@@ -68,7 +68,7 @@ brew bundle ~/Caskfile
 ## Feedback
 
 Suggestions/improvements
-[welcome](https://github.com/mingster/dotfiles/issues)!
+[welcome](https://github.com/mingster/mingster-dotfiles/issues)!
 
 ## Author
 Ming Tsai
@@ -91,4 +91,4 @@ Ming Tsai
 * [Kevin Suttle](http://kevinsuttle.com/) and his [dotfiles repository](https://github.com/kevinSuttle/dotfiles) and [OSXDefaults project](https://github.com/kevinSuttle/OSXDefaults), which aims to provide better documentation for [`~/.osx`](http://mths.be/osx)
 * [Haralan Dobrev](http://hkdobrev.com/)
 
-* anyone who [contributed a patch](https://github.com/mathiasbynens/dotfiles/contributors) or [made a helpful suggestion](https://github.com/mathiasbynens/dotfiles/issues)
+* anyone who [contributed a patch](https://github.com/mingster/mingster-dotfiles/contributors) or [made a helpful suggestion](https://github.com/mingster/mingster-dotfiles/issues)
