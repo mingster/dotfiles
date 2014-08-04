@@ -1,0 +1,23 @@
+[ui]
+editor = vim
+ignore = ~/.hgignore
+ssh = ssh -C
+username = mtsai <ming@mingster.com>
+
+[extensions]
+color =
+extdiff =
+progress =
+prompt = ~/tools/lib/hg/hg-prompt/prompt.py
+purge =
+schemes =
+
+[schemes]
+bbs = ssh://hg@bitbucket.org/
+
+[alias]
+# Push to the git mirror at the same time
+pg = !"$HG" push && "$HG" push git
+
+# Local settings
+%include ~/.hgrc_local

@@ -10,16 +10,15 @@ upgrade
 # Install GNU core utilities (those that come with OS X are outdated)
 # Don’t forget to add `$(brew --prefix coreutils)/libexec/gnubin` to `$PATH`.
 install coreutils
+
 # Install some other useful utilities like `sponge`
 install moreutils
+
 # Install GNU `find`, `locate`, `updatedb`, and `xargs`, `g`-prefixed
 install findutils
+
 # Install GNU `sed`, overwriting the built-in `sed`
 install gnu-sed --default-names
-# Install Bash 4
-# Note: don’t forget to add `/usr/local/bin/bash` to `/etc/shells` before running `chsh`.
-install bash
-install bash-completion
 
 # Install wget with IRI support
 install wget --enable-iri
@@ -35,12 +34,13 @@ install homebrew/dupes/grep
 install homebrew/dupes/screen
 install homebrew/php/php55 --with-gmp
 
+install homebrew/versions/lua52
+
 # Install other useful binaries
 install ack
 install bfg
 #install exiv2
 install foremost
-install git
 install hashpump
 install imagemagick --with-webp
 install lynx
@@ -59,7 +59,19 @@ install xpdf
 install zopfli
 install iperf
 
-install homebrew/versions/lua52
+##Python dev setup
+install ssh-copy-id
+install python --with-brewed-openssl
+install python3 --with-brewed-openssl
+install byobu
+
+#install pip
+
+sudo -v
+easy_install pip
+pip install Mercurial hg-git
+pip install virtualenv
+
 
 # Remove outdated versions from the cellar
 cleanup

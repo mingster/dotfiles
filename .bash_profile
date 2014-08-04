@@ -33,6 +33,12 @@ elif [ -f /etc/bash_completion ]; then
 	source /etc/bash_completion;
 fi;
 
+# Turn on advanced bash completion if the file exists
+#if [ -f /usr/local/etc/bash_completion ]; then
+#	. /usr/local/etc/bash_completion
+#fi
+
+
 # Enable tab completion for `g` by marking it as an alias for `git`
 if type _git &> /dev/null && [ -f /usr/local/etc/bash_completion.d/git-completion.bash ]; then
 	complete -o default -o nospace -F _git g;
@@ -47,3 +53,26 @@ complete -W "NSGlobalDomain" defaults;
 
 # Add `killall` tab completion for common apps
 complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes SystemUIServer Terminal Twitter" killall;
+
+##Python dev setup
+# Set architecture flags
+export ARCHFLAGS="-arch x86_64"
+# Ensure user-installed binaries take precedence
+export PATH=/usr/local/bin:$PATH
+
+if [ ! -d ~/projects ]; then
+	mkdir -p ~/projects
+fi
+
+if [ -d ~/.local/bin ]; then
+  export PATH=~/.local/bin:$PATH
+fi
+
+# Python path -----------------------------------------------------
+if [ -d ~/.local/lib/python2.7/site-packages ]; then
+  export PYTHONPATH=~/.local/lib/python2.7/site-packages:$PYTHONPATH
+fi
+
+
+# Load .bashrc if it exists
+test -f ~/.bashrc && source ~/.bashrc

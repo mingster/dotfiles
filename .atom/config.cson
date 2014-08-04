@@ -1,0 +1,50 @@
+'exception-reporting':
+  'userId': '157ea743-b716-f272-0645-0276d45271c4'
+'release-notes':
+  'viewedVersion': '0.95.0'
+'welcome':
+  'showOnStartup': false
+'metrics':
+  'userId': '891764930510680c62bd617da0f0f1a73c26c325'
+'editor':
+  'fontSize': 11
+  'lineHeight': 1.1
+  'fontFamily': 'Andale Mono'
+  'softWrapAtPreferredLineLength': true
+'core':
+  'themes': [
+    'atom-dark-ui'
+    'atom-dark-syntax'
+  ]
+  'ignoredNames': [
+    '.git'
+    '.svn'
+    '.DS_Store'
+  ]
+  'disabledPackages': [
+    'archive-view'
+    'bookmarks'
+    'command-palette'
+    'deprecation-cop'
+    'dev-live-reload'
+    'feedback'
+    'fuzzy-finder'
+    'git-diff'
+    'image-view'
+    'language-gfm'
+    'language-go'
+    'language-javascript'
+    'language-less'
+    'language-perl'
+    'language-php'
+    'language-ruby'
+    'language-ruby-on-rails'
+    'language-sass'
+    'language-toml'
+    'link'
+    'metrics'
+    'open-on-github'
+    'release-notes'
+    'timecop'
+  ]
+'markdown-preview': {}

@@ -8,50 +8,73 @@ changes are added to my favourites:
 1. .osx script: updates to my accustomed looks/feel & settings.
 2. add python development setup
 
-## Pre-Installation
-1. <a href="http://iterm2.com">iTerm2</a>
-2. <a href="http://brew.sh">Brew</a>
+
+
+## Install Xcode and its "Command Line Tools"
+
+- Go to App Store and install Xcode.
+- Open and accept the terms
+- Then go to the terminal and install "Command Line Tools":
+
 ```bash
-ruby -e "$(curl -fsSL https://raw.github.com/Homebrew/homebrew/go/install)"
+xcode-select --install
 ```
-3. install git first
+
+
+## Installation - Brew
+Open up Terminal, install brew:
 ```bash
-brew install git
+./brew
 ```
+This will install brew, git, and iTerm2
+
 
 ## DotFiles Installation
 
 ### Using Git and the bootstrap script
 
-You can clone the repository wherever you want. (I like to keep it in `~/projects/dotfiles`, with `~/dotfiles` as a symlink.) The bootstrapper script will pull in the latest version and copy the files to your home folder.
+Open up iTerm2, you can now using git to clone down this repository.
+You can clone the repository wherever you want.
+(I like to keep it in `~/GitHub/dotfiles`,
+with `~/dotfiles` as a symlink.)
 
 ```bash
-git clone https://github.com/mathiasbynens/dotfiles.git && cd dotfiles && source bootstrap.sh
+git clone https://github.com/mingster/mingster-dotfiles.git && cd mingster-dotfiles
 ```
 
-To execute, `cd` into your local `dotfiles` repository and then:
+### Review & update your info
+  - review .extra and replace it with your info
 
+
+### Install it
+To execute, `cd` into your local `dotfiles` repository and then:
 ```bash
 source bootstrap.sh
 ```
 
+The bootstrapper script will pull in the latest version and copy the files to
+your home folder.
+
 To update later on, just run that command again.
 
+Exit out iTerm2 and re-open it, you should see the different.
 
-### Sensible OS X defaults
+
+## Sensible OS X defaults
 
 When setting up a new Mac, you may want to set some sensible OS X defaults.  Review it carefully to best suit your own
-preferences.  To execute, do this:
+preferences.  To execute:
 
 ```bash
 ./.osx
 ```
 
-### Install Homebrew formulae
+## Install Additional Homebrew formulaes
 
-When setting up a new Mac, you may want to install some common [Homebrew](http://brew.sh/) formulae (after installing Homebrew, of course):
+When setting up a new Mac, you may want to install some common
+[Homebrew](http://brew.sh/) formulae.
 
-```bash
+ ```bash
 brew bundle ~/Brewfile
 ```
 

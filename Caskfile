@@ -4,9 +4,18 @@
 install caskroom/cask/brew-cask
 tap caskroom/versions
 
-cask install Atom 2> /dev/null
-cask install dropbox 2> /dev/null
-cask install google-chrome 2> /dev/null
+
+# Ask for the administrator password upfront
+sudo -v
+
+# Basic apps
+cask install --appdir="/Applications" transmit
+cask install --appdir="/Applications" dropbox
+cask install --appdir="/Applications" google-chrome
+cask install --appdir="/Applications" google-chrome-canary
+cask install --appdir="/Applications" alfred
+
+
 cask install google-chrome-canary 2> /dev/null
 cask install imagealpha 2> /dev/null
 cask install imageoptim 2> /dev/null
@@ -15,6 +24,9 @@ cask install opera 2> /dev/null
 cask install opera-developer 2> /dev/null
 cask install opera-next 2> /dev/null
 #cask install sublime-text 2> /dev/null
+
+#https://atom.io/download/mac
+
 cask install the-unarchiver 2> /dev/null
 cask install torbrowser 2> /dev/null
 cask install transmission 2> /dev/null
