@@ -24,6 +24,7 @@ cask install --appdir="/Applications" imagealpha
 cask install --appdir="/Applications" imageoptim
 cask install --appdir="/Applications/video" miro-video-converter
 
+cask install atom 2> /dev/null
 cask install --appdir="/Applications" atom
 #cask install sublime-text 2> /dev/null
 
