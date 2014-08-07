@@ -15,21 +15,23 @@ cask install --appdir="/Applications" google-chrome
 cask install --appdir="/Applications" google-chrome-canary
 cask install --appdir="/Applications" alfred
 
+#cask install google-chrome-canary 2> /dev/null
+cask install --appdir="/Applications" opera 2
+cask install --appdir="/Applications" opera-developer
+cask install --appdir="/Applications" opera-next
 
-cask install google-chrome-canary 2> /dev/null
-cask install imagealpha 2> /dev/null
-cask install imageoptim 2> /dev/null
-cask install miro-video-converter 2> /dev/null
-cask install opera 2> /dev/null
-cask install opera-developer 2> /dev/null
-cask install opera-next 2> /dev/null
+cask install --appdir="/Applications" imagealpha
+cask install --appdir="/Applications" imageoptim
+cask install --appdir="/Applications/video" miro-video-converter
+
+cask install --appdir="/Applications" atom
 #cask install sublime-text 2> /dev/null
 
 #https://atom.io/download/mac
 
-cask install the-unarchiver 2> /dev/null
-cask install torbrowser 2> /dev/null
-cask install transmission 2> /dev/null
-cask install ukelele 2> /dev/null
-cask install virtualbox 2> /dev/null
-cask install vlc 2> /dev/null
+cask install --appdir="/Applications" the-unarchiver
+cask install --appdir="/Applications" torbrowser
+cask install --appdir="/Applications" transmission
+cask install --appdir="/Applications" ukelele
+cask install --appdir="/Applications" virtualbox
+cask install --appdir="/Applications" vlc

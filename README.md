@@ -35,11 +35,11 @@ This will install brew, git, and iTerm2
 
 Open up iTerm2, you can now using git to clone down this repository.
 You can clone the repository wherever you want.
-(I like to keep it in `~/GitHub/dotfiles`,
-with `~/dotfiles` as a symlink.)
+(I like to keep it in `~/GitHub/dotfiles`)
 
 ```bash
-git clone https://github.com/mingster/mingster-dotfiles.git && cd mingster-dotfiles
+cd ~/GitHub
+git clone https://github.com/mingster/dotfiles.git && cd dotfiles
 ```
 
 ### Review & update your info
@@ -91,7 +91,7 @@ brew bundle ~/Caskfile
 ## Feedback
 
 Suggestions/improvements
-[welcome](https://github.com/mingster/mingster-dotfiles/issues)!
+[welcome](https://github.com/mingster/dotfiles/issues)!
 
 ## Author
 Ming Tsai
@@ -114,4 +114,4 @@ Ming Tsai
 * [Kevin Suttle](http://kevinsuttle.com/) and his [dotfiles repository](https://github.com/kevinSuttle/dotfiles) and [OSXDefaults project](https://github.com/kevinSuttle/OSXDefaults), which aims to provide better documentation for [`~/.osx`](http://mths.be/osx)
 * [Haralan Dobrev](http://hkdobrev.com/)
 
-* anyone who [contributed a patch](https://github.com/mingster/mingster-dotfiles/contributors) or [made a helpful suggestion](https://github.com/mingster/mingster-dotfiles/issues)
+* anyone who [contributed a patch](https://github.com/mingster/dotfiles/contributors) or [made a helpful suggestion](https://github.com/mingster/dotfiles/issues)
