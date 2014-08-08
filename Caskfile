@@ -10,8 +10,8 @@ sudo -v
 
 # Basic apps
 ### move the installation to ~/.brew ####cask install --appdir="/Applications/Utilities" iterm2
-cask install --appdir="/Applications/Utilities" spectacle
-cask install --appdir="/Applications/Utilities" onyx
+cask install --appdir="/Applications" spectacle
+cask install --appdir="/Applications" onyx
 
 cask install --appdir="/Applications" atom
 cask install --appdir="/Applications" dropbox
@@ -47,11 +47,12 @@ cask install --appdir="/Applications/Dev" dash
 cask install --appdir="/Applications/Dev" sequel-pro
 cask install --appdir="/Applications/Dev" pycharm
 cask install --appdir="/Applications/Dev" eclipse-ide
+cask install --appdir="/Applications/Dev" intellij-idea
 cask install --appdir="/Applications/Dev" phpstorm
 ## NOT AVAILABLE ## cask install --appdir="/Applications/Dev" 0xED
 cask install --appdir="/Applications/Dev" jd-gui
 #cask install --appdir="/Applications/Dev" xamarin-studio
-cask install --appdir="/Applications/Dev" jewelry box
+cask install --appdir="/Applications/Dev" jewelrybox
 
 # Virtual Env
 cask install --appdir="/Applications/Dev" vagrant
@@ -87,7 +88,6 @@ cask install --appdir="/Applications/Audio" tuneup
 # Plex Media Server
 # Adobe shit
 # EverNote
-# 
 #
 
 cleanup
