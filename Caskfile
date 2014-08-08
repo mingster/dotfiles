@@ -9,30 +9,42 @@ tap caskroom/versions
 sudo -v
 
 # Basic apps
-cask install --appdir="/Applications" transmit
-cask install --appdir="/Applications" dropbox
-cask install --appdir="/Applications" google-chrome
-cask install --appdir="/Applications" google-chrome-canary
-cask install --appdir="/Applications" alfred
-
-#cask install google-chrome-canary 2> /dev/null
-cask install --appdir="/Applications" opera 2
-cask install --appdir="/Applications" opera-developer
-cask install --appdir="/Applications" opera-next
-
-cask install --appdir="/Applications" imagealpha
-cask install --appdir="/Applications" imageoptim
-cask install --appdir="/Applications/video" miro-video-converter
-
-cask install atom 2> /dev/null
 cask install --appdir="/Applications" atom
+cask install --appdir="/Applications" dropbox
 #cask install sublime-text 2> /dev/null
-
-#https://atom.io/download/mac
-
+#cask install --appdir="/Applications" alfred
 cask install --appdir="/Applications" the-unarchiver
-cask install --appdir="/Applications" torbrowser
-cask install --appdir="/Applications" transmission
+
 cask install --appdir="/Applications" ukelele
 cask install --appdir="/Applications" virtualbox
 cask install --appdir="/Applications" vlc
+
+cask install --appdir="/Applications" cyberduck
+#cask install --appdir="/Applications" transmission
+#cask install --appdir="/Applications" transmit
+#cask install --appdir="/Applications" imagealpha
+#cask install --appdir="/Applications" imageoptim
+
+mkdir /Applications/Video
+#cask install --appdir="/Applications/Video" miro-video-converter
+
+# Browsers
+cask install --appdir="/Applications" google-chrome
+cask install --appdir="/Applications" google-chrome-canary
+cask install --appdir="/Applications" firefox
+cask install --appdir="/Applications" opera 2
+cask install --appdir="/Applications" opera-developer
+cask install --appdir="/Applications" opera-next
+cask install --appdir="/Applications" torbrowser
+
+# Dev
+mkdir /Applications/Dev
+cask install --appdir="/Applications/Dev" github
+cask install --appdir="/Applications/Dev" sourcetree
+cask install --appdir="/Applications/Dev" dash
+cask install --appdir="/Applications/Dev" sequel-pro
+cask install --appdir="/Applications/Dev" pycharm
+cask install --appdir="/Applications/Dev" eclipse-ide
+cask install --appdir="/Applications/Dev" phpstorm
+
+cleanup
