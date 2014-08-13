@@ -75,6 +75,7 @@ cask install --appdir="/Applications/Audio" kid3
 cask install --appdir="/Applications/Audio" max
 cask install --appdir="/Applications/Audio" xld
 cask install --appdir="/Applications/Audio" tuneup
+cask install --appdir="/Applications/Audio" vox-beta
 
 ### Other optional app to install manually ###
 #
@@ -88,6 +89,7 @@ cask install --appdir="/Applications/Audio" tuneup
 # Plex Media Server
 # Adobe shit
 # EverNote
-#
+#cask install --appdir="/Applications/Audio" get-lyrical
+
 
 cleanup
