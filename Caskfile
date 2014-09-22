@@ -54,6 +54,10 @@ cask install --appdir="/Applications/Dev" jd-gui
 #cask install --appdir="/Applications/Dev" xamarin-studio
 cask install --appdir="/Applications/Dev" jewelrybox
 
+#The Android-SDK location for IDEs such as Eclipse, IntelliJ etc is: /usr/local/Cellar/android-sdk/23.0.2
+brew install android-sdk
+
+
 # Virtual Env
 cask install --appdir="/Applications/Dev" vagrant
 cask install --appdir="/Applications/Dev" vagrant-manager
