@@ -1,17 +1,15 @@
 #!/bin/bash
 
-
 sudo chown $USER /usr/local
 
 #ruby -e "$(curl -fsSkL raw.github.com/mxcl/homebrew/go)"
-ruby -e "$(curl -fsSL https://raw.github.com/Homebrew/homebrew/go/install)"
+ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
 
-# Make sure we’re using the latest Homebrew
+# Make sure we’re using the latest HomeBrew
 brew update
 
 # Upgrade any already-installed formulae
 brew upgrade
-
 
 # Install Bash 4
 # Note: don’t forget to add `/usr/local/bin/bash` to `/etc/shells` before running `chsh`.
@@ -29,7 +27,9 @@ brew cleanup
 #using brew cask instead
 brew install caskroom/cask/brew-cask
 brew tap caskroom/versions
-brew cask install --appdir="~/Applications/Utilities" iterm2
+brew cask install --appdir="~/Applications" iterm2
+
+brew update && brew upgrade brew-cask && brew cleanup && brew cask cleanup
 
 #url="https://iterm2.googlecode.com/files/iTerm2_v1_0_0.zip"
 #zip="${url##http*/}"
