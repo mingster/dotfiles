@@ -2,6 +2,12 @@
 export PATH="/usr/local/bin:$HOME/bin:$PATH";
 #export PATH="$HOME/bin:$PATH";
 
+export ANDROID_HOME="/usr/local/Cellar/android-sdk/24.1.2";
+export MAVEN_HOME="/usr/local/Cellar/maven/3.3.1";
+export JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk1.7.0_80.jdk/Contents/Home";
+
+export PATH="$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$MAVEN_HOME/bin:$PATH";
+
 # Load the shell dotfiles, and then some:
 # * ~/.path can be used to extend `$PATH`.
 # * ~/.extra can be used for other settings you don’t want to commit.
