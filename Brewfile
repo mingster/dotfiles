@@ -59,19 +59,20 @@ install xpdf
 install zopfli
 install iperf
 
-##Python dev setup
+## Python dev setup
 install ssh-copy-id
 install python --with-brewed-openssl
 install python3 --with-brewed-openssl
-install byobu
+
+# https://mallinson.ca/osx-web-development/
+install autoenv dnsmasq
 
 #install pip
 
 sudo -v
 easy_install pip
 pip install Mercurial hg-git
-pip install virtualenv
-
+pip install virtualenv virtualenvwrapper requests
 
 # Remove outdated versions from the cellar
 cleanup
