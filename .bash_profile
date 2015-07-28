@@ -2,7 +2,10 @@
 export PATH="/usr/local/bin:$HOME/bin:$PATH";
 #export PATH="$HOME/bin:$PATH";
 
-export ANDROID_HOME="/usr/local/Cellar/android-sdk/24.1.2";
+#Homebrew sbin
+export PATH="/usr/local/sbin:$PATH"
+
+export ANDROID_HOME="/usr/local/Cellar/android-sdk/24.3.3";
 export MAVEN_HOME="/usr/local/Cellar/maven/3.3.1";
 export JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk1.7.0_80.jdk/Contents/Home";
 
