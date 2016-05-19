@@ -1,13 +1,13 @@
 # Add `~/bin` to the `$PATH`
 export PATH="/usr/local/bin:$HOME/bin:$PATH";
-#export PATH="$HOME/bin:$PATH";
+export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
 
 #Homebrew sbin
 export PATH="/usr/local/sbin:$PATH"
 
-export ANDROID_HOME="/usr/local/Cellar/android-sdk/24.3.3";
+export ANDROID_HOME="/usr/local/opt/android-sdk";
 export MAVEN_HOME="/usr/local/Cellar/maven/3.3.1";
-export JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk1.7.0_80.jdk/Contents/Home";
+export JAVA_HOME="/Library/Java/Home/";
 
 export PATH="$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$MAVEN_HOME/bin:$PATH";
 
@@ -66,21 +66,22 @@ complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes Syste
 ##Python dev setup
 # Set architecture flags
 export ARCHFLAGS="-arch x86_64"
+
 # Ensure user-installed binaries take precedence
-export PATH=/usr/local/bin:$PATH
+#export PATH=/usr/local/bin:$PATH
 
 if [ ! -d ~/projects ]; then
 	mkdir -p ~/projects
 fi
 
-if [ -d ~/.local/bin ]; then
-  export PATH=~/.local/bin:$PATH
-fi
+#if [ -d ~/.local/bin ]; then
+#  export PATH=~/.local/bin:$PATH
+#fi
 
 # Python path -----------------------------------------------------
-if [ -d ~/.local/lib/python2.7/site-packages ]; then
-  export PYTHONPATH=~/.local/lib/python2.7/site-packages:$PYTHONPATH
-fi
+#if [ -d ~/.local/lib/python2.7/site-packages ]; then
+#  export PYTHONPATH=~/.local/lib/python2.7/site-packages:$PYTHONPATH
+#fi
 
 
 # Load .bashrc if it exists

@@ -29,7 +29,7 @@ cask install --appdir="/Applications" vlc
 cask install --appdir="/Applications" skype
 cask install --appdir="/Applications" cyberduck
 #cask install --appdir="/Applications" transmission
-#cask install --appdir="/Applications" uTorrent
+cask install --appdir="/Applications" utorrent
 #cask install --appdir="/Applications" transmit
 #cask install --appdir="/Applications" cakebrew
 cask install --appdir="/Applications" gpgtools
@@ -38,10 +38,10 @@ cask install --appdir="/Applications" gpgtools
 cask install --appdir="/Applications" google-chrome
 cask install --appdir="/Applications" google-chrome-canary
 cask install --appdir="/Applications" firefox
-cask install --appdir="/Applications" opera 2
-cask install --appdir="/Applications" opera-developer
-cask install --appear="/Applications" opera-next
-cask install --appdir="/Applications" torbrowser
+#cask install --appdir="/Applications" opera 2
+#cask install --appdir="/Applications" opera-developer
+#cask install --appear="/Applications" opera-next
+#cask install --appdir="/Applications" torbrowser
 
 # Dev
 mkdir /Applications/Dev
@@ -61,6 +61,9 @@ cask install --appdir="/Applications/Dev" jewelrybox
 #The Android-SDK location for IDEs such as Eclipse, IntelliJ etc is: /usr/local/Cellar/android-sdk/23.0.2
 ## NOTE that this is not a cask app ##
 install android-sdk
+
+# Google Cloud 
+cask install google-cloud-sdk
 
 # Virtual Env
 cask install --appdir="/Applications/Dev" vagrant
@@ -83,6 +86,7 @@ cask install --appdir="/Applications/Audio" max
 cask install --appdir="/Applications/Audio" xld
 cask install --appdir="/Applications/Audio" tuneup
 cask install --appdir="/Applications/Audio" vox-beta
+#cask install --appdir="/Applications/Audio" get-lyrical
 
 ### Other optional app to install manually ###
 #
@@ -96,6 +100,5 @@ cask install --appdir="/Applications/Audio" vox-beta
 # Plex Media Server
 # Adobe shit
 # EverNote
-#cask install --appdir="/Applications/Audio" get-lyrical
 
 cleanup

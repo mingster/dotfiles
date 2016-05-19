@@ -1,78 +1,95 @@
-# Install command-line tools using Homebrew
-# Usage: `brew bundle Brewfile`
-
-# Make sure we’re using the latest Homebrew
-update
-
-# Upgrade any already-installed formulae
-upgrade
-
-# Install GNU core utilities (those that come with OS X are outdated)
-# Don’t forget to add `$(brew --prefix coreutils)/libexec/gnubin` to `$PATH`.
-install coreutils
-
-# Install some other useful utilities like `sponge`
-install moreutils
-
-# Install GNU `find`, `locate`, `updatedb`, and `xargs`, `g`-prefixed
-install findutils
-
-# Install GNU `sed`, overwriting the built-in `sed`
-install gnu-sed --default-names
-
-# Install wget with IRI support
-install wget --enable-iri
-
-# Install RingoJS and Narwhal
-# Note that the order in which these are installed is important; see http://git.io/brew-narwhal-ringo.
-install ringojs
-install narwhal
-
-# Install more recent versions of some OS X tools
-install vim --override-system-vi
-install homebrew/dupes/grep
-install homebrew/dupes/screen
-install homebrew/php/php55 --with-gmp
-
-install homebrew/versions/lua52
-
-# Install other useful binaries
-install ack
-install bfg
-#install exiv2
-install foremost
-install hashpump
-install imagemagick --with-webp
-install lynx
-install nmap
-install node # This installs `npm` too using the recommended installation method
-install p7zip
-install pigz
-install pv
-install rename
-install rhino
-install sqlmap
-install tree
-install ucspi-tcp # `tcpserver` et al.
-install webkit2png
-install xpdf
-install zopfli
-install iperf
-
-## Python dev setup
-install ssh-copy-id
-install python --with-brewed-openssl
-install python3 --with-brewed-openssl
-
-# https://mallinson.ca/osx-web-development/
-install autoenv dnsmasq
-
-#install pip
-
-sudo -v
-easy_install pip
-pip install Mercurial hg-git
-pip install virtualenv virtualenvwrapper requests
-
-# Remove outdated versions from the cellar
-cleanup
+tap 'caskroom/cask'
+tap 'caskroom/versions'
+tap 'homebrew/bundle'
+tap 'homebrew/core'
+tap 'homebrew/dupes'
+tap 'homebrew/fuse'
+tap 'homebrew/php'
+cask 'osxfuse'
+brew 'android-sdk'
+brew 'autoenv'
+brew 'readline'
+brew 'bash'
+brew 'bash-completion'
+brew 'xz'
+brew 'gmp'
+brew 'coreutils'
+brew 'openssl'
+brew 'pkg-config'
+brew 'libidn'
+brew 'curl'
+brew 'dnsmasq'
+brew 'gnu-tar'
+brew 'dpkg'
+brew 'faac'
+brew 'findutils'
+brew 'libpng'
+brew 'freetype'
+brew 'gdbm'
+brew 'gettext'
+brew 'pcre'
+brew 'git'
+brew 'gnu-sed', args: ['with-default-names']
+brew 'go'
+brew 'hugo'
+brew 'icu4c'
+brew 'iftop'
+brew 'libtool'
+brew 'jpeg'
+brew 'libtiff'
+brew 'webp'
+brew 'imagemagick', args: ['with-webp']
+brew 'iperf'
+brew 'lame'
+brew 'x264'
+brew 'xvid'
+brew 'libav'
+brew 'libxml2'
+brew 'moreutils'
+brew 'narwhal'
+brew 'nmap'
+brew 'node'
+brew 'p7zip'
+brew 'sqlite'
+brew 'python3'
+brew 'rename'
+brew 'ringojs'
+brew 'sqlmap'
+brew 'subversion'
+brew 'tree'
+brew 'unixodbc'
+brew 'vim', args: ['override-system-vi']
+brew 'webkit2png'
+brew 'wget', args: ['with-iri']
+brew 'wput'
+brew 'homebrew/dupes/grep'
+brew 'homebrew/dupes/screen'
+brew 'homebrew/fuse/ntfs-3g'
+brew 'homebrew/php/php55', args: ['with-gmp']
+cask '0xed'
+cask 'atom'
+cask 'cyberduck'
+cask 'dash'
+cask 'dropbox'
+cask 'eclipse-ide'
+cask 'filezilla'
+cask 'firefox'
+cask 'github-desktop'
+cask 'google-chrome'
+cask 'google-chrome-canary'
+cask 'google-cloud-sdk'
+cask 'handbrake'
+cask 'jd-gui'
+cask 'kid3'
+cask 'max'
+cask 'pycharm'
+cask 'skype'
+cask 'sourcetree'
+cask 'tuneup'
+cask 'utorrent'
+cask 'vagrant'
+cask 'vagrant-manager'
+cask 'virtualbox'
+cask 'vlc'
+cask 'vox'
+cask 'xld'
