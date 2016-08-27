@@ -1,15 +1,13 @@
+# Load .bashrc if it exists
+test -f ~/.bashrc && source ~/.bashrc
+
 # Add `~/bin` to the `$PATH`
-export PATH="/usr/local/bin:$HOME/bin:$PATH";
-export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="/usr/local/bin:/usr/local/sbin:$HOME/bin:$PATH";
 
-#Homebrew sbin
-export PATH="/usr/local/sbin:$PATH"
+# Ensure user-installed binaries take precedence
+export PATH=/usr/local/bin:$PATH
 
-export ANDROID_HOME="/usr/local/opt/android-sdk";
-export MAVEN_HOME="/usr/local/Cellar/maven/3.3.1";
-export JAVA_HOME="/Library/Java/Home/";
-
-export PATH="$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$MAVEN_HOME/bin:$PATH";
+export HOMEBREW_CASK_OPTS="--caskroom=/opt/homebrew-cask/Caskroom"
 
 # Load the shell dotfiles, and then some:
 # * ~/.path can be used to extend `$PATH`.
@@ -67,22 +65,19 @@ complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes Syste
 # Set architecture flags
 export ARCHFLAGS="-arch x86_64"
 
-# Ensure user-installed binaries take precedence
-#export PATH=/usr/local/bin:$PATH
-
 if [ ! -d ~/projects ]; then
 	mkdir -p ~/projects
 fi
 
-#if [ -d ~/.local/bin ]; then
-#  export PATH=~/.local/bin:$PATH
-#fi
+if [ -d ~/.local/bin ]; then
+  export PATH=~/.local/bin:$PATH
+fi
 
 # Python path -----------------------------------------------------
-#if [ -d ~/.local/lib/python2.7/site-packages ]; then
-#  export PYTHONPATH=~/.local/lib/python2.7/site-packages:$PYTHONPATH
-#fi
+if [ -d ~/.local/lib/python2.7/site-packages ]; then
+  export PYTHONPATH=~/.local/lib/python2.7/site-packages:$PYTHONPATH
+fi
 
-
-# Load .bashrc if it exists
-test -f ~/.bashrc && source ~/.bashrc
+# Init jenv
+#http://davidcai.github.io/blog/posts/install-multiple-jdk-on-mac/
+if which jenv > /dev/null; then eval "$(jenv init -)"; fi
