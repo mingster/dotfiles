@@ -7,7 +7,7 @@ export PATH="/usr/local/bin:/usr/local/sbin:$HOME/bin:$PATH";
 # Ensure user-installed binaries take precedence
 export PATH=/usr/local/bin:$PATH
 
-export HOMEBREW_CASK_OPTS="--caskroom=/opt/homebrew-cask/Caskroom"
+export HOMEBREW_CASK_OPTS="--caskroom=/usr/local/Caskroom"
 
 # Load the shell dotfiles, and then some:
 # * ~/.path can be used to extend `$PATH`.
