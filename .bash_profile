@@ -7,6 +7,9 @@ export PATH="/usr/local/bin:/usr/local/sbin:$HOME/bin:$PATH";
 # Ensure user-installed binaries take precedence
 export PATH=/usr/local/bin:$PATH
 
+# GO path
+export PATH=$PATH:/usr/local/opt/go/libexec/bin
+
 export HOMEBREW_CASK_OPTS="--caskroom=/usr/local/Caskroom"
 
 # Load the shell dotfiles, and then some:
@@ -81,3 +84,5 @@ fi
 # Init jenv
 #http://davidcai.github.io/blog/posts/install-multiple-jdk-on-mac/
 if which jenv > /dev/null; then eval "$(jenv init -)"; fi
+
+export WMSJAVA_HOME="/Library/WowzaStreamingEngine-4.5.0/java"
