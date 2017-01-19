@@ -10,75 +10,81 @@ cask 'java'
 brew 'android-sdk'
 brew 'apr'
 brew 'openssl'
-brew 'icu4c'
-brew 'readline'
-brew 'sqlite'
-brew 'unixodbc'
+brew 'git'
+brew 'git-extras'
 brew 'apr-util'
 brew 'autoenv'
+brew 'readline'
 brew 'bash'
-brew 'bash-completion'
+brew 'bash-completion2'
 brew 'cmake'
-brew 'xz'
-brew 'gmp'
 brew 'coreutils'
-brew 'pkg-config'
-brew 'libidn'
 brew 'dnsmasq'
 brew 'gnu-tar'
+brew 'xz'
 brew 'dpkg'
 brew 'gettext'
 brew 'e2fsprogs'
 brew 'faac'
-brew 'libpng'
-brew 'freetype'
 brew 'lame'
-brew 'jpeg'
-brew 'libtiff'
-brew 'webp'
-brew 'pcre'
-brew 'git'
+brew 'ffmpeg', args: ['--with-libvpx']
+brew 'wifi-password'
 brew 'x264'
 brew 'xvid'
 brew 'ffmpeg'
 brew 'findutils'
+brew 'libpng'
+brew 'freetype'
 brew 'gdbm'
+brew 'gmp'
 brew 'gnu-sed', args: ['with-default-names']
 brew 'go'
 brew 'hugo'
+brew 'icu4c'
 brew 'iftop'
+brew 'jpeg'
+brew 'libtiff'
 brew 'libtool'
 brew 'imagemagick', args: ['with-webp']
 brew 'iperf'
 brew 'jenv'
 brew 'leptonica'
 brew 'libav'
+brew 'libidn'
 brew 'libxml2'
 brew 'mas'
 brew 'moreutils'
 brew 'narwhal'
 brew 'nmap'
 brew 'node'
+brew 'nvm'
 brew 'p7zip'
+brew 'pcre'
+brew 'pkg-config'
+brew 'sqlite'
 brew 'python3'
+brew 'source-highlight'
 brew 'rclone'
 brew 'rename'
 brew 'ringojs'
 brew 'sqlmap'
-brew 'subversion'
 brew 'tesseract', args: ['with-all-languages']
 brew 'tree'
+brew 'unixodbc'
 brew 'vim', args: ['with-override-system-vi']
 brew 'webkit2png'
+brew 'webp'
 brew 'wget', args: ['with-iri']
 brew 'wput'
 brew 'homebrew/completions/brew-cask-completion'
 brew 'homebrew/dupes/grep'
 brew 'homebrew/dupes/screen'
+brew 'homebrew/dupes/openssh'
 brew 'homebrew/fuse/ntfs-3g'
-brew 'homebrew/php/php55', args: ['with-gmp']
 cask '0xed'
+cask 'diffmerge'
 cask 'dropbox'
+cask 'eclipse-ide'
 cask 'eclipse-java'
 cask 'filezilla'
 cask 'firefox'
@@ -91,29 +97,32 @@ cask 'jd-gui'
 cask 'kid3'
 cask 'max'
 cask 'mounty'
+cask 'onyx'
 cask 'pycharm'
 cask 'skype'
 cask 'sourcetree'
-cask 'telegram'
+cask 'spotify'
+cask 'staruml'
+cask 'torbrowser'
 cask 'vagrant'
 cask 'vagrant-manager'
 cask 'virtualbox'
 cask 'vlc'
 cask 'vox'
-cask 'xld'
-mas 'PhotoScapeX (2.4.1)', id: 929507092
-mas 'Xcode (8.0)', id: 497799835
-mas 'The Unarchiver (3.11.1)', id: 425424353
-mas 'Keynote (7.0)', id: 409183694
-mas 'iMovie (10.1.2)', id: 408981434
-mas 'Microsoft Remote Desktop (8.0.27181)', id: 715768417
-mas 'Evernote (6.9.1)', id: 406056744
-mas 'WeChat (2.0.4)', id: 836500024
-mas 'iBooks Author (2.5)', id: 490152466
-mas 'SiteSucker (2.8.4)', id: 442168834
-mas 'mysms (3.8)', id: 545578261
-mas 'Pages (6.0)', id: 409201541
-mas 'LINE (4.9.0)', id: 539883307
-mas 'feedly (1.1)', id: 865500966
-mas 'App Cleaner (3.0)', id: 1013897218
-mas 'Numbers (4.0)', id: 409203825
+cask 'wireshark'
+mas 'PhotoScapeX', id: 929507092
+mas 'Xcode', id: 497799835
+mas 'The Unarchiver', id: 425424353
+mas 'Keynote', id: 409183694
+mas 'iMovie', id: 408981434
+mas 'Microsoft Remote Desktop', id: 715768417
+mas 'Evernote', id: 406056744
+mas 'WeChat', id: 836500024
+mas 'iBooks Author', id: 490152466
+mas 'SiteSucker', id: 442168834
+mas 'mysms', id: 545578261
+mas 'Pages', id: 409201541
+mas 'LINE', id: 539883307
+mas 'feedly', id: 865500966
+mas 'App Cleaner', id: 1013897218
+mas 'Numbers', id: 409203825
