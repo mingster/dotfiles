@@ -1,3 +1,6 @@
+# IntelliJ IDEA IDE
+.idea
+
 # Compiled Python files
 *.pyc
 
@@ -12,3 +15,17 @@ Thumbs.db
 # Files that might appear on external disks
 .Spotlight-V100
 .Trashes
+
+# Files that might appear on external disks
+.Spotlight-V100
+.Trashes
+
+# Files that contain credentials or personal info
+.extra
+.boto
+.mrjob.conf
+.s3cfg
+.aws/
+
+# Repo scratch directory
+scratch/

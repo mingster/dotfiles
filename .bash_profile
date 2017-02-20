@@ -43,27 +43,13 @@ elif [ -f /etc/bash_completion ]; then
 	source /etc/bash_completion;
 fi;
 
-# Turn on advanced bash completion if the file exists
-#if [ -f /usr/local/etc/bash_completion ]; then
-#	. /usr/local/etc/bash_completion
-#fi
-
 # Enable tab completion for `g` by marking it as an alias for `git`
 if type _git &> /dev/null && [ -f /usr/local/etc/bash_completion.d/git-completion.bash ]; then
-	complete -o default -o nospace -F _git g;
+    complete -o default -o nospace -F _git g;
 fi;
 
-# Git branch in prompt.
-parse_git_branch() {
-  git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
-}
-
-# Set Default Editor (change 'Nano' to the editor of your choice)
-# ------------------------------------------------------------
-export EDITOR=/usr/bin/vim
-
 # Add tab completion for SSH hostnames based on ~/.ssh/config, ignoring wildcards
-[ -e "$HOME/.ssh/config" ] && complete -o "default" -o "nospace" -W "$(grep "^Host" ~/.ssh/config | grep -v "[?*]" | cut -d " " -f2 | tr ' ' '\n')" scp sftp ssh;
+[ -e "$HOME/.ssh/config" ] && complete -o "default" -o "nospace" -W "$(grep "^Host" ~/.ssh/config | grep -v "[?*]" | cut -d " " -f2- | tr ' ' '\n')" scp sftp ssh;
 
 # Add tab completion for `defaults read|write NSGlobalDomain`
 # You could just use `-g` instead, but I like being explicit
@@ -72,25 +58,8 @@ complete -W "NSGlobalDomain" defaults;
 # Add `killall` tab completion for common apps
 complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes SystemUIServer Terminal Twitter" killall;
 
-##Python dev setup
-# Set architecture flags
-export ARCHFLAGS="-arch x86_64"
 
-if [ ! -d ~/projects ]; then
-	mkdir -p ~/projects
-fi
-
-if [ -d ~/.local/bin ]; then
-  export PATH=~/.local/bin:$PATH
-fi
-
-# Python path -----------------------------------------------------
-if [ -d ~/.local/lib/python2.7/site-packages ]; then
-  export PYTHONPATH=~/.local/lib/python2.7/site-packages:$PYTHONPATH
-fi
-
-# Init jenv
-#http://davidcai.github.io/blog/posts/install-multiple-jdk-on-mac/
-if which jenv > /dev/null; then eval "$(jenv init -)"; fi
-
-export WMSJAVA_HOME="/Library/WowzaStreamingEngine-4.5.0/java"
+# Git branch in prompt.
+parse_git_branch() {
+  git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
+}
