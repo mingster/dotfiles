@@ -31,5 +31,3 @@ if [ ! -z $VENVWRAP ]; then
     # cache pip-installed packages to avoid re-downloading
     export PIP_DOWNLOAD_CACHE=$HOME/.pip/cache
 fi
-
-export WMSJAVA_HOME="/Library/WowzaStreamingEngine-4.5.0/java"
