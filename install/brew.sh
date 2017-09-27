@@ -32,7 +32,7 @@ brew install mas
 
 # Core casks
 brew cask install iterm2
-#brew cask install --appdir="~/Applications" java
+brew cask install jenv
 #brew cask install --appdir="~/Applications" xquartz
 
 # Development tool casks
