@@ -21,11 +21,6 @@ brew update
 # Upgrade any already-installed formulae.
 brew upgrade
 
-# Install `wget` with IRI support.
-brew install wget --with-iri
-
-# Install more recent versions of some OS X tools.
-brew install vim --override-system-vi
 
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
 brew install iftop iperf nmap tcpflow tcptrace tcpreplay
@@ -36,16 +31,16 @@ brew install node yarn
 brew install mas
 
 # Core casks
-brew cask install --appdir="~/Applications" iterm2
+brew cask install iterm2
 #brew cask install --appdir="~/Applications" java
 #brew cask install --appdir="~/Applications" xquartz
 
 # Development tool casks
-#brew cask install --appdir="/Applications" sublime-text
-brew cask install --appdir="/Applications" atom
-#brew cask install --appdir="/Applications" virtualbox
-#brew cask install --appdir="/Applications" vagrant
-brew cask install --appdir="/Applications" macdown
+#brew cask install sublime-text
+brew cask install atom
+#brew cask install virtualbox
+#brew cask install vagrant
+brew cask install macdown
 brew cask install --appdir="/Applications/_dev" 0xed
 brew cask install --appdir="/Applications/_dev" android-studio
 brew cask install --appdir="/Applications/_dev" eclipse-ide
@@ -63,15 +58,15 @@ brew cask install firefox
 brew cask install teamviewer
 
 brew cask install skype
-#brew cask install --appdir="/Applications" slack
+#brew cask install slack
 brew cask install dropbox
-#brew cask install --appdir="/Applications" evernote
-#brew cask install --appdir="/Applications" 1password
-#brew cask install --appdir="/Applications" gimp
-#brew cask install --appdir="/Applications" inkscape
+#brew cask install evernote
+#brew cask install 1password
+#brew cask install gimp
+#brew cask install inkscape
 
 #Remove comment to install LaTeX distribution MacTeX
-#brew cask install --appdir="/Applications" mactex
+#brew cask install mactex
 
 # Install Docker, which requires virtualbox
 brew install docker

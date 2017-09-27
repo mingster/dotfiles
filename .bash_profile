@@ -1,17 +1,6 @@
 # Load .bashrc if it exists
 test -f ~/.bashrc && source ~/.bashrc
 
-# Add `~/bin` to the `$PATH`
-export PATH="/usr/local/bin:/usr/local/sbin:$HOME/bin:$PATH";
-
-# Ensure user-installed binaries take precedence
-export PATH=/usr/local/bin:$PATH
-
-# GO path
-export PATH=$PATH:/usr/local/opt/go/libexec/bin
-
-export HOMEBREW_CASK_OPTS="--caskroom=/usr/local/Caskroom"
-
 # Load the shell dotfiles, and then some:
 # * ~/.path can be used to extend `$PATH`.
 # * ~/.extra can be used for other settings you don’t want to commit.
