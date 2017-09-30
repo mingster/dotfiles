@@ -1,6 +1,7 @@
 "*":
   "atom-beautify": {}
-  core: {}
+  core:
+    telemetryConsent: "no"
   editor:
     invisibles: {}
   "exception-reporting":

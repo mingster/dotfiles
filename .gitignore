@@ -29,3 +29,13 @@ Thumbs.db
 
 # Repo scratch directory
 scratch/
+
+# Atom sync
+/.atom/.apm/
+/.atom/blob-store/
+/.atom/compile-cache/
+/.atom/dev/
+/.atom/packages/
+/.atom/storage/
+/.atom/.node-gyp/
+/.atom/.npm/
