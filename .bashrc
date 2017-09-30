@@ -1,18 +1,18 @@
 [ -n "$PS1" ]
 #[ -n "$PS1" ] && source ~/.bash_profile;
 
-# Add `~/bin` to the `$PATH`
-export PATH="/usr/local/bin:/usr/local/sbin:$HOME/bin:$PATH";
-
 # Ensure user-installed binaries take precedence
-export PATH=/usr/local/bin:$PATH
+export PATH=/usr/local/bin:/usr/local/sbin:$PATH
+
+# Add `~/bin` to the `$PATH`
+export PATH="$HOME/bin:$PATH";
 
 # GO path
 export PATH=$PATH:/usr/local/opt/go/libexec/bin
 
 export HOMEBREW_CASK_OPTS="--caskroom=/usr/local/Caskroom"
 
-export PATH="$(brew --prefix coreutils)/libexec/gnubin:/usr/local/bin:$PATH"
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
 
 # Short of learning how to actually configure OSX, here's a hacky way to use
 # GNU manpages for programs that are GNU ones, and fallback to OSX manpages otherwise
@@ -20,6 +20,8 @@ alias man='_() { echo $1; man -M $(brew --prefix)/opt/coreutils/libexec/gnuman $
 
 export HOMEBREW_PREFIX=/usr/local
 export MANPATH=$MANPATH:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnuman
+
+export NVM_DIR="$HOME/.nvm"
 
 #temporarily turn off virtualenv if needed
 #syspip(){

@@ -21,13 +21,19 @@ brew update
 # Upgrade any already-installed formulae.
 brew upgrade
 
+# Replace cli with gnu/linux
+./homebrew-install-gnu.sh
 
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
 brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 
-# Install other useful binaries.
+# Install essential binaries.
 brew install git
-brew install node yarn
+brew install node yarn nvm
+mkdir ~/.nvm
+export NVM_DIR="$HOME/.nvm"
+. "/usr/local/opt/nvm/nvm.sh"
+
 brew install mas
 
 # Core casks
@@ -42,7 +48,6 @@ brew cask install atom
 #brew cask install vagrant
 brew cask install macdown
 brew cask install --appdir="/Applications/_dev" 0xed
-brew cask install --appdir="/Applications/_dev" android-studio
 brew cask install --appdir="/Applications/_dev" eclipse-ide
 brew cask install --appdir="/Applications/_dev" github-desktop
 brew cask install --appdir="/Applications/_dev" jd-gui
@@ -54,9 +59,7 @@ brew cask install --appdir="/Applications/_dev" wireshark
 # Misc casks
 brew cask install google-chrome
 brew cask install firefox
-
 brew cask install teamviewer
-
 brew cask install skype
 #brew cask install slack
 brew cask install dropbox
@@ -71,6 +74,7 @@ brew cask install dropbox
 # Install Docker, which requires virtualbox
 brew install docker
 brew install boot2docker
+
 
 # Install av staff
 brew cask install --appdir="/Applications/_av" aegisub

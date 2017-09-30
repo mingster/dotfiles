@@ -18,15 +18,19 @@ fi
 # Make sure we’re using the latest Homebrew.
 brew update
 
-# Install Cask
-brew install caskroom/cask/brew-cask
-brew tap caskroom/versions
+# Install Java
+brew update
+brew tap caskroom/cask
+brew install Caskroom/cask/java
 
-brew cask install --appdir="~/Applications" java
-brew cask install --appdir="~/Applications" Caskroom/versions/intellij-idea-ce
-brew cask install --appdir="~/Applications" android-studio
+# Install Cask
+#brew install caskroom/cask/brew-cask
+#brew tap caskroom/versions
 
 brew install android-sdk
+brew cask install --appdir="/Applications/_dev" android-studio
+
+brew cask install --appdir="/Applications/_dev" intellij-idea-ce
 
 # Remove outdated versions from the cellar.
 brew cleanup
