@@ -20,14 +20,10 @@ brew update
 
 # Install Java
 brew update
-brew tap caskroom/cask
+#brew tap caskroom/cask
 brew install Caskroom/cask/java
 
-# Install Cask
-#brew install caskroom/cask/brew-cask
-#brew tap caskroom/versions
-
-brew install android-sdk
+#brew install Caskroom/cask/android-sdk
 brew cask install --appdir="/Applications/_dev" android-studio
 
 brew cask install --appdir="/Applications/_dev" intellij-idea-ce
