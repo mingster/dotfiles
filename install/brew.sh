@@ -38,7 +38,7 @@ brew install mas
 
 # Core casks
 brew cask install iterm2
-brew cask install jenv
+brew install jenv
 #brew cask install --appdir="~/Applications" xquartz
 
 # Development tool casks
@@ -70,6 +70,7 @@ brew cask install dropbox
 brew cask install numi
 brew cask install alfred
 brew cask install keyboard-maestro
+brew cask install --appdir="/Applications/Utilities" onyx
 
 # Misc casks
 #brew cask install evernote
@@ -88,7 +89,7 @@ brew cask install --appdir="/Applications/_av" jubler
 brew cask install --appdir="/Applications/_av" kid3
 
 brew cask install --appdir="/Applications/_av" vox
-brew cask install --appdir="/Applications/_av" vlc
+brew cask install --appdir="/Applications/_av" iina
 
 brew tap caskroom/versions
 brew cask install google-chrome-canary
