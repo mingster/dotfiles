@@ -43,10 +43,12 @@ brew cask install jenv
 
 # Development tool casks
 #brew cask install sublime-text
-brew cask install atom
 #brew cask install virtualbox
 #brew cask install vagrant
-brew cask install macdown
+# Install Docker, which requires virtualbox
+brew install docker
+brew install boot2docker
+
 brew cask install --appdir="/Applications/_dev" 0xed
 brew cask install --appdir="/Applications/_dev" eclipse-ide
 brew cask install --appdir="/Applications/_dev" github-desktop
@@ -56,13 +58,20 @@ brew cask install --appdir="/Applications/_dev" staruml
 brew cask install --appdir="/Applications/_dev" visual-studio-code
 brew cask install --appdir="/Applications/_dev" wireshark
 
-# Misc casks
+# essential apps
+brew cask install atom
+brew cask install macdown
 brew cask install google-chrome
 brew cask install firefox
 brew cask install teamviewer
 brew cask install skype
 #brew cask install slack
 brew cask install dropbox
+brew cask install numi
+brew cask install alfred
+brew cask install keyboard-maestro
+
+# Misc casks
 #brew cask install evernote
 #brew cask install 1password
 #brew cask install gimp
@@ -70,11 +79,6 @@ brew cask install dropbox
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew cask install mactex
-
-# Install Docker, which requires virtualbox
-brew install docker
-brew install boot2docker
-
 
 # Install av staff
 brew cask install --appdir="/Applications/_av" aegisub
