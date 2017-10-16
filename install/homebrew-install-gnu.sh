@@ -27,6 +27,7 @@ brew install gzip
 brew install screen
 brew install watch
 brew install wdiff --with-gettext
+brew install telnet
 
 # OS X ships a GNU version, but too old
 brew install bash

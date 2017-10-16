@@ -73,6 +73,8 @@ brew cask install keyboard-maestro
 brew cask install --appdir="/Applications/Utilities" onyx
 
 # Misc casks
+brew cask install aerial #appletv screen saver
+brew cask install welly #ptt telnet client
 #brew cask install evernote
 #brew cask install 1password
 #brew cask install gimp
