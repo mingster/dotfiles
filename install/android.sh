@@ -20,11 +20,15 @@ brew update
 
 # Install Java
 #brew tap caskroom/cask
+brew install Caskroom/cask/java8
 brew install Caskroom/cask/java
+
+#Manage Java enviornment - http://www.jenv.be
+brew install jenv
 
 #brew install Caskroom/cask/android-sdk
 brew cask install --appdir="/Applications/_dev" android-studio
-brew cask install --appdir="/Applications/_dev" eclipse-ide
+brew cask install --appdir="/Applications/_dev" eclipse-java
 brew cask install --appdir="/Applications/_dev" intellij-idea-ce
 
 # Remove outdated versions from the cellar.

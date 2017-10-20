@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+brew tap homebrew/dupes
+
 # Install `wget` with IRI support.
 brew install wget --with-iri
 
@@ -10,6 +12,8 @@ brew install vim --override-system-vi
 
 # core
 brew install coreutils
+brew install binutils
+brew install diffutils
 
 # key commands
 brew install binutils

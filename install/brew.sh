@@ -21,9 +21,6 @@ brew update
 # Upgrade any already-installed formulae.
 brew upgrade
 
-# Replace cli with gnu/linux
-./homebrew-install-gnu.sh
-
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
 brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 
@@ -38,7 +35,6 @@ brew install mas
 
 # Core casks
 brew cask install iterm2
-brew install jenv
 #brew cask install --appdir="~/Applications" xquartz
 
 # Development tool casks
@@ -50,7 +46,7 @@ brew install docker
 brew install boot2docker
 
 brew cask install --appdir="/Applications/_dev" 0xed
-brew cask install --appdir="/Applications/_dev" eclipse-ide
+#brew cask install --appdir="/Applications/_dev" eclipse-ide
 brew cask install --appdir="/Applications/_dev" github-desktop
 brew cask install --appdir="/Applications/_dev" jd-gui
 brew cask install --appdir="/Applications/_dev" sourcetree
@@ -102,6 +98,9 @@ brew cask install google-chrome-canary
 # install packages listed in Brewfile
 #### review Brewfile and manaully pick the app to install ###
 #brew bundle
+
+# Replace cli with gnu/linux
+./homebrew-install-gnu.sh
 
 # Remove outdated versions from the cellar.
 brew cleanup
