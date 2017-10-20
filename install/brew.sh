@@ -26,10 +26,6 @@ brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 
 # Install essential binaries.
 brew install git
-brew install node yarn nvm
-mkdir ~/.nvm
-export NVM_DIR="$HOME/.nvm"
-. "/usr/local/opt/nvm/nvm.sh"
 
 brew install mas
 
