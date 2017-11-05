@@ -86,6 +86,8 @@ brew cask install --appdir="/Applications/_av" vox
 brew cask install --appdir="/Applications/_av" iina
 brew cask install --appdir="/Applications/_av" xld
 
+brew cask install --appdir="/Applications/_av" get-lyrical
+
 brew tap caskroom/versions
 brew cask install google-chrome-canary
 
