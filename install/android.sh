@@ -20,8 +20,8 @@ brew update
 
 # Install Java
 #brew tap caskroom/cask
-brew install Caskroom/cask/java8
-brew install Caskroom/cask/java
+brew cask install java8
+#brew cask install java
 
 #Manage Java enviornment - http://www.jenv.be
 brew install jenv

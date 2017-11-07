@@ -1,8 +1,7 @@
 [ -n "$PS1" ]
 #[ -n "$PS1" ] && source ~/.bash_profile;
 
-
-export HOMEBREW_CASK_OPTS="--caskroom=/usr/local/Caskroom"
+#export HOMEBREW_CASK_OPTS="--caskroom=/usr/local/Caskroom"
 
 # Short of learning how to actually configure OSX, here's a hacky way to use
 # GNU manpages for programs that are GNU ones, and fallback to OSX manpages otherwise
