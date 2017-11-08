@@ -31,5 +31,10 @@ brew cask install --appdir="/Applications/_dev" android-studio
 brew cask install --appdir="/Applications/_dev" eclipse-java
 brew cask install --appdir="/Applications/_dev" intellij-idea-ce
 
+
+#############################################
+# https://gist.github.com/patrickhammond/4ddbe49a67e5eb1b9c03
+#############################################
+
 # Remove outdated versions from the cellar.
 brew cleanup
