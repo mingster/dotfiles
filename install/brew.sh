@@ -88,6 +88,11 @@ brew cask install --appdir="/Applications/_av" xld
 
 brew cask install --appdir="/Applications/_av" get-lyrical
 
+#ffmpeg with aac/mp4 support
+# https://gist.github.com/clayton/6196167
+brew install libvpx
+brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
+
 brew tap caskroom/versions
 brew cask install google-chrome-canary
 
