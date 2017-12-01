@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # Install command-line tools using Homebrew.
+sh ./osprep.sh
 
 # Ask for the administrator password upfront.
 sudo -v
