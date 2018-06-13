@@ -34,7 +34,23 @@ brew install mas
 brew cask install iterm2
 #brew cask install --appdir="~/Applications" xquartz
 
+# essential apps
+brew cask install atom
+brew cask install macdown
+brew cask install google-chrome
+brew cask install firefox
+brew cask install teamviewer
+brew cask install skype
+#brew cask install slack
+brew cask install dropbox
+brew cask install numi
+brew cask install alfred
+brew cask install keyboard-maestro
+brew cask install --appdir="/Applications/Utilities" onyx
+
 # Development tool casks
+mkdir /Applications/_dev
+
 #brew cask install sublime-text
 #brew cask install virtualbox
 #brew cask install vagrant
@@ -51,20 +67,6 @@ brew cask install --appdir="/Applications/_dev" staruml
 brew cask install --appdir="/Applications/_dev" visual-studio-code
 brew cask install --appdir="/Applications/_dev" wireshark
 
-# essential apps
-brew cask install atom
-brew cask install macdown
-brew cask install google-chrome
-brew cask install firefox
-brew cask install teamviewer
-brew cask install skype
-#brew cask install slack
-brew cask install dropbox
-brew cask install numi
-brew cask install alfred
-brew cask install keyboard-maestro
-brew cask install --appdir="/Applications/Utilities" onyx
-
 # Misc casks
 brew cask install aerial #appletv screen saver
 brew cask install welly #ptt telnet client
@@ -72,21 +74,22 @@ brew cask install welly #ptt telnet client
 #brew cask install 1password
 #brew cask install gimp
 #brew cask install inkscape
+brew cask install spark
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew cask install mactex
 
 # Install av staff
+mkdir /Applications/_av
+
 brew cask install --appdir="/Applications/_av" aegisub
 brew cask install --appdir="/Applications/_av" handbrake
 brew cask install --appdir="/Applications/_av" kid3
 brew cask install --appdir="/Applications/_av" jubler
 brew cask install --appdir="/Applications/_av" kid3
-
 brew cask install --appdir="/Applications/_av" vox
 brew cask install --appdir="/Applications/_av" iina
 brew cask install --appdir="/Applications/_av" xld
-
 brew cask install --appdir="/Applications/_av" get-lyrical
 
 #ffmpeg with aac/mp4 support
@@ -105,7 +108,7 @@ brew cask install google-chrome-canary
 #brew bundle
 
 # Replace cli with gnu/linux
-./homebrew-install-gnu.sh
+#./homebrew-install-gnu.sh
 
 # Remove outdated versions from the cellar.
 brew cleanup
