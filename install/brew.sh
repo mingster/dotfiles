@@ -59,7 +59,7 @@ brew install docker
 brew install boot2docker
 
 brew cask install --appdir="/Applications/_dev" 0xed
-#brew cask install --appdir="/Applications/_dev" eclipse-ide
+brew cask install --appdir="/Applications/_dev" eclipse-ide
 brew cask install --appdir="/Applications/_dev" github-desktop
 brew cask install --appdir="/Applications/_dev" jd-gui
 brew cask install --appdir="/Applications/_dev" sourcetree
