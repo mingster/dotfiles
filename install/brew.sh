@@ -51,7 +51,7 @@ brew cask install --appdir="/Applications/Utilities" onyx
 # Development tool casks
 mkdir /Applications/_dev
 
-#brew cask install sublime-text
+brew cask install java
 #brew cask install virtualbox
 #brew cask install vagrant
 # Install Docker, which requires virtualbox
