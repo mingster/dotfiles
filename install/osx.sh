@@ -58,7 +58,9 @@ sudo pmset -a hibernatemode 0
 
 # …and make sure it can’t be rewritten
 # DO NOT work
-sudo chflags uchg /Private/var/vm/sleepimage
+#sudo chflags uchg /Private/var/vm/sleepimage
+# free up diskspace from sleep image
+sudo rm /var/vm/sleepimage
 
 # Disable the sudden motion sensor as it’s not useful for SSDs
 sudo pmset -a sms 0
