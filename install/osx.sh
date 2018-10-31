@@ -19,6 +19,9 @@ while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 # Set standby delay to 24 hours (default is 1 hour)
 sudo pmset -a standbydelay 86400
 
+# 1 hour
+# sudo pmset -a standbydelay 3600
+
 # Set sidebar icon size to samll
 defaults write NSGlobalDomain NSTableViewDefaultSizeMode -int 1
 
@@ -43,6 +46,9 @@ sudo systemsetup -setrestartfreeze on
 
 # Never go into computer sleep mode
 systemsetup -setcomputersleep Off > /dev/null
+
+# 5 min to sleep
+# sudo systemsetup -setcomputersleep On 5
 
 # Disable smart quotes as they’re annoying when typing code
 defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
