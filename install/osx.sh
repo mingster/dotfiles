@@ -20,7 +20,7 @@ while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 sudo pmset -a standbydelay 86400
 
 # 1 hour
-# sudo pmset -a standbydelay 3600
+#  sudo pmset -a standbydelay 3600
 
 # Set sidebar icon size to samll
 defaults write NSGlobalDomain NSTableViewDefaultSizeMode -int 1
