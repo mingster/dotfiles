@@ -51,7 +51,8 @@ brew cask install --appdir="/Applications/Utilities" onyx
 # Development tool casks
 mkdir /Applications/_dev
 
-#brew cask install sublime-text
+brew cask install java
+
 #brew cask install virtualbox
 #brew cask install vagrant
 # Install Docker, which requires virtualbox
@@ -59,13 +60,13 @@ brew install docker
 brew install boot2docker
 
 brew cask install --appdir="/Applications/_dev" 0xed
-brew cask install --appdir="/Applications/_dev" eclipse-ide
+brew cask install --appdir="/Applications/_dev" eclipse-jee
 brew cask install --appdir="/Applications/_dev" github-desktop
 brew cask install --appdir="/Applications/_dev" jd-gui
 brew cask install --appdir="/Applications/_dev" sourcetree
 brew cask install --appdir="/Applications/_dev" staruml
 brew cask install --appdir="/Applications/_dev" visual-studio-code
-brew cask install --appdir="/Applications/_dev" wireshark
+brew cask install wireshark
 
 # Misc casks
 brew cask install aerial #appletv screen saver
@@ -74,7 +75,7 @@ brew cask install welly #ptt telnet client
 #brew cask install 1password
 #brew cask install gimp
 #brew cask install inkscape
-#brew cask install spark
+brew cask install spark
 brew cask install skitch
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
