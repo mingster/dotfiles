@@ -66,6 +66,8 @@ brew cask install --appdir="/Applications/_dev" jd-gui
 brew cask install --appdir="/Applications/_dev" sourcetree
 brew cask install --appdir="/Applications/_dev" staruml
 brew cask install --appdir="/Applications/_dev" visual-studio-code
+brew cask install --appdir="/Applications/_dev" dash
+
 brew cask install wireshark
 
 # Misc casks
