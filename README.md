@@ -9,14 +9,14 @@ changes are added to my favorites.
 ## Installation
 
 ### 1. Grab this repository:
-```bash
+```
 mkdir ~/GitHub
 cd ~/GitHub
 git clone https://github.com/mingster/dotfiles.git && cd dotfiles
 ```
 ### 2. Install "Command Line Tools"
 Update macos and install command line tools:
-```bash
+```
 sh ~/GitHub/dotfiles/install/osxprep.sh
 ```
 ### 3. Sensible OS X defaults
@@ -26,14 +26,14 @@ sh ~/GitHub/dotfiles/osx.sh
 ```
 ### 4. Shell set up
 cli and iterm2 are your best friends everyday:
-```bash
+```
 ./install/bootstrap.sh
 ```
 iterm2 preferences are in the init folder.
 
 ### 5. Install essential apps
 Review and modify before you run. This will install a lot of cli programs and applications such as Chrome browser etc.
-```bash
+```
 ./install/brew.sh
 ```
 

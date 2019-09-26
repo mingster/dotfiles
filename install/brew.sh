@@ -30,8 +30,12 @@ brew install git
 
 brew install mas
 
+##zsh
+brew install zsh zsh-completion
+
 # Core casks
 brew cask install iterm2
+
 #brew cask install --appdir="~/Applications" xquartz
 
 # essential apps
@@ -44,14 +48,14 @@ brew cask install skype
 #brew cask install slack
 brew cask install dropbox
 brew cask install numi
-brew cask install alfred
-brew cask install keyboard-maestro
+#brew cask install alfred
+#brew cask install keyboard-maestro
 brew cask install --appdir="/Applications/Utilities" onyx
 
 # Development tool casks
 mkdir /Applications/_dev
 
-brew cask install java
+brew cask install java jenv
 
 #brew cask install virtualbox
 #brew cask install vagrant
@@ -67,7 +71,6 @@ brew cask install --appdir="/Applications/_dev" sourcetree
 brew cask install --appdir="/Applications/_dev" staruml
 brew cask install --appdir="/Applications/_dev" visual-studio-code
 brew cask install --appdir="/Applications/_dev" dash
-
 brew cask install wireshark
 
 # Misc casks
@@ -123,3 +126,14 @@ brew cleanup
 
 # check
 brew doctor
+
+# 先執行這行，才能用 homebrew 安裝字型。曾經執行過的人可以跳過這個指令
+brew tap caskroom/fonts
+# 安裝指令
+brew cask install font-sourcecodepro-nerd-font
+
+
+#oh-my-zsh
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+
+cp ../.zshrc ~/
