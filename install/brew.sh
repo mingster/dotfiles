@@ -31,7 +31,8 @@ brew install git
 brew install mas
 
 ##zsh
-brew install zsh zsh-completion
+brew install zsh zsh-completions
+chsh -s $(which zsh)
 
 # Core casks
 brew cask install iterm2
@@ -132,8 +133,9 @@ brew tap caskroom/fonts
 # 安裝指令
 brew cask install font-sourcecodepro-nerd-font
 
-
 #oh-my-zsh
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+# https://github.com/robbyrussell/oh-my-zsh
+#sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)" "" --unattended
+git clone https://github.com/robbyrussell/oh-my-zsh.git ~/.oh-my-zsh
 
 cp ../.zshrc ~/
