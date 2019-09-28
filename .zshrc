@@ -3,13 +3,28 @@
 
 # Path to your oh-my-zsh installation.
 #export ZSH=$HOME/.oh-my-zsh
-export ZSH="$HOME/GitHub/.oh-my-zsh"
+export ZSH="$HOME/.oh-my-zsh"
 
 # Set name of the theme to load --- if set to "random", it will
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/robbyrussell/oh-my-zsh/wiki/Themes
-ZSH_THEME="robbyrussell"
+#ZSH_THEME="robbyrussell"
+
+#ZSH_CUSTOM="custom"
+#ZSH_THEME="$ZSH_CUSTOM/themes/powerlevel9k/powerlevel9k"
+
+ZSH_THEME="powerlevel9k/powerlevel9k"
+POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(context dir dir_writable vcs)
+POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status ram)
+
+
+#POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(context dir dir_writable vcs vi_mode)
+#POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status background_jobs history ram load time)
+
+# 若當前登入的帳號為你的帳號 xxx，就不用特別顯示出來
+DEFAULT_USER="mtsai"
+POWERLEVEL9K_MODE='nerdfont-complete'
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
