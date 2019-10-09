@@ -27,12 +27,7 @@ brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 
 # Install essential binaries.
 brew install git
-
 brew install mas
-
-##zsh
-brew install zsh zsh-completions
-chsh -s $(which zsh)
 
 # Core casks
 brew cask install iterm2
@@ -56,7 +51,8 @@ brew cask install --appdir="/Applications/Utilities" onyx
 # Development tool casks
 mkdir /Applications/_dev
 
-brew cask install java jenv
+brew cask install java
+brew install jenv
 
 #brew cask install virtualbox
 #brew cask install vagrant
@@ -109,9 +105,6 @@ brew cask install --appdir="/Applications/_av" get-lyrical
 brew install libvpx
 brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
 
-brew tap caskroom/versions
-brew cask install google-chrome-canary
-
 # Install developer friendly quick look plugins; see https://github.com/sindresorhus/quick-look-plugins
 #brew cask install qlcolorcode qlstephen qlmarkdown quicklook-json qlprettypatch quicklook-csv betterzipql qlimagesize webpquicklook suspicious-package
 
@@ -129,13 +122,23 @@ brew cleanup
 brew doctor
 
 # 先執行這行，才能用 homebrew 安裝字型。曾經執行過的人可以跳過這個指令
-brew tap caskroom/fonts
+brew tap homebrew/cask-fonts
 # 安裝指令
 brew cask install font-sourcecodepro-nerd-font
 
+##zsh
 #oh-my-zsh
 # https://github.com/robbyrussell/oh-my-zsh
 #sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)" "" --unattended
 git clone https://github.com/robbyrussell/oh-my-zsh.git ~/.oh-my-zsh
-
 cp ../.zshrc ~/
+
+#powerlevel9k theme
+git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/themes/powerlevel9k
+
+brew install zsh zsh-completions
+chsh -s $(which zsh)
+
+#google-chrome-canary
+brew tap homebrew/cask-versions
+brew cask install google-chrome-canary
