@@ -77,7 +77,6 @@ brew cask install welly #ptt telnet client
 #brew cask install 1password
 #brew cask install gimp
 #brew cask install inkscape
-brew cask install spark
 brew cask install skitch
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
