@@ -11,7 +11,7 @@ export ZSH="$HOME/.oh-my-zsh"
 # See https://github.com/robbyrussell/oh-my-zsh/wiki/Themes
 #ZSH_THEME="robbyrussell"
 
-#ZSH_CUSTOM="$ZSH/custom"
+ZSH_CUSTOM="$ZSH/custom"
 #ZSH_THEME="$ZSH_CUSTOM/themes/powerlevel9k/powerlevel9k"
 ZSH_THEME="powerlevel9k/powerlevel9k"
 POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(context dir dir_writable vcs)
@@ -84,15 +84,10 @@ DISABLE_AUTO_UPDATE="true"
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
   git
-  bundler
-  dotenv
   osx
   rake
-  rbenv
-  ruby
   iterm2
-  jenv
-  npm
+  zsh-autosuggestions
 )
 
 source $ZSH/oh-my-zsh.sh
@@ -125,6 +120,6 @@ fi
 # Example aliases
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
-source .aliases
+source ~/.aliases
 
 export PATH="/usr/local/sbin:$PATH"
