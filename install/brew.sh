@@ -135,7 +135,11 @@ cp ../.zshrc ~/
 #powerlevel9k theme
 git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/themes/powerlevel9k
 
-brew install zsh zsh-completions
+#zsh-autosuggestions
+git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
+
+brew install zsh
+
 chsh -s $(which zsh)
 
 #google-chrome-canary
