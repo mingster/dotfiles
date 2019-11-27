@@ -21,7 +21,7 @@ POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status ram)
 #POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status background_jobs history ram load time)
 
 # 若當前登入的帳號為你的帳號 xxx，就不用特別顯示出來
-DEFAULT_USER="mtsai"
+#DEFAULT_USER=""
 POWERLEVEL9K_MODE='nerdfont-complete'
 
 # Set list of themes to pick from when loading at random
@@ -85,8 +85,6 @@ DISABLE_AUTO_UPDATE="true"
 plugins=(
   git
   osx
-  rake
-  iterm2
   zsh-autosuggestions
 )
 
@@ -95,7 +93,7 @@ source $ZSH/oh-my-zsh.sh
 # User configuration
 
 # zsh-completions
-fpath=(/usr/local/share/zsh-completions $fpath)
+#fpath=(/usr/local/share/zsh-completions $fpath)
 
 # export MANPATH="/usr/local/man:$MANPATH"
 
