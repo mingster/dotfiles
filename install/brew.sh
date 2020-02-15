@@ -26,7 +26,6 @@ brew upgrade
 brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 
 # Install essential binaries.
-brew install git
 brew install mas
 
 # Core casks
@@ -51,9 +50,7 @@ brew cask install --appdir="/Applications/Utilities" onyx
 # Development tool casks
 mkdir /Applications/_dev
 
-brew cask install java
-brew install jenv
-
+brew install git
 #brew cask install virtualbox
 #brew cask install vagrant
 # Install Docker, which requires virtualbox
