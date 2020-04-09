@@ -95,6 +95,7 @@ brew cask install --appdir="/Applications/_av" vox
 brew cask install --appdir="/Applications/_av" iina
 brew cask install --appdir="/Applications/_av" xld
 brew cask install --appdir="/Applications/_av" get-lyrical
+brew install mp3splt
 
 #ffmpeg with aac/mp4 support
 # https://gist.github.com/clayton/6196167
