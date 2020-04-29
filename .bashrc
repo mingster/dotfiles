@@ -17,17 +17,6 @@ export NVM_DIR="$HOME/.nvm"
 unset GREP_OPTIONS
 alias grep="/usr/bin/grep $GREP_OPTIONS"
 
-# Add `~/bin` to the `$PATH`
-export PATH="$HOME/bin:$PATH";
-
-# Ensure user-installed binaries take precedence, mainly gnu
-export PATH=/usr/local/bin:/usr/local/sbin:$PATH
-export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
-
-# GO path
-export PATH=$PATH:/usr/local/opt/go/libexec/bin
-
-
 #temporarily turn off virtualenv if needed
 #syspip(){
 #   PIP_REQUIRE_VIRTUALENV="" pip "$@"
@@ -58,10 +47,15 @@ if [ ! -z $VENVWRAP ]; then
     export PIP_DOWNLOAD_CACHE=$HOME/.pip/cache
 fi
 
-
-
 # Make vim the default editor
-export EDITOR="vim";
+# Preferred editor for local and remote sessions
+if [[ -n $SSH_CONNECTION ]]; then
+   export EDITOR='vim'
+else
+   export EDITOR='mvim'
+fi
+#export EDITOR="vim";
+
 # Set Default Editor (change 'Nano' to the editor of your choice)
 # ------------------------------------------------------------
 #export EDITOR=/usr/bin/vim
@@ -93,6 +87,17 @@ export MANPAGER="less -X";
 
 # Link Homebrew casks in `/Applications` rather than `~/Applications`
 #export HOMEBREW_CASK_OPTS="--appdir=/Applications";
+
+
+# Add `~/bin` to the `$PATH`
+export PATH="$HOME/bin:$PATH";
+
+# Ensure user-installed binaries take precedence, mainly gnu
+export PATH=/usr/local/bin:/usr/local/sbin:$PATH
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+
+# GO path
+export PATH=$PATH:/usr/local/opt/go/libexec/bin
 
 if [ -d ~/.local/bin ]; then
   export PATH=~/.local/bin:$PATH

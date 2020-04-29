@@ -92,6 +92,10 @@ source $ZSH/oh-my-zsh.sh
 
 # User configuration
 
+# Prefer US English and use UTF-8
+export LANG="en_US.UTF-8";
+export LC_ALL="en_US.UTF-8";
+
 # zsh-completions
 #fpath=(/usr/local/share/zsh-completions $fpath)
 
@@ -121,3 +125,23 @@ fi
 source ~/.aliases
 
 export PATH="/usr/local/sbin:$PATH"
+
+
+
+# Add `~/bin` to the `$PATH`
+export PATH="$HOME/bin:$PATH";
+
+# Ensure user-installed binaries take precedence, mainly gnu
+export PATH=/usr/local/bin:/usr/local/sbin:$PATH
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+
+# GO path
+export PATH=$PATH:/usr/local/opt/go/libexec/bin
+
+if [ -d $HOME/.local/bin ]; then
+  export PATH=$HOME/.local/bin:$PATH
+fi
+
+#Andriod
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export PATH=$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools/bin
