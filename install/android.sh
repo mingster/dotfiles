@@ -22,8 +22,8 @@ brew update
 #brew tap caskroom/cask
 brew cask install java
 brew cask install oracle-jdk
-
 #brew cask install java8
+
 brew install ant
 brew install maven
 brew install gradle

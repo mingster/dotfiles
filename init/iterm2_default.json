@@ -44,7 +44,13 @@
     "Alpha Component" : 1,
     "Green Component" : 0.3333333432674408
   },
-  "Horizontal Spacing" : 1,
+  "Ansi 2 Color" : {
+    "Red Component" : 0,
+    "Color Space" : "Calibrated",
+    "Blue Component" : 0,
+    "Alpha Component" : 1,
+    "Green Component" : 0.73333334922790527
+  },
   "Right Option Key Sends" : 0,
   "Rows" : 50,
   "Default Bookmark" : "No",
@@ -357,13 +363,7 @@
     "Alpha Component" : 1,
     "Green Component" : 0
   },
-  "Ansi 2 Color" : {
-    "Red Component" : 0,
-    "Color Space" : "Calibrated",
-    "Blue Component" : 0,
-    "Alpha Component" : 1,
-    "Green Component" : 0.73333334922790527
-  },
+  "Custom Directory" : "No",
   "Ansi 3 Color" : {
     "Red Component" : 0.73333334922790527,
     "Color Space" : "Calibrated",
@@ -393,8 +393,7 @@
     "Alpha Component" : 1,
     "Green Component" : 0.73333334922790527
   },
-  "Normal Font" : "SauceCodeProNerdFontComplete-Regular 14",
-  "Custom Directory" : "No",
+  "Normal Font" : "DroidSansMonoNerdFontComplete- 14",
   "Ansi 0 Color" : {
     "Red Component" : 0,
     "Color Space" : "Calibrated",
@@ -402,5 +401,6 @@
     "Alpha Component" : 1,
     "Green Component" : 0
   },
-  "Guid" : "EC651AD3-E70D-4B6E-8CDA-874E7723CCE9"
+  "Guid" : "EC651AD3-E70D-4B6E-8CDA-874E7723CCE9",
+  "Horizontal Spacing" : 1
 }

@@ -17,10 +17,7 @@ if test ! $(which brew); then
 fi
 
 # Make sure we’re using the latest Homebrew.
-brew update
-
-# Upgrade any already-installed formulae.
-brew upgrade
+brew update && brew upgrade
 
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
 brew install iftop iperf nmap tcpflow tcptrace tcpreplay
@@ -57,13 +54,14 @@ brew install git
 brew install docker
 brew install boot2docker
 
-brew cask install --appdir="/Applications/_dev" 0xed
-brew cask install --appdir="/Applications/_dev" eclipse-jee
-brew cask install --appdir="/Applications/_dev" github-desktop
-brew cask install --appdir="/Applications/_dev" jd-gui
+brew cask install --appdir="/Applications/_dev" github
 brew cask install --appdir="/Applications/_dev" sourcetree
 brew cask install --appdir="/Applications/_dev" staruml
 brew cask install --appdir="/Applications/_dev" visual-studio-code
+
+brew cask install --appdir="/Applications/_dev" 0xed
+brew cask install --appdir="/Applications/_dev" eclipse-jee
+brew cask install --appdir="/Applications/_dev" jd-gui
 brew cask install --appdir="/Applications/_dev" dash
 brew cask install wireshark
 
@@ -78,7 +76,7 @@ brew cask install skitch
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
 #brew install tor
-brew cask install torbrowser
+brew cask install tor-browser
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew cask install mactex
@@ -90,11 +88,10 @@ brew cask install --appdir="/Applications/_av" aegisub
 brew cask install --appdir="/Applications/_av" handbrake
 brew cask install --appdir="/Applications/_av" kid3
 brew cask install --appdir="/Applications/_av" jubler
-brew cask install --appdir="/Applications/_av" kid3
 brew cask install --appdir="/Applications/_av" vox
 brew cask install --appdir="/Applications/_av" iina
 brew cask install --appdir="/Applications/_av" xld
-brew cask install --appdir="/Applications/_av" get-lyrical
+#brew cask install --appdir="/Applications/_av" get-lyrical
 brew install mp3splt
 
 #ffmpeg with aac/mp4 support
@@ -113,15 +110,18 @@ brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --wi
 #./homebrew-install-gnu.sh
 
 # Remove outdated versions from the cellar.
-brew cleanup
+brew cleanup && brew doctor
 
-# check
-brew doctor
+# https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
+
+cd ~/Library/Fonts && curl -fLo "Droid Sans Mono for Powerline Nerd Font Complete.otf" https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
+#cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
+brew cask install font-source-code-pro
 
 # 先執行這行，才能用 homebrew 安裝字型。曾經執行過的人可以跳過這個指令
-brew tap homebrew/cask-fonts
+#brew tap homebrew/cask-fonts
 # 安裝指令
-brew cask install font-sourcecodepro-nerd-font
+#brew cask install font-sourcecodepro-nerd-font
 
 ##zsh
 #oh-my-zsh
@@ -136,8 +136,8 @@ git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/theme
 #zsh-autosuggestions
 git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
 
-brew install zsh
-
+#brew install zsh
+#use mac built-in zsh
 chsh -s $(which zsh)
 
 #google-chrome-canary
