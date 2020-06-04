@@ -39,6 +39,7 @@ brew cask install teamviewer
 brew cask install skype
 #brew cask install slack
 brew cask install dropbox
+brew cask install megasync
 brew cask install numi
 #brew cask install alfred
 #brew cask install keyboard-maestro
