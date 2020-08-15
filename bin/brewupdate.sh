@@ -4,8 +4,8 @@
 #sudo chown -R $(whoami):admin /usr/local
 
 brew update && brew upgrade
-
-brew cask upgrade
 brew cleanup
 mas upgrade
 brew doctor
+
+softwareupdate --all --install --force
