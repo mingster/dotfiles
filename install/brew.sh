@@ -56,7 +56,8 @@ brew cleanup && brew doctor
 
 cd ~/Library/Fonts && curl -fLo "Droid Sans Mono for Powerline Nerd Font Complete.otf" https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
 #cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
-brew cask install font-source-code-pro
+
+brew tap homebrew/cask-fonts && brew cask install font-source-code-pro
 
 # 先執行這行，才能用 homebrew 安裝字型。曾經執行過的人可以跳過這個指令
 #brew tap homebrew/cask-fonts
