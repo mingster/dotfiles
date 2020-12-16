@@ -1,6 +1,6 @@
 
 #brew cask install --appdir="~/Applications" xquartz
-
+brew cask install --appdir="/Applications/Utilities" onyx
 
 
 #brew install git
