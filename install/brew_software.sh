@@ -1,7 +1,5 @@
-
 #brew install --cask --appdir="~/Applications" xquartz
 brew install --cask --appdir="/Applications/Utilities" onyx
-
 
 #brew install git
 #brew install --cask virtualbox
@@ -9,7 +7,6 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 # Install Docker, which requires virtualbox
 brew install docker
 brew install boot2docker
-
 
 brew install --cask --appdir="/Applications/_dev" 0xed
 brew install --cask --appdir="/Applications/_dev" eclipse-jee
