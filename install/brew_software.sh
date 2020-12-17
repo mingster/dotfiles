@@ -8,6 +8,8 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 brew install docker
 brew install boot2docker
 
+brew install --cask font-source-code-pro
+brew install --cask font-sourcecodepro-nerd-font
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 brew install --cask --appdir="/Applications/_dev" azure-data-studio
 brew install --cask --appdir="/Applications/_dev" 0xed
