@@ -8,6 +8,8 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 brew install docker
 brew install boot2docker
 
+brew install --cask --appdir="/Applications/_dev" visual-studio-code
+brew install --cask --appdir="/Applications/_dev" azure-data-studio
 brew install --cask --appdir="/Applications/_dev" 0xed
 brew install --cask --appdir="/Applications/_dev" eclipse-jee
 brew install --cask --appdir="/Applications/_dev" jd-gui
