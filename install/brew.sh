@@ -26,43 +26,28 @@ brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 brew install mas
 
 # essential cask apps
-brew cask install iterm2
-brew cask install atom
-brew cask install macdown
-brew cask install google-chrome
-brew cask install firefox
-brew cask install teamviewer
-brew cask install skype
-#brew cask install slack
-brew cask install dropbox
-brew cask install megasync
-brew cask install numi
-#brew cask install alfred
-#brew cask install keyboard-maestro
-brew cask install --appdir="/Applications/Utilities" onyx
-
-# Development tool casks
-mkdir /Applications/_dev
-brew cask install --appdir="/Applications/_dev" github
-brew cask install --appdir="/Applications/_dev" sourcetree
-brew cask install --appdir="/Applications/_dev" staruml
-brew cask install --appdir="/Applications/_dev" visual-studio-code
-
+brew install --cask iterm2
+brew install --cask atom
+brew install --cask macdown
+brew install --cask google-chrome
+brew install --cask firefox
+brew install --cask teamviewer
+brew install --cask skype
+#brew install --cask slack
+brew install --cask dropbox
+brew install --cask megasync
+brew install --cask numi
+#brew install --cask alfred
+#brew install --cask keyboard-maestro
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
 
-# https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
-
-cd ~/Library/Fonts && curl -fLo "Droid Sans Mono for Powerline Nerd Font Complete.otf" https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
-#cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
-
-brew tap homebrew/cask-fonts && brew cask install font-source-code-pro
 
 # 先執行這行，才能用 homebrew 安裝字型。曾經執行過的人可以跳過這個指令
 #brew tap homebrew/cask-fonts
 # 安裝指令
-#brew cask install font-sourcecodepro-nerd-font
+#brew install --cask font-sourcecodepro-nerd-font
 
 ##zsh
 #oh-my-zsh
@@ -71,7 +56,10 @@ brew tap homebrew/cask-fonts && brew cask install font-source-code-pro
 git clone https://github.com/robbyrussell/oh-my-zsh.git ~/.oh-my-zsh
 cp ../.zshrc ~/
 
-#powerlevel9k theme
+# font for powerlevel9k theme
+cd ~/Library/Fonts && curl -fLo "Droid Sans Mono for Powerline Nerd Font Complete.otf" https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
+
+# powerlevel9k theme
 git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/themes/powerlevel9k
 
 #zsh-autosuggestions

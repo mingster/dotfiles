@@ -1,22 +1,34 @@
 #brew install --cask --appdir="~/Applications" xquartz
 brew install --cask --appdir="/Applications/Utilities" onyx
 
-#brew install git
-#brew install --cask virtualbox
-#brew install --cask vagrant
+# Development tools
+# brew install git
+# brew install --cask virtualbox
+# brew install --cask vagrant
 # Install Docker, which requires virtualbox
 brew install docker
 brew install boot2docker
 
+# https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
+#cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
+#brew tap homebrew/cask-fonts && brew install --cask font-source-code-pro
 brew install --cask font-source-code-pro
 brew install --cask font-sourcecodepro-nerd-font
+
+mkdir /Applications/_dev
+
+brew install --cask --appdir="/Applications/_dev" github
+brew install --cask --appdir="/Applications/_dev" sourcetree
+brew install --cask --appdir="/Applications/_dev" staruml
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 brew install --cask --appdir="/Applications/_dev" azure-data-studio
 brew install --cask --appdir="/Applications/_dev" 0xed
-brew install --cask --appdir="/Applications/_dev" eclipse-jee
+brew install --cask --appdir="/Applications/_dev" eclipse-java
+#brew install --cask --appdir="/Applications/_dev" eclipse-jee
 brew install --cask --appdir="/Applications/_dev" jd-gui
 brew install --cask --appdir="/Applications/_dev" dash
 brew install --cask wireshark
+
 
 # Misc casks
 brew install --cask aerial #appletv screen saver
@@ -61,7 +73,6 @@ brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --wi
 
 # Replace cli with gnu/linux
 #./homebrew-install-gnu.sh
-
 
 #google-chrome-canary
 brew tap homebrew/cask-versions

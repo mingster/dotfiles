@@ -20,9 +20,9 @@ brew update
 
 # Install Java
 #brew tap caskroom/cask
-brew cask install java
-brew cask install oracle-jdk
-#brew cask install java8
+brew install java11
+brew install --cask oracle-jdk
+#brew install --cask java8
 
 brew install ant
 brew install maven
@@ -32,7 +32,7 @@ brew install gradle
 brew install jenv
 
 brew tap homebrew/cask
-brew cask install android-sdk
+brew install --cask android-sdk
 
 #############################################
 # https://gist.github.com/patrickhammond/4ddbe49a67e5eb1b9c03
@@ -48,9 +48,9 @@ export PATH=$MAVEN_HOME/bin:$PATH
 export PATH=$GRADLE_HOME/bin:$PATH
 
 #brew install Caskroom/cask/android-sdk
-brew cask install --appdir="/Applications/_dev" android-studio
-#brew cask install --appdir="/Applications/_dev" eclipse-java
-#brew cask install --appdir="/Applications/_dev" intellij-idea-ce
+brew install --cask --appdir="/Applications/_dev" android-studio
+#brew install --cask --appdir="/Applications/_dev" eclipse-java
+#brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
 
 
 # Remove outdated versions from the cellar.
