@@ -17,6 +17,7 @@ brew install --cask font-sourcecodepro-nerd-font
 
 mkdir /Applications/_dev
 
+brew install --cask --appdir="/Applications/_dev" docker
 brew install --cask --appdir="/Applications/_dev" github
 brew install --cask --appdir="/Applications/_dev" sourcetree
 brew install --cask --appdir="/Applications/_dev" staruml
