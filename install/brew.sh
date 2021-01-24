@@ -25,6 +25,9 @@ brew install iftop iperf nmap tcpflow tcptrace tcpreplay
 # Install essential binaries.
 brew install mas
 
+#1176895641  Spark – Email App by Readdle
+mas install 1176895641
+
 # essential cask apps
 brew install --cask iterm2
 brew install --cask atom
