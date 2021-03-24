@@ -39,6 +39,7 @@ brew install --cask welly #ptt telnet client
 #brew install --cask gimp
 #brew install --cask inkscape
 brew install --cask skitch
+brew install --cask cyberduck
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
 #brew install tor
