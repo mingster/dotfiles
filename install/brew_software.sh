@@ -30,11 +30,11 @@ brew install --cask --appdir="/Applications/_dev" jd-gui
 brew install --cask --appdir="/Applications/_dev" dash
 brew install --cask wireshark
 
-
 # Misc casks
 brew install --cask aerial #appletv screen saver
 brew install --cask welly #ptt telnet client
 #brew install --cask evernote
+brew install --cask notion
 #brew install --cask 1password
 #brew install --cask gimp
 #brew install --cask inkscape
