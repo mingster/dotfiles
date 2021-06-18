@@ -19,7 +19,9 @@ fi
 brew update
 
 # Install data stores
-brew install mysql
+#brew install mysql
+brew install mariadb
+
 #brew install postgresql
 #brew install mongo
 #brew install redis
@@ -34,5 +36,8 @@ brew install --cask --appdir="/Applications/_dev" sequel-pro
 # Remove outdated versions from the cellar.
 brew cleanup
 
-brew services start mysql
+#brew services start mysql
 #brew services stop mysql
+
+brew services start mariadb
+#brew services stop mariadb
