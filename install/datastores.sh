@@ -20,7 +20,23 @@ brew update
 
 # Install data stores
 #brew install mysql
+#brew services start mysql
+#brew services stop mysql
+
+
+#https://github.com/laradock/laradock/issues/93
+brew uninstall mariadb
+rm -rf /usr/local/etc/my.cnf; rm -rf /usr/local/etc/my.cnf.d; rm -rf /usr/local/etc/my.cnf.default
+
+#remove db --beware
+# rm -rf /usr/local/var/mysql/
 brew install mariadb
+
+#  https://mariadb.com/resources/blog/installing-mariadb-10-1-16-on-mac-os-x-with-homebrew/
+## RUN mysql_install_db ##
+#brew services start mariadb
+#brew services stop mariadb
+
 
 #brew install postgresql
 #brew install mongo
@@ -35,9 +51,3 @@ brew install --cask --appdir="/Applications/_dev" sequel-pro
 
 # Remove outdated versions from the cellar.
 brew cleanup
-
-#brew services start mysql
-#brew services stop mysql
-
-brew services start mariadb
-#brew services stop mariadb
