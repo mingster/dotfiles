@@ -45,6 +45,8 @@ brew install --cask telegram
 #https://www.torproject.org/docs/tor-doc-osx.html.en
 #brew install tor
 brew install --cask tor-browser
+brew install --cask brave-browser
+brew install --cask firefox
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex
