@@ -30,6 +30,8 @@ brew install --cask --appdir="/Applications/_dev" jd-gui
 brew install --cask --appdir="/Applications/_dev" dash
 brew install --cask wireshark
 
+brew install oath-toolkit
+
 # Misc casks
 brew install --cask aerial #appletv screen saver
 brew install --cask welly #ptt telnet client
