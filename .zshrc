@@ -14,7 +14,7 @@ POWERLEVEL9K_MODE='nerdfont-complete'
 
 plugins=(
   git
-  osx
+  macos
   rake
   iterm2
   zsh-autosuggestions
