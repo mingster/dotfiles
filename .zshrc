@@ -35,4 +35,8 @@ fi
 
 export PATH="/usr/local/sbin:$PATH"
 
-export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_131`
+#export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_131`
+
+export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
+export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
+export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
