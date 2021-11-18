@@ -31,7 +31,7 @@ else
    export EDITOR='mvim'
 fi
 
-#source ~/.aliases
+source ~/.aliases
 
 export PATH="/usr/local/sbin:$PATH"
 
