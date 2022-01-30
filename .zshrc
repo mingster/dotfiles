@@ -21,8 +21,7 @@ plugins=(
 )
 
 source $ZSH/oh-my-zsh.sh
-#source ~/.aliases
-
+source ~/.aliases
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
@@ -31,12 +30,11 @@ else
    export EDITOR='mvim'
 fi
 
-source ~/.aliases
-
 export PATH="/usr/local/sbin:$PATH"
-
 #export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_131`
-
 export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
 export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
 export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
+
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
