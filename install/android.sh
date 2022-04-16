@@ -20,7 +20,7 @@ brew update
 
 # Install Java
 #brew tap caskroom/cask
-brew install java11
+#brew install java11
 brew install --cask oracle-jdk
 #brew install --cask java8
 
