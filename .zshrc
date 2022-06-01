@@ -34,10 +34,13 @@ export PATH="/usr/local/sbin:$PATH"
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_321`
 #export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
 #export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
+export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
 
 export PATH="$JAVA_HOME/bin:$PATH"
-export PATH="/opt/gradle/gradle-7.4.2/bin:$PATH"
-#export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
+#export PATH="/opt/gradle/gradle-7.4.2/bin:$PATH"
+#export DROID_SDK=`/Users/$USER/Library/Android/sdk`
+#export PATH="$DROID_SDK/platform-tools:$PATH"
 
+#export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
