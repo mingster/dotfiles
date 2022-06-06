@@ -6,7 +6,7 @@
 brew update && brew upgrade
 brew upgrade --cask
 brew cleanup
-mas upgrade
+#mas upgrade
 brew doctor
 rm -rf ~/Library/Caches/Homebrew/downloads/*
 softwareupdate --all --install --force
