@@ -163,3 +163,8 @@ selrsync(){
 	echo Command: rsync -avz --prune-empty-dirs --include="*/" $includes --exclude="*" "$restargs"
 	eval rsync -avz --prune-empty-dirs --include="*/" "$includes" --exclude="*" $restargs
 }
+
+
+
+
+alias nano=$(brew --prefix)"/Cellar/nano/6.3/bin/nano --tabstospaces --linenumbers"

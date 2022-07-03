@@ -20,13 +20,13 @@ fi
 brew update && brew upgrade
 
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
-brew install iftop iperf nmap tcpflow tcptrace tcpreplay
+brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano
 
 # Install essential binaries.
 brew install mas
 
 #1176895641  Spark – Email App by Readdle
-mas install 1176895641
+#mas install 1176895641
 
 # essential cask apps
 brew install --cask iterm2
