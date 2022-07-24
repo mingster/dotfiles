@@ -51,3 +51,6 @@ export PATH="$JAVA_HOME/bin:$PATH"
 #export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
+source /usr/local/opt/chruby/share/chruby/chruby.sh
+source /usr/local/opt/chruby/share/chruby/auto.sh
+chruby ruby-3.1.2
