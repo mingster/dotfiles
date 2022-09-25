@@ -20,7 +20,7 @@ fi
 brew update && brew upgrade
 
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
-brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano
+brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 
 # Install essential binaries.
 brew install mas

@@ -9,12 +9,6 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 brew install docker
 brew install boot2docker
 
-# https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
-#cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
-#brew tap homebrew/cask-fonts && brew install --cask font-source-code-pro
-brew install --cask font-source-code-pro
-brew install --cask font-sourcecodepro-nerd-font
-
 mkdir /Applications/_dev
 
 brew install --cask --appdir="/Applications/_dev" docker
@@ -80,6 +74,13 @@ brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --wi
 
 # Replace cli with gnu/linux
 #./homebrew-install-gnu.sh
+
+# https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
+#cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
+#brew tap homebrew/cask-fonts && brew install --cask font-source-code-pro
+brew tap homebrew/cask-fonts
+brew install --cask font-source-code-pro
+#brew install --cask font-sourcecodepro-nerd-font
 
 #google-chrome-canary
 brew tap homebrew/cask-versions
