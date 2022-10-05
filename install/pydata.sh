@@ -6,11 +6,14 @@
 # This script might be run with .dots, which uses elevated privileges
 sudo -K
 
-echo "------------------------------"
-echo "Setting up pip."
+brew uninstall --force --ignore-dependencies python python2 python2.7 python3 python3.6 > /dev/null 2>&1
+brew install python@2 python@3 > /dev/null 2>&1
+echo; for x in python python2 python3; do
+which $x; readlink $(which $x); $x --version; echo; done
 
-# Install pip
-easy_install pip
+## upgrade pip if any
+python3 -m pip install --upgrade pip
+
 
 ###############################################################################
 # Virtual Enviroments                                                         #
@@ -22,8 +25,8 @@ echo "Setting up virtual environments."
 # Install virtual environments globally
 # It fails to install virtualenv if PIP_REQUIRE_VIRTUALENV was true
 export PIP_REQUIRE_VIRTUALENV=false
-pip install virtualenv
-pip install virtualenvwrapper
+sudo pip3 install virtualenv
+sudo pip3 install virtualenvwrapper
 
 echo "------------------------------"
 echo "Source virtualenvwrapper from ~/.extra"
