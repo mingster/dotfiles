@@ -11,9 +11,15 @@ brew install python@2 python@3 > /dev/null 2>&1
 echo; for x in python python2 python3; do
 which $x; readlink $(which $x); $x --version; echo; done
 
+#https://www.freecodecamp.org/news/python-version-on-mac-update/
+brew install pyenv
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.zshrc
+echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.zshrc
+echo -e 'if command -v pyenv 1>/dev/null 2>&1; then\n  eval "$(pyenv init --path)"\n  eval "$(pyenv init -)"\nfi' >> ~/.zshrc
+
+
 ## upgrade pip if any
 python3 -m pip install --upgrade pip
-
 
 ###############################################################################
 # Virtual Enviroments                                                         #
