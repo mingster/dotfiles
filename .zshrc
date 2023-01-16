@@ -27,7 +27,7 @@ source ~/.aliases
 if [[ -n $SSH_CONNECTION ]]; then
    export EDITOR='vim'
 else
-   export EDITOR='mvim'
+   export EDITOR='nano'
 fi
 
 if type brew &>/dev/null; then
@@ -37,7 +37,8 @@ if type brew &>/dev/null; then
   compinit
 fi
 
-export PATH="/usr/local/sbin:$PATH"
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:$PATH"
+#export PATH="/usr/local/sbin:/usr/bin:$PATH"
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_321`
 #export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
 #export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
@@ -54,3 +55,9 @@ export LANG=en_US.UTF-8
 source /usr/local/opt/chruby/share/chruby/chruby.sh
 source /usr/local/opt/chruby/share/chruby/auto.sh
 chruby ruby-3.1.2
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+if command -v pyenv 1>/dev/null 2>&1; then
+  eval "$(pyenv init --path)"
+  eval "$(pyenv init -)"
+fi
