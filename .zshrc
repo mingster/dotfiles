@@ -37,7 +37,7 @@ if type brew &>/dev/null; then
   compinit
 fi
 
-export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:$PATH"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:~/bin:$PATH"
 #export PATH="/usr/local/sbin:/usr/bin:$PATH"
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_321`
 #export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
@@ -61,4 +61,3 @@ if command -v pyenv 1>/dev/null 2>&1; then
   eval "$(pyenv init --path)"
   eval "$(pyenv init -)"
 fi
-export PATH="/usr/local/sbin:$PATH"
