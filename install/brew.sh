@@ -33,7 +33,7 @@ brew install --cask iterm2
 brew install --cask atom
 brew install --cask macdown
 brew install --cask google-chrome
-brew install --cask firefox
+#brew install --cask firefox
 brew install --cask teamviewer
 brew install --cask skype
 #brew install --cask slack
@@ -62,8 +62,11 @@ cp ../.zshrc ~/
 # font for powerlevel9k theme
 cd ~/Library/Fonts && curl -fLo "Droid Sans Mono for Powerline Nerd Font Complete.otf" https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
 
+# powerlevel10k theme
+git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k
+
 # powerlevel9k theme
-git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/themes/powerlevel9k
+#git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/themes/powerlevel9k
 
 #zsh-autosuggestions
 git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions

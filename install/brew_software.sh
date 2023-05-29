@@ -85,3 +85,7 @@ brew install --cask font-source-code-pro
 #google-chrome-canary
 brew tap homebrew/cask-versions
 brew install --cask google-chrome-canary
+
+
+# copy over visual-studio-code setting
+cp ../init/vscode_settings.json  ~/Library/Application Support/Code/User/settings.json
