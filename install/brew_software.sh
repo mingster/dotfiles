@@ -88,4 +88,4 @@ brew install --cask google-chrome-canary
 
 
 # copy over visual-studio-code setting
-cp ../init/vscode_settings.json  ~/Library/Application Support/Code/User/settings.json
+cp ../init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
