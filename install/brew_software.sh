@@ -57,12 +57,19 @@ brew install --cask --appdir="/Applications/_av" jubler
 brew install --cask --appdir="/Applications/_av" vox
 brew install --cask --appdir="/Applications/_av" iina
 brew install --cask --appdir="/Applications/_av" xld
+
 #brew install --cask --appdir="/Applications/_av" get-lyrical
 brew install mp3splt
 
 #ffmpeg with aac/mp4 support
 # https://gist.github.com/clayton/6196167
+
+# replave obsoleted youtube-dl with yt-dlp
+brew install yt-dlp
+ln -s /usr/local/bin/yt-dlp /usr/local/bin/youtube-dl                                                                                                                                                                                                     1 ✘
+
 brew install libvpx
+
 brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
 
 # Install developer friendly quick look plugins; see https://github.com/sindresorhus/quick-look-plugins
