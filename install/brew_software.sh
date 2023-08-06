@@ -22,6 +22,8 @@ brew install --cask --appdir="/Applications/_dev" eclipse-java
 #brew install --cask --appdir="/Applications/_dev" eclipse-jee
 brew install --cask --appdir="/Applications/_dev" jd-gui
 brew install --cask --appdir="/Applications/_dev" dash
+
+brew install --appdir="/Applications/_dev" --cask blender
 brew install --cask wireshark
 
 brew install oath-toolkit
