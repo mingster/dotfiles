@@ -21,19 +21,33 @@ donjayamanne.githistory
 alefragnani.project-manager
 codezombiech.gitignore
 EditorConfig.EditorConfig
-rodrigovallades.es7-react-js-snippets
+dsznajder.es7-react-js-snippets
 mgmcdermott.vscode-language-babel
 BenjaminBenais.copilot-theme
 jasonnutter.search-node-modules
 christian-kohler.npm-intellisense
 christian-kohler.path-intellisense
+exodiusstudios.comment-anchors
+mikestead.dotenv
+usernamehw.errorlens
+anteprimorac.html-end-tag-labels
+#visualstudioexptteam.vscodeintellicode
+#wmaurer.vscode-jumpy
+#sibiraj-s.vscode-scss-formatter
+#mrmlnc.vscode-scss
+
+sburg.vscode-javascript-booster
+
 esbenp.prettier-vscode
 rvest.vs-code-prettier-eslint
 bradlc.vscode-tailwindcss
 Zignd.html-css-class-completion
 formulahendry.auto-rename-tag
-christian-kohler.path-intellisense
+formulahendry.auto-close-tag
 shd101wyy.markdown-preview-enhanced
+prisma.prisma
+visualstudioexptteam.intellicode-api-usage-examples
+
 )
 
 for i in ${pkglist[@]}; do
