@@ -11,6 +11,8 @@ dbaeumer.vscode-eslint
 GitHub.copilot
 github.vscode-pull-request-github
 github.github-vscode-theme
+pkief.material-icon-theme
+pkief.material-product-icons
 github.codespaces
 github.remotehub
 github.copilot-chat
