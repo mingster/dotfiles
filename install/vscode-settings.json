@@ -3,35 +3,49 @@
     "editor.multiCursorModifier": "ctrlCmd",
     "editor.fontSize": 16,
     "editor.fontFamily": "Sauce Code Pro,Menlo, Consolas, DejaVu Sans Mono, monospace",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    /*
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[typescript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[javascript]": {
+        //"editor.defaultFormatter": "vscode.typescript-language-features"
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    */
     "[vue]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
-    "editor.bracketPairColorization.enabled": true,
-    "editor.guides.bracketPairs": false,
-    "workbench.iconTheme": "vs-minimal",
-    "terminal.external.osxExec": "iTerm.app",
-    "editor.suggestSelection": "first",
-    "vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
-    "redhat.telemetry.enabled": false,
     "[json]": {
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "[jsonc]": {
         "editor.defaultFormatter": "vscode.json-language-features"
     },
-    "diffEditor.ignoreTrimWhitespace": false,
-    "editor.minimap.enabled": false,
     "[html]": {
         "editor.defaultFormatter": "vscode.html-language-features"
     },
     "[css]": {
         "editor.defaultFormatter": "vscode.css-language-features"
     },
-    "npm.keybindingsChangedWarningShown": true,
-    "[javascript]": {
-        //"editor.defaultFormatter": "vscode.typescript-language-features"
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "[scss]": {
+        "editor.defaultFormatter": "sibiraj-s.vscode-scss-formatter"
     },
+
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": false,
+    "workbench.iconTheme": "material-icon-theme",
+    "terminal.external.osxExec": "iTerm.app",
+    "editor.suggestSelection": "first",
+    "vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
+    "redhat.telemetry.enabled": false,
+    "diffEditor.ignoreTrimWhitespace": false,
+    "editor.minimap.enabled": false,
+    "npm.keybindingsChangedWarningShown": true,
+
     "security.workspace.trust.untrustedFiles": "open",
     "terminal.integrated.copyOnSelection": true,
     "terminal.integrated.defaultProfile.windows": "Git Bash",
@@ -95,8 +109,7 @@
         "editor.lineHighlightBackground": "#1073cf2d",
         "editor.lineHighlightBorder": "#9fced11f"
     },
-    "editor.formatOnType": true,
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnType": false,
     "git.autofetch": true,
     "explorer.confirmDelete": false,
     "explorer.confirmDragAndDrop": false,
@@ -107,14 +120,7 @@
     "javascript.updateImportsOnFileMove.enabled": "always",
     "files.autoSave": "afterDelay",
     "svelte.enable-ts-plugin": true,
-    "[typescriptreact]": {
-        "editor.defaultFormatter": "vscode.typescript-language-features"
-    },
-    "[typescript]": {
-        "editor.defaultFormatter": "vscode.typescript-language-features"
-    },
-    "[scss]": {
-        "editor.defaultFormatter": "sibiraj-s.vscode-scss-formatter"
-    },
-    "workbench.colorTheme": "Copilot Theme"
+    "workbench.colorTheme": "GitHub Dark Dimmed",
+    "workbench.productIconTheme": "material-product-icons",
+    /*"javascript.format.enable": false*/
 }
