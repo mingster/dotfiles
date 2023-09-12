@@ -37,8 +37,25 @@ brew install mariadb
 #brew services start mariadb
 #brew services stop mariadb
 
+##### postgre #####
+# https://www.codementor.io/@engineerapart/getting-started-with-postgresql-on-mac-osx-are8jcopb
+# brew install postgresql
 
-#brew install postgresql
+## service ##
+
+# To start postgresql@14 now and restart at login:
+#   brew services start postgresql@14
+#Or, if you don't want/need a background service you can just run:
+#  /usr/local/opt/postgresql@14/bin/postgres -D /usr/local/var/postgresql@14
+
+# brew services start postgresql
+# or "brew services run postgresql" to have it not restart at boot time
+
+## connect / admin gui ##
+# psql postgres
+# brew install --cask --appdir="/Applications/_dev" pgadmin4
+# brew install --cask --appdir="/Applications/_dev" dbeaver-community
+
 #brew install mongo
 #brew install redis
 #brew install elasticsearch

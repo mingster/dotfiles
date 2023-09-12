@@ -17,6 +17,7 @@ github.codespaces
 github.remotehub
 github.copilot-chat
 github.vscode-github-actions
+vsls-contrib.gistfs
 planbcoding.vscode-react-refactor
 eamodio.gitlens
 donjayamanne.githistory
