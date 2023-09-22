@@ -57,7 +57,21 @@ brew install mariadb
 # brew install --cask --appdir="/Applications/_dev" dbeaver-community
 
 #brew install mongo
-#brew install redis
+
+##### redis #####
+brew install redis
+
+#To start redis now and restart at login:
+#brew services start redis
+
+#start redis from console
+#/usr/local/opt/redis/bin/redis-server /usr/local/etc/redis.conf
+
+
+
+
+
+
 #brew install elasticsearch
 
 # Install mysql workbench
