@@ -18,24 +18,28 @@ fi
 # Make sure we’re using the latest Homebrew.
 brew update
 
-# Install data stores
-#brew install mysql
-#brew services start mysql
-#brew services stop mysql
 
-
+##### mariadb #####
 #https://github.com/laradock/laradock/issues/93
-brew uninstall mariadb
-rm -rf /usr/local/etc/my.cnf; rm -rf /usr/local/etc/my.cnf.d; rm -rf /usr/local/etc/my.cnf.default
+#brew uninstall mariadb
+#rm -rf /usr/local/etc/my.cnf; rm -rf /usr/local/etc/my.cnf.d; rm -rf /usr/local/etc/my.cnf.default
 
 #remove db --beware
 # rm -rf /usr/local/var/mysql/
-brew install mariadb
+#brew install mariadb
 
 #  https://mariadb.com/resources/blog/installing-mariadb-10-1-16-on-mac-os-x-with-homebrew/
 ## RUN mysql_install_db ##
 #brew services start mariadb
 #brew services stop mariadb
+
+
+##### mysql #####
+#brew install mysql
+#brew services start mysql
+#brew services stop mysql
+
+brew install mysql-client
 
 ##### postgre #####
 # https://www.codementor.io/@engineerapart/getting-started-with-postgresql-on-mac-osx-are8jcopb

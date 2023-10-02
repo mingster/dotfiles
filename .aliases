@@ -149,7 +149,6 @@ alias reload="exec $SHELL -l"
 
 alias nano="nano --tabstospaces --linenumbers"
 
-
 selrsync(){
 	# selective rsync to sync only certain filetypes;
 	# based on: https://stackoverflow.com/a/11111793/588867
@@ -162,6 +161,6 @@ selrsync(){
 	    }')
 	restargs="$@"
 
-	echo Command: rsync -avz --prune-empty-dirs --include="*/" $includes --exclude="*" "$restargs"
-	eval rsync -avz --prune-empty-dirs --include="*/" "$includes" --exclude="*" $restargs
+	echo Command: rsync -avz --prune-empty-dirs --include="*/" $includes --exclude="*" "$restargs" --no-perms --no-owner --no-group
+	eval rsync -avz --prune-empty-dirs --include="*/" "$includes" --exclude="*" $restargs --no-perms --no-owner --no-group
 }

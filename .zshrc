@@ -76,3 +76,13 @@ source $ZSH/oh-my-zsh.sh
 #  eval "$(pyenv init --path)"
 #  eval "$(pyenv init -)"
 #fi
+
+# bun completions
+[ -s "/Users/mtsai/.bun/_bun" ] && source "/Users/mtsai/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# mysql-client
+export PATH="/usr/local/opt/mysql-client/bin:$PATH"
