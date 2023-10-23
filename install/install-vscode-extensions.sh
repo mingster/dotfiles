@@ -38,9 +38,8 @@ anteprimorac.html-end-tag-labels
 #wmaurer.vscode-jumpy
 #sibiraj-s.vscode-scss-formatter
 #mrmlnc.vscode-scss
-
+rangav.vscode-thunder-client
 sburg.vscode-javascript-booster
-
 esbenp.prettier-vscode
 rvest.vs-code-prettier-eslint
 bradlc.vscode-tailwindcss
