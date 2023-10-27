@@ -58,6 +58,8 @@ echo "Setting up py2-data virtual environment."
 mkvirtualenv py2-data
 workon py2-data
 
+python -m pip install --upgrade pip
+
 # Install Python data modules
 pip install numpy
 pip install scipy
@@ -117,3 +119,10 @@ echo "------------------------------"
 echo "Script completed."
 echo "Usage: workon py2-data for Python2"
 echo "Usage: workon py3-data for Python3"
+
+
+# https://github.com/Microsoft/vscode-python
+echo "------------------------------"
+echo "Install vs code extensions"
+echo "------------------------------"
+code --install-extension  ms-python.python

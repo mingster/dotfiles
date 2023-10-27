@@ -50,6 +50,8 @@ shd101wyy.markdown-preview-enhanced
 prisma.prisma
 visualstudioexptteam.intellicode-api-usage-examples
 
+#py
+ms-python.python
 )
 
 for i in ${pkglist[@]}; do
