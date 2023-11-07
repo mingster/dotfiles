@@ -49,6 +49,7 @@ formulahendry.auto-close-tag
 shd101wyy.markdown-preview-enhanced
 prisma.prisma
 visualstudioexptteam.intellicode-api-usage-examples
+maptz.regionfolder
 
 #py
 ms-python.python
