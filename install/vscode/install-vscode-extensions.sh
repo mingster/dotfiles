@@ -50,6 +50,7 @@ shd101wyy.markdown-preview-enhanced
 prisma.prisma
 visualstudioexptteam.intellicode-api-usage-examples
 maptz.regionfolder
+mtxr.sqltools
 
 #py
 ms-python.python
