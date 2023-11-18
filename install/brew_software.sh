@@ -92,9 +92,11 @@ brew install --cask font-source-code-pro
 #brew install --cask font-sourcecodepro-nerd-font
 
 #google-chrome-canary
-brew tap homebrew/cask-versions
-brew install --cask google-chrome-canary
+#brew tap homebrew/cask-versions
+brew tap homebrew/homebrew-cask-versions
 
+brew install --cask google-chrome-canary
+brew install --cask safari-technology-preview
 
 # copy over visual-studio-code setting
 cp ../init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
