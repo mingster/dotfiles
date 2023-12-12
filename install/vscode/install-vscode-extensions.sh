@@ -51,6 +51,7 @@ prisma.prisma
 visualstudioexptteam.intellicode-api-usage-examples
 maptz.regionfolder
 mtxr.sqltools
+ms-mssql.mssql
 
 #py
 ms-python.python
