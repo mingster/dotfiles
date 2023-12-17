@@ -3,6 +3,7 @@ export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
 source ~/.aliases
+source ~/.functions
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
@@ -64,6 +65,19 @@ source $ZSH/oh-my-zsh.sh
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
+# bun completions
+[ -s "/Users/mtsai/.bun/_bun" ] && source "/Users/mtsai/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# mysql-client
+export PATH="/usr/local/opt/mysql-client/bin:$PATH"
+
+# activate asdf
+source /usr/local/opt/asdf/libexec/asdf.sh
+
 
 # https://mac.install.guide/ruby/12.html
 # source /usr/local/opt/chruby/share/chruby/chruby.sh
@@ -76,13 +90,3 @@ source $ZSH/oh-my-zsh.sh
 #  eval "$(pyenv init --path)"
 #  eval "$(pyenv init -)"
 #fi
-
-# bun completions
-[ -s "/Users/mtsai/.bun/_bun" ] && source "/Users/mtsai/.bun/_bun"
-
-# bun
-export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
-
-# mysql-client
-export PATH="/usr/local/opt/mysql-client/bin:$PATH"

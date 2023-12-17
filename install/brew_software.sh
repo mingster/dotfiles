@@ -84,6 +84,9 @@ brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --wi
 # Replace cli with gnu/linux
 #./homebrew-install-gnu.sh
 
+brew install --cask google-chrome-canary
+brew install --cask safari-technology-preview
+
 # https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
 #cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
 #brew tap homebrew/cask-fonts && brew install --cask font-source-code-pro
@@ -93,10 +96,8 @@ brew install --cask font-source-code-pro
 
 #google-chrome-canary
 #brew tap homebrew/cask-versions
-brew tap homebrew/homebrew-cask-versions
+#brew tap homebrew/homebrew-cask-versions
 
-brew install --cask google-chrome-canary
-brew install --cask safari-technology-preview
 
 # copy over visual-studio-code setting
 cp ../init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
