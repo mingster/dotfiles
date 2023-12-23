@@ -2,7 +2,7 @@
 
 # execute command
 # -------------------
-# curl -s https://raw.githubusercontent.com/karaage0703/vscode-dotfiles/master/install-vscode-extensions.sh | /bin/bash
+# curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/vscode/install-vscode-extensions.sh | /bin/bash
 
 # Visual Studio Code :: Package list
 pkglist=(
@@ -52,7 +52,6 @@ visualstudioexptteam.intellicode-api-usage-examples
 maptz.regionfolder
 mtxr.sqltools
 ms-mssql.mssql
-
 #py
 ms-python.python
 )

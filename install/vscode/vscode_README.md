@@ -22,7 +22,7 @@ $ brew cask install visual-studio-code
 Execute following command:
 
 ```sh
-$ curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/install-vscode-extensions.sh | /bin/bash
+curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/vscode/install-vscode-extensions.sh | /bin/bash
 ```
 
 #### Memo
