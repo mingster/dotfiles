@@ -54,6 +54,7 @@ mtxr.sqltools
 ms-mssql.mssql
 #py
 ms-python.python
+cesium.gltf-vscode
 )
 
 for i in ${pkglist[@]}; do
