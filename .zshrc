@@ -72,6 +72,10 @@ source $ZSH/oh-my-zsh.sh
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
+# node v20.x
+export PATH="/usr/local/opt/node@20/bin:$PATH"
+
+
 # mysql-client
 export PATH="/usr/local/opt/mysql-client/bin:$PATH"
 

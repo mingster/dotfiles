@@ -30,7 +30,7 @@ brew update
 #     ./node_modules/.bin/webpack --config webpack.local.config.js
 #
 
-brew install node yarn nvm pnpm
+brew install node@20 yarn nvm pnpm
 mkdir ~/.nvm
 export NVM_DIR="$HOME/.nvm"
 . "/usr/local/opt/nvm/nvm.sh"
