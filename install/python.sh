@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
 # @https://hackercodex.com/guide/python-development-environment-on-mac-osx/
+# @https://asdf-vm.com/guide/getting-started.html
 
+# Install asdf Dependencies
+brew install coreutils curl git
 # Install asdf
 brew install asdf openssl readline sqlite3 xz zlib
 
@@ -28,13 +31,3 @@ asdf reshim python
 
 
 brew install direnv
-
-# project setup
-# https://mdaverde.com/posts/python-venv-direnv-asdf/
-
-# cd path_to_project
-# python -m venv .venv
-# echo "export VIRTUAL_ENV=$PWD/.venv\nexport PATH=$PWD/.venv/bin:\$PATH" > .envrc
-# direnv allow
-# which python
-# which pip
