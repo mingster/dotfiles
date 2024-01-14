@@ -29,14 +29,14 @@ brew install --cask wireshark
 brew install oath-toolkit
 
 # Misc casks
-brew install --cask aerial #appletv screen saver
-brew install --cask welly #ptt telnet client
+#brew install --cask aerial #appletv screen saver
+#brew install --cask welly #ptt telnet client
 #brew install --cask evernote
 brew install --cask notion
 #brew install --cask 1password
 #brew install --cask gimp
 #brew install --cask inkscape
-brew install --cask skitch
+#brew install --cask skitch
 brew install --cask cyberduck
 brew install --cask telegram
 
@@ -44,7 +44,7 @@ brew install --cask telegram
 #brew install tor
 brew install --cask tor-browser
 brew install --cask brave-browser
-brew install --cask firefox
+#brew install --cask firefox
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex
