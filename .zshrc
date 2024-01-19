@@ -21,8 +21,10 @@ fi
 
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:~/bin:$PATH"
 #export PATH="/usr/local/sbin:/usr/bin:$PATH"
-export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_321`
+#export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_321`
 #export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
+#export JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk-21.0.1.jdk
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 #export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
 export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
 

@@ -19,11 +19,19 @@ fi
 brew update
 
 # Install Java
+
+## to remove prev installs
+#sudo rm -fr $HOME/Library/Java/JavaVirtualMachines/*
+#sudo rm -fr /Library/Java/JavaVirtualMachines/*
+
+brew install openjdk@11
+sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
+java -version
+
 #brew tap caskroom/cask
 #brew install java11
-brew install --cask oracle-jdk
+#brew install --cask oracle-jdk
 #brew install --cask java8
-
 #brew install ant
 #brew install maven
 #brew install gradle
@@ -31,7 +39,7 @@ brew install --cask oracle-jdk
 #brew install android-ndk
 
 #Manage Java enviornment - http://www.jenv.be
-brew install jenv
+#brew install jenv
 
 #############################################
 # https://gist.github.com/patrickhammond/4ddbe49a67e5eb1b9c03
