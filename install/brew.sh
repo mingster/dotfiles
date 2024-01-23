@@ -20,7 +20,7 @@ fi
 brew update && brew upgrade
 
 # Install some CTF tools; see https://github.com/ctfs/write-ups.
-brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
+#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 
 # Install essential binaries.
 brew install mas
@@ -34,12 +34,13 @@ brew install --cask atom
 brew install --cask macdown
 brew install --cask google-chrome
 #brew install --cask firefox
-brew install --cask teamviewer
+#brew install --cask teamviewer
 brew install --cask skype
 #brew install --cask slack
-brew install --cask dropbox
+#brew install --cask dropbox
 brew install --cask megasync
-brew install --cask numi
+brew install --cask onebox
+#brew install --cask numi
 #brew install --cask alfred
 #brew install --cask keyboard-maestro
 
