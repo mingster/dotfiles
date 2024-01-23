@@ -32,6 +32,7 @@ brew install mas
 brew install --cask iterm2
 brew install --cask atom
 brew install --cask macdown
+brew install --cask readdle-spark
 brew install --cask google-chrome
 #brew install --cask firefox
 #brew install --cask teamviewer
