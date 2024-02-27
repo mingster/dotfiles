@@ -52,6 +52,10 @@ visualstudioexptteam.intellicode-api-usage-examples
 maptz.regionfolder
 mtxr.sqltools
 ms-mssql.mssql
+
+#yml
+yseop.vscode-yseopml
+
 #py
 ms-python.python
 cesium.gltf-vscode
