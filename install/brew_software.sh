@@ -24,6 +24,7 @@ brew install --cask --appdir="/Applications/_dev" jd-gui
 brew install --cask --appdir="/Applications/_dev" dash
 
 brew install --appdir="/Applications/_dev" --cask blender
+brew install --appdir="/Applications/_dev" --cask db-browser-for-sqlite
 brew install --cask wireshark
 
 brew install oath-toolkit
