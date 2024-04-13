@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+echo 'Run this file to: 1.osx settings adj; 2.install essential apps; 3.zsh setup...'
+
 # Install command-line tools using Homebrew.
 sh ./osxprep.sh
 
@@ -29,6 +31,9 @@ brew install mas
 #mas install 1176895641
 
 # essential cask apps
+brew install stow
+#brew install borgbackup
+
 brew install --cask iterm2
 brew install --cask atom
 brew install --cask macdown
@@ -36,7 +41,7 @@ brew install --cask readdle-spark
 brew install --cask google-chrome
 #brew install --cask firefox
 #brew install --cask teamviewer
-brew install --cask skype
+#brew install --cask skype
 #brew install --cask slack
 #brew install --cask dropbox
 brew install --cask megasync

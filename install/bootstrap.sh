@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+echo 'bootstrap install dotfiles to your HOME directory...'
+
 cd "$(dirname "${BASH_SOURCE}")";
 
 git pull origin master;

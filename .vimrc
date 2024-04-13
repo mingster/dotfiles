@@ -36,6 +36,3 @@ set wildignore+=vendor/cache/**
 set wildignore+=log/**
 set wildignore+=tmp/**
 set wildignore+=*.png,*.jpg,*.gif
-
-" === show line number ===
-set number

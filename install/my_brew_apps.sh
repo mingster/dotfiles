@@ -1,3 +1,8 @@
+#!/usr/bin/env bash
+
+echo 'install my brew apps...'
+
+
 #brew install --cask --appdir="~/Applications" xquartz
 brew install --cask --appdir="/Applications/Utilities" onyx
 
