@@ -1,11 +1,32 @@
 # Ming's dotfiles
 
-DotFiles allows you quickly set up environment on a newly installed macos.
+this dotfiles allows you quickly set up environment on a newly installed macos.
 
 Check [this](http://dotfiles.github.io) out if you need more info.
 
 This dotfiles is based on the [Mathias’s legendary](https://github.com/mathiasbynens/dotfiles) dotfiles. A couple
 changes are added to my favorites.
+
+## Overview
+
+- change macos' perferences (osx.sh)
+- [Homebrew](https://brew.sh)
+- [Fish shell](https://fishshell.com/)
+- [Fisher](https://github.com/jorgebucaran/fisher) - Plugin manager
+- [Tide](https://github.com/IlanCosman/tide) - Shell theme. Use version 6: `fisher install ilancosman/tide@v6`
+- [Nerd fonts](https://github.com/ryanoasis/nerd-fonts) - Powerline-patched fonts. I use Hack.
+- [tmux]() - window manager
+- [lf File Manager](https://www.joshmedeski.com/posts/manage-files-with-lf/)
+- [lazygit]() 
+
+
+
+<!--
+- [z for fish](https://github.com/jethrokuan/z) - Directory jumping
+- [Eza](https://github.com/eza-community/eza) - `ls` replacement
+- [ghq](https://github.com/x-motemen/ghq) - Local Git repository organizer
+- [fzf](https://github.com/PatrickF1/fzf.fish) - Interactive filtering
+-->
 
 ## Installation
 
@@ -17,7 +38,7 @@ cd ~/GitHub
 git clone https://github.com/mingster/dotfiles.git && cd dotfiles
 ```
 
-### 2. Install "Command Line Tools"
+### 2. Software Update and "Command Line Tools"
 
 Update macos and install command line tools:
 

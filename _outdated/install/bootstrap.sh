@@ -44,4 +44,5 @@ else
 		doIt2;
 	fi;
 fi;
-unset doIt;
+
+unset doIt2;

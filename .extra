@@ -1,5 +1,0 @@
-
-
-# Source virtualenvwrapper, added by pydata.sh
-export WORKON_HOME=~/.virtualenvs
-source /usr/local/bin/virtualenvwrapper.sh

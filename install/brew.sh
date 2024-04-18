@@ -27,10 +27,14 @@ brew update && brew upgrade
 # Install essential binaries.
 brew install mas
 brew install neofetch
-brew install fish
 
+brew install fish
 #mkdir ~/.config/fish
-#ln ~/GitHub/dotfiles/.config/fish $HOME/.config/fish
+ln -s ~/GitHub/dotfiles/.config/fish $HOME/.config/fish
+
+# tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
+brew install tmux
+ln -s ~/GitHub/dotfiles/.config/tmux $HOME/.config/tmux
 
 brew install nvim
 # lazyvim
@@ -74,35 +78,20 @@ brew install --cask google-drive
 brew cleanup && brew doctor
 
 
-# 先執行這行，才能用 homebrew 安裝字型。曾經執行過的人可以跳過這個指令
-#brew tap homebrew/cask-fonts
-# 安裝指令
-#brew install --cask font-sourcecodepro-nerd-font
 
-##zsh
-#oh-my-zsh
-# https://github.com/robbyrussell/oh-my-zsh
-#sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)" "" --unattended
-#git clone https://github.com/robbyrussell/oh-my-zsh.git ~/.oh-my-zsh
+# IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
+brew install lf
+ln -s ~/GitHub/dotfiles/.config/lf $HOME/.config/lf
 
-#cp ../.zshrc ~/
 
-# font for powerlevel9k theme
-cd ~/Library/Fonts && curl -fLo "Droid Sans Mono for Powerline Nerd Font Complete.otf" https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
+# Nerd fonts - Powerline-patched fonts. I use Hack.
+brew tap homebrew/cask-fonts
+brew install font-hack-nerd-font
 
-# powerlevel10k theme
-#git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k
 
-# powerlevel9k theme
-#git clone https://github.com/bhilburn/powerlevel9k.git ~/.oh-my-zsh/custom/themes/powerlevel9k
-
-#zsh-autosuggestions
-#git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
-
-#brew install zsh
-#use mac built-in zsh
-#chsh -s $(which zsh)
-
+# lazygit
+brew install jesseduffield/lazygit/lazygit
+ln -s ~/GitHub/dotfiles/.config/lazygit $HOME/.config/lazygit
 
 # add fish to system shell
 su
@@ -111,10 +100,18 @@ echo $(which fish) >> /etc/shells
 # change shell to fish
 chsh -s $(which fish)
 
-# install fisher
+# install fisher - https://github.com/jorgebucaran/fisher
 ## enter fish shell
 fish
 curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher
 
 # install shell theme
 fisher install IlanCosman/tide@v6
+
+# icon of lf
+fisher install joshmedeski/fish-lf-icons
+
+# nvm
+fisher install jorgebucaran/nvm.fish
+
+nvm install v20.12.2
