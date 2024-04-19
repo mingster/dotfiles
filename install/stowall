@@ -14,8 +14,8 @@ clrreset=$(tput sgr0) #normal - resets all
 
 if $SCRIPT_DEBUG; then echo "${clrstandout}Stowing files in ${PWD}.${clrreset}"; fi
 
-cd ~/GitHub/dotfiles
-for files in ~/GitHub/dotfiles/*; do
+cd ~/GitHub/dotfiles/.config
+for files in ~/GitHub/dotfiles/.config/*; do
   if [ -d ${files} ]; then
     stow -R $(basename $files)
     if $SCRIPT_DEBUG; then echo "$(basename $files) stowed."; fi
