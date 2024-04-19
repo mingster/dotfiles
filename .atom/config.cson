@@ -1,0 +1,18 @@
+"*":
+  "atom-beautify":
+    html:
+      max_preserve_newlines: 0
+      preserve_newlines: false
+  core:
+    telemetryConsent: "no"
+    themes: [
+      "atom-material-ui"
+      "atom-material-syntax"
+    ]
+    uriHandlerRegistration: "always"
+  editor:
+    fontSize: 17
+    invisibles: {}
+  "linter-ui-default": {}
+  welcome:
+    showOnStartup: false
