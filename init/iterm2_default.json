@@ -184,6 +184,12 @@
       "Text" : "[1;2H",
       "Action" : 10
     },
+    "0xf702-0x300000-0x7b" : {
+      "Version" : 1,
+      "Action" : 11,
+      "Text" : "0x01",
+      "Label" : ""
+    },
     "0xf72b-0x40000" : {
       "Text" : "[1;5F",
       "Action" : 10
@@ -211,6 +217,12 @@
     "0x33-0x40000" : {
       "Text" : "0x1b",
       "Action" : 11
+    },
+    "0xf703-0x300000-0x7c" : {
+      "Version" : 1,
+      "Action" : 11,
+      "Text" : "0x05",
+      "Label" : ""
     },
     "0xf703-0x220000" : {
       "Text" : "[1;2C",
@@ -394,7 +406,7 @@
     "Alpha Component" : 1,
     "Green Component" : 0.73333334922790527
   },
-  "Normal Font" : "DroidSansMonoNerdFontComplete- 14",
+  "Normal Font" : "HackNFM-Regular 14",
   "Link Color" : {
     "Red Component" : 0.023000000044703484,
     "Color Space" : "Calibrated",

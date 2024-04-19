@@ -1,19 +1,15 @@
 [alias]
+	# Amend the currently staged files to the latest commit
+	amend = commit --amend --reuse-message=HEAD
+	arcpatch = !arc patch $1 && git rebase master && git checkout master && git merge arcpatch-$1 && :
 
-	# View abbreviated SHA, description, and history graph of the latest 20 commits
-	l = log --pretty=oneline -n 20 --graph --abbrev-commit
+	br = branch
 
-	# View the current working tree status using the short format
-	s = status -s
+	# Credit an author on the latest commit
+	credit = "!f() { git commit --amend --author \"$1 <$2>\" -C HEAD; }; f"
 
-	# Show the diff between the latest commit and the current state
-	d = "!git diff-index --quiet HEAD -- || clear; git --no-pager diff --patch-with-stat"
-
-	# `git di $number` shows the diff between the state `$number` revisions ago and the current state
-	di = "!d() { git diff --patch-with-stat HEAD~$1; }; git diff-index --quiet HEAD -- || clear; d"
-
-	# Pull in remote changes for the current repository and all its submodules
-	p = "!git pull; git submodule foreach git pull origin master"
+	co = checkout
+  ci = commit
 
 	# Clone a repository including all submodules
 	c = clone --recursive
@@ -21,22 +17,17 @@
 	# Commit all changes
 	ca = !git add -A && git commit -av
 
-	# Switch to a branch, creating it if necessary
-	go = "!f() { git checkout -b \"$1\" 2> /dev/null || git checkout \"$1\"; }; f"
+	# List contributors with number of commits
+	contributors = shortlog --summary --numbered
 
-	# Show verbose output about tags, branches or remotes
-	tags = tag -l
-	branches = branch -a
-	remotes = remote -v
+	# Show the diff between the latest commit and the current state
+	d = "!git diff-index --quiet HEAD -- || clear; git --no-pager diff --patch-with-stat"
+	# `git di $number` shows the diff between the state `$number` revisions ago and the current state
+	di = "!d() { git diff --patch-with-stat HEAD~$1; }; git diff-index --quiet HEAD -- || clear; d"
 
-	# Amend the currently staged files to the latest commit
-	amend = commit --amend --reuse-message=HEAD
-
-	# Credit an author on the latest commit
-	credit = "!f() { git commit --amend --author \"$1 <$2>\" -C HEAD; }; f"
-
-	# Interactive rebase with the given number of latest commits
-	reb = "!r() { git rebase -i HEAD~$1; }; r"
+	# Remove branches that have already been merged with master
+	# a.k.a. ‘delete merged’
+	dm = !git branch --merged | grep -v '\\*' | xargs -n 1 git branch -d
 
 	# Find branches containing commit
 	fb = "!f() { git branch -a --contains $1; }; f"
@@ -50,12 +41,30 @@
 	# Find commits by commit message
 	fm = "!f() { git log --pretty=format:'%C(yellow)%h  %Cblue%ad  %Creset%s%Cgreen  [%cn] %Cred%d' --decorate --date=short --grep=$1; }; f"
 
-	# Remove branches that have already been merged with master
-	# a.k.a. ‘delete merged’
-	dm = !git branch --merged | grep -v '\\*' | xargs -n 1 git branch -d
+	glog = log --graph --decorate --all --pretty=fuller
 
-	# List contributors with number of commits
-	contributors = shortlog --summary --numbered
+	# Switch to a branch, creating it if necessary
+	go = "!f() { git checkout -b \"$1\" 2> /dev/null || git checkout \"$1\"; }; f"
+
+	# View abbreviated SHA, description, and history graph of the latest 20 commits
+	l = log --pretty=oneline -n 20 --graph --abbrev-commit
+	# View the current working tree status using the short format
+	s = status -s
+	st = status
+	slist = stash list --format='%gd %ad %gs'
+
+	# Pull in remote changes for the current repository and all its submodules
+	p = "!git pull; git submodule foreach git pull origin master"
+
+	# Interactive rebase with the given number of latest commits
+	reb = "!r() { git rebase -i HEAD~$1; }; r"
+
+	# Show verbose output about tags, branches or remotes
+	tags = tag -l
+	branches = branch -a
+	remotes = remote -v
+
+
 
 [apply]
 
@@ -79,9 +88,11 @@
 	autocrlf = input
 	eol = lf
 	filemode = false
+	pager = less -x3,2
+	excludesfile = ~/.cvsignore
+	editor = micro
 
 [color]
-
 	# Use colors in Git commands that are capable of colored output when
 	# outputting to the terminal. (This is the default setting in Git ≥ 1.8.4.)
 	ui = auto
@@ -148,12 +159,34 @@
 [url "git://gist.github.com/"]
 
 	insteadOf = gist:
-[difftool "sourcetree"]
-	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
-	path = 
-[mergetool "sourcetree"]
-	cmd = /Applications/_dev/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
-	trustExitCode = true
+
+
+[filter "tabspace"]
+[diff]
+  tool = meld
+[difftool]
+  prompt = false
+[difftool "meld"]
+  trustExitCode = true
+  cmd = open -W -a Meld --args \"$LOCAL\" \"$REMOTE\"
+[merge]
+  tool = meld
+[mergetool]
+  prompt = false
+[mergetool "meld"]
+  trustExitCode = true
+  cmd = open -W -a Meld --args --auto-merge \"$LOCAL\" \"$BASE\" \"$REMOTE\" --output=\"$MERGED\"
+
+
+#[difftool "sourcetree"]
+#	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
+#	path =
+
+#[mergetool "sourcetree"]
+#	cmd = /Applications/_dev/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
+#	trustExitCode = true
+
+
 [user]
 	name = Ming Tsai
 	email = mingster.tsai@gmail.com

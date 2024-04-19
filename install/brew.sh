@@ -25,7 +25,7 @@ brew update && brew upgrade
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 
 # Install essential binaries.
-brew install mas neofetch git rsync
+brew install mas neofetch git rsync micro meld
 
 brew install fish
 brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
@@ -43,6 +43,8 @@ brew install font-hack-nerd-font
 
 # essential cask apps
 brew install --cask iterm2
+brew install --cask kitty
+
 brew install --cask atom
 brew install --cask macdown
 brew install --cask readdle-spark
@@ -66,17 +68,31 @@ brew install --cask google-drive
 brew cleanup && brew doctor
 
 
+if [ ! -d ${HOME}/.config ];
+then
+    mkdir -p ${HOME}/.config
+fi
 
-
-mkdir ~/.config
 # optional but recommended
-mkdir ~/.local/share/nvim
-mkdir ~/.local/state/nvim
-mkdir ~/.cache/nvim
-#mkdir ~/.config/fish
+if [ ! -d ${HOME}/.local/share/nvim ];
+then
+    mkdir -p ${HOME}/.local/share/nvim
+fi
+
+if [ ! -d ${HOME}/.local/state/nvim ];
+then
+    mkdir -p ${HOME}/.local/state/nvim
+fi
+
+if [ ! -d ${HOME}/.cache/nvim ];
+then
+    mkdir -p ${HOME}/.cache/nvim
+fi
+
 
 ln -s ~/GitHub/dotfiles/bin $HOME/bin
 
+ln -s ~/GitHub/dotfiles/.config/kitty $HOME/.config/kitty
 ln -s ~/GitHub/dotfiles/.config/fish $HOME/.config/fish
 ln -s ~/GitHub/dotfiles/.config/tmux $HOME/.config/tmux
 ln -s ~/GitHub/dotfiles/.config/nvim $HOME/.config/nvim
