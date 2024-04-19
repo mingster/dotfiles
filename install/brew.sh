@@ -66,12 +66,16 @@ brew install --cask google-drive
 brew cleanup && brew doctor
 
 
+
+
 mkdir ~/.config
 # optional but recommended
 mkdir ~/.local/share/nvim
 mkdir ~/.local/state/nvim
 mkdir ~/.cache/nvim
 #mkdir ~/.config/fish
+
+ln -s ~/GitHub/dotfiles/bin $HOME/bin
 
 ln -s ~/GitHub/dotfiles/.config/fish $HOME/.config/fish
 ln -s ~/GitHub/dotfiles/.config/tmux $HOME/.config/tmux

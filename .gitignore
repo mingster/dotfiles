@@ -18,7 +18,7 @@ Thumbs.db
 # Session
 Session.vim
 
-
+#
 
 # Files that contain credentials or personal info
 .extra
@@ -26,3 +26,7 @@ Session.vim
 .mrjob.conf
 .s3cfg
 .aws/
+
+.cache
+
+.config/fish/fish_variables
