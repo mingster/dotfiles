@@ -28,10 +28,17 @@ simple() {
         ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot \
         syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape \
         exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl \
-        micro zram-tools git rsync kdiff3 fish tmux nvim lf kitty
+        micro zram-tools git rsync kdiff3 fish tmux neovim lf kitty
+
+    # add fish to system shell
+    su
+    echo $(which fish) >> /etc/shells
 
     # lazygit
-    #wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz
+    cd /tmp
+    wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz
+    tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz
+    sudo cp lazygit /usr/bin/
 
     #remove games
     sudo apt purge iagno lightsoff four-in-a-row gnome-robots pegsolitaire gnome-2048 hitori gnome-klotski gnome-mines gnome-mahjongg gnome-sudoku quadrapassel swell-foop gnome-tetravex gnome-taquin aisleriot gnome-chess five-or-more gnome-nibbles tali ; sudo apt autoremove

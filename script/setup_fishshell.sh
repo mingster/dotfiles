@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 
-# add fish to system shell
-su
-echo $(which fish) >> /etc/shells
+ln -s ~/GitHub/dotfiles/.config/kitty $HOME/.config/kitty
+ln -s ~/GitHub/dotfiles/.config/fish $HOME/.config/fish
+ln -s ~/GitHub/dotfiles/.config/tmux $HOME/.config/tmux
+ln -s ~/GitHub/dotfiles/.config/nvim $HOME/.config/nvim
+ln -s ~/GitHub/dotfiles/.config/lf $HOME/.config/lf
+ln -s ~/GitHub/dotfiles/.config/lazygit $HOME/.config/lazygit
 
 #
 # change shell to fish
