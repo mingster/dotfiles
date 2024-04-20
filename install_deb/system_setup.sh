@@ -147,35 +147,6 @@ simple() {
     sudo apt update
     sudo apt install papirus-icon-theme libreoffice-style-papirus
 
-    # jetbrainsmono with nerd font patch
-    if fc-list | grep -q JetBrains; then
-        echo ""
-        echo -e "\033[0;35mJetBrainsMono is already installed, skipping...\033[0m"
-        echo ""
-    else
-        mkdir -p ~/.local/share/fonts
-        cd ~/.local/share/fonts
-        wget https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/JetBrainsMono.zip
-        unzip *.zip
-        rm *.zip
-    fi
-
-    # font awesome
-    if fc-list | grep -q "Font Awesome"; then
-        echo ""
-        echo -e "\033[0;35Font Awesome is already installed, skipping...\033[0m"
-        echo ""
-    else
-        mkdir -p ~/.local/share/fonts
-        cd /tmp
-        wget https://use.fontawesome.com/releases/v6.0.0/fontawesome-free-6.0.0-desktop.zip
-        unzip *.zip
-        mv fontawesome-free-6.0.0-desktop/otfs/*.otf ~/.local/share/fonts/
-        rm *.zip
-        rm -rf fontawesome-free-6.0.0-desktop
-        cd
-    fi
-
     fc-cache -f
 
     # phinger cursors
