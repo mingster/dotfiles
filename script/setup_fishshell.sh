@@ -23,3 +23,6 @@ fisher install rstacruz/fish-npm-global
 
 # install a fish-compatible version of nvm
 fisher install jorgebucaran/nvm.fish
+
+# https://github.com/IlanCosman/tide
+tide configure
