@@ -31,8 +31,7 @@ simple() {
         micro zram-tools git rsync kdiff3 fish tmux neovim lf kitty neofetch fzf
 
     # add fish to system shell
-    su
-    echo $(which fish) >> /etc/shells
+    echo $(which fish) | sudo tee -a /etc/shells
 
     # lazygit
     cd /tmp
@@ -262,7 +261,7 @@ simple() {
     #
     chsh -s $(which fish)
 
-    
+
     ln -s -f ~/dotfiles/.config/tmux $HOME/.config/tmux
     ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
     ln -s -f ~/dotfiles/.config/lf $HOME/.config/lf

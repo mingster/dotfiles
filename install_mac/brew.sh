@@ -100,6 +100,9 @@ then
 fi
 cp -rf ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
 
+# add fish to system shell
+echo $(which fish) | sudo tee -a /etc/shells
+
 #
 echo ' change default shell to fish'
 #
