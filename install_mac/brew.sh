@@ -98,7 +98,7 @@ if [ ! -d ${HOME}/.config/fish ];
 then
     mkdir -p ${HOME}/.config/fish
 fi
-cp -rf ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
 
 # add fish to system shell
 echo $(which fish) | sudo tee -a /etc/shells

@@ -189,7 +189,7 @@ simple() {
 
     ## index.theme
     mkdir -p ~/.icons/default
-    cp ~/dotfiles/install_deb/index.theme ~/.icons/default/
+    rm -rf ~/.icons/default/index.theme && cp ~/dotfiles/install_deb/index.theme ~/.icons/default/
 
     # symlinks
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
@@ -214,13 +214,12 @@ simple() {
     then
         mkdir -p ${HOME}/.config/fish
     fi
-    cp -rf ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+    cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
 
     #
-    echo ' change default shell to fish'
+    echo 'change default shell to fish'
     #
     chsh -s $(which fish)
-
 
     ln -s -f ~/dotfiles/.config/tmux $HOME/.config/tmux
     ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
@@ -265,10 +264,9 @@ simple() {
     sudo update-grub
 
     # ----------------------------------------------------------------------------------------------
-    # Change to fish shell
+    # more fish shell setup
     # ----------------------------------------------------------------------------------------------
-    bash ../scripts/setup_fishshell.sh
-
+    ../script/setup_fishshell.sh
 }
 
 simple
