@@ -160,20 +160,6 @@ simple() {
         rm *.zip
     fi
 
-    # various google fonts
-    if fc-list | grep -q "Fira Sans"; then
-        echo ""
-        echo -e "\033[0;35mGoogle fonts are already installed, skipping...\033[0m"
-        echo ""
-    else
-        mkdir -p ~/.local/share/fonts
-        cd /tmp
-        wget -O fonts.zip "https://fonts.google.com/download?family=Fira%20Sans|Fira%20Sans%20Condensed|Fira%20Sans%20Extra%20Condensed|Fira%20Mono"
-        unzip fonts.zip -d ~/.local/share/fonts
-        rm -rf *.zip
-        cd
-    fi
-
     # font awesome
     if fc-list | grep -q "Font Awesome"; then
         echo ""
