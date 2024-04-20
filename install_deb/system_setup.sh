@@ -166,8 +166,9 @@ simple() {
     echo -e "\033[1;35mMaking sure configs and scripts are executable...\033[0m"
     echo ""
 
-    sudo chmod +x ~/dotfiles/config/bspwm/bspwmrc
-    sudo chmod +x ~/dotfiles/scripts/launch.sh
+    sudo chmod +x ~/dotfiles/.config/bspwm/bspwmrc
+    sudo chmod +x ~/dotfiles/install_deb/*.sh
+    sudo chmod +x ~/dotfiles/script/*.sh
 
     # ----------------------------------------------------------------------------------------------
     # Directories, symlinks, and configs
@@ -269,6 +270,8 @@ simple() {
 }
 
 simple
+sudo apt-get update && sudo apt-get upgrade && sudo apt-get full-upgrade
+
 
 echo ""
 echo -e "\033[1;32mEverything is set up, time to reboot!\033[0m"
