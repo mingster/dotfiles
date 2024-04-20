@@ -186,8 +186,10 @@ simple() {
 
     # create missing directories and files
     mkdir -p ~/.config/{bspwm,sxhkd,rofi,rofi-pass,gtkrc-2.0,gtk-3.0,zathura,lightdm}
+
+    ## index.theme
     mkdir -p ~/.icons/default
-    touch ~/.icons/default/index.theme
+    cp ~/dotfiles/install_deb/index.theme ~/.icons/default/
 
     # symlinks
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
