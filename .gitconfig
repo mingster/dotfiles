@@ -162,21 +162,23 @@
 
 
 [filter "tabspace"]
+
 [diff]
-  tool = meld
+  tool = kdiff3
+[difftool "kdiff3"]
+  path = /usr/local/bin/kdiff3
 [difftool]
   prompt = false
-[difftool "meld"]
-  trustExitCode = true
-  cmd = open -W -a Meld --args \"$LOCAL\" \"$REMOTE\"
+	keepBackup = false
+	trustExitCode = false
 [merge]
-  tool = meld
+  tool = kdiff3
 [mergetool]
   prompt = false
-[mergetool "meld"]
-  trustExitCode = true
-  cmd = open -W -a Meld --args --auto-merge \"$LOCAL\" \"$BASE\" \"$REMOTE\" --output=\"$MERGED\"
-
+  keepBackup = false
+  keepTemporaries = false
+[mergetool "kdiff3"]
+  path = /usr/local/bin/kdiff3
 
 #[difftool "sourcetree"]
 #	cmd = opendiff \"$LOCAL\" \"$REMOTE\"

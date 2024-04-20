@@ -1,0 +1,41 @@
+# change page color to conform with system theme
+set recolor   
+set recolor-lightcolor "#282c34"
+set recolor-keephue
+
+# change background to conform with system theme
+set default-bg "#282c34"
+
+# enable copy to clipboard
+set selection-clipboard clipboard
+
+# completely remove GUI 
+set guioptions none
+
+# press f to toggle fullscreen
+unmap f
+map f toggle_fullscreen
+map [fullscreen] f toggle_fullscreen
+
+# press r to toggle recolor
+map [normal] r recolor
+map [fullscreen] r recolor
+
+# press R to rotate
+map [normal] R rotate
+map [fullscreen] R rotate
+
+# open document in best-fit width mode by default
+set adjust-open "best-fit"
+
+# scroll up and down using ne
+map [normal]     n scroll down
+map [fullscreen] n scroll down
+map [normal]     e scroll up
+map [fullscreen] e scroll up
+
+# jump pages with mi
+map [normal]     m navigate previous
+map [fullscreen] m navigate previous
+map [normal]     i navigate next
+map [fullscreen] i navigate next

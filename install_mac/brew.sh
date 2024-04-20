@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-echo 'Run this file to: 1.osx settings adj; 2.install essential apps; 3.zsh setup...'
+echo 'Run this file to: 1.osx settings adj; 2.install essential apps; 3.fish shell setup...'
 
 # Install command-line tools using Homebrew.
 sh ./osxprep.sh
@@ -25,7 +25,7 @@ brew update && brew upgrade
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 
 # Install essential binaries.
-brew install mas neofetch git rsync micro meld
+brew install mas neofetch git rsync micro kdiff3
 
 brew install fish
 brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
@@ -38,8 +38,6 @@ brew install jesseduffield/lazygit/lazygit
 # Nerd fonts - Powerline-patched fonts. I use Hack.
 brew tap homebrew/cask-fonts
 brew install font-hack-nerd-font
-
-
 
 # essential cask apps
 brew install --cask iterm2
@@ -99,38 +97,7 @@ ln -s ~/GitHub/dotfiles/.config/nvim $HOME/.config/nvim
 ln -s ~/GitHub/dotfiles/.config/lf $HOME/.config/lf
 ln -s ~/GitHub/dotfiles/.config/lazygit $HOME/.config/lazygit
 
-# add fish to system shell
-su
-echo $(which fish) >> /etc/shells
-
-#
-# change shell to fish
-#
-chsh -s $(which fish)
-
-## enter fish shell
-fish
-
-# install fisher - https://github.com/jorgebucaran/fisher
-curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher
-
-# install shell theme
-fisher install IlanCosman/tide@v6
-
-# icon of lf
-fisher install joshmedeski/fish-lf-icons
-
-# Install z to quickly jump across known directories:
-fisher install jethrokuan/z
-
-# Install fzf, a CLI fuzzy-finder, and make it work amazingly well with fish:
-brew install fzf && fisher install patrickf1/fzf.fish
-
-# Install a plugin that avoids issues where fish doesn't recognize global npm scripts:
-fisher install rstacruz/fish-npm-global
-
-# Install a fish-compatible version of nvm:
-fisher install jorgebucaran/nvm.fish
+bash ../script/setup_fishsell.sh
 
 # install node 20.12.2
 nvm install v20.12.2
