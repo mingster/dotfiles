@@ -113,7 +113,8 @@ ln -s ~/dotfiles/.config/nvim $HOME/.config/nvim
 ln -s ~/dotfiles/.config/lf $HOME/.config/lf
 ln -s ~/dotfiles/.config/lazygit $HOME/.config/lazygit
 
-bash ../script/setup_fishsell.sh
-
 # install node 20.12.2
 nvm install v20.12.2
+
+# install fish shell plug-ins
+../script/setup_fishsell.sh
