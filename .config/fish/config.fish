@@ -1,16 +1,73 @@
+set fish_greeting ""
+neofetch
+
+
+switch (uname)
+    case Linux
+
+    case Darwin
+      # homebrew
+      eval "$(/usr/local/bin/brew shellenv)"
+
+      set -x HOMEBREW_NO_ANALYTICS 1
+      set -x HOMEBREW_NO_ENV_HINTS 1
+
+      set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+      set -gx PATH $PATH $HOME/Library/Android/sdk/platform-tools
+      set -gx PATH $PATH $JAVA_HOME/bin
+
+      # node v20.x
+      set -gx PATH $PATH /usr/local/opt/node@20/bin
+
+      # mysql-client
+      set -gx PATH $PATH /usr/local/opt/mysql-client/bin
+
+      # activate asdf
+      #source /usr/local/opt/asdf/libexec/asdf.sh
+
+    case FreeBSD NetBSD DragonFly
+
+    case '*'
+
+end
+
+
+
+
+
+if status --is-interactive
+end
+
+
+#
+# universal
+#
+set -gx PATH $PATH /usr/local/bin
+set -gx PATH $PATH /usr/local/sbin
+set -gx PATH $PATH ~/bin
+set -gx PATH $PATH ~/bin2
+set -x PATH $HOME/.local/bin $PATH
+
+#set -x EDITOR vim
+#set -x VISUAL $EDITOR
+
+# set -gx PATH $PATH /usr/bin
+# set -gx PATH $PATH /bin
+# set -gx PATH $PATH /usr/sbin
+# set -gx PATH $PATH /sbin
+
+# nvm
+set -gx NVM_DIR $HOME/.nvm
+
 if status is-interactive
     # Commands to run in interactive sessions can go here
 end
 
-set fish_greeting ""
-neofetch
 # tmux
 
 # Print a new line after any command
 source ~/.config/fish/functions/postexec_newline.fish
 
-# Setup brew
-# eval "$(/usr/local/bin/brew shellenv)"
 
 # Clear line on CTRL + C
 # Sometimes it still doesn't work well enough on node.js scripts :(
@@ -55,31 +112,7 @@ end
 
 
 if status --is-login
-  # set -gx PATH $PATH /usr/bin
-  # set -gx PATH $PATH /bin
-  # set -gx PATH $PATH /usr/sbin
-  # set -gx PATH $PATH /sbin
 
-    set -gx PATH $PATH /usr/local/bin
-    set -gx PATH $PATH /usr/local/sbin
-    set -gx PATH $PATH ~/bin
-    set -gx PATH $PATH ~/bin2
-
-    set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
-    set -gx PATH $PATH $HOME/Library/Android/sdk/platform-tools
-    set -gx PATH $PATH $JAVA_HOME/bin
-
-    # node v20.x
-    set -gx PATH $PATH /usr/local/opt/node@20/bin
-
-    # mysql-client
-    set -gx PATH $PATH /usr/local/opt/mysql-client/bin
-
-    # activate asdf
-    #source /usr/local/opt/asdf/libexec/asdf.sh
-
-    # nvm
-    set -gx NVM_DIR $HOME/.nvm
 end
 
 function on_exit --on-event fish_exit
