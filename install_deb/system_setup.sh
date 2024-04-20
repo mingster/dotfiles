@@ -28,7 +28,7 @@ simple() {
         ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot \
         syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape \
         exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl \
-        micro zram-tools git rsync kdiff3 fish tmux neovim lf kitty
+        micro zram-tools git rsync kdiff3 fish tmux neovim lf kitty neofetch fzf
 
     # add fish to system shell
     su
@@ -248,6 +248,25 @@ simple() {
     ln -s -f ~/dotfiles/config/index.theme ~/.icons/default/index.theme
     sudo ln -s -f ~/dotfiles/config/index.theme /usr/share/icons/default/index.theme
     sudo ln -s -f ~/dotfiles/config/lightdm/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf
+
+    #ln -s -f ~/dotfiles/.config/fish $HOME/.config/fish
+    #ln -s ~/dotfiles/.config/fish $HOME/.config/fish
+    if [ ! -d ${HOME}/.config/fish ];
+    then
+        mkdir -p ${HOME}/.config/fish
+    fi
+    cp -rf ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+
+    #
+    echo ' change default shell to fish'
+    #
+    chsh -s $(which fish)
+
+    
+    ln -s -f ~/dotfiles/.config/tmux $HOME/.config/tmux
+    ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
+    ln -s -f ~/dotfiles/.config/lf $HOME/.config/lf
+    ln -s -f ~/dotfiles/.config/lazygit $HOME/.config/lazygit
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw

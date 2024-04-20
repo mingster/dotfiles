@@ -31,6 +31,7 @@ brew install fish
 brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
 brew install nvim
 brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
+brew install  fzf
 
 # lazygit
 brew install jesseduffield/lazygit/lazygit
@@ -87,15 +88,27 @@ then
     mkdir -p ${HOME}/.cache/nvim
 fi
 
+ln -s ~/GitHub/dotfiles $HOME
+ln -s ~/dotfiles/bin $HOME/bin
 
-ln -s ~/GitHub/dotfiles/bin $HOME/bin
+ln -s ~/dotfiles/.config/kitty $HOME/.config/kitty
 
-ln -s ~/GitHub/dotfiles/.config/kitty $HOME/.config/kitty
-ln -s ~/GitHub/dotfiles/.config/fish $HOME/.config/fish
-ln -s ~/GitHub/dotfiles/.config/tmux $HOME/.config/tmux
-ln -s ~/GitHub/dotfiles/.config/nvim $HOME/.config/nvim
-ln -s ~/GitHub/dotfiles/.config/lf $HOME/.config/lf
-ln -s ~/GitHub/dotfiles/.config/lazygit $HOME/.config/lazygit
+#ln -s ~/dotfiles/.config/fish $HOME/.config/fish
+if [ ! -d ${HOME}/.config/fish ];
+then
+    mkdir -p ${HOME}/.config/fish
+fi
+cp -rf ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+
+#
+echo ' change default shell to fish'
+#
+chsh -s $(which fish)
+
+ln -s ~/dotfiles/.config/tmux $HOME/.config/tmux
+ln -s ~/dotfiles/.config/nvim $HOME/.config/nvim
+ln -s ~/dotfiles/.config/lf $HOME/.config/lf
+ln -s ~/dotfiles/.config/lazygit $HOME/.config/lazygit
 
 bash ../script/setup_fishsell.sh
 

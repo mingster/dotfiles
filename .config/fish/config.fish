@@ -10,7 +10,7 @@ neofetch
 source ~/.config/fish/functions/postexec_newline.fish
 
 # Setup brew
-eval "$(/usr/local/bin/brew shellenv)"
+# eval "$(/usr/local/bin/brew shellenv)"
 
 # Clear line on CTRL + C
 # Sometimes it still doesn't work well enough on node.js scripts :(
