@@ -88,7 +88,7 @@ then
     mkdir -p ${HOME}/.cache/nvim
 fi
 
-ln -s ~/GitHub/dotfiles $HOME
+#ln -s ~/GitHub/dotfiles $HOME
 ln -s ~/dotfiles/bin $HOME/bin
 
 ln -s ~/dotfiles/.config/kitty $HOME/.config/kitty
@@ -117,4 +117,4 @@ ln -s ~/dotfiles/.config/lazygit $HOME/.config/lazygit
 nvm install v20.12.2
 
 # install fish shell plug-ins
-../script/setup_fishsell.sh
+fish ~/dotfiles/script/setup_fishsell.sh

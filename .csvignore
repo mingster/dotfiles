@@ -1,0 +1,13 @@
+.DS_Store
+.FBCIndex
+.FBCIndexCopy
+.FBCIndexTemp
+.FBCLockFolder
+.localized
+*.pbxuser
+build
+
+*.build
+*.framework
+*.woa
+*STRIPPED
