@@ -89,7 +89,7 @@ then
 fi
 
 #ln -s ~/GitHub/dotfiles $HOME
-ln -s ~/dotfiles/bin $HOME/bin
+ln -s ~/dotfiles/bin $HOME/
 
 ln -s ~/dotfiles/.config/kitty $HOME/.config/kitty
 
@@ -108,13 +108,13 @@ echo ' change default shell to fish'
 #
 chsh -s $(which fish)
 
-ln -s ~/dotfiles/.config/tmux $HOME/.config/tmux
-ln -s ~/dotfiles/.config/nvim $HOME/.config/nvim
-ln -s ~/dotfiles/.config/lf $HOME/.config/lf
-ln -s ~/dotfiles/.config/lazygit $HOME/.config/lazygit
+ln -s ~/dotfiles/.config/tmux $HOME/.config/
+ln -s ~/dotfiles/.config/nvim $HOME/.config/
+ln -s ~/dotfiles/.config/lf $HOME/.config/
+ln -s ~/dotfiles/.config/lazygit $HOME/.config/
 
 # install node 20.12.2
-nvm install v20.12.2
+#nvm install v20.12.2
 
 # install fish shell plug-ins
-fish ~/dotfiles/script/setup_fishsell.sh
+fish ~/dotfiles/script/setup_fishshell.sh
