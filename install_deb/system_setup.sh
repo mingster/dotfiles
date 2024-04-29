@@ -24,7 +24,7 @@ simple() {
 
     sudo apt install -y \
         xorg bspwm picom build-essential apt-transport-https software-properties-common \
-        make cmake polybar suckless-tools rofi pass pinentry-gnome3 lua5.4 \
+        make cmake polybar suckless-tools rofi pass lua5.4 \
         ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot \
         syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape \
         exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl \
@@ -147,7 +147,33 @@ simple() {
     sudo apt update
     sudo apt install papirus-icon-theme libreoffice-style-papirus
 
-    fc-cache -f
+    # Hack Nerd font
+
+    sudo apt install -y unzip fonts-recommended fonts-ubuntu fonts-font-awesome fonts-terminus
+    mkdir -p ~/.local/share/fonts
+
+    cd /tmp
+    fonts=(
+    "CascadiaCode"
+    "FiraCode"
+    "Hack"
+    "Inconsolata"
+    "JetBrainsMono"
+    "Meslo"
+    "Mononoki"
+    "RobotoMono"
+    "SourceCodePro"
+    "UbuntuMono"
+    )
+
+    for font in ${fonts[@]}
+    do
+        wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/$font.zip
+    	unzip $font.zip -d $HOME/.local/share/fonts/$font/
+        rm $font.zip
+    done
+
+    fc-cache -f -v
 
     # phinger cursors
     if [ ! -d "/usr/share/icons/phinger-cursors" ]; then
@@ -177,8 +203,8 @@ simple() {
     echo ""
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
-    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 20
-    gsettings set org.gnome.desktop.peripherals.keyboard delay 350
+    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     echo ""
     echo -e "\033[1;35mSetting up directories and symlinks...\033[0m"
