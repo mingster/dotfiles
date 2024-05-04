@@ -75,7 +75,7 @@
 
 	# Use custom `.gitignore` and `.gitattributes`
 	attributesfile = /Users/mtsai/dotfiles/.gitattributes
-	excludesfile = /Users/mtsai/dotfiles/.gitignore_global
+	excludesfile = /Users/mtsai/GitHub/dotfiles/.gitignore_global
 
 	# Treat spaces before tabs and all kinds of trailing whitespace as an error
 	# [default] trailing-space: looks for spaces at the end of a line
@@ -209,8 +209,8 @@
 [http]
 	postBuffer = 524288000
 [difftool "sourcetree"]
-	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
+	cmd = /Applications/kdiff3.app/Contents/MacOS/kdiff3 \"$LOCAL\" \"$REMOTE\"
 	path = 
 [mergetool "sourcetree"]
-	cmd = /Applications/_dev/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
+	cmd = /Applications/kdiff3.app/Contents/MacOS/kdiff3 \"$BASE\" \"$LOCAL\" \"$REMOTE\" -o \"$MERGED\"
 	trustExitCode = true
