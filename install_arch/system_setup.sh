@@ -24,11 +24,10 @@ simple() {
 
     sudo pacman -S --needed xorg sddm
     sudo pacman -S --needed plasma kde-applications
-    sudo pacman -S --needed build-essential \
-        ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot \
-        syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape \
-        exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl \
-        micro zram-tools git rsync kdiff3 fish tmux neovim lf kitty neofetch fzf
+    sudo pacman -S --needed rsync wget curl unzip micro firefox
+    #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
+    sudo pacman -S --needed zram-tools kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch github-cli
+    sudo pacman -S --needed --noconfirm base-devel
 
     # add fish to system shell
     #echo $(which fish) | sudo tee -a /etc/shells
@@ -43,7 +42,7 @@ simple() {
 
     # Hack Nerd font
 
-    sudo apt install -y unzip fonts-recommended fonts-ubuntu fonts-font-awesome fonts-terminus
+    #sudo pacman -S --needed unzip fonts-recommended fonts-ubuntu fonts-font-awesome fonts-terminus
     mkdir -p ~/.local/share/fonts
 
     cd /tmp
@@ -104,7 +103,7 @@ simple() {
     then
         mkdir -p ${HOME}/.config/fish
     fi
-    cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+    cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
 
     #
     echo 'change default shell to fish'
