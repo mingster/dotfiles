@@ -104,9 +104,9 @@ fi
 
 #ln -s ~/GitHub/dotfiles $HOME
 
-## kitty
 ln -s ~/dotfiles/bin $HOME/
 
+## kitty
 if [ ! -d ${HOME}/.config/kitty ];
 then
     rm -rf ${HOME}/.config/kitty
@@ -118,7 +118,7 @@ if [ ! -d ${HOME}/.config/fish ];
 then
     mkdir -p ${HOME}/.config/fish
 fi
-cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
 
 # add fish to system shell
 echo $(which fish) | sudo tee -a /etc/shells
