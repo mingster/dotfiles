@@ -74,8 +74,8 @@
 [core]
 
 	# Use custom `.gitignore` and `.gitattributes`
-	attributesfile = /Users/mtsai/dotfiles/.gitattributes
-	excludesfile = /Users/mtsai/GitHub/dotfiles/.gitignore_global
+	attributesfile = /home/mtsai/dotfiles/.gitattributes
+	excludesfile = /home/mtsai/dotfiles/.gitignore_global
 
 	# Treat spaces before tabs and all kinds of trailing whitespace as an error
 	# [default] trailing-space: looks for spaces at the end of a line
@@ -189,8 +189,8 @@
 
 
 [user]
-	name = Ming Tsai
-	email = mingster.tsai@gmail.com
+	name = mingster
+	email = mingster@users.noreply.github.com
 [commit]
 	template = /Users/mtsai/.stCommitMsg
 [filter "lfs"]
@@ -214,3 +214,9 @@
 [mergetool "sourcetree"]
 	cmd = /Applications/kdiff3.app/Contents/MacOS/kdiff3 \"$BASE\" \"$LOCAL\" \"$REMOTE\" -o \"$MERGED\"
 	trustExitCode = true
+[credential "https://github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
