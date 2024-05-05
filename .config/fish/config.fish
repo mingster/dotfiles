@@ -9,6 +9,8 @@ switch (uname)
       # homebrew
       eval "$(/usr/local/bin/brew shellenv)"
 
+      set -gx XDG_CONFIG_HOME ~/.config
+
       set -x HOMEBREW_NO_ANALYTICS 1
       set -x HOMEBREW_NO_ENV_HINTS 1
 
