@@ -22,13 +22,17 @@ simple() {
     echo -e "\033[1;35mInstalling applications...\033[0m"
     echo ""
 
-    sudo apt install -y \
+    sudo apt install -y
         xorg bspwm picom build-essential apt-transport-https software-properties-common \
         make cmake polybar suckless-tools rofi pass lua5.4 \
-        ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot \
+        network-manager xinput feh arandr zathura scrot \
         syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape \
         exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl \
-        micro zram-tools git rsync kdiff3 fish tmux neovim lf kitty neofetch fzf
+        zram-tools
+
+    sudo apt install -y git ufw rsync unzip curl wget wput
+    sudo apt install -y micro kdiff3 fish tmux neovim lf kitty neofetch fzf
+    sudo apt install -y chromium-browser
 
     # add fish to system shell
     echo $(which fish) | sudo tee -a /etc/shells

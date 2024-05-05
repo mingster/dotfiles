@@ -1,5 +1,7 @@
-#!/bin/bash
 
+# install github desktop
+
+```
 sudo pacman -Syu
 
 sudo pacman -S --needed --noconfirm base-devel git
@@ -24,3 +26,4 @@ yay -S github-desktop-bin --noconfirm
 
 # Remove GitHub Desktop
 # yay -Rns github-desktop-bin --noconfirm
+```
