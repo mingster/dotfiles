@@ -40,8 +40,6 @@ micro -plugin install editorconfig
 micro -plugin install fish
 micro -plugin install fzf
 
-## kitty
-
 if [ ! -d ${HOME}/.config/micro ];
 then
     mkdir -p ${HOME}/.config/micro

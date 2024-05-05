@@ -31,11 +31,24 @@ simple() {
         zram-tools
 
     sudo apt install -y git ufw rsync unzip curl wget wput
-    sudo apt install -y micro kdiff3 fish tmux neovim lf kitty neofetch fzf
+    sudo apt install -y kdiff3 fish tmux neovim lf kitty neofetch fzf
     sudo apt install -y chromium-browser
 
     # add fish to system shell
     echo $(which fish) | sudo tee -a /etc/shells
+
+    # micro editor
+    sudo apt install -y micro
+    micro -plugin install editorconfig
+    micro -plugin install fish
+    micro -plugin install fzf
+
+    if [ ! -d ${HOME}/.config/micro ];
+    then
+        mkdir -p ${HOME}/.config/micro
+    fi
+    ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
+
 
     # lazygit
     cd /tmp
@@ -208,7 +221,7 @@ simple() {
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
     gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
+    gsettings set org.gnome.desktop.peripherals.keyboard delay 200
 
     echo ""
     echo -e "\033[1;35mSetting up directories and symlinks...\033[0m"
@@ -224,7 +237,7 @@ simple() {
     # symlinks
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
     ln -s -f ~/dotfiles/.config/gtk/.gtkrc-2.0 ~/.config/.gtkrc-2.0
-    ln -s -f ~/dotfiles/.config/gtk/settings.ini ~/.config/gtk-3.0/settings.ini
+    cp ~/dotfiles/.config/gtk/settings.ini.sample ~/.config/gtk-3.0/settings.ini
     ln -s -f ~/dotfiles/.config/mimeapps.list ~/.config/mimeapps.list
     ln -s -f ~/dotfiles/.config/bspwm/bspwmrc ~/.config/bspwm/bspwmrc
     ln -s -f ~/dotfiles/.config/sxhkd/sxhkdrc ~/.config/sxhkd/sxhkdrc
@@ -244,7 +257,7 @@ simple() {
     then
         mkdir -p ${HOME}/.config/fish
     fi
-    cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/fish/
+    cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/
 
     #
     echo 'change default shell to fish'

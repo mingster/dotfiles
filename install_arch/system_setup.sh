@@ -25,7 +25,7 @@ simple() {
     sudo pacman -S --needed xorg sddm
     sudo pacman -S --needed --noconfirm base-devel
     sudo pacman -S --needed plasma kde-applications
-    sudo pacman -S --needed openssh rsync wget curl unzip micro chromium-browser
+    sudo pacman -S --needed openssh rsync wget curl unzip chromium-browser
     #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
     sudo pacman -S --needed git github-cli
     sudo pacman -S --needed zram-tools kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
@@ -33,6 +33,18 @@ simple() {
     # add fish to system shell
     echo $(which fish) | sudo tee -a /etc/shells
 
+
+    # micro editor
+    sudo pacman -S --needed micro
+    micro -plugin install editorconfig
+    micro -plugin install fish
+    micro -plugin install fzf
+
+    if [ ! -d ${HOME}/.config/micro ];
+    then
+        mkdir -p ${HOME}/.config/micro
+    fi
+    ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
 ## edit /etc/ssh/sshd_config
 
