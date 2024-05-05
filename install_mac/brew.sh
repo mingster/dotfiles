@@ -25,7 +25,7 @@ brew update && brew upgrade
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 
 # Install essential binaries.
-brew install mas git rsync wget curl unzip neofetch kdiff3
+brew install mas git gh rsync wget curl unzip neofetch kdiff3
 
 brew install fish
 brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
