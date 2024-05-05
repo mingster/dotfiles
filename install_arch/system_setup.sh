@@ -33,6 +33,14 @@ simple() {
     # add fish to system shell
     echo $(which fish) | sudo tee -a /etc/shells
 
+
+## edit /etc/ssh/sshd_config
+
+#replace
+# Subsystem sftp /usr/lib/openssh/sftp-server
+#by
+# Subsystem sftp internal-sftp
+
     # ----------------------------------------------------------------------------------------------
     # Appearance
     # ----------------------------------------------------------------------------------------------

@@ -25,13 +25,29 @@ brew update && brew upgrade
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 
 # Install essential binaries.
-brew install mas neofetch git rsync micro kdiff3
+brew install mas git rsync wget curl unzip neofetch kdiff3
 
 brew install fish
 brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
 brew install nvim
 brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
 brew install  fzf
+
+
+# micro editor
+brew install micro
+micro -plugin install editorconfig
+micro -plugin install fish
+micro -plugin install fzf
+
+## kitty
+
+if [ ! -d ${HOME}/.config/micro ];
+then
+    mkdir -p ${HOME}/.config/micro
+fi
+ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
+
 
 # lazygit
 brew install jesseduffield/lazygit/lazygit
@@ -89,11 +105,17 @@ then
 fi
 
 #ln -s ~/GitHub/dotfiles $HOME
+
+## kitty
 ln -s ~/dotfiles/bin $HOME/
 
-ln -s ~/dotfiles/.config/kitty $HOME/.config/kitty
+if [ ! -d ${HOME}/.config/kitty ];
+then
+    rm -rf ${HOME}/.config/kitty
+fi
+ln -s ~/dotfiles/.config/kitty $HOME/.config/
 
-#ln -s ~/dotfiles/.config/fish $HOME/.config/fish
+## fish
 if [ ! -d ${HOME}/.config/fish ];
 then
     mkdir -p ${HOME}/.config/fish
