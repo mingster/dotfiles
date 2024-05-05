@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-if [ ! -d ${HOME}/dotfiles ];
+if [ ! -d $HOME/dotfiles ];
 then
   echo 'create symlinks...'
 
@@ -21,7 +21,7 @@ then
   git config --global core.attributesfile ~/dotfiles/.gitattributes
 fi
 
-echo $OSTYPE;;
+echo $OSTYPE
 
 case "$OSTYPE" in
   linux*)   echo "linux" ;;
