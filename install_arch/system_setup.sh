@@ -23,14 +23,15 @@ simple() {
     echo ""
 
     sudo pacman -S --needed xorg sddm
-    sudo pacman -S --needed plasma kde-applications
-    sudo pacman -S --needed rsync wget curl unzip micro firefox
-    #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
-    sudo pacman -S --needed zram-tools kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch github-cli
     sudo pacman -S --needed --noconfirm base-devel
+    sudo pacman -S --needed plasma kde-applications
+    sudo pacman -S --needed openssh rsync wget curl unzip micro chromium-browser
+    #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
+    sudo pacman -S --needed git github-cli
+    sudo pacman -S --needed zram-tools kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
 
     # add fish to system shell
-    #echo $(which fish) | sudo tee -a /etc/shells
+    echo $(which fish) | sudo tee -a /etc/shells
 
     # ----------------------------------------------------------------------------------------------
     # Appearance
