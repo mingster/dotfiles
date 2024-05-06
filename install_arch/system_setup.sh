@@ -162,6 +162,7 @@ simple() {
     fi
 
     ## POST INSTALL
+
     ## edit /etc/ssh/sshd_config
     #replace
     # Subsystem sftp /usr/lib/openssh/sftp-server
@@ -174,14 +175,18 @@ simple() {
 
     ## mega
     cd /tmp
-    git clone https://aur.archlinux.org/megasync.git
-    cd megasync
-    sudo makepkg -Acs
+    wget https://mega.nz/linux/repo/Arch_Extra/x86_64/megasync-x86_64.pkg.tar.zst && sudo pacman -U \"$PWD/megasync-x86_64.pkg.tar.zst\"
+
+    ## noip
+    //https://www.noip.com/support/knowledgebase/install-linux-3-x-dynamic-update-client-duc
+    cd /tmp
+    git clone https://aur.archlinux.org/noip.git
+    cd noip
+    makepkg -Acs
+    sudo  pacmau -U noip-3.1.0-1-x86_64.pkg.tar.zst
 
 
-    ## vnc
-
-
+    ## update the system
     sudo pacman -Syu
 }
 
