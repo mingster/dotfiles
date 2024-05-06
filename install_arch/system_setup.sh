@@ -22,13 +22,13 @@ simple() {
     echo -e "\033[1;35mInstalling applications...\033[0m"
     echo ""
 
-    sudo pacman -S --needed xorg sddm
-    sudo pacman -S --needed --noconfirm base-devel
-    sudo pacman -S --needed plasma kde-applications
-    sudo pacman -S --needed openssh rsync wget curl unzip chromium-browser
+    #sudo pacman -S --needed xorg sddm
+    #sudo pacman -S --needed --noconfirm base-devel
+    #sudo pacman -S --needed plasma kde-applications
+    sudo pacman -S -y --needed openssh rsync wget curl unzip chromium ufw
     #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
     sudo pacman -S --needed git github-cli
-    sudo pacman -S --needed zram-tools kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
+    sudo pacman -S --needed kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
 
     # add fish to system shell
     echo $(which fish) | sudo tee -a /etc/shells
@@ -51,14 +51,6 @@ simple() {
     wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz
     tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz
     sudo cp lazygit /usr/bin/
-
-
-## edit /etc/ssh/sshd_config
-
-#replace
-# Subsystem sftp /usr/lib/openssh/sftp-server
-#by
-# Subsystem sftp internal-sftp
 
     # ----------------------------------------------------------------------------------------------
     # Appearance
@@ -125,7 +117,7 @@ simple() {
 
     # symlinks
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
-    ln -s -f ~/dotfiles/.config/kitty ~/.config/kitty
+    ln -s -f ~/dotfiles/.config/kitty ~/.config/
 
     if [ ! -d ${HOME}/.config/fish ];
     then
@@ -168,11 +160,32 @@ simple() {
 
         sudo ufw allow syncthing
     fi
+
+    ## POST INSTALL
+    ## edit /etc/ssh/sshd_config
+    #replace
+    # Subsystem sftp /usr/lib/openssh/sftp-server
+    #by
+    # Subsystem sftp internal-sftp
+
+    gh auth login
+
+    ## ssh-copyid
+
+    ## mega
+    cd /tmp
+    git clone https://aur.archlinux.org/megasync.git
+    cd megasync
+    sudo makepkg -Acs
+
+
+    ## vnc
+
+
+    sudo pacman -Syu
 }
 
 simple
-
-#sudo apt-get update && sudo apt-get upgrade && sudo apt-get full-upgrade
 
 echo ""
 echo -e "\033[1;32mEverything is set up, time to reboot!\033[0m"
