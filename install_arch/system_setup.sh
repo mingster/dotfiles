@@ -22,19 +22,27 @@ simple() {
     echo -e "\033[1;35mInstalling applications...\033[0m"
     echo ""
 
-    #sudo pacman -S --needed xorg sddm
-    #sudo pacman -S --needed --noconfirm base-devel
-    #sudo pacman -S --needed plasma kde-applications
+    echo ""
+    echo -e "\033[1;35myay\033[0m"
+    echo ""
+    sudo pacman -S --needed git base-devel && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si
+    yay -Y --gendb
+
+    echo ""
+    echo -e "\033[1;35mEssentials\033[0m"
+    echo ""
     sudo pacman -S -y --needed openssh rsync wget curl unzip chromium ufw
     #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
-    sudo pacman -S --needed git github-cli
-    sudo pacman -S --needed kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
+    sudo pacman -S --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
 
-    # add fish to system shell
+    echo ""
+    echo -e "\033[1;35m add fish to system shell \033[0m"
+    echo ""
     echo $(which fish) | sudo tee -a /etc/shells
 
-
-    # micro editor
+    echo ""
+    echo -e "\033[1;35m micro editor \033[0m"
+    echo ""
     sudo pacman -S --needed micro
     micro -plugin install editorconfig
     micro -plugin install fish
@@ -47,9 +55,9 @@ simple() {
     ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
     # lazygit
-    cd /tmp
-    wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz
-    tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz
+    cd /tmp && \
+    wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz && \
+    tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz && \
     sudo cp lazygit /usr/bin/
 
     # ----------------------------------------------------------------------------------------------
@@ -60,7 +68,7 @@ simple() {
     echo -e "\033[1;35mInstalling theme, icons, fonts...\033[0m"
     echo ""
 
-    # Hack Nerd font
+    # fonts
 
     #sudo pacman -S --needed unzip fonts-recommended fonts-ubuntu fonts-font-awesome fonts-terminus
     mkdir -p ~/.local/share/fonts
@@ -174,17 +182,18 @@ simple() {
     ## ssh-copyid
 
     ## mega
-    cd /tmp
-    wget https://mega.nz/linux/repo/Arch_Extra/x86_64/megasync-x86_64.pkg.tar.zst && sudo pacman -U \"$PWD/megasync-x86_64.pkg.tar.zst\"
+    ##cd /tmp && wget https://mega.nz/linux/repo/Arch_Extra/x86_64/megasync-x86_64.pkg.tar.zst && cd megasync-x86_64 && sudo pacman -U \"$PWD/megasync-x86_64.pkg.tar.zst\"
+
+    yay -S megasync
 
     ## noip
     //https://www.noip.com/support/knowledgebase/install-linux-3-x-dynamic-update-client-duc
-    cd /tmp
-    git clone https://aur.archlinux.org/noip.git
-    cd noip
-    makepkg -Acs
-    sudo  pacmau -U noip-3.1.0-1-x86_64.pkg.tar.zst
+    ##cd /tmp && git clone https://aur.archlinux.org/noip.git && cd noip && makepkg -Acs && sudo pacmau -U noip-3.1.0-1-x86_64.pkg.tar.zst
 
+    yay -S noip
+
+    # vscode
+    yay -S code
 
     ## update the system
     sudo pacman -Syu

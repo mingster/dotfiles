@@ -1,0 +1,13 @@
+[kitty.desktop][Global Shortcuts]
+_launch=Meta+K
+
+[org.kde.dolphin.desktop][Global Shortcuts]
+_launch=Meta+E
+
+[org.kde.kate.desktop][Global Shortcuts]
+_launch=Ctrl+T
+
+[org.kde.konsole.desktop][Global Shortcuts]
+NewTab=
+NewWindow=
+_launch=Meta+C
