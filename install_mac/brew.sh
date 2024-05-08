@@ -3,7 +3,7 @@
 echo 'Run this file to: 1.osx settings adj; 2.install essential apps; 3.fish shell setup...'
 
 # Install command-line tools using Homebrew.
-sh ./osxprep.sh
+sh ~/dotfiles/install_mac/osxprep.sh
 
 # Ask for the administrator password upfront.
 sudo -v
