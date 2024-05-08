@@ -3,5 +3,5 @@
     "CtrlUnderscore": "lua:comment.comment",
     "Ctrl-q":         "Quit",
     "Alt-q":         "Quit",
-    "Alt-s":         "Save"
+    "Ctrl-s": "Save,Quit"
 }

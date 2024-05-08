@@ -57,7 +57,7 @@ brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-fil
 brew install  fzf
 
 # create missing directories and files
-mkdir -p ~/.config/{microµ,fish}
+mkdir -p ~/.config/{micro,fish}
 
 # Install Yabai
 brew install koekeishiya/formulae/yabai
