@@ -33,19 +33,23 @@ brew install nvim
 brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
 brew install  fzf
 
+# create missing directories and files
+mkdir -p ~/.config/{micro,fish}
+
+# Install Yabai
+brew install koekeishiya/formulae/yabai
+# Install Skhd
+brew install koekeishiya/formulae/skhd
+
+ln -s ~/dotfiles/.config/yabai $HOME/.config/
+ln -s ~/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
 
 # micro editor
 brew install micro
 micro -plugin install editorconfig
 micro -plugin install fish
 micro -plugin install fzf
-
-if [ ! -d ${HOME}/.config/micro ];
-then
-    mkdir -p ${HOME}/.config/micro
-fi
 ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
-
 
 # lazygit
 brew install jesseduffield/lazygit/lazygit
@@ -57,7 +61,6 @@ brew install font-hack-nerd-font
 # essential cask apps
 brew install --cask iterm2
 brew install --cask kitty
-
 brew install --cask atom
 brew install --cask macdown
 brew install --cask readdle-spark
@@ -137,4 +140,4 @@ ln -s ~/dotfiles/.config/lazygit $HOME/.config/
 #nvm install v20.12.2
 
 # install fish shell plug-ins
-fish ~/dotfiles/script/setup_fishshell.sh
+# fish ~/dotfiles/script/setup_fishshell.sh

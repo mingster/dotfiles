@@ -17,7 +17,7 @@ changes are added to my favorites.
 - [Nerd fonts](https://github.com/ryanoasis/nerd-fonts) - Powerline-patched fonts. I use Hack.
 - [tmux]() - window manager
 - [lf File Manager](https://www.joshmedeski.com/posts/manage-files-with-lf/)
-- [lazygit]() 
+- [lazygit]()
 
 
 
@@ -88,6 +88,7 @@ Suggestions/improvements
 
 ## Thanks to…
 
+- [josean-dev / dev-environment-files](https://github.com/josean-dev/dev-environment-files)
 - @ptb and [his _OS X Lion Setup_ repository](https://github.com/ptb/Mac-OS-X-Lion-Setup)
 - [Ben Alman](http://benalman.com/) and his [dotfiles repository](https://github.com/cowboy/dotfiles)
 - [Chris Gerke](http://www.randomsquared.com/) and his [tutorial on creating an OS X SOE master image](http://chris-gerke.blogspot.com/2012/04/mac-osx-soe-master-image-day-7.html) + [_Insta_ repository](https://github.com/cgerke/Insta)
