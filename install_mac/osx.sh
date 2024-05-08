@@ -25,6 +25,11 @@ while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 # 1 hour
 #  sudo pmset -a standbydelay 3600
 
+## System Settings -> Control Center -> Automatically hide and show the menu bar
+defaults write NSGlobalDomain _HIHideMenuBar -bool true \
+    && killall Finder \
+    && open -ga /System/Library/CoreServices/Finder.app/
+
 # Set sidebar icon size to samll
 defaults write NSGlobalDomain NSTableViewDefaultSizeMode -int 1
 

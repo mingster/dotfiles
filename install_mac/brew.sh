@@ -21,11 +21,34 @@ fi
 # Make sure we’re using the latest Homebrew.
 brew update && brew upgrade
 
-# Install some CTF tools; see https://github.com/ctfs/write-ups.
-#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
+# essential cask apps
+brew install --cask iterm2
+brew install --cask kitty
+brew install --cask atom
+brew install --cask macdown
+brew install --cask readdle-spark
+brew install --cask google-chrome
+#brew install --cask firefox
+#brew install --cask teamviewer
+#brew install --cask skype
+#brew install --cask slack
+#brew install --cask dropbox
+brew install --cask megasync
+brew install --cask google-drive
+#brew install --cask onedrive
+#brew install --cask numi
+#brew install --cask alfred
+#brew install --cask keyboard-maestro
+#1176895641  Spark – Email App by Readdle
+#mas install 1176895641
+
+# Add to path (only apple silicon macbooks)
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Install essential binaries.
-brew install mas git gh rsync wget curl unzip neofetch kdiff3
+#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
+brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq
 
 brew install fish
 brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
@@ -34,7 +57,7 @@ brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-fil
 brew install  fzf
 
 # create missing directories and files
-mkdir -p ~/.config/{micro,fish}
+mkdir -p ~/.config/{microµ,fish}
 
 # Install Yabai
 brew install koekeishiya/formulae/yabai
@@ -57,32 +80,6 @@ brew install jesseduffield/lazygit/lazygit
 # Nerd fonts - Powerline-patched fonts. I use Hack.
 brew tap homebrew/cask-fonts
 brew install font-hack-nerd-font
-
-# essential cask apps
-brew install --cask iterm2
-brew install --cask kitty
-brew install --cask atom
-brew install --cask macdown
-brew install --cask readdle-spark
-brew install --cask google-chrome
-#brew install --cask firefox
-#brew install --cask teamviewer
-#brew install --cask skype
-#brew install --cask slack
-#brew install --cask dropbox
-brew install --cask megasync
-brew install --cask google-drive
-#brew install --cask onedrive
-#brew install --cask numi
-#brew install --cask alfred
-#brew install --cask keyboard-maestro
-#1176895641  Spark – Email App by Readdle
-#mas install 1176895641
-
-
-# Remove outdated versions from the cellar.
-brew cleanup && brew doctor
-
 
 if [ ! -d ${HOME}/.config ];
 then
@@ -117,10 +114,6 @@ fi
 ln -s ~/dotfiles/.config/kitty $HOME/.config/
 
 ## fish
-if [ ! -d ${HOME}/.config/fish ];
-then
-    mkdir -p ${HOME}/.config/fish
-fi
 cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
 
 # add fish to system shell
@@ -139,5 +132,22 @@ ln -s ~/dotfiles/.config/lazygit $HOME/.config/
 # install node 20.12.2
 #nvm install v20.12.2
 
-# install fish shell plug-ins
-# fish ~/dotfiles/script/setup_fishshell.sh
+# install sketchybar
+brew tap FelixKratz/formulae
+brew install sketchybar
+ln -s ~/dotfiles/.config/sketchybar $HOME/.config/
+
+brew install font-sf-pro
+brew install --cask sf-symbols
+curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/sketchybar-app-font.ttf \
+  -o $HOME/Library/Fonts/sketchybar-app-font.ttf
+
+curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/icon_map_fn.sh \
+  -o ~/dotfiles/.config/sketchybar/plugins/icon_map_fn.sh
+
+chmod +x ~/.config/sketchybar/*.sh
+chmod +x ~/.config/sketchybar/plugins/*.sh
+chmod +x ~/.config/sketchybar/items/*.sh
+
+# Remove outdated versions from the cellar.
+brew cleanup && brew doctor
