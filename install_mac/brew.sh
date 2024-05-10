@@ -42,9 +42,12 @@ brew install --cask google-drive
 #1176895641  Spark – Email App by Readdle
 #mas install 1176895641
 
+brew install --cask amethyst # Install Amethyst - https://ianyh.com/amethyst/
+ln -s ~/dotfiles/.config/amethyst $HOME/.config/
+
 # Add to path (only apple silicon macbooks)
-echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-eval "$(/opt/homebrew/bin/brew shellenv)"
+#echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+#eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Install essential binaries.
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
