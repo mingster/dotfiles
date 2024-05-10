@@ -59,6 +59,9 @@ yseop.vscode-yseopml
 #py
 ms-python.python
 cesium.gltf-vscode
+
+foxundermoon.shell-format #shellscript
+
 s-nlf-fh.glassit #GlassIt-VSC transparent theme (only work on linux)
 )
 
