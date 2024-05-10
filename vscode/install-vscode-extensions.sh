@@ -61,6 +61,8 @@ ms-python.python
 cesium.gltf-vscode
 )
 
+s-nlf-fh.glassit #GlassIt-VSC transparent theme (only work on linux)
+
 for i in ${pkglist[@]}; do
   code --install-extension $i
 done

@@ -1,7 +1,7 @@
 {
     "html.format.unformatted": "",
     "editor.multiCursorModifier": "ctrlCmd",
-    "editor.fontSize": 17,
+    "editor.fontSize": 14,
     "editor.fontFamily": "Sauce Code Pro,Menlo, Consolas, DejaVu Sans Mono, monospace",
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     /*
@@ -46,7 +46,6 @@
     "security.workspace.trust.untrustedFiles": "open",
     "terminal.integrated.copyOnSelection": true,
     "terminal.integrated.defaultProfile.windows": "Git Bash",
-    "terminal.integrated.enableBell": true,
     "[python]": {
         "editor.formatOnType": true
     },
@@ -117,8 +116,7 @@
     "javascript.updateImportsOnFileMove.enabled": "always",
     "files.autoSave": "afterDelay",
     "svelte.enable-ts-plugin": true,
-    "workbench.colorTheme": "GitHub Dark Dimmed",
-    "workbench.productIconTheme": "material-product-icons",
+    "workbench.colorTheme": "Default Dark+",
     "[xml]": {
         "editor.defaultFormatter": "DotJoshJohnson.xml"
     },
@@ -195,4 +193,8 @@
             ]
         }
     },
+    "accessibility.signals.terminalBell": {
+        "sound": "on"
+    },
+    "terminal.integrated.enableVisualBell": true,
 }
