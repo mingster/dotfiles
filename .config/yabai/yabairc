@@ -35,6 +35,6 @@ yabai -m rule --add app="^QuickTime Player$" manage=off
 yabai -m rule --add app="^RealVNC Viewer$" manage=off
 yabai -m rule --add app="^TeamViewer$" manage=off
 yabai -m rule --add app="^Sourcetree$" manage=off
-# yabai -m rule --add app="^Finder$" manage=off
+yabai -m rule --add app="^Finder$" manage=off
 
 yabai -m config external_bar all:32:0
