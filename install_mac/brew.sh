@@ -21,10 +21,10 @@ fi
 # Make sure we’re using the latest Homebrew.
 brew update && brew upgrade
 
-# essential cask apps
+echo ""
+echo -e "\033[1;35m essential apps \033[0m"
+echo ""
 brew install --cask iterm2
-brew install --cask alacritty
-brew install --cask kitty
 brew install --cask atom
 brew install --cask macdown
 brew install --cask readdle-spark
@@ -57,22 +57,70 @@ brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq
 
 cp ~/dotfiles/.gitconfig-macos ~/.gitconfig
 
-brew install fish
-brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
-brew install nvim
-brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
-brew install  fzf
+echo ""
+echo -e "\033[1;35m create missing directories and files \033[0m"
+echo ""
+if [ ! -d ${HOME}/.config ];
+then
+    mkdir -p ${HOME}/.config
+fi
 
-# create missing directories and files
 mkdir -p ~/.config/{micro,fish}
 
-# Install Ya bai
-brew install koekeishiya/formulae/yabai
-# Install Skhd
-brew install koekeishiya/formulae/skhd
+#ln -s ~/GitHub/dotfiles $HOME
+ln -s ~/dotfiles/bin $HOME/
 
-ln -s ~/dotfiles/.config/yabai $HOME/.config/
-ln -s ~/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
+
+echo ""
+echo -e "\033[1;35m fish shell \033[0m"
+echo ""
+
+brew install fish
+
+cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
+
+# add fish to system shell
+echo $(which fish) | sudo tee -a /etc/shells
+
+#
+echo ' change default shell to fish'
+#
+chsh -s $(which fish)
+
+echo ""
+echo -e "\033[1;35m Fonts \033[0m"
+echo ""
+
+# Nerd fonts - Powerline-patched fonts. I use Hack.
+brew tap homebrew/cask-fonts
+brew install font-hack-nerd-font
+
+echo ""
+echo -e "\033[1;35m kitty \033[0m"
+echo ""
+
+brew install --cask kitty
+
+if [ ! -d ${HOME}/.config/kitty ];
+then
+    rm -rf ${HOME}/.config/kitty
+fi
+ln -s ~/dotfiles/.config/kitty $HOME/.config/
+
+echo ""
+echo -e "\033[1;35m alacritty \033[0m"
+echo ""
+
+brew install --cask alacritty
+
+if [ ! -d ${HOME}/.config/alacritty ];
+then
+  rm -rf ${HOME}/.config/alacritty
+fi
+ln -s ~/dotfiles/.config/alacritty $HOME/.config/
+
+git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
+
 
 # micro editor
 brew install micro
@@ -81,17 +129,9 @@ micro -plugin install fish
 micro -plugin install fzf
 ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
-# lazygit
-brew install jesseduffield/lazygit/lazygit
-
-# Nerd fonts - Powerline-patched fonts. I use Hack.
-brew tap homebrew/cask-fonts
-brew install font-hack-nerd-font
-
-if [ ! -d ${HOME}/.config ];
-then
-    mkdir -p ${HOME}/.config
-fi
+# neovim
+brew install nvim
+ln -s ~/dotfiles/.config/nvim $HOME/.config/
 
 # optional but recommended
 if [ ! -d ${HOME}/.local/share/nvim ];
@@ -109,39 +149,27 @@ then
     mkdir -p ${HOME}/.cache/nvim
 fi
 
-#ln -s ~/GitHub/dotfiles $HOME
 
-ln -s ~/dotfiles/bin $HOME/
-
-## kitty
-if [ ! -d ${HOME}/.config/kitty ];
-then
-    rm -rf ${HOME}/.config/kitty
-fi
-ln -s ~/dotfiles/.config/kitty $HOME/.config/
-
-## fish
-cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
-
-# add fish to system shell
-echo $(which fish) | sudo tee -a /etc/shells
-
-#
-echo ' change default shell to fish'
-#
-chsh -s $(which fish)
+brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
+brew install lf # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
+brew install fzf
+brew install jesseduffield/lazygit/lazygit
 
 ln -s ~/dotfiles/.config/tmux $HOME/.config/
-ln -s ~/dotfiles/.config/nvim $HOME/.config/
 ln -s ~/dotfiles/.config/lf $HOME/.config/
 ln -s ~/dotfiles/.config/lazygit $HOME/.config/
 
-# install node 20.12.2
-#nvm install v20.12.2
+
+# Install Yabai
+brew install koekeishiya/formulae/yabai
+# Install Skhd
+brew install koekeishiya/formulae/skhd
+
+ln -s ~/dotfiles/.config/yabai $HOME/.config/
+ln -s ~/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
 
 # install sketchybar
-brew tap FelixKratz/formulae
-brew install sketchybar
+brew install FelixKratz/formulae/sketchybar
 ln -s ~/dotfiles/.config/sketchybar $HOME/.config/
 
 brew install font-sf-pro
