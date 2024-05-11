@@ -35,12 +35,26 @@ simple() {
     #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
     sudo pacman -S --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
 
-    sudo pacman -S --needed alacritty
-
     echo ""
     echo -e "\033[1;35m add fish to system shell \033[0m"
     echo ""
     echo $(which fish) | sudo tee -a /etc/shells
+
+
+    echo ""
+    echo -e "\033[1;35m alacritty \033[0m"
+    echo ""
+    sudo pacman -S --needed alacritty
+
+    if [ ! -d ${HOME}/.config/alacritty ];
+    then
+        mkdir -p ${HOME}/.config/alacritty
+    fi
+    ln -s ~/dotfiles/.config/alacritty $HOME/.config/
+
+    git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
+
+
 
     echo ""
     echo -e "\033[1;35m micro editor \033[0m"
