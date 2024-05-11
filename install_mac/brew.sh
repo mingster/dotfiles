@@ -23,6 +23,7 @@ brew update && brew upgrade
 
 # essential cask apps
 brew install --cask iterm2
+brew install --cask alacritty
 brew install --cask kitty
 brew install --cask atom
 brew install --cask macdown
@@ -42,6 +43,7 @@ brew install --cask google-drive
 #1176895641  Spark – Email App by Readdle
 #mas install 1176895641
 
+# another tile window manager as backup
 brew install --cask amethyst # Install Amethyst - https://ianyh.com/amethyst/
 ln -s ~/dotfiles/.config/amethyst $HOME/.config/
 
@@ -64,7 +66,7 @@ brew install  fzf
 # create missing directories and files
 mkdir -p ~/.config/{micro,fish}
 
-# Install Yabai
+# Install Ya bai
 brew install koekeishiya/formulae/yabai
 # Install Skhd
 brew install koekeishiya/formulae/skhd
