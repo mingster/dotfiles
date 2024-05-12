@@ -53,7 +53,7 @@ ln -s ~/dotfiles/.config/amethyst $HOME/.config/
 
 # Install essential binaries.
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq
+brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat
 
 cp ~/dotfiles/.gitconfig-macos ~/.gitconfig
 
