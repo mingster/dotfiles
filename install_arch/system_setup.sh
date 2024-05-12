@@ -127,8 +127,13 @@ simple() {
     echo ""
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
-    #gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    #gsettings set org.gnome.desktop.peripherals.keyboard delay 300
+    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    gsettings set org.gnome.desktop.peripherals.keyboard delay 500
+
+    # auto login - https://wiki.archlinux.org/title/SDDM#Autologin
+    # https://www.simplified.guide/kde/automatic-login
+    # system setting -> search sddm
+    gsettings set org.gnome.desktop.lockdown disable-lock-screen true
 
     echo ""
     echo -e "\033[1;35mSetting up directories and symlinks...\033[0m"
