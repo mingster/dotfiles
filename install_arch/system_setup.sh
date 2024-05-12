@@ -40,7 +40,6 @@ simple() {
     echo ""
     echo $(which fish) | sudo tee -a /etc/shells
 
-
     echo ""
     echo -e "\033[1;35m alacritty \033[0m"
     echo ""
@@ -53,8 +52,6 @@ simple() {
     ln -s ~/dotfiles/.config/alacritty $HOME/.config/
 
     git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
-
-
 
     echo ""
     echo -e "\033[1;35m micro editor \033[0m"
@@ -130,14 +127,18 @@ simple() {
     echo ""
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
-    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
+    #gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    #gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     echo ""
     echo -e "\033[1;35mSetting up directories and symlinks...\033[0m"
     echo ""
 
     # create missing directories and files
+    if [ ! -d ${HOME}/.local/bin ];
+    then
+        mkdir -p ${HOME}/.local/bin
+    fi
 
     # symlinks
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
