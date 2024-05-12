@@ -95,7 +95,7 @@ end
 abbr -a -g ls ls -laG
 
 if type -q pull
-abbr -add -g git git pull -rebase
+  abbr -add -g git git pull --rebase
 end
 
 # `ls` → `exa` abbreviation
