@@ -2,7 +2,7 @@
     "html.format.unformatted": "",
     "editor.multiCursorModifier": "ctrlCmd",
     "editor.fontSize": 14,
-    "editor.fontFamily": "Sauce Code Pro,Menlo, Consolas, DejaVu Sans Mono, monospace",
+    "editor.fontFamily": "Sauce Code Pro, Hack Nerd Font Mono, Menlo, Consolas, DejaVu Sans Mono, monospace",
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     /*
     "[typescriptreact]": {
@@ -36,7 +36,6 @@
     },
     "editor.bracketPairColorization.enabled": true,
     "editor.guides.bracketPairs": false,
-    "workbench.iconTheme": "material-icon-theme",
     "terminal.external.osxExec": "iTerm.app",
     "editor.suggestSelection": "first",
     "vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
@@ -44,8 +43,6 @@
     "editor.minimap.enabled": false,
     "npm.keybindingsChangedWarningShown": true,
     "security.workspace.trust.untrustedFiles": "open",
-    "terminal.integrated.copyOnSelection": true,
-    "terminal.integrated.defaultProfile.windows": "Git Bash",
     "[python]": {
         "editor.formatOnType": true
     },
@@ -53,8 +50,19 @@
     "files.associations": {
         "*.config": "aspnetcorerazor"
     },
-    "terminal.integrated.defaultProfile.osx": "zsh",
+    "terminal.integrated.env.osx": {},
+    "terminal.integrated.rightClickBehavior": "default",
+    "terminal.integrated.copyOnSelection": true,
+    "terminal.integrated.enableVisualBell": true,
+    "terminal.integrated.defaultProfile.windows": "Git Bash",
+    "terminal.integrated.defaultProfile.osx": "fish",
     "terminal.integrated.profiles.osx": {
+        "fish": {
+            "path": "/usr/local/bin/fish",
+            "args": [
+                "-l"
+            ]
+        },
         "zsh": {
             "path": "/usr/local/bin/zsh",
             "args": [
@@ -62,7 +70,9 @@
             ]
         }
     },
-    "terminal.integrated.fontFamily": "MesloLGS NF",
+    "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
+    "terminal.integrated.lineHeight": 1.1,
+    "terminal.integrated.fontSize": 12,
     "yaml.customTags": [
         "!And",
         "!And sequence",
@@ -97,10 +107,6 @@
     "editor.wordWrap": "off",
     "diffEditor.wordWrap": "off",
     "editor.guides.indentation": false,
-    "terminal.integrated.env.osx": {},
-    "terminal.integrated.lineHeight": 1.1,
-    "terminal.integrated.rightClickBehavior": "default",
-    "terminal.integrated.fontSize": 14,
     "workbench.colorCustomizations": {
         "editor.lineHighlightBackground": "#1073cf2d",
         "editor.lineHighlightBorder": "#9fced11f"
@@ -116,10 +122,6 @@
     "javascript.updateImportsOnFileMove.enabled": "always",
     "files.autoSave": "afterDelay",
     "svelte.enable-ts-plugin": true,
-    "workbench.colorTheme": "Default Dark+",
-    "[xml]": {
-        "editor.defaultFormatter": "DotJoshJohnson.xml"
-    },
     "[prisma]": {
         "editor.defaultFormatter": "Prisma.prisma"
     },
@@ -193,8 +195,16 @@
             ]
         }
     },
+    "[sql]": {
+        "editor.defaultFormatter": "mtxr.sqltools"
+    },
+    "settingsSync.ignoredExtensions": [
+        "ms-vsliveshare.vsliveshare"
+    ],
+    "Notes.notesLocation": "/Users/mtsai/projects/legod/legod.org",
     "accessibility.signals.terminalBell": {
         "sound": "on"
     },
-    "terminal.integrated.enableVisualBell": true,
+    "workbench.colorTheme": "Default Dark+",
+    "workbench.productIconTheme": "material-product-icons",
 }

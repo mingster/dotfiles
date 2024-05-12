@@ -50,10 +50,19 @@ shd101wyy.markdown-preview-enhanced
 prisma.prisma
 visualstudioexptteam.intellicode-api-usage-examples
 maptz.regionfolder
+
+# sql
 mtxr.sqltools
 ms-mssql.mssql
 
-#yml
+# scss
+mrmlnc.vscode-scss
+sibiraj-s.vscode-scss-formatter
+
+# xml
+redhat.vscode-xml
+
+# yml
 yseop.vscode-yseopml
 
 #py
