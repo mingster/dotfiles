@@ -30,3 +30,10 @@ sudo mariadb-secure-installation
 
 # test the new user
 # mariadb -u ptest -p
+
+
+# allow remote Access
+
+# sudo nano /usr/local/etc/my.cnf
+# bind-address = 0.0.0.0
+# mysqlx-bind-address = 127.0.0.1
