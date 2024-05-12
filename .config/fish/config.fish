@@ -94,6 +94,10 @@ end
 # `ls` → `ls -laG` abbreviation
 abbr -a -g ls ls -laG
 
+if type -q pull
+abbr -add -g git git pull -rebase
+end
+
 # `ls` → `exa` abbreviation
 # Requires `brew install exa`
 if type -q exa
