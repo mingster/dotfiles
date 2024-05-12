@@ -18,14 +18,14 @@ mysql_secure_installation
 # to create new db user
 # https://docs.rackspace.com/docs/create-a-new-user-and-grant-permissions-in-mysql
 
-# mysql -u root -p
-# CREATE USER '<username>'@'localhost' IDENTIFIED BY '<password>';
-# GRANT ALL PRIVILEGES ON *.* TO <username>@localhost WITH GRANT OPTION;
-# FLUSH PRIVILEGES;
-# exitmysql
+# mysql -u root 
+# create database tutorialdb;
+# create user 'tutorialuser'@'localhost' identified by 'tutorialuser';
+# grant all on tutorialdb.* to 'tutorialuser'@'localhost';
+# exit
 
 # test the new user
-# mysql -u <username> -p
+# mysql -u tutorialuser -p
 
 #sudo mysqld_safe --skip-grant-tables;
 #GRANT ALL PRIVILEGES ON *.* TO root@localhost WITH GRANT OPTION;
