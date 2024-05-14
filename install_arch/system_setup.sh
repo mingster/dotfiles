@@ -31,9 +31,9 @@ simple() {
     echo ""
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
-    sudo pacman -S -y --needed openssh rsync wget curl unzip chromium ufw
-    #build-essential ufw rsync unzip curl wget wput network-manager xinput feh arandr zathura scrot syncthing htop alsa-utils pulseaudio libavcodec-extra qpdfview inkscape exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl
+    sudo pacman -S -y --needed openssh rsync wget curl unzip ufw cron
     sudo pacman -S --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
+    sudo pacman -S -y --needed chromium
 
     echo ""
     echo -e "\033[1;35m add fish to system shell \033[0m"
@@ -187,6 +187,12 @@ simple() {
     fi
 
     ## POST INSTALL
+
+    # ********** how to import shotcuts.kksrc programatically ??? ********
+
+
+    # as root, create crontab: ping 8.8.8.8 || systemctl restart NetworkManager
+
 
     ## edit /etc/ssh/sshd_config
     #replace
