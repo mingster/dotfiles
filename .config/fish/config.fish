@@ -1,5 +1,5 @@
 set fish_greeting ""
-neofetch
+#neofetch
 
 
 switch (uname)
@@ -30,7 +30,6 @@ switch (uname)
     case FreeBSD NetBSD DragonFly
 
     case '*'
-
 end
 
 
@@ -48,7 +47,7 @@ set -gx PATH $PATH /usr/local/bin
 set -gx PATH $PATH /usr/local/sbin
 set -gx PATH $PATH ~/bin
 set -gx PATH $PATH ~/bin2
-set -x PATH $HOME/.local/bin $PATH
+set -gx PATH $HOME/.local/bin $PATH
 
 #set -x EDITOR vim
 #set -x VISUAL $EDITOR
