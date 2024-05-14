@@ -17,6 +17,14 @@ simple() {
     # ----------------------------------------------------------------------------------------------
     # Applications
     # ----------------------------------------------------------------------------------------------
+    echo ""
+    echo -e "\033[1;35mKeyboard delay...\033[0m"
+    echo ""
+    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    gsettings set org.gnome.desktop.peripherals.keyboard delay 500
+
+    # https://wiki.archlinux.org/title/Display_Power_Management_Signaling
+    xset s 180 180	#Change blank time to 3 min
 
     echo ""
     echo -e "\033[1;35mInstalling applications...\033[0m"
