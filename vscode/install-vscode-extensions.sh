@@ -24,6 +24,12 @@ donjayamanne.githistory
 alefragnani.project-manager
 codezombiech.gitignore
 EditorConfig.EditorConfig
+
+# makedown
+davidanson.vscode-markdownlint
+shd101wyy.markdown-preview-enhanced
+
+
 dsznajder.es7-react-js-snippets
 mgmcdermott.vscode-language-babel
 BenjaminBenais.copilot-theme
@@ -46,7 +52,6 @@ bradlc.vscode-tailwindcss
 Zignd.html-css-class-completion
 formulahendry.auto-rename-tag
 formulahendry.auto-close-tag
-shd101wyy.markdown-preview-enhanced
 prisma.prisma
 visualstudioexptteam.intellicode-api-usage-examples
 maptz.regionfolder
