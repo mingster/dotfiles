@@ -94,9 +94,15 @@ defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadRightC
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.trackpadCornerClickBehavior -int 1
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.enableSecondaryClick -bool true
 
+# Enable dragging with three finger drag
+defaults write com.apple.AppleMultitouchTrackpad "TrackpadThreeFingerDrag" -bool "true"
+
 # Enable full keyboard access for all controls
 # (e.g. enable Tab in modal dialogs)
 defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
+
+# Repeats the key as long as it is held down.
+defaults write NSGlobalDomain "ApplePressAndHoldEnabled" -bool "false"
 
 # Use scroll gesture with the Ctrl (^) modifier key to zoom
 defaults write com.apple.universalaccess closeViewScrollWheelToggle -bool true
@@ -221,9 +227,9 @@ defaults write com.apple.finder OpenWindowForNewRemovableDisk -bool true
 /usr/libexec/PlistBuddy -c "Set :FK_StandardViewSettings:IconViewSettings:iconSize 80" ~/Library/Preferences/com.apple.finder.plist
 /usr/libexec/PlistBuddy -c "Set :StandardViewSettings:IconViewSettings:iconSize 80" ~/Library/Preferences/com.apple.finder.plist
 
-# Use list view in all Finder windows by default
+# Use column view in all Finder windows by default - https://macos-defaults.com/finder/fxpreferredviewstyle.html
 # Four-letter codes for the other view modes: `icnv`, `clmv`, `Flwv`
-defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
+defaults write com.apple.finder FXPreferredViewStyle -string "clmv"
 
 # Disable the warning before emptying the Trash
 defaults write com.apple.finder WarnOnEmptyTrash -bool false
@@ -278,7 +284,7 @@ defaults write com.apple.dock launchanim -bool false
 # Speed up Mission Control animations
 defaults write com.apple.dock expose-animation-duration -float 0.1
 
-# Don’t group windows by application in Mission Control
+# Do not group windows by application in Mission Control
 # (i.e. use the old Exposé behavior instead)
 defaults write com.apple.dock expose-group-by-app -bool false
 
@@ -288,8 +294,10 @@ defaults write com.apple.dashboard mcx-disabled -bool false
 # Show Dashboard as a Space
 defaults write com.apple.dock dashboard-in-overlay -bool false
 
+# Do not rearrange automatically
+defaults write com.apple.dock "mru-spaces" -bool "false" && killall Dock
 # Automatically rearrange Spaces based on most recent use
-defaults write com.apple.dock mru-spaces -bool true
+#defaults write com.apple.dock mru-spaces -bool true
 
 # Remove the auto-hiding Dock delay
 defaults write com.apple.dock autohide-delay -float 0
@@ -341,15 +349,15 @@ defaults write com.apple.dock wvous-tl-modifier -int 2
 defaults write com.apple.dock wvous-tr-corner -int 2
 defaults write com.apple.dock wvous-tr-modifier -int 2
 
-# Bottom left screen corner → Start screen saver
-defaults write com.apple.dock wvous-bl-corner -int 5
-defaults write com.apple.dock wvous-bl-modifier -int 5
 # Bottom left screen corner → Put display to sleep
-defaults write com.apple.dock wvous-br-corner -int 10
-defaults write com.apple.dock wvous-br-modifier -int 10
+defaults write com.apple.dock wvous-bl-corner -int 10
+defaults write com.apple.dock wvous-bl-modifier -int 10
+# Bottom right screen corner → Mission Control
+defaults write com.apple.dock wvous-br-corner -int 2
+defaults write com.apple.dock wvous-br-modifier -int 2
 
 ###############################################################################
-# Energy saving                                                               #
+# Energy saving (for laptop)
 ###############################################################################
 # Enable lid wakeup
 sudo pmset -a lidwake 1
@@ -360,8 +368,8 @@ sudo pmset -a autorestart 1
 # Restart automatically if the computer freezes
 sudo systemsetup -setrestartfreeze on
 
-# Sleep the display after 15 minutes
-sudo pmset -a displaysleep 15
+# Sleep the display after 10 minutes
+sudo pmset -a displaysleep 10
 
 # Disable machine sleep while charging
 sudo pmset -c sleep 1
@@ -377,20 +385,22 @@ sudo pmset -a standbydelay 86400
 
 # Hibernation mode
 # 0: Disable hibernation (speeds up entering sleep mode)
-# 3: Copy RAM to disk so the system state can still be restored in case of a
-#    power failure.
+# 3: Copy RAM to disk so the system state can still be restored in case of a power failure.
 sudo pmset -a hibernatemode 3
 
 # Remove the sleep image file to save disk space
-#sudo rm /private/var/vm/sleepimage
+# sudo rm /private/var/vm/sleepimage
 # Create a zero-byte file instead…
-#sudo touch /private/var/vm/sleepimage
+# sudo touch /private/var/vm/sleepimage
 # …and make sure it can’t be rewritten
-#sudo chflags uchg /private/var/vm/sleepimage
+# sudo chflags uchg /private/var/vm/sleepimage
 
 ###############################################################################
 # Safari & WebKit                                                             #
 ###############################################################################
+
+# Show full URL
+defaults write com.apple.Safari "ShowFullURLInSmartSearchField" -bool "true" && killall Safari
 
 # Set Safari’s home page to `about:blank` for faster loading
 defaults write com.apple.Safari HomePage -string "about:blank"
@@ -509,9 +519,8 @@ fi;
 #defaults write com.apple.terminal FocusFollowsMouse -bool true
 #defaults write org.x.X11 wm_ffm -bool true
 
-# Install the Solarized Dark theme for iTerm
-#open "${HOME}/init/Solarized Dark.itermcolors"
-open "${HOME}/GitHub/dotfiles/init/Grass.itermcolors"
+# Install my default color theme for iTerm
+open "${HOME}/GitHub/dotfiles/init/default.itermcolors"
 
 # Don’t display the annoying prompt when quitting iTerm
 defaults write com.googlecode.iterm2 PromptOnQuit -bool false
@@ -584,7 +593,10 @@ defaults write com.apple.DiskUtility advanced-image-options -bool true
 #defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "automaticEmojiSubstitutionEnablediMessage" -bool false
 
 # Disable smart quotes as it’s annoying for messages that contain code
-#defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "automaticQuoteSubstitutionEnabled" -bool false
+defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "automaticQuoteSubstitutionEnabled" -bool false
+
+# Show Subject Field
+defaults write com.apple.MobileSMS "MMSShowSubject" -bool "true" && killall Messages
 
 # Disable continuous spell checking
 #defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "continuousSpellCheckingEnabled" -bool false

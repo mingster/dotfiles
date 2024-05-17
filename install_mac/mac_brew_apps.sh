@@ -50,7 +50,7 @@ brew install --cask telegram
 #brew install tor
 brew install --cask tor-browser
 brew install --cask brave-browser
-#brew install --cask firefox
+brew install --cask firefox
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex
@@ -104,6 +104,10 @@ brew install --cask font-source-code-pro
 #brew tap homebrew/cask-versions
 #brew tap homebrew/homebrew-cask-versions
 
-
 # copy over visual-studio-code setting
-cp ../init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
+cp ~/dotfiles/init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
+
+# non-automated
+# vmware
+# realvnc
+# msoffice
