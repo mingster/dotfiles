@@ -52,6 +52,8 @@ brew install --cask tor-browser
 brew install --cask brave-browser
 brew install --cask firefox
 
+brew install --cask libreoffice
+
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex
 
