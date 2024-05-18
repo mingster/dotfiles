@@ -25,7 +25,7 @@ echo $OSTYPE
 
 case "$OSTYPE" in
   linux*)   echo "linux" ;;
-  darwin*)  bash ./install_mac/brew.sh ;;
+  darwin*)  bash ./mac/system_setup.sh ;;
   msys*)    echo "windows" ;;
   solaris*) echo "solaris" ;;
   bsd*)     echo "bsd" ;;
