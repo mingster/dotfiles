@@ -7,10 +7,14 @@
 #
 
 # this will install mariadb
-brew install mysql mycli
-
+brew install mysql
+# brew install mycli
 
 brew services start mysql
+
+
+# this only works after you allow background access
+brew services restart mysql
 
 # set root password
 mysql_secure_installation
@@ -18,7 +22,7 @@ mysql_secure_installation
 # to create new db user
 # https://docs.rackspace.com/docs/create-a-new-user-and-grant-permissions-in-mysql
 
-# mysql -u root 
+# mysql -u root
 # create database tutorialdb;
 # create user 'tutorialuser'@'localhost' identified by 'tutorialuser';
 # grant all on tutorialdb.* to 'tutorialuser'@'localhost';
