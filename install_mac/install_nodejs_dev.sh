@@ -55,6 +55,8 @@ fi
 # All `npm install <pkg>` commands will pin to the version that was available at the time you run the command
 npm config set save-exact = true
 
+npm install -g npm@latest
+
 # Globally install with npm
 # To list globally installed npm packages and version: npm list -g --depth=0
 #
@@ -77,11 +79,10 @@ packages=(
     nodemon
     svgo
     yo
+    coffeescript
+    grunt-cli
+    jshint
+    less
 )
 
 npm install -g "${packages[@]}"
-
-npm install -g coffee-script
-npm install -g grunt-cli
-npm install -g jshint
-npm install -g less

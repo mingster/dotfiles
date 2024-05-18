@@ -7,34 +7,37 @@ switch (uname)
 
 
     case Darwin
-      # homebrew
-      eval "$(/usr/local/bin/brew shellenv)"
+        # homebrew
+        eval "$(/usr/local/bin/brew shellenv)"
 
-      set -gx XDG_CONFIG_HOME ~/.config
+        set -gx XDG_CONFIG_HOME ~/.config
 
-      set -x HOMEBREW_NO_ANALYTICS 1
-      set -x HOMEBREW_NO_ENV_HINTS 1
+        set -x HOMEBREW_NO_ANALYTICS 1
+        set -x HOMEBREW_NO_ENV_HINTS 1
 
         #If you need to have openjdk@11 first in your PATH, run:
         fish_add_path /usr/local/opt/openjdk@11/bin
 
         #For compilers to find openjdk@11 you may need to set:
-        set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
+        set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
 
         set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/openjdk@11/Contents/Home
 
-      #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
-      set -gx PATH $PATH $HOME/Library/Android/sdk/platform-tools
-      set -gx PATH $PATH $JAVA_HOME/bin
+        #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+        fish_add_path $HOME/Library/Android/sdk/platform-tools
+        fish_add_path $JAVA_HOME/bin
 
-      # node v20.x
-      set -gx PATH $PATH /usr/local/opt/node@20/bin
+        # node v20.x
+        fish_add_path /usr/local/opt/node@20/bin
+        set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
+        set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
 
-      # mysql-client
-      set -gx PATH $PATH /usr/local/opt/mysql-client/bin
 
-      # activate asdf
-      #source /usr/local/opt/asdf/libexec/asdf.sh
+        # mysql-client
+        fish_add_path /usr/local/opt/mysql-client/bin
+
+        # activate asdf
+        #source /usr/local/opt/asdf/libexec/asdf.sh
 
     case FreeBSD NetBSD DragonFly
 
@@ -52,19 +55,19 @@ end
 #
 # universal
 #
-set -gx PATH $PATH /usr/local/bin
-set -gx PATH $PATH /usr/local/sbin
-set -gx PATH $PATH ~/bin
-set -gx PATH $PATH ~/bin2
+fish_add_path /usr/local/bin
+fish_add_path /usr/local/sbin
+fish_add_path ~/bin
+fish_add_path ~/bin2
 set -gx PATH $HOME/.local/bin $PATH
 
 #set -x EDITOR vim
 #set -x VISUAL $EDITOR
 
-# set -gx PATH $PATH /usr/bin
-# set -gx PATH $PATH /bin
-# set -gx PATH $PATH /usr/sbin
-# set -gx PATH $PATH /sbin
+# fish_add_path /usr/bin
+# fish_add_path /bin
+# fish_add_path /usr/sbin
+# fish_add_path /sbin
 
 # nvm
 set -gx NVM_DIR $HOME/.nvm
