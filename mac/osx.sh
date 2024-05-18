@@ -20,7 +20,7 @@ while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 #sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "0x6D746873"
 
 # Set standby delay to 24 hours (default is 1 hour)
-#sudo pmset -a standbydelay 86400
+# sudo pmset -a standbydelay 86400
 
 # 1 hour
 #  sudo pmset -a standbydelay 3600
@@ -30,7 +30,7 @@ defaults write NSGlobalDomain _HIHideMenuBar -bool true \
     && killall Finder \
     && open -ga /System/Library/CoreServices/Finder.app/
 
-# Set sidebar icon size to samll
+# Set sidebar icon size to small
 defaults write NSGlobalDomain NSTableViewDefaultSizeMode -int 1
 
 # Save to disk (not to iCloud) by default
@@ -50,10 +50,10 @@ defaults write com.apple.LaunchServices LSQuarantine -bool false
 defaults write com.apple.helpviewer DevMode -bool true
 
 # Restart automatically if the computer freezes
-#sudo systemsetup -setrestartfreeze on
+# sudo systemsetup -setrestartfreeze on
 
 # Never go into computer sleep mode
-#systemsetup -setcomputersleep Off > /dev/null
+# systemsetup -setcomputersleep Off > /dev/null
 
 # 5 min to sleep
 # sudo systemsetup -setcomputersleep On 5
@@ -68,16 +68,16 @@ defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
 # SSD-specific tweaks                                                         #
 ###############################################################################
 # Disable hibernation (speeds up entering sleep mode)
-#sudo pmset -a hibernatemode 0
+sudo pmset -a hibernatemode 0
 
 # …and make sure it can’t be rewritten
 # DO NOT work
-#sudo chflags uchg /Private/var/vm/sleepimage
+sudo chflags uchg /Private/var/vm/sleepimage
 # free up diskspace from sleep image
-#sudo rm /var/vm/sleepimage
+sudo rm /var/vm/sleepimage
 
 # Disable the sudden motion sensor as it’s not useful for SSDs
-#sudo pmset -a sms 0
+sudo pmset -a sms 0
 
 ###############################################################################
 # Trackpad, mouse, keyboard, Bluetooth accessories, and input                 #
@@ -95,14 +95,14 @@ defaults -currentHost write NSGlobalDomain com.apple.trackpad.trackpadCornerClic
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.enableSecondaryClick -bool true
 
 # Enable dragging with three finger drag
-defaults write com.apple.AppleMultitouchTrackpad "TrackpadThreeFingerDrag" -bool "true"
+defaults write com.apple.AppleMultitouchTrackpad "TrackpadThreeFingerDrag" -bool true
 
 # Enable full keyboard access for all controls
 # (e.g. enable Tab in modal dialogs)
 defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
 
 # Repeats the key as long as it is held down.
-defaults write NSGlobalDomain "ApplePressAndHoldEnabled" -bool "false"
+defaults write NSGlobalDomain "ApplePressAndHoldEnabled" -bool false
 
 # Use scroll gesture with the Ctrl (^) modifier key to zoom
 defaults write com.apple.universalaccess closeViewScrollWheelToggle -bool true
@@ -121,23 +121,23 @@ defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 # Screen                                                                      #
 ###############################################################################
 # Require password immediately after sleep or screen saver begins
-#defaults write com.apple.screensaver askForPassword -int 1
-#defaults write com.apple.screensaver askForPasswordDelay -int 0
+# defaults write com.apple.screensaver askForPassword -int 1
+# defaults write com.apple.screensaver askForPasswordDelay -int 0
 
 # Save screenshots to the desktop
-#defaults write com.apple.screencapture location -string "${HOME}/Desktop"
+# defaults write com.apple.screencapture location -string "${HOME}/Desktop"
 
 # Save screenshots in PNG format (other options: BMP, GIF, JPG, PDF, TIFF)
-#defaults write com.apple.screencapture type -string "png"
+# defaults write com.apple.screencapture type -string "png"
 
 # Disable shadow in screenshots
-#defaults write com.apple.screencapture disable-shadow -bool true
+# defaults write com.apple.screencapture disable-shadow -bool true
 
 # Enable subpixel font rendering on non-Apple LCDs
-#defaults write NSGlobalDomain AppleFontSmoothing -int 2
+# defaults write NSGlobalDomain AppleFontSmoothing -int 2
 
 # Enable HiDPI display modes (requires restart)
-#sudo defaults write /Library/Preferences/com.apple.windowserver DisplayResolutionEnabled -bool true
+# sudo defaults write /Library/Preferences/com.apple.windowserver DisplayResolutionEnabled -bool true
 
 ###############################################################################
 # Finder                                                                      #
@@ -163,14 +163,14 @@ defaults write com.apple.finder ShowRemovableMediaOnDesktop -bool false
 defaults write com.apple.finder AppleShowAllFiles -bool true
 
 # Finder: show status bar
-#defaults write com.apple.finder ShowStatusBar -bool true
-#no show for me
-#defaults write com.apple.finder ShowStatusBar -bool false
+# defaults write com.apple.finder ShowStatusBar -bool true
+# dot not show
+defaults write com.apple.finder ShowStatusBar -bool false
 
 # Finder: show path bar
-#defaults write com.apple.finder ShowPathbar -bool true
-#no show for me
-#defaults write com.apple.finder ShowPathbar -bool false
+# defaults write com.apple.finder ShowPathbar -bool true
+# do notshow for me
+defaults write com.apple.finder ShowPathbar -bool false
 
 # Finder: allow text selection in Quick Look
 defaults write com.apple.finder QLEnableTextSelection -bool true
