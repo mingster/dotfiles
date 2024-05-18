@@ -8,13 +8,6 @@ sudo -v
 # Keep-alive: update existing `sudo` time stamp until the script has finished.
 while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 
-# Check for Homebrew,
-# Install if we don't have it
-if test ! $(which brew); then
-  echo "Installing homebrew..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
-
 # Make sure we’re using the latest Homebrew.
 brew update
 
@@ -26,6 +19,9 @@ brew update
 
 brew install openjdk@11
 sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
+sudo ln -s /usr/local//opt/homebrew/opt/openjdk@11 /Library/Java/JavaVirtualMachines
+
+
 java -version
 
 #brew tap caskroom/cask
@@ -57,7 +53,7 @@ java -version
 #brew install Caskroom/cask/android-sdk
 brew install --cask --appdir="/Applications/_dev" android-studio
 #brew install --cask --appdir="/Applications/_dev" eclipse-java
-#brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
+brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
 
 # Remove outdated versions from the cellar.
 brew cleanup

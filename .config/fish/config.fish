@@ -5,6 +5,7 @@ set fish_greeting ""
 switch (uname)
     case Linux
 
+
     case Darwin
       # homebrew
       eval "$(/usr/local/bin/brew shellenv)"
@@ -14,7 +15,15 @@ switch (uname)
       set -x HOMEBREW_NO_ANALYTICS 1
       set -x HOMEBREW_NO_ENV_HINTS 1
 
-      set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+        #If you need to have openjdk@11 first in your PATH, run:
+        fish_add_path /usr/local/opt/openjdk@11/bin
+
+        #For compilers to find openjdk@11 you may need to set:
+        set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
+
+        set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/openjdk@11/Contents/Home
+
+      #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
       set -gx PATH $PATH $HOME/Library/Android/sdk/platform-tools
       set -gx PATH $PATH $JAVA_HOME/bin
 
