@@ -25,7 +25,7 @@ simple() {
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
     gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    gsettings set org.gnome.desktop.peripherals.keyboard delay 500
+    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     # https://wiki.archlinux.org/title/Display_Power_Management_Signaling
     xset s 180 180	#Change blank time to 3 min
@@ -45,7 +45,7 @@ simple() {
     echo ""
     sudo pacman -S -y --needed openssh rsync wget curl unzip ufw cron
     sudo pacman -S --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch
-    sudo pacman -S -y --needed chromium
+    sudo pacman -S -y --needed chromium firefox
 
     echo ""
     echo -e "\033[1;35m add fish to system shell \033[0m"
@@ -216,10 +216,6 @@ simple() {
 
     ## ssh-copyid
 
-    ## mega
-    ##cd /tmp && wget https://mega.nz/linux/repo/Arch_Extra/x86_64/megasync-x86_64.pkg.tar.zst && cd megasync-x86_64 && sudo pacman -U \"$PWD/megasync-x86_64.pkg.tar.zst\"
-
-    yay -S megasync
 
     ## noip
     //https://www.noip.com/support/knowledgebase/install-linux-3-x-dynamic-update-client-duc
