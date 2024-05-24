@@ -30,7 +30,7 @@ java -version
 #brew install --cask java8
 #brew install ant
 #brew install maven
-#brew install gradle
+brew install gradle
 #brew install android-sdk
 #brew install android-ndk
 

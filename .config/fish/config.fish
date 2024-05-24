@@ -15,17 +15,22 @@ switch (uname)
         set -x HOMEBREW_NO_ANALYTICS 1
         set -x HOMEBREW_NO_ENV_HINTS 1
 
-        #If you need to have openjdk@11 first in your PATH, run:
-        fish_add_path /usr/local/opt/openjdk@11/bin
+        #If you need to have openjdk first in your PATH, run:
+        #fish_add_path /usr/local/opt/openjdk/bin
 
         #For compilers to find openjdk@11 you may need to set:
-        set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
+        set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk/include"
 
-        set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/openjdk@11/Contents/Home
-
+        set -gx JAVA_HOME /usr/local/opt/openjdk/
         #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+
         fish_add_path $HOME/Library/Android/sdk/platform-tools
         fish_add_path $JAVA_HOME/bin
+
+        # gradle
+        set -gx GRADLE_HOME /usr/local/opt/gradle
+        set -gx GRADLE_USER_HOME $HOME/.gradle
+        fish_add_path $GRADLE_HOME/bin
 
         # node v20.x
         fish_add_path /usr/local/opt/node@20/bin
