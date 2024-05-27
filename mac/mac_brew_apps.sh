@@ -21,6 +21,11 @@ brew install --cask --appdir="/Applications/_dev" github
 brew install --cask --appdir="/Applications/_dev" sourcetree
 brew install --cask --appdir="/Applications/_dev" staruml
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
+
+# copy over visual-studio-code setting
+cp ~/dotfiles/init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
+
+
 brew install --cask --appdir="/Applications/_dev" azure-data-studio
 brew install --cask --appdir="/Applications/_dev" 0xed
 #brew install --cask --appdir="/Applications/_dev" eclipse-java
@@ -80,7 +85,7 @@ ln -s /usr/local/bin/yt-dlp /usr/local/bin/youtube-dl                           
 
 brew install libvpx
 
-brew install ffmpeg --with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
+brew install ffmpeg #--with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
 
 # Install developer friendly quick look plugins; see https://github.com/sindresorhus/quick-look-plugins
 #brew install --cask qlcolorcode qlstephen qlmarkdown quicklook-json qlprettypatch quicklook-csv betterzipql qlimagesize webpquicklook suspicious-package
@@ -105,9 +110,6 @@ brew install --cask font-source-code-pro
 #google-chrome-canary
 #brew tap homebrew/cask-versions
 #brew tap homebrew/homebrew-cask-versions
-
-# copy over visual-studio-code setting
-cp ~/dotfiles/init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
 
 # non-automated
 # vmware
