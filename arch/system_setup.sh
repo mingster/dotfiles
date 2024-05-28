@@ -28,7 +28,7 @@ simple() {
     gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     # https://wiki.archlinux.org/title/Display_Power_Management_Signaling
-    xset s 180 180	#Change blank time to 3 min
+    xset s 180 180 #Change blank time to 3 min
 
     echo ""
     echo -e "\033[1;35mInstalling applications...\033[0m"
@@ -57,8 +57,7 @@ simple() {
     echo ""
     sudo pacman -S --needed alacritty
 
-    if [ ! -d ${HOME}/.config/alacritty ];
-    then
+    if [ ! -d ${HOME}/.config/alacritty ]; then
         mkdir -p ${HOME}/.config/alacritty
     fi
     ln -s ~/dotfiles/.config/alacritty $HOME/.config/
@@ -73,17 +72,16 @@ simple() {
     micro -plugin install fish
     micro -plugin install fzf
 
-    if [ ! -d ${HOME}/.config/micro ];
-    then
+    if [ ! -d ${HOME}/.config/micro ]; then
         mkdir -p ${HOME}/.config/micro
     fi
     ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
     # lazygit
-    cd /tmp && \
-    wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz && \
-    tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz && \
-    sudo cp lazygit /usr/bin/
+    cd /tmp &&
+        wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz &&
+        tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz &&
+        sudo cp lazygit /usr/bin/
 
     # ----------------------------------------------------------------------------------------------
     # Appearance
@@ -100,22 +98,21 @@ simple() {
 
     cd /tmp
     fonts=(
-    "CascadiaCode"
-    "FiraCode"
-    "Hack"
-    "Inconsolata"
-    "JetBrainsMono"
-    "Meslo"
-    "Mononoki"
-    "RobotoMono"
-    "SourceCodePro"
-    "UbuntuMono"
+        "CascadiaCode"
+        "FiraCode"
+        "Hack"
+        "Inconsolata"
+        "JetBrainsMono"
+        "Meslo"
+        "Mononoki"
+        "RobotoMono"
+        "SourceCodePro"
+        "UbuntuMono"
     )
 
-    for font in ${fonts[@]}
-    do
+    for font in ${fonts[@]}; do
         wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/$font.zip
-    	unzip $font.zip -d $HOME/.local/share/fonts/$font/
+        unzip $font.zip -d $HOME/.local/share/fonts/$font/
         rm $font.zip
     done
 
@@ -147,8 +144,7 @@ simple() {
     echo ""
 
     # create missing directories and files
-    if [ ! -d ${HOME}/.local/bin ];
-    then
+    if [ ! -d ${HOME}/.local/bin ]; then
         mkdir -p ${HOME}/.local/bin
         cp ./bin/ ${HOME}/.local/bin/
         chmod +x ${HOME}/.local/bin/*
@@ -158,8 +154,7 @@ simple() {
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
     ln -s -f ~/dotfiles/.config/kitty ~/.config/
 
-    if [ ! -d ${HOME}/.config/fish ];
-    then
+    if [ ! -d ${HOME}/.config/fish ]; then
         mkdir -p ${HOME}/.config/fish
     fi
     cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
@@ -204,9 +199,7 @@ simple() {
 
     # ********** how to import shotcuts.kksrc programatically ??? ********
 
-
     # as root, create crontab: ping 8.8.8.8 || systemctl restart NetworkManager
-
 
     ## edit /etc/ssh/sshd_config
     #replace
@@ -217,7 +210,6 @@ simple() {
     gh auth login
 
     ## ssh-copyid
-
 
     ## noip
     //https://www.noip.com/support/knowledgebase/install-linux-3-x-dynamic-update-client-duc

@@ -27,10 +27,8 @@ fi
 # Make sure we’re using the latest Homebrew.
 brew update && brew upgrade
 
-
 # create missing directories and files
-if [ ! -d ${HOME}/.local/bin ];
-then
+if [ ! -d ${HOME}/.local/bin ]; then
     mkdir -p ${HOME}/.local/bin
     cp ./bin/ ${HOME}/.local/bin/
     chmod +x ${HOME}/.local/bin/*
@@ -184,7 +182,6 @@ curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.
 chmod +x ~/.config/sketchybar/*.sh
 chmod +x ~/.config/sketchybar/plugins/*.sh
 chmod +x ~/.config/sketchybar/items/*.sh
-
 
 # another tile window manager as backup
 #brew install --cask amethyst # Install Amethyst - https://ianyh.com/amethyst/
