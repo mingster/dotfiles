@@ -13,6 +13,11 @@ switch (uname)
         set -gx GRADLE_USER_HOME $HOME/.gradle
         #fish_add_path $GRADLE_HOME/bin
 
+        # android
+        fish_add_path $HOME/Android/Sdk/platform-tools
+
+        fish_add_path $HOME/.local/bin
+
     case Darwin
         # homebrew
         eval "$(/usr/local/bin/brew shellenv)"
@@ -31,25 +36,27 @@ switch (uname)
         set -gx JAVA_HOME /usr/local/opt/openjdk/
         #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 
-        fish_add_path $HOME/Library/Android/sdk/platform-tools
-        fish_add_path $JAVA_HOME/bin
-
         # gradle
         set -gx GRADLE_HOME /usr/local/opt/gradle
         set -gx GRADLE_USER_HOME $HOME/.gradle
         fish_add_path $GRADLE_HOME/bin
+
+        # android
+        fish_add_path $HOME/Library/Android/sdk/platform-tools
+        fish_add_path $JAVA_HOME/bin
 
         # node v20.x
         fish_add_path /usr/local/opt/node@20/bin
         set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
         set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
 
-
         # mysql-client
         fish_add_path /usr/local/opt/mysql-client/bin
 
         # activate asdf
         #source /usr/local/opt/asdf/libexec/asdf.sh
+
+        fish_add_path $HOME/.local/bin
 
     case FreeBSD NetBSD DragonFly
 
