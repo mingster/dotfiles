@@ -32,6 +32,8 @@ brew update && brew upgrade
 if [ ! -d ${HOME}/.local/bin ];
 then
     mkdir -p ${HOME}/.local/bin
+    cp ./bin/ ${HOME}/.local/bin/
+    chmod +x ${HOME}/.local/bin/*
 fi
 
 echo ""
