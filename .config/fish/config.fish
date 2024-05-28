@@ -4,7 +4,14 @@ set fish_greeting ""
 
 switch (uname)
     case Linux
+        set -gx XDG_CONFIG_HOME ~/.config
+        set -gx JAVA_HOME /usr/lib/jvm/default
+        set -gx CPPFLAGS $CPPFLAGS "-I/usr/lib/jvm/default/include"
 
+        # gradle
+        #set -gx GRADLE_HOME /usr/bin/gradle
+        set -gx GRADLE_USER_HOME $HOME/.gradle
+        #fish_add_path $GRADLE_HOME/bin
 
     case Darwin
         # homebrew
