@@ -56,6 +56,7 @@ brew install --cask telegram
 brew install --cask tor-browser
 brew install --cask brave-browser
 brew install --cask firefox
+#brew install --cask chromium
 
 brew install --cask libreoffice
 
