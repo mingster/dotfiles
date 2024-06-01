@@ -16,8 +16,6 @@ switch (uname)
         # android
         fish_add_path $HOME/Android/Sdk/platform-tools
 
-        fish_add_path $HOME/.local/bin
-
     case Darwin
         # homebrew
         eval "$(/usr/local/bin/brew shellenv)"
@@ -56,7 +54,6 @@ switch (uname)
         # activate asdf
         #source /usr/local/opt/asdf/libexec/asdf.sh
 
-        fish_add_path $HOME/.local/bin
 
     case FreeBSD NetBSD DragonFly
 
@@ -78,7 +75,7 @@ fish_add_path /usr/local/bin
 fish_add_path /usr/local/sbin
 fish_add_path ~/bin
 fish_add_path ~/bin2
-set -gx PATH $HOME/.local/bin $PATH
+fish_add_path $HOME/.local/bin
 
 #set -x EDITOR vim
 #set -x VISUAL $EDITOR
