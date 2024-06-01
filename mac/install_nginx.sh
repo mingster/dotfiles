@@ -17,3 +17,10 @@ brew install nginx
 # https://gist.github.com/kevmo/236098a460773c99e373cb2e1f325b99
 
 mv /usr/local/etc/nginx/nginx.conf /usr/local/etc/nginx/nginx.conf.bak && cp /usr/local/etc/nginx/nginx.conf.bak /usr/local/etc/nginx/nginx.conf
+
+mkdir -p /var/www/html
+
+# copy init config
+cp -r ../etc/nginx/ /usr/local/etc/nginx/
+
+brew services start nginx
