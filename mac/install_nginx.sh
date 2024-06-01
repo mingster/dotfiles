@@ -24,3 +24,7 @@ mkdir -p /var/www/html
 cp -r ../etc/nginx/ /usr/local/etc/nginx/
 
 brew services start nginx
+
+
+# browse http://localhost:8080
+open http://localhost:8080
