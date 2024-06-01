@@ -5,7 +5,7 @@ echo -e "\033[1;35mSystem Setup for macos\033[0m"
 echo ""
 
 # Install command-line tools using Homebrew.
-sh ~/dotfiles/install_mac/osxprep.sh
+sh ~/dotfiles/mac/osxprep.sh
 
 # Ask for the administrator password upfront.
 sudo -v
