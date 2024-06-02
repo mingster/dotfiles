@@ -13,8 +13,14 @@ sudo pacman -S libreoffice
 
 ## mega
 
-cd /tmp && \
-wget https://mega.nz/linux/repo/Arch_Extra/x86_64/megasync-x86_64.pkg.tar.zst && \
-sudo pacman -U "$PWD/megasync-x86_64.pkg.tar.zst"
+#cd /tmp && \
+#wget https://mega.nz/linux/repo/Arch_Extra/x86_64/megasync-x86_64.pkg.tar.zst && \
+#sudo pacman -U "$PWD/megasync-x86_64.pkg.tar.zst"
 
+#sudo pacman -S megasync
+
+yay -S icu74
+# https://aur.archlinux.org/packages/megasync-bin
+yay -S megasync-bin
 #yay -S megasync
+#yay -S dolphin-megasync-git
