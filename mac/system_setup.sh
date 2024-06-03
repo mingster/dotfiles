@@ -62,7 +62,7 @@ brew install --cask google-drive
 
 # Install essential binaries.
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat
+brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat rar
 
 cp ~/dotfiles/.gitconfig-macos ~/.gitconfig
 

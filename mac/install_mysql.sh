@@ -4,7 +4,7 @@
 #
 # https://myapollo.com.tw/blog/install-mysql-using-homebrew/
 # https://www.geeksforgeeks.org/how-to-install-and-configure-mysql-on-arch-based-linux-distributionsmanjaro/
-#
+# https://gist.github.com/Foadsf/b351fe7686de19a4c91d3e0b4c91080a
 
 # this will install mariadb
 brew install mysql
@@ -31,5 +31,5 @@ mysql_secure_installation
 # test the new user
 # mysql -u tutorialuser -p
 
-#sudo mysqld_safe --skip-grant-tables;
-#GRANT ALL PRIVILEGES ON *.* TO root@localhost WITH GRANT OPTION;
+# sudo mysqld_safe --skip-grant-tables;
+# GRANT ALL PRIVILEGES ON *.* TO root@localhost WITH GRANT OPTION;

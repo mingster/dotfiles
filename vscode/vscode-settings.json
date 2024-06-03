@@ -1,8 +1,8 @@
 {
     "html.format.unformatted": "",
     "editor.multiCursorModifier": "ctrlCmd",
-    "editor.fontSize": 14,
-    "editor.fontFamily": "Sauce Code Pro, Hack Nerd Font Mono, Menlo, Consolas, DejaVu Sans Mono, monospace",
+    "editor.fontSize": 16,
+    "editor.fontFamily": "Sauce Code Pro, Menlo, Consolas, DejaVu Sans Mono, monospace",
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     /*
     "[typescriptreact]": {
@@ -43,6 +43,7 @@
     "editor.minimap.enabled": false,
     "npm.keybindingsChangedWarningShown": true,
     "security.workspace.trust.untrustedFiles": "open",
+
     "[python]": {
         "editor.formatOnType": true
     },
@@ -73,6 +74,8 @@
     "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
     "terminal.integrated.lineHeight": 1.1,
     "terminal.integrated.fontSize": 12,
+
+
     "yaml.customTags": [
         "!And",
         "!And sequence",
@@ -107,6 +110,7 @@
     "editor.wordWrap": "off",
     "diffEditor.wordWrap": "off",
     "editor.guides.indentation": false,
+
     "workbench.colorCustomizations": {
         "editor.lineHighlightBackground": "#1073cf2d",
         "editor.lineHighlightBorder": "#9fced11f"
@@ -122,6 +126,10 @@
     "javascript.updateImportsOnFileMove.enabled": "always",
     "files.autoSave": "afterDelay",
     "svelte.enable-ts-plugin": true,
+    "workbench.colorTheme": "Monokai",
+    "[xml]": {
+        "editor.defaultFormatter": "DotJoshJohnson.xml"
+    },
     "[prisma]": {
         "editor.defaultFormatter": "Prisma.prisma"
     },
@@ -195,16 +203,15 @@
             ]
         }
     },
-    "[sql]": {
-        "editor.defaultFormatter": "mtxr.sqltools"
-    },
-    "settingsSync.ignoredExtensions": [
-        "ms-vsliveshare.vsliveshare"
-    ],
-    "Notes.notesLocation": "/Users/mtsai/projects/legod/legod.org",
+    "workbench.productIconTheme": "material-product-icons",
     "accessibility.signals.terminalBell": {
         "sound": "on"
     },
-    "workbench.colorTheme": "Default Dark+",
-    "workbench.productIconTheme": "material-product-icons",
+    "workbench.iconTheme": "material-icon-theme",
+    "glassit.alpha": 240,
+    "[shellscript]": {
+        "editor.defaultFormatter": "foxundermoon.shell-format"
+    },
+    "prisma.showPrismaDataPlatformNotification": false,
+    "github.copilot.editor.enableAutoCompletions": true,
 }
