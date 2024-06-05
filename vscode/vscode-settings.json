@@ -2,7 +2,7 @@
     "html.format.unformatted": "",
     "editor.multiCursorModifier": "ctrlCmd",
     "editor.fontSize": 16,
-    "editor.fontFamily": "Sauce Code Pro, Menlo, Consolas, DejaVu Sans Mono, monospace",
+    "editor.fontFamily": "DejaVu Sans Mono, Consolas, Hack Nerd Font Mono, Sauce Code Pro, Menlo, monospace",
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     /*
     "[typescriptreact]": {
@@ -30,9 +30,6 @@
     },
     "[css]": {
         "editor.defaultFormatter": "vscode.css-language-features"
-    },
-    "[scss]": {
-        "editor.defaultFormatter": "sibiraj-s.vscode-scss-formatter"
     },
     "editor.bracketPairColorization.enabled": true,
     "editor.guides.bracketPairs": false,
@@ -73,7 +70,7 @@
     },
     "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
     "terminal.integrated.lineHeight": 1.1,
-    "terminal.integrated.fontSize": 12,
+    "terminal.integrated.fontSize": 14,
 
 
     "yaml.customTags": [

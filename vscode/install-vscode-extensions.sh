@@ -42,7 +42,6 @@ usernamehw.errorlens
 anteprimorac.html-end-tag-labels
 #visualstudioexptteam.vscodeintellicode
 #wmaurer.vscode-jumpy
-#sibiraj-s.vscode-scss-formatter
 #mrmlnc.vscode-scss
 rangav.vscode-thunder-client
 sburg.vscode-javascript-booster
