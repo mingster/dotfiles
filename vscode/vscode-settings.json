@@ -46,8 +46,13 @@
     },
     "editor.inlineSuggest.enabled": true,
     "files.associations": {
-        "*.config": "aspnetcorerazor"
+        "*.config": "aspnetcorerazor",
+        "*.js": "javascriptreact",
+        "*.jsx": "javascriptreact",
+        "*.ts": "typescriptreact",
+        "*.tsx": "typescriptreact"
     },
+    "js/ts.implicitProjectConfig.checkJs": true,
     "terminal.integrated.env.osx": {},
     "terminal.integrated.rightClickBehavior": "default",
     "terminal.integrated.copyOnSelection": true,
@@ -131,9 +136,6 @@
         "editor.defaultFormatter": "Prisma.prisma"
     },
     "git.openRepositoryInParentFolders": "never",
-    "[typescriptreact]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
-    },
     "github.copilot.enable": {
         "*": false,
         "plaintext": false,
