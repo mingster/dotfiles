@@ -57,6 +57,7 @@ maptz.regionfolder
 
 # sql
 mtxr.sqltools
+mtxr.sqltools-driver-mysql
 ms-mssql.mssql
 
 # scss

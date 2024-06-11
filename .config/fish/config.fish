@@ -77,6 +77,9 @@ fish_add_path ~/bin
 fish_add_path ~/bin2
 fish_add_path $HOME/.local/bin
 
+# fzf integration
+fzf --fish | source
+
 #set -x EDITOR vim
 #set -x VISUAL $EDITOR
 

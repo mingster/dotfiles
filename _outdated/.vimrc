@@ -36,3 +36,6 @@ set wildignore+=vendor/cache/**
 set wildignore+=log/**
 set wildignore+=tmp/**
 set wildignore+=*.png,*.jpg,*.gif
+
+" === fzf intergration ===
+set rtp+=/usr/local/opt/fzf
