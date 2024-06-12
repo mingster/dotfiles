@@ -23,7 +23,7 @@ brew install --cask --appdir="/Applications/_dev" staruml
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 
 # copy over visual-studio-code setting
-cp ~/dotfiles/init/vscode_settings.json  ~/Library/Application\ Support/Code/User/settings.json
+cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
 
 
 brew install --cask --appdir="/Applications/_dev" azure-data-studio
@@ -57,6 +57,7 @@ brew install --cask tor-browser
 brew install --cask brave-browser
 brew install --cask firefox
 #brew install --cask chromium
+brew install --cask arc
 
 brew install --cask libreoffice
 

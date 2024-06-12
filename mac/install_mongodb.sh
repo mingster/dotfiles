@@ -5,6 +5,7 @@
 # atlas setup
 
 # https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-os-x/
+brew install --cask --appdir="/Applications/_dev" mongodb-compass
 
 brew tap mongodb/brew
 brew update
