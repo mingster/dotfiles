@@ -82,8 +82,7 @@ export PATH="/usr/local/opt/node@20/bin:$PATH"
 export PATH="/usr/local/opt/mysql-client/bin:$PATH"
 
 # activate asdf
-source /usr/local/opt/asdf/libexec/asdf.sh
-
+. /usr/local/opt/asdf/libexec/asdf.sh
 
 # https://mac.install.guide/ruby/12.html
 # source /usr/local/opt/chruby/share/chruby/chruby.sh

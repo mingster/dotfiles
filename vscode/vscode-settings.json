@@ -58,7 +58,6 @@
     "terminal.integrated.copyOnSelection": true,
     "terminal.integrated.enableVisualBell": true,
     "terminal.integrated.defaultProfile.windows": "Git Bash",
-    "terminal.integrated.defaultProfile.osx": "fish",
     "terminal.integrated.profiles.osx": {
         "fish": {
             "path": "/usr/local/bin/fish",
@@ -73,6 +72,7 @@
             ]
         }
     },
+    "terminal.integrated.defaultProfile.osx": "JavaScript Debug Terminal",
     "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
     "terminal.integrated.lineHeight": 1.1,
     "terminal.integrated.fontSize": 14,
@@ -213,4 +213,7 @@
     },
     "prisma.showPrismaDataPlatformNotification": false,
     "github.copilot.editor.enableAutoCompletions": true,
+    "[dotenv]": {
+        "editor.defaultFormatter": "foxundermoon.shell-format"
+    },
 }
