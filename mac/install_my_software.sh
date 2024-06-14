@@ -25,7 +25,6 @@ brew install --cask --appdir="/Applications/_dev" visual-studio-code
 # copy over visual-studio-code setting
 cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
 
-
 brew install --cask --appdir="/Applications/_dev" azure-data-studio
 brew install --cask --appdir="/Applications/_dev" 0xed
 #brew install --cask --appdir="/Applications/_dev" eclipse-java
@@ -60,6 +59,7 @@ brew install --cask firefox
 brew install --cask arc
 
 brew install --cask libreoffice
+brew install --cask gimp
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex
