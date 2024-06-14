@@ -220,6 +220,9 @@ simple() {
     # vscode
     yay -S code
 
+    # copy settings
+    cp ~/dotfiles/vscode/vscode-settings.json ~/.config/Code\ -\ OSS/User/settings.json
+
     ## update the system
     sudo pacman -Syu
 }
