@@ -16,7 +16,11 @@ fi
 # Make sure we’re using the latest Homebrew.
 brew update
 
+# https://blog.logrocket.com/manage-node-js-versions-using-asdf/
+asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
+asdf nodejs update-nodebuild
 
+asdf install nodejs 20.14.0
 
 #
 # This script configures my Node.js development setup.
@@ -30,7 +34,9 @@ brew update
 #     ./node_modules/.bin/webpack --config webpack.local.config.js
 #
 
-brew install node@20 yarn nvm pnpm
+# brew uninstall --ignore-dependencies node yarn nvm pnpm
+#brew install node@20 yarn nvm pnpm
+brew install yarn nvm pnpm
 mkdir ~/.nvm
 export NVM_DIR="$HOME/.nvm"
 . "/usr/local/opt/nvm/nvm.sh"

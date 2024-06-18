@@ -65,6 +65,7 @@ brew install --cask google-drive
 brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat rar
 brew install asdf
 
+
 cp ~/dotfiles/.gitconfig-macos ~/.gitconfig
 
 echo ""

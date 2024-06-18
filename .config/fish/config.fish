@@ -52,7 +52,7 @@ switch (uname)
         fish_add_path /usr/local/opt/mysql-client/bin
 
         # activate asdf
-        #source /usr/local/opt/asdf/libexec/asdf.sh
+        source /usr/local/opt/asdf/libexec/asdf.fish
 
 
     case FreeBSD NetBSD DragonFly
