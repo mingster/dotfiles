@@ -53,6 +53,9 @@
         "*.tsx": "typescriptreact"
     },
     "js/ts.implicitProjectConfig.checkJs": true,
+    "typescript.updateImportsOnFileMove.enabled": "always",
+    "javascript.updateImportsOnFileMove.enabled": "always",
+
     "terminal.integrated.env.osx": {},
     "terminal.integrated.rightClickBehavior": "default",
     "terminal.integrated.copyOnSelection": true,
@@ -76,8 +79,6 @@
     "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
     "terminal.integrated.lineHeight": 1.1,
     "terminal.integrated.fontSize": 14,
-
-
     "yaml.customTags": [
         "!And",
         "!And sequence",
@@ -124,8 +125,6 @@
     "editor.snippetSuggestions": "top",
     "git.enableSmartCommit": true,
     "git.confirmSync": false,
-    "typescript.updateImportsOnFileMove.enabled": "always",
-    "javascript.updateImportsOnFileMove.enabled": "always",
     "files.autoSave": "afterDelay",
     "svelte.enable-ts-plugin": true,
     "workbench.colorTheme": "Monokai",
@@ -215,5 +214,5 @@
     "github.copilot.editor.enableAutoCompletions": true,
     "[dotenv]": {
         "editor.defaultFormatter": "foxundermoon.shell-format"
-    },
+    }
 }
