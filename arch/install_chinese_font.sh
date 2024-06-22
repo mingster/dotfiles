@@ -15,3 +15,9 @@ fc-cache -f -v
 
 ## input method
 sudo pacman -Syu fcitx fcitx-googlepinyin fcitx-im fcitx-configtool
+
+
+#
+# uninstall
+# sudo pacman -Rcns noto-fonts-sc
+# sudo pacman -Rcns fcitx fcitx-googlepinyin fcitx-im fcitx-configtool
