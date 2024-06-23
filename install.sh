@@ -24,7 +24,7 @@ fi
 echo $OSTYPE
 
 case "$OSTYPE" in
-  linux*)   echo "linux" ;;
+  #linux*)   bash ./arch/system_setup.sh ;;
   darwin*)  bash ./mac/system_setup.sh ;;
   msys*)    echo "windows" ;;
   solaris*) echo "solaris" ;;
