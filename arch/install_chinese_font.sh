@@ -9,12 +9,12 @@ yay -S noto-fonts-tc
 
 #cd /tmp && git clone https://aur.archlinux.org/noto-fonts-sc.git && cd noto-fonts-sc && makepkg -Acs && sudo pacman -U noto-fonts-sc-2:20210430-2-any.pkg.tar.zst
 
-yay -S noto-fonts-sc
+# yay -S noto-fonts-sc
 
 fc-cache -f -v
 
 ## input method
-sudo pacman -Syu fcitx fcitx-googlepinyin fcitx-im fcitx-configtool
+# sudo pacman -Syu fcitx fcitx-googlepinyin fcitx-im fcitx-configtool
 
 
 #
