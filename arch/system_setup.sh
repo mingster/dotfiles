@@ -43,9 +43,9 @@ simple() {
     echo ""
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
-    sudo pacman -S -y --needed openssh rsync wget curl unzip ufw cron
-    sudo pacman -S --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch net-tools
-    sudo pacman -S -y --needed chromium firefox
+    sudo pacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
+    sudo pacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch net-tools
+    sudo pacman -S --noconfirm --needed chromium firefox
 
     echo ""
     echo -e "\033[1;35m add fish to system shell \033[0m"
@@ -55,19 +55,19 @@ simple() {
     echo ""
     echo -e "\033[1;35m alacritty \033[0m"
     echo ""
-    sudo pacman -S --needed alacritty
+    sudo pacman -S --noconfirm --needed alacritty
 
-    if [ ! -d ${HOME}/.config/alacritty ]; then
+    if [ -d ${HOME}/.config/alacritty ]; then
         mkdir -p ${HOME}/.config/alacritty
+        cp ~/dotfiles/.config/alacritty/* $HOME/.config/alacritty/
+        git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
     fi
-    ln -s ~/dotfiles/.config/alacritty $HOME/.config/
 
-    git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
 
     echo ""
     echo -e "\033[1;35m micro editor \033[0m"
     echo ""
-    sudo pacman -S --needed micro
+    sudo pacman -S --noconfirm --needed micro
     micro -plugin install editorconfig
     micro -plugin install fish
     micro -plugin install fzf
@@ -126,8 +126,15 @@ simple() {
     echo -e "\033[1;35mMaking sure configs and scripts are executable...\033[0m"
     echo ""
 
-    sudo chmod +x ~/dotfiles/install_arch/*.sh
+    sudo chmod +x ~/dotfiles/arch/*.sh
     sudo chmod +x ~/dotfiles/script/*.sh
+
+    # create missing directories and files
+    if [ ! -d ${HOME}/.local/bin ]; then
+        mkdir -p ${HOME}/.local/bin
+        cp ~/dotfiles/bin/* ${HOME}/.local/bin/
+        chmod +x ${HOME}/.local/bin/*
+    fi
 
     # ----------------------------------------------------------------------------------------------
     # Directories, symlinks, and configs
@@ -136,22 +143,19 @@ simple() {
     echo ""
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
-    #gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    #gsettings set org.gnome.desktop.peripherals.keyboard delay 300
+    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     echo ""
     echo -e "\033[1;35mSetting up directories and symlinks...\033[0m"
     echo ""
 
-    # create missing directories and files
-    if [ ! -d ${HOME}/.local/bin ]; then
-        mkdir -p ${HOME}/.local/bin
-        cp ./bin/ ${HOME}/.local/bin/
-        chmod +x ${HOME}/.local/bin/*
-    fi
-
     # symlinks
     ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
+
+    if [ -d ${HOME}/.config/kitty ]; then
+        rmdir -rf ${HOME}/.config/kitty
+    fi
     ln -s -f ~/dotfiles/.config/kitty ~/.config/
 
     if [ ! -d ${HOME}/.config/fish ]; then
@@ -182,7 +186,6 @@ simple() {
         echo ""
         echo -e "\033[1;35mConfiguring UFW...\033[0m"
         echo ""
-
         sudo ufw default deny incoming
         sudo ufw default allow outgoing
         sudo ufw enable
@@ -192,7 +195,7 @@ simple() {
         sudo ufw allow 1935
         sudo ufw allow 5900
 
-        sudo ufw allow syncthing
+        #sudo ufw allow syncthing
     fi
 
     ## POST INSTALL
@@ -212,16 +215,18 @@ simple() {
     ## ssh-copyid
 
     ## noip
-    //https://www.noip.com/support/knowledgebase/install-linux-3-x-dynamic-update-client-duc
+    # https://www.noip.com/support/knowledgebase/install-linux-3-x-dynamic-update-client-duc
     ##cd /tmp && git clone https://aur.archlinux.org/noip.git && cd noip && makepkg -Acs && sudo pacmau -U noip-3.1.0-1-x86_64.pkg.tar.zst
 
-    yay -S noip
+    #yay -S noip
 
     # vscode
-    yay -S code
+    yay -S --noconfirm code
 
     # copy settings
-    cp ~/dotfiles/vscode/vscode-settings.json ~/.config/Code\ -\ OSS/User/settings.json
+    if [ -d ${HOME}/.config/Code\ -\ OSS ]; then
+        cp ~/dotfiles/vscode/vscode-settings.json ~/.config/Code\ -\ OSS/User/settings.json
+    fi
 
     ## update the system
     sudo pacman -Syu
