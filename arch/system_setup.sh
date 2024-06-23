@@ -40,6 +40,12 @@ simple() {
     sudo pacman -S --needed git base-devel && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si
     yay -Y --gendb
 
+    # remove work dir when done
+    if [ -d ./yay ]; then
+        rmdir -rf yay
+    fi
+
+
     echo ""
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
