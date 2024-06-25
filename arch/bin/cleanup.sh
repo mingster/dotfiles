@@ -8,3 +8,5 @@ sudo journalctl --vacuum-size=500M
 
 sudo pacman -Sc --noconfirm
 sudo pacman -Scc --noconfirm
+
+du -sh /usr/share/* | sort -nr | grep -E "(M|G)"

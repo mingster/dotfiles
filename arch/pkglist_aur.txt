@@ -1,0 +1,15 @@
+android-studio
+azuredatastudio-bin
+brave-bin
+github-desktop-bin
+icu74
+localepurge
+megasync-bin
+mongodb-bin
+mongodb-compass
+noip
+noto-fonts-tc
+powerkit
+realvnc-vnc-server-6
+yay
+yay-debug
