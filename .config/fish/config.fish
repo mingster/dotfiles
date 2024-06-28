@@ -49,7 +49,10 @@ switch (uname)
         set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
 
         # mysql-client
-        fish_add_path /usr/local/opt/mysql-client/bin
+        # fish_add_path /usr/local/opt/mysql-client/bin
+
+        # postgresql
+        fish_add_path /usr/local/opt/postgresql@15/bin
 
         # activate asdf
         source /usr/local/opt/asdf/libexec/asdf.fish
