@@ -31,7 +31,7 @@ pg_ctl -D /usr/local/var/postgresql@15 start && brew services start postgresql@1
 
 # https://dev.to/uponthesky/postgresql-installing-postgresql-through-homebrew-on-macos-388h
 
-CREATE ROLE postgres WITH LOGIN PASSWORD 'quoted password' [OPTIONS]
+CREATE ROLE postgres WITH LOGIN PASSWORD 'quoted password'
 
 createuser -s postgres
 
