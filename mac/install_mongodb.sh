@@ -12,6 +12,14 @@ brew update
 
 brew install mongodb-community@7.0
 
+
+## add relication to /usr/local/etc/mongod.conf
+#replication:
+#    replSetName: rs0
+
+echo "replication:" >> /usr/local/etc/mongod.conf
+echo "    replSetName: rs0" >> /usr/local/etc/mongod.conf
+
 brew services start mongodb-community
 
 ps aux | grep -v grep | grep mongod
