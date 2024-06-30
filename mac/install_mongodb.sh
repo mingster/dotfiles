@@ -22,4 +22,9 @@ echo "    replSetName: rs0" >> /usr/local/etc/mongod.conf
 
 brew services start mongodb-community
 
+
+# https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/
+# in mongosh, execute rs.initiate()
+# in mongosh, execute rs.config() to review
+
 ps aux | grep -v grep | grep mongod
