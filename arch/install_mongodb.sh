@@ -14,6 +14,9 @@ sudo echo "    replSetName: rs0" >> /etc/mongodb.conf
 #replication:
 #replSetName: rs0
 
+# https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/
+# in mongosh, execute rs.initiate()
+
 systemctl start mongodb
 ps aux | grep -v grep | grep mongo
 
