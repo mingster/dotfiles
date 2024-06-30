@@ -5,13 +5,16 @@ yay -S mongodb-bin
 
 yay -S mongodb-compass
 
-systemctl start mongodb
-
-ps aux | grep -v grep | grep mongo
-
+su -V
 # replication
-
-#sudo nano /etc/mongod.conf
+#sudo nano /etc/mongodb.conf
+sudo echo "replication:" >> /etc/mongodb.conf
+sudo echo "    replSetName: rs0" >> /etc/mongodb.conf
 
 #replication:
 #replSetName: rs0
+
+systemctl start mongodb
+ps aux | grep -v grep | grep mongo
+
+systemctl status mongodb
