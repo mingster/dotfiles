@@ -43,6 +43,7 @@ brew install oath-toolkit
 #brew install --cask welly #ptt telnet client
 #brew install --cask evernote
 brew install --cask notion
+brew install --cask obsidian
 #brew install --cask 1password
 #brew install --cask gimp
 #brew install --cask inkscape
