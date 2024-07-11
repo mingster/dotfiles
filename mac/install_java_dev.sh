@@ -17,9 +17,19 @@ brew update
 #sudo rm -fr $HOME/Library/Java/JavaVirtualMachines/*
 #sudo rm -fr /Library/Java/JavaVirtualMachines/*
 
-brew install openjdk@11
-sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
-sudo ln -s /usr/local//opt/homebrew/opt/openjdk@11 /Library/Java/JavaVirtualMachines
+brew uninstall openjdk@11
+brew list | grep -iE 'java|jdk|temurin'
+for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
+
+# asdf - https://github.com/halcyon/asdf-java
+asdf plugin-add java https://github.com/halcyon/asdf-java.git
+
+asdf install java openjdk-11.0.2
+asdf global java openjdk-11.0.2
+asdf local java openjdk-11.0.2
+
+#sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
+#sudo ln -s /usr/local//opt/homebrew/opt/openjdk@11 /Library/Java/JavaVirtualMachines
 
 
 java -version
@@ -30,7 +40,7 @@ java -version
 #brew install --cask java8
 #brew install ant
 #brew install maven
-brew install gradle
+#brew install gradle
 #brew install android-sdk
 #brew install android-ndk
 

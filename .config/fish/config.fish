@@ -20,6 +20,13 @@ switch (uname)
         # homebrew
         eval "$(/usr/local/bin/brew shellenv)"
 
+        # activate asdf
+        source /usr/local/opt/asdf/libexec/asdf.fish
+
+        # set java_home
+        . ~/.asdf/plugins/java/set-java-home.fish
+
+
         set -gx XDG_CONFIG_HOME ~/.config
 
         set -x HOMEBREW_NO_ANALYTICS 1
@@ -29,19 +36,19 @@ switch (uname)
         #fish_add_path /usr/local/opt/openjdk/bin
 
         #For compilers to find openjdk@11 you may need to set:
-        set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk/include"
+        #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk/include"
 
-        set -gx JAVA_HOME /usr/local/opt/openjdk/
+        #set -gx JAVA_HOME /usr/local/opt/openjdk/
         #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 
         # gradle
-        set -gx GRADLE_HOME /usr/local/opt/gradle
-        set -gx GRADLE_USER_HOME $HOME/.gradle
-        fish_add_path $GRADLE_HOME/bin
+        #set -gx GRADLE_HOME /usr/local/opt/gradle
+        #set -gx GRADLE_USER_HOME $HOME/.gradle
+        #fish_add_path $GRADLE_HOME/bin
 
         # android
-        fish_add_path $HOME/Library/Android/sdk/platform-tools
-        fish_add_path $JAVA_HOME/bin
+        #fish_add_path $HOME/Library/Android/sdk/platform-tools
+        #fish_add_path $JAVA_HOME/bin
 
         # node v20.x
         fish_add_path /usr/local/opt/node@20/bin
@@ -53,9 +60,6 @@ switch (uname)
 
         # postgresql
         fish_add_path /usr/local/opt/postgresql@15/bin
-
-        # activate asdf
-        source /usr/local/opt/asdf/libexec/asdf.fish
 
 
     case FreeBSD NetBSD DragonFly
@@ -92,7 +96,7 @@ fzf --fish | source
 # fish_add_path /sbin
 
 # nvm
-set -gx NVM_DIR $HOME/.nvm
+#set -gx NVM_DIR $HOME/.nvm
 
 if status is-interactive
     # Commands to run in interactive sessions can go here
