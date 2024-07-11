@@ -21,3 +21,4 @@ sudo pacman -S libreoffice
 #yay -S dolphin-megasync-git
 
 yay -S --noconfirm icu74 megasync-bin
+yay -S --noconfirm obsidian
