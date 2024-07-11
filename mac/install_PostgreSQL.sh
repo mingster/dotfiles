@@ -69,3 +69,8 @@ psql -h localhost -U postgres
 
 # list database
 psql -U postgres -l
+
+#
+# gui tool
+#
+brew install --cask --appdir="/Applications/_dev" pgadmin4
