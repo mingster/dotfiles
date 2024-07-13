@@ -65,8 +65,8 @@ simple() {
 
     if [ -d ${HOME}/.config/alacritty ]; then
         mkdir -p ${HOME}/.config/alacritty
-        cp ~/dotfiles/.config/alacritty/* $HOME/.config/alacritty/
-        git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
+        cp $HOME/dotfiles/.config/alacritty/* $HOME/.config/alacritty/
+        git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
     fi
 
 
@@ -81,7 +81,7 @@ simple() {
     if [ ! -d ${HOME}/.config/micro ]; then
         mkdir -p ${HOME}/.config/micro
     fi
-    ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
+    ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
     # lazygit
     cd /tmp &&
@@ -100,7 +100,7 @@ simple() {
     # fonts
 
     #sudo pacman -S --needed unzip fonts-recommended fonts-ubuntu fonts-font-awesome fonts-terminus
-    mkdir -p ~/.local/share/fonts
+    mkdir -p $HOME/.local/share/fonts
 
     cd /tmp
     fonts=(
@@ -132,13 +132,13 @@ simple() {
     echo -e "\033[1;35mMaking sure configs and scripts are executable...\033[0m"
     echo ""
 
-    sudo chmod +x ~/dotfiles/arch/*.sh
-    sudo chmod +x ~/dotfiles/script/*.sh
+    sudo chmod +x $HOME/dotfiles/arch/*.sh
+    sudo chmod +x $HOME/dotfiles/script/*.sh
 
     # create missing directories and files
     if [ ! -d ${HOME}/.local/bin ]; then
         mkdir -p ${HOME}/.local/bin
-        cp ~/dotfiles/bin/* ${HOME}/.local/bin/
+        cp $HOME/dotfiles/bin/* ${HOME}/.local/bin/
         chmod +x ${HOME}/.local/bin/*
     fi
 
@@ -157,27 +157,29 @@ simple() {
     echo ""
 
     # symlinks
-    ln -s -f ~/dotfiles/.config/.inputrc ~/.inputrc
+    ln -s -f $HOME/dotfiles/.config/.inputrc $HOME/.inputrc
 
     if [ -d ${HOME}/.config/kitty ]; then
         rmdir -rf ${HOME}/.config/kitty
     fi
-    ln -s -f ~/dotfiles/.config/kitty ~/.config/
+    ln -s -f $HOME/dotfiles/.config/kitty $HOME/.config/
 
     if [ ! -d ${HOME}/.config/fish ]; then
         mkdir -p ${HOME}/.config/fish
     fi
-    cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
+    #rm -rf $HOME/.config/fish/config.fish
+    ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
+    cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
 
     #
     echo 'change default shell to fish'
     #
     chsh -s $(which fish)
 
-    ln -s -f ~/dotfiles/.config/tmux $HOME/.config/tmux
-    ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
-    ln -s -f ~/dotfiles/.config/lf $HOME/.config/lf
-    ln -s -f ~/dotfiles/.config/lazygit $HOME/.config/lazygit
+    ln -s -f $HOME/dotfiles/.config/tmux $HOME/.config/tmux
+    ln -s -f $HOME/dotfiles/.config/nvim $HOME/.config/nvim
+    ln -s -f $HOME/dotfiles/.config/lf $HOME/.config/lf
+    ln -s -f $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw
@@ -231,7 +233,7 @@ simple() {
 
     # copy settings
     if [ -d ${HOME}/.config/Code\ -\ OSS ]; then
-        cp ~/dotfiles/vscode/vscode-settings.json ~/.config/Code\ -\ OSS/User/settings.json
+        cp $HOME/dotfiles/vscode/vscode-settings.json $HOME/.config/Code\ -\ OSS/User/settings.json
     fi
 
     ## update the system

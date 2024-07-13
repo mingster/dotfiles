@@ -4,7 +4,7 @@ set fish_greeting ""
 
 switch (uname)
     case Linux
-        set -gx XDG_CONFIG_HOME ~/.config
+        set -gx XDG_CONFIG_HOME $HOME/.config
         set -gx JAVA_HOME /usr/lib/jvm/default
         set -gx CPPFLAGS $CPPFLAGS "-I/usr/lib/jvm/default/include"
 
@@ -24,10 +24,10 @@ switch (uname)
         source /usr/local/opt/asdf/libexec/asdf.fish
 
         # set java_home
-        . ~/.asdf/plugins/java/set-java-home.fish
+        . $HOME/.asdf/plugins/java/set-java-home.fish
 
 
-        set -gx XDG_CONFIG_HOME ~/.config
+        set -gx XDG_CONFIG_HOME $HOME/.config
 
         set -x HOMEBREW_NO_ANALYTICS 1
         set -x HOMEBREW_NO_ENV_HINTS 1
@@ -80,8 +80,8 @@ end
 #
 fish_add_path /usr/local/bin
 fish_add_path /usr/local/sbin
-fish_add_path ~/bin
-fish_add_path ~/bin2
+fish_add_path $HOME/bin
+fish_add_path $HOME/bin2
 fish_add_path $HOME/.local/bin
 
 # fzf integration
@@ -105,7 +105,7 @@ end
 # tmux
 
 # Print a new line after any command
-source ~/.config/fish/functions/postexec_newline.fish
+source $HOME/.config/fish/functions/postexec_newline.fish
 
 
 # Clear line on CTRL + C

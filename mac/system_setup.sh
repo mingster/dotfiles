@@ -5,7 +5,7 @@ echo -e "\033[1;35mSystem Setup for macos\033[0m"
 echo ""
 
 # Install command-line tools using Homebrew.
-sh ~/dotfiles/mac/osxprep.sh
+sh $HOME/dotfiles/mac/osxprep.sh
 
 # Ask for the administrator password upfront.
 sudo -v
@@ -57,7 +57,7 @@ brew install --cask google-drive
 #mas install 1176895641
 
 # Add to path (only apple silicon macbooks)
-#echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+#echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.zprofile
 #eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Install essential binaries.
@@ -66,7 +66,7 @@ brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat rar
 brew install asdf
 
 
-cp ~/dotfiles/.gitconfig-macos ~/.gitconfig
+cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig
 
 echo ""
 echo -e "\033[1;35m create missing directories and files \033[0m"
@@ -75,18 +75,20 @@ if [ ! -d ${HOME}/.config ]; then
     mkdir -p ${HOME}/.config
 fi
 
-mkdir -p ~/.config/{micro,fish}
+mkdir -p $HOME/.config/{micro,fish}
 
-#ln -s ~/GitHub/dotfiles $HOME
-ln -s ~/dotfiles/bin $HOME/
+#ln -s $HOME/GitHub/dotfiles $HOME
+ln -s $HOME/dotfiles/bin $HOME/
 
 echo ""
 echo -e "\033[1;35m fish shell \033[0m"
 echo ""
 
 brew install fish
+rm -rf $HOME/.config/fish/config.fish
+ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
 
-cp -rf -v ~/dotfiles/.config/fish ${HOME}/.config/
+cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
 
 # add fish to system shell
 echo $(which fish) | sudo tee -a /etc/shells
@@ -113,7 +115,7 @@ brew install --cask kitty
 if [ ! -d ${HOME}/.config/kitty ]; then
     rm -rf ${HOME}/.config/kitty
 fi
-ln -s ~/dotfiles/.config/kitty $HOME/.config/
+ln -s $HOME/dotfiles/.config/kitty $HOME/.config/
 
 echo ""
 echo -e "\033[1;35m alacritty \033[0m"
@@ -124,20 +126,20 @@ brew install --cask alacritty
 if [ ! -d ${HOME}/.config/alacritty ]; then
     rm -rf ${HOME}/.config/alacritty
 fi
-ln -s ~/dotfiles/.config/alacritty $HOME/.config/
+ln -s $HOME/dotfiles/.config/alacritty $HOME/.config/
 
-git clone https://github.com/catppuccin/alacritty.git ~/dotfiles/.config/alacritty/catppuccin
+git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
 
 # micro editor
 brew install micro
 micro -plugin install editorconfig
 micro -plugin install fish
 micro -plugin install fzf
-ln -s ~/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
+ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
 # neovim
 brew install nvim
-ln -s ~/dotfiles/.config/nvim $HOME/.config/
+ln -s $HOME/dotfiles/.config/nvim $HOME/.config/
 
 # optional but recommended
 if [ ! -d ${HOME}/.local/share/nvim ]; then
@@ -157,21 +159,21 @@ brew install lf   # IF file manager - https://www.joshmedeski.com/posts/manage-f
 brew install fzf
 brew install jesseduffield/lazygit/lazygit
 
-ln -s ~/dotfiles/.config/tmux $HOME/.config/
-ln -s ~/dotfiles/.config/lf $HOME/.config/
-ln -s ~/dotfiles/.config/lazygit $HOME/.config/
+ln -s $HOME/dotfiles/.config/tmux $HOME/.config/
+ln -s $HOME/dotfiles/.config/lf $HOME/.config/
+ln -s $HOME/dotfiles/.config/lazygit $HOME/.config/
 
 # Install Yabai
 brew install koekeishiya/formulae/yabai
 # Install Skhd
 brew install koekeishiya/formulae/skhd
 
-ln -s ~/dotfiles/.config/yabai $HOME/.config/
-ln -s ~/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
+ln -s $HOME/dotfiles/.config/yabai $HOME/.config/
+ln -s $HOME/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
 
 # install sketchybar
 brew install FelixKratz/formulae/sketchybar
-ln -s ~/dotfiles/.config/sketchybar $HOME/.config/
+ln -s $HOME/dotfiles/.config/sketchybar $HOME/.config/
 
 brew install font-sf-pro
 brew install --cask sf-symbols
@@ -179,15 +181,15 @@ curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.
     -o $HOME/Library/Fonts/sketchybar-app-font.ttf
 
 curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/icon_map_fn.sh \
-    -o ~/dotfiles/.config/sketchybar/plugins/icon_map_fn.sh
+    -o $HOME/dotfiles/.config/sketchybar/plugins/icon_map_fn.sh
 
-chmod +x ~/.config/sketchybar/*.sh
-chmod +x ~/.config/sketchybar/plugins/*.sh
-chmod +x ~/.config/sketchybar/items/*.sh
+chmod +x $HOME/.config/sketchybar/*.sh
+chmod +x $HOME/.config/sketchybar/plugins/*.sh
+chmod +x $HOME/.config/sketchybar/items/*.sh
 
 # another tile window manager as backup
 #brew install --cask amethyst # Install Amethyst - https://ianyh.com/amethyst/
-#ln -s ~/dotfiles/.config/amethyst $HOME/.config/
+#ln -s $HOME/dotfiles/.config/amethyst $HOME/.config/
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
