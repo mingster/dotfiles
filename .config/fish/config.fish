@@ -51,9 +51,9 @@ switch (uname)
         #fish_add_path $JAVA_HOME/bin
 
         # node v20.x
-        fish_add_path /usr/local/opt/node@20/bin
-        set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
-        set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
+        #fish_add_path /usr/local/opt/node@20/bin
+        #set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
+        #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
 
         # mysql-client
         # fish_add_path /usr/local/opt/mysql-client/bin
