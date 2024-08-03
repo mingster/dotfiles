@@ -20,7 +20,7 @@
     "editor.defaultFormatter": "biomejs.biome"
   },
   "[typescriptreact]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "[vue]": {
     "editor.defaultFormatter": "biomejs.biome"
@@ -75,15 +75,9 @@
   "terminal.integrated.env.osx": {},
   "terminal.integrated.rightClickBehavior": "default",
   "terminal.integrated.copyOnSelection": true,
-  "terminal.integrated.enableVisualBell": true,
+"terminal.integrated.enableVisualBell": true,
   "terminal.integrated.defaultProfile.windows": "Git Bash",
   "terminal.integrated.profiles.osx": {
-    "fish": {
-      "path": "/usr/local/bin/fish",
-      "args": [
-        "-l"
-      ]
-    },
     "zsh": {
       "path": "/usr/local/bin/zsh",
       "args": [
@@ -91,7 +85,6 @@
       ]
     }
   },
-  "terminal.integrated.defaultProfile.osx": "JavaScript Debug Terminal",
   "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.fontSize": 14,
@@ -218,5 +211,9 @@
   "glassit.alpha": 240,
   "prisma.showPrismaDataPlatformNotification": false,
   "github.copilot.editor.enableAutoCompletions": true,
-  "workbench.startupEditor": "none"
+  "workbench.startupEditor": "none",
+  "[sql]": {
+    "editor.defaultFormatter": "mtxr.sqltools"
+  },
+  "continue.enableTabAutocomplete": false
 }

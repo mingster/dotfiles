@@ -6,8 +6,7 @@
 
 # Visual Studio Code :: Package list
 # get this list by: code --list-extensions
-pkglist=(
-alefragnani.project-manager
+pkglist=(alefragnani.project-manager
 anteprimorac.html-end-tag-labels
 austenc.tailwind-docs
 benjaminbenais.copilot-theme
@@ -16,11 +15,12 @@ bradlc.vscode-tailwindcss
 cesium.gltf-vscode
 christian-kohler.npm-intellisense
 christian-kohler.path-intellisense
+ckolkman.vscode-postgres
 codeium.codeium
 codezombiech.gitignore
-#continue.continue
-cweijan.dbclient-jdbc
-cweijan.vscode-mysql-client2
+#cweijan.dbclient-jdbc
+#cweijan.vscode-mysql-client2
+#cweijan.vscode-redis-client
 davidanson.vscode-markdownlint
 #dbaeumer.vscode-eslint
 donjayamanne.githistory
@@ -44,21 +44,23 @@ jasonnutter.search-node-modules
 josee9988.minifyall
 maptz.regionfolder
 mgmcdermott.vscode-language-babel
-mike-co.import-sorter
+#mike-co.import-sorter
 mikestead.dotenv
+mongodb.mongodb-vscode
 mrmlnc.vscode-scss
 #ms-vscode-remote.remote-containers
 #ms-vscode.azure-repos
 ms-vscode.remote-repositories
-#ms-vscode.vscode-typescript-next
 mtxr.sqltools
-mtxr.sqltools-driver-mysql
+#mtxr.sqltools-driver-mysql
+mtxr.sqltools-driver-pg
 pkief.material-icon-theme
 pkief.material-product-icons
 planbcoding.vscode-react-refactor
 prisma.prisma
 rangav.vscode-thunder-client
 redhat.vscode-xml
+richie5um2.vscode-sort-json
 s-nlf-fh.glassit
 sburg.vscode-javascript-booster
 shd101wyy.markdown-preview-enhanced
