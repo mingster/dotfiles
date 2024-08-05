@@ -2,7 +2,6 @@
 
 echo 'install my brew apps...'
 
-
 #brew install --cask --appdir="~/Applications" xquartz
 brew install --cask --appdir="/Applications/Utilities" onyx
 
@@ -42,6 +41,7 @@ brew install oath-toolkit
 #brew install --cask aerial #appletv screen saver
 #brew install --cask welly #ptt telnet client
 #brew install --cask evernote
+brew install --cask chatgpt
 brew install --cask notion
 brew install --cask obsidian
 #brew install --cask 1password
@@ -61,6 +61,22 @@ brew install --cask arc
 
 brew install --cask libreoffice
 brew install --cask gimp
+
+brew install --cask iterm2
+brew install --cask atom
+brew install --cask macdown
+
+#brew install --cask firefox
+#brew install --cask teamviewer
+#brew install --cask skype
+#brew install --cask slack
+#brew install --cask dropbox
+#brew install --cask onedrive
+#brew install --cask numi
+#brew install --cask alfred
+#brew install --cask keyboard-maestro
+#1176895641  Spark – Email App by Readdle
+#mas install 1176895641
 
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex

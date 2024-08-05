@@ -24,15 +24,21 @@ for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; d
 # asdf - https://github.com/halcyon/asdf-java
 asdf plugin-add java https://github.com/halcyon/asdf-java.git
 
-asdf install java openjdk-11.0.2
-asdf global java openjdk-11.0.2
-asdf local java openjdk-11.0.2
+asdf list-all java
 
+#asdf install java openjdk-11.0.2
+#asdf global java openjdk-11.0.2
+#asdf local java openjdk-11.0.2
+
+asdf install java adoptopenjdk-11.0.24+8
+asdf global java adoptopenjdk-11.0.24+8
 #sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
 #sudo ln -s /usr/local//opt/homebrew/opt/openjdk@11 /Library/Java/JavaVirtualMachines
 
-
 java -version
+
+# set java_home
+. $HOME/.asdf/plugins/java/set-java-home.fish
 
 #brew tap caskroom/cask
 #brew install java11

@@ -24,6 +24,19 @@ if test ! $(which brew); then
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 fi
 
+architecture=$(uname -m)
+if [ "$architecture" == "arm64" ]; then
+    #echo "This Mac is using Apple Silicon."
+    # Add to path (only apple silicon macbooks)
+    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.zprofile
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [ "$architecture" == "x86_64" ]; then
+    #echo "This Mac is using Intel."
+    eval "$(/usr/local/brew shellenv)"
+else
+    echo "Unknown architecture: $architecture"
+fi
+
 # Make sure we’re using the latest Homebrew.
 brew update && brew upgrade
 
@@ -37,34 +50,15 @@ fi
 echo ""
 echo -e "\033[1;35m essential apps \033[0m"
 echo ""
-brew install --cask iterm2
-brew install --cask atom
-brew install --cask macdown
 brew install --cask readdle-spark
 brew install --cask google-chrome
-#brew install --cask firefox
-#brew install --cask teamviewer
-#brew install --cask skype
-#brew install --cask slack
-#brew install --cask dropbox
 brew install --cask megasync
 brew install --cask google-drive
-#brew install --cask onedrive
-#brew install --cask numi
-#brew install --cask alfred
-#brew install --cask keyboard-maestro
-#1176895641  Spark – Email App by Readdle
-#mas install 1176895641
-
-# Add to path (only apple silicon macbooks)
-#echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.zprofile
-#eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Install essential binaries.
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat rar
 brew install asdf
-
 
 cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig
 
@@ -79,24 +73,6 @@ mkdir -p $HOME/.config/{micro,fish}
 
 #ln -s $HOME/GitHub/dotfiles $HOME
 ln -s $HOME/dotfiles/bin $HOME/
-
-echo ""
-echo -e "\033[1;35m fish shell \033[0m"
-echo ""
-
-brew install fish
-rm -rf $HOME/.config/fish/config.fish
-ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
-
-cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
-
-# add fish to system shell
-echo $(which fish) | sudo tee -a /etc/shells
-
-#
-echo ' change default shell to fish'
-#
-chsh -s $(which fish)
 
 echo ""
 echo -e "\033[1;35m Fonts \033[0m"
@@ -190,6 +166,24 @@ chmod +x $HOME/.config/sketchybar/items/*.sh
 # another tile window manager as backup
 #brew install --cask amethyst # Install Amethyst - https://ianyh.com/amethyst/
 #ln -s $HOME/dotfiles/.config/amethyst $HOME/.config/
+
+echo ""
+echo -e "\033[1;35m fish shell \033[0m"
+echo ""
+
+brew install fish
+rm -rf $HOME/.config/fish/config.fish
+ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
+#cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
+
+# add fish to system shell
+echo $(which fish) | sudo tee -a /etc/shells
+
+#
+echo ' change default shell to fish'
+#
+chsh -s $(which fish)
+
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
