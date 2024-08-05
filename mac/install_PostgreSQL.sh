@@ -5,7 +5,18 @@ brew update
 brew doctor
 
 brew install postgresql@15
-fish_add_path /usr/local/opt/postgresql@15/bin
+
+architecture=$(uname -m)
+if [ "$architecture" == "arm64" ]; then
+  fish_add_path /opt/homebrew/opt/postgresql@15/bin
+  pg_ctl -D /opt/homebrew/var/postgresql@15 start && brew services start postgresql@15
+elif [ "$architecture" == "x86_64" ]; then
+  fish_add_path /usr/local/opt/postgresql@15/bin
+  pg_ctl -D /usr/local/var/postgresql@15 start && brew services start postgresql@15
+else
+    echo "Unknown architecture: $architecture"
+fi
+
 #postgresql@15 is keg-only, which means it was not symlinked into /usr/local,
 #because this is an alternate version of another formula.
 
@@ -22,8 +33,6 @@ fish_add_path /usr/local/opt/postgresql@15/bin
 #  LC_ALL="C" /usr/local/opt/postgresql@15/bin/postgres -D /usr/local/var/postgresql@15
 #
 #brew services start postgresql@15
-pg_ctl -D /usr/local/var/postgresql@15 start && brew services start postgresql@15
-
 
 # TO REMOVE
 # brew services stop postgresql@15
@@ -31,7 +40,7 @@ pg_ctl -D /usr/local/var/postgresql@15 start && brew services start postgresql@1
 
 # https://dev.to/uponthesky/postgresql-installing-postgresql-through-homebrew-on-macos-388h
 
-CREATE ROLE postgres WITH LOGIN PASSWORD 'quoted password'
+#CREATE ROLE postgres WITH LOGIN PASSWORD 'quoted password'
 
 createuser -s postgres
 
@@ -56,16 +65,14 @@ psql -h localhost -U postgres
 
 # Create new database and its permission:
 
-# CREATE DATABASE super_awesome_application;
-# GRANT ALL PRIVILEGES ON DATABASE super_awesome_application TO pstv_user;
+# CREATE DATABASE pstv_web;
+# GRANT ALL PRIVILEGES ON DATABASE pstv_web TO pstv_user;
 # \list
 # \connect pstv_web
 # \dt
 # \q
 
 # You can now create, read, update and delete data on our super_awesome_application database with the user pstv_user!
-
-
 
 # list database
 psql -U postgres -l

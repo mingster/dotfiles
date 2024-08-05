@@ -17,11 +17,18 @@ brew install mongodb-community@7.0
 #replication:
 #    replSetName: rs0
 
-echo "replication:" >> /usr/local/etc/mongod.conf
-echo "    replSetName: rs0" >> /usr/local/etc/mongod.conf
+architecture=$(uname -m)
+if [ "$architecture" == "arm64" ]; then
+  echo "replication:" >> /opt/homebrew/etc/mongod.conf
+  echo "    replSetName: rs0" >> /opt/homebrew/etc/mongod.conf
+elif [ "$architecture" == "x86_64" ]; then
+  echo "replication:" >> /usr/local/etc/mongod.conf
+  echo "    replSetName: rs0" >> /usr/local/etc/mongod.conf
+else
+    echo "Unknown architecture: $architecture"
+fi
 
 brew services start mongodb-community
-
 
 # https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/
 # in mongosh, execute rs.initiate()

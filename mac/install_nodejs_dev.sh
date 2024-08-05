@@ -25,5 +25,5 @@ asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 asdf nodejs update-nodebuild
 
 asdf list all nodejs
-asdf install nodejs 20.15.1
-asdf global nodejs 20.15.1
+asdf install nodejs 20.16.0
+asdf global nodejs 20.16.0
