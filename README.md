@@ -1,6 +1,6 @@
 # Ming's dotfiles
 
-this dotfiles allows you quickly set up environment on a newly installed macos.
+this dotfiles allows you quickly set up environment on a newly installed macos and archlinux.
 
 Check [this](http://dotfiles.github.io) out if you need more info.
 
@@ -43,7 +43,7 @@ git clone https://github.com/mingster/dotfiles.git && cd dotfiles
 Update macos and install command line tools:
 
 ```
-sh ~/GitHub/dotfiles/install/osxprep.sh
+sh ~/GitHub/dotfiles/mac/osxprep.sh
 ```
 
 ### 3. Sensible OS X defaults
@@ -51,28 +51,28 @@ sh ~/GitHub/dotfiles/install/osxprep.sh
 When setting up a new Mac, you may want to set some sensible OS X defaults. Review it carefully to best suit your own preferences. To execute:
 
 ```bash
-sh ~/GitHub/dotfiles/install/osx.sh
+sh ~/GitHub/dotfiles/mac/osx.sh
 ```
 
 ### 4. Shell set up
 
-cli and iterm2 are your best friends everyday:
+cli and kitty (or iterm2) are your best friends everyday:
 
 ```
-./install/bootstrap.sh
+sh ~/GitHub/dotfiles/install.sh
 ```
-
-iterm2 preferences are in the init folder.
 
 ### 5. Install essential apps
 
 Review and modify before you run. This will install a lot of cli programs and applications such as Chrome browser etc.
 
 ```
-./install/brew.sh
+sh ~/GitHub/dotfiles/mac/install_my_software.sh
 ```
 
 ## 6. (Optional) Software / Dev environment
+
+Review the install_xxx.sh in the mac folder.
 
 - [vscode related](https://github.com/mingster/dotfiles/tree/master/install/vscode)
 - android.sh: for Java / Android development
