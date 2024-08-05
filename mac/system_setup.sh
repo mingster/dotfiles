@@ -42,10 +42,16 @@ brew update && brew upgrade
 
 # create missing directories and files
 if [ ! -d ${HOME}/.local/bin ]; then
-    mkdir -p ${HOME}/.local/bin
-    cp ./bin/ ${HOME}/.local/bin/
-    chmod +x ${HOME}/.local/bin/*
+    rm -rf ${HOME}/.local/bin
+    #mkdir -p ${HOME}/.local/bin
+    #cp ./bin/* ${HOME}/.local/bin/
 fi
+ln -s -f ${HOME}/dotfiles/mac/bin ${HOME}/.local/bin
+chmod +x ${HOME}/.local/bin/*
+
+#ln -s $HOME/GitHub/dotfiles $HOME
+#ln -s $HOME/dotfiles/bin $HOME/
+
 
 echo ""
 echo -e "\033[1;35m essential apps \033[0m"
@@ -70,9 +76,6 @@ if [ ! -d ${HOME}/.config ]; then
 fi
 
 mkdir -p $HOME/.config/{micro,fish}
-
-#ln -s $HOME/GitHub/dotfiles $HOME
-ln -s $HOME/dotfiles/bin $HOME/
 
 echo ""
 echo -e "\033[1;35m Fonts \033[0m"
