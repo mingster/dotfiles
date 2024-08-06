@@ -8,8 +8,16 @@ then
   ln -s -f ~/dotfiles/.editorconfig $HOME/
   ln -s -f ~/dotfiles/.gitattributes $HOME/
 
-  #ln -s -f ~/dotfiles/.gitconfig $HOME/
-  cp ~/dotfiles/.gitconfig $HOME/
+  architecture=$(uname -m)
+  if [ "$architecture" == "arm64" ]; then
+    cp ~/dotfiles/.gitconfig $HOME/
+
+  elif [ "$architecture" == "x86_64" ]; then
+    cp ~/dotfiles/.gitconfig-x64 $HOME/.gitconfig
+
+  else
+      echo "Unknown architecture: $architecture"
+  fi
 
   ln -s -f ~/dotfiles/.gitflow_export $HOME/
   ln -s -f ~/dotfiles/.gitignore $HOME/

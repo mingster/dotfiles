@@ -165,7 +165,7 @@
 [diff]
   tool = kdiff3
 [difftool "kdiff3"]
-  path = /opt/homebrew/bin/kdiff3
+  path = /usr/local/bin/kdiff3
 [difftool]
   prompt = false
 	keepBackup = false
@@ -177,7 +177,7 @@
   keepBackup = false
   keepTemporaries = false
 [mergetool "kdiff3"]
-  path = /opt/homebrew/bin/kdiff3
+  path = /usr/local/bin/kdiff3
 
 #[difftool "sourcetree"]
 #	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
@@ -216,7 +216,7 @@
 	trustExitCode = true
 [credential "https://github.com"]
 	helper =
-	helper = !/opt/homebrew/bin/gh auth git-credential
+	helper = !/usr/local/bin/gh auth git-credential
 [credential "https://gist.github.com"]
 	helper =
-	helper = !/opt/homebrew/bin/gh auth git-credential
+	helper = !/usr/local/bin/gh auth git-credential
