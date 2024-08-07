@@ -41,10 +41,10 @@ brew install oath-toolkit
 #brew install --cask aerial #appletv screen saver
 #brew install --cask welly #ptt telnet client
 #brew install --cask evernote
+brew install --cask vnc-viewer
 brew install --cask chatgpt
 brew install --cask notion
 brew install --cask obsidian
-#brew install --cask 1password
 #brew install --cask gimp
 #brew install --cask inkscape
 #brew install --cask skitch
@@ -66,7 +66,6 @@ brew install --cask iterm2
 brew install --cask atom
 brew install --cask macdown
 
-#brew install --cask firefox
 #brew install --cask teamviewer
 #brew install --cask skype
 #brew install --cask slack
@@ -125,11 +124,6 @@ brew install --cask safari-technology-preview
 brew install --cask homebrew/cask-fonts/font-source-code-pro
 #brew install --cask font-sourcecodepro-nerd-font
 
-#google-chrome-canary
-#brew tap homebrew/cask-versions
-#brew tap homebrew/homebrew-cask-versions
-
 # non-automated
 # vmware
-# realvnc
 # msoffice
