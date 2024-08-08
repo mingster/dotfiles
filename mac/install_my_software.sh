@@ -41,6 +41,7 @@ brew install oath-toolkit
 #brew install --cask aerial #appletv screen saver
 #brew install --cask welly #ptt telnet client
 #brew install --cask evernote
+brew install --cask raycast
 brew install --cask vnc-viewer
 brew install --cask chatgpt
 brew install --cask notion
