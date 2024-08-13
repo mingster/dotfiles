@@ -125,6 +125,11 @@ brew install --cask safari-technology-preview
 brew install --cask homebrew/cask-fonts/font-source-code-pro
 #brew install --cask font-sourcecodepro-nerd-font
 
+# xcode
+# https://www.moncefbelyamani.com/how-to-install-xcode-with-homebrew/
+mas search xcode
+mas install 497799835
+
 # non-automated
 # vmware
 # msoffice
