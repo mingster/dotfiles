@@ -116,7 +116,8 @@ brew install ffmpeg #--with-fdk-aac --with-tools --with-sdl2 --with-freetype --w
 # Replace cli with gnu/linux
 #./homebrew-install-gnu.sh
 
-brew install --cask google-chrome-canary
+brew install --cask google-chrome@dev
+#brew install --cask google-chrome-canary
 brew install --cask safari-technology-preview
 
 # https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
