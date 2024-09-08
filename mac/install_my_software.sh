@@ -20,6 +20,7 @@ brew install --cask --appdir="/Applications/_dev" github
 brew install --cask --appdir="/Applications/_dev" sourcetree
 brew install --cask --appdir="/Applications/_dev" staruml
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
+brew install --cask --appdir="/Applications/_dev" cursor
 
 # copy over visual-studio-code setting
 cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
