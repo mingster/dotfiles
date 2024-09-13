@@ -2,7 +2,7 @@
 
 # execute command
 # -------------------
-# curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/vscode/install-vscode-extensions.sh | /bin/bash
+# curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/vscode/install-vscode-extensions.sh | /bin/bash
 
 # Visual Studio Code :: Package list
 # get this list by: code --list-extensions
