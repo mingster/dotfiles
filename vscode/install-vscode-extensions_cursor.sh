@@ -25,8 +25,8 @@ davidanson.vscode-markdownlint
 #dbaeumer.vscode-eslint
 donjayamanne.githistory
 dotjoshjohnson.xml
-dsznajder.es7-react-js-snippets
-eamodio.gitlens
+#dsznajder.es7-react-js-snippets
+#eamodio.gitlens
 editorconfig.editorconfig
 exodiusstudios.comment-anchors
 formulahendry.auto-close-tag
@@ -43,7 +43,7 @@ heybourn.headwind
 jasonnutter.search-node-modules
 josee9988.minifyall
 maptz.regionfolder
-mgmcdermott.vscode-language-babel
+#mgmcdermott.vscode-language-babel
 #mike-co.import-sorter
 mikestead.dotenv
 mongodb.mongodb-vscode
@@ -66,7 +66,7 @@ sburg.vscode-javascript-booster
 shd101wyy.markdown-preview-enhanced
 sibiraj-s.vscode-scss-formatter
 usernamehw.errorlens
-visualstudioexptteam.intellicode-api-usage-examples
+#visualstudioexptteam.intellicode-api-usage-examples
 vsls-contrib.gistfs
 yseop.vscode-yseopml
 zignd.html-css-class-completion
