@@ -15,14 +15,14 @@ VS Code(Visual Studio Code) setting files
 Execute following command:
 
 ```sh
-$ brew cask install visual-studio-code
+brew install --cask visual-studio-code
 ```
 
 #### Install extensions
 Execute following command:
 
 ```sh
-curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/vscode/install-vscode-extensions.sh | /bin/bash
+curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/vscode/install-vscode-extensions.sh | /bin/bash
 ```
 
 #### Memo
@@ -55,17 +55,6 @@ Execute following command for uninstalling:
 $ sudo snap remove code
 ```
 
-#### Install extensions
-Execute following commands:
-
-```sh
-$ sudo apt install -y curl
-$ curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/install-vscode-extensions.sh | /bin/bash
-```
-
-#### Memo
-json file path: `~/.config/Code/User/settings.json`
-
 
 ### Raspberry Pi
 #### Install VS Code
@@ -77,31 +66,12 @@ $ sudo apt install ./insider.deb
 $ sudo mv /usr/bin/code-insiders /usr/bin/code
 ```
 
-#### Install extensions
-Execute following command for installing extensions:
-
-```sh
-$ sudo apt-get install -y curl
-$ curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/install-vscode-extensions.sh | /bin/bash
-```
-
-
 ### Windows
 
-Install Windows Subsystem for Linux.
-
-Then, execute following command for installing extensions:
-
-```sh
-$ curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/install/install-vscode-extensions.sh | /bin/bash
-```
 
 #### Memo
 json file place: `/mnt/c/Users/<user name>/AppData/Roaming/Code/User/settings.json`
 
-## License
-
-This software is released under the MIT License, see LICENSE.
 
 ## CREDIT
 

@@ -6,9 +6,10 @@
 
 # Visual Studio Code :: Package list
 # get this list by: code --list-extensions
-pkglist=(alefragnani.project-manager
+pkglist=(
+#alefragnani.project-manager
 anteprimorac.html-end-tag-labels
-austenc.tailwind-docs
+#austenc.tailwind-docs
 benjaminbenais.copilot-theme
 biomejs.biome
 bradlc.vscode-tailwindcss
@@ -36,9 +37,9 @@ github.codespaces
 #github.copilot
 #github.copilot-chat
 github.github-vscode-theme
-github.remotehub
-github.vscode-github-actions
-github.vscode-pull-request-github
+#github.remotehub
+#github.vscode-github-actions
+#github.vscode-pull-request-github
 heybourn.headwind
 jasonnutter.search-node-modules
 josee9988.minifyall
