@@ -62,7 +62,6 @@ brew install --cask firefox
 brew install --cask arc
 
 brew install --cask libreoffice
-brew install --cask gimp
 
 brew install --cask iterm2
 brew install --cask atom
