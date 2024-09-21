@@ -24,9 +24,10 @@ codezombiech.gitignore
 #cweijan.vscode-redis-client
 davidanson.vscode-markdownlint
 #dbaeumer.vscode-eslint
-donjayamanne.githistory
+#donjayamanne.githistory
 dotjoshjohnson.xml
 #dsznajder.es7-react-js-snippets
+waderyan.gitblame
 #eamodio.gitlens
 editorconfig.editorconfig
 exodiusstudios.comment-anchors
@@ -37,9 +38,9 @@ github.codespaces
 #github.copilot
 #github.copilot-chat
 github.github-vscode-theme
-#github.remotehub
-#github.vscode-github-actions
-#github.vscode-pull-request-github
+github.remotehub
+github.vscode-github-actions
+github.vscode-pull-request-github
 heybourn.headwind
 jasonnutter.search-node-modules
 josee9988.minifyall
