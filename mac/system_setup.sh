@@ -154,8 +154,8 @@ ln -s $HOME/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
 brew install FelixKratz/formulae/sketchybar
 ln -s $HOME/dotfiles/.config/sketchybar $HOME/.config/
 
-brew install font-sf-pro
-brew install --cask sf-symbols
+#brew install font-sf-pro
+#brew install --cask sf-symbols
 curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/sketchybar-app-font.ttf \
     -o $HOME/Library/Fonts/sketchybar-app-font.ttf
 
