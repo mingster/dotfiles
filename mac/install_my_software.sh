@@ -11,6 +11,7 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 # brew install --cask vagrant
 # Install Docker, which requires virtualbox
 brew install docker
+brew install docker-compose
 brew install boot2docker
 
 mkdir /Applications/_dev
@@ -21,6 +22,7 @@ brew install --cask --appdir="/Applications/_dev" sourcetree
 brew install --cask --appdir="/Applications/_dev" staruml
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 brew install --cask --appdir="/Applications/_dev" cursor
+
 
 # copy over visual-studio-code setting
 cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
