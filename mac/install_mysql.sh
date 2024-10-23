@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
 
 #
 # https://myapollo.com.tw/blog/install-mysql-using-homebrew/

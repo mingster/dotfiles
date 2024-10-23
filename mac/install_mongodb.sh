@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
 
 # this is cloud setup
 # brew install mongodb-atlas
