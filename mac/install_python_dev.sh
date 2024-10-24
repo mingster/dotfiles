@@ -34,8 +34,16 @@ asdf plugin-add direnv
 asdf direnv setup --shell bash --version latest
 
 
+# https://github.com/asdf-community/asdf-python
+
 asdf install python 3.11.1
-asdf global python 3.6.12
+asdf global python 3.11.1
+
+
+# If you use pip to install a module like ipython that has binaries. You will need to run asdf reshim python
+# for the binary to be in your path.
+
+
 python -V
 
 # use .envrc in py project
