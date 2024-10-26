@@ -23,6 +23,9 @@ sudo pacman -S base-devel linux-headers git nano --needed
 
 ## 3060ti NV174 (GA104)
 ```
-yay -S nvidia-470xx-dkms nvidia-470xx-utils lib32-nvidia-470xx-utils
+yay -S nvidia-470xx-dkms nvidia-470xx-utils
+
+#yay -S lib32-nvidia-470xx-utils
+
 yay -S nvidia-settings
 ```

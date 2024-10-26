@@ -24,8 +24,8 @@ simple() {
     echo ""
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
-    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
+    #gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    #gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     # https://wiki.archlinux.org/title/Display_Power_Management_Signaling
     xset s 180 180 #Change blank time to 3 min
@@ -42,7 +42,7 @@ simple() {
 
     # remove work dir when done
     if [ -d ./yay ]; then
-        rmdir -rf yay
+        rm -rf yay
     fi
 
 
@@ -81,7 +81,8 @@ simple() {
     if [ ! -d ${HOME}/.config/micro ]; then
         mkdir -p ${HOME}/.config/micro
     fi
-    ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
+    #rm -f $HOME/dotfiles/.config/micro/bindings.json
+    #ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
     # lazygit
     cd /tmp &&
@@ -138,7 +139,7 @@ simple() {
     # create missing directories and files
     if [ ! -d ${HOME}/.local/bin ]; then
         mkdir -p ${HOME}/.local/bin
-        cp $HOME/dotfiles/bin/* ${HOME}/.local/bin/
+        cp $HOME/dotfiles/arch/bin/* ${HOME}/.local/bin/
         chmod +x ${HOME}/.local/bin/*
     fi
 
@@ -149,8 +150,8 @@ simple() {
     echo ""
     echo -e "\033[1;35mKeyboard delay...\033[0m"
     echo ""
-    gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
-    gsettings set org.gnome.desktop.peripherals.keyboard delay 300
+    #gsettings set org.gnome.desktop.peripherals.keyboard repeat-interval 25
+    #gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     echo ""
     echo -e "\033[1;35mSetting up directories and symlinks...\033[0m"
@@ -232,6 +233,7 @@ simple() {
     yay -S --noconfirm code
 
     # copy settings
+    mkdir ${HOME}/.config/Code\ -\ OSS
     if [ -d ${HOME}/.config/Code\ -\ OSS ]; then
         cp $HOME/dotfiles/vscode/vscode-settings.json $HOME/.config/Code\ -\ OSS/User/settings.json
     fi

@@ -1,11 +1,10 @@
 #!/bin/bash
 
-```
 sudo pacman -Syu
 
-pacman -S --needed xorg sddm
-pacman -S --needed plasma kde-applications
-pacman -S  plasma-wayland-session
+sudo pacman -S --needed xorg sddm
+sudo pacman -S --needed plasma kde-applications
+sudo pacman -S  plasma-wayland-session
 
 # select the following packages:
 #pipewire-media-session
@@ -14,5 +13,5 @@ pacman -S  plasma-wayland-session
 #cronie
 #tesseract-data-eng (for english)
 
-systemctl enable sddm.service
-systemctl enable NetworkManager.service
+sudo systemctl enable sddm.service
+sudo systemctl enable NetworkManager.service
