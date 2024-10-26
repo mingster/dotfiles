@@ -22,3 +22,10 @@ sudo pacman -S libreoffice
 
 yay -S --noconfirm icu74 megasync-bin
 yay -S --noconfirm obsidian
+
+yay -S --noconfirm ktorrent
+
+#
+# asdf
+# https://asdf-vm.com/guide/getting-started.html
+cd /tmp && git clone https://aur.archlinux.org/asdf-vm.git && cd asdf-vm && makepkg -si
