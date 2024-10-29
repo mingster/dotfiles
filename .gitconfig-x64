@@ -74,8 +74,8 @@
 [core]
 
 	# Use custom `.gitignore` and `.gitattributes`
-	attributesfile = /home/mtsai/dotfiles/.gitattributes
-	excludesfile = /home/mtsai/dotfiles/.gitignore_global
+	attributesfile = $HOME/.gitattributes
+	excludesfile = $HOME/.gitignore_global
 
 	# Treat spaces before tabs and all kinds of trailing whitespace as an error
 	# [default] trailing-space: looks for spaces at the end of a line
@@ -165,58 +165,42 @@
 [diff]
   tool = kdiff3
 [difftool "kdiff3"]
-  path = /usr/local/bin/kdiff3
+  path = /usr/bin/kdiff3
 [difftool]
   prompt = false
 	keepBackup = false
 	trustExitCode = false
+
 [merge]
   tool = kdiff3
 [mergetool]
   prompt = false
   keepBackup = false
   keepTemporaries = false
+
 [mergetool "kdiff3"]
-  path = /usr/local/bin/kdiff3
-
-#[difftool "sourcetree"]
-#	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
-#	path =
-
-#[mergetool "sourcetree"]
-#	cmd = /Applications/_dev/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
-#	trustExitCode = true
+  path = /usr/bin/kdiff3
 
 
 [user]
 	name = mingster
 	email = mingster@users.noreply.github.com
-[commit]
-	template = /Users/mtsai/.stCommitMsg
+
 [filter "lfs"]
 	smudge = git-lfs smudge -- %f
 	process = git-lfs filter-process
 	required = true
 	clean = git-lfs clean -- %f
-[filesystem "Oracle Corporation|1.8.0_181|/dev/disk5s1"]
-	timestampResolution = 1001 milliseconds
-	minRacyThreshold = 0 nanoseconds
-[filesystem "Oracle Corporation|1.8.0_181|/dev/disk1s5"]
-	timestampResolution = 1001 milliseconds
-	minRacyThreshold = 0 nanoseconds
+
+
 [pull]
 	rebase = true
 [http]
 	postBuffer = 524288000
-[difftool "sourcetree"]
-	cmd = /Applications/kdiff3.app/Contents/MacOS/kdiff3 \"$LOCAL\" \"$REMOTE\"
-	path =
-[mergetool "sourcetree"]
-	cmd = /Applications/kdiff3.app/Contents/MacOS/kdiff3 \"$BASE\" \"$LOCAL\" \"$REMOTE\" -o \"$MERGED\"
-	trustExitCode = true
+
 [credential "https://github.com"]
 	helper =
-	helper = !/usr/local/bin/gh auth git-credential
+	helper = !/usr/bin/gh auth git-credential
 [credential "https://gist.github.com"]
 	helper =
-	helper = !/usr/local/bin/gh auth git-credential
+	helper = !/usr/bin/gh auth git-credential
