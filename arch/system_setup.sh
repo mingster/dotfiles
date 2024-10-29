@@ -161,7 +161,7 @@ simple() {
     ln -s -f $HOME/dotfiles/.config/.inputrc $HOME/.inputrc
 
     if [ -d ${HOME}/.config/kitty ]; then
-        rmdir -rf ${HOME}/.config/kitty
+        rm -rf ${HOME}/.config/kitty
     fi
     ln -s -f $HOME/dotfiles/.config/kitty $HOME/.config/
 
