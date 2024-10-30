@@ -8,6 +8,9 @@ switch (uname)
         set -gx JAVA_HOME /usr/lib/jvm/default
         set -gx CPPFLAGS $CPPFLAGS "-I/usr/lib/jvm/default/include"
 
+        # activate asdf
+        source /opt/asdf-vm/asdf.fish
+
         # gradle
         #set -gx GRADLE_HOME /usr/bin/gradle
         set -gx GRADLE_USER_HOME $HOME/.gradle
@@ -18,6 +21,9 @@ switch (uname)
 
     case Darwin
         set architecture (uname -m)
+
+        set -x HOMEBREW_NO_ANALYTICS 1
+        set -x HOMEBREW_NO_ENV_HINTS 1
 
         # homebrew
         if test "$architecture" = "arm64"
@@ -35,46 +41,44 @@ switch (uname)
 
             # activate asdf
             source /usr/local/opt/asdf/libexec/asdf.fish
-
             fish_add_path /usr/local/bin
         else
             echo "Unknown architecture: $architecture"
         end
 
-    set -gx XDG_CONFIG_HOME $HOME/.config
+        set -gx XDG_CONFIG_HOME $HOME/.config
+        fish_add_path /Applications/_dev/Visual\ Studio\ Code.app/Contents/Resources/app/bin/
 
-    set -x HOMEBREW_NO_ANALYTICS 1
-    set -x HOMEBREW_NO_ENV_HINTS 1
+        neofetch
 
-    #If you need to have openjdk first in your PATH, run:
-    #fish_add_path /usr/local/opt/openjdk/bin
+        #If you need to have openjdk first in your PATH, run:
+        #fish_add_path /usr/local/opt/openjdk/bin
 
-    #For compilers to find openjdk@11 you may need to set:
-    #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk/include"
+        #For compilers to find openjdk@11 you may need to set:
+        #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk/include"
 
-    #set -gx JAVA_HOME /usr/local/opt/openjdk/
-    #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+        #set -gx JAVA_HOME /usr/local/opt/openjdk/
+        #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 
-    # gradle
-    #set -gx GRADLE_HOME /usr/local/opt/gradle
-    #set -gx GRADLE_USER_HOME $HOME/.gradle
-    #fish_add_path $GRADLE_HOME/bin
+        # gradle
+        #set -gx GRADLE_HOME /usr/local/opt/gradle
+        #set -gx GRADLE_USER_HOME $HOME/.gradle
+        #fish_add_path $GRADLE_HOME/bin
 
-    # android
-    #fish_add_path $HOME/Library/Android/sdk/platform-tools
-    #fish_add_path $JAVA_HOME/bin
+        # android
+        #fish_add_path $HOME/Library/Android/sdk/platform-tools
+        #fish_add_path $JAVA_HOME/bin
 
-    # node v20.x
-    #fish_add_path /usr/local/opt/node@20/bin
-    #set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
-    #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
+        # node v20.x
+        #fish_add_path /usr/local/opt/node@20/bin
+        #set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
+        #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
 
-    # mysql-client
-    # fish_add_path /usr/local/opt/mysql-client/bin
+        # mysql-client
+        # fish_add_path /usr/local/opt/mysql-client/bin
 
-    # postgresql
-    fish_add_path /usr/local/opt/postgresql@15/bin
-
+        # postgresql
+        fish_add_path /usr/local/opt/postgresql@15/bin
 
     case FreeBSD NetBSD DragonFly
 
