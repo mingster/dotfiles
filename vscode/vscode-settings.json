@@ -4,6 +4,9 @@
   "editor.fontSize": 16,
   "editor.fontFamily": "DejaVu Sans Mono, Consolas, Hack Nerd Font Mono, Sauce Code Pro, Menlo, monospace",
   "editor.defaultFormatter": "biomejs.biome",
+  "editor.quickSuggestions": {
+    "strings": "on"
+  },
   /*
     "[typescript]": {
         "editor.defaultFormatter": "biomejs.biome"
@@ -15,12 +18,21 @@
   "[typescriptreact]": {
     "editor.defaultFormatter": "vscode.typescript-language-features"
   },
-    */
-  "[javascript]": {
+   */
+   "[tailwindcss]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
-  "[typescriptreact]": {
+  "[css]": {
     "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
+  "[javascriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "[vue]": {
     "editor.defaultFormatter": "biomejs.biome"
@@ -33,9 +45,6 @@
   },
   "[html]": {
     "editor.defaultFormatter": "vscode.html-language-features"
-  },
-  "[css]": {
-    "editor.defaultFormatter": "vscode.css-language-features"
   },
   "[xml]": {
     "editor.defaultFormatter": "DotJoshJohnson.xml"
@@ -51,12 +60,12 @@
   },
   "editor.bracketPairColorization.enabled": true,
   "editor.guides.bracketPairs": false,
-  "terminal.external.osxExec": "iTerm.app",
+  "terminal.external.osxExec": "Kitty.app",
   "editor.suggestSelection": "first",
-  "vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
+  //"vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
   "redhat.telemetry.enabled": false,
   "editor.minimap.enabled": false,
-  "npm.keybindingsChangedWarningShown": true,
+  //"npm.keybindingsChangedWarningShown": true,
   "security.workspace.trust.untrustedFiles": "open",
   "[python]": {
     "editor.formatOnType": true
@@ -67,7 +76,8 @@
     "*.js": "javascriptreact",
     "*.jsx": "javascriptreact",
     "*.ts": "typescriptreact",
-    "*.tsx": "typescriptreact"
+    "*.tsx": "typescriptreact",
+    "*.css": "css"
   },
   "js/ts.implicitProjectConfig.checkJs": true,
   "typescript.updateImportsOnFileMove.enabled": "always",
@@ -75,7 +85,7 @@
   "terminal.integrated.env.osx": {},
   "terminal.integrated.rightClickBehavior": "default",
   "terminal.integrated.copyOnSelection": true,
-"terminal.integrated.enableVisualBell": true,
+  "terminal.integrated.enableVisualBell": true,
   "terminal.integrated.defaultProfile.windows": "Git Bash",
   "terminal.integrated.profiles.osx": {
     "zsh": {
@@ -88,36 +98,7 @@
   "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.fontSize": 14,
-  "yaml.customTags": [
-    "!And",
-    "!And sequence",
-    "!If",
-    "!If sequence",
-    "!Not",
-    "!Not sequence",
-    "!Equals",
-    "!Equals sequence",
-    "!Or",
-    "!Or sequence",
-    "!FindInMap",
-    "!FindInMap sequence",
-    "!Base64",
-    "!Join",
-    "!Join sequence",
-    "!Cidr",
-    "!Ref",
-    "!Sub",
-    "!Sub sequence",
-    "!GetAtt",
-    "!GetAZs",
-    "!ImportValue",
-    "!ImportValue sequence",
-    "!Select",
-    "!Select sequence",
-    "!Split",
-    "!Split sequence"
-  ],
-  "aws.telemetry": false,
+  //"aws.telemetry": false,
   "editor.inlayHints.enabled": "off",
   "editor.wordWrap": "off",
   "diffEditor.wordWrap": "off",
@@ -134,15 +115,17 @@
   "git.enableSmartCommit": true,
   "git.confirmSync": false,
   "files.autoSave": "afterDelay",
-  "svelte.enable-ts-plugin": true,
-  "workbench.colorTheme": "Monokai",
+  //"svelte.enable-ts-plugin": true,
+  "workbench.colorTheme": "GitHub Dark",
   "git.openRepositoryInParentFolders": "never",
+  /*
   "github.copilot.enable": {
     "*": false,
     "plaintext": false,
     "markdown": false,
     "scminput": false
   },
+  */
   /*"javascript.format.enable": false*/
   // Comment region folding
   "maptz.regionfolder": {
@@ -209,11 +192,16 @@
   },
   "workbench.iconTheme": "material-icon-theme",
   "glassit.alpha": 240,
-  "prisma.showPrismaDataPlatformNotification": false,
-  "github.copilot.editor.enableAutoCompletions": true,
+  //"github.copilot.editor.enableAutoCompletions": true,
   "workbench.startupEditor": "none",
   "[sql]": {
     "editor.defaultFormatter": "mtxr.sqltools"
   },
-  "continue.enableTabAutocomplete": false
+  "errorLens.enabled": true,
+  "window.newWindowProfile": "Default",
+  "codeium.enableConfig": {
+    "*": true,
+    "dotenv": true,
+    "prisma": true
+  }
 }
