@@ -49,7 +49,7 @@ switch (uname)
         set -gx XDG_CONFIG_HOME $HOME/.config
         fish_add_path /Applications/_dev/Visual\ Studio\ Code.app/Contents/Resources/app/bin/
 
-        neofetch
+        #neofetch
 
         #If you need to have openjdk first in your PATH, run:
         #fish_add_path /usr/local/opt/openjdk/bin
