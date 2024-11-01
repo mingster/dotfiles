@@ -29,7 +29,8 @@ asdf list all nodejs
 asdf install nodejs 20.17.0
 asdf global nodejs 20.17.0
 
-#npm install -g npm@latest
+npm install -g npm@latest
+#npm install -g npm@10.9.0
 
 asdf shell nodejs 20.17.0
 corepack enable
