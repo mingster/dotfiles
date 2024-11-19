@@ -46,7 +46,7 @@ brew install oath-toolkit
 #brew install --cask evernote
 brew install --cask raycast
 brew install --cask vnc-viewer
-brew install --cask chatgpt
+#brew install --cask chatgpt
 brew install --cask notion
 brew install --cask obsidian
 #brew install --cask gimp

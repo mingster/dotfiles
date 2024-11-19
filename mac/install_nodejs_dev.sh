@@ -30,9 +30,9 @@ asdf list all nodejs
 
 asdf nodejs resolve lts --latest-available
 
-asdf install nodejs 22.9.0
-asdf global nodejs 22.9.0
-asdf shell nodejs 22.9.0
+asdf install nodejs 20.18.0
+asdf global nodejs 20.18.0
+asdf shell nodejs 20.18.0
 
 npm install -g npm@latest
 

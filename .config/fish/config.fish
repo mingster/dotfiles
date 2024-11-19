@@ -49,6 +49,10 @@ switch (uname)
         set -gx XDG_CONFIG_HOME $HOME/.config
         fish_add_path /Applications/_dev/Visual\ Studio\ Code.app/Contents/Resources/app/bin/
 
+        # bun
+        set --export BUN_INSTALL "$HOME/.bun"
+        set --export PATH $BUN_INSTALL/bin $PATH
+
         #neofetch
 
         #If you need to have openjdk first in your PATH, run:
