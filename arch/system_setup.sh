@@ -125,6 +125,9 @@ simple() {
 
     fc-cache -f -v
 
+    # theme - https://store.kde.org/p/1294174/
+
+
     # ----------------------------------------------------------------------------------------------
     # Permissions
     # ----------------------------------------------------------------------------------------------
@@ -181,6 +184,14 @@ simple() {
     ln -s -f $HOME/dotfiles/.config/nvim $HOME/.config/nvim
     ln -s -f $HOME/dotfiles/.config/lf $HOME/.config/lf
     ln -s -f $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
+
+    #
+    echo 'bluetooth'
+    # https://www.jeremymorgan.com/tutorials/linux/how-to-bluetooth-arch-linux/
+    #
+    sudo pacman -S bluez
+    sudo pacman -S bluez-utils
+    sudo pacman -S blueman
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw

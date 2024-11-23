@@ -42,3 +42,4 @@ npm install -g yarn
 corepack prepare yarn@latest --activate
 
 asdf reshim nodejs
+curl -fsSL https://bun.sh/install | bash
