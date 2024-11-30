@@ -1,9 +1,20 @@
 {
   "html.format.unformatted": "",
+  "editor.formatOnSave": true,
   "editor.multiCursorModifier": "ctrlCmd",
   "editor.fontSize": 16,
   "editor.fontFamily": "DejaVu Sans Mono, Consolas, Hack Nerd Font Mono, Sauce Code Pro, Menlo, monospace",
   "editor.defaultFormatter": "biomejs.biome",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": false,
+  "editor.suggestSelection": "first",
+  "editor.minimap.enabled": false,
+  "editor.inlineSuggest.enabled": true,
+  "editor.inlayHints.enabled": "off",
+  "editor.wordWrap": "off",
+  "editor.guides.indentation": false,
+  "editor.formatOnType": false,
+  "editor.snippetSuggestions": "top",
   "editor.quickSuggestions": {
     "strings": "on"
   },
@@ -19,7 +30,7 @@
     "editor.defaultFormatter": "vscode.typescript-language-features"
   },
    */
-   "[tailwindcss]": {
+  "[tailwindcss]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
   "[css]": {
@@ -58,19 +69,14 @@
   "[dotenv]": {
     "editor.defaultFormatter": "foxundermoon.shell-format"
   },
-  "editor.bracketPairColorization.enabled": true,
-  "editor.guides.bracketPairs": false,
   "terminal.external.osxExec": "Kitty.app",
-  "editor.suggestSelection": "first",
   //"vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
   "redhat.telemetry.enabled": false,
-  "editor.minimap.enabled": false,
   //"npm.keybindingsChangedWarningShown": true,
   "security.workspace.trust.untrustedFiles": "open",
   "[python]": {
     "editor.formatOnType": true
   },
-  "editor.inlineSuggest.enabled": true,
   "files.associations": {
     "*.config": "aspnetcorerazor",
     "*.js": "javascriptreact",
@@ -99,19 +105,14 @@
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.fontSize": 14,
   //"aws.telemetry": false,
-  "editor.inlayHints.enabled": "off",
-  "editor.wordWrap": "off",
   "diffEditor.wordWrap": "off",
-  "editor.guides.indentation": false,
   "workbench.colorCustomizations": {
     "editor.lineHighlightBackground": "#1073cf2d",
     "editor.lineHighlightBorder": "#9fced11f"
   },
-  "editor.formatOnType": false,
   "git.autofetch": true,
   "explorer.confirmDelete": false,
   "explorer.confirmDragAndDrop": false,
-  "editor.snippetSuggestions": "top",
   "git.enableSmartCommit": true,
   "git.confirmSync": false,
   "files.autoSave": "afterDelay",
