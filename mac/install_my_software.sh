@@ -13,6 +13,8 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 brew install docker
 brew install docker-compose
 brew install boot2docker
+brew install nmap
+
 
 mkdir /Applications/_dev
 
