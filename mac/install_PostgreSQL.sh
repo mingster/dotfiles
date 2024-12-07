@@ -5,39 +5,41 @@
 brew update
 brew doctor
 
-brew install postgresql@15
+brew install postgresql@17
 
 architecture=$(uname -m)
 if [ "$architecture" == "arm64" ]; then
-  fish_add_path /opt/homebrew/opt/postgresql@15/bin
-  pg_ctl -D /opt/homebrew/var/postgresql@15 start && brew services start postgresql@15
+  fish_add_path /opt/homebrew/opt/postgresql@17/bin
+  pg_ctl -D /opt/homebrew/var/postgresql@17 start && brew services start postgresql@17
 elif [ "$architecture" == "x86_64" ]; then
-  fish_add_path /usr/local/opt/postgresql@15/bin
-  pg_ctl -D /usr/local/var/postgresql@15 start && brew services start postgresql@15
+  fish_add_path /usr/local/opt/postgresql@17/bin
+  pg_ctl -D /usr/local/var/postgresql@17 start && brew services start postgresql@17
 else
     echo "Unknown architecture: $architecture"
 fi
 
-#postgresql@15 is keg-only, which means it was not symlinked into /usr/local,
+#postgresql@17 is keg-only, which means it was not symlinked into /usr/local,
 #because this is an alternate version of another formula.
 
-#If you need to have postgresql@15 first in your PATH, run:
-#  fish_add_path /usr/local/opt/postgresql@15/bin
+#If you need to have postgresql@17 first in your PATH, run:
+#  fish_add_path /usr/local/opt/postgresql@17/bin
 #
-#For compilers to find postgresql@15 you may need to set:
-#  set -gx LDFLAGS "-L/usr/local/opt/postgresql@15/lib"
-#  set -gx CPPFLAGS "-I/usr/local/opt/postgresql@15/include"
+#For compilers to find postgresql@17 you may need to set:
+#  set -gx LDFLAGS "-L/usr/local/opt/postgresql@17/lib"
+#  set -gx CPPFLAGS "-I/usr/local/opt/postgresql@17/include"
 
-#To start postgresql@15 now and restart at login:
-#  brew services start postgresql@15
+#To start postgresql@17 now and restart at login:
+#  brew services start postgresql@17
 #Or, if you don't want/need a background service you can just run:
-#  LC_ALL="C" /usr/local/opt/postgresql@15/bin/postgres -D /usr/local/var/postgresql@15
+#  LC_ALL="C" /usr/local/opt/postgresql@17/bin/postgres -D /usr/local/var/postgresql@17
 #
-#brew services start postgresql@15
+#brew services start postgresql@17
 
 # TO REMOVE
-# brew services stop postgresql@15
-# brew uninstall postgresql@15
+# brew services stop postgresql@17
+# brew uninstall postgresql@17
+#rm -rf /usr/local/var/postgres
+#rm -f ~/.psqlrc ~/.psql_history
 
 # https://dev.to/uponthesky/postgresql-installing-postgresql-through-homebrew-on-macos-388h
 
