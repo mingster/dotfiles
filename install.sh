@@ -29,11 +29,12 @@ then
   git config --global core.attributesfile ~/dotfiles/.gitattributes
 fi
 
-echo $OSTYPE
+set OSTYPE==$(uname -s)
+#echo $OSTYPE
 
 case "$OSTYPE" in
   #linux*)   bash ./arch/system_setup.sh ;;
-  darwin*)  bash ./mac/system_setup.sh ;;
+  darwin*)  echo "mac install" ; bash ./mac/system_setup.sh ;;
   msys*)    echo "windows" ;;
   solaris*) echo "solaris" ;;
   bsd*)     echo "bsd" ;;

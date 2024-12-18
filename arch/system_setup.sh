@@ -45,7 +45,6 @@ simple() {
         rm -rf yay
     fi
 
-
     echo ""
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
@@ -69,6 +68,17 @@ simple() {
         git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
     fi
 
+    echo ""
+    echo -e "\033[1;35m nano editor \033[0m"
+    echo ""
+    pacman -S --noconfirm --needed nano-syntax-highlighting
+    if [ ! -d ${HOME}/GitHub ]; then
+        mkdir -p ${HOME}/GitHub
+    fi
+
+    git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
+    #echo "include ~/GitHub/nanorc/*.nanorc" >> ~/.nanorc
+    #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
     echo ""
     echo -e "\033[1;35m micro editor \033[0m"

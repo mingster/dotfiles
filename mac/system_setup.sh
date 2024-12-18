@@ -142,6 +142,15 @@ ln -s $HOME/dotfiles/.config/tmux $HOME/.config/
 ln -s $HOME/dotfiles/.config/lf $HOME/.config/
 ln -s $HOME/dotfiles/.config/lazygit $HOME/.config/
 
+# nano
+#brew install nano
+if [ ! -d ${HOME}/GitHub ]; then
+    mkdir -p ${HOME}/GitHub
+fi
+
+git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
+#cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
+
 # Install Yabai
 brew install koekeishiya/formulae/yabai
 # Install Skhd
