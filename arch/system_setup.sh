@@ -209,7 +209,7 @@ simple() {
         sudo ufw default deny incoming
         sudo ufw default allow outgoing
         sudo ufw enable
-        sudo ufw allow 22
+        sudo ufw allow 22/tcp
         sudo ufw allow 80
         sudo ufw allow 443
         sudo ufw allow 1935
@@ -217,6 +217,12 @@ simple() {
 
         #sudo ufw allow syncthing
     fi
+
+    ## openssh
+    sudo pacman -S openssh
+    sudo systemctl start sshd
+    sudo systemctl enable sshd
+
 
     ## POST INSTALL
 
