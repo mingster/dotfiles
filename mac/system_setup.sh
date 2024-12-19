@@ -199,3 +199,30 @@ chsh -s $(which fish)
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
+
+
+echo ""
+echo -e "\033[1;35m cron service script \033[0m"
+echo ""
+cp ~/bin2/com.mingster.crontab.plist $HOME/Library/LaunchAgents/
+
+chmod 755 $HOME/bin2/*.sh
+chmod 644 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+chown $USER:staff $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+
+# test
+# plutil $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+
+launchctl bootout gui/501 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
+launchctl bootstrap gui/501 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+# Load task
+#launchctl load $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+# Remove task
+#launchctl unload ~/Library/LaunchAgents/com.mingster.crontab.plist
+
+# Manually execute task
+launchctl start $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+
+# List all tasks
+#launchctl list | grep mingster
