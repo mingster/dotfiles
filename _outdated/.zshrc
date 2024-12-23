@@ -2,8 +2,13 @@
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
-source ~/.aliases
-source ~/.functions
+if [ -f ~/.bash_aliases ]; then
+    source ~/.bash_aliases
+fi
+
+if [ -f ~/.functions ]; then
+    source ~/.functions
+fi
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
@@ -24,11 +29,10 @@ export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:~/bin:
 #export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_321`
 #export JAVA_HOME=`/usr/libexec/java_home -v 11.0.12`
 #export JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk-21.0.1.jdk
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+#export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 #export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
-export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
-
-export PATH="$JAVA_HOME/bin:$PATH"
+#export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+#export PATH="$JAVA_HOME/bin:$PATH"
 #export PATH="/opt/gradle/gradle-7.4.2/bin:$PATH"
 #export DROID_SDK=`/Users/$USER/Library/Android/sdk`
 #export PATH="$DROID_SDK/platform-tools:$PATH"
@@ -75,11 +79,10 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 # node v20.x
-export PATH="/usr/local/opt/node@20/bin:$PATH"
-
+#export PATH="/usr/local/opt/node@20/bin:$PATH"
 
 # mysql-client
-export PATH="/usr/local/opt/mysql-client/bin:$PATH"
+#export PATH="/usr/local/opt/mysql-client/bin:$PATH"
 
 # activate asdf
 . /usr/local/opt/asdf/libexec/asdf.sh
@@ -96,7 +99,6 @@ export PATH="/usr/local/opt/mysql-client/bin:$PATH"
 #  eval "$(pyenv init -)"
 #fi
 
-export NVM_DIR="$HOME/.nvm"
-
-[ -s "/usr/local/opt/nvm/nvm.sh" ] && \. "/usr/local/opt/nvm/nvm.sh"  # This loads nvm
-[ -s "/usr/local/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/usr/local/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
+#export NVM_DIR="$HOME/.nvm"
+#[ -s "/usr/local/opt/nvm/nvm.sh" ] && \. "/usr/local/opt/nvm/nvm.sh"  # This loads nvm
+#[ -s "/usr/local/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/usr/local/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
