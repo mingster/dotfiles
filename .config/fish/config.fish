@@ -35,6 +35,9 @@ switch (uname)
 
             fish_add_path /opt/homebrew/bin
 
+            # postgresql
+            fish_add_path /opt/homebrew/opt/postgresql@17/bin
+
         else if test "$architecture" = "x86_64"
             #echo "This Mac is using Intel."
             eval "$(/usr/local/bin/brew shellenv)"
@@ -42,6 +45,10 @@ switch (uname)
             # activate asdf
             source /usr/local/opt/asdf/libexec/asdf.fish
             fish_add_path /usr/local/bin
+
+            # postgresql
+            fish_add_path /usr/local/opt/postgresql@17/bin
+
         else
             echo "Unknown architecture: $architecture"
         end
@@ -81,8 +88,6 @@ switch (uname)
         # mysql-client
         # fish_add_path /usr/local/opt/mysql-client/bin
 
-        # postgresql
-        fish_add_path /usr/local/opt/postgresql@15/bin
 
     case FreeBSD NetBSD DragonFly
 
