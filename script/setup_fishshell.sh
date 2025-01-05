@@ -24,5 +24,8 @@ fisher install rstacruz/fish-npm-global
 # install a fish-compatible version of nvm
 fisher install jorgebucaran/nvm.fish
 
+# Tmux Plugin for Fish
+fisher install budimanjojo/tmux.fish
+
 # https://github.com/IlanCosman/tide
 tide configure
