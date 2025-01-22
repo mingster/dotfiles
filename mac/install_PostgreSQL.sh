@@ -38,8 +38,8 @@ fi
 # TO REMOVE
 # brew services stop postgresql@17
 # brew uninstall postgresql@17
-#rm -rf /usr/local/var/postgres
-#rm -f ~/.psqlrc ~/.psql_history
+# rm -rf /usr/local/var/postgres
+# rm -f ~/.psqlrc ~/.psql_history
 
 # https://dev.to/uponthesky/postgresql-installing-postgresql-through-homebrew-on-macos-388h
 
