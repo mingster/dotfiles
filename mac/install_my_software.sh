@@ -76,6 +76,7 @@ brew install --cask macdown
 #brew install --cask slack
 #brew install --cask dropbox
 #brew install --cask onedrive
+brew install --cask megasync
 #brew install --cask numi
 #brew install --cask alfred
 #brew install --cask keyboard-maestro
