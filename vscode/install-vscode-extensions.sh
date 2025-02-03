@@ -36,7 +36,7 @@ maptz.regionfolder
 mikestead.dotenv
 mongodb.mongodb-vscode
 mrmlnc.vscode-scss
-ms-vscode.azure-repos
+#ms-vscode.azure-repos
 ms-vscode.remote-repositories
 mtxr.sqltools
 mtxr.sqltools-driver-pg

@@ -1,5 +1,6 @@
 {
   "html.format.unformatted": "",
+  "editor.tabSize": 2,
   "editor.formatOnSave": true,
   "editor.multiCursorModifier": "ctrlCmd",
   "editor.fontSize": 16,
@@ -18,15 +19,18 @@
   "editor.quickSuggestions": {
     "strings": "on"
   },
+  "editor.codeActionsOnSave": {
+    "quickfix.biome": "explicit",
+  "source.organizeImports.biome": "explicit"
+  },
   /*
-    "[typescript]": {
-        "editor.defaultFormatter": "biomejs.biome"
-    },
-    "[javascript]": {
-        //"editor.defaultFormatter": "vscode.typescript-language-features"
-        "editor.defaultFormatter": "biomejs.biome"
-    },
+  "[javascriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
   "[typescriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
+  "[javascript]": {
     "editor.defaultFormatter": "vscode.typescript-language-features"
   },
    */
@@ -40,10 +44,10 @@
     "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "[javascriptreact]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "[typescriptreact]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "[vue]": {
     "editor.defaultFormatter": "biomejs.biome"
@@ -203,6 +207,13 @@
   "codeium.enableConfig": {
     "*": true,
     "dotenv": true,
-    "prisma": true
+    "prisma": true,
+    "markdown": true
+  },
+  "[properties]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format"
+  },
+  "[ignore]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format"
   }
 }
