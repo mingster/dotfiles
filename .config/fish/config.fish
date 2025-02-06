@@ -43,7 +43,7 @@ switch (uname)
             eval "$(/usr/local/bin/brew shellenv)"
 
             # activate asdf
-            source /usr/local/opt/asdf/libexec/asdf.fish
+            source /usr/local/opt/asdf/share/fish/vendor_completions.d/asdf.fish
             fish_add_path /usr/local/bin
 
             # postgresql
