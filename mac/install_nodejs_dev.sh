@@ -20,26 +20,31 @@ brew update
 brew list | grep -iE 'node'
 for pkg in $(brew list | grep -iE 'node'); do brew --ignore-dependencies uninstall $pkg; done
 
+asdf plugin update --all
 
 # https://blog.logrocket.com/manage-node-js-versions-using-asdf/
 asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 
-asdf nodejs update-nodebuild
+#asdf nodejs update-nodebuild.bash
 
 asdf list all nodejs
 
-asdf nodejs resolve lts --latest-available
+#asdf nodejs resolve lts --latest-available
 
 asdf install nodejs 20.18.0
-asdf global nodejs 20.18.0
-asdf shell nodejs 20.18.0
+#asdf global nodejs 20.18.0
+#asdf shell nodejs 20.18.0
+asdf set -u nodejs 20.18.0
+
 
 npm install -g npm@latest
 
 corepack enable
 
-npm install -g yarn
-corepack prepare yarn@latest --activate
+#npm install -g yarn
+#corepack prepare yarn@latest --activate
 
 asdf reshim nodejs
+
+# install bun
 curl -fsSL https://bun.sh/install | bash

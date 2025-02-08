@@ -28,17 +28,19 @@ for pkg in $(brew list | grep -iE 'node'); do brew uninstall $pkg --ignore-depen
 
 # https://asdf-vm.com/manage/configuration.html
 # https://rednafi.com/python/install_python_with_asdf/
-asdf plugin-add python
-
-asdf plugin-add direnv
-asdf direnv setup --shell bash --version latest
-
-
 # https://github.com/asdf-community/asdf-python
+asdf plugin add python
 
 asdf install python 3.11.1
-asdf global python 3.11.1
+#asdf global python 3.11.1
+asdf set -u python 3.11.1
 
+asdf plugin add direnv
+
+asdf direnv install.bash
+asdf direnv local.bash
+asdf direnv setup.bash
+asdf direnv shell.bash
 
 # If you use pip to install a module like ipython that has binaries. You will need to run asdf reshim python
 # for the binary to be in your path.

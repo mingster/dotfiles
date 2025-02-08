@@ -53,7 +53,7 @@ brew install --cask notion
 brew install --cask obsidian
 #brew install --cask gimp
 #brew install --cask inkscape
-#brew install --cask skitch
+brew install --cask shottr
 brew install --cask cyberduck
 brew install --cask telegram
 
