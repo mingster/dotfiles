@@ -88,15 +88,15 @@ defaults write com.apple.helpviewer DevMode -bool true
 # Never go into computer sleep mode
 # systemsetup -setcomputersleep Off > /dev/null
 
-# 5 min to sleep
-# sudo systemsetup -setcomputersleep On 5
+# 10 min to sleep
+# sudo systemsetup -setcomputersleep 10
+sudo systemsetup -getcomputersleep
 
 # Disable smart quotes as they’re annoying when typing code
 defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
 
 # Disable smart dashes as they’re annoying when typing code
 defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
-
 
 ###############################################################################
 # Screen                                                                      #
@@ -473,23 +473,25 @@ sudo pmset -a sms 0
 ###############################################################################
 # Energy saving (for laptop)
 ###############################################################################
+# Sleep the display after 10 minutes
+sudo pmset -a displaysleep 5
+
 # Enable lid wakeup
 sudo pmset -a lidwake 1
 
+sudo nvram AutoBoot=%03﻿
+
 # Restart automatically on power loss
-sudo pmset -a autorestart 1
+sudo pmset -a autorestart 0
 
 # Restart automatically if the computer freezes
 sudo systemsetup -setrestartfreeze on
-
-# Sleep the display after 10 minutes
-sudo pmset -a displaysleep 10
 
 # Disable machine sleep while charging
 sudo pmset -c sleep 1
 
 # Set machine sleep to 5 minutes on battery
-sudo pmset -b sleep 5
+sudo pmset -b sleep 10
 
 # Set standby delay to 24 hours (default is 1 hour)
 sudo pmset -a standbydelay 86400
@@ -503,11 +505,11 @@ sudo pmset -a standbydelay 86400
 sudo pmset -a hibernatemode 3
 
 # Remove the sleep image file to save disk space
-# sudo rm /private/var/vm/sleepimage
+sudo rm /private/var/vm/sleepimage
 # Create a zero-byte file instead…
-# sudo touch /private/var/vm/sleepimage
+sudo touch /private/var/vm/sleepimage
 # …and make sure it can’t be rewritten
-# sudo chflags uchg /private/var/vm/sleepimage
+sudo chflags uchg /private/var/vm/sleepimage
 
 ###############################################################################
 # Terminal & iTerm 2                                                          #
