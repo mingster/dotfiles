@@ -50,7 +50,7 @@ brew install --cask raycast
 brew install --cask vnc-viewer
 #brew install --cask chatgpt
 brew install --cask notion
-brew install --cask obsidian
+#brew install --cask obsidian
 #brew install --cask gimp
 #brew install --cask inkscape
 brew install --cask shottr
