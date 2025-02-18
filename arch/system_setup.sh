@@ -96,8 +96,8 @@ simple() {
 
     # lazygit
     cd /tmp &&
-        wget https://github.com/jesseduffield/lazygit/releases/download/v0.41.0/lazygit_0.41.0_Linux_x86_64.tar.gz &&
-        tar xfv lazygit_0.41.0_Linux_x86_64.tar.gz &&
+        wget https://github.com/jesseduffield/lazygit/releases/download/v0.46.0/lazygit_0.46.0_Linux_x86_64.tar.gz &&
+        tar xfv lazygit_0.46.0_Linux_x86_64.tar.gz &&
         sudo cp lazygit /usr/bin/
 
     # ----------------------------------------------------------------------------------------------
