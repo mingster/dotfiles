@@ -34,13 +34,16 @@ brew install --cask --appdir="/Applications/_dev" 0xed
 #brew install --cask --appdir="/Applications/_dev" eclipse-java
 #brew install --cask --appdir="/Applications/_dev" eclipse-jee
 brew install --cask --appdir="/Applications/_dev" jd-gui
-brew install --cask --appdir="/Applications/_dev" dash
+#brew install --cask --appdir="/Applications/_dev" dash
 
 #brew install --appdir="/Applications/_dev" --cask blender
-brew install --appdir="/Applications/_dev" --cask db-browser-for-sqlite
-brew install --cask wireshark
+#brew install --appdir="/Applications/_dev" --cask db-browser-for-sqlite
+#brew install --cask wireshark
 
-brew install oath-toolkit
+brew install --cask --appdir="/Applications/Utilities" balenaetcher
+
+
+#brew install oath-toolkit
 
 # Misc casks
 #brew install --cask aerial #appletv screen saver
