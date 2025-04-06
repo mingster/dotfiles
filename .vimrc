@@ -1,5 +1,11 @@
-syntax on
-colorscheme desert
+colorscheme solarized
+
+if !exists("g:syntax_on")
+    syntax enable
+    filetype on
+endif
+
+"set number
 
 " Use Vim instead of vi. This must be first because it changes other options
 " as a side effect.
@@ -38,4 +44,5 @@ set wildignore+=tmp/**
 set wildignore+=*.png,*.jpg,*.gif
 
 " === fzf intergration ===
-set rtp+=/usr/local/opt/fzf
+"set rtp+=/usr/local/opt/fzf
+set rtp+=/opt/homebrew/opt/fzf

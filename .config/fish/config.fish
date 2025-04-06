@@ -140,6 +140,8 @@ fzf --fish | source
 
 #set -x EDITOR vim
 #set -x VISUAL $EDITOR
+alias vi='vim -u ~/.vimrc'
+abbr -a vi "vim -u ~/.vimrc"
 
 # fish_add_path /usr/bin
 # fish_add_path /bin

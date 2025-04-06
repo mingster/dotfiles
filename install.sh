@@ -24,6 +24,8 @@ then
   ln -s -f ~/dotfiles/.gitignore_global $HOME/
   ln -s -f ~/dotfiles/.hgignore_global $HOME/
   ln -s -f ~/dotfiles/.nanorc $HOME/
+  ln -s -f ~/dotfiles/.vimrc $HOME/
+  ln -s -f ~/dotfiles/.vim $HOME/
 
   git config --global core.excludesfile ~/dotfiles/.gitignore_global
   git config --global core.attributesfile ~/dotfiles/.gitattributes
