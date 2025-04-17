@@ -438,14 +438,12 @@ defaults write com.apple.spotlight orderedItems -array \
 killall mds > /dev/null 2>&1
 # Make sure indexing is enabled for the main volume
 sudo mdutil -i on / > /dev/null
+
 # Rebuild the index from scratch
 sudo mdutil -E / > /dev/null
 
-
-
-
-
-
+# disabled indexing
+#sudo mdutil -i off
 
 # Ask for the administrator password upfront
 sudo -v
