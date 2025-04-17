@@ -488,6 +488,9 @@ sudo systemsetup -setrestartfreeze on
 # Disable machine sleep while charging
 sudo pmset -c sleep 1
 
+# Set machine sleep to 10 minutes
+sudo systemsetup -setcomputersleep 10
+
 # Set machine sleep to 5 minutes on battery
 sudo pmset -b sleep 10
 
