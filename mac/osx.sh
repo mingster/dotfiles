@@ -52,12 +52,6 @@ defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 #sudo scutil --set LocalHostName "0x6D746873"
 #sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "0x6D746873"
 
-# Set standby delay to 24 hours (default is 1 hour)
-# sudo pmset -a standbydelay 86400
-
-# 1 hour
-#  sudo pmset -a standbydelay 3600
-
 ## System Settings -> Control Center -> Automatically hide and show the menu bar
 defaults write NSGlobalDomain _HIHideMenuBar -bool true \
     && killall Finder \
@@ -81,16 +75,6 @@ defaults write com.apple.LaunchServices LSQuarantine -bool false
 
 # Set Help Viewer windows to non-floating mode
 defaults write com.apple.helpviewer DevMode -bool true
-
-# Restart automatically if the computer freezes
-# sudo systemsetup -setrestartfreeze on
-
-# Never go into computer sleep mode
-# systemsetup -setcomputersleep Off > /dev/null
-
-# 10 min to sleep
-# sudo systemsetup -setcomputersleep 10
-sudo systemsetup -getcomputersleep
 
 # Disable smart quotes as they’re annoying when typing code
 defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
@@ -337,8 +321,6 @@ defaults write com.apple.dock wvous-bl-modifier -int 10
 defaults write com.apple.dock wvous-br-corner -int 2
 defaults write com.apple.dock wvous-br-modifier -int 2
 
-
-
 ###############################################################################
 # Safari & WebKit                                                             #
 ###############################################################################
@@ -466,13 +448,31 @@ sudo rm /var/vm/sleepimage
 # Disable the sudden motion sensor as it’s not useful for SSDs
 sudo pmset -a sms 0
 
+###############################################################################
+# Power/Sleep related                                                         #
+###############################################################################
+# Set standby delay to 24 hours (default is 1 hour)
+# sudo pmset -a standbydelay 86400
 
+# 1 hour
+#  sudo pmset -a standbydelay 3600
+
+# Restart automatically if the computer freezes
+sudo systemsetup -setrestartfreeze on
+
+sudo systemsetup -getcomputersleep
+
+# Never go into computer sleep mode
+systemsetup -setcomputersleep Off > /dev/null
+
+# 10 min to sleep
+# sudo systemsetup -setcomputersleep 10
 
 ###############################################################################
 # Energy saving (for laptop)
 ###############################################################################
-# Sleep the display after 10 minutes
-sudo pmset -a displaysleep 5
+# Sleep the display after 5 minutes
+#sudo pmset -a displaysleep 5
 
 # Enable lid wakeup
 sudo pmset -a lidwake 1
@@ -482,14 +482,11 @@ sudo nvram AutoBoot=%03﻿
 # Restart automatically on power loss
 sudo pmset -a autorestart 0
 
-# Restart automatically if the computer freezes
-sudo systemsetup -setrestartfreeze on
-
 # Disable machine sleep while charging
 sudo pmset -c sleep 1
 
 # Set machine sleep to 10 minutes
-sudo systemsetup -setcomputersleep 10
+#sudo systemsetup -setcomputersleep 10
 
 # Set machine sleep to 5 minutes on battery
 sudo pmset -b sleep 10
