@@ -17,7 +17,6 @@ simple() {
     # ----------------------------------------------------------------------------------------------
     # Applications
     # ----------------------------------------------------------------------------------------------
-
     echo ""
     echo -e "\033[1;35mInstalling applications...\033[0m"
     echo ""
@@ -313,8 +312,11 @@ simple() {
 }
 
 simple
-sudo apt-get update && sudo apt-get upgrade && sudo apt-get full-upgrade
 
+sudo systemctl disable ubuntu-advantage
+sudo apt-get --assume-yes --purge remove ubuntu-advantage-tools ubuntu-pro-client
+sudo apt autoremove -y
+sudo apt-get update && sudo apt-get upgrade -y
 
 echo ""
 echo -e "\033[1;32mEverything is set up, time to reboot!\033[0m"
