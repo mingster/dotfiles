@@ -25,6 +25,8 @@ switch (uname)
         end
         set --erase _asdf_shims
 
+        set --export BUN_INSTALL "$HOME/.bun"
+        set --export PATH $BUN_INSTALL/bin $PATH
 
         # gradle
         #set -gx GRADLE_HOME /usr/bin/gradle
