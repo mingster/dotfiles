@@ -68,6 +68,10 @@ brew install asdf
 
 cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig
 
+# set up cli access for github
+gh auth login
+
+
 echo ""
 echo -e "\033[1;35m create missing directories and files \033[0m"
 echo ""
