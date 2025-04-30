@@ -1,4 +1,5 @@
 #!/usr/bin/env fish
+cp ~/dotfiles/.config/fish/functions/postexec_newline.fish ~/.config/fish/functions/
 
 ## enter fish shell
 #fish

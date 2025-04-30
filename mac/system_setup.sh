@@ -100,14 +100,12 @@ echo ""
 echo -e "\033[1;35m alacritty \033[0m"
 echo ""
 
-brew install --cask alacritty
-
-if [ ! -d ${HOME}/.config/alacritty ]; then
-    rm -rf ${HOME}/.config/alacritty
-fi
-ln -s $HOME/dotfiles/.config/alacritty $HOME/.config/
-
-git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
+#brew install --cask alacritty
+#if [ ! -d ${HOME}/.config/alacritty ]; then
+#    rm -rf ${HOME}/.config/alacritty
+#fi
+#ln -s $HOME/dotfiles/.config/alacritty $HOME/.config/
+#git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
 
 # micro editor
 brew install micro
@@ -152,28 +150,26 @@ git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
 #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
 # Install Yabai
-brew install koekeishiya/formulae/yabai
+#brew install koekeishiya/formulae/yabai
 # Install Skhd
-brew install koekeishiya/formulae/skhd
-
-ln -s $HOME/dotfiles/.config/yabai $HOME/.config/
-ln -s $HOME/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
+#brew install koekeishiya/formulae/skhd
+#ln -s $HOME/dotfiles/.config/yabai $HOME/.config/
+#ln -s $HOME/dotfiles/.config/sxhkd/skhdrc.mac $HOME/.skhdrc
 
 # install sketchybar
-brew install FelixKratz/formulae/sketchybar
-ln -s $HOME/dotfiles/.config/sketchybar $HOME/.config/
+#brew install FelixKratz/formulae/sketchybar
+#ln -s $HOME/dotfiles/.config/sketchybar $HOME/.config/
+#chmod +x $HOME/.config/sketchybar/*.sh
+#chmod +x $HOME/.config/sketchybar/plugins/*.sh
+#chmod +x $HOME/.config/sketchybar/items/*.sh
+#curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/sketchybar-app-font.ttf \
+#    -o $HOME/Library/Fonts/sketchybar-app-font.ttf
+
+#curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/icon_map_fn.sh \
+#    -o $HOME/dotfiles/.config/sketchybar/plugins/icon_map_fn.sh
 
 #brew install font-sf-pro
 #brew install --cask sf-symbols
-curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/sketchybar-app-font.ttf \
-    -o $HOME/Library/Fonts/sketchybar-app-font.ttf
-
-curl -L https://github.com/kvndrsslr/sketchybar-app-font/releases/download/v2.0.18/icon_map_fn.sh \
-    -o $HOME/dotfiles/.config/sketchybar/plugins/icon_map_fn.sh
-
-chmod +x $HOME/.config/sketchybar/*.sh
-chmod +x $HOME/.config/sketchybar/plugins/*.sh
-chmod +x $HOME/.config/sketchybar/items/*.sh
 
 # another tile window manager as backup
 #brew install --cask amethyst # Install Amethyst - https://ianyh.com/amethyst/
@@ -196,7 +192,6 @@ echo ' change default shell to fish'
 #
 chsh -s $(which fish)
 
-
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
 
@@ -204,25 +199,27 @@ brew cleanup && brew doctor
 echo ""
 echo -e "\033[1;35m cron service script \033[0m"
 echo ""
-cp ~/bin2/com.mingster.crontab.plist $HOME/Library/LaunchAgents/
+sudo cp ~/bin2/com.mingster.crontab.plist /Library/LaunchAgents/
 
+sudo -v
 chmod 755 $HOME/bin2/*.sh
-chmod 644 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
-chown $USER:staff $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+sudo chmod 644 /Library/LaunchAgents/com.mingster.crontab.plist
+sudo chown $USER:staff /Library/LaunchAgents/com.mingster.crontab.plist
 
 # test
-# plutil $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+# plutil /Library/LaunchAgents/com.mingster.crontab.plist
 
-launchctl bootout gui/501 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
-launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
-launchctl bootstrap gui/501 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+#launchctl bootout gui/501 /Library/LaunchAgents/com.mingster.crontab.plist
+#launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
+#launchctl bootstrap gui/501 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+
 # Load task
-#launchctl load $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+launchctl load /Library/LaunchAgents/com.mingster.crontab.plist
 # Remove task
 #launchctl unload ~/Library/LaunchAgents/com.mingster.crontab.plist
 
 # Manually execute task
-launchctl start $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+launchctl start /Library/LaunchAgents/com.mingster.crontab.plist
 
 # List all tasks
 #launchctl list | grep mingster

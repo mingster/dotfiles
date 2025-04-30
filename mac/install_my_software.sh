@@ -10,30 +10,28 @@ brew install --cask --appdir="/Applications/Utilities" onyx
 # brew install --cask virtualbox
 # brew install --cask vagrant
 # Install Docker, which requires virtualbox
-brew install docker
-brew install docker-compose
-brew install boot2docker
-brew install nmap
-
+#brew install docker
+#brew install docker-compose
+#brew install boot2docker
+brew install nmap tmux
 
 mkdir /Applications/_dev
 
-brew install --cask --appdir="/Applications/_dev" docker
+#brew install --cask --appdir="/Applications/_dev" docker
 brew install --cask --appdir="/Applications/_dev" github
-brew install --cask --appdir="/Applications/_dev" sourcetree
-brew install --cask --appdir="/Applications/_dev" staruml
+#brew install --cask --appdir="/Applications/_dev" sourcetree
+#brew install --cask --appdir="/Applications/_dev" staruml
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 brew install --cask --appdir="/Applications/_dev" cursor
-
 
 # copy over visual-studio-code setting
 cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
 
 brew install --cask --appdir="/Applications/_dev" azure-data-studio
-brew install --cask --appdir="/Applications/_dev" 0xed
+#brew install --cask --appdir="/Applications/_dev" 0xed
 #brew install --cask --appdir="/Applications/_dev" eclipse-java
 #brew install --cask --appdir="/Applications/_dev" eclipse-jee
-brew install --cask --appdir="/Applications/_dev" jd-gui
+#brew install --cask --appdir="/Applications/_dev" jd-gui
 #brew install --cask --appdir="/Applications/_dev" dash
 
 #brew install --appdir="/Applications/_dev" --cask blender
@@ -42,22 +40,21 @@ brew install --cask --appdir="/Applications/_dev" jd-gui
 
 brew install --cask --appdir="/Applications/Utilities" balenaetcher
 
-
 #brew install oath-toolkit
 
 # Misc casks
 #brew install --cask aerial #appletv screen saver
 #brew install --cask welly #ptt telnet client
 #brew install --cask evernote
-brew install --cask raycast
-brew install --cask vnc-viewer
+#brew install --cask raycast
+#brew install --cask vnc-viewer
 #brew install --cask chatgpt
 brew install --cask notion
 #brew install --cask obsidian
 #brew install --cask gimp
 #brew install --cask inkscape
-brew install --cask shottr
-brew install --cask cyberduck
+#brew install --cask shottr
+#brew install --cask cyberduck
 brew install --cask telegram
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
@@ -66,20 +63,19 @@ brew install --cask tor-browser
 brew install --cask brave-browser
 brew install --cask firefox
 #brew install --cask chromium
-brew install --cask arc
+#brew install --cask arc
 
-brew install --cask libreoffice
+#brew install --cask libreoffice
 
-brew install --cask iterm2
-brew install --cask atom
-brew install --cask macdown
-
+#brew install --cask iterm2
+#brew install --cask atom
+#brew install --cask macdown
 #brew install --cask teamviewer
 #brew install --cask skype
 #brew install --cask slack
 #brew install --cask dropbox
 #brew install --cask onedrive
-brew install --cask megasync
+#brew install --cask megasync
 #brew install --cask numi
 #brew install --cask alfred
 #brew install --cask keyboard-maestro
@@ -101,7 +97,7 @@ brew install --cask --appdir="/Applications/_av" iina
 brew install --cask --appdir="/Applications/_av" xld
 
 #brew install --cask --appdir="/Applications/_av" get-lyrical
-brew install mp3splt
+#brew install mp3splt
 
 #ffmpeg with aac/mp4 support
 # https://gist.github.com/clayton/6196167
@@ -110,9 +106,8 @@ brew install mp3splt
 brew install yt-dlp
 ln -s /usr/local/bin/yt-dlp /usr/local/bin/youtube-dl                                                                                                                                                                                                     1 ✘
 
-brew install libvpx
-
-brew install ffmpeg #--with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
+#brew install libvpx
+#brew install ffmpeg #--with-fdk-aac --with-tools --with-sdl2 --with-freetype --with-libass --with-libqavi --with-libvorbis --with-libvpx --with-opus --with-x265
 
 # Install developer friendly quick look plugins; see https://github.com/sindresorhus/quick-look-plugins
 #brew install --cask qlcolorcode qlstephen qlmarkdown quicklook-json qlprettypatch quicklook-csv betterzipql qlimagesize webpquicklook suspicious-package

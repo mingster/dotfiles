@@ -416,8 +416,7 @@ defaults write com.apple.spotlight orderedItems -array \
 	'{"enabled" = 0;"name" = "PRESENTATIONS";}' \
 	'{"enabled" = 0;"name" = "SPREADSHEETS";}' \
 	'{"enabled" = 0;"name" = "SOURCE";}'
-# Load new settings before rebuilding the index
-killall mds > /dev/null 2>&1
+
 # Make sure indexing is enabled for the main volume
 sudo mdutil -i on / > /dev/null
 
@@ -426,6 +425,9 @@ sudo mdutil -E / > /dev/null
 
 # disabled indexing
 #sudo mdutil -i off
+
+# Load new settings before rebuilding the index
+killall mds > /dev/null 2>&1
 
 # Ask for the administrator password upfront
 sudo -v
@@ -475,24 +477,23 @@ systemsetup -setcomputersleep Off > /dev/null
 #sudo pmset -a displaysleep 5
 
 # Enable lid wakeup
-sudo pmset -a lidwake 1
-
-sudo nvram AutoBoot=%03﻿
+#sudo pmset -a lidwake 1
+#sudo nvram AutoBoot=%03﻿
 
 # Restart automatically on power loss
-sudo pmset -a autorestart 0
+#sudo pmset -a autorestart 0
 
 # Disable machine sleep while charging
-sudo pmset -c sleep 1
+#sudo pmset -c sleep 1
 
 # Set machine sleep to 10 minutes
 #sudo systemsetup -setcomputersleep 10
 
 # Set machine sleep to 5 minutes on battery
-sudo pmset -b sleep 10
+#sudo pmset -b sleep 10
 
 # Set standby delay to 24 hours (default is 1 hour)
-sudo pmset -a standbydelay 86400
+#sudo pmset -a standbydelay 86400
 
 # Never go into computer sleep mode
 #sudo systemsetup -setcomputersleep Off > /dev/null
@@ -500,14 +501,14 @@ sudo pmset -a standbydelay 86400
 # Hibernation mode
 # 0: Disable hibernation (speeds up entering sleep mode)
 # 3: Copy RAM to disk so the system state can still be restored in case of a power failure.
-sudo pmset -a hibernatemode 3
+#sudo pmset -a hibernatemode 3
 
 # Remove the sleep image file to save disk space
-sudo rm /private/var/vm/sleepimage
+#sudo rm /private/var/vm/sleepimage
 # Create a zero-byte file instead…
-sudo touch /private/var/vm/sleepimage
+#sudo touch /private/var/vm/sleepimage
 # …and make sure it can’t be rewritten
-sudo chflags uchg /private/var/vm/sleepimage
+#sudo chflags uchg /private/var/vm/sleepimage
 
 ###############################################################################
 # Terminal & iTerm 2                                                          #
@@ -611,7 +612,7 @@ defaults write com.apple.messageshelper.MessageController SOInputLineSettings -d
 defaults write com.apple.MobileSMS "MMSShowSubject" -bool "true" && killall Messages
 
 # Disable continuous spell checking
-#defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "continuousSpellCheckingEnabled" -bool false
+defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "continuousSpellCheckingEnabled" -bool false
 
 ###############################################################################
 # Google Chrome & Google Chrome Canary                                        #
