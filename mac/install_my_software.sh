@@ -132,6 +132,8 @@ brew install --cask safari-technology-preview
 # xcode
 # https://www.moncefbelyamani.com/how-to-install-xcode-with-homebrew/
 mas search xcode
+
+#497799835  Xcode                                               (16.3)
 mas install 497799835
 
 # non-automated
