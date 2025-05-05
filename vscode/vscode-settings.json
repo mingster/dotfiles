@@ -1,219 +1,181 @@
 {
-  "html.format.unformatted": "",
-  "editor.tabSize": 2,
-  "editor.formatOnSave": true,
-  "editor.multiCursorModifier": "ctrlCmd",
-  "editor.fontSize": 16,
-  "editor.fontFamily": "DejaVu Sans Mono, Consolas, Hack Nerd Font Mono, Sauce Code Pro, Menlo, monospace",
-  "editor.defaultFormatter": "biomejs.biome",
-  "editor.bracketPairColorization.enabled": true,
-  "editor.guides.bracketPairs": false,
-  "editor.suggestSelection": "first",
-  "editor.minimap.enabled": false,
-  "editor.inlineSuggest.enabled": true,
-  "editor.inlayHints.enabled": "off",
-  "editor.wordWrap": "off",
-  "editor.guides.indentation": false,
-  "editor.formatOnType": false,
-  "editor.snippetSuggestions": "top",
-  "editor.quickSuggestions": {
-    "strings": "on"
-  },
-  "editor.codeActionsOnSave": {
-    "quickfix.biome": "explicit",
-  "source.organizeImports.biome": "explicit"
-  },
-  /*
-  "[javascriptreact]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
-  },
-  "[typescriptreact]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
-  },
-  "[javascript]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
-  },
-   */
-  "[tailwindcss]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
-  "[css]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
-  "[javascript]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
-  },
-  "[javascriptreact]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
-  "[typescriptreact]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
-  "[vue]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
-  "[json]": {
-    "editor.defaultFormatter": "vscode.json-language-features"
-  },
-  "[jsonc]": {
-    "editor.defaultFormatter": "vscode.json-language-features"
-  },
-  "[html]": {
-    "editor.defaultFormatter": "vscode.html-language-features"
-  },
-  "[xml]": {
-    "editor.defaultFormatter": "DotJoshJohnson.xml"
-  },
-  "[prisma]": {
-    "editor.defaultFormatter": "Prisma.prisma"
-  },
-  "[shellscript]": {
-    "editor.defaultFormatter": "foxundermoon.shell-format"
-  },
-  "[dotenv]": {
-    "editor.defaultFormatter": "foxundermoon.shell-format"
-  },
-  "terminal.external.osxExec": "Kitty.app",
-  //"vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
-  "redhat.telemetry.enabled": false,
-  //"npm.keybindingsChangedWarningShown": true,
-  "security.workspace.trust.untrustedFiles": "open",
-  "[python]": {
-    "editor.formatOnType": true
-  },
-  "files.associations": {
-    "*.config": "aspnetcorerazor",
-    "*.js": "javascriptreact",
-    "*.jsx": "javascriptreact",
-    "*.ts": "typescriptreact",
-    "*.tsx": "typescriptreact",
-    "*.css": "css"
-  },
-  "js/ts.implicitProjectConfig.checkJs": true,
-  "typescript.updateImportsOnFileMove.enabled": "always",
-  "javascript.updateImportsOnFileMove.enabled": "always",
-  "terminal.integrated.env.osx": {},
-  "terminal.integrated.rightClickBehavior": "default",
-  "terminal.integrated.copyOnSelection": true,
-  "terminal.integrated.enableVisualBell": true,
-  "terminal.integrated.defaultProfile.windows": "Git Bash",
-  "terminal.integrated.profiles.osx": {
-    "zsh": {
-      "path": "/usr/local/bin/zsh",
-      "args": [
-        "-l"
-      ]
-    }
-  },
-  "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
-  "terminal.integrated.lineHeight": 1.1,
-  "terminal.integrated.fontSize": 14,
-  //"aws.telemetry": false,
-  "diffEditor.wordWrap": "off",
-  "workbench.colorCustomizations": {
-    "editor.lineHighlightBackground": "#1073cf2d",
-    "editor.lineHighlightBorder": "#9fced11f"
-  },
-  "git.autofetch": true,
-  "explorer.confirmDelete": false,
-  "explorer.confirmDragAndDrop": false,
-  "git.enableSmartCommit": true,
-  "git.confirmSync": false,
-  "files.autoSave": "afterDelay",
-  //"svelte.enable-ts-plugin": true,
-  "workbench.colorTheme": "GitHub Dark",
-  "git.openRepositoryInParentFolders": "never",
-  /*
-  "github.copilot.enable": {
-    "*": false,
-    "plaintext": false,
-    "markdown": false,
-    "scminput": false
-  },
-  */
-  /*"javascript.format.enable": false*/
-  // Comment region folding
-  "maptz.regionfolder": {
+    "html.format.unformatted": "",
+    "editor.multiCursorModifier": "ctrlCmd",
+    "editor.fontSize": 14,
+    "editor.fontFamily": "DejaVu Sans Mono, Consolas, Hack Nerd Font Mono, Sauce Code Pro, Menlo, monospace",
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.quickSuggestions": {
+        "strings": "on"
+    },
+    "[tailwindcss]": {
+        "editor.defaultFormatter": "biomejs.biome"
+    },
+    "[css]": {
+        "editor.defaultFormatter": "biomejs.biome"
+    },
     "[javascript]": {
-      "foldStart": "// region [NAME]",
-      "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
-      "foldEnd": "// endregion",
-      "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
-      "foldDefinitions": [
-        {
-          "foldStart": "/* region [NAME] */",
-          "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
-          "foldEnd": "/* endregion */",
-          "foldEndRegex": "/\\*[\\s]*[#]*endregion"
-        }
-      ]
+        "editor.defaultFormatter": "vscode.typescript-language-features"
     },
     "[javascriptreact]": {
-      "foldStart": "// region [NAME]",
-      "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
-      "foldEnd": "// endregion",
-      "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
-      "foldDefinitions": [
-        {
-          "foldStart": "/* region [NAME] */",
-          "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
-          "foldEnd": "/* endregion */",
-          "foldEndRegex": "/\\*[\\s]*[#]*endregion"
-        }
-      ]
-    },
-    "[typescript]": {
-      "foldStart": "// region [NAME]",
-      "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
-      "foldEnd": "// endregion",
-      "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
-      "foldDefinitions": [
-        {
-          "foldStart": "/* region [NAME] */",
-          "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
-          "foldEnd": "/* endregion */",
-          "foldEndRegex": "/\\*[\\s]*[#]*endregion"
-        }
-      ]
+        "editor.defaultFormatter": "vscode.typescript-language-features"
     },
     "[typescriptreact]": {
-      "foldStart": "// region [NAME]",
-      "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
-      "foldEnd": "// endregion",
-      "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
-      "foldDefinitions": [
-        {
-          "foldStart": "/* region [NAME] */",
-          "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
-          "foldEnd": "/* endregion */",
-          "foldEndRegex": "/\\*[\\s]*[#]*endregion"
+        "editor.defaultFormatter": "vscode.typescript-language-features"
+    },
+    "[vue]": {
+        "editor.defaultFormatter": "biomejs.biome"
+    },
+    "[json]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[html]": {
+        "editor.defaultFormatter": "vscode.html-language-features"
+    },
+    "[xml]": {
+        "editor.defaultFormatter": "DotJoshJohnson.xml"
+    },
+    "[prisma]": {
+        "editor.defaultFormatter": "Prisma.prisma"
+    },
+    "[shellscript]": {
+        "editor.defaultFormatter": "foxundermoon.shell-format"
+    },
+    "[dotenv]": {
+        "editor.defaultFormatter": "foxundermoon.shell-format"
+    },
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": false,
+    "terminal.external.osxExec": "kitty.app",
+    "editor.suggestSelection": "first",
+    "redhat.telemetry.enabled": false,
+    "editor.minimap.enabled": false,
+    "security.workspace.trust.untrustedFiles": "open",
+    "[python]": {
+        "editor.formatOnType": true
+    },
+    "editor.inlineSuggest.enabled": true,
+    "files.associations": {
+        "*.config": "aspnetcorerazor",
+        "*.js": "javascriptreact",
+        "*.jsx": "javascriptreact",
+        "*.ts": "typescriptreact",
+        "*.tsx": "typescriptreact",
+        "*.css": "css"
+    },
+    "js/ts.implicitProjectConfig.checkJs": true,
+    "typescript.updateImportsOnFileMove.enabled": "always",
+    "javascript.updateImportsOnFileMove.enabled": "always",
+    "terminal.integrated.env.osx": {},
+    "terminal.integrated.rightClickBehavior": "default",
+    "terminal.integrated.copyOnSelection": true,
+    "terminal.integrated.enableVisualBell": true,
+    "terminal.integrated.defaultProfile.windows": "Git Bash",
+    "terminal.integrated.profiles.osx": {
+        "zsh": {
+            "path": "/usr/local/bin/zsh",
+            "args": [
+                "-l"
+            ]
         }
-      ]
-    }
-  },
-  "workbench.productIconTheme": "material-product-icons",
-  "accessibility.signals.terminalBell": {
-    "sound": "on"
-  },
-  "workbench.iconTheme": "material-icon-theme",
-  "glassit.alpha": 240,
-  //"github.copilot.editor.enableAutoCompletions": true,
-  "workbench.startupEditor": "none",
-  "[sql]": {
-    "editor.defaultFormatter": "mtxr.sqltools"
-  },
-  "errorLens.enabled": true,
-  "window.newWindowProfile": "Default",
-  "codeium.enableConfig": {
-    "*": true,
-    "dotenv": true,
-    "prisma": true,
-    "markdown": true
-  },
-  "[properties]": {
-    "editor.defaultFormatter": "foxundermoon.shell-format"
-  },
-  "[ignore]": {
-    "editor.defaultFormatter": "foxundermoon.shell-format"
-  }
+    },
+    "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
+    "terminal.integrated.lineHeight": 1.1,
+    "terminal.integrated.fontSize": 14,
+    "editor.inlayHints.enabled": "off",
+    "editor.wordWrap": "off",
+    "diffEditor.wordWrap": "off",
+    "editor.guides.indentation": false,
+    "workbench.colorCustomizations": {
+        "editor.lineHighlightBackground": "#1073cf2d",
+        "editor.lineHighlightBorder": "#9fced11f"
+    },
+    "editor.formatOnType": false,
+    "git.autofetch": true,
+    "explorer.confirmDelete": false,
+    "explorer.confirmDragAndDrop": false,
+    "editor.snippetSuggestions": "top",
+    "git.enableSmartCommit": true,
+    "git.confirmSync": false,
+    "files.autoSave": "afterDelay",
+    "git.openRepositoryInParentFolders": "never",
+
+    "maptz.regionfolder": {
+        "[javascript]": {
+            "foldStart": "// region [NAME]",
+            "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
+            "foldEnd": "// endregion",
+            "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
+            "foldDefinitions": [
+                {
+                    "foldStart": "/* region [NAME] */",
+                    "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
+                    "foldEnd": "/* endregion */",
+                    "foldEndRegex": "/\\*[\\s]*[#]*endregion"
+                }
+            ]
+        },
+        "[javascriptreact]": {
+            "foldStart": "// region [NAME]",
+            "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
+            "foldEnd": "// endregion",
+            "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
+            "foldDefinitions": [
+                {
+                    "foldStart": "/* region [NAME] */",
+                    "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
+                    "foldEnd": "/* endregion */",
+                    "foldEndRegex": "/\\*[\\s]*[#]*endregion"
+                }
+            ]
+        },
+        "[typescript]": {
+            "foldStart": "// region [NAME]",
+            "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
+            "foldEnd": "// endregion",
+            "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
+            "foldDefinitions": [
+                {
+                    "foldStart": "/* region [NAME] */",
+                    "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
+                    "foldEnd": "/* endregion */",
+                    "foldEndRegex": "/\\*[\\s]*[#]*endregion"
+                }
+            ]
+        },
+        "[typescriptreact]": {
+            "foldStart": "// region [NAME]",
+            "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*",
+            "foldEnd": "// endregion",
+            "foldEndRegex": "^[\\s]*//[\\s]*[#]*endregion",
+            "foldDefinitions": [
+                {
+                    "foldStart": "/* region [NAME] */",
+                    "foldStartRegex": "^[\\s]*/\\*[\\s]*[#]*region[\\s]*(.*)[\\s]*\\*/[\\s]*$",
+                    "foldEnd": "/* endregion */",
+                    "foldEndRegex": "/\\*[\\s]*[#]*endregion"
+                }
+            ]
+        }
+    },
+    "accessibility.signals.terminalBell": {
+        "sound": "on"
+    },
+    //"workbench.colorTheme": "GitHub Dark Colorblind (Beta)",
+    "workbench.iconTheme": "material-icon-theme",
+    "glassit.alpha": 240,
+    "workbench.startupEditor": "none",
+    "errorLens.enabled": true,
+    "window.newWindowProfile": "Default",
+    "codeium.enableConfig": {
+        "*": true,
+        "dotenv": true,
+        "prisma": true
+    },
+    "cursor.cpp.enablePartialAccepts": true,
+    "cursor.chat.premiumChatAutoScrollWhenAtBottom": true,
+    "cursor.chat.showSuggestedFiles": true,
+    "database-client.autoSync": true
 }
