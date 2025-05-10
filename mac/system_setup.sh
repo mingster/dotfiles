@@ -139,7 +139,9 @@ brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-ses
 brew install lf   # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
 brew install fzf
 brew install jesseduffield/lazygit/lazygit
+brew install commitizen
 
+ln -s $HOME/dotfiles/.config/lazygit/config.yml ~/Library/Application\ Support/lazygit/config.yml
 ln -s $HOME/dotfiles/.config/tmux $HOME/.config/
 ln -s $HOME/dotfiles/.config/lf $HOME/.config/
 ln -s $HOME/dotfiles/.config/lazygit $HOME/.config/
