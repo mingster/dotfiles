@@ -48,7 +48,7 @@ brew install --cask --appdir="/Applications/Utilities" balenaetcher
 #brew install --cask evernote
 #brew install --cask raycast
 #brew install --cask vnc-viewer
-#brew install --cask chatgpt
+brew install --cask chatgpt
 brew install --cask claude
 brew install --cask notion
 #brew install --cask obsidian
@@ -139,6 +139,9 @@ mas install 497799835
 
 #line
 mas install 539883307
+
+#notebooklm
+#mas install 6737527615
 
 # non-automated
 # vmware
