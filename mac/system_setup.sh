@@ -56,10 +56,8 @@ chmod +x ${HOME}/.local/bin/*
 echo ""
 echo -e "\033[1;35m essential apps \033[0m"
 echo ""
-brew install --cask readdle-spark
 brew install --cask google-chrome
 brew install --cask megasync
-brew install --cask google-drive
 
 # Install essential binaries.
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn

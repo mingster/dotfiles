@@ -60,6 +60,10 @@ brew install --cask telegram
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
 #brew install tor
+
+brew install --cask google-drive
+brew install --cask readdle-spark
+
 brew install --cask tor-browser
 brew install --cask brave-browser
 brew install --cask firefox
@@ -76,7 +80,7 @@ brew install --cask firefox
 #brew install --cask slack
 #brew install --cask dropbox
 #brew install --cask onedrive
-#brew install --cask megasync
+brew install --cask megasync
 #brew install --cask numi
 #brew install --cask alfred
 #brew install --cask keyboard-maestro
