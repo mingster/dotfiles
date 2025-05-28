@@ -106,6 +106,7 @@ brew install --cask --appdir="/Applications/_av" xld
 
 #ffmpeg with aac/mp4 support
 # https://gist.github.com/clayton/6196167
+brew install homebrew-ffmpeg/ffmpeg/ffmpeg
 
 # replave obsoleted youtube-dl with yt-dlp
 brew install yt-dlp
