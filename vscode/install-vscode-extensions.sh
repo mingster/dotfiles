@@ -15,7 +15,6 @@ cesium.gltf-vscode
 christian-kohler.npm-intellisense
 christian-kohler.path-intellisense
 ckolkman.vscode-postgres
-codeium.codeium
 codezombiech.gitignore
 davidanson.vscode-markdownlint
 donjayamanne.githistory
@@ -27,6 +26,8 @@ formulahendry.auto-close-tag
 formulahendry.auto-rename-tag
 foxundermoon.shell-format
 github.codespaces
+github.copilot
+github.copilot-chat
 github.github-vscode-theme
 github.remotehub
 heybourn.headwind
@@ -34,12 +35,8 @@ jasonnutter.search-node-modules
 josee9988.minifyall
 maptz.regionfolder
 mikestead.dotenv
-mongodb.mongodb-vscode
 mrmlnc.vscode-scss
-#ms-vscode.azure-repos
 ms-vscode.remote-repositories
-mtxr.sqltools
-mtxr.sqltools-driver-pg
 pkief.material-icon-theme
 pkief.material-product-icons
 planbcoding.vscode-react-refactor
@@ -52,6 +49,7 @@ shd101wyy.markdown-preview-enhanced
 sibiraj-s.vscode-scss-formatter
 usernamehw.errorlens
 vsls-contrib.gistfs
+yoavbls.pretty-ts-errors
 yseop.vscode-yseopml
 zignd.html-css-class-completion
 )
