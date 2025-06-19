@@ -30,8 +30,8 @@ asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 asdf list all nodejs | wc -l
 
 asdf install nodejs 22.14.0
-asdf global nodejs 22.14.0
-asdf shell nodejs 22.14.0
+#asdf global nodejs 22.14.0
+#asdf shell nodejs 22.14.0
 asdf set -u nodejs 22.14.0
 
 
