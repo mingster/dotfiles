@@ -130,6 +130,15 @@ brew install --cask google-chrome@dev
 #brew install --cask google-chrome-canary
 brew install --cask safari-technology-preview
 
+# browsh
+brew tap browsh-org/homebrew-browsh
+brew install browsh
+
+# gemini cli
+npx https://github.com/google-gemini/gemini-cli
+
+export GEMINI_API_KEY="AIzaSyCpqYFXnp8B5MfU7QkHIGHEVwtgO0QeYzA"
+
 # https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/SourceCodePro.zip
 #cd ~/Library/Fonts && curl -fLo "Sauce Code Pro Medium Nerd Font Complete.ttf" https://github.com/ryanoasis/nerd-fonts/blob/master/patched-fonts/SourceCodePro/Regular/complete/Sauce%20Code%20Pro%20Nerd%20Font%20Complete.ttf
 #brew tap homebrew/cask-fonts && brew install --cask font-source-code-pro
