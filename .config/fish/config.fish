@@ -84,16 +84,15 @@ switch (uname)
         set --export BUN_INSTALL "$HOME/.bun"
         set --export PATH $BUN_INSTALL/bin $PATH
 
-        #neofetch
-
+        # java (non-asdf way)
         #If you need to have openjdk first in your PATH, run:
-        #fish_add_path /usr/local/opt/openjdk/bin
+        fish_add_path /usr/local/opt/openjdk@11/bin
 
         #For compilers to find openjdk@11 you may need to set:
-        #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/openjdk/include"
+        set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
 
-        #set -gx JAVA_HOME /usr/local/opt/openjdk/
-        #set -gx JAVA_HOME /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+        set -gx JAVA_HOME /usr/local/opt/openjdk@11/
+
 
         # gradle
         #set -gx GRADLE_HOME /usr/local/opt/gradle

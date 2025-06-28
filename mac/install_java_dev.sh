@@ -12,6 +12,10 @@ while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 brew update
 
 # Install Java
+# brew install openjdk@11
+sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
+fish_add_path /usr/local/opt/openjdk@11/bin
+set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
 
 ## to remove prev installs
 #sudo rm -fr $HOME/Library/Java/JavaVirtualMachines/*
@@ -21,17 +25,18 @@ brew uninstall openjdk@11
 brew list | grep -iE 'java|jdk|temurin'
 for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
 
+
+brew install curl jq unzip
+
 # asdf - https://github.com/halcyon/asdf-java
-asdf plugin-add java https://github.com/halcyon/asdf-java.git
+asdf plugin add java https://github.com/halcyon/asdf-java.git
 
-asdf list-all java
+asdf list all java
 
-#asdf install java openjdk-11.0.2
-#asdf global java openjdk-11.0.2
-#asdf local java openjdk-11.0.2
+asdf install java latest:adoptopenjdk-11
 
-asdf install java adoptopenjdk-11.0.24+8
-asdf global java adoptopenjdk-11.0.24+8
+#asdf install java adoptopenjdk-11.0.24+8
+#asdf global java adoptopenjdk-11.0.24+8
 #sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
 #sudo ln -s /usr/local//opt/homebrew/opt/openjdk@11 /Library/Java/JavaVirtualMachines
 

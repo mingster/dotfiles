@@ -307,7 +307,7 @@ simple() {
 
 
     # ----------------------------------------------------------------------------------------------
-    # brosh
+    # brosh - install firefox from apt first - https://support.mozilla.org/en-US/kb/install-firefox-linux
     # ----------------------------------------------------------------------------------------------
     wget https://github.com/browsh-org/browsh/releases/download/v1.8.0/browsh_1.8.0_linux_amd64.deb
     sudo apt install ./browsh_1.8.0_linux_amd64.deb
