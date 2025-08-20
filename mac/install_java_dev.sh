@@ -13,27 +13,25 @@ brew update
 
 # Install Java
 # brew install openjdk@11
-sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
-fish_add_path /usr/local/opt/openjdk@11/bin
-set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
+#sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
+#fish_add_path /usr/local/opt/openjdk@11/bin
+#set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
 
 ## to remove prev installs
 #sudo rm -fr $HOME/Library/Java/JavaVirtualMachines/*
 #sudo rm -fr /Library/Java/JavaVirtualMachines/*
 
-brew uninstall openjdk@11
+brew install openjdk@11
 brew list | grep -iE 'java|jdk|temurin'
 for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
-
 
 brew install curl jq unzip
 
 # asdf - https://github.com/halcyon/asdf-java
-asdf plugin add java https://github.com/halcyon/asdf-java.git
-
-asdf list all java
-
-asdf install java latest:adoptopenjdk-11
+#asdf plugin add java https://github.com/halcyon/asdf-java.git
+#asdf list all java
+#asdf install java latest:adoptopenjdk-11
+#echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
 
 #asdf install java adoptopenjdk-11.0.24+8
 #asdf global java adoptopenjdk-11.0.24+8
@@ -43,7 +41,7 @@ asdf install java latest:adoptopenjdk-11
 java -version
 
 # set java_home
-. $HOME/.asdf/plugins/java/set-java-home.fish
+#. $HOME/.asdf/plugins/java/set-java-home.fish
 
 #brew tap caskroom/cask
 #brew install java11
