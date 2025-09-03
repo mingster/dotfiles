@@ -49,6 +49,7 @@ switch (uname)
 
             # postgresql
             fish_add_path /opt/homebrew/opt/postgresql@17/bin
+            fish_add_path /opt/homebrew/opt/openjdk@11/bin
 
         else if test "$architecture" = "x86_64"
             #echo "This Mac is using Intel."
@@ -58,6 +59,7 @@ switch (uname)
 
             # postgresql
             fish_add_path /usr/local/opt/postgresql@17/bin
+            fish_add_path /usr/local/opt/openjdk@11/bin
 
         else
             echo "Unknown architecture: $architecture"
@@ -103,15 +105,6 @@ switch (uname)
         #fish_add_path $HOME/Library/Android/sdk/platform-tools
         #fish_add_path $JAVA_HOME/bin
 
-        # node v20.x
-        #fish_add_path /usr/local/opt/node@20/bin
-        #set -gx LDFLAGS $LDFLAGS "-L/usr/local/opt/node@20/lib"
-        #set -gx CPPFLAGS $CPPFLAGS "-I/usr/local/opt/node@20/include"
-
-        # mysql-client
-        # fish_add_path /usr/local/opt/mysql-client/bin
-
-
     case FreeBSD NetBSD DragonFly
 
     case '*'
@@ -147,8 +140,6 @@ abbr -a vi "vim -u ~/.vimrc"
 # fish_add_path /usr/sbin
 # fish_add_path /sbin
 
-# nvm
-#set -gx NVM_DIR $HOME/.nvm
 
 if status is-interactive
     # Commands to run in interactive sessions can go here
@@ -168,15 +159,6 @@ abbr -a -g gemini 'npx https://github.com/google-gemini/gemini-cli'
 # Sometimes it still doesn't work well enough on node.js scripts :(
 bind --preset \cC 'cancel-commandline'
 
-# Auto-switch nvm version on cd
-# Requires a ~/.node-version file with a valid node version
-# https://github.com/jorgebucaran/nvm.fish/pull/186
-if type -q nvm
-    function __nvm_auto --on-variable PWD
-    nvm use --silent 2>/dev/null # Comment out the silent flag for debugging
-    end
-    __nvm_auto
-end
 
 # Pyenv setup
 # Requires `brew install pyenv`

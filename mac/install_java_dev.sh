@@ -21,11 +21,11 @@ brew update
 #sudo rm -fr $HOME/Library/Java/JavaVirtualMachines/*
 #sudo rm -fr /Library/Java/JavaVirtualMachines/*
 
-brew install openjdk@11
-brew list | grep -iE 'java|jdk|temurin'
-for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
+#brew list | grep -iE 'java|jdk|temurin'
+#for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
 
 brew install curl jq unzip
+brew install openjdk@11
 
 # asdf - https://github.com/halcyon/asdf-java
 #asdf plugin add java https://github.com/halcyon/asdf-java.git
