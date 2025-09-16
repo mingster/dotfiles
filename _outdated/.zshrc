@@ -86,7 +86,6 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # activate asdf
 . $(brew --prefix asdf)/libexec/asdf.sh
-
 # https://mac.install.guide/ruby/12.html
 # source /usr/local/opt/chruby/share/chruby/chruby.sh
 # source /usr/local/opt/chruby/share/chruby/auto.sh

@@ -28,15 +28,15 @@ brew install curl jq unzip
 brew install openjdk@11
 
 # asdf - https://github.com/halcyon/asdf-java
-#asdf plugin add java https://github.com/halcyon/asdf-java.git
-#asdf list all java
-#asdf install java latest:adoptopenjdk-11
-#echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
+rm -rf ~/.asdf/plugins/java
+asdf plugin add java https://github.com/halcyon/asdf-java.git
 
-#asdf install java adoptopenjdk-11.0.24+8
-#asdf global java adoptopenjdk-11.0.24+8
-#sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
-#sudo ln -s /usr/local//opt/homebrew/opt/openjdk@11 /Library/Java/JavaVirtualMachines
+#asdf list all java
+asdf install java openjdk-21
+asdf set -u java openjdk-21
+
+echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
+
 
 java -version
 

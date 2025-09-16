@@ -28,11 +28,11 @@ switch (uname)
 
         # gradle
         #set -gx GRADLE_HOME /usr/bin/gradle
-        set -gx GRADLE_USER_HOME $HOME/.gradle
+        #set -gx GRADLE_USER_HOME $HOME/.gradle
         #fish_add_path $GRADLE_HOME/bin
 
         # android
-        fish_add_path $HOME/Android/Sdk/platform-tools
+        #fish_add_path $HOME/Android/Sdk/platform-tools
 
     case Darwin
         set architecture (uname -m)
@@ -49,7 +49,8 @@ switch (uname)
 
             # postgresql
             fish_add_path /opt/homebrew/opt/postgresql@17/bin
-            fish_add_path /opt/homebrew/opt/openjdk@11/bin
+
+            #fish_add_path /opt/homebrew/opt/openjdk@17/bin
 
         else if test "$architecture" = "x86_64"
             #echo "This Mac is using Intel."
@@ -59,7 +60,15 @@ switch (uname)
 
             # postgresql
             fish_add_path /usr/local/opt/postgresql@17/bin
-            fish_add_path /usr/local/opt/openjdk@11/bin
+
+            # java (non-asdf way)
+            #If you need to have openjdk first in your PATH, run:
+            #fish_add_path /usr/local/opt/openjdk@17/bin
+
+            #For compilers to find openjdk@11 you may need to set:
+            #set -gx CPPFLAGS "-I/usr/local/opt/openjdk@17/include"
+
+            #set -gx JAVA_HOME /usr/local/opt/openjdk@17/
 
         else
             echo "Unknown architecture: $architecture"
@@ -86,16 +95,6 @@ switch (uname)
         set --export BUN_INSTALL "$HOME/.bun"
         set --export PATH $BUN_INSTALL/bin $PATH
 
-        # java (non-asdf way)
-        #If you need to have openjdk first in your PATH, run:
-        fish_add_path /usr/local/opt/openjdk@11/bin
-
-        #For compilers to find openjdk@11 you may need to set:
-        set -gx CPPFLAGS "-I/usr/local/opt/openjdk@11/include"
-
-        set -gx JAVA_HOME /usr/local/opt/openjdk@11/
-
-
         # gradle
         #set -gx GRADLE_HOME /usr/local/opt/gradle
         #set -gx GRADLE_USER_HOME $HOME/.gradle
@@ -110,20 +109,14 @@ switch (uname)
     case '*'
 end
 
-
-
-
-
-if status --is-interactive
-end
-
-
 #
 # universal
 #
 fish_add_path $HOME/bin
 fish_add_path $HOME/bin2
 fish_add_path $HOME/.local/bin
+
+. ~/.asdf/plugins/java/set-java-home.fish
 
 #echo $fish_user_paths | tr " " "\n" | nl
 
