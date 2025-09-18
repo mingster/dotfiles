@@ -25,7 +25,7 @@ brew update
 #for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
 
 brew install curl jq unzip
-brew install openjdk@11
+#brew install openjdk@11
 
 # asdf - https://github.com/halcyon/asdf-java
 rm -rf ~/.asdf/plugins/java
@@ -36,7 +36,6 @@ asdf install java openjdk-21
 asdf set -u java openjdk-21
 
 echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
-
 
 java -version
 
