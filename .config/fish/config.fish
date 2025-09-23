@@ -70,6 +70,8 @@ switch (uname)
 
             #set -gx JAVA_HOME /usr/local/opt/openjdk@17/
 
+            fish_add_path ~/Library/Android/sdk/platform-tools
+
         else
             echo "Unknown architecture: $architecture"
         end
