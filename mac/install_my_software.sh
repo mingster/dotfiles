@@ -25,6 +25,10 @@ brew install --cask --appdir="/Applications/_dev" github
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 brew install --cask --appdir="/Applications/_dev" cursor
 
+# cursor cli
+curl https://cursor.com/install -fsS | bash
+
+
 # copy over visual-studio-code setting
 cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
 
