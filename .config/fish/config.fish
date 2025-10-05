@@ -48,9 +48,9 @@ switch (uname)
             fish_add_path /opt/homebrew/bin
 
             # postgresql
-            fish_add_path /opt/homebrew/opt/postgresql@17/bin
-
-            #fish_add_path /opt/homebrew/opt/openjdk@17/bin
+            fish_add_path /opt/homebrew/opt/postgresql@18/bin
+            set -gx LDFLAGS "-L/opt/homebrew/opt/postgresql@18/lib"
+            set -gx CPPFLAGS "-I/opt/homebrew/opt/postgresql@18/include"
 
         else if test "$architecture" = "x86_64"
             #echo "This Mac is using Intel."
@@ -59,18 +59,7 @@ switch (uname)
             fish_add_path /usr/local/bin
 
             # postgresql
-            fish_add_path /usr/local/opt/postgresql@17/bin
-
-            # java (non-asdf way)
-            #If you need to have openjdk first in your PATH, run:
-            #fish_add_path /usr/local/opt/openjdk@17/bin
-
-            #For compilers to find openjdk@11 you may need to set:
-            #set -gx CPPFLAGS "-I/usr/local/opt/openjdk@17/include"
-
-            #set -gx JAVA_HOME /usr/local/opt/openjdk@17/
-
-            fish_add_path ~/Library/Android/sdk/platform-tools
+            fish_add_path /usr/local/opt/postgresql@18/bin
 
         else
             echo "Unknown architecture: $architecture"
@@ -105,6 +94,7 @@ switch (uname)
         # android
         #fish_add_path $HOME/Library/Android/sdk/platform-tools
         #fish_add_path $JAVA_HOME/bin
+        fish_add_path ~/Library/Android/sdk/platform-tools
 
     case FreeBSD NetBSD DragonFly
 
