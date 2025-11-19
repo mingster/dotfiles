@@ -33,6 +33,8 @@ asdf plugin add java https://github.com/halcyon/asdf-java.git
 
 #asdf list all java
 asdf install java openjdk-21
+#asdf install java openjdk-11.0.2
+
 asdf set -u java openjdk-21
 
 echo 'java_macos_integration_enable=yes' >> ~/.asdfrc

@@ -266,7 +266,13 @@ simple() {
     fi
 
     ## update the system
+    sudo pacman -S ca-certificates
     sudo pacman -Syu
+
+    # cursor
+    #sudo snap install cursor
+    yay -S cursor-bin
+
 }
 
 simple
