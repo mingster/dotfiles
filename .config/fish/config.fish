@@ -180,3 +180,6 @@ end
 function on_exit --on-event fish_exit
     echo fish is now exiting
 end
+
+# Added by Antigravity
+fish_add_path /Users/mtsai/.antigravity/antigravity/bin
