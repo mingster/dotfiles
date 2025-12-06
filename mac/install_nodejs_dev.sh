@@ -34,6 +34,9 @@ asdf install nodejs 22.14.0
 #asdf shell nodejs 22.14.0
 asdf set -u nodejs 22.14.0
 
+asdf install nodejs 24.11.1
+asdf set -u nodejs 24.11.1
+
 asdf plugin update --all
 
 
