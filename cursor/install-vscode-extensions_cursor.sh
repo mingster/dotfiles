@@ -7,6 +7,7 @@
 # cursor :: Package list
 # get this list by: cursor --list-extensions
 pkglist=(
+3xpo.regionfolding
 biomejs.biome
 bradlc.vscode-tailwindcss
 davidanson.vscode-markdownlint
@@ -17,6 +18,7 @@ foxundermoon.shell-format
 github.github-vscode-theme
 josee9988.minifyall
 maptz.regionfolder
+mathiasfrohlich.kotlin
 mikestead.dotenv
 ms-mssql.data-workspace-vscode
 ms-mssql.mssql
@@ -25,8 +27,16 @@ ms-mssql.sql-database-projects-vscode
 pkief.material-icon-theme
 pkief.material-product-icons
 prisma.prisma
+redhat.java
+redhat.vscode-xml
 richie5um2.vscode-sort-json
 s-nlf-fh.glassit
+vscjava.vscode-gradle
+vscjava.vscode-java-debug
+vscjava.vscode-java-dependency
+vscjava.vscode-java-pack
+vscjava.vscode-java-test
+vscjava.vscode-maven
 )
 
 for i in ${pkglist[@]}; do

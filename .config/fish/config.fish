@@ -57,6 +57,7 @@ switch (uname)
             eval "$(/usr/local/bin/brew shellenv)"
 
             fish_add_path /usr/local/bin
+            fish_add_path /usr/local/share/google-cloud-sdk/bin
 
             # postgresql
             fish_add_path /usr/local/opt/postgresql@18/bin
