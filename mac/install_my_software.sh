@@ -77,6 +77,7 @@ brew install --cask firefox
 
 #brew install --cask libreoffice
 
+brew install --cask zed
 #brew install --cask iterm2
 #brew install --cask atom
 #brew install --cask macdown
