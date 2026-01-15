@@ -14,7 +14,7 @@ switch (uname)
             set _asdf_shims "$ASDF_DATA_DIR/shims"
         end
 
-        asdf completion fish > ~/.config/fish/completions/asdf.fish
+        #asdf completion fish > ~/.config/fish/completions/asdf.fish
 
         # Do not use fish_add_path (added in Fish 3.2) because it
         # potentially changes the order of items in PATH
