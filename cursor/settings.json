@@ -21,7 +21,7 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "[markdown]": {
-        "editor.defaultFormatter": "unifiedjs.vscode-remark",
+        "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",
         "editor.formatOnSave": true
     },
     "[mdx]": {
@@ -148,6 +148,7 @@
     },
     "editor.snippetSuggestions": "top",
     "editor.suggestSelection": "first",
+    "editor.tabCompletion": "on",
     "errorLens.enabled": true,
     "explorer.confirmDelete": false,
     "explorer.confirmDragAndDrop": false,
