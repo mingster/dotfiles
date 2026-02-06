@@ -31,9 +31,9 @@ for pkg in $(brew list | grep -iE 'node'); do brew uninstall $pkg --ignore-depen
 # https://github.com/asdf-community/asdf-python
 asdf plugin add python
 
-asdf install python 3.11.1
-#asdf global python 3.11.1
-asdf set -u python 3.11.1
+asdf install python 3.13.11
+#asdf global python 3.13.11
+asdf set -u python 3.13.11
 
 asdf plugin add direnv
 
