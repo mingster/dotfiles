@@ -137,14 +137,12 @@ end
 source $HOME/.config/fish/functions/postexec_newline.fish
 
 # GEMINI_API_KEY
-
-set --export GEMINI_API_KEY "AIzaSyCpqYFXnp8B5MfU7QkHIGHEVwtgO0QeYzA"
-abbr -a -g gemini 'npx https://github.com/google-gemini/gemini-cli'
+#set --export GEMINI_API_KEY "AIzaSyCpqYFXnp8B5MfU7QkHIGHEVwtgO0QeYzA"
+#abbr -a -g gemini 'npx https://github.com/google-gemini/gemini-cli'
 
 # Clear line on CTRL + C
 # Sometimes it still doesn't work well enough on node.js scripts :(
 bind --preset \cC 'cancel-commandline'
-
 
 # Pyenv setup
 # Requires `brew install pyenv`
