@@ -93,8 +93,6 @@ switch (uname)
         #fish_add_path $GRADLE_HOME/bin
 
         # android
-        #fish_add_path $HOME/Library/Android/sdk/platform-tools
-        #fish_add_path $JAVA_HOME/bin
         fish_add_path ~/Library/Android/sdk/platform-tools
 
     case FreeBSD NetBSD DragonFly

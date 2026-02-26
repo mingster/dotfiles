@@ -39,7 +39,7 @@ asdf set -u java openjdk-21
 
 echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
 
-java -version
+java --version
 
 # set java_home
 #. $HOME/.asdf/plugins/java/set-java-home.fish
@@ -80,3 +80,14 @@ brew cleanup
 
 # Periodically run these commands again to ensure you're staying up to date:
 #android update sdk --no-ui
+
+rm -rf ~/.android
+rm -rf ~/.gradle
+rm -rf ~/Library/Android
+
+# 刪除設定檔
+rm -rf ~/Library/Application\ Support/Google/AndroidStudio*
+# 刪除快取
+rm -rf ~/Library/Caches/Google/AndroidStudio*
+# 刪除外掛
+rm -rf ~/Library/Logs/Google/AndroidStudio*
