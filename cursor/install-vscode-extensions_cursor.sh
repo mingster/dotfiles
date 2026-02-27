@@ -28,7 +28,6 @@ pkief.material-icon-theme
 pkief.material-product-icons
 prisma.prisma
 redhat.java
-redhat.vscode-xml
 richie5um2.vscode-sort-json
 s-nlf-fh.glassit
 vscjava.vscode-gradle
@@ -37,6 +36,12 @@ vscjava.vscode-java-dependency
 vscjava.vscode-java-pack
 vscjava.vscode-java-test
 vscjava.vscode-maven
+
+# roku dev
+mjmcaulay.roku-deploy-vscode
+RokuCommunity.brightscript
+AliceBeckett.brightscriptcomment
+redhat.vscode-xml
 )
 
 for i in ${pkglist[@]}; do
