@@ -182,4 +182,4 @@ end
 fish_add_path /Users/mtsai/.antigravity/antigravity/bin
 
 # OpenClaw Completion
-source "/Users/mtsai/.openclaw/completions/openclaw.fish"
+#source "/Users/mtsai/.openclaw/completions/openclaw.fish"
