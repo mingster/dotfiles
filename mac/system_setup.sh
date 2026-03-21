@@ -230,27 +230,52 @@ brew cleanup && brew doctor
 echo ""
 echo -e "\033[1;35m cron service script \033[0m"
 echo ""
-sudo cp ~/bin2/com.mingster.crontab.plist /Library/LaunchAgents/
+
+CRON_PLIST_SRC="$HOME/bin2/com.mingster.crontab.plist"
+CRON_PLIST_DST="/Library/LaunchAgents/com.mingster.crontab.plist"
+
+cron_warn() {
+    echo -e "\033[1;33mWarning:\033[0m $*" >&2
+}
+
+if [[ -f "$CRON_PLIST_SRC" ]]; then
+    sudo cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST" || cron_warn "could not copy crontab plist to $CRON_PLIST_DST"
+else
+    cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent plist install."
+fi
 
 sudo -v
-chmod 755 $HOME/bin2/*.sh
-sudo chmod 644 /Library/LaunchAgents/com.mingster.crontab.plist
-sudo chown $USER:staff /Library/LaunchAgents/com.mingster.crontab.plist
 
-# test
-# plutil /Library/LaunchAgents/com.mingster.crontab.plist
+shopt -s nullglob
+bin2_scripts=("$HOME/bin2"/*.sh)
+shopt -u nullglob
+if ((${#bin2_scripts[@]} > 0)); then
+    chmod 755 "${bin2_scripts[@]}" || cron_warn "could not chmod scripts in $HOME/bin2/"
+else
+    cron_warn "no *.sh in $HOME/bin2/; skipping chmod."
+fi
 
-#launchctl bootout gui/501 /Library/LaunchAgents/com.mingster.crontab.plist
-#launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
-#launchctl bootstrap gui/501 $HOME/Library/LaunchAgents/com.mingster.crontab.plist
+if [[ -f "$CRON_PLIST_DST" ]]; then
+    sudo chmod 644 "$CRON_PLIST_DST" || cron_warn "could not chmod $CRON_PLIST_DST"
+    sudo chown "$USER:staff" "$CRON_PLIST_DST" || cron_warn "could not chown $CRON_PLIST_DST"
 
-# Load task
-launchctl load /Library/LaunchAgents/com.mingster.crontab.plist
-# Remove task
-#launchctl unload ~/Library/LaunchAgents/com.mingster.crontab.plist
+    # test
+    # plutil "$CRON_PLIST_DST"
 
-# Manually execute task
-launchctl start /Library/LaunchAgents/com.mingster.crontab.plist
+    #launchctl bootout gui/501 "$CRON_PLIST_DST"
+    #launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
+    #launchctl bootstrap gui/501 "$HOME/Library/LaunchAgents/com.mingster.crontab.plist"
 
-# List all tasks
-#launchctl list | grep mingster
+    # Load task (may fail on newer macOS; bootstrap as root may be required)
+    _load_out=$(launchctl load "$CRON_PLIST_DST" 2>&1) || cron_warn "launchctl load failed: ${_load_out}"
+    # Remove task
+    #launchctl unload ~/Library/LaunchAgents/com.mingster.crontab.plist
+
+    # Manually execute task
+    _start_out=$(launchctl start "$CRON_PLIST_DST" 2>&1) || cron_warn "launchctl start failed: ${_start_out}"
+
+    # List all tasks
+    #launchctl list | grep mingster
+else
+    cron_warn "$CRON_PLIST_DST not present; skipping chmod/chown and launchctl load/start."
+fi
