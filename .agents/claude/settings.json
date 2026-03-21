@@ -1,12 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Skill(ray-skill:*)",
-      "Skill(php-guidelines-from-spatie:*)",
-      "Skill(fix-github-issue:*)",
-      "Skill(context7-auto-research:*)",
-      "Skill(readability:*)",
-      "Skill(agent-browser:*)",
+      "Skill",
       "Bash(gh:*)",
       "Bash(curl:*)",
       "Bash(composer:*)",

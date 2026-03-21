@@ -13,7 +13,7 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 | Tool | Home path | Canonical in repo |
 |------|-----------|---------------------|
 | [skills CLI](https://skills.sh/) | `~/.agents` | `~/dotfiles/.agents` |
-| Claude Code | `~/.claude/` (symlinks into place) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
+| Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
 | Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
 | Cursor User settings | `…/Cursor/User/settings.json` | `~/dotfiles/cursor/settings.json` (via `link-cursor-user.sh`) |
 
