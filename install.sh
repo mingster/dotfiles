@@ -48,6 +48,11 @@ if [ -d "$HOME/dotfiles" ]; then
   # Claude Code: ~/.claude/* → ~/dotfiles/.agents (skills + .agents/claude; see script/setup-claude-code.sh)
   bash "$HOME/dotfiles/script/setup-claude-code.sh"
 
+  # Claude Desktop (macOS): symlink claude_desktop_config.json from dotfiles
+  if [[ "$OSTYPE" == darwin* ]]; then
+    bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
+  fi
+
   # Cursor global rules: ~/.cursor/rules → ~/dotfiles/cursor/rules
   mkdir -p "$HOME/dotfiles/cursor/rules"
   mkdir -p "$HOME/.cursor"

@@ -99,6 +99,7 @@ mkdir -p $HOME/dotfiles/.agents
 ln -sfn $HOME/dotfiles/.agents $HOME/.agents
 
 bash "$HOME/dotfiles/script/setup-claude-code.sh"
+bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
 
 mkdir -p $HOME/dotfiles/cursor/rules
 mkdir -p $HOME/.cursor

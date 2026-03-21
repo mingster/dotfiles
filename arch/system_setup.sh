@@ -215,6 +215,9 @@ simple() {
     bash "$HOME/dotfiles/arch/install_zed.sh"
 
     bash "$HOME/dotfiles/script/setup-claude-code.sh"
+    # Claude Desktop on Linux uses ~/.config/Claude/ (if installed via AppImage/Flatpak).
+    # The mac-specific setup script handles macOS ~/Library path; on Arch we just ensure
+    # ~/.agents and ~/.claude are wired (already done above via setup-claude-code.sh).
 
     mkdir -p $HOME/dotfiles/cursor/rules
     mkdir -p $HOME/.cursor
