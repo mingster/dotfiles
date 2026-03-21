@@ -6,13 +6,18 @@ Purpose
 High-level architecture (big picture)
 - Top-level: generic dotfiles and helpers (e.g., `install.sh`, `.gitconfig`, `.stow-local-ignore`).
 - Platform folders: `mac/`, `arch/`, `debian/`, `rasp/`, `ms/` contain platform-specific installation and system setup scripts (naming pattern: `install_*.sh`, `uninstall_*.sh`, `system_setup.sh`).
-- Config packages: `~/.config` managed via GNU `stow` using `mac/stowall` (run `mac/stowall` to stow everything in `.config`).
+- Agent skills: `install.sh` and platform `system_setup` scripts create **`~/dotfiles/.agents`** and symlink **`~/.agents` → `~/dotfiles/.agents`**. Skill content and `.skill-lock.json` live under `.agents/` in the repo; restore with **`bash script/bootstrap-agents.sh`** or `npx skills@latest experimental_install` from `~/.agents` (optional: **`DOTFILES_INSTALL_SKILLS=1`** with `install.sh`). See `README.md`.
+- Claude Code: canonical tree is **`~/dotfiles/.agents/`** (shared **`skills/`**; Claude-only files under **`claude/`**). **`script/setup-claude-code.sh`** links into **`~/.claude/`** (granular symlinks). Do not commit secrets (see `.gitignore`).
+- Cursor: **`~/dotfiles/cursor/rules`** is canonical for global rules (synced from **riben.life** `web/.cursor/rules`); **`~/.cursor/rules`** symlinks there. **`script/link-cursor-user.sh`** symlinks **`cursor/settings.json`** and **`keybindings.json`** into the Cursor **User** directory (same idea as VS Code user settings). **`cursor/mcp.json.example`** shows MCP shape; real **`mcp.json`** with keys stays local / gitignored.
+- **`AGENTS.md`** at repo root summarizes paths and boundaries for agents working in this repo.
+- Config packages: `~/.config` managed via GNU `stow` using `mac/stowall` (run `mac/stowall` to stow everything in `.config`). **`mac/stowall`** uses **`$HOME/dotfiles`** (override with **`DOTFILES`**); align with the `~/dotfiles` symlink from `install.sh`.
 - Editor and tooling: `vscode/` stores VS Code profiles and an extension install script `vscode/install-vscode-extensions.sh` (use this file to update extension lists — avoid editing the binary-ish `vscode-settings.code-profile` unless necessary).
 
 Key workflows (how to run & validate changes)
-- Install / bootstrap mac: run `sh install.sh` from repo root (drives `mac/system_setup.sh` on macOS).
+- Install / bootstrap: run `sh install.sh` from repo root. It runs **`mac/system_setup.sh`** on macOS, **`arch/system_setup.sh`** or **`debian/system_setup.sh`** on Linux (from `/etc/os-release`), unless **`DOTFILES_SKIP_SYSTEM_SETUP=1`**.
 - Prepare macOS: `sh mac/osxprep.sh` then `sh mac/osx.sh` (carefully review `osx.sh` before running — it changes OS defaults).
 - Stow configs (linking into `$HOME`): from repo root run `mac/stowall` or `stow -n <package>` for a dry-run; use `stow -v` for verbose output.
+- ShellCheck: CI runs `script/shellcheck-dotfiles.sh` (error-severity only). Run locally before pushing; use plain `shellcheck` on a file for full info-level hints.
 - VS Code extensions: update `vscode/install-vscode-extensions.sh` and run it (`code --install-extension ...`) to install from the canonical list.
 
 Project-specific conventions & patterns
@@ -27,11 +32,12 @@ Testing & verification notes
 - For VS Code: run `vscode/install-vscode-extensions.sh` to validate extension changes; DO NOT edit `vscode-settings.code-profile` to change extension lists — it’s an export.
 
 Files to read first (essential reading order)
-1. `README.md` (overview and install steps)
-2. `install.sh` (top-level bootstrap behavior)
-3. `mac/system_setup.sh`, `mac/osxprep.sh`, `mac/stowall` (mac-specific flows)
-4. `vscode/install-vscode-extensions.sh` and `vscode/vscode-settings.code-profile` (extension and settings notes)
-5. `.stow-local-ignore` and `.gitconfig` (linking and git configuration patterns)
+1. `README.md` and `AGENTS.md` (overview, install steps, AI path map)
+2. `install.sh` (symlinks, `.agents`, `script/setup-claude-code.sh`, Cursor; optional `DOTFILES_INSTALL_SKILLS`; then OS-specific `system_setup` unless `DOTFILES_SKIP_SYSTEM_SETUP`)
+3. `mac/system_setup.sh`, `mac/osxprep.sh`, `mac/stowall` (mac-specific flows; `DOTFILES_BREW_UPGRADE=1` enables `brew upgrade` in `system_setup.sh`)
+4. `script/shellcheck-dotfiles.sh` (ShellCheck entrypoints used by CI)
+5. `vscode/install-vscode-extensions.sh` and `vscode/vscode-settings.code-profile` (extension and settings notes)
+6. `.stow-local-ignore` and `.gitconfig` (linking and git configuration patterns)
 
 PR guidance for contributors/agents
 - Keep PRs small and platform-targeted. Example: "Add `brew` package X to `mac/install_my_software.sh` and document the reason in the script".

@@ -1,0 +1,16 @@
+name: Validate skill lock
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate .agents/.skill-lock.json
+        run: python3 -m json.tool .agents/.skill-lock.json > /dev/null

@@ -28,8 +28,15 @@
         "editor.defaultFormatter": "unifiedjs.vscode-mdx"
     },
     "[prisma]": {
-        "editor.defaultFormatter": "prisma.prisma"
+        "editor.defaultFormatter": "prisma.prisma",
+        "editor.formatOnSave": true,
+        "editor.quickSuggestions": {
+            "strings": true
+        }
     },
+    "prisma.fileWatcher": true,
+    "prisma.showPrismaDataPlatformNotification": false,
+    "prisma.schema": "${workspaceFolder}/prisma/schema.prisma",
     "[python]": {
         "editor.formatOnType": true
     },
@@ -158,6 +165,7 @@
         "*.css": "css",
         "*.js": "javascriptreact",
         "*.jsx": "javascriptreact",
+        "*.prisma": "prisma",
         "*.ts": "typescriptreact",
         "*.tsx": "typescriptreact"
     },

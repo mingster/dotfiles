@@ -1,107 +1,231 @@
-# Ming's dotfiles
+# Ming’s dotfiles
 
-this dotfiles allows you quickly set up environment on a newly installed macos and archlinux.
+Personal configuration for a productive shell and editor setup on **macOS** and **Linux** (Arch, Debian). Install scripts link configs from this repo into your home directory so you can version everything in git and reproduce the same environment on a new machine.
 
-Check [this](http://dotfiles.github.io) out if you need more info.
+Inspired by [Mathias Bynens’s dotfiles](https://github.com/mathiasbynens/dotfiles). More background on the dotfiles idea: [dotfiles.github.io](http://dotfiles.github.io).
 
-This dotfiles is based on the [Mathias’s legendary](https://github.com/mathiasbynens/dotfiles) dotfiles. A couple
-changes are added to my favorites.
+---
 
-## Overview
+## Table of contents
 
-- change macos' perferences (osx.sh)
-- [Homebrew](https://brew.sh)
-- [Fish shell](https://fishshell.com/)
-- [Fisher](https://github.com/jorgebucaran/fisher) - Plugin manager
-- [Tide](https://github.com/IlanCosman/tide) - Shell theme. Use version 6: `fisher install ilancosman/tide@v6`
-- [Nerd fonts](https://github.com/ryanoasis/nerd-fonts) - Powerline-patched fonts. I use Hack.
-- [tmux]() - window manager
-- [lf File Manager](https://www.joshmedeski.com/posts/manage-files-with-lf/)
-- [lazygit]()
+- [Quick start (macOS)](#quick-start-macos)
+- [Quick start (Linux)](#quick-start-linux)
+- [What’s included](#whats-included)
+- [AI, Cursor, and Claude Code](#ai-cursor-and-claude-code)
+- [Environment variables](#environment-variables)
+- [Installation](#installation)
+  - [What `install.sh` does](#what-installsh-does)
+- [Optional: more software](#optional-more-software)
+- [Repository layout](#repository-layout)
+- [Feedback & thanks](#feedback--thanks)
+
+---
+
+## Quick start (macOS)
+
+```bash
+mkdir -p ~/GitHub && cd ~/GitHub
+git clone https://github.com/mingster/dotfiles.git && cd dotfiles
+
+sh mac/osxprep.sh          # Command Line Tools + prep
+sh mac/osx.sh              # Optional: macOS defaults (review first)
+sh install.sh              # Symlinks, .agents, Cursor, Claude Code; runs mac/system_setup.sh
+```
+
+Each run of `**install.sh**` (bash script, runnable as `sh install.sh` or `bash install.sh`):
+
+1. Sets `**~/dotfiles**` to a symlink → **the absolute path of the directory that contains `install.sh`** (re-running from another clone retargets `~/dotfiles`).
+2. Refreshes home links for git, vim, `**.agents**`, **Claude Code** (`script/setup-claude-code.sh` → `~/.claude/`), and **Cursor** (rules + user settings via `script/link-cursor-user.sh`).
+
+If `**~/dotfiles` exists as a real directory** (not a symlink), the script **exits with an error** so nothing is overwritten blindly.
+
+---
+
+## Quick start (Linux)
+
+Same clone location as macOS. `**install.sh`** sets up home symlinks (including `**.agents**`, **Claude Code** via `script/setup-claude-code.sh`, **Cursor** via `script/link-cursor-user.sh`), then runs the right `**system_setup`** for the machine:
 
 
+| OS                                                                 | Script                   |
+| ------------------------------------------------------------------ | ------------------------ |
+| macOS                                                              | `mac/system_setup.sh`    |
+| Arch (`ID=arch` in `/etc/os-release`, or Arch-like `ID_LIKE`)      | `arch/system_setup.sh`   |
+| Debian / Ubuntu / Mint / Pop!_OS / Zorin, or Debian-like `ID_LIKE` | `debian/system_setup.sh` |
 
-<!--
-- [z for fish](https://github.com/jethrokuan/z) - Directory jumping
-- [Eza](https://github.com/eza-community/eza) - `ls` replacement
-- [ghq](https://github.com/x-motemen/ghq) - Local Git repository organizer
-- [fzf](https://github.com/PatrickF1/fzf.fish) - Interactive filtering
--->
+
+Unsupported distros print a message but still keep the symlinks from earlier in the script. To **only** link dotfiles and skip the heavy installer (testing, unsupported distro), use `**DOTFILES_SKIP_SYSTEM_SETUP=1`**.
+
+```bash
+mkdir -p ~/GitHub && cd ~/GitHub
+git clone https://github.com/mingster/dotfiles.git && cd dotfiles
+
+sh install.sh                       # symlinks + platform system_setup
+```
+
+Requirements: `**bash**`, `**git**`, and `**sudo**` where the platform script installs packages. Read `**arch/system_setup.sh**` or `**debian/system_setup.sh**` before running on a machine you care about. They are full environment installers.
+
+On **Windows** (Git Bash / MSYS), `**install.sh`** still runs the symlink block when `**$HOME/dotfiles**` resolves; `**system_setup**` is skipped and Cursor user linking may not apply (see `script/link-cursor-user.sh`).
+
+---
+
+## What’s included
+
+
+| Area             | Notes                                                                                                                                                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell & terminal | [Fish](https://fishshell.com/), [Fisher](https://github.com/jorgebucaran/fisher), [Tide](https://github.com/IlanCosman/tide) v6 (`fisher install ilancosman/tide@v6`)                                                                                 |
+| macOS            | [Homebrew](https://brew.sh), preferences via `mac/osx.sh`                                                                                                                                                                                             |
+| Fonts            | [Nerd Fonts](https://github.com/ryanoasis/nerd-fonts) — Hack (see `mac/system_setup.sh`)                                                                                                                                                              |
+| Terminal tools   | [tmux](https://github.com/tmux/tmux/wiki), [lf](https://www.joshmedeski.com/posts/manage-files-with-lf/), [lazygit](https://github.com/jesseduffield/lazygit)                                                                                         |
+| Editors          | VS Code extension lists under `vscode/`; Cursor under `cursor/`                                                                                                                                                                                       |
+| Config           | GNU [stow](https://www.gnu.org/software/stow/) via `mac/stowall` on macOS; on Linux run `stow` yourself against `~/dotfiles/.config` packages if you use the same layout                                                                              |
+| Linux            | `arch/system_setup.sh`, `debian/system_setup.sh`, plus `arch/install_*.sh` / `debian/install_*.sh` for optional stacks                                                                                                                                |
+| CI               | [ShellCheck](https://www.shellcheck.net/) on `install.sh`, `mac/stowall`, and `mac` / `arch` / `debian` `system_setup.sh` (see `script/shellcheck-dotfiles.sh`); JSON validation for `.agents/.skill-lock.json` when that file is present in the repo |
+
+
+---
+
+## AI, Cursor, and Claude Code
+
+Dotfiles wires **skills** ([skills CLI](https://skills.sh/)), **Claude Code**, and **Cursor** (global rules + user `settings.json` / `keybindings.json`) into your home directory.
+
+
+| Topic                      | Summary                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent skills**           | `~/.agents` → `~/dotfiles/.agents`. Lock file: `.agents/.skill-lock.json`. Restore: `bash ~/dotfiles/script/bootstrap-agents.sh` or `DOTFILES_INSTALL_SKILLS=1 sh install.sh`. See [.agents/README.md](.agents/README.md).                                                                                                                                                                                                |
+| **Claude Code**            | `**script/setup-claude-code.sh`** fills `**~/.claude/**` with symlinks: `**skills/**` → `**~/dotfiles/.agents/skills**`, `**agents/**` → `**~/dotfiles/.agents/claude/agents**`, plus `**CLAUDE.md**`, `**laravel-php-guidelines.md**`, `**settings.json**`, `**statusline.sh**` from `**~/dotfiles/.agents/claude/**`. One skill tree for both the skills CLI and Claude Code. Do not commit secrets (see `.gitignore`). |
+| **Cursor**                 | Rules: `~/.cursor/rules` → `~/dotfiles/cursor/rules` (see `cursor/rules/README.md`). User settings: `script/link-cursor-user.sh` → Cursor **User** `settings.json` and `keybindings.json`. Prisma-related editor options align with riben `web/.vscode/settings.json`. MCP: use `cursor/mcp.json.example`; keep real keys out of git.                                                                                     |
+| **Entry point for agents** | [AGENTS.md](AGENTS.md) — paths and boundaries for work in this repo.                                                                                                                                                                                                                                                                                                                                                      |
+| **Copilot on GitHub**      | [.github/copilot-instructions.md](.github/copilot-instructions.md)                                                                                                                                                                                                                                                                                                                                                        |
+
+
+## Environment variables
+
+
+| Variable                       | When set                            | Effect                                                                                                                                                                                                                                                                                           |
+| ------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DOTFILES_INSTALL_SKILLS=1`    | With `install.sh`                   | Runs `npx skills@latest experimental_install` via `script/bootstrap-agents.sh` (needs Node / `npx`).                                                                                                                                                                                             |
+| `DOTFILES_BREW_UPGRADE=1`      | With `install.sh` on **macOS** only | Runs `brew upgrade` in `mac/system_setup.sh` (otherwise only `brew update`). Ignored on Linux.                                                                                                                                                                                                   |
+| `DOTFILES_SKIP_SYSTEM_SETUP=1` | With `install.sh`                   | Skips `**mac/`** / `**arch/**` / `**debian/**` `system_setup.sh` (symlinks, `.agents`, Claude Code, and Cursor setup still run).                                                                                                                                                                 |
+| `DOTFILES`                     | Optional                            | Some helpers default to `$HOME/dotfiles`; set this if your dotfiles root differs (used by `script/bootstrap-agents.sh`, `script/setup-claude-code.sh`, `script/link-cursor-user.sh`). `**install.sh**` does not read `DOTFILES`; it derives the repo path from the location of `**install.sh**`. |
+
+
+Examples:
+
+```bash
+DOTFILES_INSTALL_SKILLS=1 sh ~/GitHub/dotfiles/install.sh
+DOTFILES_BREW_UPGRADE=1 sh ~/GitHub/dotfiles/install.sh
+```
+
+---
 
 ## Installation
 
-### 1. Grab this repository:
+### 1. Clone the repository (all platforms)
 
-```
-mkdir ~/GitHub
-cd ~/GitHub
+```bash
+mkdir -p ~/GitHub && cd ~/GitHub
 git clone https://github.com/mingster/dotfiles.git && cd dotfiles
 ```
 
-### 2. Software Update and "Command Line Tools"
+### 2. Run `install.sh` (all platforms)
 
-Update macos and install command line tools:
+From the repo root (or use absolute paths):
 
+```bash
+sh install.sh
 ```
+
+This ensures `**~/dotfiles**` → this repo, links shell/git/vim dotfiles (overwriting previous symlinks), sets up `**.agents**`, **Claude Code** (`script/setup-claude-code.sh`), **Cursor** rules + user settings, and optional skills when `**DOTFILES_INSTALL_SKILLS=1`**. It then runs the platform `**system_setup**` detected from `**OSTYPE**` and `**/etc/os-release**` on Linux (see [Quick start (Linux)](#quick-start-linux)), unless `**DOTFILES_SKIP_SYSTEM_SETUP=1**`.
+
+### What `install.sh` does
+
+Order of operations (see source in `[install.sh](install.sh)`):
+
+1. `**~/dotfiles**` → symlink to this repo (fails if `**~/dotfiles**` exists and is not a symlink).
+2. **Home symlinks** (targets under the repo): `.csvignore`, `.editorconfig`, `.gitattributes`, `.gitflow_export`, `.gitignore`, `.gitignore_global`, `.hgignore_global`, `.nanorc`, `.vimrc`, `.vim`.
+3. `**~/.gitconfig`** copied from `.gitconfig` (arm64) or `.gitconfig-x64` (x86_64).
+4. `**git config --global**` `core.excludesfile` and `core.attributesfile` pointing at files in this repo.
+5. `**mkdir -p ~/dotfiles/.agents**`, `**~/.agents**` → `**~/dotfiles/.agents**`.
+6. `**bash script/setup-claude-code.sh**`: `**~/.claude/**` ← symlinks into `**.agents/skills**`, `**.agents/claude/**`, and `**.agents/claude/agents/**`.
+7. `**~/.cursor/rules**` → `**~/dotfiles/cursor/rules**`.
+8. If `**DOTFILES_INSTALL_SKILLS=1**`: `**bash script/bootstrap-agents.sh**`.
+9. `**bash script/link-cursor-user.sh**`: Cursor User `**settings.json**` and `**keybindings.json**` → `**~/dotfiles/cursor/**` (macOS and Linux paths only).
+10. Unless `**DOTFILES_SKIP_SYSTEM_SETUP=1**`, run `**mac/system_setup.sh**`, `**arch/system_setup.sh**`, or `**debian/system_setup.sh**` as detected.
+
+Platform `**system_setup**` scripts also call `**bash script/setup-claude-code.sh**` (and other links) so a manual re-run of `**system_setup**` stays aligned.
+
+### 3. macOS-only steps
+
+#### Software updates and Command Line Tools
+
+```bash
 sh ~/GitHub/dotfiles/mac/osxprep.sh
 ```
 
-### 3. Sensible OS X defaults
+Run **before** or **after** `install.sh` depending on whether you need CLT first; adjust to your workflow.
 
-When setting up a new Mac, you may want to set some sensible OS X defaults. Review it carefully to best suit your own preferences. To execute:
+#### Optional: system defaults
+
+Review `mac/osx.sh`, then:
 
 ```bash
 sh ~/GitHub/dotfiles/mac/osx.sh
 ```
 
-### 4. Shell set up
+#### Optional: extra apps
 
-cli and kitty (or iterm2) are your best friends everyday:
+Review and edit first. Installs many CLI and GUI packages:
 
-```
-sh ~/GitHub/dotfiles/install.sh
-```
-
-### 5. Install essential apps
-
-Review and modify before you run. This will install a lot of cli programs and applications such as Chrome browser etc.
-
-```
+```bash
 sh ~/GitHub/dotfiles/mac/install_my_software.sh
 ```
 
-## 6. (Optional) Software / Dev environment
+### 4. Linux-only notes
 
-Review the install_xxx.sh in the mac folder.
+`install.sh` already invokes `**arch/system_setup.sh**` or `**debian/system_setup.sh**` when `**/etc/os-release**` matches (see [Quick start (Linux)](#quick-start-linux)). To run a script **again** manually (for example after editing it):
 
-- [vscode related](https://github.com/mingster/dotfiles/tree/master/install/vscode)
-- android.sh: for Java / Android development
-- aws.sh: amazon development environment
-- datastores.sh: database apps
-- pydata.sh: Python development environment
-- web.sh: node.js based apps
+```bash
+cd ~/GitHub/dotfiles
+bash arch/system_setup.sh    # or debian/system_setup.sh
+```
 
-## Feedback
+Read the script first: both install packages, change the default shell to fish, configure UFW and desktop tooling, etc.
 
-Suggestions/improvements
-[welcome](https://github.com/mingster/dotfiles/issues)!
+---
 
-## Thanks to…
+## Optional: more software
 
-- [josean-dev / dev-environment-files](https://github.com/josean-dev/dev-environment-files)
-- [How To Make An Amazing Custom Menu Bar For Your Mac With Sketchybar](https://www.josean.com/posts/sketchybar-setup)
-- @ptb and [his _OS X Lion Setup_ repository](https://github.com/ptb/Mac-OS-X-Lion-Setup)
-- [Ben Alman](http://benalman.com/) and his [dotfiles repository](https://github.com/cowboy/dotfiles)
-- [Chris Gerke](http://www.randomsquared.com/) and his [tutorial on creating an OS X SOE master image](http://chris-gerke.blogspot.com/2012/04/mac-osx-soe-master-image-day-7.html) + [_Insta_ repository](https://github.com/cgerke/Insta)
-- [Cãtãlin Mariş](https://github.com/alrra) and his [dotfiles repository](https://github.com/alrra/dotfiles)
-- [Gianni Chiappetta](http://gf3.ca/) for sharing his [amazing collection of dotfiles](https://github.com/gf3/dotfiles)
-- [Jan Moesen](http://jan.moesen.nu/) and his [ancient `.bash_profile`](https://gist.github.com/1156154) + [shiny _tilde_ repository](https://github.com/janmoesen/tilde)
-- [Lauri ‘Lri’ Ranta](http://lri.me/) for sharing [loads of hidden preferences](http://osxnotes.net/defaults.html)
-- [Matijs Brinkhuis](http://hotfusion.nl/) and his [dotfiles repository](https://github.com/matijs/dotfiles)
-- [Nicolas Gallagher](http://nicolasgallagher.com/) and his [dotfiles repository](https://github.com/necolas/dotfiles)
-- [Sindre Sorhus](http://sindresorhus.com/)
-- [Tom Ryder](http://blog.sanctum.geek.nz/) and his [dotfiles repository](https://github.com/tejr/dotfiles)
-- [Kevin Suttle](http://kevinsuttle.com/) and his [dotfiles repository](https://github.com/kevinSuttle/dotfiles) and [OSXDefaults project](https://github.com/kevinSuttle/OSXDefaults), which aims to provide better documentation for [`~/.osx`](http://mths.be/osx)
-- [Haralan Dobrev](http://hkdobrev.com/)
+- **macOS:** `mac/install_*.sh` — Android, AWS, databases, Python, Node, nginx, etc.
+- **Linux (Arch):** `arch/install_*.sh` — Node, Java, PostgreSQL, MongoDB, NVIDIA, KDE, and others.
+- **Linux (Debian):** `debian/install_*.sh` — TeX, Zotero, Mullvad, singularity, VNC, etc.
+- **Editors (all):** [vscode/vscode_README.md](vscode/vscode_README.md), [vscode/install-vscode-extensions.sh](vscode/install-vscode-extensions.sh), [cursor/install-vscode-extensions_cursor.sh](cursor/install-vscode-extensions_cursor.sh)
 
-- anyone who [contributed a patch](https://github.com/mingster/dotfiles/contributors) or [made a helpful suggestion](https://github.com/mingster/dotfiles/issues)
+---
+
+## Repository layout
+
+
+| Path                       | Role                                                                                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `install.sh`               | Top-level bootstrap: `~/dotfiles` symlink, home dotfiles, `.agents`, Claude Code, Cursor, then `system_setup`         |
+| Top-level dotfiles         | Repo root files linked into `$HOME` (for example `.gitconfig`, `.vimrc`, `.vim`, `.gitignore_global`, …)              |
+| `mac/`, `arch/`, `debian/` | Platform-specific installers and `system_setup.sh`                                                                    |
+| `mac/stowall`              | Stow all packages under `$HOME/dotfiles/.config` (`DOTFILES` overrides root in that script)                           |
+| `script/`                  | `bootstrap-agents.sh`, `setup-claude-code.sh`, `link-cursor-user.sh`, `shellcheck-dotfiles.sh`                        |
+| `.agents/`                 | Skills (`skills/`, `.skill-lock.json`), Claude-only files under `claude/`; see [.agents/README.md](.agents/README.md) |
+| `.config/`                 | App configs consumed via `stow` / platform scripts (nvim, fish, tmux, kitty, …)                                       |
+| `cursor/`                  | Cursor user `settings.json`, `keybindings.json`, `rules/`, `mcp.json.example`                                         |
+| `vscode/`                  | VS Code settings and extension install script                                                                         |
+| `AGENTS.md`                | Short map of AI-related paths for work in this repo                                                                   |
+| `.github/`                 | Copilot instructions, workflows (ShellCheck, skill-lock JSON)                                                         |
+| `_outdated/`               | Older scripts kept for reference                                                                                      |
+
+
+---
+
+## Feedback & thanks
+
+Suggestions and improvements are [welcome](https://github.com/mingster/dotfiles/issues).
+
+Thanks to [josean-dev / dev-environment-files](https://github.com/josean-dev/dev-environment-files), [Sketchybar setup (josean.com)](https://www.josean.com/posts/sketchybar-setup), @ptb’s [Mac OS X Lion Setup](https://github.com/ptb/Mac-OS-X-Lion-Setup), [Ben Alman](https://github.com/cowboy/dotfiles), [Chris Gerke / Insta](https://github.com/cgerke/Insta), [Cãtãlin Mariş](https://github.com/alrra/dotfiles), [Gianni Chiappini / gf3](https://github.com/gf3/dotfiles), [Jan Moesen / tilde](https://github.com/janmoesen/tilde), [Lauri Ranta / OS X notes](http://osxnotes.net/defaults.html), [Matijs Brinkhuis](https://github.com/matijs/dotfiles), [Nicolas Gallagher](https://github.com/necolas/dotfiles), [Sindre Sorhus](https://sindresorhus.com/), [Tom Ryder](https://github.com/tejr/dotfiles), [Kevin Suttle / OSXDefaults](https://github.com/kevinSuttle/OSXDefaults), [Haralan Dobrev](http://hkdobrev.com/), and everyone who [contributed](https://github.com/mingster/dotfiles/contributors) or [suggested improvements](https://github.com/mingster/dotfiles/issues).

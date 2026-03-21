@@ -183,7 +183,7 @@ simple() {
     "UbuntuMono"
     )
 
-    for font in ${fonts[@]}
+    for font in "${fonts[@]}"
     do
         wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/$font.zip
     	unzip $font.zip -d $HOME/.local/share/fonts/$font/
@@ -268,6 +268,17 @@ simple() {
     ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
     ln -s -f ~/dotfiles/.config/lf $HOME/.config/lf
     ln -s -f ~/dotfiles/.config/lazygit $HOME/.config/lazygit
+
+    mkdir -p ~/dotfiles/.agents
+    ln -sfn ~/dotfiles/.agents ~/.agents
+
+    bash "$HOME/dotfiles/script/setup-claude-code.sh"
+
+    mkdir -p ~/dotfiles/cursor/rules
+    mkdir -p ~/.cursor
+    ln -sfn ~/dotfiles/cursor/rules ~/.cursor/rules
+
+    sh ~/dotfiles/script/link-cursor-user.sh
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw

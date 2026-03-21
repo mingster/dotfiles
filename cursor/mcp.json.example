@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "example": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-example"],
+      "env": {
+        "API_KEY": "set-in-your-local-mcp-json-not-in-git"
+      }
+    }
+  }
+}

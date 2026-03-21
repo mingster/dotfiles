@@ -19,7 +19,7 @@ done 2>/dev/null &
 
 # Check for Homebrew,
 # Install if we don't have it
-if test ! $(which brew); then
+if ! command -v brew >/dev/null 2>&1; then
     echo "Installing homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 fi
@@ -27,18 +27,34 @@ fi
 architecture=$(uname -m)
 if [ "$architecture" == "arm64" ]; then
     #echo "This Mac is using Apple Silicon."
-    # Add to path (only apple silicon macbooks)
-    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.zprofile
+    # Add to path (only apple silicon macbooks); idempotent — do not duplicate lines
+    if [ -f "$HOME/.zprofile" ] && grep -q '/opt/homebrew/bin/brew shellenv' "$HOME/.zprofile" 2>/dev/null; then
+        :
+    else
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+    fi
     eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [ "$architecture" == "x86_64" ]; then
     #echo "This Mac is using Intel."
-    eval "$(/usr/local/brew shellenv)"
+    if [ -x /usr/local/bin/brew ]; then
+        if [ -f "$HOME/.zprofile" ] && grep -q '/usr/local/bin/brew shellenv' "$HOME/.zprofile" 2>/dev/null; then
+            :
+        else
+            echo 'eval "$(/usr/local/bin/brew shellenv)"' >> "$HOME/.zprofile"
+        fi
+        eval "$(/usr/local/bin/brew shellenv)"
+    else
+        echo "Homebrew not found at /usr/local/bin/brew; add it to PATH and re-run this script."
+    fi
 else
     echo "Unknown architecture: $architecture"
 fi
 
-# Make sure we’re using the latest Homebrew.
-brew update && brew upgrade
+# Refresh Homebrew metadata; optional full upgrade (slow on reruns)
+brew update
+if [ "${DOTFILES_BREW_UPGRADE:-}" = "1" ]; then
+    brew upgrade
+fi
 
 # create missing directories and files
 if [ ! -d ${HOME}/.local/bin ]; then
@@ -78,6 +94,17 @@ if [ ! -d ${HOME}/.config ]; then
 fi
 
 mkdir -p $HOME/.config/{micro,fish}
+
+mkdir -p $HOME/dotfiles/.agents
+ln -sfn $HOME/dotfiles/.agents $HOME/.agents
+
+bash "$HOME/dotfiles/script/setup-claude-code.sh"
+
+mkdir -p $HOME/dotfiles/cursor/rules
+mkdir -p $HOME/.cursor
+ln -sfn $HOME/dotfiles/cursor/rules $HOME/.cursor/rules
+
+sh $HOME/dotfiles/script/link-cursor-user.sh
 
 echo ""
 echo -e "\033[1;35m Fonts \033[0m"

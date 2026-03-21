@@ -67,3 +67,11 @@ Temporary Items
 .config/alacritty/catppuccin
 
 .config/nvim/lazy-lock.json
+
+### AI / MCP — do not commit secrets ###
+# Local MCP config (copy from cursor/mcp.json.example)
+.cursor/mcp.json
+cursor/mcp.json
+# Claude Code local-only overrides (if used)
+.agents/claude/**/*.local.json
+.agents/claude/**/.local/

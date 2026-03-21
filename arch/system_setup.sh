@@ -127,7 +127,7 @@ simple() {
         "UbuntuMono"
     )
 
-    for font in ${fonts[@]}; do
+    for font in "${fonts[@]}"; do
         wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/$font.zip
         unzip $font.zip -d $HOME/.local/share/fonts/$font/
         rm $font.zip
@@ -194,6 +194,17 @@ simple() {
     ln -s -f $HOME/dotfiles/.config/nvim $HOME/.config/nvim
     ln -s -f $HOME/dotfiles/.config/lf $HOME/.config/lf
     ln -s -f $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
+
+    mkdir -p $HOME/dotfiles/.agents
+    ln -sfn $HOME/dotfiles/.agents $HOME/.agents
+
+    bash "$HOME/dotfiles/script/setup-claude-code.sh"
+
+    mkdir -p $HOME/dotfiles/cursor/rules
+    mkdir -p $HOME/.cursor
+    ln -sfn $HOME/dotfiles/cursor/rules $HOME/.cursor/rules
+
+    sh $HOME/dotfiles/script/link-cursor-user.sh
 
     #
     echo 'bluetooth'

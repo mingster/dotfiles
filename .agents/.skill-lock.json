@@ -1,0 +1,168 @@
+{
+  "version": 3,
+  "skills": {
+    "design-an-interface": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "design-an-interface/SKILL.md",
+      "skillFolderHash": "59d5eca0fd23930d3d3821aa9da507f1bdb8a348",
+      "installedAt": "2026-03-21T04:30:39.993Z",
+      "updatedAt": "2026-03-21T04:30:39.993Z"
+    },
+    "edit-article": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "edit-article/SKILL.md",
+      "skillFolderHash": "d86427caec7ecdccd963eb5dabc300e2c2e243a4",
+      "installedAt": "2026-03-21T04:30:40.708Z",
+      "updatedAt": "2026-03-21T04:30:40.708Z"
+    },
+    "git-guardrails-claude-code": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "git-guardrails-claude-code/SKILL.md",
+      "skillFolderHash": "f02ae7c2de75270e93a200e11a7e466ece897353",
+      "installedAt": "2026-03-21T04:30:41.128Z",
+      "updatedAt": "2026-03-21T04:30:41.128Z"
+    },
+    "grill-me": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "grill-me/SKILL.md",
+      "skillFolderHash": "58fccb407d628b1e89832b681410870826a947b9",
+      "installedAt": "2026-03-21T04:30:41.542Z",
+      "updatedAt": "2026-03-21T04:30:41.542Z"
+    },
+    "improve-codebase-architecture": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "improve-codebase-architecture/SKILL.md",
+      "skillFolderHash": "78b2029cbf4a74fa798c97ea27bc02bdeb2e3237",
+      "installedAt": "2026-03-21T04:30:41.958Z",
+      "updatedAt": "2026-03-21T04:30:41.958Z"
+    },
+    "migrate-to-shoehorn": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "migrate-to-shoehorn/SKILL.md",
+      "skillFolderHash": "ad722b79beb1c1fb998678d498ba11760d53714b",
+      "installedAt": "2026-03-21T04:30:42.363Z",
+      "updatedAt": "2026-03-21T04:30:42.363Z"
+    },
+    "obsidian-vault": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "obsidian-vault/SKILL.md",
+      "skillFolderHash": "1e814d168a215762391895aee58f4de06c8e3b7f",
+      "installedAt": "2026-03-21T04:30:42.758Z",
+      "updatedAt": "2026-03-21T04:30:42.758Z"
+    },
+    "prd-to-issues": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "prd-to-issues/SKILL.md",
+      "skillFolderHash": "16cfef941383949d7f9d2dca5b939e19e9eabf9f",
+      "installedAt": "2026-03-21T04:30:43.127Z",
+      "updatedAt": "2026-03-21T04:30:43.127Z"
+    },
+    "prd-to-plan": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "prd-to-plan/SKILL.md",
+      "skillFolderHash": "7317892c8d1978d485a166e8f7464fd4a45e9c08",
+      "installedAt": "2026-03-21T04:30:43.534Z",
+      "updatedAt": "2026-03-21T04:30:43.534Z"
+    },
+    "request-refactor-plan": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "request-refactor-plan/SKILL.md",
+      "skillFolderHash": "b0617c9cf69ac1e73a6b30f78c82ff81372079fd",
+      "installedAt": "2026-03-21T04:30:44.051Z",
+      "updatedAt": "2026-03-21T04:30:44.051Z"
+    },
+    "scaffold-exercises": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "scaffold-exercises/SKILL.md",
+      "skillFolderHash": "ef19ca90ec6645b23dc7e68601552ab795e3e6ee",
+      "installedAt": "2026-03-21T04:30:44.458Z",
+      "updatedAt": "2026-03-21T04:30:44.458Z"
+    },
+    "setup-pre-commit": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "setup-pre-commit/SKILL.md",
+      "skillFolderHash": "5e6e9301b4826bd820401ea4114a797adb169f47",
+      "installedAt": "2026-03-21T04:30:44.841Z",
+      "updatedAt": "2026-03-21T04:30:44.841Z"
+    },
+    "tdd": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "tdd/SKILL.md",
+      "skillFolderHash": "28d7822c112f22cf499099881856fdec07bc83a8",
+      "installedAt": "2026-03-21T04:30:45.209Z",
+      "updatedAt": "2026-03-21T04:30:45.209Z"
+    },
+    "triage-issue": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "triage-issue/SKILL.md",
+      "skillFolderHash": "0dd446c98de9b2221534895e490319c0d487a586",
+      "installedAt": "2026-03-21T04:30:45.572Z",
+      "updatedAt": "2026-03-21T04:30:45.572Z"
+    },
+    "ubiquitous-language": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "ubiquitous-language/SKILL.md",
+      "skillFolderHash": "07a5a654ab4276bd7404b7f1b5f196b15c9fca33",
+      "installedAt": "2026-03-21T04:30:45.968Z",
+      "updatedAt": "2026-03-21T04:30:45.968Z"
+    },
+    "write-a-prd": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "write-a-prd/SKILL.md",
+      "skillFolderHash": "566c485ddc02f2338f1d5be6c0188db74e278678",
+      "installedAt": "2026-03-21T04:30:46.368Z",
+      "updatedAt": "2026-03-21T04:30:46.368Z"
+    },
+    "write-a-skill": {
+      "source": "mingster/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mingster/skills.git",
+      "skillPath": "write-a-skill/SKILL.md",
+      "skillFolderHash": "2f252b35aa238879afc5a230ac30343708dee0b3",
+      "installedAt": "2026-03-21T04:30:46.708Z",
+      "updatedAt": "2026-03-21T04:30:46.708Z"
+    },
+    "frontend-design": {
+      "source": "anthropics/claude-code",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/anthropics/claude-code.git",
+      "skillPath": "plugins/frontend-design/skills/frontend-design/SKILL.md",
+      "skillFolderHash": "3bd61bab4d6b858c5d3af8adf14b917ce853e4c5",
+      "installedAt": "2026-03-21T04:33:09.271Z",
+      "updatedAt": "2026-03-21T04:33:09.271Z"
+    }
+  },
+  "dismissed": {}
+}
