@@ -77,7 +77,7 @@ brew install --cask megasync
 
 # Install essential binaries.
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-brew install mas git gh rsync wget curl unzip neofetch kdiff3 jq trash bat rar
+brew install mas git gh rsync wget curl unzip fastfetch kdiff3 jq trash bat rar
 brew install asdf
 
 cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig

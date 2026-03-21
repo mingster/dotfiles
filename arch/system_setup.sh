@@ -54,7 +54,7 @@ simple() {
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
     sudo pacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
-    sudo pacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty neofetch fzf neofetch net-tools
+    sudo pacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty fastfetch fzf net-tools
     sudo pacman -S --noconfirm --needed chromium firefox
 
     echo ""

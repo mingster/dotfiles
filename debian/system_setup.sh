@@ -30,7 +30,7 @@ simple() {
         zram-tools
 
     sudo apt install -y git ufw rsync unzip curl wget wput
-    sudo apt install -y kdiff3 fish tmux neovim lf kitty neofetch fzf
+    sudo apt install -y kdiff3 fish tmux neovim lf kitty fastfetch fzf
     sudo apt install -y chromium-browser
 
     # add fish to system shell
