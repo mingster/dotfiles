@@ -76,7 +76,7 @@ simple() {
     echo ""
     echo -e "\033[1;35m nano editor \033[0m"
     echo ""
-    pacman -S --noconfirm --needed nano-syntax-highlighting
+    sudo pacman -S --noconfirm --needed nano-syntax-highlighting
     if [ ! -d ${HOME}/GitHub ]; then
         mkdir -p ${HOME}/GitHub
     fi
