@@ -155,6 +155,8 @@ Order of operations (see source in `[install.sh](install.sh)`):
 
 Platform `**system_setup**` scripts also call `**bash script/setup-claude-code.sh**` (and other links) so a manual re-run of `**system_setup**` stays aligned.
 
+**Symlink loop (`Too many levels of symbolic links`):** `install.sh` uses the physical repo path (`pwd -P`) so `~/dotfiles` and paths like `~/dotfiles/mac/system_setup.sh` do not walk a circular symlink chain. If you still see this error, remove the broken symlink `rm ~/dotfiles` (only if it is a symlink, not a real folder), then run `install.sh` again from your clone (for example `cd ~/GitHub/dotfiles && sh install.sh`). Do not point two locations at each other (for example `~/dotfiles` → `~/GitHub/dotfiles` and `~/GitHub/dotfiles` → `~/dotfiles`).
+
 ### 3. macOS-only steps
 
 #### Software updates and Command Line Tools

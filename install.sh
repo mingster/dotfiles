@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Idempotent: safe to re-run. Always points ~/dotfiles at this repo and refreshes home symlinks.
-DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Use pwd -P so DOTFILES_ROOT is the real filesystem path (avoids symlink loops when ~/dotfiles
+# or the repo path repeats the same link chain).
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 if [ -e "$HOME/dotfiles" ] && [ ! -L "$HOME/dotfiles" ]; then
   echo "install: error: $HOME/dotfiles exists and is not a symlink. Remove or rename it, then re-run." >&2
