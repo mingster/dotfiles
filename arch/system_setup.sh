@@ -81,7 +81,14 @@ simple() {
         mkdir -p ${HOME}/GitHub
     fi
 
-    git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
+    if [ -d "${HOME}/GitHub/nanorc/.git" ]; then
+        echo "nanorc: repo exists; git pull"
+        git -C "${HOME}/GitHub/nanorc" pull --ff-only || true
+    elif [ ! -e "${HOME}/GitHub/nanorc" ]; then
+        git clone https://github.com/scopatz/nanorc.git "${HOME}/GitHub/nanorc"
+    else
+        echo "nanorc: ${HOME}/GitHub/nanorc exists (not a git clone); skip clone"
+    fi
     #echo "include ~/GitHub/nanorc/*.nanorc" >> ~/.nanorc
     #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
