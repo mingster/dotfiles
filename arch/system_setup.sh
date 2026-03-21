@@ -28,7 +28,12 @@ simple() {
     #gsettings set org.gnome.desktop.peripherals.keyboard delay 300
 
     # https://wiki.archlinux.org/title/Display_Power_Management_Signaling
-    xset s 180 180 #Change blank time to 3 min
+    # xset needs a running X server and DISPLAY (skip SSH, headless, Wayland-only).
+    if [ -n "${DISPLAY:-}" ] && command -v xset >/dev/null 2>&1; then
+        xset s 180 180 2>/dev/null || true
+    else
+        echo "Skipping xset (no DISPLAY or not under X11)."
+    fi
 
     echo ""
     echo -e "\033[1;35mInstalling applications...\033[0m"
