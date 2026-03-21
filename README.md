@@ -201,7 +201,7 @@ Read the script first: both install packages, change the default shell to fish, 
 ## Optional: more software
 
 - **macOS:** `mac/install_*.sh` — Android, AWS, databases, Python, Node, nginx, etc.
-- **Linux (Arch):** `arch/install_*.sh` — Node, Java, PostgreSQL, MongoDB, NVIDIA, KDE, and others.
+- **Linux (Arch):** `arch/install_*.sh` — Node, Java, PostgreSQL, MongoDB, NVIDIA, KDE, Claude Code (`arch/install_claude.sh`), Zed (`arch/install_zed.sh`), and others.
 - **Linux (Debian):** `debian/install_*.sh` — TeX, Zotero, Mullvad, singularity, VNC, etc.
 - **Editors (all):** [vscode/vscode_README.md](vscode/vscode_README.md), [vscode/install-vscode-extensions.sh](vscode/install-vscode-extensions.sh), [cursor/install-vscode-extensions_cursor.sh](cursor/install-vscode-extensions_cursor.sh)
 

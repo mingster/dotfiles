@@ -198,6 +198,10 @@ simple() {
     mkdir -p $HOME/dotfiles/.agents
     ln -sfn $HOME/dotfiles/.agents $HOME/.agents
 
+    bash "$HOME/dotfiles/arch/install_claude.sh"
+
+    bash "$HOME/dotfiles/arch/install_zed.sh"
+
     bash "$HOME/dotfiles/script/setup-claude-code.sh"
 
     mkdir -p $HOME/dotfiles/cursor/rules
