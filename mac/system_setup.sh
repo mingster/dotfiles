@@ -56,14 +56,12 @@ if [ "${DOTFILES_BREW_UPGRADE:-}" = "1" ]; then
     brew upgrade
 fi
 
-# create missing directories and files
-if [ ! -d ${HOME}/.local/bin ]; then
-    rm -rf ${HOME}/.local/bin
-    #mkdir -p ${HOME}/.local/bin
-    #cp ./bin/* ${HOME}/.local/bin/
-fi
-ln -s -f ${HOME}/dotfiles/mac/bin ${HOME}/.local/bin
-chmod +x ${HOME}/.local/bin/*
+# Symlink ~/dotfiles/mac/scripts into ~/.local/bin (must remove existing dir first:
+# if ~/.local/bin is a directory, `ln -s ... ~/.local/bin` creates ~/.local/bin/bin on macOS).
+mkdir -p "${HOME}/.local"
+rm -rf "${HOME}/.local/bin"
+ln -sfn "${HOME}/dotfiles/mac/bin" "${HOME}/.local/bin"
+chmod +x "${HOME}/dotfiles/mac/bin/"*
 
 #ln -s $HOME/GitHub/dotfiles $HOME
 #ln -s $HOME/dotfiles/bin $HOME/
