@@ -10,7 +10,8 @@ Prefer using browser agent skill over using playwright directly.
 Never use dashes (— or -) as punctuation in documentation or README files. Rephrase sentences using periods, commas, or parentheses instead.
 
 ## Coding Standards
-When working with Laravel/PHP projects, always use the php-guidelines-from-spatie skill
+When working with Laravel/PHP projects, always use the php-guidelines-from-spatie skill.
+
 
 ## Using GitHub
 For questions about GitHub, use the gh tool
