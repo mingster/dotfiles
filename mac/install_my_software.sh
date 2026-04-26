@@ -53,8 +53,11 @@ brew install --cask --appdir="/Applications/Utilities" balenaetcher
 #brew install --cask evernote
 #brew install --cask raycast
 #brew install --cask vnc-viewer
-brew install --cask chatgpt
+#brew install --cask chatgpt
 brew install --cask claude
+curl -fsSL https://claude.ai/install.sh | bash
+npm install -g @google/gemini-cl
+
 brew install --cask notion
 #brew install --cask obsidian
 #brew install --cask gimp

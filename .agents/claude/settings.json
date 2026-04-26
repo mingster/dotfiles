@@ -59,6 +59,7 @@
     "agent-browser@agent-browser": true
   },
   "alwaysThinkingEnabled": true,
+  "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
-  "effortLevel": "high"
+  "theme": "auto"
 }
