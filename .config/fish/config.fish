@@ -107,6 +107,8 @@ fish_add_path $HOME/bin
 fish_add_path $HOME/bin2
 fish_add_path $HOME/.local/bin
 
+fish_add_path $HOME/dotfiles/bin
+
 . ~/.asdf/plugins/java/set-java-home.fish
 
 #echo $fish_user_paths | tr " " "\n" | nl
