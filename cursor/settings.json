@@ -206,5 +206,6 @@
     //"workbench.colorTheme": "GitHub Dark Colorblind (Beta)",
     "workbench.iconTheme": "material-icon-theme",
     "workbench.startupEditor": "none",
-    "window.autoDetectColorScheme": false
+    "window.autoDetectColorScheme": false,
+    "cursor.composer.editorConversationDensity": "compact-ungrouped"
 }
