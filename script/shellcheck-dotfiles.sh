@@ -8,7 +8,8 @@ cd "$ROOT"
 
 if ! command -v shellcheck >/dev/null 2>&1; then
   echo "shellcheck not found. Install: https://github.com/koalaman/shellcheck#installing" >&2
-  exit 1
+  brew install shellcheck
+  #exit 1
 fi
 
 exec shellcheck -x --severity=error \
@@ -17,3 +18,5 @@ exec shellcheck -x --severity=error \
   mac/system_setup.sh \
   arch/system_setup.sh \
   debian/system_setup.sh
+
+echo "done."

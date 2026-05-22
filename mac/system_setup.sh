@@ -110,8 +110,7 @@ echo -e "\033[1;35m Fonts \033[0m"
 echo ""
 
 # Nerd fonts - Powerline-patched fonts. I use Hack.
-brew tap homebrew/cask-fonts
-brew install font-hack-nerd-font
+brew search '/font-.*-nerd-font/' | awk '{print $1}' | xargs brew install --cask
 
 echo ""
 echo -e "\033[1;35m kitty \033[0m"
