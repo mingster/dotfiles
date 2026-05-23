@@ -72,8 +72,8 @@ brew install coreutils curl git
 brew install gh rsync wget unzip fastfetch kdiff3 jq trash bat rar
 brew install asdf
 
-# set up cli access for github
-gh auth login
+# set up cli access for github (skip if already authenticated)
+gh auth status >/dev/null 2>&1 || gh auth login
 
 echo ""
 echo -e "\033[1;35m create missing directories and files \033[0m"
@@ -113,10 +113,7 @@ echo ""
 
 brew install --cask kitty
 
-if [ ! -d ${HOME}/.config/kitty ]; then
-    rm -rf ${HOME}/.config/kitty
-fi
-ln -s $HOME/dotfiles/.config/kitty $HOME/.config/
+ln -sfn $HOME/dotfiles/.config/kitty $HOME/.config/kitty
 
 sh $HOME/dotfiles/mac/install_nodejs_dev.sh
 sh $HOME/dotfiles/mac/install_java_dev.sh
@@ -134,14 +131,14 @@ echo ""
 
 # micro editor
 brew install micro
-micro -plugin install editorconfig
-micro -plugin install fish
-micro -plugin install fzf
-ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
+micro -plugin list 2>/dev/null | grep -q editorconfig || micro -plugin install editorconfig
+micro -plugin list 2>/dev/null | grep -q fish        || micro -plugin install fish
+micro -plugin list 2>/dev/null | grep -q fzf         || micro -plugin install fzf
+ln -sfn $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/bindings.json
 
 # neovim
 brew install nvim
-ln -s $HOME/dotfiles/.config/nvim $HOME/.config/
+ln -sfn $HOME/dotfiles/.config/nvim $HOME/.config/nvim
 
 # optional but recommended
 if [ ! -d ${HOME}/.local/share/nvim ]; then
@@ -162,10 +159,11 @@ brew install fzf
 brew install lazygit
 brew install commitizen
 
-ln -s $HOME/dotfiles/.config/lazygit/config.yml ~/Library/Application\ Support/lazygit/config.yml
-ln -s $HOME/dotfiles/.config/tmux $HOME/.config/
-ln -s $HOME/dotfiles/.config/lf $HOME/.config/
-ln -s $HOME/dotfiles/.config/lazygit $HOME/.config/
+mkdir -p ~/Library/Application\ Support/lazygit
+ln -sfn $HOME/dotfiles/.config/lazygit/config.yml ~/Library/Application\ Support/lazygit/config.yml
+ln -sfn $HOME/dotfiles/.config/tmux $HOME/.config/tmux
+ln -sfn $HOME/dotfiles/.config/lf $HOME/.config/lf
+ln -sfn $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
 
 # nano
 #brew install nano
@@ -173,7 +171,7 @@ if [ ! -d ${HOME}/GitHub ]; then
     mkdir -p ${HOME}/GitHub
 fi
 
-git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
+[ -d "$HOME/GitHub/nanorc" ] || git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
 #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
 # Install Yabai
@@ -207,17 +205,18 @@ echo -e "\033[1;35m fish shell \033[0m"
 echo ""
 
 brew install fish
-rm -rf $HOME/.config/fish/config.fish
-ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
-#cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
+ln -sfn $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/config.fish
 
-# add fish to system shell
-echo $(which fish) | sudo tee -a /etc/shells
+# add fish to system shells list (idempotent)
+if ! grep -qF "$(which fish)" /etc/shells; then
+    echo "$(which fish)" | sudo tee -a /etc/shells
+fi
 
-#
-echo ' change default shell to fish'
-#
-chsh -s $(which fish)
+# change default shell to fish (skip if already set)
+if [ "$SHELL" != "$(which fish)" ]; then
+    echo ' change default shell to fish'
+    chsh -s "$(which fish)"
+fi
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
