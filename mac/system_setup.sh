@@ -76,30 +76,6 @@ brew install asdf
 gh auth status >/dev/null 2>&1 || gh auth login
 
 echo ""
-echo -e "\033[1;35m create missing directories and files \033[0m"
-echo ""
-if [ ! -d ${HOME}/.config ]; then
-    mkdir -p ${HOME}/.config
-fi
-
-mkdir -p $HOME/.config/{micro,fish}
-
-mkdir -p $HOME/dotfiles/.agents
-ln -sfn $HOME/dotfiles/.agents $HOME/.agents
-
-bash "$HOME/dotfiles/script/setup-claude-code.sh"
-bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
-
-if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
-    bash "$HOME/dotfiles/script/bootstrap-agents.sh"
-fi
-
-bash "$HOME/dotfiles/script/setup-cursor.sh"
-bash "$HOME/dotfiles/script/setup-vscode.sh"
-bash "$HOME/dotfiles/script/setup-antigravity.sh"
-bash "$HOME/dotfiles/script/setup-obsidian.sh"
-
-echo ""
 echo -e "\033[1;35m Fonts \033[0m"
 echo ""
 
