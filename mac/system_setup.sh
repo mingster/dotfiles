@@ -72,8 +72,6 @@ brew install coreutils curl git
 brew install gh rsync wget unzip fastfetch kdiff3 jq trash bat rar
 brew install asdf
 
-cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig
-
 # set up cli access for github
 gh auth login
 
