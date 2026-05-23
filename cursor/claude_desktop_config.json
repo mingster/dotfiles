@@ -1,0 +1,11 @@
+{
+  "preferences": {
+    "allowAllBrowserActions": true,
+    "coworkScheduledTasksEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "chat",
+    "coworkWebSearchEnabled": true,
+    "bypassPermissionsModeEnabled": true,
+    "dockBounceEnabled": true
+  }
+}
