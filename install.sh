@@ -25,7 +25,11 @@ if [ "$architecture" == "arm64" ]; then
   cp -f "$DOTFILES_ROOT/.gitconfig" "$HOME/.gitconfig"
 
 elif [ "$architecture" == "x86_64" ]; then
-  cp -f "$DOTFILES_ROOT/.gitconfig-x64" "$HOME/.gitconfig"
+  if [ -f "$DOTFILES_ROOT/.gitconfig-x64" ]; then
+    cp -f "$DOTFILES_ROOT/.gitconfig-x64" "$HOME/.gitconfig"
+  else
+    cp -f "$DOTFILES_ROOT/.gitconfig" "$HOME/.gitconfig"
+  fi
 
 else
     echo "Unknown architecture: $architecture"
