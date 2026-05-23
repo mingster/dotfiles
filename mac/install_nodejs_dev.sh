@@ -10,7 +10,7 @@ echo '---- install node.js ----'
 brew list | grep -iE 'node'
 for pkg in $(brew list | grep -iE 'node'); do brew --ignore-dependencies uninstall $pkg; done
 
-asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
+asdf plugin list 2>/dev/null | grep -q '^nodejs$' || asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 
 asdf list all nodejs | wc -l
 
@@ -24,5 +24,5 @@ asdf set -u nodejs 24.15.0
 
 asdf plugin update --all
 
-# install bun
-curl -fsSL https://bun.sh/install | bash
+# install bun (skip if already present)
+command -v bun >/dev/null 2>&1 || curl -fsSL https://bun.sh/install | bash
