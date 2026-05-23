@@ -81,8 +81,6 @@ brew install --cask --appdir="/Applications/_dev" github
 brew install --cask --appdir="/Applications/_dev" antigravity
 brew install --cask --appdir="/Applications/_dev" visual-studio-code
 
-# copy over visual-studio-code setting
-cp $HOME/dotfiles/vscode/settings.json  ~/Library/Application\ Support/Code/User/settings.json
 
 #brew install --cask --appdir="/Applications/_dev" azure-data-studio
 #brew install --cask --appdir="/Applications/_dev" 0xed

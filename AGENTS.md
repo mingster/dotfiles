@@ -15,7 +15,9 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 | [skills CLI](https://skills.sh/) | `~/.agents` | `~/dotfiles/.agents` |
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
 | Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
-| Cursor User settings | `…/Cursor/User/settings.json` | `~/dotfiles/cursor/settings.json` (via `link-cursor-user.sh`) |
+| Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/cursor/` (via `link-cursor-user.sh`) |
+| VS Code User settings | `…/Code/User/{settings,keybindings}.json` | `~/dotfiles/vscode/` (via `script/setup-vscode.sh`) |
+| Antigravity IDE User settings | `…/Antigravity IDE/User/{settings,keybindings}.json` | `~/dotfiles/Antigravity/` (via `script/setup-antigravity.sh`) |
 
 Restore skills from the lockfile on a new machine:
 
