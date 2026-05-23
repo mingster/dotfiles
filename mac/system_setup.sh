@@ -78,9 +78,9 @@ else
 fi
 
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-brew install coreutils curl git
-brew install gh rsync wget unzip fastfetch kdiff3 jq trash bat rar
-brew install asdf
+for pkg in coreutils curl git gh rsync wget unzip fastfetch kdiff3 jq trash bat rar asdf; do
+  brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
+done
 
 # set up cli access for github (skip if already authenticated)
 gh auth status >/dev/null 2>&1 || gh auth login
