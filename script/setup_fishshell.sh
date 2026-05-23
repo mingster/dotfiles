@@ -1,17 +1,27 @@
 #!/usr/bin/env fish
-mkdir -p ~/.config/fish/functions/
+# Full fish shell setup: fisher, plugins (via fish_plugins), tide config restore.
+# Called from mac/system_setup.sh after fish is installed and set as default shell.
 
+# Link fish_plugins from dotfiles so fisher reads the canonical list
+ln -sfn ~/dotfiles/.config/fish/fish_plugins ~/.config/fish/fish_plugins
+
+mkdir -p ~/.config/fish/functions/
 ln -sfn ~/dotfiles/.config/fish/functions/postexec_newline.fish ~/.config/fish/functions/postexec_newline.fish
 
-# install fisher - https://github.com/jorgebucaran/fisher
-curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher
+# Install fisher if not already present
+if not functions -q fisher
+    curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+    fisher install jorgebucaran/fisher
+end
 
-fisher install IlanCosman/tide@v6
-fisher install joshmedeski/fish-lf-icons
-fisher install jethrokuan/z
-fisher install patrickf1/fzf.fish
-fisher install rstacruz/fish-npm-global
-fisher install jorgebucaran/nvm.fish
-fisher install budimanjojo/tmux.fish
+# Install / update all plugins declared in fish_plugins (idempotent)
+fisher update
 
-# tide configure is interactive — run manually after install if you want to reconfigure the prompt
+# Restore tide config saved in dotfiles
+set tide_conf ~/dotfiles/.config/fish/tide_config.fish
+if test -f $tide_conf
+    source $tide_conf
+    echo "setup-fish: tide config restored"
+else
+    echo "setup-fish: no tide_config.fish found — run script/backup-tide.fish after configuring tide, then commit"
+end
