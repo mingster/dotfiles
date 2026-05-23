@@ -70,21 +70,12 @@ chmod +x "${HOME}/dotfiles/mac/bin/"*
 echo ""
 echo -e "\033[1;35m essential apps \033[0m"
 echo ""
-brew install --cask google-chrome
-brew install --cask megasync
+
 
 # Install essential binaries.
 
 ## mas
-# 1. 下載官方專為 Intel (x64) 架構編譯的 .pkg 安裝包
-cd ~/Downloads
-curl -L -O https://github.com/mas-cli/mas/releases/download/v7.0.0/mas-7.0.0-x86_64.pkg
-
-# 2. 透過系統安裝器將其安裝至 Mac 中 (需要輸入 Mac 開機密碼)
-sudo installer -pkg mas-7.0.0-x86_64.pkg -target /
-
-# 3. 刪除下載的安裝包以保持乾淨
-rm mas-7.0.0-x86_64.pkg
+brew install mas
 
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 brew install coreutils curl git
@@ -121,8 +112,8 @@ echo ""
 echo -e "\033[1;35m Fonts \033[0m"
 echo ""
 
-# Nerd fonts - Powerline-patched fonts. I use Hack.
-brew search '/font-.*-nerd-font/' | awk '{print $1}' | xargs brew install --cask
+# Nerd fonts - only Hack
+brew install --cask font-hack-nerd-font
 
 echo ""
 echo -e "\033[1;35m kitty \033[0m"
@@ -134,7 +125,6 @@ if [ ! -d ${HOME}/.config/kitty ]; then
     rm -rf ${HOME}/.config/kitty
 fi
 ln -s $HOME/dotfiles/.config/kitty $HOME/.config/
-
 
 sh $HOME/dotfiles/mac/install_nodejs_dev.sh
 sh $HOME/dotfiles/mac/install_java_dev.sh
@@ -292,3 +282,5 @@ if [[ -f "$CRON_PLIST_DST" ]]; then
 else
     cron_warn "$CRON_PLIST_DST not present; skipping chmod/chown and launchctl load/start."
 fi
+
+sh $HOME/dotfiles/mac/install_my_software.sh
