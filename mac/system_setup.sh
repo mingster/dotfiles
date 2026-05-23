@@ -155,8 +155,8 @@ brew install fzf
 brew install lazygit
 brew install commitizen
 
-mkdir -p ~/Library/Application\ Support/lazygit
-ln -sfn $HOME/dotfiles/.config/lazygit/config.yml ~/Library/Application\ Support/lazygit/config.yml
+mkdir -p "$HOME/Library/Application Support/lazygit"
+ln -sfn "$HOME/dotfiles/.config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
 ln -sfn $HOME/dotfiles/.config/tmux $HOME/.config/tmux
 ln -sfn $HOME/dotfiles/.config/lf $HOME/.config/lf
 ln -sfn $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
@@ -167,7 +167,7 @@ if [ ! -d ${HOME}/GitHub ]; then
     mkdir -p ${HOME}/GitHub
 fi
 
-[ -d "$HOME/GitHub/nanorc" ] || git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
+[ -d "$HOME/GitHub/nanorc" ] || git clone https://github.com/scopatz/nanorc.git "$HOME/GitHub/nanorc"
 #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
 # Install Yabai

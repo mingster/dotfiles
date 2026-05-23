@@ -28,7 +28,7 @@ asdf install java openjdk-21
 
 asdf set -u java openjdk-21
 
-grep -qF 'java_macos_integration_enable=yes' ~/.asdfrc 2>/dev/null || echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
+grep -qF 'java_macos_integration_enable=yes' "$HOME/.asdfrc" 2>/dev/null || echo 'java_macos_integration_enable=yes' >> "$HOME/.asdfrc"
 
 java --version
 

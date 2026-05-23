@@ -2,7 +2,7 @@
 # Save current tide universal variables to dotfiles for restore on new machines.
 # Run this after configuring tide, then commit the result.
 
-set dest ~/dotfiles/.config/fish/tide_config.fish
+set dest $HOME/dotfiles/.config/fish/tide_config.fish
 
 printf '' > $dest
 
