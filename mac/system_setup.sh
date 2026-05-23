@@ -214,19 +214,12 @@ echo -e "\033[1;35m cron service script \033[0m"
 echo ""
 
 CRON_PLIST_SRC="$HOME/bin2/com.mingster.crontab.plist"
-CRON_PLIST_DST="/Library/LaunchAgents/com.mingster.crontab.plist"
+CRON_PLIST_DST="$HOME/Library/LaunchAgents/com.mingster.crontab.plist"
+CRON_LABEL="com.mingster.crontab"
 
 cron_warn() {
     echo -e "\033[1;33mWarning:\033[0m $*" >&2
 }
-
-if [[ -f "$CRON_PLIST_SRC" ]]; then
-    sudo cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST" || cron_warn "could not copy crontab plist to $CRON_PLIST_DST"
-else
-    cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent plist install."
-fi
-
-sudo -v
 
 shopt -s nullglob
 bin2_scripts=("$HOME/bin2"/*.sh)
@@ -237,29 +230,17 @@ else
     cron_warn "no *.sh in $HOME/bin2/; skipping chmod."
 fi
 
-if [[ -f "$CRON_PLIST_DST" ]]; then
-    sudo chmod 644 "$CRON_PLIST_DST" || cron_warn "could not chmod $CRON_PLIST_DST"
-    sudo chown "$USER:staff" "$CRON_PLIST_DST" || cron_warn "could not chown $CRON_PLIST_DST"
+if [[ -f "$CRON_PLIST_SRC" ]]; then
+    # Unload existing job before replacing the plist
+    launchctl bootout "gui/$(id -u)/$CRON_LABEL" 2>/dev/null || true
 
-    # test
-    # plutil "$CRON_PLIST_DST"
+    cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST" || { cron_warn "could not copy plist to $CRON_PLIST_DST"; }
+    chmod 644 "$CRON_PLIST_DST"
 
-    #launchctl bootout gui/501 "$CRON_PLIST_DST"
-    #launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
-    #launchctl bootstrap gui/501 "$HOME/Library/LaunchAgents/com.mingster.crontab.plist"
-
-    # Load task (may fail on newer macOS; bootstrap as root may be required)
-    _load_out=$(launchctl load "$CRON_PLIST_DST" 2>&1) || cron_warn "launchctl load failed: ${_load_out}"
-    # Remove task
-    #launchctl unload ~/Library/LaunchAgents/com.mingster.crontab.plist
-
-    # Manually execute task
-    _start_out=$(launchctl start "$CRON_PLIST_DST" 2>&1) || cron_warn "launchctl start failed: ${_start_out}"
-
-    # List all tasks
-    #launchctl list | grep mingster
+    launchctl bootstrap "gui/$(id -u)" "$CRON_PLIST_DST" || cron_warn "launchctl bootstrap failed"
+    launchctl kickstart "gui/$(id -u)/$CRON_LABEL" || cron_warn "launchctl kickstart failed"
 else
-    cron_warn "$CRON_PLIST_DST not present; skipping chmod/chown and launchctl load/start."
+    cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent install."
 fi
 
 sh $HOME/dotfiles/mac/install_my_software.sh
