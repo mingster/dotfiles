@@ -56,7 +56,14 @@
   },
   "enabledPlugins": {
     "laravel-simplifier@laravel": true,
-    "agent-browser@agent-browser": true
+    "agent-browser@agent-browser": true,
+    "obsidian-vault@obsidian-vault": true
+  },
+  "mcpServers": {
+    "obsidian": {
+      "command": "bash",
+      "args": ["-c", "npx --yes mcp-obsidian $HOME/Documents/Obsidian"]
+    }
   },
   "alwaysThinkingEnabled": true,
   "effortLevel": "high",

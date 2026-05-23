@@ -95,6 +95,7 @@ if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
 fi
 
 bash "$HOME/dotfiles/script/setup-cursor.sh"
+bash "$HOME/dotfiles/script/setup-obsidian.sh"
 
 echo ""
 echo -e "\033[1;35m Fonts \033[0m"
