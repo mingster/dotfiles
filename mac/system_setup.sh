@@ -64,8 +64,18 @@ echo ""
 
 # Install essential binaries.
 
-## mas
-brew install mas
+## mas — build via brew on arm64; download release pkg on x86_64
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v mas >/dev/null 2>&1; then
+    MAS_VERSION=$(curl -fsSL https://api.github.com/repos/mas-cli/mas/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    MAS_PKG="mas-${MAS_VERSION}-x86_64.pkg"
+    curl -fsSL "https://github.com/mas-cli/mas/releases/download/v${MAS_VERSION}/${MAS_PKG}" -o "/tmp/${MAS_PKG}"
+    sudo installer -pkg "/tmp/${MAS_PKG}" -target /
+    rm -f "/tmp/${MAS_PKG}"
+  fi
+else
+  brew install mas
+fi
 
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
 brew install coreutils curl git
