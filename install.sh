@@ -40,33 +40,6 @@ ln -sfn "$DOTFILES_ROOT/.vim" "$HOME/.vim"
 git config --global core.excludesfile "$DOTFILES_ROOT/.gitignore_global"
 git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
 
-# Agent skills: ~/.agents → ~/dotfiles/.agents (idempotent; ok on reruns)
-if [ -d "$HOME/dotfiles" ]; then
-  mkdir -p "$HOME/dotfiles/.agents"
-  ln -sfn "$HOME/dotfiles/.agents" "$HOME/.agents"
-
-  # Claude Code: ~/.claude/* → ~/dotfiles/.agents (skills + .agents/claude; see script/setup-claude-code.sh)
-  bash "$HOME/dotfiles/script/setup-claude-code.sh"
-
-  # Claude Desktop (macOS): symlink claude_desktop_config.json from dotfiles
-  if [[ "$OSTYPE" == darwin* ]]; then
-    bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
-  fi
-
-  # Cursor global rules: ~/.cursor/rules → ~/dotfiles/cursor/rules
-  mkdir -p "$HOME/dotfiles/cursor/rules"
-  mkdir -p "$HOME/.cursor"
-  ln -sfn "$HOME/dotfiles/cursor/rules" "$HOME/.cursor/rules"
-
-  # Optional: restore skills from .skill-lock.json (needs Node/npx)
-  if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
-    bash "$HOME/dotfiles/script/bootstrap-agents.sh"
-  fi
-
-  # Cursor app User folder: settings + keybindings -> dotfiles/cursor (riben.life standard)
-  bash "$HOME/dotfiles/script/link-cursor-user.sh"
-fi
-
 # Platform-specific full system setup (Homebrew stack, distro packages, etc.)
 
 if [ "${DOTFILES_SKIP_SYSTEM_SETUP:-}" = "1" ]; then
