@@ -23,9 +23,7 @@ echo '---- install open jdk ----'
 asdf plugin list 2>/dev/null | grep -q '^java$' || asdf plugin add java https://github.com/halcyon/asdf-java.git
 
 #asdf list all java
-asdf install java openjdk-21
-#asdf install java openjdk-11.0.2
-
+asdf list java 2>/dev/null | grep -q 'openjdk-21' || asdf install java openjdk-21
 asdf set -u java openjdk-21
 
 grep -qF 'java_macos_integration_enable=yes' "$HOME/.asdfrc" 2>/dev/null || echo 'java_macos_integration_enable=yes' >> "$HOME/.asdfrc"
@@ -62,9 +60,8 @@ java --version
 #export PATH=$GRADLE_HOME/bin:$PATH
 
 #brew install Caskroom/cask/android-sdk
-brew install --cask --appdir="/Applications/_dev" android-studio
-#brew install --cask --appdir="/Applications/_dev" eclipse-java
-brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
+brew list --cask android-studio  >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" android-studio
+brew list --cask intellij-idea-ce >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
 
 # Remove outdated versions from the cellar.
 brew cleanup

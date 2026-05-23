@@ -18,7 +18,7 @@ asdf list all nodejs | wc -l
 #asdf shell nodejs 22.14.0
 #asdf set -u nodejs 22.14.0
 
-asdf install nodejs 24.15.0
+asdf list nodejs 2>/dev/null | grep -q '24.15.0' || asdf install nodejs 24.15.0
 asdf set -u nodejs 24.15.0
 
 asdf plugin update --all

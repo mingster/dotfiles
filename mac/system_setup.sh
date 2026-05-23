@@ -74,7 +74,7 @@ if [ "$(uname -m)" = "x86_64" ]; then
     rm -f "/tmp/${MAS_PKG}"
   fi
 else
-  brew install mas
+  brew list mas >/dev/null 2>&1 || brew install mas
 fi
 
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
