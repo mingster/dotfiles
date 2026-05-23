@@ -20,8 +20,7 @@ echo '---- install open jdk ----'
 
 
 # asdf - https://github.com/halcyon/asdf-java
-rm -rf ~/.asdf/plugins/java
-asdf plugin add java https://github.com/halcyon/asdf-java.git
+asdf plugin list 2>/dev/null | grep -q '^java$' || asdf plugin add java https://github.com/halcyon/asdf-java.git
 
 #asdf list all java
 asdf install java openjdk-21
@@ -29,7 +28,7 @@ asdf install java openjdk-21
 
 asdf set -u java openjdk-21
 
-echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
+grep -qF 'java_macos_integration_enable=yes' ~/.asdfrc 2>/dev/null || echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
 
 java --version
 
