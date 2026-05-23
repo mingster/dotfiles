@@ -208,7 +208,12 @@
   "workbench.startupEditor": "none",
   "window.autoDetectColorScheme": false,
   "editor.fontVariations": false,
-  "terminal.integrated.accessibleViewFocusOnCommandExecution": true,
   "terminal.integrated.defaultProfile.osx": "sh",
-  "terminal.integrated.macOptionIsMeta": true
+  "terminal.integrated.macOptionIsMeta": true,
+  "accessibility.verbosity.terminal": false,
+  "accessibility.accessibleView.closeOnKeyPress": false,
+  "accessibility.verbosity.hover": false,
+  "accessibility.verbosity.inlineCompletions": false,
+  "accessibility.verbosity.notification": false,
+  "accessibility.verbosity.walkthrough": false
 }
