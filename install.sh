@@ -53,21 +53,13 @@ mkdir -p "$HOME/.config/micro" "$HOME/.config/fish"
 mkdir -p "$DOTFILES_ROOT/.agents"
 ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
-# AI tooling: Claude Code, VS Code, Antigravity IDE, Cursor user settings
+# AI tooling: each script handles OS-specific install paths internally
 bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
+bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
+bash "$DOTFILES_ROOT/script/setup-cursor.sh"
+bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"
 bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
-
-# macOS-only: Claude Desktop config merge, Cursor + Obsidian installs
-case "$OSTYPE" in
-  darwin*)
-    bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
-    if command -v brew >/dev/null 2>&1; then
-      bash "$DOTFILES_ROOT/script/setup-cursor.sh"
-      bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
-    fi
-    ;;
-esac
 
 if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
   bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"
