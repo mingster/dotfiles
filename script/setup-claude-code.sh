@@ -29,7 +29,7 @@ mkdir -p "${HOME}/.claude"
 
 # Skills: shared tree between skills CLI and Claude Code
 rm -rf "${HOME}/.claude/skills"
-ln -sf "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
+ln -sfn "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
 
 # Link every entry in .agents/claude/ into ~/.claude/ (skip README.md)
 for entry in "$CLAUDE_SRC"/*; do

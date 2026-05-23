@@ -13,19 +13,23 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 | Tool | Home path | Canonical in repo |
 |------|-----------|---------------------|
 | [skills CLI](https://skills.sh/) | `~/.agents` | `~/dotfiles/.agents` |
-| Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` | `~/dotfiles/.agents/` — `script/setup-claude-code.sh` links every entry in `.agents/claude/` into `~/.claude/` and `.agents/skills/` as `~/.claude/skills/` |
-| Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/cursor/rules` |
-| Cursor User settings | `…/Cursor/User/settings.json` | `~/dotfiles/cursor/settings.json` (via `script/link-cursor-user.sh`) |
+| Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
+| Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
+| Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/cursor/` (via `link-cursor-user.sh`) |
+| VS Code User settings | `…/Code/User/{settings,keybindings}.json` | `~/dotfiles/vscode/` (via `script/setup-vscode.sh`) |
+| Antigravity IDE User settings | `…/Antigravity IDE/User/{settings,keybindings}.json` | `~/dotfiles/Antigravity/` (via `script/setup-antigravity.sh`) |
 | Obsidian vault (agent memory) | `~/Documents/Obsidian` | created by `script/setup-obsidian.sh`; accessed via `obsidian` MCP server declared in `.agents/claude/settings.json` |
 
-## Setup scripts (called from `mac/system_setup.sh`)
+## Setup scripts (called from `install.sh`)
 
 | Script | What it does |
 |--------|-------------|
 | `script/setup-claude-code.sh` | Links all `.agents/claude/*` into `~/.claude/`; links skills |
-| `script/setup-claude-desktop.sh` | Links Claude Desktop config |
-| `script/setup-cursor.sh` | Installs Cursor cask + CLI; links rules and user settings |
-| `script/setup-obsidian.sh` | Installs Obsidian cask; creates vault at `~/Documents/Obsidian` |
+| `script/setup-claude-desktop.sh` | Merges Claude Desktop config (macOS and Linux) |
+| `script/setup-cursor.sh` | Installs Cursor; links rules and user settings |
+| `script/setup-vscode.sh` | Links VS Code settings and keybindings |
+| `script/setup-antigravity.sh` | Links Antigravity IDE settings and keybindings |
+| `script/setup-obsidian.sh` | Installs Obsidian; creates vault at `~/Documents/Obsidian` |
 | `script/setup_fishshell.sh` | Installs fisher + plugins; restores tide config |
 | `script/backup-tide.fish` | Saves current tide config to `.config/fish/tide_config.fish` |
 | `script/bootstrap-agents.sh` | Restores skills from `.skill-lock.json` (requires Node/npx) |
