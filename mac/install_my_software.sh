@@ -1,51 +1,13 @@
 #!/usr/bin/env bash
 
-echo 'install my brew apps...'
-
-#brew install --cask --appdir="~/Applications" xquartz
-brew install --cask --appdir="/Applications/Utilities" onyx
-brew install --cask the-unarchiver
-
-# Development tools
-# brew install git
-# brew install --cask virtualbox
-# brew install --cask vagrant
-# Install Docker, which requires virtualbox
-#brew install docker
-#brew install docker-compose
-#brew install boot2docker
+echo ""
+echo -e "\033[1;35m cli apps \033[0m"
+echo ""
 brew install nmap tmux
 
-mkdir /Applications/_dev
-
-#brew install --cask --appdir="/Applications/_dev" docker
-brew install --cask --appdir="/Applications/_dev" github
-#brew install --cask --appdir="/Applications/_dev" sourcetree
-#brew install --cask --appdir="/Applications/_dev" staruml
-brew install --cask --appdir="/Applications/_dev" visual-studio-code
-brew install --cask --appdir="/Applications/_dev" antigravity
-brew install --cask --appdir="/Applications/_dev" cursor
-
-# cursor cli
-curl https://cursor.com/install -fsS | bash
-
-# copy over visual-studio-code setting
-cp ~/dotfiles/vscode/vscode-settings.json  ~/Library/Application\ Support/Code/User/settings.json
-
-brew install --cask --appdir="/Applications/_dev" azure-data-studio
-#brew install --cask --appdir="/Applications/_dev" 0xed
-#brew install --cask --appdir="/Applications/_dev" eclipse-java
-#brew install --cask --appdir="/Applications/_dev" eclipse-jee
-#brew install --cask --appdir="/Applications/_dev" jd-gui
-#brew install --cask --appdir="/Applications/_dev" dash
-
-#brew install --appdir="/Applications/_dev" --cask blender
-#brew install --appdir="/Applications/_dev" --cask db-browser-for-sqlite
-#brew install --cask wireshark
-
-brew install --cask --appdir="/Applications/Utilities" balenaetcher
-
-#brew install oath-toolkit
+echo ""
+echo -e "\033[1;35m Essential apps \033[0m"
+echo ""
 
 # Misc casks
 #brew install --cask aerial #appletv screen saver
@@ -54,12 +16,15 @@ brew install --cask --appdir="/Applications/Utilities" balenaetcher
 #brew install --cask raycast
 #brew install --cask vnc-viewer
 #brew install --cask chatgpt
-brew install --cask claude
-curl -fsSL https://claude.ai/install.sh | bash
-npm install -g @google/gemini-cl
 
+brew install --cask claude
+
+curl -fsSL https://claude.ai/install.sh | bash
+
+brew install --cask google-chrome
+brew install --cask megasync
 brew install --cask notion
-#brew install --cask obsidian
+brew install --cask obsidian
 #brew install --cask gimp
 #brew install --cask inkscape
 #brew install --cask shottr
@@ -71,9 +36,7 @@ brew install --cask telegram
 
 brew install --cask google-drive
 brew install --cask readdle-spark
-
-brew install --cask tor-browser
-brew install --cask brave-browser
+brew install --cask tor-browser brave-browser
 brew install --cask firefox
 #brew install --cask chromium
 #brew install --cask arc
@@ -99,6 +62,39 @@ brew install --cask megasync
 #Remove comment to install LaTeX distribution MacTeX
 #brew install --cask mactex
 
+#brew install --cask --appdir="~/Applications" xquartz
+brew install --cask --appdir="/Applications/Utilities" onyx
+brew install --cask --appdir="/Applications/Utilities" balenaetcher
+brew install --cask the-unarchiver
+
+
+echo ""
+echo -e "\033[1;35m development apps \033[0m"
+echo ""
+
+mkdir -p /Applications/_dev
+
+#brew install --cask --appdir="/Applications/_dev" docker
+brew install --cask --appdir="/Applications/_dev" github
+#brew install --cask --appdir="/Applications/_dev" sourcetree
+#brew install --cask --appdir="/Applications/_dev" staruml
+brew install --cask --appdir="/Applications/_dev" antigravity
+brew install --cask --appdir="/Applications/_dev" visual-studio-code
+
+# copy over visual-studio-code setting
+cp $HOME/dotfiles/vscode/settings.json  ~/Library/Application\ Support/Code/User/settings.json
+
+#brew install --cask --appdir="/Applications/_dev" azure-data-studio
+#brew install --cask --appdir="/Applications/_dev" 0xed
+#brew install --cask --appdir="/Applications/_dev" eclipse-java
+#brew install --cask --appdir="/Applications/_dev" eclipse-jee
+#brew install --cask --appdir="/Applications/_dev" jd-gui
+#brew install --cask --appdir="/Applications/_dev" dash
+
+#brew install --appdir="/Applications/_dev" --cask blender
+#brew install --appdir="/Applications/_dev" --cask db-browser-for-sqlite
+#brew install --cask wireshark
+
 # Install av staff
 mkdir /Applications/_av
 
@@ -115,7 +111,7 @@ brew install --cask --appdir="/Applications/_av" xld
 
 #ffmpeg with aac/mp4 support
 # https://gist.github.com/clayton/6196167
-brew install homebrew-ffmpeg/ffmpeg/ffmpeg
+#brew install homebrew-ffmpeg/ffmpeg/ffmpeg
 
 # replave obsoleted youtube-dl with yt-dlp
 brew install yt-dlp
@@ -136,11 +132,11 @@ ln -s /usr/local/bin/yt-dlp /usr/local/bin/youtube-dl                           
 
 brew install --cask google-chrome@dev
 #brew install --cask google-chrome-canary
-brew install --cask safari-technology-preview
+#brew install --cask safari-technology-preview
 
 # browsh
-brew tap browsh-org/homebrew-browsh
-brew install browsh
+#brew tap browsh-org/homebrew-browsh
+#brew install browsh
 
 # gemini cli
 npx https://github.com/google-gemini/gemini-cli

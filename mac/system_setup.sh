@@ -94,11 +94,7 @@ if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
     bash "$HOME/dotfiles/script/bootstrap-agents.sh"
 fi
 
-mkdir -p $HOME/dotfiles/cursor/rules
-mkdir -p $HOME/.cursor
-ln -sfn $HOME/dotfiles/cursor/rules $HOME/.cursor/rules
-
-sh $HOME/dotfiles/script/link-cursor-user.sh
+bash "$HOME/dotfiles/script/setup-cursor.sh"
 
 echo ""
 echo -e "\033[1;35m Fonts \033[0m"
@@ -217,6 +213,9 @@ if [ "$SHELL" != "$(which fish)" ]; then
     echo ' change default shell to fish'
     chsh -s "$(which fish)"
 fi
+
+# install fisher and fish plugins
+fish "$HOME/dotfiles/script/setup_fishshell.sh"
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
