@@ -7,15 +7,15 @@ description: Search, create, and manage notes in the Obsidian vault with wikilin
 
 ## Vault location
 
-`/mnt/d/Obsidian Vault/AI Research/`
+`~/Documents/Obsidian`
 
 Mostly flat at root level.
 
 ## Naming conventions
 
-- **Index notes**: aggregate related topics (e.g., `Ralph Wiggum Index.md`, `Skills Index.md`, `RAG Index.md`)
+- **Index notes**: aggregate related topics (e.g., `Claude Index.md`, `Skills Index.md`, `Projects Index.md`)
 - **Title case** for all note names
-- No folders for organization - use links and index notes instead
+- No folders for organization — use links and index notes instead
 
 ## Linking
 
@@ -23,37 +23,41 @@ Mostly flat at root level.
 - Notes link to dependencies/related notes at the bottom
 - Index notes are just lists of `[[wikilinks]]`
 
-## Workflows
+## MCP tools (preferred)
 
-### Search for notes
+The `obsidian` MCP server is configured in Claude Code settings. Prefer MCP tools over shell commands when available:
+
+- `read_file` — read a note by path
+- `write_file` — create or overwrite a note
+- `list_directory` — list vault contents
+- `search_files` — search by filename or content
+
+## Shell fallback
 
 ```bash
+VAULT="$HOME/Documents/Obsidian"
+
 # Search by filename
-find "/mnt/d/Obsidian Vault/AI Research/" -name "*.md" | grep -i "keyword"
+find "$VAULT" -name "*.md" | grep -i "keyword"
 
 # Search by content
-grep -rl "keyword" "/mnt/d/Obsidian Vault/AI Research/" --include="*.md"
+grep -rl "keyword" "$VAULT" --include="*.md"
+
+# Find index notes
+find "$VAULT" -name "*Index*"
+
+# Find backlinks
+grep -rl "\[\[Note Title\]\]" "$VAULT" --include="*.md"
 ```
 
-Or use Grep/Glob tools directly on the vault path.
+## Workflows
 
 ### Create a new note
 
 1. Use **Title Case** for filename
-2. Write content as a unit of learning (per vault rules)
+2. Write content as a self-contained unit
 3. Add `[[wikilinks]]` to related notes at the bottom
-4. If part of a numbered sequence, use the hierarchical numbering scheme
 
-### Find related notes
+### Save agent memory
 
-Search for `[[Note Title]]` across the vault to find backlinks:
-
-```bash
-grep -rl "\\[\\[Note Title\\]\\]" "/mnt/d/Obsidian Vault/AI Research/"
-```
-
-### Find index notes
-
-```bash
-find "/mnt/d/Obsidian Vault/AI Research/" -name "*Index*"
-```
+Create a note named after the topic (e.g., `Project Foo Context.md`). Reference it from the relevant index note. Agents write here to persist context across sessions.
