@@ -49,7 +49,12 @@ if os.path.isfile(dst_path) and not os.path.islink(dst_path):
         dst = {}
 
 # Machine-local preference keys to preserve (not overwritten by dotfiles).
-LOCAL_KEYS = {"localAgentModeTrustedFolders"}
+LOCAL_KEYS = {
+    "localAgentModeTrustedFolders",
+    "bypassPermissionsGateByAccount",
+    "remoteToolsDeviceName",
+    "epitaxyPrefs",
+}
 
 merged = dict(dst)
 for top_key, top_val in src.items():
