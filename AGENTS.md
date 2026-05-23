@@ -30,7 +30,7 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 | `script/setup-vscode.sh` | Links VS Code settings and keybindings |
 | `script/setup-antigravity.sh` | Links Antigravity IDE settings and keybindings |
 | `script/setup-obsidian.sh` | Installs Obsidian; creates vault at `~/Documents/Obsidian` |
-| `script/setup_fishshell.sh` | Installs fisher + plugins; restores tide config |
+| `script/setup_fishshell.fish` | Installs fisher + plugins; restores tide config |
 | `script/backup-tide.fish` | Saves current tide config to `.config/fish/tide_config.fish` |
 | `script/bootstrap-agents.sh` | Restores skills from `.skill-lock.json` (requires Node/npx) |
 

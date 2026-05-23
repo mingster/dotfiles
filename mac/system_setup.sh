@@ -204,7 +204,7 @@ if [ "$SHELL" != "$(which fish)" ]; then
 fi
 
 # install fisher and fish plugins
-fish "$HOME/dotfiles/script/setup_fishshell.sh"
+fish "$HOME/dotfiles/script/setup_fishshell.fish"
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
