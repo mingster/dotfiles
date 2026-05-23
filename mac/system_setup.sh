@@ -90,13 +90,13 @@ echo -e "\033[1;35m Fonts \033[0m"
 echo ""
 
 # Nerd fonts - only Hack
-brew install --cask font-hack-nerd-font
+brew list --cask font-hack-nerd-font >/dev/null 2>&1 || brew install --cask font-hack-nerd-font
 
 echo ""
 echo -e "\033[1;35m kitty \033[0m"
 echo ""
 
-brew install --cask kitty
+brew list --cask kitty >/dev/null 2>&1 || brew install --cask kitty
 
 ln -sfn $HOME/dotfiles/.config/kitty $HOME/.config/kitty
 
@@ -115,14 +115,14 @@ echo ""
 #git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
 
 # micro editor
-brew install micro
+brew list micro >/dev/null 2>&1 || brew install micro
 micro -plugin list 2>/dev/null | grep -q editorconfig || micro -plugin install editorconfig
 micro -plugin list 2>/dev/null | grep -q fish        || micro -plugin install fish
 micro -plugin list 2>/dev/null | grep -q fzf         || micro -plugin install fzf
 ln -sfn $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/bindings.json
 
 # neovim
-brew install nvim
+brew list nvim >/dev/null 2>&1 || brew install nvim
 ln -sfn $HOME/dotfiles/.config/nvim $HOME/.config/nvim
 
 # optional but recommended
@@ -138,11 +138,11 @@ if [ ! -d ${HOME}/.cache/nvim ]; then
     mkdir -p ${HOME}/.cache/nvim
 fi
 
-brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
-brew install lf   # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
-brew install fzf
-brew install lazygit
-brew install commitizen
+brew list tmux       >/dev/null 2>&1 || brew install tmux       # https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
+brew list lf         >/dev/null 2>&1 || brew install lf         # https://www.joshmedeski.com/posts/manage-files-with-lf/
+brew list fzf        >/dev/null 2>&1 || brew install fzf
+brew list lazygit    >/dev/null 2>&1 || brew install lazygit
+brew list commitizen >/dev/null 2>&1 || brew install commitizen
 
 mkdir -p "$HOME/Library/Application Support/lazygit"
 ln -sfn "$HOME/dotfiles/.config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
@@ -189,7 +189,7 @@ echo ""
 echo -e "\033[1;35m fish shell \033[0m"
 echo ""
 
-brew install fish
+brew list fish >/dev/null 2>&1 || brew install fish
 ln -sfn $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/config.fish
 
 # add fish to system shells list (idempotent)
