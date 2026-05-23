@@ -7,7 +7,24 @@ set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 SRC="$DOTFILES/mac/claude_desktop_config.json"
-CLAUDE_SUPPORT="$HOME/Library/Application Support/Claude"
+
+case "${OSTYPE:-}" in
+  darwin*)
+    CLAUDE_SUPPORT="$HOME/Library/Application Support/Claude"
+    ;;
+  linux*)
+    CLAUDE_SUPPORT="${XDG_CONFIG_HOME:-$HOME/.config}/Claude"
+    ;;
+  msys* | cygwin*)
+    echo "setup-claude-desktop: Windows not automated; configure Claude Desktop manually." >&2
+    exit 0
+    ;;
+  *)
+    echo "setup-claude-desktop: unknown OSTYPE=${OSTYPE:-}, skipping." >&2
+    exit 0
+    ;;
+esac
+
 DST="$CLAUDE_SUPPORT/claude_desktop_config.json"
 
 if [ ! -f "$SRC" ]; then

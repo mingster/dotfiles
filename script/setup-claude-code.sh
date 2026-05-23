@@ -26,17 +26,16 @@ fi
 
 mkdir -p "${HOME}/.claude"
 
-ln -sf "$CLAUDE_SRC/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
-ln -sf "$CLAUDE_SRC/laravel-php-guidelines.md" "${HOME}/.claude/laravel-php-guidelines.md"
-ln -sf "$CLAUDE_SRC/settings.json" "${HOME}/.claude/settings.json"
-ln -sf "$CLAUDE_SRC/statusline.sh" "${HOME}/.claude/statusline.sh"
-chmod +x "$CLAUDE_SRC/statusline.sh" 2>/dev/null || true
-
+# Skills: shared tree between skills CLI and Claude Code
 rm -rf "${HOME}/.claude/skills"
-ln -sf "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
+ln -sfn "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
 
-rm -rf "${HOME}/.claude/agents"
-ln -sf "$CLAUDE_SRC/agents" "${HOME}/.claude/agents"
+# Link every entry in .agents/claude/ into ~/.claude/ (skip README.md)
+for entry in "$CLAUDE_SRC"/*; do
+  name=$(basename "$entry")
+  [ "$name" = "README.md" ] && continue
+  ln -sfn "$entry" "${HOME}/.claude/$name"
+done
 
 # Cursor discovers skills from BOTH ~/.cursor/skills/ and ~/.claude/skills/ (compatibility).
 # If both point at the same tree, each skill appears twice in Cursor. Keep ~/.claude/skills
