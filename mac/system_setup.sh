@@ -90,6 +90,10 @@ ln -sfn $HOME/dotfiles/.agents $HOME/.agents
 bash "$HOME/dotfiles/script/setup-claude-code.sh"
 bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
 
+if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
+    bash "$HOME/dotfiles/script/bootstrap-agents.sh"
+fi
+
 mkdir -p $HOME/dotfiles/cursor/rules
 mkdir -p $HOME/.cursor
 ln -sfn $HOME/dotfiles/cursor/rules $HOME/.cursor/rules
