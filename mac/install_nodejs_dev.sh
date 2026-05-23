@@ -7,8 +7,7 @@
 
 echo '---- install node.js ----'
 
-brew list | grep -iE 'node'
-for pkg in $(brew list | grep -iE 'node'); do brew --ignore-dependencies uninstall $pkg; done
+for pkg in $(brew list | grep -iE 'node'); do brew uninstall --ignore-dependencies "$pkg"; done
 
 asdf plugin list 2>/dev/null | grep -q '^nodejs$' || asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 

@@ -7,11 +7,8 @@
 
 echo '---- uninstall swift ----'
 
-brew list | grep -iE 'swift'
-for pkg in $(brew list | grep -iE 'swift'); do brew --ignore-dependencies uninstall $pkg; done
-
-brew list | grep -iE 'swiftpm'
-for pkg in $(brew list | grep -iE 'swiftpm'); do brew --ignore-dependencies uninstall $pkg; done
+for pkg in $(brew list | grep -iE 'swift'); do brew uninstall --ignore-dependencies "$pkg"; done
+for pkg in $(brew list | grep -iE 'swiftpm'); do brew uninstall --ignore-dependencies "$pkg"; done
 
 #brew search '/swift/' | awk '{print $1}' | xargs brew uninstall --cask
 #brew search '/swiftpm/' | awk '{print $1}' | xargs brew uninstall --cask
