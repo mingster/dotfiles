@@ -74,15 +74,27 @@ brew install --cask google-chrome
 brew install --cask megasync
 
 # Install essential binaries.
+
+## mas
+# 1. 下載官方專為 Intel (x64) 架構編譯的 .pkg 安裝包
+cd ~/Downloads
+curl -L -O https://github.com/mas-cli/mas/releases/download/v7.0.0/mas-7.0.0-x86_64.pkg
+
+# 2. 透過系統安裝器將其安裝至 Mac 中 (需要輸入 Mac 開機密碼)
+sudo installer -pkg mas-7.0.0-x86_64.pkg -target /
+
+# 3. 刪除下載的安裝包以保持乾淨
+rm mas-7.0.0-x86_64.pkg
+
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-brew install mas git gh rsync wget curl unzip fastfetch kdiff3 jq trash bat rar
+brew install coreutils curl git
+brew install gh rsync wget unzip fastfetch kdiff3 jq trash bat rar
 brew install asdf
 
 cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig
 
 # set up cli access for github
 gh auth login
-
 
 echo ""
 echo -e "\033[1;35m create missing directories and files \033[0m"
@@ -122,6 +134,10 @@ if [ ! -d ${HOME}/.config/kitty ]; then
     rm -rf ${HOME}/.config/kitty
 fi
 ln -s $HOME/dotfiles/.config/kitty $HOME/.config/
+
+
+sh $HOME/dotfiles/mac/install_nodejs_dev.sh
+sh $HOME/dotfiles/mac/install_java_dev.sh
 
 echo ""
 echo -e "\033[1;35m alacritty \033[0m"
@@ -223,7 +239,6 @@ chsh -s $(which fish)
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
-
 
 echo ""
 echo -e "\033[1;35m cron service script \033[0m"
