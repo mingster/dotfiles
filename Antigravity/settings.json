@@ -7,5 +7,6 @@
     "editor.fontVariations": false,
     "diffEditor.codeLens": true,
     "editor.minimap.enabled": false,
-    "security.workspace.trust.untrustedFiles": "open"
+    "security.workspace.trust.untrustedFiles": "open",
+    "redhat.telemetry.enabled": false
 }
