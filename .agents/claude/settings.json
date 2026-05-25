@@ -61,8 +61,8 @@
   },
   "mcpServers": {
     "obsidian": {
-      "command": "bash",
-      "args": ["-c", "npx --yes mcp-obsidian $HOME/Documents/Obsidian"]
+      "command": "/Users/mtsai/.asdf/installs/nodejs/24.15.0/bin/mcp-obsidian",
+      "args": ["/Users/mtsai/Documents/Obsidian"]
     }
   },
   "alwaysThinkingEnabled": true,

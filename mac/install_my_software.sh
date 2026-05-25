@@ -9,9 +9,6 @@ echo ""
 echo -e "\033[1;35m cli apps \033[0m"
 echo ""
 
-bi nmap
-# tmux is also installed in system_setup.sh; guard handles the duplicate
-bi tmux
 
 echo ""
 echo -e "\033[1;35m Essential apps \033[0m"
@@ -22,7 +19,7 @@ echo ""
 #bc welly         # ptt telnet client
 #bc evernote
 #bc raycast
-#bc vnc-viewer
+bc vnc-viewer
 #bc chatgpt
 
 bc claude
@@ -37,6 +34,7 @@ bc obsidian
 #bc shottr
 #bc cyberduck
 bc telegram
+#bc raycast #use buit-in spotlight instead
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
 #bi tor
@@ -80,18 +78,21 @@ echo ""
 
 mkdir -p /Applications/_dev
 
-#brew list --cask docker        >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" docker
+#brew list --cask dcocker        >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" docker
 brew list --cask github        >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" github
 #brew list --cask sourcetree   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" sourcetree
 #brew list --cask staruml      >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" staruml
 brew list --cask antigravity   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity
+brew list --cask antigravity-ide   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity-ide
 brew list --cask visual-studio-code >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" visual-studio-code
-
 #brew list --cask azure-data-studio >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" azure-data-studio
 #brew list --cask blender           >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" blender
 #bc wireshark
 
-# Install av apps
+echo ""
+echo -e "\033[1;35m video/ audio apps \033[0m"
+echo ""
+
 mkdir -p /Applications/_av
 
 brew list --cask aegisub  >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" aegisub
@@ -132,5 +133,5 @@ mas list | grep -q '^539883307' || mas install 539883307  # Line
 #mas list | grep -q '^6737527615' || mas install 6737527615  # NotebookLM
 
 # non-automated
-# vmware
+# vmware #https://support.broadcom.com/group/ecx/productdownloads?subfamily=VMware%20Fusion&freeDownloads=true
 # msoffice

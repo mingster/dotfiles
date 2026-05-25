@@ -77,10 +77,11 @@ else
   brew list mas >/dev/null 2>&1 || brew install mas
 fi
 
-#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-for pkg in coreutils curl git gh rsync wget unzip fastfetch kdiff3 jq trash bat rar asdf; do
+#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn nmap
+for pkg in coreutils curl git gh rsync wget unzip fastfetch kdiff3 jq trash bat rar asdf nmap; do
   brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
 done
+
 
 # set up cli access for github (skip if already authenticated)
 gh auth status >/dev/null 2>&1 || gh auth login
@@ -114,12 +115,6 @@ echo ""
 #ln -s $HOME/dotfiles/.config/alacritty $HOME/.config/
 #git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
 
-# micro editor
-brew list micro >/dev/null 2>&1 || brew install micro
-micro -plugin list 2>/dev/null | grep -q editorconfig || micro -plugin install editorconfig
-micro -plugin list 2>/dev/null | grep -q fish        || micro -plugin install fish
-micro -plugin list 2>/dev/null | grep -q fzf         || micro -plugin install fzf
-ln -sfn $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/bindings.json
 
 # neovim
 brew list nvim >/dev/null 2>&1 || brew install nvim
