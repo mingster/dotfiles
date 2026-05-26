@@ -18,7 +18,7 @@ echo ""
 #bc aerial        # appletv screen saver
 #bc welly         # ptt telnet client
 #bc evernote
-#bc raycast
+bc raycast
 bc vnc-viewer
 #bc chatgpt
 
