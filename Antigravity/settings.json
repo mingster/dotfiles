@@ -1,0 +1,12 @@
+{
+    "securecoder.enabled": true,
+    "securecoder.scannerBackend": "semgrep",
+    "files.autoSave": "afterDelay",
+    "editor.fontSize": 14,
+    "editor.fontFamily": "Hack Nerd Font Mono, Menlo, GeistMono Nerd Font",
+    "editor.fontVariations": false,
+    "diffEditor.codeLens": true,
+    "editor.minimap.enabled": false,
+    "security.workspace.trust.untrustedFiles": "open",
+    "redhat.telemetry.enabled": false
+}

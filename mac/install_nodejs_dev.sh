@@ -1,31 +1,15 @@
 #!/usr/bin/env bash
 
-
-# Ask for the administrator password upfront.
-sudo -v
-
-# Keep-alive: update existing `sudo` time stamp until the script has finished.
-while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-
-# Check for Homebrew,
-# Install if we don't have it
-if test ! $(which brew); then
-  echo "Installing homebrew..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
-
-# Make sure we’re using the latest Homebrew.
-brew update
-
-brew list | grep -iE 'node'
-for pkg in $(brew list | grep -iE 'node'); do brew --ignore-dependencies uninstall $pkg; done
-
-brew install coreutils curl git
-
-brew install asdf
+# requirement: asdf (check system_setup.sh for installation)
+#brew install coreutils curl git
+#brew install asdf
 #git clone https://github.com/asdf-vm/asdf.git ~/.asdf --branch v0.14.0
 
-asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
+echo '---- install node.js ----'
+
+for pkg in $(brew list | grep -iE 'node'); do brew uninstall --ignore-dependencies "$pkg"; done
+
+asdf plugin list 2>/dev/null | grep -q '^nodejs$' || asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 
 asdf list all nodejs | wc -l
 
@@ -34,11 +18,10 @@ asdf list all nodejs | wc -l
 #asdf shell nodejs 22.14.0
 #asdf set -u nodejs 22.14.0
 
-asdf install nodejs 24.15.0
+asdf list nodejs 2>/dev/null | grep -q '24.15.0' || asdf install nodejs 24.15.0
 asdf set -u nodejs 24.15.0
 
 asdf plugin update --all
 
-
-# install bun
-curl -fsSL https://bun.sh/install | bash
+# install bun (skip if already present)
+command -v bun >/dev/null 2>&1 || curl -fsSL https://bun.sh/install | bash

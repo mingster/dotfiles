@@ -56,10 +56,30 @@
   },
   "enabledPlugins": {
     "laravel-simplifier@laravel": true,
-    "agent-browser@agent-browser": true
+    "agent-browser@agent-browser": true,
+    "obsidian-vault@obsidian-vault": true
+  },
+  "mcpServers": {
+    "obsidian": {
+      "command": "/Users/mtsai/.asdf/installs/nodejs/24.15.0/bin/mcp-obsidian",
+      "args": ["/Users/mtsai/Documents/Obsidian"]
+    }
   },
   "alwaysThinkingEnabled": true,
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "auto"
+  "theme": "auto",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "afplay /System/Library/Sounds/Glass.aiff"
+          }
+        ]
+      }
+    ]
+  }
 }

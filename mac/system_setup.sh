@@ -7,16 +7,6 @@ echo ""
 # Install command-line tools using Homebrew.
 sh $HOME/dotfiles/mac/osxprep.sh
 
-# Ask for the administrator password upfront.
-sudo -v
-
-# Keep-alive: update existing `sudo` time stamp until the script has finished.
-while true; do
-    sudo -n true
-    sleep 60
-    kill -0 "$$" || exit
-done 2>/dev/null &
-
 # Check for Homebrew,
 # Install if we don't have it
 if ! command -v brew >/dev/null 2>&1; then
@@ -70,59 +60,49 @@ chmod +x "${HOME}/dotfiles/mac/bin/"*
 echo ""
 echo -e "\033[1;35m essential apps \033[0m"
 echo ""
-brew install --cask google-chrome
-brew install --cask megasync
+
 
 # Install essential binaries.
-#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn
-brew install mas git gh rsync wget curl unzip fastfetch kdiff3 jq trash bat rar
-brew install asdf
 
-cp $HOME/dotfiles/.gitconfig-macos $HOME/.gitconfig
-
-# set up cli access for github
-gh auth login
-
-
-echo ""
-echo -e "\033[1;35m create missing directories and files \033[0m"
-echo ""
-if [ ! -d ${HOME}/.config ]; then
-    mkdir -p ${HOME}/.config
+## mas — build via brew on arm64; download release pkg on x86_64
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v mas >/dev/null 2>&1; then
+    MAS_VERSION=$(curl -fsSL https://api.github.com/repos/mas-cli/mas/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    MAS_PKG="mas-${MAS_VERSION}-x86_64.pkg"
+    curl -fsSL "https://github.com/mas-cli/mas/releases/download/v${MAS_VERSION}/${MAS_PKG}" -o "/tmp/${MAS_PKG}"
+    sudo installer -pkg "/tmp/${MAS_PKG}" -target /
+    rm -f "/tmp/${MAS_PKG}"
+  fi
+else
+  brew list mas >/dev/null 2>&1 || brew install mas
 fi
 
-mkdir -p $HOME/.config/{micro,fish}
+#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn nmap
+for pkg in coreutils curl git gh rsync wget unzip fastfetch kdiff3 jq trash bat rar asdf nmap; do
+  brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
+done
 
-mkdir -p $HOME/dotfiles/.agents
-ln -sfn $HOME/dotfiles/.agents $HOME/.agents
 
-bash "$HOME/dotfiles/script/setup-claude-code.sh"
-bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
-
-mkdir -p $HOME/dotfiles/cursor/rules
-mkdir -p $HOME/.cursor
-ln -sfn $HOME/dotfiles/cursor/rules $HOME/.cursor/rules
-
-sh $HOME/dotfiles/script/link-cursor-user.sh
+# set up cli access for github (skip if already authenticated)
+gh auth status >/dev/null 2>&1 || gh auth login
 
 echo ""
 echo -e "\033[1;35m Fonts \033[0m"
 echo ""
 
-# Nerd fonts - Powerline-patched fonts. I use Hack.
-brew tap homebrew/cask-fonts
-brew install font-hack-nerd-font
+# Nerd fonts - only Hack
+brew list --cask font-hack-nerd-font >/dev/null 2>&1 || brew install --cask font-hack-nerd-font
 
 echo ""
 echo -e "\033[1;35m kitty \033[0m"
 echo ""
 
-brew install --cask kitty
+brew list --cask kitty >/dev/null 2>&1 || brew install --cask kitty
 
-if [ ! -d ${HOME}/.config/kitty ]; then
-    rm -rf ${HOME}/.config/kitty
-fi
-ln -s $HOME/dotfiles/.config/kitty $HOME/.config/
+ln -sfn $HOME/dotfiles/.config/kitty $HOME/.config/kitty
+
+sh $HOME/dotfiles/mac/install_nodejs_dev.sh
+sh $HOME/dotfiles/mac/install_java_dev.sh
 
 echo ""
 echo -e "\033[1;35m alacritty \033[0m"
@@ -135,16 +115,10 @@ echo ""
 #ln -s $HOME/dotfiles/.config/alacritty $HOME/.config/
 #git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
 
-# micro editor
-brew install micro
-micro -plugin install editorconfig
-micro -plugin install fish
-micro -plugin install fzf
-ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
 # neovim
-brew install nvim
-ln -s $HOME/dotfiles/.config/nvim $HOME/.config/
+brew list nvim >/dev/null 2>&1 || brew install nvim
+ln -sfn $HOME/dotfiles/.config/nvim $HOME/.config/nvim
 
 # optional but recommended
 if [ ! -d ${HOME}/.local/share/nvim ]; then
@@ -159,16 +133,17 @@ if [ ! -d ${HOME}/.cache/nvim ]; then
     mkdir -p ${HOME}/.cache/nvim
 fi
 
-brew install tmux # tmux - https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
-brew install lf   # IF file manager - https://www.joshmedeski.com/posts/manage-files-with-lf/
-brew install fzf
-brew install lazygit
-brew install commitizen
+brew list tmux       >/dev/null 2>&1 || brew install tmux       # https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
+brew list lf         >/dev/null 2>&1 || brew install lf         # https://www.joshmedeski.com/posts/manage-files-with-lf/
+brew list fzf        >/dev/null 2>&1 || brew install fzf
+brew list lazygit    >/dev/null 2>&1 || brew install lazygit
+brew list commitizen >/dev/null 2>&1 || brew install commitizen
 
-ln -s $HOME/dotfiles/.config/lazygit/config.yml ~/Library/Application\ Support/lazygit/config.yml
-ln -s $HOME/dotfiles/.config/tmux $HOME/.config/
-ln -s $HOME/dotfiles/.config/lf $HOME/.config/
-ln -s $HOME/dotfiles/.config/lazygit $HOME/.config/
+mkdir -p "$HOME/Library/Application Support/lazygit"
+ln -sfn "$HOME/dotfiles/.config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
+ln -sfn $HOME/dotfiles/.config/tmux $HOME/.config/tmux
+ln -sfn $HOME/dotfiles/.config/lf $HOME/.config/lf
+ln -sfn $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
 
 # nano
 #brew install nano
@@ -176,7 +151,7 @@ if [ ! -d ${HOME}/GitHub ]; then
     mkdir -p ${HOME}/GitHub
 fi
 
-git clone https://github.com/scopatz/nanorc.git ~/GitHub/nanorc
+[ -d "$HOME/GitHub/nanorc" ] || git clone https://github.com/scopatz/nanorc.git "$HOME/GitHub/nanorc"
 #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
 # Install Yabai
@@ -209,41 +184,37 @@ echo ""
 echo -e "\033[1;35m fish shell \033[0m"
 echo ""
 
-brew install fish
-rm -rf $HOME/.config/fish/config.fish
-ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
-#cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
+brew list fish >/dev/null 2>&1 || brew install fish
+ln -sfn $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/config.fish
 
-# add fish to system shell
-echo $(which fish) | sudo tee -a /etc/shells
+# add fish to system shells list (idempotent)
+if ! grep -qF "$(which fish)" /etc/shells; then
+    echo "$(which fish)" | sudo tee -a /etc/shells
+fi
 
-#
-echo ' change default shell to fish'
-#
-chsh -s $(which fish)
+# change default shell to fish (skip if already set)
+if [ "$SHELL" != "$(which fish)" ]; then
+    echo ' change default shell to fish'
+    chsh -s "$(which fish)"
+fi
+
+# install fisher and fish plugins
+fish "$HOME/dotfiles/script/setup_fishshell.fish"
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
-
 
 echo ""
 echo -e "\033[1;35m cron service script \033[0m"
 echo ""
 
 CRON_PLIST_SRC="$HOME/bin2/com.mingster.crontab.plist"
-CRON_PLIST_DST="/Library/LaunchAgents/com.mingster.crontab.plist"
+CRON_PLIST_DST="$HOME/Library/LaunchAgents/com.mingster.crontab.plist"
+CRON_LABEL="com.mingster.crontab"
 
 cron_warn() {
     echo -e "\033[1;33mWarning:\033[0m $*" >&2
 }
-
-if [[ -f "$CRON_PLIST_SRC" ]]; then
-    sudo cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST" || cron_warn "could not copy crontab plist to $CRON_PLIST_DST"
-else
-    cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent plist install."
-fi
-
-sudo -v
 
 shopt -s nullglob
 bin2_scripts=("$HOME/bin2"/*.sh)
@@ -254,27 +225,17 @@ else
     cron_warn "no *.sh in $HOME/bin2/; skipping chmod."
 fi
 
-if [[ -f "$CRON_PLIST_DST" ]]; then
-    sudo chmod 644 "$CRON_PLIST_DST" || cron_warn "could not chmod $CRON_PLIST_DST"
-    sudo chown "$USER:staff" "$CRON_PLIST_DST" || cron_warn "could not chown $CRON_PLIST_DST"
+if [[ -f "$CRON_PLIST_SRC" ]]; then
+    # Unload existing job before replacing the plist
+    launchctl bootout "gui/$(id -u)/$CRON_LABEL" 2>/dev/null || true
 
-    # test
-    # plutil "$CRON_PLIST_DST"
+    cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST" || { cron_warn "could not copy plist to $CRON_PLIST_DST"; }
+    chmod 644 "$CRON_PLIST_DST"
 
-    #launchctl bootout gui/501 "$CRON_PLIST_DST"
-    #launchctl enable user/501/~/Library/LaunchAgents/com.mingster.crontab.plist
-    #launchctl bootstrap gui/501 "$HOME/Library/LaunchAgents/com.mingster.crontab.plist"
-
-    # Load task (may fail on newer macOS; bootstrap as root may be required)
-    _load_out=$(launchctl load "$CRON_PLIST_DST" 2>&1) || cron_warn "launchctl load failed: ${_load_out}"
-    # Remove task
-    #launchctl unload ~/Library/LaunchAgents/com.mingster.crontab.plist
-
-    # Manually execute task
-    _start_out=$(launchctl start "$CRON_PLIST_DST" 2>&1) || cron_warn "launchctl start failed: ${_start_out}"
-
-    # List all tasks
-    #launchctl list | grep mingster
+    launchctl bootstrap "gui/$(id -u)" "$CRON_PLIST_DST" || cron_warn "launchctl bootstrap failed"
+    launchctl kickstart "gui/$(id -u)/$CRON_LABEL" || cron_warn "launchctl kickstart failed"
 else
-    cron_warn "$CRON_PLIST_DST not present; skipping chmod/chown and launchctl load/start."
+    cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent install."
 fi
+
+sh $HOME/dotfiles/mac/install_my_software.sh

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Idempotent: safe to re-run. Always points ~/dotfiles at this repo and refreshes home symlinks.
+# Idempotent: safe to re-run. Always points ~/dotfiles at this repo and refreshes home symlinks,
+# then delegates to the platform system_setup.sh. Individual installs inside system_setup are
+# guarded so already-installed software is skipped.
 # Use pwd -P so DOTFILES_ROOT is the real filesystem path (avoids symlink loops when ~/dotfiles
 # or the repo path repeats the same link chain).
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -23,7 +25,11 @@ if [ "$architecture" == "arm64" ]; then
   cp -f "$DOTFILES_ROOT/.gitconfig" "$HOME/.gitconfig"
 
 elif [ "$architecture" == "x86_64" ]; then
-  cp -f "$DOTFILES_ROOT/.gitconfig-x64" "$HOME/.gitconfig"
+  if [ -f "$DOTFILES_ROOT/.gitconfig-x64" ]; then
+    cp -f "$DOTFILES_ROOT/.gitconfig-x64" "$HOME/.gitconfig"
+  else
+    cp -f "$DOTFILES_ROOT/.gitconfig" "$HOME/.gitconfig"
+  fi
 
 else
     echo "Unknown architecture: $architecture"
@@ -40,34 +46,28 @@ ln -sfn "$DOTFILES_ROOT/.vim" "$HOME/.vim"
 git config --global core.excludesfile "$DOTFILES_ROOT/.gitignore_global"
 git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
 
-# Agent skills: ~/.agents → ~/dotfiles/.agents (idempotent; ok on reruns)
-if [ -d "$HOME/dotfiles" ]; then
-  mkdir -p "$HOME/dotfiles/.agents"
-  ln -sfn "$HOME/dotfiles/.agents" "$HOME/.agents"
+# Common directories
+mkdir -p "$HOME/.config/micro" "$HOME/.config/fish"
 
-  # Claude Code: ~/.claude/* → ~/dotfiles/.agents (skills + .agents/claude; see script/setup-claude-code.sh)
-  bash "$HOME/dotfiles/script/setup-claude-code.sh"
+# Agents: ~/.agents -> dotfiles/.agents (skills CLI + Claude Code + Cursor share this tree)
+mkdir -p "$DOTFILES_ROOT/.agents"
+ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
-  # Claude Desktop (macOS): symlink claude_desktop_config.json from dotfiles
-  if [[ "$OSTYPE" == darwin* ]]; then
-    bash "$HOME/dotfiles/script/setup-claude-desktop.sh"
-  fi
+# AI tooling: each script handles OS-specific install paths internally
+bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
+bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
+bash "$DOTFILES_ROOT/script/setup-cursor.sh"
+bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
+bash "$DOTFILES_ROOT/script/setup-vscode.sh"
+bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
 
-  # Cursor global rules: ~/.cursor/rules → ~/dotfiles/cursor/rules
-  mkdir -p "$HOME/dotfiles/cursor/rules"
-  mkdir -p "$HOME/.cursor"
-  ln -sfn "$HOME/dotfiles/cursor/rules" "$HOME/.cursor/rules"
-
-  # Optional: restore skills from .skill-lock.json (needs Node/npx)
-  if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
-    bash "$HOME/dotfiles/script/bootstrap-agents.sh"
-  fi
-
-  # Cursor app User folder: settings + keybindings -> dotfiles/cursor (riben.life standard)
-  bash "$HOME/dotfiles/script/link-cursor-user.sh"
+if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
+  bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"
 fi
 
-# Platform-specific full system setup (Homebrew stack, distro packages, etc.)
+# Platform-specific full system setup (Homebrew stack, distro packages, etc.).
+# Each install inside system_setup.sh is guarded; already-installed items are skipped.
+# Set DOTFILES_SKIP_SYSTEM_SETUP=1 to skip entirely (CI, unsupported distro, etc.).
 
 if [ "${DOTFILES_SKIP_SYSTEM_SETUP:-}" = "1" ]; then
   echo "dotfiles: DOTFILES_SKIP_SYSTEM_SETUP=1 — skipping system_setup scripts."

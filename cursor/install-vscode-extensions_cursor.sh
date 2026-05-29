@@ -8,11 +8,14 @@
 # get this list by: cursor --list-extensions
 pkglist=(
 3xpo.regionfolding
+anysphere.csharp
+anysphere.remote-ssh
 biomejs.biome
 bradlc.vscode-tailwindcss
 davidanson.vscode-markdownlint
 dbaeumer.vscode-eslint
 dotjoshjohnson.xml
+editorconfig.editorconfig
 exodiusstudios.comment-anchors
 foxundermoon.shell-format
 github.github-vscode-theme
@@ -20,16 +23,22 @@ josee9988.minifyall
 maptz.regionfolder
 mathiasfrohlich.kotlin
 mikestead.dotenv
+ms-dotnettools.vscode-dotnet-runtime
 ms-mssql.data-workspace-vscode
 ms-mssql.mssql
 ms-mssql.sql-bindings-vscode
 ms-mssql.sql-database-projects-vscode
+ohziinteractivestudio.ohzi-vscode-glb-viewer
 pkief.material-icon-theme
 pkief.material-product-icons
 prisma.prisma
 redhat.java
+redhat.vscode-xml
 richie5um2.vscode-sort-json
+rokucommunity.brightscript
 s-nlf-fh.glassit
+tomoki1207.pdf
+unifiedjs.vscode-mdx
 vscjava.vscode-gradle
 vscjava.vscode-java-debug
 vscjava.vscode-java-dependency
@@ -37,11 +46,6 @@ vscjava.vscode-java-pack
 vscjava.vscode-java-test
 vscjava.vscode-maven
 
-# roku dev
-mjmcaulay.roku-deploy-vscode
-RokuCommunity.brightscript
-AliceBeckett.brightscriptcomment
-redhat.vscode-xml
 )
 
 for i in ${pkglist[@]}; do

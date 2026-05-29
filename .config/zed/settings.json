@@ -1,0 +1,83 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "ui_font_weight": 500.0,
+  "buffer_font_weight": 400.0,
+  "buffer_line_height": "standard",
+  "icon_theme": "Zed (Default)",
+  "ui_font_family": "Andale Mono",
+  "buffer_font_family": "GeistMono Nerd Font Mono",
+  "agent_servers": {
+    "gemini": {
+      "type": "registry",
+    },
+    "github-copilot-cli": {
+      "type": "registry",
+    },
+    "claude-acp": {
+      "type": "registry",
+    },
+  },
+  "edit_predictions": {
+    "provider": "copilot",
+  },
+  "project_panel": {
+    "dock": "left",
+  },
+  "outline_panel": {
+    "dock": "left",
+  },
+  "collaboration_panel": {
+    "dock": "left",
+  },
+  "git_panel": {
+    "dock": "left",
+  },
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434",
+    },
+    "openai_compatible": {},
+  },
+  "agent": {
+    "dock": "right",
+    "play_sound_when_agent_done": "always",
+    "tool_permissions": {
+      "default": "allow",
+    },
+    "default_model": {
+      "effort": "high",
+      "enable_thinking": false,
+      "provider": "copilot_chat",
+      "model": "gpt-5-mini",
+    },
+    "model_parameters": [],
+  },
+  "context_servers": {
+    "postgres-context-server": {
+      "enabled": true,
+      "remote": false,
+      "settings": {}
+    },
+    "mcp-server-github": {
+      "enabled": true,
+      "settings": {
+        "github_personal_access_token": "${GITHUB_TOKEN}",
+      },
+    },
+  },
+  "autosave": {
+    "after_delay": {
+      "milliseconds": 1000,
+    },
+  },
+  "ui_font_size": 14.0,
+  "buffer_font_size": 14.0,
+  "theme": "Gruvbox Dark Hard",
+}

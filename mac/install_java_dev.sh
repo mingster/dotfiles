@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
 
-# Install command-line tools using Homebrew.
-
-# Ask for the administrator password upfront.
-sudo -v
-
-# Keep-alive: update existing `sudo` time stamp until the script has finished.
-while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-
-# Make sure we’re using the latest Homebrew.
-brew update
-
 # Install Java
 # brew install openjdk@11
 #sudo ln -sfn /usr/local/opt/openjdk@11/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-11.jdk
@@ -24,20 +13,20 @@ brew update
 #brew list | grep -iE 'java|jdk|temurin'
 #for pkg in $(brew list | grep -iE 'java|jdk|temurin'); do brew uninstall $pkg; done
 
-brew install curl jq unzip
+#brew install curl jq unzip
 #brew install openjdk@11
 
+echo '---- install open jdk ----'
+
+
 # asdf - https://github.com/halcyon/asdf-java
-rm -rf ~/.asdf/plugins/java
-asdf plugin add java https://github.com/halcyon/asdf-java.git
+asdf plugin list 2>/dev/null | grep -q '^java$' || asdf plugin add java https://github.com/halcyon/asdf-java.git
 
 #asdf list all java
-asdf install java openjdk-21
-#asdf install java openjdk-11.0.2
-
+asdf list java 2>/dev/null | grep -q 'openjdk-21' || asdf install java openjdk-21
 asdf set -u java openjdk-21
 
-echo 'java_macos_integration_enable=yes' >> ~/.asdfrc
+grep -qF 'java_macos_integration_enable=yes' "$HOME/.asdfrc" 2>/dev/null || echo 'java_macos_integration_enable=yes' >> "$HOME/.asdfrc"
 
 java --version
 
@@ -71,23 +60,8 @@ java --version
 #export PATH=$GRADLE_HOME/bin:$PATH
 
 #brew install Caskroom/cask/android-sdk
-brew install --cask --appdir="/Applications/_dev" android-studio
-#brew install --cask --appdir="/Applications/_dev" eclipse-java
-brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
+brew list --cask android-studio  >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" android-studio
+brew list --cask intellij-idea-ce >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
 
 # Remove outdated versions from the cellar.
 brew cleanup
-
-# Periodically run these commands again to ensure you're staying up to date:
-#android update sdk --no-ui
-
-rm -rf ~/.android
-rm -rf ~/.gradle
-rm -rf ~/Library/Android
-
-# 刪除設定檔
-rm -rf ~/Library/Application\ Support/Google/AndroidStudio*
-# 刪除快取
-rm -rf ~/Library/Caches/Google/AndroidStudio*
-# 刪除外掛
-rm -rf ~/Library/Logs/Google/AndroidStudio*
