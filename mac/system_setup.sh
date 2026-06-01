@@ -231,6 +231,26 @@ fish "$HOME/dotfiles/script/setup_fishshell.fish"
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
 
+# If this machine appears to be a desktop (no battery present), configure it to never sleep.
+# Detection: `pmset -g batt` reports "No battery" on mac desktops. This is a conservative check.
+if pmset -g batt 2>&1 | grep -qi "no battery"; then
+  echo ""
+  echo -e "\033[1;35m mac desktop detected — configuring never-sleep power settings \033[0m"
+  # Set machine and display sleep to 'never' (0). Requires sudo.
+  sudo pmset -a sleep 0 disksleep 0 displaysleep 0
+
+  # Use systemsetup for redundancy where available (may also prompt for sudo).
+  if command -v systemsetup >/dev/null 2>&1; then
+    sudo systemsetup -setcomputersleep Never || true
+    sudo systemsetup -setdisplaysleep Never || true
+    # Hard disk sleep to never
+    sudo systemsetup -setharddisksleep Never || true
+  fi
+else
+  echo ""
+  echo -e "\033[1;35m portable Mac detected — leaving power settings unchanged \033[0m"
+fi
+
 echo ""
 echo -e "\033[1;35m cron service script \033[0m"
 echo ""
