@@ -51,7 +51,12 @@ fi
 mkdir -p "${HOME}/.local"
 rm -rf "${HOME}/.local/bin"
 ln -sfn "${HOME}/dotfiles/mac/bin" "${HOME}/.local/bin"
-chmod +x "${HOME}/dotfiles/mac/bin/"*
+# Make scripts in mac/bin executable only if they exist to avoid chmod errors
+if compgen -G "${HOME}/dotfiles/mac/bin/*" >/dev/null 2>&1; then
+  for _f in "${HOME}/dotfiles/mac/bin/"*; do
+    [ -f "$_f" ] && chmod +x "$_f"
+  done
+fi
 
 #ln -s $HOME/GitHub/dotfiles $HOME
 #ln -s $HOME/dotfiles/bin $HOME/
