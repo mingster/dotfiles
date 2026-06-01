@@ -77,8 +77,8 @@ else
   brew list mas >/dev/null 2>&1 || brew install mas
 fi
 
-#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn nmap
-for pkg in coreutils curl git gh rsync wget unzip fastfetch kdiff3 jq trash bat rar asdf nmap; do
+#brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn nmap  fastfetch kdiff3 jq trash bat rar asdf nmap
+for pkg in coreutils curl git gh rsync wget unzip; do
   brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
 done
 
@@ -137,7 +137,7 @@ brew list tmux       >/dev/null 2>&1 || brew install tmux       # https://www.jo
 brew list lf         >/dev/null 2>&1 || brew install lf         # https://www.joshmedeski.com/posts/manage-files-with-lf/
 brew list fzf        >/dev/null 2>&1 || brew install fzf
 brew list lazygit    >/dev/null 2>&1 || brew install lazygit
-brew list commitizen >/dev/null 2>&1 || brew install commitizen
+#brew list commitizen >/dev/null 2>&1 || brew install commitizen
 
 mkdir -p "$HOME/Library/Application Support/lazygit"
 ln -sfn "$HOME/dotfiles/.config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
@@ -184,7 +184,19 @@ echo ""
 echo -e "\033[1;35m fish shell \033[0m"
 echo ""
 
-brew list fish >/dev/null 2>&1 || brew install fish
+# On Intel Macs, download and install the official pkg release; on Apple Silicon use Homebrew
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v fish >/dev/null 2>&1; then
+    FISH_VERSION="4.7.1"
+    FISH_PKG="fish-${FISH_VERSION}.pkg"
+    curl -fsSL "https://github.com/fish-shell/fish-shell/releases/download/${FISH_VERSION}/${FISH_PKG}" -o "/tmp/${FISH_PKG}"
+    sudo installer -pkg "/tmp/${FISH_PKG}" -target /
+    rm -f "/tmp/${FISH_PKG}"
+  fi
+else
+  brew list fish >/dev/null 2>&1 || brew install fish
+fi
+
 ln -sfn $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/config.fish
 
 # add fish to system shells list (idempotent)
