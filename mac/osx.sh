@@ -458,33 +458,50 @@ sudo systemsetup -setrestartfreeze on
 
 
 ###############################################################################
-# Energy saving (for laptop)
+# Power / Energy settings
 ###############################################################################
-# Sleep the display after 5 minutes
-sudo pmset -a displaysleep 5
+# Detect desktop vs portable: pmset -g batt reports "No battery" for desktops.
+if pmset -g batt 2>&1 | grep -qi "no battery"; then
+  echo "Configuring never-sleep settings for desktop Mac"
+  # Never sleep on desktop machines
+  sudo pmset -a sleep 0 disksleep 0 displaysleep 0
+  sudo pmset -a lidwake 0 || true
+  sudo pmset -a autorestart 0 || true
 
-# Enable lid wakeup
-sudo pmset -a lidwake 1
-sudo nvram AutoBoot=%03﻿
+  # Use systemsetup for redundancy where available
+  if command -v systemsetup >/dev/null 2>&1; then
+    sudo systemsetup -setcomputersleep Never || true
+    sudo systemsetup -setdisplaysleep Never || true
+    sudo systemsetup -setharddisksleep Never || true
+  fi
+else
+  # Preserve laptop-optimized settings
+  # Sleep the display after 5 minutes
+  sudo pmset -a displaysleep 5
 
-# Restart automatically on power loss
-sudo pmset -a autorestart 0
+  # Enable lid wakeup
+  sudo pmset -a lidwake 1
+  sudo nvram AutoBoot=%03 || true
 
-# Disable machine sleep while charging
-#sudo pmset -c sleep 1
+  # Restart automatically on power loss
+  sudo pmset -a autorestart 0
 
-# Set machine sleep to 10 minutes
-sudo systemsetup -setcomputersleep 10
+  # Disable machine sleep while charging (commented out by default)
+  #sudo pmset -c sleep 1
 
-# Set machine sleep to 5 minutes on battery
-sudo pmset -b sleep 5
+  # Set machine sleep to 10 minutes
+  sudo systemsetup -setcomputersleep 10 || true
 
-# Hibernation mode
-# 0: Disable hibernation (speeds up entering sleep mode)
-# 3: Copy RAM to disk so the system state can still be restored in case of a power failure.
-sudo pmset -a hibernatemode 3
+  # Set machine sleep to 5 minutes on battery
+  sudo pmset -b sleep 5 || true
 
-sudo systemsetup -getcomputersleep
+  # Hibernation mode
+  # 0: Disable hibernation (speeds up entering sleep mode)
+  # 3: Copy RAM to disk so the system state can still be restored in case of a power failure.
+  sudo pmset -a hibernatemode 3 || true
+
+  sudo systemsetup -getcomputersleep || true
+fi
 
 # Remove the sleep image file to save disk space
 #sudo rm /private/var/vm/sleepimage
