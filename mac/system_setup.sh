@@ -256,11 +256,22 @@ if [[ -f "$CRON_PLIST_SRC" ]]; then
     # Unload existing job before replacing the plist
     launchctl bootout "gui/$(id -u)/$CRON_LABEL" 2>/dev/null || true
 
-    cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST" || { cron_warn "could not copy plist to $CRON_PLIST_DST"; }
-    chmod 644 "$CRON_PLIST_DST"
+    # Ensure destination directory exists so cp doesn't fail
+    if ! mkdir -p "$(dirname "$CRON_PLIST_DST")" 2>/dev/null; then
+        cron_warn "could not create directory $(dirname "$CRON_PLIST_DST")"
+    fi
 
-    launchctl bootstrap "gui/$(id -u)" "$CRON_PLIST_DST" || cron_warn "launchctl bootstrap failed"
-    launchctl kickstart "gui/$(id -u)/$CRON_LABEL" || cron_warn "launchctl kickstart failed"
+    if cp "$CRON_PLIST_SRC" "$CRON_PLIST_DST"; then
+        chmod 644 "$CRON_PLIST_DST"
+
+        if ! launchctl bootstrap "gui/$(id -u)" "$CRON_PLIST_DST" 2>/dev/null; then
+            cron_warn "launchctl bootstrap failed"
+        else
+            launchctl kickstart "gui/$(id -u)/$CRON_LABEL" || cron_warn "launchctl kickstart failed"
+        fi
+    else
+        cron_warn "could not copy plist to $CRON_PLIST_DST"
+    fi
 else
     cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent install."
 fi
