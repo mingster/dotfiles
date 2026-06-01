@@ -460,6 +460,8 @@ sudo systemsetup -setrestartfreeze on
 ###############################################################################
 # Power / Energy settings
 ###############################################################################
+# If this machine appears to be a desktop (no battery present), configure it to never sleep.
+# Detection: `pmset -g batt` reports "No battery" on mac desktops. This is a conservative check.
 # Detect desktop vs portable: pmset -g batt reports "No battery" for desktops.
 if pmset -g batt 2>&1 | grep -qi "no battery"; then
   echo "Configuring never-sleep settings for desktop Mac"
@@ -503,13 +505,6 @@ else
   sudo systemsetup -getcomputersleep || true
 fi
 
-# Remove the sleep image file to save disk space
-#sudo rm /private/var/vm/sleepimage
-# Create a zero-byte file instead…
-#sudo touch /private/var/vm/sleepimage
-# …and make sure it can’t be rewritten
-#sudo chflags uchg /private/var/vm/sleepimage
-
 ###############################################################################
 # Terminal & iTerm 2                                                          #
 ###############################################################################
@@ -518,7 +513,7 @@ fi
 defaults write com.apple.terminal StringEncodings -array 4
 
 # Use a modified version of the Solarized Dark theme by default in Terminal.app
-TERM_PROFILE='Solarized Dark xterm-256color';
+TERM_PROFILE='default';
 CURRENT_PROFILE="$(defaults read com.apple.terminal 'Default Window Settings')";
 if [ "${CURRENT_PROFILE}" != "${TERM_PROFILE}" ]; then
 	open "${HOME}/GitHub/dotfiles/init/${TERM_PROFILE}.terminal";
@@ -533,10 +528,10 @@ fi;
 #defaults write org.x.X11 wm_ffm -bool true
 
 # Install my default color theme for iTerm
-open "${HOME}/GitHub/dotfiles/init/default.itermcolors"
+#open "${HOME}/GitHub/dotfiles/init/default.itermcolors"
 
 # Don’t display the annoying prompt when quitting iTerm
-defaults write com.googlecode.iterm2 PromptOnQuit -bool false
+#defaults write com.googlecode.iterm2 PromptOnQuit -bool false
 
 ###############################################################################
 # Time Machine                                                                #
