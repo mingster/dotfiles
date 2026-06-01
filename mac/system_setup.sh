@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
 
+# If run with sh, re-exec under bash so bash-specific features work
+if [ -z "$BASH_VERSION" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  else
+    echo "This script requires bash. Please run with bash." >&2
+    exit 1
+  fi
+fi
+
 echo ""
 echo -e "\033[1;35mSystem Setup for macos\033[0m"
 echo ""
