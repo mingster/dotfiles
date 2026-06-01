@@ -49,21 +49,6 @@ git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
 # Common directories
 mkdir -p "$HOME/.config/micro" "$HOME/.config/fish"
 
-# Agents: ~/.agents -> dotfiles/.agents (skills CLI + Claude Code + Cursor share this tree)
-mkdir -p "$DOTFILES_ROOT/.agents"
-ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
-
-# AI tooling: platform-independent setup (symlinks only, no package managers)
-bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
-bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
-bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
-bash "$DOTFILES_ROOT/script/setup-vscode.sh"
-bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
-
-if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
-  bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"
-fi
-
 # Platform-specific full system setup (Homebrew stack, distro packages, etc.).
 # Each install inside system_setup.sh is guarded; already-installed items are skipped.
 # Set DOTFILES_SKIP_SYSTEM_SETUP=1 to skip entirely (CI, unsupported distro, etc.).
@@ -115,3 +100,19 @@ case "$OSTYPE" in
     echo "dotfiles: unknown OSTYPE=$OSTYPE — no system_setup."
     ;;
 esac
+
+
+# Agents: ~/.agents -> dotfiles/.agents (skills CLI + Claude Code + Cursor share this tree)
+mkdir -p "$DOTFILES_ROOT/.agents"
+ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
+
+# AI tooling: platform-independent setup (symlinks only, no package managers)
+bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
+bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
+bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
+bash "$DOTFILES_ROOT/script/setup-vscode.sh"
+bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
+
+if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
+  bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"
+fi
