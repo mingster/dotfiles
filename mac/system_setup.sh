@@ -238,4 +238,11 @@ else
     cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent install."
 fi
 
+echo ""
+echo -e "\033[1;35m Cursor \033[0m"
+echo ""
+
+# Cursor setup (only after brew is available and in context of macOS)
+bash "$HOME/dotfiles/script/setup-cursor.sh"
+
 sh $HOME/dotfiles/mac/install_my_software.sh
