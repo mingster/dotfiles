@@ -283,4 +283,6 @@ echo ""
 # Cursor setup (only after brew is available and in context of macOS)
 bash "$HOME/dotfiles/script/setup-cursor.sh"
 
-sh $HOME/dotfiles/mac/install_my_software.sh
+if [ -f "$HOME/dotfiles/mac/install_my_software.sh" ]; then
+  bash "$HOME/dotfiles/mac/install_my_software.sh"
+fi
