@@ -53,10 +53,9 @@ mkdir -p "$HOME/.config/micro" "$HOME/.config/fish"
 mkdir -p "$DOTFILES_ROOT/.agents"
 ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
-# AI tooling: each script handles OS-specific install paths internally
+# AI tooling: platform-independent setup (symlinks only, no package managers)
 bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
 bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
-bash "$DOTFILES_ROOT/script/setup-cursor.sh"
 bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"
 bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
