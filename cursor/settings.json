@@ -25,7 +25,7 @@
     "editor.formatOnSave": true
   },
   "[mdx]": {
-    "editor.defaultFormatter": "unifiedjs.vscode-mdx"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[prisma]": {
     "editor.defaultFormatter": "prisma.prisma",
@@ -162,7 +162,7 @@
   "explorer.confirmPasteNative": false,
   "files.associations": {
     "*.config": "aspnetcorerazor",
-    "*.css": "css",
+    "*.css": "tailwindcss",
     "*.js": "javascriptreact",
     "*.jsx": "javascriptreact",
     "*.prisma": "prisma",
@@ -215,5 +215,6 @@
   "accessibility.verbosity.hover": false,
   "accessibility.verbosity.inlineCompletions": false,
   "accessibility.verbosity.notification": false,
-  "accessibility.verbosity.walkthrough": false
+  "accessibility.verbosity.walkthrough": false,
+  "workbench.colorTheme": "GitHub Dark"
 }

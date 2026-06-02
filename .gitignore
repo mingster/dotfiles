@@ -68,6 +68,8 @@ Temporary Items
 
 .config/nvim/lazy-lock.json
 
+.env
+
 ### AI / MCP — do not commit secrets ###
 # Local MCP config (copy from cursor/mcp.json.example)
 .cursor/mcp.json

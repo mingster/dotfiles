@@ -40,7 +40,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh
 | Script | What it sets up |
 |--------|-----------------|
 | `script/setup-claude-code.sh` | `~/.claude/` linked from `.agents/claude/`; skills at `~/.claude/skills/` |
-| `script/setup-claude-desktop.sh` | Claude Desktop config merged from `mac/claude_desktop_config.json` |
+| `script/setup-claude-desktop.sh` | Claude Desktop config merged from `init/claude_desktop_config.json` |
 | `script/setup-cursor.sh` | Cursor app + rules (`~/.cursor/rules`) + user settings |
 | `script/setup-vscode.sh` | VS Code user settings and keybindings |
 | `script/setup-antigravity.sh` | Antigravity IDE user settings and keybindings |
@@ -61,7 +61,7 @@ MCP secrets go in `~/.claude/settings.local.json` (gitignored). See [AGENTS.md](
 Run these after changing settings locally, then commit the result.
 
 ```bash
-bash script/backup-claude-desktop.sh   # Claude Desktop preferences → mac/claude_desktop_config.json
+bash script/backup-claude-desktop.sh   # Claude Desktop preferences → init/claude_desktop_config.json
 fish script/backup-tide.fish           # Tide prompt config → .config/fish/tide_config.fish
 ```
 
