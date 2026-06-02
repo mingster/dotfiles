@@ -7,9 +7,19 @@ DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 case "${OSTYPE:-}" in
   darwin*)
     VSCODE_USER="$HOME/Library/Application Support/Code/User"
+    if ! command -v code >/dev/null 2>&1 \
+        && [ ! -d "/Applications/Visual Studio Code.app" ] \
+        && [ ! -d "$HOME/Applications/Visual Studio Code.app" ]; then
+      echo "setup-vscode: VS Code not installed; skipping." >&2
+      exit 0
+    fi
     ;;
   linux*)
     VSCODE_USER="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User"
+    if ! command -v code >/dev/null 2>&1; then
+      echo "setup-vscode: VS Code not installed; skipping." >&2
+      exit 0
+    fi
     ;;
   msys* | cygwin*)
     echo "setup-vscode: Windows not automated; copy ${DOTFILES}/vscode/settings.json manually." >&2
