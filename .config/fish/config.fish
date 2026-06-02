@@ -140,6 +140,16 @@ source $HOME/.config/fish/functions/postexec_newline.fish
 #set --export GEMINI_API_KEY "AIzaSyCpqYFXnp8B5MfU7QkHIGHEVwtgO0QeYzA"
 #abbr -a -g gemini 'npx https://github.com/google-gemini/gemini-cli'
 
+# Source .env (handles `export KEY="VALUE"` syntax)
+if test -f $HOME/dotfiles/.env
+    for line in (grep -v '^#' $HOME/dotfiles/.env | grep -v '^\s*$')
+        set -l kv (string replace -r '^export\s+' '' -- $line | string split -m 1 '=')
+        if test (count $kv) -ge 2
+            set -gx $kv[1] (string trim -c '"' -- $kv[2])
+        end
+    end
+end
+
 # Clear line on CTRL + C
 # Sometimes it still doesn't work well enough on node.js scripts :(
 bind --preset \cC 'cancel-commandline'

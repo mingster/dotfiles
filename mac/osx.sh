@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Ask for the administrator password upfront and keep the sudo timestamp alive
+# for the duration of the script.
+sudo -v
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+
 ###############################################################################
 # Trackpad, mouse, keyboard, Bluetooth accessories, and input                 #
 ###############################################################################
@@ -52,10 +57,8 @@ defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 #sudo scutil --set LocalHostName "0x6D746873"
 #sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "0x6D746873"
 
-## System Settings -> Control Center -> Automatically hide and show the menu bar
-defaults write NSGlobalDomain _HIHideMenuBar -bool true \
-    && killall Finder \
-    && open -ga /System/Library/CoreServices/Finder.app/
+## System Settings -> Control Center -> Menu bar: always visible
+defaults write NSGlobalDomain _HIHideMenuBar -bool false
 
 # Set sidebar icon size to small
 defaults write NSGlobalDomain NSTableViewDefaultSizeMode -int 1
@@ -137,9 +140,6 @@ defaults write com.apple.finder ShowStatusBar -bool false
 # do notshow for me
 defaults write com.apple.finder ShowPathbar -bool false
 
-# Finder: allow text selection in Quick Look
-defaults write com.apple.finder QLEnableTextSelection -bool true
-
 # Display full POSIX path as Finder window title
 defaults write com.apple.finder _FXShowPosixPathInTitle -bool true
 
@@ -199,9 +199,6 @@ defaults write com.apple.finder FXPreferredViewStyle -string "clmv"
 # Disable the warning before emptying the Trash
 defaults write com.apple.finder WarnOnEmptyTrash -bool false
 
-# Empty Trash securely by default
-defaults write com.apple.finder EmptyTrashSecurely -bool true
-
 # Show the ~/Library folder
 chflags nohidden ~/Library
 
@@ -253,12 +250,6 @@ defaults write com.apple.dock expose-animation-duration -float 0.1
 # (i.e. use the old Exposé behavior instead)
 defaults write com.apple.dock expose-group-by-app -bool false
 
-# Enable Dashboard
-defaults write com.apple.dashboard mcx-disabled -bool false
-
-# Show Dashboard as a Space
-defaults write com.apple.dock dashboard-in-overlay -bool false
-
 # Do not rearrange automatically
 defaults write com.apple.dock "mru-spaces" -bool "false" && killall Dock
 # Automatically rearrange Spaces based on most recent use
@@ -283,9 +274,6 @@ defaults write com.apple.dock hide-mirror -bool true
 
 # Disable the Launchpad gesture (pinch with thumb and three fingers)
 defaults write com.apple.dock showLaunchpadGestureEnabled -int 0
-
-# Reset Launchpad, but keep the desktop wallpaper intact
-find "${HOME}/Library/Application Support/Dock" -name "*-*.db" -maxdepth 1 -delete
 
 # Add iOS Simulator to Launchpad (updatd for xocde 6.1)
 #sudo ln -sf "/Applications/Xcode.app/Contents/Developer/Applications/iOS Simulator.app" "/Applications/iOS Simulator2.app"
@@ -420,32 +408,9 @@ defaults write com.apple.spotlight orderedItems -array \
 # Make sure indexing is enabled for the main volume
 sudo mdutil -i on / > /dev/null
 
-# Rebuild the index from scratch
-sudo mdutil -E / > /dev/null
-
-# disabled indexing
-#sudo mdutil -i off
-
-# Load new settings before rebuilding the index
-killall mds > /dev/null 2>&1
-
-# Ask for the administrator password upfront
-sudo -v
-
-# Keep-alive: update existing `sudo` time stamp until `.osx` has finished
-while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-
 ###############################################################################
 # SSD-specific tweaks                                                         #
 ###############################################################################
-# …and make sure it can’t be rewritten
-# DO NOT work
-sudo chflags uchg /Private/var/vm/sleepimage
-# free up diskspace from sleep image
-sudo rm /var/vm/sleepimage
-
-# Disable the sudden motion sensor as it’s not useful for SSDs
-sudo pmset -a sms 0
 
 ###############################################################################
 # Power/Sleep related                                                         #
@@ -453,8 +418,8 @@ sudo pmset -a sms 0
 # Set standby delay to 1 hours (default is 1 hour)
 sudo pmset -a standbydelay 3600
 
-# Restart automatically if the computer freezes
-sudo systemsetup -setrestartfreeze on
+# Restart automatically if the computer freezes (systemsetup deprecated macOS 13+)
+sudo systemsetup -setrestartfreeze on || true
 
 
 ###############################################################################
@@ -540,8 +505,7 @@ fi;
 # Prevent Time Machine from prompting to use new hard drives as backup volume
 defaults write com.apple.TimeMachine DoNotOfferNewDisksForBackup -bool true
 
-# Disable local Time Machine backups
-hash tmutil &> /dev/null && sudo tmutil disablelocal
+# Local Time Machine backups: tmutil disablelocal removed in macOS 10.13
 
 ###############################################################################
 # Activity Monitor                                                            #
@@ -561,14 +525,11 @@ defaults write com.apple.ActivityMonitor SortColumn -string "CPUUsage"
 defaults write com.apple.ActivityMonitor SortDirection -int 0
 
 ###############################################################################
-# Address Book, Dashboard, iCal, TextEdit, and Disk Utility                   #
+# Address Book, iCal, TextEdit, and Disk Utility                              #
 ###############################################################################
 
 # Enable the debug menu in Address Book
 #defaults write com.apple.addressbook ABShowDebugMenu -bool true
-
-# Enable Dashboard dev mode (allows keeping widgets on the desktop)
-defaults write com.apple.dashboard devmode -bool true
 
 # Enable the debug menu in iCal (pre-10.8)
 #defaults write com.apple.iCal IncludeDebugMenu -bool true
@@ -653,37 +614,12 @@ defaults write com.google.Chrome.canary ExtensionInstallSources -array "https://
 #defaults write org.m0k.transmission WarningLegal -bool false
 
 ###############################################################################
-# Twitter.app                                                                 #
-###############################################################################
-
-# Disable smart quotes as it’s annoying for code tweets
-defaults write com.twitter.twitter-mac AutomaticQuoteSubstitutionEnabled -bool false
-
-# Show the app window when clicking the menu bar icon
-defaults write com.twitter.twitter-mac MenuItemBehavior -int 1
-
-# Enable the hidden ‘Develop’ menu
-defaults write com.twitter.twitter-mac ShowDevelopMenu -bool true
-
-# Open links in the background
-defaults write com.twitter.twitter-mac openLinksInBackground -bool true
-
-# Allow closing the ‘new tweet’ window by pressing `Esc`
-defaults write com.twitter.twitter-mac ESCClosesComposeWindow -bool true
-
-# Show full names rather than Twitter handles
-defaults write com.twitter.twitter-mac ShowFullNames -bool true
-
-# Hide the app in the background if it’s not the front-most window
-defaults write com.twitter.twitter-mac HideInBackground -bool true
-
-###############################################################################
 # Kill affected applications                                                  #
 ###############################################################################
 
 for app in "Activity Monitor" "Address Book" "Calendar" "Contacts" "cfprefsd" \
-	"Dock" "Finder" "Mail" "Messages" "Safari" "SizeUp" "SystemUIServer" \
-	"Terminal" "Transmission" "Twitter" "iCal"; do
+	"Dock" "Finder" "Mail" "Messages" "Safari" "SystemUIServer" \
+	"Terminal" "iCal"; do
 	killall "${app}" > /dev/null 2>&1
 done
 echo "Done. Note that some of these changes require a logout/restart to take effect."

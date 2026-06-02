@@ -50,25 +50,6 @@
     ],
     "defaultMode": "acceptEdits"
   },
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/statusline.sh"
-  },
-  "enabledPlugins": {
-    "laravel-simplifier@laravel": true,
-    "agent-browser@agent-browser": true,
-    "obsidian-vault@obsidian-vault": true
-  },
-  "mcpServers": {
-    "obsidian": {
-      "command": "/Users/mtsai/.asdf/installs/nodejs/24.15.0/bin/mcp-obsidian",
-      "args": ["/Users/mtsai/Documents/Obsidian"]
-    }
-  },
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "high",
-  "skipDangerousModePermissionPrompt": true,
-  "theme": "auto",
   "hooks": {
     "Stop": [
       {
@@ -81,5 +62,28 @@
         ]
       }
     ]
-  }
+  },
+  "enableWorkflows": true,
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  },
+  "enabledPlugins": {
+    "laravel-simplifier@laravel": true,
+    "agent-browser@agent-browser": true,
+    "obsidian-vault@obsidian-vault": true
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "auto",
+  "mcpServers": {
+    "obsidian": {
+      "command": "/Users/mtsai/.asdf/installs/nodejs/24.15.0/bin/mcp-obsidian",
+      "args": [
+        "/Users/mtsai/Documents/Obsidian"
+      ]
+    }
+  },
+  "agentPushNotifEnabled": true
 }
