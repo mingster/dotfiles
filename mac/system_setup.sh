@@ -93,9 +93,22 @@ else
 fi
 
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn nmap  fastfetch kdiff3 jq trash bat rar asdf nmap
-for pkg in coreutils curl git gh rsync wget unzip; do
+for pkg in coreutils curl git rsync wget unzip; do
   brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
 done
+
+## gh — download release pkg on x86_64; brew on arm64
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    GH_PKG="gh_${GH_VERSION}_macOS_amd64.pkg"
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_PKG}" -o "/tmp/${GH_PKG}"
+    sudo installer -pkg "/tmp/${GH_PKG}" -target /
+    rm -f "/tmp/${GH_PKG}"
+  fi
+else
+  brew list gh >/dev/null 2>&1 || brew install gh
+fi
 
 
 # set up cli access for github (skip if already authenticated)
@@ -131,8 +144,18 @@ echo ""
 #git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
 
 
-# neovim
-brew list nvim >/dev/null 2>&1 || brew install nvim
+# neovim — download pre-built tarball on x86_64; brew on arm64
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v nvim >/dev/null 2>&1; then
+    NVIM_VERSION=$(curl -fsSL https://api.github.com/repos/neovim/neovim/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    curl -fsSL "https://github.com/neovim/neovim/releases/download/v${NVIM_VERSION}/nvim-macos-x86_64.tar.gz" -o /tmp/nvim.tar.gz
+    tar -xzf /tmp/nvim.tar.gz -C /tmp
+    cp /tmp/nvim-macos-x86_64/bin/nvim /usr/local/bin/nvim
+    rm -rf /tmp/nvim.tar.gz /tmp/nvim-macos-x86_64
+  fi
+else
+  brew list nvim >/dev/null 2>&1 || brew install nvim
+fi
 ln -sfn $HOME/dotfiles/.config/nvim $HOME/.config/nvim
 
 # optional but recommended
@@ -148,10 +171,33 @@ if [ ! -d ${HOME}/.cache/nvim ]; then
     mkdir -p ${HOME}/.cache/nvim
 fi
 
-brew list tmux       >/dev/null 2>&1 || brew install tmux       # https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
-brew list lf         >/dev/null 2>&1 || brew install lf         # https://www.joshmedeski.com/posts/manage-files-with-lf/
-brew list fzf        >/dev/null 2>&1 || brew install fzf
-brew list lazygit    >/dev/null 2>&1 || brew install lazygit
+brew list tmux >/dev/null 2>&1 || brew install tmux  # https://www.joshmedeski.com/posts/manage-terminal-sessions-with-tmux/
+
+## lf, fzf, lazygit — download pre-built binaries on x86_64; brew on arm64
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v lf >/dev/null 2>&1; then
+    LF_VERSION=$(curl -fsSL https://api.github.com/repos/gokcehan/lf/releases/latest | grep '"tag_name"' | sed 's/.*"r\([^"]*\)".*/\1/')
+    curl -fsSL "https://github.com/gokcehan/lf/releases/download/r${LF_VERSION}/lf-darwin-amd64.tar.gz" -o /tmp/lf.tar.gz
+    tar -xzf /tmp/lf.tar.gz -C /usr/local/bin lf
+    rm -f /tmp/lf.tar.gz
+  fi
+  if ! command -v fzf >/dev/null 2>&1; then
+    FZF_VERSION=$(curl -fsSL https://api.github.com/repos/junegunn/fzf/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    curl -fsSL "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-darwin_amd64.tar.gz" -o /tmp/fzf.tar.gz
+    tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin fzf
+    rm -f /tmp/fzf.tar.gz
+  fi
+  if ! command -v lazygit >/dev/null 2>&1; then
+    LG_VERSION=$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VERSION}/lazygit_${LG_VERSION}_Darwin_x86_64.tar.gz" -o /tmp/lazygit.tar.gz
+    tar -xzf /tmp/lazygit.tar.gz -C /usr/local/bin lazygit
+    rm -f /tmp/lazygit.tar.gz
+  fi
+else
+  brew list lf      >/dev/null 2>&1 || brew install lf       # https://www.joshmedeski.com/posts/manage-files-with-lf/
+  brew list fzf     >/dev/null 2>&1 || brew install fzf
+  brew list lazygit >/dev/null 2>&1 || brew install lazygit
+fi
 #brew list commitizen >/dev/null 2>&1 || brew install commitizen
 
 mkdir -p "$HOME/Library/Application Support/lazygit"
@@ -226,7 +272,11 @@ if [ "$SHELL" != "$(which fish)" ]; then
 fi
 
 # install fisher and fish plugins
-fish "$HOME/dotfiles/script/setup_fishshell.fish"
+if command -v fish >/dev/null 2>&1; then
+  fish "$HOME/dotfiles/script/setup_fishshell.fish"
+else
+  echo "system_setup: fish not found; skipping setup_fishshell.fish" >&2
+fi
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
@@ -276,13 +326,6 @@ if [[ -f "$CRON_PLIST_SRC" ]]; then
 else
     cron_warn "$CRON_PLIST_SRC not found; skipping LaunchAgent install."
 fi
-
-echo ""
-echo -e "\033[1;35m Cursor \033[0m"
-echo ""
-
-# Cursor setup (only after brew is available and in context of macOS)
-bash "$HOME/dotfiles/script/setup-cursor.sh"
 
 if [ -f "$HOME/dotfiles/mac/install_my_software.sh" ]; then
   bash "$HOME/dotfiles/mac/install_my_software.sh"

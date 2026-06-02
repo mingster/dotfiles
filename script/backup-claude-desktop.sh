@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
-DST="$DOTFILES/mac/claude_desktop_config.json"
+DST="$DOTFILES/init/claude_desktop_config.json"
 
 case "${OSTYPE:-}" in
   darwin*)

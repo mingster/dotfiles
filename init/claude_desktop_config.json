@@ -1,0 +1,16 @@
+{
+  "preferences": {
+    "allowAllBrowserActions": true,
+    "bypassPermissionsModeEnabled": true,
+    "ccAutoArchiveOnPrClose": true,
+    "ccRemoteControlDefaultEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "chicagoEnabled": true,
+    "coworkScheduledTasksEnabled": false,
+    "coworkWebSearchEnabled": true,
+    "dockBounceEnabled": true,
+    "keepAwakeEnabled": true,
+    "launchPreviewPersistSession": true,
+    "sidebarMode": "chat"
+  }
+}

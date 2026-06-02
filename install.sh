@@ -106,9 +106,10 @@ esac
 mkdir -p "$DOTFILES_ROOT/.agents"
 ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
-# AI tooling: platform-independent setup (symlinks only, no package managers)
+# AI tooling and editor config (install app first if needed, then configure)
 bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
 bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
+bash "$DOTFILES_ROOT/script/setup-cursor.sh"
 bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"
 bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
@@ -116,3 +117,11 @@ bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
 if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
   bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"
 fi
+
+case "$OSTYPE" in
+  darwin*)
+    echo ""
+    echo "dotfiles: run mac/osx.sh to apply macOS system defaults:"
+    echo "  bash $DOTFILES_ROOT/mac/osx.sh"
+    ;;
+esac
