@@ -17,7 +17,12 @@ if command -v brew >/dev/null 2>&1; then
     brew install awscli
   fi
 elif command -v yay >/dev/null 2>&1; then
-  yay -S --noconfirm --needed aws-cli-v2
+  if sudo -n true 2>/dev/null; then
+    yay -S --noconfirm --needed aws-cli-v2
+  else
+    echo "install_aws_cli: sudo not available — skipping aws-cli-v2 install" >&2
+    exit 0
+  fi
 else
   # Debian / Raspberry Pi OS / generic Linux
   ARCH=$(uname -m)

@@ -11,7 +11,12 @@ fi
 if command -v brew >/dev/null 2>&1; then
   brew list --cask google-cloud-sdk >/dev/null 2>&1 || brew install --cask google-cloud-sdk
 elif command -v yay >/dev/null 2>&1; then
-  yay -S --noconfirm --needed google-cloud-cli
+  if sudo -n true 2>/dev/null; then
+    yay -S --noconfirm --needed google-cloud-cli
+  else
+    echo "install_gcloud: sudo not available — skipping google-cloud-cli install" >&2
+    exit 0
+  fi
 else
   # Debian / Raspberry Pi OS / generic Linux — use official apt repo
   curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
