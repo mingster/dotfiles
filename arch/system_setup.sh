@@ -18,24 +18,6 @@ simple() {
     echo -e "\033[1;35mSystem Setup for arch\033[0m"
     echo ""
 
-    # Check sudo availability once. Over SSH without a TTY, sudo requires a password
-    # interactively and will time out. _sudo() skips gracefully so re-runs don't abort.
-    _SUDO_OK=false
-    if sudo -n true 2>/dev/null; then
-        _SUDO_OK=true
-    else
-        echo "system_setup: sudo requires an interactive password — package installs will be skipped."
-        echo "  Run directly on the machine (not over SSH) to install/update packages."
-    fi
-
-    _sudo() {
-        if [ "$_SUDO_OK" = "true" ]; then
-            sudo "$@"
-        else
-            echo "system_setup: [no sudo] skipping: sudo $*" >&2
-        fi
-    }
-
     # ----------------------------------------------------------------------------------------------
     # Applications
     # ----------------------------------------------------------------------------------------------
@@ -61,7 +43,7 @@ simple() {
     echo -e "\033[1;35myay\033[0m"
     echo ""
     if ! command -v yay >/dev/null 2>&1; then
-        _sudo pacman -S --needed git base-devel && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si
+        sudo pacman -S --needed git base-devel && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si
         yay -Y --gendb
         if [ -d ./yay ]; then
             rm -rf yay
@@ -73,21 +55,21 @@ simple() {
     echo ""
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
-    _sudo pacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
-    _sudo pacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty fastfetch fzf net-tools
-    _sudo pacman -S --noconfirm --needed chromium firefox
+    sudopacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
+    sudopacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty fastfetch fzf net-tools
+    sudopacman -S --noconfirm --needed chromium firefox
 
     echo ""
     echo -e "\033[1;35m fish shell \033[0m"
     echo ""
     if ! grep -qF "$(which fish)" /etc/shells; then
-        which fish | _sudo tee -a /etc/shells
+        which fish | sudo tee -a /etc/shells
     fi
 
     echo ""
     echo -e "\033[1;35m alacritty \033[0m"
     echo ""
-    _sudo pacman -S --noconfirm --needed alacritty
+    sudopacman -S --noconfirm --needed alacritty
 
     if [ ! -d "${HOME}/.config/alacritty" ]; then
         mkdir -p "${HOME}/.config/alacritty"
@@ -98,7 +80,7 @@ simple() {
     echo ""
     echo -e "\033[1;35m nano editor \033[0m"
     echo ""
-    _sudo pacman -S --noconfirm --needed nano-syntax-highlighting
+    sudopacman -S --noconfirm --needed nano-syntax-highlighting
     if [ ! -d ${HOME}/GitHub ]; then
         mkdir -p ${HOME}/GitHub
     fi
@@ -110,7 +92,7 @@ simple() {
     echo ""
     echo -e "\033[1;35m micro editor \033[0m"
     echo ""
-    _sudo pacman -S --noconfirm --needed micro
+    sudopacman -S --noconfirm --needed micro
     micro -plugin install editorconfig
     micro -plugin install fish
     micro -plugin install fzf
@@ -127,7 +109,7 @@ simple() {
         cd /tmp &&
             wget "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VERSION}/lazygit_${LG_VERSION}_Linux_x86_64.tar.gz" &&
             tar xfv "lazygit_${LG_VERSION}_Linux_x86_64.tar.gz" &&
-            _sudo cp lazygit /usr/bin/ &&
+            sudocp lazygit /usr/bin/ &&
             rm -f "lazygit_${LG_VERSION}_Linux_x86_64.tar.gz"
     else
         echo "lazygit already installed, skipping."
@@ -243,7 +225,7 @@ simple() {
     echo 'bluetooth'
     # https://www.jeremymorgan.com/tutorials/linux/how-to-bluetooth-arch-linux/
     #
-    _sudo pacman -S --noconfirm --needed bluez bluez-utils blueman
+    sudopacman -S --noconfirm --needed bluez bluez-utils blueman
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw
@@ -258,20 +240,20 @@ simple() {
         echo ""
         echo -e "\033[1;35mConfiguring UFW...\033[0m"
         echo ""
-        _sudo ufw default deny incoming
-        _sudo ufw default allow outgoing
-        _sudo ufw enable
-        _sudo ufw allow 22/tcp
-        _sudo ufw allow 80
-        _sudo ufw allow 443
-        _sudo ufw allow 1935
-        _sudo ufw allow 5900
+        sudoufw default deny incoming
+        sudoufw default allow outgoing
+        sudoufw enable
+        sudoufw allow 22/tcp
+        sudoufw allow 80
+        sudoufw allow 443
+        sudoufw allow 1935
+        sudoufw allow 5900
 
         #sudo ufw allow syncthing
     fi
 
-    _sudo systemctl start sshd
-    _sudo systemctl enable sshd
+    sudosystemctl start sshd
+    sudosystemctl enable sshd
 
 
     ## POST INSTALL
@@ -297,23 +279,15 @@ simple() {
     #yay -S noip
 
     # vscode
-    if [ "$_SUDO_OK" = "true" ]; then
-        yay -S --noconfirm --needed code
-    else
-        echo "system_setup: [no sudo] skipping yay install of code" >&2
-    fi
+    yay -S --noconfirm --needed code
     bash "$HOME/dotfiles/script/setup-vscode.sh"
 
     ## update the system
-    _sudo pacman -S --noconfirm --needed ca-certificates
-    _sudo pacman -Syu
+    sudopacman -S --noconfirm --needed ca-certificates
+    sudopacman -Syu
 
     # cursor
-    if [ "$_SUDO_OK" = "true" ]; then
-        yay -S --noconfirm --needed cursor-bin
-    else
-        echo "system_setup: [no sudo] skipping yay install of cursor-bin" >&2
-    fi
+    yay -S --noconfirm --needed cursor-bin
 
     bash "$HOME/dotfiles/script/install_aws_cli.sh"
     bash "$HOME/dotfiles/script/install_gcloud.sh"
