@@ -297,7 +297,11 @@ simple() {
     #yay -S noip
 
     # vscode
-    yay -S --noconfirm --needed code
+    if [ "$_SUDO_OK" = "true" ]; then
+        yay -S --noconfirm --needed code
+    else
+        echo "system_setup: [no sudo] skipping yay install of code" >&2
+    fi
     bash "$HOME/dotfiles/script/setup-vscode.sh"
 
     ## update the system
@@ -305,7 +309,11 @@ simple() {
     _sudo pacman -Syu
 
     # cursor
-    yay -S --noconfirm --needed cursor-bin
+    if [ "$_SUDO_OK" = "true" ]; then
+        yay -S --noconfirm --needed cursor-bin
+    else
+        echo "system_setup: [no sudo] skipping yay install of cursor-bin" >&2
+    fi
 
     bash "$HOME/dotfiles/script/install_aws_cli.sh"
     bash "$HOME/dotfiles/script/install_gcloud.sh"
