@@ -28,7 +28,7 @@
     "editor.defaultFormatter": "unifiedjs.vscode-mdx"
   },
   "[prisma]": {
-    "editor.defaultFormatter": "prisma.prisma",
+    "editor.defaultFormatter": "Prisma.prisma",
     "editor.formatOnSave": true,
     "editor.quickSuggestions": {
       "strings": true
@@ -55,7 +55,7 @@
   "[xml]": {
     "editor.defaultFormatter": "DotJoshJohnson.xml"
   },
-  "3xpo.regionfolder": {
+  "maptz.regionfolder": {
     "[javascript]": {
       "foldDefinitions": [
         {
@@ -116,21 +116,7 @@
   "accessibility.signals.terminalBell": {
     "sound": "on"
   },
-  "cSpell.userWords": [
-    "mingster",
-    "pstv",
-    "totp"
-  ],
-  "cursor.agent_layout_browser_beta_setting": true,
-  "cursor.chat.premiumChatAutoScrollWhenAtBottom": true,
-  "cursor.chat.showSuggestedFiles": true,
-  "cursor.composer.queueMessageDefaultBehavior": "stop-and-send",
-  "cursor.composer.shouldAllowCustomModes": true,
-  "cursor.composer.shouldChimeAfterChatFinishes": true,
-  "cursor.cpp.enablePartialAccepts": true,
-  "cursor.diffs.useCharacterLevelDiffs": true,
-  "cursor.enable_git_worktrees_setting": true,
-  "cursor.terminal.usePreviewBox": true,
+  "cSpell.userWords": ["mingster", "pstv", "totp"],
   "diffEditor.ignoreTrimWhitespace": true,
   "diffEditor.wordWrap": "off",
   "editor.bracketPairColorization.enabled": true,
@@ -176,7 +162,6 @@
   "git.openRepositoryInParentFolders": "never",
   "glassit.alpha": 240,
   "html.format.unformatted": "",
-  "javascript.updateImportsOnFileMove.enabled": "always",
   "js/ts.implicitProjectConfig.checkJs": true,
   "redhat.telemetry.enabled": false,
   "security.workspace.trust.untrustedFiles": "open",
@@ -190,21 +175,19 @@
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.profiles.osx": {
     "zsh": {
-      "args": [
-        "-l"
-      ],
+      "args": ["-l"],
       "path": "/usr/local/bin/zsh"
     }
   },
   "terminal.integrated.rightClickBehavior": "default",
-  "typescript.updateImportsOnFileMove.enabled": "always",
+  "js/ts.updateImportsOnFileMove.enabled": "always",
   "window.newWindowProfile": "Default",
   "workbench.colorCustomizations": {
     "editor.lineHighlightBackground": "#1073cf2d",
     "editor.lineHighlightBorder": "#9fced11f"
   },
   //"workbench.colorTheme": "GitHub Dark Colorblind (Beta)",
-  "workbench.iconTheme": "material-icon-theme",
+  //"workbench.iconTheme": "material-icon-theme",
   "workbench.startupEditor": "none",
   "window.autoDetectColorScheme": false,
   "editor.fontVariations": false

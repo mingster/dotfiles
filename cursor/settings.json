@@ -28,7 +28,7 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[prisma]": {
-    "editor.defaultFormatter": "prisma.prisma",
+    "editor.defaultFormatter": "Prisma.prisma",
     "editor.formatOnSave": true,
     "editor.quickSuggestions": {
       "strings": true
@@ -116,11 +116,7 @@
   "accessibility.signals.terminalBell": {
     "sound": "on"
   },
-  "cSpell.userWords": [
-    "mingster",
-    "pstv",
-    "totp"
-  ],
+  "cSpell.userWords": ["mingster", "pstv", "totp"],
   "cursor.agent_layout_browser_beta_setting": true,
   "cursor.chat.premiumChatAutoScrollWhenAtBottom": true,
   "cursor.chat.showSuggestedFiles": true,
@@ -190,9 +186,7 @@
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.profiles.osx": {
     "zsh": {
-      "args": [
-        "-l"
-      ],
+      "args": ["-l"],
       "path": "/usr/local/bin/zsh"
     }
   },
