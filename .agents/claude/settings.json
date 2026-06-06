@@ -78,14 +78,7 @@
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto",
   "agentPushNotifEnabled": true,
-  "mcpServers": {
-    "obsidian": {
-      "command": "/Users/mtsai/.asdf/installs/nodejs/24.15.0/bin/mcp-obsidian",
-      "args": [
-        "/Users/mtsai/Documents/Obsidian"
-      ]
-    }
-  },
+  "mcpServers": {},
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
       "source": {

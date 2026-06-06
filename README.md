@@ -56,6 +56,55 @@ bash script/bootstrap-agents.sh
 
 MCP secrets go in `~/.claude/settings.local.json` (gitignored). See [AGENTS.md](AGENTS.md) for the full AI paths reference.
 
+## Three-tier context system
+
+Claude Code sessions load context in three tiers to keep the working window lean:
+
+| Tier | Location | Loaded |
+|------|----------|--------|
+| **Project instructions** | `AGENTS.md` / `CLAUDE.md` in project root | Always (auto) |
+| **Quick reference notes** | `~/.claude/notes/` → `.agents/claude/notes/` | On demand via `@`-include |
+| **Deep docs and memory** | Obsidian vault `~/Documents/Obsidian` | On demand via `obsidian` MCP |
+
+### Quick reference notes
+
+Short cross-project rules and gotchas. Current topics: `stack`, `nextjs`, `prisma`,
+`next-safe-action`. See [`.agents/claude/notes/`](.agents/claude/notes/) for the full index.
+
+To add a learning from any project:
+
+```bash
+~/dotfiles/script/contribute-to-agents.sh <topic> "What I learned"
+~/dotfiles/script/contribute-to-agents.sh nextjs "Nested route-group layouts cause dev 404s"
+~/dotfiles/script/contribute-to-agents.sh prisma   # opens $EDITOR for a longer note
+```
+
+Commit the result to dotfiles so it is available on all machines.
+
+### Obsidian vault
+
+`~/Documents/Obsidian` is the memory and document hub. It holds project overview pages, extended
+tech notes, architecture decision records, and session notes. The `obsidian` MCP server (configured
+in `.agents/claude/settings.json`) lets Claude fetch notes on demand without loading them upfront.
+
+Key entry points:
+
+- `Projects Index.md` — all active projects
+- `Tech Notes Index.md` — cross-project patterns with links to extended notes
+- `Riben Life Docs/HOME.md` — full architecture docs for riben.life
+
+To add a new project to the vault, create `Project Name.md` following the existing pattern and add
+it to `Projects Index.md`.
+
+### Vault sync (MEGAcmd)
+
+`script/setup-obsidian.sh` (called by `install.sh`) handles the full sync setup on both macOS
+and Arch: installs MEGAcmd, prompts for MEGA login if needed, and configures background sync of
+`~/Documents/Obsidian` to `MEGA:/Obsidian`. Nothing to do manually — just run `sh install.sh`.
+
+The MCP server path is written to `~/.claude/settings.local.json` (gitignored, generated per
+machine) rather than committed to `settings.json`.
+
 ## Backup scripts
 
 Run these after changing settings locally, then commit the result.

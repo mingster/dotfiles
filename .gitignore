@@ -78,3 +78,8 @@ ide/cursor/mcp.json
 .agents/claude/**/*.local.json
 .agents/claude/**/.local/
 mac/bin/claude
+
+### Python ###
+**/__pycache__/
+**/*.pyc
+**/*.pyo
