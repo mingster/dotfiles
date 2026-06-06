@@ -23,9 +23,5 @@ if command -v brew >/dev/null 2>&1; then
   brew list --cask android-studio  >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" android-studio
   brew list --cask intellij-idea-ce >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
 elif command -v yay >/dev/null 2>&1; then
-  if sudo -n true 2>/dev/null; then
-    yay -S --noconfirm --needed android-studio intellij-idea-community-edition
-  else
-    echo "install_java_dev: sudo not available — skipping android-studio and intellij install" >&2
-  fi
+  yay -S --noconfirm --needed android-studio intellij-idea-community-edition
 fi

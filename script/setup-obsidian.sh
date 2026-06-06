@@ -47,13 +47,7 @@ install_obsidian() {
             brew_cask_installed obsidian || brew install --cask obsidian
         fi
     elif is_arch; then
-        if yay_installed obsidian; then
-            : # already installed
-        elif sudo -n true 2>/dev/null; then
-            yay -S --noconfirm --needed obsidian
-        else
-            printf 'setup-obsidian: sudo not available — skipping obsidian install\n' >&2
-        fi
+        yay_installed obsidian || yay -S --noconfirm --needed obsidian
     else
         printf 'setup-obsidian: unsupported platform — install Obsidian manually\n' >&2
     fi
@@ -69,11 +63,7 @@ install_megacmd() {
         # MEGAcmd has no GitHub releases; brew is the reliable source on both architectures
         brew install megacmd
     elif is_arch; then
-        if sudo -n true 2>/dev/null; then
-            yay -S --noconfirm --needed megacmd-bin
-        else
-            printf 'setup-obsidian: sudo not available — skipping megacmd install\n' >&2
-        fi
+        yay -S --noconfirm --needed megacmd-bin
     else
         printf 'setup-obsidian: unsupported platform — install MEGAcmd manually\n' >&2
     fi

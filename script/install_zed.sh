@@ -18,13 +18,8 @@ if command -v brew >/dev/null 2>&1; then
   echo "install_zed: brew install --cask zed"
   brew list --cask zed >/dev/null 2>&1 || brew install --cask zed
 elif command -v pacman >/dev/null 2>&1; then
-  if sudo -n true 2>/dev/null; then
-    echo "install_zed: sudo pacman -S --needed --noconfirm zed"
-    sudo pacman -S --needed --noconfirm zed
-  else
-    echo "install_zed: sudo not available — skipping pacman install of zed" >&2
-    exit 0
-  fi
+  echo "install_zed: sudo pacman -S --needed --noconfirm zed"
+  sudo pacman -S --needed --noconfirm zed
 else
   echo "install_zed: using https://zed.dev/install.sh"
   curl -fsSL https://zed.dev/install.sh | sh
