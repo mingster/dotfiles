@@ -60,23 +60,8 @@ install_megacmd() {
         return 0
     fi
     if is_mac; then
-        if [ "$(uname -m)" = "x86_64" ]; then
-            # Intel: download DMG from GitHub releases (no brew)
-            local url
-            url=$(curl -fsSL "https://api.github.com/repos/meganz/MEGAcmd/releases/latest" \
-                | grep '"browser_download_url"' \
-                | grep 'macOS_x86_64\.dmg"' \
-                | sed 's/.*"\(https[^"]*\)".*/\1/' \
-                | head -1)
-            curl -fsSL "$url" -o /tmp/MEGAcmd.dmg
-            hdiutil attach /tmp/MEGAcmd.dmg -mountpoint /Volumes/MEGAcmd -nobrowse -quiet
-            sudo installer -pkg "/Volumes/MEGAcmd/MEGAcmd.pkg" -target /
-            hdiutil detach /Volumes/MEGAcmd -quiet
-            rm -f /tmp/MEGAcmd.dmg
-        else
-            # Apple Silicon: brew
-            brew install megacmd
-        fi
+        # MEGAcmd has no GitHub releases; brew is the reliable source on both architectures
+        brew install megacmd
     elif is_arch; then
         yay -S --noconfirm --needed megacmd-bin
     else
