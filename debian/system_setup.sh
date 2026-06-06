@@ -50,11 +50,20 @@ simple() {
 
 
     # lazygit
-    cd /tmp
-    LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | \grep -Po '"tag_name": *"v\K[^"]*')
-    curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
-    tar xf lazygit.tar.gz lazygit
-    sudo install lazygit -D -t /usr/local/bin/
+    if ! command -v lazygit >/dev/null 2>&1; then
+        cd /tmp
+        LAZYGIT_VERSION=$(curl -fsSL "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+        curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
+        tar xf lazygit.tar.gz lazygit
+        sudo install lazygit -D -t /usr/local/bin/
+        rm -f lazygit.tar.gz lazygit
+    else
+        echo "lazygit already installed, skipping."
+    fi
+
+    bash "$HOME/dotfiles/script/install_asdf.sh"
+    sh "$HOME/dotfiles/script/install_node.sh"
+    sh "$HOME/dotfiles/script/install_java_dev.sh"
 
     #remove games
     sudo apt purge iagno lightsoff four-in-a-row gnome-robots pegsolitaire gnome-2048 hitori gnome-klotski gnome-mines gnome-mahjongg gnome-sudoku quadrapassel swell-foop gnome-tetravex gnome-taquin aisleriot gnome-chess five-or-more gnome-nibbles tali ; sudo apt autoremove
@@ -272,11 +281,13 @@ simple() {
     mkdir -p ~/dotfiles/.agents
     ln -sfn ~/dotfiles/.agents ~/.agents
 
+    bash "$HOME/dotfiles/script/install_claude.sh"
+    bash "$HOME/dotfiles/script/install_zed.sh"
     bash "$HOME/dotfiles/script/setup-claude-code.sh"
 
-    mkdir -p ~/dotfiles/cursor/rules
+    mkdir -p ~/dotfiles/ide/cursor/rules
     mkdir -p ~/.cursor
-    ln -sfn ~/dotfiles/cursor/rules ~/.cursor/rules
+    ln -sfn ~/dotfiles/ide/cursor/rules ~/.cursor/rules
 
     sh ~/dotfiles/script/link-cursor-user.sh
 

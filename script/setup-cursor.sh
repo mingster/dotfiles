@@ -15,9 +15,9 @@ case "${OSTYPE:-}" in
 esac
 
 # Global rules: ~/.cursor/rules → dotfiles/cursor/rules
-mkdir -p "$DOTFILES/cursor/rules"
+mkdir -p "$DOTFILES/ide/cursor/rules"
 mkdir -p "$HOME/.cursor"
-ln -sfn "$DOTFILES/cursor/rules" "$HOME/.cursor/rules"
+ln -sfn "$DOTFILES/ide/cursor/rules" "$HOME/.cursor/rules"
 
 # User settings + keybindings
 bash "$DOTFILES/script/link-cursor-user.sh"

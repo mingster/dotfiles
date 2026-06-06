@@ -42,12 +42,14 @@ simple() {
     echo ""
     echo -e "\033[1;35myay\033[0m"
     echo ""
-    sudo pacman -S --needed git base-devel && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si
-    yay -Y --gendb
-
-    # remove work dir when done
-    if [ -d ./yay ]; then
-        rm -rf yay
+    if ! command -v yay >/dev/null 2>&1; then
+        sudo pacman -S --needed git base-devel && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si
+        yay -Y --gendb
+        if [ -d ./yay ]; then
+            rm -rf yay
+        fi
+    else
+        echo "yay already installed, skipping."
     fi
 
     echo ""
@@ -58,19 +60,21 @@ simple() {
     sudo pacman -S --noconfirm --needed chromium firefox
 
     echo ""
-    echo -e "\033[1;35m add fish to system shell \033[0m"
+    echo -e "\033[1;35m fish shell \033[0m"
     echo ""
-    echo $(which fish) | sudo tee -a /etc/shells
+    if ! grep -qF "$(which fish)" /etc/shells; then
+        echo "$(which fish)" | sudo tee -a /etc/shells
+    fi
 
     echo ""
     echo -e "\033[1;35m alacritty \033[0m"
     echo ""
     sudo pacman -S --noconfirm --needed alacritty
 
-    if [ -d ${HOME}/.config/alacritty ]; then
-        mkdir -p ${HOME}/.config/alacritty
-        cp $HOME/dotfiles/.config/alacritty/* $HOME/.config/alacritty/
-        git clone https://github.com/catppuccin/alacritty.git $HOME/dotfiles/.config/alacritty/catppuccin
+    if [ ! -d "${HOME}/.config/alacritty" ]; then
+        mkdir -p "${HOME}/.config/alacritty"
+        cp "$HOME/dotfiles/.config/alacritty/"* "$HOME/.config/alacritty/"
+        git clone https://github.com/catppuccin/alacritty.git "$HOME/dotfiles/.config/alacritty/catppuccin"
     fi
 
     echo ""
@@ -81,14 +85,7 @@ simple() {
         mkdir -p ${HOME}/GitHub
     fi
 
-    if [ -d "${HOME}/GitHub/nanorc/.git" ]; then
-        echo "nanorc: repo exists; git pull"
-        git -C "${HOME}/GitHub/nanorc" pull --ff-only || true
-    elif [ ! -e "${HOME}/GitHub/nanorc" ]; then
-        git clone https://github.com/scopatz/nanorc.git "${HOME}/GitHub/nanorc"
-    else
-        echo "nanorc: ${HOME}/GitHub/nanorc exists (not a git clone); skip clone"
-    fi
+    [ -d "$HOME/GitHub/nanorc" ] || git clone https://github.com/scopatz/nanorc.git "$HOME/GitHub/nanorc"
     #echo "include ~/GitHub/nanorc/*.nanorc" >> ~/.nanorc
     #cp ~/GitHub/nanorc/*.nanorc /usr/share/nano/
 
@@ -107,10 +104,16 @@ simple() {
     #ln -s $HOME/dotfiles/.config/micro/bindings.json $HOME/.config/micro/
 
     # lazygit
-    cd /tmp &&
-        wget https://github.com/jesseduffield/lazygit/releases/download/v0.46.0/lazygit_0.46.0_Linux_x86_64.tar.gz &&
-        tar xfv lazygit_0.46.0_Linux_x86_64.tar.gz &&
-        sudo cp lazygit /usr/bin/
+    if ! command -v lazygit >/dev/null 2>&1; then
+        LG_VERSION=$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+        cd /tmp &&
+            wget "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VERSION}/lazygit_${LG_VERSION}_Linux_x86_64.tar.gz" &&
+            tar xfv "lazygit_${LG_VERSION}_Linux_x86_64.tar.gz" &&
+            sudo cp lazygit /usr/bin/ &&
+            rm -f "lazygit_${LG_VERSION}_Linux_x86_64.tar.gz"
+    else
+        echo "lazygit already installed, skipping."
+    fi
 
     # ----------------------------------------------------------------------------------------------
     # Appearance
@@ -125,27 +128,15 @@ simple() {
     #sudo pacman -S --needed unzip fonts-recommended fonts-ubuntu fonts-font-awesome fonts-terminus
     mkdir -p $HOME/.local/share/fonts
 
-    cd /tmp
-    fonts=(
-        "CascadiaCode"
-        "FiraCode"
-        "Hack"
-        "Inconsolata"
-        "JetBrainsMono"
-        "Meslo"
-        "Mononoki"
-        "RobotoMono"
-        "SourceCodePro"
-        "UbuntuMono"
-    )
-
-    for font in "${fonts[@]}"; do
-        wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/$font.zip
-        unzip $font.zip -d $HOME/.local/share/fonts/$font/
-        rm $font.zip
-    done
-
-    fc-cache -f -v
+    if [ ! -d "$HOME/.local/share/fonts/Hack" ]; then
+        cd /tmp
+        wget "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/Hack.zip"
+        unzip "Hack.zip" -d "$HOME/.local/share/fonts/Hack/"
+        rm "Hack.zip"
+        fc-cache -f -v
+    else
+        echo "Hack Nerd Font already installed, skipping."
+    fi
 
     # theme - https://store.kde.org/p/1294174/
 
@@ -185,43 +176,48 @@ simple() {
     # symlinks
     ln -s -f $HOME/dotfiles/.config/.inputrc $HOME/.inputrc
 
-    if [ -d ${HOME}/.config/kitty ]; then
-        rm -rf ${HOME}/.config/kitty
+    ln -sfn "$HOME/dotfiles/.config/kitty" "$HOME/.config/kitty"
+
+    bash "$HOME/dotfiles/script/install_asdf.sh"
+    sh "$HOME/dotfiles/script/install_node.sh"
+    sh "$HOME/dotfiles/script/install_java_dev.sh"
+
+    mkdir -p "${HOME}/.config/fish"
+    ln -sfn "$HOME/dotfiles/.config/fish/config.fish" "$HOME/.config/fish/config.fish"
+
+    if [ "$SHELL" != "$(which fish)" ]; then
+        echo 'change default shell to fish'
+        chsh -s "$(which fish)"
     fi
-    ln -s -f $HOME/dotfiles/.config/kitty $HOME/.config/
 
-    if [ ! -d ${HOME}/.config/fish ]; then
-        mkdir -p ${HOME}/.config/fish
+    if command -v fish >/dev/null 2>&1; then
+        fish "$HOME/dotfiles/script/setup_fishshell.fish"
+    else
+        echo "system_setup: fish not found; skipping setup_fishshell.fish" >&2
     fi
-    #rm -rf $HOME/.config/fish/config.fish
-    ln -s $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/
-    cp -rf -v $HOME/dotfiles/.config/fish ${HOME}/.config/
 
-    #
-    echo 'change default shell to fish'
-    #
-    chsh -s $(which fish)
+    ln -sfn "$HOME/dotfiles/.config/tmux" "$HOME/.config/tmux"
+    ln -sfn "$HOME/dotfiles/.config/nvim" "$HOME/.config/nvim"
+    ln -sfn "$HOME/dotfiles/.config/lf" "$HOME/.config/lf"
+    ln -sfn "$HOME/dotfiles/.config/lazygit" "$HOME/.config/lazygit"
 
-    ln -s -f $HOME/dotfiles/.config/tmux $HOME/.config/tmux
-    ln -s -f $HOME/dotfiles/.config/nvim $HOME/.config/nvim
-    ln -s -f $HOME/dotfiles/.config/lf $HOME/.config/lf
-    ln -s -f $HOME/dotfiles/.config/lazygit $HOME/.config/lazygit
+    mkdir -p "$HOME/.local/share/nvim"
+    mkdir -p "$HOME/.local/state/nvim"
+    mkdir -p "$HOME/.cache/nvim"
 
     mkdir -p $HOME/dotfiles/.agents
     ln -sfn $HOME/dotfiles/.agents $HOME/.agents
 
-    bash "$HOME/dotfiles/arch/install_claude.sh"
+    bash "$HOME/dotfiles/script/install_claude.sh"
 
-    bash "$HOME/dotfiles/arch/install_zed.sh"
+    bash "$HOME/dotfiles/script/install_zed.sh"
 
     bash "$HOME/dotfiles/script/setup-claude-code.sh"
     # Claude Desktop on Linux uses ~/.config/Claude/ (if installed via AppImage/Flatpak).
     # The mac-specific setup script handles macOS ~/Library path; on Arch we just ensure
     # ~/.agents and ~/.claude are wired (already done above via setup-claude-code.sh).
 
-    mkdir -p $HOME/dotfiles/cursor/rules
-    mkdir -p $HOME/.cursor
-    ln -sfn $HOME/dotfiles/cursor/rules $HOME/.cursor/rules
+    bash "$HOME/dotfiles/script/setup-cursor.sh"
 
     sh $HOME/dotfiles/script/link-cursor-user.sh
 
@@ -229,9 +225,7 @@ simple() {
     echo 'bluetooth'
     # https://www.jeremymorgan.com/tutorials/linux/how-to-bluetooth-arch-linux/
     #
-    sudo pacman -S bluez
-    sudo pacman -S bluez-utils
-    sudo pacman -S blueman
+    sudo pacman -S --noconfirm --needed bluez bluez-utils blueman
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw
@@ -258,8 +252,6 @@ simple() {
         #sudo ufw allow syncthing
     fi
 
-    ## openssh
-    sudo pacman -S openssh
     sudo systemctl start sshd
     sudo systemctl enable sshd
 
@@ -276,7 +268,7 @@ simple() {
     #by
     # Subsystem sftp internal-sftp
 
-    gh auth login
+    gh auth status >/dev/null 2>&1 || gh auth login
 
     ## ssh-copyid
 
@@ -287,21 +279,22 @@ simple() {
     #yay -S noip
 
     # vscode
-    yay -S --noconfirm code
-
-    # copy settings
-    mkdir ${HOME}/.config/Code\ -\ OSS
-    if [ -d ${HOME}/.config/Code\ -\ OSS ]; then
-        cp $HOME/dotfiles/vscode/vscode-settings.json $HOME/.config/Code\ -\ OSS/User/settings.json
-    fi
+    yay -S --noconfirm --needed code
+    bash "$HOME/dotfiles/script/setup-vscode.sh"
 
     ## update the system
-    sudo pacman -S ca-certificates
+    sudo pacman -S --noconfirm --needed ca-certificates
     sudo pacman -Syu
 
     # cursor
-    #sudo snap install cursor
-    yay -S cursor-bin
+    yay -S --noconfirm --needed cursor-bin
+
+    bash "$HOME/dotfiles/script/install_aws_cli.sh"
+    bash "$HOME/dotfiles/script/install_gcloud.sh"
+
+    if [ -f "$HOME/dotfiles/arch/install_misc_software.sh" ]; then
+        bash "$HOME/dotfiles/arch/install_misc_software.sh"
+    fi
 
 }
 

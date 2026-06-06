@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Antigravity IDE: symlink User settings and keybindings from ~/dotfiles/Antigravity/.
+# Antigravity IDE: symlink User settings and keybindings from ~/dotfiles/ide/antigravity/.
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
@@ -30,6 +30,6 @@ case "${OSTYPE:-}" in
 esac
 
 mkdir -p "$AG_USER"
-ln -sfn "$DOTFILES/Antigravity/settings.json" "$AG_USER/settings.json"
-ln -sfn "$DOTFILES/Antigravity/keybindings.json" "$AG_USER/keybindings.json"
-echo "setup-antigravity: linked $AG_USER/{settings,keybindings}.json -> $DOTFILES/Antigravity/"
+ln -sfn "$DOTFILES/ide/antigravity/settings.json" "$AG_USER/settings.json"
+ln -sfn "$DOTFILES/ide/antigravity/keybindings.json" "$AG_USER/keybindings.json"
+echo "setup-antigravity: linked $AG_USER/{settings,keybindings}.json -> $DOTFILES/ide/antigravity/"
