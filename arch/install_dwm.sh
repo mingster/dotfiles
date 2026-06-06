@@ -12,6 +12,6 @@ sudo pacman -S rofi
 
 cd ~/.suckless/dwm && make && sudo make clean install
 cd ~/.suckless/st && make && sudo make clean install
-cd ~/.suckless/dmenu && make && sudo make clean install`
+cd ~/.suckless/dmenu && make && sudo make clean install
 
 cp ~/dotfiles/install_arch/.desktop /usr/share/xsessions/

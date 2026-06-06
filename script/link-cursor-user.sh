@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Symlink Cursor User settings + keybindings to ~/dotfiles/cursor/* (same layout as VS Code).
+# Symlink Cursor User settings + keybindings to ~/dotfiles/ide/cursor/* (same layout as VS Code).
 # Standard content is maintained in dotfiles (synced from riben.life web stack — see cursor/rules/README.md).
 set -euo pipefail
 
@@ -23,7 +23,7 @@ case "${OSTYPE:-}" in
 esac
 
 mkdir -p "$CURSOR_USER"
-ln -sfn "$DOTFILES/cursor/settings.json" "$CURSOR_USER/settings.json"
-ln -sfn "$DOTFILES/cursor/keybindings.json" "$CURSOR_USER/keybindings.json"
-ln -sfn "$DOTFILES/cursor/environment.json" "$CURSOR_USER/environment.json"
-echo "link-cursor-user: linked $CURSOR_USER/{settings,keybindings,environment}.json -> $DOTFILES/cursor/"
+ln -sfn "$DOTFILES/ide/cursor/settings.json" "$CURSOR_USER/settings.json"
+ln -sfn "$DOTFILES/ide/cursor/keybindings.json" "$CURSOR_USER/keybindings.json"
+ln -sfn "$DOTFILES/ide/cursor/environment.json" "$CURSOR_USER/environment.json"
+echo "link-cursor-user: linked $CURSOR_USER/{settings,keybindings,environment}.json -> $DOTFILES/ide/cursor/"

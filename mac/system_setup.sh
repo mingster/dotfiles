@@ -129,8 +129,11 @@ brew list --cask kitty >/dev/null 2>&1 || brew install --cask kitty
 
 ln -sfn $HOME/dotfiles/.config/kitty $HOME/.config/kitty
 
-sh $HOME/dotfiles/mac/install_nodejs_dev.sh
-sh $HOME/dotfiles/mac/install_java_dev.sh
+bash "$HOME/dotfiles/script/install_asdf.sh"
+sh "$HOME/dotfiles/script/install_node.sh"
+sh "$HOME/dotfiles/script/install_java_dev.sh"
+bash "$HOME/dotfiles/script/install_claude.sh"
+bash "$HOME/dotfiles/script/install_zed.sh"
 
 echo ""
 echo -e "\033[1;35m alacritty \033[0m"

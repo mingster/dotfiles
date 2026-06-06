@@ -14,10 +14,10 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 |------|-----------|---------------------|
 | [skills CLI](https://skills.sh/) | `~/.agents` | `~/dotfiles/.agents` |
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
-| Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
-| Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/cursor/` (via `link-cursor-user.sh`) |
-| VS Code User settings | `…/Code/User/{settings,keybindings}.json` | `~/dotfiles/vscode/` (via `script/setup-vscode.sh`) |
-| Antigravity IDE User settings | `…/Antigravity IDE/User/{settings,keybindings}.json` | `~/dotfiles/Antigravity/` (via `script/setup-antigravity.sh`) |
+| Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
+| Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-user.sh`) |
+| VS Code User settings | macOS: `…/Code/User/` Linux: `…/Code - OSS/User/` | `~/dotfiles/ide/vscode/` (via `script/setup-vscode.sh`) |
+| Antigravity IDE User settings | macOS: `…/Antigravity IDE/User/` Linux: `~/.config/Antigravity IDE/User/` | `~/dotfiles/ide/antigravity/` (via `script/setup-antigravity.sh`) |
 | Obsidian vault (agent memory) | `~/Documents/Obsidian` | created by `script/setup-obsidian.sh`; accessed via `obsidian` MCP server declared in `.agents/claude/settings.json` |
 
 ## Setup scripts (called from `install.sh`)
