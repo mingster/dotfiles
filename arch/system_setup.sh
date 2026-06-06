@@ -55,9 +55,9 @@ simple() {
     echo ""
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
-    sudopacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
-    sudopacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty fastfetch fzf net-tools
-    sudopacman -S --noconfirm --needed chromium firefox
+    sudo pacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
+    sudo pacman -S --noconfirm --needed github-cli kdiff3 fish tmux neovim lf kitty fastfetch fzf net-tools
+    sudo pacman -S --noconfirm --needed chromium firefox
 
     echo ""
     echo -e "\033[1;35m fish shell \033[0m"
@@ -69,7 +69,7 @@ simple() {
     echo ""
     echo -e "\033[1;35m alacritty \033[0m"
     echo ""
-    sudopacman -S --noconfirm --needed alacritty
+    sudo pacman -S --noconfirm --needed alacritty
 
     if [ ! -d "${HOME}/.config/alacritty" ]; then
         mkdir -p "${HOME}/.config/alacritty"
@@ -80,7 +80,7 @@ simple() {
     echo ""
     echo -e "\033[1;35m nano editor \033[0m"
     echo ""
-    sudopacman -S --noconfirm --needed nano-syntax-highlighting
+    sudo pacman -S --noconfirm --needed nano-syntax-highlighting
     if [ ! -d ${HOME}/GitHub ]; then
         mkdir -p ${HOME}/GitHub
     fi
@@ -92,7 +92,7 @@ simple() {
     echo ""
     echo -e "\033[1;35m micro editor \033[0m"
     echo ""
-    sudopacman -S --noconfirm --needed micro
+    sudo pacman -S --noconfirm --needed micro
     micro -plugin install editorconfig
     micro -plugin install fish
     micro -plugin install fzf
@@ -109,7 +109,7 @@ simple() {
         cd /tmp &&
             wget "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VERSION}/lazygit_${LG_VERSION}_Linux_x86_64.tar.gz" &&
             tar xfv "lazygit_${LG_VERSION}_Linux_x86_64.tar.gz" &&
-            sudocp lazygit /usr/bin/ &&
+            sudo cplazygit /usr/bin/ &&
             rm -f "lazygit_${LG_VERSION}_Linux_x86_64.tar.gz"
     else
         echo "lazygit already installed, skipping."
@@ -225,7 +225,7 @@ simple() {
     echo 'bluetooth'
     # https://www.jeremymorgan.com/tutorials/linux/how-to-bluetooth-arch-linux/
     #
-    sudopacman -S --noconfirm --needed bluez bluez-utils blueman
+    sudo pacman -S --noconfirm --needed bluez bluez-utils blueman
 
     # ----------------------------------------------------------------------------------------------
     # Configure ufw
@@ -240,20 +240,20 @@ simple() {
         echo ""
         echo -e "\033[1;35mConfiguring UFW...\033[0m"
         echo ""
-        sudoufw default deny incoming
-        sudoufw default allow outgoing
-        sudoufw enable
-        sudoufw allow 22/tcp
-        sudoufw allow 80
-        sudoufw allow 443
-        sudoufw allow 1935
-        sudoufw allow 5900
+        sudo ufw default deny incoming
+        sudo ufw default allow outgoing
+        sudo ufw enable
+        sudo ufw allow 22/tcp
+        sudo ufw allow 80
+        sudo ufw allow 443
+        sudo ufw allow 1935
+        sudo ufw allow 5900
 
         #sudo ufw allow syncthing
     fi
 
-    sudosystemctl start sshd
-    sudosystemctl enable sshd
+    sudo systemctl start sshd
+    sudo systemctl enable sshd
 
 
     ## POST INSTALL
@@ -283,8 +283,8 @@ simple() {
     bash "$HOME/dotfiles/script/setup-vscode.sh"
 
     ## update the system
-    sudopacman -S --noconfirm --needed ca-certificates
-    sudopacman -Syu
+    sudo pacman -S --noconfirm --needed ca-certificates
+    sudo pacman -Syu
 
     # cursor
     yay -S --noconfirm --needed cursor-bin
