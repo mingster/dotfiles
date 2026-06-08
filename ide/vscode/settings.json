@@ -27,6 +27,11 @@
   "[mdx]": {
     "editor.defaultFormatter": "unifiedjs.vscode-mdx"
   },
+  "biome.lsp.bin": {
+    "darwin-arm64": "/opt/homebrew/bin/biome",
+    "darwin-x64": "/usr/local/bin/biome",
+    "linux-x64": "/home/linuxbrew/.linuxbrew/bin/biome"
+  },
   "[prisma]": {
     "editor.defaultFormatter": "Prisma.prisma",
     "editor.formatOnSave": true,
@@ -116,7 +121,11 @@
   "accessibility.signals.terminalBell": {
     "sound": "on"
   },
-  "cSpell.userWords": ["mingster", "pstv", "totp"],
+  "cSpell.userWords": [
+    "mingster",
+    "pstv",
+    "totp"
+  ],
   "diffEditor.ignoreTrimWhitespace": true,
   "diffEditor.wordWrap": "off",
   "editor.bracketPairColorization.enabled": true,
@@ -175,7 +184,9 @@
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.profiles.osx": {
     "zsh": {
-      "args": ["-l"],
+      "args": [
+        "-l"
+      ],
       "path": "/usr/local/bin/zsh"
     }
   },

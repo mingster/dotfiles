@@ -6,7 +6,7 @@ This directory is synced from **`riben.life`** (`web/.cursor/rules/`) as the **s
 - Re-sync from riben when you update project rules:
 
   ```bash
-  rsync -a --delete ~/projects/riben.life/web/.cursor/rules/ ~/dotfiles/cursor/rules/
+  rsync -a --delete ~/projects/riben.life/web/.cursor/rules/ ~/dotfiles/ide/cursor/rules/
   ```
 
 - Do not put secrets in `.mdc` files.

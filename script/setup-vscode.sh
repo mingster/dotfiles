@@ -36,7 +36,18 @@ case "${OSTYPE:-}" in
     ;;
 esac
 
+VSCODE_SRC="$DOTFILES/ide/vscode"
+if [ ! -d "$VSCODE_SRC" ] && [ -d "$DOTFILES/vscode" ]; then
+  VSCODE_SRC="$DOTFILES/vscode"
+  echo "setup-vscode: falling back to legacy $VSCODE_SRC" >&2
+fi
+
+if [ ! -f "$VSCODE_SRC/settings.json" ] || [ ! -f "$VSCODE_SRC/keybindings.json" ]; then
+  echo "setup-vscode: missing $VSCODE_SRC/{settings.json,keybindings.json}" >&2
+  exit 1
+fi
+
 mkdir -p "$VSCODE_USER"
-ln -sfn "$DOTFILES/ide/vscode/settings.json" "$VSCODE_USER/settings.json"
-ln -sfn "$DOTFILES/ide/vscode/keybindings.json" "$VSCODE_USER/keybindings.json"
-echo "setup-vscode: linked $VSCODE_USER/{settings,keybindings}.json -> $DOTFILES/ide/vscode/"
+ln -sfn "$VSCODE_SRC/settings.json" "$VSCODE_USER/settings.json"
+ln -sfn "$VSCODE_SRC/keybindings.json" "$VSCODE_USER/keybindings.json"
+echo "setup-vscode: linked $VSCODE_USER/{settings,keybindings}.json -> $VSCODE_SRC/"

@@ -14,7 +14,7 @@ case "${OSTYPE:-}" in
     ;;
 esac
 
-# Global rules: ~/.cursor/rules → dotfiles/cursor/rules
+# Global rules: ~/.cursor/rules → dotfiles/ide/cursor/rules
 mkdir -p "$DOTFILES/ide/cursor/rules"
 mkdir -p "$HOME/.cursor"
 ln -sfn "$DOTFILES/ide/cursor/rules" "$HOME/.cursor/rules"
