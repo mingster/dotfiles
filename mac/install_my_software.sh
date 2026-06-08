@@ -29,12 +29,18 @@ bc google-chrome
 bc megasync
 bc notion
 bc obsidian
+bc zed
+
 #bc gimp
 #bc inkscape
 #bc shottr
 #bc cyberduck
 bc telegram
+bc whatsapp
 #bc raycast #use buit-in spotlight instead
+
+# remote deskop
+bc windows-app
 
 #https://www.torproject.org/docs/tor-doc-osx.html.en
 #bi tor
@@ -48,8 +54,6 @@ bc firefox
 #bc arc
 
 #bc libreoffice
-
-bc zed
 #bc iterm2
 #bc atom
 #bc macdown
@@ -66,8 +70,8 @@ bc zed
 
 #Remove comment to install LaTeX distribution MacTeX
 #bc mactex
-
 #bc --appdir="~/Applications" xquartz
+
 brew list --cask onyx         >/dev/null 2>&1 || brew install --cask --appdir="/Applications/Utilities" onyx
 brew list --cask balenaetcher >/dev/null 2>&1 || brew install --cask --appdir="/Applications/Utilities" balenaetcher
 bc the-unarchiver
