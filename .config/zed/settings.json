@@ -12,7 +12,7 @@
   "buffer_line_height": "standard",
   "icon_theme": "Zed (Default)",
   "ui_font_family": "Andale Mono",
-  "buffer_font_family": "GeistMono Nerd Font Mono",
+  "buffer_font_family": "Hack Nerd Font Mono",
   "agent_servers": {
     "gemini": {
       "type": "registry",
@@ -26,6 +26,7 @@
   },
   "edit_predictions": {
     "provider": "copilot",
+    "mode": "eager",
   },
   "project_panel": {
     "dock": "left",
@@ -45,7 +46,7 @@
     },
     "openai_compatible": {},
   },
-  "agent": {
+  /* Duplicated key auto-commented: "agent": {
     "dock": "right",
     "play_sound_when_agent_done": "always",
     "tool_permissions": {
@@ -58,12 +59,18 @@
       "model": "gpt-5-mini",
     },
     "model_parameters": [],
+  }, */
+  "agent": {
+    "default_model": {
+      "provider": "ollama",
+      "model": "gemma3:4b",
+    },
   },
   "context_servers": {
     "postgres-context-server": {
       "enabled": true,
       "remote": false,
-      "settings": {}
+      "settings": {},
     },
     "mcp-server-github": {
       "enabled": true,

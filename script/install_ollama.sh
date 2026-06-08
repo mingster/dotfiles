@@ -8,6 +8,15 @@ set -euo pipefail
 
 # --- install ollama ---
 
+# Only install Ollama on ARM-based macOS (Apple Silicon).
+# Explicitly skip on Intel macOS.
+if [[ "${OSTYPE:-}" = darwin* ]]; then
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" -ne 1 ]; then
+    echo "install_ollama: Ollama is only supported on ARM-based macOS (Apple Silicon). Skipping."
+    exit 0
+  fi
+fi
+
 if ! command -v ollama >/dev/null 2>&1; then
   if command -v brew >/dev/null 2>&1; then
     echo "install_ollama: brew install ollama"
@@ -101,3 +110,4 @@ else
 fi
 
 echo "install_ollama: ok — run: ollama run ${MODEL}"
+oa
