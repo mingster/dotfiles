@@ -61,6 +61,18 @@
     "model_parameters": [],
   }, */
   "agent": {
+    "favorite_models": [
+      {
+        "provider": "ollama",
+        "model": "gemma3:4b",
+        "enable_thinking": false
+      },
+      {
+        "provider": "ollama",
+        "model": "gemma3:12b",
+        "enable_thinking": false
+      }
+    ],
     "dock": "right",
     "default_model": {
       "provider": "ollama",
