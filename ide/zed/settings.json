@@ -61,6 +61,7 @@
     "model_parameters": [],
   }, */
   "agent": {
+    "dock": "right",
     "default_model": {
       "provider": "ollama",
       "model": "gemma3:12b",
