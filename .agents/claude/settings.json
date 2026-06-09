@@ -73,12 +73,6 @@
     "agent-browser@agent-browser": true,
     "obsidian-vault@obsidian-vault": true
   },
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "high",
-  "skipDangerousModePermissionPrompt": true,
-  "theme": "auto",
-  "agentPushNotifEnabled": true,
-  "mcpServers": {},
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
       "source": {
@@ -86,5 +80,12 @@
         "url": "https://github.com/anthropics/claude-plugins-official.git"
       }
     }
-  }
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "auto",
+  "agentPushNotifEnabled": true,
+  "mcpServers": {},
+  "inputNeededNotifEnabled": true
 }
