@@ -21,6 +21,7 @@ echo ""
 bc raycast
 bc vnc-viewer
 #bc chatgpt
+bc surfshark
 
 bc claude
 command -v claude >/dev/null 2>&1 || curl -fsSL https://claude.ai/install.sh | bash
