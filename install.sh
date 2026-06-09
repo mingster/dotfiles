@@ -113,6 +113,7 @@ bash "$DOTFILES_ROOT/script/setup-cursor.sh"
 bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"
 bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
+bash "$DOTFILES_ROOT/script/setup-zed.sh"
 
 if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
   bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"

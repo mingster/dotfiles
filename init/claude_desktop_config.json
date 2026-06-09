@@ -1,16 +1,21 @@
 {
+  "coworkUserFilesPath": "/Users/mtsai/Claude",
   "preferences": {
-    "allowAllBrowserActions": true,
-    "bypassPermissionsModeEnabled": true,
-    "ccAutoArchiveOnPrClose": true,
-    "ccRemoteControlDefaultEnabled": true,
-    "ccdScheduledTasksEnabled": true,
-    "chicagoEnabled": true,
-    "coworkScheduledTasksEnabled": false,
-    "coworkWebSearchEnabled": true,
-    "dockBounceEnabled": true,
-    "keepAwakeEnabled": true,
     "launchPreviewPersistSession": true,
-    "sidebarMode": "chat"
+    "allowAllBrowserActions": true,
+    "coworkScheduledTasksEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "chat",
+    "bypassPermissionsModeEnabled": true,
+    "dockBounceEnabled": true,
+    "coworkWebSearchEnabled": true,
+    "coworkModelAutoFallbackByAccount": {
+      "11cf52cf-7980-4829-981c-1a374dae57e6": true
+    },
+    "keepAwakeEnabled": true,
+    "coworkOnboardingResumeStep": null,
+    "chicagoEnabled": true,
+    "ccAutoArchiveOnPrClose": true,
+    "ccRemoteControlDefaultEnabled": true
   }
 }

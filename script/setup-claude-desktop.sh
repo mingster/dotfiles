@@ -39,8 +39,13 @@ SRC_DESKTOP="$DOTFILES/init/claude_desktop_config.json"
 DST_DESKTOP="$CLAUDE_SUPPORT/claude_desktop_config.json"
 
 if [ ! -f "$SRC_DESKTOP" ]; then
-  echo "setup-claude-desktop: missing $SRC_DESKTOP" >&2
-  exit 1
+  if [ -f "$CLAUDE_SUPPORT/claude_desktop_config.json" ]; then
+    echo "setup-claude-desktop: $SRC_DESKTOP not found; running backup to seed it first"
+    bash "$(dirname "$0")/backup-claude-desktop.sh"
+  else
+    echo "setup-claude-desktop: missing $SRC_DESKTOP" >&2
+    exit 1
+  fi
 fi
 
 python3 - <<EOF

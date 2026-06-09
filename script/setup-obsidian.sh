@@ -60,8 +60,8 @@ install_megacmd() {
         return 0
     fi
     if is_mac; then
-        # MEGAcmd has no GitHub releases; brew is the reliable source on both architectures
-        brew install megacmd
+        # Official MEGAcmd from MEGA NZ — provides mega-whoami, mega-login, mega-sync, etc.
+        brew install --cask megacmd-app
     elif is_arch; then
         yay -S --noconfirm --needed megacmd-bin
     else
@@ -107,11 +107,12 @@ configure_mega_sync() {
 # paths. settings.local.json is gitignored and generated here per machine.
 
 configure_mcp() {
-    local mcp_cmd="$HOME/.asdf/shims/mcp-obsidian"
+    local mcp_cmd
+    mcp_cmd=$(command -v mcp-obsidian 2>/dev/null || true)
     local settings="$HOME/.claude/settings.local.json"
 
-    if [ ! -f "$mcp_cmd" ]; then
-        printf 'setup-obsidian: mcp-obsidian not found at %s — install it with: npm install -g mcp-obsidian\n' "$mcp_cmd" >&2
+    if [ -z "$mcp_cmd" ]; then
+        printf 'setup-obsidian: mcp-obsidian not found — install it with: npm install -g mcp-obsidian\n' >&2
         return 0
     fi
 

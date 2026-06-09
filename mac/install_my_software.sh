@@ -89,6 +89,7 @@ brew list --cask github        >/dev/null 2>&1 || brew install --cask --appdir="
 brew list --cask antigravity   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity
 brew list --cask antigravity-ide   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity-ide
 brew list --cask visual-studio-code >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" visual-studio-code
+brew list --cask cursor             >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" cursor
 #brew list --cask azure-data-studio >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" azure-data-studio
 #brew list --cask blender           >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" blender
 #bc wireshark
