@@ -46,6 +46,7 @@ switch (uname)
             eval "$(/opt/homebrew/bin/brew shellenv)"
 
             fish_add_path /opt/homebrew/bin
+            fish_add_path /usr/local/bin
 
             # postgresql
             fish_add_path /opt/homebrew/opt/postgresql@18/bin
