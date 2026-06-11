@@ -27,11 +27,6 @@
   "[mdx]": {
     "editor.defaultFormatter": "unifiedjs.vscode-mdx"
   },
-  "biome.lsp.bin": {
-    "darwin-arm64": "/opt/homebrew/bin/biome",
-    "darwin-x64": "/usr/local/bin/biome",
-    "linux-x64": "/home/linuxbrew/.linuxbrew/bin/biome"
-  },
   "[prisma]": {
     "editor.defaultFormatter": "Prisma.prisma",
     "editor.formatOnSave": true,
@@ -39,9 +34,6 @@
       "strings": true
     }
   },
-  "prisma.fileWatcher": true,
-  "prisma.showPrismaDataPlatformNotification": false,
-  "prisma.schema": "${workspaceFolder}/prisma/schema.prisma",
   "[python]": {
     "editor.formatOnType": true
   },
@@ -60,6 +52,69 @@
   "[xml]": {
     "editor.defaultFormatter": "DotJoshJohnson.xml"
   },
+  "accessibility.signals.terminalBell": {
+    "sound": "on"
+  },
+  "biome.lsp.bin": {
+    "darwin-arm64": "/opt/homebrew/bin/biome",
+    "darwin-x64": "/usr/local/bin/biome",
+    "linux-x64": "/home/linuxbrew/.linuxbrew/bin/biome"
+  },
+  "claudeCode.preferredLocation": "panel",
+  "diffEditor.ignoreTrimWhitespace": true,
+  "diffEditor.wordWrap": "off",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.codeActionsOnSave": {
+    "quickfix.biome": "explicit",
+    "source.action.useSortedKeys.biome": "explicit",
+    "source.fixAll.biome": "explicit",
+    "source.organizeImports.biome": "explicit"
+  },
+  "editor.defaultFormatter": "biomejs.biome",
+  "editor.fontFamily": "Hack Nerd Font Mono, Menlo, GeistMono Nerd Font",
+  "editor.fontLigatures": "'ss01','ss05','dlig'",
+  "editor.fontSize": 14,
+  "editor.fontVariations": false,
+  "editor.formatOnType": false,
+  "editor.guides.bracketPairs": false,
+  "editor.guides.indentation": false,
+  "editor.inlayHints.enabled": "off",
+  "editor.inlineSuggest.enabled": true,
+  "editor.minimap.enabled": false,
+  "editor.multiCursorModifier": "ctrlCmd",
+  "editor.quickSuggestions": {
+    "strings": "on"
+  },
+  "editor.snippetSuggestions": "top",
+  "editor.suggestSelection": "first",
+  "editor.tabCompletion": "on",
+  "errorLens.enabled": true,
+  "explorer.confirmDelete": false,
+  "explorer.confirmDragAndDrop": false,
+  "explorer.confirmPasteNative": false,
+  "explorer.decorations.badges": false,
+  "extensions.supportAgentsWindow": {
+    "vira.vsc-vira-theme": true
+  },
+  "files.associations": {
+    "*.config": "aspnetcorerazor",
+    "*.css": "css",
+    "*.js": "javascriptreact",
+    "*.jsx": "javascriptreact",
+    "*.prisma": "prisma",
+    "*.ts": "typescriptreact",
+    "*.tsx": "typescriptreact"
+  },
+  "files.autoSave": "afterDelay",
+  "geminicodeassist.project": "formidable-timing-lb2vk",
+  "git.autofetch": true,
+  "git.confirmSync": false,
+  "git.enableSmartCommit": true,
+  "git.openRepositoryInParentFolders": "never",
+  "html.format.unformatted": "",
+  "http.systemCertificatesNode": true,
+  "js/ts.implicitProjectConfig.checkJs": true,
+  "js/ts.updateImportsOnFileMove.enabled": "always",
   "maptz.regionfolder": {
     "[javascript]": {
       "foldDefinitions": [
@@ -118,60 +173,9 @@
       "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*"
     }
   },
-  "accessibility.signals.terminalBell": {
-    "sound": "on"
-  },
-  "cSpell.userWords": [
-    "mingster",
-    "pstv",
-    "totp"
-  ],
-  "diffEditor.ignoreTrimWhitespace": true,
-  "diffEditor.wordWrap": "off",
-  "editor.bracketPairColorization.enabled": true,
-  "editor.codeActionsOnSave": {
-    "quickfix.biome": "explicit",
-    "source.action.useSortedKeys.biome": "explicit",
-    "source.fixAll.biome": "explicit",
-    "source.organizeImports.biome": "explicit"
-  },
-  "editor.defaultFormatter": "biomejs.biome",
-  "editor.fontFamily": "Hack Nerd Font Mono, Menlo, GeistMono Nerd Font",
-  "editor.fontSize": 14,
-  "editor.formatOnType": false,
-  "editor.guides.bracketPairs": false,
-  "editor.guides.indentation": false,
-  "editor.inlayHints.enabled": "off",
-  "editor.inlineSuggest.enabled": true,
-  "editor.minimap.enabled": false,
-  "editor.multiCursorModifier": "ctrlCmd",
-  "editor.quickSuggestions": {
-    "strings": "on"
-  },
-  "editor.snippetSuggestions": "top",
-  "editor.suggestSelection": "first",
-  "editor.tabCompletion": "on",
-  "errorLens.enabled": true,
-  "explorer.confirmDelete": false,
-  "explorer.confirmDragAndDrop": false,
-  "explorer.confirmPasteNative": false,
-  "files.associations": {
-    "*.config": "aspnetcorerazor",
-    "*.css": "css",
-    "*.js": "javascriptreact",
-    "*.jsx": "javascriptreact",
-    "*.prisma": "prisma",
-    "*.ts": "typescriptreact",
-    "*.tsx": "typescriptreact"
-  },
-  "files.autoSave": "afterDelay",
-  "git.autofetch": true,
-  "git.confirmSync": false,
-  "git.enableSmartCommit": true,
-  "git.openRepositoryInParentFolders": "never",
-  "glassit.alpha": 240,
-  "html.format.unformatted": "",
-  "js/ts.implicitProjectConfig.checkJs": true,
+  "prisma.fileWatcher": true,
+  "prisma.schema": "${workspaceFolder}/prisma/schema.prisma",
+  "prisma.showPrismaDataPlatformNotification": false,
   "redhat.telemetry.enabled": false,
   "security.workspace.trust.untrustedFiles": "open",
   "terminal.external.osxExec": "kitty.app",
@@ -184,22 +188,73 @@
   "terminal.integrated.lineHeight": 1.1,
   "terminal.integrated.profiles.osx": {
     "zsh": {
-      "args": [
-        "-l"
-      ],
+      "args": ["-l"],
       "path": "/usr/local/bin/zsh"
     }
   },
   "terminal.integrated.rightClickBehavior": "default",
-  "js/ts.updateImportsOnFileMove.enabled": "always",
+  "window.autoDetectColorScheme": false,
   "window.newWindowProfile": "Default",
   "workbench.colorCustomizations": {
     "editor.lineHighlightBackground": "#1073cf2d",
-    "editor.lineHighlightBorder": "#9fced11f"
+    "editor.lineHighlightBorder": "#9fced11f",
+    "[Vira*]": {
+      "statusBar.debuggingBackground": "#80CBC433",
+      "statusBar.debuggingForeground": "#80CBC4",
+      "toolbar.activeBackground": "#80CBC426",
+      "button.background": "#80CBC4",
+      "button.hoverBackground": "#80CBC4cc",
+      "extensionButton.separator": "#80CBC433",
+      "extensionButton.background": "#80CBC414",
+      "extensionButton.foreground": "#80CBC4",
+      "extensionButton.hoverBackground": "#80CBC433",
+      "extensionButton.prominentForeground": "#80CBC4",
+      "extensionButton.prominentBackground": "#80CBC414",
+      "extensionButton.prominentHoverBackground": "#80CBC433",
+      "activityBarBadge.background": "#80CBC4",
+      "activityBar.activeBorder": "#80CBC4",
+      "activityBarTop.activeBorder": "#80CBC4",
+      "list.inactiveSelectionIconForeground": "#80CBC4",
+      "list.activeSelectionForeground": "#80CBC4",
+      "list.inactiveSelectionForeground": "#80CBC4",
+      "list.highlightForeground": "#80CBC4",
+      "sash.hoverBorder": "#80CBC480",
+      "list.activeSelectionIconForeground": "#80CBC4",
+      "scrollbarSlider.activeBackground": "#80CBC480",
+      "editorSuggestWidget.highlightForeground": "#80CBC4",
+      "textLink.foreground": "#80CBC4",
+      "progressBar.background": "#80CBC4",
+      "pickerGroup.foreground": "#80CBC4",
+      "tab.activeBorder": "#80CBC4",
+      "tab.activeBorderTop": "#80CBC400",
+      "tab.unfocusedActiveBorder": "#80CBC4",
+      "tab.unfocusedActiveBorderTop": "#80CBC400",
+      "tab.activeModifiedBorder": "#80CBC400",
+      "notificationLink.foreground": "#80CBC4",
+      "editorWidget.resizeBorder": "#80CBC4",
+      "editorWidget.border": "#80CBC4",
+      "settings.modifiedItemIndicator": "#80CBC4",
+      "panelTitle.activeBorder": "#80CBC4",
+      "breadcrumb.activeSelectionForeground": "#80CBC4",
+      "menu.selectionForeground": "#80CBC4",
+      "menubar.selectionForeground": "#80CBC4",
+      "editor.findMatchBorder": "#80CBC4",
+      "selection.background": "#80CBC440",
+      "statusBarItem.remoteBackground": "#80CBC414",
+      "statusBarItem.remoteHoverBackground": "#80CBC4",
+      "statusBarItem.remoteForeground": "#80CBC4",
+      "notebook.inactiveFocusedCellBorder": "#80CBC480",
+      "chat.slashCommandForeground": "#80CBC4",
+      "chat.avatarForeground": "#80CBC4",
+      "activityBarBadge.foreground": "#000000",
+      "button.foreground": "#000000",
+      "statusBarItem.remoteHoverForeground": "#000000"
+    }
   },
   //"workbench.colorTheme": "GitHub Dark Colorblind (Beta)",
   //"workbench.iconTheme": "material-icon-theme",
   "workbench.startupEditor": "none",
-  "window.autoDetectColorScheme": false,
-  "editor.fontVariations": false
+  "workbench.productIconTheme": "a-file-icon-vscode-product-icon-theme",
+  "workbench.iconTheme": "a-file-icon-vscode",
+  "workbench.colorTheme": "Vira Clay"
 }

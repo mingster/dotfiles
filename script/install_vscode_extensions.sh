@@ -7,18 +7,25 @@
 # Visual Studio Code :: Package list
 # get this list by: code --list-extensions
 pkglist=(
+    alicebeckett.brightscriptcomment
+    anthropic.claude-code
     biomejs.biome
     bradlc.vscode-tailwindcss
     davidanson.vscode-markdownlint
     dbaeumer.vscode-eslint
     dotjoshjohnson.xml
+    exodiusstudios.comment-anchors
     foxundermoon.shell-format
+    google.geminicodeassist
     josee9988.minifyall
     maptz.regionfolder
+    mikestead.dotenv
     prisma.prisma
     redhat.vscode-xml
+    richie5um2.vscode-sort-json
+    rokucommunity.brightscript
     unifiedjs.vscode-mdx
-
+atommaterial.a-file-icon-vscode
     #alicebeckett.brightscriptcomment
     #anteprimorac.html-end-tag-labels
     #anthropic.claude-code
