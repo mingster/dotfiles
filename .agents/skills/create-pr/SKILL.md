@@ -1,25 +1,23 @@
 ---
 name: create-pr
 description: >-
-  Create GitHub pull requests with gh CLI from the current branch. Use when the
-  user asks to create a PR, open a pull request, createpr, or push and PR after
-  feature work. Analyzes full branch diff vs base, pushes if needed, and returns
-  the PR URL.
+  Commit, verify build, and open a GitHub PR with gh CLI. Use when the user asks
+  to create a PR, open a pull request, createpr, commit and PR, or push and PR
+  after feature work. Always runs `bun run build` from web/ before commit; only
+  checks in build-passing code.
 ---
 
 # Create PR
 
-Open a GitHub pull request from the current branch using `gh`. **Do not** use the Task tool or todo list for this workflow.
+**Always commit, then push, then open the PR.** Run a production build first and only commit when it passes. **Do not** use the Task tool or todo list for this workflow.
 
 ## Prerequisites
 
 - `gh` authenticated (`gh auth status`)
-- Repo cloned; on a feature branch (not default branch unless user explicitly wants that)
-- User has **not** asked you to commit — only create PR from existing commits unless they also asked to commit/push
+- Repo cloned; work from a feature branch (create one from default branch if needed)
+- Commands for riben.life app run from **`web/`**
 
 ## 1. Gather branch state (parallel)
-
-Run these **in parallel** before writing the PR:
 
 ```bash
 git status
@@ -31,20 +29,48 @@ git diff main...HEAD
 
 If the default branch is not `main`, detect it (`git symbolic-ref refs/remotes/origin/HEAD` or `gh repo view --json defaultBranchRef`) and use that instead of `main` in `git diff <base>...HEAD`.
 
-Also check whether the branch tracks a remote and is ahead/behind.
+## 2. Branch setup
 
-## 2. Analyze the full PR scope
+- If on the default branch with uncommitted work: `git fetch origin <base>` then `git checkout -b fix/<short-topic> origin/<base>`.
+- If already on a feature branch, keep it (rebase on `<base>` only if the user asked).
 
-- Review **all commits** on the branch since it diverged from base — not only the latest commit.
-- Read staged + unstaged diff only to warn the user if uncommitted work would be **left out** of the PR (do not commit unless asked).
-- Draft title and body from the combined change set.
+## 3. Verify build (required before commit)
 
-### Title
+From **`web/`**, run:
 
-- One line, imperative, scoped to the main outcome
-- Prefer under ~72 characters; riben.life commits often use short messages (<50 chars) — PR title can be slightly longer but stay concise
+```bash
+cd web && bun run build
+```
 
-### Body template
+- **Build must exit 0** before any commit. This overrides the usual “don’t run build for routine edits” rule for this workflow only.
+- If build fails: fix TypeScript, import, and compile errors, then re-run until green. **Do not commit** failing code.
+- Optional quick check before full build: `bun run lint` — but **build is mandatory** for create-pr.
+
+## 4. Commit
+
+Stage all changes that belong in the PR. **Exclude** unless explicitly requested:
+
+- `.env*` / secrets
+- `.cursor/hooks/state/` (machine-local agent state)
+- Unrelated local-only churn
+
+Follow repo commit style: short imperative message (<50 chars when possible):
+
+```bash
+git add -A   # or selective paths after excluding the above
+git commit -m "$(cat <<'EOF'
+Short imperative summary
+
+EOF
+)"
+```
+
+If there is nothing to commit after build passes, skip to step 6 (push + PR from existing commits).
+
+## 5. Draft PR title and body
+
+- Review **all commits** on the branch since it diverged from base — not only the latest.
+- Title: one line, imperative, main outcome (~72 chars max).
 
 ```markdown
 ## Summary
@@ -54,12 +80,11 @@ Also check whether the branch tracks a remote and is ahead/behind.
 - [ ] <concrete check the reviewer can run>
 ```
 
-For riben.life (`web/` app): suggest `bun run lint` or targeted manual checks; use `bun run build` only when the user asked or the change touches schema, deps, or routing.
+Mention in test plan that `bun run build` passed locally before commit.
 
-## 3. Push then create PR (sequential)
+## 6. Push and create PR (sequential)
 
 ```bash
-# Only if branch is not on remote or is behind and user asked to push / create PR
 git push -u origin HEAD
 
 gh pr create --title "the pr title" --body "$(cat <<'EOF'
@@ -68,60 +93,62 @@ gh pr create --title "the pr title" --body "$(cat <<'EOF'
 
 ## Test plan
 - [ ] ...
+- [ ] `bun run build` passed locally before commit
 
 EOF
 )"
 ```
 
-Use a **HEREDOC** for `--body` so markdown and backticks are preserved.
-
-Return the **PR URL** from `gh pr create` output to the user.
+Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output.
 
 ## Hard rules
 
 | Do | Don't |
 |----|--------|
-| Use `gh` for all GitHub operations | `git config` changes |
-| Push with `-u origin HEAD` when needed | Force-push `main`/`master` without explicit user request |
-| Include every commit since branch diverged | Commit unless the user asked |
-| Warn if uncommitted changes won't be in the PR | `git add -A` / commit proactively |
+| Run `bun run build` from `web/` before commit | Commit when build fails |
+| Commit all PR-relevant changes, then push + PR | Open a PR with uncommitted work left out |
+| Use `gh` for GitHub operations | `git config` changes |
+| Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
 | Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
 
 ## Optional follow-ups (only if user asks)
 
 ```bash
-gh pr view --web          # open in browser
-gh pr checks --watch      # wait for CI
+gh pr view --web
+gh pr checks --watch
 gh pr edit --add-reviewer @user
 ```
 
 ## Linking issues
 
-If the branch or commits reference an issue:
-
 ```markdown
 Fixes #123
 ```
 
-Add to the PR body `## Summary` or a dedicated line at the top.
+Add to the PR body when branch/commits reference an issue.
 
 ## Example
 
-Branch `fix/misc` with 2 commits (settings + geo defaults):
-
 ```bash
+cd web && bun run build
+
+git add -A
+git commit -m "$(cat <<'EOF'
+Update client state after AI menu scan
+
+EOF
+)"
+
 git push -u origin HEAD
 
-gh pr create --title "Store settings and geo defaults on create" --body "$(cat <<'EOF'
+gh pr create --title "Refresh product and category lists after menu scan" --body "$(cat <<'EOF'
 ## Summary
-- Merge pickup into shipping tab; danger zone as collapsible panel
-- Resolve supported countries for payment/shipping on storefront and admin
-- GeoIP defaults on store creation
+- Return mapped columns from scan save action
+- Merge new products/categories into client state without router.refresh
 
 ## Test plan
-- [ ] Store settings: 語系與國家 saves TW; 金流設定 lists payment methods
-- [ ] Storefront checkout shows TW-eligible methods
-- [ ] `bun run lint` from `web/`
+- [ ] AI scan from products/categories sheet shows new rows immediately
+- [ ] `bun run build` passed locally before commit
 
 EOF
 )"
