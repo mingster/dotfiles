@@ -9,6 +9,7 @@
 pkglist=(
     alicebeckett.brightscriptcomment
     anthropic.claude-code
+    atommaterial.a-file-icon-vscode
     biomejs.biome
     bradlc.vscode-tailwindcss
     davidanson.vscode-markdownlint
@@ -16,16 +17,25 @@ pkglist=(
     dotjoshjohnson.xml
     exodiusstudios.comment-anchors
     foxundermoon.shell-format
+    github.github-vscode-theme
     google.geminicodeassist
     josee9988.minifyall
     maptz.regionfolder
+    mathiasfrohlich.kotlin
     mikestead.dotenv
     prisma.prisma
+    redhat.java
     redhat.vscode-xml
     richie5um2.vscode-sort-json
     rokucommunity.brightscript
     unifiedjs.vscode-mdx
-atommaterial.a-file-icon-vscode
+    vscjava.vscode-gradle
+    vscjava.vscode-java-debug
+    vscjava.vscode-java-dependency
+    vscjava.vscode-java-pack
+    vscjava.vscode-java-test
+    vscjava.vscode-maven
+
     #alicebeckett.brightscriptcomment
     #anteprimorac.html-end-tag-labels
     #anthropic.claude-code

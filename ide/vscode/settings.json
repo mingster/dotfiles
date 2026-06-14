@@ -60,7 +60,7 @@
     "darwin-x64": "/usr/local/bin/biome",
     "linux-x64": "/home/linuxbrew/.linuxbrew/bin/biome"
   },
-  "claudeCode.preferredLocation": "panel",
+  "claudeCode.preferredLocation": "sidebar",
   "diffEditor.ignoreTrimWhitespace": true,
   "diffEditor.wordWrap": "off",
   "editor.bracketPairColorization.enabled": true,
@@ -256,5 +256,5 @@
   "workbench.startupEditor": "none",
   "workbench.productIconTheme": "a-file-icon-vscode-product-icon-theme",
   "workbench.iconTheme": "a-file-icon-vscode",
-  "workbench.colorTheme": "Vira Clay"
+  "workbench.colorTheme": "GitHub Dark"
 }

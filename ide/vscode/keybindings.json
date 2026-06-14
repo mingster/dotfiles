@@ -7,6 +7,6 @@
   },
   {
     "key": "cmd+l",
-    "command": "workbench.view.extension.codeium"
+    "command": "claude-vscode.sidebar.open"
   }
 ]
