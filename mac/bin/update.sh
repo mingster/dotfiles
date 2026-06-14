@@ -1,14 +1,12 @@
-#!/bin/sh
+#!/bin/bash
 
 #no longer needed in high sierra
 #sudo chown -R $(whoami):admin /usr/local
 
 brew update
-brew upgrade
-brew upgrade --cask --greedy
+brew upgrade --greedy
+#brew upgrade --cask --greedy
 
-#brew update && brew upgrade
-#brew cleanup
 mas upgrade
 
 brew cleanup
