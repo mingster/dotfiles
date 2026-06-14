@@ -11,7 +11,8 @@
   "buffer_font_weight": 400.0,
   "buffer_line_height": "standard",
   "icon_theme": "Zed (Default)",
-  "ui_font_family": "Andale Mono",
+  //"ui_font_family": "Andale Mono",
+  //"ui_font_size": 14.0,
   "buffer_font_family": "Hack Nerd Font Mono",
   "agent_servers": {
     "gemini": {
@@ -25,7 +26,7 @@
     },
   },
   "edit_predictions": {
-    "provider": "zed",
+    "provider": "copilot",
     "mode": "eager",
   },
   "project_panel": {
@@ -61,22 +62,25 @@
     "model_parameters": [],
   }, */
   "agent": {
+    "play_sound_when_agent_done": "always",
+    "single_file_review": true,
+    "sidebar_side": "right",
     "favorite_models": [
       {
         "provider": "ollama",
         "model": "gemma3:4b",
-        "enable_thinking": false
+        "enable_thinking": false,
       },
       {
         "provider": "ollama",
         "model": "gemma3:12b",
-        "enable_thinking": false
-      }
+        "enable_thinking": false,
+      },
     ],
     "dock": "right",
     "default_model": {
       "provider": "ollama",
-      "model": "gemma3:12b",
+      "model": "gemma3:4b",
     },
   },
   "context_servers": {
@@ -97,7 +101,6 @@
       "milliseconds": 1000,
     },
   },
-  "ui_font_size": 14.0,
-  "buffer_font_size": 14.0,
+  //"buffer_font_size": 14.0,
   "theme": "Gruvbox Dark Hard",
 }
