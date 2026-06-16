@@ -266,5 +266,14 @@
     "https://json-schema.org/": true,
     "https://developer.microsoft.com/json-schemas/": true,
     "https://biomejs.dev": true
-  }
+  },
+  "chat.models":{
+      "provider": "ollama",
+      "model": "llama4:26b",
+      "endpoint": "http://192.168.2.2:11434"
+    },
+    "editor.codeActions.triggerOnFocusChange": true,
+    "chat.tools.terminal.autoApprove": {
+      "bun": true
+    }
 }
