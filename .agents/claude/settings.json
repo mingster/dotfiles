@@ -85,7 +85,7 @@
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "auto",
+  "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
   "mcpServers": {}
