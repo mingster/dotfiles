@@ -15,7 +15,6 @@ They are not scripted — install manually on a new machine.
 | Plugin | Source | Purpose |
 |--------|--------|---------|
 | `remember` | claude-plugins-official | Persistent memory across sessions |
-| `superpowers` | claude-plugins-official | Extended agent capabilities |
 | `vercel` | claude-plugins-official | Vercel deployment integration |
 | `github` | claude-plugins-official | GitHub integration |
 | `stripe` | claude-plugins-official | Stripe integration |

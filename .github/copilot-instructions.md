@@ -6,7 +6,7 @@ Purpose
 High-level architecture (big picture)
 - Top-level: generic dotfiles and helpers (e.g., `install.sh`, `.gitconfig`, `.stow-local-ignore`).
 - Platform folders: `mac/`, `arch/`, `debian/`, `rasp/`, `ms/` contain platform-specific installation and system setup scripts (naming pattern: `install_*.sh`, `uninstall_*.sh`, `system_setup.sh`).
-- Agent skills: `install.sh` and platform `system_setup` scripts create **`~/dotfiles/.agents`** and symlink **`~/.agents` → `~/dotfiles/.agents`**. Skill content and `.skill-lock.json` live under `.agents/` in the repo; restore with **`bash script/bootstrap-agents.sh`** or `npx skills@latest experimental_install` from `~/.agents` (optional: **`DOTFILES_INSTALL_SKILLS=1`** with `install.sh`). See `README.md`.
+- Agent skills: `install.sh` and platform `system_setup` scripts create **`~/dotfiles/.agents`** and symlink **`~/.agents` → `~/dotfiles/.agents`**. Skills are committed folders under `.agents/skills/`, shared across IDEs via `~/.agents` and `~/.claude/skills`; no lockfile or restore step. See `README.md`.
 - Claude Code (CLI + [Desktop](https://code.claude.com/download)): canonical tree is **`~/dotfiles/.agents/`** (shared **`skills/`**; Claude-only files under **`claude/`**). **`script/setup-claude-code.sh`** links **`~/.claude/`** (including **`~/.claude/skills`**). User **`settings.json`** should include **`"Skill"`** in **`permissions.allow`** so skills are usable. Do not commit secrets (see `.gitignore`).
 - Cursor: **`~/dotfiles/ide/cursor/rules`** is canonical for global rules (synced from **riben.life** `web/.cursor/rules`); **`~/.cursor/rules`** symlinks there. **`script/link-cursor-user.sh`** symlinks **`ide/cursor/{settings.json,keybindings.json,environment.json}`** into the Cursor **User** directory (same idea as VS Code user settings). **`cursor/mcp.json.example`** shows MCP shape; real **`mcp.json`** with keys stays local / gitignored.
 - **`AGENTS.md`** at repo root summarizes paths and boundaries for agents working in this repo.
@@ -33,7 +33,7 @@ Testing & verification notes
 
 Files to read first (essential reading order)
 1. `README.md` and `AGENTS.md` (overview, install steps, AI path map)
-2. `install.sh` (symlinks, `.agents`, `script/setup-claude-code.sh`, Cursor; optional `DOTFILES_INSTALL_SKILLS`; then OS-specific `system_setup` unless `DOTFILES_SKIP_SYSTEM_SETUP`)
+2. `install.sh` (symlinks, `.agents`, `script/setup-claude-code.sh`, Cursor; then OS-specific `system_setup` unless `DOTFILES_SKIP_SYSTEM_SETUP`)
 3. `mac/system_setup.sh`, `mac/osxprep.sh`, `mac/stowall` (mac-specific flows; `DOTFILES_BREW_UPGRADE=1` enables `brew upgrade` in `system_setup.sh`)
 4. `script/shellcheck-dotfiles.sh` (ShellCheck entrypoints used by CI)
 5. `vscode/install-vscode-extensions.sh` and `vscode/vscode-settings.code-profile` (extension and settings notes)
