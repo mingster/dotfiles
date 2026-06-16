@@ -46,13 +46,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh
 | `script/setup-antigravity.sh` | Antigravity IDE user settings and keybindings |
 | `script/setup-obsidian.sh` | Obsidian app + vault at `~/Documents/Obsidian` |
 
-Agent skills are managed via the [skills CLI](https://skills.sh/). Restore from the lockfile:
-
-```bash
-DOTFILES_INSTALL_SKILLS=1 sh install.sh
-# or
-bash script/bootstrap-agents.sh
-```
+Agent skills live as committed folders under `.agents/skills/`. They are shared across IDEs (Claude Code, Cursor, Zed, VS Code) via `~/.agents` and `~/.claude/skills`, so cloning the repo and running `install.sh` makes them available everywhere. No separate restore step.
 
 MCP secrets go in `~/.claude/settings.local.json` (gitignored). See [AGENTS.md](AGENTS.md) for the full AI paths reference.
 
@@ -119,7 +113,6 @@ fish script/backup-tide.fish           # Tide prompt config → .config/fish/tid
 | Variable | Effect |
 |----------|--------|
 | `DOTFILES_SKIP_SYSTEM_SETUP=1` | Skip `system_setup.sh`; still runs symlinks and AI tooling |
-| `DOTFILES_INSTALL_SKILLS=1` | Restore skills from `.agents/.skill-lock.json` via `npx` |
 | `DOTFILES_BREW_UPGRADE=1` | Run `brew upgrade` during macOS setup (default: `brew update` only) |
 
 ## Optional extras
@@ -136,7 +129,7 @@ fish script/backup-tide.fish           # Tide prompt config → .config/fish/tid
 | `install.sh` | Single entry point for all platforms |
 | `mac/` `arch/` `debian/` | Platform installers and `system_setup.sh` |
 | `script/` | Setup and backup scripts |
-| `.agents/` | Skills, Claude Code config (`claude/`), skill lockfile |
+| `.agents/` | Skills (committed folders), Claude Code config (`claude/`) |
 | `.config/` | App configs (fish, nvim, tmux, kitty, lazygit, ...) |
 | `cursor/` | Cursor settings, keybindings, rules, `mcp.json.example` |
 | `vscode/` | VS Code settings and keybindings |

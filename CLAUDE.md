@@ -43,12 +43,6 @@ Bootstrap without running system_setup (e.g., unsupported distro or CI):
 DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh
 ```
 
-Restore skills from lock file:
-
-```bash
-bash script/bootstrap-agents.sh
-```
-
 ## Conventions
 
 - Scripts must pass `shellcheck --severity=error`. CI enforces this on `install.sh`, `mac/stowall`, and the three `system_setup.sh` files.

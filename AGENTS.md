@@ -12,7 +12,7 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 
 | Tool | Home path | Canonical in repo |
 |------|-----------|---------------------|
-| [skills CLI](https://skills.sh/) | `~/.agents` | `~/dotfiles/.agents` |
+| Agent skills (shared tree, read by all IDEs) | `~/.agents` | `~/dotfiles/.agents` |
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
 | Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
 | Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-user.sh`) |
@@ -32,14 +32,12 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 | `script/setup-obsidian.sh` | Installs Obsidian + MEGAcmd; creates vault; configures sync; writes obsidian MCP to `~/.claude/settings.local.json` |
 | `script/setup_fishshell.fish` | Installs fisher + plugins; restores tide config |
 | `script/backup-tide.fish` | Saves current tide config to `.config/fish/tide_config.fish` |
-| `script/bootstrap-agents.sh` | Restores skills from `.skill-lock.json` (requires Node/npx) |
 
 ## `.agents/` structure
 
 ```
 .agents/
-  .skill-lock.json          lockfile for skills CLI (npx skills@latest)
-  skills/                   shared skill packs (linked as ~/.claude/skills and ~/.agents/skills)
+  skills/                   shared skill packs, committed folders (linked as ~/.claude/skills and ~/.agents/skills)
   claude/
     CLAUDE.md               global Claude Code instructions (linked as ~/.claude/CLAUDE.md)
     settings.json           permissions, MCP servers, hooks, enabled plugins
@@ -116,9 +114,6 @@ sh install.sh
 
 # Refresh dotfile symlinks only (brew already installed)
 sh install.sh
-
-# Restore skills from lockfile
-DOTFILES_INSTALL_SKILLS=1 sh install.sh
 
 # Install Claude Code marketplace plugins (manual — see .agents/claude/plugins.md)
 ```

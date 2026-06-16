@@ -102,7 +102,7 @@ case "$OSTYPE" in
 esac
 
 
-# Agents: ~/.agents -> dotfiles/.agents (skills CLI + Claude Code + Cursor share this tree)
+# Agents: ~/.agents -> dotfiles/.agents (committed skill folders shared by Claude Code, Cursor, and other IDEs)
 mkdir -p "$DOTFILES_ROOT/.agents"
 ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
@@ -114,10 +114,6 @@ bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"
 bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
 bash "$DOTFILES_ROOT/script/setup-zed.sh"
-
-if [ "${DOTFILES_INSTALL_SKILLS:-}" = "1" ]; then
-  bash "$DOTFILES_ROOT/script/bootstrap-agents.sh"
-fi
 
 case "$OSTYPE" in
   darwin*)

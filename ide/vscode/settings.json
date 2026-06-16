@@ -272,5 +272,11 @@
     "endpoint": "http://192.168.2.2:11434"
   },
   "editor.codeActions.triggerOnFocusChange": true,
-  "chat.tools.terminal.autoApprove": true
+  "chat.tools.global.autoApprove": true,
+  "chat.tools.terminal.autoApprove": {
+    "cd": true,
+    "printf": true,
+    "ls": true,
+    "true": true
+  }
 }

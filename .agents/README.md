@@ -4,9 +4,8 @@ This directory is the **single canonical tree** for agent skills and Claude Code
 
 | Path | Role |
 |------|------|
-| **`skills/`** | Shared skill packs. Used by the [skills CLI](https://skills.sh/) (`~/.agents` → this folder) **and** by Claude Code (`~/.claude/skills` → same folder via `script/setup-claude-code.sh`). |
+| **`skills/`** | Shared skill packs, committed as folders. Read at the [skills.sh](https://skills.sh/) standard location (`~/.agents` → this folder) by Cursor, Zed, VS Code, etc., **and** by Claude Code (`~/.claude/skills` → same folder via `script/setup-claude-code.sh`). |
 | **`claude/`** | Claude Code only: `CLAUDE.md`, `laravel-php-guidelines.md`, `settings.json`, `statusline.sh`, and the **`agents/`** markdown agent definitions. Linked into `~/.claude/`. |
-| **`.skill-lock.json`** | Lockfile for `npx skills@latest experimental_install` (see `script/bootstrap-agents.sh`). |
 
 ## Refreshing skills from upstream (e.g. [freekmurze/dotfiles](https://github.com/freekmurze/dotfiles))
 
