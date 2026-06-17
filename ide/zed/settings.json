@@ -79,8 +79,9 @@
     ],
     "dock": "right",
     "default_model": {
+      "enable_thinking": true,
       "provider": "ollama",
-      "model": "gemma3:4b",
+      "model": "gemma4:26b",
     },
   },
   "context_servers": {
