@@ -105,7 +105,7 @@
     "*.tsx": "typescriptreact"
   },
   "files.autoSave": "afterDelay",
-  "geminicodeassist.project": "formidable-timing-lb2vk",
+  "geminicodeassist.project": "tv-fiveik-player2",
   "git.autofetch": true,
   "git.confirmSync": false,
   "git.enableSmartCommit": true,
@@ -278,5 +278,6 @@
     "printf": true,
     "ls": true,
     "true": true
-  }
+  },
+  "geminicodeassist.inlineSuggestions.enableAuto": false
 }
