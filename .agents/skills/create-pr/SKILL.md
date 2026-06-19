@@ -46,9 +46,24 @@ cd web && bun run build
 - If build fails: fix TypeScript, import, and compile errors, then re-run until green. **Do not commit** failing code.
 - Optional quick check before full build: `bun run lint` — but **build is mandatory** for create-pr.
 
-## 4. Commit
+## 4. Update CHANGELOG.md
 
-Stage all changes that belong in the PR. **Exclude** unless explicitly requested:
+Before committing, prepend an entry to `CHANGELOG.md` in the repo root (create it if it doesn't exist). Use Keep a Changelog format:
+
+```markdown
+## [Unreleased] — YYYY-MM-DD
+
+### Changed
+- Short description of what changed and why (matches PR summary)
+```
+
+- Use today's date in `YYYY-MM-DD` format.
+- If `CHANGELOG.md` already has an `[Unreleased]` section at the top, append bullets to it rather than creating a new one.
+- Skip this step only for deps-only or chore-only PRs where the user explicitly says to skip the changelog.
+
+## 5. Commit
+
+Stage all changes that belong in the PR, **including `CHANGELOG.md`**. **Exclude** unless explicitly requested:
 
 - `.env*` / secrets
 - `.cursor/hooks/state/` (machine-local agent state)
@@ -67,7 +82,7 @@ EOF
 
 If there is nothing to commit after build passes, skip to step 6 (push + PR from existing commits).
 
-## 5. Draft PR title and body
+## 6. Draft PR title and body
 
 - Review **all commits** on the branch since it diverged from base — not only the latest.
 - Title: one line, imperative, main outcome (~72 chars max).
@@ -100,7 +115,7 @@ Commit the HOME.md change with the rest of the PR. Per-repo config: `.cursor/cha
 
 Mention in test plan that `bun run build` passed locally before commit.
 
-## 6. Push and create PR (sequential)
+## 7. Push and create PR (sequential)
 
 ```bash
 git push -u origin HEAD
@@ -124,7 +139,8 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 | Do | Don't |
 |----|--------|
 | Run `bun run build` from `web/` before commit | Commit when build fails |
-| Commit all PR-relevant changes, then push + PR | Open a PR with uncommitted work left out |
+| Write to `CHANGELOG.md` before commit | Skip changelog without explicit user consent |
+| Commit all PR-relevant changes (including CHANGELOG.md), then push + PR | Open a PR with uncommitted work left out |
 | Use `gh` for GitHub operations | `git config` changes |
 | Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
 | Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
