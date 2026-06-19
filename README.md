@@ -41,7 +41,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh
 |--------|-----------------|
 | `script/setup-claude-code.sh` | `~/.claude/` linked from `.agents/claude/`; skills at `~/.claude/skills/` |
 | `script/setup-claude-desktop.sh` | Claude Desktop config merged from `init/claude_desktop_config.json` |
-| `script/setup-cursor.sh` | Cursor app + rules (`~/.cursor/rules`) + user settings |
+| `script/setup-cursor.sh` | Cursor app + rules (`~/.cursor/rules`) + user settings + global hooks |
 | `script/setup-vscode.sh` | VS Code user settings and keybindings |
 | `script/setup-antigravity.sh` | Antigravity IDE user settings and keybindings |
 | `script/setup-obsidian.sh` | Obsidian app + vault at `~/Documents/Obsidian` |
@@ -131,7 +131,7 @@ fish script/backup-tide.fish           # Tide prompt config → .config/fish/tid
 | `script/` | Setup and backup scripts |
 | `.agents/` | Skills (committed folders), Claude Code config (`claude/`) |
 | `.config/` | App configs (fish, nvim, tmux, kitty, lazygit, ...) |
-| `cursor/` | Cursor settings, keybindings, rules, `mcp.json.example` |
+| `ide/cursor/` | Cursor settings, keybindings, rules, `hooks.json`, `hooks/*.sh`, `mcp.json.example` |
 | `vscode/` | VS Code settings and keybindings |
 | `Antigravity/` | Antigravity IDE settings and keybindings |
 | `AGENTS.md` | AI paths reference for humans and agents |

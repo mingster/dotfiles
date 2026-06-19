@@ -72,6 +72,24 @@ If there is nothing to commit after build passes, skip to step 6 (push + PR from
 - Review **all commits** on the branch since it diverged from base — not only the latest.
 - Title: one line, imperative, main outcome (~72 chars max).
 
+### Recent Changes (required for product PRs)
+
+If the branch touches `web/src/`, `web/bin/`, `web/prisma/`, or `fileServer/docs/` (except HOME-only typo fixes), **prepend one line** to `fileServer/docs/HOME.md` under `## Recent Changes` **before** `gh pr create`. A Cursor hook blocks PR creation until HOME.md is updated.
+
+Format:
+
+```text
+- YYYY-MM-DD — [[path/to/note|Short label]] — one-line what changed
+```
+
+Helper (from repo root; uses `~/dotfiles/script/prepend-recent-change.ts`):
+
+```bash
+bun ~/dotfiles/script/prepend-recent-change.ts --link STRIPE_STORE_SUBSCRIPTION_METADATA --label "Platform subscription pricing" --summary "List/special monthly and yearly ×11"
+```
+
+Commit the HOME.md change with the rest of the PR. Per-repo config: `.cursor/changelog-hook.json`. See `doc-vault-context.mdc` in project rules.
+
 ```markdown
 ## Summary
 - <1–3 bullets: what changed and why>
@@ -110,6 +128,11 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 | Use `gh` for GitHub operations | `git config` changes |
 | Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
 | Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
+| Update `fileServer/docs/HOME.md` Recent Changes before `gh pr create` when shipping product code | Skip changelog for deps-only or chore-only PRs |
+
+## Changelog hook (global)
+
+User hook `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh` (linked into `~/.cursor/hooks/` by `script/link-cursor-hooks.sh`) **denies** `gh pr create` when shippable paths changed but the repo changelog (see `.cursor/changelog-hook.json` or auto-detect) was not updated. Re-run `bash ~/dotfiles/script/link-cursor-hooks.sh` or `install.sh` after pulling dotfiles.
 
 ## Optional follow-ups (only if user asks)
 

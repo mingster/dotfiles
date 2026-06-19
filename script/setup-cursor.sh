@@ -22,4 +22,7 @@ ln -sfn "$DOTFILES/ide/cursor/rules" "$HOME/.cursor/rules"
 # User settings + keybindings
 bash "$DOTFILES/script/link-cursor-user.sh"
 
+# Global hooks (~/.cursor/hooks.json)
+bash "$DOTFILES/script/link-cursor-hooks.sh"
+
 echo "setup-cursor: done"

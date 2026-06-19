@@ -16,6 +16,7 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
 | Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
 | Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-user.sh`) |
+| Cursor hooks (global) | `~/.cursor/hooks.json`, `~/.cursor/hooks/*.sh` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-hooks.sh`) |
 | VS Code User settings | macOS: `…/Code/User/` Linux: `…/Code - OSS/User/` | `~/dotfiles/ide/vscode/` (via `script/setup-vscode.sh`) |
 | Antigravity IDE User settings | macOS: `…/Antigravity IDE/User/` Linux: `~/.config/Antigravity IDE/User/` | `~/dotfiles/ide/antigravity/` (via `script/setup-antigravity.sh`) |
 | Obsidian vault (agent memory) | `~/Documents/Obsidian` | created and synced by `script/setup-obsidian.sh`; MCP config in `~/.claude/settings.local.json` (generated per machine) |
@@ -26,7 +27,7 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 |--------|-------------|
 | `script/setup-claude-code.sh` | Links all `.agents/claude/*` into `~/.claude/`; links skills |
 | `script/setup-claude-desktop.sh` | Merges Claude Desktop config (macOS and Linux) |
-| `script/setup-cursor.sh` | Installs Cursor; links rules and user settings |
+| `script/setup-cursor.sh` | Installs Cursor; links rules, user settings, and global hooks |
 | `script/setup-vscode.sh` | Links VS Code settings and keybindings |
 | `script/setup-antigravity.sh` | Links Antigravity IDE settings and keybindings |
 | `script/setup-obsidian.sh` | Installs Obsidian + MEGAcmd; creates vault; configures sync; writes obsidian MCP to `~/.claude/settings.local.json` |

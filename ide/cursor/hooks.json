@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "hooks/ensure-changelog-before-pr.sh",
+        "matcher": "gh pr create"
+      }
+    ]
+  }
+}
