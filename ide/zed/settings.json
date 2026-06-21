@@ -80,8 +80,8 @@
     "dock": "right",
     "default_model": {
       "enable_thinking": true,
-      "provider": "ollama",
-      "model": "gemma4:26b",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
     },
   },
   "context_servers": {
