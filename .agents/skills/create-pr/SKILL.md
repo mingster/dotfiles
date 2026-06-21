@@ -46,9 +46,13 @@ cd web && bun run build
 - If build fails: fix TypeScript, import, and compile errors, then re-run until green. **Do not commit** failing code.
 - Optional quick check before full build: `bun run lint` — but **build is mandatory** for create-pr.
 
-## 4. Update CHANGELOG.md
+## 4. Update changelogs (before commit)
 
-Before committing, prepend an entry to `CHANGELOG.md` in the repo root (create it if it doesn't exist). Use Keep a Changelog format:
+Skip only for deps-only or chore-only PRs when the user explicitly says to skip.
+
+### 4a. CHANGELOG.md (repo root)
+
+Prepend an entry to `CHANGELOG.md` (create if missing). Keep a Changelog format:
 
 ```markdown
 ## [Unreleased] — YYYY-MM-DD
@@ -59,11 +63,31 @@ Before committing, prepend an entry to `CHANGELOG.md` in the repo root (create i
 
 - Use today's date in `YYYY-MM-DD` format.
 - If `CHANGELOG.md` already has an `[Unreleased]` section at the top, append bullets to it rather than creating a new one.
-- Skip this step only for deps-only or chore-only PRs where the user explicitly says to skip the changelog.
+
+### 4b. Recent Changes (product PRs — required for hook)
+
+If the branch touches `web/src/`, `web/bin/`, `web/prisma/`, or `fileServer/docs/` (except HOME-only typo fixes), **prepend one line** to the vault `HOME.md` from `.cursor/changelog-hook.json` (riben.life: `fileServer/docs/HOME.md`) under `## Recent Changes`.
+
+**Use the helper** (from repo root; do not hand-edit unless the helper is unavailable):
+
+```bash
+bun ~/dotfiles/script/prepend-recent-change.ts \
+  --link path/to/vault-note \
+  --label "Short label" \
+  --summary "One-line what changed"
+```
+
+Format written:
+
+```text
+- YYYY-MM-DD — [[path/to/note|Short label]] — one-line what changed
+```
+
+A Cursor hook (`ensure-changelog-before-pr.sh`) **denies** `gh pr create` when shippable paths changed but that HOME.md file is not in the branch/worktree diff. Per-repo config: `.cursor/changelog-hook.json`.
 
 ## 5. Commit
 
-Stage all changes that belong in the PR, **including `CHANGELOG.md`**. **Exclude** unless explicitly requested:
+Stage all changes that belong in the PR, **including `CHANGELOG.md` and the vault HOME.md Recent Changes line**. **Exclude** unless explicitly requested:
 
 - `.env*` / secrets
 - `.cursor/hooks/state/` (machine-local agent state)
@@ -87,24 +111,6 @@ If there is nothing to commit after build passes, skip to step 6 (push + PR from
 - Review **all commits** on the branch since it diverged from base — not only the latest.
 - Title: one line, imperative, main outcome (~72 chars max).
 
-### Recent Changes (required for product PRs)
-
-If the branch touches `web/src/`, `web/bin/`, `web/prisma/`, or `fileServer/docs/` (except HOME-only typo fixes), **prepend one line** to `fileServer/docs/HOME.md` under `## Recent Changes` **before** `gh pr create`. A Cursor hook blocks PR creation until HOME.md is updated.
-
-Format:
-
-```text
-- YYYY-MM-DD — [[path/to/note|Short label]] — one-line what changed
-```
-
-Helper (from repo root; uses `~/dotfiles/script/prepend-recent-change.ts`):
-
-```bash
-bun ~/dotfiles/script/prepend-recent-change.ts --link STRIPE_STORE_SUBSCRIPTION_METADATA --label "Platform subscription pricing" --summary "List/special monthly and yearly ×11"
-```
-
-Commit the HOME.md change with the rest of the PR. Per-repo config: `.cursor/changelog-hook.json`. See `doc-vault-context.mdc` in project rules.
-
 ```markdown
 ## Summary
 - <1–3 bullets: what changed and why>
@@ -115,7 +121,28 @@ Commit the HOME.md change with the rest of the PR. Per-repo config: `.cursor/cha
 
 Mention in test plan that `bun run build` passed locally before commit.
 
-## 7. Push and create PR (sequential)
+## 7. Verify changelog gate (product PRs)
+
+From **repo root**, confirm the hook will allow PR creation (read `.cursor/changelog-hook.json` for the changelog path):
+
+```bash
+BASE="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main)"
+git diff "origin/${BASE}...HEAD" --name-only | rg 'fileServer/docs/HOME.md|web/doc/HOME.md'
+```
+
+If shippable paths changed but the command prints nothing, run `prepend-recent-change.ts`, commit, and re-check.
+
+Optional dry-run (stdin must be JSON; do not embed the phrase in the outer shell command):
+
+```bash
+printf '%s' '{"command":"gh pr create --title test","cwd":"'"$(git rev-parse --show-toplevel)"'"}' \
+  | CURSOR_PROJECT_DIR="$(git rev-parse --show-toplevel)" \
+  bash ~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh
+```
+
+Expect `{"permission":"allow"}` when HOME.md is in the diff.
+
+## 8. Push and create PR (sequential)
 
 ```bash
 git push -u origin HEAD
@@ -139,16 +166,17 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 | Do | Don't |
 |----|--------|
 | Run `bun run build` from `web/` before commit | Commit when build fails |
-| Write to `CHANGELOG.md` before commit | Skip changelog without explicit user consent |
-| Commit all PR-relevant changes (including CHANGELOG.md), then push + PR | Open a PR with uncommitted work left out |
+| Commit CHANGELOG.md + vault HOME.md Recent Changes before push | Skip changelog without explicit user consent |
+| Verify hook dry-run returns `allow` before `gh pr create` | Chain `git push && gh pr create` in one command |
+| Use `prepend-recent-change.ts` for vault Recent Changes | Hand-edit HOME.md when the helper works |
+| Commit all PR-relevant changes, then push + PR | Open a PR with uncommitted work left out |
 | Use `gh` for GitHub operations | `git config` changes |
 | Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
 | Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
-| Update `fileServer/docs/HOME.md` Recent Changes before `gh pr create` when shipping product code | Skip changelog for deps-only or chore-only PRs |
 
 ## Changelog hook (global)
 
-User hook `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh` (linked into `~/.cursor/hooks/` by `script/link-cursor-hooks.sh`) **denies** `gh pr create` when shippable paths changed but the repo changelog (see `.cursor/changelog-hook.json` or auto-detect) was not updated. Re-run `bash ~/dotfiles/script/link-cursor-hooks.sh` or `install.sh` after pulling dotfiles.
+User hook `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh` (linked into `~/.cursor/hooks/` by `script/link-cursor-hooks.sh`) **denies** `gh pr create` when shippable paths changed but the repo changelog (see `.cursor/changelog-hook.json` or auto-detect) was not updated. The hook always emits compact JSON via `jq`; an EXIT trap fail-opens with `allow` if the script errors. Re-run `bash ~/dotfiles/script/link-cursor-hooks.sh` after pulling dotfiles.
 
 ## Optional follow-ups (only if user asks)
 

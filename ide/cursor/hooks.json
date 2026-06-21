@@ -4,7 +4,7 @@
     "beforeShellExecution": [
       {
         "command": "hooks/ensure-changelog-before-pr.sh",
-        "matcher": "gh pr create"
+        "matcher": "(^|[;&|]|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)"
       }
     ]
   }
