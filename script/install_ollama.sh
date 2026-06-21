@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Install Ollama and pull Gemma 3. Model tier is chosen by available memory/VRAM:
-#   >= 12 GB  →  gemma3:12b  (~8.1 GB)
-#   >=  5 GB  →  gemma3:4b   (~3.3 GB)
-#   <   5 GB  →  gemma3:1b   (~0.8 GB)
+# Install Ollama and pull Gemma models. Model tier is chosen by available memory/VRAM:
+#   >= 16 GB  →  gemma4:26b
+#   >=  8 GB  →  gemma4:12b
+#   <   8 GB  →  gemma4:e4b
 # Docs: https://ollama.com
 set -euo pipefail
 
@@ -170,12 +170,12 @@ _wait_ready
 
 # --- select and pull model ---
 
-if [ "$MEM_GB" -ge 12 ]; then
-  MODEL="gemma3:12b"
-elif [ "$MEM_GB" -ge 5 ]; then
-  MODEL="gemma3:4b"
+if [ "$MEM_GB" -ge 16 ]; then
+  MODEL="gemma4:26b"
+elif [ "$MEM_GB" -ge 8 ]; then
+  MODEL="gemma4:12b"
 else
-  MODEL="gemma3:1b"
+  MODEL="gemma4:e4b"
 fi
 
 echo "install_ollama: ${MEM_GB} GB detected → ${MODEL}"
