@@ -104,10 +104,10 @@ mkdir -p /Applications/_av
 brew list --cask aegisub  >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" aegisub
 brew list --cask handbrake >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" handbrake
 brew list --cask kid3     >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" kid3
-brew list --cask jubler   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" jubler
-brew list --cask vox      >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" vox
+#brew list --cask jubler   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" jubler
+#brew list --cask vox      >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" vox
 brew list --cask iina     >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" iina
-brew list --cask xld      >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" xld
+#brew list --cask xld      >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_av" xld
 
 #bc --appdir="/Applications/_av" get-lyrical
 #bi mp3splt
