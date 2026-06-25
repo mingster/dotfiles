@@ -2,6 +2,8 @@ set fish_greeting ""
 
 switch (uname)
     case Linux
+        set -gx BUN_FEATURE_FLAG_DISABLE_IPV6 1
+
         set -gx XDG_CONFIG_HOME $HOME/.config
         set -gx JAVA_HOME /usr/lib/jvm/default
         set -gx CPPFLAGS $CPPFLAGS "-I/usr/lib/jvm/default/include"
@@ -193,3 +195,6 @@ end
 
 # Added by Antigravity
 fish_add_path /Users/mtsai/.antigravity/antigravity/bin
+
+# Added by Antigravity IDE
+fish_add_path /Users/mtsai/.antigravity-ide/antigravity-ide/bin
