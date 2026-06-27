@@ -11,8 +11,8 @@ fi
 
 asdf plugin list 2>/dev/null | grep -q '^nodejs$' || asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 
-asdf list nodejs 2>/dev/null | grep -q '24.16.0' || asdf install nodejs 24.16.0
-asdf set -u nodejs 24.16.0
+asdf list nodejs 2>/dev/null | grep -q '24.18.0' || asdf install nodejs 24.18.0
+asdf set -u nodejs 24.18.0
 
 asdf plugin update --all
 
