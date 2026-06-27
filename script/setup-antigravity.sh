@@ -41,3 +41,20 @@ mkdir -p "$AG_USER"
 ln -sfn "$AG_SRC/settings.json" "$AG_USER/settings.json"
 ln -sfn "$AG_SRC/keybindings.json" "$AG_USER/keybindings.json"
 echo "setup-antigravity: linked $AG_USER/{settings,keybindings}.json -> $AG_SRC/"
+
+# Set up Antigravity agent settings and skills
+AG_AGENT_CONFIG="$HOME/.gemini/config"
+AGENTS_ROOT="$DOTFILES/.agents"
+
+mkdir -p "$AG_AGENT_CONFIG"
+ln -sfn "$AGENTS_ROOT/claude/CLAUDE.md" "$AG_AGENT_CONFIG/AGENTS.md"
+
+cat > "$AG_AGENT_CONFIG/skills.json" <<EOF
+{
+  "entries": [
+    { "path": "$AGENTS_ROOT/skills" }
+  ]
+}
+EOF
+echo "setup-antigravity: configured agent skills and rules in $AG_AGENT_CONFIG"
+
