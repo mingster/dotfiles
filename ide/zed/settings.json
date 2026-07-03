@@ -79,9 +79,10 @@
     ],
     "dock": "right",
     "default_model": {
+      "effort": "minimal",
       "enable_thinking": true,
-      "provider": "ollama",
-      "model": "gemma4:26b",
+      "provider": "google",
+      "model": "gemini-3.1-flash-lite",
     },
   },
   "context_servers": {
