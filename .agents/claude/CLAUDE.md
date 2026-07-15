@@ -74,6 +74,9 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## Cursor Rules
+When working in a workspace that contains a `.cursor/rules` directory, always search or view the files in that directory (e.g. using `list_dir` or reading `.cursor/rules/README.md`) to find relevant `.mdc` files. Follow all constraints and guidelines defined in those rule files for the specific files/patterns you are editing.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
