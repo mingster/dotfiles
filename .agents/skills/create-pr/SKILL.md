@@ -3,8 +3,8 @@ name: create-pr
 description: >-
   Commit, verify build, and open a GitHub PR with gh CLI. Use when the user asks
   to create a PR, open a pull request, createpr, commit and PR, or push and PR
-  after feature work. Always runs `bun run build` from web/ before commit; only
-  checks in build-passing code.
+  after feature work. Always runs `bun run build` from the project's web dir
+  before commit; only checks in build-passing code. Never commits failing code.
 ---
 
 # Create PR
@@ -15,7 +15,7 @@ description: >-
 
 - `gh` authenticated (`gh auth status`)
 - Repo cloned; work from a feature branch (create one from default branch if needed)
-- Commands for riben.life app run from **`web/`**
+- Detect the web app directory: check for `pstv_web/` first, then `web/`. Use whichever exists.
 
 ## 1. Gather branch state (parallel)
 
@@ -34,17 +34,20 @@ If the default branch is not `main`, detect it (`git symbolic-ref refs/remotes/o
 - If on the default branch with uncommitted work: `git fetch origin <base>` then `git checkout -b fix/<short-topic> origin/<base>`.
 - If already on a feature branch, keep it (rebase on `<base>` only if the user asked).
 
-## 3. Verify build (required before commit)
+## 3. Verify build (required before commit — no exceptions)
 
-From **`web/`**, run:
+Detect the web app directory and run the production build:
 
 ```bash
-cd web && bun run build
+# Detect project dir: pstv_web/ for PSTV, web/ for riben.life
+WEB_DIR=$([ -d pstv_web ] && echo pstv_web || echo web)
+cd “$WEB_DIR” && bun run build
 ```
 
-- **Build must exit 0** before any commit. This overrides the usual “don’t run build for routine edits” rule for this workflow only.
-- If build fails: fix TypeScript, import, and compile errors, then re-run until green. **Do not commit** failing code.
-- Optional quick check before full build: `bun run lint` — but **build is mandatory** for create-pr.
+- **Build must exit 0** before any commit. No exceptions. This is a hard gate — not optional, not skippable.
+- **If build fails: stop.** Fix all TypeScript, import, and compile errors, then re-run until the build is green. Only then proceed to commit.
+- **Never commit code that does not compile.** A failing build is a blocker; abort and fix.
+- Optional quick check before full build: `bun run biolint` (PSTV) or `bun run lint` — but **build is mandatory** for create-pr.
 
 ## 4. Update changelogs (before commit)
 
@@ -165,7 +168,8 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 
 | Do | Don't |
 |----|--------|
-| Run `bun run build` from `web/` before commit | Commit when build fails |
+| Detect `pstv_web/` or `web/`; run `bun run build` from that dir | Commit when build fails — not even "just this once" |
+| Fix all compile errors before committing | Skip or bypass the build step |
 | Commit CHANGELOG.md + vault HOME.md Recent Changes before push | Skip changelog without explicit user consent |
 | Verify hook dry-run returns `allow` before `gh pr create` | Chain `git push && gh pr create` in one command |
 | Use `prepend-recent-change.ts` for vault Recent Changes | Hand-edit HOME.md when the helper works |
@@ -197,8 +201,12 @@ Add to the PR body when branch/commits reference an issue.
 ## Example
 
 ```bash
-cd web && bun run build
+# Step 1: detect project dir and run build — must pass before anything else
+WEB_DIR=$([ -d pstv_web ] && echo pstv_web || echo web)
+cd "$WEB_DIR" && bun run build
+# If this fails, stop here and fix errors. Do not proceed.
 
+cd ..
 git add -A
 git commit -m "$(cat <<'EOF'
 Update client state after AI menu scan
