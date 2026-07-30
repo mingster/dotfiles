@@ -81,8 +81,7 @@
       }
     }
   },
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "medium",
+  "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,

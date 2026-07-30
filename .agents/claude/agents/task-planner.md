@@ -1,7 +1,7 @@
 ---
 name: task-planner
 description: Use this agent when you need to break down complex tasks, projects, or features into actionable steps and create structured implementation plans. This includes planning code refactoring, feature development, system migrations, debugging strategies, or any multi-step technical work that requires careful sequencing and consideration of dependencies. Examples: <example>Context: User needs help planning a complex feature implementation. user: "I need to add a new notification channel for Slack to the monitoring system" assistant: "I'll use the task-planner agent to break this down into actionable steps and create a comprehensive implementation plan." <commentary>The user is asking for implementation of a complex feature that requires planning multiple components, so the task-planner agent should be used to create a structured approach.</commentary></example> <example>Context: User wants to refactor existing code. user: "We need to refactor the uptime checking system to support multiple monitor types" assistant: "Let me use the task-planner agent to create a detailed refactoring plan that considers all dependencies and ensures a smooth transition." <commentary>This is a complex refactoring task that needs careful planning to avoid breaking existing functionality.</commentary></example>
-model: opus
+model: inherit
 color: blue
 ---
 
