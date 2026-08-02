@@ -1,15 +1,17 @@
 ---
 name: create-pr
 description: >-
-  Commit, verify build, and open a GitHub PR with gh CLI. Use when the user asks
-  to create a PR, open a pull request, createpr, commit and PR, or push and PR
-  after feature work. Always runs `bun run build` from the project's web dir
-  before commit; only checks in build-passing code. Never commits failing code.
+  Always commit ALL changes (`git add -A`), verify build, push, and open a
+  GitHub PR with gh CLI. Use when the user asks to create a PR, open a pull
+  request, createpr, /create-pr, commit and PR, or push and PR after feature
+  work. Always runs `bun run build` from the project's web dir before commit;
+  only checks in build-passing code. Never commits failing code. Never leave
+  uncommitted work out of the PR.
 ---
 
 # Create PR
 
-**Always commit, then push, then open the PR.** Run a production build first and only commit when it passes. **Do not** use the Task tool or todo list for this workflow.
+**Always commit ALL, then push, then open the PR.** Treat `/create-pr` as **commit all + create PR** — stage every change with `git add -A` (except secrets / hook state listed below), commit, push, and open the PR. Do not ask whether to commit; do not leave uncommitted files out of the PR. Run a production build first and only commit when it passes. **Do not** use the Task tool or todo list for this workflow.
 
 ## Prerequisites
 
@@ -88,18 +90,21 @@ Format written:
 
 A Cursor hook (`ensure-changelog-before-pr.sh`) **denies** `gh pr create` when shippable paths changed but that HOME.md file is not in the branch/worktree diff. Per-repo config: `.cursor/changelog-hook.json`.
 
-## 5. Commit
+## 5. Commit all
 
-Stage all changes that belong in the PR, **including `CHANGELOG.md` and the vault HOME.md Recent Changes line**. **Exclude** unless explicitly requested:
+**Always `git add -A` then commit.** Include every file in the worktree that belongs in the PR — **including `CHANGELOG.md` and the vault HOME.md Recent Changes line**. Do not selectively stage “just some” feature files unless the user explicitly names paths to exclude.
 
-- `.env*` / secrets
+**Exclude from the commit** (unstage if `git add -A` picked them up) unless the user explicitly requests otherwise:
+
+- `.env*` / secrets / credentials
 - `.cursor/hooks/state/` (machine-local agent state)
-- Unrelated local-only churn
 
 Follow repo commit style: short imperative message (<50 chars when possible):
 
 ```bash
-git add -A   # or selective paths after excluding the above
+git add -A
+# Unstage secrets / hook state if present:
+# git restore --staged .env .env.local .cursor/hooks/state/ 2>/dev/null || true
 git commit -m "$(cat <<'EOF'
 Short imperative summary
 
@@ -173,7 +178,7 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 | Commit CHANGELOG.md + vault HOME.md Recent Changes before push | Skip changelog without explicit user consent |
 | Verify hook dry-run returns `allow` before `gh pr create` | Chain `git push && gh pr create` in one command |
 | Use `prepend-recent-change.ts` for vault Recent Changes | Hand-edit HOME.md when the helper works |
-| Commit all PR-relevant changes, then push + PR | Open a PR with uncommitted work left out |
+| Always `git add -A` (then unstage secrets only), commit, push + PR | Open a PR with uncommitted work left out; selective staging without user ask |
 | Use `gh` for GitHub operations | `git config` changes |
 | Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
 | Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
@@ -207,7 +212,7 @@ cd "$WEB_DIR" && bun run build
 # If this fails, stop here and fix errors. Do not proceed.
 
 cd ..
-git add -A
+git add -A   # commit ALL — required for /create-pr
 git commit -m "$(cat <<'EOF'
 Update client state after AI menu scan
 
