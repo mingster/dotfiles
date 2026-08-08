@@ -217,5 +217,6 @@
   "accessibility.verbosity.notification": false,
   "accessibility.verbosity.walkthrough": false,
   "workbench.colorTheme": "GitHub Dark Dimmed",
-  "biome.suggestInstallingGlobally": false
+  "biome.suggestInstallingGlobally": false,
+  "workbench.editor.enablePreview": false
 }
