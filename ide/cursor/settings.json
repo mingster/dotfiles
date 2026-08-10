@@ -225,5 +225,7 @@
   "accessibility.verbosity.notification": false,
   "accessibility.verbosity.walkthrough": false,
   "workbench.colorTheme": "GitHub Dark",
-  "cursor.composer.conversationDensity": "compact-ungrouped"
+  "cursor.composer.conversationDensity": "compact-ungrouped",
+  "cursor.composer.textSizeScale": 1.15,
+  "cursor.composer.codeBlockWordWrap": true
 }
