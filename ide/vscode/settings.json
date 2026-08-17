@@ -279,5 +279,6 @@
     "ls": true,
     "true": true
   },
-  "geminicodeassist.inlineSuggestions.enableAuto": false
+  "geminicodeassist.inlineSuggestions.enableAuto": false,
+  "markdownConverter.pdfFormat": "A4"
 }
