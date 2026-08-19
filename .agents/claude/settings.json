@@ -10,10 +10,8 @@
       "Bash(git:*)",
       "Bash(php artisan:*)",
       "Bash(npm:*)",
-      "Bash(npx:*)",
       "Bash(yarn:*)",
       "Bash(pnpm:*)",
-      "Bash(php:*)",
       "Bash(docker:*)",
       "Bash(docker-compose:*)",
       "Bash(make:*)",
@@ -28,7 +26,6 @@
       "Bash(cp:*)",
       "Bash(mv:*)",
       "Bash(touch:*)",
-      "Bash(chmod:*)",
       "Bash(pwd:*)",
       "Bash(which:*)",
       "Bash(whoami:*)",
@@ -86,5 +83,43 @@
   "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "mcpServers": {}
+  "mcpServers": {},
+  "autoMode": {
+    "environment": [
+      "### Org-wide",
+      "**Organization**: None configured (personal GitHub account `mingster`; this project is `mingster/pstv_web2`)",
+      "**Cloud provider(s)**: None configured (shell history shows `aws` and `gcloud` invocations outside this project, but no provider is configured for this repo)",
+      "**Repository visibility**: private — `github.com/mingster/pstv_web2` reported PRIVATE by the authenticated gh API",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: None configured (repo keeps secrets in untracked `pstv_web/.env`; `.env`, `.env.test`, `.env*.local`, `.env*.production` are gitignored)",
+      "**Default / protected branches**: default branch `main`; rulesets not queryable here and no classic protected branches listed, so protection status is unknown — treat `main` as protected by convention",
+      "**CI/CD deploy targets**: None configured",
+      "**Network posture**: None configured",
+      "**Source control**: The trusted repo and its remote(s) only (no additional orgs configured) — `github.com/mingster/pstv_web2` (private), as scoped by the Trusted repo and Repository visibility entries above",
+      "**Trusted internal domains**: `w2.5ik.tv`, `5ik.tv`, `vod.5ik.tv`, `stm38.tvcdn.org` — project hosts seen repeatedly in this repo's transcripts",
+      "**Trusted cloud buckets**: None configured",
+      "**Key internal services**: pstv web platform dev server at `http://0.0.0.0:3000`; PayPal billing (sandbox at `www.sandbox.paypal.com`) for subscription plans; Prisma-managed databases reached via `bun run migrate` / `bun run generate`",
+      "**Internal package registry**: None configured (Bun/`bunx` against the public npm registry)",
+      "**Sensitive data locations & audiences**: `pstv_web/.env` and any other `.env*` file; `pstv_web/scripts/backfill-nop-legacy-credentials.ts` and the legacy credential records it touches; Prisma database schemas holding subscriber and payment data — share only with audiences cleared at the [named+specifics] bar and preserve exact handles when known",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (hyphen/underscore/dot-delimited — e.g. matches `prod-db`, not `producer`); also the live streaming hosts `w2.5ik.tv`, `vod.5ik.tv`, `stm38.tvcdn.org` and the bare host `192.154.111.78` when written to",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development — Next.js 16 / TypeScript SaaS streaming platform (Bun, Prisma, Biome), plus Laravel/PHP work per user-level guidance",
+      "**Trusted repo**: `/Users/mtsai/pstv/web2` (`github.com/mingster/pstv_web2`, private) and its configured remote. Because the repo is private, confidential material is fine to commit or push there; secrets and sensitive data (personal & entrusted) are never cleared into any repo by its visibility (see Definitions).",
+      "**Org-specific CLIs**: `bun` / `bunx` (package manager and script runner for this repo), `gh` for GitHub questions and PRs, `biome` for format/lint",
+      "**Routine under this repo's prefix**: `bun run dev`, `bun run build`, `bun run biolint`, `bun run migrate`, `bun run generate`, `bun run platform:install` and `bunx` invocations under `/Users/mtsai/pstv/web2` are routine development actions"
+    ],
+    "allow": [
+      "$defaults",
+      "Bash(bunx biome:*)",
+      "Bash(lsof:*)"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Bash(bun run platform:install:*)",
+      "Bash(scp:*)"
+    ]
+  }
 }
