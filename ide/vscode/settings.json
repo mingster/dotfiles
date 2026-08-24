@@ -172,6 +172,7 @@
       "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*"
     }
   },
+  "markdownlint.configFile": "${userHome}/dotfiles/ide/vscode/.markdownlint.json",
   "prisma.fileWatcher": true,
   "prisma.schema": "${workspaceFolder}/prisma/schema.prisma",
   "prisma.showPrismaDataPlatformNotification": false,

@@ -7,12 +7,19 @@ Do not excessively use emojis.
 Prefer using browser agent skill over using playwright directly.
 
 ## Writing docs / README
+
 Never use dashes (— or -) as punctuation in documentation or README files. Rephrase sentences using periods, commas, or parentheses instead.
 
 ## Coding Standards
+
 When working with Laravel/PHP projects, always use the php-guidelines-from-spatie skill.
 
+## Spreadsheet Files
+
+For `.xlsx` updates, use the Mescius SpreadJS XLSX Editor when available. Use programmatic XLSX editing only for batch or precision changes.
+
 ## Using GitHub
+
 For questions about GitHub, use the gh tool
 Never mention Claude Code in PR descriptions, PR comments, or issue comments
 Do not include a "Test plan" section in PR descriptions
@@ -50,6 +57,7 @@ The test: every changed line should trace directly to my request.
 ## 4. Goal-Driven Execution
 
 Transform tasks into verifiable goals:
+
 - "Add validation" → "Write tests for invalid inputs, then make them pass"
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
@@ -57,4 +65,5 @@ Transform tasks into verifiable goals:
 For multi-step tasks, state a brief plan with a verification check per step, then loop until each check passes.
 
 ## Cursor Rules
+
 When working in a workspace that contains a `.cursor/rules` directory, always search or view the files in that directory (e.g. using `list_dir` or reading `.cursor/rules/README.md`) to find relevant `.mdc` files. Follow all constraints and guidelines defined in those rule files for the specific files/patterns you are editing.

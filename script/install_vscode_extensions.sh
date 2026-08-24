@@ -7,41 +7,41 @@
 # Visual Studio Code :: Package list
 # get this list by: code --list-extensions
 pkglist=(
-    alicebeckett.brightscriptcomment
-    anthropic.claude-code
-    atommaterial.a-file-icon-vscode
-    biomejs.biome
-    bradlc.vscode-tailwindcss
-    davidanson.vscode-markdownlint
-    dbaeumer.vscode-eslint
-    dotjoshjohnson.xml
-    exodiusstudios.comment-anchors
-    foxundermoon.shell-format
-    github.github-vscode-theme
-    google.geminicodeassist
-    josee9988.minifyall
-    maptz.regionfolder
-    mathiasfrohlich.kotlin
-    mikestead.dotenv
-    prisma.prisma
-    redhat.java
-    redhat.vscode-xml
-    richie5um2.vscode-sort-json
-    rokucommunity.brightscript
-    unifiedjs.vscode-mdx
-    vscjava.vscode-gradle
-    vscjava.vscode-java-debug
-    vscjava.vscode-java-dependency
-    vscjava.vscode-java-pack
-    vscjava.vscode-java-test
-    vscjava.vscode-maven
+alicebeckett.brightscriptcomment
+anthropic.claude-code
+atommaterial.a-file-icon-vscode
+biomejs.biome
+bradlc.vscode-tailwindcss
+davidanson.vscode-markdownlint
+dbaeumer.vscode-eslint
+dotjoshjohnson.xml
+exodiusstudios.comment-anchors
+foxundermoon.shell-format
+github.github-vscode-theme
+josee9988.minifyall
+maptz.regionfolder
+markdowntopdfandhtml.convert-markdown-to-pdf-and-html
+mathiasfrohlich.kotlin
+mescius.spreadjs-xlsx-editor
+mikestead.dotenv
+ms-dotnettools.csdevkit
+ms-dotnettools.csharp
+ms-dotnettools.vscode-dotnet-runtime
+prisma.prisma
+redhat.java
+redhat.vscode-xml
+richie5um2.vscode-sort-json
+rokucommunity.brightscript
+unifiedjs.vscode-mdx
+vscjava.vscode-gradle
+vscjava.vscode-java-debug
+vscjava.vscode-java-dependency
+vscjava.vscode-java-pack
+vscjava.vscode-java-test
+vscjava.vscode-maven
 
-    #alicebeckett.brightscriptcomment
     #anteprimorac.html-end-tag-labels
-    #anthropic.claude-code
     #benjaminbenais.copilot-theme
-    #biomejs.biome
-    #bradlc.vscode-tailwindcss
     #cesium.gltf-vscode
     #christian-kohler.npm-intellisense
     #christian-kohler.path-intellisense
