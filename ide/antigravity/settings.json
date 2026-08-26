@@ -218,5 +218,6 @@
   "accessibility.verbosity.walkthrough": false,
   "workbench.colorTheme": "GitHub Dark Dimmed",
   "biome.suggestInstallingGlobally": false,
-  "workbench.editor.enablePreview": false
+  "workbench.editor.enablePreview": false,
+  "markdownlint.configFile": "${userHome}/dotfiles/ide/vscode/.markdownlint.json",
 }

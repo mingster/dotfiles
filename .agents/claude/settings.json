@@ -45,7 +45,7 @@
       "mcp__laravel-boost__*",
       "mcp__chrome-devtools__*"
     ],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "auto"
   },
   "hooks": {
     "Stop": [
@@ -83,8 +83,17 @@
   "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "mcpServers": {},
   "autoMode": {
+    "allow": [
+      "$defaults",
+      "Bash(bunx biome:*)",
+      "Bash(lsof:*)"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Bash(bun run platform:install:*)",
+      "Bash(scp:*)"
+    ],
     "environment": [
       "### Org-wide",
       "**Organization**: None configured (personal GitHub account `mingster`; this project is `mingster/pstv_web2`)",
@@ -110,16 +119,7 @@
       "**Trusted repo**: `/Users/mtsai/pstv/web2` (`github.com/mingster/pstv_web2`, private) and its configured remote. Because the repo is private, confidential material is fine to commit or push there; secrets and sensitive data (personal & entrusted) are never cleared into any repo by its visibility (see Definitions).",
       "**Org-specific CLIs**: `bun` / `bunx` (package manager and script runner for this repo), `gh` for GitHub questions and PRs, `biome` for format/lint",
       "**Routine under this repo's prefix**: `bun run dev`, `bun run build`, `bun run biolint`, `bun run migrate`, `bun run generate`, `bun run platform:install` and `bunx` invocations under `/Users/mtsai/pstv/web2` are routine development actions"
-    ],
-    "allow": [
-      "$defaults",
-      "Bash(bunx biome:*)",
-      "Bash(lsof:*)"
-    ],
-    "soft_deny": [
-      "$defaults",
-      "Bash(bun run platform:install:*)",
-      "Bash(scp:*)"
     ]
-  }
+  },
+  "mcpServers": {}
 }
