@@ -129,7 +129,7 @@
   "cursor.agent_layout_browser_beta_setting": true,
   "cursor.chat.premiumChatAutoScrollWhenAtBottom": true,
   "cursor.chat.showSuggestedFiles": true,
-  "cursor.composer.queueMessageDefaultBehavior": "stop-and-send",
+  "cursor.composer.queueMessageDefaultBehavior": "steer",
   "cursor.composer.shouldAllowCustomModes": true,
   "cursor.composer.shouldChimeAfterChatFinishes": true,
   "cursor.cpp.enablePartialAccepts": true,
