@@ -220,4 +220,7 @@
   "biome.suggestInstallingGlobally": false,
   "workbench.editor.enablePreview": false,
   "markdownlint.configFile": "${userHome}/dotfiles/ide/vscode/.markdownlint.json",
+  "workbench.editorAssociations": {
+    "*.xlsx": "xlsxViewer.xlsx"
+  },
 }
