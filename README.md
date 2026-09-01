@@ -48,6 +48,27 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh
 
 Agent skills live as committed folders under `.agents/skills/`. They are shared across IDEs (Claude Code, Cursor, Zed, VS Code) via `~/.agents` and `~/.claude/skills`, so cloning the repo and running `install.sh` makes them available everywhere. No separate restore step.
 
+### Skill placement
+
+`~/.claude/skills` is user level, so every skill in `.agents/skills/` is already live in every
+project without per-project wiring. A project only needs its own skills directory for skills that
+are genuinely project specific.
+
+A project level skill takes precedence over a central one of the same name, and nothing reports
+that it happened, so the two sets must not overlap. The convention:
+
+| Kind | Lives in |
+|------|----------|
+| Reusable across projects | `.agents/skills/<name>/` here, and nowhere else |
+| Project specific | `<project>/.cursor/skills/<name>/` (the real folder) |
+| Project specific, for Claude Code | `<project>/.claude/skills/<name>` symlinked to `../../.cursor/skills/<name>` |
+| Reference to the central set | `<project>/.agents/skills-global` symlinked to `~/.agents/skills` |
+
+Run `script/check-skill-collisions.sh` to verify. It walks `~/projects` (or the roots you pass),
+and fails on a project skill that shadows a central one, a broken symlink, or a missing
+`SKILL.md`. It warns when the same skill name exists as separate copies in two projects, which
+usually means it belongs in `.agents/skills/` instead.
+
 MCP secrets go in `~/.claude/settings.local.json` (gitignored). See [AGENTS.md](AGENTS.md) for the full AI paths reference.
 
 ## Three-tier context system
