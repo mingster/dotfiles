@@ -68,7 +68,8 @@
   "enabledPlugins": {
     "laravel-simplifier@laravel": true,
     "agent-browser@agent-browser": true,
-    "obsidian-vault@obsidian-vault": true
+    "obsidian-vault@obsidian-vault": true,
+    "mattpocock-skills@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
