@@ -65,12 +65,7 @@
     "type": "command",
     "command": "~/.claude/statusline.sh"
   },
-  "enabledPlugins": {
-    "laravel-simplifier@laravel": true,
-    "agent-browser@agent-browser": true,
-    "obsidian-vault@obsidian-vault": true,
-    "mattpocock-skills@claude-plugins-official": true
-  },
+  "enabledPlugins": {},
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
       "source": {
