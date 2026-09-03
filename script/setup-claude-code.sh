@@ -31,10 +31,20 @@ mkdir -p "${HOME}/.claude"
 rm -rf "${HOME}/.claude/skills"
 ln -sfn "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
 
-# Link every entry in .agents/claude/ into ~/.claude/ (skip README.md)
+# CLAUDE.md is COPIED, not linked. Cowork sessions skip a ~/.claude/CLAUDE.md that is
+# itself a symlink, and skip user-scope imports resolving outside the session working
+# directory, so a linked or @-imported global file silently fails to load there.
+# https://code.claude.com/docs/en/memory#import-additional-files
+# The copy means edits to ~/.claude/CLAUDE.md do not flow back: edit
+# .agents/claude/CLAUDE.md and re-run this script.
+rm -f "${HOME}/.claude/CLAUDE.md"
+cp "$CLAUDE_SRC/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
+
+# Link every other entry in .agents/claude/ into ~/.claude/ (skip README.md and CLAUDE.md)
 for entry in "$CLAUDE_SRC"/*; do
   name=$(basename "$entry")
   [ "$name" = "README.md" ] && continue
+  [ "$name" = "CLAUDE.md" ] && continue
   ln -sfn "$entry" "${HOME}/.claude/$name"
 done
 
@@ -52,3 +62,4 @@ if [ -e "${HOME}/.cursor/skills" ] && [ -e "${HOME}/.claude/skills" ]; then
 fi
 
 echo "setup-claude-code: linked ~/.claude <- ${CLAUDE_SRC} (skills <- ${AGENTS_ROOT}/skills)"
+echo "setup-claude-code: copied ~/.claude/CLAUDE.md (re-run after editing the source)"
