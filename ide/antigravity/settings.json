@@ -221,6 +221,15 @@
   "workbench.editor.enablePreview": false,
   "markdownlint.configFile": "${userHome}/dotfiles/ide/vscode/.markdownlint.json",
   "workbench.editorAssociations": {
-    "*.xlsx": "xlsxViewer.xlsx"
+    "*.xlsx": "xlsxViewer.xlsx",
+    "*.md": "xlsxViewer.md"
   },
+  "xlsxViewer.md.stickyToolbar": true,
+  "xlsxViewer.md.wordWrap": true,
+  "xlsxViewer.md.syncScroll": true,
+  "xlsxViewer.md.previewPosition": "right",
+  "xlsxViewer.md.moveMdButtonsToEnd": false,
+  "xlsxViewer.showPopups": true,
+  "xlsxViewer.md.showOutline": false,
+  "xlsxViewer.md.showLineNumbers": true,
 }
