@@ -227,5 +227,6 @@
   "workbench.colorTheme": "GitHub Dark",
   "cursor.composer.conversationDensity": "compact-ungrouped",
   "cursor.composer.textSizeScale": 1.15,
-  "cursor.composer.codeBlockWordWrap": true
+  "cursor.composer.codeBlockWordWrap": true,
+  "cursor.composer.editorConversationDensity": "detailed"
 }
