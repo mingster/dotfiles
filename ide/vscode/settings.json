@@ -281,5 +281,6 @@
     "true": true
   },
   "geminicodeassist.inlineSuggestions.enableAuto": false,
-  "markdownConverter.pdfFormat": "A4"
+  "markdownConverter.pdfFormat": "A4",
+  "chat.mcp.gallery.enabled": true
 }
