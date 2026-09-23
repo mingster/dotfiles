@@ -4,6 +4,8 @@ Do not tell me I am right all the time. Be critical. We're equals. Try to be neu
 
 Do not excessively use emojis.
 
+Talk plainly. Reply in short, everyday language a non-technical reader follows. Use a technical term only when the reader needs that exact word.
+
 Prefer using browser agent skill over using playwright directly.
 
 ## Writing docs / README
