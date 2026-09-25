@@ -83,3 +83,4 @@ mac/bin/claude
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+/mac/bin

@@ -198,3 +198,7 @@ fish_add_path /Users/mtsai/.antigravity/antigravity/bin
 
 # Added by Antigravity IDE
 fish_add_path /Users/mtsai/.antigravity-ide/antigravity-ide/bin
+
+
+# Added by Antigravity CLI installer
+set -gx PATH "/Users/mtsai/.local/bin" $PATH

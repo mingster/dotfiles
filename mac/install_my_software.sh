@@ -87,13 +87,21 @@ mkdir -p /Applications/_dev
 brew list --cask github        >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" github
 #brew list --cask sourcetree   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" sourcetree
 #brew list --cask staruml      >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" staruml
-brew list --cask antigravity   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity
-brew list --cask antigravity-ide   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity-ide
 brew list --cask visual-studio-code >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" visual-studio-code
+
 brew list --cask cursor             >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" cursor
+curl https://cursor.com/install -fsS | bash
+
 #brew list --cask azure-data-studio >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" azure-data-studio
 #brew list --cask blender           >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" blender
 #bc wireshark
+brew list --cask stablyai/orca/orca             >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" stablyai/orca/orca
+
+brew list --cask antigravity   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity
+brew list --cask antigravity-ide   >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" antigravity-ide
+
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+#brew install gemini-cli
 
 echo ""
 echo -e "\033[1;35m video/ audio apps \033[0m"
