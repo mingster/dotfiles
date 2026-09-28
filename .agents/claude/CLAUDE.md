@@ -14,7 +14,7 @@ Never use dashes (— or -) as punctuation in documentation or README files. Rep
 
 ## Coding Standards
 
-When working with Laravel/PHP projects, always use the php-guidelines-from-spatie skill.
+When working with Laravel/PHP projects, follow `~/.claude/laravel-php-guidelines.md` and the `laravel-inertia-react-structure` skill.
 
 ## Spreadsheet Files
 
@@ -68,7 +68,7 @@ If you reach stage 2 in a repo where `docs/agents/issue-tracker.md` does not exi
 
 Prefer the script. Fall back to the skill when it does not fit.
 
-Related skills, invoked on demand rather than as part of the loop: `/grilling` (stress test an idea with no doc output), `/research` (gather context first), `/triage` (move issues through the triage state machine), `/retro` (review how a session went and feed it back into these instructions).
+Related skills, invoked on demand rather than as part of the loop: `/grilling` (stress test an idea with no doc output), `/research` (gather context first), `/diagnosing-bugs` (hard bugs and regressions), `/resolving-merge-conflicts`.
 
 ## 1. Think Before Coding
 

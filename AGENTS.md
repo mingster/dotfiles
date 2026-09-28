@@ -44,7 +44,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 |------|-----------|---------------------|
 | Agent skills (shared tree, read by all IDEs) | `~/.agents` | `~/dotfiles/.agents` |
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
-| Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (synced from `~/projects/riben.life/web/.cursor/rules`) |
+| Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (generic only; project rules live in each repo) |
 | Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-user.sh`) |
 | Cursor hooks (global) | `~/.cursor/hooks.json`, `~/.cursor/hooks/*.sh` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-hooks.sh`) |
 | VS Code User settings | macOS: `…/Code/User/` Linux: `…/Code - OSS/User/` | `~/dotfiles/ide/vscode/` (via `script/setup-vscode.sh`) |

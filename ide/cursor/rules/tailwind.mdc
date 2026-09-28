@@ -1,9 +1,0 @@
----
-description: Tailwind CSS v4
-globs: "**/*.{tsx,ts,css}"
-alwaysApply: false
----
-
-# Tailwind v4
-
-`@import "tailwindcss";` + `@theme` in CSS. Vars: `bg-(--token)`. Renames: `shadow-sm`→`shadow-xs`, opacity via `/50`. Config: `@tailwindcss/postcss`. See Tailwind v4 docs for container queries (`@sm:`).

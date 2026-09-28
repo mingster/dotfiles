@@ -7,7 +7,7 @@ alwaysApply: false
 # Cursor rules
 
 - One topic per file: `.cursor/rules/<kebab-case>.mdc` with frontmatter `description`, `globs`, `alwaysApply`.
-- Prefer glob-scoped rules with `alwaysApply: false`. Keep always-on rules short; repo-wide conventions belong in `AGENTS.md`.
+- Prefer glob-scoped rules with `alwaysApply: false`. Keep always-on rules short; repo-wide conventions belong in the repo's `AGENTS.md`.
 - Do not repeat `AGENTS.md` or another rule; link to it.
-- Learned facts that are not a coding rule go in `docs/agents/learned.md`; personal preferences stay out of the repo.
-- Update the index in `.cursor/rules/README.md` when adding, renaming or deleting a rule.
+- Personal preferences stay out of repos; they live in dotfiles.
+- Keep `.cursor/rules/README.md` as the index when a repo has one.

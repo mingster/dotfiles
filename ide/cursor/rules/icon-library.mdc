@@ -1,9 +1,0 @@
----
-description: Tabler icons
-globs: "**/*.{tsx,ts}"
-alwaysApply: false
----
-
-# Icons
-
-Primary: `@tabler/icons-react` (`IconPlus`, etc.). Fallback: `lucide-react` only if missing. No icon size/margin inside shadcn `Button`.

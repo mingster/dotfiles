@@ -6,6 +6,7 @@ alwaysApply: true
 # Git and GitHub
 
 - Commit, push or pull only when asked. Never commit secrets.
-- Short imperative commit subject (under about 50 characters).
-- GitHub work uses the `gh` CLI; conventions in `docs/agents/issue-tracker.md`, labels in `docs/agents/triage-labels.md`.
-- A shipped change adds its entry to `CHANGELOG.md` (a PR hook checks this; `.cursor/changelog-hook.json`).
+- Short imperative commit subject, under about 50 characters.
+- GitHub work goes through the `gh` CLI. If the repo has `docs/agents/issue-tracker.md`, follow it.
+- PRs and issues never mention Claude Code and have no "Test plan" section.
+- If the repo has `.cursor/changelog-hook.json`, add the change to its changelog before opening a PR.

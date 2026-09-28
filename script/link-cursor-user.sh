@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Symlink Cursor User settings + keybindings to ~/dotfiles/ide/cursor/* (same layout as VS Code).
-# Standard content is maintained in dotfiles (synced from riben.life web stack — see cursor/rules/README.md).
+# Standard content is maintained in dotfiles (see ide/cursor/rules/README.md).
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"

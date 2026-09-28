@@ -1,9 +1,0 @@
----
-description: Zod v4 validation
-globs: "**/*.validation.ts,**/actions/**"
-alwaysApply: false
----
-
-# Zod v4
-
-`import { z } from "zod"`. Use `z.object`, `z.coerce.*`, `.min()/.max()/.default()`. Types: `z.infer<typeof schema>`. Refactor legacy Zod patterns to v4 before extending. Colocate with actions as `*.validation.ts`.
