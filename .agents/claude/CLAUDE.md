@@ -42,8 +42,9 @@ Default path for any non-trivial feature, refactor, or bug. Run the stages in or
 
 | Stage | Skill | What it does |
 |-------|-------|--------------|
+| 0. Intent | `/capture-intent` | For a new feature or a change in product behaviour: write the problem and outcome as `intent.md` in my words, and wait for my accept. Skip for bugs, refactors and chores. |
 | 1. Grill | `/grill-with-docs` | Interview me one question at a time to surface edge cases and align the design with the codebase, before writing any code. Produces ADRs and a glossary as a side effect. |
-| 2. Spec | `/to-spec` | Synthesize the agreed plan into a spec on the issue tracker. No second interview, just what we already settled. |
+| 2. Spec | `/write-spec` or `/to-spec` | When the repo has `docs/SDLC.md`, write `spec.md` next to the accepted intent (`/write-spec`); otherwise synthesize the agreed plan into a spec on the issue tracker (`/to-spec`). No second interview, just what we already settled. |
 | 3. Tickets | `/to-tickets` | Break the spec into tracer bullet vertical slices, each small enough to implement inside a fresh context window, with blocking edges declared. |
 | 4. Implement | `/tdd` | Strict red, green, refactor. One failing test first, then the minimum code that passes it. |
 | 5. Review | `/code-review` | Check the diff against this repo's coding standards and against the originating spec, in parallel sub-agents. |
@@ -108,3 +109,11 @@ For multi-step work, state the plan with one verification check per step, then r
 ## Cursor Rules
 
 When working in a workspace that contains a `.cursor/rules` directory, always search or view the files in that directory (e.g. using `list_dir` or reading `.cursor/rules/README.md`) to find relevant `.mdc` files. Follow all constraints and guidelines defined in those rule files for the specific files/patterns you are editing.
+
+## Personal tooling
+
+- Browser for agent UI work: Google Chrome Dev (`/Applications/Google Chrome Dev.app`) over CDP `127.0.0.1:9223` with profile `~/.cursor/chrome-dev-agent-profile` (`agent-browser --cdp 9223`). Not Cursor Simple Browser, not stable Chrome on 9222 (Antigravity).
+- Mnemoverse memory, when its MCP tools are available: `memory_read` at task start, `memory_write` for durable facts, one concise fact each, never secrets.
+- `create-pr`: commit everything (`git add -A`, unstage only secrets and `.cursor/hooks/state`), push, then open the PR.
+- PR changelog gate: `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh`, configured per repo in `.cursor/changelog-hook.json` (riben.life gates on `CHANGELOG.md`).
+- Quick notes go to `~/.claude/notes/`; contribute a note to shared agent docs with `~/dotfiles/script/contribute-to-agents.sh <topic> "note"`.
