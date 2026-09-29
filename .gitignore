@@ -84,3 +84,4 @@ mac/bin/claude
 **/*.pyc
 **/*.pyo
 /mac/bin
+.agents/skills/synced/
