@@ -27,6 +27,15 @@
       "skillFolderHash": "b0cd1d58b0c317cf7c3726fef7e6b1197c405246",
       "installedAt": "2026-09-28T16:33:09.348Z",
       "updatedAt": "2026-09-28T16:33:09.348Z"
+    },
+    "orca-per-workspace-env": {
+      "source": "stablyai/orca",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/stablyai/orca.git",
+      "skillPath": "skills/orca-per-workspace-env/SKILL.md",
+      "skillFolderHash": "58dfb5dc3ad287a6a42625f9d15c7c0c3dfd02ec",
+      "installedAt": "2026-10-01T12:08:44.106Z",
+      "updatedAt": "2026-10-01T12:08:44.106Z"
     }
   },
   "dismissed": {
