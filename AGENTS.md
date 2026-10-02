@@ -178,3 +178,5 @@ The five canonical triage roles, label strings unchanged. See `docs/agents/triag
 ### Domain docs
 
 Single context: `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Imported Claude Cowork project instructions
