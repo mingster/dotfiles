@@ -123,11 +123,16 @@ If there is nothing to commit after build passes, skip to step 6 (push + PR from
 ## Summary
 - <1–3 bullets: what changed and why>
 
-## Test plan
-- [ ] <concrete check the reviewer can run>
-```
+## Spec Traceability
+- Addresses: <Issue # or Spec section>
+- Contract satisfied: <brief note on scope boundary and key criteria met>
 
-Mention in test plan that `bun run build` passed locally before commit.
+## Review Checklist
+- [ ] Standards checked: Conforms to repo conventions, tenancy scoping, BigInt epochs, SafeActions
+- [ ] Spec traceability verified: No scope creep; exact requirements met
+- [ ] Blast radius assessed: Low/Medium/High (Reversibility noted)
+- [ ] Build & tests passed: `bun run build` and tests verified
+```
 
 ## 7. Verify changelog gate (product PRs)
 

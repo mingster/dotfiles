@@ -76,8 +76,14 @@ Do NOT close or modify any parent issue.
 
 **Status:** ready-for-agent
 
+### Acceptance criteria
 - [ ] Acceptance criterion 1
 - [ ] Acceptance criterion 2
+
+### Machine-checkable contract
+- **Allowed files / scope boundaries:** Exact files or directories the worker is permitted to edit (e.g. `web/src/actions/foo/*`, `web/src/lib/foo/*`).
+- **Verification command:** Exact test or check command that must pass (e.g. `bun test --isolate <test-path>`, `bun run lint`).
+- **Blast radius & reversibility:** Low/Medium/High; rollback plan if applicable.
 
 </local-ticket-template>
 
@@ -95,6 +101,12 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 
 - [ ] Criterion 1
 - [ ] Criterion 2
+
+## Machine-checkable contract
+
+- **Allowed files / scope boundaries:** Exact files or directories the worker is permitted to edit.
+- **Verification command:** Exact test or check command that must pass.
+- **Blast radius & reversibility:** Low/Medium/High.
 
 ## Blocked by
 
