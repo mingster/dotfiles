@@ -110,6 +110,13 @@ For multi-step work, state the plan with one verification check per step, then r
 
 When working in a workspace that contains a `.cursor/rules` directory, always search or view the files in that directory (e.g. using `list_dir` or reading `.cursor/rules/README.md`) to find relevant `.mdc` files. Follow all constraints and guidelines defined in those rule files for the specific files/patterns you are editing.
 
+## 5. FinOps & Anti-Loop Safeguards (Lean Startup SDLC)
+
+- **Three-Strike Hard Stop**: If fixing the same bug, type error, or test failure reaches 3 attempts, immediately halt (Hard Stop). Write error logs and tried solutions to `active_run.md` (or `progress.md`) under `[Blockers]`. Await human input. Never make blind guesses.
+- **Cost Gate (3 Turns)**: Any autonomous subagent or execution loop has a hard threshold of **3 turns** maximum before taking a progress snapshot in `active_run.md` and confirming with the owner to continue.
+- **State Artifacts**: Maintain context and progress via `product_backlog.md` (atomic living specs) and `active_run.md` (session execution, strike counts, blockers, staged files). Reference `docs/agents/lean-startup-sdlc.md`.
+- **Zero-Env Disclosure**: Never write `.env` secrets or keys into markdown artifacts or logs; use `[Omitted/Configured via Env]`.
+
 ## Personal tooling
 
 - Browser for agent UI work: Google Chrome Dev (`/Applications/Google Chrome Dev.app`) over CDP `127.0.0.1:9223` with profile `~/.cursor/chrome-dev-agent-profile` (`agent-browser --cdp 9223`). Not Cursor Simple Browser, not stable Chrome on 9222 (Antigravity).
@@ -117,3 +124,4 @@ When working in a workspace that contains a `.cursor/rules` directory, always se
 - `create-pr`: commit everything (`git add -A`, unstage only secrets and `.cursor/hooks/state`), push, then open the PR.
 - PR changelog gate: `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh`, configured per repo in `.cursor/changelog-hook.json` (riben.life gates on `CHANGELOG.md`).
 - Quick notes go to `~/.claude/notes/`; contribute a note to shared agent docs with `~/dotfiles/script/contribute-to-agents.sh <topic> "note"`.
+

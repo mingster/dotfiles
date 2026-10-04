@@ -48,8 +48,16 @@ Updated dynamically after each turn or command execution. Prevents amnesia acros
 - *Discovery*: Found that `getUtcNowEpoch()` must be used instead of `Date.now()`.
 - *Decision*: Kept existing DB schema intact; handled transformation in application layer.
 
-## Known Blockers & Strike Tracker
-- Strike Count: 1/3 (First failure analyzed; root cause identified as stale mock module).
+## Known Blockers & Strike Tracker (Three-Strike Rule)
+- Strike Count: 2/3 (Second failure analyzed).
+- **Blockers Log**:
+  - *Error*: `AssertionError: expected true to be false` at `path/to/test.ts:42`
+  - *Attempted*: 1) Updated mock return type; 2) Adjusted input params.
+  - *Hard Stop*: At strike 3, halt execution immediately and record full error context. Never guess blindly.
+
+## FinOps Cost Gate (3-Turn Checkpoint)
+- **Turn Count**: 2/3
+- *Rule*: After 3 autonomous turns/steps, snapshot state to `active_run.md` (or `progress.md`) and confirm with the owner before continuing.
 
 ## Next Immediate Action
 - Update fake module return value to match schema in `path/to/fake.ts` and re-run test.
@@ -57,8 +65,16 @@ Updated dynamically after each turn or command execution. Prevents amnesia acros
 
 ---
 
-## 3. Why This Prevents Amnesia & Hallucination
+## 3. Compatibility with Lean Startup SDLC (`active_run.md` & `product_backlog.md`)
 
-1. **Context Compaction Resilience**: When the LLM context window is compacted or reset, the agent re-reads `task_plan.md` and `progress.md` in turn 1 to resume instantly with zero memory drift.
+- `progress.md` serves as the detailed execution ledger for `task_plan.md`. For fast-path or lean startup runs, `active_run.md` and `product_backlog.md` (`docs/agents/lean-startup-sdlc.md`) may be used as the equivalent dynamic state artifacts.
+- Both formats enforce **Zero-Env Disclosure**: never record `.env` secrets or keys into markdown artifacts; use `[Omitted/Configured via Env]`.
+
+---
+
+## 4. Why This Prevents Amnesia & Hallucination
+
+1. **Context Compaction Resilience**: When the LLM context window is compacted or reset, the agent re-reads `task_plan.md` and `progress.md` (or `active_run.md`) in turn 1 to resume instantly with zero memory drift.
 2. **Anchor Against Scope Creep**: Reading `task_plan.md` before every tool call forces the agent to stay within the allowlisted files.
-3. **Loop Breaker**: Tracking strikes and discoveries in `progress.md` prevents the model from attempting the same failing approach repeatedly.
+3. **Loop Breaker & FinOps Gate**: Tracking strikes and turns prevents the model from attempting the same failing approach repeatedly or burning tokens uncontrollably.
+
