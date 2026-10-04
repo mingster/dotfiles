@@ -87,5 +87,10 @@ if [ -f "$TEMPLATES/.agents/skills/crew/SKILL.md" ]; then
   fi
 fi
 
+# 5. Install persistent memory protocol
+if [ -f "$TEMPLATES/docs/agents/persistent-memory-protocol.md" ]; then
+  copy_file "$TEMPLATES/docs/agents/persistent-memory-protocol.md" "$TARGET_DIR/docs/agents/persistent-memory-protocol.md"
+fi
+
 echo "Agent team successfully adopted for $PROJECT_NAME!"
 echo "Run /tl or /crew <objective> in $TARGET_DIR to begin."

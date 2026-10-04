@@ -28,6 +28,7 @@ If the objective is a bug fix, chore, or small task touching <= 3 files, **do NO
 
 ## Step 3. Isolated execution (workers)
 
+- **Persistent Memory Layer**: Before modifying code, initialize `task_plan.md` in your worktree root (specifying target scope, allowlisted files, verification commands, and tracer bullet steps). After each step or test run, update `progress.md` (recording current step, test outcome, strike count, and findings). This prevents context amnesia across compaction rounds. See `docs/agents/persistent-memory-protocol.md`.
 - Edit only files on your allow list. If you need another file, message the lead and wait; do not edit it.
 - Follow `AGENTS.md`. For app changes, run `bun run lint` and the relevant `bun run test` in `web/`. For documentation-only changes, check links, role/branch references and `git diff --check`; do not run an app build.
 - Follow the Token budget section of `AGENTS.md`, including two strikes on a failing test.

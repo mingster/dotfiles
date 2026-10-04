@@ -134,7 +134,23 @@ Every code change must pass two independent axes before merge:
 
 ---
 
-## 5. Token Efficiency & Performance Rules
+## 5. Persistent Memory Layer (`task_plan.md` & `progress.md`)
+
+To prevent LLM amnesia, context drift, or hallucinations during multi-step automated execution, every worker session and crew lane maintains two lightweight, persistent files:
+
+1. **`task_plan.md` (Static Contract & Roadmap)**:
+   - Written *before* modifying code.
+   - Declares the objective, allowed file whitelist, verification command (`bun test --isolate <path>`), and tracer-bullet steps.
+2. **`progress.md` (Dynamic State Ledger)**:
+   - Updated after each meaningful step or test run.
+   - Records current status, discoveries, test outputs, decisions made, and strike counts.
+   - *Compaction Resilience*: When context is compressed or a subagent restarts, reading these two files restores exact state in 1 turn with zero drift.
+
+See full template and examples at `docs/agents/persistent-memory-protocol.md`.
+
+---
+
+## 6. Token Efficiency & Performance Rules
 
 1. **Default Model**: Sonnet with `medium` effort for execution, coordination, QA, and operations. Reserve `high` effort strictly for complex multi-domain architecture (`architect-pm`) or security/financial audits (`secops-finops`).
 2. **On-Demand Memory**: Never load `learned.md` or `experiences/` blindly at session start. Grep on-demand only when tackling known domain gotchas.
