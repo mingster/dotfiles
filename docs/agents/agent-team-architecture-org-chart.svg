@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 905.471 713.5" width="905.471" height="713.5" style="--bg:#FFFFFF;--fg:#3B3B3B;--line:#3B3B3B;--accent:#005FB8;--muted:#3B3B3BCC;--surface:#F8F8F8;--border:#3B3B3B;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<g class="subgraph" data-id="Direct_Reports" data-label="CEO 3 Direct Reports">
+  <rect x="177.516375" y="215.8" width="518.95775" height="283.90000000000003" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="177.516375" y="215.8" width="518.95775" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="189.516375" y="229.8" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">CEO 3 Direct Reports</text>
+</g>
+<g class="subgraph" data-id="Tech_Specialists" data-label="Technical Execution Subtree (Orchestrated by Tech Lead)">
+  <rect x="40" y="559.7" width="825.471" height="113.80000000000001" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="40" y="559.7" width="825.471" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="52" y="573.7" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Technical Execution Subtree (Orchestrated by Tech Lead)</text>
+</g>
+<polyline class="edge" data-from="Board" data-to="CEO" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,76.9 462.61562499999997,124.9" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="Sales" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 280.810875,210.8 280.810875,259.8" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="BA" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 515.262875,210.8 515.262875,259.8" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="TL" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 579.841625,210.8 579.841625,429.90000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="TL" data-to="Dev" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 148.4815,543.7 148.4815,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="TL" data-to="QA" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 367.74299999999994,543.7 367.74299999999994,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="TL" data-to="SecOps" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 586.2634999999999,543.7 586.2634999999999,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="TL" data-to="RM" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 777.7375,543.7 777.7375,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="BA" data-to="TL" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Machine-Checkable Ticket Contracts (tickets.md)" points="515.262875,313.6 515.262875,393.90000000000003 546.2974583333333,393.90000000000003 546.2974583333333,429.90000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="BA" data-to="TL" data-label="Machine-Checkable Ticket Contracts (tickets.md)">
+  <rect x="391.76287499999995" y="356.6" width="246.34" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="514.932875" y="371.75" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Machine-Checkable Ticket Contracts (tickets.md)</text>
+</g>
+<g class="node" data-id="Board" data-label="Mingster (Human Owner / Board)" data-shape="rectangle">
+  <rect x="347.533625" y="40" width="230.164" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="462.61562499999997" y="58.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Mingster (Human Owner / Board)</text>
+</g>
+<g class="node" data-id="CEO" data-label="Elon (CEO / Top-Level Orchestrator)" data-shape="rectangle">
+  <rect x="335.677625" y="124.9" width="253.87599999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="462.61562499999997" y="143.35000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Elon (CEO / Top-Level Orchestrator)</text>
+</g>
+<g class="node" data-id="Sales" data-label="sales-marketing
+(Commercial &amp; Metrics)" data-shape="rectangle">
+  <rect x="193.516375" y="259.8" width="174.58900000000003" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="280.810875" y="286.7" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="280.810875" dy="-3.9000000000000012">sales-marketing</tspan><tspan x="280.810875" dy="16.900000000000002">(Commercial &amp; Metrics)</tspan></text>
+</g>
+<g class="node" data-id="BA" data-label="architect-pm
+(需求分析師兼產品架構師 / BA)" data-shape="rectangle">
+  <rect x="396.10537500000004" y="259.8" width="238.31499999999997" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="515.262875" y="286.7" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="515.262875" dy="-3.9000000000000012">architect-pm</tspan><tspan x="515.262875" dy="16.900000000000002">(需求分析師兼產品架構師 / BA)</tspan></text>
+</g>
+<g class="node" data-id="TL" data-label="Tech Lead
+(Engineering Orchestrator)" data-shape="rectangle">
+  <rect x="479.209125" y="429.90000000000003" width="201.265" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="579.841625" y="456.8" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="579.841625" dy="-3.9000000000000012">Tech Lead</tspan><tspan x="579.841625" dy="16.900000000000002">(Engineering Orchestrator)</tspan></text>
+</g>
+<g class="node" data-id="Dev" data-label="fullstack-dev / junior-dev
+(TDD Implementation)" data-shape="rectangle">
+  <rect x="56" y="603.7" width="184.96300000000002" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="148.4815" y="630.6" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="148.4815" dy="-3.9000000000000012">fullstack-dev / junior-dev</tspan><tspan x="148.4815" dy="16.900000000000002">(TDD Implementation)</tspan></text>
+</g>
+<g class="node" data-id="QA" data-label="qa-sdet
+(Dual-Axis Review &amp; Tests)" data-shape="rectangle">
+  <rect x="268.96299999999997" y="603.7" width="197.55999999999997" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="367.74299999999994" y="630.6" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="367.74299999999994" dy="-3.9000000000000012">qa-sdet</tspan><tspan x="367.74299999999994" dy="16.900000000000002">(Dual-Axis Review &amp; Tests)</tspan></text>
+</g>
+<g class="node" data-id="SecOps" data-label="secops-finops
+(Security &amp; Auth Review)" data-shape="rectangle">
+  <rect x="494.52299999999997" y="603.7" width="183.48099999999997" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="586.2634999999999" y="630.6" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="586.2634999999999" dy="-3.9000000000000012">secops-finops</tspan><tspan x="586.2634999999999" dy="16.900000000000002">(Security &amp; Auth Review)</tspan></text>
+</g>
+<g class="node" data-id="RM" data-label="release-manager
+(Deploy Pipeline)" data-shape="rectangle">
+  <rect x="706.0039999999999" y="603.7" width="143.467" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="777.7375" y="630.6" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="777.7375" dy="-3.9000000000000012">release-manager</tspan><tspan x="777.7375" dy="16.900000000000002">(Deploy Pipeline)</tspan></text>
+</g>
+</svg>

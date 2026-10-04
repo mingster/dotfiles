@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 794.0249999999999 565.2" width="794.0249999999999" height="565.2" style="--bg:#FFFFFF;--fg:#3B3B3B;--line:#3B3B3B;--accent:#005FB8;--muted:#3B3B3BCC;--surface:#F8F8F8;--border:#3B3B3B;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<g class="subgraph" data-id="Orca_ADE" data-label="Orca ADE Environment">
+  <rect x="236.29049999999998" y="224.7" width="321.4439999999999" height="300.5" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="236.29049999999998" y="224.7" width="321.4439999999999" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="248.29049999999998" y="238.7" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Orca ADE Environment</text>
+</g>
+<g class="subgraph" data-id="Providers" data-label="Supported Model Providers &amp; Harnesses">
+  <rect x="40" y="40" width="714.0249999999999" height="130.7" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="40" y="40" width="714.0249999999999" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="52" y="54" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Supported Model Providers &amp; Harnesses</text>
+</g>
+<polyline class="edge" data-from="Providers" data-to="Orchestration" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="397.01249999999993,170.7 397.01249999999993,268.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="Orchestration" data-to="Worktrees" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="397.01249999999993,322.5 397.01249999999993,370.5" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="Worktrees" data-to="Diffs" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="397.01249999999993,424.3 397.01249999999993,472.3" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="node" data-id="Orchestration" data-label="Team Orchestration Engine
+(CEO: Elon -&gt; BA, Sales, Tech Lead)" data-shape="rectangle">
+  <rect x="271.92699999999996" y="268.7" width="250.17099999999994" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="397.01249999999993" y="295.59999999999997" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="397.01249999999993" dy="-3.9000000000000012">Team Orchestration Engine</tspan><tspan x="397.01249999999993" dy="16.900000000000002">(CEO: Elon -&gt; BA, Sales, Tech Lead)</tspan></text>
+</g>
+<g class="node" data-id="Worktrees" data-label="Orca Workspace Worktrees
+(~/orca/workspaces/&lt;project&gt;/&lt;lane&gt;)" data-shape="rectangle">
+  <rect x="261.92349999999993" y="370.5" width="270.178" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="397.01249999999993" y="397.4" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="397.01249999999993" dy="-3.9000000000000012">Orca Workspace Worktrees</tspan><tspan x="397.01249999999993" dy="16.900000000000002">(~/orca/workspaces/&lt;project&gt;/&lt;lane&gt;)</tspan></text>
+</g>
+<g class="node" data-id="Diffs" data-label="Orca Built-in Side-by-Side Diffs &amp; Terminals" data-shape="rectangle">
+  <rect x="252.29049999999998" y="472.3" width="289.4439999999999" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="397.01249999999993" y="490.75" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Orca Built-in Side-by-Side Diffs &amp; Terminals</text>
+</g>
+<g class="node" data-id="Claude" data-label="Anthropic Claude Code
+(Sonnet 3.7 / 3.5)
+via .claude/agents/*.md" data-shape="rectangle">
+  <rect x="299.34399999999994" y="84" width="179.03499999999997" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="388.8614999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="388.8614999999999" dy="-12.350000000000001">Anthropic Claude Code</tspan><tspan x="388.8614999999999" dy="16.900000000000002">(Sonnet 3.7 / 3.5)</tspan><tspan x="388.8614999999999" dy="16.900000000000002">via .claude/agents/*.md</tspan></text>
+</g>
+<g class="node" data-id="Codex" data-label="OpenAI / Cursor Codex
+(o3-mini / GPT-4o / GPT-5-Codex)
+via .agents/skills/ &amp; rules" data-shape="rectangle">
+  <rect x="506.3789999999999" y="84" width="231.64599999999996" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="622.2019999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="622.2019999999999" dy="-12.350000000000001">OpenAI / Cursor Codex</tspan><tspan x="622.2019999999999" dy="16.900000000000002">(o3-mini / GPT-4o / GPT-5-Codex)</tspan><tspan x="622.2019999999999" dy="16.900000000000002">via .agents/skills/ &amp; rules</tspan></text>
+</g>
+<g class="node" data-id="Antigravity" data-label="Google Antigravity
+(Gemini 2.5 Pro / Flash)
+via AGENTS.md &amp; native skills" data-shape="rectangle">
+  <rect x="56" y="84" width="215.34399999999994" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="163.67199999999997" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="163.67199999999997" dy="-12.350000000000001">Google Antigravity</tspan><tspan x="163.67199999999997" dy="16.900000000000002">(Gemini 2.5 Pro / Flash)</tspan><tspan x="163.67199999999997" dy="16.900000000000002">via AGENTS.md &amp; native skills</tspan></text>
+</g>
+</svg>
