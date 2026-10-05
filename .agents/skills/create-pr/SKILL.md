@@ -57,7 +57,9 @@ Skip only for deps-only or chore-only PRs when the user explicitly says to skip.
 
 ### 4a. CHANGELOG.md (repo root)
 
-Prepend an entry to `CHANGELOG.md` (create if missing). Keep a Changelog format:
+If the repo has a `changelog.d/` directory (changelog fragments), do not edit `CHANGELOG.md`. Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the entry line(s) in the repo's CHANGELOG format, then skip to 4b. The release step compiles fragments with `bin/changelog-compile.sh`.
+
+Otherwise prepend an entry to `CHANGELOG.md` (create if missing). Keep a Changelog format:
 
 ```markdown
 ## [Unreleased] — YYYY-MM-DD
@@ -92,7 +94,7 @@ A Cursor hook (`ensure-changelog-before-pr.sh`) **denies** `gh pr create` when s
 
 ## 5. Commit all
 
-**Always `git add -A` then commit.** Include every file in the worktree that belongs in the PR — **including `CHANGELOG.md` and the vault HOME.md Recent Changes line**. Do not selectively stage “just some” feature files unless the user explicitly names paths to exclude.
+**Always `git add -A` then commit.** Include every file in the worktree that belongs in the PR — **including `CHANGELOG.md` (or the new `changelog.d/` fragment when the repo uses fragments) and the vault HOME.md Recent Changes line**. Do not selectively stage “just some” feature files unless the user explicitly names paths to exclude.
 
 **Exclude from the commit** (unstage if `git add -A` picked them up) unless the user explicitly requests otherwise:
 
@@ -180,7 +182,7 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 |----|--------|
 | Detect `pstv_web/` or `web/`; run `bun run build` from that dir | Commit when build fails — not even "just this once" |
 | Fix all compile errors before committing | Skip or bypass the build step |
-| Commit CHANGELOG.md + vault HOME.md Recent Changes before push | Skip changelog without explicit user consent |
+| Commit CHANGELOG.md (or the changelog.d fragment) + vault HOME.md Recent Changes before push | Skip changelog without explicit user consent |
 | Verify hook dry-run returns `allow` before `gh pr create` | Chain `git push && gh pr create` in one command |
 | Use `prepend-recent-change.ts` for vault Recent Changes | Hand-edit HOME.md when the helper works |
 | Always `git add -A` (then unstage secrets only), commit, push + PR | Open a PR with uncommitted work left out; selective staging without user ask |

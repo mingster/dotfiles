@@ -121,6 +121,6 @@ When working in a workspace that contains a `.cursor/rules` directory, always se
 - Browser for agent UI work: Google Chrome Dev (`/Applications/Google Chrome Dev.app`) over CDP `127.0.0.1:9223` with profile `~/.cursor/chrome-dev-agent-profile` (`agent-browser --cdp 9223`). Not Cursor Simple Browser, not stable Chrome on 9222 (Antigravity).
 - Mnemoverse memory, when its MCP tools are available: `memory_read` at task start, `memory_write` for durable facts, one concise fact each, never secrets.
 - `create-pr`: commit everything (`git add -A`, unstage only secrets and `.cursor/hooks/state`), push, then open the PR.
-- PR changelog gate: `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh`, configured per repo in `.cursor/changelog-hook.json` (riben.life gates on `CHANGELOG.md`).
+- PR changelog gate: `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh`, configured per repo in `.cursor/changelog-hook.json` (riben.life gates on `CHANGELOG.md`). With the optional `"fragments": "changelog.d/"` key a PR passes by adding `changelog.d/<issue>-<slug>.md` instead of editing the changelog.
 - Quick notes go to `~/.claude/notes/`; contribute a note to shared agent docs with `~/dotfiles/script/contribute-to-agents.sh <topic> "note"`.
 

@@ -23,6 +23,8 @@ Blocks `gh pr create` when the branch touches **shippable** paths but the repo *
 }
 ```
 
+Optional `"fragments": "changelog.d/"`: the PR then passes when it adds a file under that directory (README.md does not count) OR edits the changelog file. When the gate blocks, the message tells the author to add `changelog.d/<issue>-<slug>.md` instead of using the prepend helper. Without the key, behaviour is unchanged.
+
 If missing, auto-detects `fileServer/docs/HOME.md`, `web/doc/HOME.md`, or `doc/HOME.md` when they contain `## Recent Changes`.
 
 ### Prepend helper

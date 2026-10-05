@@ -56,7 +56,7 @@ Load the `orchestration` skill (`orca skills get orchestration`) before dispatch
 ## Step 5. Integration (Tech Lead teammate)
 
 1. When every task has passed, create `crew/<slug>` from an up to date `main` in the current worktree (the Orca worktree when run from Orca).
-2. Merge each passing branch in dependency order. No force push, no history rewriting. `CHANGELOG.md` merges as a union on its own (`merge=union` in `.gitattributes`); any other conflict goes back to the owning worker.
+2. Merge each passing branch in dependency order. No force push, no history rewriting. Each worker branch adds its own `changelog.d/<issue>-<slug>.md` fragment, so changelog entries never conflict; any other conflict goes back to the owning worker. Do not edit `CHANGELOG.md` here, the release step compiles the fragments.
 3. Run `bun run lint` and `bun run test` on an integrated app change; use documentation checks for documentation-only changes. If integration changed code, qa-sdet audits again.
 4. Push the branch and open one PR for the objective, with validation appropriate to the changed files. Worker branches stay local.
 5. **Prune worktrees**: Immediately remove child worktrees (`git worktree remove <path>`) once integrated so orphaned directories never accumulate.
