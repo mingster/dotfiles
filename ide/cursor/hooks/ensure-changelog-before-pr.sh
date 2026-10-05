@@ -73,6 +73,7 @@ BASE="${PR_BASE_BRANCH:-main}"
 CHANGELOG_REL=""
 RECENT_HEADING="## Recent Changes"
 SHIP_PREFIXES=()
+FRAGMENTS_DIR=""
 
 load_config() {
 	if [[ ! -f "$CONFIG_PATH" ]]; then
@@ -85,6 +86,10 @@ load_config() {
 	heading="$(jq -r '.recentHeading // empty' "$CONFIG_PATH" 2>/dev/null || true)"
 	if [[ -n "$heading" ]]; then
 		RECENT_HEADING="$heading"
+	fi
+	FRAGMENTS_DIR="$(jq -r '.fragments // empty' "$CONFIG_PATH" 2>/dev/null || true)"
+	if [[ -n "$FRAGMENTS_DIR" ]]; then
+		FRAGMENTS_DIR="${FRAGMENTS_DIR%/}/"
 	fi
 	while IFS= read -r prefix; do
 		[[ -n "$prefix" ]] && SHIP_PREFIXES+=("$prefix")
@@ -152,6 +157,10 @@ while IFS= read -r file; do
 	if [[ "$file" == "$CHANGELOG_REL" ]]; then
 		has_changelog=true
 	fi
+	# A new fragment under the fragments dir counts like a changelog edit (README is never a fragment).
+	if [[ -n "$FRAGMENTS_DIR" && "$file" == "$FRAGMENTS_DIR"* && "$file" != "${FRAGMENTS_DIR}README.md" ]]; then
+		has_changelog=true
+	fi
 	if matches_prefix "$file"; then
 		needs_changelog=true
 	fi
@@ -169,6 +178,13 @@ while IFS= read -r file; do
 		fi
 	fi
 done < <(collect_changed_files)
+
+if [[ "$needs_changelog" == true && "$has_changelog" == false && -n "$FRAGMENTS_DIR" ]]; then
+	emit_deny \
+		"Add a changelog fragment under ${FRAGMENTS_DIR} before opening this PR." \
+		"Add one new file ${FRAGMENTS_DIR}<issue>-<slug>.md (or <branch-slug>.md with no issue) holding only the entry line(s) in the ${CHANGELOG_REL} format. Do not edit ${CHANGELOG_REL}. Commit, then run gh pr create again."
+	exit 2
+fi
 
 if [[ "$needs_changelog" == true && "$has_changelog" == false ]]; then
 	PREPEND="${DOTFILES:-$HOME/dotfiles}/script/prepend-recent-change.ts"

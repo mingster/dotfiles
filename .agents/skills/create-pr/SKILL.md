@@ -57,7 +57,9 @@ Skip only for deps-only or chore-only PRs when the user explicitly says to skip.
 
 ### 4a. CHANGELOG.md (repo root)
 
-Prepend an entry to `CHANGELOG.md` (create if missing). Keep a Changelog format:
+If the repo has a `changelog.d/` directory (changelog fragments), do not edit `CHANGELOG.md`. Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the entry line(s) in the repo's CHANGELOG format, then skip to 4b. The release step compiles fragments with `bin/changelog-compile.sh`.
+
+Otherwise prepend an entry to `CHANGELOG.md` (create if missing). Keep a Changelog format:
 
 ```markdown
 ## [Unreleased] — YYYY-MM-DD

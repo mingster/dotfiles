@@ -121,6 +121,16 @@ if [ "$DRY_RUN" -eq 0 ]; then
   done
 fi
 
+# 6d. Install the changelog fragments convention (compile script, its test, and the README)
+if [ "$DRY_RUN" -eq 0 ]; then
+  mkdir -p "$TARGET_DIR/bin" "$TARGET_DIR/changelog.d"
+  for f in changelog-compile.sh changelog-compile.test.sh; do
+    cp "$TEMPLATES/bin/$f" "$TARGET_DIR/bin/$f"
+    chmod +x "$TARGET_DIR/bin/$f"
+  done
+  copy_file "$TEMPLATES/changelog.d/README.md" "$TARGET_DIR/changelog.d/README.md"
+fi
+
 # 7. Token budget block that the role files point to, added only when missing
 if [ "$DRY_RUN" -eq 0 ]; then
   touch "$TARGET_DIR/AGENTS.md"

@@ -9,4 +9,4 @@ alwaysApply: true
 - Short imperative commit subject, under about 50 characters.
 - GitHub work goes through the `gh` CLI. If the repo has `docs/agents/issue-tracker.md`, follow it.
 - PRs and issues never mention Claude Code and have no "Test plan" section.
-- If the repo has `.cursor/changelog-hook.json`, add the change to its changelog before opening a PR.
+- If the repo has `.cursor/changelog-hook.json`, add the change to its changelog before opening a PR. If the config has a `"fragments"` key, add a new `<fragments dir>/<issue>-<slug>.md` file instead of editing the changelog.

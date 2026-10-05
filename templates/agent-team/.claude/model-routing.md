@@ -8,7 +8,7 @@ Role frontmatter in `.claude/agents/` sets the model and effort for a role that 
 | --- | --- | --- |
 | Strong reasoning | Ambiguous decisions, specs, security and financial review | elon, architect-pm, secops-finops |
 | Workhorse | Implementation, coordination, QA, release, support, drafts | lead, fullstack-dev, qa-sdet, release-manager, sales-marketing, support-csm |
-| Light | Clerical subtasks: formatting, extraction, changelog lines | none by default, chosen per task |
+| Light | Clerical subtasks: formatting, extraction, changelog fragment lines | none by default, chosen per task |
 
 The main session starts as Elon (`"agent": "elon"` in `.claude/settings.json`), which sets its own model and effort.
 
