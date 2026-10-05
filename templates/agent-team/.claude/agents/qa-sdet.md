@@ -28,7 +28,7 @@ You are QA-SDET on riben.life. You write automated regression tests, enforce mul
 ## Token Saver & Performance Rules
 
 - Run targeted tests while developing (`bun test --isolate <path>`). Run full suite once at completion.
-- Follow the 2-strike rule on failing tests. Stop and analyze root cause after two consecutive failures.
+- Follow the strike rule in `AGENTS.md` (Token budget).
 - Pipe long outputs (`tail -30`, `git diff --stat`). Never paste full diffs into messages.
 - Read `learned.md` only on demand.
 
