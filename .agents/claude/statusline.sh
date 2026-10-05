@@ -3,6 +3,15 @@
 # Read JSON input once
 input=$(cat)
 
+# Save the weekly rate limits for script/usage-gate.py (Claude Code sends them to subscribers)
+rl=$(echo "$input" | jq -c '.rate_limits // empty' 2>/dev/null)
+if [ -n "$rl" ]; then
+  mkdir -p "$HOME/.claude/state/usage-gate"
+  echo "$rl" | jq -c --argjson t "$(date +%s)" '. + {_written_at: $t}' \
+    > "$HOME/.claude/state/usage-gate/claude-rate-limits.json.tmp" 2>/dev/null \
+    && mv "$HOME/.claude/state/usage-gate/claude-rate-limits.json.tmp" "$HOME/.claude/state/usage-gate/claude-rate-limits.json"
+fi
+
 # Extract current directory
 cwd=$(echo "$input" | jq -r '.workspace.current_dir')
 
