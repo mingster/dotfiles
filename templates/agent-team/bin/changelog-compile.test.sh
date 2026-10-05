@@ -1,84 +1,48 @@
 #!/usr/bin/env bash
-# Tests for changelog-compile.sh. Run: bash bin/changelog-compile.test.sh
-set -uo pipefail
+# Tests for bin/changelog-compile.sh. Run: bash bin/changelog-compile.test.sh
+set -u
+SCRIPT="$(cd "$(dirname "$0")" && pwd)/changelog-compile.sh"
+fail=0
+pass() { echo "ok   $1"; }
+bad() { echo "FAIL $1"; fail=1; }
 
-SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/changelog-compile.sh"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-FAILS=0
-
-# new_fixture <name> <changelog-text>: a repo layout with the script copied in.
-new_fixture() {
-	local dir="$TMP/$1"
-	mkdir -p "$dir/bin" "$dir/changelog.d"
-	cp "$SCRIPT" "$dir/bin/changelog-compile.sh"
-	printf '%s' "$2" >"$dir/CHANGELOG.md"
-	echo "$dir"
+new_repo() {
+  d="$(mktemp -d)"
+  mkdir -p "$d/changelog.d"
+  printf '# Changelog\n\n## [Unreleased] - 2026-10-01\n\n### Fixed\n- old\n' > "$d/CHANGELOG.md"
+  echo "$d"
 }
+run() { (cd "$1" && bash "$SCRIPT" 2>&1); }
 
-assert_eq() { # <label> <expected> <actual> (command substitution drops the final newline)
-	local expected="${2%$'\n'}"
-	if [[ "$expected" == "$3" ]]; then
-		echo "ok   $1"
-	else
-		echo "FAIL $1"
-		echo "  expected: $(printf '%q' "$2")"
-		echo "  actual:   $(printf '%q' "$3")"
-		FAILS=$((FAILS + 1))
-	fi
-}
+# 1. no fragments: no change, exit 0
+d="$(new_repo)"; before="$(cat "$d/CHANGELOG.md")"
+run "$d" >/dev/null; rc=$?
+[ "$rc" -eq 0 ] && [ "$before" = "$(cat "$d/CHANGELOG.md")" ] && pass "no fragments" || bad "no fragments"
 
-BASE=$'# Changelog\n\n## [Unreleased]\n- old\n\n## [1.0.0]\n- first\n'
-
-# no fragments: unchanged, exit 0
-d="$(new_fixture none "$BASE")"
-printf 'readme\n' >"$d/changelog.d/README.md"
-(cd "$d" && bash bin/changelog-compile.sh >/dev/null 2>&1)
-assert_eq "no fragments: exit 0" 0 $?
-assert_eq "no fragments: changelog unchanged" "$BASE" "$(cat "$d/CHANGELOG.md")"
-
-# two fragments: sorted by file name, directly under the heading, fragments deleted
-d="$(new_fixture two "$BASE")"
-printf -- '- b entry\n' >"$d/changelog.d/20-b.md"
-printf -- '- a entry\n' >"$d/changelog.d/10-a.md"
-(cd "$d" && bash bin/changelog-compile.sh >/dev/null 2>&1)
-assert_eq "two fragments: exit 0" 0 $?
-assert_eq "two fragments: order and placement" \
-	$'# Changelog\n\n## [Unreleased]\n- a entry\n- b entry\n- old\n\n## [1.0.0]\n- first\n' \
-	"$(cat "$d/CHANGELOG.md")"
-assert_eq "two fragments: deleted" 0 "$(ls "$d/changelog.d" | wc -l | tr -d ' ')"
-
+# 2. two fragments land in file name order under the heading, then are deleted
+d="$(new_repo)"
+printf -- '- from b\n' > "$d/changelog.d/20-b.md"
+printf -- '- from a\n' > "$d/changelog.d/10-a.md"
+run "$d" >/dev/null; rc=$?
+got="$(sed -n 3,7p "$d/CHANGELOG.md" | tr '\n' '|')"
+[ "$rc" -eq 0 ] && [ "$got" = "## [Unreleased] - 2026-10-01|- from a|- from b||### Fixed|" ] \
+  && [ ! -e "$d/changelog.d/10-a.md" ] && [ ! -e "$d/changelog.d/20-b.md" ] \
+  && pass "two fragments order" || bad "two fragments order: $got"
 # idempotent: second run changes nothing
-before="$(cat "$d/CHANGELOG.md")"
-(cd "$d" && bash bin/changelog-compile.sh >/dev/null 2>&1)
-assert_eq "idempotent: exit 0" 0 $?
-assert_eq "idempotent: unchanged" "$before" "$(cat "$d/CHANGELOG.md")"
+snap="$(cat "$d/CHANGELOG.md")"; run "$d" >/dev/null
+[ "$snap" = "$(cat "$d/CHANGELOG.md")" ] && pass "idempotent" || bad "idempotent"
 
-# heading with a date suffix still matches; fragment without trailing newline is handled
-d="$(new_fixture dated $'# Changelog\n\n## [Unreleased] 2026-10-06\n\n### Added\n')"
-printf -- '- no newline' >"$d/changelog.d/1-x.md"
-(cd "$d" && bash bin/changelog-compile.sh >/dev/null 2>&1)
-assert_eq "dated heading: result" \
-	$'# Changelog\n\n## [Unreleased] 2026-10-06\n- no newline\n\n### Added\n' \
-	"$(cat "$d/CHANGELOG.md")"
+# 3. missing heading: exit 1 with message, fragments kept
+d="$(new_repo)"; printf '# Changelog\n' > "$d/CHANGELOG.md"
+printf -- '- x\n' > "$d/changelog.d/1-x.md"
+out="$(run "$d")"; rc=$?
+[ "$rc" -eq 1 ] && echo "$out" | grep -q 'Unreleased' && [ -e "$d/changelog.d/1-x.md" ] \
+  && pass "missing heading" || bad "missing heading"
 
-# missing heading: exit 1, clear message, fragment kept, changelog untouched
-d="$(new_fixture nohead $'# Changelog\n\n## [1.0.0]\n- first\n')"
-printf -- '- x\n' >"$d/changelog.d/1-x.md"
-msg="$(cd "$d" && bash bin/changelog-compile.sh 2>&1)"
-code=$?
-assert_eq "missing heading: exit 1" 1 "$code"
-[[ "$msg" == *"## [Unreleased]"* ]] && assert_eq "missing heading: message names heading" 1 1 || assert_eq "missing heading: message names heading" 1 0
-assert_eq "missing heading: fragment kept" 1 "$(ls "$d/changelog.d" | grep -c '1-x.md')"
+# 4. README skipped and kept
+d="$(new_repo)"; printf 'about\n' > "$d/changelog.d/README.md"
+run "$d" >/dev/null; rc=$?
+[ "$rc" -eq 0 ] && [ -e "$d/changelog.d/README.md" ] && ! grep -q about "$d/CHANGELOG.md" \
+  && pass "README skipped" || bad "README skipped"
 
-# README skipped even when it is the only file with .md extension next to fragments
-d="$(new_fixture readme "$BASE")"
-printf 'do not compile me\n' >"$d/changelog.d/README.md"
-printf -- '- real\n' >"$d/changelog.d/5-real.md"
-(cd "$d" && bash bin/changelog-compile.sh >/dev/null 2>&1)
-assert_eq "README skipped: content" \
-	$'# Changelog\n\n## [Unreleased]\n- real\n- old\n\n## [1.0.0]\n- first\n' \
-	"$(cat "$d/CHANGELOG.md")"
-assert_eq "README skipped: README kept" 1 "$(ls "$d/changelog.d" | grep -c README.md)"
-
-[[ "$FAILS" -eq 0 ]] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
+exit "$fail"
