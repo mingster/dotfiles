@@ -16,3 +16,5 @@ For one delivery objective, use `/crew <objective>` and read `.agents/skills/cre
 Owner updates are plain and concise: what changed, any action needed, and next step. Use Taiwan Traditional Chinese or English. Prefer the verified Slack owner destination and repeat the concise update in the terminal/current session; never claim unverified delivery.
 
 Terminal shortcut from any directory: `team riben` for status, or append the request. Use `--crew <objective>` for a coordinated delivery objective.
+
+To hand a task to another provider, use Orca's `orca-cli` handoff (see Step 2 of `.agents/skills/crew/SKILL.md`).

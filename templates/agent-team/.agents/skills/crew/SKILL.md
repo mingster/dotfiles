@@ -23,6 +23,7 @@ If the objective is a bug fix, chore, or small task touching <= 3 files, **do NO
 ## Step 2. Parallel dispatch (lead to workers)
 
 - Spawn one teammate per unblocked task (max 2-3 concurrent).
+- Keep workers short. A Claude Code worker's prompt cache lasts about 5 minutes, so put the full contract in its prompt and do not park it waiting on a reply. To move a task to another provider (Codex, Cursor, Antigravity), use Orca's `orca-cli` handoff: the ticket, branch and final report travel, not the chat.
 - Worktrees in Orca: create under `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`. Never create loose worktrees in `/tmp` or `.claude/worktrees/`.
 - Prompt: objective, task number, allowed files, test command, and done criterion.
 
