@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # worker-watch.sh <run_id>
-# Flags Orca workers stopped by a provider limit (STOPPED) or near full context (LOW_CONTEXT).
+# Flags Orca workers stopped by a provider limit (STOPPED), waiting on a dialog (BLOCKED_DIALOG) or near full context (LOW_CONTEXT).
 # Heartbeats and a live terminal do not prove progress, so read the screen.
-# Exit 0 all OK, 4 any STOPPED or LOW_CONTEXT, 2 usage or orca error.
+# Exit 0 all OK, 4 any STOPPED, BLOCKED_DIALOG or LOW_CONTEXT, 2 usage or orca error.
 set -u
 
 [ $# -eq 1 ] && [ -n "$1" ] || { echo "usage: worker-watch.sh <run_id>" >&2; exit 2; }
@@ -42,12 +42,18 @@ tail = [l.rstrip() for l in tail[-30:]]
 stop = re.compile(
     r"Individual quota reached|\bResets in \d|weekly limit.*% left|hit your weekly limit"
     r"|spendLimitHit: true|usage limit reached|limit will reset|Context limit reached"
-    r"|Run /compact to", re.I)
+    r"|Run /compact to|You.ve hit your usage limit", re.I)
+dialog = re.compile(r"Workspace Trust Required", re.I)
 marker = re.compile(r"^\s*[⚠■✗✖!]")
 # Source, diffs and shell lines are not provider notices.
 code = re.compile(r"^\s*(\d+\s*[:|│]|[+\-#]|[│|])|[`=]|\b(grep|printf|echo|check|pattern|re\.compile)\b|[\x27\"]")
 ui = tail[-8:]
+for l in tail[-8:]:
+    if dialog.search(l):
+        print("BLOCKED_DIALOG", l.strip()[:160]); sys.exit(0)
 for l in tail:
+    if re.match(r"^\s*You.ve hit your usage limit", l) and l in ui:
+        print("STOPPED", l.strip()[:160]); sys.exit(0)
     if stop.search(l) and (l in ui or marker.match(l)) and (marker.match(l) or not code.search(l)):
         print("STOPPED", l.strip()[:160]); sys.exit(0)
 for l in tail[-5:]:

@@ -50,6 +50,12 @@ check "codex weekly limit" 4 'ctx_a term_a STOPPED .*weekly limit'
 printf 'Error: spendLimitHit: true\n' > "$tmp/term_a.txt"
 check "cursor spendLimitHit" 4 'ctx_a term_a STOPPED .*spendLimitHit'
 
+printf "You've hit your usage limit\nSwitch to a cheaper model\n" > "$tmp/term_a.txt"
+check "cursor usage limit" 4 'ctx_a term_a STOPPED .*usage limit'
+
+printf 'Workspace Trust Required\nDo you trust the contents of this directory?\n[a] Trust this workspace\n[q] Quit\n' > "$tmp/term_a.txt"
+check "cursor trust dialog" 4 'ctx_a term_a BLOCKED_DIALOG .*Trust Required'
+
 printf 'Working\nctx: 79%%\n' > "$tmp/term_a.txt"
 check "ctx 79 is OK" 0 'ctx_a term_a OK'
 
