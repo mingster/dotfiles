@@ -16,3 +16,14 @@ The roles, task list, hotfix loop and gates are the same; only the mechanics cha
 ## CEO reporting without a mailbox
 
 Load the canonical shared CEO role in `.claude/agents/elon.md` for an explicit review of business priorities, material risk or cross-role trade-offs, then return to the Tech Lead role. `.claude/agents/ceo.md` is only a legacy compatibility alias. Routine small tasks do not require a separate CEO startup or review step. Routine delivery/support reports address the Tech Lead (`lead`); relay its consolidated delivery report to Elon (`elon`). Sales addresses commercial outcomes and SecOps independent risk to Elon; technical handoffs copy lead. Preserve critical/suppressed-concern escalations in the session, visible to CEO/owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. CEO recommendations never replace human owner approvals.
+
+## Where each tool finds skills
+
+| Tool | Project skills | User skills |
+| --- | --- | --- |
+| Claude Code | `.claude/skills/` (symlinks into `.agents/skills/`) | `~/.claude/skills` (dotfiles `.agents/skills`) |
+| Codex | `.agents/skills/` | `~/.agents/skills` (dotfiles) |
+| Cursor | `.cursor/skills/` (symlinks into `.agents/skills/`) | `~/.cursor/skills` (dotfiles) |
+| Antigravity | `.agents/skills/` | `~/.gemini/config/skills.json` points at dotfiles `.agents/skills` |
+
+The real directory lives in `.agents/skills/<name>/`. Every other tool gets a symlink to it. To add a skill: create the directory there, then `ln -s ../../.agents/skills/<name> .claude/skills/<name>` and the same under `.cursor/skills/`. `script/check-skill-collisions.sh` in dotfiles flags a project skill that shadows a central one.
