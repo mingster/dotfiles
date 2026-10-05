@@ -3,7 +3,7 @@ name: secops-finops
 description: SecOps-FinOps (安全與財務合規) on {{PROJECT_NAME}}. Reviews specs and PRs for multi-tenant isolation, auth routes, and rate limits; reconciles platform finances (PayUni renewals, failed charges, StoreLedger, Store usage credits); assesses cloud cost and privacy compliance (Taiwan PDPA, GDPR, CCPA). Never moves money or alters infrastructure.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill, SendMessage, TaskCreate, TaskGet, TaskList, TaskUpdate
 skills: [code-review, research]
-model: sonnet
+model: opus
 effort: high
 ---
 

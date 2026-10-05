@@ -7,29 +7,37 @@ description: Run one objective through the {{PROJECT_NAME}} agent team with the 
 
 The objective is the text after `/crew` ($ARGUMENTS). If there is none, ask for it in one line and stop.
 
-In Orca, start with shared CEO Elon (`elon`) as the top-level orchestrator: Elon owns the cross-project objective, cross-role DAG, dispatch and completion review. The Tech Lead owns the {{PROJECT_NAME}} engineering subtree beneath Elon. Outside Orca, the Tech Lead remains the lead session and reports to CEO. Follow both role files and their gates. Routine engineering, QA, release, product delivery and support reports go to the Tech Lead; Sales reports business outcomes and SecOps independent risk to Elon. Direct handoffs copy the lead; critical or suppressed concerns may escalate directly to Elon/owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. Every message to the owner uses **Now**, **Needs owner**, **Running**.
+Elon (`elon`) is the session and the top-level orchestrator: Elon owns the objective, the task tree, dispatch and completion review. The Tech Lead (`lead`) is a teammate that integrates engineering work. Every teammate reports to Elon only, and Elon reports to the owner. Follow both role files and their gates. Critical or suppressed concerns may escalate to Elon and the owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. Every message to the owner uses **Now**, **Needs owner**, **Running**.
 
 ## Step 0. Fast-Path Check (Skip Crew)
 
 If the objective is a bug fix, chore, or small task touching <= 3 files, **do NOT run the full crew**. Work directly in the current workspace with TDD, verify with `bun run lint` and `bun test --isolate <file>`, and finish. Use the multi-agent crew below only for multi-domain features or large epics.
 
-## Step 1. Orchestration and decomposition (lead)
+## Step 1. Orchestration and decomposition (Elon)
 
 1. CEO / Lead scan: scan workspace status and define tasks. Keep tasks lean.
 2. Size gate: handle small changes directly. Parallelize only truly independent tasks.
 3. Build the task tree: each task has owner, exact files allowed, dependencies, and done criterion.
 4. Show proposed plan concisely and proceed.
 
-## Step 2. Parallel dispatch (lead to workers)
+## Step 2. Parallel dispatch (Elon to workers, with Orca orchestration)
 
-- Spawn one teammate per unblocked task (max 2-3 concurrent).
-- Worktrees in Orca: create under `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`. Never create loose worktrees in `/tmp` or `.claude/worktrees/`.
-- Prompt: objective, task number, allowed files, test command, and done criterion.
+Load the `orchestration` skill (`orca skills get orchestration`) before dispatching. Never use a non-Orca subagent tool for this.
+
+- Handle small reversible docs and lookups directly; delegate substantial implementation and independent review.
+- Open one Run for the objective: `orca orchestration run-create --objective "<objective>" --json`.
+- Start the whole independent wave before waiting, at most 2 or 3 workers: `orca orchestration worker-start --spec "<task spec>" --worktree new-child --agent <provider> --model <id> --effort <level> --json`. Choose provider, model and effort from the tier in `.claude/model-routing.md`. Use `--deps` only for real ordering, such as review after build.
+- Task spec: Target (files in scope), Change (the result), Constraints, Ownership (the allowed files), Observable acceptance (the test command and done criterion), and "read `.claude/agents/<role>.md` first and follow it". Workers do not inherit role frontmatter, so name the role.
+- Wait with `orca orchestration check --wait --types worker_done,escalation,question --timeout-ms 900000 --json`. Reply to each question, validate each `worker_done`, then `orca orchestration worker-release --dispatch <id>`.
+- Provider failure (quota, auth, outage): rerun the Task on the next provider with `orca orchestration worker-start --task <task_id> --agent <next provider> ...`. See Fallback in `.claude/model-routing.md`.
+- Keep workers short. A Claude Code worker's prompt cache lasts about 5 minutes, so put the full contract in the spec and do not park a worker waiting on a reply.
+- Worktrees: Orca creates them (`--worktree new-child`). Never create loose worktrees in `/tmp` or `.claude/worktrees/`.
 
 ## Step 3. Isolated execution (workers)
 
+- When finished, send `worker_done` once (three sentence summary, `--outcome succeeded` or `failed`) with the Task and Dispatch IDs from your preamble, then stop. Ask a blocking question with the preamble's `ask` command, not a local prompt.
 - **Run ledger**: for a ticket with more than one slice, keep `active_run.md` (git ignored) in your worktree root. Write it once at the start (allowed files, verify command) and again only when blocked. Task list, git and your final report hold everything else.
-- Edit only files on your allow list. If you need another file, message the lead and wait; do not edit it.
+- Edit only files on your allow list. If you need another file, ask Elon with the preamble's `ask` command and wait; do not edit it.
 - Follow `AGENTS.md`. For app changes, run `bun run lint` and the relevant `bun run test` in `web/`. For documentation-only changes, check links, role/branch references and `git diff --check`; do not run an app build.
 - Follow the Token budget section of `AGENTS.md`, including two strikes on a failing test.
 - Finish with: branch name, commits, `git diff main...HEAD --stat`, tests run with pass and fail counts (failing output only), and anything left open. Not the full diff: the reviewer reads it from the branch.
@@ -43,7 +51,7 @@ If the objective is a bug fix, chore, or small task touching <= 3 files, **do NO
 - Reviewer verifies the test command from the ticket contract passes cleanly.
 - Verdict per task: `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation items. At most 2 remediation rounds per task.
 
-## Step 5. Integration (lead)
+## Step 5. Integration (Tech Lead teammate)
 
 1. When every task has passed, create `crew/<slug>` from an up to date `main` in the current worktree (the Orca worktree when run from Orca).
 2. Merge each passing branch in dependency order. No force push, no history rewriting. `CHANGELOG.md` merges as a union on its own (`merge=union` in `.gitattributes`); any other conflict goes back to the owning worker.
