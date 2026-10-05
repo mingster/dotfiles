@@ -25,15 +25,15 @@ brew list | grep -iE 'python'
 for pkg in $(brew list | grep -iE 'node'); do brew uninstall $pkg --ignore-dependencies; done
 
 # use asdf instead
-
 # https://asdf-vm.com/manage/configuration.html
 # https://rednafi.com/python/install_python_with_asdf/
 # https://github.com/asdf-community/asdf-python
 asdf plugin add python
 
-asdf install python 3.13.11
-#asdf global python 3.13.11
-asdf set -u python 3.13.11
+#asdf list all python
+
+asdf install python 3.14.8
+asdf set -u python 3.14.8
 
 asdf plugin add direnv
 
