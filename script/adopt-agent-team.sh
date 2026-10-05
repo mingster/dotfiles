@@ -92,5 +92,30 @@ if [ -f "$TEMPLATES/docs/agents/persistent-memory-protocol.md" ]; then
   copy_file "$TEMPLATES/docs/agents/persistent-memory-protocol.md" "$TARGET_DIR/docs/agents/persistent-memory-protocol.md"
 fi
 
+# 6. Install hooks (settings.json points at them; without them Bash calls fail)
+for h in guard-bash.py strikes.py; do
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  [dry-run] write $TARGET_DIR/.claude/hooks/$h"
+  else
+    mkdir -p "$TARGET_DIR/.claude/hooks"
+    cp "$TEMPLATES/.claude/hooks/$h" "$TARGET_DIR/.claude/hooks/$h"
+    echo "  installed $TARGET_DIR/.claude/hooks/$h"
+  fi
+done
+copy_file "$TEMPLATES/.claude/hooks/session-start.md" "$TARGET_DIR/.claude/hooks/session-start.md"
+
+# 7. Token budget block that the role files point to, added only when missing
+if [ "$DRY_RUN" -eq 0 ]; then
+  touch "$TARGET_DIR/AGENTS.md"
+  if ! grep -q "^## Token budget" "$TARGET_DIR/AGENTS.md"; then
+    cat "$TEMPLATES/AGENTS.token-budget.md" >> "$TARGET_DIR/AGENTS.md"
+    echo "  appended Token budget to AGENTS.md"
+  fi
+  # 8. Keep the ledger and hook state out of git
+  for pat in "active_run.md" ".claude/state/"; do
+    grep -qxF "$pat" "$TARGET_DIR/.gitignore" 2>/dev/null || echo "$pat" >> "$TARGET_DIR/.gitignore"
+  done
+fi
+
 echo "Agent team successfully adopted for $PROJECT_NAME!"
-echo "Run /tl or /crew <objective> in $TARGET_DIR to begin."
+echo "Run /crew <objective> in $TARGET_DIR to begin."
