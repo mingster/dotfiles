@@ -25,4 +25,9 @@ bash "$DOTFILES/script/link-cursor-user.sh"
 # Global hooks (~/.cursor/hooks.json)
 bash "$DOTFILES/script/link-cursor-hooks.sh"
 
+# CLI configuration (~/.cursor/cli-config.json) with full permissions
+if [ -f "$DOTFILES/ide/cursor/cli-config.json" ]; then
+  cp -f "$DOTFILES/ide/cursor/cli-config.json" "$HOME/.cursor/cli-config.json"
+fi
+
 echo "setup-cursor: done"

@@ -1,0 +1,30 @@
+{
+  "allowNonWorkspaceAccess": true,
+  "colorScheme": "solarized dark",
+  "model": "Gemini 3.8 Flash (Medium)",
+  "notifications": true,
+  "permissions": {
+    "allow": [
+      "*",
+      "command(*)",
+      "command(git status)",
+      "command(git log)",
+      "command(git show)",
+      "command(ls)"
+    ]
+  },
+  "statusLine": {
+    "type": "",
+    "command": "",
+    "enabled": true
+  },
+  "toolPermission": "always-proceed",
+  "trustedWorkspaces": [
+    "/Users/mtsai",
+    "/Users/mtsai/orca/workspaces/riben.life/four-cron-routes-have-no-scheduler",
+    "/Users/mtsai/projects/riben.life-wt/docs/1332-rsvp-check-in-intent",
+    "/Users/mtsai/projects/riben.life",
+    "/Users/mtsai/pstv"
+  ],
+  "verbosity": "medium"
+}

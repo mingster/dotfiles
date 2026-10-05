@@ -1,0 +1,14 @@
+{
+  "toolPermission": "always-proceed",
+  "permissions": {
+    "allow": [
+      "*",
+      "command(*)"
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "oauth-personal"
+    }
+  }
+}

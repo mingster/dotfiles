@@ -1,0 +1,251 @@
+{
+  "version": "1.0.0",
+  "default_chain": [
+    "codex",
+    "claude",
+    "cursor",
+    "antigravity"
+  ],
+  "roles": {
+    "elon": {
+      "tier": "strong",
+      "description": "Chief Executive Officer and top-level orchestrator",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-opus-5-5-high"
+        }
+      ]
+    },
+    "architect-pm": {
+      "tier": "strong",
+      "description": "Product architect and specification designer",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-opus-5-5-high"
+        }
+      ]
+    },
+    "secops-finops": {
+      "tier": "strong",
+      "description": "Security, financial balance, tenancy and credential auditor",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-opus-5-5-high"
+        }
+      ]
+    },
+    "fullstack-dev": {
+      "tier": "workhorse",
+      "description": "Fullstack developer implementing features test-first",
+      "chain": [
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": "medium"
+        },
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-sonnet-5-5-medium"
+        }
+      ]
+    },
+    "tech-lead": {
+      "tier": "workhorse",
+      "description": "Engineering lead integrating branches, eager merging, and hygiene",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-sonnet-5-5-medium"
+        }
+      ]
+    },
+    "qa-sdet": {
+      "tier": "strong",
+      "description": "Quality assurance and dual-axis test/spec reviewer (distinct from developer models)",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      ]
+    },
+    "release-manager": {
+      "tier": "workhorse",
+      "description": "Release manager running staging promotions and deploys",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-sonnet-5-5-medium"
+        }
+      ]
+    },
+    "sales-marketing": {
+      "tier": "workhorse",
+      "description": "Customer messaging, market analysis, and product copy",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-sonnet-5-5-medium"
+        }
+      ]
+    },
+    "support-csm": {
+      "tier": "workhorse",
+      "description": "Customer support triage and telemetry diagnosis",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-sonnet-5-5-medium"
+        }
+      ]
+    },
+    "stream-health": {
+      "tier": "workhorse",
+      "description": "Stream health monitoring and media server diagnostics",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "claude-sonnet-5-5-medium"
+        }
+      ]
+    }
+  }
+}

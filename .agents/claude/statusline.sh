@@ -6,6 +6,9 @@ input=$(cat)
 # Extract current directory
 cwd=$(echo "$input" | jq -r '.workspace.current_dir')
 
+# Extract model name
+model=$(echo "$input" | jq -r '.model.display_name // empty')
+
 # Extract context percentage
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
 
@@ -33,5 +36,5 @@ if GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
   git_part=$(printf ' \033[01;32m%s%s\033[00m' "$branch" "$dirty")
 fi
 
-printf '\033[01;36m%s\033[00m%s | ctx: %b%s%%\033[00m' \
-  "$dir" "$git_part" "$ctx_color" "$ctx_pct"
+printf '\033[90m[%s]\033[00m \033[01;36m%s\033[00m%s | ctx: %b%s%%\033[00m' \
+  "$model" "$dir" "$git_part" "$ctx_color" "$ctx_pct"

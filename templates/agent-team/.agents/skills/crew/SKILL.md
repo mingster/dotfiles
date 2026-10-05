@@ -28,6 +28,7 @@ Load the `orchestration` skill (`orca skills get orchestration`) before dispatch
 - Open one Run for the objective: `orca orchestration run-create --objective "<objective>" --json`.
 - Start the whole independent wave before waiting, at most 2 or 3 workers: `orca orchestration worker-start --spec "<task spec>" --worktree new-child --agent <provider> --model <id> --effort <level> --json`. Choose provider, model and effort from the tier in `.claude/model-routing.md`. Use `--deps` only for real ordering, such as review after build.
 - Task spec: Target (files in scope), Change (the result), Constraints, Ownership (the allowed files), Observable acceptance (the test command and done criterion), and "read `.claude/agents/<role>.md` first and follow it". Workers do not inherit role frontmatter, so name the role.
+- **Anti-fluttering**: Do not flutter workers. Give each worker a self-contained contract, dispatch it, and wait for `worker_done` or legitimate escalation. Never poll in a tight loop, restart terminals prematurely, or swap models mid-flight unless the provider is demonstrably unavailable.
 - Wait with `orca orchestration check --wait --types worker_done,escalation,question --timeout-ms 900000 --json`. Reply to each question, validate each `worker_done`, then `orca orchestration worker-release --dispatch <id>`.
 - Provider failure (quota, auth, outage): rerun the Task on the next provider with `orca orchestration worker-start --task <task_id> --agent <next provider> ...`. See Fallback in `.claude/model-routing.md`.
 - Keep workers short. A Claude Code worker's prompt cache lasts about 5 minutes, so put the full contract in the spec and do not park a worker waiting on a reply.
@@ -60,6 +61,7 @@ Load the `orchestration` skill (`orca skills get orchestration`) before dispatch
 5. **Prune worktrees**: Immediately remove child worktrees (`git worktree remove <path>`) once integrated so orphaned directories never accumulate.
 6. Present to the owner: `git diff main...HEAD --stat`, the PR link, audit verdict, and test results.
 7. Merge the PR under the Merging rules once review and checks pass.
+8. **Continuous queue draining**: Immediately query for the next open issue in the queue and begin the next cycle, repeating until no open tasks remain.
 
 ## Orca terminal layout
 

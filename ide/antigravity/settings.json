@@ -231,4 +231,5 @@
   "xlsxViewer.showPopups": true,
   "xlsxViewer.md.showOutline": false,
   "xlsxViewer.md.showLineNumbers": true,
+  "chat.tools.global.autoApprove": true
 }

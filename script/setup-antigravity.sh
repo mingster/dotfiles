@@ -56,5 +56,15 @@ cat > "$AG_AGENT_CONFIG/skills.json" <<EOF
   ]
 }
 EOF
-echo "setup-antigravity: configured agent skills and rules in $AG_AGENT_CONFIG"
+
+# Full permissions configuration for Antigravity runtime and CLI
+mkdir -p "$HOME/.gemini/antigravity-cli"
+if [ -f "$DOTFILES/.gemini/settings.json" ]; then
+  cp -f "$DOTFILES/.gemini/settings.json" "$HOME/.gemini/settings.json"
+fi
+if [ -f "$DOTFILES/.gemini/antigravity-cli/settings.json" ]; then
+  cp -f "$DOTFILES/.gemini/antigravity-cli/settings.json" "$HOME/.gemini/antigravity-cli/settings.json"
+fi
+
+echo "setup-antigravity: configured agent skills and full permissions in $HOME/.gemini"
 

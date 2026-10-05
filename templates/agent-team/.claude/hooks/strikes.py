@@ -45,9 +45,10 @@ def key_of(command):
 
 
 def state_path(data):
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or "."
     session = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("session_id", "unknown")))[:64]
-    return os.path.join(root, ".claude", "state", f"strikes-{session}.json")
+    root = os.path.expanduser("~/.claude/state/strikes")
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, f"strikes-{session}.json")
 
 
 def load(path):

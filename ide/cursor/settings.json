@@ -228,5 +228,6 @@
   "cursor.composer.conversationDensity": "compact-ungrouped",
   "cursor.composer.textSizeScale": 1.15,
   "cursor.composer.codeBlockWordWrap": true,
-  "cursor.composer.editorConversationDensity": "detailed"
+  "cursor.composer.editorConversationDensity": "detailed",
+  "chat.tools.global.autoApprove": true
 }

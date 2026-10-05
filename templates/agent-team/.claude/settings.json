@@ -40,6 +40,15 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/strikes.py\""
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worker-budget.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -51,25 +60,39 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/strikes.py\""
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worker-budget.py\""
+          }
+        ]
       }
     ]
   },
   "permissions": {
     "allow": [
+      "Bash",
+      "Bash(*)",
       "Bash(bin/promote-production.sh:*)",
-      "Bash(./bin/promote-production.sh:*)"
+      "Bash(./bin/promote-production.sh:*)",
+      "Read",
+      "Write",
+      "Edit",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch",
+      "Skill",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskUpdate"
     ],
-    "ask": [
-      "Bash(git push origin main:*)",
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git push origin *:production*)",
-      "Bash(git push origin *:refs/heads/production*)",
-      "Bash(ssh root@stm36.tvcdn.org*)",
-      "Bash(gh api *branches/production/protection*)",
-      "Bash(git push origin +*)",
-      "Bash(*SCHEMA_APPROVED=1*)"
-    ],
+    "ask": [],
+    "defaultMode": "bypassPermissions",
     "deny": [
       "Bash(gh pr merge * --admin*)",
       "Bash(gh * pr merge * --admin*)",
@@ -83,5 +106,47 @@
       "Read(**/*.p12)",
       "Read(**/*.pfx)"
     ]
+  },
+  "deniedMcpServers": [
+    {
+      "serverName": "claude.ai Vercel"
+    },
+    {
+      "serverName": "claude.ai AWS Marketplace"
+    },
+    {
+      "serverName": "claude.ai Dropbox"
+    },
+    {
+      "serverName": "claude.ai Notion"
+    },
+    {
+      "serverName": "claude.ai Slack"
+    },
+    {
+      "serverName": "plugin:productivity:slack"
+    },
+    {
+      "serverName": "claude.ai Cloudflare Developer Platform"
+    },
+    {
+      "serverName": "claude.ai Google Sheets"
+    },
+    {
+      "serverName": "claude.ai Claude Docs"
+    }
+  ],
+  "autoCompactWindow": 200000,
+  "enabledPlugins": {
+    "pdf-viewer@synced": false,
+    "design@synced": false,
+    "engineering@synced": false,
+    "productivity@synced": false,
+    "sales@synced": false,
+    "marketing@synced": false,
+    "data@synced": false,
+    "customer-support@synced": false,
+    "product-management@synced": false,
+    "cowork-plugin-management@synced": false
   }
 }

@@ -14,6 +14,20 @@ The main session starts as Elon (`"agent": "elon"` in `.claude/settings.json`), 
 
 Raise one assignment a tier, never the whole role, when it touches money, auth, tenancy or production, or after two failed attempts at a hard diagnosis. For example, the qa-sdet review of a payment PR runs at Strong reasoning. Record the reason in the task. A higher tier does not grant another strike.
 
+## Default provider by role
+
+Each role starts on its default provider. Fallback begins at the next provider after it.
+
+| Role | Default provider | Flags |
+| --- | --- | --- |
+| fullstack-dev | Codex | `--agent codex --model gpt-5.5 --effort medium` (or `gpt-6.1-sol`) |
+| qa-sdet | Claude / Cursor | `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
+| every other role | Claude | the Claude column for the role's tier |
+
+Dual-model separation: qa-sdet must never use the same model family as fullstack-dev on the same PR to prevent shared blind spots. When fullstack-dev implements on Codex (GPT), qa-sdet audits on Claude (Opus) or Cursor (Claude Opus). Consult `~/.orca/presets.json` for role fallback chains.
+
+Codex workers run without the Claude hooks (`guard-bash.py`, `strikes.py`) and the `settings.json` deny list. Their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules` (migrations, `prisma db push`, ssh, deploy scripts, merges, pushes to default branches). Check that those rules exist before starting a Codex worker. Read only and release roles stay on Claude.
+
 ## Worker flags by provider
 
 This table is the owner's standing model choice, so pass these flags on every `worker-start`. Ids were checked on 2026-10-05 on this machine: Claude aliases from `claude --help`, Codex from `~/.codex/models_cache.json`, Cursor from `cursor-agent --list-models`, Antigravity from `agy models`. Re-check them when they drift.
