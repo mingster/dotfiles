@@ -1,158 +1,76 @@
 # Ming's dotfiles
 
-Personal configuration for macOS, Arch, and Debian. Run `install.sh` once to wire everything up. Re-run it anytime to refresh symlinks and settings.
+Personal configuration for macOS, Arch and Debian. `install.sh` wires everything up and is safe to re-run.
 
 ## Quick start
 
 ```bash
 mkdir -p ~/GitHub && cd ~/GitHub
 git clone https://github.com/mingster/dotfiles.git && cd dotfiles
-
-sh mac/osxprep.sh   # macOS only: Command Line Tools + prep
+sh mac/osxprep.sh   # macOS only: Command Line Tools
 sh install.sh
 ```
 
-`install.sh` is idempotent. Every install is guarded so already-installed software is skipped.
-
-## What install.sh does
-
-1. Sets `~/dotfiles` to a symlink pointing at this repo.
-2. Links shell and git dotfiles into `$HOME`.
-3. Creates `~/.agents` and wires up AI tooling (see below).
-4. Detects the OS and runs the matching `system_setup.sh`.
-
-| OS | Script |
-|----|--------|
-| macOS | `mac/system_setup.sh` |
-| Arch (or Arch-like) | `arch/system_setup.sh` |
-| Debian / Ubuntu / Mint / Pop / Zorin | `debian/system_setup.sh` |
-
-Skip software installs and only refresh symlinks:
-
-```bash
-DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh
-```
+`install.sh` links `~/dotfiles` to this repo, links shell and git dotfiles into `$HOME`, creates `~/.agents`, sets up the AI tooling below, then runs the OS installer (`mac/`, `arch/` or `debian/` `system_setup.sh`). Already installed software is skipped. `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` only refreshes links. `DOTFILES_BREW_UPGRADE=1` also runs `brew upgrade` on macOS.
 
 ## AI tooling
 
-`install.sh` runs these scripts on every OS. Each one handles platform differences internally.
+| Script | Sets up |
+| --- | --- |
+| `script/setup-claude-code.sh` | `~/.claude/` from `.agents/claude/`, skills at `~/.claude/skills/` |
+| `script/setup-claude-desktop.sh` | Claude Desktop config |
+| `script/setup-cursor.sh`, `link-cursor-user.sh` | Cursor app, rules, settings, hooks, and `~/.cursor/skills` |
+| `script/setup-antigravity.sh` | Antigravity settings and `~/.gemini/config/skills.json` |
+| `script/setup-vscode.sh` | VS Code settings |
+| `script/setup-obsidian.sh` | Obsidian vault at `~/Documents/Obsidian`, synced with MEGAcmd |
 
-| Script | What it sets up |
-|--------|-----------------|
-| `script/setup-claude-code.sh` | `~/.claude/` linked from `.agents/claude/`; skills at `~/.claude/skills/` |
-| `script/setup-claude-desktop.sh` | Claude Desktop config merged from `init/claude_desktop_config.json` |
-| `script/setup-cursor.sh` | Cursor app + rules (`~/.cursor/rules`) + user settings + global hooks |
-| `script/setup-vscode.sh` | VS Code user settings and keybindings |
-| `script/setup-antigravity.sh` | Antigravity IDE user settings and keybindings |
-| `script/setup-obsidian.sh` | Obsidian app + vault at `~/Documents/Obsidian` |
+### Skills
 
-Agent skills live as committed folders under `.agents/skills/`. They are shared across IDEs (Claude Code, Cursor, Zed, VS Code) via `~/.agents` and `~/.claude/skills`, so cloning the repo and running `install.sh` makes them available everywhere. No separate restore step.
-
-### Skill placement
-
-`~/.claude/skills` is user level, so every skill in `.agents/skills/` is already live in every
-project without per-project wiring. A project only needs its own skills directory for skills that
-are genuinely project specific.
-
-A project level skill takes precedence over a central one of the same name, and nothing reports
-that it happened, so the two sets must not overlap. The convention:
+Reusable skills live in `.agents/skills/<name>/` and are visible to Claude Code, Codex, Cursor and Antigravity through `~/.agents`, `~/.claude/skills`, `~/.cursor/skills` and the Antigravity `skills.json`. A project skill with the same name as a central one silently wins, so keep the two sets apart:
 
 | Kind | Lives in |
-|------|----------|
-| Reusable across projects | `.agents/skills/<name>/` here, and nowhere else |
-| Project specific | `<project>/.cursor/skills/<name>/` (the real folder) |
-| Project specific, for Claude Code | `<project>/.claude/skills/<name>` symlinked to `../../.cursor/skills/<name>` |
-| Reference to the central set | `<project>/.agents/skills-global` symlinked to `~/.agents/skills` |
+| --- | --- |
+| Reusable across projects | here, `.agents/skills/<name>/`, and nowhere else |
+| Project specific | `<project>/.agents/skills/<name>/`, with symlinks from `<project>/.claude/skills/` and `<project>/.cursor/skills/` |
 
-Run `script/check-skill-collisions.sh` to verify. It walks `~/projects` (or the roots you pass),
-and fails on a project skill that shadows a central one, a broken symlink, or a missing
-`SKILL.md`. It warns when the same skill name exists as separate copies in two projects, which
-usually means it belongs in `.agents/skills/` instead.
+Run `script/check-skill-collisions.sh` to find a project skill that shadows a central one, a broken symlink, or a missing `SKILL.md`. MCP secrets go in `~/.claude/settings.local.json` (gitignored). Paths reference: [AGENTS.md](AGENTS.md).
 
-MCP secrets go in `~/.claude/settings.local.json` (gitignored). See [AGENTS.md](AGENTS.md) for the full AI paths reference.
+### Agent team template
 
-## Three-tier context system
+`script/adopt-agent-team.sh [--project-name <name>] <dir>` installs the agent team into any repo: roles, crew skill, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Elon is the front door and dispatches the teammates through Orca orchestration. Source: `templates/agent-team/`.
 
-Claude Code sessions load context in three tiers to keep the working window lean:
+### Context and notes
 
-| Tier | Location | Loaded |
-|------|----------|--------|
-| **Project instructions** | `AGENTS.md` / `CLAUDE.md` in project root | Always (auto) |
-| **Quick reference notes** | `~/.claude/notes/` → `.agents/claude/notes/` | On demand via `@`-include |
-| **Deep docs and memory** | Obsidian vault `~/Documents/Obsidian` | On demand via `obsidian` MCP |
-
-### Quick reference notes
-
-Short cross-project rules and gotchas. Current topics: `stack`, `nextjs`, `prisma`,
-`next-safe-action`. See [`.agents/claude/notes/`](.agents/claude/notes/) for the full index.
-
-To add a learning from any project:
+Project instructions (`AGENTS.md`) load always. Short cross-project rules live in `~/.claude/notes/` (`.agents/claude/notes/`) and the Obsidian vault holds deep docs. Add a lesson from any project:
 
 ```bash
-~/dotfiles/script/contribute-to-agents.sh <topic> "What I learned"
 ~/dotfiles/script/contribute-to-agents.sh nextjs "Nested route-group layouts cause dev 404s"
-~/dotfiles/script/contribute-to-agents.sh prisma   # opens $EDITOR for a longer note
 ```
 
-Commit the result to dotfiles so it is available on all machines.
-
-### Obsidian vault
-
-`~/Documents/Obsidian` is the memory and document hub. It holds project overview pages, extended
-tech notes, architecture decision records, and session notes. The `obsidian` MCP server (configured
-in `.agents/claude/settings.json`) lets Claude fetch notes on demand without loading them upfront.
-
-Key entry points:
-
-- `Projects Index.md` — all active projects
-- `Tech Notes Index.md` — cross-project patterns with links to extended notes
-- `Riben Life Docs/HOME.md` — full architecture docs for riben.life
-
-To add a new project to the vault, create `Project Name.md` following the existing pattern and add
-it to `Projects Index.md`.
-
-### Vault sync (MEGAcmd)
-
-`script/setup-obsidian.sh` (called by `install.sh`) handles the full sync setup on both macOS
-and Arch: installs MEGAcmd, prompts for MEGA login if needed, and configures background sync of
-`~/Documents/Obsidian` to `MEGA:/Obsidian`. Nothing to do manually — just run `sh install.sh`.
-
-The MCP server path is written to `~/.claude/settings.local.json` (gitignored, generated per
-machine) rather than committed to `settings.json`.
-
-## Backup scripts
-
-Run these after changing settings locally, then commit the result.
+## Backups
 
 ```bash
-bash script/backup-claude-desktop.sh   # Claude Desktop preferences → init/claude_desktop_config.json
-fish script/backup-tide.fish           # Tide prompt config → .config/fish/tide_config.fish
+bash script/backup-claude-desktop.sh   # Claude Desktop settings into init/
+fish script/backup-tide.fish           # Tide prompt config
 ```
-
-## Environment variables
-
-| Variable | Effect |
-|----------|--------|
-| `DOTFILES_SKIP_SYSTEM_SETUP=1` | Skip `system_setup.sh`; still runs symlinks and AI tooling |
-| `DOTFILES_BREW_UPGRADE=1` | Run `brew upgrade` during macOS setup (default: `brew update` only) |
-
-## Optional extras
-
-- `mac/osx.sh` — macOS system defaults (review before running)
-- `mac/install_my_software.sh` — GUI and CLI apps
-- `mac/install_nodejs_dev.sh`, `install_java_dev.sh` — dev stacks
-- `arch/install_*.sh`, `debian/install_*.sh` — platform-specific stacks
 
 ## Layout
 
 | Path | Role |
-|------|------|
-| `install.sh` | Single entry point for all platforms |
-| `mac/` `arch/` `debian/` | Platform installers and `system_setup.sh` |
-| `script/` | Setup and backup scripts |
-| `.agents/` | Skills (committed folders), Claude Code config (`claude/`) |
-| `.config/` | App configs (fish, nvim, tmux, kitty, lazygit, ...) |
-| `ide/cursor/` | Cursor settings, keybindings, rules, `hooks.json`, `hooks/*.sh`, `mcp.json.example` |
-| `vscode/` | VS Code settings and keybindings |
-| `Antigravity/` | Antigravity IDE settings and keybindings |
-| `AGENTS.md` | AI paths reference for humans and agents |
+| --- | --- |
+| `install.sh` | Single entry point |
+| `mac/` `arch/` `debian/` | Platform installers |
+| `script/` | Setup, backup and agent team scripts |
+| `.agents/` | Skills and Claude Code config (`claude/`) |
+| `templates/agent-team/` | The agent team template |
+| `.config/`, `ide/cursor/`, `vscode/`, `Antigravity/` | App and editor configs |
+
+## Example prompts
+
+```text
+Adopt the agent team into ~/projects/acme with script/adopt-agent-team.sh, then show me what it installed.
+```
+
+```text
+Run script/check-skill-collisions.sh and fix what it reports.
+```
