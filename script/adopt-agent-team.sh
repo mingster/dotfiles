@@ -112,6 +112,15 @@ if [ "$DRY_RUN" -eq 0 ]; then
   copy_file "$TEMPLATES/.claude/model-routing.md" "$TARGET_DIR/.claude/model-routing.md"
 fi
 
+# 6c. Install the worker watch script and its test
+if [ "$DRY_RUN" -eq 0 ]; then
+  mkdir -p "$TARGET_DIR/.agents/skills/orchestration"
+  for f in worker-watch.sh worker-watch.test.sh; do
+    cp "$TEMPLATES/.agents/skills/orchestration/$f" "$TARGET_DIR/.agents/skills/orchestration/$f"
+    chmod +x "$TARGET_DIR/.agents/skills/orchestration/$f"
+  done
+fi
+
 # 7. Token budget block that the role files point to, added only when missing
 if [ "$DRY_RUN" -eq 0 ]; then
   touch "$TARGET_DIR/AGENTS.md"
