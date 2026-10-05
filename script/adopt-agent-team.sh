@@ -104,6 +104,14 @@ for h in guard-bash.py strikes.py; do
 done
 copy_file "$TEMPLATES/.claude/hooks/session-start.md" "$TARGET_DIR/.claude/hooks/session-start.md"
 
+# 6b. Install the state of play script and the model routing tiers
+if [ "$DRY_RUN" -eq 0 ]; then
+  mkdir -p "$TARGET_DIR/.claude/bin"
+  cp "$TEMPLATES/.claude/bin/state-of-play.sh" "$TARGET_DIR/.claude/bin/state-of-play.sh"
+  chmod +x "$TARGET_DIR/.claude/bin/state-of-play.sh"
+  copy_file "$TEMPLATES/.claude/model-routing.md" "$TARGET_DIR/.claude/model-routing.md"
+fi
+
 # 7. Token budget block that the role files point to, added only when missing
 if [ "$DRY_RUN" -eq 0 ]; then
   touch "$TARGET_DIR/AGENTS.md"

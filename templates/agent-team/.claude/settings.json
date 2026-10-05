@@ -12,7 +12,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.md\""
+            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.md\"; bash \"$CLAUDE_PROJECT_DIR/.claude/bin/state-of-play.sh\""
           }
         ]
       },
