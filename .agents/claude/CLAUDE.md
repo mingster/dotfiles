@@ -113,7 +113,6 @@ When working in a workspace that contains a `.cursor/rules` directory, always se
 ## 5. FinOps & Anti-Loop Safeguards (Lean Startup SDLC)
 
 - **Three-Strike Hard Stop**: If fixing the same bug, type error, or test failure reaches 3 attempts, immediately halt (Hard Stop). Write error logs and tried solutions to `active_run.md` under `[Blockers]`. Await human input. Never make blind guesses.
-- **Cost Gate (3 Turns)**: Any autonomous subagent or execution loop has a hard threshold of **3 turns** maximum before taking a progress snapshot in `active_run.md` and confirming with the owner to continue.
 - **State Artifacts**: Maintain active execution context and progress via `active_run.md` (session execution, strike counts, blockers, staged files). Reference `docs/agents/lean-startup-sdlc.md`. Living specs remain strictly in the project's SDLC intent/spec folders.
 - **Zero-Env Disclosure**: Never write `.env` secrets or keys into markdown artifacts or logs; use `[Omitted/Configured via Env]`.
 
