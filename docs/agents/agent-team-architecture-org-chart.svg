@@ -72,10 +72,10 @@
   <rect x="479.209125" y="429.90000000000003" width="201.265" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
   <text x="579.841625" y="456.8" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="579.841625" dy="-3.9000000000000012">Tech Lead</tspan><tspan x="579.841625" dy="16.900000000000002">(Engineering Orchestrator)</tspan></text>
 </g>
-<g class="node" data-id="Dev" data-label="fullstack-dev / junior-dev
+<g class="node" data-id="Dev" data-label="fullstack-dev
 (TDD Implementation)" data-shape="rectangle">
   <rect x="56" y="603.7" width="184.96300000000002" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="148.4815" y="630.6" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="148.4815" dy="-3.9000000000000012">fullstack-dev / junior-dev</tspan><tspan x="148.4815" dy="16.900000000000002">(TDD Implementation)</tspan></text>
+  <text x="148.4815" y="630.6" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="148.4815" dy="-3.9000000000000012">fullstack-dev</tspan><tspan x="148.4815" dy="16.900000000000002">(TDD Implementation)</tspan></text>
 </g>
 <g class="node" data-id="QA" data-label="qa-sdet
 (Dual-Axis Review &amp; Tests)" data-shape="rectangle">

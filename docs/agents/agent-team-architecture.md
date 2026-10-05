@@ -20,7 +20,7 @@ flowchart TD
     end
     
     subgraph Tech_Specialists["Technical Execution Subtree (Orchestrated by Tech Lead)"]
-        Dev["Fullstack-Dev / Junior-Dev\n(fullstack-dev / junior-dev)\nTDD implementation in isolated worktrees"]
+        Dev["Fullstack-Dev\n(fullstack-dev)\nTDD implementation in isolated worktrees"]
         QA["QA-SDET\n(qa-sdet)\nDual-axis audits (Standards & Spec), regression tests"]
         SecOps["SecOps-FinOps\n(secops-finops)\nSecurity, auth, tenancy & money reconciliation audits"]
         RM["Release-Manager\n(release-manager)\nThree-stage deploy pipeline (Local -> Staging -> Prod)"]
@@ -73,7 +73,7 @@ flowchart TD
 
 ### Pillar 3: Engineering Orchestration (`tech-lead`)
 - **Direct report to CEO** for delivery status and capacity.
-- Orchestrates technical specialists (`fullstack-dev`, `qa-sdet`, `junior-dev`, `release-manager`).
+- Orchestrates technical specialists (`fullstack-dev`, `qa-sdet`, `release-manager`).
 - Receives machine-checkable ticket contracts from the BA, provisions isolated worktrees, and controls merge integration.
 - *Strict boundary*: Never self-merges unreviewed application changes; relies on independent QA/SecOps gates.
 
@@ -157,7 +157,12 @@ See full template and examples at `docs/agents/persistent-memory-protocol.md`.
 3. **Three-Strike Hard Stop**: When fixing the same bug, type error, or test failure reaches 3 attempts, halt immediately. Log errors and attempted solutions in `active_run.md` under `[Blockers]` and wait for human input.
 4. **On-Demand Memory**: Never load `learned.md` or `experiences/` blindly at session start. Grep on-demand only when tackling known domain gotchas.
 5. **Worktree Lifecycle**: Child worktrees belong in `~/orca/workspaces/<project>/<lane>`. When integrated or abandoned, prune them immediately (`git worktree remove`) so directories never accumulate.
-6. **Lean State Artifacts**: Reference `docs/agents/lean-startup-sdlc.md` for `product_backlog.md` and `active_run.md` formats and zero-env disclosures.
+6. **Lean State Artifacts**: Reference `docs/agents/lean-startup-sdlc.md` for `active_run.md` format and zero-env disclosures. Living specs remain in the project's SDLC intent or spec folders.
+7. **Context Hygiene & Session Lifecycles**:
+   - **One Ticket, One Session**: Workers exit cleanly once their PR is opened and verified. Never chain unrelated tasks in an old session; start fresh sessions for new tickets.
+   - **In-Task Compaction Readiness**: Maintain `active_run.md` continuously so human operators can run `/compact` during long tasks without losing execution state.
+   - **Side Subagent Offloading**: Lead sessions delegate heavy file reading and test sweeps to side workers, absorbing only compact diff stats and exit codes.
+   - **Spike Isolation**: Test speculative fixes in disposable worktrees or forked sessions. Discard failed explorations rather than polluting main thread history.
 
 ---
 
