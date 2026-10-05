@@ -1,13 +1,13 @@
 ---
 name: crew
-description: Run one objective through the riben.life agent team with the crew protocol (decompose, dispatch parallel workers, isolated execution, audit, integrate into one diff). Use with /crew <objective>, or when the owner states an objective in a lead session. Works in Claude Code, Cursor, Antigravity and Orca worktrees.
+description: Run one objective through the {{PROJECT_NAME}} agent team with the crew protocol (decompose, dispatch parallel workers, isolated execution, audit, integrate into one diff). Use with /crew <objective>, or when the owner states an objective in a lead session. Works in Claude Code, Cursor, Antigravity and Orca worktrees.
 ---
 
 # Crew protocol
 
 The objective is the text after `/crew` ($ARGUMENTS). If there is none, ask for it in one line and stop.
 
-In Orca, start with shared CEO Elon (`elon`) as the top-level orchestrator: Elon owns the cross-project objective, cross-role DAG, dispatch and completion review. The Tech Lead owns the riben.life engineering subtree beneath Elon. Outside Orca, the Tech Lead remains the lead session and reports to CEO. Follow both role files and their gates. Routine engineering, QA, release, product delivery and support reports go to the Tech Lead; Sales reports business outcomes and SecOps independent risk to Elon. Direct handoffs copy the lead; critical or suppressed concerns may escalate directly to Elon/owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. Every message to the owner uses **Now**, **Needs owner**, **Running**.
+In Orca, start with shared CEO Elon (`elon`) as the top-level orchestrator: Elon owns the cross-project objective, cross-role DAG, dispatch and completion review. The Tech Lead owns the {{PROJECT_NAME}} engineering subtree beneath Elon. Outside Orca, the Tech Lead remains the lead session and reports to CEO. Follow both role files and their gates. Routine engineering, QA, release, product delivery and support reports go to the Tech Lead; Sales reports business outcomes and SecOps independent risk to Elon. Direct handoffs copy the lead; critical or suppressed concerns may escalate directly to Elon/owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. Every message to the owner uses **Now**, **Needs owner**, **Running**.
 
 ## Step 0. Fast-Path Check (Skip Crew)
 
@@ -23,7 +23,7 @@ If the objective is a bug fix, chore, or small task touching <= 3 files, **do NO
 ## Step 2. Parallel dispatch (lead to workers)
 
 - Spawn one teammate per unblocked task (max 2-3 concurrent).
-- Worktrees in Orca: create under `~/orca/workspaces/riben.life/<lane>`. Never create loose worktrees in `/tmp` or `.claude/worktrees/`.
+- Worktrees in Orca: create under `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`. Never create loose worktrees in `/tmp` or `.claude/worktrees/`.
 - Prompt: objective, task number, allowed files, test command, and done criterion.
 
 ## Step 3. Isolated execution (workers)

@@ -1,6 +1,6 @@
 ---
 name: architect-pm
-description: BA & Requirements Analyst (需求分析師) for riben.life. Translates owner vision, user pain points, and business needs into intent.md and spec.md, and decomposes accepted specs into machine-checkable tickets for the Tech Lead.
+description: BA & Requirements Analyst (需求分析師) for {{PROJECT_NAME}}. Translates owner vision, user pain points, and business needs into intent.md and spec.md, and decomposes accepted specs into machine-checkable tickets for the Tech Lead.
 tools: Read, Grep, Glob, Write, Edit, Bash, WebSearch, WebFetch, Skill, SendMessage, TaskCreate, TaskGet, TaskList, TaskUpdate
 skills: [capture-intent, write-spec, to-tickets]
 model: sonnet
