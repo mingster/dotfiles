@@ -20,7 +20,7 @@ Each role starts on its default provider. Fallback begins at the next provider a
 
 | Role | Default provider | Flags |
 | --- | --- | --- |
-| fullstack-dev | Codex | `--agent codex --model gpt-5.5 --effort medium` (or `gpt-6.1-sol`) |
+| fullstack-dev | Codex | `--agent codex --model gpt-6.1-sol --effort medium` (`gpt-5.5` retires October 14, do not use) |
 | qa-sdet | Claude / Cursor | `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
 | every other role | Claude | the Claude column for the role's tier |
 
