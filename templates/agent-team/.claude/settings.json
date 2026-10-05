@@ -1,4 +1,5 @@
 {
+  "agent": "elon",
   "model": "sonnet",
   "effortLevel": "medium",
   "env": {
