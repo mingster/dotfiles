@@ -17,6 +17,9 @@
     --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
     --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
   }
+  @media (prefers-color-scheme: dark) {
+    svg { --bg:#1E1E1E !important; --fg:#E6E6E6 !important; --line:#E6E6E6 !important; --accent:#4DA3FF !important; --muted:#E6E6E6CC !important; --surface:#2A2A2A !important; --border:#E6E6E6 !important; }
+  }
 </style>
 <defs>
   <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
@@ -40,10 +43,10 @@
 <polyline class="edge" data-from="CEO" data-to="Sales" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 280.810875,210.8 280.810875,259.8" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="CEO" data-to="BA" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 515.262875,210.8 515.262875,259.8" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="CEO" data-to="TL" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 579.841625,210.8 579.841625,429.90000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="TL" data-to="Dev" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 148.4815,543.7 148.4815,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="TL" data-to="QA" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 367.74299999999994,543.7 367.74299999999994,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="TL" data-to="SecOps" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 586.2634999999999,543.7 586.2634999999999,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="TL" data-to="RM" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="579.841625,483.70000000000005 579.841625,543.7 777.7375,543.7 777.7375,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="Dev" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.677625,143.35 100,143.35 100,543.7 148.4815,543.7 148.4815,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="QA" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.677625,143.35 100,143.35 100,543.7 367.74299999999994,543.7 367.74299999999994,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="SecOps" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.677625,143.35 100,143.35 100,543.7 586.2634999999999,543.7 586.2634999999999,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="CEO" data-to="RM" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.677625,143.35 100,143.35 100,543.7 777.7375,543.7 777.7375,603.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="BA" data-to="TL" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Machine-Checkable Ticket Contracts (tickets.md)" points="515.262875,313.6 515.262875,393.90000000000003 546.2974583333333,393.90000000000003 546.2974583333333,429.90000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <g class="edge-label" data-from="BA" data-to="TL" data-label="Machine-Checkable Ticket Contracts (tickets.md)">
   <rect x="391.76287499999995" y="356.6" width="246.34" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />

@@ -47,7 +47,7 @@ This table is the owner's standing model choice, so pass these flags on every `w
 
 A role file's `model:` and `effort:` apply only when the role runs as a Claude Code subagent or as `claude --agent <role>`. An Orca worker started with `worker-start --agent ... --model ...` does not read them.
 
-1. **Default, every provider:** use the flags above, and the spec says "read `.claude/agents/<role>.md` first and follow it". The role's `tools:` line is then not enforced, so a read only role (secops-finops, support-csm, stream-health) is held only by its Never section. Check the diff it leaves.
+1. **Default, every provider:** use the flags above, and the spec says "read `<repo root>/.claude/agents/<role>.md` first and follow it". Use the absolute path, so the worker reads the role file on the main checkout, not a stale copy in its own branch. The role's `tools:` line is then not enforced, so a read only role (secops-finops, support-csm, stream-health) is held only by its Never section. Check the diff it leaves.
 2. **Claude with the role enforced (optional, not tested here):** `orca terminal create --worktree <worktree> --command "claude --agent <role>" --json`, then `orca orchestration worker-start --terminal <handle> --spec "<task spec>" --worktree <worktree> --json`. The role's model, effort, tools and skills then come from its frontmatter. `--model` and `--effort` cannot be combined with `--terminal`.
 
 Keep each role file's `model:` and `effort:` equal to the Claude row for its tier, because mode 2 and Claude Code subagents use them.
