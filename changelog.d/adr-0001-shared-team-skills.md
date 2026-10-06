@@ -1,0 +1,1 @@
+- `docs/adr/0001-shared-team-skills-and-usage-caps.md` records the three tiers of skills, why team skills are committed copies, and the usage gate hook with its owner reserved thresholds.

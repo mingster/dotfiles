@@ -39,6 +39,8 @@ Run `script/check-skill-collisions.sh` to find a project skill that shadows a ce
 
 `script/adopt-agent-team.sh [--project-name <name>] <dir>` installs the agent team into any repo: roles, the team skills (through `script/sync-team-skills.sh`), facts file skeletons, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Elon is the front door and dispatches the teammates through Orca orchestration. Source: `templates/agent-team/`.
 
+Decisions are recorded in `docs/adr/` (0001: shared team skills and usage caps).
+
 ### Context and notes
 
 Project instructions (`AGENTS.md`) load always. Short cross-project rules live in `~/.claude/notes/` (`.agents/claude/notes/`) and the Obsidian vault holds deep docs. Add a lesson from any project:
