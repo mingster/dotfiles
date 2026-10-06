@@ -2,16 +2,22 @@
 """Daily usage gate for the agent team: stop dispatching when a provider has used
 its daily share of the weekly limit, so the week never runs out.
 
-  usage-gate.py check [--provider claude|codex] [--cap 12] [--ceiling 95]
+  usage-gate.py check [--provider claude|codex|<other>] [--cap 12] [--ceiling 95]
   usage-gate.py show
 
 Reads the provider's own weekly percentage, never an estimate:
-  codex   latest token_count event in ~/.codex/sessions (rate_limits.primary)
+  codex   latest token_count event in ~/.codex/sessions whose weekly window is
+          under rate_limits.primary or rate_limits.secondary
   claude  ~/.claude/state/usage-gate/claude-rate-limits.json, written by
           statusline.sh from Claude Code's statusline input (rate_limits.seven_day)
 
 Per provider it keeps the weekly percentage seen at the start of the local day
 and blocks when (now - start) >= cap, or when the week is >= ceiling used.
+A reading older than MAX_AGE (6 hours) says nothing about today's spend, so it never
+counts for the daily cap. Weekly usage cannot fall before the reset, so while its
+resets_at is still ahead it still blocks on the weekly ceiling. Past the reset, or
+of unknown age, it is no reading. So is any provider without a reader (cursor,
+antigravity, ...).
 Exit codes: 0 allowed, 3 blocked, 4 unknown (no reading; treated as allowed by
 callers, reported so the owner can see the gap).
 """
@@ -22,6 +28,7 @@ HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
 CODEX = os.environ.get("USAGE_GATE_CODEX_SESSIONS", HOME + "/.codex/sessions")
 WEEK_MIN = 10080
+MAX_AGE = 6 * 3600  # seconds; an older reading is no reading
 
 
 def codex_reading(root=None):
@@ -39,12 +46,14 @@ def codex_reading(root=None):
                 continue
             try:
                 d = json.loads(line)
-                p = d["payload"]["rate_limits"].get("primary") or {}
+                limits = d["payload"]["rate_limits"]
+                windows = [limits.get("primary") or {}, limits.get("secondary") or {}]
             except (ValueError, KeyError, AttributeError):
                 continue
-            if p.get("window_minutes") == WEEK_MIN and "used_percent" in p:
-                return {"pct": float(p["used_percent"]), "resets_at": p.get("resets_at"),
-                        "observed_at": d.get("timestamp")}
+            for p in windows:
+                if p.get("window_minutes") == WEEK_MIN and "used_percent" in p:
+                    return {"pct": float(p["used_percent"]), "resets_at": p.get("resets_at"),
+                            "observed_at": d.get("timestamp")}
     return None
 
 
@@ -61,11 +70,36 @@ def claude_reading(path=None):
 READERS = {"codex": codex_reading, "claude": claude_reading}
 
 
+def fresh(reading, now):
+    """The reading, flagged stale when it is more than MAX_AGE old but its week has not reset
+    yet; None when it is old and past its reset, ahead of the clock, or of unknown age.
+    observed_at is epoch seconds (claude) or an ISO timestamp (codex)."""
+    at = (reading or {}).get("observed_at")
+    try:
+        t = float(at)
+    except (TypeError, ValueError):
+        try:
+            t = datetime.fromisoformat(str(at).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    if abs(now - t) <= MAX_AGE:
+        return reading
+    resets = reading.get("resets_at")
+    if now - t > MAX_AGE and resets and float(resets) >= now:
+        return {**reading, "stale": True}
+    return None
+
+
 def decide(reading, state, today, now, cap, ceiling):
     """Return (verdict, detail, new_state). verdict: allowed|blocked|unknown."""
     if reading is None:
         return "unknown", {"reason": "no reading"}, state
     pct, resets = reading["pct"], reading.get("resets_at")
+    if reading.get("stale"):                # too old for the daily cap, still binding for the ceiling
+        if pct >= ceiling:
+            return "blocked", {"weekly_used": pct, "ceiling": ceiling, "resets_at": resets,
+                               "reason": "weekly ceiling (stale reading)"}, state
+        return "unknown", {"reason": "no reading"}, state
     if resets and float(resets) < now:      # the week rolled over since this reading
         pct, resets = 0.0, None
     st = dict(state or {})
@@ -96,7 +130,9 @@ def run(provider, cap, ceiling, now=None):
         state = json.load(open(path))
     except (OSError, ValueError):
         state = None
-    verdict, detail, new = decide(READERS[provider](), state, today, now, cap, ceiling)
+    reader = READERS.get(provider)
+    reading = fresh(reader(), now) if reader else None
+    verdict, detail, new = decide(reading, state, today, now, cap, ceiling)
     if new is not state and new:
         os.makedirs(STATE, exist_ok=True)
         json.dump(new, open(path, "w"))
@@ -106,7 +142,7 @@ def run(provider, cap, ceiling, now=None):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["check", "show"])
-    ap.add_argument("--provider", choices=list(READERS))
+    ap.add_argument("--provider")
     ap.add_argument("--cap", type=float, default=12.0)
     ap.add_argument("--ceiling", type=float, default=95.0)
     a = ap.parse_args(argv)

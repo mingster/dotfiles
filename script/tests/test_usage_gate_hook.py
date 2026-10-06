@@ -1,5 +1,5 @@
 import json, os, subprocess, sys, tempfile, time, unittest
-from datetime import datetime
+from datetime import datetime, timezone
 HOOK = os.path.join(os.path.dirname(__file__), "..", "usage-gate-hook.py")
 FUT = time.time() + 3 * 86400
 
@@ -13,14 +13,15 @@ class Hook(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def claude(self, pct, baseline=None):
-        json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT}}, open(self.state + "/claude-rate-limits.json", "w"))
+    def claude(self, pct, baseline=None, written_at=None):
+        json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT}, "_written_at": written_at or time.time()},
+                  open(self.state + "/claude-rate-limits.json", "w"))
         if baseline is not None:
             today = datetime.now().strftime("%Y-%m-%d")
             json.dump({"date": today, "baseline": baseline, "resets_at": FUT}, open(self.state + "/claude.json", "w"))
 
     def codex_reading(self, pct):
-        ev = {"timestamp": "x", "payload": {"rate_limits": {"primary": {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}
+        ev = {"timestamp": datetime.now(timezone.utc).isoformat(), "payload": {"rate_limits": {"primary": {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}
         open(self.codex + "/2026/10/06/rollout-a.jsonl", "w").write(json.dumps(ev) + "\n")
 
     def run_hook(self, command, tool="Bash"):
@@ -71,6 +72,17 @@ class Hook(unittest.TestCase):
         self.assertIn("no usage reading for agent cursor", err)
 
     def test_no_reading_passes_with_warning(self):
+        deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")
+        self.assertIsNone(deny)
+        self.assertIn("gate exit 4", err)
+
+    def test_stale_reading_at_ceiling_still_blocks_before_reset(self):
+        self.claude(99, written_at=time.time() - 7 * 3600)
+        deny, _ = self.run_hook("orca orchestration worker-start --task t --agent claude")
+        self.assertIn("weekly ceiling", deny)
+
+    def test_stale_reading_under_ceiling_passes_with_warning(self):
+        self.claude(50, written_at=time.time() - 7 * 3600)
         deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")
         self.assertIsNone(deny)
         self.assertIn("gate exit 4", err)
