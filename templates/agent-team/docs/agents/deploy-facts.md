@@ -41,9 +41,10 @@ One row per deployable component. With one row, `/deploy` takes no component arg
 * Schema diff for the summary: `<git diff command>`.
 * What a deploy interrupts: `<downtime, restarts>`.
 
-## Standing go
+## Owner approval
 
-`<owner, date>`. No approval of its own when all hold: local and staging statuses `success`, the schema diff empty, no prerequisite, not a rollback, `<project condition>`. Everything else waits for the owner's go for that commit.
+* Production needs the owner's explicit go for each release.
+* Owner approval script: `<path and exact command, for example bin/owner-approve.sh <component> <sha>, or none>`. The owner runs it; the deploy skill gives them the exact command.
 
 ## Host status
 
