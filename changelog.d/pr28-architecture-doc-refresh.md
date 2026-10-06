@@ -1,0 +1,1 @@
+- Agent team architecture doc refreshed to match the current setup.

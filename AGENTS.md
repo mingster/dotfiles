@@ -159,6 +159,7 @@ sh install.sh
 
 - No secrets in committed files. MCP secrets go in `~/.claude/settings.local.json` (gitignored globally via `.gitignore_global`).
 - Prefer small, focused changes; match existing shell and doc style.
+- Never edit `CHANGELOG.md` in a PR. Add a `changelog.d/<issue>-<slug>.md` fragment (`<branch-slug>.md` with no issue); release runs `bin/changelog-compile.sh` to compile them.
 - Scripts must pass `shellcheck --severity=error`. CI enforces this on `install.sh`, `mac/stowall`, and the three `system_setup.sh` files. Run: `bash script/shellcheck-dotfiles.sh`
 - Installs must be idempotent and safe to re-run. Follow the Homebrew pattern for external tools: check before installing.
 - `_outdated/` is read-only historical context. Update the active files under `mac/`, `arch/`, `debian/` instead.
