@@ -3,12 +3,14 @@
 set -u
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/sync-team-skills.sh"
 fail=0
+ROOT="$(mktemp -d)"
+trap 'rm -rf "$ROOT"' EXIT
 pass() { echo "ok   $1"; }
 bad() { echo "FAIL $1"; fail=1; }
 
 # A fake dotfiles with two tier 2 skills, and an empty project.
 new_dotfiles() {
-  d="$(mktemp -d)"
+  d="$(mktemp -d "$ROOT/dotfiles.XXXXXX")"
   s="$d/templates/agent-team/.agents/skills"
   mkdir -p "$s/alpha" "$s/beta"
   printf -- '---\nname: alpha\ndescription: Alpha.\n---\n\n# Alpha\n\nBody.\n' > "$s/alpha/SKILL.md"
@@ -16,7 +18,7 @@ new_dotfiles() {
   printf -- '---\nname: beta\ndescription: Beta.\n---\n\nBeta body.\n' > "$s/beta/SKILL.md"
   echo "$d"
 }
-new_project() { d="$(mktemp -d)"; git -C "$d" init -q; echo "$d"; }
+new_project() { d="$(mktemp -d "$ROOT/project.XXXXXX")"; git -C "$d" init -q; echo "$d"; }
 sync() { DOTFILES="$1" bash "$SCRIPT" "${@:2}" 2>&1; }
 
 # 1. sync writes each skill, stamps SKILL.md after the frontmatter, links .claude and .cursor
@@ -38,9 +40,10 @@ out="$(sync "$D" --check "$P")"; rc=$?
 [ "$rc" -eq 0 ] && pass "clean copy passes --check" || bad "clean copy passes --check: $out"
 
 # 3. a second sync changes nothing
-snap="$(cd "$P" && find . -path ./.git -prune -o -type f -print -exec cat {} \; | shasum)"
+tree() { (cd "$1" && find . -path ./.git -prune -o \( -type f -print -exec cat {} \; \) -o \( -type l -print -exec readlink {} \; \) | shasum); }
+snap="$(tree "$P")"
 sync "$D" "$P" >/dev/null
-[ "$snap" = "$(cd "$P" && find . -path ./.git -prune -o -type f -print -exec cat {} \; | shasum)" ] \
+[ "$snap" = "$(tree "$P")" ] \
   && pass "idempotent" || bad "idempotent"
 
 # 4. a hand edited copy fails --check and names the file
@@ -117,5 +120,36 @@ out="$(sync "$D" "$P")"; rc=$?
 P="$(new_project)"
 out="$(DOTFILES=/nonexistent bash "$SCRIPT" "$P" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && pass "missing dotfiles fails" || bad "missing dotfiles fails"
+
+# 15. a skill removed from dotfiles: --check flags the stale copy, sync removes it and its links
+D="$(new_dotfiles)"; P="$(new_project)"
+sync "$D" "$P" >/dev/null
+rm -rf "$D/templates/agent-team/.agents/skills/beta"
+out="$(sync "$D" --check "$P")"; rc=$?
+[ "$rc" -ne 0 ] && echo "$out" | grep -q 'beta' \
+  && pass "removed skill fails --check" || bad "removed skill fails --check (rc $rc): $out"
+sync "$D" "$P" >/dev/null
+[ ! -e "$P/.agents/skills/beta" ] && [ ! -L "$P/.claude/skills/beta" ] && [ ! -L "$P/.cursor/skills/beta" ] \
+  && [ -d "$P/.agents/skills/alpha" ] && sync "$D" --check "$P" >/dev/null \
+  && pass "sync removes removed skill" || bad "sync removes removed skill"
+
+# 16. a hand written skill unknown to dotfiles is left alone
+mkdir -p "$P/.agents/skills/local"; echo "x" > "$P/.agents/skills/local/SKILL.md"
+sync "$D" "$P" >/dev/null; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$P/.agents/skills/local/SKILL.md" ] && sync "$D" --check "$P" >/dev/null \
+  && pass "project skill untouched" || bad "project skill untouched (rc $rc)"
+
+# 17. refuses a target whose skills folder resolves outside it (a home folder linked into dotfiles)
+D="$(new_dotfiles)"; H="$(mktemp -d "$ROOT/home.XXXXXX")"
+mkdir -p "$D/.agents/skills/tdd"; echo tdd > "$D/.agents/skills/tdd/SKILL.md"
+ln -s "$D/.agents" "$H/.agents"
+out="$(sync "$D" "$H")"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$D/.agents/skills/alpha" ] && echo "$out" | grep -q 'outside' \
+  && pass "refuses skills folder outside the project" || bad "refuses skills folder outside the project (rc $rc): $out"
+
+# 18. refuses the dotfiles checkout itself
+out="$(sync "$D" "$D")"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$D/.agents/skills/alpha" ] \
+  && pass "refuses dotfiles as target" || bad "refuses dotfiles as target (rc $rc): $out"
 
 exit "$fail"

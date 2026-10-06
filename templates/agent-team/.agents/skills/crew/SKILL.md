@@ -44,7 +44,7 @@ Load the `orchestration` skill (`orca skills get orchestration`) before dispatch
 ## Step 3. Isolated execution (workers)
 
 - When finished, send `worker_done` once (three sentence summary, `--outcome succeeded` or `failed`) with the Task and Dispatch IDs from your preamble, then stop. Ask a blocking question with the preamble's `ask` command, not a local prompt.
-- **Run ledger**: for a ticket with more than one slice, keep `active_run.md` (git ignored) in your worktree root. Write it once at the start (allowed files, verify command) and again only when blocked. Task list, git and your final report hold everything else. See `docs/agents/persistent-memory-protocol.md`.
+- **Run ledger**: for a ticket with more than one slice, keep `active_run.md` (git ignored) in your worktree root. Write it once at the start (allowed files, verify command, current step) and again only when blocked (strike count, blockers). Task list, git and your final report hold everything else. See `docs/agents/persistent-memory-protocol.md`.
 - Edit only files on your allow list. If you need another file, ask Elon with the preamble's `ask` command and wait; do not edit it.
 - Follow `AGENTS.md`. For app changes, run the checks from team facts for the component you touched. For documentation-only changes, check links, role/branch references and `git diff --check`; do not run an app build.
 - Follow the Token budget section of `AGENTS.md`, including two strikes on a failing test. Pipe long output (`tail -40`, `git diff --stat`) and run only the relevant tests while coding.

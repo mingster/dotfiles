@@ -129,6 +129,8 @@ Tier 2 is kept out of `~/dotfiles/.agents/skills` on purpose: that tree is linke
 * Each copied `SKILL.md` gets one line right after its frontmatter: `<!-- Generated from dotfiles templates/agent-team/.agents/skills/<name> by script/sync-team-skills.sh, do not edit. ... source-sha256: <hash> -->`. The hash covers every file path and content in the source skill, so it names the dotfiles version a copy came from.
 * `--check` writes nothing and exits 1 when a copy is missing, a file differs (hand edited, or dotfiles moved on), a file is extra, or a link is missing. It prints the command that restores the copies.
 * Sync refuses to replace a hand written skill directory (no stamp) or a real directory where a link belongs, so product facts are never wiped by accident. Move them out, then rerun with `--force`.
+* It refuses the home folder, the dotfiles checkout, and any target whose `.agents/skills`, `.claude/skills` or `.cursor/skills` resolves outside it (as `~/.agents` does), so it can never write into the tier 1 tree.
+* A generated skill that dotfiles no longer has is flagged by `--check` and removed by sync, with its links. Hand written project skills are never touched.
 * `adopt-agent-team.sh` calls it, and writes the two facts skeletons from `templates/agent-team/docs/agents/` when they are missing.
 * Test: `bash script/tests/sync-team-skills.test.sh`.
 
@@ -167,7 +169,7 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 
 1. Done (dotfiles, phase 1): tier 1 cleanup, tier 2 reconciliation, facts skeletons, sync script, duplicate fixes. Check: `bash script/tests/sync-team-skills.test.sh` passes; `grep -rn 'riben\|pstv\|/Users/' templates/agent-team/.agents/skills` finds nothing.
 2. riben.life (phase 2): write `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`, `git mv .agents/skills/crew/daily-run.md docs/agents/daily-run.md`, `git rm -r .agents/skills/orchestration`, point `.claude/model-routing.md` at `~/.claude/skills/orchestration/worker-watch.sh`, run `sync-team-skills.sh --force .`, replace the six real `.cursor/skills` dirs of tier 3 skills with links to `.agents`, add `sync-team-skills.sh --check` to CI or pre-commit. Check: `--check` passes, `/elon`, `/crew`, `/tl`, `/deploy status` load and resolve their facts.
-3. PSTV (phase 2): the same, plus `git mv .agents/skills/tl/issue-budget.md docs/agents/issue-budget.md` (and fix the path in daily run step 3), remove the orchestration `SKILL.md` and its `skills-lock.json` entry, copy `docs/agents/persistent-memory-protocol.md` from the template, drop `e2e-test-scaffold` from qa-sdet or add a PSTV variant, turn `web2/.cursor/skills` copies into links. Check: same as step 2.
+3. PSTV (phase 2): the same, plus `git mv .agents/skills/tl/issue-budget.md docs/agents/issue-budget.md` (and fix the path in daily run step 3), remove the orchestration `SKILL.md`, copy `docs/agents/persistent-memory-protocol.md` from the template, drop `e2e-test-scaffold` from qa-sdet or add a PSTV variant, turn `web2/.cursor/skills` copies into links. Check: same as step 2.
 
 ### Risks
 

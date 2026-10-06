@@ -16,7 +16,7 @@ In the commands below, `<repo>` is the repository from the facts, `<dev>` the de
 1. **Who starts a stage.** local and staging: release-manager or the Tech Lead, any time. production: release-manager, under the standing go in the facts or on the owner's go for that exact commit, and only inside the production window when the facts name one.
 2. **Promotion.** A stage deploys only a commit with a `success` status from the stage before: the local context for staging, the staging context for production. Production deploys exactly the commit `<staging branch>` points at, even when `<dev>` has moved on.
 3. **Fast forward only.** Stage branches move with `git push origin <sha>:<stage branch>` and nothing else (the first push creates the branch). If the push is refused as non fast forward, stop and tell the lead; never add `--force`.
-4. **One path to a server.** Deploy only with the command the facts name for the stage. Never run host scripts or `ssh` around it. When the command refuses, report the reason to Elon; do not work around it.
+4. **One path to a server.** Deploy only with the command the facts name for the stage. Never run host scripts or `ssh` around it, except the manual fallback steps the facts name for when the command cannot run (those ask for approval). When the command refuses, report the reason to Elon; do not work around it.
 5. **The record.** Set the stage's status on the commit when it passes, and `failure` when it fails:
    `gh api -X POST repos/<repo>/statuses/<sha> -f state=success -f context=<context> -f description="<one line>"`
 6. **Smoke checks belong to the role the facts name** (qa-sdet unless they say otherwise). After staging or production, send `Ready for <role> smoke check: [<component>] <stage> <sha>` and set the status only after `Smoke passed: [<component>] <stage> <sha>`.
@@ -38,7 +38,7 @@ The commit is the tip of `<dev>` unless the lead names another.
 
 1. Make a throwaway worktree at the commit where the facts say (never a loose one in `/tmp`): `git fetch origin && git worktree add --detach <path> <sha>`. Remove an old one at that path first with `git worktree remove --force <path>`.
 2. Copy the env file the facts name into the worktree with `cp`.
-3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host, or a `_test` database). Check with the masking tool the facts name when there is one, never `cat` or `grep` a secret file. Anything else stops the stage.
+3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host, or a `_test` database). Check with the masking tool or check command the facts name, never print the file or its credentials. Anything else stops the stage.
 4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask the lead; never kill it.
 5. Run the local steps from the facts for the component, in order, inside the worktree. A step the facts mark advisory fails the gate only as the facts describe.
 6. All passed: set the local context to `success` with what ran (test counts) in the description. Remove the worktree.
@@ -66,7 +66,7 @@ Before asking for go, build the summary for the lead to put under **Needs owner*
 
 Then:
 
-1. Run the production deploy command from the facts. When it is a wrapper, it pushes `<production branch>` and checks the guards itself; otherwise `git push origin <sha>:<production branch>` first. Set only the overrides the facts allow, and only when the owner said so.
+1. Run the production deploy command from the facts, including the `git push origin <sha>:<production branch>` when the facts list it (some commands push the branch themselves, some check that it already points at the commit). Set only the overrides the facts allow, and only when the owner said so.
 2. Confirm the host runs the commit with the check in the facts.
 3. Send the smoke check message. On `Smoke passed`, set the production context to `success` and tell the lead: component, commit, PRs shipped, deploy time.
 

@@ -81,6 +81,19 @@ for d in "$SRC"/*/; do
   NAMES+=("$name")
   render "$name" "$TMP/$name"
 done
+if [ ${#NAMES[@]} -eq 0 ]; then
+  echo "sync-team-skills: no skills in $SRC" >&2
+  exit 2
+fi
+
+is_name() {
+  local n
+  for n in "${NAMES[@]}"; do [ "$n" = "$1" ] && return 0; done
+  return 1
+}
+
+DOTFILES_REAL="$(cd "$DOTFILES" && pwd -P)"
+HOME_REAL="$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")"
 
 status=0
 for proj in "${PROJECTS[@]}"; do
@@ -90,7 +103,46 @@ for proj in "${PROJECTS[@]}"; do
     continue
   fi
   proj="$(cd "$proj" && pwd)"
+  real="$(cd "$proj" && pwd -P)"
   problems=()
+
+  # Never write into the home folder or the dotfiles checkout, or through a skills folder that
+  # links out of the project (as ~/.agents and ~/.claude/skills link into dotfiles).
+  case "$real/" in
+    "$DOTFILES_REAL/"*) problems+=("refused: target is inside the dotfiles checkout") ;;
+  esac
+  [ "$real" = "$HOME_REAL" ] && problems+=("refused: target is the home folder")
+  for tool in .agents .claude .cursor; do
+    [ -d "$proj/$tool/skills" ] || continue
+    sk="$(cd "$proj/$tool/skills" && pwd -P)"
+    case "$sk/" in
+      "$real/"*) ;;
+      *) problems+=("refused: $tool/skills resolves outside the project ($sk)") ;;
+    esac
+  done
+  if [ ${#problems[@]} -gt 0 ]; then
+    status=1
+    for p in "${problems[@]}"; do echo "sync-team-skills: $proj: $p" >&2; done
+    continue
+  fi
+
+  # Generated skills that dotfiles no longer has: flag them, and remove them on sync.
+  for d in "$proj/.agents/skills"/*/; do
+    [ -f "$d/SKILL.md" ] || continue
+    name="$(basename "$d")"
+    is_name "$name" && continue
+    grep -q "Generated from dotfiles $SRC_REL/$name by script/sync-team-skills.sh" "$d/SKILL.md" || continue
+    if [ "$CHECK" -eq 1 ]; then
+      problems+=("stale .agents/skills/$name: generated from dotfiles, which no longer has it")
+    else
+      rm -rf "$proj/.agents/skills/$name"
+      for tool in .claude .cursor; do
+        link="$proj/$tool/skills/$name"
+        [ -L "$link" ] && [ "$(readlink "$link")" = "../../.agents/skills/$name" ] && rm -f "$link"
+      done
+      echo "sync-team-skills: $proj: removed $name (no longer in dotfiles)"
+    fi
+  done
 
   for name in "${NAMES[@]}"; do
     want="$TMP/$name"
