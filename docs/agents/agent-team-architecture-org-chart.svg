@@ -26,15 +26,15 @@
     <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
   </marker>
 </defs>
-<g class="subgraph" data-id="Direct_Reports" data-label="CEO 3 Direct Reports">
+<g class="subgraph" data-id="Direct_Reports" data-label="Teammates reporting to Elon">
   <rect x="177.516375" y="215.8" width="518.95775" height="283.90000000000003" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
   <rect x="177.516375" y="215.8" width="518.95775" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
-  <text x="189.516375" y="229.8" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">CEO 3 Direct Reports</text>
+  <text x="189.516375" y="229.8" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Teammates reporting to Elon</text>
 </g>
-<g class="subgraph" data-id="Tech_Specialists" data-label="Technical Execution Subtree (Orchestrated by Tech Lead)">
+<g class="subgraph" data-id="Tech_Specialists" data-label="Technical Specialists (report to Elon)">
   <rect x="40" y="559.7" width="825.471" height="113.80000000000001" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
   <rect x="40" y="559.7" width="825.471" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
-  <text x="52" y="573.7" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Technical Execution Subtree (Orchestrated by Tech Lead)</text>
+  <text x="52" y="573.7" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Technical Specialists (report to Elon)</text>
 </g>
 <polyline class="edge" data-from="Board" data-to="CEO" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,76.9 462.61562499999997,124.9" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="CEO" data-to="Sales" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="462.61562499999997,161.8 462.61562499999997,210.8 280.810875,210.8 280.810875,259.8" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
@@ -53,9 +53,9 @@
   <rect x="347.533625" y="40" width="230.164" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
   <text x="462.61562499999997" y="58.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Mingster (Human Owner / Board)</text>
 </g>
-<g class="node" data-id="CEO" data-label="Elon (CEO / Top-Level Orchestrator)" data-shape="rectangle">
+<g class="node" data-id="CEO" data-label="Elon (Shared CEO / Front Door)" data-shape="rectangle">
   <rect x="335.677625" y="124.9" width="253.87599999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="462.61562499999997" y="143.35000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Elon (CEO / Top-Level Orchestrator)</text>
+  <text x="462.61562499999997" y="143.35000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Elon (Shared CEO / Front Door)</text>
 </g>
 <g class="node" data-id="Sales" data-label="sales-marketing
 (Commercial &amp; Metrics)" data-shape="rectangle">
@@ -68,9 +68,9 @@
   <text x="515.262875" y="286.7" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="515.262875" dy="-3.9000000000000012">architect-pm</tspan><tspan x="515.262875" dy="16.900000000000002">(需求分析師兼產品架構師 / BA)</tspan></text>
 </g>
 <g class="node" data-id="TL" data-label="Tech Lead
-(Engineering Orchestrator)" data-shape="rectangle">
+(Integration and Merges)" data-shape="rectangle">
   <rect x="479.209125" y="429.90000000000003" width="201.265" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="579.841625" y="456.8" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="579.841625" dy="-3.9000000000000012">Tech Lead</tspan><tspan x="579.841625" dy="16.900000000000002">(Engineering Orchestrator)</tspan></text>
+  <text x="579.841625" y="456.8" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="579.841625" dy="-3.9000000000000012">Tech Lead</tspan><tspan x="579.841625" dy="16.900000000000002">(Integration and Merges)</tspan></text>
 </g>
 <g class="node" data-id="Dev" data-label="fullstack-dev
 (TDD Implementation)" data-shape="rectangle">

@@ -61,9 +61,9 @@
   <line x1="460.2915" y1="328.45" x2="245.55149999999998" y2="328.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
   <text x="352.9215" y="318.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">PRD &amp; machine-checkable ticket contracts</text>
 </g>
-<g class="message" data-from="CEO" data-to="TL" data-label="Execute tickets via /crew" data-line-style="solid" data-arrow-head="filled" data-self="false">
+<g class="message" data-from="CEO" data-to="TL" data-label="Execute tickets via Orca workers" data-line-style="solid" data-arrow-head="filled" data-self="false">
   <line x1="245.55149999999998" y1="368.45" x2="842.718" y2="368.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
-  <text x="544.1347499999999" y="358.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">Execute tickets via /crew</text>
+  <text x="544.1347499999999" y="358.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">Execute tickets via Orca workers</text>
 </g>
 <g class="message" data-from="TL" data-to="CEO" data-label="Delivery &amp; verification pass" data-line-style="dashed" data-arrow-head="filled" data-self="false">
   <line x1="842.718" y1="408.45" x2="245.55149999999998" y2="408.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
@@ -81,9 +81,9 @@
   </g>
   <text x="95.27849999999994" y="84" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">Mingster</text>
 </g>
-<g class="actor" data-id="CEO" data-label="/elon (Elon - CEO)" data-type="participant">
+<g class="actor" data-id="CEO" data-label="/elon (Elon - shared CEO)" data-type="participant">
   <rect x="178.55899999999997" y="30" width="133.985" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
-  <text x="245.55149999999998" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">/elon (Elon - CEO)</text>
+  <text x="245.55149999999998" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">/elon (Elon - shared CEO)</text>
 </g>
 <g class="actor" data-id="BA" data-label="architect-pm (BA / 需求分析師)" data-type="participant">
   <rect x="352.544" y="30" width="215.49499999999998" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />

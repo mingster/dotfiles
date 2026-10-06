@@ -39,10 +39,10 @@
 <polyline class="edge" data-from="Providers" data-to="Orchestration" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="397.01249999999993,170.7 397.01249999999993,268.7" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="Orchestration" data-to="Worktrees" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="397.01249999999993,322.5 397.01249999999993,370.5" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="Worktrees" data-to="Diffs" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="397.01249999999993,424.3 397.01249999999993,472.3" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<g class="node" data-id="Orchestration" data-label="Team Orchestration Engine
-(CEO: Elon -&gt; BA, Sales, Tech Lead)" data-shape="rectangle">
+<g class="node" data-id="Orchestration" data-label="Orca Orchestration
+(Elon to every role)" data-shape="rectangle">
   <rect x="271.92699999999996" y="268.7" width="250.17099999999994" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="397.01249999999993" y="295.59999999999997" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="397.01249999999993" dy="-3.9000000000000012">Team Orchestration Engine</tspan><tspan x="397.01249999999993" dy="16.900000000000002">(CEO: Elon -&gt; BA, Sales, Tech Lead)</tspan></text>
+  <text x="397.01249999999993" y="295.59999999999997" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="397.01249999999993" dy="-3.9000000000000012">Orca Orchestration</tspan><tspan x="397.01249999999993" dy="16.900000000000002">(Elon to every role)</tspan></text>
 </g>
 <g class="node" data-id="Worktrees" data-label="Orca Workspace Worktrees
 (~/orca/workspaces/&lt;project&gt;/&lt;lane&gt;)" data-shape="rectangle">
@@ -54,21 +54,21 @@
   <text x="397.01249999999993" y="490.75" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Orca Built-in Side-by-Side Diffs &amp; Terminals</text>
 </g>
 <g class="node" data-id="Claude" data-label="Anthropic Claude Code
-(Sonnet 3.7 / 3.5)
+(see model-routing.md)
 via .claude/agents/*.md" data-shape="rectangle">
   <rect x="299.34399999999994" y="84" width="179.03499999999997" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="388.8614999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="388.8614999999999" dy="-12.350000000000001">Anthropic Claude Code</tspan><tspan x="388.8614999999999" dy="16.900000000000002">(Sonnet 3.7 / 3.5)</tspan><tspan x="388.8614999999999" dy="16.900000000000002">via .claude/agents/*.md</tspan></text>
+  <text x="388.8614999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="388.8614999999999" dy="-12.350000000000001">Anthropic Claude Code</tspan><tspan x="388.8614999999999" dy="16.900000000000002">(see model-routing.md)</tspan><tspan x="388.8614999999999" dy="16.900000000000002">via .claude/agents/*.md</tspan></text>
 </g>
 <g class="node" data-id="Codex" data-label="OpenAI / Cursor Codex
-(o3-mini / GPT-4o / GPT-5-Codex)
+(see model-routing.md)
 via .agents/skills/ &amp; rules" data-shape="rectangle">
   <rect x="506.3789999999999" y="84" width="231.64599999999996" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="622.2019999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="622.2019999999999" dy="-12.350000000000001">OpenAI / Cursor Codex</tspan><tspan x="622.2019999999999" dy="16.900000000000002">(o3-mini / GPT-4o / GPT-5-Codex)</tspan><tspan x="622.2019999999999" dy="16.900000000000002">via .agents/skills/ &amp; rules</tspan></text>
+  <text x="622.2019999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="622.2019999999999" dy="-12.350000000000001">OpenAI / Cursor Codex</tspan><tspan x="622.2019999999999" dy="16.900000000000002">(see model-routing.md)</tspan><tspan x="622.2019999999999" dy="16.900000000000002">via .agents/skills/ &amp; rules</tspan></text>
 </g>
 <g class="node" data-id="Antigravity" data-label="Google Antigravity
-(Gemini 2.5 Pro / Flash)
+(see model-routing.md)
 via AGENTS.md &amp; native skills" data-shape="rectangle">
   <rect x="56" y="84" width="215.34399999999994" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="163.67199999999997" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="163.67199999999997" dy="-12.350000000000001">Google Antigravity</tspan><tspan x="163.67199999999997" dy="16.900000000000002">(Gemini 2.5 Pro / Flash)</tspan><tspan x="163.67199999999997" dy="16.900000000000002">via AGENTS.md &amp; native skills</tspan></text>
+  <text x="163.67199999999997" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="163.67199999999997" dy="-12.350000000000001">Google Antigravity</tspan><tspan x="163.67199999999997" dy="16.900000000000002">(see model-routing.md)</tspan><tspan x="163.67199999999997" dy="16.900000000000002">via AGENTS.md &amp; native skills</tspan></text>
 </g>
 </svg>
