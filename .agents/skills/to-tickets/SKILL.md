@@ -81,8 +81,8 @@ Do NOT close or modify any parent issue.
 - [ ] Acceptance criterion 2
 
 ### Machine-checkable contract
-- **Allowed files / scope boundaries:** Exact files or directories the worker is permitted to edit (e.g. `web/src/actions/foo/*`, `web/src/lib/foo/*`).
-- **Verification command:** Exact test or check command that must pass (e.g. `bun test --isolate <test-path>`, `bun run lint`).
+- **Allowed files / scope boundaries:** Exact files or directories the worker is permitted to edit (e.g. `src/billing/*`, `tests/billing/refund.test.ts`).
+- **Verification command:** Exact test or check command that must pass (e.g. `npm test -- <test-path>`, `npm run lint`).
 - **Blast radius & reversibility:** Low/Medium/High; rollback plan if applicable.
 
 </local-ticket-template>

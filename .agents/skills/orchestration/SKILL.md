@@ -25,6 +25,16 @@ for results, or coordinate a DAG — and for ordinary terminal control, shell co
 worktree management, and the built-in browser. Coordination requires real Orca runtime
 state; never substitute a non-Orca subagent tool.
 
+In a project with the agent team (it has `.claude/agents/elon.md`), the default Orca coordinator
+is the `elon` role. Elon owns the cross-project objective, cross-role DAG, dispatch and completion
+review. `lead` is a teammate that coordinates engineering integration and reports to Elon. Keep
+this split explicit in task messages and completion reports; CEO recommendations never replace
+human-owner approval or required independent review.
+
+`worker-watch.sh <run_id>` next to this file flags workers that look alive but stopped (provider
+limit, trust dialog, low context); run it as `~/.claude/skills/orchestration/worker-watch.sh`.
+`worker-watch.test.sh` is its test.
+
 ## Resolve the CLI for this session
 
 Choose the executable once and reuse it for every later command:

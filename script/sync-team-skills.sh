@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sync-team-skills.sh: write the tier 2 team skills into a project as committed, generated copies.
 #
-# Source: $DOTFILES/templates/agent-team/.agents/skills/<name>/ (every directory there is a tier 2 skill).
+# Source: $DOTFILES/templates/agent-team/.agents/skills/<name>/ (every directory there with a SKILL.md is a tier 2 skill).
 # Target: <project>/.agents/skills/<name>/, plus relative links .claude/skills/<name> and
 # .cursor/skills/<name> -> ../../.agents/skills/<name>, so a fresh clone or cloud session has them.
 # Each copied SKILL.md gets a "generated, do not edit" comment after its frontmatter with a hash
@@ -76,6 +76,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 NAMES=()
 for d in "$SRC"/*/; do
+  [ -f "$d/SKILL.md" ] || continue
   name="$(basename "$d")"
   NAMES+=("$name")
   render "$name" "$TMP/$name"
