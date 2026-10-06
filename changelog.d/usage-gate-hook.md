@@ -1,0 +1,1 @@
+- `script/usage-gate-hook.py` PreToolUse hook enforces the usage gate on every claude or codex `worker-start`, wired into the agent team template.
