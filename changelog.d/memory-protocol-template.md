@@ -1,0 +1,1 @@
+- `docs/agents/persistent-memory-protocol.md` template now describes the `active_run.md` ledger (product neutral) instead of `task_plan.md` and `progress.md`, matching crew.
