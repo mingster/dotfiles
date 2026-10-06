@@ -69,7 +69,10 @@ def decide(reading, state, today, now, cap, ceiling):
     if resets and float(resets) < now:      # the week rolled over since this reading
         pct, resets = 0.0, None
     st = dict(state or {})
-    rolled = st.get("resets_at") != resets or pct < st.get("baseline", 0)
+    old = st.get("resets_at")
+    # codex resets_at jitters by a few seconds between events; only a jump of an hour is a new week
+    moved = (old is None) != (resets is None) or (old is not None and abs(float(resets) - float(old)) >= 3600)
+    rolled = moved or pct < st.get("baseline", 0)
     if st.get("date") != today or "baseline" not in st or rolled:
         st = {"date": today, "baseline": 0.0 if rolled and st.get("date") == today else pct,
               "resets_at": resets}

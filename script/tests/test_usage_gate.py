@@ -38,6 +38,10 @@ class Decide(unittest.TestCase):
         v, d, _ = self.go(D(99, NOW - 5), {"date": "d1", "baseline": 90, "resets_at": NOW - 5})
         self.assertEqual((v, d["weekly_used"]), ("allowed", 0.0))
 
+    def test_resets_at_jitter_is_the_same_week(self):
+        v, d, st = self.go(D(40, FUT + 1), {"date": "d1", "baseline": 38, "resets_at": FUT})
+        self.assertEqual((v, d["today_used"], st["baseline"]), ("allowed", 2.0, 38))
+
     def test_no_reading_is_unknown(self):
         self.assertEqual(self.go(None, None)[0], "unknown")
 
