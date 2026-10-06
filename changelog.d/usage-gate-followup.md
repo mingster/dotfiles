@@ -1,0 +1,1 @@
+- `script/usage-gate.py`: a provider without a reader (cursor, antigravity, ...) and a reading older than 6 hours now count as no reading (exit 4), and the codex reader also finds the weekly window under `secondary`; tech-lead template drops the nonexistent `dispatch-worker.sh`.
