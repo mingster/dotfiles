@@ -76,8 +76,13 @@ class Hook(unittest.TestCase):
         self.assertIsNone(deny)
         self.assertIn("gate exit 4", err)
 
-    def test_stale_reading_passes_with_warning(self):
+    def test_stale_reading_at_ceiling_still_blocks_before_reset(self):
         self.claude(99, written_at=time.time() - 7 * 3600)
+        deny, _ = self.run_hook("orca orchestration worker-start --task t --agent claude")
+        self.assertIn("weekly ceiling", deny)
+
+    def test_stale_reading_under_ceiling_passes_with_warning(self):
+        self.claude(50, written_at=time.time() - 7 * 3600)
         deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")
         self.assertIsNone(deny)
         self.assertIn("gate exit 4", err)

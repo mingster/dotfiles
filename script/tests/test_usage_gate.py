@@ -1,4 +1,5 @@
 import contextlib, importlib.util, io, json, os, sys, tempfile, unittest
+from unittest import mock
 spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname(__file__), "..", "usage-gate.py"))
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
 NOW = 1_000_000_000.0
@@ -55,9 +56,13 @@ class Main(unittest.TestCase):
 
 
 class Fresh(unittest.TestCase):
-    def test_old_reading_is_no_reading(self):
-        old = {"pct": 99.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
+    def test_old_reading_past_its_reset_is_no_reading(self):
+        old = {"pct": 99.0, "resets_at": NOW - 5, "observed_at": NOW - ug.MAX_AGE - 1}
         self.assertIsNone(ug.fresh(old, NOW))
+
+    def test_old_reading_before_its_reset_is_kept_as_stale(self):
+        old = {"pct": 99.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
+        self.assertEqual(ug.fresh(old, NOW), {**old, "stale": True})
 
     def test_recent_reading_is_kept_whatever_its_timestamp_format(self):
         for at in (NOW - 60, "2001-09-09T01:45:40.000Z"):  # epoch seconds (claude) or ISO (codex)
@@ -70,6 +75,26 @@ class Fresh(unittest.TestCase):
     def test_reading_of_unknown_age_is_no_reading(self):
         for at in (None, "x"):
             self.assertIsNone(ug.fresh({"pct": 5.0, "observed_at": at}, NOW), at)
+
+
+class StaleReading(unittest.TestCase):
+    """Weekly usage cannot fall before the reset, so an old reading still counts against the ceiling."""
+
+    def check(self, reading):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return ug.main(["check", "--provider", "claude"])
+
+    def test_stale_reading_at_ceiling_before_reset_blocks(self):
+        self.assertEqual(self.check({"pct": 99.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}), 3)
+
+    def test_stale_reading_past_reset_is_unknown(self):
+        self.assertEqual(self.check({"pct": 99.0, "resets_at": NOW - 5, "observed_at": NOW - ug.MAX_AGE - 1}), 4)
+
+    def test_stale_reading_under_ceiling_is_unknown_for_the_daily_cap(self):
+        self.assertEqual(self.check({"pct": 50.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}), 4)
 
 
 class Readers(unittest.TestCase):

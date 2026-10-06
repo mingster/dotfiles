@@ -13,9 +13,11 @@ Reads the provider's own weekly percentage, never an estimate:
 
 Per provider it keeps the weekly percentage seen at the start of the local day
 and blocks when (now - start) >= cap, or when the week is >= ceiling used.
-A reading older than MAX_AGE (6 hours), or of unknown age, counts as no reading:
-an idle provider's last number says nothing about today. So does any provider
-without a reader (cursor, antigravity, ...).
+A reading older than MAX_AGE (6 hours) says nothing about today's spend, so it never
+counts for the daily cap. Weekly usage cannot fall before the reset, so while its
+resets_at is still ahead it still blocks on the weekly ceiling. Past the reset, or
+of unknown age, it is no reading. So is any provider without a reader (cursor,
+antigravity, ...).
 Exit codes: 0 allowed, 3 blocked, 4 unknown (no reading; treated as allowed by
 callers, reported so the owner can see the gap).
 """
@@ -69,7 +71,8 @@ READERS = {"codex": codex_reading, "claude": claude_reading}
 
 
 def fresh(reading, now):
-    """The reading, or None when it is more than MAX_AGE old (or ahead) or its age is unknown.
+    """The reading, flagged stale when it is more than MAX_AGE old but its week has not reset
+    yet; None when it is old and past its reset, ahead of the clock, or of unknown age.
     observed_at is epoch seconds (claude) or an ISO timestamp (codex)."""
     at = (reading or {}).get("observed_at")
     try:
@@ -79,7 +82,12 @@ def fresh(reading, now):
             t = datetime.fromisoformat(str(at).replace("Z", "+00:00")).timestamp()
         except ValueError:
             return None
-    return reading if abs(now - t) <= MAX_AGE else None
+    if abs(now - t) <= MAX_AGE:
+        return reading
+    resets = reading.get("resets_at")
+    if now - t > MAX_AGE and resets and float(resets) >= now:
+        return {**reading, "stale": True}
+    return None
 
 
 def decide(reading, state, today, now, cap, ceiling):
@@ -87,6 +95,11 @@ def decide(reading, state, today, now, cap, ceiling):
     if reading is None:
         return "unknown", {"reason": "no reading"}, state
     pct, resets = reading["pct"], reading.get("resets_at")
+    if reading.get("stale"):                # too old for the daily cap, still binding for the ceiling
+        if pct >= ceiling:
+            return "blocked", {"weekly_used": pct, "ceiling": ceiling, "resets_at": resets,
+                               "reason": "weekly ceiling (stale reading)"}, state
+        return "unknown", {"reason": "no reading"}, state
     if resets and float(resets) < now:      # the week rolled over since this reading
         pct, resets = 0.0, None
     st = dict(state or {})
