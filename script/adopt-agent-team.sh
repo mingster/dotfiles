@@ -85,6 +85,13 @@ else
     || echo "  team skills not synced, see the message above" >&2
 fi
 
+# 4b. Product facts the team skills read. Owned by the project: written only when missing.
+for f in team-facts.md deploy-facts.md; do
+  if [ ! -f "$TARGET_DIR/docs/agents/$f" ]; then
+    copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
+  fi
+done
+
 # 5. Install persistent memory protocol
 if [ -f "$TEMPLATES/docs/agents/persistent-memory-protocol.md" ]; then
   copy_file "$TEMPLATES/docs/agents/persistent-memory-protocol.md" "$TARGET_DIR/docs/agents/persistent-memory-protocol.md"

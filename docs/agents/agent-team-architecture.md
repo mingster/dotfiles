@@ -192,7 +192,7 @@ Provider fallback order: **Claude, then Codex, then Cursor, then Antigravity.**
 2. **Single Source of Truth**:
    - `AGENTS.md` at repo root is the single source for conventions.
    - Roles in `.claude/agents/` define persona boundaries across all providers.
-   - Skills in `.agents/skills/` (`orchestration`, `crew`, `to-tickets`, `create-pr`, `deploy`) provide cross-platform procedural workflows.
+   - Skills provide cross-platform procedural workflows in three tiers. General skills (`orchestration`, `to-tickets`, `create-pr`, `tdd` and the rest) come only from dotfiles through `~/.claude/skills` and `~/.agents/skills`. Team skills (`elon`, `ceo`, `crew`, `tl`, `deploy`) are committed, generated copies in each project's `.agents/skills/`, written by `~/dotfiles/script/sync-team-skills.sh`, and read product facts from `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`. Project-only skills stay in the project. Details: `docs/agents/skills-inventory.md`.
 3. **Workspace Isolation in Orca ADE**:
    - Always route child worktrees to `~/orca/workspaces/<project>/<lane>`.
    - Never use `/tmp` or `.claude/worktrees`.
@@ -202,7 +202,7 @@ Provider fallback order: **Claude, then Codex, then Cursor, then Antigravity.**
 
 ## 8. Shared vs per project
 
-The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled in copies of it (`docs/agents/team.md`, `.claude/agents/`, `.claude/model-routing.md`), and the copy in the project is what its agents follow.
+The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled in copies of it (`docs/agents/team.md`, `.claude/agents/`, `.claude/model-routing.md`), and the copy in the project is what its agents follow. The team skills are the exception: their project copies are generated, never edited in place. Edit them in `templates/agent-team/.agents/skills/` and run `script/sync-team-skills.sh <project>`; `--check` fails when a project copy drifts.
 
 What may differ per project:
 - Hostnames, environments, and deploy stages (for example PSTV's staging and production hosts).

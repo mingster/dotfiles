@@ -37,7 +37,7 @@ Run `script/check-skill-collisions.sh` to find a project skill that shadows a ce
 
 ### Agent team template
 
-`script/adopt-agent-team.sh [--project-name <name>] <dir>` installs the agent team into any repo: roles, crew skill, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Elon is the front door and dispatches the teammates through Orca orchestration. Source: `templates/agent-team/`.
+`script/adopt-agent-team.sh [--project-name <name>] <dir>` installs the agent team into any repo: roles, the team skills (through `script/sync-team-skills.sh`), facts file skeletons, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Elon is the front door and dispatches the teammates through Orca orchestration. Source: `templates/agent-team/`.
 
 ### Context and notes
 
