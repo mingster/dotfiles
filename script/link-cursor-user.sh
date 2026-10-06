@@ -37,11 +37,7 @@ for file in settings.json keybindings.json environment.json; do
   ln -sfn "$BASE_CURSOR_DIR/$file" "$CURSOR_USER/$file"
 done
 
-# Make the central skills visible to Cursor at user level (Cursor reads ~/.cursor/skills).
-if [ -d "$DOTFILES/.agents/skills" ] && [ ! -e "$HOME/.cursor/skills" ]; then
-  mkdir -p "$HOME/.cursor"
-  ln -sfn "$DOTFILES/.agents/skills" "$HOME/.cursor/skills"
-  echo "link-cursor-user: linked ~/.cursor/skills -> $DOTFILES/.agents/skills"
-fi
+# No ~/.cursor/skills link: Cursor already reads ~/.claude/skills (setup-claude-code.sh), and a
+# second link to the same tree lists every skill twice. setup-claude-code.sh removes a stale one.
 
 echo "link-cursor-user: linked $CURSOR_USER/{settings,keybindings,environment}.json -> $BASE_CURSOR_DIR/"

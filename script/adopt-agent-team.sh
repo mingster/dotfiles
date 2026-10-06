@@ -58,8 +58,6 @@ copy_file() {
 
 # 1. Ensure directories exist
 mkdir -p "$TARGET_DIR/.claude/agents"
-mkdir -p "$TARGET_DIR/.agents/skills/crew"
-mkdir -p "$TARGET_DIR/.claude/skills"
 
 # 2. Install standard roles
 ROLES=(elon tech-lead architect-pm fullstack-dev qa-sdet secops-finops sales-marketing release-manager)
@@ -78,14 +76,21 @@ if [ ! -f "$TARGET_DIR/.claude/settings.json" ]; then
   fi
 fi
 
-# 4. Install crew skill
-if [ -f "$TEMPLATES/.agents/skills/crew/SKILL.md" ]; then
-  copy_file "$TEMPLATES/.agents/skills/crew/SKILL.md" "$TARGET_DIR/.agents/skills/crew/SKILL.md"
-  if [ ! -e "$TARGET_DIR/.claude/skills/crew" ]; then
-    ln -s "../../.agents/skills/crew" "$TARGET_DIR/.claude/skills/crew"
-    echo "  symlinked .claude/skills/crew"
-  fi
+# 4. Team skills (crew, tl, deploy, elon, ceo): committed, generated copies from the template.
+#    General skills (orchestration, tdd, ...) come from ~/.claude/skills, never a project copy.
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "  [dry-run] sync team skills into $TARGET_DIR/.agents/skills"
+else
+  "$DOTFILES/script/sync-team-skills.sh" "$TARGET_DIR" \
+    || echo "  team skills not synced, see the message above" >&2
 fi
+
+# 4b. Product facts the team skills read. Owned by the project: written only when missing.
+for f in team-facts.md deploy-facts.md; do
+  if [ ! -f "$TARGET_DIR/docs/agents/$f" ]; then
+    copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
+  fi
+done
 
 # 5. Install persistent memory protocol
 if [ -f "$TEMPLATES/docs/agents/persistent-memory-protocol.md" ]; then
@@ -110,15 +115,6 @@ if [ "$DRY_RUN" -eq 0 ]; then
   cp "$TEMPLATES/.claude/bin/state-of-play.sh" "$TARGET_DIR/.claude/bin/state-of-play.sh"
   chmod +x "$TARGET_DIR/.claude/bin/state-of-play.sh"
   copy_file "$TEMPLATES/.claude/model-routing.md" "$TARGET_DIR/.claude/model-routing.md"
-fi
-
-# 6c. Install the worker watch script and its test
-if [ "$DRY_RUN" -eq 0 ]; then
-  mkdir -p "$TARGET_DIR/.agents/skills/orchestration"
-  for f in worker-watch.sh worker-watch.test.sh; do
-    cp "$TEMPLATES/.agents/skills/orchestration/$f" "$TARGET_DIR/.agents/skills/orchestration/$f"
-    chmod +x "$TARGET_DIR/.agents/skills/orchestration/$f"
-  done
 fi
 
 # 6d. Install the changelog fragments convention (compile script, its test, and the README)

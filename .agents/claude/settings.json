@@ -179,7 +179,7 @@
     "command": "~/.claude/statusline.sh"
   },
   "enabledPlugins": {
-    "mattpocock-skills@mattpocock": true
+    "mattpocock-skills@mattpocock": false
   },
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
