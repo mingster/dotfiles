@@ -16,18 +16,30 @@ from datetime import datetime, timedelta
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
 GATED = {"claude", "codex"}
-PUNCT = set(";&|\n")
+PUNCT = set(";&|\n()<>")
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
+VAR = re.compile(r"^\$\{?(\w+)\}?$")
 
 
 def agents(cmd):
-    """Agent id per worker-start in cmd (None when it has no --agent)."""
+    """Agent ids named by the worker-starts in cmd (None for a start without --agent).
+
+    A `$VAR` agent resolves from a `VAR=x` or `for VAR in x y` in the same command."""
+    cmd = HEREDOC.sub("<<", cmd.replace("\\\n", " "))   # heredoc bodies are text, not commands
     try:
-        lex = shlex.shlex(cmd.replace("\\\n", " "), posix=True, punctuation_chars=";&|\n")
-        lex.whitespace = " \t\r"
-        lex.whitespace_split = True
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars="".join(PUNCT))
+        lex.whitespace, lex.commenters, lex.whitespace_split = " \t\r", "", True
         toks = list(lex)
     except ValueError:
         return [m.group(1) for m in re.finditer(r"worker-start\b.*?--agent[=\s]+['\"]?([\w.-]+)", cmd, re.S)] or [None]
+    stop = lambda t: (t and set(t) <= PUNCT) or t == "worker-start"
+    env = {}
+    for i, t in enumerate(toks):
+        if re.match(r"^\w+=", t):
+            env[t.split("=", 1)[0]] = [t.split("=", 1)[1]]
+        elif t == "for" and toks[i + 2:i + 3] == ["in"]:
+            words = toks[i + 3:]
+            env[toks[i + 1]] = words[:next((n for n, w in enumerate(words) if stop(w) or w == "do"), len(words))]
     out = []
     for i, t in enumerate(toks):
         if t != "worker-start" or i == 0 or toks[i - 1] != "orchestration":
@@ -35,13 +47,15 @@ def agents(cmd):
         agent = None
         for j in range(i + 1, len(toks)):
             a = toks[j]
-            if (a and set(a) <= PUNCT) or a == "worker-start":
+            if stop(a):
                 break
             if a == "--agent" and j + 1 < len(toks):
                 agent = toks[j + 1]
             elif a.startswith("--agent="):
                 agent = a.split("=", 1)[1]
-        out.append(agent)
+        agent = agent and agent.strip("`'\"")
+        m = VAR.match(agent or "")
+        out += env.get(m.group(1), [agent]) if m else [agent]
     return out
 
 
@@ -77,13 +91,16 @@ def main():
             continue
         try:
             r = subprocess.run([sys.executable, GATE, "check", "--provider", provider],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, timeout=10)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
             print(f"usage-gate-hook: gate failed for {provider} ({e}); worker-start allowed.", file=sys.stderr)
             continue
         if r.returncode == 3:
-            blocked.append(reason(provider, detail))
+            try:
+                blocked.append(reason(provider, detail))
+            except Exception:
+                blocked.append(f"Usage gate blocked {provider}: {detail.get('reason', 'see usage-gate.py show')}.")
         elif r.returncode != 0:
             print(f"usage-gate-hook: no usage reading for {provider} (gate exit {r.returncode}); "
                   "worker-start allowed, say so in your report.", file=sys.stderr)

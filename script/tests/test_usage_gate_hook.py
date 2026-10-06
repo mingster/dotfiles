@@ -39,13 +39,25 @@ class Hook(unittest.TestCase):
         self.codex_reading(100)
         deny, _ = self.run_hook("orca orchestration worker-start --task t --worktree current --agent codex")
         self.assertIn("blocked codex: weekly ceiling", deny)
-        self.assertIn("Resets ", deny)
-        self.assertNotIn("Resets unknown", deny)
+        self.assertIn("Resets " + datetime.fromtimestamp(FUT).strftime("%a %d %b %H:%M"), deny)
 
     def test_blocked_at_daily_cap(self):
         self.claude(52, baseline=40)
         deny, _ = self.run_hook('orca orchestration worker-start --spec "fix x; then y" --agent=claude')
         self.assertIn("blocked claude: daily cap", deny)
+        self.assertIn("00:00.", deny)  # local midnight, before the weekly reset
+
+    def test_agent_from_a_shell_variable_or_loop_is_gated(self):
+        self.codex_reading(100)
+        for cmd in ('A=codex; orca orchestration worker-start --task t --agent "$A"',
+                    "for a in claude codex; do orca orchestration worker-start --task t --agent ${a}; done",
+                    "(orca orchestration worker-start --task t --agent codex)"):
+            self.assertIn("blocked codex", self.run_hook(cmd)[0] or "", cmd)
+
+    def test_heredoc_text_is_not_a_command(self):
+        self.codex_reading(100)
+        cmd = "git commit -F - <<'EOF'\nDocs: don't run orca orchestration worker-start --agent codex\nEOF"
+        self.assertEqual(self.run_hook(cmd), (None, ""))
 
     def test_one_blocked_start_in_a_chain_blocks_the_command(self):
         self.claude(11); self.codex_reading(100)
