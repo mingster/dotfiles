@@ -63,6 +63,10 @@ class Fresh(unittest.TestCase):
         for at in (NOW - 60, "2001-09-09T01:45:40.000Z"):  # epoch seconds (claude) or ISO (codex)
             self.assertEqual(ug.fresh({"pct": 5.0, "observed_at": at}, NOW)["pct"], 5.0, at)
 
+    def test_reading_from_the_far_future_is_no_reading(self):
+        for at in (NOW * 1000, NOW + ug.MAX_AGE + 1):  # a millisecond epoch, or a badly skewed clock
+            self.assertIsNone(ug.fresh({"pct": 5.0, "observed_at": at}, NOW), at)
+
     def test_reading_of_unknown_age_is_no_reading(self):
         for at in (None, "x"):
             self.assertIsNone(ug.fresh({"pct": 5.0, "observed_at": at}, NOW), at)

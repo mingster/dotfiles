@@ -69,7 +69,7 @@ READERS = {"codex": codex_reading, "claude": claude_reading}
 
 
 def fresh(reading, now):
-    """The reading, or None when it is older than MAX_AGE or its age is unknown.
+    """The reading, or None when it is more than MAX_AGE old (or ahead) or its age is unknown.
     observed_at is epoch seconds (claude) or an ISO timestamp (codex)."""
     at = (reading or {}).get("observed_at")
     try:
@@ -79,7 +79,7 @@ def fresh(reading, now):
             t = datetime.fromisoformat(str(at).replace("Z", "+00:00")).timestamp()
         except ValueError:
             return None
-    return reading if now - t <= MAX_AGE else None
+    return reading if abs(now - t) <= MAX_AGE else None
 
 
 def decide(reading, state, today, now, cap, ceiling):
