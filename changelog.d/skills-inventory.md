@@ -1,0 +1,1 @@
+- Skills inventory for the riben.life, PSTV and template agent teams, with a dedupe and symlink migration plan (`docs/agents/skills-inventory.md`).
