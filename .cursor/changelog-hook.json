@@ -1,0 +1,6 @@
+{
+  "changelog": "CHANGELOG.md",
+  "fragments": "changelog.d/",
+  "base": "master",
+  "shippablePrefixes": [".agents/", "script/", "ide/", "mac/", "arch/", "debian/", "install.sh", "bin/"]
+}

@@ -87,6 +87,11 @@ load_config() {
 	if [[ -n "$heading" ]]; then
 		RECENT_HEADING="$heading"
 	fi
+	local base
+	base="$(jq -r '.base // empty' "$CONFIG_PATH" 2>/dev/null || true)"
+	if [[ -n "$base" && -z "${PR_BASE_BRANCH:-}" ]]; then
+		BASE="$base"
+	fi
 	FRAGMENTS_DIR="$(jq -r '.fragments // empty' "$CONFIG_PATH" 2>/dev/null || true)"
 	if [[ -n "$FRAGMENTS_DIR" ]]; then
 		FRAGMENTS_DIR="${FRAGMENTS_DIR%/}/"

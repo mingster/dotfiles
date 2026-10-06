@@ -90,4 +90,12 @@ mkdir -p "$r/changelog.d" && echo "- thing" >"$r/changelog.d/12-thing.md"
 commit_all "$r"
 check "no fragments key ignores changelog.d" 2 "$r"
 
+r="$(new_repo base-config '{"changelog":"CHANGELOG.md","shippablePrefixes":["src/"],"fragments":"changelog.d/","base":"main"}')"
+echo b >"$r/src/a.txt"
+commit_all "$r"
+input="$(jq -nc --arg cwd "$r" '{command:"gh pr create", cwd:$cwd}')"
+out="$(cd "$r" && env -u PR_BASE_BRANCH CURSOR_PROJECT_DIR="$r" bash "$HOOK" <<<"$input")"
+code=$?
+if [[ "$code" -eq 2 ]]; then echo "ok   base from config blocks without PR_BASE_BRANCH"; else echo "FAIL base from config: exit $code ($out)"; FAILS=$((FAILS + 1)); fi
+
 [[ "$FAILS" -eq 0 ]] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
