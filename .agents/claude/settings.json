@@ -259,5 +259,6 @@
       "**Routine under this repo's prefix**: `bun run lint`, `bun run test`, `bun run test:regression`, `bunx`/`npx` invocations under `/Users/mtsai/projects/riben.life` are routine development actions"
     ]
   },
-  "mcpServers": {}
+  "mcpServers": {},
+  "outputStyle": "Concise"
 }
