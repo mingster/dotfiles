@@ -7,13 +7,13 @@ description: Move a commit (of one component, when the project has several) thro
 
 Arguments: the stage (`local`, `staging`, `production` or `status`) and, when the project has more than one component, the component. With no stage, run `status`; `status` without a component covers them all.
 
-Every product fact lives in the project's `docs/agents/deploy-facts.md`: the repository, the components and their folders, the stage branch and status names, hosts, the command for each stage, guards, the production window, the standing go and the rollback. Read it first. Where this skill says "facts", use that file. If it is missing, stop and tell the lead. When the facts and this skill disagree on a product detail, the facts win; on the rules below, this skill wins.
+Every product fact lives in the project's `docs/agents/deploy-facts.md`: the repository, the components and their folders, the stage branch and status names, hosts, the command for each stage, guards, the production window, the owner approval script and the rollback. Read it first. Where this skill says "facts", use that file. If it is missing, stop and tell the lead. When the facts and this skill disagree on a product detail, the facts win; on the rules below, this skill wins.
 
 In the commands below, `<repo>` is the repository from the facts, `<dev>` the development branch, `<staging branch>` and `<production branch>` the stage branch names for the component (for example `staging`, or `web2/staging`), and `<context>` the commit status name for the stage (for example `deploy/staging`, or `deploy/web2/staging`).
 
 ## Rules for every stage
 
-1. **Who starts a stage.** local and staging: release-manager or the Tech Lead, any time. production: release-manager, under the standing go in the facts or on the owner's go for that exact commit, and only inside the production window when the facts name one.
+1. **Who starts a stage.** local and staging: release-manager or the Tech Lead, any time. production: release-manager, only on the owner's explicit go for that release (that exact commit), and only inside the production window when the facts name one.
 2. **Promotion.** A stage deploys only a commit with a `success` status from the stage before: the local context for staging, the staging context for production. Production deploys exactly the commit `<staging branch>` points at, even when `<dev>` has moved on.
 3. **Fast forward only.** Stage branches move with `git push origin <sha>:<stage branch>` and nothing else (the first push creates the branch). If the push is refused as non fast forward, stop and tell the lead; never add `--force`.
 4. **One path to a server.** Deploy only with the command the facts name for the stage. Never run host scripts or `ssh` around it, except the manual fallback steps the facts name for when the command cannot run (those ask for approval). When the command refuses, report the reason to Elon; do not work around it.
@@ -62,7 +62,7 @@ Before asking for go, build the summary for the lead to put under **Needs owner*
 - Checks on the commit are green (`gh api repos/<repo>/commits/<sha>/check-runs`).
 - Prerequisites: anything a PR in the range needs before or with the deploy (an env value, a secret, a cron line, a server setting). Read each PR's description and deploy notes.
 
-**Standing go.** When every standing go condition in the facts holds, no approval of its own is needed: tell the lead `Standing go: [<component>] <sha>, <N> PRs, deploying` and go ahead (inside the window, when there is one). Otherwise send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after the lead relays the owner's go for that exact commit. A rollback is never under the standing go.
+**Owner go.** Production always needs the owner's explicit go for that release. No earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after the lead relays the owner's go for that exact commit. When the facts name an owner approval script, also tell the owner to run it, giving the exact command with the component and commit filled in, and do not deploy until the script has run. A rollback needs the owner's go too.
 
 Then:
 

@@ -1,0 +1,1 @@
+- Shared deploy skill and team template: removed the standing go. Every production release needs the owner's explicit go, and the skill tells the owner to run the project's owner approval script (named in `docs/agents/deploy-facts.md`) with the exact command.
