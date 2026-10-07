@@ -25,7 +25,7 @@ class Hook(unittest.TestCase):
         open(self.codex + "/2026/10/06/rollout-a.jsonl", "w").write(json.dumps(ev) + "\n")
 
     def run_hook(self, command, tool="Bash"):
-        env = dict(os.environ, USAGE_GATE_STATE=self.state, USAGE_GATE_CODEX_SESSIONS=self.codex)
+        env = dict(os.environ, USAGE_GATE_STATE=self.state, USAGE_GATE_CODEX_SESSIONS=self.codex, USAGE_GATE_ORCA="false")
         r = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0)
@@ -40,13 +40,13 @@ class Hook(unittest.TestCase):
         self.codex_reading(100)
         deny, _ = self.run_hook("orca orchestration worker-start --task t --worktree current --agent codex")
         self.assertIn("blocked codex: weekly ceiling", deny)
-        self.assertIn("Resets " + datetime.fromtimestamp(FUT).strftime("%a %d %b %H:%M"), deny)
+        self.assertIn("Resets " + time.strftime("%a %d %b %H:%M %Z", time.localtime(FUT)) + " (local time)", deny)
 
     def test_blocked_at_daily_cap(self):
         self.claude(52, baseline=40)
         deny, _ = self.run_hook('orca orchestration worker-start --spec "fix x; then y" --agent=claude')
         self.assertIn("blocked claude: daily cap", deny)
-        self.assertIn("00:00.", deny)  # local midnight, before the weekly reset
+        self.assertIn("00:00", deny)  # local midnight, before the weekly reset
 
     def test_agent_from_a_shell_variable_or_loop_is_gated(self):
         self.codex_reading(100)

@@ -101,7 +101,7 @@ class Readers(unittest.TestCase):
     def test_codex_reads_latest_weekly_percent(self):
         with tempfile.TemporaryDirectory() as t:
             os.makedirs(t + "/2026/10/05")
-            ev = lambda p, w: json.dumps({"timestamp": "x", "payload": {"type": "token_count",
+            ev = lambda p, w: json.dumps({"timestamp": "2026-10-05T01:00:00Z", "payload": {"type": "token_count",
                 "rate_limits": {"primary": {"used_percent": p, "window_minutes": w, "resets_at": 5}}}})
             open(t + "/2026/10/05/rollout-a.jsonl", "w").write(ev(10, 10080) + "\n" + ev(33, 10080) + "\n" + ev(99, 300) + "\n")
             self.assertEqual(ug.codex_reading(t)["pct"], 33.0)
@@ -109,7 +109,7 @@ class Readers(unittest.TestCase):
     def codex(self, *limits):
         with tempfile.TemporaryDirectory() as t:
             os.makedirs(t + "/2026/10/05")
-            lines = [json.dumps({"timestamp": "x", "payload": {"type": "token_count", "rate_limits": r}}) for r in limits]
+            lines = [json.dumps({"timestamp": "2026-10-05T01:00:00Z", "payload": {"type": "token_count", "rate_limits": r}}) for r in limits]
             open(t + "/2026/10/05/rollout-a.jsonl", "w").write("\n".join(lines) + "\n")
             return ug.codex_reading(t)
 
@@ -129,6 +129,149 @@ class Readers(unittest.TestCase):
             json.dump({"seven_day": {"used_percentage": 21.5, "resets_at": 7}}, open(p, "w"))
             self.assertEqual(ug.claude_reading(p)["pct"], 21.5)
             self.assertIsNone(ug.claude_reading(t + "/missing.json"))
+
+
+class Reserve(unittest.TestCase):
+    """Room held back for workers already running."""
+
+    def go(self, reading, state, reserve):
+        return ug.decide(reading, state, "d1", NOW, 12, 95, reserve)
+
+    ST = {"date": "d1", "baseline": 40, "resets_at": FUT}
+
+    def test_reserve_lowers_the_cap_for_new_starts(self):
+        self.assertEqual(self.go(D(50.9), self.ST, 1)[0], "allowed")
+        v, d, _ = self.go(D(51), self.ST, 1)       # 11 spent + 1 reserved = 12
+        self.assertEqual((v, d["reason"], d["reserve"]), ("blocked", "daily cap", 1))
+
+    def test_reserve_lowers_the_ceiling_too(self):
+        st = {"date": "d1", "baseline": 90, "resets_at": FUT}
+        self.assertEqual(self.go(D(93), st, 1)[0], "allowed")
+        self.assertEqual(self.go(D(94), st, 1)[1]["reason"], "weekly ceiling")
+
+    def test_no_running_workers_keeps_the_plain_cap(self):
+        self.assertEqual(self.go(D(51.9), self.ST, 0)[0], "allowed")
+
+    def run_with(self, running, per_worker=1.0, pct=50.0):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": pct, "resets_at": FUT, "observed_at": NOW}}), \
+                mock.patch.object(ug, "running_workers", return_value=running), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            ug.json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"), "baseline": 40,
+                          "resets_at": FUT}, open(t + "/claude.json", "w"))
+            return ug.run("claude", 12, 95, per_worker=per_worker)
+
+    def test_each_running_worker_reserves_its_share(self):
+        self.assertEqual(self.run_with(1)["verdict"], "allowed")       # 10 + 1 < 12
+        self.assertEqual(self.run_with(2)["verdict"], "blocked")       # 10 + 2 >= 12
+        self.assertEqual(self.run_with(1, per_worker=2.0)["verdict"], "blocked")
+
+    def test_orca_unavailable_counts_as_no_running_workers(self):
+        r = self.run_with(None)
+        self.assertEqual((r["verdict"], r["reserve"], r["running"]), ("allowed", 0.0, None))
+
+    def test_running_workers_counts_active_terminals_of_one_provider(self):
+        rows = [{"projection": {"provider": {"id": p}}} for p in ("claude", "codex", "claude")]
+        out = mock.Mock(stdout=json.dumps({"result": {"workers": rows}}))
+        with mock.patch.object(ug.subprocess, "run", return_value=out):
+            self.assertEqual((ug.running_workers("claude"), ug.running_workers("codex")), (2, 1))
+        with mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertIsNone(ug.running_workers("claude"))
+
+
+class DayStart(unittest.TestCase):
+    """'Today' counts from the start of the local day, not from the first check."""
+
+    def go(self, reading, day_start):
+        return ug.decide(reading, None, "d1", NOW, 12, 95, 0.0, day_start)
+
+    def test_first_check_late_in_the_day_still_counts_the_morning(self):
+        v, d, st = self.go(D(60), D(45))
+        self.assertEqual((v, d["today_used"], st["baseline"]), ("blocked", 15.0, 45))
+
+    def test_week_reset_since_the_day_start_counts_from_zero(self):
+        v, d, _ = self.go(D(13, FUT + 604800), D(80, FUT))   # codex reset at noon: week = today
+        self.assertEqual((v, d["today_used"]), ("blocked", 13.0))
+
+    def test_a_week_that_began_today_started_from_zero(self):
+        mid = NOW - 3600
+        began_today = {"pct": 13.0, "resets_at": mid + 3600 + 604800 - 1800}      # reset - 7 days = 30 min after midnight
+        self.assertEqual(ug.start_of_day(began_today, "codex", mid), {"pct": 0.0, "resets_at": began_today["resets_at"]})
+        older = {"pct": 13.0, "resets_at": mid + 604800 - 1}                       # began 1 s before midnight
+        with mock.patch.dict(ug.DAY_START, {"codex": lambda m: "from logs"}):
+            self.assertEqual(ug.start_of_day(older, "codex", mid), "from logs")
+        self.assertIsNone(ug.start_of_day(older, "cursor", mid))
+
+    def test_no_day_start_falls_back_to_the_first_check(self):
+        self.assertEqual(self.go(D(60), None)[1]["today_used"], 0.0)
+
+    def test_a_day_start_never_exceeds_the_reading(self):
+        self.assertEqual(self.go(D(40), D(50))[1]["today_used"], 0.0)
+
+    def test_blocked_until_is_local_midnight_for_the_daily_cap_and_the_reset_for_the_ceiling(self):
+        mid = ug.next_midnight(NOW)
+        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": FUT + 9 * 86400}, NOW), mid)
+        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": NOW + 60}, NOW), NOW + 60)
+        self.assertEqual(ug.blocked_until({"reason": "weekly ceiling", "resets_at": FUT}, NOW), FUT)
+        self.assertGreater(mid, NOW)
+        self.assertLessEqual(mid - NOW, 86400 + 3600)
+
+
+class NewestReading(unittest.TestCase):
+    def write(self, root, name, events, mtime):
+        os.makedirs(root + "/2026/10/05", exist_ok=True)
+        p = f"{root}/2026/10/05/{name}"
+        lines = [json.dumps({"timestamp": ts, "payload": {"rate_limits": {"primary":
+                 {"used_percent": pct, "window_minutes": 10080, "resets_at": 5}}}}) for ts, pct in events]
+        open(p, "w").write("\n".join(lines) + "\n")
+        os.utime(p, (mtime, mtime))
+
+    def test_newest_event_wins_even_from_an_earlier_named_file(self):
+        with tempfile.TemporaryDirectory() as t:
+            # started later (name sorts last) but went quiet; the earlier session kept writing
+            self.write(t, "rollout-2026-10-05T22.jsonl", [("2026-10-05T14:00:00Z", 12)], 100)
+            self.write(t, "rollout-2026-10-05T18.jsonl", [("2026-10-05T14:50:00Z", 13)], 200)
+            self.assertEqual(ug.codex_reading(t)["pct"], 13.0)
+
+    def test_day_start_is_the_last_event_before_midnight(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.write(t, "rollout-a.jsonl", [("2026-10-05T10:00:00Z", 20), ("2026-10-05T15:00:00Z", 26)],
+                       ug.epoch("2026-10-05T15:00:00Z"))
+            self.write(t, "rollout-b.jsonl", [("2026-10-05T17:00:00Z", 31)], ug.epoch("2026-10-05T17:00:00Z"))
+            mid = ug.epoch("2026-10-05T16:00:00Z")
+            with mock.patch.object(ug, "CODEX", t):
+                self.assertEqual(ug.codex_day_start(mid)["pct"], 26.0)
+                self.assertIsNone(ug.codex_day_start(ug.epoch("2026-10-05T09:00:00Z")))
+                self.assertEqual(ug.codex_reading()["pct"], 31.0)
+
+    def test_claude_day_start_must_be_from_today(self):
+        with tempfile.TemporaryDirectory() as t:
+            p = t + "/d.json"
+            json.dump({"seven_day": {"used_percentage": 21, "resets_at": 7}, "_written_at": NOW}, open(p, "w"))
+            self.assertEqual(ug.claude_day_start(NOW - 100, p)["pct"], 21.0)
+            self.assertIsNone(ug.claude_day_start(NOW + 100, p))
+
+
+class Show(unittest.TestCase):
+    def test_show_lists_every_provider_in_one_table(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW},
+                                             "codex": lambda: None}), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ug.main(["show"]), 0)
+        text = out.getvalue()
+        for name in ("claude", "codex", "cursor", "antigravity", "not gated"):
+            self.assertIn(name, text)
+        self.assertEqual(len([l for l in text.splitlines() if l.startswith("claude")]), 1)
+
+    def test_show_json_is_a_list(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: None, "codex": lambda: None}), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            ug.main(["show", "--json"])
+        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity", "claude", "codex", "cursor"])
 
 
 if __name__ == "__main__":

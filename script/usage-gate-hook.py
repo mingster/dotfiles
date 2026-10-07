@@ -12,7 +12,6 @@ any gate error. Every other command passes untouched. Exit 0 always; a block is
 a JSON permissionDecision of "deny".
 """
 import json, os, re, shlex, subprocess, sys
-from datetime import datetime, timedelta
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
 GATED = {"claude", "codex"}
@@ -59,21 +58,14 @@ def agents(cmd):
     return out
 
 
-def when(ts):
-    return datetime.fromtimestamp(float(ts)).strftime("%a %d %b %H:%M") if ts else "unknown"
-
-
 def reason(provider, d):
-    resets = d.get("resets_at")
+    reserve = f", incl. {d['reserve']:g}% held for {d['running']} running worker(s)" if d.get("reserve") else ""
     if d.get("reason") == "daily cap":
-        midnight = (datetime.now() + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-        at = min(midnight, float(resets)) if resets else midnight
-        why = f"daily cap ({d.get('today_used')}% used today, cap {d.get('cap')}% of the week)"
+        why = f"daily cap ({d.get('today_used')}% used today, cap {d.get('cap')}% of the week{reserve})"
     else:
-        at = resets
-        why = f"weekly ceiling ({d.get('weekly_used')}% of the week used, ceiling {d.get('ceiling')}%)"
-    return (f"Usage gate blocked {provider}: {why}. Resets {when(at)}. Use the next provider in the "
-            "fallback order that passes the gate, or stop dispatching and report it.")
+        why = f"weekly ceiling ({d.get('weekly_used')}% of the week used, ceiling {d.get('ceiling')}%{reserve})"
+    return (f"Usage gate blocked {provider}: {why}. Resets {d.get('blocked_until_local', 'unknown')} (local time). "
+            "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 
 
 def main():

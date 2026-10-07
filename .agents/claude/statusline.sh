@@ -10,6 +10,12 @@ if [ -n "$rl" ]; then
   echo "$rl" | jq -c --argjson t "$(date +%s)" '. + {_written_at: $t}' \
     > "$HOME/.claude/state/usage-gate/claude-rate-limits.json.tmp" 2>/dev/null \
     && mv "$HOME/.claude/state/usage-gate/claude-rate-limits.json.tmp" "$HOME/.claude/state/usage-gate/claude-rate-limits.json"
+  # First reading of the local day: the gate's start-of-day baseline for "used today"
+  day="$HOME/.claude/state/usage-gate/claude-day-start.json"
+  if [ "$(jq -r '._date // empty' "$day" 2>/dev/null)" != "$(date +%F)" ]; then
+    echo "$rl" | jq -c --argjson t "$(date +%s)" --arg d "$(date +%F)" '. + {_written_at: $t, _date: $d}' \
+      > "$day.tmp" 2>/dev/null && mv "$day.tmp" "$day"
+  fi
 fi
 
 # Extract current directory
