@@ -23,3 +23,5 @@ When the conversation is compacted, keep: your role, the task list and who acts 
 ## Project facts the roles point to
 
 Fill these in: the read only database URL variable, the masked env check, the local development database name, the staging and production hosts, and the support mailbox.
+
+Run `~/dotfiles/script/init-agent-project.sh --labels` once in a new project. It seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, adds the "Agent skills" block to `AGENTS.md` and creates the triage labels. The Claude Code SessionStart hook does this by itself in mingster repos.

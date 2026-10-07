@@ -10,7 +10,7 @@ Short names used below:
 | P | PSTV, `~/pstv`, read at `origin/main` af650e2d6 (the local checkout is 3 commits behind) |
 | T | dotfiles template, `templates/agent-team`, at dotfiles `master` c5f4251 |
 | D | dotfiles shared tree, `.agents/skills/` at dotfiles `master`. Reached on the Mac as `~/.claude/skills`, `~/.agents/skills` and `~/.cursor/skills` (all three are home symlinks into this one tree, none of them hold their own copies) |
-| MP | the `mattpocock-skills` plugin cache, v1.3.1 (upstream `6fd9479`, synced 2026-10-07), in two copies: `~/.claude/plugins/cache/mattpocock/...` (enabled in `~/.claude/settings.json`) and `~/.claude/plugins/cache/claude-plugins-official/...` (installed, not enabled) |
+| MP | the `mattpocock-skills` plugin cache, v1.3.1 (upstream `6fd9479`, synced 2026-10-07), in two copies: `~/.claude/plugins/cache/mattpocock/...` (installed but disabled in `~/.claude/settings.json`, value `false`; skills load from the shared dotfiles folder D) and `~/.claude/plugins/cache/claude-plugins-official/...` (installed, not enabled) |
 | dir | real directory, git tracked (mode 040000 tree) |
 | link | symlink `../../.agents/skills/<name>`, git tracked (mode 120000) |
 
@@ -38,7 +38,7 @@ Proposed home uses the three tiers the owner approved (Tier 1 general, Tier 2 te
 | --- | --- | --- | --- | --- |
 | agent-browser | qa-sdet (R, P, T), P stream-health | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | capture-intent | architect-pm (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
-| code-review | elon, qa-sdet, secops-finops, tech-lead (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). Shows twice in Claude Code (`code-review` and `mattpocock-skills:code-review`). | Tier 1: dotfiles shared |
+| code-review | elon, qa-sdet, secops-finops, tech-lead (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). Shows twice in Claude Code (`code-review` and `mattpocock-skills:code-review`) only when the plugin is enabled. | Tier 1: dotfiles shared |
 | codebase-design | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | create-pr | fullstack-dev, tech-lead (R, P, T) | D dir | Single copy, but project aware: detects `web/` (R) or `pstv_web/` (P), riben `HOME.md` rule. | Tier 1: dotfiles shared; move the R and P branches into per repo config later |
 | diagnosing-bugs | qa-sdet, support-csm (R, P, T), P stream-health | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
@@ -88,7 +88,7 @@ Nothing is referenced that does not exist somewhere. These references cannot be 
 | Antigravity | `$AGENTS_ROOT/skills` via `~/.gemini/.../skills.json` | `script/setup-antigravity.sh` |
 | `.agents/skills/synced/` | claude.ai synced skills, written through the home link into the dotfiles checkout | Claude Code; gitignored (`.gitignore` line 87) |
 
-The `mattpocock-skills` plugin is enabled at user scope while the same skills are vendored in D, so Claude Code offers each one twice. D's `to-tickets` is locally edited, so D is the copy to keep.
+The `mattpocock-skills` plugin is installed but disabled (`false` in `~/.claude/settings.json`) while the same skills are vendored in D. Claude Code may still list a skill under both names if the plugin is switched on. D's `to-tickets` is locally edited, so D is the copy to keep.
 
 ## Fresh clones and cloud sessions
 
