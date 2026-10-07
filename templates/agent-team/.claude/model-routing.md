@@ -34,13 +34,14 @@ This table is the owner's standing model choice, so pass these flags on every `w
 
 | Tier | Claude | Codex | Cursor | Antigravity |
 | --- | --- | --- | --- | --- |
-| Strong | `--agent claude --model opus --effort high` | `--agent codex --model gpt-6.1-sol --effort medium` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model claude-opus-5-5-high` |
+| Strong | `--agent claude --model opus --effort high` | `--agent codex --model gpt-6-astra --effort medium` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model claude-opus-5-5-high` |
 | Workhorse | `--agent claude --model sonnet --effort medium` | `--agent codex --model gpt-6.1-sol --effort medium` | `--agent cursor --model claude-sonnet-5-5-medium` | `--agent antigravity --model claude-sonnet-5-5-medium` |
 | Light | `--agent claude --model haiku` | `--agent codex --model gpt-6-luna --effort low` | `--agent cursor --model gemini-3.8-flash-low` | `--agent antigravity --model gemini-3.8-flash-low` |
 
 - Codex's own descriptions: `gpt-6-astra` is "frontier intelligence for the most demanding work", `gpt-6.1-sol` is the "latest workhorse model for coding and everyday work", `gpt-6-luna` is "fast and affordable".
-- Owner rule (2026-10-07): Codex workhorse workers (fullstack-dev and every Workhorse role) run `gpt-6.1-sol` at `--effort medium`; Light work runs `gpt-6-luna` at `--effort low`. Strong tier work on Codex also runs `gpt-6.1-sol` at `medium`, never `gpt-6-astra` or high effort, including money work. Do not raise a Codex worker's model or effort without the owner.
+- Owner rule (2026-10-07): Codex workhorse workers (fullstack-dev and every Workhorse role) run `gpt-6.1-sol` at `--effort medium`; Light work runs `gpt-6-luna` at `--effort low`. Strong tier work on Codex (elon, architect-pm, secops-finops, and money or security reviews) runs `gpt-6-astra` at `--effort medium`, never high effort. Do not raise a Codex worker's model or effort without the owner.
 - Cursor and Antigravity put the effort in the model id, so pass no `--effort` there.
+- Cursor and Antigravity default to Claude models, so they do not satisfy the different family review rule when the author ran on Claude. For a non-Claude reviewer when Codex is blocked, use `--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-3.1-pro-high` (ids checked 2026-10-07).
 - Elon's own session runs on `opus` at `high`, set by `elon.md`.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt, and report the effective model, not the requested one.
 
