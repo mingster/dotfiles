@@ -140,8 +140,8 @@ if [ "$DRY_RUN" -eq 0 ]; then
     cat "$TEMPLATES/AGENTS.token-budget.md" >> "$TARGET_DIR/AGENTS.md"
     echo "  appended Token budget to AGENTS.md"
   fi
-  # 8. Keep the ledger and hook state out of git
-  for pat in "active_run.md" ".claude/state/"; do
+  # 8. Keep the ledger, hook state and release evidence out of git
+  for pat in "active_run.md" ".claude/state/" ".claude/release-reports/"; do
     grep -qxF "$pat" "$TARGET_DIR/.gitignore" 2>/dev/null || echo "$pat" >> "$TARGET_DIR/.gitignore"
   done
 fi
