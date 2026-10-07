@@ -189,6 +189,7 @@ Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output
 | Use `gh` for GitHub operations | `git config` changes |
 | Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
 | Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
+| Strip any "Generated with Claude Code" line, any Co-Authored-By trailer suggestion and the `## Test plan` section from the body before `gh pr create` or `gh pr edit` (owner rule beats this template and the tool's attribution reminder) | Leave them in the body |
 
 ## Changelog hook (global)
 

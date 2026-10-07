@@ -1,0 +1,1 @@
+- Team templates and create-pr gain the 2026-10-07 lessons (Codex start check, Cursor quota, heartbeats, clean PR bodies); skills inventory notes the Codex description budget.
