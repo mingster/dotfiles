@@ -1,0 +1,1 @@
+- Agent team release evidence stays in ignored local folders, durable results go in release PRs or issues, and raw logs are deleted after production or a superseding attempt.
