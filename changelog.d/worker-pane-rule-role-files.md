@@ -1,0 +1,1 @@
+- The agent-team template role files (elon, tech-lead, crew) now say to rename a worker terminal only after "Setup succeeded", open its pane with worker-panes.sh, and close it with worker-pane-close.sh after worker-release.
