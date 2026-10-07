@@ -131,6 +131,10 @@ The five canonical triage roles, label strings unchanged. See \`docs/agents/tria
 ### Domain docs
 
 Single context: \`CONTEXT.md\` plus \`docs/adr/\` at the repo root. See \`docs/agents/domain.md\`.
+
+### Invoking skills
+
+Invoke a skill by name: \`/to-tickets\` in Claude Code, Cursor and Antigravity, \`$to-tickets\` in Codex, or read \`~/.agents/skills/<name>/SKILL.md\` and follow it. Codex and Antigravity hide skills marked \`disable-model-invocation\` (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder) until the prompt names them.
 BLOCK
     fi
   fi

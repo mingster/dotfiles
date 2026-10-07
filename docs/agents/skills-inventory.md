@@ -203,3 +203,12 @@ Local deviations from upstream, to re-apply on every refresh:
 The fast path names (`to-spec`, `to-tickets`, `tdd`, `code-review`) and `diagnosing-bugs`, `grill-with-docs`, `research` are unchanged upstream, and none of the role files, elon/tl/crew skills or `docs/agents/*.md` pass arguments to them, so the team docs needed no edit in R, P or T.
 
 `script/init-agent-project.sh` seeds `docs/agents/{issue-tracker,triage-labels,domain}.md` from `setup-matt-pocock-skills`. It now accepts a git worktree (`.git` as a file) and the GitHub seed gained the sub-issue operation that the new `to-tickets` uses. R already had the three files (a sub-issue line was added to R's `issue-tracker.md`); P had none and was seeded.
+
+## Skill loading per tool (2026-10-07)
+
+| Tool | Global skills read from | Notes |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills` (link to `.agents/skills`) | Loads every skill. |
+| Cursor | `~/.claude/skills` and `~/.agents/skills` | No `~/.cursor/skills` link: it would list each skill twice. Cursor print mode could not be verified on 2026-10-07 (monthly usage limit until 10/25). |
+| Codex 0.160.1 | `~/.agents/skills` | Hides every skill with `disable-model-invocation: true` from the model (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder and others). One loads only when the prompt names it as `$to-tickets`. We keep the flag, which is upstream. The docs say how to invoke instead: `/name` in Claude Code, Cursor and Antigravity, `$name` in Codex, or read `~/.agents/skills/<name>/SKILL.md`. The sentence lives in the `Agent skills` block of each `AGENTS.md`, in `AGENTS.token-budget.md` and in `~/.codex/AGENTS.md` (source `.codex/AGENTS.md`, linked by `setup-codex.sh`). |
+| Antigravity | `~/.gemini/antigravity/skills` and, for the `agy` CLI, `~/.gemini/antigravity-cli/skills` | Both are links to `.agents/skills`, made by `setup-antigravity.sh`. Antigravity also hides `disable-model-invocation` skills from the model (asked without a name it answers no), but `/to-tickets` loads it. A skill whose frontmatter is invalid YAML is skipped with an error in `~/.gemini/antigravity-cli/log` (`write-spec` had an unquoted colon in its description, now quoted). `~/.gemini/config/skills` is Google's own data skills and is left alone. Workspace skills come from `<repo>/.agent/skills` (singular), a relative link to `../.agents/skills` in each repo and in the template. |
