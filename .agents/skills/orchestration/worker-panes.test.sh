@@ -31,12 +31,12 @@ check() { # name condition_exit
 
 "$here/worker-panes.sh" run_x term_base >/dev/null 2>&1
 check "splits only active workers" "$([ "$(wc -l < "$tmp/splits.log")" -eq 2 ]; echo $?)"
-check "first split is vertical, color 1" "$(sed -n 1p "$tmp/splits.log" | grep -q 'vertical.*worker-pane.sh d1 1'; echo $?)"
-check "second split is horizontal, color 2" "$(sed -n 2p "$tmp/splits.log" | grep -q 'horizontal.*worker-pane.sh d3 2'; echo $?)"
+check "first split is vertical, no color arg" "$(sed -n 1p "$tmp/splits.log" | grep -q 'vertical.*worker-pane.sh d1 --json'; echo $?)"
+check "second split is horizontal" "$(sed -n 2p "$tmp/splits.log" | grep -q 'horizontal.*worker-pane.sh d3 --json'; echo $?)"
 
 rm "$tmp/splits.log"
 "$here/worker-panes.sh" run_x term_base d2 >/dev/null 2>&1
-check "explicit dispatch id overrides the list" "$(grep -q 'worker-pane.sh d2 1' "$tmp/splits.log"; echo $?)"
+check "explicit dispatch id overrides the list" "$(grep -q 'worker-pane.sh d2 --json' "$tmp/splits.log"; echo $?)"
 
 # Panes already in the coordinator's tab: the next call continues the color sequence.
 cat > "$tmp/terminals.json" <<'JSON'
@@ -44,6 +44,6 @@ cat > "$tmp/terminals.json" <<'JSON'
 JSON
 rm "$tmp/splits.log"
 "$here/worker-panes.sh" run_x term_base d4 >/dev/null 2>&1
-check "next call continues color from panes in the tab" "$(grep -q 'horizontal.*worker-pane.sh d4 3' "$tmp/splits.log"; echo $?)"
+check "direction continues from panes in the tab" "$(grep -q 'horizontal.*worker-pane.sh d4 --json' "$tmp/splits.log"; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
