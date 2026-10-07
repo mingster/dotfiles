@@ -35,6 +35,11 @@ human-owner approval or required independent review.
 limit, trust dialog, low context); run it as `~/.claude/skills/orchestration/worker-watch.sh`.
 `worker-watch.test.sh` is its test.
 
+`worker-panes.sh <run_id> <coordinator_terminal> [dispatch_id ...]` shows workers as colored split panes in the
+coordinator's tab (Orca cannot start a worker as a split pane). Each pane runs `worker-pane.sh <dispatch_id> [color 1-7]`,
+a read-only live mirror of that worker's screen that stays open after completion. Run it as
+`~/.claude/skills/orchestration/worker-panes.sh`; `worker-panes.test.sh` is its test.
+
 ## Resolve the CLI for this session
 
 Choose the executable once and reuse it for every later command:
