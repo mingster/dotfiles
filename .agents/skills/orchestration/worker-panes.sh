@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open one colored worker-pane.sh split per active worker of a run, beside the given terminal.
+# Open one role-colored worker-pane.sh split per active worker of a run, beside the given terminal.
 # Usage: worker-panes.sh <run_id> <coordinator_terminal_handle> [dispatch_id ...]
 set -u
 run="$1"; base="$2"; shift 2; orca="${ORCA_CLI_COMMAND:-orca}"
@@ -12,7 +12,7 @@ r=json.load(sys.stdin)["result"]
 for w in r.get("workers", []):
   if w.get("dispatchStatus") in ("dispatched", "running", "pending"): print(w["dispatchId"])')
 fi
-# Next color and split direction continue from the panes already in the coordinator's tab.
+# Split direction continues from the panes already in the coordinator's tab.
 n=0
 if tab=$("$orca" terminal list --json 2>/dev/null | python3 -c '
 import sys,json
@@ -24,8 +24,7 @@ print(sum(1 for x in t if tab and x.get("tabId")==tab))' "$base"); then
   n=$(echo "$tab" | sed -n 2p); n=${n:-0}
 fi
 [ "$n" -gt 1 ] 2>/dev/null && dir=horizontal || dir=vertical
-color=$(( (n > 1 ? n - 1 : 0) % 6 + 1 ))
 for d in ${ids[@]+"${ids[@]}"}; do
-  "$orca" terminal split --terminal "$base" --direction "$dir" --command "$here/worker-pane.sh $d $color" --json >/dev/null && echo "pane $d color $color"
-  color=$(( color % 6 + 1 )); dir=horizontal
+  "$orca" terminal split --terminal "$base" --direction "$dir" --command "$here/worker-pane.sh $d" --json >/dev/null && echo "pane $d"
+  dir=horizontal
 done
