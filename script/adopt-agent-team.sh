@@ -85,6 +85,12 @@ else
     || echo "  team skills not synced, see the message above" >&2
 fi
 
+# 4a. Antigravity reads workspace skills from .agent/skills (singular): relative link to .agents/skills.
+if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET_DIR/.agents/skills" ] && [ ! -e "$TARGET_DIR/.agent/skills" ]; then
+  mkdir -p "$TARGET_DIR/.agent"
+  ln -s ../.agents/skills "$TARGET_DIR/.agent/skills"
+fi
+
 # 4b. Product facts the team skills read. Owned by the project: written only when missing.
 for f in team-facts.md deploy-facts.md; do
   if [ ! -f "$TARGET_DIR/docs/agents/$f" ]; then

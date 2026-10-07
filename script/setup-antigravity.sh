@@ -57,6 +57,17 @@ cat > "$AG_AGENT_CONFIG/skills.json" <<EOF
 }
 EOF
 
+# Global skills: Antigravity reads ~/.gemini/antigravity/skills, the agy CLI reads
+# ~/.gemini/antigravity-cli/skills. Never touch ~/.gemini/config/skills (Google's data skills).
+for d in "$HOME/.gemini/antigravity" "$HOME/.gemini/antigravity-cli"; do
+  mkdir -p "$d"
+  if [ -e "$d/skills" ] && [ ! -L "$d/skills" ]; then
+    echo "setup-antigravity: $d/skills is a real directory; leaving it alone." >&2
+  else
+    ln -sfn "$AGENTS_ROOT/skills" "$d/skills"
+  fi
+done
+
 # Full permissions configuration for Antigravity runtime and CLI
 mkdir -p "$HOME/.gemini/antigravity-cli"
 if [ -f "$DOTFILES/.gemini/settings.json" ]; then

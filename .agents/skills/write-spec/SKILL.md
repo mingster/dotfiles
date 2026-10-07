@@ -1,6 +1,6 @@
 ---
 name: write-spec
-description: Write spec.md for an accepted intent.md (Design stage of the AI-native SDLC): requirements and design for this codebase, conflicts with existing decisions, glossary terms and ADRs. Use when an intent is accepted, or the owner says "write the spec" or "/write-spec" for an intent folder.
+description: "Write spec.md for an accepted intent.md (Design stage of the AI-native SDLC): requirements and design for this codebase, conflicts with existing decisions, glossary terms and ADRs. Use when an intent is accepted, or the owner says \"write the spec\" or \"/write-spec\" for an intent folder."
 ---
 
 # Write spec
