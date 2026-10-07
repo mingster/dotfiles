@@ -11,4 +11,4 @@ Do not ask the user to repeat this setup in each project.
 
 In a mingster repo without `docs/agents/issue-tracker.md`, run `~/dotfiles/script/init-agent-project.sh --labels` before using to-spec, to-tickets, triage or code-review.
 
-Invoke a skill by name: `/to-tickets` in Claude Code and Cursor, `$to-tickets` in Codex, or read `~/.agents/skills/<name>/SKILL.md` and follow it. Codex hides skills marked `disable-model-invocation` (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder) until the prompt names them.
+Invoke a skill by name: `/to-tickets` in Claude Code, Cursor and Antigravity, `$to-tickets` in Codex, or read `~/.agents/skills/<name>/SKILL.md` and follow it. Codex and Antigravity hide skills marked `disable-model-invocation` (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder) until the prompt names them.

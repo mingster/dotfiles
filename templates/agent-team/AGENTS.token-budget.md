@@ -26,4 +26,4 @@ Fill these in: the read only database URL variable, the masked env check, the lo
 
 Run `~/dotfiles/script/init-agent-project.sh --labels` once in a new project. It seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, adds the "Agent skills" block to `AGENTS.md` and creates the triage labels. The Claude Code SessionStart hook does this by itself in mingster repos.
 
-Invoke a skill by name: `/to-tickets` in Claude Code and Cursor, `$to-tickets` in Codex, or read `~/.agents/skills/<name>/SKILL.md` and follow it. Codex hides skills marked `disable-model-invocation` (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder) until the prompt names them.
+Invoke a skill by name: `/to-tickets` in Claude Code, Cursor and Antigravity, `$to-tickets` in Codex, or read `~/.agents/skills/<name>/SKILL.md` and follow it. Codex and Antigravity hide skills marked `disable-model-invocation` (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder) until the prompt names them.
