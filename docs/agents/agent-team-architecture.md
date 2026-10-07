@@ -58,7 +58,7 @@ Not drawn: `support-csm` (customer support and success) in both projects, and `s
 - **Direct Executive Partner to Mingster**:
   - Objective-driven and critical: challenges weak assumptions without yes-man flattery.
   - Plans, dispatches every teammate with Orca orchestration (skill `orchestration`, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done` report, and reports back to Mingster. Elon never uses Claude subagents or experimental agent teams for this.
-  - Usage gate: before every `worker-start`, Elon runs `usage-gate.py check --provider <provider>`. A provider that has used its daily cap (12% of its weekly limit) is skipped for the next one in the fallback order.
+  - Usage gate: before every `worker-start`, Elon runs `usage-gate.py check --provider <provider>`. A provider that has used its daily cap (12% of its weekly limit), counted with a reserve of 1% of the week per worker already running on it, is skipped for the next one in the fallback order.
   - Commands: Use `/elon <goal>` or `/ceo <goal>` to initiate goals, strategy discussions, or high-level status inquiries.
   - Standard output format: **Now** (accomplished), **Needs owner** (decisions requiring board approval), **Running** (active agents and pipelines).
 
@@ -78,7 +78,7 @@ Not drawn: `support-csm` (customer support and success) in both projects, and `s
 - **A teammate that reports to Elon** for delivery status and capacity.
 - Coordinates engineering integration: merges reviewed PRs, keeps branches and worktrees clean, coordinates releases, and starts and supervises engineering workers in Orca.
 - Receives machine-checkable ticket contracts from the BA and runs the same usage gate as Elon before every `worker-start`.
-- *Merging*: Merges eagerly. As soon as QA (plus SecOps or stream-health where required) has no blocking comments, checks are green and the PR is mergeable, the Tech Lead merges without waiting for the owner, never with `--admin`. PRs that accept an intent or spec, production deploys outside the standing go, and migrations still go to the owner.
+- *Merging*: Reports passing PRs to Elon, who merges eagerly (the lead never runs `git push`, `gh pr create` or `gh pr merge`). As soon as QA (plus SecOps or stream-health where required) has no blocking comments, checks are green and the PR is mergeable, the Tech Lead merges without waiting for the owner, never with `--admin`. PRs that accept an intent or spec, production deploys outside the standing go, and migrations still go to the owner.
 
 ---
 
@@ -107,12 +107,12 @@ sequenceDiagram
     else Crew Dispatch (Multi-domain feature)
         CEO->>Dev: Dispatch ticket with Orca orchestration (isolated worktree under ~/orca/workspaces/...)
         Dev->>Dev: Strict Red-Green-Refactor (TDD)
-        Dev->>CEO: worker_done (PR ready)
+        Dev->>CEO: worker_done (branch ready: worktree path, diff stat, tests)
         CEO->>QA: Dispatch audit
         QA->>QA: Dual-Axis Review (Standards & Spec Traceability)
         QA->>CEO: worker_done (verdict)
-        CEO->>TL: Merge the reviewed PR
-        TL->>TL: Merge once checks pass & prune worktree
+        CEO->>CEO: Push, open the PR, merge with --match-head-commit
+        CEO->>TL: Prune the worktree after the push succeeded
     end
 
     TL->>CEO: Consolidated delivery & verification report
@@ -159,13 +159,13 @@ See full template and examples at `docs/agents/persistent-memory-protocol.md`.
 ## 6. Token Efficiency & FinOps Rules (Lean Startup SDLC)
 
 1. **Model and Effort**: Pick the tier by task, not by habit: Strong reasoning for ambiguous decisions, specs, and security or financial review; Workhorse for implementation, coordination, QA, release, and support. Exact flags per provider are in `.claude/model-routing.md`.
-2. **Usage Gate**: Before every `worker-start`, run `usage-gate.py check --provider <provider>`. Exit 3 means the provider hit its daily cap (12% of its weekly limit) or the week is 95% used, so use the next provider in the fallback order, or stop dispatching and report it. The `script/usage-gate-hook.py` PreToolUse hook enforces this for claude and codex: it denies a blocked `worker-start`.
+2. **Usage Gate**: Before every `worker-start`, run `usage-gate.py check --provider <provider>`. Exit 3 means the provider hit its daily cap (12% of its weekly limit) or the week is 95% used, so use the next provider in the fallback order, or stop dispatching and report it. The `script/usage-gate-hook.py` PreToolUse hook enforces this for claude and codex: it denies a blocked `worker-start` and names the reset time in local time. How the numbers work: the gate reads the provider's own weekly percentage (codex: newest `rate_limits` event in `~/.codex/sessions`; claude: the statusline's `rate_limits.seven_day`), "used today" is that percentage minus its value at the start of the local day (codex: last event before midnight; claude: the first statusline reading of the day; a week that began today counts from 0), and a reading older than 6 hours counts as no reading except against the 95% ceiling. The percentage is the whole account's, so sessions outside Orca count. A start is refused when used today plus the reserve reaches the cap, where the reserve is 1% of the week per running worker (`orca orchestration worker-list`). The gate checks only at `worker-start` and never stops a running worker. `usage-gate.py show` prints every provider as one table (`--json` for the raw rows).
 3. **Three-Strike Hard Stop**: When fixing the same bug, type error, or test failure reaches 3 attempts, halt immediately. Log errors and attempted solutions in `active_run.md` under `[Blockers]` and wait for human input.
 4. **On-Demand Memory**: Never load `learned.md` or `experiences/` blindly at session start. Grep on-demand only when tackling known domain gotchas.
 5. **Worktree Lifecycle**: Child worktrees belong in `~/orca/workspaces/<project>/<lane>`. When integrated or abandoned, prune them immediately (`git worktree remove`) so directories never accumulate. Release each finished worker with `orca orchestration worker-release --dispatch <id>`, even when its outcome is `failed`.
 6. **Lean State Artifacts**: Reference `docs/agents/lean-startup-sdlc.md` for `active_run.md` format and zero-env disclosures. Living specs remain in the project's SDLC intent or spec folders.
 7. **Context Hygiene & Session Lifecycles**:
-   - **One Ticket, One Session**: Workers exit cleanly once their PR is opened and verified. Never chain unrelated tasks in an old session; start fresh sessions for new tickets.
+   - **One Ticket, One Session**: Workers exit cleanly once their branch is committed, verified and reported (Elon pushes and opens the PR). Never chain unrelated tasks in an old session; start fresh sessions for new tickets.
    - **In-Task Compaction Readiness**: Maintain `active_run.md` continuously so human operators can run `/compact` during long tasks without losing execution state.
    - **Side Worker Offloading**: Elon and the Tech Lead delegate heavy file reading and test sweeps to Orca workers, absorbing only compact diff stats and exit codes.
    - **Spike Isolation**: Test speculative fixes in disposable worktrees or forked sessions. Discard failed explorations rather than polluting main thread history.
@@ -211,3 +211,13 @@ What may differ per project:
 - Extra roles (PSTV adds `stream-health`).
 
 What stays the same: Elon as the single front door, Orca orchestration with `worker_done` reports, the usage gate, the provider fallback order, eager merging by the Tech Lead, and the gated actions held by the owner.
+
+## Commit, push and merge (owner rule)
+
+Enforced by instruction until the hook exists.
+
+1. A worker edits and commits only on its own branch in its own worktree. It never pushes, never runs `gh pr create` and never merges. It reports the branch, the worktree path, `git diff main...HEAD --stat` and test counts in `worker_done`.
+2. A reviewer reads the worker's worktree locally and puts its findings in its `worker_done`, not in PR comments.
+3. Elon pushes the branch and opens the PR with the push script (it refuses `main`, `staging` and `production`, refuses `.env` files, tries at most 3 times and then reports, and writes a PR body with no Test plan and no tool credit), then merges with `--match-head-commit`. A worktree is removed only after its push succeeded.
+4. The release manager pushes `staging` and `production` only, and production only with the owner's approval.
+5. A hook that blocks `git push`, `gh pr create` and `gh pr merge` in worker terminals, and the push script, are built next session.
