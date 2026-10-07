@@ -33,6 +33,6 @@ except Exception: tail=[]
 print("\n".join(l for l in tail if l.strip()))' | tail -n $((rows-2)) | cut -c1-"$cols")
   printf '\033[H\033[2J\033[1;37;48;5;%sm %-*s\033[0m\n' "$c" $((cols-1)) "$title [$status]"
   printf '%s\n' "$body"
-  case "$status" in completed|failed|cancelled|released) printf '\033[1;38;5;%sm-- %s, pane stays for review (Ctrl+C to close) --\033[0m\n' "$c" "$status"; sleep "${WORKER_PANE_HOLD:-3600}"; exit;; esac
+  case "$status" in completed|failed|cancelled|released) printf '\033[1;38;5;%sm-- %s --\033[0m\n' "$c" "$status"; exit;; esac
   sleep 5
 done
