@@ -64,6 +64,7 @@ Keep each role file's `model:` and `effort:` equal to the Claude row for its tie
 5. Before picking a provider, read its startup notice: Codex prints "weekly limit: only N% left", and at 5% or less treat Codex as unavailable for a new worker. Record each unavailable provider's reset time in the status report.
 6. Rename the terminal after the delivery check passes, because agents overwrite the title at startup, then confirm with `orca terminal list`. Then run `~/.claude/skills/orchestration/worker-panes.sh <run_id> <coordinator terminal handle> <dispatch_id>` so the worker appears as a colored pane in the coordinator's tab (pane color comes from the role in the task title, so always start the title with the role name); find the coordinator handle with `orca terminal list --json` (the terminal titled with the coordinator role in the main checkout).
 7. In status reports, name each running worker's worktree (under `~/orca/workspaces/<project>`) so the owner can find it.
+8. After every `worker-release`, the coordinator closes that worker's pane with `~/.claude/skills/orchestration/worker-pane-close.sh <dispatch_id>` (no arguments closes every recorded pane whose dispatch has ended). A finished pane stays open until the coordinator closes it.
 
 ## Watching a worker
 

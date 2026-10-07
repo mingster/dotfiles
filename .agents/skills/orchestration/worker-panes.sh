@@ -12,6 +12,7 @@ r=json.load(sys.stdin)["result"]
 for w in r.get("workers", []):
   if w.get("dispatchStatus") in ("dispatched", "running", "pending"): print(w["dispatchId"])')
 fi
+state="${ORCA_PANE_STATE_DIR:-$HOME/.cache/orca-worker-panes}"; mkdir -p "$state"
 # Split direction continues from the panes already in the coordinator's tab.
 n=0
 if tab=$("$orca" terminal list --json 2>/dev/null | python3 -c '
@@ -25,6 +26,25 @@ print(sum(1 for x in t if tab and x.get("tabId")==tab))' "$base"); then
 fi
 [ "$n" -gt 1 ] 2>/dev/null && dir=horizontal || dir=vertical
 for d in ${ids[@]+"${ids[@]}"}; do
-  "$orca" terminal split --terminal "$base" --direction "$dir" --command "$here/worker-pane.sh $d" --json >/dev/null && echo "pane $d"
+  if rec=$("$orca" terminal split --terminal "$base" --direction "$dir" --command "$here/worker-pane.sh $d" --json); then
+    # Record the pane handle so the coordinator can close it (worker-pane-close.sh).
+    h=$(printf '%s' "$rec" | python3 -c '
+import sys,json
+def find(o):
+  if isinstance(o,dict):
+    v=o.get("handle")
+    if isinstance(v,str) and v: return v
+    for x in o.values():
+      r=find(x)
+      if r: return r
+  elif isinstance(o,list):
+    for x in o:
+      r=find(x)
+      if r: return r
+try: print(find(json.load(sys.stdin)) or "")
+except Exception: print("")')
+    [ -n "$h" ] && printf '%s\n' "$h" > "$state/$d"
+    echo "pane $d"
+  fi
   dir=horizontal
 done

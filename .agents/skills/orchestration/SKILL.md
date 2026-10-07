@@ -37,8 +37,9 @@ limit, trust dialog, low context); run it as `~/.claude/skills/orchestration/wor
 
 `worker-panes.sh <run_id> <coordinator_terminal> [dispatch_id ...]` shows workers as colored split panes in the
 coordinator's tab (Orca cannot start a worker as a split pane). Each pane runs `worker-pane.sh <dispatch_id> [color]`,
-a read-only live mirror of that worker's screen that stays open after completion. Run it as
+a read-only live mirror of that worker's screen; it shows the final status line when the dispatch ends and stops. Each pane's handle is recorded in `~/.cache/orca-worker-panes/<dispatch_id>`. Run it as
 `~/.claude/skills/orchestration/worker-panes.sh`; `worker-panes.test.sh` and `worker-pane.test.sh` are its tests.
+After every `worker-release`, the coordinator closes the pane with `~/.claude/skills/orchestration/worker-pane-close.sh <dispatch_id>` (no arguments closes every recorded pane whose dispatch has ended); `worker-pane-close.test.sh` is its test.
 Pane color comes from the role in the task title (`<role> - <job>`), looked up in `role-colors.tsv` next to the scripts (unknown role: grey), so always start the title with the role name. Add a line there for a new role.
 
 ## Resolve the CLI for this session
