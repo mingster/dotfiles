@@ -6,6 +6,7 @@ cat > "$tmp/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" ;;
+  "terminal list"*) cat "$FAKE_DIR/terminals.json" ;;
   "terminal split"*) echo "$*" >> "$FAKE_DIR/splits.log"; echo '{"ok":true}' ;;
   *) exit 1 ;;
 esac
@@ -17,6 +18,10 @@ cat > "$tmp/workers.json" <<'JSON'
  {"dispatchId":"d1","dispatchStatus":"running"},
  {"dispatchId":"d2","dispatchStatus":"completed"},
  {"dispatchId":"d3","dispatchStatus":"dispatched"}]}}
+JSON
+
+cat > "$tmp/terminals.json" <<'JSON'
+{"result":{"terminals":[{"handle":"term_base","tabId":"t1"},{"handle":"term_other","tabId":"t2"}]}}
 JSON
 
 pass=0; fail=0
@@ -32,5 +37,13 @@ check "second split is horizontal, color 2" "$(sed -n 2p "$tmp/splits.log" | gre
 rm "$tmp/splits.log"
 "$here/worker-panes.sh" run_x term_base d2 >/dev/null 2>&1
 check "explicit dispatch id overrides the list" "$(grep -q 'worker-pane.sh d2 1' "$tmp/splits.log"; echo $?)"
+
+# Panes already in the coordinator's tab: the next call continues the color sequence.
+cat > "$tmp/terminals.json" <<'JSON'
+{"result":{"terminals":[{"handle":"term_base","tabId":"t1"},{"handle":"w1","tabId":"t1"},{"handle":"w2","tabId":"t1"},{"handle":"term_other","tabId":"t2"}]}}
+JSON
+rm "$tmp/splits.log"
+"$here/worker-panes.sh" run_x term_base d4 >/dev/null 2>&1
+check "next call continues color from panes in the tab" "$(grep -q 'horizontal.*worker-pane.sh d4 3' "$tmp/splits.log"; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

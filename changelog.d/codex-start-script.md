@@ -1,0 +1,1 @@
+- start-codex-worker.sh starts Codex workers without the agent_readiness failure (warm-up turn first, then worker-start). worker-panes.sh continues the pane color from the panes already in the coordinator's tab. The model-routing template now points Codex starts at the script.
