@@ -20,7 +20,7 @@ Each role starts on its default provider. Fallback begins at the next provider a
 
 | Role | Default provider | Flags |
 | --- | --- | --- |
-| fullstack-dev | Codex | `--agent codex --model gpt-6.1-sol --effort medium` (`gpt-5.5` retires October 14, do not use) |
+| fullstack-dev | Codex | `--agent codex --model gpt-6.1-sol --effort medium` (owner rule, see below) |
 | qa-sdet | Claude / Cursor | `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
 | every other role | Claude | the Claude column for the role's tier |
 
@@ -34,11 +34,12 @@ This table is the owner's standing model choice, so pass these flags on every `w
 
 | Tier | Claude | Codex | Cursor | Antigravity |
 | --- | --- | --- | --- | --- |
-| Strong | `--agent claude --model opus --effort high` | `--agent codex --model gpt-6-astra --effort high` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model claude-opus-5-5-high` |
+| Strong | `--agent claude --model opus --effort high` | `--agent codex --model gpt-6.1-sol --effort medium` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model claude-opus-5-5-high` |
 | Workhorse | `--agent claude --model sonnet --effort medium` | `--agent codex --model gpt-6.1-sol --effort medium` | `--agent cursor --model claude-sonnet-5-5-medium` | `--agent antigravity --model claude-sonnet-5-5-medium` |
 | Light | `--agent claude --model haiku` | `--agent codex --model gpt-6-luna --effort low` | `--agent cursor --model gemini-3.8-flash-low` | `--agent antigravity --model gemini-3.8-flash-low` |
 
 - Codex's own descriptions: `gpt-6-astra` is "frontier intelligence for the most demanding work", `gpt-6.1-sol` is the "latest workhorse model for coding and everyday work", `gpt-6-luna` is "fast and affordable".
+- Owner rule (2026-10-07): Codex workhorse workers (fullstack-dev and every Workhorse role) run `gpt-6.1-sol` at `--effort medium`; Light work runs `gpt-6-luna` at `--effort low`. Strong tier work on Codex also runs `gpt-6.1-sol` at `medium`, never `gpt-6-astra` or high effort, including money work. Do not raise a Codex worker's model or effort without the owner.
 - Cursor and Antigravity put the effort in the model id, so pass no `--effort` there.
 - Elon's own session runs on `opus` at `high`, set by `elon.md`.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt, and report the effective model, not the requested one.
@@ -56,10 +57,11 @@ Keep each role file's `model:` and `effort:` equal to the Claude row for its tie
 
 1. Start every worker with `--worktree new-child --name <role>-<short-job> --base-branch origin/main`, so it shows under the coordinator's worktree in Orca's sidebar. Do not pre-create worker worktrees with `--no-parent`, because their terminals then sit under a separate sidebar entry the owner cannot find.
 2. Delivery check: within 2 minutes of `worker-start`, run `orca terminal read --terminal <handle> --screen`. It must show the agent working on the spec. An empty prompt, a startup notice (usage limit, model retirement, update), any dialog or an error in the agent output (for example Cursor answering "spendLimitHit: true" for Opus) means the start failed and the spec was not delivered. Such a dispatch has not settled, so `worker-release` refuses it. Run `orca orchestration worker-stop --dispatch <id>`; if it returns `stop_unknown` and the screen positively shows the provider error with no `worker_done` sent, run `orca orchestration worker-abandon --dispatch <id>` (a retry on a `stop_unknown` dispatch fails with `task_not_startable`). Then `orca orchestration worker-start --task <task_id> --retry-of <dispatch_id> --worktree <same worktree> --agent <next provider that passes the usage gate> ...`, and run the delivery check again. Never wait on an undelivered worker.
-3. Cursor shows "Workspace Trust Required" in every new worktree and `worker-start` fails at `agent_readiness`. `cursor-agent --trust` trusts the workspace without prompting, so launch with it when the start command lets you pass flags. Otherwise run `orca terminal send --terminal <handle> --text a`, confirm the prompt bar shows, then `worker-start --task <task_id> --retry-of <failed dispatch> --terminal <handle> --worktree path:<same worktree>`.
-4. Before picking a provider, read its startup notice: Codex prints "weekly limit: only N% left", and at 5% or less treat Codex as unavailable for a new worker. Record each unavailable provider's reset time in the status report.
-5. Rename the terminal after the delivery check passes, because agents overwrite the title at startup, then confirm with `orca terminal list`.
-6. In status reports, name each running worker's worktree (under `~/orca/workspaces/<project>`) so the owner can find it.
+3. Codex 0.160.1 fails `worker-start` at `agent_readiness` (it reports no status to Orca until its first prompt, and leaves the terminal's `>|xterm.js(...)` reply in its input box). Let the failed start create the worktree and terminal, run `orca terminal send --terminal <handle> --text "Say ready and wait for your task." --enter`, wait about 25 seconds, then `worker-start --task <task_id> --retry-of <dispatch_id> --terminal <handle> --worktree path:<same worktree>`. Drop this step once a cheap `gpt-6-luna` probe starts cleanly.
+4. Cursor shows "Workspace Trust Required" in every new worktree and `worker-start` fails at `agent_readiness`. `cursor-agent --trust` trusts the workspace without prompting, so launch with it when the start command lets you pass flags. Otherwise run `orca terminal send --terminal <handle> --text a`, confirm the prompt bar shows, then `worker-start --task <task_id> --retry-of <failed dispatch> --terminal <handle> --worktree path:<same worktree>`.
+5. Before picking a provider, read its startup notice: Codex prints "weekly limit: only N% left", and at 5% or less treat Codex as unavailable for a new worker. Record each unavailable provider's reset time in the status report.
+6. Rename the terminal after the delivery check passes, because agents overwrite the title at startup, then confirm with `orca terminal list`.
+7. In status reports, name each running worker's worktree (under `~/orca/workspaces/<project>`) so the owner can find it.
 
 ## Watching a worker
 

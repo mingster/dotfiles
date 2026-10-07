@@ -87,7 +87,7 @@ setup_repo() {
     say "skip  $repo (no such directory)"
     return
   fi
-  if [ ! -d "$repo/.git" ]; then
+  if [ ! -e "$repo/.git" ]; then
     say "skip  $repo (not a git repo)"
     return
   fi
