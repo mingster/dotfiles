@@ -36,7 +36,7 @@ limit, trust dialog, low context); run it as `~/.claude/skills/orchestration/wor
 `worker-watch.test.sh` is its test.
 
 `worker-panes.sh <run_id> <coordinator_terminal> [dispatch_id ...]` shows workers as colored split panes in the
-coordinator's tab (Orca cannot start a worker as a split pane). Each pane runs `worker-pane.sh <dispatch_id> [color]`,
+coordinator's tab (coordinator left; the first pane splits it to the right, later panes stack in that right column, and the coordinator is split again only when no worker pane is left) (Orca cannot start a worker as a split pane). Each pane runs `worker-pane.sh <dispatch_id> [color]`,
 a read-only live mirror of that worker's screen; it shows the final status line when the dispatch ends and stops. Each pane's handle is recorded in `~/.cache/orca-worker-panes/<dispatch_id>`. Run it as
 `~/.claude/skills/orchestration/worker-panes.sh`; `worker-panes.test.sh` and `worker-pane.test.sh` are its tests.
 After every `worker-release`, the coordinator closes the pane with `~/.claude/skills/orchestration/worker-pane-close.sh <dispatch_id>` (no arguments closes every recorded pane whose dispatch has ended); `worker-pane-close.test.sh` is its test.

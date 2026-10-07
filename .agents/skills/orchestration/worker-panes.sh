@@ -13,20 +13,23 @@ for w in r.get("workers", []):
   if w.get("dispatchStatus") in ("dispatched", "running", "pending"): print(w["dispatchId"])')
 fi
 state="${ORCA_PANE_STATE_DIR:-$HOME/.cache/orca-worker-panes}"; mkdir -p "$state"
-# Split direction continues from the panes already in the coordinator's tab.
-n=0
-if tab=$("$orca" terminal list --json 2>/dev/null | python3 -c '
+# Layout: coordinator on the left, one right column of worker panes. The first pane splits the coordinator
+# to the right (vertical); later panes split the newest live worker pane below it (horizontal).
+# Live worker panes come from the state files, minus handles that orca terminal list no longer shows.
+target="$base"; dir=vertical
+live=$("$orca" terminal list --json 2>/dev/null | python3 -c '
 import sys,json
-t=json.load(sys.stdin)["result"]["terminals"]
-b=[x for x in t if x.get("handle")==sys.argv[1]]
-tab=b[0].get("tabId") if b else None
-print(tab or "")
-print(sum(1 for x in t if tab and x.get("tabId")==tab))' "$base"); then
-  n=$(echo "$tab" | sed -n 2p); n=${n:-0}
+try: print("\n".join(x.get("handle","") for x in json.load(sys.stdin)["result"]["terminals"]))
+except Exception: pass')
+if [ -n "$live" ]; then
+  for f in $(ls -t "$state" 2>/dev/null); do
+    [ -f "$state/$f" ] || continue
+    h=$(head -n 1 "$state/$f")
+    if [ -n "$h" ] && [ "$h" != "$base" ] && printf '%s\n' "$live" | grep -qxF "$h"; then target="$h"; dir=horizontal; break; fi
+  done
 fi
-[ "$n" -gt 1 ] 2>/dev/null && dir=horizontal || dir=vertical
 for d in ${ids[@]+"${ids[@]}"}; do
-  if rec=$("$orca" terminal split --terminal "$base" --direction "$dir" --command "$here/worker-pane.sh $d" --json); then
+  if rec=$("$orca" terminal split --terminal "$target" --direction "$dir" --command "$here/worker-pane.sh $d" --json); then
     # Record the pane handle so the coordinator can close it (worker-pane-close.sh).
     h=$(printf '%s' "$rec" | python3 -c '
 import sys,json
@@ -43,8 +46,7 @@ def find(o):
       if r: return r
 try: print(find(json.load(sys.stdin)) or "")
 except Exception: print("")')
-    [ -n "$h" ] && printf '%s\n' "$h" > "$state/$d"
+    [ -n "$h" ] && { printf '%s\n' "$h" > "$state/$d"; target="$h"; dir=horizontal; }
     echo "pane $d"
   fi
-  dir=horizontal
 done
