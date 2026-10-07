@@ -6,6 +6,8 @@
 # next to this script; unknown roles get 240 (grey). An explicit color argument overrides it.
 # Orca has no option to start a worker as a split pane (each worker owns its worktree),
 # so this mirrors the worker's screen into a pane of the coordinator's tab.
+# When the dispatch ends (completed, failed, cancelled, released) the pane prints the final status, waits
+# ORCA_PANE_CLOSE_DELAY seconds (default 10) and closes itself (needs ORCA_TERMINAL_HANDLE, set by Orca).
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 role_color() { # title -> 256-color number
@@ -33,6 +35,15 @@ except Exception: tail=[]
 print("\n".join(l for l in tail if l.strip()))' | tail -n $((rows-2)) | cut -c1-"$cols")
   printf '\033[H\033[2J\033[1;37;48;5;%sm %-*s\033[0m\n' "$c" $((cols-1)) "$title [$status]"
   printf '%s\n' "$body"
-  case "$status" in completed|failed|cancelled|released) printf '\033[1;38;5;%sm-- %s --\033[0m\n' "$c" "$status"; exit;; esac
+  case "$status" in completed|failed|cancelled|released)
+    printf '\033[1;38;5;%sm-- %s --\033[0m\n' "$c" "$status"
+    # Close this pane too. A split that timed out (screen saver) leaves a pane whose handle nobody recorded,
+    # so worker-pane-close.sh cannot find it. Orca sets ORCA_TERMINAL_HANDLE in every terminal.
+    if [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
+      sleep "${ORCA_PANE_CLOSE_DELAY:-10}"
+      "$orca" terminal close --terminal "$ORCA_TERMINAL_HANDLE" >/dev/null 2>&1
+    fi
+    exit;;
+  esac
   sleep 5
 done

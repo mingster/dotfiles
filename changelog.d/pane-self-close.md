@@ -1,0 +1,1 @@
+- worker-pane.sh now closes its own terminal about 10 seconds after its dispatch ends (completed, failed, cancelled or released), through ORCA_TERMINAL_HANDLE, so a pane whose split timed out after the screen saver no longer stays open. worker-pane-close.sh stays the main path. Removed the stray empty orker-panes.test.sh.
