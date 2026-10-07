@@ -18,8 +18,8 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-6-astra",
-          "effort": "high"
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
         },
         {
           "provider": "cursor",
@@ -42,8 +42,8 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-6-astra",
-          "effort": "high"
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
         },
         {
           "provider": "cursor",
@@ -66,8 +66,8 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-6-astra",
-          "effort": "high"
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
         },
         {
           "provider": "cursor",
@@ -85,7 +85,7 @@
       "chain": [
         {
           "provider": "codex",
-          "model": "gpt-5.5",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -114,7 +114,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.5",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -146,8 +146,8 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-6-astra",
-          "effort": "high"
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
         }
       ]
     },
@@ -162,7 +162,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.5",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -186,7 +186,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.5",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -210,7 +210,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.5",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -234,7 +234,7 @@
         },
         {
           "provider": "codex",
-          "model": "gpt-5.5",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {

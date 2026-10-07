@@ -10,7 +10,7 @@ Short names used below:
 | P | PSTV, `~/pstv`, read at `origin/main` af650e2d6 (the local checkout is 3 commits behind) |
 | T | dotfiles template, `templates/agent-team`, at dotfiles `master` c5f4251 |
 | D | dotfiles shared tree, `.agents/skills/` at dotfiles `master`. Reached on the Mac as `~/.claude/skills`, `~/.agents/skills` and `~/.cursor/skills` (all three are home symlinks into this one tree, none of them hold their own copies) |
-| MP | the `mattpocock-skills` plugin cache, v1.2.3, in two copies: `~/.claude/plugins/cache/mattpocock/...` (enabled in `~/.claude/settings.json`) and `~/.claude/plugins/cache/claude-plugins-official/...` (installed, not enabled) |
+| MP | the `mattpocock-skills` plugin cache, v1.3.1 (upstream `6fd9479`, synced 2026-10-07), in two copies: `~/.claude/plugins/cache/mattpocock/...` (enabled in `~/.claude/settings.json`) and `~/.claude/plugins/cache/claude-plugins-official/...` (installed, not enabled) |
 | dir | real directory, git tracked (mode 040000 tree) |
 | link | symlink `../../.agents/skills/<name>`, git tracked (mode 120000) |
 
@@ -25,7 +25,7 @@ Slash commands named in those files that are not skills: `/compact`, `/clear`, `
 | Skills referenced by the teams | 27 |
 | Skills inventoried (referenced plus unreferenced project skills found next to them) | 30 |
 | Skills with two or more real copies | 23 (20 of them referenced) |
-| Drifted (copies disagree in a way that is not just product facts) | 5: crew, tl, orchestration, elon/ceo, to-tickets |
+| Drifted (copies disagree in a way that is not just product facts) | 5: crew, tl, orchestration, elon/ceo, to-tickets (to-tickets also carries the local CONTEXT.md rename) |
 | Referenced but not found anywhere | 0 |
 | Referenced but not reachable for that team | 8 gaps over 7 names (see Missing) |
 | Referenced skills absent in a fresh clone or cloud session | 17 for R, 16 for P |
@@ -38,20 +38,20 @@ Proposed home uses the three tiers the owner approved (Tier 1 general, Tier 2 te
 | --- | --- | --- | --- | --- |
 | agent-browser | qa-sdet (R, P, T), P stream-health | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | capture-intent | architect-pm (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
-| code-review | elon, qa-sdet, secops-finops, tech-lead (R, P, T) | D dir; MP twice | Identical to MP. Shows twice in Claude Code (`code-review` and `mattpocock-skills:code-review`). | Tier 1: dotfiles shared |
-| codebase-design | architect-pm (R, P, T) | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
+| code-review | elon, qa-sdet, secops-finops, tech-lead (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). Shows twice in Claude Code (`code-review` and `mattpocock-skills:code-review`). | Tier 1: dotfiles shared |
+| codebase-design | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | create-pr | fullstack-dev, tech-lead (R, P, T) | D dir | Single copy, but project aware: detects `web/` (R) or `pstv_web/` (P), riben `HOME.md` rule. | Tier 1: dotfiles shared; move the R and P branches into per repo config later |
-| diagnosing-bugs | qa-sdet, support-csm (R, P, T), P stream-health | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
-| domain-modeling | architect-pm (R, P, T) | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
+| diagnosing-bugs | qa-sdet, support-csm (R, P, T), P stream-health | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
+| domain-modeling | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | elon | elon role frontmatter and every role body (R, P, T); `AGENTS.md` (R, P); crew, tl, daily-run (R, P); P orchestration | D `elon/` dir | Drifted duplicate of `ceo`. `elon` is newer (2026-10-05 vs 2026-10-04) and adds the Commands section and direct dispatch wording. | Tier 2: dotfiles template, one copy (move out of D so it stops loading in every repo) |
 | ceo | named only in elon's description ("or /ceo") | D `ceo/` dir | Older drifted copy of `elon` (`effort: max`, Tech Lead orchestrates). Both show in the skill list with the same description. | Tier 2: delete, or a 3 line stub next to `elon` that loads it |
-| grill-with-docs | architect-pm (R, P, T) | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
+| grill-with-docs | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | orca-cli | model-routing (R, P, T); tl SKILL and other-tools (R, P); P orchestration | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | orchestration | elon role, `AGENTS.md`, crew SKILL, model-routing (R, P, T) | D `SKILL.md` only. P `.agents` dir with `SKILL.md` plus `worker-watch.sh` and `worker-watch.test.sh`, links in P `.claude` and `.cursor`. R `.agents` dir with the two scripts only, no `SKILL.md`, no `.claude` or `.cursor` link. T dir with the two scripts only. | Drifted. P `SKILL.md` is D plus one paragraph (Elon is the default coordinator), P newer (2026-10-05 vs 2026-09-29). The two scripts are byte identical in R, P and T. `check-skill-collisions.sh` reports FAIL: the R and P dirs shadow D, and R's dir has no `SKILL.md`. In R, Claude Code loads D's copy. | Tier 1: dotfiles shared; merge P's paragraph and both scripts into D, remove the R, P and T copies |
-| research | architect-pm, sales-marketing, secops-finops (R, P, T), P stream-health | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
-| resolving-merge-conflicts | fullstack-dev (R, P, T) | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
-| tdd | elon, fullstack-dev, qa-sdet (R, P, T) | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
-| to-spec | elon (R, P, T) | D dir; MP twice | Identical to MP. | Tier 1: dotfiles shared |
+| research | architect-pm, sales-marketing, secops-finops (R, P, T), P stream-health | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
+| resolving-merge-conflicts | fullstack-dev (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
+| tdd | elon, fullstack-dev, qa-sdet (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
+| to-spec | elon (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | to-tickets | architect-pm, elon (R, P, T) | D dir; MP twice | Drifted. D adds two "Machine-checkable contract" sections (commit add20a3, 2026-10-04) with riben examples (`bun test --isolate`, `web/src/actions/foo`). D is newest. | Tier 1: dotfiles shared; replace the riben examples with neutral ones |
 | write-spec | architect-pm (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | crew | `AGENTS.md` (R); elon, tech-lead (R, P, T); tl SKILL (R, P) | R, P, T `.agents` dirs; links in R and P `.claude` and `.cursor` | Drifted, partly project specific. T vs R: 6 lines, T has the newer changelog fragment wording in Step 5, R has the `persistent-memory-protocol.md` pointer T lacks. R vs P: 125 lines, P rewrote it for the monorepo (absolute `/Users/mtsai/pstv` paths, component worktrees, CEO and BA in Step 1). Last commits: P 10-06 02:46, T 02:42, R 02:41. | Tier 2: dotfiles template, one project neutral copy; product facts move to a repo file the skill reads |
@@ -180,3 +180,26 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 | One tier 2 copy for two products means product facts must leave the skill. A missing fact breaks R or P deploys. | Medium | The facts files in the PR for this change list every value the old skills held; a dry run of `/deploy status` in both repos before deleting the old copies. |
 | The first sync over a hand written project copy would wipe product files inside it (P `tl/issue-budget.md`, both `crew/daily-run.md`). | Medium | Sync refuses without `--force`; phase 2 moves those files first. |
 | Tier 3 tracked relative links become plain text files on a Windows clone without `core.symlinks`. | Low | No Windows users today; the real dir in `.agents/skills` still works for Codex. |
+
+## Mattpocock sync (2026-10-07)
+
+Upstream `mattpocock/skills` at `6fd947921b935b7e1e69293a200400f0fdd5c15f` (plugin v1.3.1, was v1.2.3 at `c55ee46`). Pulled in `~/.claude/plugins/marketplaces/mattpocock` and `claude plugin update mattpocock-skills@mattpocock`. The plugin stays disabled at user scope; D is the copy every tool reads (`~/.agents/skills` and `~/.claude/skills` are both home symlinks into D, so Claude, Codex, Cursor and Antigravity load the same SKILL.md).
+
+Local deviations from upstream, to re-apply on every refresh:
+
+* Upstream renamed `CONTEXT.md` to `GLOSSARY.md` (and `CONTEXT-MAP.md`, `CONTEXT-FORMAT.md`). We keep `CONTEXT.md` everywhere (our AGENTS.md, `docs/SDLC.md` and `init-agent-project.sh` use it). After copying, run `sed -i '' 's/GLOSSARY/CONTEXT/g'` over the copied skills and rename `domain-modeling/GLOSSARY-FORMAT.md` to `CONTEXT-FORMAT.md`. `teach` keeps its own `GLOSSARY.md` because it is a separate teaching workspace file.
+* `to-tickets` keeps the "Machine-checkable contract" sections (allowed files, verification command, blast radius) in both templates.
+
+| Skill | Action | Reason |
+| --- | --- | --- |
+| ask-matt, domain-modeling, handoff, implement, setup-matt-pocock-skills, to-tickets | Updated | Newer upstream (to-tickets attaches tickets as sub-issues, implement calls the Skill tool, handoff resolves the temp dir, ask-matt lists `/implement-spec`, `/pr`, `/retro`). |
+| tdd, diagnosing-bugs, codebase-design, improve-codebase-architecture, triage, wait-what, to-spec, code-review, grill-with-docs, grilling, research, prototype, wizard, wayfinder, grill-me, teach, to-questionnaire, writing-for-agents, resolving-merge-conflicts | Unchanged | Identical to upstream apart from the `CONTEXT.md` naming. |
+| retro | Added | Looks back over a session and suggests environment changes (docs, hooks, navigation), which fits the daily-run learning loop. |
+| implement-spec | Skipped | Runs implementer subagents in parallel inside the harness; our rule is Orca workers, never Claude subagents. |
+| pr | Skipped | Writes a PR body template that conflicts with `create-pr` and the owner's PR body rules (no Test plan, no tool mention). |
+| chief-of-staff, claude-handoff, loop-me, setup-ts-deep-modules, writing-beats, writing-fragments, writing-shape | Skipped | Upstream `in-progress`, unstable, off workflow. |
+| git-guardrails-claude-code, migrate-to-shoehorn, scaffold-exercises, setup-pre-commit | Skipped | Upstream `misc`; guardrails and pre-commit are covered by our hooks, the others are TypeScript course tooling. |
+
+The fast path names (`to-spec`, `to-tickets`, `tdd`, `code-review`) and `diagnosing-bugs`, `grill-with-docs`, `research` are unchanged upstream, and none of the role files, elon/tl/crew skills or `docs/agents/*.md` pass arguments to them, so the team docs needed no edit in R, P or T.
+
+`script/init-agent-project.sh` seeds `docs/agents/{issue-tracker,triage-labels,domain}.md` from `setup-matt-pocock-skills`. It now accepts a git worktree (`.git` as a file) and the GitHub seed gained the sub-issue operation that the new `to-tickets` uses. R already had the three files (a sub-issue line was added to R's `issue-tracker.md`); P had none and was seeded.

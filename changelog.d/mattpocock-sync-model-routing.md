@@ -1,0 +1,1 @@
+- Matt Pocock skills synced to upstream 6fd9479 (plugin 1.3.1): six skills updated, retro added, the CONTEXT.md naming and the to-tickets contract sections kept. Codex model routing set to gpt-6.1-sol medium (workhorse, strong) and gpt-6-luna low (light). init-agent-project.sh now works inside a git worktree.
