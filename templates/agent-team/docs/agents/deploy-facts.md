@@ -41,6 +41,18 @@ One row per deployable component. With one row, `/deploy` takes no component arg
 * Schema diff for the summary: `<git diff command>`.
 * What a deploy interrupts: `<downtime, restarts>`.
 
+### Production prerequisites
+
+Release-manager applies production SQL and secrets itself, through the project's scripts, inside the owner's approval. The owner never runs SQL. Delete this block if the project has no production database.
+
+* Production SQL apply script: `<path and exact command, for example bin/apply-production-sql.sh <component> <sha> --dry-run <db> <files>>`. Dry run first, then the same command without `--dry-run`.
+* Production secret script: `<path and exact command, for example bin/set-production-secret.sh <component> <sha> <KEY>>`, with its allowed keys: `<list>`.
+* Approval scope that allows both: `<for example bin/owner-approve.sh promote <component> <sha> --schema --apply>`. Valid for `<minutes>`, one component and one full commit sha.
+* Migration login: `<least privilege login the SQL script uses, and where its credential lives>`. Preflight that checks it before any write: `<command, or none>`.
+* Ledger: `<table or file that records applied SQL files, and how a changed file is handled>`.
+* Backup before the first write: `<how it is made and verified, and where it lands>`. A failed backup stops the run.
+* One time owner dry run: `<what the owner runs once to prove the scripts, login and backup work, and the date it passed>`.
+
 ## Owner approval
 
 * Production needs the owner's explicit go for each release.
