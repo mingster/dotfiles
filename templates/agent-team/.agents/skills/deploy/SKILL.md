@@ -64,6 +64,8 @@ Before asking for go, build the summary for the lead to put under **Needs owner*
 
 **Owner go.** Production always needs the owner's explicit go for that release. No earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after the lead relays the owner's go for that exact commit. When the facts name an owner approval script, also tell the owner to run it, giving the exact command with the component and commit filled in, and do not deploy until the script has run. A rollback needs the owner's go too.
 
+**Production prerequisites.** When the facts name a production SQL apply script or secret script and the owner's approval covers them (the scope in the facts), release-manager runs them itself before moving `<production branch>`: the SQL script with a dry run first, then the same command without it, one database at a time; the secret script for each required key. Only these scripts, never raw SQL or `ssh`, and never `owner-approve` or the approval file. The owner never runs SQL. Stop on the first failure and never retry a file or write that may have applied. If a guard denies a command, stop and report the deny message to Elon; do not work around it.
+
 Then:
 
 1. Run the production deploy command from the facts, including the `git push origin <sha>:<production branch>` when the facts list it (some commands push the branch themselves, some check that it already points at the commit). Set only the overrides the facts allow, and only when the owner said so.
