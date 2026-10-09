@@ -318,5 +318,188 @@ class AutoCap(unittest.TestCase):
             self.assertEqual(ug.run("claude", 12, 95)["cap"], 12)
 
 
+class IdleCodex(unittest.TestCase):
+    def test_old_unreset_reading_without_activity_today_is_zero_spend(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t + "/state"), \
+                mock.patch.object(ug, "CODEX", t + "/sessions"), \
+                mock.patch.object(ug, "running_workers", return_value=1):
+            os.makedirs(t + "/sessions")
+            p = t + "/sessions/rollout-old.jsonl"
+            old = ug.local_midnight(NOW) - 10
+            with open(p, "w") as f:
+                f.write(json.dumps({"timestamp": old, "payload": {"rate_limits": {"primary":
+                    {"used_percent": 39, "window_minutes": 10080, "resets_at": FUT}}}}))
+            os.utime(p, (old, old))
+            r = ug.run("codex", 12, 95, now=NOW)
+            self.assertEqual((r["verdict"], r["today_used"], r["weekly_used"], r["reserve"]),
+                             ("allowed", 0, 39, 1))
+            # Activity without a new rate reading must preserve unknown, including non-rollout files.
+            with open(t + "/sessions/other.jsonl", "w") as f:
+                f.write("{}")
+            os.utime(t + "/sessions/other.jsonl", (NOW, NOW))
+            self.assertEqual(ug.run("codex", 12, 95, now=NOW)["verdict"], "unknown")
+
+    def test_idle_reading_still_blocks_with_running_reserve_and_expired_week_stays_unknown(self):
+        old = ug.local_midnight(NOW) - 10
+        reading = {"pct": 94.0, "resets_at": FUT, "observed_at": old}
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug, "CODEX", t + "/sessions"), \
+                mock.patch.dict(ug.READERS, {"codex": lambda: reading, "claude": lambda: reading}), \
+                mock.patch.object(ug, "running_workers", return_value=1):
+            r = ug.run("codex", 12, 95, now=NOW)
+            self.assertEqual((r["verdict"], r["reason"], r["today_used"]), ("blocked", "weekly ceiling", 0))
+            self.assertEqual(ug.run("claude", 12, 95, now=NOW)["verdict"], "unknown")
+            reading["resets_at"] = NOW - 1
+            self.assertEqual(ug.run("codex", 12, 95, now=NOW)["verdict"], "unknown")
+
+
+
+class Pick(unittest.TestCase):
+    def invoke(self, chain=None, role="fullstack-dev", claude=44, codex=41, extra=(), pin=False,
+               running=0, default=False, cap=12, codex_baseline=40):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug, "CODEX", t + "/sessions"), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=running), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            chain = chain or [{"provider": "claude", "model": "sonnet", "effort": "medium"},
+                              {"provider": "codex", "model": "gpt-test", "effort": "low"},
+                              {"provider": "cursor", "model": "claude-test"},
+                              {"provider": "antigravity", "model": "gemini-test"}]
+            presets = {"default_chain": ["codex", "claude", "cursor", "antigravity"],
+                       "roles": {"fullstack-dev" if default else role:
+                                 {"chain": chain, "tier": "workhorse", "pin": pin}}}
+            with open(t + "/presets.json", "w") as f:
+                json.dump(presets, f)
+            for provider, pct in (("claude", claude), ("codex", codex)):
+                if pct is None:
+                    continue
+                with open(t + "/" + provider + ".json", "w") as f:
+                    json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
+                               "baseline": codex_baseline if provider == "codex" else 40, "resets_at": FUT}, f)
+                if provider == "claude":
+                    with open(t + "/claude-rate-limits.json", "w") as f:
+                        json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT},
+                                   "_written_at": NOW}, f)
+                else:
+                    os.makedirs(t + "/sessions")
+                    with open(t + "/sessions/rollout-test.jsonl", "w") as f:
+                        json.dump({"timestamp": NOW, "payload": {"rate_limits": {"primary":
+                            {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": t + "/presets.json"}):
+                status = ug.main(["pick", "--role", role, *(["--cap", str(cap)] if cap is not None else []), *extra])
+            return status, out.getvalue(), err.getvalue()
+
+    def test_picks_largest_fraction_and_prints_flags_and_reasons(self):
+        status, out, err = self.invoke()
+        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-test --effort low"))
+        for provider in ("claude", "codex", "cursor", "antigravity"):
+            self.assertIn(provider, err)
+
+    def test_ranks_by_fraction_of_auto_cap_rather_than_absolute_room(self):
+        status, out, _ = self.invoke(claude=44, codex=81, codex_baseline=80, cap=None, extra=("--json",))
+        result = json.loads(out)
+        claude, codex = result["candidates"][:2]
+        self.assertGreater(claude["headroom"], codex["headroom"])
+        self.assertEqual((status, result["selected"]["provider"]), (0, "codex"))
+
+    def test_ties_keep_chain_order_and_reserve_can_block_all_gated_providers(self):
+        self.assertIn("--agent claude", self.invoke(codex=44)[1])
+        self.assertIn("--agent cursor", self.invoke(claude=51, codex=51, running=1)[1])
+
+    def test_pinned_roles_keep_first_allowed_entry(self):
+        for role, pin in (("elon", False), ("release-manager", False), ("custom", True)):
+            with self.subTest(role):
+                self.assertIn("--agent claude", self.invoke(role=role, pin=pin)[1])
+                self.assertIn("--agent codex", self.invoke(role=role, pin=pin, claude=52)[1])
+
+    def test_review_excludes_family_even_for_pinned_roles(self):
+        self.assertIn("--agent claude", self.invoke(extra=("--avoid-family", "gpt"))[1])
+        self.assertIn("--agent codex", self.invoke(role="elon", extra=("--avoid-family", "claude"))[1])
+        # Claude models on both ungated providers are also excluded.
+        chain = [{"provider": "claude", "model": "opus"},
+                 {"provider": "cursor", "model": "claude-opus"},
+                 {"provider": "antigravity", "model": "claude-opus"}]
+        status, out, err = self.invoke(chain=chain, claude=52, extra=("--avoid-family", "claude"))
+        self.assertEqual((status, out), (3, ""))
+        self.assertIn(ug.local(ug.next_midnight(NOW)), err)
+        chain = [{"provider": "cursor", "model": "gpt-test"}]
+        self.assertEqual(self.invoke(chain=chain, extra=("--avoid-family", "gpt"))[0], 3)
+
+    def test_ungated_is_only_a_last_resort_and_unknown_does_not_prove_blocked(self):
+        self.assertIn("--agent codex", self.invoke(claude=52)[1])
+        self.assertIn("--agent cursor", self.invoke(claude=52, codex=52)[1])
+        self.assertEqual(self.invoke(claude=None, codex=52)[0], 3)
+        self.assertEqual(self.invoke(extra=("--avoid-family", "gpt"), claude=None)[0], 3)
+
+    def test_unknown_role_uses_default_chain_and_models_from_file(self):
+        status, out, _ = self.invoke(role="unlisted", default=True, claude=41)
+        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-test --effort low"))
+
+    def test_json_includes_selection_headroom_and_every_candidate(self):
+        status, out, _ = self.invoke(extra=("--json",), running=2)
+        result = json.loads(out)
+        self.assertEqual((status, result["selected"]["provider"], result["selected"]["headroom"]),
+                         (0, "codex", 9))
+        self.assertEqual(len(result["candidates"]), 4)
+
+    def test_no_allowed_entry_reports_earliest_reset_and_exit_three_in_json(self):
+        chain = [{"provider": "claude", "model": "opus"}, {"provider": "codex", "model": "gpt-test"}]
+        status, out, _ = self.invoke(chain=chain, claude=96, codex=52, extra=("--json",))
+        result = json.loads(out)
+        self.assertEqual((status, result["selected"], result["blocked_until"]),
+                         (3, None, ug.next_midnight(NOW)))
+
+
+class PickOrder(unittest.TestCase):
+    def test_show_orders_by_fraction_with_unknown_providers_last(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW},
+                                             "codex": lambda: None}), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            ug.main(["show"])
+        self.assertEqual(out.getvalue().splitlines()[-1],
+                         "pick order now: claude 100.0%, codex unknown, cursor not gated, antigravity not gated")
+
+    def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
+        reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: reading, "codex": lambda: None}), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ug.main(["show"]), 0)
+        self.assertIn("weekly ceiling (stale reading)", out.getvalue())
+
+
+class CodexWorkerBase(unittest.TestCase):
+    def test_new_worktree_uses_origin_head_and_preserves_explicit_override(self):
+        import subprocess
+        script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "start-codex-worker.sh"))
+        with tempfile.TemporaryDirectory() as t:
+            subprocess.run(["git", "init", "-q", t], check=True)
+            subprocess.run(["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"],
+                           cwd=t, check=True)
+            stub = t + "/orca"
+            with open(stub, "w") as f:
+                f.write("#!/bin/sh\n")
+                f.write('if [ "$1 $2" = "worktree create" ]; then\n')
+                f.write('  printf "%s\\n" "$@" > "$TEST_BASE_LOG"\n')
+                f.write("  echo '{\"result\":{\"worktree\":{\"path\":\"/tmp/unused\"}}}'\n")
+                f.write("else exit 1; fi\n")
+            os.chmod(stub, 0o755)
+            env = {**os.environ, "ORCA_CLI_COMMAND": stub, "TEST_BASE_LOG": t + "/args"}
+            args = ["bash", script, "--run", "unused", "--spec", "unused", "--title", "unused",
+                    "--name", "unused", "--repo", t]
+            for override, expected in (([], "origin/master"), (["--base-branch", "origin/release"], "origin/release")):
+                subprocess.run(args + override, env=env, capture_output=True)
+                with open(t + "/args") as f:
+                    flags = f.read().splitlines()
+                self.assertEqual(flags[flags.index("--base-branch") + 1], expected)
+
+
 if __name__ == "__main__":
     unittest.main()

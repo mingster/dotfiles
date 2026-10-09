@@ -4,6 +4,7 @@ its daily share of the weekly limit, so the week never runs out.
 
   usage-gate.py check [--provider claude|codex|<other>] [--cap N] [--ceiling 95] [--reserve 1]
   usage-gate.py show [--json]       every provider at once, as a table
+  usage-gate.py pick --role <role> [--avoid-family claude|gpt] [--json]
 
 Reads the provider's own weekly percentage, never an estimate:
   codex   latest token_count event in ~/.codex/sessions whose weekly window is
@@ -21,8 +22,10 @@ weekly reset (a partial last day counts as a fraction, the last day may use all 
 spent + reserve >= cap, or when week + reserve >= ceiling, where reserve is
 --reserve (default 1) percent of the week per worker already running on that provider
 (`orca orchestration worker-list`), so running workers keep room to finish.
-A reading older than MAX_AGE (6 hours) says nothing about today's spend, so it never
-counts for the daily cap. Weekly usage cannot fall before the reset, so while its
+An older Codex reading with an unreset week and no session file modified since
+local midnight means zero spend today. Every other reading older than MAX_AGE
+(6 hours) says nothing about today's spend, so it never counts for the daily cap.
+Weekly usage cannot fall before the reset, so while its
 resets_at is still ahead it still blocks on the weekly ceiling. Past the reset, or
 of unknown age, it is no reading. So is any provider without a reader (cursor,
 antigravity, ...).
@@ -243,6 +246,17 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0):
         state = None
     reader = READERS.get(provider)
     reading = fresh(reader(), now) if reader else None
+    # An idle Codex account has spent nothing locally today. Require an unreset,
+    # dated reading and check every session file, including ones without rate limits.
+    if provider == "codex" and reading and reading.get("stale"):
+        try:
+            active = any(os.path.getmtime(p) >= midnight
+                         for p in glob.glob(CODEX + "/**/*", recursive=True) if os.path.isfile(p))
+        except OSError:
+            active = True  # cannot prove inactivity
+        if not active and float(reading["resets_at"]) > now:
+            reading = {k: v for k, v in reading.items() if k != "stale"}
+            state = {"date": today, "baseline": reading["pct"], "resets_at": reading["resets_at"]}
     running = running_workers(provider) if reading else None
     reserve = round(per_worker * (running or 0), 1) if cap is None else round(min(per_worker * (running or 0), cap), 1)
     day_start = None
@@ -272,8 +286,9 @@ def table(rows):
             out.append((r["provider"], "unknown", "-", "-", "-", "-", "-", note, "-", "-"))
             continue
         age = r.get("reading_age_min")
-        out.append((r["provider"], r["verdict"], f"{r['weekly_used']:g}", f"{r['today_used']:g}", f"{r['cap']:g}",
-                    f"{r['reserve']:g}", "?" if r.get("running") is None else str(r["running"]),
+        out.append((r["provider"], r["verdict"], f"{r['weekly_used']:g}",
+                    *(f"{r[k]:g}" if k in r else "?" for k in ("today_used", "cap", "reserve")),
+                    "?" if r.get("running") is None else str(r["running"]),
                     "?" if age is None else f"{age}m ago", r.get("resets_local", "-"),
                     f"{r['blocked_until_local']} ({r['reason']})" if r["verdict"] == "blocked" else "now"))
     widths = [max(len(str(x[i])) for x in [head] + out) for i in range(len(head))]
@@ -281,13 +296,109 @@ def table(rows):
     lines.append("today% = week% now minus week% at the start of the local day, for the whole account "
                  "(sessions outside Orca count). cap% = (ceiling - week% at the start of today) / days left "
                  "until the weekly reset. reserve% = --reserve per running worker.")
+    ordered = sorted(rows, key=lambda r: headroom(r)[1] if headroom(r)[1] is not None else -float("inf"),
+                     reverse=True)
+    order = []
+    for row in ordered:
+        fraction = headroom(row)[1]
+        note = f"{fraction * 100:.1f}%" if fraction is not None else (
+            "not gated" if row["provider"] in NOT_GATED else row.get("reason", "unknown"))
+        if note == "no reading":
+            note = "unknown"
+        order.append(f"{row['provider']} {note}")
+    lines.append("pick order now: " + ", ".join(order))
     return "\n".join(lines)
+
+
+def headroom(row):
+    """Remaining weekly percentage points and fraction of today's cap."""
+    if "today_used" not in row or "cap" not in row:
+        return None, None
+    room = min(row["cap"] - row["today_used"] - row["reserve"],
+               row["ceiling"] - row["weekly_used"] - row["reserve"])
+    return room, room / row["cap"] if row["cap"] > 0 else 0.0
+
+
+def role_chain(role):
+    path = os.environ.get("USAGE_GATE_PRESETS", HOME + "/.orca/presets.json")
+    with open(path) as f:
+        presets = json.load(f)
+    entry = presets.get("roles", {}).get(role, {})
+    if "chain" in entry:
+        return entry["chain"], entry.get("pin", False)
+    # Unknown roles use workhorse models from this file, never hardcoded ids.
+    tier = entry.get("tier", "workhorse")
+    models = dict(presets.get("tiers", {}).get(tier, {}))
+    for r in presets.get("roles", {}).values():
+        if r.get("tier") == tier:
+            for candidate in r.get("chain", []):
+                models.setdefault(candidate["provider"], candidate)
+    chain = []
+    for provider in presets.get("default_chain", []):
+        if isinstance(provider, dict):
+            chain.append(provider)
+        elif provider in models:
+            chain.append({**models[provider], "provider": provider})
+        else:
+            raise ValueError(f"no {tier} model for {provider} in presets")
+    return chain, entry.get("pin", False)
+
+
+def family(entry):
+    provider, model = entry["provider"], entry["model"]
+    if provider == "claude" or (provider in NOT_GATED and model.startswith("claude-")):
+        return "claude"
+    if provider == "codex" or model.startswith("gpt-"):
+        return "gpt"
+    return None
+
+
+def pick(role, avoid, cap, ceiling, per_worker):
+    chain, pinned = role_chain(role)
+    rows = {e["provider"]: None for e in chain}
+    for provider in rows:
+        rows[provider] = run(provider, cap, ceiling, per_worker=per_worker)
+    gated = [r for p, r in rows.items() if p in READERS]
+    fallback = all(r["verdict"] == "blocked" for r in gated)
+    candidates, allowed = [], []
+    for index, entry in enumerate(chain):
+        row = rows[entry["provider"]]
+        room, fraction = headroom(row)
+        eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
+        excluded = avoid is not None and family(entry) == avoid
+        candidate = {**entry, "verdict": row["verdict"], "headroom": room,
+                     "headroom_fraction": fraction, "excluded_family": excluded,
+                     "eligible": eligible and not excluded}
+        candidates.append(candidate)
+        if candidate["eligible"]:
+            allowed.append((index, candidate))
+    chosen = None
+    if allowed:
+        if (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
+            chosen = allowed[0][1]
+        else:
+            chosen = max(allowed, key=lambda pair: pair[1]["headroom_fraction"]
+                         if pair[1]["headroom_fraction"] is not None else -1)[1]
+    resets = [r["blocked_until"] for r in rows.values() if r.get("blocked_until")]
+    until = min(resets) if resets else None
+    return {"role": role, "selected": chosen, "candidates": candidates,
+            "blocked_until": until, "blocked_until_local": local(until)}
+
+
+def candidate_reason(candidate):
+    fraction = candidate["headroom_fraction"]
+    room = candidate["headroom"]
+    detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of cap)"
+    note = "excluded family" if candidate["excluded_family"] else candidate["verdict"]
+    return f"{candidate['provider']} {candidate['model']}: {detail}, {note}"
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["check", "show"])
+    ap.add_argument("cmd", choices=["check", "show", "pick"])
     ap.add_argument("--provider")
+    ap.add_argument("--role")
+    ap.add_argument("--avoid-family", choices=["claude", "gpt"])
     ap.add_argument("--cap", type=float, default=None,
                     help="fixed daily cap in weekly percent; default: remaining week / days left")
     ap.add_argument("--ceiling", type=float, default=95.0)
@@ -295,6 +406,27 @@ def main(argv=None):
                     help="weekly percent held back per worker already running on the provider")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "pick":
+        if not a.role:
+            ap.error("pick requires --role")
+        try:
+            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"cannot read role presets: {exc}", file=sys.stderr)
+            return 3
+        if a.json:
+            print(json.dumps(result))
+        else:
+            print("; ".join(candidate_reason(c) for c in result["candidates"]), file=sys.stderr)
+            chosen = result["selected"]
+            if chosen:
+                flags = f"--agent {chosen['provider']} --model {chosen['model']}"
+                if chosen.get("effort"):
+                    flags += f" --effort {chosen['effort']}"
+                print(flags)
+            else:
+                print(f"nothing allowed; earliest reset: {result['blocked_until_local']}", file=sys.stderr)
+        return 0 if result["selected"] else 3
     names = [a.provider] if a.provider else list(READERS)
     if a.cmd == "show" and not a.provider:
         names += list(NOT_GATED)
