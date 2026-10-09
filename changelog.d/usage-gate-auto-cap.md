@@ -1,0 +1,1 @@
+- The usage gate's daily cap is no longer a fixed 12% of the week. It is what is left of the week under the 95% ceiling at the start of the day, divided by the days left until the weekly reset. `--cap N` still fixes it.

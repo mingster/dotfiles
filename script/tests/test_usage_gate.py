@@ -274,5 +274,49 @@ class Show(unittest.TestCase):
         self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity", "claude", "codex", "cursor"])
 
 
+class AutoCap(unittest.TestCase):
+    """Default cap: what is left of the week under the ceiling, spread over the days left."""
+
+    def mid(self):
+        return ug.local_midnight(NOW)
+
+    def test_cap_is_remaining_week_over_days_left(self):
+        resets = self.mid() + 4 * 86400                      # today plus 3 more days
+        self.assertEqual(ug.auto_cap(35.0, resets, NOW, 95), 15.0)   # (95 - 35) / 4
+
+    def test_a_partial_last_day_counts_as_a_fraction(self):
+        resets = self.mid() + 3.125 * 86400                  # resets 03:00 on the 4th day
+        self.assertEqual(ug.auto_cap(42.0, resets, NOW, 95), 17.0)   # 53 / 3.125
+
+    def test_the_last_day_may_use_everything_left(self):
+        resets = self.mid() + 0.5 * 86400
+        self.assertEqual(ug.auto_cap(80.0, resets, NOW, 95), 15.0)
+
+    def test_nothing_left_is_a_zero_cap(self):
+        self.assertEqual(ug.auto_cap(97.0, self.mid() + 3 * 86400, NOW, 95), 0.0)
+
+    def test_unknown_reset_falls_back_to_a_seventh_of_the_ceiling(self):
+        self.assertEqual(ug.auto_cap(10.0, None, NOW, 95), round(95 / 7, 1))
+
+    def test_decide_uses_the_auto_cap_when_cap_is_none(self):
+        resets = self.mid() + 4 * 86400
+        v, d, _ = ug.decide(D(50, resets), None, "d1", NOW, None, 95, 0.0, D(35, resets))
+        self.assertEqual((v, d["cap"], d["today_used"]), ("blocked", 15.0, 15.0))   # spent 15 of 15
+        v, d, _ = ug.decide(D(45, resets), None, "d1", NOW, None, 95, 0.0, D(35, resets))
+        self.assertEqual((v, d["cap"], d["today_used"]), ("allowed", 15.0, 10.0))
+
+    def test_cli_default_is_the_auto_cap_and_a_number_still_fixes_it(self):
+        resets = self.mid() + 4 * 86400
+        reading = {"pct": 45.0, "resets_at": resets, "observed_at": NOW}
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
+                mock.patch.object(ug, "running_workers", lambda p: 0), \
+                mock.patch.object(ug, "start_of_day", lambda r, p, m: {"pct": 35.0, "resets_at": resets}), \
+                mock.patch.object(ug.time, "time", lambda: NOW):
+            self.assertEqual(ug.run("claude", None, 95)["cap"], 15.0)
+            os.remove(t + "/claude.json")
+            self.assertEqual(ug.run("claude", 12, 95)["cap"], 12)
+
+
 if __name__ == "__main__":
     unittest.main()
