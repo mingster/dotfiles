@@ -18,7 +18,8 @@ statusline render of the day; otherwise the first check of the day). It is the w
 account's use, including sessions outside Orca. The daily cap is what is left of the
 week under the ceiling at the start of today, spread over the days left until the
 weekly reset (a partial last day counts as a fraction, the last day may use all of it);
---cap N fixes it at N percent instead. The gate blocks a new start when
+--cap N fixes it at N percent instead. An owner approved cap for one day lives in
+STATE/<provider>.cap-override.json as {"date": "YYYY-MM-DD", "cap": N} and ends at local midnight. The gate blocks a new start when
 spent + reserve >= cap, or when week + reserve >= ceiling, where reserve is
 --reserve (default 1) percent of the week per worker already running on that provider
 (`orca orchestration worker-list`), so running workers keep room to finish.
@@ -262,6 +263,14 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0):
     day_start = None
     if reading and (state or {}).get("date") != today:
         day_start = start_of_day(reading, provider, midnight)
+    if cap is None:
+        # Owner approved one day cap: STATE/<provider>.cap-override.json {"date": "YYYY-MM-DD", "cap": N}.
+        try:
+            o = json.load(open(f"{STATE}/{provider}.cap-override.json"))
+            if o.get("date") == today:
+                cap = float(o["cap"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
     verdict, detail, new = decide(reading, state, today, now, cap, ceiling, reserve, day_start)
     if new is not state and new:
         os.makedirs(STATE, exist_ok=True)
