@@ -3,11 +3,11 @@
 # Orca only sees a Codex terminal as ready after Codex has finished one turn, so open the
 # Codex terminal first, give it a one line warm-up turn, then hand it the task.
 # Usage: start-codex-worker.sh --run <run_id> --spec <file> --title <text>
-#          (--worktree-path <path> | --name <new worktree> --repo <path> [--base-branch origin/main])
+#          (--worktree-path <path> | --name <new worktree> --repo <path> [--base-branch <ref>])
 #          [--model gpt-6.1-sol] [--effort medium]
 # Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running.
 set -u
-poll="${START_CODEX_POLL:-3}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=origin/main
+poll="${START_CODEX_POLL:-3}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=
 run= spec= title= wt= name= repo=
 while [ $# -gt 0 ]; do case "$1" in
   --run) run=$2;; --spec) spec=$2;; --title) title=$2;; --worktree-path) wt=$2;;
@@ -17,6 +17,11 @@ while [ $# -gt 0 ]; do case "$1" in
 j() { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1"; }
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || { echo "need --worktree-path or --name and --repo" >&2; exit 2; }
+  if [ -z "$base" ]; then
+    base=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD) || {
+      echo "cannot resolve origin/HEAD for $repo; pass --base-branch explicitly" >&2; exit 1;
+    }
+  fi
   wt=$("$orca" worktree create --name "$name" --repo "path:$repo" --base-branch "$base" --setup run --json | j 'd["result"]["worktree"]["path"]') || exit 1
 fi
 term=$("$orca" terminal create --worktree "path:$wt" --title "$title" \

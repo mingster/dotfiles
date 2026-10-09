@@ -5,6 +5,9 @@ Wired from each agent team's .claude/settings.json. For every
 `orca orchestration worker-start ... --agent <id>` in the command it runs
 `usage-gate.py check --provider <id>` (claude and codex only) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
+Known roles from the task title must also match `pick --role`. The Codex launcher
+is checked the same way. A command scoped USAGE_GATE_OVERRIDE reason bypasses
+routing enforcement and is logged, but never bypasses the daily or weekly gate.
 
 Passes with a warning on stderr: an agent the gate cannot read (cursor,
 antigravity, ...), a worker-start without --agent, gate exit 4 (no reading) and
@@ -12,6 +15,7 @@ any gate error. Every other command passes untouched. Exit 0 always; a block is
 a JSON permissionDecision of "deny".
 """
 import json, os, re, shlex, subprocess, sys
+from datetime import datetime, timezone
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
 GATED = {"claude", "codex"}
@@ -20,8 +24,8 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.
 VAR = re.compile(r"^\$\{?(\w+)\}?$")
 
 
-def agents(cmd):
-    """Agent ids named by the worker-starts in cmd (None for a start without --agent).
+def starts(cmd):
+    """Worker starts with provider, title role and command scoped override.
 
     A `$VAR` agent resolves from a `VAR=x` or `for VAR in x y` in the same command."""
     cmd = HEREDOC.sub("<<", cmd.replace("\\\n", " "))   # heredoc bodies are text, not commands
@@ -30,7 +34,8 @@ def agents(cmd):
         lex.whitespace, lex.commenters, lex.whitespace_split = " \t\r", "", True
         toks = list(lex)
     except ValueError:
-        return [m.group(1) for m in re.finditer(r"worker-start\b.*?--agent[=\s]+['\"]?([\w.-]+)", cmd, re.S)] or [None]
+        return [{"provider": m.group(1), "role": None, "override": None}
+                for m in re.finditer(r"worker-start\b.*?--agent[=\s]+['\"]?([\w.-]+)", cmd, re.S)]
     stop = lambda t: (t and set(t) <= PUNCT) or t == "worker-start"
     env = {}
     for i, t in enumerate(toks):
@@ -41,21 +46,88 @@ def agents(cmd):
             env[toks[i + 1]] = words[:next((n for n, w in enumerate(words) if stop(w) or w == "do"), len(words))]
     out = []
     for i, t in enumerate(toks):
-        if t != "worker-start" or i == 0 or toks[i - 1] != "orchestration":
+        launcher = os.path.basename(t) == "start-codex-worker.sh"
+        if not launcher and (t != "worker-start" or i == 0 or toks[i - 1] != "orchestration"):
             continue
-        agent = None
-        for j in range(i + 1, len(toks)):
-            a = toks[j]
-            if stop(a):
+        end = next((j for j in range(i + 1, len(toks)) if stop(toks[j])), len(toks))
+        flags = toks[i + 1:end]
+        def option(name):
+            for j, word in enumerate(flags):
+                if word == name and j + 1 < len(flags):
+                    return flags[j + 1]
+                if word.startswith(name + "="):
+                    return word.split("=", 1)[1]
+            return None
+        agent = "codex" if launcher else option("--agent")
+        title = option("--title" if launcher else "--task-title") or ""
+        role_match = re.match(r"^([a-z][a-z0-9-]*)\s+-\s+\S", title)
+        role = role_match.group(1) if role_match else None
+        # Overrides are environment prefixes of this simple command only. A spec,
+        # an echo argument, or an earlier command cannot grant the override.
+        begin = i
+        while begin > 0 and not stop(toks[begin - 1]):
+            begin -= 1
+        prefix = toks[begin:i]
+        while prefix and prefix[0] in ("do", "then", "env"):
+            prefix = prefix[1:]
+        if launcher:
+            words = [word for word in prefix if not re.match(r"^\w+=", word)]
+            if any(os.path.basename(word) not in ("bash", "sh", "exec", "command") for word in words):
+                continue
+        override = None
+        for word in prefix:
+            if not re.match(r"^\w+=", word):
                 break
-            if a == "--agent" and j + 1 < len(toks):
-                agent = toks[j + 1]
-            elif a.startswith("--agent="):
-                agent = a.split("=", 1)[1]
-        agent = agent and agent.strip("`'\"")
+            if word.startswith("USAGE_GATE_OVERRIDE="):
+                override = word.split("=", 1)[1].strip() or None
         m = VAR.match(agent or "")
-        out += env.get(m.group(1), [agent]) if m else [agent]
+        providers = env.get(m.group(1), [agent]) if m else [agent]
+        out += [{"provider": provider.lower() if provider else None, "role": role,
+                 "override": override} for provider in providers]
     return out
+
+
+def agents(cmd):
+    return [start["provider"] for start in starts(cmd)]
+
+
+def routing(start):
+    role, provider = start["role"], start["provider"]
+    try:
+        if start["override"]:
+            state = os.environ.get("USAGE_GATE_STATE", os.path.expanduser("~/.claude/state/usage-gate"))
+            os.makedirs(state, exist_ok=True)
+            with open(state + "/overrides.log", "a") as f:
+                f.write(json.dumps({"at": datetime.now(timezone.utc).isoformat(), "role": role,
+                                   "provider": provider, "reason": start["override"]}) + "\n")
+        path = os.environ.get("USAGE_GATE_PRESETS", os.path.expanduser("~/.orca/presets.json"))
+        with open(path) as f:
+            roles = json.load(f).get("roles", {})
+        if role not in roles:
+            print("usage-gate-hook: no known role prefix; provider pick not enforced.", file=sys.stderr)
+            return None
+        if start["override"]:
+            return None
+        result = subprocess.run([sys.executable, GATE, "pick", "--role", role, "--json"],
+                                capture_output=True, text=True, timeout=15)
+        if result.returncode not in (0, 3):
+            raise ValueError(f"pick exit {result.returncode}")
+        picked = json.loads(result.stdout)
+        chosen = picked.get("selected")
+        if chosen and chosen["provider"] == provider:
+            return None
+        def room(p):
+            c = next((c for c in picked.get("candidates", []) if c["provider"] == p), {})
+            value, fraction = c.get("headroom"), c.get("headroom_fraction")
+            return "unknown" if value is None else f"{value:g}% ({fraction * 100:.1f}% of cap)"
+        recommended = chosen["provider"] if chosen else "no provider"
+        return (f"Usage gate pick recommends {recommended} for {role}; "
+                f"{provider} headroom {room(provider)}, {recommended} headroom {room(recommended)}. "
+                "Use the pick flags, or prefix a deliberate override with USAGE_GATE_OVERRIDE='<reason>'.")
+    except Exception as exc:
+        print(f"usage-gate-hook: pick failed ({exc}); worker-start allowed without routing enforcement.",
+              file=sys.stderr)
+        return None
 
 
 def reason(provider, d):
@@ -73,10 +145,16 @@ def main():
     if data.get("tool_name") != "Bash":
         return
     cmd = (data.get("tool_input") or {}).get("command") or ""
-    if "worker-start" not in cmd:
+    if "worker-start" not in cmd and "start-codex-worker.sh" not in cmd:
         return
     blocked = []
-    for provider in dict.fromkeys(a.lower() if a else None for a in agents(cmd)):
+    commands = starts(cmd)
+    for start in commands:
+        if start["provider"] in GATED:
+            denial = routing(start)
+            if denial:
+                blocked.append(denial)
+    for provider in dict.fromkeys(start["provider"] for start in commands):
         if provider not in GATED:
             print(f"usage-gate-hook: no usage reading for agent {provider or '(none given)'}; "
                   "worker-start allowed without the gate.", file=sys.stderr)
