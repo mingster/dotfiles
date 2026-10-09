@@ -34,9 +34,6 @@
       "strings": true
     }
   },
-  "prisma.fileWatcher": true,
-  "prisma.showPrismaDataPlatformNotification": false,
-  "prisma.schema": "${workspaceFolder}/prisma/schema.prisma",
   "[python]": {
     "editor.formatOnType": true
   },
@@ -113,9 +110,17 @@
       "foldStartRegex": "^[\\s]*//[\\s]*[#]*region[\\s]*(.*)[\\s]*"
     }
   },
+  "accessibility.accessibleView.closeOnKeyPress": false,
   "accessibility.signals.terminalBell": {
     "sound": "on"
   },
+  "accessibility.verbosity.hover": false,
+  "accessibility.verbosity.inlineCompletions": false,
+  "accessibility.verbosity.notification": false,
+  "accessibility.verbosity.terminal": false,
+  "accessibility.verbosity.walkthrough": false,
+  "biome.suggestInstallingGlobally": false,
+  "chat.tools.global.autoApprove": true,
   "cSpell.userWords": [
     "mingster",
     "pstv",
@@ -143,6 +148,7 @@
   "editor.defaultFormatter": "biomejs.biome",
   "editor.fontFamily": "Hack Nerd Font Mono, Menlo, GeistMono Nerd Font",
   "editor.fontSize": 14,
+  "editor.fontVariations": false,
   "editor.formatOnType": false,
   "editor.guides.bracketPairs": false,
   "editor.guides.indentation": false,
@@ -178,16 +184,22 @@
   "html.format.unformatted": "",
   "javascript.updateImportsOnFileMove.enabled": "always",
   "js/ts.implicitProjectConfig.checkJs": true,
+  "markdownlint.configFile": "${userHome}/dotfiles/ide/vscode/.markdownlint.json",
+  "prisma.fileWatcher": true,
+  "prisma.schema": "${workspaceFolder}/prisma/schema.prisma",
+  "prisma.showPrismaDataPlatformNotification": false,
   "redhat.telemetry.enabled": false,
   "security.workspace.trust.untrustedFiles": "open",
   "terminal.external.osxExec": "kitty.app",
   "terminal.integrated.copyOnSelection": true,
+  "terminal.integrated.defaultProfile.osx": "sh",
   "terminal.integrated.defaultProfile.windows": "Git Bash",
   "terminal.integrated.enableVisualBell": true,
   "terminal.integrated.env.osx": {},
   "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
   "terminal.integrated.fontSize": 14,
   "terminal.integrated.lineHeight": 1.1,
+  "terminal.integrated.macOptionIsMeta": true,
   "terminal.integrated.profiles.osx": {
     "zsh": {
       "args": [
@@ -198,39 +210,28 @@
   },
   "terminal.integrated.rightClickBehavior": "default",
   "typescript.updateImportsOnFileMove.enabled": "always",
+  "window.autoDetectColorScheme": false,
   "window.newWindowProfile": "Default",
   "workbench.colorCustomizations": {
     "editor.lineHighlightBackground": "#1073cf2d",
     "editor.lineHighlightBorder": "#9fced11f"
   },
+  "workbench.colorTheme": "GitHub Dark Dimmed",
+  "workbench.editor.enablePreview": false,
+  "workbench.editorAssociations": {
+    "*.md": "xlsxViewer.md",
+    "*.xlsx": "xlsxViewer.xlsx"
+  },
   //"workbench.colorTheme": "GitHub Dark Colorblind (Beta)",
   "workbench.iconTheme": "material-icon-theme",
   "workbench.startupEditor": "none",
-  "window.autoDetectColorScheme": false,
-  "editor.fontVariations": false,
-  "terminal.integrated.defaultProfile.osx": "sh",
-  "terminal.integrated.macOptionIsMeta": true,
-  "accessibility.verbosity.terminal": false,
-  "accessibility.accessibleView.closeOnKeyPress": false,
-  "accessibility.verbosity.hover": false,
-  "accessibility.verbosity.inlineCompletions": false,
-  "accessibility.verbosity.notification": false,
-  "accessibility.verbosity.walkthrough": false,
-  "workbench.colorTheme": "GitHub Dark Dimmed",
-  "biome.suggestInstallingGlobally": false,
-  "workbench.editor.enablePreview": false,
-  "markdownlint.configFile": "${userHome}/dotfiles/ide/vscode/.markdownlint.json",
-  "workbench.editorAssociations": {
-    "*.xlsx": "xlsxViewer.xlsx"
-  },
-  "xlsxViewer.md.stickyToolbar": true,
-  "xlsxViewer.md.wordWrap": true,
-  "xlsxViewer.md.syncScroll": true,
-  "xlsxViewer.md.previewPosition": "right",
+  "xlsxViewer.language": "auto",
   "xlsxViewer.md.moveMdButtonsToEnd": false,
-  "xlsxViewer.showPopups": true,
-  "xlsxViewer.md.showOutline": false,
+  "xlsxViewer.md.previewPosition": "right",
   "xlsxViewer.md.showLineNumbers": true,
-  "chat.tools.global.autoApprove": true,
-  "xlsxViewer.language": "auto"
+  "xlsxViewer.md.showOutline": false,
+  "xlsxViewer.md.stickyToolbar": true,
+  "xlsxViewer.md.syncScroll": true,
+  "xlsxViewer.md.wordWrap": true,
+  "xlsxViewer.showPopups": true
 }
