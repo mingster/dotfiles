@@ -21,6 +21,7 @@ In the commands below, `<repo>` is the repository from the facts, `<dev>` the de
    `gh api -X POST repos/<repo>/statuses/<sha> -f state=success -f context=<context> -f description="<one line>"`
 6. **Smoke checks belong to the role the facts name** (qa-sdet unless they say otherwise). After staging or production, send `Ready for <role> smoke check: [<component>] <stage> <sha>` and set the status only after `Smoke passed: [<component>] <stage> <sha>`.
 7. **One deploy at a time** when the facts say so (a lock or a shared host). Stop at the first failure: report the step, the command and the first error line to Elon. Do not retry a step that may have changed a database.
+8. **Ten minute limit.** Any single step (a test suite, a build, a deploy command) that runs over 10 minutes is a failure, not a wait. Stop it, set nothing to success, and report to Elon at once: the step, the command, how long it ran and the last output line. A step that prints nothing for 5 minutes counts the same.
 
 ## status
 
