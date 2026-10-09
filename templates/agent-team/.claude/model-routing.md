@@ -46,6 +46,12 @@ This table is the owner's standing model choice, so pass these flags on every `w
 - Elon's own session runs on `opus` at `high`, set by `elon.md`.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt, and report the effective model, not the requested one.
 
+## Saving quota (owner 2026-10-09)
+
+- A fix or chore that touches 3 files or fewer runs as `fullstack-dev-small`, a Light tier role in `~/.orca/presets.json` (Codex `gpt-6-luna` at `--effort low` first). Title the worker `fullstack-dev-small - <job>` so the usage gate picks from the Light tier. Features, schema changes, money and security work stay on `fullstack-dev`.
+- Docs, translation, marketing copy, deploys and Playground walkthroughs start on `--agent antigravity --model gemini-3.1-pro-high`. The usage gate does not meter Antigravity and the hook lets it through, so this keeps Claude and Codex for code. Audit a Gemini worker's file list and new i18n keys before merge, because it reformats files and copies English into tw and jp.
+- Antigravity's Claude models and Cursor's Opus have their own quotas that can run out for days. Read the worker's startup screen; on a quota message fall back to the next provider instead of retrying.
+
 ## Role files and worker launch
 
 A role file's `model:` and `effort:` apply only when the role runs as a Claude Code subagent or as `claude --agent <role>`. An Orca worker started with `worker-start --agent ... --model ...` does not read them.
