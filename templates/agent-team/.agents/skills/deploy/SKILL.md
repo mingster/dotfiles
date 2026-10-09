@@ -21,6 +21,7 @@ In the commands below, `<repo>` is the repository from the facts, `<dev>` the de
    `gh api -X POST repos/<repo>/statuses/<sha> -f state=success -f context=<context> -f description="<one line>"`
 6. **Smoke checks belong to the role the facts name** (qa-sdet unless they say otherwise). After staging or production, send `Ready for <role> smoke check: [<component>] <stage> <sha>` and set the status only after `Smoke passed: [<component>] <stage> <sha>`.
 7. **One deploy at a time** when the facts say so (a lock or a shared host). Stop at the first failure: report the step, the command and the first error line to Elon. Do not retry a step that may have changed a database.
+9. **Deploys test the deployment, not the code** (owner rule). A stage checks only that the build succeeds, the schema sync works and the site is up and serving the candidate sha. Unit and regression suites run in development before any deploy, and the local stage requires the development pass the facts name (a commit status) instead of running them. A missing or failed pass stops the stage; it is fixed in development.
 8. **Ten minute limit.** Any single step (a test suite, a build, a deploy command) that runs over 10 minutes is a failure, not a wait. Stop it, set nothing to success, and report to Elon at once: the step, the command, how long it ran and the last output line. A step that prints nothing for 5 minutes counts the same.
 
 ## status
@@ -42,7 +43,7 @@ The commit is the tip of `<dev>` unless the lead names another.
 3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host, or a `_test` database). Check with the masking tool or check command the facts name, never print the file or its credentials. Anything else stops the stage.
 4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask the lead; never kill it.
 5. Run the local steps from the facts for the component, in order, inside the worktree. A step the facts mark advisory fails the gate only as the facts describe.
-6. All passed: set the local context to `success` with what ran (test counts) in the description. Remove the worktree.
+6. All passed: set the local context to `success` with what ran (build, development pass) in the description. Remove the worktree.
 
 ## staging
 
