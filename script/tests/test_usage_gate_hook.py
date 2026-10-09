@@ -43,7 +43,7 @@ class Hook(unittest.TestCase):
         self.assertIn("Resets " + time.strftime("%a %d %b %H:%M %Z", time.localtime(FUT)) + " (local time)", deny)
 
     def test_blocked_at_daily_cap(self):
-        self.claude(52, baseline=40)
+        self.claude(65, baseline=40)  # 25 spent; cap = 55 left over about 3.5 days
         deny, _ = self.run_hook('orca orchestration worker-start --spec "fix x; then y" --agent=claude')
         self.assertIn("blocked claude: daily cap", deny)
         self.assertIn("00:00", deny)  # local midnight, before the weekly reset

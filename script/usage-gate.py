@@ -2,7 +2,7 @@
 """Daily usage gate for the agent team: stop dispatching when a provider has used
 its daily share of the weekly limit, so the week never runs out.
 
-  usage-gate.py check [--provider claude|codex|<other>] [--cap 12] [--ceiling 95] [--reserve 1]
+  usage-gate.py check [--provider claude|codex|<other>] [--cap N] [--ceiling 95] [--reserve 1]
   usage-gate.py show [--json]       every provider at once, as a table
 
 Reads the provider's own weekly percentage, never an estimate:
@@ -14,7 +14,10 @@ Reads the provider's own weekly percentage, never an estimate:
 "Today" is the weekly percentage now minus the weekly percentage at the start of the
 local day (codex: the last session event before local midnight; claude: the first
 statusline render of the day; otherwise the first check of the day). It is the whole
-account's use, including sessions outside Orca. The gate blocks a new start when
+account's use, including sessions outside Orca. The daily cap is what is left of the
+week under the ceiling at the start of today, spread over the days left until the
+weekly reset (a partial last day counts as a fraction, the last day may use all of it);
+--cap N fixes it at N percent instead. The gate blocks a new start when
 spent + reserve >= cap, or when week + reserve >= ceiling, where reserve is
 --reserve (default 1) percent of the week per worker already running on that provider
 (`orca orchestration worker-list`), so running workers keep room to finish.
@@ -151,9 +154,23 @@ def start_of_day(reading, provider, midnight):
     return DAY_START[provider](midnight) if provider in DAY_START else None
 
 
+def local_midnight(now):
+    return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+def auto_cap(baseline, resets, now, ceiling):
+    """Today's share of the week: (ceiling - weekly use at the start of today) / days left
+    until the reset, counted from local midnight. Unknown reset: a seventh of the ceiling."""
+    if not resets:
+        return round(ceiling / 7, 1)
+    days = (float(resets) - local_midnight(now)) / 86400
+    return round(max(ceiling - baseline, 0.0) / max(days, 1.0), 1)
+
+
 def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None):
     """Return (verdict, detail, new_state). verdict: allowed|blocked|unknown.
-    reserve is weekly percent held back for workers already running."""
+    reserve is weekly percent held back for workers already running.
+    cap None means auto_cap from the day's baseline and the weekly reset."""
     if reading is None:
         return "unknown", {"reason": "no reading"}, state
     pct, resets = reading["pct"], reading.get("resets_at")
@@ -173,6 +190,8 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
         st = {"date": today, "baseline": 0.0 if rolled and st.get("date") == today
               else day_baseline(day_start, pct, resets), "resets_at": resets}
     spent = round(pct - st["baseline"], 1)
+    if cap is None:
+        cap = auto_cap(st["baseline"], resets, now, ceiling)
     detail = {"weekly_used": pct, "today_used": spent, "cap": cap, "ceiling": ceiling,
               "reserve": reserve, "resets_at": resets}
     if pct + reserve >= ceiling:
@@ -216,7 +235,7 @@ def blocked_until(detail, now):
 def run(provider, cap, ceiling, now=None, per_worker=1.0):
     now = now or time.time()
     today = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
-    midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    midnight = local_midnight(now)
     path = f"{STATE}/{provider}.json"
     try:
         state = json.load(open(path))
@@ -225,7 +244,7 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0):
     reader = READERS.get(provider)
     reading = fresh(reader(), now) if reader else None
     running = running_workers(provider) if reading else None
-    reserve = round(min(per_worker * (running or 0), cap), 1)
+    reserve = round(per_worker * (running or 0), 1) if cap is None else round(min(per_worker * (running or 0), cap), 1)
     day_start = None
     if reading and (state or {}).get("date") != today:
         day_start = start_of_day(reading, provider, midnight)
@@ -260,7 +279,8 @@ def table(rows):
     widths = [max(len(str(x[i])) for x in [head] + out) for i in range(len(head))]
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip() for row in [head] + out]
     lines.append("today% = week% now minus week% at the start of the local day, for the whole account "
-                 "(sessions outside Orca count). reserve% = --reserve per running worker.")
+                 "(sessions outside Orca count). cap% = (ceiling - week% at the start of today) / days left "
+                 "until the weekly reset. reserve% = --reserve per running worker.")
     return "\n".join(lines)
 
 
@@ -268,7 +288,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["check", "show"])
     ap.add_argument("--provider")
-    ap.add_argument("--cap", type=float, default=12.0)
+    ap.add_argument("--cap", type=float, default=None,
+                    help="fixed daily cap in weekly percent; default: remaining week / days left")
     ap.add_argument("--ceiling", type=float, default=95.0)
     ap.add_argument("--reserve", type=float, default=1.0,
                     help="weekly percent held back per worker already running on the provider")
