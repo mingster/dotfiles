@@ -168,7 +168,7 @@ def check_segment(segment, depth=0):
             method = args[0].upper()
         if not token and ((method and method not in ("GET", "HEAD")) or body):
             deny("The team calls the PayPal API with GET only (plus the oauth2/token request). Refunds, cancellations "
-                 "and any other write are gated: put them under Needs owner.")
+                 "and any other write are gated: report them to Elon, who asks the owner.")
 
     # 2. Secrets.
     secret_args = [a for a in args if SECRET_FILE.search(a)]

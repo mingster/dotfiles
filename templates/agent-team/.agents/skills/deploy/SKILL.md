@@ -42,7 +42,7 @@ The commit is the tip of `<dev>` unless the lead names another.
 1. Make a throwaway worktree at the commit where the facts say (never a loose one in `/tmp`): `git fetch origin && git worktree add --detach <path> <sha>`. Remove an old one at that path first with `git worktree remove --force <path>`.
 2. Copy the env file the facts name into the worktree with `cp`.
 3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host, or a `_test` database). Check with the masking tool or check command the facts name, never print the file or its credentials. Anything else stops the stage.
-4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask the lead; never kill it.
+4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask Elon; never kill it.
 5. **Development pass.** Before any step, the commit must carry the development pass status the facts name (a commit status, for example `dev/<component>`) as `success`. Missing or not `success` stops the stage; ask the lead for a development run on that commit. Never run the unit or regression suites here. Then run the local steps from the facts for the component, in order, inside the worktree. A step the facts mark advisory fails the gate only as the facts describe.
 6. All passed: set the local context to `success` with what ran (build, development pass) in the description. Remove the worktree.
 
@@ -52,11 +52,11 @@ The commit is the tip of `<dev>` unless the lead names another.
 1. Pick the commit: the newest commit on `<dev>` with the local context `success`. Check the status before anything else.
 2. `git push origin <sha>:<staging branch>`, then run the staging deploy command from the facts.
 3. Follow the staging steps in the facts: how to wait for the build, the guards the command checks, how to apply staging migrations, and the app page that must answer 200. A failed build or deploy means staging still runs the previous commit: set the staging context to `failure` and report.
-4. Send the smoke check message. On `Smoke passed`, set the staging context to `success`, then send the lead `Ready for owner to approve production: [<component>] <sha>, <N> PRs` with the summary below.
+4. Send the smoke check message. On `Smoke passed`, set the staging context to `success`, then send Elon `Ready for owner to approve production: [<component>] <sha>, <N> PRs` with the summary below.
 
 ## production
 
-Before asking for go, build the summary for the lead to put under **Needs owner**:
+Before asking for go, build the summary for Elon to put in the owner decision message:
 
 - The commit (`origin/<staging branch>`) and its local and staging statuses. Both must be `success`.
 - `git log --oneline origin/<production branch>..<sha>` (limited to the component folder when the facts give one) and the merged PRs in it.
@@ -65,7 +65,7 @@ Before asking for go, build the summary for the lead to put under **Needs owner*
 - Checks on the commit are green (`gh api repos/<repo>/commits/<sha>/check-runs`).
 - Prerequisites: anything a PR in the range needs before or with the deploy (an env value, a secret, a cron line, a server setting). Read each PR's description and deploy notes.
 
-**Owner go.** Production always needs the owner's explicit go for that release. No earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after the lead relays the owner's go for that exact commit. When the facts name an owner approval script, also tell the owner to run it, giving the exact command with the component and commit filled in, and do not deploy until the script has run. A rollback needs the owner's go too.
+**Owner go.** Production always needs the owner's explicit go for that release. No earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after Elon relays the owner's go for that exact commit. When the facts name an owner approval script, also give Elon the exact command for the owner to run, with the component and commit filled in, and do not deploy until the script has run. A rollback needs the owner's go too.
 
 **Production prerequisites.** When the facts name a production SQL apply script or secret script and the owner's approval covers them (the scope in the facts), release-manager runs them itself before moving `<production branch>`: the SQL script with a dry run first, then the same command without it, one database at a time; the secret script for each required key. Only these scripts, never raw SQL or `ssh`, and never `owner-approve` or the approval file. The owner never runs SQL. Stop on the first failure and never retry a file or write that may have applied. If a guard denies a command, stop and report the deny message to Elon; do not work around it.
 
@@ -82,6 +82,6 @@ The host deploy script is the last step of this pipeline, not a way around it. I
 ## When production fails
 
 - **Normal:** revert the change on `<dev>` and take the revert through local, staging and production.
-- **Emergency, owner approval required:** follow the rollback section of the facts (usually: move `<production branch>` back to the previous commit with a force push, which asks for approval, and redeploy). Blocked when the failed deploy changed the schema in a way the facts say does not reverse: that case goes to the owner with the schema diff.
+- **Emergency, owner approval required:** follow the rollback section of the facts (usually: move `<production branch>` back to the previous commit with a force push, which asks for approval, and redeploy). Blocked when the failed deploy changed the schema in a way the facts say does not reverse: that case goes to Elon, who asks the owner, with the schema diff.
 
 Report every failure to Elon at once with the step, the error and your recommendation.
