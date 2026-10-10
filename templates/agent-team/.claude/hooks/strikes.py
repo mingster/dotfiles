@@ -107,7 +107,7 @@ def main():
             save(path, state)
             note = f"Strike {state[key]} of {LIMIT} for `{key}`."
             if state[key] >= LIMIT:
-                note += " Hard Stop: command blocked for session. Write error log and attempted solutions to `active_run.md` under `[Blockers]` and report to owner."
+                note += " Hard Stop: command blocked for session. Write error log and attempted solutions to `active_run.md` under `[Blockers]` and report to Elon."
             elif state[key] >= 2:
                 note += (" Two strikes: stop editing code. Check the mock.module fake against the real module "
                          "and the local Postgres before one last run; the next failure blocks this command.")

@@ -9,7 +9,7 @@ The objective is the text after `/crew` ($ARGUMENTS). If there is none, ask for 
 
 Product facts (repository, worker start flags, check commands, review checklist, extra reviewers, changelog folder) live in the project's `docs/agents/team-facts.md`. Read it before Step 1. Where this skill says "team facts", use the value from that file. If the file is missing, stop and tell the owner.
 
-Elon (`elon`) is the session and the top-level orchestrator: Elon owns the objective, the task tree, dispatch and completion review. The Tech Lead (`lead`) is a teammate that integrates engineering work. Every teammate reports to Elon only, and Elon reports to the owner. Follow both role files and their gates. Critical or suppressed concerns may escalate to Elon and the owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. Every message to the owner uses **Now**, **Needs owner**, **Running**.
+Elon (`elon`) is the session and the top-level orchestrator: Elon owns the objective, the task tree, dispatch and completion review. The Tech Lead (`lead`) is a teammate that integrates engineering work. Every teammate reports to Elon only, and Elon contacts the owner only for a decision Elon cannot make. Follow both role files and their gates. Critical or suppressed concerns may escalate to Elon and the owner. Owner-facing replies may use Taiwan Traditional Chinese or English without mirroring the owner. A message to the owner states the decision, the options and Elon's recommendation.
 
 ## Step 0. Fast-Path Check (Skip Crew)
 
@@ -66,7 +66,7 @@ Load the `orchestration` skill (`orca skills get orchestration`) before dispatch
 3. Run the full checks from team facts on an integrated app change; use documentation checks for documentation-only changes. If integration changed code, qa-sdet audits again.
 4. Push the branch and open one PR for the objective in the repository from team facts, with spec traceability, review checklists and validation appropriate to the changed files. Worker branches stay local.
 5. **Prune worktrees**: Immediately remove child worktrees (`git worktree remove <path>`) once integrated so orphaned directories never accumulate.
-6. Present to the owner: `git diff <default branch>...HEAD --stat`, the PR link, audit verdict, and test results.
+6. Report to Elon: `git diff <default branch>...HEAD --stat`, the PR link, audit verdict, and test results.
 7. Merge the PR under the Merging rules once review and checks pass.
 8. **Continuous queue draining**: Immediately query for the next open issue in the queue and begin the next cycle, repeating until no open tasks remain.
 
