@@ -43,7 +43,7 @@ The commit is the tip of `<dev>` unless the lead names another.
 2. Copy the env file the facts name into the worktree with `cp`.
 3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host, or a `_test` database). Check with the masking tool or check command the facts name, never print the file or its credentials. Anything else stops the stage.
 4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask the lead; never kill it.
-5. Run the local steps from the facts for the component, in order, inside the worktree. A step the facts mark advisory fails the gate only as the facts describe.
+5. **Development pass.** Before any step, the commit must carry the development pass status the facts name (a commit status, for example `dev/<component>`) as `success`. Missing or not `success` stops the stage; ask the lead for a development run on that commit. Never run the unit or regression suites here. Then run the local steps from the facts for the component, in order, inside the worktree. A step the facts mark advisory fails the gate only as the facts describe.
 6. All passed: set the local context to `success` with what ran (build, development pass) in the description. Remove the worktree.
 
 ## staging
