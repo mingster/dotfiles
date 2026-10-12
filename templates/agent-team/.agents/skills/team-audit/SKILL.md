@@ -13,7 +13,7 @@ Run `~/dotfiles/script/team-audit.sh` (default projects `~/projects/riben.life` 
 
 ## 2. Judgement review
 
-Read, in each project: `.claude/agents/*.md`, `.claude/model-routing.md`, `docs/agents/team.md` (PSTV: `fileServer/docs/agents/team.md`), `docs/agents/daily-run.md`, and the team skills in `.agents/skills/`. Then report:
+Read, in each project: `.claude/agents/*.md`, `.claude/model-routing.md`, `docs/agents/team.md`, `docs/agents/daily-run.md`, and the team skills in `.agents/skills/`. Then report:
 
 - **Contradictions:** two files that give a different owner, order, model, provider or gate for the same thing. Owner rules (dated "owner rule" lines and `docs/agents/team.md`) win, then `.claude/model-routing.md` for models and the commit, push and merge rule, then the role file. Name both lines.
 - **Duplication:** a rule restated in full outside its single source; replace it with a pointer.
