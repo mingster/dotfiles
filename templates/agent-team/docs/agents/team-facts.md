@@ -1,6 +1,6 @@
 # Team facts
 
-Product facts the shared team skills (`crew`, `tl`) read. Those skills are generated from dotfiles and hold no product facts; this file is owned by this project. Keep the headings: the skills look values up by heading.
+Product facts read by the generated team skills (`crew`, `tl`), which hold none themselves. This project owns this file. Keep the headings: the skills look values up by heading.
 
 ## Repository
 

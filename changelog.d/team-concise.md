@@ -1,0 +1,1 @@
+- Agent team role files, model routing, team skills and the architecture overview rewritten to be concise: the commit, push and merge owner rule and the worker launch steps now live once in `.claude/model-routing.md`, with one line pointers elsewhere.

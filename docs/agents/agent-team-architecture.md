@@ -1,12 +1,10 @@
-# Agent Team Architecture & Operating Model
+# Agent team architecture
 
-This document outlines the organization, operating workflow, and decision governance of our autonomous AI Agent Team across projects (**riben.life**, **PSTV**, and future adoptions). The canonical, current copies live in each project: `docs/agents/team.md` and `.claude/model-routing.md`. This file is the overview, so when it disagrees with them, they win.
+Overview of the AI agent team across **riben.life**, **PSTV** and future adoptions. The current rules live in each project's `docs/agents/team.md` and `.claude/model-routing.md`; when this file disagrees with them, they win.
 
----
+## 1. Organization
 
-## 1. Executive Organization & Command Hierarchy
-
-Mingster talks only to **Elon (`elon`)**, the single front door and the shared CEO of riben.life and PSTV. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. The team has nine roles in riben.life (Elon, the Tech Lead `lead`, and seven specialists) and ten in PSTV (the same plus `stream-health`).
+Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of riben.life and PSTV. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. riben.life has nine roles (Elon, the Tech Lead `lead`, seven specialists); PSTV has ten (plus `stream-health`).
 
 ```mermaid
 flowchart TD
@@ -38,51 +36,17 @@ flowchart TD
     CEO --> RM
 ```
 
-Not drawn: `support-csm` (customer support and success) in both projects, and `stream-health` (streaming and infrastructure checks) in PSTV only. Each reports to Elon the same way.
+Not drawn: `support-csm` (customer support and success) in both projects, and `stream-health` (streaming and infrastructure checks) in PSTV only. Each reports to Elon.
 
----
+## 2. Responsibilities and decision boundaries
 
-## 2. Pillar Responsibilities & Decision Boundaries
+- **Mingster (board).** Talks to Elon (`/elon` or `/ceo`) as executive peer and sounding board. Keeps approval over permanent pricing, discounts and plan fees; irreversible production data migrations or schema drops; production deployments (go or no go); external spending and advertising.
+- **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (Tech Lead and workers). Plans, dispatches every teammate with Orca orchestration (skill `orchestration`, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents or experimental agent teams. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; progress, merges, reviews and staging deploys are not reported. On request the format is **Now**, **Needs owner**, **Running**.
+- **Sales and Marketing (`sales-marketing`).** Validates demand and acquisition channels (CAC, LTV, churn, activation) and supplies evidence based problem definitions. Never sends unapproved marketing email, touches production ledgers or offers unapproved discounts.
+- **BA (`architect-pm` / 需求分析師).** Turns pain points and owner vision into `intent.md`, then `spec.md` (PRD), then machine checkable ticket contracts (`tickets.md`); works with the Tech Lead on handoffs. Never writes application code.
+- **Tech Lead (`lead`).** Reports delivery status and capacity to Elon. Merges reviewed PRs, keeps branches and worktrees clean, coordinates releases, starts and supervises engineering workers in Orca with the same usage gate. Receives ticket contracts from the BA. *Merging:* reports passing PRs to Elon, who merges eagerly; the lead never runs `git push`, `gh pr create` or `gh pr merge`. Once QA (plus SecOps or stream-health where required) has no blocking comments, checks are green and the PR is mergeable, the Tech Lead merges without waiting for the owner, never with `--admin`. PRs accepting an intent or spec, production deploys outside the standing go, and migrations still go to the owner.
 
-### Board (`Mingster`) & Primary Interface
-- **Primary Human Interaction is with Elon (`/elon` or `/ceo`)**:
-  - The human owner speaks directly to the CEO as the executive peer and strategic sounding board.
-  - Elon translates vision into commercial experiments (Sales), requirements analysis (BA), and technical delivery (Tech Lead and workers).
-- Retains ultimate approval over:
-  - Permanent pricing, discounting, or plan fee terms.
-  - Irreversible production data migrations or schema drops.
-  - Production deployments (gated go/no-go).
-  - External spending or advertising commitments.
-
-### Executive Orchestrator: Elon (`elon` / `/elon`)
-- **Direct Executive Partner to Mingster**:
-  - Objective-driven and critical: challenges weak assumptions without yes-man flattery.
-  - Plans, dispatches every teammate with Orca orchestration (skill `orchestration`, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done` report, and contacts Mingster only for a decision Elon cannot make (the Owner-Reserved list). Elon never uses Claude subagents or experimental agent teams for this.
-  - Usage gate: before every `worker-start`, Elon runs `usage-gate.py check --provider <provider>`. A provider that has used its daily cap (what is left of its week under the 95% ceiling at the start of today, divided by the days left until its weekly reset), counted with a reserve of 1% of the week per worker already running on it, is skipped for the next one in the fallback order.
-  - Commands: Use `/elon <goal>` or `/ceo <goal>` to initiate goals, strategy discussions, or high-level status inquiries.
-  - Unprompted messages state a decision, the options, Elon's recommendation and any exact command. Progress, merges, reviews and staging deploys are not reported. When Mingster asks (`/elon status` or a direct question) the format is **Now** (accomplished), **Needs owner** (decisions requiring board approval), **Running** (active agents and pipelines).
-
-### Pillar 1: Sales & Marketing (`sales-marketing`)
-- **Reports to Elon**.
-- Validates market demand and analyzes user acquisition channels (CAC, LTV, churn, activation).
-- Supplies evidence-based problem definitions for product intake.
-- *Strict boundary*: Never sends unapproved marketing emails, touches production ledgers, or offers unapproved discounts.
-
-### Pillar 2: Business Analysis & Product Architecture (`architect-pm` / 需求分析師)
-- **Reports to Elon** for product requirements; collaborates with Tech Lead for technical handoffs.
-- Transforms business pain points and owner vision into `intent.md` $\rightarrow$ `spec.md` (PRD).
-- Decomposes accepted specs into **Machine-Checkable Ticket Contracts** (`tickets.md`).
-- *Strict boundary*: Never writes application code; focuses purely on domain modeling, requirements boundaries, and contract definitions.
-
-### Pillar 3: Engineering Orchestration (`tech-lead`)
-- **A teammate that reports to Elon** for delivery status and capacity.
-- Coordinates engineering integration: merges reviewed PRs, keeps branches and worktrees clean, coordinates releases, and starts and supervises engineering workers in Orca.
-- Receives machine-checkable ticket contracts from the BA and runs the same usage gate as Elon before every `worker-start`.
-- *Merging*: Reports passing PRs to Elon, who merges eagerly (the lead never runs `git push`, `gh pr create` or `gh pr merge`). As soon as QA (plus SecOps or stream-health where required) has no blocking comments, checks are green and the PR is mergeable, the Tech Lead merges without waiting for the owner, never with `--admin`. PRs that accept an intent or spec, production deploys outside the standing go, and migrations still go to the owner.
-
----
-
-## 3. End-to-End Delivery Lifecycle (6-Stage SDLC)
+## 3. Delivery lifecycle
 
 ```mermaid
 sequenceDiagram
@@ -121,104 +85,52 @@ sequenceDiagram
     RM->>RM: /deploy (Local -> Staging -> Production)
 ```
 
----
+## 4. Ticket and review contracts
 
-## 4. Machine-Checkable Ticket & Review Contracts
+Each BA ticket (`tickets.md`) defines:
 
-To eliminate agent wandering, context sprawl, and unexpected bugs, work handoffs strictly use machine-checkable boundaries:
+1. **Allowed files:** the exact files or folders the agent may touch. Any edit outside fails review.
+2. **Verification command:** the deterministic test that gates the ticket (for example `bun test --isolate <path>`, `bun run lint`).
+3. **Blast radius and reversibility:** impact (Low, Medium, High) and rollback notes.
 
-### The Ticket Contract (`tickets.md`)
-Each ticket generated by the BA must define:
-1. **Allowed files / scope boundaries**: Exact whitelist of files or subdirectories the agent may touch. Any edit outside this whitelist fails review.
-2. **Verification command**: Exact deterministic test command that gates the ticket (e.g., `bun test --isolate <path>`, `bun run lint`).
-3. **Blast radius & reversibility**: Scope impact assessment (Low / Medium / High) and rollback notes.
+Every code change passes two axes before merge. **Standards:** `AGENTS.md` conventions, safe actions only in `"use server"`, tenant and store scoping, BigInt epochs, Fowler smells. **Spec:** every acceptance criterion met, only allowlisted files touched, no scope creep.
 
-### The Dual-Axis Review Contract
-Every code change must pass two independent axes before merge:
-- **Standards Axis**: Conformance to project conventions (`AGENTS.md`), safe-actions only in `"use server"`, tenant/store scoping, BigInt epochs, and Fowler code smells.
-- **Spec Axis**: Verification that all acceptance criteria are met, only allowlisted files were touched, and **zero scope creep** occurred.
+## 5. Persistent memory (`task_plan.md` and `progress.md`)
 
----
+Every worker session keeps two small files so a compaction or restart restores state in one turn:
 
-## 5. Persistent Memory Layer (`task_plan.md` & `progress.md`)
+1. **`task_plan.md`** (static contract), written before code changes: objective, allowed files, verification command (`bun test --isolate <path>`), tracer bullet steps.
+2. **`progress.md`** (state ledger), updated after each meaningful step or test run: status, discoveries, test output, decisions, strike counts.
 
-To prevent LLM amnesia, context drift, or hallucinations during multi-step automated execution, every worker session maintains two lightweight, persistent files:
+Template and examples: `docs/agents/persistent-memory-protocol.md`.
 
-1. **`task_plan.md` (Static Contract & Roadmap)**:
-   - Written *before* modifying code.
-   - Declares the objective, allowed file whitelist, verification command (`bun test --isolate <path>`), and tracer-bullet steps.
-2. **`progress.md` (Dynamic State Ledger)**:
-   - Updated after each meaningful step or test run.
-   - Records current status, discoveries, test outputs, decisions made, and strike counts.
-   - *Compaction Resilience*: When context is compressed or a worker restarts, reading these two files restores exact state in 1 turn with zero drift.
+## 6. Token efficiency and FinOps
 
-See full template and examples at `docs/agents/persistent-memory-protocol.md`.
+1. **Model and effort:** pick the tier by task (Strong for ambiguous decisions, specs, security or financial review; Workhorse for implementation, coordination, QA, release, support). Flags: `.claude/model-routing.md`.
+2. **Usage gate:** before every `worker-start`, `usage-gate.py check --provider <provider>`; rules in `.claude/model-routing.md` (Starting a worker). How the numbers work: the gate reads the provider's own weekly percentage (codex: the newest `rate_limits` event in `~/.codex/sessions`; claude: the statusline's `rate_limits.seven_day`). "Used today" is that percentage minus its value at the start of the local day (codex: the last event before midnight; claude: the first statusline reading of the day; a week that began today counts from 0). A reading older than 6 hours counts as no reading, except against the 95% ceiling. The reserve counts running workers from `orca orchestration worker-list`. `usage-gate.py show` prints one table (`--json` for raw rows). The `script/usage-gate-hook.py` hook enforces it for claude and codex.
+3. **Three strike hard stop:** when fixing the same bug, type error or test failure reaches 3 attempts, halt, log errors and attempted solutions in `active_run.md` under `[Blockers]`, and wait for human input.
+4. **On demand memory:** never load `learned.md` or `experiences/` at session start; grep them when a known domain gotcha comes up.
+5. **Worktrees:** child worktrees go in `~/orca/workspaces/<project>/<lane>`, never `/tmp` or `.claude/worktrees`. Remove them (`git worktree remove`) as soon as they are integrated or abandoned. Release each finished worker with `orca orchestration worker-release --dispatch <id>`, failed ones too.
+6. **State artifacts:** `docs/agents/lean-startup-sdlc.md` defines the `active_run.md` format and zero env disclosure. Living specs stay in the project's SDLC intent or spec folders.
+7. **Context hygiene:** one ticket per session (a worker exits once its branch is committed, verified and reported; Elon pushes and opens the PR). Keep `active_run.md` current so an operator can `/compact` mid task. Elon and the Tech Lead hand heavy reading and test sweeps to Orca workers and read only diff stats and exit codes. Try speculative fixes in disposable worktrees or forked sessions and discard failures.
 
----
+## 7. Providers in Orca ADE
 
-## 6. Token Efficiency & FinOps Rules (Lean Startup SDLC)
+Every provider is driven the same way, `orca orchestration worker-start --agent <provider> --model <id> --effort <level>`, and every worker sends `worker_done` to Elon. Model names and flags live only in each project's `.claude/model-routing.md`. Fallback order: **Claude, Codex, Cursor, Antigravity**. A provider is unavailable on quota exhaustion, a long rate limit, an auth error or an outage: rerun the task on the next one, never downgrade silently, finish a task where it landed and start the next on the preferred provider.
 
-1. **Model and Effort**: Pick the tier by task, not by habit: Strong reasoning for ambiguous decisions, specs, and security or financial review; Workhorse for implementation, coordination, QA, release, and support. Exact flags per provider are in `.claude/model-routing.md`.
-2. **Usage Gate**: Before every `worker-start`, run `usage-gate.py check --provider <provider>`. Exit 3 means the provider hit its daily cap (what is left of its week under the 95% ceiling at the start of today, divided by the days left until its weekly reset) or the week is 95% used, so use the next provider in the fallback order, or stop dispatching and report it. The `script/usage-gate-hook.py` PreToolUse hook enforces this for claude and codex: it denies a blocked `worker-start` and names the reset time in local time. How the numbers work: the gate reads the provider's own weekly percentage (codex: newest `rate_limits` event in `~/.codex/sessions`; claude: the statusline's `rate_limits.seven_day`), "used today" is that percentage minus its value at the start of the local day (codex: last event before midnight; claude: the first statusline reading of the day; a week that began today counts from 0), and a reading older than 6 hours counts as no reading except against the 95% ceiling. The percentage is the whole account's, so sessions outside Orca count. A start is refused when used today plus the reserve reaches the cap, where the reserve is 1% of the week per running worker (`orca orchestration worker-list`). The gate checks only at `worker-start` and never stops a running worker. `usage-gate.py show` prints every provider as one table (`--json` for the raw rows).
-3. **Three-Strike Hard Stop**: When fixing the same bug, type error, or test failure reaches 3 attempts, halt immediately. Log errors and attempted solutions in `active_run.md` under `[Blockers]` and wait for human input.
-4. **On-Demand Memory**: Never load `learned.md` or `experiences/` blindly at session start. Grep on-demand only when tackling known domain gotchas.
-5. **Worktree Lifecycle**: Child worktrees belong in `~/orca/workspaces/<project>/<lane>`. When integrated or abandoned, prune them immediately (`git worktree remove`) so directories never accumulate. Release each finished worker with `orca orchestration worker-release --dispatch <id>`, even when its outcome is `failed`.
-6. **Lean State Artifacts**: Reference `docs/agents/lean-startup-sdlc.md` for `active_run.md` format and zero-env disclosures. Living specs remain in the project's SDLC intent or spec folders.
-7. **Context Hygiene & Session Lifecycles**:
-   - **One Ticket, One Session**: Workers exit cleanly once their branch is committed, verified and reported (Elon pushes and opens the PR). Never chain unrelated tasks in an old session; start fresh sessions for new tickets.
-   - **In-Task Compaction Readiness**: Maintain `active_run.md` continuously so human operators can run `/compact` during long tasks without losing execution state.
-   - **Side Worker Offloading**: Elon and the Tech Lead delegate heavy file reading and test sweeps to Orca workers, absorbing only compact diff stats and exit codes.
-   - **Spike Isolation**: Test speculative fixes in disposable worktrees or forked sessions. Discard failed explorations rather than polluting main thread history.
-
----
-
-## 7. Multi-Provider Compatibility in Orca ADE
-
-The Agent Team runs inside **Orca ADE**. Every provider is driven the same way, by Orca orchestration: `orca orchestration worker-start --agent <provider> --model <id> --effort <level>`, with each worker sending `worker_done` to Elon. Model names and flags change often, so they are kept only in `.claude/model-routing.md` of each project.
-
-Provider fallback order: **Claude, then Codex, then Cursor, then Antigravity.**
-
-| Provider | Role Loading Mechanism | Notes |
+| Provider | Role loading | Notes |
 | :--- | :--- | :--- |
-| **Claude** | Role files in `.claude/agents/*.md` | Default for most roles. Role file `model:` and `effort:` apply only when run as `claude --agent <role>`. |
-| **Codex** | The spec tells the worker to read `.claude/agents/<role>.md` first | Runs without the Claude hooks, so the strike rule in `AGENTS.md` is the guard. |
-| **Cursor** | Same as Codex, plus `.cursor/rules/` | Effort is part of the model id. New worktrees need workspace trust. |
-| **Antigravity** | Same as Codex, plus project `AGENTS.md` and `.agents/skills/` | Effort is part of the model id. |
+| **Claude** | Role files in `.claude/agents/*.md` | Default for most roles. `model:` and `effort:` apply only under `claude --agent <role>`. |
+| **Codex** | The spec says read `.claude/agents/<role>.md` first | No Claude hooks, so the strike rule in `AGENTS.md` is the guard. |
+| **Cursor** | Same as Codex, plus `.cursor/rules/` | Effort is in the model id. New worktrees need workspace trust. |
+| **Antigravity** | Same as Codex, plus project `AGENTS.md` and `.agents/skills/` | Effort is in the model id. |
 
-### Universal Rules across all Providers:
-1. **Fallback**:
-   - A provider is unavailable on quota exhaustion, a long rate limit, an auth error, or an outage. Rerun the task on the next provider in the order above, and never downgrade silently.
-   - Check the usage gate before each start. Finish a task on the provider where it landed, and start the next task on the preferred provider again.
-2. **Single Source of Truth**:
-   - `AGENTS.md` at repo root is the single source for conventions.
-   - Roles in `.claude/agents/` define persona boundaries across all providers.
-   - Skills provide cross-platform procedural workflows in three tiers. General skills (`orchestration`, `to-tickets`, `create-pr`, `tdd` and the rest) come only from dotfiles through `~/.claude/skills` and `~/.agents/skills`. Team skills (`elon`, `ceo`, `crew`, `tl`, `deploy`) are committed, generated copies in each project's `.agents/skills/`, written by `~/dotfiles/script/sync-team-skills.sh`, and read product facts from `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`. Project-only skills stay in the project. Details: `docs/agents/skills-inventory.md`.
-3. **Workspace Isolation in Orca ADE**:
-   - Always route child worktrees to `~/orca/workspaces/<project>/<lane>`.
-   - Never use `/tmp` or `.claude/worktrees`.
-   - Always clean up merged worktrees with `git worktree remove`.
+Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role boundaries on every provider. Skills come in three tiers. General skills (`orchestration`, `to-tickets`, `create-pr`, `tdd` and the rest) come only from dotfiles through `~/.claude/skills` and `~/.agents/skills`. Team skills (`elon`, `ceo`, `crew`, `tl`, `deploy`) are committed generated copies in each project's `.agents/skills/`, written by `~/dotfiles/script/sync-team-skills.sh`, reading product facts from `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`. Project only skills stay in the project. Details: `docs/agents/skills-inventory.md`.
 
----
+## 8. Shared and per project
 
-## 8. Shared vs per project
+The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled in copies (`docs/agents/team.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are the exception: generated, never edited in place. Edit `templates/agent-team/.agents/skills/` and run `script/sync-team-skills.sh <project>`; `--check` fails on drift.
 
-The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled in copies of it (`docs/agents/team.md`, `.claude/agents/`, `.claude/model-routing.md`), and the copy in the project is what its agents follow. The team skills are the exception: their project copies are generated, never edited in place. Edit them in `templates/agent-team/.agents/skills/` and run `script/sync-team-skills.sh <project>`; `--check` fails when a project copy drifts.
+Per project: hostnames, environments and deploy stages (for example PSTV's staging and production hosts); ADR numbers (riben.life cites ADR 0058 and 0060, PSTV fileServer ADR 0002 and 0004); product wording, language rules and domain terms; extra roles (PSTV adds `stream-health`).
 
-What may differ per project:
-- Hostnames, environments, and deploy stages (for example PSTV's staging and production hosts).
-- ADR numbers (riben.life cites ADR 0058 and 0060, PSTV cites fileServer ADR 0002 and 0004).
-- Product wording, language rules, and domain terms.
-- Extra roles (PSTV adds `stream-health`).
-
-What stays the same: Elon as the single front door, Orca orchestration with `worker_done` reports, the usage gate, the provider fallback order, eager merging by the Tech Lead, and the gated actions held by the owner.
-
-## Commit, push and merge (owner rule)
-
-Enforced by instruction until the hook exists.
-
-1. A worker edits and commits only on its own branch in its own worktree. It never pushes, never runs `gh pr create` and never merges. It reports the branch, the worktree path, `git diff main...HEAD --stat` and test counts in `worker_done`.
-2. A reviewer reads the worker's worktree locally and puts its findings in its `worker_done`, not in PR comments.
-3. Elon pushes the branch and opens the PR with the push script (it refuses `main`, `staging` and `production`, refuses `.env` files, tries at most 3 times and then reports, and writes a PR body with no Test plan and no tool credit), then merges with `--match-head-commit`. A worktree is removed only after its push succeeded.
-4. The release manager pushes `staging` and `production` only, and production only with the owner's approval.
-5. A hook that blocks `git push`, `gh pr create` and `gh pr merge` in worker terminals, and the push script, are built next session.
-6. Merge on completion (owner standard, 2026-10-12): the moment a worker's `worker_done` is validated, Elon merges its branch and fast forwards the owner's local main checkout (`git pull --ff-only`, only when it is on `main` and clean). Never hold a finished branch for another review round: release that reviewer first (the merge removes the worktree), then run one post-merge review on `main` and file its findings as follow-up issues.
+Shared: Elon as the single front door, Orca orchestration with `worker_done` reports, the usage gate, the provider fallback order, eager merging by the Tech Lead, the owner's gated actions, and the commit, push and merge owner rule (`.claude/model-routing.md`).
