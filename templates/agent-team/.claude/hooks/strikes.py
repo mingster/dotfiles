@@ -94,7 +94,7 @@ def main():
                     "permissionDecisionReason": (
                         f"Circuit breaker: `{key}` failed {LIMIT} times in a row in this session. "
                         "Stop editing immediately (Three-Strike Hard Stop). Record the error log and attempted fixes "
-                        "in `active_run.md` (or `progress.md`) under `[Blockers]`. Await human input without blind retries."
+                        "in `active_run.md` under `[Blockers]`. Await human input without blind retries."
                     ),
                 }
             }))

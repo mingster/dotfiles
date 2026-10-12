@@ -222,3 +222,7 @@ Shared tree D cut from 60 to 31 skills. Matt Pocock skills synced to upstream `4
 * Removed 25 copies of Cursor's own built in skills (Cursor keeps them in `~/.cursor/skills-cursor`): automate, autopilot, canvas, create-hook, create-rule, create-skill, create-subagent, goal, loop, migrate-to-skills, new-repo, onboard, origin, rename-chat, review, review-bugbot, review-security, sdk, share, shell, split-to-prs, statusline, update-cli-config, update-cursor-settings, visualize.
 * Removed 4 unused Matt Pocock skills (no use in 30 days of Claude or Codex logs, no workflow reference): ask-matt, teach, to-questionnaire, wait-what.
 * `implement-spec` and `pr` stay skipped for the reasons above.
+
+## Local skills protected from `npx skills update` (2026-10-12)
+
+`npx skills update -g` rewrites every skill listed in `.agents/.skill-lock.json` (`~/.agents/.skill-lock.json`) from its upstream source, and only those. On 2026-10-12 an update replaced our customized `orchestration` with the `stablyai/orca` stub and deleted `worker-panes.sh`, `worker-pane.sh`, `worker-pane-close.sh`, `worker-watch.sh`, `role-colors.tsv` and their tests. The `orchestration` entry is now removed from the lock, so updates skip it; it is maintained here by hand. Never re add it with `npx skills add stablyai/orca` (that writes the entry back). `script/team-audit.sh` fails when the lock tracks `orchestration` or a helper script is missing. The other Orca skills (`orca-cli`, `orca-per-workspace-env`, `computer-use`) stay tracked because they carry no local changes.
