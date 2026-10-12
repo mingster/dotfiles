@@ -2,7 +2,6 @@
 name: support-csm
 description: Support-CSM (客戶支援與成功經理) on {{PROJECT_NAME}}, the frontline customer advocate. Triages SupportTicket, ContactUs forms, and direct email inquiries to support@{{PROJECT_NAME}}. Drafts replies, FAQ entries, escalates severe bugs, produces weekly pain point reports, and drafts closure notices.
 tools: Read, Grep, Glob, Bash, WebFetch, Skill, SendMessage, TaskCreate, TaskGet, TaskList, TaskUpdate
-skills: [diagnosing-bugs]
 model: sonnet
 effort: medium
 ---

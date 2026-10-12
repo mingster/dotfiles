@@ -46,12 +46,14 @@ Default path for any non-trivial feature, refactor, or bug. Run the stages in or
 | 1. Grill | `/grill-with-docs` | Interview me one question at a time to surface edge cases and align the design with the codebase, before writing any code. Produces ADRs and a glossary as a side effect. |
 | 2. Spec | `/write-spec` or `/to-spec` | When the repo has `docs/SDLC.md`, write `spec.md` next to the accepted intent (`/write-spec`); otherwise synthesize the agreed plan into a spec on the issue tracker (`/to-spec`). No second interview, just what we already settled. |
 | 3. Tickets | `/to-tickets` | Break the spec into tracer bullet vertical slices, each small enough to implement inside a fresh context window, with blocking edges declared. |
-| 4. Implement | `/tdd` | Strict red, green, refactor. One failing test first, then the minimum code that passes it. |
+| 4. Implement | `/implement` or `/tdd` | `/implement <ticket>` builds one ticket: it drives `/tdd` at each seam and ends with `/code-review`. `/tdd` alone for work with no ticket. Strict red, green, refactor. |
 | 5. Review | `/code-review` | Check the diff against this repo's coding standards and against the originating spec, in parallel sub-agents. |
 
 Escape hatches, because the full loop is overkill for small work:
 
 - A one line fix, a typo, a config tweak: go straight to `/tdd`, or straight to the edit if no behaviour changes.
+- A bug: `/diagnosing-bugs` until a test goes red on it, then fix with `/tdd`. Skip stages 0 to 3.
+- A new issue: `/triage` decides whether it is ready for an agent, needs info, or needs me.
 - A change we already discussed in depth this session: start at `/to-spec`.
 - A single slice that needs no decomposition: skip `/to-tickets`.
 
@@ -68,7 +70,9 @@ If you reach stage 2 in a repo where `docs/agents/issue-tracker.md` does not exi
 
 Prefer the script. Fall back to the skill when it does not fit.
 
-Related skills, invoked on demand rather than as part of the loop: `/grilling` (stress test an idea with no doc output), `/research` (gather context first), `/diagnosing-bugs` (hard bugs and regressions), `/resolving-merge-conflicts`.
+Related skills, invoked on demand rather than as part of the loop: `/grilling` (stress test an idea with no doc output), `/research` (gather context first), `/prototype` (answer a design question with throwaway code), `/wayfinder` (work bigger than one session), `/improve-codebase-architecture` (every few days), `/resolving-merge-conflicts`, `/handoff` (pass work to a fresh session), `/retro` (after a session that went wrong).
+
+Skills marked `disable-model-invocation` (grill-me, grill-with-docs, handoff, implement, improve-codebase-architecture, retro, to-spec, to-tickets, triage, wayfinder) run only when I type them. When you hand one to another agent, name its file: "read `~/.agents/skills/<name>/SKILL.md` and follow it".
 
 ## 1. Think Before Coding
 

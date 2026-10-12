@@ -80,8 +80,11 @@ backed by skills vendored from [mattpocock/skills](https://github.com/mattpocock
 | Grill | `grill-with-docs` (wraps `grilling` + `domain-modeling`) |
 | Spec | `to-spec` |
 | Tickets | `to-tickets` |
-| Implement | `tdd` (or `implement` / `implement-spec` for a whole spec) |
+| Implement | `tdd` (or `implement` for a ticket; `implement-spec` is not vendored) |
 | Review | `code-review` |
+
+Which team role runs which skill for each stage and recurring job: `docs/agents/sdlc-skill-map.md`.
+Read it before changing a role file, the crew or tl skill, or a project's daily run.
 
 Each repo needs its own `docs/agents/` config (issue tracker, triage labels, domain doc layout) before
 `to-spec`, `to-tickets`, `triage`, and `code-review` will work there. That is per project, not part of

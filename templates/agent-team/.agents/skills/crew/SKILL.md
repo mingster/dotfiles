@@ -13,12 +13,12 @@ Elon (`elon`) owns the objective, the task tree, dispatch and completion review.
 
 ## Step 0. Fast path
 
-A bug fix, chore or small task touching 3 files or fewer skips the crew: work directly in the current workspace with TDD, run the fast checks from team facts (Checks), and finish. The crew is for multi domain features and large epics.
+A bug fix, chore or small task touching 3 files or fewer skips the crew: work directly in the current workspace with the `tdd` skill (`diagnosing-bugs` first for a bug), run the fast checks from team facts (Checks), and finish. The crew is for multi domain features and large epics.
 
 ## Step 1. Scope and plan (Elon and BA)
 
 1. Elon scans the workspace status, aligns the objective with Sales-Marketing and directs the BA (`architect-pm` / 需求分析師).
-2. The BA breaks the spec into machine checkable ticket contracts (`tickets.md`): scope boundaries and exact allowed files, verification commands and criteria, blast radius and dependencies.
+2. The BA breaks the spec into machine checkable ticket contracts with the `to-tickets` skill (GitHub issues with blocking edges): scope boundaries and exact allowed files, verification commands and criteria, blast radius and dependencies.
 3. Size gate: handle small changes directly; parallelize only truly independent tasks. Each task has an owner, allowed files, dependencies and a done criterion.
 4. The Tech Lead reviews the dependency DAG. Show the plan briefly and proceed.
 
@@ -29,7 +29,7 @@ Load the `orchestration` skill (`orca skills get orchestration`) first. Never us
 - Do small reversible docs and lookups directly; delegate substantial implementation and independent review.
 - One Run per objective: `orca orchestration run-create --objective "<objective>" --json`.
 - Start the whole independent wave before waiting, at most 2 or 3 workers: `orca orchestration worker-start --spec "<task spec>" --worktree new-child <worker start flags from team facts> --agent <provider> --model <id> --effort <level> --json`, provider from the role's default, model and effort from its tier in `.claude/model-routing.md`. `--deps` only for real ordering, such as review after build.
-- Task spec: Target (files in scope), Change (the result), Constraints, Ownership (allowed files), Observable acceptance (test command and done criterion), rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`, and "read `.claude/agents/<role>.md` and the Token budget in `AGENTS.md` first and follow them". Workers do not inherit role frontmatter, so name the role. When team facts say a worker's worktree lacks `.claude/agents/`, give the absolute paths they list.
+- Task spec: Target (files in scope), Change (the result), Constraints, Ownership (allowed files), Observable acceptance (test command and done criterion), Skill (the one skill the job runs, named with its file so every provider loads it: "use `/tdd`: read `~/.agents/skills/tdd/SKILL.md` and follow it"; build `tdd`, a whole ticket `implement`, a hard bug `diagnosing-bugs`, review `code-review`, a merge conflict `resolving-merge-conflicts`; a `disable-model-invocation` skill such as `implement` loads only this way), rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`, and "read `.claude/agents/<role>.md` and the Token budget in `AGENTS.md` first and follow them". Workers do not inherit role frontmatter, so name the role. When team facts say a worker's worktree lacks `.claude/agents/`, give the absolute paths they list.
 - Follow "Starting a worker" (usage gate, title, rename, panes, delivery check, close) and "Watching a worker" in `.claude/model-routing.md`.
 - Let workers finish: one self-contained contract, then wait for `worker_done` or a real escalation. No tight polling, premature terminal restarts or mid flight model swaps unless the provider is demonstrably unavailable.
 - Wait with `orca orchestration check --wait --types worker_done,escalation,question --timeout-ms 900000 --json`. Answer each question and validate each `worker_done`. If validation fails, send the fix to the same worker first. Then close every settled worker, succeeded or failed (`orca orchestration worker-release --dispatch <id>` is required: an open worker holds a terminal and a worktree).
@@ -48,10 +48,10 @@ Load the `orchestration` skill (`orca skills get orchestration`) first. Never us
 
 ## Step 4. Quality gate (reviewers)
 
-- **Dual-Axis review.** Standards: `AGENTS.md` conventions, the team facts standards checklist, Fowler smells. Spec: the diff against the ticket contract (only allowlisted files, every acceptance criterion met, no scope creep).
+- **Dual-Axis review** with the `code-review` skill (fixed point the default branch, spec the ticket). Standards: `AGENTS.md` conventions, the team facts standards checklist, Fowler smells. Spec: the diff against the ticket contract (only allowlisted files, every acceptance criterion met, no scope creep).
 - `qa-sdet` audits every worker diff; `secops-finops` too when it touches auth, tenancy, entitlement, rate limits, money or payments. Team facts may name more reviewers by area.
 - The reviewer verifies the ticket's test command passes cleanly.
-- Verdict per task: `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. At most 2 remediation rounds per task.
+- Verdict per task: `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. At most 2 remediation rounds per task; a task that fails both gets a `retro` (`~/.agents/skills/retro/SKILL.md`) on the worker's session, its top finding filed as an issue.
 
 ## Step 5. Integration (Tech Lead integrates, Elon ships)
 
