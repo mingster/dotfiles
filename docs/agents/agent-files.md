@@ -67,6 +67,18 @@ working directory, so a linked or `@`-imported global file silently fails to loa
 The cost is drift. Edit `.agents/claude/CLAUDE.md` and re-run `bash script/setup-claude-code.sh`.
 Never edit `~/.claude/CLAUDE.md` directly.
 
+## One docs root
+
+All human and agent docs live under `docs/` at the repo root, so every tool (Claude Code, Codex,
+Cursor, Antigravity, Gemini) finds them in one place. Component docs go in `docs/<component>/`,
+ADRs in `docs/adr/` (a component series in `docs/adr/<component>/`, numbers kept), intents in
+`docs/intent/`. Never add a `doc/` or `docs/` folder inside a component or an ops folder.
+
+Stay where the tool or release script reads a fixed path: `AGENTS.md`, `CLAUDE.md`, `README.md`,
+`CONTEXT.md`, `CHANGELOG.md`, `changelog.d/` (one, at the root), `.claude/`, `.agents/`, `.cursor/`,
+and code-adjacent READMEs. Move with `git mv`, fix every reference in the same change, and check
+links with a script over all tracked `.md` and `.mdc` files.
+
 ## New repos
 
 `script/init-agent-project.sh` creates the `docs/agents/` config and the `## Agent skills` block,

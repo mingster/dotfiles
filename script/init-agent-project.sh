@@ -130,7 +130,7 @@ The five canonical triage roles, label strings unchanged. See \`docs/agents/tria
 
 ### Domain docs
 
-Single context: \`CONTEXT.md\` plus \`docs/adr/\` at the repo root. See \`docs/agents/domain.md\`.
+Single context: \`CONTEXT.md\` plus \`docs/adr/\` at the repo root. See \`docs/agents/domain.md\`. All docs live under \`docs/\`; component docs go in \`docs/<component>/\`.
 
 ### Invoking skills
 
