@@ -190,6 +190,8 @@ Local deviations from upstream, to re-apply on every refresh:
 * Upstream renamed `CONTEXT.md` to `GLOSSARY.md` (and `CONTEXT-MAP.md`, `CONTEXT-FORMAT.md`). We keep `CONTEXT.md` everywhere (our AGENTS.md, `docs/SDLC.md` and `init-agent-project.sh` use it). After copying, run `sed -i '' 's/GLOSSARY/CONTEXT/g'` over the copied skills and rename `domain-modeling/GLOSSARY-FORMAT.md` to `CONTEXT-FORMAT.md`. `teach` keeps its own `GLOSSARY.md` because it is a separate teaching workspace file.
 * `to-tickets` keeps the "Machine-checkable contract" sections (allowed files, verification command, blast radius) in both templates.
 
+Staying current: the synced upstream sha and the vendored skill names live in `.agents/skills/.mattpocock-upstream`. `script/team-audit.sh` compares that sha with upstream main (check `mp-upstream`) and reports when upstream changed a vendored skill. `script/sync-mattpocock-skills.sh` refreshes only the listed skills from a shallow clone, re-applies the `CONTEXT.md` naming and `.agents/skills/.mattpocock-local.patch` (the `to-tickets` contract sections), updates the sha and prints the diff stat. Local only skills are never touched.
+
 | Skill | Action | Reason |
 | --- | --- | --- |
 | ask-matt, domain-modeling, handoff, implement, setup-matt-pocock-skills, to-tickets | Updated | Newer upstream (to-tickets attaches tickets as sub-issues, implement calls the Skill tool, handoff resolves the temp dir, ask-matt lists `/implement-spec`, `/pr`, `/retro`). |
