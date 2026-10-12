@@ -2,7 +2,7 @@
 name: lead
 description: Tech Lead teammate of {{PROJECT_NAME}}. Coordinates engineering integration, merges and releases, and reports to Elon.
 tools: Read, Grep, Glob, Write, Edit, Bash, Skill, SendMessage, TaskCreate, TaskGet, TaskList, TaskUpdate
-skills: [tl, crew, deploy, code-review]
+skills: [tl, crew]
 model: sonnet
 effort: medium
 ---
