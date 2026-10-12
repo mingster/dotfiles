@@ -243,5 +243,6 @@
   "xlsxViewer.md.stickyToolbar": true,
   "xlsxViewer.md.syncScroll": true,
   "xlsxViewer.md.wordWrap": true,
-  "xlsxViewer.showPopups": true
+  "xlsxViewer.showPopups": true,
+  "terminal.integrated.enableMultiLinePasteWarning": "never"
 }
