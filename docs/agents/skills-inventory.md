@@ -214,3 +214,11 @@ The fast path names (`to-spec`, `to-tickets`, `tdd`, `code-review`) and `diagnos
 | Antigravity | `~/.gemini/antigravity/skills` and, for the `agy` CLI, `~/.gemini/antigravity-cli/skills` | Both are links to `.agents/skills`, made by `setup-antigravity.sh`. Antigravity also hides `disable-model-invocation` skills from the model (asked without a name it answers no), but `/to-tickets` loads it. A skill whose frontmatter is invalid YAML is skipped with an error in `~/.gemini/antigravity-cli/log` (`write-spec` had an unquoted colon in its description, now quoted). `~/.gemini/config/skills` is Google's own data skills and is left alone. Workspace skills come from `<repo>/.agent/skills` (singular), a relative link to `../.agents/skills` in each repo and in the template. |
 
 Codex lists skill descriptions only within about 2% of its context (8,000 characters) and drops the rest. On 2026-10-07 the 11 Claude Cowork plugin packs and the duplicate `mattpocock-skills@claude-cowork` plugin were disabled in `~/.codex/config.toml` (Codex only; Cowork keeps them), which brought Codex to 64 skills. Keep the global skills folder lean for this reason.
+
+## Skills trim (2026-10-12)
+
+Shared tree D cut from 60 to 31 skills. Matt Pocock skills synced to upstream `49dd158` (plugin v1.3.1), with the two local deviations above re-applied (`CONTEXT.md` naming, `to-tickets` contract sections). Orca skills (`orchestration`, `orca-cli`, `orca-per-workspace-env`, `computer-use`) are discovery stubs that load the guide from the installed `orca` binary, and already match `stablyai/orca` main, so nothing changed there.
+
+* Removed 25 copies of Cursor's own built in skills (Cursor keeps them in `~/.cursor/skills-cursor`): automate, autopilot, canvas, create-hook, create-rule, create-skill, create-subagent, goal, loop, migrate-to-skills, new-repo, onboard, origin, rename-chat, review, review-bugbot, review-security, sdk, share, shell, split-to-prs, statusline, update-cli-config, update-cursor-settings, visualize.
+* Removed 4 unused Matt Pocock skills (no use in 30 days of Claude or Codex logs, no workflow reference): ask-matt, teach, to-questionnaire, wait-what.
+* `implement-spec` and `pr` stay skipped for the reasons above.
