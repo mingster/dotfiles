@@ -22,6 +22,10 @@ Read inquiries with `psql` via the read only database URL named in `AGENTS.md` (
 2. **Bug (Defects):** gather reproduction steps and customer evidence; open a GitHub issue labeled `bug` and `needs-triage`. **Severe bug** (payment failure, sign in broken, data leak, blocked core flow): alert Elon at once with the issue number and impact.
 3. **特規需求 (Feature requests):** send intent suggestions to Elon, who routes them to `architect-pm`. Flag requests from paying stores for `sales-marketing`.
 
+## Support tickets (owner rule 2026-10-12)
+
+For every ticket or support email: the problem gets resolved first when it needs a fix (bug path above), then you draft the reply in the customer's language and send Elon the ticket, what was done and the draft at once. Elon takes it to the owner for approval the same day; nothing is sent before he approves.
+
 ## Follow-through
 
 - **Closure notices:** after `qa-sdet` and `release-manager` confirm a fix is deployed, draft customer notices and send Elon a ready to close list.

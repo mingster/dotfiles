@@ -6,8 +6,8 @@ Tiers, Orca worker flags, worker launch and supervision, fallback, and the commi
 
 | Tier | Use it for | Roles |
 | --- | --- | --- |
-| Strong reasoning | Ambiguous decisions, specs, security and financial review | elon, architect-pm, secops-finops |
-| Workhorse | Implementation, coordination, QA, release, support, drafts | lead, fullstack-dev, qa-sdet, release-manager, sales-marketing, support-csm |
+| Strong reasoning | Ambiguous decisions, specs, security, financial and PR review | elon, architect-pm, secops-finops, qa-sdet |
+| Workhorse | Implementation, coordination, QA, release, support, drafts | lead, fullstack-dev, release-manager, sales-marketing, support-csm |
 | Light | Clerical subtasks: formatting, extraction, changelog fragment lines | none by default, chosen per task |
 
 The main session starts as Elon (`"agent": "elon"` in `.claude/settings.json`), on `opus` at `high` from `elon.md`.
@@ -21,12 +21,12 @@ Fallback begins at the provider after the role's default.
 | Role | Default provider | Flags |
 | --- | --- | --- |
 | fullstack-dev | Codex | `--agent codex --model gpt-6.1-sol --effort medium` (owner rule below) |
-| qa-sdet | Claude / Cursor | `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
+| qa-sdet | Claude / Cursor | the Strong row: `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
 | every other role | Claude | the Claude column for the role's tier |
 
 Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. When fullstack-dev ran on Codex (GPT), qa-sdet audits on Claude Opus or Cursor Claude Opus. Role fallback chains: `~/.orca/presets.json`.
 
-Codex workers run without the Claude hooks (`guard-bash.py`, `strikes.py`) and the `settings.json` deny list. Their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules` (migrations, `prisma db push`, ssh, deploy scripts, merges, pushes to default branches); check those rules exist before starting a Codex worker. Read only and release roles stay on Claude.
+Codex workers run without the Claude hooks (`guard-bash.py`, `strikes.py`) and the `settings.json` deny list. Their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules` (migrations, `prisma db push`, ssh, deploy scripts, merges, pushes to default branches); check those rules exist before starting a Codex worker. Read only and release roles never run on Codex: Claude, or Antigravity where Saving quota below says so.
 
 ## Worker flags by provider
 

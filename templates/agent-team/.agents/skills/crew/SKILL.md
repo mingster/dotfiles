@@ -53,17 +53,16 @@ Load the `orchestration` skill (`orca skills get orchestration`) first. Never us
 - The reviewer verifies the ticket's test command passes cleanly.
 - Verdict per task: `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. At most 2 remediation rounds per task.
 
-## Step 5. Integration (Tech Lead)
+## Step 5. Integration (Tech Lead integrates, Elon ships)
 
-1. When every task passed, create `crew/<slug>` from an up to date default branch in the current worktree (the Orca worktree when run from Orca).
-2. Merge each passing branch in dependency order. No force push, no history rewriting. Each worker branch carries its own changelog fragment (folder in team facts, `<issue>-<slug>.md`), so entries never conflict; any other conflict goes back to the owning worker. Never edit `CHANGELOG.md` here; the release step compiles fragments.
-3. Run the full team facts checks on an integrated app change, documentation checks on a documentation only change. If integration changed code, qa-sdet audits again.
-4. Push the branch and open one PR for the objective in the team facts repository, with spec traceability, review checklists and validation fitting the changed files. Worker branches stay local.
-5. Remove child worktrees (`git worktree remove <path>`) as soon as they are integrated.
-6. Report to Elon: `git diff <default branch>...HEAD --stat`, the PR link, audit verdict, test results.
-7. Merge the PR under the Merging rules once review and checks pass.
-8. Take the next open issue in the queue and start the next cycle, until no open tasks remain.
+1. When every task passed, the Tech Lead creates `crew/<slug>` from an up to date default branch in its own worktree (the Orca worktree when run from Orca).
+2. It merges each passing branch locally in dependency order. No force push, no history rewriting. Each worker branch carries its own changelog fragment (folder in team facts, `<issue>-<slug>.md`), so entries never conflict; any other conflict goes back to the owning worker. Never edit `CHANGELOG.md` here; the release step compiles fragments.
+3. It runs the full team facts checks on an integrated app change, documentation checks on a documentation only change. If integration changed code, qa-sdet audits again.
+4. It reports to Elon with `worker_done`: the `crew/<slug>` branch, worktree path, `git diff <default branch>...HEAD --stat`, audit verdict and test results. It never pushes, opens a PR or merges.
+5. Elon alone pushes `crew/<slug>`, opens one PR for the objective in the team facts repository (spec traceability, review checklists, validation fitting the changed files) and merges it, per "Commit, push and merge" in `.claude/model-routing.md`. Worker branches stay local.
+6. After the merge, remove child worktrees (`git worktree remove <path>`).
+7. Elon takes the next open issue in the queue and starts the next cycle, until no open tasks remain.
 
 ## Orca terminal layout
 
-For visible teammate terminals, open the CEO session in an Orca terminal and run `orca claude-teams`: Orca creates native split panes and keeps their lifecycle and worktree visibility. Use clear role titles (`CEO`, `Tech Lead`, `QA-SDET`, `Release-Manager`); Orca has a global color scheme, not a per pane color flag. Never nest tmux inside Orca for supervised work: nested panes escape Orca's lifecycle control.
+Each worker shows as a colored pane in the coordinator's tab: after "Setup succeeded", run `~/.claude/skills/orchestration/worker-panes.sh <run_id> <coordinator terminal handle> <dispatch_id>` (colors per role in `role-colors.tsv`, read from the `<role> - <job>` task title), and close it with `worker-pane-close.sh <dispatch_id>` on release ("Starting a worker" in `.claude/model-routing.md`). Never nest tmux inside Orca for supervised work: nested panes escape Orca's lifecycle control.
