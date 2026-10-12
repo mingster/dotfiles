@@ -1,0 +1,1 @@
+- `script/team-audit.sh` check `mp-upstream` flags vendored Matt Pocock skills that fell behind upstream, and `script/sync-mattpocock-skills.sh` refreshes them while keeping the local `CONTEXT.md` naming and `to-tickets` edits.

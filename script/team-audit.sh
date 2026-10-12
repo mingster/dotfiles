@@ -11,6 +11,9 @@
 #   skill     every SKILL.md has name and description frontmatter
 #   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orchestration)
 #   helpers   the orchestration helper scripts exist
+#   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
+#             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
+#             network failure prints "WARN mp-upstream" and is not a finding.
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles).
 set -uo pipefail
@@ -21,7 +24,7 @@ LOCAL_SKILLS="${LOCAL_SKILLS:-orchestration}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
 
-case "${1:-}" in -h|--help) sed -n '2,16p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,19p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 [ ${#PROJECTS[@]} -eq 0 ] && PROJECTS=("$HOME/projects/riben.life" "$HOME/pstv")
 [ -d "$TEMPLATE" ] || { echo "team-audit: missing $TEMPLATE (set DOTFILES)" >&2; exit 2; }
@@ -98,6 +101,37 @@ fi
 for h in $HELPERS; do
   [ -f "$DOTFILES/.agents/skills/orchestration/$h" ] || finding helpers "missing $DOTFILES/.agents/skills/orchestration/$h"
 done
+
+MP_STATE="$DOTFILES/.agents/skills/.mattpocock-upstream"
+if [ ! -f "$MP_STATE" ]; then
+  finding mp-upstream "missing $MP_STATE (run script/sync-mattpocock-skills.sh after recording the synced sha)"
+else
+  mp_sha=$(sed -n 's/^sha=//p' "$MP_STATE"); mp_skills=$(sed -n 's/^skills=//p' "$MP_STATE")
+  latest=$(gh api repos/mattpocock/skills/commits/main --jq .sha 2>/dev/null) || latest=""
+  if [ -z "$latest" ]; then
+    echo "WARN mp-upstream: could not read the latest upstream sha (gh or network); skipped the upstream comparison"
+  elif [ "$latest" != "$mp_sha" ]; then
+    files=$(gh api "repos/mattpocock/skills/compare/$mp_sha...$latest" --jq '.files[].filename' 2>/dev/null) || files="?"
+    if [ "$files" = "?" ]; then
+      echo "WARN mp-upstream: could not compare $mp_sha with $latest; skipped"
+    else
+      changed=""
+      for n in $mp_skills; do
+        echo "$files" | grep -qE "^skills/[^/]+/$n/" && changed="$changed $n"
+      done
+      [ -n "$changed" ] && finding mp-upstream "${mp_sha:0:7} behind ${latest:0:7}:${changed}"
+    fi
+  fi
+  for root in "$TEMPLATE" "${PROJECTS[@]}"; do
+    for f in "$root"/.claude/agents/*.md; do
+      [ -f "$f" ] || continue
+      list=$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^skills:/{print}' "$f" | sed -E 's/^skills: *\[?//; s/\] *$//; s/,/ /g')
+      for n in $list; do
+        case " $mp_skills " in *" $n "*) [ -f "$DOTFILES/.agents/skills/$n/SKILL.md" ] || finding mp-upstream "$f: skills: names $n, missing from $DOTFILES/.agents/skills" ;; esac
+      done
+    done
+  done
+fi
 
 if [ "$findings" -eq 0 ]; then echo "team-audit: clean"; exit 0; fi
 echo "team-audit: $findings finding(s)"

@@ -18,7 +18,23 @@ setup() { # a clean dotfiles tree and a project synced from it
   printf -- '---\nname: lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
   printf 'Elon merges every PR.\n' > "$P/docs/agents/team.md"
   DOTFILES="$D" "$D/script/sync-team-skills.sh" "$P" >/dev/null 2>&1
+  mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
+  printf 'sha=aaa1111\nskills=tdd research\n' > "$D/.agents/skills/.mattpocock-upstream"
+  GH_LATEST=aaa1111 GH_FILES="" GH_FAIL=""
 }
+
+# Fake gh on PATH: commits/main prints $GH_LATEST, compare prints $GH_FILES, GH_FAIL makes both fail.
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/gh" <<'EOS'
+#!/usr/bin/env bash
+[ -n "$GH_FAIL" ] && exit 1
+case "$2" in
+  */commits/main) echo "$GH_LATEST" ;;
+  */compare/*) printf '%s' "$GH_FILES" ;;
+esac
+EOS
+chmod +x "$tmp/bin/gh"
+export PATH="$tmp/bin:$PATH"
 
 pass=0; fail=0
 check() { # name expected_exit output_regex
@@ -62,6 +78,25 @@ check "lock tracking orchestration" 1 'FINDING lock: .*tracks orchestration'
 
 setup; rm "$D/.agents/skills/orchestration/worker-panes.sh"
 check "missing orchestration helper" 1 'FINDING helpers: missing .*worker-panes.sh'
+
+setup; GH_LATEST=bbb2222 GH_FILES=$'skills/engineering/tdd/SKILL.md\nREADME.md\n'; export GH_LATEST GH_FILES
+check "upstream changed a vendored skill" 1 'FINDING mp-upstream: aaa1111 behind bbb2222: tdd'
+
+setup; GH_LATEST=bbb2222 GH_FILES=$'skills/engineering/triage/SKILL.md\nREADME.md\n'; export GH_LATEST GH_FILES
+check "upstream changed only other skills" 0 'team-audit: clean'
+
+setup; GH_FAIL=1; export GH_FAIL
+check "gh failure is a warning only" 0 'WARN mp-upstream'
+unset GH_FAIL GH_LATEST GH_FILES
+
+setup; rm "$D/.agents/skills/tdd/SKILL.md"; printf -- '---\nname: dev\nskills: [tdd, orchestration]\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"
+check "role names a missing Matt Pocock skill" 1 'FINDING mp-upstream: .*dev.md: skills: names tdd'
+
+setup; printf -- '---\nname: dev\nskills: [tdd, orchestration]\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"
+check "role skills all present" 0 'team-audit: clean'
+
+setup; rm "$D/.agents/skills/.mattpocock-upstream"
+check "missing upstream record" 1 'FINDING mp-upstream: missing'
 
 setup
 out=$(DOTFILES="$D" "$here/team-audit.sh" --bogus 2>&1); code=$?
