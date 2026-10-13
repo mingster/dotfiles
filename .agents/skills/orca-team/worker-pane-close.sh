@@ -4,7 +4,8 @@
 #        worker-pane-close.sh                       sweep recorded panes and discover ended workers in the caller's Run
 # Closes the pane worker-panes.sh recorded, then every terminal of that worker still in `orca terminal list`:
 # the handles worker-show reports (agent and setup terminals) and any terminal whose cwd is the worktree Orca
-# created for the worker. A dispatch that is still running keeps its terminals. Missing or already-closed
+# created for the worker. A dispatch that is still running keeps its terminals, and so does a terminal that a
+# dispatch not yet in a final state also uses (a retry reuses the failed dispatch's terminal). Missing or already-closed
 # terminals are not errors. State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
 # one handle per line, retained until verified gone. Failed or lingering closes retry for up to 30 minutes.
 set -u
@@ -41,6 +42,26 @@ for t in terms:
   if h in own or (path and t.get("worktreePath")==path):
     seen.add(h); print(h)'
 }
+busy_handles() { # $1 dispatch to ignore -> terminal handles used by any other dispatch not in a final state; rc 1 if the list cannot be read
+  local cursor="" args workers page next
+  while :; do
+    args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
+    workers=$(close_rpc orchestration worker-list ${args[@]+"${args[@]}"} --json 2>/dev/null) || return 1
+    page=$(printf '%s' "$workers" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)["result"]
+for w in r["workers"]:
+    if w.get("dispatchId")==sys.argv[1] or w.get("dispatchStatus") in ("completed","failed","cancelled","released"): continue
+    for h in (w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
+        if h: print(h)
+p=r.get("page") or {}
+if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])' "$1") || return 1
+    printf '%s\n' "$page" | sed '/^CURSOR=/d'
+    next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
+    [ -n "$next" ] && [ "$next" != "$cursor" ] || return 0
+    cursor="$next"
+  done
+}
 close_allowed() {
   [ "${2:-}" != "${ORCA_TERMINAL_HANDLE:-}" ] || return 1
   local show status
@@ -62,6 +83,16 @@ close_one() {
     case "$done_" in *" $h "*) continue;; esac
     done_="$done_$h "; pending+=("$h")
   done
+  # A retry may reuse this dispatch's terminal: leave any handle a live dispatch also uses.
+  if [ "${#pending[@]}" -gt 0 ]; then
+    local busy kept=()
+    busy=$(busy_handles "$d") || return 0
+    for h in "${pending[@]}"; do
+      case $'\n'"$busy"$'\n' in *$'\n'"$h"$'\n'*) ;; *) kept+=("$h");; esac
+    done
+    [ "${#kept[@]}" -gt 0 ] || return 0
+    pending=(${kept[@]+"${kept[@]}"})
+  fi
   [ "${#pending[@]}" -gt 0 ] || { [ ! -f "$f" ] || rm -f "$f"; return 0; }
   # Persist newly discovered leftovers too, so budget expiry can be recovered on wake.
   mkdir -p "$state"

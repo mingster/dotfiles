@@ -50,6 +50,9 @@ check "codex weekly limit" 4 'ctx_a term_a STOPPED .*weekly limit'
 printf 'Error: spendLimitHit: true\n' > "$tmp/term_a.txt"
 check "cursor spendLimitHit" 4 'ctx_a term_a STOPPED .*spendLimitHit'
 
+printf 'Switch to a different model or set a Spend Limit\n' > "$tmp/term_a.txt"
+check "cursor Claude allowance spent" 4 'ctx_a term_a STOPPED .*Spend Limit'
+
 printf "You've hit your usage limit\nSwitch to a cheaper model\n" > "$tmp/term_a.txt"
 check "cursor usage limit" 4 'ctx_a term_a STOPPED .*usage limit'
 

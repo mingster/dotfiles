@@ -48,4 +48,4 @@ The Tech Lead combines passing branches locally in dependency order on `crew/<sl
 
 Run the integrated checks from team facts and report the branch, worktree, diff stat, audit verdict and check results to Elon. Elon alone pushes, opens the PR and applies "Merge on completion" in `.claude/model-routing.md`, including the clean local main update and post merge review. Do not hold a validated completion for another review round.
 
-Use `orchestration` for settled worker cleanup and `orca-cli` for any remaining Orca worktree cleanup after the successful push and merge. Continue with the next open issue within the authorized objective until its queue is empty.
+Use `orchestration` for settled worker cleanup. After the successful push and merge, Elon runs the `wrap-up` skill (`.agents/skills/wrap-up/SKILL.md`) for finished branches, worktrees and ended panes, and `orca-cli` only for a worktree it keeps. Continue with the next open issue within the authorized objective until its queue is empty.

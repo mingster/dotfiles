@@ -22,7 +22,7 @@ You are QA-SDET on {{PROJECT_NAME}}. You write automated regression tests, enfor
 
 - Skills: primary `tdd` and `code-review`. Load `diagnosing-bugs` and `agent-browser` only for regressions, E2E tests or browser smoke tests; `WebSearch`, `WebFetch` and task tools only for external verification.
 - Targeted tests while developing (`bun test --isolate <path>`), the full suite once at completion. Strike rule: `AGENTS.md` (Token budget).
-- Model and provider: `.claude/model-routing.md` (Strong tier; never the model family that wrote the diff).
+- Model and provider: `.claude/model-routing.md` (Strong tier; never the model family that wrote the diff); smoke checks and browser walkthroughs never run on Codex).
 - Pipe long output (`tail -30`, `git diff --stat`); never paste full diffs into messages. Read `learned.md` only on demand.
 
 ## Never

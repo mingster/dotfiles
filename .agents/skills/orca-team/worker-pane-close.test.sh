@@ -119,6 +119,24 @@ JSON
 "$here/worker-pane-close.sh" d8 >/dev/null
 check "current worktree: closes only the worker's own terminal" "$([ "$(cat "$tmp/closes.log")" = term_agent ]; echo $?)"
 
+# A retry reuses the failed dispatch's terminal: never close a terminal a live dispatch also uses.
+rm -f "$tmp/closes.log" "$tmp/workers.json"
+cat > "$tmp/show.dfail" <<'JSON'
+{"result":{"dispatch":{"status":"failed","assigneeHandle":"term_shared"},"worker":{"agentTerminalHandle":"term_shared","effects":[]}}}
+JSON
+echo term_shared > "$tmp/state/dfail"
+echo '{"result":{"terminals":[{"handle":"term_shared"}]}}' > "$tmp/terminals.json"
+echo '{"result":{"workers":[{"dispatchId":"dfail","dispatchStatus":"failed","agentTerminalHandle":"term_shared"},{"dispatchId":"dretry","dispatchStatus":"running","agentTerminalHandle":"term_shared","resource":{"terminalHandle":"term_shared"}}],"page":{"hasMore":false}}}' > "$tmp/workers.json"
+"$here/worker-pane-close.sh" dfail >/dev/null
+check "retry sharing the terminal: not closed" "$([ ! -s "$tmp/closes.log" ]; echo $?)"
+check "retry sharing the terminal: record kept" "$([ -e "$tmp/state/dfail" ]; echo $?)"
+"$here/worker-pane-close.sh" >/dev/null
+check "no args: shared terminal of a live retry is not closed" "$([ ! -s "$tmp/closes.log" ]; echo $?)"
+echo '{"result":{"workers":[{"dispatchId":"dfail","dispatchStatus":"failed","agentTerminalHandle":"term_shared"},{"dispatchId":"dretry","dispatchStatus":"completed","agentTerminalHandle":"term_shared"}],"page":{"hasMore":false}}}' > "$tmp/workers.json"
+"$here/worker-pane-close.sh" dfail >/dev/null
+check "retry ended too: terminal is closed" "$(grep -qx term_shared "$tmp/closes.log"; echo $?)"
+rm -f "$tmp/workers.json" "$tmp/show.dfail"
+
 # The recorded pane file may list several handles (one per line); all are closed.
 rm -f "$tmp/closes.log" "$tmp/show.d9"; printf 'term_p1\nterm_p2\n' > "$tmp/state/d9"
 echo completed > "$tmp/status.d9"
