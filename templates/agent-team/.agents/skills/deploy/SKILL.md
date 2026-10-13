@@ -40,12 +40,12 @@ and, when the facts name a host status command, what the hosts actually run (a h
 
 The commit is the tip of `<dev>` unless the lead names another.
 
-1. Make a throwaway worktree at the commit where the facts say (never loose in `/tmp`): `git fetch origin && git worktree add --detach <path> <sha>`, after `git worktree remove --force <path>` for an old one.
+1. Prepare a throwaway worktree at the candidate commit in the location named by the facts. In Orca, use the `orca-cli` skill for creation and cleanup. Outside Orca, use Git worktrees. Preserve an existing worktree with unshipped changes.
 2. Copy the env file the facts name into the worktree with `cp`.
 3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host or a `_test` database). Check with the facts' masking tool or check command; never print the file or its credentials. Anything else stops the stage.
 4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask Elon; never kill it.
 5. **Development pass.** The commit must carry the facts' development pass status (for example `dev/<component>`) as `success` before any step; otherwise stop and ask the lead for a development run on it. Never run the unit or regression suites here. Then run the facts' local steps for the component, in order, in the worktree. A step the facts mark advisory fails the gate only as the facts describe.
-6. All passed: set the local context to `success` with what ran (build, development pass) in the description. Remove the worktree.
+6. All passed: set the local context to `success` with what ran (build, development pass) in the description. Clean up the throwaway worktree through the same tool that created it.
 
 ## staging
 

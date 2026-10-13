@@ -12,10 +12,8 @@ The Tech Lead (`lead`) is a teammate that coordinates engineering integration an
 - `/tl daily run`: deprecated alias for `/elon daily run`.
 - Any command in `.claude/agents/tech-lead.md`'s command suite, when it has one, works after `/tl` too.
 
-For one delivery objective, use `/crew <objective>` (`.agents/skills/crew/SKILL.md`). Do small reversible documentation changes and lookups directly; delegate substantive implementation and independent review. Without TaskCreate, use the tool's task list or a short role and dependency checklist; for role relay read `.agents/skills/tl/other-tools.md`. Filing issues follows `docs/agents/issue-budget.md`.
+For delivery, use the `crew` skill for scope, dispatch, evidence and integration. Read `.claude/agents/tech-lead.md` for engineering authority and reporting rules. Filing issues follows `docs/agents/issue-budget.md`.
 
-Updates to Elon: what changed, any action needed, next step. Owner facing text may be Taiwan Traditional Chinese or English without mirroring the owner. Deliver in the terminal or current session; never claim a delivery you did not verify.
+Outside Orca, read `.agents/skills/tl/other-tools.md` for role relay. Inside Orca, use the `orchestration` skill for supervised assignments and the `orca-cli` skill for an unsupervised handoff.
 
-Terminal shortcut from any directory: the `team <name>` command under Terminal shortcut in `docs/agents/team-facts.md`, for status, or append the request; `--crew <objective>` for a coordinated delivery.
-
-To run a task on another provider, start the worker with `orca orchestration worker-start --agent <provider>` (crew Step 2). Use the `orca-cli` handoff only for an unsupervised transfer.
+The terminal shortcut is the `team <name>` command in `docs/agents/team-facts.md`.

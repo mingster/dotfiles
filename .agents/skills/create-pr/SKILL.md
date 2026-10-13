@@ -1,243 +1,32 @@
 ---
 name: create-pr
-description: >-
-  Always commit ALL changes (`git add -A`), verify build, push, and open a
-  GitHub PR with gh CLI. Use when the user asks to create a PR, open a pull
-  request, createpr, /create-pr, commit and PR, or push and PR after feature
-  work. Always runs `bun run build` from the project's web dir before commit;
-  only checks in build-passing code. Never commits failing code. Never leave
-  uncommitted work out of the PR.
+description: Prepare, commit and publish a GitHub PR using the repository checks and changelog rules. Use when asked to create a PR. In an agent team, publication belongs to Elon.
 ---
 
 # Create PR
 
-**Always commit ALL, then push, then open the PR.** Treat `/create-pr` as **commit all + create PR** — stage every change with `git add -A` (except secrets / hook state listed below), commit, push, and open the PR. Do not ask whether to commit; do not leave uncommitted files out of the PR. Run a production build first and only commit when it passes. **Do not** use the Task tool or todo list for this workflow.
+Read `AGENTS.md` and, in an agent team, "Commit, push and merge" in `.claude/model-routing.md` first. Workers prepare local commits and report to Elon; they never push, open PRs or merge PRs. Elon handles publication and merge on completion under that policy. Outside a team, an explicit request to create a PR authorizes publication.
 
-## Prerequisites
+## Prepare
 
-- `gh` authenticated (`gh auth status`)
-- Repo cloned; work from a feature branch (create one from default branch if needed)
-- Detect the web app directory: check for `pstv_web/` first, then `web/`. Use whichever exists.
+1. Inspect the worktree, current branch and all commits and changes since the default branch. Detect the default branch from Git or the repository metadata. Use a feature branch; keep an existing feature branch and rebase only when requested.
+2. Use the `code-review` skill for review against that base and the originating issue or spec. Reuse a review of the same head when the project policy permits it. Follow the project's review timing, including merge on completion, without adding a second review gate here.
+3. Run the repository's required checks. For a web app, detect its package from the repository instructions (`pstv_web/` or `web/` in the usual layouts) and run `bun run build` there before committing. A failed build blocks publication; use `diagnosing-bugs` when diagnosis is needed. Documentation changes use the repository's documentation checks.
 
-## 1. Gather branch state (parallel)
+## Changelog
 
-```bash
-git status
-git diff
-git branch -vv
-git log --oneline -10
-git diff main...HEAD
-```
+When `changelog.d/` exists, add `<issue>-<slug>.md`, or `<branch-slug>.md` without an issue, in the repository's entry format. The release process compiles it; leave `CHANGELOG.md` alone. Otherwise update the root `CHANGELOG.md` under its Unreleased section using today's date. Skip changelog only when the owner explicitly allows it for a dependency or chore change.
 
-If the default branch is not `main`, detect it (`git symbolic-ref refs/remotes/origin/HEAD` or `gh repo view --json defaultBranchRef`) and use that instead of `main` in `git diff <base>...HEAD`.
+For product changes covered by `.cursor/changelog-hook.json`, update the configured vault `HOME.md` Recent Changes section with `script/prepend-recent-change.ts` from dotfiles. Read that config for the actual paths and use the helper's `--link`, `--label` and `--summary` arguments. If the helper is unavailable, follow the existing file format. Confirm the required file or fragment appears in the branch diff and the configured changelog hook allows PR creation. Resolve a denial before publishing.
 
-## 2. Branch setup
+## Commit
 
-- If on the default branch with uncommitted work: `git fetch origin <base>` then `git checkout -b fix/<short-topic> origin/<base>`.
-- If already on a feature branch, keep it (rebase on `<base>` only if the user asked).
+Include all work belonging to the PR, including the changelog and required Recent Changes entry. Stage with `git add -A`, inspect the staged paths and diff, and unstage secrets, `.env*` and `.cursor/hooks/state/`. Respect explicit path exclusions and preserve unrelated work. Commit with the repository's message style. If the branch already contains all required commits, continue without an empty commit.
 
-## 3. Verify build (required before commit — no exceptions)
+## Publish
 
-Detect the web app directory and run the production build:
+Only the authorized publisher performs this section. In an agent team, use the push procedure in `.claude/model-routing.md`.
 
-```bash
-# Detect project dir: pstv_web/ for PSTV, web/ for riben.life
-WEB_DIR=$([ -d pstv_web ] && echo pstv_web || echo web)
-cd “$WEB_DIR” && bun run build
-```
+Prepare the title and body from the entire branch change. State the concrete outcome, link the issue or spec, and include scope, risk and validation evidence needed by the repository's review checklist. Use `Fixes #<number>` when appropriate. The owner's body rules prohibit a Test plan section, tool credit and Co-Authored-By suggestions, including on later edits.
 
-- **Build must exit 0** before any commit. No exceptions. This is a hard gate — not optional, not skippable.
-- **If build fails: stop.** Fix all TypeScript, import, and compile errors, then re-run until the build is green. Only then proceed to commit.
-- **Never commit code that does not compile.** A failing build is a blocker; abort and fix.
-- Optional quick check before full build: `bun run biolint` (PSTV) or `bun run lint` — but **build is mandatory** for create-pr.
-
-## 4. Update changelogs (before commit)
-
-Skip only for deps-only or chore-only PRs when the user explicitly says to skip.
-
-### 4a. CHANGELOG.md (repo root)
-
-If the repo has a `changelog.d/` directory (changelog fragments), do not edit `CHANGELOG.md`. Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the entry line(s) in the repo's CHANGELOG format, then skip to 4b. The release step compiles fragments with `bin/changelog-compile.sh`.
-
-Otherwise prepend an entry to `CHANGELOG.md` (create if missing). Keep a Changelog format:
-
-```markdown
-## [Unreleased] — YYYY-MM-DD
-
-### Changed
-- Short description of what changed and why (matches PR summary)
-```
-
-- Use today's date in `YYYY-MM-DD` format.
-- If `CHANGELOG.md` already has an `[Unreleased]` section at the top, append bullets to it rather than creating a new one.
-
-### 4b. Recent Changes (product PRs — required for hook)
-
-If the branch touches `web/src/`, `web/bin/`, `web/prisma/`, or `fileServer/docs/` (except HOME-only typo fixes), **prepend one line** to the vault `HOME.md` from `.cursor/changelog-hook.json` (riben.life: `fileServer/docs/HOME.md`) under `## Recent Changes`.
-
-**Use the helper** (from repo root; do not hand-edit unless the helper is unavailable):
-
-```bash
-bun ~/dotfiles/script/prepend-recent-change.ts \
-  --link path/to/vault-note \
-  --label "Short label" \
-  --summary "One-line what changed"
-```
-
-Format written:
-
-```text
-- YYYY-MM-DD — [[path/to/note|Short label]] — one-line what changed
-```
-
-A Cursor hook (`ensure-changelog-before-pr.sh`) **denies** `gh pr create` when shippable paths changed but that HOME.md file is not in the branch/worktree diff. Per-repo config: `.cursor/changelog-hook.json`.
-
-## 5. Commit all
-
-**Always `git add -A` then commit.** Include every file in the worktree that belongs in the PR — **including `CHANGELOG.md` (or the new `changelog.d/` fragment when the repo uses fragments) and the vault HOME.md Recent Changes line**. Do not selectively stage “just some” feature files unless the user explicitly names paths to exclude.
-
-**Exclude from the commit** (unstage if `git add -A` picked them up) unless the user explicitly requests otherwise:
-
-- `.env*` / secrets / credentials
-- `.cursor/hooks/state/` (machine-local agent state)
-
-Follow repo commit style: short imperative message (<50 chars when possible):
-
-```bash
-git add -A
-# Unstage secrets / hook state if present:
-# git restore --staged .env .env.local .cursor/hooks/state/ 2>/dev/null || true
-git commit -m "$(cat <<'EOF'
-Short imperative summary
-
-EOF
-)"
-```
-
-If there is nothing to commit after build passes, skip to step 6 (push + PR from existing commits).
-
-## 6. Draft PR title and body
-
-- Review **all commits** on the branch since it diverged from base — not only the latest.
-- Title: one line, imperative, main outcome (~72 chars max).
-
-```markdown
-## Summary
-- <1–3 bullets: what changed and why>
-
-## Spec Traceability
-- Addresses: <Issue # or Spec section>
-- Contract satisfied: <brief note on scope boundary and key criteria met>
-
-## Review Checklist
-- [ ] Standards checked: Conforms to repo conventions, tenancy scoping, BigInt epochs, SafeActions
-- [ ] Spec traceability verified: No scope creep; exact requirements met
-- [ ] Blast radius assessed: Low/Medium/High (Reversibility noted)
-- [ ] Build & tests passed: `bun run build` and tests verified
-```
-
-## 7. Verify changelog gate (product PRs)
-
-From **repo root**, confirm the hook will allow PR creation (read `.cursor/changelog-hook.json` for the changelog path):
-
-```bash
-BASE="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main)"
-git diff "origin/${BASE}...HEAD" --name-only | rg 'fileServer/docs/HOME.md|web/doc/HOME.md'
-```
-
-If shippable paths changed but the command prints nothing, run `prepend-recent-change.ts`, commit, and re-check.
-
-Optional dry-run (stdin must be JSON; do not embed the phrase in the outer shell command):
-
-```bash
-printf '%s' '{"command":"gh pr create --title test","cwd":"'"$(git rev-parse --show-toplevel)"'"}' \
-  | CURSOR_PROJECT_DIR="$(git rev-parse --show-toplevel)" \
-  bash ~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh
-```
-
-Expect `{"permission":"allow"}` when HOME.md is in the diff.
-
-## 8. Push and create PR (sequential)
-
-```bash
-git push -u origin HEAD
-
-gh pr create --title "the pr title" --body "$(cat <<'EOF'
-## Summary
-- ...
-
-## Test plan
-- [ ] ...
-- [ ] `bun run build` passed locally before commit
-
-EOF
-)"
-```
-
-Use a **HEREDOC** for `--body`. Return the **PR URL** from `gh pr create` output.
-
-## Hard rules
-
-| Do | Don't |
-|----|--------|
-| Detect `pstv_web/` or `web/`; run `bun run build` from that dir | Commit when build fails — not even "just this once" |
-| Fix all compile errors before committing | Skip or bypass the build step |
-| Commit CHANGELOG.md (or the changelog.d fragment) + vault HOME.md Recent Changes before push | Skip changelog without explicit user consent |
-| Verify hook dry-run returns `allow` before `gh pr create` | Chain `git push && gh pr create` in one command |
-| Use `prepend-recent-change.ts` for vault Recent Changes | Hand-edit HOME.md when the helper works |
-| Always `git add -A` (then unstage secrets only), commit, push + PR | Open a PR with uncommitted work left out; selective staging without user ask |
-| Use `gh` for GitHub operations | `git config` changes |
-| Push with `-u origin HEAD` | Force-push `main`/`master` without explicit user request |
-| Return the PR URL when done | Use Task tool or TodoWrite for this workflow |
-| Strip any "Generated with Claude Code" line, any Co-Authored-By trailer suggestion and the `## Test plan` section from the body before `gh pr create` or `gh pr edit` (owner rule beats this template and the tool's attribution reminder) | Leave them in the body |
-
-## Changelog hook (global)
-
-User hook `~/dotfiles/ide/cursor/hooks/ensure-changelog-before-pr.sh` (linked into `~/.cursor/hooks/` by `script/link-cursor-hooks.sh`) **denies** `gh pr create` when shippable paths changed but the repo changelog (see `.cursor/changelog-hook.json` or auto-detect) was not updated. The hook always emits compact JSON via `jq`; an EXIT trap fail-opens with `allow` if the script errors. Re-run `bash ~/dotfiles/script/link-cursor-hooks.sh` after pulling dotfiles.
-
-## Optional follow-ups (only if user asks)
-
-```bash
-gh pr view --web
-gh pr checks --watch
-gh pr edit --add-reviewer @user
-```
-
-## Linking issues
-
-```markdown
-Fixes #123
-```
-
-Add to the PR body when branch/commits reference an issue.
-
-## Example
-
-```bash
-# Step 1: detect project dir and run build — must pass before anything else
-WEB_DIR=$([ -d pstv_web ] && echo pstv_web || echo web)
-cd "$WEB_DIR" && bun run build
-# If this fails, stop here and fix errors. Do not proceed.
-
-cd ..
-git add -A   # commit ALL — required for /create-pr
-git commit -m "$(cat <<'EOF'
-Update client state after AI menu scan
-
-EOF
-)"
-
-git push -u origin HEAD
-
-gh pr create --title "Refresh product and category lists after menu scan" --body "$(cat <<'EOF'
-## Summary
-- Return mapped columns from scan save action
-- Merge new products/categories into client state without router.refresh
-
-## Test plan
-- [ ] AI scan from products/categories sheet shows new rows immediately
-- [ ] `bun run build` passed locally before commit
-
-EOF
-)"
-```
+Outside a team, push the feature branch with `git push -u origin HEAD`. Open the PR only after the push succeeds. Pass a prepared body file to `gh pr create --title <title> --body-file <path>` so newlines and literal text survive shell quoting. Report the returned PR URL. Follow the project's merge policy; opening a PR alone does not authorize merging it.

@@ -12,7 +12,7 @@ The spec answers the intent: what exactly will be built in this codebase and why
 1. Read `docs/SDLC.md` if it exists; it overrides these defaults.
 2. Read the intent. Its Status must include `Accepted`; if not, ask the owner to accept or edit it first.
 3. Read `CONTEXT.md`, the ADRs that touch the area, the area's living design notes (`docs/<AREA>/_INDEX.md`) and the code paths involved. Find facts yourself.
-4. Grill the owner on every decision the intent leaves open (use the `grilling` and `domain-modeling` skills, or `/grill-with-docs`): numbered rounds, each question with your recommended answer, until nothing is silently assumed. Record settled terms in `CONTEXT.md` and hard-to-reverse trade-offs as ADRs as they settle.
+4. Use the `grill-with-docs` skill for unresolved decisions and domain records: read `~/.agents/skills/grill-with-docs/SKILL.md` and follow it.
 
 ## spec.md template
 

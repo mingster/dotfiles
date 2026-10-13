@@ -61,6 +61,8 @@ The adoption script currently copies the first eight roles. For support, also co
 
 Team skills come from [templates/agent-team/.agents/skills](templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `tl` handles engineering requests, `deploy` promotes releases, `grill-backlog` clears owner decisions and `team-audit` checks team files. Adoption runs `script/sync-team-skills.sh` to generate project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and sync again; do not edit generated copies.
 
+Team skills add project policy and call Orca and Matt Pocock skills for shared procedures. The [ownership and overlap decisions](docs/agents/skill-overlap-decisions.md) cover every owned skill and explain which steps belong upstream.
+
 Other project files tell the team how this repo works:
 
 | File | What to set or read |

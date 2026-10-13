@@ -1,68 +1,51 @@
 ---
 name: crew
-description: Run one objective through the project's agent team with the crew protocol (decompose, dispatch parallel workers, isolated execution, audit, integrate into one diff). Use with /crew <objective>, or when the owner states an objective in a lead session. Works in Claude Code, Cursor, Antigravity and Orca worktrees.
+description: Apply the agent team's roles and delivery gates to one objective. Use with /crew <objective> or when Elon coordinates a feature or epic.
 ---
 
-# Crew protocol
+# Crew
 
-The objective is the text after `/crew` ($ARGUMENTS). If there is none, ask for it in one line and stop.
+The objective is the text after `/crew` ($ARGUMENTS). If it is missing, ask for it and stop. Read `docs/agents/team-facts.md` for checks, repository, worker placement and review rules; if it is missing, report that to Elon.
 
-"Team facts" means the project's `docs/agents/team-facts.md` (repository, worker start flags, check commands, review checklist, extra reviewers, changelog folder). Read it before Step 1; if it is missing, stop and tell the owner.
-
-Elon (`elon`) owns the objective, the task tree, dispatch and completion review. The Tech Lead (`lead`) integrates engineering work. Every teammate reports only to Elon, and follows both role files and their gates; a critical or suppressed concern may go to Elon and the owner. Elon contacts the owner only for a decision Elon cannot make, stating the decision, the options and a recommendation. Owner facing replies may use Taiwan Traditional Chinese or English without mirroring the owner.
+Elon owns the objective and dispatch. The Tech Lead integrates engineering work. Read `.claude/agents/elon.md` for the front door and owner decisions, and `.claude/model-routing.md` for provider selection, the usage gate and commit, push and merge authority.
 
 ## Step 0. Fast path
 
-A bug fix, chore or small task touching 3 files or fewer skips the crew: work directly in the current workspace with the `tdd` skill (`diagnosing-bugs` first for a bug), run the fast checks from team facts (Checks), and finish. The crew is for multi domain features and large epics.
+Bugs, chores and small tasks touching 3 files or fewer use `tdd` directly, with `diagnosing-bugs` first when diagnosis is needed. Run the fast checks in team facts. Small reversible documentation changes and lookups need no crew. Use the remaining steps for features across domains and large epics.
 
-## Step 1. Scope and plan (Elon and BA)
+## Step 1. Scope and plan
 
-1. Elon scans the workspace status, aligns the objective with Sales-Marketing and directs the BA (`architect-pm` / 需求分析師).
-2. The BA breaks the spec into machine checkable ticket contracts with the `to-tickets` skill (GitHub issues with blocking edges): scope boundaries and exact allowed files, verification commands and criteria, blast radius and dependencies.
-3. Size gate: handle small changes directly; parallelize only truly independent tasks. Each task has an owner, allowed files, dependencies and a done criterion.
-4. The Tech Lead reviews the dependency DAG. Show the plan briefly and proceed.
+Elon aligns the objective with Sales-Marketing and assigns architect-pm to use the `to-tickets` skill for ticket contracts and dependencies. Read `~/.agents/skills/to-tickets/SKILL.md` and follow it. The Tech Lead reviews the resulting plan for integration risks. Existing accepted tickets need no second breakdown.
 
-## Step 2. Parallel dispatch (Elon, with Orca orchestration)
+## Step 2. Dispatch
 
-Load the `orchestration` skill (`orca skills get orchestration`) first. Never use a non Orca subagent tool.
+Use the `orchestration` skill for task contracts, dispatch, supervision, questions, recovery and settlement. Load the installed guide with `orca skills get orchestration` and follow its conditional references. Use Orca for supervised work across every provider.
 
-- Do small reversible docs and lookups directly; delegate substantial implementation and independent review.
-- One Run per objective: `orca orchestration run-create --objective "<objective>" --json`.
-- Start the whole independent wave before waiting, at most 2 or 3 workers: `orca orchestration worker-start --spec "<task spec>" --worktree new-child <worker start flags from team facts> --agent <provider> --model <id> --effort <level> --json`, provider from the role's default, model and effort from its tier in `.claude/model-routing.md`. `--deps` only for real ordering, such as review after build.
-- Task spec: Target (files in scope), Change (the result), Constraints, Ownership (allowed files), Observable acceptance (test command and done criterion), Skill (the one skill the job runs, named with its file so every provider loads it: "use `/tdd`: read `~/.agents/skills/tdd/SKILL.md` and follow it"; build `tdd`, a whole ticket `implement`, a hard bug `diagnosing-bugs`, review `code-review`, a merge conflict `resolving-merge-conflicts`; a `disable-model-invocation` skill such as `implement` loads only this way), rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`, and "read `.claude/agents/<role>.md` and the Token budget in `AGENTS.md` first and follow them". Workers do not inherit role frontmatter, so name the role. When team facts say a worker's worktree lacks `.claude/agents/`, give the absolute paths they list.
-- Follow "Starting a worker" (usage gate, title, rename, panes, delivery check, close) and "Watching a worker" in `.claude/model-routing.md`.
-- Let workers finish: one self-contained contract, then wait for `worker_done` or a real escalation. No tight polling, premature terminal restarts or mid flight model swaps unless the provider is demonstrably unavailable.
-- Wait with `orca orchestration check --wait --types worker_done,escalation,question --timeout-ms 900000 --json`. Answer each question and validate each `worker_done`. If validation fails, send the fix to the same worker first. Then close every settled worker, succeeded or failed (`orca orchestration worker-release --dispatch <id>` is required: an open worker holds a terminal and a worktree).
-- Provider failure (quota, auth, outage): rerun the Task on the next provider, `orca orchestration worker-start --task <task_id> --agent <next provider> ...` (Fallback in `.claude/model-routing.md`).
-- Keep workers short. A Claude Code worker's prompt cache lasts about 5 minutes: put the full contract in the spec and never park a worker waiting on a reply.
-- Orca creates worktrees (`--worktree new-child`). Never create loose worktrees in `/tmp` or `.claude/worktrees/`.
+Team additions to its task contract:
 
-## Step 3. Isolated execution (workers)
+- Name the role file by absolute path, the Token budget in `AGENTS.md`, and the skill file to read. Use `implement` for a whole ticket, `tdd` for a build slice, `diagnosing-bugs` for diagnosis, `code-review` for review and `resolving-merge-conflicts` for conflicts. Read the named `~/.agents/skills/<name>/SKILL.md` even when the harness hides it.
+- State rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`: workers commit on their own branches and worktrees, never push, open PRs or merge PRs; reviewers report locally to Elon.
+- Apply the usage gate before every launch and use the role's provider, model and effort from `.claude/model-routing.md`. Cap each independent wave at 3 workers. Use child worktrees and the placement flags in team facts.
+- Use the `orca-team` skill for colored panes and worker watch helpers. Keep runtime lifecycle authority with `orchestration`; project routing supplies team policy, not permission to bypass Orca's recovery rules.
 
-- Send `worker_done` once when finished (three sentence summary, `--outcome succeeded` or `failed`) with the Task and Dispatch IDs from your preamble, then stop. Ask blocking questions with the preamble's `ask` command, not a local prompt.
-- **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in your worktree root. Write it at the start (allowed files, verify command, current step) and again only when blocked (strike count, blockers). See `docs/agents/persistent-memory-protocol.md`.
-- Edit only allowlisted files. For another file, ask Elon with `ask` and wait.
-- Follow `AGENTS.md`. App changes: run the team facts checks for the component you touched. Documentation only: check links, role and branch references and `git diff --check`; no app build.
-- Follow the Token budget in `AGENTS.md`, including two strikes on a failing test. Pipe long output (`tail -40`, `git diff --stat`); run only relevant tests while coding.
-- Finish with: branch, commits, `git diff <default branch>...HEAD --stat`, tests run with pass and fail counts (failing output only), anything left open. Not the full diff.
+## Step 3. Worker evidence
 
-## Step 4. Quality gate (reviewers)
+Use the assigned implementation skill and the component checks in team facts. Documentation changes need link and reference checks plus `git diff --check`, with no app build. Follow the Token budget and strike rule in `AGENTS.md`.
 
-- **Dual-Axis review** with the `code-review` skill (fixed point the default branch, spec the ticket). Standards: `AGENTS.md` conventions, the team facts standards checklist, Fowler smells. Spec: the diff against the ticket contract (only allowlisted files, every acceptance criterion met, no scope creep).
-- `qa-sdet` audits every worker diff; `secops-finops` too when it touches auth, tenancy, entitlement, rate limits, money or payments. Team facts may name more reviewers by area.
-- The reviewer verifies the ticket's test command passes cleanly.
-- Verdict per task: `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. At most 2 remediation rounds per task; a task that fails both gets a `retro` (`~/.agents/skills/retro/SKILL.md`) on the worker's session, its top finding filed as an issue.
+For a ticket with several slices, use `docs/agents/persistent-memory-protocol.md` for the worktree's `active_run.md`. Edit only allowed files; a scope extension goes to Elon through orchestration.
 
-## Step 5. Integration (Tech Lead integrates, Elon ships)
+Include the branch, commits, worktree path, `git diff <default branch>...HEAD --stat`, check counts and unresolved items in the completion evidence required by orchestration. Use the `handoff` skill if context runs out, and include its artifact path.
 
-1. When every task passed, the Tech Lead creates `crew/<slug>` from an up to date default branch in its own worktree (the Orca worktree when run from Orca).
-2. It merges each passing branch locally in dependency order. No force push, no history rewriting. Each worker branch carries its own changelog fragment (folder in team facts, `<issue>-<slug>.md`), so entries never conflict; any other conflict goes back to the owning worker. Never edit `CHANGELOG.md` here; the release step compiles fragments.
-3. It runs the full team facts checks on an integrated app change, documentation checks on a documentation only change. If integration changed code, qa-sdet audits again.
-4. It reports to Elon with `worker_done`: the `crew/<slug>` branch, worktree path, `git diff <default branch>...HEAD --stat`, audit verdict and test results. It never pushes, opens a PR or merges.
-5. Elon alone pushes `crew/<slug>`, opens one PR for the objective in the team facts repository (spec traceability, review checklists, validation fitting the changed files) and merges it, per "Commit, push and merge" in `.claude/model-routing.md`. Worker branches stay local.
-6. After the merge, remove child worktrees (`git worktree remove <path>`).
-7. Elon takes the next open issue in the queue and starts the next cycle, until no open tasks remain.
+## Step 4. Review
 
-## Orca terminal layout
+Use the `code-review` skill against the default branch and ticket, with `AGENTS.md` and the team facts checklist as standards. Apply the review by risk rule in `.claude/agents/tech-lead.md`; add `secops-finops` for auth, tenancy, entitlement, rate limits, money or payments, and any reviewers named in team facts.
 
-Each worker shows as a colored pane in the coordinator's tab: after "Setup succeeded", run `~/.claude/skills/orca-team/worker-panes.sh <run_id> <coordinator terminal handle> <dispatch_id>` (colors per role in `role-colors.tsv`, read from the `<role> - <job>` task title), and close it with `worker-pane-close.sh <dispatch_id>` on release ("Starting a worker" in `.claude/model-routing.md`). Never nest tmux inside Orca for supervised work: nested panes escape Orca's lifecycle control.
+The reviewer verifies the ticket's check command passes. Report `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. Allow at most two remediation rounds; after both fail, use the `retro` skill on the worker session and file its top finding under the project's issue budget. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
+
+## Step 5. Integration and completion
+
+The Tech Lead combines passing branches locally in dependency order on `crew/<slug>`, based on the current default branch in its own worktree. Keep local history intact. Worker branches carry separate changelog fragments in the team facts folder. Send conflicts to their owning worker to resolve with `resolving-merge-conflicts`.
+
+Run the integrated checks from team facts and report the branch, worktree, diff stat, audit verdict and check results to Elon. Elon alone pushes, opens the PR and applies "Merge on completion" in `.claude/model-routing.md`, including the clean local main update and post merge review. Do not hold a validated completion for another review round.
+
+Use `orchestration` for settled worker cleanup and `orca-cli` for any remaining Orca worktree cleanup after the successful push and merge. Continue with the next open issue within the authorized objective until its queue is empty.
