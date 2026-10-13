@@ -15,7 +15,7 @@ From the repo root, using the tracker in `docs/agents/issue-tracker.md`:
 for l in ready-for-human needs-triage; do gh issue list --label $l --limit 50 --json number,title --jq '.[]|"\(.number) \(.title)"'; done
 ```
 
-Read each issue body and its last comment, trimmed (`--jq '(.body|.[0:900]), (.comments|last|.body // ""|.[0:400])'`). Do not read code yet.
+Use the `triage` skill for issues that still need evaluation or claim verification: read `~/.agents/skills/triage/SKILL.md` and follow it. For the owner decision sweep, read the remaining issues and their prior decisions.
 
 ## 2. Sort each issue
 
@@ -31,26 +31,14 @@ Most "ready-for-human" issues turn out to be the second kind. Converting them is
 
 ## 3. Ask in rounds
 
-Run the interview with the `grilling` skill (rounds, numbered questions, recommended answer first). This skill adds only the backlog rules:
+Use the `grilling` skill for the interview and its "Grilling on tracker issues" rules for recording decisions and changing labels. This skill adds only the backlog rules:
 
 - Each question answerable with a letter; A is your recommendation, with one line of why and the cost of B. End with "all A is fine".
-- Accept partial answers and carry the rest into the next round. Do not reopen a settled answer.
 - Never quote secrets you find while reading (keys, passwords in scripts). Report them as a finding with the fix.
 
-## 4. Record as answers arrive
+## 4. Queue the resolved work
 
-For every answer, at once:
-
-```bash
-gh issue comment <n> --body "Owner decision <date> (<round, option>): <what was decided, who does what, when>."
-gh issue edit <n> --remove-label ready-for-human --remove-label needs-triage --add-label ready-for-agent
-```
-
-Keep the label only when the owner still has to act with his hands; say what, then relabel when he reports done and you verified it (for example test the tunnel or port yourself, read only). A decision to park or defer gets `blocked` (or the issue is closed) with the reason, not `ready-for-agent`. New facts that affect a spec go on the spec's issue as a comment. A new problem found on the way becomes its own issue (`docs/agents/issue-budget.md`).
-
-## 5. Dispatch
-
-Each relabelled issue goes into the normal queue: a self contained worker spec, dispatched with Orca orchestration under the usage gate. Production steps join the next release batch; the release still needs the owner's explicit go.
+Use the `crew` skill to deliver resolved issues under the usage gate. Production steps join the next release batch through `deploy`; the release still needs the owner's explicit go. New facts that affect a spec go on its issue. New problems follow `docs/agents/issue-budget.md`.
 
 ## Done when
 

@@ -14,7 +14,7 @@ Only for new features and changes to how the product behaves. Bugs, refactors, c
 ## Steps
 
 1. If the repo has `docs/SDLC.md`, read it first: it gives the folder, the approver and any repo rules. Otherwise use `docs/intent/<YYYY-MM-DD>-<slug>/intent.md`.
-2. Let the owner describe the problem. Ask questions one round at a time, numbered, each with your suggested answer, until you can state: who hurts, when, how often, and what "better" looks like. Look up facts yourself (code, docs, issues); only ask about things the owner decides.
+2. Use the `grilling` skill to clarify the problem with the owner. Limit the interview to who hurts, when, how often and what "better" looks like; solution design belongs to the next stage.
 3. Stay on the problem. Do not choose a design, name tables or pick libraries; that is `write-spec`. If the owner proposes a solution, record it under Proposed outcome as their preference, not as a decision.
 4. Write the file in the owner's language and wording (Chinese is fine). Use the template below.
 5. Show the draft, apply corrections, then commit it on its own (`docs: intent <slug>`), unless the owner says otherwise.

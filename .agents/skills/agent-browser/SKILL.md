@@ -6,6 +6,8 @@ allowed-tools: Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
+For Orca embedded tabs, use the `orca-cli` skill. For native app windows that need GUI control, use the `computer-use` skill. This skill covers standalone browser automation with the `agent-browser` CLI, including saved sessions, network interception and recording.
+
 ## Quick start
 
 ```bash

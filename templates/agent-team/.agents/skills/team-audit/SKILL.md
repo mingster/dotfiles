@@ -13,12 +13,13 @@ Run `~/dotfiles/script/team-audit.sh` (default projects `~/projects/riben.life` 
 
 ## 2. Judgement review
 
-Read, in each project: `.claude/agents/*.md`, `.claude/model-routing.md`, `docs/agents/team.md`, `docs/agents/daily-run.md`, and the team skills in `.agents/skills/`. Then report:
+Use the `writing-for-agents` skill to assess duplication, pointer quality, relevance and instruction structure in each project's roles, model routing, team docs, daily run and skills. For a failure tied to a particular session, use the `retro` skill on that session instead of recreating its process here.
 
-- **Contradictions:** two files that give a different owner, order, model, provider or gate for the same thing. Owner rules (dated "owner rule" lines and `docs/agents/team.md`) win, then `.claude/model-routing.md` for models and the commit, push and merge rule, then the role file. Name both lines.
-- **Duplication:** a rule restated in full outside its single source; replace it with a pointer.
-- **Unused skills:** skills named in role frontmatter or `~/.agents/skills` with no use in the last 30 days of `~/.claude/projects/*/*.jsonl` logs (grep for `"skill":"<name>"` and `/<name>`). Propose removal; do not remove.
-- **Drift between projects:** the same role file differs between riben.life, PSTV and the dotfiles template in a way that is not a product fact.
+Add these team checks:
+
+- **Authority conflicts:** owner rules and `docs/agents/team.md` win, then `.claude/model-routing.md` for provider and shipping policy, then the role file. Name both file lines when rules disagree. Orca's `orchestration` skill owns runtime lifecycle authority.
+- **Unused skills:** check the last 30 days of available session logs for skill invocations and file loads. A harness may read `SKILL.md` directly; no slash command match alone does not prove disuse. Propose removal with the evidence and log coverage; do not remove.
+- **Project drift:** compare role and skill copies with the dotfiles template. Product facts may differ; team policy should have one source.
 
 ## 3. Output
 
