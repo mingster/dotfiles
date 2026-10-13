@@ -7,9 +7,20 @@
 # Orca has no option to start a worker as a split pane (each worker owns its worktree),
 # so this mirrors the worker's screen into a pane of the coordinator's tab.
 # When the dispatch ends (completed, failed, cancelled, released) the pane prints the final status, waits
-# ORCA_PANE_CLOSE_DELAY seconds (default 10) and closes itself (needs ORCA_TERMINAL_HANDLE, set by Orca).
+# ORCA_PANE_CLOSE_DELAY seconds (default 10) and closes itself with verified retries for up to 30 minutes (needs ORCA_TERMINAL_HANDLE, set by Orca).
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=worker-pane-retry.sh
+. "$here/worker-pane-retry.sh"
+close_allowed() {
+  local info
+  info=$(close_rpc orchestration worker-show --dispatch "$1" --json 2>/dev/null) || return 1
+  printf '%s' "$info" | python3 -c '
+import json,sys
+try: s=json.load(sys.stdin)["result"]["dispatch"]["status"]
+except Exception: sys.exit(1)
+sys.exit(0 if s in ("completed","failed","cancelled","released") else 1)'
+}
 role_color() { # title -> 256-color number
   local role; role=$(printf '%s' "$1" | sed 's/ - .*//' | tr 'A-Z' 'a-z' | tr -d '[:space:]')
   awk -F'\t' -v r="$role" '$1 == r { print $2; f = 1; exit } END { if (!f) print 240 }' "$here/role-colors.tsv"
@@ -41,7 +52,7 @@ print("\n".join(l for l in tail if l.strip()))' | tail -n $((rows-2)) | cut -c1-
     # so worker-pane-close.sh cannot find it. Orca sets ORCA_TERMINAL_HANDLE in every terminal.
     if [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then
       sleep "${ORCA_PANE_CLOSE_DELAY:-10}"
-      "$orca" terminal close --terminal "$ORCA_TERMINAL_HANDLE" >/dev/null 2>&1
+      close_verified "$ORCA_TERMINAL_HANDLE" "$d" || :
     fi
     exit;;
   esac

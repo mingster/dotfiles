@@ -6,12 +6,20 @@ cat > "$tmp/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
   "orchestration worker-show"*) printf '{"result":{"dispatch":{"assigneeHandle":"-","status":"%s","taskTitle":"%s"}}}' "${FAKE_STATUS:-completed}" "$FAKE_TITLE" ;;
-  "terminal close"*) echo "$*" >> "$FAKE_LOG" ;;
+  "terminal close"*) echo "$*" >> "$FAKE_LOG"
+    n=$(wc -l < "$FAKE_LOG")
+    [ "$n" -le "${FAKE_FAILS:-0}" ] && exit 1
+    exit 0 ;;
+  "terminal list"*)
+    n=$(wc -l < "$FAKE_LOG")
+    if [ "$n" -lt "${FAKE_DISAPPEARS_AT:-0}" ]; then
+      echo '{"result":{"terminals":[{"handle":"term_abc"}]}}'
+    else echo '{"result":{"terminals":[]}}'; fi ;;
   *) exit 1 ;;
 esac
 FAKE
 chmod +x "$tmp/orca"
-export ORCA_CLI_COMMAND="$tmp/orca"
+export ORCA_CLI_COMMAND="$tmp/orca" ORCA_TERMINAL_HANDLE= ORCA_PANE_CLOSE_DELAY=0
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
 pane() { FAKE_TITLE="$1" "$here/worker-pane.sh" d1 ${2:+"$2"} 2>/dev/null; }
@@ -37,6 +45,14 @@ done
 check "empty ORCA_TERMINAL_HANDLE: no close" "$([ ! -s "$FAKE_LOG" ]; echo $?)"
 : > "$FAKE_LOG"; env -u ORCA_TERMINAL_HANDLE FAKE_STATUS=completed FAKE_TITLE='lead - x' "$here/worker-pane.sh" d1 >/dev/null 2>&1
 check "unset ORCA_TERMINAL_HANDLE: no close" "$([ ! -s "$FAKE_LOG" ]; echo $?)"
+# Failed and accepted-but-lingering closes both require verification and retry.
+mkdir "$tmp/bin"; printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/sleep"; chmod +x "$tmp/bin/sleep"
+: > "$FAKE_LOG"
+PATH="$tmp/bin:$PATH" FAKE_FAILS=1 FAKE_DISAPPEARS_AT=3 FAKE_STATUS=completed FAKE_TITLE='lead - retry' ORCA_TERMINAL_HANDLE=term_abc "$here/worker-pane.sh" d1 >/dev/null 2>&1
+check "self-close retries failed and lingering closes" "$([ "$(wc -l < "$FAKE_LOG" | tr -d ' ')" = 3 ]; echo $?)"
+: > "$FAKE_LOG"
+ORCA_PANE_CLOSE_TIMEOUT=0 FAKE_DISAPPEARS_AT=100 FAKE_STATUS=completed FAKE_TITLE='lead - stuck' ORCA_TERMINAL_HANDLE=term_abc "$here/worker-pane.sh" d1 >/dev/null 2>&1; rc=$?
+check "self-close gives up quietly at budget" "$([ "$rc" = 0 ] && [ "$(wc -l < "$FAKE_LOG" | tr -d ' ')" = 1 ]; echo $?)"
 # A running dispatch must never close; a failing worker-show must not end the loop or close.
 for mode in running show-fails; do
   : > "$FAKE_LOG"
