@@ -49,6 +49,9 @@ git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
 # Common directories
 mkdir -p "$HOME/.config/micro" "$HOME/.config/fish"
 
+# Skills are wired even when software installation is skipped.
+DOTFILES="$DOTFILES_ROOT" bash "$DOTFILES_ROOT/script/setup-agent-skills.sh" || exit 1
+
 # Platform-specific full system setup (Homebrew stack, distro packages, etc.).
 # Each install inside system_setup.sh is guarded; already-installed items are skipped.
 # Set DOTFILES_SKIP_SYSTEM_SETUP=1 to skip entirely (CI, unsupported distro, etc.).
@@ -101,11 +104,6 @@ case "$OSTYPE" in
     ;;
 esac
 
-
-# Agents: ~/.agents -> dotfiles/.agents (includes our orca-team tooling).
-# orchestration is ignored and installed/updated by Orca, never shipped by dotfiles.
-mkdir -p "$DOTFILES_ROOT/.agents"
-ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
 # AI tooling and editor config (install app first if needed, then configure)
 bash "$DOTFILES_ROOT/script/setup-claude-code.sh"

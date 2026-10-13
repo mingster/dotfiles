@@ -9,7 +9,7 @@ Short names used below:
 | R | riben.life, `~/projects/riben.life`, read at `origin/main` 15c4bd633 (the local checkout is 2 commits behind) |
 | P | PSTV, `~/pstv`, read at `origin/main` af650e2d6 (the local checkout is 3 commits behind) |
 | T | dotfiles template, `templates/agent-team`, at dotfiles `master` c5f4251 |
-| D | dotfiles shared tree, `.agents/skills/` at dotfiles `master`. Reached on the Mac as `~/.claude/skills`, `~/.agents/skills` and `~/.cursor/skills` (all three are home symlinks into this one tree, none of them hold their own copies) |
+| D | dotfiles shared tree, `.agents/skills/` at dotfiles `master`. Reached on the Mac as `~/.claude/skills`, `~/.agents/skills` and `~/.cursor/skills` (dotfiles skills are individual links in real home directories; tool skills can hold their own copies) |
 | MP | the `mattpocock-skills` plugin cache, v1.3.1 (upstream `6fd9479`, synced 2026-10-07), in two copies: `~/.claude/plugins/cache/mattpocock/...` (installed but disabled in `~/.claude/settings.json`, value `false`; skills load from the shared dotfiles folder D) and `~/.claude/plugins/cache/claude-plugins-official/...` (installed, not enabled) |
 | dir | real directory, git tracked (mode 040000 tree) |
 | link | symlink `../../.agents/skills/<name>`, git tracked (mode 120000) |
@@ -82,11 +82,11 @@ Nothing is referenced that does not exist somewhere. These references cannot be 
 | Path | Points to | Made by |
 | --- | --- | --- |
 | `~/dotfiles` | `~/GitHub/dotfiles` | `install.sh` |
-| `~/.agents` | `~/GitHub/dotfiles/.agents` | `install.sh` |
-| `~/.claude/skills` | `~/dotfiles/.agents/skills` | `script/setup-claude-code.sh` |
+| `~/.agents/skills/<name>` | tracked dotfiles skill directory | `script/setup-agent-skills.sh` (real parents) |
+| `~/.claude/skills/<name>` | tracked dotfiles skill directory | `script/setup-agent-skills.sh` (real parents) |
 | `~/.cursor/skills` | `~/dotfiles/.agents/skills` | `script/link-cursor-user.sh` (run by `setup-cursor.sh`, after `setup-claude-code.sh` deletes the link), so Cursor lists every shared skill twice. Fixed: see Duplicate listings. |
 | Antigravity | `$AGENTS_ROOT/skills` via `~/.gemini/.../skills.json` | `script/setup-antigravity.sh` |
-| `.agents/skills/synced/` | claude.ai synced skills, written through the home link into the dotfiles checkout | Claude Code; gitignored (`.gitignore` line 87) |
+| `.agents/skills/synced/` | claude.ai synced skills, legacy location; migration preserves it under real home skill directories | Claude Code; gitignored (`.gitignore` line 87) |
 
 The `mattpocock-skills` plugin is installed but disabled (`false` in `~/.claude/settings.json`) while the same skills are vendored in D. Claude Code may still list a skill under both names if the plugin is switched on. D's `to-tickets` is locally edited, so D is the copy to keep.
 
@@ -119,7 +119,7 @@ Layout decided by the owner on 2026-10-06 (option b: committed generated copies 
 | 2 Team | elon, ceo (an alias that loads elon), crew, tl, deploy | Source: `~/dotfiles/templates/agent-team/.agents/skills/<name>/`, one product neutral copy each | A committed, generated copy in `<project>/.agents/skills/<name>/` plus committed relative links in `.claude/skills/` and `.cursor/skills/`, written by `~/dotfiles/script/sync-team-skills.sh`. Product facts live in the project's `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`. |
 | 3 Project | R: action-scaffold, e2e-test-scaffold, i18n-sync, payment-plugin, store-admin-crud. P: roku-qa, web2 jellyfin-web-port, web2 paypal-webhooks | `<project>/.agents/skills/<name>/`, tracked | Tracked relative links `.claude/skills/<name>` and `.cursor/skills/<name>` to `../../.agents/skills/<name>`, which resolve in any clone |
 
-Tier 2 is kept out of `~/dotfiles/.agents/skills` on purpose: that tree is linked as `~/.claude/skills`, so anything there loads in every repo on the Mac, not only in the team repos. Committed copies (rather than ignored links) mean a fresh clone, a cloud session and every Orca child worktree has the team skills without dotfiles.
+Tier 2 is kept out of `~/dotfiles/.agents/skills` on purpose: its tracked skills are individually linked into `~/.claude/skills`, so anything there loads in every repo on the Mac, not only in the team repos. Committed copies (rather than ignored links) mean a fresh clone, a cloud session and every Orca child worktree has the team skills without dotfiles.
 
 ### The sync script
 
@@ -183,7 +183,7 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 
 ## Mattpocock sync (2026-10-07)
 
-Upstream `mattpocock/skills` at `6fd947921b935b7e1e69293a200400f0fdd5c15f` (plugin v1.3.1, was v1.2.3 at `c55ee46`). Pulled in `~/.claude/plugins/marketplaces/mattpocock` and `claude plugin update mattpocock-skills@mattpocock`. The plugin stays disabled at user scope; D is the copy every tool reads (`~/.agents/skills` and `~/.claude/skills` are both home symlinks into D, so Claude, Codex, Cursor and Antigravity load the same SKILL.md).
+Upstream `mattpocock/skills` at `6fd947921b935b7e1e69293a200400f0fdd5c15f` (plugin v1.3.1, was v1.2.3 at `c55ee46`). Pulled in `~/.claude/plugins/marketplaces/mattpocock` and `claude plugin update mattpocock-skills@mattpocock`. The plugin stays disabled at user scope; D is the copy every tool reads (tracked D skills are individually linked in `~/.agents/skills` and `~/.claude/skills`, so Claude, Codex, Cursor and Antigravity load the same SKILL.md).
 
 Local deviations from upstream, to re-apply on every refresh:
 
@@ -210,7 +210,7 @@ The fast path names (`to-spec`, `to-tickets`, `tdd`, `code-review`) and `diagnos
 
 | Tool | Global skills read from | Notes |
 | --- | --- | --- |
-| Claude Code | `~/.claude/skills` (link to `.agents/skills`) | Loads every skill. |
+| Claude Code | `~/.claude/skills` (real directory with individual dotfiles skill links) | Loads every skill. |
 | Cursor | `~/.claude/skills` and `~/.agents/skills` | No `~/.cursor/skills` link: it would list each skill twice. Cursor print mode could not be verified on 2026-10-07 (monthly usage limit until 10/25). |
 | Codex 0.160.1 | `~/.agents/skills` | Hides every skill with `disable-model-invocation: true` from the model (to-spec, to-tickets, triage, grill-with-docs, handoff, implement, retro, wayfinder and others). One loads only when the prompt names it as `$to-tickets`. We keep the flag, which is upstream. The docs say how to invoke instead: `/name` in Claude Code, Cursor and Antigravity, `$name` in Codex, or read `~/.agents/skills/<name>/SKILL.md`. The sentence lives in the `Agent skills` block of each `AGENTS.md`, in `AGENTS.token-budget.md` and in `~/.codex/AGENTS.md` (source `.codex/AGENTS.md`, linked by `setup-codex.sh`). |
 | Antigravity | `~/.gemini/antigravity/skills` and, for the `agy` CLI, `~/.gemini/antigravity-cli/skills` | Both are links to `.agents/skills`, made by `setup-antigravity.sh`. Antigravity also hides `disable-model-invocation` skills from the model (asked without a name it answers no), but `/to-tickets` loads it. A skill whose frontmatter is invalid YAML is skipped with an error in `~/.gemini/antigravity-cli/log` (`write-spec` had an unquoted colon in its description, now quoted). `~/.gemini/config/skills` is Google's own data skills and is left alone. Workspace skills come from `<repo>/.agent/skills` (singular), a relative link to `../.agents/skills` in each repo and in the template. |
@@ -231,6 +231,12 @@ An upstream update previously replaced our customized `orchestration` skill and 
 
 Our additions now live in `.agents/skills/orca-team/`: the Elon coordinator paragraph, worker panes, pane closing and retry helpers, worker-watch, role colors and all four shell test suites. The `orca-team` skill complements Orca's `orchestration` skill; load the official guide with `orca skills get orchestration` for coordination commands.
 
-Dotfiles no longer tracks or ships `.agents/skills/orchestration/`; `.gitignore` reserves it for Orca's official installation. `install.sh` links `~/.agents` to the shared tree, and `setup-claude-code.sh` links `~/.claude/skills` to its skills directory, so both discover `orca-team` automatically. Arch and Debian setup also create the shared `~/.agents` link. `sync-team-skills.sh` copies only the tier 2 template skills and installs neither shared skill; it updates the crew instructions to call the shared `orca-team` scripts.
+Dotfiles no longer tracks or ships `.agents/skills/orchestration/`; `.gitignore` reserves it for Orca's official installation. `install.sh`, `setup-claude-code.sh`, and Arch/Debian setup call `script/setup-agent-skills.sh`. It creates real `~/.agents`, `~/.agents/skills`, and `~/.claude/skills` directories and individually links tracked dotfiles skills, including `orca-team`. Ignored `orchestration` and synced/plugin skills are never linked from the checkout. `sync-team-skills.sh` copies only the tier 2 template skills and installs neither shared skill; it updates the crew instructions to call the shared `orca-team` scripts.
 
 Orca installs and updates its official `orchestration` copy. Keep `orca-team` out of `.agents/.skill-lock.json`: `script/team-audit.sh` rejects a lock entry for it and missing helpers, including `worker-pane-retry.sh`. Tracking official `orchestration` in the lock is allowed again. Tests: every `.agents/skills/orca-team/*.test.sh` and `script/tests/team-audit.test.sh`.
+
+### Home directory migration (#79, 2026-10-13)
+
+Run `bash ~/dotfiles/script/setup-agent-skills.sh` after updating the checkout. No software installation is needed. The helper copies non-dotfiles skills (including hidden metadata and the agents lockfile) into real home directories before replacing legacy tree aliases, keeps the old source intact, and prints preservation, migration and link actions. It leaves existing real skill folders and foreign links untouched; a same-name tool folder wins. Only links into a tracked dotfiles skill are refreshed. `sync-team-skills.sh` remains project scoped and still refuses HOME and targets resolving outside their project; it does not depend on a home tree alias.
+
+Proof: `bash script/tests/install-skills.test.sh` runs the installer twice in each temporary HOME for fresh installation, legacy migration and conflicts. `bash script/tests/orca-skills-home.test.sh` performs the network-dependent official Orca install/update in a temporary HOME, checks for no Skipped entry, and verifies orchestration lives outside the Git checkout.

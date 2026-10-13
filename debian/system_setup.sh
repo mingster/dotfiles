@@ -278,8 +278,7 @@ simple() {
     ln -s -f ~/dotfiles/.config/lf $HOME/.config/lf
     ln -s -f ~/dotfiles/.config/lazygit $HOME/.config/lazygit
 
-    mkdir -p ~/dotfiles/.agents
-    ln -sfn ~/dotfiles/.agents ~/.agents
+    bash "$HOME/dotfiles/script/setup-agent-skills.sh"
 
     bash "$HOME/dotfiles/script/install_claude.sh"
     bash "$HOME/dotfiles/script/install_zed.sh"

@@ -205,8 +205,7 @@ simple() {
     mkdir -p "$HOME/.local/state/nvim"
     mkdir -p "$HOME/.cache/nvim"
 
-    mkdir -p $HOME/dotfiles/.agents
-    ln -sfn $HOME/dotfiles/.agents $HOME/.agents
+    bash "$HOME/dotfiles/script/setup-agent-skills.sh"
 
     bash "$HOME/dotfiles/script/install_claude.sh"
 
