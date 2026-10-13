@@ -47,6 +47,9 @@ check "antigravity quota" 4 'ctx_a term_a STOPPED .*quota'
 printf 'You have hit your weekly limit (1% left)\n' > "$tmp/term_a.txt"
 check "codex weekly limit" 4 'ctx_a term_a STOPPED .*weekly limit'
 
+printf '• Working (3m 21s • esc to interrupt)\n   ⚠ weekly limit: 25%% left · resets at 1:03 PM on 20 Oct · /status\n' > "$tmp/term_a.txt"
+check "codex weekly warning while working not flagged" 0 'ctx_a term_a OK'
+
 printf 'Error: spendLimitHit: true\n' > "$tmp/term_a.txt"
 check "cursor spendLimitHit" 4 'ctx_a term_a STOPPED .*spendLimitHit'
 

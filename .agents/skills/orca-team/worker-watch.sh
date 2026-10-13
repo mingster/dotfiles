@@ -40,7 +40,7 @@ except Exception:
 tail = [l.rstrip() for l in tail[-30:]]
 # Only the providers actual stop messages, never bare words.
 stop = re.compile(
-    r"Individual quota reached|\bResets in \d|weekly limit.*% left|hit your weekly limit"
+    r"Individual quota reached|\bResets in \d|hit your weekly limit"
     r"|spendLimitHit: true|usage limit reached|limit will reset|Context limit reached"
     r"|Run /compact to|You.ve hit your usage limit|Switch to a different model or set a Spend Limit", re.I)
 dialog = re.compile(r"Workspace Trust Required", re.I)
