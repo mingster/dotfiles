@@ -42,7 +42,7 @@ tail = [l.rstrip() for l in tail[-30:]]
 stop = re.compile(
     r"Individual quota reached|\bResets in \d|hit your weekly limit"
     r"|spendLimitHit: true|usage limit reached|limit will reset|Context limit reached"
-    r"|Run /compact to|You.ve hit your usage limit|Switch to a different model or set a Spend Limit", re.I)
+    r"|Run /compact to|You.ve hit your usage limit|Switch to a different model or set a Spend Limit|Selected model is at capacity", re.I)
 dialog = re.compile(r"Workspace Trust Required", re.I)
 marker = re.compile(r"^\s*[⚠■✗✖!]")
 # Source, diffs and shell lines are not provider notices.
