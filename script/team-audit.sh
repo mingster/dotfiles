@@ -9,8 +9,8 @@
 #   wording   no banned wording in team files: someone other than Elon merges, pushes or opens PRs,
 #             task_plan.md or progress.md ledgers, the old orca claude-teams layout
 #   skill     every SKILL.md has name and description frontmatter
-#   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orchestration)
-#   helpers   the orchestration helper scripts exist
+#   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
+#   helpers   the orca-team helper scripts exist
 #   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
 #             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
 #             network failure prints "WARN mp-upstream" and is not a finding.
@@ -20,8 +20,8 @@ set -uo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 BUDGET="${ROLE_WORD_BUDGET:-800}"
-LOCAL_SKILLS="${LOCAL_SKILLS:-orchestration}"
-HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-watch.sh role-colors.tsv"
+LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
+HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
 
 case "${1:-}" in -h|--help) sed -n '2,19p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
@@ -99,7 +99,7 @@ if [ -f "$LOCK" ]; then
 fi
 
 for h in $HELPERS; do
-  [ -f "$DOTFILES/.agents/skills/orchestration/$h" ] || finding helpers "missing $DOTFILES/.agents/skills/orchestration/$h"
+  [ -f "$DOTFILES/.agents/skills/orca-team/$h" ] || finding helpers "missing $DOTFILES/.agents/skills/orca-team/$h"
 done
 
 MP_STATE="$DOTFILES/.agents/skills/.mattpocock-upstream"

@@ -27,7 +27,8 @@ fi
 
 mkdir -p "${HOME}/.claude"
 
-# Skills: shared tree between skills CLI and Claude Code
+# Skills: shared tree between skills CLI and Claude Code, including our orca-team.
+# Dotfiles does not ship orchestration; Orca owns its ignored directory in this tree.
 rm -rf "${HOME}/.claude/skills"
 ln -sfn "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
 
