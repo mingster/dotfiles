@@ -11,7 +11,7 @@ sh mac/osxprep.sh   # macOS only: Command Line Tools
 sh install.sh
 ```
 
-`install.sh` links `~/dotfiles` to this repo, links shell and git dotfiles into `$HOME`, creates `~/.agents`, sets up the AI tooling below, then runs the OS installer (`mac/`, `arch/` or `debian/` `system_setup.sh`). Already installed software is skipped. `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` only refreshes links. `DOTFILES_BREW_UPGRADE=1` also runs `brew upgrade` on macOS.
+`install.sh` links `~/dotfiles` to this repo, links shell and git dotfiles into `$HOME`, creates real home skill directories, sets up the AI tooling below, then runs the OS installer (`mac/`, `arch/` or `debian/` `system_setup.sh`). Already installed software is skipped. `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` only refreshes links. `DOTFILES_BREW_UPGRADE=1` also runs `brew upgrade` on macOS.
 
 ## AI tooling
 
@@ -26,12 +26,14 @@ sh install.sh
 
 ### Skills
 
-Reusable skills live in `.agents/skills/<name>/` and are visible to Claude Code, Codex, Cursor and Antigravity through `~/.agents`, `~/.claude/skills`, `~/.cursor/skills` and the Antigravity `skills.json`. A project skill with the same name as a central one silently wins, so keep the two sets apart:
+Reusable skills live in `.agents/skills/<name>/` and are visible to Claude Code, Codex, Cursor and Antigravity through individual links in `~/.agents/skills` and `~/.claude/skills` (also read by Cursor), and the Antigravity `skills.json`. A project skill with the same name as a central one silently wins, so keep the two sets apart:
 
 | Kind | Lives in |
 | --- | --- |
 | Reusable across projects | here, `.agents/skills/<name>/`, and nowhere else |
 | Project specific | `<project>/.agents/skills/<name>/`, with symlinks from `<project>/.claude/skills/` and `<project>/.cursor/skills/` |
+
+Run `bash script/setup-agent-skills.sh` to migrate legacy tree links to real directories. It retains tool-installed skills and their lock data, leaves the old source intact, links only tracked dotfiles skills, and prints its actions. Existing tool folders and foreign links are preserved, including same-name conflicts. `DOTFILES_SKIP_SYSTEM_SETUP=1 bash install.sh` also performs this migration without installing software. The skill inventory requires a Git checkout.
 
 Run `script/check-skill-collisions.sh` to find a project skill that shadows a central one, a broken symlink, or a missing `SKILL.md`. MCP secrets go in `~/.claude/settings.local.json` (gitignored). Paths reference: [AGENTS.md](AGENTS.md).
 

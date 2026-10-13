@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code (CLI + Claude Code Desktop): symlink ~/.claude/* from ~/dotfiles/.agents.
-# Skills: ~/.claude/skills -> .agents/skills (same tree as the skills CLI).
+# Skills: real home directories with individual links to tracked dotfiles skills.
 # All other entries in .agents/claude/ are linked into ~/.claude/ automatically.
 # README.md is excluded (documentation only).
 set -euo pipefail
@@ -27,10 +27,7 @@ fi
 
 mkdir -p "${HOME}/.claude"
 
-# Skills: shared tree between skills CLI and Claude Code, including our orca-team.
-# Dotfiles does not ship orchestration; Orca owns its ignored directory in this tree.
-rm -rf "${HOME}/.claude/skills"
-ln -sfn "$AGENTS_ROOT/skills" "${HOME}/.claude/skills"
+DOTFILES="$DOTFILES" bash "$DOTFILES/script/setup-agent-skills.sh"
 
 # CLAUDE.md is COPIED, not linked. Cowork sessions skip a ~/.claude/CLAUDE.md that is
 # itself a symlink, and skip user-scope imports resolving outside the session working

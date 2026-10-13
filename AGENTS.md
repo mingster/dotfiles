@@ -6,7 +6,7 @@ This file orients humans and coding agents working **in this repository** (`$HOM
 
 1. [README.md](README.md) — install flow and overview.
 2. [.github/copilot-instructions.md](.github/copilot-instructions.md) — conventions for GitHub Copilot on this repo.
-3. [install.sh](install.sh) — creates `~/dotfiles` symlink, refreshes home dotfile symlinks, then delegates to the platform `system_setup.sh` (detected via `$OSTYPE`). Use `DOTFILES_SKIP_SYSTEM_SETUP=1` to skip software install.
+3. [install.sh](install.sh) — creates `~/dotfiles` symlink, refreshes home dotfile and per-skill symlinks, then delegates to the platform `system_setup.sh` (detected via `$OSTYPE`). Use `DOTFILES_SKIP_SYSTEM_SETUP=1` to skip software install.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 
 | Tool | Home path | Canonical in repo |
 |------|-----------|---------------------|
-| Agent skills (shared tree, read by all IDEs) | `~/.agents` | `~/dotfiles/.agents` |
+| Agent skills (shared tree, read by all IDEs) | `~/.agents/skills/<name>` | `~/dotfiles/.agents/skills/<name>` (individual links; home parents are real directories) |
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
 | Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (generic only; project rules live in each repo) |
 | Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-user.sh`) |
