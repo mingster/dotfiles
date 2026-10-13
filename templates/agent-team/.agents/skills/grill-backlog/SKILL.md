@@ -1,6 +1,6 @@
 ---
 name: grill-backlog
-description: Grill the owner on every issue that waits on a human (labels ready-for-human, needs-triage) until each one is agent ready, then record the answers on the issues, relabel them ready-for-agent and dispatch. Use with /grill-backlog, "grill me on all", or when the queue has only owner blocked issues left.
+description: Backlog sweep on top of the grilling skill. Grill the owner on every issue that waits on a human (labels ready-for-human, needs-triage) until each one is agent ready, then record the answers on the issues, relabel them ready-for-agent and dispatch. Use with /grill-backlog, "grill me on all", or when the queue has only owner blocked issues left.
 ---
 
 # Grill the backlog
@@ -31,11 +31,10 @@ Most "ready-for-human" issues turn out to be the second kind. Converting them is
 
 ## 3. Ask in rounds
 
-- One numbered round of independent questions, each answerable with a letter. A is always your recommendation; say why in one line, and the cost of B.
-- Say "all A is fine" at the end. Accept partial answers ("5: agree", "Q4: run on stm36") and carry the rest into the next round.
-- A question that depends on another answer waits for the next round. Follow up on answers that raise a new fact (a host name, a field format) before moving on.
-- Push back when an answer has a real risk (shared host, single point of failure), record the mitigation and move on. Do not reopen a settled answer.
-- Write in the owner's language when he asks (for example "write in chinese").
+Run the interview with the `grilling` skill (rounds, numbered questions, recommended answer first). This skill adds only the backlog rules:
+
+- Each question answerable with a letter; A is your recommendation, with one line of why and the cost of B. End with "all A is fine".
+- Accept partial answers and carry the rest into the next round. Do not reopen a settled answer.
 - Never quote secrets you find while reading (keys, passwords in scripts). Report them as a finding with the fix.
 
 ## 4. Record as answers arrive
@@ -47,7 +46,7 @@ gh issue comment <n> --body "Owner decision <date> (<round, option>): <what was 
 gh issue edit <n> --remove-label ready-for-human --remove-label needs-triage --add-label ready-for-agent
 ```
 
-Keep the label only when the owner still has to act with his hands; say what, then relabel when he reports done and you verified it (for example test the tunnel or port yourself, read only). New facts that affect a spec go on the spec's issue as a comment. A new problem found on the way becomes its own issue (`docs/agents/issue-budget.md`).
+Keep the label only when the owner still has to act with his hands; say what, then relabel when he reports done and you verified it (for example test the tunnel or port yourself, read only). A decision to park or defer gets `blocked` (or the issue is closed) with the reason, not `ready-for-agent`. New facts that affect a spec go on the spec's issue as a comment. A new problem found on the way becomes its own issue (`docs/agents/issue-budget.md`).
 
 ## 5. Dispatch
 
