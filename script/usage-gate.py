@@ -264,10 +264,11 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0):
     if reading and (state or {}).get("date") != today:
         day_start = start_of_day(reading, provider, midnight)
     if cap is None:
-        # Owner approved one day cap: STATE/<provider>.cap-override.json {"date": "YYYY-MM-DD", "cap": N}.
+        # Owner approved cap: STATE/<provider>.cap-override.json {"date": "YYYY-MM-DD", "cap": N}
+        # for one day, or {"until": <epoch>, "cap": N} for a window (owner 2026-10-13).
         try:
             o = json.load(open(f"{STATE}/{provider}.cap-override.json"))
-            if o.get("date") == today:
+            if o.get("date") == today or ("until" in o and now < float(o["until"])):
                 cap = float(o["cap"])
         except (OSError, ValueError, KeyError, TypeError):
             pass
