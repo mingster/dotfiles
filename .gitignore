@@ -85,3 +85,6 @@ mac/bin/claude
 **/*.pyo
 /mac/bin
 .agents/skills/synced/
+
+# Orca owns its official orchestration skill; install/update it outside Git tracking.
+.agents/skills/orchestration/

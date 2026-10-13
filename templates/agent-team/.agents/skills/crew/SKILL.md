@@ -65,4 +65,4 @@ Load the `orchestration` skill (`orca skills get orchestration`) first. Never us
 
 ## Orca terminal layout
 
-Each worker shows as a colored pane in the coordinator's tab: after "Setup succeeded", run `~/.claude/skills/orchestration/worker-panes.sh <run_id> <coordinator terminal handle> <dispatch_id>` (colors per role in `role-colors.tsv`, read from the `<role> - <job>` task title), and close it with `worker-pane-close.sh <dispatch_id>` on release ("Starting a worker" in `.claude/model-routing.md`). Never nest tmux inside Orca for supervised work: nested panes escape Orca's lifecycle control.
+Each worker shows as a colored pane in the coordinator's tab: after "Setup succeeded", run `~/.claude/skills/orca-team/worker-panes.sh <run_id> <coordinator terminal handle> <dispatch_id>` (colors per role in `role-colors.tsv`, read from the `<role> - <job>` task title), and close it with `worker-pane-close.sh <dispatch_id>` on release ("Starting a worker" in `.claude/model-routing.md`). Never nest tmux inside Orca for supervised work: nested panes escape Orca's lifecycle control.

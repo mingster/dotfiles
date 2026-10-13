@@ -7,12 +7,12 @@ D="$tmp/dotfiles" P="$tmp/proj"
 setup() { # a clean dotfiles tree and a project synced from it
   rm -rf "$D" "$P"
   mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
-           "$D/.agents/skills/orchestration" "$P/.claude/agents" "$P/docs/agents"
+           "$D/.agents/skills/orca-team" "$P/.claude/agents" "$P/docs/agents"
   cp "$here/sync-team-skills.sh" "$D/script/"
   printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nElon pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
-  printf -- '---\nname: orchestration\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orchestration/SKILL.md"
-  for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-watch.sh role-colors.tsv; do
-    touch "$D/.agents/skills/orchestration/$h"
+  printf -- '---\nname: orca-team\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orca-team/SKILL.md"
+  for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv; do
+    touch "$D/.agents/skills/orca-team/$h"
   done
   printf '{"version": 3, "skills": {"orca-cli": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
   printf -- '---\nname: lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
@@ -74,10 +74,16 @@ setup; mkdir -p "$D/.agents/skills/bare"; printf -- '---\nname: bare\n---\n' > "
 check "skill without description" 1 'FINDING skill: .*bare/SKILL.md: no description'
 
 setup; printf '{"version": 3, "skills": {"orchestration": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
-check "lock tracking orchestration" 1 'FINDING lock: .*tracks orchestration'
+check "official orchestration may be tracked" 0 'team-audit: clean'
 
-setup; rm "$D/.agents/skills/orchestration/worker-panes.sh"
-check "missing orchestration helper" 1 'FINDING helpers: missing .*worker-panes.sh'
+setup; printf '{"version": 3, "skills": {"orca-team": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
+check "lock tracking our orca-team" 1 'FINDING lock: .*tracks orca-team'
+
+setup; rm "$D/.agents/skills/orca-team/worker-panes.sh"
+check "missing orca-team helper" 1 'FINDING helpers: missing .*worker-panes.sh'
+
+setup; rm "$D/.agents/skills/orca-team/worker-pane-retry.sh"
+check "missing pane retry helper" 1 'FINDING helpers: missing .*worker-pane-retry.sh'
 
 setup; GH_LATEST=bbb2222 GH_FILES=$'skills/engineering/tdd/SKILL.md\nREADME.md\n'; export GH_LATEST GH_FILES
 check "upstream changed a vendored skill" 1 'FINDING mp-upstream: aaa1111 behind bbb2222: tdd'

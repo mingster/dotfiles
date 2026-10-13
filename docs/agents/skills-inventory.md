@@ -115,7 +115,7 @@ Layout decided by the owner on 2026-10-06 (option b: committed generated copies 
 
 | Tier | What | Lives | How a project sees it |
 | --- | --- | --- | --- |
-| 1 General | agent-browser, capture-intent, code-review, codebase-design, create-pr, diagnosing-bugs, domain-modeling, grill-with-docs, orca-cli, orchestration (with `worker-watch.sh`), research, resolving-merge-conflicts, tdd, to-spec, to-tickets, write-spec, the vendored mattpocock skills, optionally shadcn | `~/dotfiles/.agents/skills/<name>/` only | `~/.claude/skills` and `~/.agents/skills`, linked by `install.sh` (Cursor reads `~/.claude/skills`). No project copy, no project link. |
+| 1 General | agent-browser, capture-intent, code-review, codebase-design, create-pr, diagnosing-bugs, domain-modeling, grill-with-docs, orca-cli, orca-team (pane and watch helpers), research, resolving-merge-conflicts, tdd, to-spec, to-tickets, write-spec, the vendored mattpocock skills, optionally shadcn | `~/dotfiles/.agents/skills/<name>/` only | `~/.claude/skills` and `~/.agents/skills`, linked by `install.sh` (Cursor reads `~/.claude/skills`). No project copy, no project link. |
 | 2 Team | elon, ceo (an alias that loads elon), crew, tl, deploy | Source: `~/dotfiles/templates/agent-team/.agents/skills/<name>/`, one product neutral copy each | A committed, generated copy in `<project>/.agents/skills/<name>/` plus committed relative links in `.claude/skills/` and `.cursor/skills/`, written by `~/dotfiles/script/sync-team-skills.sh`. Product facts live in the project's `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`. |
 | 3 Project | R: action-scaffold, e2e-test-scaffold, i18n-sync, payment-plugin, store-admin-crud. P: roku-qa, web2 jellyfin-web-port, web2 paypal-webhooks | `<project>/.agents/skills/<name>/`, tracked | Tracked relative links `.claude/skills/<name>` and `.cursor/skills/<name>` to `../../.agents/skills/<name>`, which resolve in any clone |
 
@@ -155,7 +155,7 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 | --- | --- |
 | crew | T base (changelog fragment wording, anti-fluttering, merge and queue draining steps) plus R's `persistent-memory-protocol.md` pointer plus P's newer Step 1 (BA writes ticket contracts, Tech Lead reviews the DAG), "Starting a worker" step and role default provider. Product facts moved to `team-facts.md`. `daily-run.md` leaves the skill. |
 | tl | P's newer copy (command suite line, `worker-start --agent` wording); terminal shortcut from `team-facts.md`; `issue-budget.md` leaves the skill. `other-tools.md` is P's copy (tiered routing) with the daily run task count and the skills table made generic. |
-| orchestration | Tier 1. D plus P's Elon coordinator paragraph, scoped to projects that have `.claude/agents/elon.md`. `worker-watch.sh` and its test move from the template into D; `model-routing.md` now calls `~/.claude/skills/orchestration/worker-watch.sh`. |
+| orca-team | Tier 1. Our Elon coordinator paragraph, pane helpers, `worker-watch.sh`, role colors and tests. Complements Orca's official `orchestration` skill; `model-routing.md` calls `~/.claude/skills/orca-team/worker-watch.sh`. |
 | elon, ceo | `elon` (newer) moves from D to the template, product names removed, daily run path now `docs/agents/daily-run.md`. `ceo` becomes a three line alias that loads `elon`. |
 | to-tickets | D (newest) with neutral examples in place of the riben paths and `bun` commands. |
 | deploy | One generic flow (rules, status, local, staging, production, hand deploy, rollback) that reads everything product specific from `deploy-facts.md`. |
@@ -168,7 +168,7 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 ### Steps, each with its check
 
 1. Done (dotfiles, phase 1): tier 1 cleanup, tier 2 reconciliation, facts skeletons, sync script, duplicate fixes. Check: `bash script/tests/sync-team-skills.test.sh` passes; `grep -rn 'riben\|pstv\|/Users/' templates/agent-team/.agents/skills` finds nothing.
-2. riben.life (phase 2): write `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`, `git mv .agents/skills/crew/daily-run.md docs/agents/daily-run.md`, `git rm -r .agents/skills/orchestration`, point `.claude/model-routing.md` at `~/.claude/skills/orchestration/worker-watch.sh`, run `sync-team-skills.sh --force .`, replace the six real `.cursor/skills` dirs of tier 3 skills with links to `.agents`, add `sync-team-skills.sh --check` to CI or pre-commit. Check: `--check` passes, `/elon`, `/crew`, `/tl`, `/deploy status` load and resolve their facts.
+2. riben.life (phase 2): write `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`, `git mv .agents/skills/crew/daily-run.md docs/agents/daily-run.md`, `git rm -r .agents/skills/orchestration`, point `.claude/model-routing.md` at `~/.claude/skills/orca-team/worker-watch.sh`, run `sync-team-skills.sh --force .`, replace the six real `.cursor/skills` dirs of tier 3 skills with links to `.agents`, add `sync-team-skills.sh --check` to CI or pre-commit. Check: `--check` passes, `/elon`, `/crew`, `/tl`, `/deploy status` load and resolve their facts.
 3. PSTV (phase 2): the same, plus `git mv .agents/skills/tl/issue-budget.md docs/agents/issue-budget.md` (and fix the path in daily run step 3), remove the orchestration `SKILL.md`, copy `docs/agents/persistent-memory-protocol.md` from the template, drop `e2e-test-scaffold` from qa-sdet or add a PSTV variant, turn `web2/.cursor/skills` copies into links. Check: same as step 2.
 
 ### Risks
@@ -225,6 +225,12 @@ Shared tree D cut from 60 to 31 skills. Matt Pocock skills synced to upstream `4
 * Removed 4 unused Matt Pocock skills (no use in 30 days of Claude or Codex logs, no workflow reference): ask-matt, teach, to-questionnaire, wait-what.
 * `implement-spec` and `pr` stay skipped for the reasons above.
 
-## Local skills protected from `npx skills update` (2026-10-12)
+## Orca owns orchestration; dotfiles owns orca-team (2026-10-13)
 
-`npx skills update -g` rewrites every skill listed in `.agents/.skill-lock.json` (`~/.agents/.skill-lock.json`) from its upstream source, and only those. On 2026-10-12 an update replaced our customized `orchestration` with the `stablyai/orca` stub and deleted `worker-panes.sh`, `worker-pane.sh`, `worker-pane-close.sh`, `worker-watch.sh`, `role-colors.tsv` and their tests. The `orchestration` entry is now removed from the lock, so updates skip it; it is maintained here by hand. Never re add it with `npx skills add stablyai/orca` (that writes the entry back). `script/team-audit.sh` fails when the lock tracks `orchestration` or a helper script is missing. The other Orca skills (`orca-cli`, `orca-per-workspace-env`, `computer-use`) stay tracked because they carry no local changes.
+An upstream update previously replaced our customized `orchestration` skill and deleted its helper scripts. Keeping that copy out of the skill lock protected it from `npx skills update`, but prevented Orca ADE from recognizing and updating its official skill.
+
+Our additions now live in `.agents/skills/orca-team/`: the Elon coordinator paragraph, worker panes, pane closing and retry helpers, worker-watch, role colors and all four shell test suites. The `orca-team` skill complements Orca's `orchestration` skill; load the official guide with `orca skills get orchestration` for coordination commands.
+
+Dotfiles no longer tracks or ships `.agents/skills/orchestration/`; `.gitignore` reserves it for Orca's official installation. `install.sh` links `~/.agents` to the shared tree, and `setup-claude-code.sh` links `~/.claude/skills` to its skills directory, so both discover `orca-team` automatically. Arch and Debian setup also create the shared `~/.agents` link. `sync-team-skills.sh` copies only the tier 2 template skills and installs neither shared skill; it updates the crew instructions to call the shared `orca-team` scripts.
+
+Orca installs and updates its official `orchestration` copy. Keep `orca-team` out of `.agents/.skill-lock.json`: `script/team-audit.sh` rejects a lock entry for it and missing helpers, including `worker-pane-retry.sh`. Tracking official `orchestration` in the lock is allowed again. Tests: every `.agents/skills/orca-team/*.test.sh` and `script/tests/team-audit.test.sh`.

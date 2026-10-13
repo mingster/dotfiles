@@ -102,7 +102,8 @@ case "$OSTYPE" in
 esac
 
 
-# Agents: ~/.agents -> dotfiles/.agents (committed skill folders shared by Claude Code, Cursor, and other IDEs)
+# Agents: ~/.agents -> dotfiles/.agents (includes our orca-team tooling).
+# orchestration is ignored and installed/updated by Orca, never shipped by dotfiles.
 mkdir -p "$DOTFILES_ROOT/.agents"
 ln -sfn "$DOTFILES_ROOT/.agents" "$HOME/.agents"
 
