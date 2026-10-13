@@ -28,3 +28,14 @@ Each round the user answers reshapes the tree: settled decisions push the fronti
 Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch a sub-agent to find it; don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report; ask the rest of the frontier now. The _decisions_ are the user's: put each to them and wait.
 
 The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
+
+## Grilling on tracker issues
+
+When the grill covers issues that wait on a human (labels `needs-triage` or `ready-for-human`), the orchestrator (Elon, or whoever runs the grill) owns the labels. As each answer settles an issue, record it and relabel it at once, without asking again:
+
+```bash
+gh issue comment <n> --body "Owner decision <date> (grill Q<k>, <option>): <what was decided, who does what>."
+gh issue edit <n> --remove-label needs-triage --remove-label ready-for-human --add-label ready-for-agent
+```
+
+Keep `ready-for-human` only when the owner still has to act with his own hands or accounts; name that action and its exact command on the issue. A decision to park or defer gets `blocked` (or is closed) with the reason, not `ready-for-agent`. Relabelled issues go into the normal dispatch queue. For a full backlog sweep use `grill-backlog`.
