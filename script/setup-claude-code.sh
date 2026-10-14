@@ -4,6 +4,12 @@
 # All other entries in .agents/claude/ are linked into ~/.claude/ automatically.
 # README.md is excluded (documentation only).
 set -euo pipefail
+KEEP_SETTINGS=0
+case "${1:-}" in
+  --keep-settings) KEEP_SETTINGS=1 ;;
+  '') ;;
+  *) echo 'Usage: setup-claude-code.sh [--keep-settings]' >&2; exit 2 ;;
+esac
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 AGENTS_ROOT="$DOTFILES/.agents"
@@ -43,6 +49,7 @@ for entry in "$CLAUDE_SRC"/*; do
   name=$(basename "$entry")
   [ "$name" = "README.md" ] && continue
   [ "$name" = "CLAUDE.md" ] && continue
+  [ "$name" != settings.json ] || [ "$KEEP_SETTINGS" -eq 0 ] || continue
   ln -sfn "$entry" "${HOME}/.claude/$name"
 done
 
