@@ -9,14 +9,15 @@ case "${OSTYPE:-}" in
     AG_USER="$HOME/Library/Application Support/Antigravity IDE/User"
     if [ ! -d "/Applications/Antigravity IDE.app" ] \
         && [ ! -d "/Applications/_dev/Antigravity IDE.app" ] \
-        && [ ! -d "$HOME/Applications/Antigravity IDE.app" ]; then
+        && [ ! -d "$HOME/Applications/Antigravity IDE.app" ] \
+        && ! command -v agy >/dev/null 2>&1; then
       echo "setup-antigravity: Antigravity IDE not installed; skipping." >&2
       exit 0
     fi
     ;;
   linux*)
     AG_USER="${XDG_CONFIG_HOME:-$HOME/.config}/Antigravity IDE/User"
-    if ! command -v antigravity >/dev/null 2>&1 && ! command -v antigravity-ide >/dev/null 2>&1; then
+    if ! command -v antigravity >/dev/null 2>&1 && ! command -v antigravity-ide >/dev/null 2>&1 && ! command -v agy >/dev/null 2>&1; then
       echo "setup-antigravity: Antigravity IDE not installed; skipping." >&2
       exit 0
     fi

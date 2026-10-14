@@ -39,6 +39,8 @@ Run `script/check-skill-collisions.sh` to find a project skill that shadows a ce
 
 ### Agent team template
 
+Use `script/agent-team.sh` for machine setup, new projects and safe reset previews. See [Agent team setup](docs/agents/agent-team-setup.md) for commands, backups and owner steps.
+
 The team files give agents their jobs, working rules and repeatable steps. Elon is the front door: give him an objective and he plans, dispatches teammates through Orca orchestration and collects their results. See [Agent team architecture](docs/agents/agent-team-architecture.md) for the full design.
 
 `script/adopt-agent-team.sh [--project-name <name>] <dir>` installs from [templates/agent-team](templates/agent-team/): roles, generated team skills, facts file skeletons, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
@@ -57,7 +59,7 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 | `secops-finops` | Security, tenant isolation, financial reconciliation, cost and privacy reviews. |
 | `support-csm` | Customer ticket triage, reply drafts, recurring pain points and closure drafts. |
 
-The adoption script currently copies the first eight roles. For support, also copy [support-csm.md](templates/agent-team/.claude/agents/support-csm.md) into the project's `.claude/agents/` and replace `{{PROJECT_NAME}}`.
+The adoption script installs every role in the template, including support.
 
 Team skills come from [templates/agent-team/.agents/skills](templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `tl` handles engineering requests, `deploy` promotes releases, `grill-backlog` clears owner decisions and `team-audit` checks team files. Adoption runs `script/sync-team-skills.sh` to generate project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and sync again; do not edit generated copies.
 
