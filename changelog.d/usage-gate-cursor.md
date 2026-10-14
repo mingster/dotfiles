@@ -1,0 +1,1 @@
+- `script/usage-gate.py` now gates Cursor like Claude and Codex. It reads the plan usage percentage and billing cycle end from the Cursor dashboard summary (using the session the app already holds, never printed or stored) and applies the same daily cap, 95% ceiling and per-worker reserve over the cycle. The hook gates `--agent cursor`.

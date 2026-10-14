@@ -74,9 +74,27 @@ class Hook(unittest.TestCase):
         self.assertIn("codex", deny); self.assertNotIn("claude", deny)
 
     def test_unknown_provider_passes_with_warning(self):
-        deny, err = self.run_hook("orca orchestration worker-start --task t --agent cursor")
+        deny, err = self.run_hook("orca orchestration worker-start --task t --agent antigravity")
         self.assertIsNone(deny)
-        self.assertIn("no usage reading for agent cursor", err)
+        self.assertIn("no usage reading for agent antigravity", err)
+
+    def cursor(self, pct, baseline):
+        ends = datetime.fromtimestamp(FUT, timezone.utc).isoformat()
+        json.dump({"billingCycleStart": "2026-09-25T00:00:00+00:00", "billingCycleEnd": ends,
+                   "individualUsage": {"plan": {"enabled": True, "totalPercentUsed": pct}}},
+                  open(self.state + "/summary.json", "w"))
+        json.dump({"date": datetime.now().strftime("%Y-%m-%d"), "baseline": baseline, "resets_at": FUT.__float__()},
+                  open(self.state + "/cursor.json", "w"))
+        os.environ["USAGE_GATE_CURSOR_SUMMARY"] = self.state + "/summary.json"
+        self.addCleanup(os.environ.pop, "USAGE_GATE_CURSOR_SUMMARY", None)
+
+    def test_cursor_start_goes_through_the_gate(self):
+        cmd = "orca orchestration worker-start --task t --agent cursor"
+        self.cursor(40, 38)
+        self.assertIsNone(self.run_hook(cmd)[0])
+        self.cursor(95, 90)
+        deny, _ = self.run_hook(cmd)
+        self.assertIn("Usage gate blocked cursor", deny)
 
     def test_no_reading_passes_with_warning(self):
         deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")

@@ -11,6 +11,10 @@ Reads the provider's own weekly percentage, never an estimate:
           under rate_limits.primary or rate_limits.secondary
   claude  ~/.claude/state/usage-gate/claude-rate-limits.json, written by
           statusline.sh from Claude Code's statusline input (rate_limits.seven_day)
+  cursor  https://cursor.com/api/usage-summary, called with the session the Cursor app
+          already holds (read in memory, never printed or stored). Cursor bills a
+          monthly cycle, not a week, so the cycle is mapped onto the same formula, see
+          cursor_parse
 
 "Today" is the weekly percentage now minus the weekly percentage at the start of the
 local day (codex: the last session event before local midnight; claude: the first
@@ -28,8 +32,8 @@ local midnight means zero spend today. Every other reading older than MAX_AGE
 (6 hours) says nothing about today's spend, so it never counts for the daily cap.
 Weekly usage cannot fall before the reset, so while its
 resets_at is still ahead it still blocks on the weekly ceiling. Past the reset, or
-of unknown age, it is no reading. So is any provider without a reader (cursor,
-antigravity, ...).
+of unknown age, it is no reading. So is any provider without a reader (antigravity,
+...), and cursor when its usage cannot be fetched.
 Exit codes: 0 allowed, 3 blocked, 4 unknown (no reading; treated as allowed by
 callers, reported so the owner can see the gap).
 """
@@ -42,7 +46,9 @@ CODEX = os.environ.get("USAGE_GATE_CODEX_SESSIONS", HOME + "/.codex/sessions")
 WEEK_MIN = 10080
 MAX_AGE = 6 * 3600  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
-NOT_GATED = ("cursor", "antigravity")
+NOT_GATED = ("antigravity",)
+CURSOR_URL = "https://cursor.com/api/usage-summary"
+CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
 
 
 def epoch(at):
@@ -120,7 +126,47 @@ def claude_day_start(midnight, path=None):
     return r if t is not None and t >= midnight else None
 
 
-READERS = {"codex": codex_reading, "claude": claude_reading}
+def cursor_parse(summary, now):
+    """Map Cursor's billing cycle onto the weekly formula. Cursor has no weekly window: it
+    bills one cycle (about a month) with a plan allowance. So pct is the plan's
+    totalPercentUsed (the dashboard's "used N% of included total usage"), resets_at is
+    billingCycleEnd, and began_at is billingCycleStart. The cap is then what is left of the
+    cycle under the ceiling at the start of today divided by the days left until the cycle
+    ends, exactly as for a week. On-demand spend is not part of the plan percentage."""
+    try:
+        plan = summary["individualUsage"]["plan"]
+        ends = epoch(summary["billingCycleEnd"])
+        began = epoch(summary["billingCycleStart"])
+        if not plan.get("enabled", True) or ends is None:
+            return None
+        return {"pct": float(plan["totalPercentUsed"]), "resets_at": ends, "began_at": began,
+                "observed_at": now}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def cursor_reading(path=None):
+    """Read-only. The access token comes from the Cursor app's own state database, is turned
+    into the dashboard session cookie in memory, and is never printed or written anywhere."""
+    path = path or CURSOR_SUMMARY
+    try:
+        if path:
+            return cursor_parse(json.load(open(path)), time.time())
+        import base64, sqlite3, urllib.parse, urllib.request
+        db = (HOME + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+              if sys.platform == "darwin" else HOME + "/.config/Cursor/User/globalStorage/state.vscdb")
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        token = con.execute("select value from ItemTable where key='cursorAuth/accessToken'").fetchone()[0]
+        con.close()
+        user = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==="))["sub"].split("|")[-1]
+        cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
+        with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
+            return cursor_parse(json.load(r), time.time())
+    except Exception:
+        return None
+
+
+READERS = {"codex": codex_reading, "claude": claude_reading, "cursor": cursor_reading}
 DAY_START = {"codex": codex_day_start, "claude": claude_day_start}
 
 
@@ -151,9 +197,11 @@ def day_baseline(day_start, pct, resets):
 
 def start_of_day(reading, provider, midnight):
     """Weekly reading at the start of the local day. A week that began today (its reset minus
-    seven days is after midnight) started from 0, whatever older logs say."""
+    seven days, or the cycle start for cursor, is after midnight) started from 0, whatever
+    older logs say."""
     resets = reading.get("resets_at")
-    if resets and float(resets) - WEEK_MIN * 60 >= midnight:
+    began = reading.get("began_at") or (float(resets) - WEEK_MIN * 60 if resets else None)
+    if resets and began is not None and float(began) >= midnight:
         return {"pct": 0.0, "resets_at": resets}
     return DAY_START[provider](midnight) if provider in DAY_START else None
 
@@ -356,7 +404,7 @@ def role_chain(role):
 
 def family(entry):
     provider, model = entry["provider"], entry["model"]
-    if provider == "claude" or (provider in NOT_GATED and model.startswith("claude-")):
+    if provider == "claude" or (provider in NOT_GATED + ("cursor",) and model.startswith("claude-")):
         return "claude"
     if provider == "codex" or model.startswith("gpt-"):
         return "gpt"
