@@ -206,3 +206,6 @@ set -gx PATH "/Users/mtsai/.local/bin" $PATH
 # >>> grok installer >>>
 fish_add_path $HOME/.grok/bin
 # <<< grok installer <<<
+
+# Homebrew casks live in /Applications/_dev (owner decision 2026-10-14)
+set -gx HOMEBREW_CASK_OPTS "--appdir=/Applications/_dev"
