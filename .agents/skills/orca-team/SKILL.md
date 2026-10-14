@@ -18,8 +18,12 @@ review. `lead` is a teammate that coordinates engineering integration and report
 this split explicit in task messages and completion reports; CEO recommendations never replace
 human-owner approval or required independent review.
 
-`worker-watch.sh <run_id>` next to this file flags workers that look alive but stopped (provider
-limit, trust dialog, low context); run it as `~/.claude/skills/orca-team/worker-watch.sh`.
+`worker-watch.sh <run_id>` next to this file flags STOPPED (provider limit or network error),
+IDLE (empty input prompt without busy markers), BLOCKED_DIALOG (trust dialog) and LOW_CONTEXT;
+each exits 4, while OK exits 0. Run it as `~/.claude/skills/orca-team/worker-watch.sh`.
+On IDLE or network STOPPED, send the worker a resume message with
+`orca terminal send --terminal <handle> --text "Resume the assigned task and report its outcome." --enter`
+at once; never leave it waiting.
 `worker-watch.test.sh` is its test.
 
 `worker-panes.sh <run_id> <coordinator_terminal> [dispatch_id ...]` shows workers as colored split panes in the

@@ -41,10 +41,45 @@ workers ctx_a:term_a:in_progress
 printf 'Working on spec\nrunning tests --limit 40\nconst limit = 5\n' > "$tmp/term_a.txt"
 check "all OK, bare word limit not flagged" 0 'ctx_a term_a OK'
 
+cat > "$tmp/term_a.txt" <<'SCREEN'
+  assertions) and initiated the Playwright regression test suite. I am waiting for the test execution to complete.
+────────────────────────────────────────
+>
+
+SCREEN
+check "antigravity ended turn at empty prompt" 4 'ctx_a term_a IDLE'
+
+cat > "$tmp/term_a.txt" <<'SCREEN'
+⚠ There was a network issue connecting to the server, please try again.
+Error ID: 95836a72-example
+────────────────────────────────────────
+>
+SCREEN
+check "antigravity network error at empty prompt" 4 'ctx_a term_a STOPPED .*network issue'
+
+for prompt in '>' '›' '❯'; do
+  printf 'Completed the current turn.\n────────────────────\n%s\n' "$prompt" > "$tmp/term_a.txt"
+  check "empty provider prompt $prompt" 4 'ctx_a term_a IDLE'
+  for busy in '⠋ Executing tests' 'Running tests' 'Thinking' '• Working (esc to interrupt)'; do
+    printf '%s\n────────────────────\n%s\n' "$busy" "$prompt" > "$tmp/term_a.txt"
+    check "busy screen $busy with prompt $prompt" 0 'ctx_a term_a OK'
+  done
+done
+
+printf '> Continue with the tests\n' > "$tmp/term_a.txt"
+check "nonempty input is not idle" 0 'ctx_a term_a OK'
+
+cat > "$tmp/term_a.txt" <<'SRC'
++⚠ There was a network issue connecting to the server, please try again.
+  12 | ⚠ There was a network issue connecting to the server, please try again.
+echo "⚠ There was a network issue connecting to the server, please try again."
+SRC
+check "network error in source and diff not flagged" 0 'ctx_a term_a OK'
+
 printf 'Individual quota reached. Resets in 4h51m\n' > "$tmp/term_a.txt"
 check "antigravity quota" 4 'ctx_a term_a STOPPED .*quota'
 
-printf 'You have hit your weekly limit (1% left)\n' > "$tmp/term_a.txt"
+printf 'You have hit your weekly limit (1%% left)\n' > "$tmp/term_a.txt"
 check "codex weekly limit" 4 'ctx_a term_a STOPPED .*weekly limit'
 
 printf '• Working (3m 21s • esc to interrupt)\n   ⚠ weekly limit: 25%% left · resets at 1:03 PM on 20 Oct · /status\n' > "$tmp/term_a.txt"
@@ -97,7 +132,9 @@ printf 'Working\n' > "$tmp/term_b.txt"
 out=$("$here/worker-watch.sh" run_x); code=$?
 if [ "$code" = 0 ] && ! echo "$out" | grep -q ctx_a && echo "$out" | grep -q 'ctx_b term_b OK'; then pass=$((pass+1)); echo "ok   settled skipped"; else fail=$((fail+1)); echo "FAIL settled skipped"; echo "$out"; fi
 
-"$here/worker-watch.sh" >/dev/null 2>&1; [ $? = 2 ] && { pass=$((pass+1)); echo "ok   usage exit 2"; } || { fail=$((fail+1)); echo "FAIL usage exit 2"; }
+"$here/worker-watch.sh" >/dev/null 2>&1
+if [ $? = 2 ]; then pass=$((pass+1)); echo "ok   usage exit 2"
+else fail=$((fail+1)); echo "FAIL usage exit 2"; fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
