@@ -49,7 +49,7 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 ## Saving quota (owner 2026-10-09)
 
 - A fix or chore touching 3 files or fewer runs as `fullstack-dev-small`, a Light role in `~/.orca/presets.json` (Codex `gpt-6-luna` at `--effort low` first), titled `fullstack-dev-small - <job>` so the usage gate picks from the Light tier. Features, schema changes, money and security stay on `fullstack-dev`.
-- Docs, translation, marketing copy, deploys and Playground walkthroughs start on `--agent antigravity --model gemini-3.1-pro-high` (the usage gate does not meter Antigravity and the hook lets it through), which keeps Claude and Codex for code. Before merge, audit a Gemini worker's file list and new i18n keys: it reformats files and copies English into tw and jp.
+- Docs, translation, marketing copy, deploys and Playground walkthroughs start on `--agent antigravity --model gemini-3.1-pro-high` (the usage gate reads Antigravity per model pool, Claude and Gemini: check with `--provider antigravity --model <id>`), which keeps Claude and Codex for code. Before merge, audit a Gemini worker's file list and new i18n keys: it reformats files and copies English into tw and jp.
 - Antigravity's Claude models and Cursor's Opus have their own quotas that can run out for days. On a quota message in the startup screen, fall back to the next provider; do not retry.
 
 ## Role files and worker launch
