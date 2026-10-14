@@ -1,4 +1,5 @@
-import json, os, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
+from unittest import mock
 from datetime import datetime, timezone
 HOOK = os.path.join(os.path.dirname(__file__), "..", "usage-gate-hook.py")
 FUT = time.time() + 3 * 86400
@@ -74,9 +75,26 @@ class Hook(unittest.TestCase):
         self.assertIn("codex", deny); self.assertNotIn("claude", deny)
 
     def test_unknown_provider_passes_with_warning(self):
-        deny, err = self.run_hook("orca orchestration worker-start --task t --agent antigravity")
+        deny, err = self.run_hook("orca orchestration worker-start --task t --agent unknown")
         self.assertIsNone(deny)
-        self.assertIn("no usage reading for agent antigravity", err)
+        self.assertIn("no usage reading for agent unknown", err)
+
+    def test_antigravity_hook_checks_worst_pool_even_with_model(self):
+        spec = importlib.util.spec_from_file_location("hook", HOOK)
+        hook = importlib.util.module_from_spec(spec)
+        with mock.patch("sys.stdin", io.StringIO('{"tool_name":"Read"}')), \
+                mock.patch("sys.exit"):
+            spec.loader.exec_module(hook)
+        command = "orca orchestration worker-start --agent antigravity --model gemini-flash"
+        data = {"tool_name": "Bash", "tool_input": {"command": command}}
+        result = mock.Mock(returncode=3, stdout=json.dumps({"reason": "pool ceiling",
+                           "weekly_used": 95, "ceiling": 95}))
+        with mock.patch("sys.stdin", io.StringIO(json.dumps(data))), \
+                mock.patch.object(hook.subprocess, "run", return_value=result) as run, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            hook.main()
+        self.assertIn("blocked antigravity", out.getvalue())
+        self.assertEqual(run.call_args.args[0][-3:], ["check", "--provider", "antigravity"])
 
     def cursor(self, pct, baseline):
         ends = datetime.fromtimestamp(FUT, timezone.utc).isoformat()

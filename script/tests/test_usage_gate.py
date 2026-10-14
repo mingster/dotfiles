@@ -4,10 +4,93 @@ from unittest import mock
 spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname(__file__), "..", "usage-gate.py"))
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
 NO_CURSOR = "/nonexistent/cursor-summary.json"
+ug.READERS["antigravity"] = lambda: None  # tests never query the local server
 ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
+
+
+class Antigravity(unittest.TestCase):
+    def test_reads_model_pools_with_shared_quota(self):
+        payload = {"userStatus": {"cascadeModelConfigData": {"clientModelConfigs": [
+            {"label": label, "quotaInfo": {"remainingFraction": remaining,
+                                           "resetTime": "2026-10-20T01:49:00Z"}}
+            for label, remaining in [("Claude Sonnet", .5), ("GPT-OSS 120B", .5),
+                                     ("Gemini Flash", .98), ("Other", 0)]
+        ]}}}
+        readings = ug.antigravity_reading(fetch=lambda: payload)
+        self.assertEqual(set(readings), {"claude", "gemini"})
+        self.assertEqual(readings["claude"]["pct"], 50)
+        self.assertAlmostEqual(readings["gemini"]["pct"], 2)
+        self.assertEqual(readings["claude"]["resets_at"], ug.epoch("2026-10-20T01:49:00Z"))
+
+    def test_check_selects_model_pool_and_blocks_at_ceiling(self):
+        pools = {"claude": {"pct": 95, "resets_at": FUT, "observed_at": NOW},
+                 "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+        with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            for model, status in [("claude-sonnet", 3), ("gpt-oss-120b", 3),
+                                  ("gemini-flash", 0), (None, 3), ("unknown", 4)]:
+                with self.subTest(model=model), contextlib.redirect_stdout(io.StringIO()) as out:
+                    args = ["check", "--provider", "antigravity"]
+                    self.assertEqual(ug.main(args + (["--model", model] if model else [])), status)
+                    detail = json.loads(out.getvalue())
+                    self.assertNotIn("today_used", detail)
+            pools["claude"]["pct"] = 94.99
+            self.assertEqual(ug.run("antigravity", None, 95, now=NOW)["verdict"], "allowed")
+
+    def test_missing_server_timeout_and_bad_payload_have_no_reading(self):
+        with mock.patch.object(ug.subprocess, "run", return_value=mock.Mock(stdout="")):
+            self.assertIsNone(ug.antigravity_reading())
+        for payload in (None, {}, {"userStatus": []}):
+            self.assertIsNone(ug.antigravity_reading(fetch=lambda: payload))
+        def timeout():
+            raise TimeoutError()
+        self.assertIsNone(ug.antigravity_reading(fetch=timeout))
+        with mock.patch.dict(ug.READERS, {"antigravity": lambda: None}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ug.main(["check", "--provider", "antigravity"]), 4)
+
+    def test_transport_timeout_or_bad_json_produces_no_reading(self):
+        import urllib.request
+        processes = mock.Mock(stdout="123 language_server_macos_arm --csrf_token synthetic")
+        ports = mock.Mock(stdout="server 123 TCP 127.0.0.1:12345 (LISTEN)")
+        for error in (TimeoutError(), ValueError("bad JSON")):
+            with mock.patch.object(ug.subprocess, "run", side_effect=[processes, ports]), \
+                    mock.patch.object(urllib.request, "build_opener") as build:
+                build.return_value.open.side_effect = error
+                self.assertIsNone(ug.antigravity_reading())
+
+    def test_picker_uses_candidate_model_pool(self):
+        pools = {"claude": {"pct": 95, "resets_at": FUT, "observed_at": NOW},
+                 "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+        chain = [{"provider": "antigravity", "model": model}
+                 for model in ("claude-sonnet", "gemini-flash")]
+        with tempfile.TemporaryDirectory() as t, \
+                mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            path = t + "/presets.json"
+            with open(path, "w") as f:
+                json.dump({"roles": {"dev": {"chain": chain}}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}):
+                result = ug.pick("dev", None, None, 95, 1)
+        self.assertEqual(result["selected"]["model"], "gemini-flash")
+        self.assertEqual([c["verdict"] for c in result["candidates"]], ["blocked", "allowed"])
+
+    def test_show_lists_both_pools_with_local_resets(self):
+        pools = {"claude": {"pct": 50, "resets_at": FUT, "observed_at": NOW},
+                 "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+        with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ug.main(["show", "--provider", "antigravity"]), 0)
+        for pool, pct in (("claude", "50"), ("gemini", "2")):
+            lines = [line for line in out.getvalue().splitlines() if line.startswith("antigravity/" + pool)]
+            self.assertEqual(len(lines), 1)
+            self.assertIn(pct, lines[0])
+            self.assertIn(ug.local(FUT), lines[0])
 
 
 class Decide(unittest.TestCase):
@@ -265,7 +348,7 @@ class Show(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
         text = out.getvalue()
-        for name in ("claude", "codex", "cursor", "antigravity", "not gated"):
+        for name in ("claude", "codex", "cursor", "antigravity/claude", "antigravity/gemini", "no reading"):
             self.assertIn(name, text)
         self.assertEqual(len([l for l in text.splitlines() if l.startswith("claude")]), 1)
 
@@ -274,7 +357,7 @@ class Show(unittest.TestCase):
                 mock.patch.dict(ug.READERS, {"claude": lambda: None, "codex": lambda: None}), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show", "--json"])
-        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity", "claude", "codex", "cursor"])
+        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity/claude", "antigravity/gemini", "claude", "codex", "cursor"])
 
 
 def summary(pct, ends=FUT, began=NOW - 29 * 86400, enabled=True):
@@ -529,7 +612,7 @@ class PickOrder(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 100.0%, codex unknown, cursor unknown, antigravity not gated")
+                         "pick order now: claude 100.0%, codex unknown, cursor unknown, antigravity/claude unknown, antigravity/gemini unknown")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
