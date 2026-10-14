@@ -1,8 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash",
-      "Bash(*)",
       "Read",
       "Write",
       "Edit",
@@ -225,13 +223,15 @@
     "allow": [
       "$defaults",
       "Bash(bunx biome:*)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(orca orchestration:*)"
     ],
     "soft_deny": [
       "$defaults",
       "Bash(bun run platform:install:*)",
       "Bash(scp:*)",
-      "Bash(rsync:*)"
+      "Bash(rsync:*)",
+      "Bash(psql:*)"
     ],
     "environment": [
       "### Org-wide",
@@ -265,6 +265,8 @@
       "**Key internal services**: `web/` Next.js app (App Router, Prisma, Better Auth) run via Bun; PayUni, NewebPay, ECPay, LINE Pay, TapPay, PayPal and Stripe payment integrations; LINE Official Account / LIFF / LINE assistant (`liff.line.me`, `api.line.me`); Cloudflare API (`api.cloudflare.com`); Prisma-managed Postgres reached via `bun run` scripts",
       "**Sensitive data locations & audiences**: `web/.env.local`, `web/.env.playground`, `web/doc/.env-production`, `fileServer/docs/.env-production`, `fileServer/secrets/`, and any other `.env*` file; `web/bin/validate-aws-s3-credentials.ts` and the AWS S3 credentials it touches; `docs/adr/0009-invoice-credentials-independent-of-payment.md` and related invoice/payment credential records; Prisma database schemas holding customer, payment and subscription data — share only with audiences cleared at the [named+specifics] bar and preserve exact handles when known",
       "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (hyphen/underscore/dot-delimited — e.g. matches `prod-db`, not `producer`); also `store.riben.life` (the production host) and any target touched by `fileServer/bin/db_sync_config_to_prod.sh` or `fileServer/bin/nginx_sync_config_to_prod.sh` when writing (not just syncing from)",
+      "**Default / protected branches**: default branch `main`; rulesets not queryable here and no classic protected branches listed — large orgs may use rulesets instead of classic protection, so treat `main` as protected by convention; `staging` and `production` branches also function as deploy gates per project docs",
+      "**Sensitive data locations & audiences**: `web/.env.local`, `web/.env.playground`, `web/doc/.env-production`, `fileServer/docs/.env-production`, `fileServer/secrets/` (including `fileServer/secrets/client_secret_901427205623-pq0ef15n6sn1562gqpf0vajbif59jrm4.apps.googleusercontent.com.json`), and any other `.env*` file; `web/bin/validate-aws-s3-credentials.ts`, `web/bin/encrypt-notification-channel-credentials.ts`, `web/bin/encrypt-store-credentials.ts`, `web/e2e/helpers/seed-secret.ts` and the credentials they touch; `bin/run-personal-data-retention-cron.sh` and `bin/set-production-secret.sh`; `docs/adr/0009-invoice-credentials-independent-of-payment.md` and related invoice/payment credential records; Prisma database schemas holding customer, payment and subscription data — share only with audiences cleared at the [named+specifics] bar and preserve exact handles when known",
       "### User-specific",
       "**Primary use of Claude Code**: software development — Next.js 16 / TypeScript SaaS streaming platform (Bun, Prisma, Biome), plus Laravel/PHP work per user-level guidance",
       "**Trusted repo**: `/Users/mtsai/pstv/web2` (`github.com/mingster/pstv_web2`, private) and its configured remote. Because the repo is private, confidential material is fine to commit or push there; secrets and sensitive data (personal & entrusted) are never cleared into any repo by its visibility (see Definitions).",
@@ -273,7 +275,9 @@
       "**Primary use of Claude Code**: software development — Next.js store-operations SaaS (Bun, Prisma, Better Auth) for Taiwanese shops and restaurants, plus Laravel/PHP work per user-level guidance",
       "**Trusted repo**: `/Users/mtsai/projects/riben.life` (`github.com/mingster/riben.life`, private) and its configured remote. Because the repo is private, confidential material is fine to commit or push there; secrets and sensitive data (personal & entrusted) are never cleared into any repo by its visibility (see Definitions).",
       "**Org-specific CLIs**: `bun` / `bunx` (package manager and script runner for this repo), `gh` for GitHub questions and PRs",
-      "**Routine under this repo's prefix**: `bun run lint`, `bun run test`, `bun run test:regression`, `bunx`/`npx` invocations under `/Users/mtsai/projects/riben.life` are routine development actions"
+      "**Routine under this repo's prefix**: `bun run lint`, `bun run test`, `bun run test:regression`, `bunx`/`npx` invocations under `/Users/mtsai/projects/riben.life` are routine development actions",
+      "**Primary use of Claude Code**: software development — Next.js 16 / TypeScript store-operations SaaS (Bun, Prisma, Better Auth) for Taiwanese shops and restaurants, plus Laravel/PHP work per user-level guidance",
+      "**Org-specific CLIs**: `bun` / `bunx` (package manager and script runner for this repo), `gh` for GitHub questions and PRs, `orca` for orchestration (heavily used — 105× in this project's transcripts)"
     ]
   },
   "mcpServers": {}
