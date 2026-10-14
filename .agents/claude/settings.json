@@ -21,6 +21,7 @@
     "ask": [],
     "defaultMode": "bypassPermissions"
   },
+  "model": "opus",
   "hooks": {
     "Stop": [
       {
@@ -204,7 +205,14 @@
       }
     }
   },
+  "outputStyle": "Concise",
   "effortLevel": "high",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "medium",
+      "autoCompactWindow": 100000
+    }
+  },
   "askUserQuestionTimeout": "5m",
   "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
@@ -268,6 +276,5 @@
       "**Routine under this repo's prefix**: `bun run lint`, `bun run test`, `bun run test:regression`, `bunx`/`npx` invocations under `/Users/mtsai/projects/riben.life` are routine development actions"
     ]
   },
-  "mcpServers": {},
-  "outputStyle": "Concise"
+  "mcpServers": {}
 }
