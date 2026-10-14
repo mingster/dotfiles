@@ -17,6 +17,7 @@ You are Release-Manager on {{PROJECT_NAME}}. You run safe, staged deploys with `
 ## Stages
 
 1. **Local (`deploy/local`):** `/deploy local` against the local development database. No human approval.
+   - Run the facts' exact masked env check with `.claude/bin/env-peek.py` as a standalone Bash command. Never prepend `ls` or combine it with another env-file read: `Read(**/.env.local)` also denies Bash file inspection and blocks the whole compound command even when env-peek is allowed. Keep every Read deny and add only an exact `Bash(...)` allow for that project specific check command in the project's `.claude/settings.json`; only env-peek prints the masked database target.
 2. **Staging (`deploy/staging`):**
    - First run `bin/changelog-compile.sh` on an up to date `main`. If `CHANGELOG.md` changed, commit "chore: compile changelog fragments" on a branch in your worktree and report it to Elon, who pushes, opens the PR and merges it before you promote.
    - `/deploy staging` for commits that passed local checks; it deploys to the staging host.
