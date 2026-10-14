@@ -32,8 +32,9 @@ local midnight means zero spend today. Every other reading older than MAX_AGE
 (6 hours) says nothing about today's spend, so it never counts for the daily cap.
 Weekly usage cannot fall before the reset, so while its
 resets_at is still ahead it still blocks on the weekly ceiling. Past the reset, or
-of unknown age, it is no reading. So is any provider without a reader (antigravity,
-...), and cursor when its usage cannot be fetched.
+of unknown age, it is no reading. So is any provider without a reader, and
+cursor or Antigravity when usage cannot be fetched. Antigravity reads quota per
+model pool from its local language server and uses ceiling only gating.
 Exit codes: 0 allowed, 3 blocked, 4 unknown (no reading; treated as allowed by
 callers, reported so the owner can see the gap).
 """
@@ -46,7 +47,7 @@ CODEX = os.environ.get("USAGE_GATE_CODEX_SESSIONS", HOME + "/.codex/sessions")
 WEEK_MIN = 10080
 MAX_AGE = 6 * 3600  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
-NOT_GATED = ("antigravity",)
+NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
 
@@ -166,7 +167,82 @@ def cursor_reading(path=None):
         return None
 
 
-READERS = {"codex": codex_reading, "claude": claude_reading, "cursor": cursor_reading}
+def antigravity_fetch():
+    """Read local quota without persisting or displaying the server's CSRF token."""
+    import re, ssl, urllib.request
+    deadline = time.monotonic() + 7
+    try:
+        processes = subprocess.run(["ps", "-axo", "pid,command"], capture_output=True,
+                                   text=True, timeout=2).stdout
+        for line in processes.splitlines():
+            if "language_server_macos" not in line:
+                continue
+            token = re.search(r"--csrf_token(?:=|\s+)(\S+)", line)
+            if not token or not line.split()[0].isdigit():
+                continue
+            ports = subprocess.run(["lsof", "-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p",
+                                    line.split()[0]], capture_output=True, text=True, timeout=2).stdout
+            for port in sorted(set(re.findall(r":(\d+) \(LISTEN\)", ports))):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                request = urllib.request.Request(
+                    f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus",
+                    data=json.dumps({"metadata": {"ideName": "antigravity",
+                                    "extensionName": "antigravity", "locale": "en"}}).encode(),
+                    headers={"Content-Type": "application/json", "Connect-Protocol-Version": "1",
+                             "X-Codeium-Csrf-Token": token.group(1)})
+                try:
+                    # The local server uses a self-signed certificate. Never use a proxy.
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                        urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
+                    with opener.open(request, timeout=min(2, remaining)) as response:
+                        payload = json.load(response)
+                    if isinstance(payload, dict) and "userStatus" in payload:
+                        return payload
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
+
+def antigravity_pool(model):
+    if model.startswith(("claude-", "gpt-oss")):
+        return "claude"
+    if model.startswith("gemini-"):
+        return "gemini"
+    return None
+
+
+def antigravity_reading(fetch=None):
+    """One reading per model pool. Duplicate model labels share the same quota."""
+    try:
+        payload = (fetch or antigravity_fetch)()
+        configs = payload["userStatus"]["cascadeModelConfigData"]["clientModelConfigs"]
+        pools = {}
+        for config in configs:
+            label = config.get("label", "")
+            pool = "claude" if label.startswith(("Claude", "GPT-OSS")) else (
+                "gemini" if label.startswith("Gemini") else None)
+            if pool is None:
+                continue
+            quota = config["quotaInfo"]
+            remaining = float(quota["remainingFraction"])
+            resets = epoch(quota["resetTime"])
+            if not 0 <= remaining <= 1 or resets is None:
+                continue
+            reading = {"pct": round(100 * (1 - remaining), 10), "resets_at": resets,
+                       "observed_at": time.time()}
+            if pool not in pools or reading["pct"] > pools[pool]["pct"]:
+                pools[pool] = reading
+        return pools or None
+    except (KeyError, TypeError, ValueError, AttributeError, OSError):
+        return None
+
+
+READERS = {"codex": codex_reading, "claude": claude_reading, "cursor": cursor_reading,
+           "antigravity": antigravity_reading}
 DAY_START = {"codex": codex_day_start, "claude": claude_day_start}
 
 
@@ -284,8 +360,29 @@ def blocked_until(detail, now):
     return float(resets) if resets else None
 
 
-def run(provider, cap, ceiling, now=None, per_worker=1.0):
+def antigravity_result(pools, ceiling, now, model=None, pool=None):
+    selected = pool or (antigravity_pool(model) if model else None)
+    reading = pools.get(selected) if selected else (max(pools.values(), key=lambda r: r["pct"])
+                                                   if pools and not model else None)
+    result = {"provider": "antigravity" + ("/" + pool if pool else ""),
+              "verdict": "unknown", "reason": "no reading", "policy": "ceiling only"}
+    if not reading or reading["resets_at"] <= now:
+        return result
+    blocked = reading["pct"] >= ceiling
+    result.update(verdict="blocked" if blocked else "allowed", weekly_used=reading["pct"],
+                  ceiling=ceiling, resets_at=reading["resets_at"],
+                  resets_local=local(reading["resets_at"]), reading_age_min=0)
+    result.pop("reason")
+    if blocked:
+        result.update(reason="pool ceiling", blocked_until=reading["resets_at"],
+                      blocked_until_local=local(reading["resets_at"]))
+    return result
+
+
+def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
     now = now or time.time()
+    if provider == "antigravity":
+        return antigravity_result(READERS[provider]() or {}, ceiling, now, model=model)
     today = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
     midnight = local_midnight(now)
     path = f"{STATE}/{provider}.json"
@@ -353,7 +450,7 @@ def table(rows):
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip() for row in [head] + out]
     lines.append("today% = week% now minus week% at the start of the local day, for the whole account "
                  "(sessions outside Orca count). cap% = (ceiling - week% at the start of today) / days left "
-                 "until the weekly reset. reserve% = --reserve per running worker.")
+                 "until the weekly reset. reserve% = --reserve per running worker. Antigravity reads per model pool and uses only the ceiling.")
     ordered = sorted(rows, key=lambda r: headroom(r)[1] if headroom(r)[1] is not None else -float("inf"),
                      reverse=True)
     order = []
@@ -370,6 +467,9 @@ def table(rows):
 
 def headroom(row):
     """Remaining weekly percentage points and fraction of today's cap."""
+    if row.get("policy") == "ceiling only" and "weekly_used" in row:
+        room = row["ceiling"] - row["weekly_used"]
+        return room, room / row["ceiling"] if row["ceiling"] > 0 else 0.0
     if "today_used" not in row or "cap" not in row:
         return None, None
     room = min(row["cap"] - row["today_used"] - row["reserve"],
@@ -404,7 +504,7 @@ def role_chain(role):
 
 def family(entry):
     provider, model = entry["provider"], entry["model"]
-    if provider == "claude" or (provider in NOT_GATED + ("cursor",) and model.startswith("claude-")):
+    if provider == "claude" or (provider in ("antigravity", "cursor") and model.startswith("claude-")):
         return "claude"
     if provider == "codex" or model.startswith("gpt-"):
         return "gpt"
@@ -413,14 +513,16 @@ def family(entry):
 
 def pick(role, avoid, cap, ceiling, per_worker):
     chain, pinned = role_chain(role)
-    rows = {e["provider"]: None for e in chain}
-    for provider in rows:
-        rows[provider] = run(provider, cap, ceiling, per_worker=per_worker)
-    gated = [r for p, r in rows.items() if p in READERS]
+    rows = {}
+    for entry in chain:
+        key = (entry["provider"], entry["model"] if entry["provider"] == "antigravity" else None)
+        if key not in rows:
+            rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1])
+    gated = [r for (p, _), r in rows.items() if p in READERS]
     fallback = all(r["verdict"] == "blocked" for r in gated)
     candidates, allowed = [], []
     for index, entry in enumerate(chain):
-        row = rows[entry["provider"]]
+        row = rows[(entry["provider"], entry["model"] if entry["provider"] == "antigravity" else None)]
         room, fraction = headroom(row)
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
@@ -455,6 +557,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["check", "show", "pick"])
     ap.add_argument("--provider")
+    ap.add_argument("--model", help="Antigravity model id; omitted selects the worst pool")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt"])
     ap.add_argument("--cap", type=float, default=None,
@@ -488,7 +591,14 @@ def main(argv=None):
     names = [a.provider] if a.provider else list(READERS)
     if a.cmd == "show" and not a.provider:
         names += list(NOT_GATED)
-    out = [run(n, a.cap, a.ceiling, per_worker=a.reserve) for n in names]
+    out = []
+    for name in names:
+        if name == "antigravity" and a.cmd == "show":
+            pools = READERS[name]() or {}
+            out.extend(antigravity_result(pools, a.ceiling, time.time(), pool=pool)
+                       for pool in ("claude", "gemini"))
+        else:
+            out.append(run(name, a.cap, a.ceiling, per_worker=a.reserve, model=a.model))
     if a.cmd == "show" and not a.json:
         print(table(out))
     else:
