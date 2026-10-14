@@ -1,7 +1,10 @@
 import contextlib, importlib.util, io, json, os, sys, tempfile, unittest
+from datetime import timezone
 from unittest import mock
 spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname(__file__), "..", "usage-gate.py"))
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+NO_CURSOR = "/nonexistent/cursor-summary.json"
+ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
@@ -49,7 +52,7 @@ class Decide(unittest.TestCase):
 
 class Main(unittest.TestCase):
     def test_unreadable_provider_is_no_reading_not_a_usage_error(self):
-        for name in ("cursor", "antigravity", "made-up"):
+        for name in ("antigravity", "made-up"):
             with self.subTest(name), contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(ug.main(["check", "--provider", name]), 4)
             self.assertEqual(json.loads(out.getvalue())["reason"], "no reading")
@@ -200,7 +203,7 @@ class DayStart(unittest.TestCase):
         older = {"pct": 13.0, "resets_at": mid + 604800 - 1}                       # began 1 s before midnight
         with mock.patch.dict(ug.DAY_START, {"codex": lambda m: "from logs"}):
             self.assertEqual(ug.start_of_day(older, "codex", mid), "from logs")
-        self.assertIsNone(ug.start_of_day(older, "cursor", mid))
+        self.assertIsNone(ug.start_of_day(older, "antigravity", mid))
 
     def test_no_day_start_falls_back_to_the_first_check(self):
         self.assertEqual(self.go(D(60), None)[1]["today_used"], 0.0)
@@ -272,6 +275,70 @@ class Show(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show", "--json"])
         self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity", "claude", "codex", "cursor"])
+
+
+def summary(pct, ends=FUT, began=NOW - 29 * 86400, enabled=True):
+    return {"billingCycleStart": ug.datetime.fromtimestamp(began, timezone.utc).isoformat(),
+            "billingCycleEnd": ug.datetime.fromtimestamp(ends, timezone.utc).isoformat(),
+            "individualUsage": {"plan": {"enabled": enabled, "totalPercentUsed": pct}}}
+
+
+class Cursor(unittest.TestCase):
+    """Cursor bills one monthly cycle: totalPercentUsed stands in for the week, the cycle end for its reset."""
+
+    def check(self, pct, baseline=None, ends=NOW + 10 * 86400, running=0, cap=None):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=running):
+            if pct is not None:
+                path = t + "/summary.json"
+                json.dump(summary(pct, ends), open(path, "w"))
+                os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
+                ug.CURSOR_SUMMARY = path
+            else:
+                ug.CURSOR_SUMMARY = NO_CURSOR
+            if baseline is not None:
+                json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"), "baseline": baseline,
+                           "resets_at": ends}, open(t + "/cursor.json", "w"))
+            try:
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    status = ug.main(["check", "--provider", "cursor", *(["--cap", str(cap)] if cap else [])])
+            finally:
+                ug.CURSOR_SUMMARY = NO_CURSOR
+                os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
+            return status, json.loads(out.getvalue())
+
+    def test_parse_maps_the_cycle_onto_the_week(self):
+        r = ug.cursor_parse(summary(42.5), NOW)
+        self.assertEqual((r["pct"], r["resets_at"], r["observed_at"]), (42.5, FUT, NOW))
+        self.assertEqual(r["began_at"], NOW - 29 * 86400)
+
+    def test_parse_without_a_plan_is_no_reading(self):
+        self.assertIsNone(ug.cursor_parse({}, NOW))
+        self.assertIsNone(ug.cursor_parse(summary(10, enabled=False), NOW))
+
+    def test_allowed_under_the_daily_share(self):
+        status, d = self.check(50, baseline=48)       # cap = (95-48) over the days left to the cycle end, spent 2
+        self.assertEqual((status, d["cap"], d["today_used"]), (0, ug.auto_cap(48, NOW + 10 * 86400, NOW, 95), 2.0))
+
+    def test_capped_when_today_used_the_daily_share(self):
+        status, d = self.check(53, baseline=48)
+        self.assertEqual((status, d["reason"]), (3, "daily cap"))
+
+    def test_cycle_exhausted_blocks_until_the_cycle_ends(self):
+        status, d = self.check(100, baseline=100)
+        self.assertEqual((status, d["reason"], d["blocked_until"]), (3, "weekly ceiling", NOW + 10 * 86400))
+
+    def test_running_cursor_workers_reserve_room(self):
+        self.assertEqual(self.check(50, baseline=48, running=3)[0], 3)
+
+    def test_no_reading_is_exit_4(self):
+        status, d = self.check(None)
+        self.assertEqual((status, d["reason"]), (4, "no reading"))
+
+    def test_a_cycle_that_began_today_started_from_zero(self):
+        r = ug.cursor_parse(summary(3, began=NOW), NOW)
+        self.assertEqual(ug.start_of_day(r, "cursor", NOW - 3600)["pct"], 0.0)
 
 
 class AutoCap(unittest.TestCase):
@@ -406,7 +473,7 @@ class Pick(unittest.TestCase):
 
     def test_ties_keep_chain_order_and_reserve_can_block_all_gated_providers(self):
         self.assertIn("--agent claude", self.invoke(codex=44)[1])
-        self.assertIn("--agent cursor", self.invoke(claude=51, codex=51, running=1)[1])
+        self.assertEqual(self.invoke(claude=51, codex=51, running=1)[0], 3)   # cursor has no reading, which proves nothing
 
     def test_pinned_roles_keep_first_allowed_entry(self):
         for role, pin in (("elon", False), ("release-manager", False), ("custom", True)):
@@ -429,7 +496,7 @@ class Pick(unittest.TestCase):
 
     def test_ungated_is_only_a_last_resort_and_unknown_does_not_prove_blocked(self):
         self.assertIn("--agent codex", self.invoke(claude=52)[1])
-        self.assertIn("--agent cursor", self.invoke(claude=52, codex=52)[1])
+        self.assertEqual(self.invoke(claude=52, codex=52)[0], 3)   # cursor has no reading, so antigravity is not a fallback yet
         self.assertEqual(self.invoke(claude=None, codex=52)[0], 3)
         self.assertEqual(self.invoke(extra=("--avoid-family", "gpt"), claude=None)[0], 3)
 
@@ -462,7 +529,7 @@ class PickOrder(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 100.0%, codex unknown, cursor not gated, antigravity not gated")
+                         "pick order now: claude 100.0%, codex unknown, cursor unknown, antigravity not gated")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}

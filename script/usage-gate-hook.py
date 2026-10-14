@@ -3,14 +3,14 @@
 
 Wired from each agent team's .claude/settings.json. For every
 `orca orchestration worker-start ... --agent <id>` in the command it runs
-`usage-gate.py check --provider <id>` (claude and codex only) and denies the
+`usage-gate.py check --provider <id>` (claude, codex and cursor) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
 Known roles from the task title must also match `pick --role`. The Codex launcher
 is checked the same way. A command scoped USAGE_GATE_OVERRIDE reason bypasses
 routing enforcement and is logged, but never bypasses the daily or weekly gate.
 
-Passes with a warning on stderr: an agent the gate cannot read (cursor,
-antigravity, ...), a worker-start without --agent, gate exit 4 (no reading) and
+Passes with a warning on stderr: an agent the gate cannot read
+(antigravity, ...), a worker-start without --agent, gate exit 4 (no reading) and
 any gate error. Every other command passes untouched. Exit 0 always; a block is
 a JSON permissionDecision of "deny".
 """
@@ -18,7 +18,7 @@ import json, os, re, shlex, subprocess, sys
 from datetime import datetime, timezone
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
-GATED = {"claude", "codex"}
+GATED = {"claude", "codex", "cursor"}
 PUNCT = set(";&|\n()<>")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
 VAR = re.compile(r"^\$\{?(\w+)\}?$")
