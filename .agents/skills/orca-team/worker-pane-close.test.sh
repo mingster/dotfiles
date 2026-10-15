@@ -38,7 +38,8 @@ esac
 FAKE
 chmod +x "$tmp/orca"
 export ORCA_TERMINAL_HANDLE=term_coordinator ORCA_CLI_COMMAND="$tmp/orca" FAKE_DIR="$tmp" ORCA_PANE_STATE_DIR="$tmp/state"
-mkdir -p "$tmp/state" "$tmp/bin"
+mkdir -p "$tmp/state" "$tmp/bin" "$tmp/linked" "$tmp/main/.git"
+printf 'gitdir: /fixture/worktrees/linked\n' > "$tmp/linked/.git"
 printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "$FAKE_DIR/sleeps.log"\n' > "$tmp/bin/sleep"; chmod +x "$tmp/bin/sleep"
 export PATH="$tmp/bin:$PATH"
 pass=0; fail=0
@@ -72,19 +73,19 @@ check "no args re-run is a no-op" "$([ "$(closes)" = 2 ]; echo $?)"
 # Leftover terminals: a validated worker leaves its agent and setup terminals, a shell in its worktree and
 # maybe a pane whose split timed out. Close the ones still listed, never the owner's or other projects'.
 rm -f "$tmp/closes.log"
-cat > "$tmp/show.d6" <<'JSON'
+cat > "$tmp/show.d6" <<JSON
 {"result":{"dispatch":{"status":"released","assigneeHandle":"term_agent"},
  "worker":{"agentTerminalHandle":"term_agent","effects":[
-  {"kind":"worktree","action":"created_child","id":"wt1::/wt/d6"},
+  {"kind":"worktree","action":"created_child","id":"wt1::$tmp/linked"},
   {"kind":"terminal","role":"agent","action":"created","id":"term_agent"},
   {"kind":"terminal","role":"setup","action":"created","id":"term_setup"},
   {"kind":"terminal","role":"setup","action":"created","id":"term_gone"}]}}}
 JSON
-cat > "$tmp/terminals.json" <<'JSON'
+cat > "$tmp/terminals.json" <<JSON
 {"result":{"terminals":[
- {"handle":"term_agent","worktreePath":"/wt/d6"},{"handle":"term_setup","worktreePath":"/wt/d6"},
- {"handle":"term_shell","worktreePath":"/wt/d6"},{"handle":"term_owner","worktreePath":"/proj"},
- {"handle":"term_wt_prefix","worktreePath":"/wt/d6-other"}]}}
+ {"handle":"term_agent","worktreePath":"$tmp/linked"},{"handle":"term_setup","worktreePath":"$tmp/linked"},
+ {"handle":"term_shell","worktreePath":"$tmp/linked"},{"handle":"term_owner","worktreePath":"$tmp/main"},
+ {"handle":"term_wt_prefix","worktreePath":"$tmp/linked-other"}]}}
 JSON
 "$here/worker-pane-close.sh" d6 >/dev/null
 check "leftover: closes the agent terminal" "$(grep -qx term_agent "$tmp/closes.log"; echo $?)"
@@ -94,9 +95,34 @@ check "leftover: skips a handle orca terminal list no longer shows" "$(! grep -q
 check "leftover: leaves the owner's and other worktrees' terminals" "$(! grep -qE 'term_owner|term_wt_prefix' "$tmp/closes.log"; echo $?)"
 check "leftover: each terminal closed once" "$([ "$(sort "$tmp/closes.log" | uniq -d | wc -l | tr -d ' ')" = 0 ]; echo $?)"
 
+# Reusing a linked worktree still owns its leftover shell terminals.
+rm -f "$tmp/closes.log"
+sed 's/"created_child"/"reused"/' "$tmp/show.d6" > "$tmp/show.reused"
+cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_shell_one","worktreePath":"$tmp/linked"},{"handle":"term_shell_two","worktreePath":"$tmp/linked"}]}}
+JSON
+"$here/worker-pane-close.sh" reused >/dev/null
+check "reused worktree: closes both leftover shells" "$(grep -qx term_shell_one "$tmp/closes.log" && grep -qx term_shell_two "$tmp/closes.log"; echo $?)"
+
+# Missing worktree effects fall back to the worker identity, then its start options.
+for source in worktreeId startOptions; do
+  rm -f "$tmp/closes.log"
+  python3 - "$tmp/show.fallback" "$tmp/linked" "$source" <<'FIXTURE'
+import json,sys
+file,path,source=sys.argv[1:]
+worker={"worktreeId":"wt1::"+path} if source=="worktreeId" else {"startOptions":{"worktree":"path:"+path}}
+json.dump({"result":{"dispatch":{"status":"released"},"worker":worker}},open(file,"w"))
+FIXTURE
+  cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_fallback_shell","worktreePath":"$tmp/linked"}]}}
+JSON
+  "$here/worker-pane-close.sh" fallback >/dev/null
+  check "$source fallback: closes leftover shell" "$(grep -qx term_fallback_shell "$tmp/closes.log"; echo $?)"
+done
+
 # A pane recorded in the state file is closed once even when it is also in the listing.
-cat > "$tmp/terminals.json" <<'JSON'
-{"result":{"terminals":[{"handle":"term_shell","worktreePath":"/wt/d6"}]}}
+cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_shell","worktreePath":"$tmp/linked"}]}}
 JSON
 rm -f "$tmp/closes.log"; echo term_shell > "$tmp/state/d6"
 "$here/worker-pane-close.sh" d6 >/dev/null
@@ -108,12 +134,14 @@ echo term_shell > "$tmp/state/d7"
 "$here/worker-pane-close.sh" d7 >/dev/null
 check "active dispatch: no terminal is closed" "$([ ! -e "$tmp/closes.log" ]; echo $?)"
 
-# A worker running in the owner's checkout (no created worktree) is matched by handle only, never by cwd.
+# A reused main checkout has a .git directory and is matched by handle only, never by cwd.
 rm -f "$tmp/closes.log"
-echo '{"result":{"terminals":[{"handle":"term_agent","worktreePath":"/proj"},{"handle":"term_owner","worktreePath":"/proj"}]}}' > "$tmp/terminals.json"
-cat > "$tmp/show.d8" <<'JSON'
+cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_agent","worktreePath":"$tmp/main"},{"handle":"term_owner","worktreePath":"$tmp/main"}]}}
+JSON
+cat > "$tmp/show.d8" <<JSON
 {"result":{"dispatch":{"status":"failed"},"worker":{"agentTerminalHandle":"term_agent","effects":[
-  {"kind":"worktree","action":"reused","id":"wt0::/proj"},
+  {"kind":"worktree","action":"reused","id":"wt0::$tmp/main"},
   {"kind":"terminal","role":"agent","action":"created","id":"term_agent"}]}}}
 JSON
 "$here/worker-pane-close.sh" d8 >/dev/null
@@ -159,9 +187,15 @@ FAKE_REACTIVATE=reactivate FAKE_FAILS=100 "$here/worker-pane-close.sh" reactivat
 check "dispatch becoming running stops retries" "$([ "$(closes)" = 1 ] && [ -e "$tmp/state/reactivate" ]; echo $?)"
 rm "$tmp/state/reactivate"
 # No recorded pane: discover ended workers from the current Run, with pagination.
-echo '{"result":{"workers":[{"dispatchId":"d7","resource":{"worktreeId":"repo1::/wt/d6"}}],"page":{"hasMore":true,"nextCursor":"next"}}}' > "$tmp/workers.json"
-echo '{"result":{"workers":[{"dispatchId":"d6","dispatchStatus":"released","resource":{"worktreeId":"repo1::/wt/d6"}},{"dispatchId":"other","dispatchStatus":"completed","resource":{"worktreeId":"repo2::/other"}}],"page":{"hasMore":false}}}' > "$tmp/workers-next.json"
-echo '{"result":{"terminals":[{"handle":"term_agent","worktreePath":"/wt/d6"},{"handle":"term_other","worktreePath":"/other"}]}}' > "$tmp/terminals.json"
+cat > "$tmp/workers.json" <<JSON
+{"result":{"workers":[{"dispatchId":"d7","resource":{"worktreeId":"repo1::$tmp/linked"}}],"page":{"hasMore":true,"nextCursor":"next"}}}
+JSON
+cat > "$tmp/workers-next.json" <<JSON
+{"result":{"workers":[{"dispatchId":"d6","dispatchStatus":"released","resource":{"worktreeId":"repo1::$tmp/linked"}},{"dispatchId":"other","dispatchStatus":"completed","resource":{"worktreeId":"repo2::/other"}}],"page":{"hasMore":false}}}
+JSON
+cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_agent","worktreePath":"$tmp/linked"},{"handle":"term_other","worktreePath":"/other"}]}}
+JSON
 echo '{"result":{"dispatch":{"status":"completed","assigneeHandle":"term_other"}}}' > "$tmp/show.other"
 rm -f "$tmp/closes.log"
 "$here/worker-pane-close.sh" >/dev/null
