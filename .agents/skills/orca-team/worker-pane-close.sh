@@ -3,9 +3,9 @@
 # Usage: worker-pane-close.sh <dispatch_id> [...]   close those workers' panes and leftover terminals
 #        worker-pane-close.sh                       sweep recorded panes and discover ended workers in the caller's Run
 # Closes the pane worker-panes.sh recorded, then every terminal of that worker still in `orca terminal list`:
-# the handles worker-show reports (agent and setup terminals) and any terminal whose cwd is the worktree Orca
-# created for the worker. A dispatch that is still running keeps its terminals, and so does a terminal that a
-# dispatch not yet in a final state also uses (a retry reuses the failed dispatch's terminal). Missing or already-closed
+# the handles worker-show reports (agent and setup terminals) and any terminal whose worktreePath matches
+# the linked git worktree the worker created or reused. A dispatch that is still running keeps its terminals,
+# and so does a terminal that a dispatch not yet in a final state also uses (a retry reuses the failed dispatch's terminal). Missing or already-closed
 # terminals are not errors. State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
 # one handle per line, retained until verified gone. Failed or lingering closes retry for up to 30 minutes.
 set -u
@@ -33,8 +33,15 @@ own=[w.get("agentTerminalHandle"), d.get("assigneeHandle")]
 path=""
 for e in w.get("effects") or []:
   if e.get("kind")=="terminal" and e.get("action")=="created": own.append(e.get("id"))
-  if e.get("kind")=="worktree" and e.get("action")=="created_child":
+  if e.get("kind")=="worktree":
     path=(e.get("id") or "").split("::",1)[-1]
+if not path:
+  path=(w.get("worktreeId") or "").split("::",1)[-1]
+if not path:
+  option=(w.get("startOptions") or {}).get("worktree") or ""
+  if option.startswith("path:"): path=option[len("path:"):]
+# Main checkouts have a .git directory and may host owner or coordinator sessions.
+if not path or not os.path.isfile(os.path.join(path,".git")): path=""
 seen=set()
 for t in terms:
   h=t.get("handle")

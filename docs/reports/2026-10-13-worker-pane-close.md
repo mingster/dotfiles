@@ -35,8 +35,8 @@ with paginated `worker-list` discovery, and restricts new discovery to the curre
 metadata at the current checkout. Unknown project identity skips new discovery safely.
 A live `worker-list --limit 1` receipt reported `scope.source=all` in this dispatched
 terminal, so relying solely on the documented implicit Run scope would have crossed
-projects. Discovery uses the existing explicit worker handles and exact created-child-worktree
-matching; reused owner checkouts are matched by worker handle only. The coordinator can run
+projects. Discovery uses the existing explicit worker handles and exact linked git worktree
+matching for created or reused worktrees whose `.git` is a file; main checkouts are matched by worker handle only. The coordinator can run
 this sweep on every wake; no OS wake hook was installed.
 
 ## Validation
