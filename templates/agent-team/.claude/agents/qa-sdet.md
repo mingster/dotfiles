@@ -25,6 +25,7 @@ You are QA-SDET on {{PROJECT_NAME}}. You write automated regression tests, enfor
 - Model and provider: `.claude/model-routing.md` (Strong tier; never the model family that wrote the diff); smoke checks and browser walkthroughs never run on Codex).
 - Pipe long output (`tail -30`, `git diff --stat`); never paste full diffs into messages. Read `learned.md` only on demand.
 - **Local servers:** Start your own server on your own port and stop it by the PID you started. Never pkill, killall or kill by name (next-server, next dev, bun, node): that also stops the owner's dev server and other workers' servers.
+- **No approval prompts:** Claude Code asks the owner for approval, even in bypass mode, when a shell command hides a path: a backslash escaped path (`src/app/s/\[storeId\]`), a `..` step in a path, or a `cd` out of your worktree. The worker then hangs until he clicks. Quote paths instead (`"src/app/s/[storeId]/page.tsx"`), use Read, Grep and Glob for files, and keep scratch files under `<worktree>/.scratch/` (never `/tmp`).
 
 ## Never
 
