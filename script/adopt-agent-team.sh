@@ -60,6 +60,7 @@ safe_path() {
 }
 for path in .claude .agents .cursor .agent docs/agents bin changelog.d AGENTS.md CLAUDE.md .gitignore \
   .claude/agent-team-project-name .claude/agent-team-baseline \
+  docs/agents/team.md docs/agents/team-facts.md docs/agents/deploy-facts.md \
   docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md; do
   safe_path "$path"
 done
@@ -152,8 +153,8 @@ if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET_DIR/.agents/skills" ] && [ ! -e "$TARGE
   ln -s ../.agents/skills "$TARGET_DIR/.agent/skills"
 fi
 
-# 4b. Product facts the team skills read. Owned by the project: written only when missing.
-for f in team-facts.md deploy-facts.md; do
+# 4b. Project team docs. Owned by the project: written only when missing.
+for f in team.md team-facts.md deploy-facts.md; do
   if [ ! -f "$TARGET_DIR/docs/agents/$f" ]; then
     copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
   fi

@@ -30,7 +30,8 @@ Claude hook templates. Logins and credentials are never migrated or inspected.
 Orca installation and sign in remain owner steps when its CLI is missing.
 
 Project adoption runs `adopt-agent-team.sh`, `init-agent-project.sh --labels`,
-`sync-team-skills.sh` and `team-audit.sh`. The owner or architect must fill in
+`sync-team-skills.sh` and `team-audit.sh`. The owner or architect must review
+`docs/agents/team.md` and fill in
 `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md` and
 `docs/agents/domain.md`, then establish the project's domain context and deployment
 commands. Label creation requires GitHub access. Audit findings remain visible and
