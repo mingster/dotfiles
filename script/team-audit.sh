@@ -6,7 +6,7 @@
 # Checks, each printed as "FINDING <check>: <detail>":
 #   sync      sync-team-skills.sh --check passes for each project
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
-#   wording   no banned wording in team files: someone other than Elon merges, pushes or opens PRs,
+#   wording   no banned wording in team files: implementation workers merge, push or open PRs,
 #             task_plan.md or progress.md ledgers, the old orca claude-teams layout
 #   skill     every SKILL.md has name and description frontmatter
 #   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
@@ -34,8 +34,7 @@ finding() { echo "FINDING $1: $2"; findings=$((findings + 1)); }
 
 # Banned wording, as extended regexes. A line may opt out with "team-audit: allow".
 BANNED=(
-  '(Tech Lead|[Tt]he lead|`lead`) (merges|pushes the branch|opens (the|a) PR)'
-  'direct(s)? the Tech Lead to merge'
+  '(fullstack-dev|qa-sdet|support-csm|sales|architect-pm|teammate)s? pushes (the|a|its) branch'
   '(release-manager|fullstack-dev|qa-sdet|support-csm|teammate)s? (merges (the |a |its |team )?PRs?|opens (the|a|its) PR)'
   'open a PR and merge it'
   'task_plan\.md'
