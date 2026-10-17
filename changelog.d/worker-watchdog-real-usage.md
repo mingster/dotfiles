@@ -1,0 +1,2 @@
+- Make daily usage caps advisory pacing hints; only fresh provider weekly/cycle usage plus running worker reserve can block starts, with refresh attempts, explicit unknown failures, and source/age reporting.
+- Add a 90-second Orca worker watchdog with idle nudges, cooldowns and coordinator escalations, plus an optional KeepAlive launchd template and install instructions.
