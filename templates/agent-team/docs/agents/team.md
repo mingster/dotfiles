@@ -19,7 +19,7 @@
 1. **Task tree:** Elon builds tasks from the accepted spec. Use the project's configured workflow and add specialist slices only when the work requires them.
 2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when the Tech Lead judges a full crew unnecessary.
 3. **Reports:** Engineering work goes Elon, then the Tech Lead, then the SDLC cycle (owner rule 2026-10-17): Elon hands each issue to the lead; the lead dispatches fullstack-dev, qa-sdet and release-manager (triage, implement or tdd, code-review), and they report to the lead, who publishes and merges reviewed branches and reports results to Elon. Every other role reports to Elon. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
-4. **Close workers:** the coordinator validates each `worker_done` and releases the worker according to the project's orchestration procedure. Remove worktrees separately after work is merged or abandoned.
+4. **Monitor and close workers:** On every wake, every coordinator (Elon included) checks that each worker it started is alive and making progress, rather than idle at a prompt or stopped by capacity or quota; resume or replace a stuck worker. Validate each `worker_done`, release the worker and close its terminals; remove its worktree and branch after merge or abandonment, preserving unmerged work.
 5. **Merge and queue:** the Tech Lead merges passing branches under `.claude/model-routing.md` and reports to Elon. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
 
 ## Handoffs
