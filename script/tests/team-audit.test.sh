@@ -9,14 +9,14 @@ setup() { # a clean dotfiles tree and a project synced from it
   mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
            "$D/.agents/skills/orca-team" "$P/.claude/agents" "$P/docs/agents"
   cp "$here/sync-team-skills.sh" "$D/script/"
-  printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nElon pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
+  printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nThe Tech Lead pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
   printf -- '---\nname: orca-team\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orca-team/SKILL.md"
   for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv; do
     touch "$D/.agents/skills/orca-team/$h"
   done
   printf '{"version": 3, "skills": {"orca-cli": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
   printf -- '---\nname: lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
-  printf 'Elon merges every PR.\n' > "$P/docs/agents/team.md"
+  printf 'The Tech Lead merges every PR.\n' > "$P/docs/agents/team.md"
   DOTFILES="$D" "$D/script/sync-team-skills.sh" "$P" >/dev/null 2>&1
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
   printf 'sha=aaa1111\nskills=tdd research\n' > "$D/.agents/skills/.mattpocock-upstream"
@@ -47,7 +47,10 @@ setup
 check "clean tree passes" 0 'team-audit: clean'
 
 setup; echo 'When a review passes, the Tech Lead merges it.' >> "$P/docs/agents/team.md"
-check "lead merging is banned" 1 'FINDING wording: .*team.md'
+check "lead merging is allowed" 0 'team-audit: clean'
+
+setup; echo 'sales pushes its branch.' >> "$P/docs/agents/team.md"
+check "sales pushing is banned" 1 'FINDING wording: .*team.md'
 
 setup; echo 'Then release-manager opens the PR.' >> "$P/.claude/agents/tech-lead.md"
 check "a role opening a PR is banned" 1 'FINDING wording: .*tech-lead.md'

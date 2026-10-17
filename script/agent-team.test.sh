@@ -21,9 +21,9 @@ exit 1
 SH
 chmod +x "$tmp/tools/gh"
 export PATH="$tmp/tools:$PATH" TEST_LABELS="$tmp/labels"
-# The existing Elon template is 889 words; keep its independent 800-word audit finding
+# The Elon template exceeds 800 words; keep its independent budget finding
 # out of the composition success fixture, and exercise audit failure separately.
-export ROLE_WORD_BUDGET=1000
+export ROLE_WORD_BUDGET=$(($(wc -w < "$here/../templates/agent-team/.claude/agents/elon.md") + 100))
 git init -q "$tmp/new project"
 git -C "$tmp/new project" remote add origin https://github.com/mingster/synthetic.git
 out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 2>&1); rc=$?
@@ -162,7 +162,7 @@ out=$(HOME="$tmp/ag-home" PATH="$TEST_BIN:$PATH" bash "$here/setup-antigravity.s
 git init -q "$tmp/audit-project"
 git -C "$tmp/audit-project" remote add origin https://github.com/mingster/synthetic.git
 out=$(ROLE_WORD_BUDGET=800 bash "$here/agent-team.sh" project "$tmp/audit-project" 2>&1); rc=$?
-{ [ "$rc" = 1 ] && grep -q '889 words (budget 800)' <<< "$out" && grep -q 'Owner or architect' <<< "$out"; } && check "audit findings fail project setup while still printing owner facts" ok || { check "audit findings fail project setup while still printing owner facts" bad; echo "exit=$rc"; tail -6 <<< "$out"; }
+{ [ "$rc" = 1 ] && grep -qE '[0-9]+ words \(budget 800\)' <<< "$out" && grep -q 'Owner or architect' <<< "$out"; } && check "audit findings fail project setup while still printing owner facts" ok || { check "audit findings fail project setup while still printing owner facts" bad; echo "exit=$rc"; tail -6 <<< "$out"; }
 mkdir -p "$tmp/legacy-home/.codex" "$tmp/legacy-config"
 echo '{"legacy":true}' > "$tmp/legacy-config/settings.json"
 ln -s "$tmp/legacy-config" "$tmp/legacy-home/.claude"
