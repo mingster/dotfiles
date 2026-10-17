@@ -71,13 +71,14 @@ Other project files tell the team how this repo works:
 | --- | --- |
 | `.claude/model-routing.md` | Provider and model choices, worker launch rules, usage limits and who may push or merge. |
 | `.claude/settings.json`, `.claude/hooks/` | Claude session setup, Bash safeguards and repeated test failure limits; `session-start.md` puts Elon at the front door. Other providers follow their own controls and the role instructions. |
+| `docs/agents/team.md` | Team roles, orchestration, reporting, handoffs, hotfix loop, rules and gated actions. |
 | `docs/agents/team-facts.md` | Repository, check commands, review rules and project shortcuts. |
 | `docs/agents/deploy-facts.md` | Components, hosts, stage commands, production approval and rollback steps. |
 | `docs/agents/issue-tracker.md` | Where specs and tickets go and how to read or update them. |
 | `docs/agents/triage-labels.md` | The project's issue labels and what each means. |
 | `docs/agents/domain.md` | Where agents read domain terms and design decisions. |
 
-Adoption creates `team-facts.md` and `deploy-facts.md` if missing. Create the tracker, label and domain files separately with `~/dotfiles/script/init-agent-project.sh --labels <dir>` before using the ticket and review skills. Configure `docs/agents/daily-run.md` in the project before asking for a daily run. Decisions belong in `docs/adr/`.
+Adoption creates `team.md`, `team-facts.md` and `deploy-facts.md` if missing. Create the tracker, label and domain files separately with `~/dotfiles/script/init-agent-project.sh --labels <dir>` before using the ticket and review skills. Configure `docs/agents/daily-run.md` in the project before asking for a daily run. Decisions belong in `docs/adr/`.
 
 Use slash commands below in Claude Code, Cursor and Antigravity; in Codex use `$skill-name` with the same arguments. A worker prompt can instead name the skill's `SKILL.md` path and ask it to follow the file.
 
