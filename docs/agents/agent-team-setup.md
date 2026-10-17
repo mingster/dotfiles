@@ -56,3 +56,21 @@ The commands use the vendored skills already in dotfiles. Updating that snapshot
 from upstream is a separate maintainer operation through
 `script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
 changes the dotfiles checkout. No command commits or pushes the target project.
+
+## Letting the Tech Lead merge
+
+`~/.codex/rules/default.rules` forbids `gh pr merge` for every Codex worker. The Tech Lead
+(a Codex session) merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`.
+The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
+open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
+only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `.codex`, `*.rules`,
+and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
+`ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the lead check.
+
+The owner allows the script once by appending the template to the live rules, then checks the result:
+
+```bash
+cat ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
+```
+
+Agents never edit `~/.codex` themselves. The forbidden `gh pr merge` rule stays in place.
