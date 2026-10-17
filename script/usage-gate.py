@@ -1,51 +1,28 @@
 #!/usr/bin/env python3
-"""Daily usage gate for the agent team: stop dispatching when a provider has used
-its daily share of the weekly limit, so the week never runs out.
+"""Provider usage gate: only fresh real usage plus running worker reserve can block.
 
-  usage-gate.py check [--provider claude|codex|<other>] [--cap N] [--ceiling 95] [--reserve 1]
-  usage-gate.py show [--json]       every provider at once, as a table
-  usage-gate.py pick --role <role> [--avoid-family claude|gpt] [--json]
-
-Reads the provider's own weekly percentage, never an estimate:
-  codex   latest token_count event in ~/.codex/sessions whose weekly window is
-          under rate_limits.primary or rate_limits.secondary
-  claude  ~/.claude/state/usage-gate/claude-rate-limits.json, written by
-          statusline.sh from Claude Code's statusline input (rate_limits.seven_day)
-  cursor  https://cursor.com/api/usage-summary, called with the session the Cursor app
-          already holds (read in memory, never printed or stored). Cursor bills a
-          monthly cycle, not a week, so the cycle is mapped onto the same formula, see
-          cursor_parse
-
-"Today" is the weekly percentage now minus the weekly percentage at the start of the
-local day (codex: the last session event before local midnight; claude: the first
-statusline render of the day; otherwise the first check of the day). It is the whole
-account's use, including sessions outside Orca. The daily cap is what is left of the
-week under the ceiling at the start of today, spread over the days left until the
-weekly reset (a partial last day counts as a fraction, the last day may use all of it);
---cap N fixes it at N percent instead. An owner approved cap for one day lives in
-STATE/<provider>.cap-override.json as {"date": "YYYY-MM-DD", "cap": N} and ends at local midnight. The gate blocks a new start when
-spent + reserve >= cap, or when week + reserve >= ceiling, where reserve is
---reserve (default 1) percent of the week per worker already running on that provider
-(`orca orchestration worker-list`), so running workers keep room to finish.
-An older Codex reading with an unreset week and no session file modified since
-local midnight means zero spend today. Every other reading older than MAX_AGE
-(6 hours) says nothing about today's spend, so it never counts for the daily cap.
-Weekly usage cannot fall before the reset, so while its
-resets_at is still ahead it still blocks on the weekly ceiling. Past the reset, or
-of unknown age, it is no reading. So is any provider without a reader, and
-cursor or Antigravity when usage cannot be fetched. Antigravity reads quota per
-model pool from its local language server and uses ceiling only gating.
-Exit codes: 0 allowed, 3 blocked, 4 unknown (no reading; treated as allowed by
-callers, reported so the owner can see the gap).
+check --provider NAME exits 0 allowed, 3 weekly/cycle ceiling reached, 4 unknown.
+show [--json] includes the exact source and reading age; pick --role ROLE retains
+its existing flags and ranks providers by remaining weekly/cycle headroom.
+Codex reads session rate_limits and refreshes via app-server account/rateLimits/read;
+Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
+endpoint; Cursor fetches usage-summary; Antigravity queries local GetUserStatus.
+Missing, stale (>5 minutes), expired, invalid or future readings trigger a refresh.
+If the real source cannot supply a fresh reading, report unknown, never inferred
+zero usage or a stale ceiling verdict. Unknown does not block worker starts.
+Daily caps and owner cap overrides remain pacing hints only: at the hint, allow
+with note "pacing: prefer a lighter model". --reserve (default 1) holds weekly
+percentage points per running worker; --ceiling defaults to 95. Cursor uses its
+provider billing cycle and Antigravity its provider model pools.
 """
-import argparse, glob, json, os, subprocess, sys, time
+import argparse, glob, json, math, os, subprocess, sys, time
 from datetime import datetime, timedelta
 
 HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
 CODEX = os.environ.get("USAGE_GATE_CODEX_SESSIONS", HOME + "/.codex/sessions")
 WEEK_MIN = 10080
-MAX_AGE = 6 * 3600  # seconds; an older reading is no reading
+MAX_AGE = 5 * 60  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
@@ -247,18 +224,114 @@ DAY_START = {"codex": codex_day_start, "claude": claude_day_start}
 
 
 def fresh(reading, now):
-    """The reading, flagged stale when it is more than MAX_AGE old but its week has not reset
-    yet; None when it is old and past its reset, ahead of the clock, or of unknown age.
-    observed_at is epoch seconds (claude) or an ISO timestamp (codex)."""
-    t = epoch((reading or {}).get("observed_at"))
-    if t is None:
-        return None
-    if abs(now - t) <= MAX_AGE:
-        return reading
-    resets = reading.get("resets_at")
-    if now - t > MAX_AGE and resets and float(resets) >= now:
-        return {**reading, "stale": True}
+    """Accept only fresh, finite real provider readings within the current cycle."""
+    try:
+        t = epoch((reading or {}).get("observed_at"))
+        pct = float(reading["pct"])
+        resets = epoch(reading.get("resets_at"))
+        if (t is not None and math.isfinite(t) and -5 <= now - t <= MAX_AGE
+                and math.isfinite(pct) and 0 <= pct <= 100
+                and (resets is None or resets > now)):
+            return {**reading, "pct": pct, "resets_at": resets}
+    except (TypeError, KeyError, ValueError):
+        pass
     return None
+
+
+def reading_source(provider, refresh=False):
+    return {
+        "codex": "codex app-server account/rateLimits/read" if refresh else CODEX + "/**/rollout-*.jsonl rate_limits",
+        "claude": "https://api.anthropic.com/api/oauth/usage seven_day" if refresh else STATE + "/claude-rate-limits.json seven_day",
+        "cursor": CURSOR_SUMMARY or CURSOR_URL,
+        "antigravity": "local Antigravity LanguageServerService/GetUserStatus quotaInfo",
+    }.get(provider, "no reader for " + provider)
+
+
+def codex_refresh():
+    """Read the authenticated account without starting a model turn or changing sessions."""
+    import selectors
+    process = subprocess.Popen(["codex", "app-server"], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + 5
+    buffer = b""
+    def send(message):
+        process.stdin.write((json.dumps(message) + "\n").encode())
+        process.stdin.flush()
+    try:
+        send({"id": 1, "method": "initialize", "params": {
+            "clientInfo": {"name": "usage_gate", "version": "1"}}})
+        while time.monotonic() < deadline:
+            if not selector.select(max(0, deadline - time.monotonic())):
+                break
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                message = json.loads(line)
+                if message.get("id") == 1:
+                    if "error" in message:
+                        return None
+                    send({"method": "initialized"})
+                    send({"id": 2, "method": "account/rateLimits/read"})
+                elif message.get("id") == 2:
+                    limits = message.get("result", {}).get("rateLimits", {})
+                    for window in (limits.get("primary"), limits.get("secondary")):
+                        if window and window.get("windowDurationMins") == WEEK_MIN:
+                            return {"pct": float(window["usedPercent"]),
+                                    "resets_at": window.get("resetsAt"), "observed_at": time.time()}
+                    return None
+        return None
+    finally:
+        selector.close()
+        process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        process.stdin.close()
+        process.stdout.close()
+
+
+def claude_refresh():
+    """Use Claude's own OAuth credentials in memory; never log tokens or response bodies."""
+    import urllib.request
+    path = HOME + "/.claude/.credentials.json"
+    if os.path.isfile(path):
+        with open(path) as f:
+            credentials = json.load(f)
+    elif sys.platform == "darwin":
+        result = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                                capture_output=True, text=True, timeout=2, check=True)
+        credentials = json.loads(result.stdout)
+    else:
+        return None
+    token = credentials["claudeAiOauth"]["accessToken"]
+    request = urllib.request.Request("https://api.anthropic.com/api/oauth/usage", headers={
+        "Authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20"})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        weekly = json.load(response)["seven_day"]
+    return {"pct": float(weekly["utilization"]), "resets_at": epoch(weekly.get("resets_at")),
+            "observed_at": time.time()}
+
+
+def refresh_reading(provider):
+    # Re-scan local provider output first: another session/statusline may have updated it.
+    try:
+        reading = READERS[provider]()
+    except Exception:
+        reading = None
+    if fresh(reading, time.time()):
+        return {**reading, "source": reading_source(provider)}
+    if provider == "codex":
+        return codex_refresh()
+    if provider == "claude":
+        return claude_refresh()
+    return reading
 
 
 def day_baseline(day_start, pct, resets):
@@ -298,17 +371,12 @@ def auto_cap(baseline, resets, now, ceiling):
 def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None):
     """Return (verdict, detail, new_state). verdict: allowed|blocked|unknown.
     reserve is weekly percent held back for workers already running.
-    cap None means auto_cap from the day's baseline and the weekly reset."""
+    cap is advisory; None derives pacing from the day baseline and weekly reset."""
     if reading is None:
         return "unknown", {"reason": "no reading"}, state
     pct, resets = reading["pct"], reading.get("resets_at")
-    if reading.get("stale"):                # too old for the daily cap, still binding for the ceiling
-        if pct >= ceiling:
-            return "blocked", {"weekly_used": pct, "ceiling": ceiling, "resets_at": resets,
-                               "reason": "weekly ceiling (stale reading)"}, state
-        return "unknown", {"reason": "no reading"}, state
-    if resets and float(resets) < now:      # the week rolled over since this reading
-        pct, resets = 0.0, None
+    if reading.get("stale") or (resets and float(resets) <= now):
+        return "unknown", {"reason": "stale or expired reading"}, state
     st = dict(state or {})
     old = st.get("resets_at")
     # codex resets_at jitters by a few seconds between events; only a jump of an hour is a new week
@@ -326,18 +394,32 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
         detail["reason"] = "weekly ceiling"
         return "blocked", detail, st
     if spent + reserve >= cap:
-        detail["reason"] = "daily cap"
-        return "blocked", detail, st
+        detail["note"] = "pacing: prefer a lighter model"
     return "allowed", detail, st
 
 
 def running_workers(provider):
-    """Orca workers with a live terminal on this provider; None when orca cannot say."""
+    """Live running Dispatches, including retained/reused terminals, across every page."""
     try:
-        r = subprocess.run([ORCA, "orchestration", "worker-list", "--terminal-state", "active",
-                            "--limit", "100", "--json"], capture_output=True, text=True, timeout=5)
-        rows = json.loads(r.stdout)["result"]["workers"]
-        return sum(1 for w in rows if ((w.get("projection") or {}).get("provider") or {}).get("id") == provider)
+        count, cursor = 0, None
+        while True:
+            args = [ORCA, "orchestration", "worker-list", "--limit", "100", "--json"]
+            if cursor:
+                args += ["--cursor", cursor]
+            response = subprocess.run(args, capture_output=True, text=True, timeout=5)
+            result = json.loads(response.stdout)["result"]
+            for worker in result["workers"]:
+                projection = worker.get("projection") or {}
+                # Older hosts may omit terminalState; their provider projection remains usable.
+                if (worker.get("terminalState") not in ("released", "reclaimable")
+                        and worker.get("dispatchStatus") not in ("completed", "failed", "cancelled", "abandoned")
+                        and (projection.get("liveness") or {}).get("verdict") != "exited"
+                        and (projection.get("provider") or {}).get("id") == provider):
+                    count += 1
+            page = result.get("page") or {}
+            if not page.get("hasMore"):
+                return count
+            cursor = page["nextCursor"]
     except Exception:
         return None
 
@@ -352,26 +434,28 @@ def next_midnight(now):
 
 
 def blocked_until(detail, now):
-    """Epoch when a blocked provider can start work again (the daily share restarts at local
-    midnight, but never later than the weekly reset)."""
+    """Only the provider's real reset ends a weekly/cycle ceiling block."""
     resets = detail.get("resets_at")
-    if detail.get("reason") == "daily cap":
-        return min(next_midnight(now), float(resets)) if resets else next_midnight(now)
     return float(resets) if resets else None
 
 
-def antigravity_result(pools, ceiling, now, model=None, pool=None):
+def antigravity_result(pools, ceiling, now, model=None, pool=None, reserve=0.0, running=None):
     selected = pool or (antigravity_pool(model) if model else None)
     reading = pools.get(selected) if selected else (max(pools.values(), key=lambda r: r["pct"])
                                                    if pools and not model else None)
     result = {"provider": "antigravity" + ("/" + pool if pool else ""),
-              "verdict": "unknown", "reason": "no reading", "policy": "ceiling only"}
-    if not reading or reading["resets_at"] <= now:
+              "verdict": "unknown", "reason": "no reading", "policy": "ceiling only",
+              "source": reading_source("antigravity"), "reading_age_min": None}
+    result["reading_age_min"] = ((now - epoch(reading["observed_at"])) / 60
+                                  if reading and epoch(reading.get("observed_at")) is not None else None)
+    if not fresh(reading, now):
+        result["reason"] = "GetUserStatus returned no fresh valid pool quota"
         return result
-    blocked = reading["pct"] >= ceiling
+    blocked = reading["pct"] + reserve >= ceiling
     result.update(verdict="blocked" if blocked else "allowed", weekly_used=reading["pct"],
-                  ceiling=ceiling, resets_at=reading["resets_at"],
-                  resets_local=local(reading["resets_at"]), reading_age_min=0)
+                  ceiling=ceiling, reserve=reserve, running=running, resets_at=reading["resets_at"],
+                  resets_local=local(reading["resets_at"]),
+                  reading_age_min=round((now - epoch(reading["observed_at"])) / 60, 1))
     result.pop("reason")
     if blocked:
         result.update(reason="pool ceiling", blocked_until=reading["resets_at"],
@@ -380,9 +464,14 @@ def antigravity_result(pools, ceiling, now, model=None, pool=None):
 
 
 def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
-    now = now or time.time()
+    live_clock = now is None
+    now = time.time() if live_clock else now
     if provider == "antigravity":
-        return antigravity_result(READERS[provider]() or {}, ceiling, now, model=model)
+        pools = READERS[provider]() or {}
+        now = time.time() if live_clock else now
+        running = running_workers(provider) if pools else None
+        return antigravity_result(pools, ceiling, now, model=model,
+                                  reserve=per_worker * (running or 0), running=running)
     today = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
     midnight = local_midnight(now)
     path = f"{STATE}/{provider}.json"
@@ -391,20 +480,28 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
     except (OSError, ValueError):
         state = None
     reader = READERS.get(provider)
-    reading = fresh(reader(), now) if reader else None
-    # An idle Codex account has spent nothing locally today. Require an unreset,
-    # dated reading and check every session file, including ones without rate limits.
-    if provider == "codex" and reading and reading.get("stale"):
+    try:
+        raw = reader() if reader else None
+    except Exception:
+        raw = None
+    now = time.time() if live_clock else now
+    previous = raw
+    reading = fresh(raw, now)
+    source = reading_source(provider)
+    failure = "no fresh provider reading"
+    if not reading and reader:
         try:
-            active = any(os.path.getmtime(p) >= midnight
-                         for p in glob.glob(CODEX + "/**/*", recursive=True) if os.path.isfile(p))
-        except OSError:
-            active = True  # cannot prove inactivity
-        if not active and float(reading["resets_at"]) > now:
-            reading = {k: v for k, v in reading.items() if k != "stale"}
-            state = {"date": today, "baseline": reading["pct"], "resets_at": reading["resets_at"]}
+            raw = refresh_reading(provider)
+            source = (raw or {}).get("source", reading_source(provider, refresh=True))
+            now = time.time() if live_clock else now
+            reading = fresh(raw, now)
+            failure = "refresh returned no fresh valid usage reading"
+        except Exception as exc:
+            source = reading_source(provider, refresh=True)
+            failure = "refresh failed: " + type(exc).__name__
+    # Do not print exception text: provider responses can contain credentials.
     running = running_workers(provider) if reading else None
-    reserve = round(per_worker * (running or 0), 1) if cap is None else round(min(per_worker * (running or 0), cap), 1)
+    reserve = round(per_worker * (running or 0), 1)
     day_start = None
     if reading and (state or {}).get("date") != today:
         day_start = start_of_day(reading, provider, midnight)
@@ -421,6 +518,13 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
     if new is not state and new:
         os.makedirs(STATE, exist_ok=True)
         json.dump(new, open(path, "w"))
+    detail["source"] = source
+    t = epoch((raw or previous or {}).get("observed_at"))
+    if not reading and previous:
+        detail["last_reading_source"] = reading_source(provider)
+    detail["reading_age_min"] = round((now - t) / 60, 1) if t is not None else None
+    if not reading:
+        detail["reason"] = failure
     if reading:
         t = epoch(reading.get("observed_at"))
         detail["reading_age_min"] = round((now - t) / 60) if t is not None else None
@@ -433,24 +537,22 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
 
 
 def table(rows):
-    head = ("provider", "verdict", "week%", "today%", "cap%", "reserve%", "running", "reading", "week resets", "next start")
+    head = ("provider", "verdict", "week%", "today%", "cap%", "reserve%", "running", "reading", "source", "week resets", "next start")
     out = []
     for r in rows:
         if r["verdict"] == "unknown":
             note = "not gated" if r["provider"] in NOT_GATED else r.get("reason", "no reading")
-            out.append((r["provider"], "unknown", "-", "-", "-", "-", "-", note, "-", "-"))
+            out.append((r["provider"], "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
             continue
         age = r.get("reading_age_min")
         out.append((r["provider"], r["verdict"], f"{r['weekly_used']:g}",
                     *(f"{r[k]:g}" if k in r else "?" for k in ("today_used", "cap", "reserve")),
                     "?" if r.get("running") is None else str(r["running"]),
-                    "?" if age is None else f"{age}m ago", r.get("resets_local", "-"),
-                    f"{r['blocked_until_local']} ({r['reason']})" if r["verdict"] == "blocked" else "now"))
+                    "?" if age is None else f"{age}m ago", r.get("source", "unknown"), r.get("resets_local", "-"),
+                    f"{r['blocked_until_local']} ({r['reason']})" if r["verdict"] == "blocked" else r.get("note", "now")))
     widths = [max(len(str(x[i])) for x in [head] + out) for i in range(len(head))]
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip() for row in [head] + out]
-    lines.append("today% = week% now minus week% at the start of the local day, for the whole account "
-                 "(sessions outside Orca count). cap% = (ceiling - week% at the start of today) / days left "
-                 "until the weekly reset. reserve% = --reserve per running worker. Antigravity reads per model pool and uses only the ceiling.")
+    lines.append("cap% is a pacing hint only; only fresh real usage + reserve% reaching the weekly/cycle ceiling blocks.")
     ordered = sorted(rows, key=lambda r: headroom(r)[1] if headroom(r)[1] is not None else -float("inf"),
                      reverse=True)
     order = []
@@ -466,15 +568,11 @@ def table(rows):
 
 
 def headroom(row):
-    """Remaining weekly percentage points and fraction of today's cap."""
-    if row.get("policy") == "ceiling only" and "weekly_used" in row:
-        room = row["ceiling"] - row["weekly_used"]
-        return room, room / row["ceiling"] if row["ceiling"] > 0 else 0.0
-    if "today_used" not in row or "cap" not in row:
+    """Remaining real weekly/cycle headroom; daily pacing never ranks out a provider."""
+    if row.get("verdict") == "unknown" or "weekly_used" not in row:
         return None, None
-    room = min(row["cap"] - row["today_used"] - row["reserve"],
-               row["ceiling"] - row["weekly_used"] - row["reserve"])
-    return room, room / row["cap"] if row["cap"] > 0 else 0.0
+    room = row["ceiling"] - row["weekly_used"] - row.get("reserve", 0)
+    return room, room / row["ceiling"] if row["ceiling"] > 0 else 0.0
 
 
 def role_chain(role):
@@ -548,7 +646,7 @@ def pick(role, avoid, cap, ceiling, per_worker):
 def candidate_reason(candidate):
     fraction = candidate["headroom_fraction"]
     room = candidate["headroom"]
-    detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of cap)"
+    detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of ceiling)"
     note = "excluded family" if candidate["excluded_family"] else candidate["verdict"]
     return f"{candidate['provider']} {candidate['model']}: {detail}, {note}"
 
@@ -561,7 +659,7 @@ def main(argv=None):
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt"])
     ap.add_argument("--cap", type=float, default=None,
-                    help="fixed daily cap in weekly percent; default: remaining week / days left")
+                    help="advisory daily pacing hint; never blocks")
     ap.add_argument("--ceiling", type=float, default=95.0)
     ap.add_argument("--reserve", type=float, default=1.0,
                     help="weekly percent held back per worker already running on the provider")
@@ -573,8 +671,8 @@ def main(argv=None):
         try:
             result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve)
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            print(f"cannot read role presets: {exc}", file=sys.stderr)
-            return 3
+            print(f"cannot read role presets: {type(exc).__name__}", file=sys.stderr)
+            return 4
         if a.json:
             print(json.dumps(result))
         else:
@@ -587,7 +685,7 @@ def main(argv=None):
                 print(flags)
             else:
                 print(f"nothing allowed; earliest reset: {result['blocked_until_local']}", file=sys.stderr)
-        return 0 if result["selected"] else 3
+        return 0 if result["selected"] else (3 if all(c["verdict"] == "blocked" for c in result["candidates"]) else 4)
     names = [a.provider] if a.provider else list(READERS)
     if a.cmd == "show" and not a.provider:
         names += list(NOT_GATED)
@@ -595,7 +693,9 @@ def main(argv=None):
     for name in names:
         if name == "antigravity" and a.cmd == "show":
             pools = READERS[name]() or {}
-            out.extend(antigravity_result(pools, a.ceiling, time.time(), pool=pool)
+            running = running_workers(name) if pools else None
+            out.extend(antigravity_result(pools, a.ceiling, time.time(), pool=pool,
+                                         reserve=a.reserve * (running or 0), running=running)
                        for pool in ("claude", "gemini"))
         else:
             out.append(run(name, a.cap, a.ceiling, per_worker=a.reserve, model=a.model))

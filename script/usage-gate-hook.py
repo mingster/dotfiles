@@ -6,9 +6,9 @@ Wired from each agent team's .claude/settings.json. For every
 `usage-gate.py check --provider <id>` (claude, codex, cursor and antigravity) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
 Antigravity is checked without a model, so the hook gates on its worst pool.
-Known roles from the task title must also match `pick --role`. The Codex launcher
+Known roles from the task title receive advisory `pick --role` recommendations. The Codex launcher
 is checked the same way. A command scoped USAGE_GATE_OVERRIDE reason bypasses
-routing enforcement and is logged, but never bypasses the daily or weekly gate.
+routing enforcement and is logged, but never bypasses the weekly ceiling gate.
 
 Passes with a warning on stderr: an agent the gate cannot read
 (unknown providers), a worker-start without --agent, gate exit 4 (no reading) and
@@ -110,8 +110,8 @@ def routing(start):
         if start["override"]:
             return None
         result = subprocess.run([sys.executable, GATE, "pick", "--role", role, "--json"],
-                                capture_output=True, text=True, timeout=15)
-        if result.returncode not in (0, 3):
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode not in (0, 3, 4):
             raise ValueError(f"pick exit {result.returncode}")
         picked = json.loads(result.stdout)
         chosen = picked.get("selected")
@@ -120,11 +120,12 @@ def routing(start):
         def room(p):
             c = next((c for c in picked.get("candidates", []) if c["provider"] == p), {})
             value, fraction = c.get("headroom"), c.get("headroom_fraction")
-            return "unknown" if value is None else f"{value:g}% ({fraction * 100:.1f}% of cap)"
+            return "unknown" if value is None else f"{value:g}% ({fraction * 100:.1f}% of ceiling)"
         recommended = chosen["provider"] if chosen else "no provider"
-        return (f"Usage gate pick recommends {recommended} for {role}; "
+        print(f"Usage gate pick recommends {recommended} for {role}; "
                 f"{provider} headroom {room(provider)}, {recommended} headroom {room(recommended)}. "
-                "Use the pick flags, or prefix a deliberate override with USAGE_GATE_OVERRIDE='<reason>'.")
+                "Use the pick flags, or prefix a deliberate override with USAGE_GATE_OVERRIDE='<reason>'.", file=sys.stderr)
+        return None
     except Exception as exc:
         print(f"usage-gate-hook: pick failed ({exc}); worker-start allowed without routing enforcement.",
               file=sys.stderr)
@@ -133,10 +134,7 @@ def routing(start):
 
 def reason(provider, d):
     reserve = f", incl. {d['reserve']:g}% held for {d['running']} running worker(s)" if d.get("reserve") else ""
-    if d.get("reason") == "daily cap":
-        why = f"daily cap ({d.get('today_used')}% used today, cap {d.get('cap')}% of the week{reserve})"
-    else:
-        why = f"weekly ceiling ({d.get('weekly_used')}% of the week used, ceiling {d.get('ceiling')}%{reserve})"
+    why = f"weekly ceiling ({d.get('weekly_used')}% of the week used, ceiling {d.get('ceiling')}%{reserve})"
     return (f"Usage gate blocked {provider}: {why}. Resets {d.get('blocked_until_local', 'unknown')} (local time). "
             "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 
@@ -162,7 +160,7 @@ def main():
             continue
         try:
             r = subprocess.run([sys.executable, GATE, "check", "--provider", provider],
-                               capture_output=True, text=True, timeout=10)
+                               capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
             print(f"usage-gate-hook: gate failed for {provider} ({e}); worker-start allowed.", file=sys.stderr)
@@ -172,8 +170,11 @@ def main():
                 blocked.append(reason(provider, detail))
             except Exception:
                 blocked.append(f"Usage gate blocked {provider}: {detail.get('reason', 'see usage-gate.py show')}.")
+        elif r.returncode == 0 and detail.get("note"):
+            print("usage-gate-hook: " + detail["note"], file=sys.stderr)
         elif r.returncode != 0:
             print(f"usage-gate-hook: no usage reading for {provider} (gate exit {r.returncode}); "
+                  f"source {detail.get('source', 'unknown')}: {detail.get('reason', 'unknown')}; "
                   "worker-start allowed, say so in your report.", file=sys.stderr)
     if blocked:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",

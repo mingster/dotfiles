@@ -74,3 +74,32 @@ cat ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
 ```
 
 Agents never edit `~/.codex` themselves. The forbidden `gh pr merge` rule stays in place.
+
+## Optional worker watchdog (macOS)
+
+Copy `templates/launchd/life.riben.worker-watchdog.plist` to
+`~/Library/LaunchAgents/life.riben.worker-watchdog.plist`. Replace `__HOME__` with
+an absolute home path, `__ORCA_CLI__` with the absolute path from `command -v orca`,
+`__RUN_ID__` with the run to monitor, and `__NOTIFY_HANDLE__` / `__NOTIFY_RUN_ID__`
+with the escalation recipient's terminal handle and owning run. Add more
+`--run`, run ID pairs to `ProgramArguments` to monitor several runs.
+
+After reviewing the file, load it with
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.riben.worker-watchdog.plist`.
+Unload it with
+`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.riben.worker-watchdog.plist`
+before changing run IDs or notification handles. This is an opt-in install;
+project adoption does not load the service.
+
+The KeepAlive job checks rendered coordinator and live worker screens every 90
+seconds, nudges after two idle checks (at most once per terminal per ten minutes),
+and escalates provider limits, three idle checks after a nudge, or three checks
+with no live workers. Counters and cooldowns survive restarts in
+`~/.orca/state/worker-watchdog/`; action lines go to
+`~/.orca/logs/worker-watchdog.log` without terminal text. It never stops workers.
+For a bounded foreground diagnostic, use
+`bash ~/dotfiles/script/worker-watchdog.sh --run RUN --notify HANDLE --notify-run RUN --checks 3`.
+The only gate block is fresh real provider usage plus running worker reserve at
+the weekly/cycle ceiling; daily pacing is advisory, and failed provider refreshes
+report unknown with the source and reason. A watchdog nudge does not replace the
+coordinator's screen check on every wake.

@@ -5,6 +5,7 @@ spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
 NO_CURSOR = "/nonexistent/cursor-summary.json"
 ug.READERS["antigravity"] = lambda: None  # tests never query the local server
+ug.refresh_reading = lambda provider: None  # isolate provider refresh transport in legacy unit cases
 ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
@@ -12,6 +13,11 @@ D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
 
 
 class Antigravity(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(ug, "running_workers", return_value=0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_reads_model_pools_with_shared_quota(self):
         payload = {"userStatus": {"cascadeModelConfigData": {"clientModelConfigs": [
             {"label": label, "quotaInfo": {"remainingFraction": remaining,
@@ -101,9 +107,9 @@ class Decide(unittest.TestCase):
         v, d, st = self.go(D(40), None)
         self.assertEqual((v, d["today_used"], st["baseline"]), ("allowed", 0.0, 40))
 
-    def test_blocks_at_daily_cap(self):
+    def test_daily_cap_is_only_a_pacing_hint(self):
         v, d, _ = self.go(D(52), {"date": "d1", "baseline": 40, "resets_at": FUT})
-        self.assertEqual((v, d["reason"]), ("blocked", "daily cap"))
+        self.assertEqual((v, d["note"]), ("allowed", "pacing: prefer a lighter model"))
 
     def test_allows_below_cap(self):
         v, _, _ = self.go(D(51.9), {"date": "d1", "baseline": 40, "resets_at": FUT})
@@ -123,7 +129,7 @@ class Decide(unittest.TestCase):
 
     def test_expired_reading_is_zero(self):
         v, d, _ = self.go(D(99, NOW - 5), {"date": "d1", "baseline": 90, "resets_at": NOW - 5})
-        self.assertEqual((v, d["weekly_used"]), ("allowed", 0.0))
+        self.assertEqual((v, d["reason"]), ("unknown", "stale or expired reading"))
 
     def test_resets_at_jitter_is_the_same_week(self):
         v, d, st = self.go(D(40, FUT + 1), {"date": "d1", "baseline": 38, "resets_at": FUT})
@@ -138,7 +144,7 @@ class Main(unittest.TestCase):
         for name in ("antigravity", "made-up"):
             with self.subTest(name), contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(ug.main(["check", "--provider", name]), 4)
-            self.assertEqual(json.loads(out.getvalue())["reason"], "no reading")
+            self.assertEqual(json.loads(out.getvalue())["verdict"], "unknown")
 
 
 class Fresh(unittest.TestCase):
@@ -148,7 +154,7 @@ class Fresh(unittest.TestCase):
 
     def test_old_reading_before_its_reset_is_kept_as_stale(self):
         old = {"pct": 99.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
-        self.assertEqual(ug.fresh(old, NOW), {**old, "stale": True})
+        self.assertIsNone(ug.fresh(old, NOW))
 
     def test_recent_reading_is_kept_whatever_its_timestamp_format(self):
         for at in (NOW - 60, "2001-09-09T01:45:40.000Z"):  # epoch seconds (claude) or ISO (codex)
@@ -174,7 +180,7 @@ class StaleReading(unittest.TestCase):
             return ug.main(["check", "--provider", "claude"])
 
     def test_stale_reading_at_ceiling_before_reset_blocks(self):
-        self.assertEqual(self.check({"pct": 99.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}), 3)
+        self.assertEqual(self.check({"pct": 99.0, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}), 4)
 
     def test_stale_reading_past_reset_is_unknown(self):
         self.assertEqual(self.check({"pct": 99.0, "resets_at": NOW - 5, "observed_at": NOW - ug.MAX_AGE - 1}), 4)
@@ -228,7 +234,7 @@ class Reserve(unittest.TestCase):
     def test_reserve_lowers_the_cap_for_new_starts(self):
         self.assertEqual(self.go(D(50.9), self.ST, 1)[0], "allowed")
         v, d, _ = self.go(D(51), self.ST, 1)       # 11 spent + 1 reserved = 12
-        self.assertEqual((v, d["reason"], d["reserve"]), ("blocked", "daily cap", 1))
+        self.assertEqual((v, d["note"], d["reserve"]), ("allowed", "pacing: prefer a lighter model", 1))
 
     def test_reserve_lowers_the_ceiling_too(self):
         st = {"date": "d1", "baseline": 90, "resets_at": FUT}
@@ -249,8 +255,8 @@ class Reserve(unittest.TestCase):
 
     def test_each_running_worker_reserves_its_share(self):
         self.assertEqual(self.run_with(1)["verdict"], "allowed")       # 10 + 1 < 12
-        self.assertEqual(self.run_with(2)["verdict"], "blocked")       # 10 + 2 >= 12
-        self.assertEqual(self.run_with(1, per_worker=2.0)["verdict"], "blocked")
+        self.assertEqual(self.run_with(2)["verdict"], "allowed")       # 10 + 2 >= 12
+        self.assertEqual(self.run_with(1, per_worker=2.0)["verdict"], "allowed")
 
     def test_orca_unavailable_counts_as_no_running_workers(self):
         r = self.run_with(None)
@@ -273,11 +279,11 @@ class DayStart(unittest.TestCase):
 
     def test_first_check_late_in_the_day_still_counts_the_morning(self):
         v, d, st = self.go(D(60), D(45))
-        self.assertEqual((v, d["today_used"], st["baseline"]), ("blocked", 15.0, 45))
+        self.assertEqual((v, d["today_used"], st["baseline"]), ("allowed", 15.0, 45))
 
     def test_week_reset_since_the_day_start_counts_from_zero(self):
         v, d, _ = self.go(D(13, FUT + 604800), D(80, FUT))   # codex reset at noon: week = today
-        self.assertEqual((v, d["today_used"]), ("blocked", 13.0))
+        self.assertEqual((v, d["today_used"]), ("allowed", 13.0))
 
     def test_a_week_that_began_today_started_from_zero(self):
         mid = NOW - 3600
@@ -296,7 +302,7 @@ class DayStart(unittest.TestCase):
 
     def test_blocked_until_is_local_midnight_for_the_daily_cap_and_the_reset_for_the_ceiling(self):
         mid = ug.next_midnight(NOW)
-        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": FUT + 9 * 86400}, NOW), mid)
+        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": FUT + 9 * 86400}, NOW), FUT + 9 * 86400)
         self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": NOW + 60}, NOW), NOW + 60)
         self.assertEqual(ug.blocked_until({"reason": "weekly ceiling", "resets_at": FUT}, NOW), FUT)
         self.assertGreater(mid, NOW)
@@ -348,7 +354,7 @@ class Show(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
         text = out.getvalue()
-        for name in ("claude", "codex", "cursor", "antigravity/claude", "antigravity/gemini", "no reading"):
+        for name in ("claude", "codex", "cursor", "antigravity/claude", "antigravity/gemini", "no fresh"):
             self.assertIn(name, text)
         self.assertEqual(len([l for l in text.splitlines() if l.startswith("claude")]), 1)
 
@@ -406,18 +412,18 @@ class Cursor(unittest.TestCase):
 
     def test_capped_when_today_used_the_daily_share(self):
         status, d = self.check(53, baseline=48)
-        self.assertEqual((status, d["reason"]), (3, "daily cap"))
+        self.assertEqual((status, d["note"]), (0, "pacing: prefer a lighter model"))
 
     def test_cycle_exhausted_blocks_until_the_cycle_ends(self):
         status, d = self.check(100, baseline=100)
         self.assertEqual((status, d["reason"], d["blocked_until"]), (3, "weekly ceiling", NOW + 10 * 86400))
 
     def test_running_cursor_workers_reserve_room(self):
-        self.assertEqual(self.check(50, baseline=48, running=3)[0], 3)
+        self.assertEqual(self.check(50, baseline=48, running=3)[0], 0)
 
     def test_no_reading_is_exit_4(self):
         status, d = self.check(None)
-        self.assertEqual((status, d["reason"]), (4, "no reading"))
+        self.assertEqual((status, d["verdict"]), (4, "unknown"))
 
     def test_a_cycle_that_began_today_started_from_zero(self):
         r = ug.cursor_parse(summary(3, began=NOW), NOW)
@@ -451,7 +457,7 @@ class AutoCap(unittest.TestCase):
     def test_decide_uses_the_auto_cap_when_cap_is_none(self):
         resets = self.mid() + 4 * 86400
         v, d, _ = ug.decide(D(50, resets), None, "d1", NOW, None, 95, 0.0, D(35, resets))
-        self.assertEqual((v, d["cap"], d["today_used"]), ("blocked", 15.0, 15.0))   # spent 15 of 15
+        self.assertEqual((v, d["cap"], d["today_used"]), ("allowed", 15.0, 15.0))   # spent 15 of 15
         v, d, _ = ug.decide(D(45, resets), None, "d1", NOW, None, 95, 0.0, D(35, resets))
         self.assertEqual((v, d["cap"], d["today_used"]), ("allowed", 15.0, 10.0))
 
@@ -481,8 +487,7 @@ class IdleCodex(unittest.TestCase):
                     {"used_percent": 39, "window_minutes": 10080, "resets_at": FUT}}}}))
             os.utime(p, (old, old))
             r = ug.run("codex", 12, 95, now=NOW)
-            self.assertEqual((r["verdict"], r["today_used"], r["weekly_used"], r["reserve"]),
-                             ("allowed", 0, 39, 1))
+            self.assertEqual(r["verdict"], "unknown")
             # Activity without a new rate reading must preserve unknown, including non-rollout files.
             with open(t + "/sessions/other.jsonl", "w") as f:
                 f.write("{}")
@@ -497,7 +502,7 @@ class IdleCodex(unittest.TestCase):
                 mock.patch.dict(ug.READERS, {"codex": lambda: reading, "claude": lambda: reading}), \
                 mock.patch.object(ug, "running_workers", return_value=1):
             r = ug.run("codex", 12, 95, now=NOW)
-            self.assertEqual((r["verdict"], r["reason"], r["today_used"]), ("blocked", "weekly ceiling", 0))
+            self.assertEqual(r["verdict"], "unknown")
             self.assertEqual(ug.run("claude", 12, 95, now=NOW)["verdict"], "unknown")
             reading["resets_at"] = NOW - 1
             self.assertEqual(ug.run("codex", 12, 95, now=NOW)["verdict"], "unknown")
@@ -552,17 +557,17 @@ class Pick(unittest.TestCase):
         result = json.loads(out)
         claude, codex = result["candidates"][:2]
         self.assertGreater(claude["headroom"], codex["headroom"])
-        self.assertEqual((status, result["selected"]["provider"]), (0, "codex"))
+        self.assertEqual((status, result["selected"]["provider"]), (0, "claude"))
 
     def test_ties_keep_chain_order_and_reserve_can_block_all_gated_providers(self):
         self.assertIn("--agent claude", self.invoke(codex=44)[1])
-        self.assertEqual(self.invoke(claude=51, codex=51, running=1)[0], 3)   # cursor has no reading, which proves nothing
+        self.assertEqual(self.invoke(claude=94, codex=94, running=1)[0], 4)   # cursor has no reading, which proves nothing
 
     def test_pinned_roles_keep_first_allowed_entry(self):
         for role, pin in (("elon", False), ("release-manager", False), ("custom", True)):
             with self.subTest(role):
                 self.assertIn("--agent claude", self.invoke(role=role, pin=pin)[1])
-                self.assertIn("--agent codex", self.invoke(role=role, pin=pin, claude=52)[1])
+                self.assertIn("--agent codex", self.invoke(role=role, pin=pin, claude=95)[1])
 
     def test_review_excludes_family_even_for_pinned_roles(self):
         self.assertIn("--agent claude", self.invoke(extra=("--avoid-family", "gpt"))[1])
@@ -571,17 +576,17 @@ class Pick(unittest.TestCase):
         chain = [{"provider": "claude", "model": "opus"},
                  {"provider": "cursor", "model": "claude-opus"},
                  {"provider": "antigravity", "model": "claude-opus"}]
-        status, out, err = self.invoke(chain=chain, claude=52, extra=("--avoid-family", "claude"))
-        self.assertEqual((status, out), (3, ""))
-        self.assertIn(ug.local(ug.next_midnight(NOW)), err)
+        status, out, err = self.invoke(chain=chain, claude=95, extra=("--avoid-family", "claude"))
+        self.assertEqual((status, out), (4, ""))
+        self.assertIn(ug.local(FUT), err)
         chain = [{"provider": "cursor", "model": "gpt-test"}]
-        self.assertEqual(self.invoke(chain=chain, extra=("--avoid-family", "gpt"))[0], 3)
+        self.assertEqual(self.invoke(chain=chain, extra=("--avoid-family", "gpt"))[0], 4)
 
     def test_ungated_is_only_a_last_resort_and_unknown_does_not_prove_blocked(self):
-        self.assertIn("--agent codex", self.invoke(claude=52)[1])
-        self.assertEqual(self.invoke(claude=52, codex=52)[0], 3)   # cursor has no reading, so antigravity is not a fallback yet
-        self.assertEqual(self.invoke(claude=None, codex=52)[0], 3)
-        self.assertEqual(self.invoke(extra=("--avoid-family", "gpt"), claude=None)[0], 3)
+        self.assertIn("--agent codex", self.invoke(claude=95)[1])
+        self.assertEqual(self.invoke(claude=95, codex=95)[0], 4)   # cursor has no reading, so antigravity is not a fallback yet
+        self.assertEqual(self.invoke(claude=None, codex=95)[0], 4)
+        self.assertEqual(self.invoke(extra=("--avoid-family", "gpt"), claude=None)[0], 4)
 
     def test_unknown_role_uses_default_chain_and_models_from_file(self):
         status, out, _ = self.invoke(role="unlisted", default=True, claude=41)
@@ -591,15 +596,15 @@ class Pick(unittest.TestCase):
         status, out, _ = self.invoke(extra=("--json",), running=2)
         result = json.loads(out)
         self.assertEqual((status, result["selected"]["provider"], result["selected"]["headroom"]),
-                         (0, "codex", 9))
+                         (0, "codex", 52))
         self.assertEqual(len(result["candidates"]), 4)
 
     def test_no_allowed_entry_reports_earliest_reset_and_exit_three_in_json(self):
         chain = [{"provider": "claude", "model": "opus"}, {"provider": "codex", "model": "gpt-test"}]
-        status, out, _ = self.invoke(chain=chain, claude=96, codex=52, extra=("--json",))
+        status, out, _ = self.invoke(chain=chain, claude=96, codex=95, extra=("--json",))
         result = json.loads(out)
         self.assertEqual((status, result["selected"], result["blocked_until"]),
-                         (3, None, ug.next_midnight(NOW)))
+                         (3, None, FUT))
 
 
 class PickOrder(unittest.TestCase):
@@ -612,7 +617,7 @@ class PickOrder(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 100.0%, codex unknown, cursor unknown, antigravity/claude unknown, antigravity/gemini unknown")
+                         "pick order now: claude 67.4%, codex refresh returned no fresh valid usage reading, cursor refresh returned no fresh valid usage reading, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini GetUserStatus returned no fresh valid pool quota")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
@@ -622,7 +627,8 @@ class PickOrder(unittest.TestCase):
                 mock.patch.object(ug, "running_workers", return_value=0), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
-        self.assertIn("weekly ceiling (stale reading)", out.getvalue())
+        self.assertIn("unknown", out.getvalue())
+        self.assertNotIn("blocked", out.getvalue())
 
 
 class CodexWorkerBase(unittest.TestCase):
@@ -649,6 +655,120 @@ class CodexWorkerBase(unittest.TestCase):
                 with open(t + "/args") as f:
                     flags = f.read().splitlines()
                 self.assertEqual(flags[flags.index("--base-branch") + 1], expected)
+
+
+class RealReadingPolicy(unittest.TestCase):
+    def setUp(self):
+        module_spec = importlib.util.spec_from_file_location("real_gate", spec.origin)
+        self.gate = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(self.gate)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.gate.STATE = self.tmp.name
+
+    def test_stale_ceiling_refresh_can_allow_and_never_infers_zero_after_reset(self):
+        gate = self.gate
+        old = {"pct": 99, "resets_at": NOW - 1, "observed_at": NOW - 600}
+        new = {"pct": 3, "resets_at": FUT, "observed_at": NOW}
+        with mock.patch.dict(gate.READERS, {"codex": lambda: old}), \
+                mock.patch.object(gate, "refresh_reading", return_value=new) as refresh, \
+                mock.patch.object(gate, "running_workers", return_value=0):
+            result = gate.run("codex", 1, 95, now=NOW)
+        refresh.assert_called_once_with("codex")
+        self.assertEqual((result["verdict"], result["weekly_used"]), ("allowed", 3))
+        self.assertEqual(result["source"], "codex app-server account/rateLimits/read")
+
+    def test_failed_refresh_is_unknown_with_exact_source_age_and_no_invented_number(self):
+        gate = self.gate
+        old = {"pct": 99, "resets_at": FUT, "observed_at": NOW - 600}
+        with mock.patch.dict(gate.READERS, {"claude": lambda: old}), \
+                mock.patch.object(gate, "refresh_reading", side_effect=TimeoutError("secret response")):
+            result = gate.run("claude", None, 95, now=NOW)
+        self.assertEqual(result["verdict"], "unknown")
+        self.assertEqual(result["reading_age_min"], 10)
+        self.assertIn("api.anthropic.com/api/oauth/usage", result["source"])
+        self.assertIn("TimeoutError", result["reason"])
+        self.assertNotIn("weekly_used", result)
+        self.assertNotIn("secret", json.dumps(result))
+
+    def test_missing_reading_refresh_can_block_only_on_real_week_plus_full_reserve(self):
+        gate = self.gate
+        with mock.patch.dict(gate.READERS, {"claude": lambda: None}), \
+                mock.patch.object(gate, "refresh_reading", return_value={"pct": 93, "resets_at": FUT, "observed_at": NOW}), \
+                mock.patch.object(gate, "running_workers", return_value=2):
+            result = gate.run("claude", .1, 95, now=NOW)
+        self.assertEqual((result["verdict"], result["reserve"], result["reason"]), ("blocked", 2, "weekly ceiling"))
+
+    def test_fresh_reading_does_not_refresh_and_invalid_numbers_never_decide(self):
+        gate = self.gate
+        for pct in (float('nan'), float('inf'), -1, 101):
+            self.assertIsNone(gate.fresh({"pct": pct, "observed_at": NOW}, NOW))
+        with mock.patch.dict(gate.READERS, {"claude": lambda: {"pct": 90, "observed_at": NOW, "resets_at": FUT}}), \
+                mock.patch.object(gate, "refresh_reading") as refresh, \
+                mock.patch.object(gate, "running_workers", return_value=0):
+            result = gate.run("claude", None, 95, now=NOW)
+        refresh.assert_not_called()
+        self.assertEqual(result["verdict"], "allowed")
+        self.assertIn("claude-rate-limits.json", result["source"])
+
+    def test_broken_local_reader_refreshes_instead_of_crashing(self):
+        gate = self.gate
+        with mock.patch.dict(gate.READERS, {"codex": mock.Mock(side_effect=ValueError("bad local data"))}), \
+                mock.patch.object(gate, "codex_refresh", return_value={"pct": 20, "observed_at": NOW}), \
+                mock.patch.object(gate, "running_workers", return_value=0):
+            self.assertEqual(gate.run("codex", None, 95, now=NOW)["verdict"], "allowed")
+
+    def test_refresh_age_uses_the_clock_after_provider_response(self):
+        gate = self.gate
+        with mock.patch.dict(gate.READERS, {"codex": lambda: None}), \
+                mock.patch.object(gate, "refresh_reading", return_value={"pct": 20, "observed_at": NOW + 10}), \
+                mock.patch.object(gate.time, "time", side_effect=[NOW, NOW, NOW + 10]), \
+                mock.patch.object(gate, "running_workers", return_value=0):
+            result = gate.run("codex", None, 95)
+        self.assertEqual((result["verdict"], result["reading_age_min"]), ("allowed", 0))
+
+    def test_codex_refresh_reads_real_account_rpc_without_a_model_turn(self):
+        gate = self.gate
+        path = self.tmp.name + '/codex'
+        with open(path, 'w') as f:
+            f.write('''#!/usr/bin/env python3
+import json,sys
+for line in sys.stdin:
+    d=json.loads(line)
+    if d['method']=='initialize': print(json.dumps({'id':1,'result':{}}),flush=True)
+    elif d['method']=='account/rateLimits/read':
+        print(json.dumps({'id':2,'result':{'rateLimits':{'secondary':{
+            'usedPercent':41,'windowDurationMins':10080,'resetsAt':2000000000}}}}),flush=True)
+    elif d['method']!='initialized': sys.exit(1)
+''')
+        os.chmod(path, 0o755)
+        with mock.patch.dict(os.environ, {'PATH':self.tmp.name + ':' + os.environ['PATH']}):
+            reading = gate.codex_refresh()
+        self.assertEqual((reading['pct'], reading['resets_at']), (41, 2000000000))
+        self.assertIsNotNone(gate.fresh(reading, gate.time.time()))
+
+    def test_claude_refresh_uses_own_usage_response(self):
+        import urllib.request
+        gate = self.gate
+        gate.HOME = self.tmp.name
+        os.makedirs(self.tmp.name + '/.claude')
+        with open(self.tmp.name + '/.claude/.credentials.json', 'w') as f:
+            json.dump({'claudeAiOauth':{'accessToken':'synthetic'}}, f)
+        body = io.StringIO(json.dumps({'seven_day':{'utilization':42, 'resets_at':FUT}}))
+        with mock.patch.object(urllib.request, 'urlopen', return_value=body) as fetch:
+            reading = gate.claude_refresh()
+        self.assertEqual(reading['pct'], 42)
+        self.assertEqual(fetch.call_args.args[0].full_url, 'https://api.anthropic.com/api/oauth/usage')
+
+    def test_running_reserve_includes_retained_live_workers_on_later_pages(self):
+        gate = self.gate
+        pages = [mock.Mock(stdout=json.dumps({'result':{'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}}})),
+                 mock.Mock(stdout=json.dumps({'result':{'workers':[
+                     {'terminalState':'retained','dispatchStatus':'dispatched','projection':{'provider':{'id':'codex'},'liveness':{'verdict':'live'}}},
+                     {'terminalState':'retained','dispatchStatus':'completed','projection':{'provider':{'id':'codex'}}}], 'page':{'hasMore':False}}}))]
+        with mock.patch.object(gate.subprocess, 'run', side_effect=pages) as query:
+            self.assertEqual(gate.running_workers('codex'), 1)
+        self.assertIn('page2', query.call_args.args[0])
 
 
 if __name__ == "__main__":
