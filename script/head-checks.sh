@@ -69,6 +69,7 @@ fi
 for commit in "$sha" "$base"; do
   git -C "$repo" cat-file -e "$commit^{commit}" 2>/dev/null || git -C "$repo" fetch origin "$commit" >> "$log" 2>&1
  done
+base=$(git -C "$repo" merge-base "$base" "$sha") || usage "cannot resolve PR merge base"
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
@@ -95,7 +96,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp)
-  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" \
+  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
