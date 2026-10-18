@@ -109,7 +109,7 @@ class VisibleText(HTMLParser):
         self.parts = []
     def handle_data(self, data):
         self.parts.append(data)
-def normalize(text):
+def visible_folded(text):
     text.encode("utf-8", errors="strict")
     parser = VisibleText()
     parser.feed(html.unescape(text))
@@ -117,13 +117,24 @@ def normalize(text):
     decomposed = unicodedata.normalize("NFKD", "".join(parser.parts))
     unmarked = "".join(char for char in decomposed if not unicodedata.category(char).startswith("M"))
     folded = unicodedata.normalize("NFKC", unmarked).casefold()
-    return "".join(char for char in folded if unicodedata.category(char)[0] in "LN")
+    return folded
+def normalize(text):
+    return "".join(char for char in visible_folded(text) if unicodedata.category(char)[0] in "LN")
+def term_counts(text):
+    normalized, visible = normalize(text), visible_folded(text)
+    # Preserve currency symbols: NT$ must never become the ordinary substring nt.
+    return [visible.count(visible_folded(raw))
+            if any(unicodedata.category(char) == "Sc" or char == "%" for char in raw) or not word
+            else normalized.count(word) for raw, word in zip(words, normalized_words)]
+def contains_topic(text):
+    return any(term_counts(text))
 def increased(before, after):
-    normalized_before, normalized_after = normalize(before), normalize(after)
-    # Symbol-only policy terms disappear during normalization; retain their gate.
-    return any(normalized_after.count(word) > normalized_before.count(word)
-               if word else after.casefold().count(raw.casefold()) > before.casefold().count(raw.casefold())
-               for raw, word in zip(words, normalized_words))
+    return any(new > old for old, new in zip(term_counts(before), term_counts(after)))
+def quantities(values):
+    # Compare tokens per value so independent locale keys cannot assemble numbers.
+    from collections import Counter
+    return Counter(token for value in values for token in
+                   re.findall(r"\d+|NT\$|\$|¥|元|円|USD|TWD|JPY|%", html.unescape(value), re.IGNORECASE))
 def flatten(value, path=()):
     if isinstance(value, str):
         return {path: value}
@@ -161,14 +172,20 @@ try:
             after = {} if raw[4] == "D" else flatten(json.loads(git("show", f"{head}:{path}")))
             if before.keys() != after.keys():
                 eligible = False
-            # Preserve the sensitive-key gate for schema changes on the normal route.
-            sensitive |= increased(" ".join(" ".join(key) for key in before),
-                                   " ".join(" ".join(key) for key in after))
+            changed = [key for key in before.keys() | after.keys()
+                       if before.get(key) != after.get(key)]
+            sensitive |= any(contains_topic(" ".join(key)) or
+                             contains_topic(before.get(key, "")) or
+                             contains_topic(after.get(key, "")) for key in changed)
+            sensitive |= quantities(before[key] for key in changed if key in before) != quantities(
+                after[key] for key in changed if key in after)
             before, after = "".join(before.values()), "".join(after.values())
         elif re.fullmatch(r"marketing/(content|copy)/(?:[^/]+/)*[^/]+\.(md|txt)", path):
             # Absent files and gitlinks contain no text blob on that side.
             before = "" if raw[4] == "A" or raw[0] == ":160000" else git("show", f"{ancestor}:{path}")
             after = "" if raw[4] == "D" or raw[1] == "160000" else git("show", f"{head}:{path}")
+            sensitive |= contains_topic(before) or contains_topic(after)
+            sensitive |= quantities([before]) != quantities([after])
         else:
             eligible = False
             continue

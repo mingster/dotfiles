@@ -240,6 +240,40 @@ check "stale owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
 check "owner sensitive approval permits normal route merge" 0 'lane=normal' 1
 
+# Count-preserving topic changes still require current-head owner approval.
+for surface in marketing locale; do
+  for probe in price refund scope replace; do
+    copy_setup
+    case "$probe" in
+      price) before="Price: \$100"; after="Price: \$200"; before_json='{"price":"100"}'; after_json='{"price":"200"}' ;;
+      refund) before='Refund within 30 days'; after='Refund within 0 days'; before_json='{"refund":"within 30 days"}'; after_json='{"refund":"within 0 days"}' ;;
+      scope) before='We promise service for one day'; after='We promise service for a thousand years'; before_json='{"message":"We promise service for one day"}'; after_json='{"message":"We promise service for a thousand years"}' ;;
+      replace) before=$'We promise email support\nWelcome'; after=$'Welcome\nWe promise phone support'; before_json='{"first":"We promise email support","second":"Welcome"}'; after_json='{"first":"Welcome","second":"We promise phone support"}' ;;
+    esac
+    if [ "$surface" = marketing ]; then
+      probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
+      printf '%s\n' "$before" > "$probe_file"
+    else
+      probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+      printf '%s\n' "$before_json" > "$probe_file"
+    fi
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm topic-base
+    base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+    if [ "$surface" = marketing ]; then
+      printf '%s\n' "$after" > "$probe_file"
+    else
+      printf '%s\n' "$after_json" > "$probe_file"
+    fi
+    copy_commit
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "$surface unchanged-count $probe needs approval" 1 'owner copy approval'
+    COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+    check "$surface unchanged-count $probe owner approved" 0 'lane=normal' 1
+  done
+done
+
 # Retained text must participate when edits assemble a new sensitive occurrence.
 for surface in marketing locale; do
   for probe in reorder replace; do
@@ -298,7 +332,11 @@ for surface in marketing locale; do
   fi
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
-  check "$surface unchanged sensitive count uses light route" 0 'lane=copy-only' 1
+  if [ "$surface" = marketing ]; then
+    check "marketing existing topic requires approval for any file edit" 1 'owner copy approval'
+  else
+    check "locale unchanged topic in another key uses light route" 0 'lane=copy-only' 1
+  fi
   # An existing occurrence cannot hide a second occurrence of the same term.
   if [ "$surface" = marketing ]; then
     printf 'Our promise\npromise\n' > "$probe_file"
@@ -308,6 +346,66 @@ for surface in marketing locale; do
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "$surface increased sensitive count needs approval" 1 'owner copy approval'
+done
+
+# Literal currency symbols must not turn ordinary words into sensitive topics.
+for wording in Continue 'Help center' 'Account settings' 'Something went wrong'; do
+  copy_setup
+  printf '{"greeting":"%s","price":"100"}\n' "$wording" > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm unchanged-price-base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  printf '{"greeting":"%s please","price":"100"}\n' "$wording" > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "ordinary $wording beside unchanged price uses light route" 0 'lane=copy-only' 1
+done
+
+# Quantities are owner-held even when neither value nor key names a topic.
+for surface in marketing locale; do
+  for probe in digits '$' 'NT$' '¥' 元 円 USD TWD JPY '%'; do
+    copy_setup
+    before='Open 10'; after='Open 20'
+    if [ "$probe" != digits ]; then before="Open 10 $probe"; after='Open 10'; fi
+    if [ "$surface" = marketing ]; then
+      probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
+      printf '%s\n' "$before" > "$probe_file"
+    else
+      probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+      jq -n --arg value "$before" '{greeting:$value}' > "$probe_file"
+    fi
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm quantity-base
+    base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+    if [ "$surface" = marketing ]; then
+      printf '%s\n' "$after" > "$probe_file"
+    else
+      jq -n --arg value "$after" '{greeting:$value}' > "$probe_file"
+    fi
+    copy_commit
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "$surface changed $probe requires approval" 1 'owner copy approval'
+  done
+done
+
+# Removing a locale topic or changing only its nested key's value needs approval.
+for probe in removed nested; do
+  copy_setup
+  probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+  printf '{"refund":{"message":"Available"},"greeting":"Hello"}\n' > "$probe_file"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm nested-topic-base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  if [ "$probe" = removed ]; then
+    printf '{"greeting":"Hello"}\n' > "$probe_file"
+  else
+    printf '{"refund":{"message":"Unavailable"},"greeting":"Hello"}\n' > "$probe_file"
+  fi
+  copy_commit
+  check "$probe locale topic requires approval" 1 'owner copy approval'
 done
 
 # Diff-like content is still marketing text, never a patch header.
@@ -370,7 +468,7 @@ base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
 printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
 copy_commit
 comments+=$'\nPhone-width screenshots in tw, en and jp.'
-check "removed marketing wording alone does not need copy approval" 0 'lane=copy-only' 1
+check "removed marketing topic requires approval" 1 'owner copy approval'
 
 # Rendered sensitive wording must retain the owner gate across copy surfaces.
 for surface in marketing locale; do
