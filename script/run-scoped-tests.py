@@ -85,13 +85,73 @@ def run_scoped_tests(root, runner, files):
     return subprocess.run(shlex.split(runner) + paths, cwd=root, env=env).returncode
 
 
+def run_command(command, cwd=Path('.')):
+    print('Component check:', shlex.join(command), 'cwd=' + str(cwd), flush=True)
+    subprocess.run(command, cwd=cwd, check=True)
+
+
+def component_checks(root, phase, files):
+    paths = [Path(name) for name in files]
+    existing = [path for path in paths if path.is_file()]
+    marketing = root == Path('web') and any(path.parts[0] == 'marketing' for path in paths)
+    if phase == 'lint':
+        for path in paths:
+            supported = (path.is_relative_to(root) or path.suffix in ('.md', '.sh', '.py')
+                         or str(path).startswith(('docs/', 'changelog.d/'))
+                         or str(path) == '.agents/head-checks.conf'
+                         or (root == Path('web') and (str(path).startswith('marketing/') or (path.parent == Path('bin') and path.suffix == '.ts')))
+                         or (path.parent == Path('.github/workflows') and path.suffix in ('.yml', '.yaml')))
+            if not supported:
+                print('UNCHECKED:', path, flush=True)
+        python_files = [str(path) for path in existing if path.suffix == '.py']
+        if python_files:
+            run_command(['python3', '-m', 'py_compile', *python_files])
+        workflows = [str(path) for path in existing if path.parent == Path('.github/workflows') and path.suffix in ('.yml', '.yaml')]
+        if workflows:
+            run_command(['bun', '-e', 'for (const f of process.argv.slice(1)) { Bun.YAML.parse(await Bun.file(f).text()); console.log("YAML parsed:", f); }', *workflows])
+        if marketing:
+            run_command(['bun', 'install', '--frozen-lockfile', '--ignore-scripts'], Path('marketing'))
+            targets = [str(path.relative_to('marketing')) for path in existing if path.is_relative_to('marketing') and path.suffix in ('.ts', '.tsx', '.js', '.jsx', '.json', '.jsonc', '.css')]
+            if targets:
+                # Marketing has its own tsconfig and no lint config; use Biome's defaults there.
+                run_command(['bunx', '--package', '@biomejs/biome', 'biome', 'check', '--no-errors-on-unmatched', '--', *targets], Path('marketing'))
+    elif phase == 'typecheck':
+        if marketing:
+            run_command(['bunx', '--no-install', 'next', 'typegen'], Path('marketing'))
+            run_command(['bunx', '--no-install', 'tsc', '--noEmit'], Path('marketing'))
+    elif phase == 'tests':
+        directories = set()
+        for path in existing:
+            if path.suffix == '.py':
+                directories.update(directory for directory in (path.parent / 'tests', path.parent.parent / 'tests') if directory.is_dir())
+        for directory in sorted(directories):
+            run_command(['python3', '-m', 'pytest', str(directory)])
+        if root == Path('web'):
+            bin_files = [str(path) for path in paths if path.parent == Path('bin') and path.suffix == '.ts']
+            if bin_files:
+                result = run_scoped_tests(Path('bin'), 'bun test --isolate', bin_files)
+                if result:
+                    return result
+            if marketing:
+                result = run_scoped_tests(Path('marketing'), 'bun test --isolate', files)
+                if result:
+                    return result
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--runner', required=True)
+    parser.add_argument('--components', choices=('lint', 'typecheck', 'tests'))
     parser.add_argument('files', nargs='*')
     args = parser.parse_args()
-    return run_scoped_tests(args.root, args.runner, args.files)
+    try:
+        if args.components:
+            return component_checks(args.root, args.components, args.files)
+        return run_scoped_tests(args.root, args.runner, args.files)
+    except subprocess.CalledProcessError as error:
+        return error.returncode
 
 
 if __name__ == '__main__':
