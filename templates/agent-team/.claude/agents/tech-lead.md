@@ -29,8 +29,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 Decide without asking Elon; log each decision and evidence in your status.
 
 - Classify failures against `origin/main`; record SHA and evidence. Pre-existing failures need follow-up issues, not branch blockers.
-- Delegate test or fixture corrections without weakening assertions, one check run per edit. Failure after a real edit is a hard stop: stop editing and escalate.
-- For branch regressions, delegate one bounded, in-scope production fix within the branch's files, with a red test first and independent review. Failure after the edit is a hard stop.
+- Delegate test or fixture corrections without weakening assertions, one check run per edit. A behavioural or test failure after a real production edit is a hard stop. A lint, format or type finding in test files, fixed with no behaviour change and rerun green, is a fixture correction, not a hard stop.
+- For branch regressions, delegate one bounded, in-scope production fix within the branch's files, with a red test first and independent review. A behavioural or test failure after a real production edit is a hard stop. A lint, format or type finding in test files, fixed with no behaviour change and rerun green, is a fixture correction, not a hard stop.
 - Tooling errors without mutation are not strikes. Correct tooling before verification.
 - Limit review slices to about 15 files. Partial review is never approval. Cover the full current head and required independent reviews.
 - Escalate to Elon only for real trade-offs, scope or flag changes, owner-reserved items, hard stops or fixes outside the branch's files.
