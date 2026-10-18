@@ -112,11 +112,11 @@ def flatten(value, path=()):
 try:
     ancestor = git("merge-base", base, head).strip()
     paths = git("diff", "--name-only", "--no-renames", ancestor, head, "--").splitlines()
-    if not paths or sorted(paths) != sorted(json.loads(inventory)):
-        raise ValueError("diff inventory mismatch")
+    eligible = bool(paths) and sorted(paths) == sorted(json.loads(inventory))
     words = json.load(open(config))["sensitive_words"]
+    if not isinstance(words, list) or not words or any(not isinstance(word, str) or not word.strip() for word in words):
+        raise ValueError("invalid sensitive wording policy")
     sensitive = False
-    eligible = True
     for path in paths:
         raw = git("diff", "--raw", "--no-renames", ancestor, head, "--", path).split()
         if len(raw) != 6:
@@ -133,18 +133,21 @@ try:
             after = {} if raw[4] == "D" else flatten(json.loads(git("show", f"{head}:{path}")))
             if before.keys() != after.keys():
                 eligible = False
-            changed = [" ".join((*key, before.get(key, ""), after.get(key, "")))
+            changed = [" ".join((*key, after.get(key, "")))
                        for key in before.keys() | after.keys() if before.get(key) != after.get(key)]
         elif re.fullmatch(r"marketing/(content|copy)/(?:[^/]+/)*[^/]+\.(md|txt)", path):
             changed = [line[1:] for line in git("diff", "--no-ext-diff", "--unified=0", ancestor, head, "--", path).splitlines()
-                       if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
+                       if line.startswith("+") and not line.startswith("+++")]
         else:
             eligible = False
             continue
         sensitive |= any(word.casefold() in text.casefold() for text in changed for word in words)
     print(("copy-only" if eligible else "normal") + (" sensitive" if sensitive else ""))
 except (ValueError, KeyError, OSError, subprocess.SubprocessError):
-    print("normal")
+    # Copy changes with unreadable blobs or policy still need the owner gate.
+    copy_changed = any(path.startswith(("web/src/app/i18n/locales/", "marketing/content/", "marketing/copy/"))
+                       for path in json.loads(inventory))
+    print("normal sensitive" if copy_changed else "normal")
 PYTHON
 ) || die "cannot classify copy-only diff"
   case "$classification" in
