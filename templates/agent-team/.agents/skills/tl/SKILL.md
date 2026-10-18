@@ -12,6 +12,8 @@ The Tech Lead (`lead`) is a teammate that coordinates engineering integration an
 - `/tl daily run`: deprecated alias for `/elon daily run`.
 - Any command in `.claude/agents/tech-lead.md`'s command suite, when it has one, works after `/tl` too.
 
+Read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for engineering operating mode, Orca dispatch, provider fallback and handoff; then use poteto-mode with the applicable playbook.
+
 For delivery, use the `crew` skill for scope, dispatch, evidence and integration. Read `.claude/agents/tech-lead.md` for engineering authority and reporting rules. Filing issues follows `docs/agents/issue-budget.md`.
 
 Outside Orca, read `.agents/skills/tl/other-tools.md` for role relay. Inside Orca, use the `orchestration` skill for supervised assignments and the `orca-cli` skill for an unsupervised handoff.

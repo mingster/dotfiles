@@ -2,6 +2,8 @@
 
 Tiers, Orca worker flags, worker launch and supervision, fallback, and the commit, push and merge rule. They apply to every provider.
 
+Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for lead, fullstack-dev, qa-sdet and release-manager work. Its Codex-first routing, Cursor job restrictions and quota fallback supersede older engineering provider defaults below; existing usage, effort, token, strike, independent-review and publication gates still apply.
+
 ## Tiers
 
 | Tier | Use it for | Roles |
