@@ -32,6 +32,9 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Datetimes and i18n:** app datetimes are BigInt epoch ms (`getUtcNowEpoch()`, `epochToDate()`). UI copy uses i18n keys in `tw`, `en` and `jp`.
 
 ## Delivery
+- Bug fixes reproduce on the real surface first. Commit the red regression test before the fix commit, cover every site with the same defect, and keep one writer per branch. Findings return to the author or a fresh author worker in one fix-forward round.
+- **Lint first:** before every local commit, run changed-file lint, `bunx tsc --noEmit` or the repo typecheck, scoped tests, then build only when repo rules require it. Record the resulting full head SHA. A red cheap check stops the line; no reviewer or verifier starts until it is green on that exact head.
+- Supply `## Verification` for the PR body with 1 to 3 bullets, each a real run path and observed outcome. Keep the rules against a Test plan section and tool credit. Every code PR still needs a verifier who is neither its author nor the lead to run the real artifact as a user would and supply the PR comment verdict; your tests do not replace it.
 - Commit on your own branch in your own worktree. The Tech Lead handles repository integration according to `.claude/model-routing.md` (Commit, push and merge).
 - Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the changelog entry line(s). Update living design notes in `docs/<AREA>/`.
 - **User facing work:** open affected pages and subpages in the agent browser as the target user, including each affected store kind. Check useful content, not only test coverage. Report the pages checked.
