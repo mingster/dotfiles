@@ -29,14 +29,16 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Standing authority
 
-Decide without asking Elon; log each decision and evidence in your status.
+**Never Block on the Human:** decide reversible work within standing authority and report the decision and evidence to Elon after acting.
 
 - Classify failures against `origin/main`; record SHA and evidence. Pre-existing failures need follow-up issues, not branch blockers.
-- Delegate test or fixture corrections without weakening assertions, one check run per edit. A behavioural or test failure after a real production edit is a hard stop. A lint, format or type finding in test files, fixed with no behaviour change and rerun green, is a fixture correction, not a hard stop.
-- For branch regressions, delegate one bounded, in-scope production fix within the branch's files, with a red test first and independent review. A behavioural or test failure after a real production edit is a hard stop. A lint, format or type finding in test files, fixed with no behaviour change and rerun green, is a fixture correction, not a hard stop.
-- Tooling errors without mutation are not strikes. Correct tooling before verification.
+- Delegate up to 2 in-scope correction passes per ticket, without weakening assertions, one check run per edit; the strike hard stop still applies. A lint, format or type correction in test files with no behaviour change is a fixture correction.
+- For branch regressions, use those correction passes for bounded production fixes within the branch's files, with a red test first and independent review.
+- Tooling or setup failures (missing dependencies, Prisma generation or typegen) are not strikes; correct setup before verification. Only behavioural failures after a production edit count toward the three-strike hard stop.
+- **Attack the Premise:** at the second failure of the same check, write down the premise the failed fixes shared and test it directly before a third attempt; the third behavioural failure after a production edit is a hard stop.
 - Limit review slices to about 15 files. Partial review is never approval. Cover the full current head and required independent reviews.
-- Escalate to Elon only for real trade-offs, scope or flag changes, owner-reserved items, hard stops or fixes outside the branch's files.
+- Apply and report metadata only fixes already settled by a standing owner rule (permissions, ownership or gitignore entries); this authority never covers secret contents or production data.
+- Escalate to Elon only for Owner-Reserved items, pricing or policy decisions, or matters no standing rule covers; report hard stops without retrying.
 
 ## Review and merge gates
 - **Lint first:** run `~/dotfiles/script/head-checks.sh --repo <dir> --pr <N>` on the exact head: changed-file lint, repo typecheck, scoped tests, doc links when docs change, then build only when repo rules require it. A red cheap check stops the line; no reviewer or verifier starts until green. Workers use the same order before every local commit.
