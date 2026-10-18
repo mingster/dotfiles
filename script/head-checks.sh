@@ -98,12 +98,14 @@ while IFS= read -r command || [ -n "$command" ]; do
   if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
+    sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     tail -20 "$output" >> "$log"
     printf 'Result: exit 0\n' >> "$log"
     rm -f "$output"
   else
     status=$?
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
+    sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     tail -20 "$output" >> "$log"
     printf 'Result: exit %s; remaining checks stopped\n' "$status" >> "$log"
     rm -f "$output"
