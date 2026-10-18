@@ -92,7 +92,6 @@ if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then
     git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || die "cannot inspect copy-only diff"
   done
   classification=$(python3 - "$base" "$head" "$files" "$(dirname "$0")/copy-only.config.json" <<'PYTHON'
-import difflib
 import html
 from html.parser import HTMLParser
 import json
@@ -119,6 +118,12 @@ def normalize(text):
     unmarked = "".join(char for char in decomposed if not unicodedata.category(char).startswith("M"))
     folded = unicodedata.normalize("NFKC", unmarked).casefold()
     return "".join(char for char in folded if unicodedata.category(char)[0] in "LN")
+def increased(before, after):
+    normalized_before, normalized_after = normalize(before), normalize(after)
+    # Symbol-only policy terms disappear during normalization; retain their gate.
+    return any(normalized_after.count(word) > normalized_before.count(word)
+               if word else after.casefold().count(raw.casefold()) > before.casefold().count(raw.casefold())
+               for raw, word in zip(words, normalized_words))
 def flatten(value, path=()):
     if isinstance(value, str):
         return {path: value}
@@ -136,7 +141,7 @@ try:
     if not isinstance(words, list) or not words or any(not isinstance(word, str) or not word.strip() for word in words):
         raise ValueError("invalid sensitive wording policy")
     normalized_words = [normalize(word) for word in words]
-    changed_text = []
+    sensitive = False
     for path in paths:
         entry = git("diff", "--raw", "-z", "--no-renames", ancestor, head, "--", path).split("\0")
         if len(entry) != 3 or entry[1] != path or entry[2]:
@@ -156,24 +161,21 @@ try:
             after = {} if raw[4] == "D" else flatten(json.loads(git("show", f"{head}:{path}")))
             if before.keys() != after.keys():
                 eligible = False
-            changed = [" ".join((*key, after.get(key, "")))
-                       for key in before.keys() | after.keys() if before.get(key) != after.get(key)]
+            # Preserve the sensitive-key gate for schema changes on the normal route.
+            sensitive |= increased(" ".join(" ".join(key) for key in before),
+                                   " ".join(" ".join(key) for key in after))
+            before, after = "".join(before.values()), "".join(after.values())
         elif re.fullmatch(r"marketing/(content|copy)/(?:[^/]+/)*[^/]+\.(md|txt)", path):
             # Absent files and gitlinks contain no text blob on that side.
-            before = [] if raw[4] == "A" or raw[0] == ":160000" else git("show", f"{ancestor}:{path}").splitlines()
-            after = [] if raw[4] == "D" or raw[1] == "160000" else git("show", f"{head}:{path}").splitlines()
-            changed = [line for tag, _, _, start, end in
-                       difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes()
-                       if tag in ("insert", "replace") for line in after[start:end]]
+            before = "" if raw[4] == "A" or raw[0] == ":160000" else git("show", f"{ancestor}:{path}")
+            after = "" if raw[4] == "D" or raw[1] == "160000" else git("show", f"{head}:{path}")
         else:
             eligible = False
             continue
-        changed_text.extend(changed)
-    text = "\n".join(changed_text)
-    normalized_text = normalize(text)
-    # Raw matching retains symbol-only commercial policy terms such as % and $.
-    sensitive = (any(word.casefold() in text.casefold() for word in words)
-                 or any(word and word in normalized_text for word in normalized_words))
+        # Whole-file counts include retained context and reordered locale values.
+        sensitive |= increased(before, after)
+    if sensitive:
+        eligible = False
     print(("copy-only" if eligible else "normal") + (" sensitive" if sensitive else ""))
 except (ValueError, KeyError, OSError, subprocess.SubprocessError):
     # Copy changes with unreadable blobs or policy still need the owner gate.

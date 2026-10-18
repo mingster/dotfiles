@@ -238,7 +238,77 @@ check "non-owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$OLD" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
 check "stale owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
-check "owner sensitive approval permits merge" 0 'lane=copy-only' 1
+check "owner sensitive approval permits normal route merge" 0 'lane=normal' 1
+
+# Retained text must participate when edits assemble a new sensitive occurrence.
+for surface in marketing locale; do
+  for probe in reorder replace; do
+    copy_setup
+    if [ "$probe" = reorder ]; then
+      before=$'pro\nhello\nmise'
+      after=$'pro\nmise\nhello'
+      before_json='{"first":"pro","second":"hello","third":"mise"}'
+      after_json='{"first":"pro","third":"mise","second":"hello"}'
+    else
+      before=$'pro\nWelcome'
+      after=$'pro\nmise'
+      before_json='{"first":"pro","second":"Welcome"}'
+      after_json='{"first":"pro","second":"mise"}'
+    fi
+    if [ "$surface" = marketing ]; then
+      probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
+      printf '%s\n' "$before" > "$probe_file"
+    else
+      probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+      printf '%s\n' "$before_json" > "$probe_file"
+    fi
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm fragment-base
+    base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+    if [ "$surface" = marketing ]; then
+      printf '%s\n' "$after" > "$probe_file"
+    else
+      printf '%s\n' "$after_json" > "$probe_file"
+    fi
+    copy_commit
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "$surface $probe across unchanged fragments needs approval" 1 'owner copy approval'
+  done
+done
+
+# Existing sensitive wording may remain once while unrelated copy changes.
+for surface in marketing locale; do
+  copy_setup
+  if [ "$surface" = marketing ]; then
+    probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
+    printf 'Our promise\nWelcome\n' > "$probe_file"
+  else
+    probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+    printf '{"first":"Our promise","second":"Welcome"}\n' > "$probe_file"
+  fi
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm existing-term-base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  if [ "$surface" = marketing ]; then
+    printf 'Our promise\nCome in\n' > "$probe_file"
+  else
+    printf '{"first":"Our promise","second":"Come in"}\n' > "$probe_file"
+  fi
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "$surface unchanged sensitive count uses light route" 0 'lane=copy-only' 1
+  # An existing occurrence cannot hide a second occurrence of the same term.
+  if [ "$surface" = marketing ]; then
+    printf 'Our promise\npromise\n' > "$probe_file"
+  else
+    printf '{"first":"Our promise","second":"promise"}\n' > "$probe_file"
+  fi
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "$surface increased sensitive count needs approval" 1 'owner copy approval'
+done
 
 # Diff-like content is still marketing text, never a patch header.
 for wording in '++promise' '+++promise' '-- promise'; do
