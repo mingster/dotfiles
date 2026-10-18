@@ -1,6 +1,6 @@
 ---
 name: team-audit
-description: Monthly audit of the agent team files (role files, team skills, model-routing.md, team docs) for drift, contradictions and unused skills. Use with /team-audit, on the first Monday of the month in the daily run, or after a large team file change.
+description: Weekly audit of every agent role, team skills, model-routing.md and team docs for performance, drift, contradictions and unused skills. Use with /team-audit, every Monday in the daily run, or after a large team file change.
 ---
 
 # Team audit
@@ -21,6 +21,18 @@ Add these team checks:
 - **Unused skills:** check the last 30 days of available session logs for skill invocations and file loads. A harness may read `SKILL.md` directly; no slash command match alone does not prove disuse. Propose removal with the evidence and log coverage; do not remove.
 - **Project drift:** compare role and skill copies with the dotfiles template. Product facts may differ; team policy should have one source.
 
-## 3. Output
+## 3. Role performance
 
-A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the proposed change. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, riben.life, PSTV), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.
+Every Monday, review every role defined in each project's `.claude/agents/`, including roles with no activity. Review behavior and outcomes, alongside the file review above.
+
+Elon appends observations during the week to `~/.claude/state/team-observations.md`, one line per observation with date, project, role, evidence reference and proposed change. This log is private. Never copy it verbatim into a repository or put it in `~/.claude/notes`, which is public.
+
+1. Read the unconsumed observations and the week's available Orca escalations and `worker_done` reports, using the official `orchestration` guide to inspect the records. State the date range and report coverage. If a source is missing or unavailable, report that gap without treating it as a clean performance record.
+2. For each role, give evidence of its decisions and outcomes, then propose a concrete change to its role file, routing tier or dispatch brief template. Use sanitized evidence references rather than private log text. For an inactive role, record no activity and the evidence gap; mark a proposal provisional when there is insufficient evidence to justify adoption. Proposals remain proposals until agreed under existing authority and owner gates.
+3. After recording the review, mark each consumed observation in the private log with `audited: YYYY-MM-DD` using the audit date. Preserve the observation and leave unreviewed entries unmarked.
+
+Completion requires one performance entry for every role, with evidence or an explicit evidence gap, a proposal and its rationale, plus the consumed markers in the private log.
+
+## 4. Output
+
+A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the proposed change, plus every role's performance entry and the evidence coverage. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, riben.life, PSTV), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.
