@@ -240,6 +240,21 @@ check "stale owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
 check "owner sensitive approval permits merge" 0 'lane=copy-only' 1
 
+# Copy paths must contain ordinary text blobs, including additions.
+for kind in binary symlink submodule deleted renamed; do
+  copy_setup
+  case "$kind" in
+    binary) printf 'image\0data\n' > "$REAL_PATCH_REPO/marketing/content/home.md" ;;
+    symlink) rm "$REAL_PATCH_REPO/marketing/content/home.md"; ln -s ../../marketing/src/home.ts "$REAL_PATCH_REPO/marketing/content/home.md" ;;
+    submodule) "$REAL_GIT" -C "$REAL_PATCH_REPO" rm -q marketing/content/home.md; "$REAL_GIT" -C "$REAL_PATCH_REPO" update-index --add --cacheinfo "160000,$base_sha,marketing/content/home.md"; mkdir -p "$REAL_PATCH_REPO/marketing/content/home.md" ;;
+    deleted) rm "$REAL_PATCH_REPO/marketing/content/home.md" ;;
+    renamed) "$REAL_GIT" -C "$REAL_PATCH_REPO" mv marketing/content/home.md marketing/content/renamed.md ;;
+  esac
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "$kind marketing file uses normal route" 0 'lane=normal' 1
+done
+
 unset REAL_PATCH_REPO
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
