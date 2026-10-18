@@ -35,6 +35,12 @@ else: sys.exit(1)
     run('ordered exact head checks',line('lint')+'\n'+line('typecheck')+'\n'+line('tests')+'\n'+'test ! -f .env.local\ntest "$(git rev-parse HEAD)" = "$HEAD_CHECK_SHA"\nprintf "%s" "${ORCA_TEST_SECRET:-}"',0)
     if order.read_text()=='lint\ntypecheck\ntests\n': passed+=1; print('ok   cheapest first order')
     else: failed+=1; print('FAIL order')
+    # The fetched PR base can be ahead of stale origin/main and diverge from HEAD.
+    fresh=git('commit-tree',git('rev-parse',base+'^{tree}'),'-p',env['GH_HEAD'],'-m','fresh PR base')
+    env['GH_BASE']=fresh
+    expected=env['GH_HEAD']
+    run('checklist receives actual PR merge base', 'test "$HEAD_CHECK_BASE" = "'+expected+'"',0)
+    env['GH_BASE']=base
     run('stop at first red',line('lint')+'\nexit 9\n'+line('tests'),1)
     if order.read_text()=='lint\n': passed+=1; print('ok   later checks never start')
     else: failed+=1; print('FAIL later checks ran')
