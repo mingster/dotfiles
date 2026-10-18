@@ -175,8 +175,28 @@ copy_commit() {
   PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
   files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})')
   checks="Checks: PASS head=$SHA"
-  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
+  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none'
 }
+copy_setup
+printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nPhone-width screenshots in tw, en and jp.'
+check "missing topic attestation refuses light route" 0 'lane=normal' 1
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: None\nPhone-width screenshots in tw, en and jp.'
+check "malformed topic attestation refuses light route" 0 'lane=normal' 1
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: owner\nPhone-width screenshots in tw, en and jp.'
+check "verifier owner attestation needs owner approval" 1 'owner copy approval'
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+check "verifier owner attestation accepts current owner approval" 0 'lane=normal' 1
+COMMENTS_JSON=""
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none\nPhone-width screenshots in tw, en and jp.'
+check "verifier none attestation allows plain light route" 0 'lane=copy-only' 1
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg head "$SHA" '[{body:$checks},{body:("Verdict: PASS head="+$head+" verifier=ctx_verify author=ctx_author\nPhone-width screenshots in tw, en and jp.")},{body:"Copy topics: none"}]')
+check "separate non-verifier attestation refuses light route" 0 'lane=normal' 1
+COMMENTS_JSON=""
+comments="Verdict: PASS head=$SHA verifier=ctx_author author=ctx_author"$'\nCopy topics: none\nPhone-width screenshots in tw, en and jp.'
+check "author cannot attest copy topics" 1 'author cannot'
+
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
@@ -186,7 +206,7 @@ check "values-only locale uses copy-only route" 0 'lane=copy-only' 1
 checks="Checks: FAIL head=$SHA"
 check "copy-only still requires passing checks" 1 'Checks'
 checks="Checks: PASS head=$SHA"
-comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nPhone-width screenshots in tw and en.'
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none\nPhone-width screenshots in tw and en.'
 check "copy-only missing jp screenshot evidence refused" 1 'screenshots'
 
 copy_setup
@@ -268,6 +288,35 @@ for surface in en tw jp marketing; do
     COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
     check "$surface r6 $wording owner approved" 0 'lane=normal' 1
   done
+done
+
+# r7 core vocabulary stays gated even with a verifier's none attestation.
+for wording in penalty waiver arbitration litigation breach dues levy fare rent retainer reimburse clawback rescission annulment pledge undertake always never commit 押金 尾款 價差 加收 入場料 担保金 頭金 敷金 礼金 返款 返現 退錢 退購 退票 返納 返済 返却 払い戻す 償還 違約 違約金 仲裁 訴訟 準據法 著作權 準拠法 著作権 一定 必定 絕對 包退 包換 必ず 絶対 確実 万全 deliver tomorrow today 準時 送達 隔日 お届け 翌日; do
+  copy_setup
+  probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+  jq -n --arg text "$wording alpha" '{greeting:$text}' > "$probe_file"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm topic-base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  jq -n --arg text "$wording beta" '{greeting:$text}' > "$probe_file"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "r7 $wording none cannot override backstop" 1 'owner copy approval'
+done
+for pair in 'checkout_sign_in|Sign In|Continue' 'group_buy_bill_save|Save|Save changes' 'shop_subscription_back|Back|Go back'; do
+  IFS='|' read -r key before after <<<"$pair"
+  copy_setup
+  probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+  jq -n --arg key "$key" --arg text "$before" '{($key):$text}' > "$probe_file"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm label-base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  jq -n --arg key "$key" --arg text "$after" '{($key):$text}' > "$probe_file"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "unchanged $key context alone stays light" 0 'lane=copy-only' 1
 done
 
 # Count-preserving topic changes still require current-head owner approval.
@@ -420,7 +469,7 @@ for surface in marketing locale; do
   done
 done
 
-# Removing a locale topic or changing only its nested key's value needs approval.
+# Removed topic keys stay gated; an unchanged nested key alone stays light.
 for probe in removed nested; do
   copy_setup
   probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
@@ -435,7 +484,12 @@ for probe in removed nested; do
     printf '{"refund":{"message":"Unavailable"},"greeting":"Hello"}\n' > "$probe_file"
   fi
   copy_commit
-  check "$probe locale topic requires approval" 1 'owner copy approval'
+  if [ "$probe" = removed ]; then
+    check "$probe locale topic requires approval" 1 'owner copy approval'
+  else
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "unchanged nested key context alone stays light" 0 'lane=copy-only' 1
+  fi
 done
 
 # Diff-like content is still marketing text, never a patch header.

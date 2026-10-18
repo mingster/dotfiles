@@ -5,13 +5,14 @@ and money, refunds and cancellation, legal/contracts/privacy, and promises and
 guarantees, with separate en, tw and jp word arrays. Currency markers have their
 own group. Each group has a provenance comment. `lead-merge.sh` flattens only the
 word arrays and rejects malformed or empty groups; matching and approval rules
-are unchanged. Terms are global across eligible surfaces, regardless of locale.
+use the verifier attestation below. Terms are global across eligible surfaces, regardless of locale.
 
-The vocabulary combines the owner's standard synonyms, every explicit round-6
+The vocabulary combines the owner's standard synonyms, every explicit round-6 and round-7
 omission, the earlier policy, and a 2026-10-19 scan of riben.life's 21 locale JSON
 files (including `marketing.json`) and text sources under `marketing/`. It includes
 Traditional/Simplified Chinese and Japanese kanji variants; substring matching
-also covers many inflections and compounds. This is a maintained heuristic.
+also covers many inflections and compounds. This list is frozen after pass 8 of #3819: future misses are notes, not blockers.
+It is a backstop, not the semantic control.
 
 Examples of mined values (under `web/src/app/i18n/locales/`):
 
@@ -32,6 +33,24 @@ The author evidence report for #3819 links the complete path/key/value/topic-wor
 inventory, the keyword-key scan, and sampled historical commits. Marketing copy
 currently lives mainly in locale `marketing.json` files; scanning `marketing/`
 does not imply eligible `.md` or `.txt` marketing files exist.
+
+For the light route, the independent verifier judges each changed text against
+four topics: prices and money; refunds and cancellation; legal and privacy;
+and promises to customers, including delivery and timing. When unsure, choose
+owner. The same Verdict comment must have exactly `Copy topics: none` or
+`Copy topics: owner` as its second line (case-sensitive), under the Verdict's
+existing independent verifier/author check. A separate comment cannot attest;
+the newest applicable Verdict controls. Missing or malformed attestation falls
+back to the normal route.
+
+`Copy topics: owner`, any backstop hit in an old or changed value, or the
+quantity/currency rule requires a comment by `mingster` whose first line is
+exactly `Copy approval: head=<current full sha>`. `Copy topics: none` cannot
+turn off the backstop. An unchanged key path alone does not trigger approval;
+the old or changed value must itself contain a backstop term. Added or removed
+sensitive keys retain the owner gate. Plain Save, Back
+and Sign In variants can therefore stay light despite their surrounding keys.
+Cancel contains a backstop term even as a UI label and still triggers.
 
 A conservative refusal means current-head owner Copy approval is required. It
 can catch unrelated UI cancellation, `rate` inside `generate`, or `fee` inside

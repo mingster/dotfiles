@@ -2,7 +2,7 @@
 	"sensitive_word_groups": {
 		"prices_and_money": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"price",
 					"prices",
@@ -92,11 +92,16 @@
 					"recurring",
 					"membership",
 					"receipt",
-					"repay"
+					"repay",
+					"dues",
+					"levy",
+					"fare",
+					"rent",
+					"retainer"
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"價格",
 					"價錢",
@@ -251,11 +256,19 @@
 					"计价",
 					"估价",
 					"附加费",
-					"无偿"
+					"无偿",
+					"收費標準",
+					"押金",
+					"尾款",
+					"價差",
+					"加收",
+					"保證金",
+					"場地費",
+					"球場費"
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"価格",
 					"値段",
@@ -346,13 +359,20 @@
 					"利息",
 					"年会費",
 					"利用料",
-					"使用料"
+					"使用料",
+					"入場料",
+					"担保金",
+					"頭金",
+					"敷金",
+					"礼金",
+					"預り金",
+					"保証金"
 				]
 			}
 		},
 		"refunds_and_cancellation": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"refund",
 					"refunds",
@@ -374,11 +394,16 @@
 					"withdrawal",
 					"rescind",
 					"terminate",
-					"termination"
+					"termination",
+					"chargeback",
+					"reimburse",
+					"clawback",
+					"rescission",
+					"annulment"
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"退款",
 					"退費",
@@ -404,11 +429,16 @@
 					"退訂",
 					"退單",
 					"退单",
-					"撤订"
+					"撤订",
+					"返款",
+					"返現",
+					"退錢",
+					"退購",
+					"退票"
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"返金",
 					"払い戻し",
@@ -425,13 +455,19 @@
 					"中途解約",
 					"解除",
 					"撤回",
-					"中止"
+					"中止",
+					"返納",
+					"返済",
+					"返却",
+					"払い戻す",
+					"償還",
+					"解約金"
 				]
 			}
 		},
 		"legal_contracts_and_privacy": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"terms",
 					"policy",
@@ -458,11 +494,17 @@
 					"contractual",
 					"responsibility",
 					"responsible",
-					"indemnification"
+					"indemnification",
+					"waiver",
+					"penalty",
+					"arbitration",
+					"litigation",
+					"breach",
+					"waive"
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"條款",
 					"政策",
@@ -503,11 +545,17 @@
 					"綁約",
 					"负责",
 					"承担",
-					"绑约"
+					"绑约",
+					"違約",
+					"仲裁",
+					"訴訟",
+					"準據法",
+					"著作權",
+					"罰金"
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"規約",
 					"利用規約",
@@ -535,13 +583,20 @@
 					"権利",
 					"許諾",
 					"拘束",
-					"同意書"
+					"同意書",
+					"違約",
+					"違約金",
+					"準拠法",
+					"著作権",
+					"仲裁",
+					"罰金",
+					"罰則"
 				]
 			}
 		},
 		"promises_and_guarantees": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"promise",
 					"guarantee",
@@ -556,11 +611,22 @@
 					"perpetuity",
 					"warranties",
 					"promises",
-					"assure"
+					"assure",
+					"pledge",
+					"undertake",
+					"always",
+					"never",
+					"commit",
+					"delivery",
+					"deliver",
+					"timing",
+					"tomorrow",
+					"today",
+					"deadline"
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"保固",
 					"保證",
@@ -575,11 +641,21 @@
 					"无限",
 					"终身",
 					"不設上限",
-					"不设上限"
+					"不设上限",
+					"一定",
+					"必定",
+					"絕對",
+					"包退",
+					"包換",
+					"準時",
+					"送達",
+					"隔日",
+					"配送",
+					"交付"
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"保証",
 					"約束",
@@ -592,13 +668,23 @@
 					"保證",
 					"保障",
 					"制限なし",
-					"上限なし"
+					"上限なし",
+					"必ず",
+					"絶対",
+					"確実",
+					"万全",
+					"お約束いたします",
+					"お届け",
+					"翌日",
+					"配達",
+					"納期",
+					"到着"
 				]
 			}
 		},
 		"currency_markers": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"%",
 					"NT$",
@@ -612,7 +698,7 @@
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"元",
 					"圓",
@@ -621,7 +707,7 @@
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"円",
 					"圓"

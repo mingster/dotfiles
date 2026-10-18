@@ -185,8 +185,12 @@ try:
                 eligible = False
             changed = [key for key in before.keys() | after.keys()
                        if before.get(key) != after.get(key)]
-            sensitive |= any(contains_topic(" ".join(key)) or
-                             contains_topic(before.get(key, "")) or
+            # Added/deleted keys still retain the owner gate; only unchanged
+            # key context is ignored when both values are ordinary UI wording.
+            sensitive |= any(contains_topic(" ".join(key)) for key in
+                             before.keys() ^ after.keys())
+            # Unchanged key context alone cannot make an ordinary label sensitive.
+            sensitive |= any(contains_topic(before.get(key, "")) or
                              contains_topic(after.get(key, "")) for key in changed)
             sensitive |= quantities(before[key] for key in changed if key in before) != quantities(
                 after[key] for key in changed if key in after)
@@ -218,13 +222,6 @@ PYTHON
     'normal sensitive') sensitive=true ;;
   esac
 fi
-echo "lead-merge: lane=$lane"
-if [ "$sensitive" = true ]; then
-  jq -e --arg approval "Copy approval: head=$head" \
-    'any(.comments[]; .author.login == "mingster" and (.body | split("\n")[0]) == $approval)' <<<"$info" >/dev/null \
-    || die "missing owner copy approval for current head (mingster: Copy approval: head=$head)"
-fi
-
 # Recompute both patches; never trust a patch-id asserted in a comment.
 patch_id() {
   local sha="$1" base patch
@@ -261,6 +258,14 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only 
         if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
           die "verdict must cover unchecked paths in its live lane"
         fi
+        # The topic attestation belongs to this same independent Verdict,
+        # never a separate author's comment or an earlier superseded verdict.
+        topics=$(printf '%s\n' "$comment" | sed -n '2p')
+        case "$topics" in
+          'Copy topics: owner') sensitive=true; lane=normal ;;
+          'Copy topics: none') ;;
+          *) lane=normal ;;
+        esac
         if [ "$lane" = copy-only ] && [ "$verdict" != FAIL ]; then
           for evidence in 'screenshots?' 'phone[ -]width' '\btw\b' '\ben\b' '\bjp\b'; do
             grep -qiE "$evidence" <<<"${comment#*$'\n'}" || die "copy-only verdict needs phone-width screenshots in tw, en and jp"
@@ -272,6 +277,13 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only 
     fi
   done < <(jq -r '.comments | reverse[] | .body | @base64' <<<"$info")
   [ "$verified" = true ] || die "missing passing verifier verdict for current head or stable patch-id"
+fi
+
+echo "lead-merge: lane=$lane"
+if [ "$sensitive" = true ]; then
+  jq -e --arg approval "Copy approval: head=$head" \
+    'any(.comments[]; .author.login == "mingster" and (.body | split("\n")[0]) == $approval)' <<<"$info" >/dev/null \
+    || die "missing owner copy approval for current head (mingster: Copy approval: head=$head)"
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
