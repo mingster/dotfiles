@@ -140,6 +140,9 @@ setup; files='[{"path":".agents/skills/a/SKILL.md"}]'; comments=""; check "skill
 setup; API_OVERRIDE=$(jq -n '[range(101) | {filename:("docs/"+tostring+".md")}] + [{filename:".claude/hooks/late.py"}]'); check "paginated owner path after 100 refused" 1 'late.py'
 setup; COUNT_OVERRIDE=2; check "incomplete file inventory refused" 1 'file count'
 
+setup; body=$'## Verification\n- Ran script: passed.\n## Test plan:'; check "punctuated Test plan refused" 1 'Test plan'
+setup; body=$'##  vERIFICATION :  \n- Ran script: passed.'; check "normalized Verification accepted" 0 '^MERGED' 1
+
 # Exercise the script with real commit graphs and git patch-id, not asserted IDs.
 setup
 export REAL_PATCH_REPO="$tmp/patch-repo"
