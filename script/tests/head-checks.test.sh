@@ -57,7 +57,7 @@ else: sys.exit(1)
     if 'Unchecked paths: jellyfin/Thing.cs, roku/main.brs' in comments.read_text(): passed+=1; print('ok   unchecked receipt summary')
     else: failed+=1; print('FAIL missing unchecked receipt summary',comments.read_text())
     result,_=run('selection remains visible after verbose tests', "printf 'Scoped tests: 3\\nSelected: ./notification-service.test.ts\\nSelected: ./no-update-many-claims-contract.test.ts\\nSelected: ./route.test.ts\\n'; for i in {1..30}; do echo test-output; done",0)
-    if all(name in comments.read_text() for name in ['Scoped tests: 3','Selected: ./notification-service.test.ts','Selected: ./no-update-many-claims-contract.test.ts','Selected: ./route.test.ts']): passed+=1; print('ok   scoped selection survives output tail')
+    if all(name in comments.read_text().splitlines() for name in ['Scoped tests: 3','Selected: ./notification-service.test.ts','Selected: ./no-update-many-claims-contract.test.ts','Selected: ./route.test.ts']): passed+=1; print('ok   scoped selection survives output tail')
     else: failed+=1; print('FAIL scoped selection was truncated')
     # Run both real repository checklists against committed component fixtures.
     tools_home=root/'home/dotfiles/script'; tools_home.mkdir(parents=True)
