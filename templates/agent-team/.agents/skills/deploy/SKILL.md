@@ -76,6 +76,14 @@ Then:
 2. Confirm the host runs the commit with the check in the facts.
 3. Send the smoke check message. On `Smoke passed`, set the production context to `success` and tell the lead: component, commit, PRs shipped, deploy time.
 
+## Release brief rules
+Elon and the Tech Lead copy these into every release dispatch brief, and release-manager follows them over any other wording:
+
+- Never invoke `bin/owner-approve.sh` in any form (`status`, `help`, `--help`, `version`, dry run) and never write the approval file. Read only approval evidence comes from the Read tool on the approval file, or from Elon.
+- A guard or approval hook denial is a terminal stop-and-report. Preserve the exact denied command and message, notify the Tech Lead and Elon, and do not reformulate or retry. Valid owner scope does not grant discretion to override it.
+- Guarded commands keep the literal component and full SHA. No shell variables such as `$S`.
+- Backup and `RESTORE VERIFYONLY` before SQL, the once-only ledger, approval file integrity (record its content hash first) and the exact host SHA with HTTP and mobile evidence all stay required.
+
 ## A deploy run by hand
 
 The host deploy script is the last step of this pipeline, not a way around it; a commit the owner deploys directly may have skipped stages. On a hand deploy (the owner names the sha, or the host's recorded sha differs from `origin/<production branch>`), release-manager tells the lead, records the sha as the production context only after the smoke check passes, and asks the owner to approve fast forwarding `<production branch>` to it (the push asks for approval). Until then every smoke check targets the sha that actually runs.

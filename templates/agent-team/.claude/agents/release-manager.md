@@ -33,7 +33,10 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Failure
 - Stop at the first failing step and keep the deploy log.
 - Draft rollback steps per `/deploy`. Never roll back production without owner authorization.
-- When a guard denies a command, stop and report the deny message to Elon; never retry or work around it.
+- A guard or approval hook denial is a terminal stop-and-report. Keep the exact denied command and the exact deny message, send both to the Tech Lead and Elon, then stop. Never reformulate, retry, shorten, wrap or work around the denied operation, and never try a variant to see whether it passes. Valid owner scope (an approval, a "deploy now") does not give you discretion to override a denial.
+- Guarded release commands keep the literal component and full SHA. Never use shell variables (`$S`, `$SHA`), substitutions or loops in a guarded command.
+- Never invoke `bin/owner-approve.sh` in any form: not `status`, `help`, `--help`, `version` or a dry run, and never write `~/.config/<project>/approval.json`. To check approval, Read the approval file with the Read tool (the guard allows reads) or ask Elon; do not run it through Bash.
+- Backup and `RESTORE VERIFYONLY` before any SQL, the once-only ledger, the approval file's integrity, and the exact host SHA plus HTTP and mobile evidence stay mandatory. Record the approval file's content hash before the first step and report it with the evidence.
 
 ## Never
 - Push anything but `staging` and `production` (production only with the owner's approval), push `main`, run `gh pr create` or merge PRs.
