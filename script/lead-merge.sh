@@ -92,6 +92,7 @@ if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then
     git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || die "cannot inspect copy-only diff"
   done
   classification=$(python3 - "$base" "$head" "$files" "$(dirname "$0")/copy-only.config.json" <<'PYTHON'
+import difflib
 import html
 from html.parser import HTMLParser
 import json
@@ -114,7 +115,9 @@ def normalize(text):
     parser = VisibleText()
     parser.feed(html.unescape(text))
     parser.close()
-    folded = unicodedata.normalize("NFKC", "".join(parser.parts)).casefold()
+    decomposed = unicodedata.normalize("NFKD", "".join(parser.parts))
+    unmarked = "".join(char for char in decomposed if not unicodedata.category(char).startswith("M"))
+    folded = unicodedata.normalize("NFKC", unmarked).casefold()
     return "".join(char for char in folded if unicodedata.category(char)[0] in "LN")
 def flatten(value, path=()):
     if isinstance(value, str):
@@ -156,8 +159,12 @@ try:
             changed = [" ".join((*key, after.get(key, "")))
                        for key in before.keys() | after.keys() if before.get(key) != after.get(key)]
         elif re.fullmatch(r"marketing/(content|copy)/(?:[^/]+/)*[^/]+\.(md|txt)", path):
-            changed = [line[1:] for line in git("diff", "--no-ext-diff", "--unified=0", ancestor, head, "--", path).splitlines()
-                       if line.startswith("+") and not line.startswith("+++")]
+            # Absent files and gitlinks contain no text blob on that side.
+            before = [] if raw[4] == "A" or raw[0] == ":160000" else git("show", f"{ancestor}:{path}").splitlines()
+            after = [] if raw[4] == "D" or raw[1] == "160000" else git("show", f"{head}:{path}").splitlines()
+            changed = [line for tag, _, _, start, end in
+                       difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes()
+                       if tag in ("insert", "replace") for line in after[start:end]]
         else:
             eligible = False
             continue

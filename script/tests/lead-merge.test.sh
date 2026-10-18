@@ -154,7 +154,7 @@ copy_setup() {
   setup
   export REAL_PATCH_REPO="$tmp/copy-repo"
   rm -rf "$REAL_PATCH_REPO"
-  "$REAL_GIT" init -q "$REAL_PATCH_REPO"
+  "$REAL_GIT" init -q -b fixture "$REAL_PATCH_REPO"
   "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.name Fixture
   "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.email fixture@example.invalid
   mkdir -p "$REAL_PATCH_REPO/web/src/app/i18n/locales/en" "$REAL_PATCH_REPO/marketing/content" "$REAL_PATCH_REPO/marketing/src"
@@ -239,6 +239,43 @@ COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg hea
 check "stale owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
 check "owner sensitive approval permits merge" 0 'lane=copy-only' 1
+
+# Diff-like content is still marketing text, never a patch header.
+for wording in '++promise' '+++promise' '-- promise'; do
+  copy_setup
+  printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "diff-like marketing wording $wording needs approval" 1 'owner copy approval'
+done
+
+# Accents cannot conceal promises in any supported locale's changed values.
+for locale in en tw jp; do
+  copy_setup
+  locale_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/$locale/translation.json"
+  if [ "$locale" != en ]; then
+    mkdir -p "$(dirname "$locale_file")"
+    printf '{"greeting":"Hello"}\n' > "$locale_file"
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm locale-base
+    base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  fi
+  case "$locale" in
+    en) wording='prómise' ;;
+    tw) wording='保́證服務' ;;
+    jp) wording='プラ́イバシー' ;;
+  esac
+  jq -n --arg value "$wording" '{greeting:$value}' > "$locale_file"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "combining marks in $locale locale need approval" 1 'owner copy approval'
+done
+copy_setup
+printf '{"greeting":"prómise"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "precomposed English accent needs approval" 1 'owner copy approval'
 
 # Each configured policy term is independently sensitive in added marketing text.
 for wording in 'We promise unlimited service forever' PROMISE guarantee unlimited forever lifetime free refund price discount '%' 'NT$' '$' warranty compensation legal terms privacy 保證 承諾 無限 永久 終身 免費 退款 價格 折扣 優惠 賠償 條款 隱私 保証 約束 無制限 無料 返金 価格 割引 補償 規約 プライバシー; do
