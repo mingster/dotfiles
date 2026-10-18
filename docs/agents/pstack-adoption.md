@@ -186,3 +186,17 @@ This plan paraphrases ideas with file attribution. When implementation copies or
 [pr-subtract-before-you-add]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-subtract-before-you-add/SKILL.md
 [pr-test-behavior-not-implementation]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-test-behavior-not-implementation/SKILL.md
 [pr-type-system-discipline]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-type-system-discipline/SKILL.md
+
+## Merge gates
+
+Adapted from the pinned Autopilot-full, Shipping, Feature, Bug fix and Opening a PR playbooks. `script/head-checks.sh` runs ordered checks in a throwaway worktree at the exact head and records a Checks receipt. `script/lead-merge.sh` requires that receipt, Verification bullets, distinct author and verifier dispatch IDs, gate countersigns, a trunk drift check and a MERGED read-back. Stable patch identity can carry a pure rebase verdict, while every new head gets fresh checks. The lead publishes, the author owns branch writes, and one verifier proves live behaviour and audits the diff. Sensitive paths retain an independent security lane.
+
+The following upstream mechanisms are not adopted:
+
+- Green CI and bot triage. There is no PR CI or bot lane in this workflow; head-checks supplies the checks.
+- A cloud agent per PR owner. Use local supervised Orca workers.
+- A full swarm for every PR. Use one verifier within the Codex budget, plus secops-finops for sensitive paths.
+- deslop and no-comments skills. They are not vendored; the verifier audits comments.
+- Stacked PRs. Land independent PRs off main.
+
+The repo checklist provisions frozen dependencies, generates Prisma clients with placeholder database URLs, and runs Next type generation before typecheck. A local historical baseline can use `--ref <sha> --config <file>`; PR checks always use the checklist committed at the PR head. Missing tools or runtime access fail the lane instead of earning a pass. No production environment files are copied into check worktrees. Unsupported component paths refuse a checks pass until their scoped commands are configured. Non-web PSTV components still need those commands and a complete live verifier verdict.

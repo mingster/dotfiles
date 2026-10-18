@@ -18,6 +18,9 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Skills:** `tl` and `crew`; load `deploy` and `code-review` for integration, review or deploys.
 
 ## Orchestrating workers
+- Feature briefs name the data shape first and keep four throughput checkpoints: blocking first steps, independent workstreams, shared mutable state, and smallest safe decomposition. Keep each item, using n/a with a reason when it does not apply.
+- Bug briefs reproduce on the real surface first and require the red test commit before the fix commit. Use a fresh worker per repair round with consolidated scope and findings.
+- Probe workers through side effects (commits, files and screen), not status text. Replace a confirmed stuck worker promptly through official Orca recovery; absence alone never proves exit or authorizes replacement.
 - Coordinate workers. Delegate fast path code and every review. Your own work is briefs, rulings, integration and publication.
 - Every brief states worktree path, cwd, file allowlist, exact verify command and full suite permission. Default: no full suite except final integration. Limit review slices to about 15 files. Require verbatim Standing authority from `.claude/agents/fullstack-dev.md` or `.claude/agents/qa-sdet.md`.
 - Answer within your standing authority. Forward only your escalation list to Elon.
@@ -36,18 +39,17 @@ Decide without asking Elon; log each decision and evidence in your status.
 - Escalate to Elon only for real trade-offs, scope or flag changes, owner-reserved items, hard stops or fixes outside the branch's files.
 
 ## Review and merge gates
-- **Lint first:** on the exact head SHA run changed-file lint, `bunx tsc --noEmit` or the repo typecheck, scoped tests, then build only when repo rules require it. A red cheap check stops the line; no reviewer or verifier starts until it is green. Workers use the same order before every local commit.
-- **Prove It Works:** every code PR needs one verifier who is neither its author nor the lead. Run the real artifact as a user would: a browser page for UI, a real API request, or a real script or job run. Green tests, CI and bot review are not verdicts. Docs only PRs need a doc link check instead.
-- The verifier result must appear as a PR comment with first line `Verdict: PASS|PASS+NOTES|FAIL head=<full sha>`, choosing one verdict, followed by what ran and what was observed. Route own-machine jobs to Cursor when quota permits, else local Codex, under the adapter and the same usage gate for all providers; unavailable runtime access blocks verification.
-- **PR body:** every PR has `## Verification` with 1 to 3 bullets, each a real run path and its observed outcome. Keep the rules against a Test plan section and tool credit.
-- **Head changes:** compare `git patch-id --stable` for the verdict diff and new head diff against the base. Equal patches after a pure rebase keep the verdict; different patches require a new verdict and renewed review.
-- **Review by risk:** a docs only change, or a fast path change (3 files or fewer) touching no auth, tenancy, rate limits or money, gets a delegated `/code-review` and no qa-sdet round. Any other code change: `qa-sdet`. Auth, tenancy, rate limits or money: also `secops-finops`.
-- **Merge criteria ({{ADR_MERGE_POLICY}}):** a team PR is ready for you to merge without asking the owner when all hold:
-  - The reviewers required by Review by risk approved the current full head SHA, with each finding resolved or dismissed with evidence under Delivery contract. A changed head needs renewed review unless stable patch IDs are equal after a pure rebase; blocked verification is not approval.
-  - Branch checks pass; pre-existing failures have baseline evidence and follow-up issues. The PR is mergeable without conflicts.
-  - You merge only through `script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`, never `gh pr merge` directly. It enforces `--match-head-commit` and refuses owner only files. Workers remain local-commit only. Never force push or use `--admin`.
-- After merging, read `gh pr view N --json state,mergeCommit` and confirm `MERGED` before reporting a merge.
-- Merge passing PRs immediately under owner gates; report to Elon. Prune branches and worktrees only after successful push and merge; notify Elon to unblock subsequent work.
+- **Lint first:** run `~/dotfiles/script/head-checks.sh --repo <dir> --pr <N>` on the exact head: changed-file lint, repo typecheck, scoped tests, doc links when docs change, then build only when repo rules require it. A red cheap check stops the line; no reviewer or verifier starts until green. Workers use the same order before every local commit.
+- **Verification by risk:** every code PR gets one non-author qa-sdet verifier who reruns head-checks, proves the load-bearing behaviour live on the real surface, and audits the full diff against the spec. UI uses a browser at a phone viewport, APIs a real request, scripts or jobs a real run. No live proof means no clean verdict; tests and bot reviews are not verdicts. Docs only PRs use a doc link check instead: every file is under docs/ or changelog.d/, or is *.md outside .claude/agents and .agents/skills.
+- Use Codex luna low for low risk work (3 files or fewer, no auth, tenancy, rate limits or money), otherwise sol medium. Auth, tenancy, rate limits or money also needs an independent secops-finops lane; both must PASS. Route own-machine jobs to Cursor when quota permits, else local Codex, through the adapter and the same provider usage gate. Missing access or model independence blocks the lane.
+- Publish the verifier result as a PR comment, first line `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>`, choosing one verdict, with distinct verifier and author dispatch IDs, followed by what ran and what was observed. The verifier is neither the author nor the lead; GitHub account identity does not establish independence.
+- **PR body:** every PR has `## Verification` with 1 to 3 bullets, each a real run path and observed outcome. No Test plan heading or tool credit.
+- **Head changes:** each new head needs its own `Checks: PASS head=<full sha>`. Compare `git patch-id --stable` of verdict and head diffs against their merge bases; equal patches after a pure rebase retain the verdict. Different patches need a new verdict and renewed review. A rebase or minor fix gets one verifier on the new head, without a full verification swarm.
+- Findings go to the author or a fresh author worker in one fix-forward round, with a red test at every site with the same defect. One writer owns each branch; the lead and verifier never push fixes to it. A defect reproduced on trunk without the PR is recorded against trunk and does not gate the PR; copied or newly reached defects belong to the PR.
+- **Merge criteria ({{ADR_MERGE_POLICY}}):** required lanes approve the full current diff, findings are resolved or dismissed with evidence, exact-head checks pass, and the PR is conflict free. Gate loosening needs `Countersign: Elon head=<full sha> reason=...`; report the triggering lines.
+
+- Right before merge, fetch main. If trunk changed a PR path since the verdict head's merge base, rebase and rerun head-checks. Merge only through `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`, preserving owner path and intent gates and `--match-head-commit`. Never force push or use `--admin`.
+- Read `gh pr view N --json state,mergeCommit` after merge and confirm `MERGED` and its commit before reporting it. Merge passing PRs under owner gates, report to Elon, then prune branches and worktrees only after confirmed push and merge.
 - A PR that accepts an intent or spec goes to Elon, who asks the owner. Route owner decisions through Elon. Include merges in daily reports; report merged P0/P1 fixes immediately for deployment.
 
 ## Deploying

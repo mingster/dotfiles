@@ -51,10 +51,15 @@ fi
 
 # 5. Verification is required even for documentation changes.
 field .body | grep -qE '^## Verification[[:space:]]*$' || die "missing ## Verification heading"
+if field .body | grep -qiE '^#{1,6}[[:space:]]+Test plan[[:space:]]*$'; then die "Test plan heading is forbidden"; fi
+bullet_count=$(field .body | awk '/^## Verification[[:space:]]*$/ {inside=1; next} inside && /^## / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}')
+[ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ] || die "Verification needs 1 to 3 run and outcome bullets"
+checks=$(jq -r --arg head "$head" '[.comments[].body | split("\n")[0] | select(. == ("Checks: PASS head="+$head) or . == ("Checks: FAIL head="+$head))] | last // ""' <<<"$info")
+[ "$checks" = "Checks: PASS head=$head" ] || die "missing current-head Checks: PASS"
 docs_only=true
 while IFS= read -r f; do
   case "$f" in
-    .claude/agents/*|*/.claude/agents/*) docs_only=false ;;
+    .claude/agents/*|*/.claude/agents/*|.agents/skills/*|*/.agents/skills/*) docs_only=false ;;
     docs/*|*.md|changelog.d/*) ;;
     *) docs_only=false ;;
   esac
@@ -72,22 +77,25 @@ patch_id() {
   [ -n "$patch" ] || return 1
   awk 'NR == 1 {print $1}' <<<"$patch"
 }
+verdict_head="$head"
 if [ "$docs_only" = false ]; then
   verified=false
   current_patch=""
   # Newest applicable verdict wins, including a FAIL after an earlier PASS.
   while IFS= read -r line; do
-    if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})$ ]]; then
-      verdict="${BASH_REMATCH[1]}"; verdict_head="${BASH_REMATCH[2]}"
+    if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
+      verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
+      [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || die "author cannot supply verifier verdict"
       applies=false
-      if [ "$verdict_head" = "$head" ]; then
+      if [ "$candidate_head" = "$head" ]; then
         applies=true
       else
         current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for verdict"
-        old_patch=$(patch_id "$verdict_head") || continue
+        old_patch=$(patch_id "$candidate_head") || continue
         [ "$old_patch" != "$current_patch" ] || applies=true
       fi
       if [ "$applies" = true ]; then
+        verdict_head="$candidate_head"
         [ "$verdict" = FAIL ] || verified=true
         break
       fi
@@ -96,6 +104,30 @@ if [ "$docs_only" = false ]; then
   [ "$verified" = true ] || die "missing passing verifier verdict for current head or stable patch-id"
 fi
 
+# Gate changes need a fresh, head-bound countersign from Elon.
+triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo|xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
+while IFS= read -r f; do
+  case "$f" in
+    .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh)
+      triggers="${triggers}${triggers:+$'\n'}gate definition changed: $f" ;;
+  esac
+done < <(jq -r '.files[].path' <<<"$info")
+if [ -n "$triggers" ]; then
+  echo "lead-merge: countersign triggers:" >&2
+  printf '%s\n' "$triggers" >&2
+  jq -e --arg prefix "Countersign: Elon head=$head reason=" \
+    'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]")))' <<<"$info" >/dev/null \
+    || die "missing Countersign: Elon for current head"
+fi
+
+# Fetch immediately before merge; any shared changed path needs a new exact-head run.
+git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
+ancestor=$(git merge-base "$(field .baseRefOid)" "$verdict_head") || die "cannot find merge base; rebase and rerun head-checks"
+trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
+while IFS= read -r f; do
+  if grep -Fxq -- "$f" <<<"$trunk_files"; then die "trunk changed $f; rebase and rerun head-checks"; fi
+done < <(jq -r '.files[].path' <<<"$info")
+
 merge() { gh pr merge "$pr" --repo "$repo" --merge --match-head-commit "$head"; }
 if ! out=$(merge 2>&1); then
   out=$(merge 2>&1) || { echo "lead-merge: merge failed: $out" >&2; exit 1; }
@@ -103,4 +135,6 @@ fi
 
 final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit,url) || { echo "lead-merge: cannot confirm merge of PR $pr" >&2; exit 1; }
 [ "$(jq -r .state <<<"$final")" = MERGED ] || { echo "lead-merge: PR $pr is not MERGED after merge" >&2; exit 1; }
-echo "MERGED $(jq -r .url <<<"$final")"
+merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
+[ -n "$merge_sha" ] || die "MERGED read-back has no merge commit"
+echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
