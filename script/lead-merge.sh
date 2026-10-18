@@ -57,9 +57,10 @@ fi
 # 5. Verification is required even for documentation changes.
 # Normalize heading case, spacing and trailing punctuation once for both gates.
 normalized_body=$(field .body | awk '
-/^#+[[:space:]]/ {
-  hashes=$0; sub(/[[:space:]].*$/, "", hashes)
-  title=$0; sub(/^#+[[:space:]]+/, "", title)
+/^[[:blank:]]*#+[[:space:]]/ {
+  heading=$0; sub(/^[[:blank:]]*/, "", heading)
+  hashes=heading; sub(/[[:space:]].*$/, "", hashes)
+  title=heading; sub(/^#+[[:space:]]+/, "", title)
   gsub(/[[:space:]]+/, " ", title)
   sub(/[[:space:][:punct:]]+$/, "", title)
   print hashes " " tolower(title); next
