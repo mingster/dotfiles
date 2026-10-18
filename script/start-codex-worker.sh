@@ -3,6 +3,8 @@
 # Orca only sees a Codex terminal as ready after Codex has finished one turn, so open the
 # Codex terminal first, give it a one line warm-up turn, then hand it the task.
 # Usage: start-codex-worker.sh --run <run_id> --spec <file> --title <text>
+# Briefs must list Allowed files and say: Read only these; Grep before Read; Read with offset/limit.
+# Reviewer slices may inspect at most 40 files.
 #          (--worktree-path <path> | --name <new worktree> --repo <path> [--base-branch <ref>])
 #          [--model gpt-6.1-sol] [--effort medium]
 # Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running.

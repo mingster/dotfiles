@@ -5,9 +5,10 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/bin"
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
-# FAKE_DIR holds workers.json and <handle>.txt (one screen line per line).
+# FAKE_DIR holds workers.json, terminals.json and <handle>.txt (one screen line per line).
 case "$*" in
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" ;;
+  "terminal list"*) cat "$FAKE_DIR/terminals.json" ;;
   "terminal read"*)
     h=$(echo "$*" | sed -E 's/.*--terminal ([^ ]+).*/\1/')
     python3 -c '
@@ -36,10 +37,35 @@ for a in sys.argv[1:]:
 print(json.dumps({"ok": True, "result": {"workers": ws}}))
 ' "$@" > "$tmp/workers.json"
 }
+cat > "$tmp/terminals.json" <<EOF
+{"ok":true,"result":{"terminals":[{"handle":"term_a","worktreePath":"$tmp/lead-queue"}]}}
+EOF
+mkdir -p "$tmp/sessions/2026/10/18"
+python3 - "$tmp/sessions/2026/10/18/lead.jsonl" <<'PY'
+import json,sys
+with open(sys.argv[1], 'w') as f:
+    f.write(json.dumps({'type':'session_meta','payload':{'cwd':__import__('os').environ['FAKE_DIR']+'/lead-queue'}})+'\n')
+    for _ in range(10): f.write(json.dumps({'type':'event_msg','payload':{'type':'token_count'}})+'\n')
+PY
+export CODEX_SESSIONS_DIR="$tmp/sessions"
 
 workers ctx_a:term_a:in_progress
+export FAKE_CALLS=10
 printf 'Working on spec\nrunning tests --limit 40\nconst limit = 5\n' > "$tmp/term_a.txt"
 check "all OK, bare word limit not flagged" 0 'ctx_a term_a OK'
+python3 - "$tmp/sessions/2026/10/18/lead.jsonl" <<'PY2'
+import json,sys
+with open(sys.argv[1], 'w') as f:
+    f.write(json.dumps({'type':'session_meta','payload':{'cwd':__import__('os').environ['FAKE_DIR']+'/lead-queue'}})+'\n')
+    for _ in range(200): f.write(json.dumps({'type':'event_msg','payload':{'type':'token_count'}})+'\n')
+PY2
+check "Codex LONG_SESSION stops named dispatch at 200 calls" 4 'ctx_a term_a LONG_SESSION 200 calls; end dispatch'
+python3 - "$tmp/sessions/2026/10/18/lead.jsonl" <<'PY3'
+import json,sys
+with open(sys.argv[1], 'w') as f:
+    f.write(json.dumps({'type':'session_meta','payload':{'cwd':__import__('os').environ['FAKE_DIR']+'/lead-queue'}})+'\n')
+    for _ in range(10): f.write(json.dumps({'type':'event_msg','payload':{'type':'token_count'}})+'\n')
+PY3
 
 cat > "$tmp/term_a.txt" <<'SCREEN'
   assertions) and initiated the Playwright regression test suite. I am waiting for the test execution to complete.
@@ -47,6 +73,7 @@ cat > "$tmp/term_a.txt" <<'SCREEN'
 >
 
 SCREEN
+export FAKE_CALLS=10
 check "antigravity ended turn at empty prompt" 4 'ctx_a term_a IDLE'
 
 cat > "$tmp/term_a.txt" <<'SCREEN'
