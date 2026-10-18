@@ -33,6 +33,10 @@ finish() {
   [ "$status" -ne 0 ] || result=PASS
   {
     printf 'Checks: %s head=%s\n\n' "$result" "$sha"
+    if [ -n "$changed" ]; then
+      unchecked_paths=$(sed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
+      [ -z "$unchecked_paths" ] || printf 'Unchecked paths: %s\n\n' "$unchecked_paths"
+    fi
     cat "$log"
   } | python3 -c '
 import os,re,sys
@@ -47,7 +51,7 @@ sys.stdout.write(text)
     (cd "$repo" && gh pr comment "$pr" --body-file "$receipt") || status=1
   fi
   rm -f "$log" "$receipt"
-  [ -z "$changed" ] || rm -f "$changed"
+  [ -z "$changed" ] || rm -f "$changed" "$changed.unchecked"
   [ "$status" -eq 0 ] || exit 1
 }
 trap finish EXIT
@@ -77,6 +81,7 @@ config="${override:-$worktree/.agents/head-checks.conf}"
 [ -f "$config" ] || usage "missing .agents/head-checks.conf"
 printf "Checklist: %s\n" "$(shasum -a 256 "$config")" >> "$log"
 changed=$(mktemp)
+: > "$changed.unchecked"
 git -C "$worktree" diff --name-only -z "$base...$sha" -- > "$changed" 2>> "$log" || usage "cannot determine changed paths"
 files=""
 while IFS= read -r -d '' file; do
@@ -92,11 +97,13 @@ while IFS= read -r command || [ -n "$command" ]; do
   output=$(mktemp)
   if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
+    sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     tail -20 "$output" >> "$log"
     printf 'Result: exit 0\n' >> "$log"
     rm -f "$output"
   else
     status=$?
+    sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     tail -20 "$output" >> "$log"
     printf 'Result: exit %s; remaining checks stopped\n' "$status" >> "$log"
     rm -f "$output"

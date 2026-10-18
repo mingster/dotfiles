@@ -69,8 +69,11 @@ grep -qE '^## verification$' <<<"$normalized_body" || die "missing ## Verificati
 if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then die "Test plan heading is forbidden"; fi
 bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
 [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ] || die "Verification needs 1 to 3 run and outcome bullets"
-checks=$(jq -r --arg head "$head" '[.comments[].body | split("\n")[0] | select(. == ("Checks: PASS head="+$head) or . == ("Checks: FAIL head="+$head))] | last // ""' <<<"$info")
+check_body=$(jq -r --arg head "$head" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head))] | last // ""' <<<"$info")
+checks=${check_body%%$'\n'*}
 [ "$checks" = "Checks: PASS head=$head" ] || die "missing current-head Checks: PASS"
+unchecked=false
+if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
 docs_only=true
 while IFS= read -r f; do
   case "$f" in
@@ -93,11 +96,13 @@ patch_id() {
   awk 'NR == 1 {print $1}' <<<"$patch"
 }
 verdict_head="$head"
-if [ "$docs_only" = false ]; then
+if [ "$docs_only" = false ] || [ "$unchecked" = true ]; then
   verified=false
   current_patch=""
   # Newest applicable verdict wins, including a FAIL after an earlier PASS.
-  while IFS= read -r line; do
+  while IFS= read -r encoded; do
+    comment=$(jq -r '@base64d' <<<"\"$encoded\"")
+    line=${comment%%$'\n'*}
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || die "author cannot supply verifier verdict"
@@ -111,11 +116,14 @@ if [ "$docs_only" = false ]; then
       fi
       if [ "$applies" = true ]; then
         verdict_head="$candidate_head"
+        if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
+          die "verdict must cover unchecked paths in its live lane"
+        fi
         [ "$verdict" = FAIL ] || verified=true
         break
       fi
     fi
-  done < <(jq -r '.comments | reverse[] | .body | split("\n")[0]' <<<"$info")
+  done < <(jq -r '.comments | reverse[] | .body | @base64' <<<"$info")
   [ "$verified" = true ] || die "missing passing verifier verdict for current head or stable patch-id"
 fi
 
