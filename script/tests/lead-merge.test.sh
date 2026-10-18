@@ -25,6 +25,11 @@ EOS
 # merge logs the call and fails MERGE_FAILS times first.
 cat > "$tmp/bin/gh" <<'EOS'
 #!/usr/bin/env bash
+if [ "$1" = api ]; then
+  [[ "$*" = *--paginate* ]] || exit 1
+  printf '%s' "$API_FILES"
+  exit 0
+fi
 case "$2" in
   view)
     if [ -f "$MERGE_LOG" ] && grep -q ok "$MERGE_LOG"; then printf '%s' "$FINAL_JSON"; else printf '%s' "$PR_JSON"; fi ;;
@@ -45,7 +50,7 @@ OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 setup() {
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
-  COMMENTS_JSON=""
+  COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"script/foo.sh"}]'
   body=$'## Verification\n- Ran script successfully.'
@@ -61,6 +66,9 @@ mkjson() {
     "$state" "$base" "$branch" "$headsha" "$mergeable" "$files")
   PR_JSON=$(jq --arg body "$body" --arg comments "$comments" --arg checks "$checks" --arg countersign "$countersign" --arg base "$base_sha" '. + {body:$body, baseRefOid:$base, comments:[$checks,$comments,$countersign | {body:.}]}' <<<"$PR_JSON")
   [ -z "$COMMENTS_JSON" ] || PR_JSON=$(jq --argjson comments "$COMMENTS_JSON" '.comments=$comments' <<<"$PR_JSON")
+  API_FILES=${API_OVERRIDE:-$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")}
+  PR_JSON=$(jq --argjson count "${COUNT_OVERRIDE:-$(jq length <<<"$API_FILES")}" '.changedFiles=$count' <<<"$PR_JSON")
+  export API_FILES
   export OLD_PATCH
   export PR_JSON FINAL_JSON PR_DIFF FAKE_TOP MERGE_FAILS
 }
@@ -128,6 +136,9 @@ setup; PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon h
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'
 setup; TRUNK_FILES="unrelated.sh"; export TRUNK_FILES; check "disjoint trunk drift allowed" 0 '^MERGED' 1
 setup; files='[{"path":".agents/skills/a/SKILL.md"}]'; comments=""; check "skills need verifier" 1 'verdict'
+
+setup; API_OVERRIDE=$(jq -n '[range(101) | {filename:("docs/"+tostring+".md")}] + [{filename:".claude/hooks/late.py"}]'); check "paginated owner path after 100 refused" 1 'late.py'
+setup; COUNT_OVERRIDE=2; check "incomplete file inventory refused" 1 'file count'
 
 # Exercise the script with real commit graphs and git patch-id, not asserted IDs.
 setup
