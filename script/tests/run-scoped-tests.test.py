@@ -49,6 +49,14 @@ class ScopedTests(unittest.TestCase):
         for path in ['notification/__tests__/notification-service.test.ts', 'db/__tests__/no-update-many-claims-contract.test.ts', 'app/api/__tests__/route.test.ts']:
             self.assertIn('./src/' + path, selected)
 
+    def test_source_contract_references_are_selected(self):
+        self.write('web/src/db/__tests__/no-update-many-claims-contract.test.ts',
+                   'const allowed = {"src/lib/send.server.ts#claim": "safe"};')
+        result = self.run_helper('web/src/lib/send.server.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads((self.repo / 'web/selected.json').read_text())
+        self.assertIn('./src/db/__tests__/no-update-many-claims-contract.test.ts', selected)
+
     def test_pstv_root_changed_test_and_quoted_path(self):
         self.write('web2/pstv_web/src/path with space.test.ts', '')
         result = self.run_helper('web2/pstv_web/src/path with space.test.ts', root='web2/pstv_web')
