@@ -121,7 +121,10 @@ try:
         raw = git("diff", "--raw", "--no-renames", ancestor, head, "--", path).split()
         if len(raw) != 6:
             raise ValueError("unknown diff entry")
-        if raw[0] not in (":100644", ":000000") or raw[1] not in ("100644", "000000"):
+        if raw[4] not in ("A", "M") or raw[0] not in (":100644", ":100755", ":000000") or raw[1] not in ("100644", "100755"):
+            eligible = False
+        stats = git("diff", "--numstat", "--no-renames", ancestor, head, "--", path).split("\t", 2)
+        if len(stats) != 3 or "-" in stats[:2]:
             eligible = False
         if re.fullmatch(r"web/src/app/i18n/locales/(tw|en|jp)/[^/]+\.json", path):
             if raw[4] != "M":
