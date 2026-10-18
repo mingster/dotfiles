@@ -56,6 +56,25 @@ else: sys.exit(1)
     result,_=run('unchecked receipt lists all paths',"printf 'UNCHECKED: jellyfin/Thing.cs\\n'; printf 'UNCHECKED: roku/main.brs\\n'",0)
     if 'Unchecked paths: jellyfin/Thing.cs, roku/main.brs' in comments.read_text(): passed+=1; print('ok   unchecked receipt summary')
     else: failed+=1; print('FAIL missing unchecked receipt summary',comments.read_text())
+    # Run both real repository checklists against committed component fixtures.
+    tools_home=root/'home/dotfiles/script'; tools_home.mkdir(parents=True)
+    (tools_home/'run-scoped-tests.py').symlink_to(pathlib.Path(runner).with_name('run-scoped-tests.py'))
+    tool_log=root/'tool-calls'
+    for tool in ['bun','bunx']:
+        path=binpath/tool
+        path.write_text('#!/usr/bin/env python3\nimport pathlib,sys\nwith open('+repr(str(tool_log))+', "a") as f: f.write(str(pathlib.Path.cwd())+" "+" ".join(sys.argv[1:])+"\\n")\n')
+        path.chmod(0o755)
+    for component in ['web','web2/pstv_web','marketing','bin','pstv_op/bin','jellyfin','roku','.github/workflows']:
+        (repo/component).mkdir(parents=True,exist_ok=True)
+    for path,contents in {'marketing/src.ts':'export const x = 1;', 'bin/task.ts':'export const x = 1;', 'bin/task.test.ts':'', 'pstv_op/bin/task.py':'x = 1', 'jellyfin/Thing.cs':'class Thing {}', 'roku/main.brs':'', '.github/workflows/build.yml':'name: Build'}.items():
+        (repo/path).write_text(contents)
+    for project in ['riben.life','pstv']:
+        checklist=pathlib.Path('/Users/mtsai/orca/workspaces')/project/'merge-gates/.agents/head-checks.conf'
+        result,_=run(project+' real component checklist',checklist.read_text(),0)
+        summary=comments.read_text()
+        if 'Unchecked paths:' in summary and 'jellyfin/Thing.cs' in summary and 'roku/main.brs' in summary and 'Unsupported check scope' not in summary:
+            passed+=1; print('ok  ',project,'unchecked components remain mergeable')
+        else: failed+=1; print('FAIL',project,'component coverage receipt',summary)
     git('update-ref','refs/remotes/origin/main',env['GH_HEAD'])
     historical=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD']],env=env,text=True,capture_output=True)
     if historical.returncode==1 and '--base' in historical.stdout+historical.stderr: passed+=1; print('ok   historical ref requires base')
