@@ -2,13 +2,14 @@
 # Run a repository's ordered checks in an isolated worktree at one exact head.
 set -euo pipefail
 repo="" pr="" ref="" sha="" worktree="" created=false
-override="" changed=""
+override="" changed="" explicit_base=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
     --pr) pr="${2:-}"; shift 2 ;;
     --ref) ref="${2:-}"; shift 2 ;;
+    --base) explicit_base="${2:-}"; shift 2 ;;
     --config) override="${2:-}"; shift 2 ;;
     *) usage "unknown argument $1" ;;
   esac
@@ -16,6 +17,7 @@ done
 [ -d "$repo" ] || usage "--repo must name a repository directory"
 [ -n "$pr" ] || [ -n "$ref" ] || usage "provide --pr N or --ref SHA"
 [ -z "$pr" ] || [ -z "$ref" ] || usage "choose --pr or --ref, not both"
+[ -z "$explicit_base" ] || [ -n "$ref" ] || usage "--base is only for --ref"
 [ -z "$override" ] || { [ -n "$ref" ] && [ -f "$override" ]; } || usage "--config is a local --ref-only checklist override"
 [ -z "$override" ] || override=$(cd "$(dirname "$override")" && printf "%s/%s" "$PWD" "$(basename "$override")")
 case "$pr" in *[!0-9]*) usage "--pr must be numeric" ;; esac
@@ -54,7 +56,10 @@ if [ -n "$pr" ]; then
   sha=$(jq -r .headRefOid <<<"$info"); base=$(jq -r .baseRefOid <<<"$info")
 else
   sha=$(git -C "$repo" rev-parse --verify "$ref^{commit}")
-  base=$(git -C "$repo" rev-parse --verify origin/main)
+  if [ -z "$explicit_base" ] && git -C "$repo" merge-base --is-ancestor "$sha" origin/main; then
+    usage "historical --ref requires --base <ref>"
+  fi
+  base=$(git -C "$repo" rev-parse --verify "${explicit_base:-origin/main}^{commit}")
 fi
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$base" =~ ^[0-9a-f]{40}$ ]] || usage "invalid head or base SHA"
 for commit in "$sha" "$base"; do

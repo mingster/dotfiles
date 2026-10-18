@@ -55,9 +55,19 @@ if awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//)} intent && /^\+Status:.*
 fi
 
 # 5. Verification is required even for documentation changes.
-field .body | grep -qE '^## Verification[[:space:]]*$' || die "missing ## Verification heading"
-if field .body | grep -qiE '^#{1,6}[[:space:]]+Test plan[[:space:]]*$'; then die "Test plan heading is forbidden"; fi
-bullet_count=$(field .body | awk '/^## Verification[[:space:]]*$/ {inside=1; next} inside && /^## / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}')
+# Normalize heading case, spacing and trailing punctuation once for both gates.
+normalized_body=$(field .body | awk '
+/^#+[[:space:]]/ {
+  hashes=$0; sub(/[[:space:]].*$/, "", hashes)
+  title=$0; sub(/^#+[[:space:]]+/, "", title)
+  gsub(/[[:space:]]+/, " ", title)
+  sub(/[[:space:][:punct:]]+$/, "", title)
+  print hashes " " tolower(title); next
+}
+{print}')
+grep -qE '^## verification$' <<<"$normalized_body" || die "missing ## Verification heading"
+if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then die "Test plan heading is forbidden"; fi
+bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
 [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ] || die "Verification needs 1 to 3 run and outcome bullets"
 checks=$(jq -r --arg head "$head" '[.comments[].body | split("\n")[0] | select(. == ("Checks: PASS head="+$head) or . == ("Checks: FAIL head="+$head))] | last // ""' <<<"$info")
 [ "$checks" = "Checks: PASS head=$head" ] || die "missing current-head Checks: PASS"
