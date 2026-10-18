@@ -265,6 +265,37 @@ copy_commit
 comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "removed marketing wording alone does not need copy approval" 0 'lane=copy-only' 1
 
+# Rendered sensitive wording must retain the owner gate across copy surfaces.
+for surface in marketing locale; do
+  for wording in 'We pro**mise** unlim**ited** service for**ever**' '保**證**無**限**服務' '保**証**と無**制限**サービス' 'pro<strong>mise</strong>' '保<strong>證</strong>服務' '保<strong>証</strong>サービス' $'pro\u200bmise' $'保\u200b證' $'保\u200b証' 'ＰＲＯＭＩＳＥ' 'pro&#109;ise' '保&#x8B49;' '保&#x8A3C;' $'pro\nmise'; do
+    copy_setup
+    if [ "$surface" = marketing ]; then
+      printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
+    else
+      jq -n --arg value "$wording" '{greeting:$value}' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+    fi
+    copy_commit
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "normalized $surface wording $wording needs approval" 1 'owner copy approval'
+  done
+done
+
+copy_setup
+printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/hello world.md"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "plain copy path with spaces uses light route" 0 'lane=copy-only' 1
+printf 'pro**mise**\n' > "$REAL_PATCH_REPO/marketing/content/hello world.md"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "sensitive copy path with spaces needs approval" 1 'owner copy approval'
+
+copy_setup
+printf 'bad \377 text\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "undecodable copy requires approval" 1 'owner copy approval'
+
 # Unreadable or invalid policy cannot silently waive the owner gate.
 mkdir -p "$tmp/gate"
 cp "$here/lead-merge.sh" "$tmp/gate/lead-merge.sh"
