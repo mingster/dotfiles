@@ -32,10 +32,12 @@ def read_aliases(root):
     return root / options.get('baseUrl', '.'), options.get('paths', {})
 
 
-def import_targets(specifier, test, base, aliases):
+def import_targets(specifier, test, root, base, aliases):
     if specifier.startswith('.'):
         return [test.parent / specifier]
-    targets = []
+    # Source-contract suites also name root-relative files as path#symbol keys.
+    source_path = Path(specifier.partition('#')[0])
+    targets = [root / source_path] if source_path.suffix in SOURCE_SUFFIXES else []
     for alias, replacements in aliases.items():
         prefix, star, suffix = alias.partition('*')
         if (star and specifier.startswith(prefix) and specifier.endswith(suffix)) or specifier == alias:
@@ -66,7 +68,7 @@ def select_changed_tests(root, files):
                 # Includes import/export-from, require, import(), mock.module and vi.mock.
                 specifiers = re.findall(r'''["']([^"'\n]+)["']''', test.read_text(errors='replace'))
                 for specifier in specifiers:
-                    candidates = import_targets(specifier, test, base, aliases)
+                    candidates = import_targets(specifier, test, root, base, aliases)
                     if any(source_key(candidate.resolve()) in modules or source_key((candidate / 'index').resolve()) in modules for candidate in candidates):
                         tests.add(test)
                         break
