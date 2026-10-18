@@ -6,6 +6,16 @@ Source snapshot: pstack checkout commit `0b8e952052d482ee6de06deebf14d590d77b1b3
 
 For exact targets below, **T** means `templates/agent-team/` in dotfiles. **R** means `/Users/mtsai/projects/riben.life/`. **P** means the pstack source root above. Links resolve to actual local source files. Proposed files are explicitly marked new. The five incidents motivating the ranking are owner reported observations, not measured causal findings from this study.
 
+## Adopted owner rules, 19 October 2026
+
+These owner decisions govern the rollout in dotfiles, riben.life and PSTV; earlier proposals below are historical where they differ. Existing merge and release gates still apply.
+
+- Never Block on the Human: the lead decides reversible work within standing authority and reports after acting, including metadata only fixes already settled by an owner rule (permissions, ownership or gitignore entries, never secret contents or production data); only Owner-Reserved items, pricing or policy and matters without a standing rule go to Elon, with up to 2 in-scope correction passes per ticket.
+- Attack the Premise: at the second failure of the same check, write down the premise the failed fixes shared and test it directly before a third attempt; only behavioural failures after a production edit count toward the three-strike hard stop, while missing dependencies, Prisma generation and typegen setup failures do not.
+- Exhaust the Design Space: before any agent builds 2 or 3 competing prototypes, Elon asks the owner in Chinese with the options and cost, and proceeds only on his explicit yes.
+- Encode Lessons in Structure: team-audit runs only when the owner says "team-audit", reads `~/.claude/state/team-observations.md`, delivers a lint, check, script or role-file rule, and reports ticket-start-to-merge time and post-merge reopens and hotfixes since the last audit, with coverage gaps marked unknown.
+- Name Laziness Protocol, Prove It Works, Fix Root Causes or Subtract Before You Add only where the cue changes a decision; keep principle text in its vendored leaf skill.
+
 ## 1. Aspect table
 
 | Aspect | What pstack does, with source | What we do now, with source | Gap | Recommendation and reason |
@@ -53,12 +63,12 @@ These are proposed applications, not claims that every principle changed this st
 | [Laziness protocol][pr-laziness-protocol] | PM and developer choose the smallest complete change, including deletion, before adding machinery. |
 | [Foundational thinking][pr-foundational-thinking] | Architect PM settles the central data shape and executable scaffold before feature logic. |
 | [Redesign from first principles][pr-redesign-from-first-principles] | Architect PM changes a boundary coherently when evidence warrants it, through an accepted design change rather than worker scope expansion. |
-| [Attack the premise][pr-attack-the-premise] | Developer names and tests the shared premise after two failed fixes only if existing strike limits still permit work; a hard stop remains a stop. |
+| [Attack the premise][pr-attack-the-premise] | Developer writes and directly tests the shared premise at the second check failure before a third attempt; the three-strike hard stop remains, counting only behavioural failures after production edits. |
 | [Subtract before you add][pr-subtract-before-you-add] | Developer removes proven dead paths before building on them, inside the allowlist. |
 | [Minimize reader load][pr-minimize-reader-load] | Lead sends one self contained brief and reviewers read bounded evidence rather than conversation history. |
 | [Outcome oriented execution][pr-outcome-oriented-execution] | PM defines a migration finish predicate; intermediate compatibility is deliberate and scoped, not an excuse to override test limits. |
 | [Experience first][pr-experience-first] | Support, growth and QA judge the actual user flow, useful content and affected store kinds. |
-| [Exhaust the design space][pr-exhaust-the-design-space] | Architect PM compares a few bounded prototypes for costly unknowns, instead of debating or multiplying routine designs. |
+| [Exhaust the design space][pr-exhaust-the-design-space] | Architect PM compares 2 or 3 bounded prototypes only after Elon asks the owner in Chinese with options and cost and receives an explicit yes. |
 | [Build the lever][pr-build-the-lever] | Lead commissions a reusable command for repeated verification instead of repeating manual work in each worker. |
 | [Model the domain][pr-model-the-domain] | Architect PM and SecOps encode ownership, money and lifecycle states explicitly rather than scatter flags. |
 | [Boundary discipline][pr-boundary-discipline] | Developer and SecOps validate external and tenant boundaries once at the correct seam, retaining required defense checks. |
@@ -73,7 +83,7 @@ These are proposed applications, not claims that every principle changed this st
 | [Explain the number][pr-explain-the-number] | Growth, QA and release report comparable inputs, run count, range and limiting factor before claiming improvement. |
 | [Guard the context window][pr-guard-the-context-window] | Lead delegates bulk inspection to fresh Orca workers and receives compact findings plus artifact pointers. |
 | [Never block on the human][pr-never-block-on-the-human] | Every teammate resolves reversible uncertainty within standing authority; reserved decisions follow the lead to Elon. |
-| [Encode lessons in structure][pr-encode-lessons-in-structure] | Team audit selects a guard that rejects a real repeated failure before adding another instruction. |
+| [Encode lessons in structure][pr-encode-lessons-in-structure] | Owner requested team-audit reads the private observation log, produces structural fixes, and reports delivery time and post-merge reopens and hotfixes since the last audit. |
 
 ## 2. Ranked adoption list
 

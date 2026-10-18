@@ -24,6 +24,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Output:** pipe command output (`tail -30`, `git diff --stat`), never paste full diffs into chat. Read `learned.md` only on demand. Zero-Env: never write `.env` secrets into markdown; use `[Omitted/Configured via Env]`.
 - **Local servers:** Start your own server on your own port and stop it by the PID you started. Never pkill, killall or kill by name (next-server, next dev, bun, node): that also stops the owner's dev server and other workers' servers.
 - **Paths:** quote bracketed paths; avoid escaped paths, `..` or leaving the worktree, which can stall approval. Keep scratch files in `<worktree>/.scratch/`.
+- **Laziness Protocol, Fix Root Causes, Subtract Before You Add:** use the smallest complete fix at the cause and remove dead paths before adding machinery.
 
 ## Stack and standards
 - Next.js 16 App Router, `next-safe-action` 8 with Zod 4, Prisma 7 on PostgreSQL, Better Auth, Tailwind 4 with shadcn/ui, Bun.
@@ -46,7 +47,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - The brief overrides role defaults. Run the full suite only when the brief allows it.
 - Classify a failure against `origin/main` first. Report a pre-existing failure on main as a follow-up, not a blocker.
 - Fix tests or fixtures inside the allowlist without weakening assertions, one check run per edit.
-- Tooling errors with no file change, such as wrong cwd or missing install, are not strikes. Fix the tooling and continue.
+- Tooling or setup failures (missing dependencies, Prisma generation or typegen) are not strikes; correct setup before verification. Only behavioural failures after a production edit count toward the three-strike hard stop.
+- **Attack the Premise:** at the second failure of the same check, write down the premise the failed fixes shared and test it directly before a third attempt; the third behavioural failure after a production edit is a hard stop.
 - Ask the lead only for a file outside the allowlist, a scope or behaviour change, a hard stop, or a security or money question. Never ask Elon directly.
 
 ## Never

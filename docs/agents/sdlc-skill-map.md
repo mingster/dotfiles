@@ -24,7 +24,7 @@ Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/
 | Merge conflicts | fullstack-dev | `resolving-merge-conflicts` | named in fullstack-dev only; daily run step 4 did not | Daily run now names it |
 | Architecture review | architect-pm (lead consults) | `improve-codebase-architecture`, `codebase-design` | only `codebase-design` named | Missing skill; now on architect-pm's load list. Cadence still unscheduled (open) |
 | Prototype | architect-pm | `prototype` | not named anywhere | Missing skill; now on architect-pm's load list |
-| Retro | Elon after a failed task | `retro` | none; monthly `team-audit` covers team files, not a session | Missing; crew Step 4 now runs it after a task fails both remediation rounds |
+| Retro | Elon after a failed task | `retro` | none; owner requested `team-audit` covers team files, not a session | Missing; crew Step 4 now runs it after a task fails both remediation rounds |
 | Handoff between sessions | the worker that runs out of context | `handoff` | model-routing: a "what is left" list in `worker_done`; `active_run.md` for multi slice tickets | Home grown list; now written with `handoff` and its path reported. `active_run.md` stays (it lives in the worktree, `handoff` writes to `$TMPDIR`) |
 | Worker spec | Elon, lead | names the skill and its file | crew Step 2 spec had no skill field | Missing; crew Step 2 and elon.md now require it |
 | Deploy | release-manager | `deploy` (ours) | correct | Unchanged by rule |
