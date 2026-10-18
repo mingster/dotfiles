@@ -73,7 +73,11 @@ else: sys.exit(1)
     for path,contents in {'marketing/src.ts':'export const x = 1;', 'bin/task.ts':'export const x = 1;', 'bin/task.test.ts':'', 'pstv_op/bin/task.py':'x = 1', 'jellyfin/Thing.cs':'class Thing {}', 'roku/main.brs':'', '.github/workflows/build.yml':'name: Build'}.items():
         (repo/path).write_text(contents)
     for project in ['riben.life','pstv']:
-        checklist=pathlib.Path(runner).resolve().parents[3]/project/'merge-gates/.agents/head-checks.conf'
+        default=pathlib.Path(runner).resolve().parents[3]/project/'merge-gates/.agents/head-checks.conf'
+        checklist=pathlib.Path(os.environ.get(project.upper().replace('.', '_')+'_CHECKLIST', str(default)))
+        if not checklist.is_file():
+            print('skip',project,'optional sibling checklist integration (set '+project.upper().replace('.', '_')+'_CHECKLIST)')
+            continue
         result,_=run(project+' real component checklist',checklist.read_text(),0)
         summary=comments.read_text()
         if 'Unchecked paths:' in summary and 'jellyfin/Thing.cs' in summary and 'roku/main.brs' in summary and 'Unsupported check scope' not in summary:
