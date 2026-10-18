@@ -26,7 +26,7 @@ case "$top" in "$root"/*) ;; *) die "worktree is not under $root" ;; esac
 case "$(basename "$top")" in lead-*) ;; *) die "only the lead worktree (lead-*) may merge" ;; esac
 
 # 2. PR state
-info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,files,body,comments,baseRefOid) \
+info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid) \
   || die "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
 [ "$(field .state)" = OPEN ] || die "PR $pr is not open"
@@ -37,13 +37,18 @@ field() { jq -r "$1" <<<"$info"; }
 # 4. Head branch
 case "$(field .headRefName)" in main|staging|production) die "head branch $(field .headRefName) is not mergeable here" ;; esac
 
+# gh pr view truncates files at 100; every path gate shares this complete list.
+file_pages=$(gh api --paginate "repos/$repo/pulls/$pr/files") || die "cannot read complete PR files"
+files=$(jq -s '[.[][] | .filename]' <<<"$file_pages") || die "invalid PR file inventory"
+[ "$(jq length <<<"$files")" = "$(field .changedFiles)" ] || die "PR file count differs from changed_files"
+
 # 3. Owner only paths
 while IFS= read -r f; do
   case "$f" in
     .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|.codex/*|*/.codex/*|*.rules)
       die "PR touches $f, which waits for the owner through Elon" ;;
   esac
-done < <(jq -r '.files[].path' <<<"$info")
+done < <(jq -r '.[]' <<<"$files")
 diff=$(gh pr diff "$pr" --repo "$repo") || die "cannot read diff of PR $pr"
 if awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//)} intent && /^\+Status:.*Accepted/{found=1} END{exit !found}' <<<"$diff"; then
   die "PR accepts an intent under docs/intent/, which waits for the owner through Elon"
@@ -63,7 +68,7 @@ while IFS= read -r f; do
     docs/*|*.md|changelog.d/*) ;;
     *) docs_only=false ;;
   esac
-done < <(jq -r '.files[].path' <<<"$info")
+done < <(jq -r '.[]' <<<"$files")
 
 # Recompute both patches; never trust a patch-id asserted in a comment.
 patch_id() {
@@ -112,7 +117,7 @@ while IFS= read -r f; do
       gate_lines=$(awk -v path="$f" '/^\+\+\+ / {active=($0 == "+++ b/" path)} active && /^[+-]/ && !/^\+\+\+ / && !/^--- / {print path ":" $0}' <<<"$diff")
       triggers="${triggers}${triggers:+$'\n'}${gate_lines:-gate definition changed: $f}" ;;
   esac
-done < <(jq -r '.files[].path' <<<"$info")
+done < <(jq -r '.[]' <<<"$files")
 if [ -n "$triggers" ]; then
   echo "lead-merge: countersign triggers:" >&2
   printf '%s\n' "$triggers" >&2
@@ -127,7 +132,7 @@ ancestor=$(git merge-base "$(field .baseRefOid)" "$verdict_head") || die "cannot
 trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
 while IFS= read -r f; do
   if grep -Fxq -- "$f" <<<"$trunk_files"; then die "trunk changed $f; rebase and rerun head-checks"; fi
-done < <(jq -r '.files[].path' <<<"$info")
+done < <(jq -r '.[]' <<<"$files")
 
 merge() { gh pr merge "$pr" --repo "$repo" --merge --match-head-commit "$head"; }
 if ! out=$(merge 2>&1); then
