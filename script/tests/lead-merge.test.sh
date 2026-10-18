@@ -142,6 +142,8 @@ setup; COUNT_OVERRIDE=2; check "incomplete file inventory refused" 1 'file count
 
 setup; body=$'## Verification\n- Ran script: passed.\n## Test plan:'; check "punctuated Test plan refused" 1 'Test plan'
 setup; body=$'##  vERIFICATION :  \n- Ran script: passed.'; check "normalized Verification accepted" 0 '^MERGED' 1
+setup; body=$'## Verification\n- Ran script: passed.\n   ##  Test    plan :  '; check "indented Test plan refused" 1 'Test plan'
+setup; body=$'   ##  Verification  \n- Ran script: passed.'; check "indented Verification accepted" 0 '^MERGED' 1
 
 setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'; check "unchecked needs live verdict coverage" 1 'unchecked'
 setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'; comments+=$'\nRan unchecked Jellyfin paths live: passed.'; check "unchecked live coverage allows merge" 0 '^MERGED' 1
