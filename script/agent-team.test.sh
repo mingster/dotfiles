@@ -21,9 +21,9 @@ exit 1
 SH
 chmod +x "$tmp/tools/gh"
 export PATH="$tmp/tools:$PATH" TEST_LABELS="$tmp/labels"
-# The Elon template exceeds 800 words; keep its independent budget finding
-# out of the composition success fixture, and exercise audit failure separately.
-export ROLE_WORD_BUDGET=$(($(wc -w < "$here/../templates/agent-team/.claude/agents/elon.md") + 100))
+# Exercise composition with the real default 800-word role budget.
+# The negative fixture below sets its own deliberately smaller budget.
+unset ROLE_WORD_BUDGET
 git init -q "$tmp/new project"
 git -C "$tmp/new project" remote add origin https://github.com/mingster/synthetic.git
 out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 2>&1); rc=$?
@@ -161,8 +161,9 @@ out=$(HOME="$tmp/ag-home" PATH="$TEST_BIN:$PATH" bash "$here/setup-antigravity.s
 { [ "$rc" = 0 ] && [ -f "$tmp/ag-home/.gemini/antigravity-cli/settings.json" ] && [ -L "$tmp/ag-home/.gemini/antigravity-cli/skills" ]; } && check "Antigravity CLI alone receives configuration" ok || check "Antigravity CLI alone receives configuration" bad
 git init -q "$tmp/audit-project"
 git -C "$tmp/audit-project" remote add origin https://github.com/mingster/synthetic.git
-out=$(ROLE_WORD_BUDGET=800 bash "$here/agent-team.sh" project "$tmp/audit-project" 2>&1); rc=$?
-{ [ "$rc" = 1 ] && grep -qE '[0-9]+ words \(budget 800\)' <<< "$out" && grep -q 'Owner or architect' <<< "$out"; } && check "audit findings fail project setup while still printing owner facts" ok || { check "audit findings fail project setup while still printing owner facts" bad; echo "exit=$rc"; tail -6 <<< "$out"; }
+# A 1-word budget guarantees a finding independently of canonical role sizes.
+out=$(ROLE_WORD_BUDGET=1 bash "$here/agent-team.sh" project "$tmp/audit-project" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qE '[0-9]+ words \(budget 1\)' <<< "$out" && grep -q 'Owner or architect' <<< "$out"; } && check "audit findings fail project setup while still printing owner facts" ok || { check "audit findings fail project setup while still printing owner facts" bad; echo "exit=$rc"; tail -6 <<< "$out"; }
 mkdir -p "$tmp/legacy-home/.codex" "$tmp/legacy-config"
 echo '{"legacy":true}' > "$tmp/legacy-config/settings.json"
 ln -s "$tmp/legacy-config" "$tmp/legacy-home/.claude"

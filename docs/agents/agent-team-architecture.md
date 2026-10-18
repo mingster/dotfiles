@@ -66,23 +66,24 @@ sequenceDiagram
     BA->>BA: Grill & compile spec.md (PRD + ADRs)
     BA->>TL: Hand off tickets.md (Machine-checkable contracts)
     
+    CEO->>TL: Hand off engineering scope and owner gates
     alt Fast-Path (<= 3 files, chore, bug)
-        CEO->>Dev: One worker implements directly via TDD
-        Dev->>CEO: worker_done
+        TL->>Dev: Dispatch one implementation worker when needed
     else Crew Dispatch (Multi-domain feature)
-        CEO->>Dev: Dispatch ticket with Orca orchestration (isolated worktree under ~/orca/workspaces/...)
-        Dev->>Dev: Strict Red-Green-Refactor (TDD)
-        Dev->>CEO: worker_done (branch ready: worktree path, diff stat, tests)
-        CEO->>QA: Dispatch audit
-        QA->>QA: Dual-Axis Review (Standards & Spec Traceability)
-        QA->>CEO: worker_done (verdict)
-        CEO->>CEO: Push, open the PR, merge with --match-head-commit
-        CEO->>TL: Prune the worktree after the push succeeded
+        TL->>Dev: Dispatch scoped tickets with Orca orchestration in isolated worktrees
     end
+    Dev->>Dev: TDD and local commits on own branch
+    Dev->>TL: worker_done (branch, worktree, full head, diff stat, tests)
+    TL->>QA: Required risk-based reviews of current full head (Lead review on eligible fast path)
+    QA->>TL: worker_done (verdict and finding dispositions)
+    TL->>TL: Validate required reviews, resolved findings, green checks and mergeability
+    TL->>TL: Push, open PR, merge via lead-merge.sh with --match-head-commit; no --admin
+    Note over TL,QA: Settle, release and close ended panes per docs/agents/team.md Delivery contract
+    TL->>TL: Prune only after successful push AND merged PR; retain dirty/unmerged work with named owner
 
     TL->>CEO: Consolidated delivery & verification report
     CEO->>Owner: Release recommendation
-    Owner->>RM: Owner Go for Production Deploy
+    Owner->>RM: Explicit Owner Go for this exact production commit
     RM->>RM: /deploy (Local -> Staging -> Production)
 ```
 
