@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the selector through its CLI and real fixture files."""
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -59,6 +60,59 @@ class ScopedTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Scoped tests: 0', result.stdout)
         self.assertFalse((self.repo / 'web/selected.json').exists())
+
+    def components(self, phase, *files):
+        tools = self.repo / 'tools'
+        tools.mkdir(exist_ok=True)
+        for tool in ['bun', 'bunx', 'python3']:
+            target = tools / tool
+            target.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\nwith open(os.environ["CALLS"], "a") as f: f.write(json.dumps([pathlib.Path(sys.argv[0]).name, os.getcwd(), sys.argv[1:]])+"\\n")\nif pathlib.Path(sys.argv[0]).name == "python3" and "py_compile" in sys.argv: sys.exit(subprocess.run([' + repr(sys.executable) + ']+sys.argv[1:]).returncode)\n')
+            target.chmod(0o755)
+        return subprocess.run([sys.executable, str(HELPER), '--root', 'web', '--runner', 'bun test --isolate', '--components', phase, *files], cwd=self.repo, env=dict(os.environ, PATH=str(tools)+os.pathsep+os.environ['PATH'], CALLS=str(self.repo/'calls')), text=True, capture_output=True)
+
+    def test_unknown_components_are_reported_and_do_not_block(self):
+        result = self.components('lint', 'jellyfin/Thing.cs', 'roku/main.brs', 'streaminator/a.cpp')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for path in ['jellyfin/Thing.cs', 'roku/main.brs', 'streaminator/a.cpp']:
+            self.assertIn('UNCHECKED: '+path, result.stdout)
+
+    def test_python_syntax_errors_fail_lint(self):
+        self.write('pstv_op/bin/task.py', 'def broken(:')
+        result = self.components('lint', 'pstv_op/bin/task.py')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('SyntaxError', result.stderr)
+
+    def test_python_sibling_tests_are_run(self):
+        self.write('pstv_op/bin/task.py', 'x = 1')
+        self.write('pstv_op/bin/tests/test_task.py', 'def test_ok(): assert True')
+        result = self.components('tests', 'pstv_op/bin/task.py')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('pytest', (self.repo/'calls').read_text())
+        self.assertIn('pstv_op/bin/tests', (self.repo/'calls').read_text())
+
+    def test_workflow_yaml_is_parsed(self):
+        self.write('.github/workflows/build.yml', 'name: Build')
+        result = self.components('lint', '.github/workflows/build.yml')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('YAML.parse', (self.repo/'calls').read_text())
+        self.assertNotIn('UNCHECKED', result.stdout)
+
+    def test_marketing_lint_and_typecheck_run_from_marketing(self):
+        self.write('marketing/src/page.tsx', 'export default 1;')
+        self.write('marketing/package.json', '{}')
+        for phase in ['lint', 'typecheck']:
+            result = self.components(phase, 'marketing/src/page.tsx')
+            self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in (self.repo/'calls').read_text().splitlines()]
+        self.assertTrue(any('biome' in ' '.join(call[2]) and call[1].endswith('/marketing') for call in calls))
+        self.assertTrue(any('tsc' in call[2] and call[1].endswith('/marketing') for call in calls))
+
+    def test_bin_sources_run_sibling_bun_tests(self):
+        self.write('bin/job.ts', 'export const job=1;')
+        self.write('bin/job.test.ts', '')
+        result = self.components('tests', 'bin/job.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('./job.test.ts', (self.repo/'calls').read_text())
 
 
 if __name__ == '__main__':
