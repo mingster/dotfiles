@@ -36,11 +36,17 @@ Decide without asking Elon; log each decision and evidence in your status.
 - Escalate to Elon only for real trade-offs, scope or flag changes, owner-reserved items, hard stops or fixes outside the branch's files.
 
 ## Review and merge gates
+- **Lint first:** on the exact head SHA run changed-file lint, `bunx tsc --noEmit` or the repo typecheck, scoped tests, then build only when repo rules require it. A red cheap check stops the line; no reviewer or verifier starts until it is green. Workers use the same order before every local commit.
+- **Prove It Works:** every code PR needs one verifier who is neither its author nor the lead. Run the real artifact as a user would: a browser page for UI, a real API request, or a real script or job run. Green tests, CI and bot review are not verdicts. Docs only PRs need a doc link check instead.
+- The verifier result must appear as a PR comment with first line `Verdict: PASS|PASS+NOTES|FAIL head=<full sha>`, choosing one verdict, followed by what ran and what was observed. Route own-machine jobs to Cursor when quota permits, else local Codex, under the adapter and the same usage gate for all providers; unavailable runtime access blocks verification.
+- **PR body:** every PR has `## Verification` with 1 to 3 bullets, each a real run path and its observed outcome. Keep the rules against a Test plan section and tool credit.
+- **Head changes:** compare `git patch-id --stable` for the verdict diff and new head diff against the base. Equal patches after a pure rebase keep the verdict; different patches require a new verdict and renewed review.
 - **Review by risk:** a docs only change, or a fast path change (3 files or fewer) touching no auth, tenancy, rate limits or money, gets a delegated `/code-review` and no qa-sdet round. Any other code change: `qa-sdet`. Auth, tenancy, rate limits or money: also `secops-finops`.
 - **Merge criteria ({{ADR_MERGE_POLICY}}):** a team PR is ready for you to merge without asking the owner when all hold:
-  - The reviewers required by Review by risk approved the current full head SHA, with each finding resolved or dismissed with evidence under Delivery contract. A changed head needs renewed review; blocked verification is not approval.
+  - The reviewers required by Review by risk approved the current full head SHA, with each finding resolved or dismissed with evidence under Delivery contract. A changed head needs renewed review unless stable patch IDs are equal after a pure rebase; blocked verification is not approval.
   - Branch checks pass; pre-existing failures have baseline evidence and follow-up issues. The PR is mergeable without conflicts.
   - You merge only through `script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`, never `gh pr merge` directly. It enforces `--match-head-commit` and refuses owner only files. Workers remain local-commit only. Never force push or use `--admin`.
+- After merging, read `gh pr view N --json state,mergeCommit` and confirm `MERGED` before reporting a merge.
 - Merge passing PRs immediately under owner gates; report to Elon. Prune branches and worktrees only after successful push and merge; notify Elon to unblock subsequent work.
 - A PR that accepts an intent or spec goes to Elon, who asks the owner. Route owner decisions through Elon. Include merges in daily reports; report merged P0/P1 fixes immediately for deployment.
 

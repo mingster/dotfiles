@@ -7,11 +7,18 @@ export HOME="$tmp/home"
 mkdir -p "$HOME/orca/workspaces/proj/lead-x" "$HOME/orca/workspaces/proj/fullstack-dev-x" "$tmp/other/lead-y" "$tmp/bin"
 LEAD="$HOME/orca/workspaces/proj/lead-x"
 
+REAL_GIT=$(command -v git); export REAL_GIT
 # git stub: rev-parse --show-toplevel prints $FAKE_TOP.
 cat > "$tmp/bin/git" <<'EOS'
 #!/usr/bin/env bash
 [ "$1" = rev-parse ] && { echo "$FAKE_TOP"; exit 0; }
-exit 1
+[ -z "${REAL_PATCH_REPO:-}" ] || exec "$REAL_GIT" -C "$REAL_PATCH_REPO" "$@"
+case "$1" in
+  cat-file|fetch) exit 0 ;;
+  diff) case "$*" in *"$OLD"*) echo "$OLD_PATCH" ;; *) echo current ;; esac ;;
+  patch-id) read -r patch; [ -n "$patch" ] && echo "$patch commit" ;;
+  *) exit 1 ;;
+esac
 EOS
 # gh stub: view prints $PR_JSON (or $FINAL_JSON after a merge), diff prints $PR_DIFF,
 # merge logs the call and fails MERGE_FAILS times first.
@@ -32,17 +39,26 @@ chmod +x "$tmp/bin/"*
 export PATH="$tmp/bin:$PATH"
 export MERGE_LOG="$tmp/merge.log"
 
-SHA=abc123
+SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 setup() {
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
+  COMMENTS_JSON=""
+  base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"script/foo.sh"}]'
+  body=$'## Verification\n- Ran script successfully.'
+  comments="Verdict: PASS head=$SHA"; OLD_PATCH=current
+  export OLD OLD_PATCH
   state=OPEN base=main headsha=$SHA mergeable=MERGEABLE branch=feature
   FINAL_JSON='{"state":"MERGED","url":"https://github.com/o/r/pull/7"}'
 }
 mkjson() {
   PR_JSON=$(printf '{"state":"%s","baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeable":"%s","url":"https://github.com/o/r/pull/7","files":%s}' \
     "$state" "$base" "$branch" "$headsha" "$mergeable" "$files")
+  PR_JSON=$(jq --arg body "$body" --arg comments "$comments" --arg base "$base_sha" '. + {body:$body, baseRefOid:$base, comments:[$comments | {body:.}]}' <<<"$PR_JSON")
+  [ -z "$COMMENTS_JSON" ] || PR_JSON=$(jq --argjson comments "$COMMENTS_JSON" '.comments=$comments' <<<"$PR_JSON")
+  export OLD_PATCH
   export PR_JSON FINAL_JSON PR_DIFF FAKE_TOP MERGE_FAILS
 }
 
@@ -80,6 +96,47 @@ check "intent edit without status change allowed" 0 '^MERGED' 1
 setup; MERGE_FAILS=1; check "one retry then success" 0 '^MERGED' 2
 setup; MERGE_FAILS=2; check "merge failure prints error, exits 1" 1 'merge failed: boom' 2
 setup; FINAL_JSON='{"state":"OPEN","url":"u"}'; check "unconfirmed merge fails" 1 'not MERGED' 1
+
+setup; body="No heading"; check "missing Verification refused" 1 'Verification'
+setup; comments=""; check "missing verdict refused" 1 'verdict'
+setup; comments="Verdict: FAIL head=$SHA"; check "FAIL verdict refused" 1 'verdict'
+setup; comments="Verdict: PASS head=$OLD"; OLD_PATCH=different; check "stale different patch refused" 1 'verdict'
+setup; comments="Verdict: PASS head=$OLD"; check "stale equal patch allowed" 0 '^MERGED' 1
+setup; comments="Verdict: PASS+NOTES head=$SHA"; check "PASS+NOTES allowed" 0 '^MERGED' 1
+setup; files='[{"path":"docs/guide.txt"},{"path":"README.md"},{"path":"changelog.d/change.txt"}]'; comments=""; check "docs only skips verdict" 0 '^MERGED' 1
+setup; files='[{"path":".claude/agents/qa-sdet.md"}]'; comments=""; check "agent instructions require verdict" 1 'verdict'
+setup; files='[{"path":"docs/guide.md"}]'; body=""; comments=""; check "docs still needs Verification" 1 'Verification'
+
+setup; files='[{"path":"templates/agent-team/.claude/agents/qa-sdet.md"}]'; comments=""; check "template agents require verdict" 1 'verdict'
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Verdict: PASS head="+$sha)},{body:("Verdict: FAIL head="+$sha)}]'); check "newer FAIL supersedes PASS" 1 'verdict'
+
+# Exercise the script with real commit graphs and git patch-id, not asserted IDs.
+setup
+export REAL_PATCH_REPO="$tmp/patch-repo"
+"$REAL_GIT" init -q "$REAL_PATCH_REPO"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" config user.name Fixture
+"$REAL_GIT" -C "$REAL_PATCH_REPO" config user.email fixture@example.invalid
+printf 'base\n' > "$REAL_PATCH_REPO/code"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add code
+"$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm base
+base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+printf 'change\n' >> "$REAL_PATCH_REPO/code"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam change
+OLD=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+"$REAL_GIT" -C "$REAL_PATCH_REPO" checkout -q --detach "$base_sha"
+printf 'unrelated\n' > "$REAL_PATCH_REPO/other"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add other
+"$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm advance-base
+base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+"$REAL_GIT" -C "$REAL_PATCH_REPO" cherry-pick "$OLD" >/dev/null
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+comments="Verdict: PASS head=$OLD"
+check "real rebase keeps stable patch verdict" 0 '^MERGED' 1
+rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
+printf 'different\n' >> "$REAL_PATCH_REPO/code"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam different
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+check "real changed patch invalidates verdict" 1 'verdict'
 
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]

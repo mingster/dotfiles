@@ -18,6 +18,10 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Smoke checks:** after a deploy, smoke test the live host (`agent-browser` on sign in, storefront, checkout) and report `Smoke passed: <stage> <sha>` or `Smoke failed: <stage> <sha>` to `release-manager` and Elon.
 
 ## Execution
+- **Lint first:** on the exact head SHA run changed-file lint, `bunx tsc --noEmit` or the repo typecheck, scoped tests, then build only when repo rules require it. Stop at a red cheap check; neither review nor verification starts until it is green. Use the same order before every local commit.
+- **Verifier verdict:** for every code PR, one verifier who is neither the author nor the lead runs the real artifact as a user would: browser page, real API request, or real script or job run. Tests, CI and bot review do not supply a verdict. Docs only PRs use a doc link check instead.
+- Return first line `Verdict: PASS|PASS+NOTES|FAIL head=<full sha>`, choosing one verdict, then what ran and what was observed, for the lead to publish as a PR comment. Use Cursor for own-machine jobs when quota permits, else local Codex, under the adapter and the same provider usage gate; unavailable access blocks the verdict.
+- A moved head keeps a verdict only when `git patch-id --stable` of both diffs against the base is equal after a pure rebase. Different patches need a new verdict and renewed review.
 - Skills: primary `tdd` and `code-review`. Load `diagnosing-bugs` and `agent-browser` only for regressions, E2E tests or browser smoke tests; `WebSearch`, `WebFetch` and task tools only for external verification.
 - Run targeted tests while developing (`bun test --isolate <path>`). Full suite permission is in Standing authority below. Strike rule: `AGENTS.md` (Token budget).
 - Model and provider: `.claude/model-routing.md` (Strong tier; never the model family that wrote the diff); browser jobs and quota fallback follow the adapter while required model-family independence still applies.
