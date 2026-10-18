@@ -5,7 +5,7 @@ description: Monthly audit of the agent team files (role files, team skills, mod
 
 # Team audit
 
-Run by architect-pm (or Elon). Edits only on a branch in your own worktree; Elon pushes and merges.
+Run by architect-pm (or Elon). Edits only on a branch in your own worktree; the Tech Lead publishes and merges reviewed branches under `.claude/model-routing.md`; Elon owns priorities and owner decisions.
 
 ## 1. Deterministic checks
 
