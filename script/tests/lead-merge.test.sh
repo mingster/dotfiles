@@ -77,7 +77,7 @@ pass=0; fail=0
 check() { # name expected_exit output_regex [merge_calls]
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   mkjson
-  out=$("$here/lead-merge.sh" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
+  out=$("${LEAD_MERGE:-$here/lead-merge.sh}" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
   if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ]; then pass=$((pass+1)); echo "ok   $1"
   else fail=$((fail+1)); echo "FAIL $1 (exit $code, merge calls $calls)"; echo "$out"; fi
@@ -239,6 +239,46 @@ COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg hea
 check "stale owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
 check "owner sensitive approval permits merge" 0 'lane=copy-only' 1
+
+# Each configured policy term is independently sensitive in added marketing text.
+for wording in 'We promise unlimited service forever' PROMISE guarantee unlimited forever lifetime free refund price discount '%' 'NT$' '$' warranty compensation legal terms privacy 保證 承諾 無限 永久 終身 免費 退款 價格 折扣 優惠 賠償 條款 隱私 保証 約束 無制限 無料 返金 価格 割引 補償 規約 プライバシー; do
+  copy_setup
+  printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "sensitive added wording $wording needs approval" 1 'owner copy approval'
+done
+copy_setup
+printf '{"greeting":"UnLiMiTeD service"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "locale customer promise needs approval" 1 'owner copy approval'
+
+copy_setup
+printf 'Refund available\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+"$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm sensitive-base
+base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+"$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "removed marketing wording alone does not need copy approval" 0 'lane=copy-only' 1
+
+# Unreadable or invalid policy cannot silently waive the owner gate.
+mkdir -p "$tmp/gate"
+cp "$here/lead-merge.sh" "$tmp/gate/lead-merge.sh"
+LEAD_MERGE="$tmp/gate/lead-merge.sh"
+for policy in missing 'not json' '{"sensitive_words":[]}' '{"sensitive_words":[1]}'; do
+  copy_setup
+  printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  rm -f "$tmp/gate/copy-only.config.json"
+  [ "$policy" = missing ] || printf '%s\n' "$policy" > "$tmp/gate/copy-only.config.json"
+  check "invalid sensitive policy $policy needs approval" 1 'owner copy approval'
+done
+unset LEAD_MERGE
 
 # Copy paths must contain ordinary text blobs, including additions.
 for kind in binary symlink submodule deleted renamed; do
