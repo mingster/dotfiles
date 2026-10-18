@@ -39,13 +39,19 @@ four topics: prices and money; refunds and cancellation; legal and privacy;
 and promises to customers, including delivery and timing. When unsure, choose
 owner. The same Verdict comment must have exactly `Copy topics: none` or
 `Copy topics: owner` as its second line (case-sensitive), under the Verdict's
-existing independent verifier/author check. A separate comment cannot attest;
-the newest applicable Verdict controls. Missing or malformed attestation falls
-back to the normal route.
+existing independent verifier/author check. A separate comment cannot attest.
+Every Verdict for the current head (or an equal patch) counts: one `owner`
+keeps the owner gate on, a later `none` cannot erase it, and a PASS beside a
+FAIL is refused. An edited or minimized Verdict is refused, so post a new one.
+Missing or malformed attestation falls back to the normal route.
 
 `Copy topics: owner`, any backstop hit in an old or changed value, or the
-quantity/currency rule requires a comment by `mingster` whose first line is
-exactly `Copy approval: head=<current full sha>`. `Copy topics: none` cannot
+quantity/currency rule requires owner Copy approval: the owner runs
+`bin/owner-approve.sh copy <current full sha>` in a terminal, which writes
+`~/.config/<namespace>/approval.json` (scope `copy`, that sha, 30 minutes).
+lead-merge.sh reads the namespace from `APPROVAL_NAMESPACE` in the repo's
+`.claude/hooks/guard-bash.py` (or `approval_namespace` in `copy-only.config.json`).
+A GitHub comment approves nothing, because every agent's gh login is the owner's. `Copy topics: none` cannot
 turn off the backstop. An unchanged key path alone does not trigger approval;
 the old or changed value must itself contain a backstop term. Added or removed
 sensitive keys retain the owner gate. Plain Save, Back
@@ -57,6 +63,12 @@ can catch unrelated UI cancellation, `rate` inside `generate`, or `fee` inside
 `coffee`; report convenience-sample results separately from real historical
 copy edits. A copy-only projection of a mixed historical commit measures wording
 classification, not the original commit's complete route or merge readiness.
+
+Known limit: Codex workers run without the Claude hooks, so the approval file
+is protected from agents only for Claude workers (guard-bash.py denies running
+`owner-approve.sh` and writing the file). A Codex worker on the owner's account
+could write it. Keep Codex workers out of the lead worktree's merge step and
+the owner's home directory until a sandbox rule covers it.
 
 Known limitations: spelled-out quantities such as `one hundred`, `一百`, and `百`
 are not recognized by the quantity guard. A configured nearby topic can still

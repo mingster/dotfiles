@@ -236,11 +236,14 @@ patch_id() {
 }
 verdict_head="$head"
 if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; then
-  verified=false
   current_patch=""
-  # Newest applicable verdict wins, including a FAIL after an earlier PASS.
-  while IFS= read -r encoded; do
-    comment=$(jq -r '@base64d' <<<"\"$encoded\"")
+  applicable=()
+  passes=0 fails=0
+  # Every Verdict for this head (or an equal patch) counts. Newest first; none
+  # of them can erase another, and an edited or minimized one fails closed.
+  while IFS= read -r row; do
+    comment=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\"")
+    flagged=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
     line=${comment%%$'\n'*}
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
@@ -254,36 +257,51 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only 
         [ "$old_patch" != "$current_patch" ] || applies=true
       fi
       if [ "$applies" = true ]; then
-        verdict_head="$candidate_head"
-        if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
-          die "verdict must cover unchecked paths in its live lane"
-        fi
-        # The topic attestation belongs to this same independent Verdict,
-        # never a separate author's comment or an earlier superseded verdict.
-        topics=$(printf '%s\n' "$comment" | sed -n '2p')
-        case "$topics" in
-          'Copy topics: owner') sensitive=true; lane=normal ;;
-          'Copy topics: none') ;;
-          *) lane=normal ;;
-        esac
-        if [ "$lane" = copy-only ] && [ "$verdict" != FAIL ]; then
-          for evidence in 'screenshots?' 'phone[ -]width' '\btw\b' '\ben\b' '\bjp\b'; do
-            grep -qiE "$evidence" <<<"${comment#*$'\n'}" || die "copy-only verdict needs phone-width screenshots in tw, en and jp"
-          done
-        fi
-        [ "$verdict" = FAIL ] || verified=true
-        break
+        [ "$flagged" = false ] || die "verdict comment was edited or minimized; post a fresh Verdict"
+        [ ${#applicable[@]} -gt 0 ] || verdict_head="$candidate_head"
+        applicable+=("$verdict"$'\n'"$comment")
+        if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
     fi
-  done < <(jq -r '.comments | reverse[] | .body | @base64' <<<"$info")
-  [ "$verified" = true ] || die "missing passing verifier verdict for current head or stable patch-id"
+  done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
+  [ "$passes" -gt 0 ] || die "missing passing verifier verdict for current head or stable patch-id"
+  [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or stable patch-id"
+  for entry in "${applicable[@]}"; do
+    comment=${entry#*$'\n'}
+    if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
+      die "verdict must cover unchecked paths in its live lane"
+    fi
+    # The topic attestation belongs to an independent Verdict, never a separate
+    # comment. Any owner attestation keeps the owner gate on.
+    topics=$(printf '%s\n' "$comment" | sed -n '2p')
+    case "$topics" in
+      'Copy topics: owner') sensitive=true; lane=normal ;;
+      'Copy topics: none') ;;
+      *) lane=normal ;;
+    esac
+  done
+  if [ "$lane" = copy-only ]; then
+    for entry in "${applicable[@]}"; do
+      comment=${entry#*$'\n'}
+      for evidence in 'screenshots?' 'phone[ -]width' '\btw\b' '\ben\b' '\bjp\b'; do
+        grep -qiE "$evidence" <<<"${comment#*$'\n'}" || die "copy-only verdict needs phone-width screenshots in tw, en and jp"
+      done
+    done
+  fi
 fi
 
 echo "lead-merge: lane=$lane"
 if [ "$sensitive" = true ]; then
-  jq -e --arg approval "Copy approval: head=$head" \
-    'any(.comments[]; .author.login == "mingster" and (.body | split("\n")[0]) == $approval)' <<<"$info" >/dev/null \
-    || die "missing owner copy approval for current head (mingster: Copy approval: head=$head)"
+  # Owner Copy approval is `bin/owner-approve.sh copy <sha>`, a terminal-only file.
+  # No GitHub comment approves anything: every agent's gh login is the owner's.
+  ns=$(sed -n 's/^APPROVAL_NAMESPACE *= *"\([a-z0-9_-]*\)".*/\1/p' "$top/.claude/hooks/guard-bash.py" 2>/dev/null | head -n1)
+  [ -n "$ns" ] || ns=$(jq -r '.approval_namespace // empty' "$(dirname "$0")/copy-only.config.json" 2>/dev/null) || ns=""
+  [ -n "$ns" ] || die "no approval namespace (APPROVAL_NAMESPACE in .claude/hooks/guard-bash.py or approval_namespace in copy-only.config.json)"
+  approval_file="$HOME/.config/$ns/approval.json"
+  jq -e --arg head "$head" --argjson now "$(date +%s)" \
+    '(if type == "object" and has("approvals") then .approvals else [.] end) | any(.[]; .scope == "copy" and .target == $head and (.expires_at | type == "number") and .expires_at > $now and .expires_at <= $now + 1860)' \
+    "$approval_file" >/dev/null 2>&1 \
+    || die "missing owner copy approval for current head (owner runs: bin/owner-approve.sh copy $head)"
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.

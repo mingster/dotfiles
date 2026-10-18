@@ -48,7 +48,7 @@ export MERGE_LOG="$tmp/merge.log"
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 setup() {
-  rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
+  rm -f "$MERGE_LOG" "$MERGE_LOG.calls" "$APPROVAL"
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
   COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""
   base_sha=cccccccccccccccccccccccccccccccccccccccc
@@ -71,6 +71,16 @@ mkjson() {
   export API_FILES
   export OLD_PATCH
   export PR_JSON FINAL_JSON PR_DIFF FAKE_TOP MERGE_FAILS
+}
+
+# Owner copy approval is a terminal-only file, never a GitHub comment.
+mkdir -p "$LEAD/.claude/hooks"
+printf 'APPROVAL_NAMESPACE = "proj"  # fixture\n' > "$LEAD/.claude/hooks/guard-bash.py"
+APPROVAL="$HOME/.config/proj/approval.json"
+write_approval() { # scope target [offset seconds] [by]
+  mkdir -p "$(dirname "$APPROVAL")"
+  jq -n --arg scope "$1" --arg target "$2" --argjson off "${3:-+1800}" --arg by "${4:-mingster}" \
+    '{scope:$scope,target:$target,schema:false,apply:false,created_at:(now|floor),expires_at:((now|floor)+$off),by:$by}' > "$APPROVAL"
 }
 
 pass=0; fail=0
@@ -186,7 +196,7 @@ comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy
 check "malformed topic attestation refuses light route" 0 'lane=normal' 1
 comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: owner\nPhone-width screenshots in tw, en and jp.'
 check "verifier owner attestation needs owner approval" 1 'owner copy approval'
-COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+COMMENTS_JSON=""; write_approval copy "$SHA"
 check "verifier owner attestation accepts current owner approval" 0 'lane=normal' 1
 COMMENTS_JSON=""
 comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none\nPhone-width screenshots in tw, en and jp.'
@@ -196,6 +206,38 @@ check "separate non-verifier attestation refuses light route" 0 'lane=normal' 1
 COMMENTS_JSON=""
 comments="Verdict: PASS head=$SHA verifier=ctx_author author=ctx_author"$'\nCopy topics: none\nPhone-width screenshots in tw, en and jp.'
 check "author cannot attest copy topics" 1 'author cannot'
+
+# Every applicable Verdict counts: a later none never erases an earlier owner.
+verdict_json() { # body [edited] [minimized]
+  jq -n --arg body "$1" --argjson edited "${2:-false}" --argjson min "${3:-false}" '{body:$body,includesCreatedEdit:$edited,isMinimized:$min}'
+}
+shot=$'\nPhone-width screenshots in tw, en and jp.'
+v_owner="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: owner'"$shot"
+v_none="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none'"$shot"
+v_other="Verdict: PASS head=$SHA verifier=ctx_other author=ctx_author"$'\nCopy topics: none'"$shot"
+v_fail="Verdict: FAIL head=$SHA verifier=ctx_other author=ctx_author"$'\nCopy topics: none'"$shot"
+comments_of() { jq -s --arg checks "$checks" '[{body:$checks}] + .'; }
+rm -f "$APPROVAL"
+COMMENTS_JSON=$({ verdict_json "$v_owner"; verdict_json "$v_none"; } | comments_of)
+check "later none after owner still needs owner approval" 1 'owner copy approval'
+COMMENTS_JSON=$({ verdict_json "$v_owner"; verdict_json "$v_other"; } | comments_of)
+check "later none by another verifier after owner needs owner approval" 1 'owner copy approval'
+write_approval copy "$SHA"
+check "later none after owner merges with current owner approval" 0 'lane=normal' 1
+rm -f "$APPROVAL"
+COMMENTS_JSON=$({ verdict_json "$v_none"; verdict_json "$v_fail"; } | comments_of)
+check "conflicting PASS and FAIL verdicts refused" 1 'conflicting'
+COMMENTS_JSON=$({ verdict_json "$v_fail"; verdict_json "$v_none"; } | comments_of)
+check "conflicting FAIL then PASS verdicts refused" 1 'conflicting'
+COMMENTS_JSON=$({ verdict_json "$v_none" true; } | comments_of)
+check "edited verdict refused" 1 'edited or minimized'
+COMMENTS_JSON=$({ verdict_json "$v_none" false true; } | comments_of)
+check "minimized verdict refused" 1 'edited or minimized'
+COMMENTS_JSON=$({ verdict_json "$v_owner"; verdict_json "$v_none" true; } | comments_of)
+check "edited none after owner refused" 1 'edited or minimized'
+COMMENTS_JSON=$({ verdict_json "$v_none"; } | comments_of)
+check "unedited single none still light" 0 'lane=copy-only' 1
+COMMENTS_JSON=""
 
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
@@ -253,11 +295,24 @@ printf '{"greeting":"Refund available"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/
 copy_commit
 comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "sensitive wording without owner approval refused" 1 'owner copy approval'
-COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"someone"},body:("Copy approval: head="+$head)}]')
-check "non-owner sensitive approval refused" 1 'owner copy approval'
-COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$OLD" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
-check "stale owner sensitive approval refused" 1 'owner copy approval'
+COMMENTS_JSON=""; write_approval promote "$SHA"
+check "approval file with wrong scope refused" 1 'owner copy approval'
+COMMENTS_JSON=""; write_approval copy "$OLD"
+check "approval file with wrong sha refused" 1 'owner copy approval'
+COMMENTS_JSON=""; write_approval copy "$SHA" -5
+check "expired approval file refused" 1 'owner copy approval'
+COMMENTS_JSON=""; write_approval copy "$SHA" +99999
+check "approval file claiming more than 30 minutes refused" 1 'owner copy approval'
+COMMENTS_JSON=""; jq -n --arg sha "$SHA" '{approvals:[{scope:"host",target:null,expires_at:(now+600)},{scope:"copy",target:$sha,expires_at:(now+600)}]}' > "$APPROVAL"
+check "stacked approval file with current copy entry accepted" 0 'lane=normal' 1
+COMMENTS_JSON=""; jq -n --arg sha "$SHA" '{approvals:[{scope:"copy",target:$sha,expires_at:(now-5)},{scope:"host",target:null,expires_at:(now+600)}]}' > "$APPROVAL"
+check "stacked approval file without valid copy entry refused" 1 'owner copy approval'
+COMMENTS_JSON=""; printf 'not json' > "$APPROVAL"
+check "unreadable approval file refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+rm -f "$APPROVAL"
+check "GitHub Copy approval comment no longer approves" 1 'owner copy approval'
+COMMENTS_JSON=""; write_approval copy "$SHA"
 check "owner sensitive approval permits normal route merge" 0 'lane=normal' 1
 
 # Round-6 omissions must require approval on every eligible surface, even when
@@ -285,7 +340,7 @@ for surface in en tw jp marketing; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface r6 $wording needs approval" 1 'owner copy approval'
-    COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+    COMMENTS_JSON=""; write_approval copy "$SHA"
     check "$surface r6 $wording owner approved" 0 'lane=normal' 1
   done
 done
@@ -348,7 +403,7 @@ for surface in marketing locale; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface unchanged-count $probe needs approval" 1 'owner copy approval'
-    COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+    COMMENTS_JSON=""; write_approval copy "$SHA"
     check "$surface unchanged-count $probe owner approved" 0 'lane=normal' 1
   done
 done
