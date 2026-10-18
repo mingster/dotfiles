@@ -123,7 +123,7 @@ setup; checks="Checks: PASS head=$OLD"; check "stale checks refused" 1 'Checks'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_same author=ctx_same"; check "author cannot verify" 1 'verdict'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; check "test skip needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// @ts-expect-error intentional'; check "suppression needs countersign" 1 'Countersign'
-setup; files='[{"path":".agents/head-checks.conf"}]'; check "check config needs countersign" 1 'Countersign'
+setup; files='[{"path":".agents/head-checks.conf"}]'; PR_DIFF=$'+++ b/.agents/head-checks.conf\n+echo changed'; check "check config prints countersign trigger" 1 'head-checks.conf:\+echo changed'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$SHA reason=fixture only"; check "countersigned skip allowed" 0 '^MERGED' 1
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'
 setup; TRUNK_FILES="unrelated.sh"; export TRUNK_FILES; check "disjoint trunk drift allowed" 0 '^MERGED' 1

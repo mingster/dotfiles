@@ -109,7 +109,8 @@ triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo|xit\(|eslint-disable|
 while IFS= read -r f; do
   case "$f" in
     .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh)
-      triggers="${triggers}${triggers:+$'\n'}gate definition changed: $f" ;;
+      gate_lines=$(awk -v path="$f" '/^\+\+\+ / {active=($0 == "+++ b/" path)} active && /^[+-]/ && !/^\+\+\+ / && !/^--- / {print path ":" $0}' <<<"$diff")
+      triggers="${triggers}${triggers:+$'\n'}${gate_lines:-gate definition changed: $f}" ;;
   esac
 done < <(jq -r '.files[].path' <<<"$info")
 if [ -n "$triggers" ]; then
