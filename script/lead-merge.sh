@@ -92,14 +92,30 @@ if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then
     git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || die "cannot inspect copy-only diff"
   done
   classification=$(python3 - "$base" "$head" "$files" "$(dirname "$0")/copy-only.config.json" <<'PYTHON'
+import html
+from html.parser import HTMLParser
 import json
 import re
 import subprocess
 import sys
+import unicodedata
 
 base, head, inventory, config = sys.argv[1:]
 def git(*args):
     return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode()
+class VisibleText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+    def handle_data(self, data):
+        self.parts.append(data)
+def normalize(text):
+    text.encode("utf-8", errors="strict")
+    parser = VisibleText()
+    parser.feed(html.unescape(text))
+    parser.close()
+    folded = unicodedata.normalize("NFKC", "".join(parser.parts)).casefold()
+    return "".join(char for char in folded if unicodedata.category(char)[0] in "LN")
 def flatten(value, path=()):
     if isinstance(value, str):
         return {path: value}
@@ -111,19 +127,23 @@ def flatten(value, path=()):
     return result
 try:
     ancestor = git("merge-base", base, head).strip()
-    paths = git("diff", "--name-only", "--no-renames", ancestor, head, "--").splitlines()
+    paths = git("diff", "--name-only", "-z", "--no-renames", ancestor, head, "--").split("\0")[:-1]
     eligible = bool(paths) and sorted(paths) == sorted(json.loads(inventory))
     words = json.load(open(config))["sensitive_words"]
     if not isinstance(words, list) or not words or any(not isinstance(word, str) or not word.strip() for word in words):
         raise ValueError("invalid sensitive wording policy")
-    sensitive = False
+    normalized_words = [normalize(word) for word in words]
+    changed_text = []
     for path in paths:
-        raw = git("diff", "--raw", "--no-renames", ancestor, head, "--", path).split()
-        if len(raw) != 6:
+        entry = git("diff", "--raw", "-z", "--no-renames", ancestor, head, "--", path).split("\0")
+        if len(entry) != 3 or entry[1] != path or entry[2]:
             raise ValueError("unknown diff entry")
+        raw = entry[0].split()
+        if len(raw) != 5:
+            raise ValueError("unknown diff metadata")
         if raw[4] not in ("A", "M") or raw[0] not in (":100644", ":100755", ":000000") or raw[1] not in ("100644", "100755"):
             eligible = False
-        stats = git("diff", "--numstat", "--no-renames", ancestor, head, "--", path).split("\t", 2)
+        stats = git("diff", "--numstat", "-z", "--no-renames", ancestor, head, "--", path).split("\t", 2)
         if len(stats) != 3 or "-" in stats[:2]:
             eligible = False
         if re.fullmatch(r"web/src/app/i18n/locales/(tw|en|jp)/[^/]+\.json", path):
@@ -141,7 +161,12 @@ try:
         else:
             eligible = False
             continue
-        sensitive |= any(word.casefold() in text.casefold() for text in changed for word in words)
+        changed_text.extend(changed)
+    text = "\n".join(changed_text)
+    normalized_text = normalize(text)
+    # Raw matching retains symbol-only commercial policy terms such as % and $.
+    sensitive = (any(word.casefold() in text.casefold() for word in words)
+                 or any(word and word in normalized_text for word in normalized_words))
     print(("copy-only" if eligible else "normal") + (" sensitive" if sensitive else ""))
 except (ValueError, KeyError, OSError, subprocess.SubprocessError):
     # Copy changes with unreadable blobs or policy still need the owner gate.

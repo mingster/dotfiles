@@ -267,7 +267,7 @@ check "removed marketing wording alone does not need copy approval" 0 'lane=copy
 
 # Rendered sensitive wording must retain the owner gate across copy surfaces.
 for surface in marketing locale; do
-  for wording in 'We pro**mise** unlim**ited** service for**ever**' '保**證**無**限**服務' '保**証**と無**制限**サービス' 'pro<strong>mise</strong>' '保<strong>證</strong>服務' '保<strong>証</strong>サービス' $'pro\u200bmise' $'保\u200b證' $'保\u200b証' 'ＰＲＯＭＩＳＥ' 'pro&#109;ise' '保&#x8B49;' '保&#x8A3C;' $'pro\nmise'; do
+  for wording in 'We pro**mise** unlim**ited** service for**ever**' '保**證**無**限**服務' '保**証**と無**制限**サービス' 'pro<strong>mise</strong>' '保<strong>證</strong>服務' '保<strong>証</strong>サービス' 'pro​mise' '保​證' '保​証' 'ＰＲＯＭＩＳＥ' 'pro&#109;ise' '保&#x8B49;' '保&#x8A3C;' $'pro\nmise'; do
     copy_setup
     if [ "$surface" = marketing ]; then
       printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
