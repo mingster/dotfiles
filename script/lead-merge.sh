@@ -84,6 +84,79 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
+lane=normal
+sensitive=false
+base=$(field .baseRefOid)
+if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then
+  for ref in "$base" "$head"; do
+    git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || die "cannot inspect copy-only diff"
+  done
+  classification=$(python3 - "$base" "$head" "$files" "$(dirname "$0")/copy-only.config.json" <<'PYTHON'
+import json
+import re
+import subprocess
+import sys
+
+base, head, inventory, config = sys.argv[1:]
+def git(*args):
+    return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode()
+def flatten(value, path=()):
+    if isinstance(value, str):
+        return {path: value}
+    if not isinstance(value, dict) or not value:
+        raise ValueError("not a translation object")
+    result = {}
+    for key, child in value.items():
+        result.update(flatten(child, (*path, key)))
+    return result
+try:
+    ancestor = git("merge-base", base, head).strip()
+    paths = git("diff", "--name-only", "--no-renames", ancestor, head, "--").splitlines()
+    if not paths or sorted(paths) != sorted(json.loads(inventory)):
+        raise ValueError("diff inventory mismatch")
+    words = json.load(open(config))["sensitive_words"]
+    sensitive = False
+    eligible = True
+    for path in paths:
+        raw = git("diff", "--raw", "--no-renames", ancestor, head, "--", path).split()
+        if len(raw) != 6:
+            raise ValueError("unknown diff entry")
+        if raw[0] not in (":100644", ":000000") or raw[1] not in ("100644", "000000"):
+            eligible = False
+        if re.fullmatch(r"web/src/app/i18n/locales/(tw|en|jp)/[^/]+\.json", path):
+            if raw[4] != "M":
+                eligible = False
+            before = {} if raw[4] == "A" else flatten(json.loads(git("show", f"{ancestor}:{path}")))
+            after = {} if raw[4] == "D" else flatten(json.loads(git("show", f"{head}:{path}")))
+            if before.keys() != after.keys():
+                eligible = False
+            changed = [" ".join((*key, before.get(key, ""), after.get(key, "")))
+                       for key in before.keys() | after.keys() if before.get(key) != after.get(key)]
+        elif re.fullmatch(r"marketing/(content|copy)/(?:[^/]+/)*[^/]+\.(md|txt)", path):
+            changed = [line[1:] for line in git("diff", "--no-ext-diff", "--unified=0", ancestor, head, "--", path).splitlines()
+                       if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
+        else:
+            eligible = False
+            continue
+        sensitive |= any(word.casefold() in text.casefold() for text in changed for word in words)
+    print(("copy-only" if eligible else "normal") + (" sensitive" if sensitive else ""))
+except (ValueError, KeyError, OSError, subprocess.SubprocessError):
+    print("normal")
+PYTHON
+) || die "cannot classify copy-only diff"
+  case "$classification" in
+    copy-only) lane=copy-only ;;
+    'copy-only sensitive') lane=copy-only; sensitive=true ;;
+    'normal sensitive') sensitive=true ;;
+  esac
+fi
+echo "lead-merge: lane=$lane"
+if [ "$sensitive" = true ]; then
+  jq -e --arg approval "Copy approval: head=$head" \
+    'any(.comments[]; .author.login == "mingster" and (.body | split("\n")[0]) == $approval)' <<<"$info" >/dev/null \
+    || die "missing owner copy approval for current head (mingster: Copy approval: head=$head)"
+fi
+
 # Recompute both patches; never trust a patch-id asserted in a comment.
 patch_id() {
   local sha="$1" base patch
@@ -97,7 +170,7 @@ patch_id() {
   awk 'NR == 1 {print $1}' <<<"$patch"
 }
 verdict_head="$head"
-if [ "$docs_only" = false ] || [ "$unchecked" = true ]; then
+if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; then
   verified=false
   current_patch=""
   # Newest applicable verdict wins, including a FAIL after an earlier PASS.
@@ -120,6 +193,11 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ]; then
         if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
           die "verdict must cover unchecked paths in its live lane"
         fi
+        if [ "$lane" = copy-only ] && [ "$verdict" != FAIL ]; then
+          for evidence in 'screenshots?' 'phone[ -]width' '\btw\b' '\ben\b' '\bjp\b'; do
+            grep -qiE "$evidence" <<<"${comment#*$'\n'}" || die "copy-only verdict needs phone-width screenshots in tw, en and jp"
+          done
+        fi
         [ "$verdict" = FAIL ] || verified=true
         break
       fi
@@ -132,7 +210,7 @@ fi
 triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo|xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
 while IFS= read -r f; do
   case "$f" in
-    .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh)
+    .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh|script/copy-only.config.json|*/script/copy-only.config.json)
       gate_lines=$(awk -v path="$f" '/^\+\+\+ / {active=($0 == "+++ b/" path)} active && /^[+-]/ && !/^\+\+\+ / && !/^--- / {print path ":" $0}' <<<"$diff")
       triggers="${triggers}${triggers:+$'\n'}${gate_lines:-gate definition changed: $f}" ;;
   esac

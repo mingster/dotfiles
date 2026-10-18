@@ -75,6 +75,7 @@ mkjson() {
 
 pass=0; fail=0
 check() { # name expected_exit output_regex [merge_calls]
+  rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   mkjson
   out=$("$here/lead-merge.sh" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
@@ -131,6 +132,7 @@ setup; checks="Checks: PASS head=$OLD"; check "stale checks refused" 1 'Checks'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_same author=ctx_same"; check "author cannot verify" 1 'verdict'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; check "test skip needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// @ts-expect-error intentional'; check "suppression needs countersign" 1 'Countersign'
+setup; files='[{"path":"script/copy-only.config.json"}]'; PR_DIFF=$'+++ b/script/copy-only.config.json\n+{"sensitive_words":[]}'; check "copy gate config needs countersign" 1 'Countersign'
 setup; files='[{"path":".agents/head-checks.conf"}]'; PR_DIFF=$'+++ b/.agents/head-checks.conf\n+echo changed'; check "check config prints countersign trigger" 1 'head-checks.conf:\+echo changed'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$SHA reason=fixture only"; check "countersigned skip allowed" 0 '^MERGED' 1
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'
@@ -147,6 +149,100 @@ setup; body=$'   ##  Verification  \n- Ran script: passed.'; check "indented Ver
 
 setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'; check "unchecked needs live verdict coverage" 1 'unchecked'
 setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'; comments+=$'\nRan unchecked Jellyfin paths live: passed.'; check "unchecked live coverage allows merge" 0 '^MERGED' 1
+
+copy_setup() {
+  setup
+  export REAL_PATCH_REPO="$tmp/copy-repo"
+  rm -rf "$REAL_PATCH_REPO"
+  "$REAL_GIT" init -q "$REAL_PATCH_REPO"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.name Fixture
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.email fixture@example.invalid
+  mkdir -p "$REAL_PATCH_REPO/web/src/app/i18n/locales/en" "$REAL_PATCH_REPO/marketing/content" "$REAL_PATCH_REPO/marketing/src"
+  printf '{"greeting":"Hello"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+  printf '{"greeting":"Hello"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/marketing.json"
+  printf 'Welcome\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
+  printf 'export default 1;\n' > "$REAL_PATCH_REPO/marketing/src/home.ts"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" remote add origin "$REAL_PATCH_REPO"
+}
+copy_commit() {
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm copy
+  SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+  PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+  files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})')
+  checks="Checks: PASS head=$SHA"
+  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
+}
+copy_setup
+printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+check "copy-only needs phone screenshots for all locales" 1 'screenshots'
+comments+=$'\nPhone-width screenshots of every changed page in tw, en and jp.'
+check "values-only locale uses copy-only route" 0 'lane=copy-only' 1
+checks="Checks: FAIL head=$SHA"
+check "copy-only still requires passing checks" 1 'Checks'
+checks="Checks: PASS head=$SHA"
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nPhone-width screenshots in tw and en.'
+check "copy-only missing jp screenshot evidence refused" 1 'screenshots'
+
+copy_setup
+printf '{"greeting":"Welcome","extra":"New"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+check "added locale key uses normal route" 0 'lane=normal' 1
+
+copy_setup
+printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+printf 'export default 2;\n' > "$REAL_PATCH_REPO/marketing/src/home.ts"
+copy_commit
+check "locale plus ts uses normal route" 0 'lane=normal' 1
+
+copy_setup
+printf 'export default 2;\n' > "$REAL_PATCH_REPO/marketing/src/home.ts"
+copy_commit
+check "marketing code uses normal route" 0 'lane=normal' 1
+
+copy_setup
+printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "marketing content uses copy-only route" 0 'lane=copy-only' 1
+
+copy_setup
+printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/marketing.json"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "other locale namespaces use copy-only route" 0 'lane=copy-only' 1
+
+copy_setup
+printf '{"greeting":"Welcome","price":"100"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+check "sensitive added key keeps owner gate on normal route" 1 'owner copy approval'
+
+copy_setup
+printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+printf 'export default 2;\n' > "$REAL_PATCH_REPO/marketing/content/code.ts"
+copy_commit
+check "code under marketing content remains normal" 0 'lane=normal' 1
+
+copy_setup
+printf '{"greeting":"Refund available"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+comments+=$'\nPhone-width screenshots in tw, en and jp.'
+check "sensitive wording without owner approval refused" 1 'owner copy approval'
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"someone"},body:("Copy approval: head="+$head)}]')
+check "non-owner sensitive approval refused" 1 'owner copy approval'
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$OLD" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+check "stale owner sensitive approval refused" 1 'owner copy approval'
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+check "owner sensitive approval permits merge" 0 'lane=copy-only' 1
+
+unset REAL_PATCH_REPO
+SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 # Exercise the script with real commit graphs and git patch-id, not asserted IDs.
 setup

@@ -39,6 +39,10 @@ Read this section before framing an objective, dispatching, reviewing a delivery
 
 ## Handoffs
 
+- **Copy-only exception (#3819):** `lead-merge.sh` decides from the actual diff: existing locale values only (unchanged keys), or `.md`/`.txt` under `marketing/content/` or `marketing/copy/`; anything else uses the normal route. Use Codex luna low for the edit and independent verifier, batch small requests into one PR a day, require current-head Checks PASS and a Verdict with phone-width screenshots of every changed page in tw, en and jp; qa-sdet diff review and the secops lane are not required.
+- Sensitive changed locale keys/values or marketing wording need a PR comment by `mingster` beginning `Copy approval: head=<full sha>` before merge; this copy approval is separate from production approval.
+- Copy-only may go to Playground at once; production still needs the owner's go. Japanese homepage and main-page copy needs a native reader before launch.
+
 Handoffs use committed artifacts such as intents, specs, branches, pull requests and reviews, with `active_run.md` for long tasks. Always name the next actor by role.
 
 | Situation | Sender | Report |
