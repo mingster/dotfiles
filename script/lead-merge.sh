@@ -148,7 +148,18 @@ try:
     ancestor = git("merge-base", base, head).strip()
     paths = git("diff", "--name-only", "-z", "--no-renames", ancestor, head, "--").split("\0")[:-1]
     eligible = bool(paths) and sorted(paths) == sorted(json.loads(inventory))
-    words = json.load(open(config))["sensitive_words"]
+    groups = json.load(open(config))["sensitive_word_groups"]
+    if not isinstance(groups, dict) or not groups:
+        raise ValueError("invalid sensitive wording groups")
+    # Group metadata documents provenance; only explicit word arrays are matched.
+    words = []
+    for locales in groups.values():
+        if not isinstance(locales, dict) or set(locales) != {"en", "tw", "jp"}:
+            raise ValueError("invalid sensitive wording locales")
+        for group in locales.values():
+            if not isinstance(group, dict) or not isinstance(group.get("words"), list) or not group["words"]:
+                raise ValueError("invalid sensitive wording group")
+            words.extend(group["words"])
     if not isinstance(words, list) or not words or any(not isinstance(word, str) or not word.strip() for word in words):
         raise ValueError("invalid sensitive wording policy")
     normalized_words = [normalize(word) for word in words]

@@ -240,6 +240,36 @@ check "stale owner sensitive approval refused" 1 'owner copy approval'
 COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
 check "owner sensitive approval permits normal route merge" 0 'lane=normal' 1
 
+# Round-6 omissions must require approval on every eligible surface, even when
+# their count is unchanged and quantities are spelled out (no digit fallback).
+for surface in en tw jp marketing; do
+  for wording in pricing cost charge 價錢 定價 售價 法律 値段 代金 契約 法的; do
+    copy_setup
+    if [ "$surface" = marketing ]; then
+      probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
+      printf '%s alpha\n' "$wording" > "$probe_file"
+    else
+      probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/$surface/translation.json"
+      mkdir -p "$(dirname "$probe_file")"
+      jq -n --arg value "$wording alpha" '{message:$value}' > "$probe_file"
+    fi
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm vocabulary-base
+    base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+    if [ "$surface" = marketing ]; then
+      printf '%s beta\n' "$wording" > "$probe_file"
+    else
+      jq -n --arg value "$wording beta" '{message:$value}' > "$probe_file"
+    fi
+    copy_commit
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "$surface r6 $wording needs approval" 1 'owner copy approval'
+    COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" --arg head "$SHA" '[{body:$checks},{body:$verdict},{author:{login:"mingster"},body:("Copy approval: head="+$head)}]')
+    check "$surface r6 $wording owner approved" 0 'lane=normal' 1
+  done
+done
+
 # Count-preserving topic changes still require current-head owner approval.
 for surface in marketing locale; do
   for probe in price refund scope replace; do
@@ -446,7 +476,7 @@ comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "precomposed English accent needs approval" 1 'owner copy approval'
 
 # Each configured policy term is independently sensitive in added marketing text.
-for wording in 'We promise unlimited service forever' PROMISE guarantee unlimited forever lifetime free refund price discount '%' 'NT$' '$' warranty compensation legal terms privacy 保證 承諾 無限 永久 終身 免費 退款 價格 折扣 優惠 賠償 條款 隱私 保証 約束 無制限 無料 返金 価格 割引 補償 規約 プライバシー; do
+for wording in 'We promise unlimited service forever' PROMISE guarantee unlimited forever lifetime free refund price discount '%' 'NT$' '$' warranty compensation legal terms privacy 保證 承諾 無限 永久 終身 免費 退款 價格 折扣 優惠 賠償 條款 隱私 保証 約束 無制限 無料 返金 価格 割引 補償 規約 プライバシー pricing cost charge rate tariff billing payment subscription plan cancellation policy contract agreement liability warranty promise 價錢 價目 售價 定價 收費 費率 付款 訂閱 方案 退費 政策 契約 合約 協議 責任 保固 値段 費用 手数料 支払 購読 サブスク プラン 払い戻し キャンセル 利用規約 ポリシー 契約 同意 責任 永久 帳務 履約 定期購入 課金 解約 价格 价钱 定价 费用 无偿 無償; do
   copy_setup
   printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
   copy_commit
@@ -505,7 +535,7 @@ check "undecodable copy requires approval" 1 'owner copy approval'
 mkdir -p "$tmp/gate"
 cp "$here/lead-merge.sh" "$tmp/gate/lead-merge.sh"
 LEAD_MERGE="$tmp/gate/lead-merge.sh"
-for policy in missing 'not json' '{"sensitive_words":[]}' '{"sensitive_words":[1]}'; do
+for policy in missing 'not json' '{"sensitive_words":[]}' '{"sensitive_words":[1]}' '{"sensitive_word_groups":{}}' '{"sensitive_word_groups":{"topic":{"en":{"words":["fee"]}}}}' '{"sensitive_word_groups":{"topic":{"en":{"words":["fee"]},"tw":{"words":[]},"jp":{"words":["料金"]}}}}'; do
   copy_setup
   printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
   copy_commit
