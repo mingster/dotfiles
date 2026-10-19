@@ -15,13 +15,14 @@ with note "pacing: prefer a lighter model". --reserve (default 1) holds weekly
 percentage points per running worker; --ceiling defaults to 95. Cursor uses its
 provider billing cycle and Antigravity its provider model pools.
 """
-import argparse, glob, json, math, os, subprocess, sys, time
+import argparse, re, glob, json, math, os, subprocess, sys, time
 from datetime import datetime, timedelta
 
 HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
 CODEX = os.environ.get("USAGE_GATE_CODEX_SESSIONS", HOME + "/.codex/sessions")
 WEEK_MIN = 10080
+TIE_POINTS = 2.0  # headroom points within which the preset provider keeps the pick
 MAX_AGE = 5 * 60  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
@@ -193,6 +194,15 @@ def antigravity_pool(model):
 
 
 def antigravity_reading(fetch=None):
+    """One reading per model pool, with banner-blocked pools forced to exhausted until their reset."""
+    pools = antigravity_pools(fetch) or {}
+    now = time.time()
+    for pool, resets in read_banners(now).items():
+        pools[pool] = {"pct": 100.0, "resets_at": resets, "observed_at": now, "source": "banner"}
+    return pools or None
+
+
+def antigravity_pools(fetch=None):
     """One reading per model pool. Duplicate model labels share the same quota."""
     try:
         payload = (fetch or antigravity_fetch)()
@@ -216,6 +226,58 @@ def antigravity_reading(fetch=None):
         return pools or None
     except (KeyError, TypeError, ValueError, AttributeError, OSError):
         return None
+
+
+BANNER_FILE = os.environ.get("USAGE_GATE_BANNER_FILE", HOME + "/.claude/state/antigravity-banner.json")
+BANNER_RE = re.compile(r"quota reached.{0,200}?resets? in\s+(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m)?",
+                       re.I | re.S)
+
+
+def parse_quota_banner(text, now):
+    """Pool and reset time from an Antigravity 'quota reached ... Resets in 94h29m' screen, else None."""
+    match = BANNER_RE.search(text or "")
+    if not match or not any(match.groups()):
+        return None
+    days, hours, minutes = (int(g or 0) for g in match.groups())
+    window = text[max(0, match.start() - 300):match.end()].lower()
+    pool = "claude" if re.search(r"claude|gpt-oss", window) else ("gemini" if "gemini" in window else None)
+    if pool is None:
+        return None
+    return pool, now + days * 86400 + hours * 3600 + minutes * 60
+
+
+def record_quota_banner(text, now=None, path=None):
+    """Remember a banner so the pool stays blocked until its reset. Returns the pool or None."""
+    now = time.time() if now is None else now
+    parsed = parse_quota_banner(text, now)
+    if not parsed:
+        return None
+    path = path or BANNER_FILE
+    banners = read_banners(now, path)
+    banners[parsed[0]] = parsed[1]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(banners, f)
+    return parsed[0]
+
+
+def read_banners(now, path=None):
+    try:
+        with open(path or BANNER_FILE) as f:
+            data = json.load(f)
+        return {pool: float(t) for pool, t in data.items() if pool in ("claude", "gemini") and float(t) > now}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def antigravity_models():
+    """Model ids the Antigravity CLI lists, or None when it cannot say."""
+    try:
+        out = subprocess.run(["agy", "models"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    ids = {line.split()[0] for line in out.splitlines() if line.strip() and not line.startswith("Fetching")}
+    return ids or None
 
 
 READERS = {"codex": codex_reading, "claude": claude_reading, "cursor": cursor_reading,
@@ -616,6 +678,7 @@ def pick(role, avoid, cap, ceiling, per_worker):
         key = (entry["provider"], entry["model"] if entry["provider"] == "antigravity" else None)
         if key not in rows:
             rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1])
+    known = antigravity_models() if any(e["provider"] == "antigravity" for e in chain) else None
     gated = [r for (p, _), r in rows.items() if p in READERS]
     fallback = all(r["verdict"] == "blocked" for r in gated)
     candidates, allowed = [], []
@@ -624,6 +687,8 @@ def pick(role, avoid, cap, ceiling, per_worker):
         room, fraction = headroom(row)
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
+        if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
+            eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
                      "headroom_fraction": fraction, "excluded_family": excluded,
                      "eligible": eligible and not excluded}
@@ -635,8 +700,14 @@ def pick(role, avoid, cap, ceiling, per_worker):
         if (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
             chosen = allowed[0][1]
         else:
-            chosen = max(allowed, key=lambda pair: pair[1]["headroom_fraction"]
-                         if pair[1]["headroom_fraction"] is not None else -1)[1]
+            best = max(allowed, key=lambda pair: pair[1]["headroom_fraction"]
+                       if pair[1]["headroom_fraction"] is not None else -1)[1]
+            first = allowed[0][1]
+            # Near equal headroom keeps the role's preset provider so readings that wobble
+            # by a point do not flip the pick; switch only when clearly lower (over 2 points).
+            near = (first["headroom"] is None or best["headroom"] is None
+                    or best["headroom"] - first["headroom"] <= TIE_POINTS)
+            chosen = first if allowed[0][0] == 0 and near else best
     resets = [r["blocked_until"] for r in rows.values() if r.get("blocked_until")]
     until = min(resets) if resets else None
     return {"role": role, "selected": chosen, "candidates": candidates,
@@ -653,7 +724,7 @@ def candidate_reason(candidate):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["check", "show", "pick"])
+    ap.add_argument("cmd", choices=["check", "show", "pick", "banner"])
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id; omitted selects the worst pool")
     ap.add_argument("--role")
@@ -665,6 +736,10 @@ def main(argv=None):
                     help="weekly percent held back per worker already running on the provider")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "banner":
+        pool = record_quota_banner(sys.stdin.read())
+        print(pool or "no quota banner found")
+        return 0 if pool else 1
     if a.cmd == "pick":
         if not a.role:
             ap.error("pick requires --role")
