@@ -142,3 +142,9 @@ bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test -d "$tmp/live"
 echo 'ok active worker-show cwd blocks cleanup'
 echo '15 tests passed'  
+export TEAM_OBSERVATIONS_FILE="$tmp/obs.md"
+git branch leftover
+git push -q origin leftover
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+grep -q '| wrap-up | applied found' "$tmp/obs.md"
+echo 'ok wrap-up logs findings to team observations'

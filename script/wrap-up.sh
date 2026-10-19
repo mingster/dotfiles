@@ -168,3 +168,10 @@ else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept"
+# Weekly safety net: anything found here means lead-merge.sh cleanup missed it. Log it for team-audit.
+if [ $((removed + local_deleted + remote_deleted)) -gt 0 ]; then
+  obs=${TEAM_OBSERVATIONS_FILE:-$HOME/.claude/state/team-observations.md}
+  mkdir -p "$(dirname "$obs")"
+  printf '%s | %s | wrap-up | %s found worktrees=%s local=%s remote=%s | lead-merge cleanup missed these; fix script/merge-cleanup.sh\n' \
+    "$(date +%F)" "$(basename "$repo")" "$([ "$apply" -eq 1 ] && echo applied || echo previewed)" "$removed" "$local_deleted" "$remote_deleted" >> "$obs"
+fi

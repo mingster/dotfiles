@@ -339,3 +339,11 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit,url) || { echo 
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || die "MERGED read-back has no merge commit"
 echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
+
+# Cleanup after the merge: head branch, ticket lanes, old recovery branches. Never fails the merge.
+# Issue N: "Closes #N" in the PR body, else the first number in the branch name. DRY_RUN=1 previews.
+head_branch=$(field .headRefName)
+issue=$(field .body | sed -nE 's/.*[Cc]loses[[:space:]]+#([0-9]+).*/\1/p' | head -n1)
+[ -n "$issue" ] || issue=$(sed -nE 's/[^0-9]*([0-9]+).*/\1/p' <<<"$head_branch" | head -n1)
+bash "$(dirname "$0")/merge-cleanup.sh" --branch "$head_branch" ${issue:+--issue "$issue"} \
+  || echo "lead-merge: cleanup incomplete (merge succeeded); run script/wrap-up.sh" >&2
