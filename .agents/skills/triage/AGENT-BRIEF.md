@@ -62,6 +62,11 @@ Be specific about edge cases and error conditions.
 - [ ] Specific, testable criterion 2
 - [ ] Specific, testable criterion 3
 
+**Requirement owner:** the person who asked and why (not "the ticket" or "the reviewer")
+**Done condition:** an observable result (command output, screenshot, DB row), never only "tests pass"
+**Design tier:** design:none / design:review / design:architect / design:arena
+**Deleted:** the flag, step, layer or requirement removed, or "nothing, because ..."
+
 **Out of scope:**
 - Thing that should NOT be changed or addressed in this issue
 - Adjacent feature that might seem related but is separate

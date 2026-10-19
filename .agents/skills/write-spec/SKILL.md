@@ -25,10 +25,16 @@ Intent: [intent](intent.md)
 ## Summary
 Two or three sentences: what changes for whom.
 
+Deleted: the flag, step, layer or requirement this removes, or "nothing, because ...".
+
+Deleted: the flag, step, layer or requirement this removes, or "nothing, because ...".
+
 ## Requirements
-Numbered, testable statements in glossary terms. Each one says who can do what, and what happens on failure.
+Numbered, testable statements in glossary terms. Each one says who can do what, what happens on failure, and who asked for it and why (a person, never "the ticket", "the reviewer", "the linter" or "the old code").
 
 ## Design
+When the spec touches a shared module (wallet or ledger, notifications, auth or permissions, any lib others call), open with the caller's usage, then types and signatures, then the module map. Settle any open question that running code can answer with a throwaway spike in a scratch dir and paste the result here; only product trade-offs go to the owner.
+
 How it fits the current code: data model changes, where the logic lives, screens and routes, jobs, integrations, permissions. Name real files and modules.
 
 ## Decisions and conflicts
@@ -37,8 +43,11 @@ Which ADRs this relies on, amends or supersedes (link new ADRs). Any place where
 ## Out of scope
 What this spec deliberately leaves out.
 
+## Risk checklist
+One line each: tenancy, money, auth, data deletion. Security and cross-family review run on the first built slice, not on this spec.
+
 ## Verification
-The tests and regression areas that prove each requirement. Every requirement maps to at least one check.
+The tests and regression areas that prove each requirement. Every requirement maps to at least one check, and each done condition is an observable result (command output, screenshot, DB row), never only "tests pass".
 
 ## Rollout
 Migrations, backfills, flags, environments, anything the deploy needs.
