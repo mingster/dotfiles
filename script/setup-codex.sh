@@ -8,6 +8,11 @@ mkdir -p "$HOME/.codex"
 
 if [ -f "$DOTFILES/.codex/config.toml" ] && [ ! -f "$HOME/.codex/config.toml" ]; then
   cp -f "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+  # Untracked config.local.toml (trusted project folders) is appended on first init only; later runs never touch the live file.
+  if [ -f "$DOTFILES/.codex/config.local.toml" ]; then
+    printf '\n' >> "$HOME/.codex/config.toml"
+    cat "$DOTFILES/.codex/config.local.toml" >> "$HOME/.codex/config.toml"
+  fi
   echo "setup-codex: initialized $HOME/.codex/config.toml from template"
 fi
 

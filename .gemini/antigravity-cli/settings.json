@@ -20,11 +20,7 @@
   },
   "toolPermission": "always-proceed",
   "trustedWorkspaces": [
-    "/Users/mtsai",
-    "/Users/mtsai/orca/workspaces/riben.life/four-cron-routes-have-no-scheduler",
-    "/Users/mtsai/projects/riben.life-wt/docs/1332-rsvp-check-in-intent",
-    "/Users/mtsai/projects/riben.life",
-    "/Users/mtsai/pstv"
+    "/Users/mtsai"
   ],
   "verbosity": "medium"
 }

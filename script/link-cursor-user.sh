@@ -34,7 +34,13 @@ for file in settings.json keybindings.json environment.json; do
     echo "link-cursor-user: missing $BASE_CURSOR_DIR/$file" >&2
     exit 1
   fi
-  ln -sfn "$BASE_CURSOR_DIR/$file" "$CURSOR_USER/$file"
+  if [ "$file" = settings.json ] && [ -f "$BASE_CURSOR_DIR/settings.local.json" ]; then
+    # An untracked settings.local.json adds list items (spell words), so the result is a rendered copy, not a link.
+    rm -f "$CURSOR_USER/$file"
+    python3 "$DOTFILES/script/apply-ide-overlay.py" "$BASE_CURSOR_DIR/$file" "$BASE_CURSOR_DIR/settings.local.json" > "$CURSOR_USER/$file"
+  else
+    ln -sfn "$BASE_CURSOR_DIR/$file" "$CURSOR_USER/$file"
+  fi
 done
 
 # No ~/.cursor/skills link: Cursor already reads ~/.claude/skills (setup-claude-code.sh), and a
