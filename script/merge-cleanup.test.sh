@@ -114,3 +114,25 @@ touch "$tmp/blocker"
 FAKE_RELEASED="$tmp/wt-e" MERGE_CLEANUP_REF_DIR="$tmp/blocker/sub" bash "$here/merge-cleanup.sh" --branch mingster/none --issue 60 > "$tmp/out" 2>&1
 [ -d "$tmp/wt-e" ] && [ -f "$tmp/wt-e/u.txt" ] || fail "worktree removed though patch unsaved"
 echo 'ok unsaved patch keeps worktree'
+
+# Protected names match as heads, refs, origin/ refs and last path components.
+GIT_COMMITTER_DATE="$(date -v-8d +%s 2>/dev/null || date -d '8 days ago' +%s) +0000" \
+  git -c user.name=T -c user.email=t@x commit-tree -m old "main^{tree}" -p main > "$tmp/oldsha2"
+for b in feature/main recovery/main production staging release/production; do
+  git branch "$b" main; git push -q origin "$b"
+done
+git update-ref refs/heads/recovery/main "$(cat "$tmp/oldsha2")"
+git branch wip/cur main; git branch lane/70/main main
+git worktree add -q "$tmp/wt-cur" wip/cur
+for h in feature/main recovery/main production origin/staging refs/heads/staging release/production; do
+  bash "$here/merge-cleanup.sh" --branch "$h" > "$tmp/out" 2>&1 || fail "cleanup failed for $h"
+  grep -q "protected: kept $h" "$tmp/out" || fail "no protected message for $h"
+done
+bash "$here/merge-cleanup.sh" --branch mingster/none --issue 70 > "$tmp/out" 2>&1 || true
+grep -q 'protected: kept lane/70/main' "$tmp/out" && has_local lane/70/main || fail "ticket lane lane/70/main deleted"
+for b in feature/main recovery/main production staging release/production; do
+  has_local "$b" && has_remote "$b" || fail "protected $b deleted"
+done
+(cd "$tmp/wt-cur" && bash "$here/merge-cleanup.sh" --branch wip/cur > "$tmp/out" 2>&1) || fail "cleanup failed for current"
+grep -q 'protected: kept wip/cur' "$tmp/out" && has_local wip/cur || fail "current branch deleted"
+echo 'ok protected names, refs, origin/ and last components kept'

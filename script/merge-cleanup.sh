@@ -8,7 +8,8 @@
 #    (and <branch>.untracked.txt listing them) first; if saving fails the worktree is kept.
 #    DRY_RUN=1 does no fetch, prune, delete or write.
 # 3. Prune recovery/* branches whose last commit is older than 7 days.
-# Never touches main, master, staging, production or the current branch.
+# Never touches main, master, staging, production, the current branch, origin/ refs, or branches
+# whose last path component is one of those. Prints 'protected: kept <ref>' and carries on.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 dry=${DRY_RUN:-0}
@@ -28,11 +29,20 @@ case "$issue" in *[!0-9]*) echo "merge-cleanup: --issue must be a number" >&2; e
 top=$(cd -P "$(git rev-parse --show-toplevel)" && pwd)
 current=$(git symbolic-ref --quiet --short HEAD || true)
 run() { if [ "$dry" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
-protected() {
-  case "$1" in main|master|staging|production|HEAD|origin/*) return 0 ;; esac
-  [ "$1" != "$current" ] || return 0
+# True for main/master/staging/production/HEAD and the current branch, as a bare name, refs/heads/<name>,
+# any origin/ ref, or any name whose last path component is one of those (feature/main).
+is_protected() {
+  local n=${1#refs/heads/} last
+  case "$n" in origin/*|refs/*) return 0 ;; esac
+  last=${n##*/}
+  for n in "$n" "$last"; do
+    case "$n" in main|master|staging|production|HEAD) return 0 ;; esac
+    [ -z "$current" ] || [ "$n" != "$current" ] || return 0
+  done
   return 1
 }
+# Prints the keep line and returns 0 when $1 must not be deleted.
+keep_protected() { is_protected "$1" || return 1; echo "protected: kept $1"; }
 if [ "$dry" = 1 ]; then
   echo "[dry-run] no fetch; using already-fetched refs"
 else
@@ -63,7 +73,7 @@ in_main() {
 # Remove one branch fully. $2 = "force" when the worktree may be dirty (diff saved first).
 drop() {
   local b=$1 mode=${2:-clean} wt dirty
-  protected "$b" && { echo "Kept $b (protected or current)"; return 0; }
+  keep_protected "$b" && return 0
   wt=$(wt_of "$b")
   if [ -n "$wt" ]; then
     wt=$(cd -P "$wt" && pwd)
@@ -111,7 +121,7 @@ if [ -n "$issue" ]; then
   re="(^|[^0-9])${issue}([^0-9]|\$)"
   while IFS= read -r b; do
     [[ "$b" =~ $re ]] || continue
-    protected "$b" && continue
+    keep_protected "$b" && continue
     [ "$b" != "$branch" ] || continue
     wt=$(wt_of "$b"); wt_real=""
     [ -z "$wt" ] || wt_real=$(cd -P "$wt" && pwd)
@@ -128,6 +138,7 @@ cutoff=$(( $(date +%s) - 7*86400 ))
 while read -r ref ts; do
   b=${ref#refs/heads/}; b=${b#refs/remotes/origin/}
   [ "$ts" -lt "$cutoff" ] || continue
+  keep_protected "$b" && continue
   if git show-ref --verify --quiet "refs/heads/$b"; then
     if [ -n "$(wt_of "$b")" ]; then echo "Kept $b (checked out)"; continue; fi
     echo "Delete local $b (older than 7 days)"; run git branch -D -- "$b" >/dev/null
