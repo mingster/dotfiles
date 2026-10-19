@@ -28,8 +28,11 @@ elif args[:2] == ['terminal','read']:
           'unavailable':'› Ask Codex to do anything',
           'banner':'Gemini 3 Pro\nModel quota reached for Gemini. Resets in 94h29m\n› '}[mode]
     output({'terminal':{'tail':text.splitlines(),'source':'screen-unavailable' if mode=='unavailable' else 'screen'}})
+elif args[:2] == ['orchestration','task-list']:
+    output({'tasks':[] if os.environ.get('WATCHDOG_TEST_TASKS')=='none' else [{'status':'pending'}]})
 elif args[:2] in (['terminal','send'], ['orchestration','send']):
     with open(os.environ['WATCHDOG_TEST_ACTIONS'],'a') as f: f.write(json.dumps(args)+'\n')
+    if os.environ.get('WATCHDOG_TEST_SEND_FAIL') and args[0]=='orchestration': sys.exit(1)
     output({})
 else: sys.exit(1)
 PY
@@ -80,6 +83,14 @@ run_case claude 2
 [[ $(count 'terminal send') == 2 ]]
 run_case empty 3
 [[ $(count 'orchestration send') == 1 ]]
+# One escalation per empty episode, even when the send is rejected.
+run_case empty 8
+[[ $(count 'orchestration send') == 1 ]]
+WATCHDOG_TEST_SEND_FAIL=1 run_case empty 8
+[[ $(count 'orchestration send') == 1 ]]
+# A finished run (no pending or ready tasks) with zero workers is not an alarm.
+WATCHDOG_TEST_TASKS=none run_case empty 5
+[[ $(count 'orchestration send') == 0 ]]
 # Repeatable run flags still deduplicate shared terminal handles.
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_a --run run_b --notify term_owner --notify-run run_owner --interval 0 --checks 2

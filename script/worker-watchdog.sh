@@ -100,9 +100,23 @@ PY
     empty=0
     [[ ! -f "$state/run-$run" ]] || read -r empty < "$state/run-$run"
     if [[ "$complete" == 1 && "$live" == 0 ]]; then
-      empty=$((empty + 1))
-      if [[ "$empty" == 3 ]]; then
-        escalate "zero-live-workers $run" "Run $run has zero live workers for three checks; inspect its queue and provider usage gate." || empty=2
+      # A run with no pending or ready tasks is finished, not stuck. Unreadable queue counts as finished.
+      pending=0
+      if bounded "$orca_cli" orchestration task-list --run "$run" --json > "$tmp/tasks" 2>/dev/null; then
+        pending=$(python3 - "$tmp/tasks" <<'PY' 2>/dev/null || echo 0
+import json,sys
+r=json.load(open(sys.argv[1]))['result']
+print(sum(t.get('status') in ('pending','ready') for t in r['tasks']))
+PY
+)
+      else log_action "read-tasks-failed $run"; fi
+      if [[ "${pending:-0}" == 0 ]]; then empty=0
+      elif [[ "$empty" -lt 3 ]]; then
+        empty=$((empty + 1))
+        # Once per empty episode, whether or not the send succeeds. Stays at 3 until a live worker resets it.
+        if [[ "$empty" == 3 ]]; then
+          escalate "zero-live-workers $run" "Run $run has zero live workers for three checks; inspect its queue and provider usage gate." || true
+        fi
       fi
     else empty=0; fi
     printf '%s\n' "$empty" > "$state/run-$run"
