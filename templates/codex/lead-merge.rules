@@ -1,2 +1,2 @@
-prefix_rule(pattern=[["/Users/mtsai/dotfiles/script/lead-merge.sh"]], decision="allow", justification="Tech Lead only: merges a reviewed PR through the guarded script.")
-prefix_rule(pattern=["bash", "/Users/mtsai/dotfiles/script/lead-merge.sh"], decision="allow", justification="Tech Lead only: merges a reviewed PR through the guarded script.")
+prefix_rule(pattern=[["__HOME__/dotfiles/script/lead-merge.sh"]], decision="allow", justification="Tech Lead only: merges a reviewed PR through the guarded script.")
+prefix_rule(pattern=["bash", "__HOME__/dotfiles/script/lead-merge.sh"], decision="allow", justification="Tech Lead only: merges a reviewed PR through the guarded script.")

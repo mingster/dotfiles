@@ -1,0 +1,1 @@
+- Removed the local account name from the protected configs: the Codex config template and the lead merge rules template use `__HOME__` (rendered by `setup-codex.sh` and the README `sed` line), the Cursor hook commands use `$HOME`, and the Antigravity CLI trusted folder moves to the untracked `settings.local.json`. The guard's temporary exclusions are gone.
