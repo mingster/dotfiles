@@ -8,7 +8,7 @@ word arrays and rejects malformed or empty groups; matching and approval rules
 use the verifier attestation below. Terms are global across eligible surfaces, regardless of locale.
 
 The vocabulary combines the owner's standard synonyms, every explicit round-6 and round-7
-omission, the earlier policy, and a 2026-10-19 scan of riben.life's 21 locale JSON
+omission, the earlier policy, and a 2026-10-19 scan of <project-a>'s 21 locale JSON
 files (including `marketing.json`) and text sources under `marketing/`. It includes
 Traditional/Simplified Chinese and Japanese kanji variants; substring matching
 also covers many inflections and compounds. This list is frozen after pass 8 of #3819: future misses are notes, not blockers.

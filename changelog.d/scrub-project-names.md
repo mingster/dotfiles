@@ -1,0 +1,1 @@
+- Removed project names, hosts and company ids from the public tree: docs and tests use placeholders, dated project reports are deleted, per machine values move to untracked `*.local.json` overlays (`script/apply-local-overlay.py`), and `script/tests/no-project-names.test.sh` guards it.

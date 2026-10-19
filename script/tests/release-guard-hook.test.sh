@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Behavioural regression for mingster/pstv#563: drives the REAL guard hook (.claude/hooks/guard-bash.py)
+# Behavioural regression for mingster/projb#563: drives the REAL guard hook (.claude/hooks/guard-bash.py)
 # with PreToolUse JSON on stdin. The hook only reads the command text and never runs it, so nothing
 # executes. HOME is a temp dir, so no real approval file or ledger is read or written; a sentinel file
 # in the command proves the denied command did no further mutation. Run: bash script/tests/release-guard-hook.test.sh [<project root>]
 set -u
-# Arg 1: a project root whose .claude/hooks/guard-bash.py carries the project guard (pstv, riben.life).
+# Arg 1: a project root whose .claude/hooks/guard-bash.py carries the project guard (projb, proja).
 # The generic template hook has no owner-approve or production seam (known gap, see below), so with no
 # argument this SKIPs the denial cases and only runs the controls.
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/templates/agent-team}"
 HOOK="$ROOT/.claude/hooks/guard-bash.py"
 [ -f "$HOOK" ] || { echo "FAIL no hook at $HOOK"; exit 1; }
 GATED=0; grep -q "owner-approve" "$HOOK" && GATED=1
-PROMOTE="${PROMOTE_CMD:-pstv_op/bin/deploy-stage.sh production web2}"
+PROMOTE="${PROMOTE_CMD:-projb_op/bin/deploy-stage.sh production web2}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 SENT="$TMP/sentinel"; fail=0; n=0
 run_hook() { # prints the hook stdout for a command string

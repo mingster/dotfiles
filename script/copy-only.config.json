@@ -2,7 +2,7 @@
 	"sensitive_word_groups": {
 		"prices_and_money": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"price",
 					"prices",
@@ -101,7 +101,7 @@
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"價格",
 					"價錢",
@@ -268,7 +268,7 @@
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"価格",
 					"値段",
@@ -372,7 +372,7 @@
 		},
 		"refunds_and_cancellation": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"refund",
 					"refunds",
@@ -403,7 +403,7 @@
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"退款",
 					"退費",
@@ -438,7 +438,7 @@
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"返金",
 					"払い戻し",
@@ -467,7 +467,7 @@
 		},
 		"legal_contracts_and_privacy": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"terms",
 					"policy",
@@ -504,7 +504,7 @@
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"條款",
 					"政策",
@@ -555,7 +555,7 @@
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"規約",
 					"利用規約",
@@ -596,7 +596,7 @@
 		},
 		"promises_and_guarantees": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"promise",
 					"guarantee",
@@ -626,7 +626,7 @@
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"保固",
 					"保證",
@@ -655,7 +655,7 @@
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"保証",
 					"約束",
@@ -684,7 +684,7 @@
 		},
 		"currency_markers": {
 			"en": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/en/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"%",
 					"NT$",
@@ -698,7 +698,7 @@
 				]
 			},
 			"tw": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/tw/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"元",
 					"圓",
@@ -707,7 +707,7 @@
 				]
 			},
 			"jp": {
-				"_comment": "Owner standard synonyms + r6/r7 omissions + riben.life locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
+				"_comment": "Owner standard synonyms + r6/r7 omissions + <project-a> locales/jp/*.json (including marketing.json), mined 2026-10-19; see docs/agents/copy-only-vocabulary.md. Frozen after #3819 pass 8; later misses are notes, not blockers.",
 				"words": [
 					"円",
 					"圓"

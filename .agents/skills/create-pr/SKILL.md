@@ -11,7 +11,7 @@ Read `AGENTS.md` and, in an agent team, "Commit, push and merge" in `.claude/mod
 
 1. Inspect the worktree, current branch and all commits and changes since the default branch. Detect the default branch from Git or the repository metadata. Use a feature branch; keep an existing feature branch and rebase only when requested.
 2. Use the `code-review` skill for review against that base and the originating issue or spec. Reuse a review of the same head when the project policy permits it. Follow the project's review timing, including merge on completion, without adding a second review gate here.
-3. Run the repository's required checks. For a web app, detect its package from the repository instructions (`pstv_web/` or `web/` in the usual layouts) and run `bun run build` there before committing. A failed build blocks publication; use `diagnosing-bugs` when diagnosis is needed. Documentation changes use the repository's documentation checks.
+3. Run the repository's required checks. For a web app, detect its package from the repository instructions (`<project-b>_web/` or `web/` in the usual layouts) and run `bun run build` there before committing. A failed build blocks publication; use `diagnosing-bugs` when diagnosis is needed. Documentation changes use the repository's documentation checks.
 
 ## Changelog
 

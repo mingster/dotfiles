@@ -2,13 +2,13 @@
 
 Phase 1 study only, 18 October 2026. No team configuration changes are made by this document. Adopt the useful decisions inside our existing roles, skills and checks. Do not install pstack or import its 55 skills. Source text was treated as reference material; none of its scripts were executed.
 
-Source snapshot: pstack checkout commit `0b8e952052d482ee6de06deebf14d590d77b1b34`, under `/Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/`. Our study branch starts at dotfiles `f6c43281ed91324201fb8cffa7af37507ffb76ca`. Plan the three audited roles against dotfiles **`788c067`**, the coordinator supplied final audit revision, rather than their older copies on this branch. References to those three roles below identify their paths; their baseline content is `git show 788c067:<path>`. Riben checkout inspected at `bad5cba956bd2cf2e8ae2bba9a966f026f7cb1e7`.
+Source snapshot: pstack checkout commit `0b8e952052d482ee6de06deebf14d590d77b1b34`, under `/Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/`. Our study branch starts at dotfiles `f6c43281ed91324201fb8cffa7af37507ffb76ca`. Plan the three audited roles against dotfiles **`788c067`**, the coordinator supplied final audit revision, rather than their older copies on this branch. References to those three roles below identify their paths; their baseline content is `git show 788c067:<path>`. <project-a> checkout inspected at `bad5cba956bd2cf2e8ae2bba9a966f026f7cb1e7`.
 
-For exact targets below, **T** means `templates/agent-team/` in dotfiles. **R** means `/Users/mtsai/projects/riben.life/`. **P** means the pstack source root above. Links resolve to actual local source files. Proposed files are explicitly marked new. The five incidents motivating the ranking are owner reported observations, not measured causal findings from this study.
+For exact targets below, **T** means `templates/agent-team/` in dotfiles. **R** means `/Users/mtsai/projects/<app>/`. **P** means the pstack source root above. Links resolve to actual local source files. Proposed files are explicitly marked new. The five incidents motivating the ranking are owner reported observations, not measured causal findings from this study.
 
 ## Adopted owner rules, 19 October 2026
 
-These owner decisions govern the rollout in dotfiles, riben.life and PSTV; earlier proposals below are historical where they differ. Existing merge and release gates still apply.
+These owner decisions govern the rollout in dotfiles, <project-a> and <project-b>; earlier proposals below are historical where they differ. Existing merge and release gates still apply.
 
 - Never Block on the Human: the lead decides reversible work within standing authority and reports after acting, including metadata only fixes already settled by an owner rule (permissions, ownership or gitignore entries, never secret contents or production data); only Owner-Reserved items, pricing or policy and matters without a standing rule go to Elon, with up to 2 in-scope correction passes per ticket.
 - Attack the Premise: at the second failure of the same check, write down the premise the failed fixes shared and test it directly before a third attempt; only behavioural failures after a production edit count toward the three-strike hard stop, while missing dependencies, Prisma generation and typegen setup failures do not.
@@ -104,7 +104,7 @@ Ranking estimates expected effect on the five reported problems, not measured sp
 
 1. Rebase the implementation plan onto audited `788c067` and inspect its final three role files. The current document proposes followups only; it does not edit that branch. Retain the restored child worktree path as an explicit acceptance check.
 2. Build focused failing regressions at the real seam for the chosen increment. For rank 1, demonstrate a denied full suite attempt and permitted targeted check under both providers. For rank 5, distinguish a tooling failure without mutation from a genuine failed repair without weakening existing stop limits. Record baseline and candidate evidence, not just instruction presence.
-3. Keep changes in dotfiles sources. Coordinate the same release across dotfiles, riben.life and pstv. [Sync team skills][sync-script] copies only `T/.agents/skills/*`, not role files or owned project contracts. Use it for generated skills, then `--check`; use the [adoption script][adopt-script] `--dry-run --reset` preview and reviewed role diffs for role and routing updates, preserving project customization. Project team docs are missing only there, so reconcile the live Delivery contract explicitly. Do not claim a skills sync updated every role.
+3. Keep changes in dotfiles sources. Coordinate the same release across dotfiles, <project-a> and <project-b>. [Sync team skills][sync-script] copies only `T/.agents/skills/*`, not role files or owned project contracts. Use it for generated skills, then `--check`; use the [adoption script][adopt-script] `--dry-run --reset` preview and reviewed role diffs for role and routing updates, preserving project customization. Project team docs are missing only there, so reconcile the live Delivery contract explicitly. Do not claim a skills sync updated every role.
 4. Run the focused existing [team tests][team-tests], [audit tests][audit-tests] and relevant script checks named by the implementation brief, including [ShellCheck entry point][shellcheck] for shell changes. Verify root AGENTS files stay below 200 lines and CLAUDE remains a pointer under [agent file convention][agent-files]. Keep detailed vocabulary and audit inventory in on demand docs.
 5. Lead publishes only after current full SHA review, cross family review where required, synchronized generated skills and rollout evidence. Elon remains the only owner contact. Deploy, external messaging, database changes and spending retain their own gates. Nothing in this study authorizes publication or changes token budgets.
 
@@ -142,8 +142,8 @@ This plan paraphrases ideas with file attribution. When implementation copies or
 [p-reflect]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/reflect/SKILL.md
 [p-license]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/LICENSE
 [p-manifest]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/.claude-plugin/plugin.json
-[r-team]: /Users/mtsai/projects/riben.life/docs/agents/team.md
-[r-routing]: /Users/mtsai/projects/riben.life/.claude/model-routing.md
+[r-team]: /Users/mtsai/projects/<app>/docs/agents/team.md
+[r-routing]: /Users/mtsai/projects/<app>/.claude/model-routing.md
 [sdlc]: sdlc-skill-map.md
 [agent-files]: agent-files.md
 [orca-skill]: /Users/mtsai/.agents/skills/orchestration/SKILL.md
@@ -209,4 +209,4 @@ The following upstream mechanisms are not adopted:
 - deslop and no-comments skills. They are not vendored; the verifier audits comments.
 - Stacked PRs. Land independent PRs off main.
 
-The repo checklist provisions frozen dependencies, generates Prisma clients with placeholder database URLs, and runs Next type generation before typecheck. A local historical baseline can use `--ref <sha> --base <sha> --config <file>`; PR checks always use the checklist committed at the PR head. Missing tools or runtime access fail the lane instead of earning a pass. No production environment files are copied into check worktrees. Unsupported component paths print `UNCHECKED: <path>`, and Checks can still pass. For non-web PSTV components, configure scoped commands when available. At lead merge, the Verdict must mention "unchecked" and the verifier must cover those paths live.
+The repo checklist provisions frozen dependencies, generates Prisma clients with placeholder database URLs, and runs Next type generation before typecheck. A local historical baseline can use `--ref <sha> --base <sha> --config <file>`; PR checks always use the checklist committed at the PR head. Missing tools or runtime access fail the lane instead of earning a pass. No production environment files are copied into check worktrees. Unsupported component paths print `UNCHECKED: <path>`, and Checks can still pass. For non-web <project-b> components, configure scoped commands when available. At lead merge, the Verdict must mention "unchecked" and the verifier must cover those paths live.

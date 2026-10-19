@@ -25,7 +25,7 @@ One file per topic. All files here are linked into `~/.claude/notes/` by
 
 | File | Covers |
 |------|--------|
-| [stack.md](stack.md) | Common tech stack for riben.life / mingster.com / pstv |
+| [stack.md](stack.md) | Common tech stack for <project-a> / mingster.com / <project-b> |
 | [nextjs.md](nextjs.md) | App Router patterns: data fetching rule, state-after-mutation, route-group layout gotcha, CRUD page pattern |
 | [prisma.md](prisma.md) | BigInt epoch datetimes, serialize before client, no @prisma/client in client modules |
 | [next-safe-action.md](next-safe-action.md) | Two-file convention, action clients, storeId bound-arg rule, SafeError, checklist |

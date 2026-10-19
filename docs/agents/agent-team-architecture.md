@@ -1,15 +1,15 @@
 # Agent team architecture
 
-Overview of the AI agent team across **riben.life**, **PSTV** and future adoptions. The current rules live in each project's `docs/agents/team.md` and `.claude/model-routing.md`; when this file disagrees with them, they win.
+Overview of the AI agent team across **<project-a>**, **<project-b>** and future adoptions. The current rules live in each project's `docs/agents/team.md` and `.claude/model-routing.md`; when this file disagrees with them, they win.
 
 ## 1. Organization
 
-Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of riben.life and PSTV. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. riben.life has nine roles (Elon, the Tech Lead `lead`, seven specialists); PSTV has ten (plus `stream-health`).
+Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of <project-a> and <project-b>. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. <project-a> has nine roles (Elon, the Tech Lead `lead`, seven specialists); <project-b> has ten (plus `stream-health`).
 
 ```mermaid
 flowchart TD
     Board["Mingster (Human Owner / Board)\nHolds final approval gates: Money, Deploys, Contracts"]
-    CEO["Elon (shared CEO)\nSingle front door for riben.life and PSTV, dispatches with Orca orchestration"]
+    CEO["Elon (shared CEO)\nSingle front door for <project-a> and <project-b>, dispatches with Orca orchestration"]
     
     subgraph Direct_Reports["Teammates reporting to Elon"]
         Sales["Sales & Marketing\n(sales-marketing)\nCommercial strategy, demand signals & unit economics"]
@@ -36,7 +36,7 @@ flowchart TD
     CEO --> RM
 ```
 
-Not drawn: `support-csm` (customer support and success) in both projects, and `stream-health` (streaming and infrastructure checks) in PSTV only. Each reports to Elon.
+Not drawn: `support-csm` (customer support and success) in both projects, and `stream-health` (streaming and infrastructure checks) in <project-b> only. Each reports to Elon.
 
 ## 2. Responsibilities and decision boundaries
 
@@ -131,6 +131,6 @@ Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role bounda
 
 The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled in copies (`docs/agents/team.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are the exception: generated, never edited in place. Edit `templates/agent-team/.agents/skills/` and run `script/sync-team-skills.sh <project>`; `--check` fails on drift.
 
-Per project: hostnames, environments and deploy stages (for example PSTV's staging and production hosts); ADR numbers (riben.life cites ADR 0058 and 0060, PSTV fileServer ADR 0002 and 0004); product wording, language rules and domain terms; extra roles (PSTV adds `stream-health`).
+Per project: hostnames, environments and deploy stages (for example <project-b>'s staging and production hosts); ADR numbers (<project-a> cites ADR 0058 and 0060, <project-b> fileServer ADR 0002 and 0004); product wording, language rules and domain terms; extra roles (<project-b> adds `stream-health`).
 
 Shared: Elon as the single front door, Orca orchestration with `worker_done` reports, the usage gate, the provider fallback order, eager merging by the Tech Lead, the owner's gated actions, and the commit, push and merge owner rule (`.claude/model-routing.md`).

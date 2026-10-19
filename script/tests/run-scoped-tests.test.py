@@ -57,11 +57,11 @@ class ScopedTests(unittest.TestCase):
         selected = json.loads((self.repo / 'web/selected.json').read_text())
         self.assertIn('./src/db/__tests__/no-update-many-claims-contract.test.ts', selected)
 
-    def test_pstv_root_changed_test_and_quoted_path(self):
-        self.write('web2/pstv_web/src/path with space.test.ts', '')
-        result = self.run_helper('web2/pstv_web/src/path with space.test.ts', root='web2/pstv_web')
+    def test_projb_root_changed_test_and_quoted_path(self):
+        self.write('web2/projb_web/src/path with space.test.ts', '')
+        result = self.run_helper('web2/projb_web/src/path with space.test.ts', root='web2/projb_web')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads((self.repo / 'web2/pstv_web/selected.json').read_text()), ['./src/path with space.test.ts'])
+        self.assertEqual(json.loads((self.repo / 'web2/projb_web/selected.json').read_text()), ['./src/path with space.test.ts'])
 
     def test_no_tests_does_not_start_runner(self):
         result = self.run_helper('README.md')
@@ -85,18 +85,18 @@ class ScopedTests(unittest.TestCase):
             self.assertIn('UNCHECKED: '+path, result.stdout)
 
     def test_python_syntax_errors_fail_lint(self):
-        self.write('pstv_op/bin/task.py', 'def broken(:')
-        result = self.components('lint', 'pstv_op/bin/task.py')
+        self.write('projb_op/bin/task.py', 'def broken(:')
+        result = self.components('lint', 'projb_op/bin/task.py')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('SyntaxError', result.stderr)
 
     def test_python_sibling_tests_are_run(self):
-        self.write('pstv_op/bin/task.py', 'x = 1')
-        self.write('pstv_op/bin/tests/test_task.py', 'def test_ok(): assert True')
-        result = self.components('tests', 'pstv_op/bin/task.py')
+        self.write('projb_op/bin/task.py', 'x = 1')
+        self.write('projb_op/bin/tests/test_task.py', 'def test_ok(): assert True')
+        result = self.components('tests', 'projb_op/bin/task.py')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('pytest', (self.repo/'calls').read_text())
-        self.assertIn('pstv_op/bin/tests', (self.repo/'calls').read_text())
+        self.assertIn('projb_op/bin/tests', (self.repo/'calls').read_text())
 
     def test_workflow_yaml_is_parsed(self):
         self.write('.github/workflows/build.yml', 'name: Build')

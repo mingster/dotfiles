@@ -77,17 +77,17 @@ Agents never edit `~/.codex` themselves. The forbidden `gh pr merge` rule stays 
 
 ## Optional worker watchdog (macOS)
 
-Copy `templates/launchd/life.riben.worker-watchdog.plist` to
-`~/Library/LaunchAgents/life.riben.worker-watchdog.plist`. Replace `__HOME__` with
+Copy `templates/launchd/life.example.worker-watchdog.plist` to
+`~/Library/LaunchAgents/life.example.worker-watchdog.plist`. Replace `__HOME__` with
 an absolute home path, `__ORCA_CLI__` with the absolute path from `command -v orca`,
 `__RUN_ID__` with the run to monitor, and `__NOTIFY_HANDLE__` / `__NOTIFY_RUN_ID__`
 with the escalation recipient's terminal handle and owning run. Add more
 `--run`, run ID pairs to `ProgramArguments` to monitor several runs.
 
 After reviewing the file, load it with
-`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.riben.worker-watchdog.plist`.
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.example.worker-watchdog.plist`.
 Unload it with
-`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.riben.worker-watchdog.plist`
+`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.example.worker-watchdog.plist`
 before changing run IDs or notification handles. This is an opt-in install;
 project adoption does not load the service.
 

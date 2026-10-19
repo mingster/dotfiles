@@ -1,6 +1,6 @@
 # Next.js App Router patterns
 
-Applies to riben.life, mingster.com, pstv.
+Applies to <project-a>, mingster.com, <project-b>.
 
 ## Data fetching rule
 
@@ -24,7 +24,7 @@ onUpdated(result.data as ThingColumn);
 
 A route group `(foo)` can only have one `layout.tsx`. Adding a nested `(routes)/layout.tsx` under
 an existing `(dashboard)/layout.tsx` causes silent dev 404s on all child routes. Verified in
-riben.life `storeAdmin/(dashboard)/[storeId]/`.
+<project-a> `storeAdmin/(dashboard)/[storeId]/`.
 
 ## Async API — must be awaited
 
@@ -52,7 +52,7 @@ Server page converts BigInt timestamps to strings before passing to client.
 Callbacks (`onCreated`, `onUpdated`, `onDeleted`) update state; never `router.refresh()`.
 `useCallback` stabilizes handlers; `useMemo` wraps column factory.
 
-Reference: `src/app/storeAdmin/(dashboard)/[storeId]/(routes)/product-option-template/` (riben.life)
+Reference: `src/app/storeAdmin/(dashboard)/[storeId]/(routes)/product-option-template/` (<project-a>)
 
 ## Select empty value
 

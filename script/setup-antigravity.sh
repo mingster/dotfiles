@@ -75,7 +75,8 @@ if [ -f "$DOTFILES/.gemini/settings.json" ]; then
   cp -f "$DOTFILES/.gemini/settings.json" "$HOME/.gemini/settings.json"
 fi
 if [ -f "$DOTFILES/.gemini/antigravity-cli/settings.json" ]; then
-  cp -f "$DOTFILES/.gemini/antigravity-cli/settings.json" "$HOME/.gemini/antigravity-cli/settings.json"
+  # Untracked settings.local.json (trusted folders) merges over the tracked file.
+  python3 "$DOTFILES/script/apply-local-overlay.py" "$DOTFILES/.gemini/antigravity-cli/settings.json" "$DOTFILES/.gemini/antigravity-cli/settings.local.json" > "$HOME/.gemini/antigravity-cli/settings.json"
 fi
 
 echo "setup-antigravity: configured agent skills and full permissions in $HOME/.gemini"
