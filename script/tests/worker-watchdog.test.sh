@@ -153,10 +153,10 @@ left=json.load(open(sys.argv[1]))['gemini']-time.time()
 assert 94*3600+28*60 < left <= 94*3600+29*60, left
 PY
 WATCHDOG_TEST_PROVIDER=antigravity run_case idle 1
-if rg -q 'Ask Codex|usage limit|❯' "$HOME/.orca/logs/worker-watchdog.log"; then exit 1; fi
+if grep -Eq 'Ask Codex|usage limit|❯' "$HOME/.orca/logs/worker-watchdog.log"; then exit 1; fi
 # Without timeout or gtimeout (stock macOS) a hanging command must still be cut off.
 nt="$tmp/no-timeout"; mkdir -p "$nt"
-for f in /bin/* /usr/bin/* "$(command -v python3)" "$(command -v rg)" "$(command -v bash)"; do
+for f in /bin/* /usr/bin/* "$(command -v python3)" "$(command -v bash)"; do
   case ${f##*/} in timeout|gtimeout) continue ;; esac
   ln -sf "$f" "$nt/${f##*/}" 2> /dev/null || true
 done
