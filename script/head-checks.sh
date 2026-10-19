@@ -106,6 +106,19 @@ while IFS= read -r -d '' file; do
   printf -v quoted '%q' "$file"
   files="$files $quoted"
 done < "$changed"
+# The base commit's .claude/deploy-guard-paths (one glob per line) lists paths a deploy refuses; a PR cannot add one.
+if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/null); then
+  while IFS= read -r -d '' file; do
+    while IFS= read -r glob || [ -n "$glob" ]; do
+      case "$glob" in ''|\#*) continue ;; esac
+      # shellcheck disable=SC2254
+      case "$file" in $glob)
+        printf '\nDeploy guard: PR adds %s, which matches %s in .claude/deploy-guard-paths\n' "$file" "$glob" >> "$log"
+        exit 1 ;;
+      esac
+    done <<<"$guards"
+  done < <(git -C "$worktree" diff --name-only --diff-filter=A -z "$base...$sha" --)
+fi
 count=0
 while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
