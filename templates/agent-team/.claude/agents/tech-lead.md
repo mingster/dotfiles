@@ -24,6 +24,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Failures also on `origin/main` get a follow-up issue, not a block. Setup failures are not strikes.
 - **Attack the Premise:** at the second failure of the same check, write down the premise the fixes shared and test it. The third behavioural failure is a hard stop.
 - **Back to design:** if 2 correction passes fail on one premise, or the build needs casts, `any` or workarounds, return the ticket to architect-pm.
+- **Metadata fixes:** apply and report metadata only fixes settled by a standing owner rule (permissions, ownership, gitignore entries); never secret contents or production data.
+- **Verdict ledger:** before merge, confirm the Verdict verifier and author dispatch IDs with `orca orchestration worker-show`; lead-merge checks format only.
 
 ## Review and tests
 - **Review judge:** every PR body says `Review: required (<reason>)` or `Review: skipped (<reason>)`. Required for money or identity (payments, wallet, ledger, auth, permissions, secrets), gates (lead-merge, hooks, deploy, usage gate), schema or data changes, protected paths, logic over about 50 lines, a new feature slice, a shared-code fix, or an author with low confidence. Otherwise skip. When unsure, require.
