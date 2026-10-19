@@ -23,7 +23,7 @@ elif args[:2] == ['orchestration','inbox']:
 elif args[:2] == ['orchestration','worker-list']:
     if mode=='failed-list': sys.exit(1)
     run=args[args.index('--run')+1] if '--run' in args else 'run_live'
-    workers=[] if mode=='empty' else [{'runId':run,'agentTerminalHandle':'term_worker','terminalState':'retained',
+    workers=[] if mode in ('empty','emptyidle') else [{'runId':run,'agentTerminalHandle':'term_worker','terminalState':'retained',
         'dispatchStatus':'dispatched','projection':{'liveness':{'verdict':'live'},'provider':os.environ.get('WATCHDOG_TEST_PROVIDER')}}]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
@@ -34,7 +34,7 @@ elif args[:2] == ['terminal','read']:
     text={'idle':'› Ask Codex to do anything', 'working':'Working (esc to interrupt)\n› Ask Codex to do anything',
           'stopped':"You've hit your usage limit", 'capacity':'No capacity available',
           'rate':'Rate limit reached', 'quota':'Quota exhausted', 'claude':'❯ ', 'empty':'Working (esc to interrupt)',
-          'unavailable':'› Ask Codex to do anything',
+          'unavailable':'› Ask Codex to do anything', 'emptyidle':'› Ask Codex to do anything',
           'banner':'Gemini 3 Pro\nModel quota reached for Gemini. Resets in 94h29m\n› '}[mode]
     output({'terminal':{'tail':text.splitlines(),'source':'screen-unavailable' if mode=='unavailable' else 'screen'}})
 elif args[:2] == ['orchestration','task-list']:
@@ -58,8 +58,8 @@ PY
 run_case idle 1
 [[ $(count 'terminal send') == 0 ]]
 run_case idle 8
-[[ $(count 'terminal send') == 2 ]] # coordinator and worker, once each despite cooldown
-[[ $(count 'orchestration send') == 2 ]] # three idle checks after nudge
+[[ $(count 'terminal send') == 1 ]] # worker once despite cooldown; its coordinator waits on it and is never nudged
+[[ $(count 'orchestration send') == 1 ]] # three idle checks after nudge
 python3 - "$tmp/actions" <<'PY'
 import json,sys
 for row in map(json.loads,open(sys.argv[1])):
@@ -90,6 +90,10 @@ for stopped_mode in capacity rate quota; do
 done
 run_case claude 2
 [[ $(count 'terminal send') == 2 ]]
+# A coordinator with no live worker really is idle and is still nudged.
+run_case emptyidle 2
+[[ $(count 'terminal send') == 1 ]]
+grep -q term_coord "$tmp/actions"
 run_case empty 3
 [[ $(count 'orchestration send') == 1 ]]
 # One escalation per empty episode, even when the send is rejected.
@@ -112,7 +116,7 @@ python3 - "$tmp/actions" <<'PY'
 import json,sys
 rows=[json.loads(l) for l in open(sys.argv[1])]
 sends=[r for r in rows if r[:2]==['orchestration','send']]
-assert len(sends)==2 and all(x[x.index('--to')+1]=='coord_run_live' and x[x.index('--run')+1]=='run_live' for x in sends), rows
+assert len(sends)==1 and all(x[x.index('--to')+1]=='coord_run_live' and x[x.index('--run')+1]=='run_live' for x in sends), rows
 assert not any('run_dead' in ' '.join(r) for r in rows), rows
 PY
 # Unread reports: one escalation per message, only when old, unread and of a report type.

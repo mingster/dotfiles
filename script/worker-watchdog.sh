@@ -100,7 +100,7 @@ PY
 }
 cycle=0
 while :; do
-  : > "$tmp/terminals"
+  : > "$tmp/terminals"; : > "$tmp/busy-coord"
   if [[ "$all" == 1 ]]; then
     runs=()
     if list_runs worker | sort -u > "$tmp/active-runs" && list_runs run | sort -u > "$tmp/known-runs"; then
@@ -152,6 +152,8 @@ PY
       done < "$tmp/parsed"
       [[ -n "$cursor" ]] || break
     done
+    # A coordinator waits on its workers in the background, so its prompt looks idle; do not nudge it.
+    [[ "$live" -lt 1 ]] || { cat "$tmp/coord-$run"; echo; } >> "$tmp/busy-coord" 2>/dev/null || true
     empty=0
     [[ ! -f "$state/run-$run" ]] || read -r empty < "$state/run-$run"
     if [[ "$complete" == 1 && "$live" == 0 ]]; then
@@ -244,6 +246,7 @@ PY
           escalate "$run" "provider-stopped $terminal" "Run $run terminal $terminal shows a provider capacity, quota, rate or usage limit; check fresh real provider usage and recover its queue." && alerted=1
         fi ;;
       idle)
+        if grep -qx -- "$terminal" "$tmp/busy-coord"; then idle=0; after=0; alerted=0; else
         idle=$((idle + 1))
         if [[ "$after" -gt 0 ]]; then
           after=$((after + 1))
@@ -255,6 +258,7 @@ PY
           if bounded "$orca_cli" terminal send --terminal "$terminal" --text 'Resume: read your inbox (orca orchestration inbox --limit 5 --full) and continue your queue; only the usage gate may stop you.' --enter --json > /dev/null 2>&1; then
             log_action "nudge $terminal run=$run"; last=$now; after=1
           else log_action "nudge-failed $terminal"; fi
+        fi
         fi ;;
       *) idle=0; after=0; alerted=0 ;;
     esac
