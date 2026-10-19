@@ -298,10 +298,19 @@ if [ "$sensitive" = true ]; then
   [ -n "$ns" ] || ns=$(jq -r '.approval_namespace // empty' "$(dirname "$0")/copy-only.config.json" 2>/dev/null) || ns=""
   [ -n "$ns" ] || die "no approval namespace (APPROVAL_NAMESPACE in .claude/hooks/guard-bash.py or approval_namespace in copy-only.config.json)"
   approval_file="$HOME/.config/$ns/approval.json"
-  jq -e --arg head "$head" --argjson now "$(date +%s)" \
-    '(if type == "object" and has("approvals") then .approvals else [.] end) | any(.[]; .scope == "copy" and .target == $head and (.expires_at | type == "number") and .expires_at > $now and .expires_at <= $now + 1860)' \
-    "$approval_file" >/dev/null 2>&1 \
-    || die "missing owner copy approval for current head (owner runs: bin/owner-approve.sh copy $head)"
+  # An approval holds while the head moves without changing content: it matches the
+  # head sha, or the zero context stable patch-id against the merge base with main.
+  approved() { # patch-id (empty matches by head only)
+    jq -e --arg head "$head" --arg pid "$1" --argjson now "$(date +%s)" \
+      '(if type == "object" and has("approvals") then .approvals else [.] end) | any(.[]; .scope == "copy" and (.target == $head or ($pid != "" and .patch_id == $pid)) and (.expires_at | type == "number") and .expires_at > $now and .expires_at <= $now + 1860)' \
+      "$approval_file" >/dev/null 2>&1
+  }
+  if ! approved ""; then
+    git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || true
+    git fetch origin main >&2 || true
+    pid=$(git diff -U0 "$(git merge-base origin/main "$head")" "$head" -- 2>/dev/null | git patch-id --stable | awk 'NR == 1 {print $1}') || pid=""
+    approved "$pid" || die "missing owner copy approval for current head or its patch (owner runs: bin/owner-approve.sh copy $head)"
+  fi
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
