@@ -26,6 +26,7 @@ check "existing worktree: exit 0 and prints dispatch, terminal, state" "$([ $rc 
 check "no worktree create for an existing worktree" "$(! grep -q '^worktree create' "$tmp/calls.log"; echo $?)"
 check "terminal opens codex with model and effort" "$(grep -q 'terminal create.*codex -m gpt-6.1-sol -c model_reasoning_effort=medium' "$tmp/calls.log"; echo $?)"
 check "warm-up line is sent before worker-start" "$([ "$(grep -n 'Say ready' "$tmp/calls.log" | cut -d: -f1)" -lt "$(grep -n 'worker-start' "$tmp/calls.log" | cut -d: -f1)" ]; echo $?)"
+check "heavy plugins are disabled on the codex command" "$(grep 'terminal create' "$tmp/calls.log" | grep -q 'plugins."documents@openai-primary-runtime".enabled=false'; echo $?)"
 check "worker-start uses the terminal and worktree path" "$(grep 'worker-start' "$tmp/calls.log" | grep -q -- '--terminal term_x --worktree path:/wt/existing'; echo $?)"
 
 : > "$tmp/calls.log"

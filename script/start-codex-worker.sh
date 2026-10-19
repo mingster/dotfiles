@@ -9,7 +9,12 @@
 #          [--model gpt-6.1-sol] [--effort medium]
 # Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running.
 set -u
-poll="${START_CODEX_POLL:-3}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=
+poll="${START_CODEX_POLL:-1}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=
+# Plugins a coding or review worker does not need; each one slows Codex startup.
+off=; for p in codex-app-tools@openai-bundled unified-computer-use@openai-bundled visualize@openai-bundled \
+  documents@openai-primary-runtime pdf@openai-primary-runtime spreadsheets@openai-primary-runtime \
+  presentations@openai-primary-runtime template-creator@openai-primary-runtime; do
+  off="$off -c plugins.\"$p\".enabled=false"; done
 run= spec= title= wt= name= repo=
 while [ $# -gt 0 ]; do case "$1" in
   --run) run=$2;; --spec) spec=$2;; --title) title=$2;; --worktree-path) wt=$2;;
@@ -27,11 +32,11 @@ if [ -z "$wt" ]; then
   wt=$("$orca" worktree create --name "$name" --repo "path:$repo" --base-branch "$base" --setup run --json | j 'd["result"]["worktree"]["path"]') || exit 1
 fi
 term=$("$orca" terminal create --worktree "path:$wt" --title "$title" \
-  --command "codex -m $model -c model_reasoning_effort=$effort" --json | j 'd["result"]["terminal"]["handle"]') || exit 1
-for i in $(seq 1 30); do   # up to 90 s for the Codex prompt
+  --command "codex -m $model -c model_reasoning_effort=$effort$off" --json | j 'd["result"]["terminal"]["handle"]') || exit 1
+for i in $(seq 1 180); do   # up to 180 s for the Codex prompt
   "$orca" terminal read --terminal "$term" --screen --json 2>/dev/null | grep -q 'Ask Codex\|? for shortcuts' && break; sleep "$poll"; done
 "$orca" terminal send --terminal "$term" --text "Say ready and wait for your task." --enter --json >/dev/null
-for i in $(seq 1 30); do   # up to 90 s for the warm-up turn to finish
+for i in $(seq 1 90); do   # up to 90 s for the warm-up turn to finish
   sleep "$poll"; scr=$("$orca" terminal read --terminal "$term" --screen --json 2>/dev/null)
   echo "$scr" | grep -q 'Working' || { echo "$scr" | grep -qi 'ready' && break; }; done
 out=$("$orca" orchestration worker-start --run "$run" --spec "$(cat "$spec")" --terminal "$term" \
