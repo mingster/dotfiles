@@ -27,8 +27,6 @@ Two or three sentences: what changes for whom.
 
 Deleted: the flag, step, layer or requirement this removes, or "nothing, because ...".
 
-Deleted: the flag, step, layer or requirement this removes, or "nothing, because ...".
-
 ## Requirements
 Numbered, testable statements in glossary terms. Each one says who can do what, what happens on failure, and who asked for it and why (a person, never "the ticket", "the reviewer", "the linter" or "the old code").
 
