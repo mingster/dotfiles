@@ -2,19 +2,22 @@
 # Observe rendered agent prompts, nudge idleness, and escalate to the owning coordinator.
 # No terminal text is logged. The watchdog never stops or retries workers.
 set -euo pipefail
-runs=() notify='' notify_run='' interval=90 checks=0
+runs=() notify='' notify_run='' interval=90 checks=0 all=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --all-runs) all=1; shift ;;
     --run) runs+=("$2"); shift 2 ;;
     --notify) notify=$2; shift 2 ;;
     --notify-run) notify_run=$2; shift 2 ;;
     --interval) interval=$2; shift 2 ;;
     --checks) checks=$2; shift 2 ;;
-    *) echo 'usage: worker-watchdog.sh --run ID [--run ID] --notify HANDLE --notify-run ID [--interval 90] [--checks N]' >&2; exit 2 ;;
+    *) echo 'usage: worker-watchdog.sh (--all-runs | --run ID [--run ID] --notify HANDLE --notify-run ID) [--interval 90] [--checks N]' >&2; exit 2 ;;
   esac
 done
-[[ ${#runs[@]} -gt 0 && -n "$notify" && -n "$notify_run" && "$interval" =~ ^[0-9]+$ && "$checks" =~ ^[0-9]+$ ]] || exit 2
-for id in "${runs[@]}" "$notify" "$notify_run"; do
+[[ "$interval" =~ ^[0-9]+$ && "$checks" =~ ^[0-9]+$ ]] || exit 2
+[[ "$all" == 1 || (${#runs[@]} -gt 0 && -n "$notify" && -n "$notify_run") ]] || exit 2
+[[ "$all" == 1 ]] && notify_run=all-runs
+for id in ${runs[@]+"${runs[@]}"} ${notify:+"$notify"} "$notify_run"; do
   [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
 done
 orca_cli=${ORCA_CLI_COMMAND:-orca}
@@ -28,7 +31,9 @@ bounded() {
   else perl -e 'alarm shift; exec @ARGV or exit 127' "$bound" "$@"
   fi
 }
-state="$HOME/.orca/state/worker-watchdog/$notify_run"
+root="$HOME/.orca/state/worker-watchdog"
+state="$root/$notify_run"
+alerts="$root/alerts.log"
 log="$HOME/.orca/logs/worker-watchdog.log"
 mkdir -p "$state" "$(dirname "$log")"
 # One monitor per notification run; preserve counters/cooldowns across launchd restarts.
@@ -43,28 +48,77 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp" "$state/lock"' EXIT
 trap 'exit 0' INT TERM
 log_action() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$log"; }
+# Alerts that cannot be delivered must still reach a human: alerts.log plus a macOS notification.
+alert_fallback() {
+  printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$alerts"
+  if command -v osascript > /dev/null 2>&1; then
+    osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "Worker watchdog"' -e 'end run' "$1" > /dev/null 2>&1 || true
+  fi
+}
+# escalate RUN SUBJECT BODY: send to that run's coordinator on that run.
 escalate() {
-  if bounded "$orca_cli" orchestration send --to "$notify" --run "$notify_run" --type escalation \
-      --subject "Watchdog: $1" --body "$2" --json > /dev/null 2>&1; then
-    log_action "escalation $1"
+  local run=$1 to=$notify rr=$notify_run fails=0
+  if [[ "$all" == 1 ]]; then to=$(cat "$tmp/coord-$run" 2>/dev/null || true); rr=$run; fi
+  [[ ! -f "$state/send-fails" ]] || read -r fails < "$state/send-fails"
+  if [[ -n "$to" ]] && bounded "$orca_cli" orchestration send --to "$to" --run "$rr" --type escalation \
+      --subject "Watchdog: $2" --body "$3" --json > /dev/null 2>&1; then
+    log_action "escalation $2"
+    printf '0\n' > "$state/send-fails"
     return 0
   fi
-  log_action "escalation-failed $1"
+  log_action "escalation-failed $2"
+  fails=$((fails + 1))
+  printf '%s\n' "$fails" > "$state/send-fails"
+  alert_fallback "undelivered (run $rr): $2. $3"
+  [[ "$fails" != 3 ]] || alert_fallback "3 consecutive watchdog sends failed; coordinators are not reachable"
   return 1
+}
+# Page through run-list or worker-list, printing the run ids that qualify.
+list_runs() {
+  local kind=$1 cursor='' n=0
+  while [[ $n -lt 20 ]]; do
+    args=(orchestration "$kind-list" --limit 100 --json)
+    [[ -z "$cursor" ]] || args+=(--cursor "$cursor")
+    bounded "$orca_cli" "${args[@]}" > "$tmp/page" 2>/dev/null || return 1
+    python3 - "$kind" "$tmp/page" > "$tmp/pageout" 2>/dev/null <<'PY' || return 1
+import json,sys
+r=json.load(open(sys.argv[2])); assert r.get('ok',True); r=r['result']
+if sys.argv[1]=='worker':
+    for w in r['workers']:
+        if w.get('terminalState') in ('active','retained') and w.get('runId'): print('run',w['runId'])
+    p=r.get('page',{}); print('cursor',p.get('nextCursor') or '' if p.get('hasMore') else '')
+else:
+    for x in r['runs']: print('run',x['id'])
+    print('cursor',r.get('nextCursor') or '')
+PY
+    sed -n 's/^run //p' "$tmp/pageout"
+    cursor=$(sed -n 's/^cursor //p' "$tmp/pageout")
+    [[ -n "$cursor" ]] || return 0
+    n=$((n + 1))
+  done
 }
 cycle=0
 while :; do
   : > "$tmp/terminals"
+  if [[ "$all" == 1 ]]; then
+    runs=()
+    if list_runs worker | sort -u > "$tmp/active-runs" && list_runs run | sort -u > "$tmp/known-runs"; then
+      while read -r id; do
+        [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]] && runs+=("$id")
+      done < <(comm -12 "$tmp/active-runs" "$tmp/known-runs")
+    else log_action "discover-runs-failed"; fi
+  fi
   for run in "${runs[@]}"; do
     if ! bounded "$orca_cli" orchestration run-show --id "$run" --json > "$tmp/run" 2>/dev/null; then
       log_action "read-run-failed $run"; continue
     fi
-    if ! python3 - "$tmp/run" "$run" >> "$tmp/terminals" <<'PY'
+    if ! python3 - "$tmp/run" "$run" "$tmp/coord-$run" >> "$tmp/terminals" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1]))
 assert r.get('ok',True)
 h=r['result']['run']['coordinator_handle']
-if h: print(h, sys.argv[2])
+if h:
+    print(h, sys.argv[2]); open(sys.argv[3],'w').write(h)
 PY
     then log_action "parse-run-failed $run"; continue; fi
     live=0 cursor='' complete=1
@@ -115,12 +169,32 @@ PY
         empty=$((empty + 1))
         # Once per empty episode, whether or not the send succeeds. Stays at 3 until a live worker resets it.
         if [[ "$empty" == 3 ]]; then
-          escalate "zero-live-workers $run" "Run $run has zero live workers for three checks; inspect its queue and provider usage gate." || true
+          escalate "$run" "zero-live-workers $run" "Run $run has zero live workers for three checks; inspect its queue and provider usage gate." || true
         fi
       fi
     else empty=0; fi
     printf '%s\n' "$empty" > "$state/run-$run"
   done
+  # A report its coordinator has not read for 5 minutes means nobody is reading. inbox lists without consuming.
+  if [[ ${#runs[@]} -gt 0 ]] && bounded "$orca_cli" orchestration inbox --limit 200 --json > "$tmp/inbox" 2>/dev/null; then
+    touch "$state/unread-alerted"
+    if python3 - "$tmp/inbox" "$state/unread-alerted" "${runs[@]}" > "$tmp/unread" 2>/dev/null <<'PY'
+import json,sys,calendar,time
+r=json.load(open(sys.argv[1])); assert r.get('ok',True)
+seen=set(open(sys.argv[2]).read().split()); runs=set(sys.argv[3:])
+for m in r['result']['messages']:
+    age=time.time()-calendar.timegm(time.strptime(m['created_at'],'%Y-%m-%dT%H:%M:%SZ'))
+    if m.get('run_id') in runs and not m.get('read') and m.get('type') in ('worker_done','escalation','question') and age>=300 and m['id'] not in seen:
+        print(m['id'],m['run_id'],m['type'])
+PY
+    then
+      while read -r id run type; do
+        [[ "$id" =~ ^[a-zA-Z0-9_-]+$ && "$run" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+        printf '%s\n' "$id" >> "$state/unread-alerted"
+        escalate "$run" "unread-report $id" "Run $run has an unread $type message $id older than 5 minutes; its coordinator is not reading. Run: orca orchestration check --run $run" || true
+      done < "$tmp/unread"
+    else log_action "parse-inbox-failed"; fi
+  fi
   sort -u -k1,1 "$tmp/terminals" > "$tmp/unique"
   while read -r terminal run provider; do
     [[ "$terminal" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
@@ -166,14 +240,14 @@ PY
       stopped)
         idle=0; after=0
         if [[ "$alerted" == 0 ]]; then
-          escalate "provider-stopped $terminal" "Run $run terminal $terminal shows a provider capacity, quota, rate or usage limit; check fresh real provider usage and recover its queue." && alerted=1
+          escalate "$run" "provider-stopped $terminal" "Run $run terminal $terminal shows a provider capacity, quota, rate or usage limit; check fresh real provider usage and recover its queue." && alerted=1
         fi ;;
       idle)
         idle=$((idle + 1))
         if [[ "$after" -gt 0 ]]; then
           after=$((after + 1))
           if [[ "$after" -ge 4 && "$alerted" == 0 ]]; then
-            escalate "idle-after-nudge $terminal" "Run $run terminal $terminal remained idle for three checks after a nudge; inspect its screen and continue its queue." && alerted=1
+            escalate "$run" "idle-after-nudge $terminal" "Run $run terminal $terminal remained idle for three checks after a nudge; inspect its screen and continue its queue." && alerted=1
           fi
         fi
         if [[ "$idle" -ge 2 && $((now - last)) -ge 600 ]]; then

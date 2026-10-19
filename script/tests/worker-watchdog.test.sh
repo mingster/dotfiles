@@ -5,16 +5,25 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export ORCA_CLI_COMMAND=orca HOME="$tmp/home" PATH="$tmp/bin:$PATH" WATCHDOG_TEST_ACTIONS="$tmp/actions" WATCHDOG_TEST_MODE=idle
 mkdir -p "$HOME" "$tmp/bin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$WATCHDOG_TEST_NOTIFY"\n' > "$tmp/bin/osascript"
+chmod +x "$tmp/bin/osascript"
+export WATCHDOG_TEST_NOTIFY="$tmp/notify"
 cat > "$tmp/bin/orca" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
 args=sys.argv[1:]; mode=os.environ['WATCHDOG_TEST_MODE']
 def output(result): print(json.dumps({'ok': True, 'result':result}))
 if args[:2] == ['orchestration','run-show']:
-    output({'run':{'coordinator_handle':'term_coord'}})
+    rid=args[args.index('--id')+1]
+    output({'run':{'coordinator_handle':'coord_'+rid if os.environ.get('WATCHDOG_TEST_PER_RUN') else 'term_coord'}})
+elif args[:2] == ['orchestration','run-list']:
+    output({'runs':[{'id':r} for r in os.environ.get('WATCHDOG_TEST_RUNS','').split()]})
+elif args[:2] == ['orchestration','inbox']:
+    output({'messages':json.load(open(os.environ['WATCHDOG_TEST_INBOX'])) if os.environ.get('WATCHDOG_TEST_INBOX') else []})
 elif args[:2] == ['orchestration','worker-list']:
     if mode=='failed-list': sys.exit(1)
-    workers=[] if mode=='empty' else [{'agentTerminalHandle':'term_worker','terminalState':'retained',
+    run=args[args.index('--run')+1] if '--run' in args else 'run_live'
+    workers=[] if mode=='empty' else [{'runId':run,'agentTerminalHandle':'term_worker','terminalState':'retained',
         'dispatchStatus':'dispatched','projection':{'liveness':{'verdict':'live'},'provider':os.environ.get('WATCHDOG_TEST_PROVIDER')}}]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
@@ -95,6 +104,44 @@ WATCHDOG_TEST_TASKS=none run_case empty 5
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_a --run run_b --notify term_owner --notify-run run_owner --interval 0 --checks 2
 [[ $(count 'terminal send') == 2 ]]
+# --all-runs: only runs with a live worker are watched, and each escalates to its own coordinator.
+export WATCHDOG_TEST_PER_RUN=1 WATCHDOG_TEST_RUNS='run_live run_dead'
+rm -rf "$HOME/.orca"; : > "$tmp/actions"
+WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 8
+python3 - "$tmp/actions" <<'PY'
+import json,sys
+rows=[json.loads(l) for l in open(sys.argv[1])]
+sends=[r for r in rows if r[:2]==['orchestration','send']]
+assert len(sends)==2 and all(x[x.index('--to')+1]=='coord_run_live' and x[x.index('--run')+1]=='run_live' for x in sends), rows
+assert not any('run_dead' in ' '.join(r) for r in rows), rows
+PY
+# Unread reports: one escalation per message, only when old, unread and of a report type.
+now_old=2020-01-01T00:00:00Z; now_new=$(date -u +%FT%TZ)
+python3 - "$tmp/inbox.json" "$now_old" "$now_new" <<'PY'
+import json,sys
+m=lambda i,t,c,r=0,run='run_live':{'id':i,'run_id':run,'type':t,'read':r,'created_at':c}
+json.dump([m('msg_a','worker_done',sys.argv[2]), m('msg_b','escalation',sys.argv[2]), m('msg_new','question',sys.argv[3]),
+           m('msg_read','worker_done',sys.argv[2],1), m('msg_status','status',sys.argv[2]), m('msg_other','worker_done',sys.argv[2],0,'run_dead')],open(sys.argv[1],'w'))
+PY
+export WATCHDOG_TEST_INBOX="$tmp/inbox.json"
+rm -rf "$HOME/.orca"; : > "$tmp/actions"
+WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 3
+[[ $(count 'orchestration send') == 2 ]]
+grep -q 'unread-report msg_a' "$tmp/actions" && grep -q 'unread-report msg_b' "$tmp/actions"
+! grep -q 'msg_new\|msg_read\|msg_status\|msg_other' "$tmp/actions"
+# A failed send lands in alerts.log and a notification; the third consecutive failure is flagged.
+rm -rf "$HOME/.orca"; : > "$tmp/actions"; : > "$tmp/notify"
+WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
+[[ $(grep -c 'undelivered (run run_live): unread-report' "$HOME/.orca/state/worker-watchdog/alerts.log") == 2 ]]
+[[ $(wc -l < "$tmp/notify") == 2 ]]
+rm -rf "$HOME/.orca"
+python3 - "$tmp/inbox.json" "$now_old" <<'PY'
+import json,sys
+json.dump([{'id':'msg_%d'%i,'run_id':'run_live','type':'worker_done','read':0,'created_at':sys.argv[2]} for i in range(3)],open(sys.argv[1],'w'))
+PY
+WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
+grep -q '3 consecutive watchdog sends failed' "$HOME/.orca/state/worker-watchdog/alerts.log"
+unset WATCHDOG_TEST_PER_RUN WATCHDOG_TEST_RUNS WATCHDOG_TEST_INBOX
 # An Antigravity quota banner blocks its pool until reset; other providers are never fed to the parser.
 export USAGE_GATE_BANNER_FILE="$tmp/banner.json"
 WATCHDOG_TEST_PROVIDER=codex run_case banner 2
@@ -126,4 +173,4 @@ for _ in $(seq 1 100); do kill -0 "$hang_pid" 2> /dev/null || break; sleep 0.1; 
 if kill -0 "$hang_pid" 2> /dev/null; then kill "$hang_pid"; echo 'watchdog hung without timeout binary' >&2; exit 1; fi
 wait "$hang_pid"
 grep -q 'read-run-failed run_test' "$HOME/.orca/logs/worker-watchdog.log"
-echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary)'
+echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary, all-runs discovery, unread reports, alerts.log fallback)'
