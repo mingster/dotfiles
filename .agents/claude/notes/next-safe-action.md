@@ -1,6 +1,6 @@
 # next-safe-action patterns
 
-Applies to riben.life, mingster.com, pstv. All use next-safe-action v8.
+Applies to <project-a>, mingster.com, <project-b>. All use next-safe-action v8.
 
 ## Two-file convention
 

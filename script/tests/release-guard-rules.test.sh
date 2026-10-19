@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release guard rules (mingster/pstv#563): the templates carry them, and sync-team-skills.sh keeps them in a project.
+# Release guard rules (mingster/projb#563): the templates carry them, and sync-team-skills.sh keeps them in a project.
 # Text assertions only; the guard hooks are not driven. Run: bash script/tests/release-guard-rules.test.sh
 set -u
 D="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -6,8 +6,8 @@ Short names used below:
 
 | Name | Meaning |
 | --- | --- |
-| R | riben.life, `~/projects/riben.life`, read at `origin/main` 15c4bd633 (the local checkout is 2 commits behind) |
-| P | PSTV, `~/pstv`, read at `origin/main` af650e2d6 (the local checkout is 3 commits behind) |
+| R | <project-a>, `~/projects/<app>`, read at `origin/main` 15c4bd633 (the local checkout is 2 commits behind) |
+| P | <project-b>, `~/<project-b>`, read at `origin/main` af650e2d6 (the local checkout is 3 commits behind) |
 | T | dotfiles template, `templates/agent-team`, at dotfiles `master` c5f4251 |
 | D | dotfiles shared tree, `.agents/skills/` at dotfiles `master`. Reached on the Mac as `~/.claude/skills`, `~/.agents/skills` and `~/.cursor/skills` (dotfiles skills are individual links in real home directories; tool skills can hold their own copies) |
 | MP | the `mattpocock-skills` plugin cache, v1.3.1 (upstream `6fd9479`, synced 2026-10-07), in two copies: `~/.claude/plugins/cache/mattpocock/...` (installed but disabled in `~/.claude/settings.json`, value `false`; skills load from the shared dotfiles folder D) and `~/.claude/plugins/cache/claude-plugins-official/...` (installed, not enabled) |
@@ -40,7 +40,7 @@ Proposed home uses the three tiers the owner approved (Tier 1 general, Tier 2 te
 | capture-intent | architect-pm (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | code-review | elon, qa-sdet, secops-finops, tech-lead (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). Shows twice in Claude Code (`code-review` and `mattpocock-skills:code-review`) only when the plugin is enabled. | Tier 1: dotfiles shared |
 | codebase-design | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
-| create-pr | fullstack-dev, tech-lead (R, P, T) | D dir | Single copy, but project aware: detects `web/` (R) or `pstv_web/` (P), riben `HOME.md` rule. | Tier 1: dotfiles shared; move the R and P branches into per repo config later |
+| create-pr | fullstack-dev, tech-lead (R, P, T) | D dir | Single copy, but project aware: detects `web/` (R) or `<project-b>_web/` (P), <project-a> `HOME.md` rule. | Tier 1: dotfiles shared; move the R and P branches into per repo config later |
 | diagnosing-bugs | qa-sdet, support-csm (R, P, T), P stream-health | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | domain-modeling | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | elon | elon role frontmatter and every role body (R, P, T); `AGENTS.md` (R, P); crew, tl, daily-run (R, P); P orchestration | D `elon/` dir | Drifted duplicate of `ceo`. `elon` is newer (2026-10-05 vs 2026-10-04) and adds the Commands section and direct dispatch wording. | Tier 2: dotfiles template, one copy (move out of D so it stops loading in every repo) |
@@ -52,18 +52,18 @@ Proposed home uses the three tiers the owner approved (Tier 1 general, Tier 2 te
 | resolving-merge-conflicts | fullstack-dev (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | tdd | elon, fullstack-dev, qa-sdet (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | to-spec | elon (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
-| to-tickets | architect-pm, elon (R, P, T) | D dir; MP twice | Drifted. D adds two "Machine-checkable contract" sections (commit add20a3, 2026-10-04) with riben examples (`bun test --isolate`, `web/src/actions/foo`). D is newest. | Tier 1: dotfiles shared; replace the riben examples with neutral ones |
+| to-tickets | architect-pm, elon (R, P, T) | D dir; MP twice | Drifted. D adds two "Machine-checkable contract" sections (commit add20a3, 2026-10-04) with <project-a> examples (`bun test --isolate`, `web/src/actions/foo`). D is newest. | Tier 1: dotfiles shared; replace the <project-a> examples with neutral ones |
 | write-spec | architect-pm (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
-| crew | `AGENTS.md` (R); elon, tech-lead (R, P, T); tl SKILL (R, P) | R, P, T `.agents` dirs; links in R and P `.claude` and `.cursor` | Drifted, partly project specific. T vs R: 6 lines, T has the newer changelog fragment wording in Step 5, R has the `persistent-memory-protocol.md` pointer T lacks. R vs P: 125 lines, P rewrote it for the monorepo (absolute `/Users/mtsai/pstv` paths, component worktrees, CEO and BA in Step 1). Last commits: P 10-06 02:46, T 02:42, R 02:41. | Tier 2: dotfiles template, one project neutral copy; product facts move to a repo file the skill reads |
+| crew | `AGENTS.md` (R); elon, tech-lead (R, P, T); tl SKILL (R, P) | R, P, T `.agents` dirs; links in R and P `.claude` and `.cursor` | Drifted, partly project specific. T vs R: 6 lines, T has the newer changelog fragment wording in Step 5, R has the `persistent-memory-protocol.md` pointer T lacks. R vs P: 125 lines, P rewrote it for the monorepo (absolute `/Users/mtsai/<project-b>` paths, component worktrees, CEO and BA in Step 1). Last commits: P 10-06 02:46, T 02:42, R 02:41. | Tier 2: dotfiles template, one project neutral copy; product facts move to a repo file the skill reads |
 | tl | `AGENTS.md`, elon, tech-lead, daily-run (R, P); elon, tech-lead (T) | R, P `.agents` dirs; links in R and P `.claude` and `.cursor` | Drifted, 13 lines, partly project specific. P newer (2026-10-05 21:15 vs 14:27): adds the command suite line, `worker-start --agent` handoff wording, tiered routing rule; P only `issue-budget.md`. T ships no `tl`. | Tier 2: dotfiles template, one project neutral copy |
-| deploy | `AGENTS.md`, release-manager, tech-lead, daily-run (R, P); R `team.md`; release-manager, tech-lead (T) | R, P `.agents` dirs; links in R and P `.claude` and `.cursor` | Project specific, not a dedupe target. R: stm36, Prisma migrate, Playground staging, ADR 0060. P: 5ik.tv, Jellyfin, stm38 and stm39. 106 lines apart. T ships no `deploy`. | Tier 2 per the owner decision, but it is mostly product facts: one generic deploy flow in the dotfiles template that reads hosts and steps from `docs/agents/deploy-facts.md` |
+| deploy | `AGENTS.md`, release-manager, tech-lead, daily-run (R, P); R `team.md`; release-manager, tech-lead (T) | R, P `.agents` dirs; links in R and P `.claude` and `.cursor` | Project specific, not a dedupe target. R: <prod-host>, Prisma migrate, Playground staging, ADR 0060. P: 5ik.tv, Jellyfin, <prod-host> and <prod-host>. 106 lines apart. T ships no `deploy`. | Tier 2 per the owner decision, but it is mostly product facts: one generic deploy flow in the dotfiles template that reads hosts and steps from `docs/agents/deploy-facts.md` |
 | roku-qa | its own SKILL (P) | P `.agents` dir; links in P `.claude` and `.cursor` | Project specific (Roku, 5ik, Jellyfin). | Tier 3: stays in P |
 | action-scaffold | fullstack-dev (R, T); R store-admin-crud SKILL | R `.agents` dir and R `.cursor` dir, identical; R `.claude` link points at the `.cursor` copy | Duplicate inside R, identical. Project specific (Prisma, `web/src`, storeAdmin). | Tier 3: stays in R, one copy in `.agents`; drop from T |
-| e2e-test-scaffold | fullstack-dev, qa-sdet (R, T); P qa-sdet body | R `.agents` and `.cursor` dirs, identical; R `.claude` link to `.cursor` | Duplicate inside R. Project specific. Not reachable for P or T. | Tier 3: stays in R; drop from P and T, or write a PSTV variant |
+| e2e-test-scaffold | fullstack-dev, qa-sdet (R, T); P qa-sdet body | R `.agents` and `.cursor` dirs, identical; R `.claude` link to `.cursor` | Duplicate inside R. Project specific. Not reachable for P or T. | Tier 3: stays in R; drop from P and T, or write a <project-b> variant |
 | i18n-sync | fullstack-dev (R, T) | as action-scaffold | Duplicate inside R, identical, project specific. | Tier 3: stays in R; drop from T |
 | payment-plugin | fullstack-dev (R, T), including the Money and Payments rule | as action-scaffold | Duplicate inside R, identical, project specific. | Tier 3: stays in R; drop from T |
 | store-admin-crud | fullstack-dev (R, T) | as action-scaffold | Duplicate inside R, identical, project specific. | Tier 3: stays in R; drop from T |
-| shadcn | not referenced | R `.agents` and `.cursor` dirs, identical; R `.claude` link to `.cursor` | Duplicate inside R. Generic upstream shadcn skill, no riben facts. | Tier 1: dotfiles shared, or Tier 3 in R |
+| shadcn | not referenced | R `.agents` and `.cursor` dirs, identical; R `.claude` link to `.cursor` | Duplicate inside R. Generic upstream shadcn skill, no <project-a> facts. | Tier 1: dotfiles shared, or Tier 3 in R |
 | jellyfin-web-port | not referenced (nested in P `web2/`) | P `web2/.agents` and `web2/.cursor` dirs, identical | Duplicate inside P, project specific. | Tier 3: stays in P; make the `.cursor` copy a link |
 | paypal-webhooks | not referenced (nested in P `web2/`) | as jellyfin-web-port | Duplicate inside P, project specific. | Tier 3: stays in P; make the `.cursor` copy a link |
 
@@ -75,7 +75,7 @@ Nothing is referenced that does not exist somewhere. These references cannot be 
 | --- | --- | --- |
 | P | e2e-test-scaffold | P qa-sdet body names it; it lives only in R. (P dropped it from the frontmatter already.) |
 | T | tl, deploy | Named in elon, tech-lead and release-manager frontmatter. T ships only crew and orchestration scripts, and `script/adopt-agent-team.sh` creates no `tl` or `deploy`. |
-| T | action-scaffold, store-admin-crud, i18n-sync, payment-plugin, e2e-test-scaffold | riben skills leaked into T fullstack-dev and qa-sdet. An adopting project has none of them. |
+| T | action-scaffold, store-admin-crud, i18n-sync, payment-plugin, e2e-test-scaffold | <project-a> skills leaked into T fullstack-dev and qa-sdet. An adopting project has none of them. |
 
 ## How the Mac links skills today
 
@@ -98,9 +98,9 @@ Tracked symlinks outside skills that do leave their repo and dangle in a clone (
 
 | Repo | Link | Target |
 | --- | --- | --- |
-| R | `fileServer/backup/production/nginx/stm36.tvcdn.org/sites-enabled/` (4 links) | `/etc/nginx/sites-available/...` |
-| P | `pstv_op/bin/linux/media_bin` | `/Volumes/data3/Media/bin/` |
-| P | `pstv_op/bin/media/streamschedule.smil` | `/Users/mtsai/media/Movies/streamschedule.smil` |
+| R | `fileServer/backup/production/nginx/<prod-host>/sites-enabled/` (4 links) | `/etc/nginx/sites-available/...` |
+| P | `<project-b>_op/bin/linux/media_bin` | `/Volumes/data3/Media/bin/` |
+| P | `<project-b>_op/bin/media/streamschedule.smil` | `/Users/mtsai/media/Movies/streamschedule.smil` |
 
 The real cloud gap is the reverse: nothing in the repos points at dotfiles, so a cloud session (or any machine without `install.sh`) has no `~/.claude/skills` and no user plugins. Every role still preloads its frontmatter `skills:`, and these are absent:
 
@@ -157,7 +157,7 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 | tl | P's newer copy (command suite line, `worker-start --agent` wording); terminal shortcut from `team-facts.md`; `issue-budget.md` leaves the skill. `other-tools.md` is P's copy (tiered routing) with the daily run task count and the skills table made generic. |
 | orca-team | Tier 1. Our Elon coordinator paragraph, pane helpers, `worker-watch.sh`, role colors and tests. Complements Orca's official `orchestration` skill; `model-routing.md` calls `~/.claude/skills/orca-team/worker-watch.sh`. |
 | elon, ceo | `elon` (newer) moves from D to the template, product names removed, daily run path now `docs/agents/daily-run.md`. `ceo` becomes a three line alias that loads `elon`. |
-| to-tickets | D (newest) with neutral examples in place of the riben paths and `bun` commands. |
+| to-tickets | D (newest) with neutral examples in place of the <project-a> paths and `bun` commands. |
 | deploy | One generic flow (rules, status, local, staging, production, hand deploy, rollback) that reads everything product specific from `deploy-facts.md`. |
 
 ### Duplicate listings
@@ -167,9 +167,9 @@ Skeletons for the first two: `templates/agent-team/docs/agents/`.
 
 ### Steps, each with its check
 
-1. Done (dotfiles, phase 1): tier 1 cleanup, tier 2 reconciliation, facts skeletons, sync script, duplicate fixes. Check: `bash script/tests/sync-team-skills.test.sh` passes; `grep -rn 'riben\|pstv\|/Users/' templates/agent-team/.agents/skills` finds nothing.
-2. riben.life (phase 2): write `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`, `git mv .agents/skills/crew/daily-run.md docs/agents/daily-run.md`, `git rm -r .agents/skills/orchestration`, point `.claude/model-routing.md` at `~/.claude/skills/orca-team/worker-watch.sh`, run `sync-team-skills.sh --force .`, replace the six real `.cursor/skills` dirs of tier 3 skills with links to `.agents`, add `sync-team-skills.sh --check` to CI or pre-commit. Check: `--check` passes, `/elon`, `/crew`, `/tl`, `/deploy status` load and resolve their facts.
-3. PSTV (phase 2): the same, plus `git mv .agents/skills/tl/issue-budget.md docs/agents/issue-budget.md` (and fix the path in daily run step 3), remove the orchestration `SKILL.md`, copy `docs/agents/persistent-memory-protocol.md` from the template, drop `e2e-test-scaffold` from qa-sdet or add a PSTV variant, turn `web2/.cursor/skills` copies into links. Check: same as step 2.
+1. Done (dotfiles, phase 1): tier 1 cleanup, tier 2 reconciliation, facts skeletons, sync script, duplicate fixes. Check: `bash script/tests/sync-team-skills.test.sh` passes; `grep -rn '<project-a>\|<project-b>\|/Users/' templates/agent-team/.agents/skills` finds nothing.
+2. <project-a> (phase 2): write `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`, `git mv .agents/skills/crew/daily-run.md docs/agents/daily-run.md`, `git rm -r .agents/skills/orchestration`, point `.claude/model-routing.md` at `~/.claude/skills/orca-team/worker-watch.sh`, run `sync-team-skills.sh --force .`, replace the six real `.cursor/skills` dirs of tier 3 skills with links to `.agents`, add `sync-team-skills.sh --check` to CI or pre-commit. Check: `--check` passes, `/elon`, `/crew`, `/tl`, `/deploy status` load and resolve their facts.
+3. <project-b> (phase 2): the same, plus `git mv .agents/skills/tl/issue-budget.md docs/agents/issue-budget.md` (and fix the path in daily run step 3), remove the orchestration `SKILL.md`, copy `docs/agents/persistent-memory-protocol.md` from the template, drop `e2e-test-scaffold` from qa-sdet or add a <project-b> variant, turn `web2/.cursor/skills` copies into links. Check: same as step 2.
 
 ### Risks
 

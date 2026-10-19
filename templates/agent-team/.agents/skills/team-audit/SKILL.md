@@ -9,7 +9,7 @@ Run only when the owner says "team-audit", by architect-pm (or Elon). Edits only
 
 ## 1. Deterministic checks
 
-Run `~/dotfiles/script/team-audit.sh` (default projects `~/projects/riben.life` and `~/pstv`; pass project roots to override). Each `FINDING <check>` line names the file. Fix every finding or explain why it is a false positive (a line may opt out with the comment `team-audit: allow`). For a `sync` finding, edit the dotfiles source and run `~/dotfiles/script/sync-team-skills.sh <project>`; never edit a generated copy. For an `mp-upstream` finding (the vendored Matt Pocock skills are behind upstream, or a role names one that is missing), run `~/dotfiles/script/sync-mattpocock-skills.sh`, review `git diff` of `.agents/skills`, and commit it on the team-audit branch in dotfiles. A `WARN mp-upstream` line means the network check was skipped; rerun later. Never run `skills update`.
+Run `~/dotfiles/script/team-audit.sh` (default projects come from the untracked `script/team-audit.local.conf`, one root per line; pass project roots to override). Each `FINDING <check>` line names the file. Fix every finding or explain why it is a false positive (a line may opt out with the comment `team-audit: allow`). For a `sync` finding, edit the dotfiles source and run `~/dotfiles/script/sync-team-skills.sh <project>`; never edit a generated copy. For an `mp-upstream` finding (the vendored Matt Pocock skills are behind upstream, or a role names one that is missing), run `~/dotfiles/script/sync-mattpocock-skills.sh`, review `git diff` of `.agents/skills`, and commit it on the team-audit branch in dotfiles. A `WARN mp-upstream` line means the network check was skipped; rerun later. Never run `skills update`.
 
 ## 2. Judgement review
 
@@ -43,4 +43,4 @@ Report lead escalations to Elon since the last audit: count the tagged lines in 
 
 ## 5. Output
 
-A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the structural fix with verification or its approval gate, plus every role's performance entry, both metrics and the evidence coverage. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, riben.life, PSTV), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.
+A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the structural fix with verification or its approval gate, plus every role's performance entry, both metrics and the evidence coverage. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, <project-a>, <project-b>), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.

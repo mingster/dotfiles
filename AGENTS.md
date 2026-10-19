@@ -93,7 +93,7 @@ the dotfiles bootstrap. Scaffold it with:
 ```bash
 cd <repo> && ~/dotfiles/script/init-agent-project.sh --labels
 # or, for many at once
-~/dotfiles/script/init-agent-project.sh --labels ~/projects/* ~/pstv/web2
+~/dotfiles/script/init-agent-project.sh --labels ~/projects/* ~/<project-b>/web
 ```
 
 The script infers the tracker from the `origin` remote, seeds `docs/agents/*.md` from the templates in
@@ -103,8 +103,8 @@ labels on the GitHub remote. It is idempotent and never overwrites a file that a
 `--dry-run` first. For a repo that needs judgement (monorepo, non-GitHub tracker), run the
 `setup-matt-pocock-skills` skill instead.
 
-Configured so far: `riben.life`, `mingster.com`, `dotfiles`, `pstv/web2`, `pstv/fileServer`,
-`pstv/jellyfin`, `pstv/pstv_op`, `pstv/streaminator`.
+Configured so far: `<project-a>`, `mingster.com`, `dotfiles`, `<project-b>/web2`, `<project-b>/fileServer`,
+`<project-b>/jellyfin`, `<project-b>/<project-b>_op`, `<project-b>/streaminator`.
 
 ## Agent instruction file convention
 

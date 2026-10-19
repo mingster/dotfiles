@@ -2,7 +2,7 @@
 
 Which role owns each SDLC stage and recurring job, which Matt Pocock skill it runs, and what was wrong before the 2026-10-12 alignment. Read it before changing a role file, the crew or tl skill, `model-routing.md`, a project `daily-run.md` or the Engineering workflow table in `.agents/claude/CLAUDE.md`.
 
-Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/skills` README, its user invoked and model invoked split), `.agents/claude/CLAUDE.md`, `templates/agent-team/`, and in riben.life and PSTV the role files, `docs/SDLC.md`, `docs/agents/team.md`, `daily-run.md` and `lean-startup-sdlc.md`.
+Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/skills` README, its user invoked and model invoked split), `.agents/claude/CLAUDE.md`, `templates/agent-team/`, and in <project-a> and <project-b> the role files, `docs/SDLC.md`, `docs/agents/team.md`, `daily-run.md` and `lean-startup-sdlc.md`.
 
 ## Two facts that drive most fixes
 
@@ -15,8 +15,8 @@ Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/
 | --- | --- | --- | --- | --- |
 | Intake and triage of an issue | architect-pm, Elon as maintainer | `triage` (agent brief per `AGENT-BRIEF.md`) | daily run step 2: Elon reads each `needs-triage` issue and relabels it by hand | Home grown step duplicating `triage`, without its redundancy check, claim verification or agent brief |
 | Intent | architect-pm | `capture-intent` (ours, no upstream equivalent) | correct | None |
-| Grill | architect-pm with the owner | `grill-with-docs` (`grilling` and `domain-modeling` inside) | correct; PSTV SDLC paired it with `to-spec` | See Spec |
-| Spec | architect-pm | `write-spec` when the repo has `docs/SDLC.md`, else `to-spec` | PSTV `fileServer/docs/SDLC.md` said `/grill-with-docs` and `/to-spec` | Wrong skill: `to-spec` publishes an issue, PSTV commits spec files, so `write-spec` |
+| Grill | architect-pm with the owner | `grill-with-docs` (`grilling` and `domain-modeling` inside) | correct; <project-b> SDLC paired it with `to-spec` | See Spec |
+| Spec | architect-pm | `write-spec` when the repo has `docs/SDLC.md`, else `to-spec` | <project-b> `fileServer/docs/SDLC.md` said `/grill-with-docs` and `/to-spec` | Wrong skill: `to-spec` publishes an issue, <project-b> commits spec files, so `write-spec` |
 | Tickets | architect-pm | `to-tickets` (GitHub issues with blocking edges) | `skills: [..., to-tickets]`; role body and crew Step 1 said `tickets.md` | DMI skill in `skills:` is silently skipped; `tickets.md` contradicted `docs/SDLC.md` (issues) |
 | Implement | fullstack-dev | `implement` per ticket (drives `tdd`, ends with `code-review`); `tdd` on the fast path | `tdd` only; Elon's "fast loop" ran `to-spec` on an issue that already exists | `implement` unused; `to-spec` misapplied to an existing issue |
 | Bug diagnosis | qa-sdet reproduces, fullstack-dev fixes | `diagnosing-bugs`, then `tdd` | `diagnosing-bugs` preloaded on support-csm (read only, never diagnoses); hotfix "reproduce" step home grown | Skill on the wrong role; reproduce step now names the skill's feedback loop |
@@ -31,10 +31,10 @@ Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/
 
 ## Other fixes
 
-* `qa-sdet` preloaded five skills its body said to load only on demand; now `[tdd, code-review]`. `secops-finops` dropped `research`, the template and riben `lead` dropped `deploy` and `code-review`, for the same reason.
-* `e2e-test-scaffold` exists only in riben.life; it was named in the template and PSTV qa-sdet. Removed there.
+* `qa-sdet` preloaded five skills its body said to load only on demand; now `[tdd, code-review]`. `secops-finops` dropped `research`, the template and <project-a> `lead` dropped `deploy` and `code-review`, for the same reason.
+* `e2e-test-scaffold` exists only in <project-a>; it was named in the template and <project-b> qa-sdet. Removed there.
 * dotfiles `AGENTS.md` named `implement-spec`, which is not vendored (`skills-inventory.md` explains why).
-* `script/init-agent-project.sh` wrote `$to-tickets` inside an unquoted heredoc, which aborts under `set -u`; escaped, and the "Invoking skills" block now covers Claude Code. riben.life `AGENTS.md` gained the block PSTV already had.
+* `script/init-agent-project.sh` wrote `$to-tickets` inside an unquoted heredoc, which aborts under `set -u`; escaped, and the "Invoking skills" block now covers Claude Code. <project-a> `AGENTS.md` gained the block <project-b> already had.
 
 ## Open
 

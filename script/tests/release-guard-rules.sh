@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Asserts the release guard rules (issue mingster/pstv#563) are in the release-manager role file and the deploy skill.
+# Asserts the release guard rules (issue mingster/projb#563) are in the release-manager role file and the deploy skill.
 # Text assertions only: the guard hooks are not driven here. Run: bash THIS [<root>]
 set -u
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"

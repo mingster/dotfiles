@@ -88,3 +88,8 @@ mac/bin/claude
 
 # Orca owns its official orchestration skill; install/update it outside Git tracking.
 .agents/skills/orchestration/
+
+# Per machine overlays holding project names, hosts and paths (never tracked)
+*.local.json
+*.local.toml
+*.local.conf

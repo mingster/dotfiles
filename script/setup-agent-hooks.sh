@@ -16,7 +16,24 @@ if len(sys.argv) != 2 and not render:
     sys.exit('Usage: setup-agent-hooks.sh [--render <settings-template>]')
 settings = pathlib.Path.home() / '.claude/settings.json'
 template = json.loads((root / 'templates/agent-team/.claude/settings.json').read_text())
+
+
+def merge(base, extra):
+    if isinstance(base, dict) and isinstance(extra, dict):
+        out = dict(base)
+        for key, value in extra.items():
+            out[key] = merge(base[key], value) if key in base else value
+        return out
+    if isinstance(base, list) and isinstance(extra, list):
+        return base + [item for item in extra if item not in base]
+    return extra
+
+
+# An untracked settings.local.json beside the template holds per machine values.
+local = pathlib.Path(sys.argv[3]).with_name('settings.local.json') if render else None
 data = json.loads(pathlib.Path(sys.argv[3]).read_text()) if render else (json.loads(settings.read_text()) if settings.exists() else {})
+if local is not None and local.is_file():
+    data = merge(data, json.loads(local.read_text()))
 before = copy.deepcopy(data)
 hooks = data.setdefault('hooks', {})
 for event, groups in template['hooks'].items():

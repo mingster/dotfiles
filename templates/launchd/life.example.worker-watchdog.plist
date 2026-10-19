@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>life.riben.worker-watchdog</string>
+  <key>Label</key><string>life.example.worker-watchdog</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>

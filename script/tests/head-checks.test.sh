@@ -73,12 +73,12 @@ else: sys.exit(1)
         path=binpath/tool
         path.write_text('#!/usr/bin/env python3\nimport pathlib,sys\nwith open('+repr(str(tool_log))+', "a") as f: f.write(str(pathlib.Path.cwd())+" "+" ".join(sys.argv[1:])+"\\n")\n')
         path.chmod(0o755)
-    for component in ['web','web2/pstv_web','marketing','bin','pstv_op/bin','jellyfin','roku','.github/workflows']:
+    for component in ['web','web2/projb_web','marketing','bin','projb_op/bin','jellyfin','roku','.github/workflows']:
         (repo/component).mkdir(parents=True,exist_ok=True)
         (repo/component/'.keep').write_text('fixture')
-    for path,contents in {'marketing/src.ts':'export const x = 1;', 'bin/task.ts':'export const x = 1;', 'bin/task.test.ts':'', 'pstv_op/bin/task.py':'x = 1', 'jellyfin/Thing.cs':'class Thing {}', 'roku/main.brs':'', '.github/workflows/build.yml':'name: Build'}.items():
+    for path,contents in {'marketing/src.ts':'export const x = 1;', 'bin/task.ts':'export const x = 1;', 'bin/task.test.ts':'', 'projb_op/bin/task.py':'x = 1', 'jellyfin/Thing.cs':'class Thing {}', 'roku/main.brs':'', '.github/workflows/build.yml':'name: Build'}.items():
         (repo/path).write_text(contents)
-    for project in ['riben.life','pstv']:
+    for project in ['proja','projb']:
         default=pathlib.Path(runner).resolve().parents[3]/project/'merge-gates/.agents/head-checks.conf'
         checklist=pathlib.Path(os.environ.get(project.upper().replace('.', '_')+'_CHECKLIST', str(default)))
         if not checklist.is_file():

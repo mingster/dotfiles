@@ -60,4 +60,4 @@ Worktree: `/Users/mtsai/orca/workspaces/dotfiles/dotfiles-skilldedupe`.
 | Changed skill pointers and crew section references | Pass, targets retained and Step 0 through Step 5 preserved |
 | Added prose punctuation and `git diff --check` | Pass, no dash punctuation or whitespace errors |
 
-No skill was removed, so there are no removed skill references to repair. Existing Step 0 through Step 5 references to crew still resolve. The `ceo`, `elon`, `tl` and relay file paths remain valid. Product adoption and sync into riben.life or PSTV are left to Elon after merge.
+No skill was removed, so there are no removed skill references to repair. Existing Step 0 through Step 5 references to crew still resolve. The `ceo`, `elon`, `tl` and relay file paths remain valid. Product adoption and sync into <project-a> or <project-b> are left to Elon after merge.

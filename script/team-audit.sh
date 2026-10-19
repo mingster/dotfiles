@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # team-audit.sh: deterministic checks of the agent team files. The judgement part is the team-audit skill.
 #
-# Usage: ~/dotfiles/script/team-audit.sh [<project-root> ...]   (default: ~/projects/riben.life ~/pstv)
+# Usage: ~/dotfiles/script/team-audit.sh [<project-root> ...]   (default: one project root per line in script/team-audit.local.conf, untracked)
 #
 # Checks, each printed as "FINDING <check>: <detail>":
 #   sync      sync-team-skills.sh --check passes for each project
@@ -26,7 +26,14 @@ TEMPLATE="$DOTFILES/templates/agent-team"
 
 case "${1:-}" in -h|--help) sed -n '2,19p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
-[ ${#PROJECTS[@]} -eq 0 ] && PROJECTS=("$HOME/projects/riben.life" "$HOME/pstv")
+CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
+if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    PROJECTS+=("${line/#\~/$HOME}")
+  done < "$CONF"
+fi
+[ ${#PROJECTS[@]} -eq 0 ] && { echo "team-audit: pass project roots or list them in $CONF" >&2; exit 2; }
 [ -d "$TEMPLATE" ] || { echo "team-audit: missing $TEMPLATE (set DOTFILES)" >&2; exit 2; }
 
 findings=0
