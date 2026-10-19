@@ -77,10 +77,10 @@ mkjson() {
 mkdir -p "$LEAD/.claude/hooks"
 printf 'APPROVAL_NAMESPACE = "proj"  # fixture\n' > "$LEAD/.claude/hooks/guard-bash.py"
 APPROVAL="$HOME/.config/proj/approval.json"
-write_approval() { # scope target [offset seconds] [by]
+write_approval() { # scope target [offset seconds] [by] [patch_id]
   mkdir -p "$(dirname "$APPROVAL")"
-  jq -n --arg scope "$1" --arg target "$2" --argjson off "${3:-+1800}" --arg by "${4:-mingster}" \
-    '{scope:$scope,target:$target,schema:false,apply:false,created_at:(now|floor),expires_at:((now|floor)+$off),by:$by}' > "$APPROVAL"
+  jq -n --arg scope "$1" --arg target "$2" --argjson off "${3:-+1800}" --arg by "${4:-mingster}" --arg pid "${5:-}" \
+    '{scope:$scope,target:$target,patch_id:(if $pid == "" then null else $pid end),schema:false,apply:false,created_at:(now|floor),expires_at:((now|floor)+$off),by:$by}' > "$APPROVAL"
 }
 
 pass=0; fail=0
@@ -715,6 +715,48 @@ printf 'different\n' >> "$REAL_PATCH_REPO/code"
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
 checks="Checks: PASS head=$SHA"
 check "real changed patch invalidates verdict" 1 'verdict'
+
+# Owner copy approval survives a content neutral head move (main merged into the branch).
+G() { "$REAL_GIT" -C "$REAL_PATCH_REPO" "$@"; }
+approval_pid() { # sha: the owner-approve.sh fingerprint, zero context against main
+  G diff -U0 "$(G merge-base refs/remotes/origin/main "$1")" "$1" | "$REAL_GIT" patch-id --stable | awk '{print $1}'
+}
+set_main() { G update-ref refs/heads/main "$1"; G update-ref refs/remotes/origin/main "$1"; base_sha=$1; }
+approval_attest() {
+  checks="Checks: PASS head=$SHA"
+  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: owner\nPhone-width screenshots in tw, en and jp.'
+}
+copy_setup
+tr_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+printf '{\n"a":"1",\n"b":"2",\n"c":"3",\n"d":"4",\n"e":"5",\n"f":"6",\n"g":"7"\n}\n' > "$tr_file"
+G add .; G commit -qm base2; set_main "$(G rev-parse HEAD)"; M0=$base_sha
+G checkout -q -b pr; sed -i.bak 's/"d":"4"/"d":"four"/' "$tr_file"; rm -f "$tr_file.bak"
+G add .; G commit -qm copy; A=$(G rev-parse HEAD); SHA=$A; headsha=$A
+PID_A=$(approval_pid "$A")
+write_approval copy "$A" +1800 mingster "$PID_A"; approval_attest
+check "approved head merges" 0 'lane=normal' 1
+# Another PR edits the neighbouring lines of the same file, then main is merged in.
+G checkout -q fixture 2>/dev/null || G checkout -q main
+G checkout -q -B mainwork "$M0"; sed -i.bak 's/"b":"2"/"b":"two"/; s/"f":"6"/"f":"six"/' "$tr_file"; rm -f "$tr_file.bak"
+G add .; G commit -qm other-pr; OTHER=$(G rev-parse HEAD); set_main "$OTHER"
+G checkout -q pr; G merge -q --no-edit main >/dev/null; B=$(G rev-parse HEAD); SHA=$B; headsha=$B
+PR_DIFF=$(G diff "$base_sha...$B")
+approval_attest
+check "main merged into branch with no content change still merges" 0 'lane=normal' 1
+write_approval copy "$A" +1800 mingster
+check "approval without a patch id does not follow the moved head" 1 'owner copy approval'
+write_approval copy "$A" -10 mingster "$PID_A"
+check "expired approval refuses even when the patch id matches" 1 'owner copy approval'
+write_approval copy "$A" +5000 mingster "$PID_A"
+check "approval expiring beyond the ttl window refuses" 1 'owner copy approval'
+write_approval copy "$A" +1800 mingster "$(G diff -U0 "$M0" "$OTHER" | "$REAL_GIT" patch-id --stable | awk '{print $1}')"
+check "a different PR's patch id refuses" 1 'owner copy approval'
+write_approval copy "$A" +1800 mingster "$PID_A"
+sed -i.bak 's/"g":"7"/"g":"seven"/' "$tr_file"; rm -f "$tr_file.bak"
+G add .; G commit -qm one-more-line; C=$(G rev-parse HEAD); SHA=$C; headsha=$C
+PR_DIFF=$(G diff "$base_sha...$C"); approval_attest
+check "one changed line after approval refuses" 1 'owner copy approval'
+rm -f "$APPROVAL"
 
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]
