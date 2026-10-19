@@ -7,9 +7,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd -P)
 cd "$root" || exit 1
 # The account name is written with a bracket so this file does not contain it literally.
 pattern='riben|pstv|stm3[689]|tvcdn|63\.141|ht3|09702642|mtsa[i]'
-# TEMPORARY: protected files are scrubbed on a separate owner reviewed branch; that branch deletes these excludes.
-protected=(':!.codex/config.toml' ':!templates/codex/lead-merge.rules' ':!ide/cursor/hooks.json' ':!.gemini/antigravity-cli/settings.json')
-hits=$(git grep -IiE "$pattern" -- . ':!script/tests/no-project-names.test.sh' "${protected[@]}" || true)
+hits=$(git grep -IiE "$pattern" -- . ':!script/tests/no-project-names.test.sh' || true)
 if [ -n "$hits" ]; then
   echo "FAIL: project names found in tracked files:"; echo "$hits" | cut -c1-160 | head -30
   exit 1
