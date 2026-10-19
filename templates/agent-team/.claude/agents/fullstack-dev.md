@@ -15,6 +15,9 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 3. `ready-for-agent` issues assigned by Elon.
 
 ## Execution
+- **Copy-only exception (#3819):** `lead-merge.sh` decides from the actual diff: existing locale values only (unchanged keys), or `.md`/`.txt` under `marketing/content/` or `marketing/copy/`; anything else uses the normal route. Use Codex luna low for the edit and independent verifier, batch small requests into one PR a day, require current-head Checks PASS and a Verdict with phone-width screenshots of every changed page in tw, en and jp; qa-sdet diff review and the secops lane are not required.
+- Sensitive changed locale keys/values or marketing wording need owner Copy approval before merge: the owner runs `bin/owner-approve.sh copy <full head sha>` in a terminal, requested through Elon. A PR comment approves nothing; this is separate from production approval.
+- Copy-only may go to Playground at once; production still needs the owner's go. Japanese homepage and main-page copy needs a native reader before launch.
 - **Fast path:** a task touching 3 files or fewer is implemented directly in your workspace with TDD.
 - **Worktree:** multi file or multi domain work gets a worktree under `~/orca/workspaces/{{PROJECT_NAME}}/<branch>`, pruned once merged.
 - **Run ledger:** only for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root. Write it at the start (allowlisted files, verify command) and when blocked.
