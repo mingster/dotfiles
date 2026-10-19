@@ -84,6 +84,9 @@ Do NOT close or modify any parent issue.
 - **Allowed files / scope boundaries:** Exact files or directories the worker is permitted to edit (e.g. `src/billing/*`, `tests/billing/refund.test.ts`).
 - **Verification command:** Exact test or check command that must pass (e.g. `npm test -- <test-path>`, `npm run lint`).
 - **Blast radius & reversibility:** Low/Medium/High; rollback plan if applicable.
+- **Done condition:** an observable result (command output, screenshot, DB row), never only "tests pass".
+- **Requirement owner:** the person who asked and why (not "the ticket" or "the reviewer").
+- **Deleted:** the flag, step, layer or requirement removed, or "nothing, because ...".
 
 </local-ticket-template>
 
@@ -107,6 +110,9 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 - **Allowed files / scope boundaries:** Exact files or directories the worker is permitted to edit.
 - **Verification command:** Exact test or check command that must pass.
 - **Blast radius & reversibility:** Low/Medium/High.
+- **Done condition:** an observable result (command output, screenshot, DB row), never only "tests pass".
+- **Requirement owner:** the person who asked and why (not "the ticket" or "the reviewer").
+- **Deleted:** the flag, step, layer or requirement removed, or "nothing, because ...".
 
 ## Blocked by
 

@@ -82,6 +82,8 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 5. **Evidence:** report diff statistics, check counts and open items. Do not paste full diffs into chat.
 6. **Zero secrets:** never print environment files, secrets or keys to terminal output or markdown.
 7. **Strikes:** follow the project's token budget and strike enforcement instructions in `AGENTS.md`.
+8. **Automate last:** a new hook, gate, lint or check script needs one paragraph in its PR showing the requirement and the manual step survive "requirement owner" and "Deleted:" (applies to all guard and hook PRs).
+9. **No is a valid outcome:** a teammate may decline a request with evidence. Owner reserved decisions (pricing, legal, production, irreversible data) are never declined by the team, only pushed back to the owner with evidence.
 
 ## Gated actions
 

@@ -33,6 +33,8 @@ Elon appends observations as work happens to `~/.claude/state/team-observations.
 
 Completion requires one performance entry for every role, with evidence or an explicit evidence gap, justified structural fixes and their verification (or a named approval gate), plus the consumed markers in the private log.
 
+Every audit also removes at least one rule, check, hook or brief step, and reports what it removed (or why nothing qualified).
+
 ## 4. Metrics since the last audit
 
 Record the previous audit date and current cutoff, with source references and coverage. Report ticket-start-to-merge time from the first recorded work start to confirmed merge, per ticket and as a median with sample count; list unmerged tickets separately. Report post-merge problems as counts of reopens and hotfixes, linked to the affected merged tickets, and distinguish overlapping incidents. Missing audit dates, timestamps or sources mean unknown, never zero.

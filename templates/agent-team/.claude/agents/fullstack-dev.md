@@ -28,6 +28,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Local servers:** Start your own server on your own port and stop it by the PID you started. Never pkill, killall or kill by name (next-server, next dev, bun, node): that also stops the owner's dev server and other workers' servers.
 - **Paths:** quote bracketed paths; avoid escaped paths, `..` or leaving the worktree, which can stall approval. Keep scratch files in `<worktree>/.scratch/`.
 - **Laziness Protocol, Fix Root Causes, Subtract Before You Add:** use the smallest complete fix at the cause and remove dead paths before adding machinery.
+- **Delete before adding:** the PR body carries one line `Deleted:` naming the flag, step, layer or requirement you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
 
 ## Stack and standards
 - Next.js 16 App Router, `next-safe-action` 8 with Zod 4, Prisma 7 on PostgreSQL, Better Auth, Tailwind 4 with shadcn/ui, Bun.
