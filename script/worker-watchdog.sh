@@ -18,6 +18,9 @@ for id in "${runs[@]}" "$notify" "$notify_run"; do
   [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
 done
 orca_cli=${ORCA_CLI_COMMAND:-orca}
+gate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/usage-gate.py"
+# Bound every external command so a hung CLI cannot stall the loop.
+bounded() { if command -v timeout > /dev/null 2>&1; then timeout 30 "$@"; else "$@"; fi; }
 state="$HOME/.orca/state/worker-watchdog/$notify_run"
 log="$HOME/.orca/logs/worker-watchdog.log"
 mkdir -p "$state" "$(dirname "$log")"
@@ -34,7 +37,7 @@ trap 'rm -rf "$tmp" "$state/lock"' EXIT
 trap 'exit 0' INT TERM
 log_action() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$log"; }
 escalate() {
-  if "$orca_cli" orchestration send --to "$notify" --run "$notify_run" --type escalation \
+  if bounded "$orca_cli" orchestration send --to "$notify" --run "$notify_run" --type escalation \
       --subject "Watchdog: $1" --body "$2" --json > /dev/null 2>&1; then
     log_action "escalation $1"
     return 0
@@ -46,7 +49,7 @@ cycle=0
 while :; do
   : > "$tmp/terminals"
   for run in "${runs[@]}"; do
-    if ! "$orca_cli" orchestration run-show --id "$run" --json > "$tmp/run" 2>/dev/null; then
+    if ! bounded "$orca_cli" orchestration run-show --id "$run" --json > "$tmp/run" 2>/dev/null; then
       log_action "read-run-failed $run"; continue
     fi
     if ! python3 - "$tmp/run" "$run" >> "$tmp/terminals" <<'PY'
@@ -61,7 +64,7 @@ PY
     while :; do
       args=(orchestration worker-list --run "$run" --limit 100 --json)
       [[ -z "$cursor" ]] || args+=(--cursor "$cursor")
-      if ! "$orca_cli" "${args[@]}" > "$tmp/workers" 2>/dev/null; then
+      if ! bounded "$orca_cli" "${args[@]}" > "$tmp/workers" 2>/dev/null; then
         complete=0; log_action "read-workers-failed $run"; break
       fi
       if ! python3 - "$tmp/workers" > "$tmp/parsed" <<'PY'
@@ -72,16 +75,16 @@ for w in r['workers']:
     if (w.get('terminalState') in ('active','retained') and w.get('dispatchStatus') not in ('completed','failed','cancelled','abandoned')
         and w.get('projection',{}).get('liveness',{}).get('verdict') != 'exited'):
         h=w.get('agentTerminalHandle')
-        if h: print('terminal',h)
+        if h: print('terminal',h,str((w.get('projection') or {}).get('provider') or 'none').lower())
 if page.get('hasMore'):
     assert page.get('nextCursor')
     print('cursor',page['nextCursor'])
 PY
       then complete=0; log_action "parse-workers-failed $run"; break; fi
       cursor=''
-      while read -r kind value; do
+      while read -r kind value provider; do
         if [[ "$kind" == terminal ]]; then
-          printf '%s %s\n' "$value" "$run" >> "$tmp/terminals"
+          printf '%s %s %s\n' "$value" "$run" "${provider:-none}" >> "$tmp/terminals"
           live=$((live + 1))
         else cursor=$value; fi
       done < "$tmp/parsed"
@@ -98,14 +101,27 @@ PY
     printf '%s\n' "$empty" > "$state/run-$run"
   done
   sort -u -k1,1 "$tmp/terminals" > "$tmp/unique"
-  while read -r terminal run; do
+  while read -r terminal run provider; do
     [[ "$terminal" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
-    if ! "$orca_cli" terminal read --terminal "$terminal" --screen --limit 24 --json > "$tmp/screen" 2>/dev/null; then
+    if ! bounded "$orca_cli" terminal read --terminal "$terminal" --screen --limit 24 --json > "$tmp/screen" 2>/dev/null; then
       log_action "read-screen-failed $terminal"
       last=0
       [[ ! -f "$state/term-$terminal" ]] || read -r _ last _ _ < "$state/term-$terminal"
       printf '0 %s 0 0\n' "$last" > "$state/term-$terminal"
       continue
+    fi
+    if [[ "${provider:-none}" == antigravity ]]; then
+      # Antigravity shows a quota banner instead of an error; record it so the pool stays blocked.
+      if python3 - "$tmp/screen" > "$tmp/banner" 2>/dev/null <<'PY'
+import json,re,sys
+t=json.load(open(sys.argv[1]))['result']['terminal']
+tail=t.get('tail',[])
+if t.get('source')=='screen':
+    print(re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','','\n'.join(tail if isinstance(tail,list) else tail.splitlines())))
+PY
+      then
+        [[ ! -s "$tmp/banner" ]] || bounded python3 "$gate" banner < "$tmp/banner" > /dev/null 2>&1 || log_action "banner-failed $terminal"
+      fi
     fi
     if ! observation=$(python3 - "$tmp/screen" <<'PY'
 import json,re,sys
@@ -140,7 +156,7 @@ PY
           fi
         fi
         if [[ "$idle" -ge 2 && $((now - last)) -ge 600 ]]; then
-          if "$orca_cli" terminal send --terminal "$terminal" --text 'Resume: read your inbox (orca orchestration inbox --limit 5 --full) and continue your queue; only the usage gate may stop you.' --enter --json > /dev/null 2>&1; then
+          if bounded "$orca_cli" terminal send --terminal "$terminal" --text 'Resume: read your inbox (orca orchestration inbox --limit 5 --full) and continue your queue; only the usage gate may stop you.' --enter --json > /dev/null 2>&1; then
             log_action "nudge $terminal run=$run"; last=$now; after=1
           else log_action "nudge-failed $terminal"; fi
         fi ;;

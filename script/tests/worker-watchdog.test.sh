@@ -3,7 +3,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-export HOME="$tmp/home" PATH="$tmp/bin:$PATH" WATCHDOG_TEST_ACTIONS="$tmp/actions" WATCHDOG_TEST_MODE=idle
+export ORCA_CLI_COMMAND=orca HOME="$tmp/home" PATH="$tmp/bin:$PATH" WATCHDOG_TEST_ACTIONS="$tmp/actions" WATCHDOG_TEST_MODE=idle
 mkdir -p "$HOME" "$tmp/bin"
 cat > "$tmp/bin/orca" <<'PY'
 #!/usr/bin/env python3
@@ -15,7 +15,7 @@ if args[:2] == ['orchestration','run-show']:
 elif args[:2] == ['orchestration','worker-list']:
     if mode=='failed-list': sys.exit(1)
     workers=[] if mode=='empty' else [{'agentTerminalHandle':'term_worker','terminalState':'retained',
-        'dispatchStatus':'dispatched','projection':{'liveness':{'verdict':'live'}}}]
+        'dispatchStatus':'dispatched','projection':{'liveness':{'verdict':'live'},'provider':os.environ.get('WATCHDOG_TEST_PROVIDER')}}]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
     else: output({'workers':workers, 'page':{'hasMore':False}})
@@ -25,7 +25,8 @@ elif args[:2] == ['terminal','read']:
     text={'idle':'› Ask Codex to do anything', 'working':'Working (esc to interrupt)\n› Ask Codex to do anything',
           'stopped':"You've hit your usage limit", 'capacity':'No capacity available',
           'rate':'Rate limit reached', 'quota':'Quota exhausted', 'claude':'❯ ', 'empty':'Working (esc to interrupt)',
-          'unavailable':'› Ask Codex to do anything'}[mode]
+          'unavailable':'› Ask Codex to do anything',
+          'banner':'Gemini 3 Pro\nModel quota reached for Gemini. Resets in 94h29m\n› '}[mode]
     output({'terminal':{'tail':text.splitlines(),'source':'screen-unavailable' if mode=='unavailable' else 'screen'}})
 elif args[:2] in (['terminal','send'], ['orchestration','send']):
     with open(os.environ['WATCHDOG_TEST_ACTIONS'],'a') as f: f.write(json.dumps(args)+'\n')
@@ -83,5 +84,16 @@ run_case empty 3
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_a --run run_b --notify term_owner --notify-run run_owner --interval 0 --checks 2
 [[ $(count 'terminal send') == 2 ]]
+# An Antigravity quota banner blocks its pool until reset; other providers are never fed to the parser.
+export USAGE_GATE_BANNER_FILE="$tmp/banner.json"
+WATCHDOG_TEST_PROVIDER=codex run_case banner 2
+[[ ! -e "$USAGE_GATE_BANNER_FILE" ]]
+WATCHDOG_TEST_PROVIDER=antigravity run_case banner 2
+python3 - "$USAGE_GATE_BANNER_FILE" <<'PY'
+import json,sys,time
+left=json.load(open(sys.argv[1]))['gemini']-time.time()
+assert 94*3600+28*60 < left <= 94*3600+29*60, left
+PY
+WATCHDOG_TEST_PROVIDER=antigravity run_case idle 1
 if rg -q 'Ask Codex|usage limit|❯' "$HOME/.orca/logs/worker-watchdog.log"; then exit 1; fi
-echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query)'
+echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner)'
