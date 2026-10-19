@@ -7,9 +7,7 @@
   <array>
     <string>/bin/bash</string>
     <string>__HOME__/dotfiles/script/worker-watchdog.sh</string>
-    <string>--run</string><string>__RUN_ID__</string>
-    <string>--notify</string><string>__NOTIFY_HANDLE__</string>
-    <string>--notify-run</string><string>__NOTIFY_RUN_ID__</string>
+    <string>--all-runs</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
