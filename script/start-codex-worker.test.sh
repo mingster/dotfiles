@@ -8,7 +8,7 @@ echo "$*" >> "$FAKE_DIR/calls.log"
 case "$*" in
   "worktree create"*) echo '{"ok":true,"result":{"worktree":{"path":"/wt/new"}}}' ;;
   "terminal create"*) echo '{"ok":true,"result":{"terminal":{"handle":"term_x"}}}' ;;
-  "terminal read"*) echo '{"result":{"screen":"Ask Codex  ready"}}' ;;
+  "terminal read"*) echo "{\"result\":{\"screen\":\"${FAKE_SCREEN:-Ask Codex  ready}\"}}" ;;
   "terminal send"*) echo '{"ok":true}' ;;
   "terminal rename"*) echo '{"ok":true}' ;;
   "orchestration worker-start"*) echo "{\"ok\":true,\"result\":{\"dispatchId\":\"ctx_1\",\"state\":\"${FAKE_STATE:-ready}\"}}" ;;
@@ -40,5 +40,9 @@ check "non-running state exits 1" "$([ $? = 1 ]; echo $?)"
 
 "$here/start-codex-worker.sh" --run run_1 >/dev/null 2>&1
 check "missing args exit 2" "$([ $? = 2 ]; echo $?)"
+
+: > "$tmp/calls.log"
+FAKE_SCREEN='GPT-6-Luna low · ~/x' "$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path /wt/e >/dev/null 2>&1
+check "0.163 footer (GPT-n) counts as ready without waiting" "$([ "$(grep -c '^terminal read' "$tmp/calls.log")" -le 91 ]; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

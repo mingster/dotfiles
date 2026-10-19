@@ -34,7 +34,7 @@ fi
 term=$("$orca" terminal create --worktree "path:$wt" --title "$title" \
   --command "codex -m $model -c model_reasoning_effort=$effort$off" --json | j 'd["result"]["terminal"]["handle"]') || exit 1
 for i in $(seq 1 180); do   # up to 180 s for the Codex prompt
-  "$orca" terminal read --terminal "$term" --screen --json 2>/dev/null | grep -q 'Ask Codex\|? for shortcuts' && break; sleep "$poll"; done
+  "$orca" terminal read --terminal "$term" --screen --json 2>/dev/null | grep -q 'Ask Codex\|? for shortcuts\|GPT-[0-9]' && break; sleep "$poll"; done
 "$orca" terminal send --terminal "$term" --text "Say ready and wait for your task." --enter --json >/dev/null
 for i in $(seq 1 90); do   # up to 90 s for the warm-up turn to finish
   sleep "$poll"; scr=$("$orca" terminal read --terminal "$term" --screen --json 2>/dev/null)
