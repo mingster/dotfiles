@@ -14,15 +14,6 @@ status_line_use_colors = true
 [tui.model_availability_nux]
 "gpt-6.1-sol" = 4
 
-[projects."/Users/mtsai/projects/riben.life"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/pstv/web2"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/pstv"]
-trust_level = "trusted"
-
 [desktop]
 followUpQueueMode = "steer"
 conversationDetailMode = "STEPS_PROSE"
@@ -210,54 +201,3 @@ enabled = false
 
 [apps.connector_openai_codex_document_control]
 enabled = false
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-e2e-1642-1666"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-money-1588-1666"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-repair-security"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-clean-money"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-clean-architect"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-clean-e2e"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-qa-exact-head"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-secops-exact-head"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-qa-exact-head-retry"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-secops-exact-head-retry"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-flash-secops"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-flash-integration"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-flash-qa"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/launch-tech-lead-clean"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/self-serve-ordering-spec-codex"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/self-serve-ordering-spec-codex-retry"]
-trust_level = "trusted"
-
-[projects."/Users/mtsai/orca/workspaces/riben.life/role-readiness-sales"]
-trust_level = "trusted"

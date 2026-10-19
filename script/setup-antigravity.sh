@@ -39,7 +39,13 @@ if [ ! -f "$AG_SRC/settings.json" ] || [ ! -f "$AG_SRC/keybindings.json" ]; then
 fi
 
 mkdir -p "$AG_USER"
-ln -sfn "$AG_SRC/settings.json" "$AG_USER/settings.json"
+if [ -f "$AG_SRC/settings.local.json" ]; then
+  # An untracked settings.local.json adds list items (spell words), so the result is a rendered copy, not a link.
+  rm -f "$AG_USER/settings.json"
+  python3 "$DOTFILES/script/apply-ide-overlay.py" "$AG_SRC/settings.json" "$AG_SRC/settings.local.json" > "$AG_USER/settings.json"
+else
+  ln -sfn "$AG_SRC/settings.json" "$AG_USER/settings.json"
+fi
 ln -sfn "$AG_SRC/keybindings.json" "$AG_USER/keybindings.json"
 echo "setup-antigravity: linked $AG_USER/{settings,keybindings}.json -> $AG_SRC/"
 
