@@ -50,7 +50,7 @@ quantity/currency rule requires owner Copy approval: the owner runs
 `bin/owner-approve.sh copy <current full sha>` in a terminal, which writes
 `~/.config/<namespace>/approval.json` (scope `copy`, that sha, 30 minutes).
 lead-merge.sh reads the namespace from `APPROVAL_NAMESPACE` in the repo's
-`.claude/hooks/guard-bash.py` (or `approval_namespace` in `copy-only.config.json`).
+`.claude/hooks/guard-bash.py` (or `approval_namespace` in `copy-only.config.json`). When `guard-bash.py` is missing or unreadable, the script falls back to the configured value; with neither it refuses with a `no approval namespace` message naming the missing file.
 A GitHub comment approves nothing, because every agent's gh login is the owner's. `Copy topics: none` cannot
 turn off the backstop. An unchanged key path alone does not trigger approval;
 the old or changed value must itself contain a backstop term. Added or removed
@@ -70,8 +70,23 @@ is protected from agents only for Claude workers (guard-bash.py denies running
 could write it. Keep Codex workers out of the lead worktree's merge step and
 the owner's home directory until a sandbox rule covers it.
 
-Known limitations: spelled-out quantities such as `one hundred`, `一百`, and `百`
-are not recognized by the quantity guard. A configured nearby topic can still
-require approval, but generic spelled-out quantity changes remain outside scope.
-Cyrillic homoglyphs and rendered concatenation across physical files are not
+Spelled-out quantities: the quantity guard also counts CJK numeral characters
+(`一二三…十百千萬`, financial forms such as `壹` and `佰`) and English number words
+(`one`, `hundred`, `thousand`, `half`, `dozen` and similar). A change in how many of
+each a value contains routes to owner Copy approval, so `一百` to `二百`, `百` to `千`
+and `one hundred` to `two hundred` are caught. This is a conservative tripwire, not
+a lexicon. It cannot see a number written as another word (`a couple`, `一打`,
+`半額`, `ひゃく`), a swap that keeps the same count of number characters
+(`二百` to `百二`), or a number spread across keys. Rewording that adds or drops a
+common character such as `一` also trips it, which is accepted.
+
+Semantic review is the control. The independent verifier reads every changed value
+for any change of amount, count, duration, date or percentage, spelled with digits
+or words, in tw, en and jp, and answers `Copy topics: owner` for any such change.
+Examples that need `owner`: `滿一百送一` to `滿二百送一`, `百人限定` to `千人限定`,
+`先着百名様` to `先着千名様`, `Open one hundred seats` to `Open two hundred seats`,
+`半額` to `三割引`. Examples that stay `none`: a typo fix in a sentence with no
+amount, or `Welcome one and all` reworded with the same number words.
+
+Known limitations: Cyrillic homoglyphs and rendered concatenation across physical files are not
 modeled; screenshot receipt words do not establish actual image inspection.

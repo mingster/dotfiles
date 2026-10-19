@@ -816,5 +816,75 @@ check "real merge of main keeps the countersign" 0 '^MERGED' 1
 SHA=$R; headsha=$R; checks="Checks: PASS head=$R"; comments="Verdict: PASS head=$R verifier=ctx_verify author=ctx_author"
 check "real changed patch loses the countersign" 1 'Countersign'
 
+# Spelled-out quantities (issue 3832 item 2): a changed number word is owner-held
+# even though it has no digit, currency marker or topic word.
+for surface in marketing locale; do
+  while IFS='|' read -r before after; do
+    copy_setup
+    if [ "$surface" = marketing ]; then
+      probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
+      printf '%s\n' "$before" > "$probe_file"
+    else
+      probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+      jq -n --arg value "$before" '{greeting:$value}' > "$probe_file"
+    fi
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm spelled-base
+    base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+    if [ "$surface" = marketing ]; then
+      printf '%s\n' "$after" > "$probe_file"
+    else
+      jq -n --arg value "$after" '{greeting:$value}' > "$probe_file"
+    fi
+    copy_commit
+    comments+=$'\nPhone-width screenshots in tw, en and jp.'
+    check "$surface spelled quantity $before to $after requires approval" 1 'owner copy approval'
+  done <<'CASES'
+滿一百送一|滿二百送一
+一百人|二百人
+百人|千人
+百名様|千名様
+一千円|二千円
+Open one hundred|Open two hundred
+Seats: Hundred|Seats: Thousand
+CASES
+done
+# Unchanged number words and wording that keeps the same number words stay light.
+for pair in '一起來|一起來吧' 'Welcome one and all|Welcome one and all, friends'; do
+  copy_setup
+  before=${pair%%|*}; after=${pair#*|}
+  printf '%s\n' "$before" > "$REAL_PATCH_REPO/marketing/content/home.md"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm spelled-same-base
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  printf '%s\n' "$after" > "$REAL_PATCH_REPO/marketing/content/home.md"
+  copy_commit
+  comments+=$'\nPhone-width screenshots in tw, en and jp.'
+  check "same number words ($before) stay on the light route" 0 'lane=copy-only' 1
+done
+
+# Missing guard-bash.py (issue 3832 item 3): fall back to the configured namespace
+# or print a clear diagnostic, and still fail closed.
+mkdir -p "$tmp/gate2"
+cp "$here/lead-merge.sh" "$tmp/gate2/lead-merge.sh"
+LEAD_MERGE="$tmp/gate2/lead-merge.sh"
+hooks_file="$LEAD/.claude/hooks/guard-bash.py"
+mv "$hooks_file" "$hooks_file.away"
+copy_setup
+printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
+copy_commit
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: owner\nPhone-width screenshots in tw, en and jp.'
+jq 'del(.approval_namespace)' "$here/copy-only.config.json" > "$tmp/gate2/copy-only.config.json"
+check "missing guard-bash.py without configured namespace prints diagnostic" 1 'no approval namespace'
+jq '. + {approval_namespace:"proj"}' "$here/copy-only.config.json" > "$tmp/gate2/copy-only.config.json"
+check "missing guard-bash.py with configured namespace still needs approval" 1 'owner copy approval'
+write_approval copy "$SHA"
+check "missing guard-bash.py falls back to configured namespace" 0 'lane=normal' 1
+rm -f "$APPROVAL"
+mv "$hooks_file.away" "$hooks_file"
+unset LEAD_MERGE
+
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]

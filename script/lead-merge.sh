@@ -133,8 +133,12 @@ def increased(before, after):
 def quantities(values):
     # Compare tokens per value so independent locale keys cannot assemble numbers.
     from collections import Counter
+    # Spelled-out numbers (CJK numerals and English number words) are compared too, so
+    # 一百→二百, 百→千 and "one hundred"→"two hundred" route to owner review. This is a
+    # conservative tripwire for a changed count, not a lexicon: semantic review still decides.
     return Counter(token for value in values for token in
-                   re.findall(r"\d+|NT\$|\$|¥|元|円|USD|TWD|JPY|%", html.unescape(value), re.IGNORECASE))
+                   re.findall(r"\d+|NT\$|\$|¥|元|円|USD|TWD|JPY|%|[零〇一二三四五六七八九十百千萬万億亿兩两壹貳參叁肆伍陸柒捌玖拾佰仟]|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty|hundred|thousand|million|billion|half|dozen)\b",
+                                    html.unescape(value), re.IGNORECASE))
 def flatten(value, path=()):
     if isinstance(value, str):
         return {path: value}
@@ -326,9 +330,15 @@ echo "lead-merge: lane=$lane"
 if [ "$sensitive" = true ]; then
   # Owner Copy approval is `bin/owner-approve.sh copy <sha>`, a terminal-only file.
   # No GitHub comment approves anything: every agent's gh login is the owner's.
-  ns=$(sed -n 's/^APPROVAL_NAMESPACE *= *"\([a-z0-9_-]*\)".*/\1/p' "$top/.claude/hooks/guard-bash.py" 2>/dev/null | head -n1)
+  # A missing or unreadable guard-bash.py must not end the script under set -e before
+  # the configured fallback; it only leaves the namespace empty, which still refuses.
+  ns=""
+  if [ -r "$top/.claude/hooks/guard-bash.py" ]; then
+    ns=$(sed -n 's/^APPROVAL_NAMESPACE *= *"\([a-z0-9_-]*\)".*/\1/p' "$top/.claude/hooks/guard-bash.py" 2>/dev/null | head -n1) || ns=""
+  fi
   [ -n "$ns" ] || ns=$(jq -r '.approval_namespace // empty' "$(dirname "$0")/copy-only.config.json" 2>/dev/null) || ns=""
-  [ -n "$ns" ] || die "no approval namespace (APPROVAL_NAMESPACE in .claude/hooks/guard-bash.py or approval_namespace in copy-only.config.json)"
+  [ -n "$ns" ] || die "no approval namespace (APPROVAL_NAMESPACE in .claude/hooks/guard-bash.py, missing or unreadable at $top/.claude/hooks/guard-bash.py, or approval_namespace in copy-only.config.json)"
+  case "$ns" in *[!a-z0-9_-]*) die "invalid approval namespace" ;; esac
   approval_file="$HOME/.config/$ns/approval.json"
   # An approval holds while the head moves without changing content: it matches the
   # head sha, or the zero context stable patch-id against the merge base with main.
