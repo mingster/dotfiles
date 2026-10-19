@@ -53,9 +53,9 @@
   <line x1="672.0675" y1="220.45" x2="245.55149999999998" y2="220.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
   <text x="458.80949999999996" y="210.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">Market data &amp; unit economics</text>
 </g>
-<g class="message" data-from="CEO" data-to="BA" data-label="Analyze requirements &amp; draft spec.md / tickets.md" data-line-style="solid" data-arrow-head="filled" data-self="false">
+<g class="message" data-from="CEO" data-to="BA" data-label="Analyze requirements &amp; draft spec.md / tickets" data-line-style="solid" data-arrow-head="filled" data-self="false">
   <line x1="245.55149999999998" y1="288.45" x2="460.2915" y2="288.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
-  <text x="352.9215" y="278.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">Analyze requirements &amp; draft spec.md / tickets.md</text>
+  <text x="352.9215" y="278.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">Analyze requirements &amp; draft spec.md / tickets</text>
 </g>
 <g class="message" data-from="BA" data-to="CEO" data-label="PRD &amp; machine-checkable ticket contracts" data-line-style="dashed" data-arrow-head="filled" data-self="false">
   <line x1="460.2915" y1="328.45" x2="245.55149999999998" y2="328.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
