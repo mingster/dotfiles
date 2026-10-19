@@ -209,6 +209,7 @@ MECH=1
 setup; comments=""; PR_DIFF="$SUBST"; check "mechanical substitution needs no verdict" 0 'mechanical lane' 1
 setup; comments=""; PR_DIFF="$SUBST"$'diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n'; check "mechanical allows whole file deletion" 0 'mechanical lane' 1
 setup; comments=""; PR_DIFF=$'diff --git a/script/foo.sh b/script/foo.sh\n--- a/script/foo.sh\n+++ b/script/foo.sh\n@@ -1 +1,2 @@\n echo hi\n+rm -rf "$x"\n'; check "mechanical refuses added logic line" 1 'pure substitution'
+setup; comments=""; PR_DIFF=$'diff --git a/script/a b/c.sh b/script/a b/c.sh\n--- a/script/a b/c.sh\n+++ b/script/a b/c.sh\n@@ -1 +1,2 @@\n echo hi\n+rm -rf "$x"\n'; check "mechanical names a path with spaces" 1 'script/a b/c.sh: 0 removed, 1 added'
 setup; comments=""; PR_DIFF=$'diff --git a/script/new.sh b/script/new.sh\nnew file mode 100755\n--- /dev/null\n+++ b/script/new.sh\n@@ -0,0 +1 @@\n+echo hi\n'; check "mechanical refuses new script" 1 'new file'
 setup; comments=""; PR_DIFF=$'diff --git a/a b/b\nsimilarity index 90%\nrename from a\nrename to b\n'; check "mechanical refuses rename" 1 'renames'
 setup; comments=""; PR_DIFF="$SUBST"; checks="Checks: PASS head=$SHA"$'\nUnchecked paths: script/foo.sh'; check "mechanical refuses unchecked paths" 1 'unchecked'

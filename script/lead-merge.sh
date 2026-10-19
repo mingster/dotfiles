@@ -279,12 +279,15 @@ if [ "$mechanical" = true ]; then
   [ "$lane" = normal ] && [ "$sensitive" = false ] || die "--mechanical is not for copy-only changes"
   [ "$unchecked" = false ] || die "--mechanical needs every path checked (head-checks lists unchecked paths)"
   grep -qE '^(rename|copy|similarity|Binary files|GIT binary patch)' <<<"$diff" && die "--mechanical refuses renames, copies and binary changes"
+  # Paths come from the ---/+++ lines (to end of line, so spaces and quoted names work), not from the diff --git line.
   bad=$(awk '
     function flush() { if (file != "" && !deleted && !created && (plus != minus)) print file ": " minus " removed, " plus " added"; plus = minus = 0 }
-    /^diff --git / { flush(); file = $4; sub(/^b\//, "", file); deleted = created = 0; next }
-    /^new file mode/ { created = 1; if (file !~ /^changelog\.d\//) print file ": new file"; next }
+    function path(l) { sub(/^(\+\+\+|---) /, "", l); sub(/\t.*$/, "", l); gsub(/^"|"$/, "", l); sub(/^[ab]\//, "", l); return l }
+    /^diff --git / { flush(); file = "?"; deleted = created = 0; next }
+    /^new file mode/ { created = 1; next }
     /^deleted file mode/ { deleted = 1; next }
-    /^\+\+\+ |^--- / { next }
+    /^--- / { if ($0 !~ /^--- \/dev\/null/) file = path($0); next }
+    /^\+\+\+ / { if ($0 !~ /^\+\+\+ \/dev\/null/) file = path($0); if (created && file !~ /^changelog\.d\//) print file ": new file"; next }
     /^\+/ { plus++ } /^-/ { minus++ }
     END { flush() }' <<<"$diff")
   [ -z "$bad" ] || die "--mechanical needs a pure substitution or deletion diff: $bad"
