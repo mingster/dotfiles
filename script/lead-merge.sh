@@ -234,7 +234,6 @@ patch_id() {
   [ -n "$patch" ] || return 1
   awk 'NR == 1 {print $1}' <<<"$patch"
 }
-verdict_head="$head"
 # Dispatch ids Orca knows about, read lazily and once, following page cursors.
 known_dispatches=""
 load_dispatches() {
@@ -292,7 +291,6 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only 
         # author=unknown is the one literal allowed without a dispatch; any other author must be known.
         [ "$author_id" = unknown ] || grep -Fxq -- "$author_id" <<<"$known_dispatches" || die "verdict author $author_id is not a known dispatch"
         [ "$flagged" = false ] || die "verdict comment was edited or minimized; post a fresh Verdict"
-        [ ${#applicable[@]} -gt 0 ] || verdict_head="$candidate_head"
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
@@ -359,14 +357,28 @@ done < <(jq -r '.[]' <<<"$files")
 if [ -n "$triggers" ]; then
   echo "lead-merge: countersign triggers:" >&2
   printf '%s\n' "$triggers" >&2
-  jq -e --arg prefix "Countersign: Elon head=$head reason=" \
-    'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]")))' <<<"$info" >/dev/null \
-    || die "missing Countersign: Elon for current head"
+  # Checks: PASS for the current head is already required above. Like a retained
+  # Verdict, a Countersign for an older head holds when its patch-id equals the current head's.
+  countersigned() { # head
+    jq -e --arg prefix "Countersign: Elon head=$1 reason=" \
+      'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]")))' <<<"$info" >/dev/null
+  }
+  if ! countersigned "$head"; then
+    current_patch=""
+    while IFS= read -r candidate_head; do
+      [ "$candidate_head" != "$head" ] || continue
+      current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for countersign"
+      old_patch=$(patch_id "$candidate_head") || continue
+      if [ "$old_patch" = "$current_patch" ] && countersigned "$candidate_head"; then countersign_ok=true; break; fi
+    done < <(jq -r '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=").h?' <<<"$info" | awk '!seen[$0]++')
+    [ "${countersign_ok:-}" = true ] || die "missing Countersign: Elon for current head or stable patch-id"
+  fi
 fi
 
 # Fetch immediately before merge; any shared changed path needs a new exact-head run.
 git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
-ancestor=$(git merge-base "$(field .baseRefOid)" "$verdict_head") || die "cannot find merge base; rebase and rerun head-checks"
+# A Verdict retained by patch-id is judged against the current head, which has the trunk it was checked on.
+ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
 trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
 while IFS= read -r f; do
   if grep -Fxq -- "$f" <<<"$trunk_files"; then die "trunk changed $f; rebase and rerun head-checks"; fi

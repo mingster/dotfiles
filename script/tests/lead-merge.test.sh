@@ -188,6 +188,10 @@ setup; PR_DIFF=$'+// biome-ignore lint'; check "trigger biome-ignore lint needs 
 setup; PR_DIFF=$'+// @ts-ignore'; check "trigger @ts-ignore needs countersign" 1 'Countersign'
 setup; files='[{"path":".agents/head-checks.conf"}]'; PR_DIFF=$'+++ b/.agents/head-checks.conf\n+echo changed'; check "check config prints countersign trigger" 1 'head-checks.conf:\+echo changed'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$SHA reason=fixture only"; check "countersigned skip allowed" 0 '^MERGED' 1
+# A countersign follows an equal patch-id head (checks and verdict still bind the current head).
+setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; check "countersign retained on equal patch-id" 0 '^MERGED' 1
+setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; OLD_PATCH=different; check "countersign refused on different patch-id" 1 'Countersign'
+setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; checks="Checks: PASS head=$OLD"; check "countersign refused without checks on the current head" 1 'Checks: PASS'
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'
 setup; TRUNK_FILES="unrelated.sh"; export TRUNK_FILES; check "disjoint trunk drift allowed" 0 '^MERGED' 1
 setup; files='[{"path":".agents/skills/a/SKILL.md"}]'; comments=""; check "skills need verifier" 1 'verdict'
@@ -790,6 +794,27 @@ G add .; G commit -qm one-more-line; C=$(G rev-parse HEAD); SHA=$C; headsha=$C
 PR_DIFF=$(G diff "$base_sha...$C"); approval_attest
 check "one changed line after approval refuses" 1 'owner copy approval'
 rm -f "$APPROVAL"
+
+# Retained verdict and countersign when main was merged into the branch (real graph).
+rr() { G checkout -q -B "$1" "$2"; }
+rm -f "$APPROVAL"
+rr main2 "$(G rev-parse refs/heads/main)"; mkdir -p "$REAL_PATCH_REPO/lib"
+seq 1 10 > "$REAL_PATCH_REPO/lib/pr2.txt"; G add .; G commit -qm lib; M1=$(G rev-parse HEAD); set_main "$M1"
+rr pr2 "$M1"; echo pr >> "$REAL_PATCH_REPO/lib/pr2.txt"; G commit -qam pr2; P=$(G rev-parse HEAD)
+rr main3 "$M1"; sed -i.bak 's/^1$/one/' "$REAL_PATCH_REPO/lib/pr2.txt"; rm -f "$REAL_PATCH_REPO/lib/pr2.txt.bak"
+G commit -qam trunk-edit; M2=$(G rev-parse HEAD); set_main "$M2"
+G checkout -q pr2; G merge -q --no-edit main3 >/dev/null; Q=$(G rev-parse HEAD)
+echo more >> "$REAL_PATCH_REPO/lib/pr2.txt"; G commit -qam pr2-more; R=$(G rev-parse HEAD)
+files='[{"path":"lib/pr2.txt"}]'; PR_DIFF=""; countersign=""
+SHA=$Q; headsha=$Q; checks="Checks: PASS head=$Q"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"
+check "retained verdict ignores trunk already in the current head" 0 '^MERGED' 1
+SHA=$P; headsha=$P; checks="Checks: PASS head=$P"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"
+check "exact head without trunk still refused" 1 'trunk changed lib/pr2.txt' 
+SHA=$Q; headsha=$Q; checks="Checks: PASS head=$Q"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"
+PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$P reason=fixture only"
+check "real merge of main keeps the countersign" 0 '^MERGED' 1
+SHA=$R; headsha=$R; checks="Checks: PASS head=$R"; comments="Verdict: PASS head=$R verifier=ctx_verify author=ctx_author"
+check "real changed patch loses the countersign" 1 'Countersign'
 
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]
