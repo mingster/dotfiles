@@ -107,7 +107,7 @@ The real cloud gap is the reverse: nothing in the repos points at dotfiles, so a
 * R (17): agent-browser, capture-intent, code-review, codebase-design, create-pr, diagnosing-bugs, domain-modeling, elon, grill-with-docs, orca-cli, orchestration, research, resolving-merge-conflicts, tdd, to-spec, to-tickets, write-spec.
 * P (16): the same list without orchestration (P commits its own `SKILL.md`).
 
-Both repos start every session as Elon (`"agent": "elon"` in `.claude/settings.json`), so a cloud session opens as a CEO whose own skill is missing.
+Sessions no longer start as Elon (owner rule 2026-10-20); the team runs only on `/elon`, `/crew` or `/tl`.
 
 ## Migration plan
 

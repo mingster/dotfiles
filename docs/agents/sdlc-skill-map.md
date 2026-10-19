@@ -7,7 +7,7 @@ Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/
 ## Two facts that drive most fixes
 
 1. **A `disable-model-invocation` skill runs only when named.** grill-me, grill-with-docs, handoff, implement, improve-codebase-architecture, retro, to-spec, to-tickets, triage and wayfinder carry the flag. Claude Code skips them in a role's `skills:` list (preloading draws from the skills the model may invoke) and refuses them through the Skill tool; Codex and Antigravity hide them until the prompt names them. An Orca worker spec is not a typed slash command, so the spec names the file: "read `~/.agents/skills/<name>/SKILL.md` and follow it".
-2. **`skills:` preloads the whole skill on every start.** Only `claude --agent <role>` and Elon's session (`"agent": "elon"`) read it; default Orca workers read the role body. So `skills:` holds the role's primary skills only, and the body names the rest with when to load them.
+2. **`skills:` preloads the whole skill on every start.** Only `claude --agent <role>` reads it; default Orca workers read the role body. So `skills:` holds the role's primary skills only, and the body names the rest with when to load them.
 
 ## Map
 

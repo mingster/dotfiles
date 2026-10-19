@@ -11,7 +11,7 @@ The roles, task list, hotfix loop and gates are the same; only the mechanics cha
 - **Codex.** It reads `AGENTS.md` only, not `.claude/agents/`. Start each worker in its own Orca worktree, tell it to read `.claude/agents/<role>.md` first, and pass the model per `.claude/model-routing.md`. There is no mailbox, so relay messages as for Cursor.
 - **Strike rule.** The strike hook runs only in Claude Code. In these tools the strike rule in `AGENTS.md` is the only guard, so keep it there.
 - **Moving a task between providers.** Use the `orchestration` skill for a supervised retry, with the usage gate and provider policy in `.claude/model-routing.md`. Use the `orca-cli` skill for an unsupervised handoff.
-- **Front door.** Claude Code starts as Elon through settings. In Cursor, Codex and Antigravity run `/elon` first, then delegate as described here. Teammates report to Elon only.
+- **Front door.** The agent team runs only when called: in every tool run `/elon` (or `/crew`, `/tl`) first, then delegate as described here. A plain session is not the team. Teammates report to Elon only.
 - **Skills.** When a skill cannot be loaded by name, read its `SKILL.md` from `.agents/skills/` or `~/.agents/skills/`.
 
 ## Reporting without a mailbox
