@@ -43,6 +43,10 @@ def main():
     cwd = os.path.realpath(data.get("cwd") or os.getcwd())
     if not cwd.startswith(WORKSPACES + os.sep):
         return
+    # The Tech Lead runs in a lead-* worktree (the name lead-merge.sh checks); it is never capped.
+    parts = cwd[len(WORKSPACES) + 1:].split(os.sep)
+    if len(parts) > 1 and parts[1].startswith("lead-"):
+        return
     n = turns(data["transcript_path"], str(data.get("session_id", "unknown")))
     event = data.get("hook_event_name")
     if event == "PostToolUse" and n >= WARN:
