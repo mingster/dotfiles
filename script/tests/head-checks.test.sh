@@ -27,7 +27,7 @@ else: sys.exit(1)
         (repo/'.env.local').write_text('secret=SECRET_MUST_NOT_APPEAR\n')
         result=subprocess.run(['bash',runner,'--repo',str(repo),*(['--pr','7'] if pr else ['--ref',head]),*(['--config',str(conf)] if override else [])],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
         receipt=comments.read_text() if comments.exists() else ''
-        good=(result.returncode==expected and ('Checks: '+('PASS' if expected==0 else 'FAIL')+' head='+head in receipt if pr else not comments.exists()) and 'SECRET_MUST_NOT_APPEAR' not in result.stdout+receipt and not (root/'home/orca/workspaces/fixture/_checks').exists())
+        good=(result.returncode==expected and ('Checks: '+('PASS' if expected==0 else 'FAIL')+' head='+head in receipt if pr else not comments.exists()) and 'SECRET_MUST_NOT_APPEAR' not in result.stdout+receipt and not (root/'home/orca/workspaces/fixture/_checks.lock').exists())
         if good: passed+=1; print('ok  ',name)
         else: failed+=1; print('FAIL',name,result.returncode,result.stdout,receipt)
         return result,head
@@ -97,6 +97,18 @@ else: sys.exit(1)
     explicit=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf)],env=env,text=True,capture_output=True)
     if explicit.returncode==0: passed+=1; print('ok   historical ref with explicit base')
     else: failed+=1; print('FAIL explicit base',explicit.stdout,explicit.stderr)
+    # The check worktree persists: ignored caches survive a rerun, untracked files do not, and a held lock refuses a second run.
+    wt=root/'home/orca/workspaces/fixture/_checks'
+    (repo/'.git/info/exclude').write_text('node_modules\n'); (wt/'node_modules').mkdir(exist_ok=True); (wt/'node_modules/cache').write_text('kept'); (wt/'stray.txt').write_text('gone')
+    conf.write_text(line('reuse')+'\n'); git('add','.agents/head-checks.conf'); git('commit','-qm','reuse config')
+    reuse=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env=env,text=True,capture_output=True)
+    if reuse.returncode==0 and (wt/'node_modules/cache').exists() and not (wt/'stray.txt').exists(): passed+=1; print('ok   check worktree reused, caches kept')
+    else: failed+=1; print('FAIL worktree reuse',reuse.stdout,reuse.stderr)
+    lock=pathlib.Path(str(wt)+'.lock'); lock.mkdir(); (lock/'pid').write_text(str(os.getppid()))
+    locked=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env=env,text=True,capture_output=True)
+    if locked.returncode==1 and 'in use' in locked.stdout+locked.stderr and lock.exists(): passed+=1; print('ok   locked worktree refuses second run')
+    else: failed+=1; print('FAIL lock',locked.stdout,locked.stderr)
+    import shutil; shutil.rmtree(lock)
 print(f'passed {passed}, failed {failed}')
 sys.exit(bool(failed))
 PY
