@@ -134,7 +134,7 @@ run_case() { # result_file run_script name expected_exit output_regex [merge_cal
     "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
   fi
   mkjson
-  out=$("$run" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
+  out=$("$run" --repo o/r --pr 7 --head "$SHA" ${MECH:+--mechanical} 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
   if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ] \
     && { [ -z "${5:-}" ] || grep -qE -- "$5" "$MERGE_LOG.calls"; }; then echo "ok   $1" > "$res"
@@ -203,6 +203,20 @@ check "intent accepted refused" 1 'accepts an intent'
 setup; files='[{"path":"docs/intent/a/intent.md"}]'
 PR_DIFF=$'+++ b/docs/intent/a/intent.md\n+Some text mentioning Accepted\n'
 check "intent edit without status change allowed" 0 '^MERGED' 1
+# Mechanical lane: substitution or deletion only, no Verdict.
+SUBST=$'diff --git a/script/foo.sh b/script/foo.sh\n--- a/script/foo.sh\n+++ b/script/foo.sh\n@@ -1,2 +1,2 @@\n-cd /Users/x/dotfiles\n+cd "$HOME/dotfiles"\n echo hi\n'
+MECH=1
+setup; comments=""; PR_DIFF="$SUBST"; check "mechanical substitution needs no verdict" 0 'mechanical lane' 1
+setup; comments=""; PR_DIFF="$SUBST"$'diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n'; check "mechanical allows whole file deletion" 0 'mechanical lane' 1
+setup; comments=""; PR_DIFF=$'diff --git a/script/foo.sh b/script/foo.sh\n--- a/script/foo.sh\n+++ b/script/foo.sh\n@@ -1 +1,2 @@\n echo hi\n+rm -rf "$x"\n'; check "mechanical refuses added logic line" 1 'pure substitution'
+setup; comments=""; PR_DIFF=$'diff --git a/script/a b/c.sh b/script/a b/c.sh\n--- a/script/a b/c.sh\n+++ b/script/a b/c.sh\n@@ -1 +1,2 @@\n echo hi\n+rm -rf "$x"\n'; check "mechanical names a path with spaces" 1 'script/a b/c.sh: 0 removed, 1 added'
+setup; comments=""; PR_DIFF=$'diff --git a/script/new.sh b/script/new.sh\nnew file mode 100755\n--- /dev/null\n+++ b/script/new.sh\n@@ -0,0 +1 @@\n+echo hi\n'; check "mechanical refuses new script" 1 'new file'
+setup; comments=""; PR_DIFF=$'diff --git a/a b/b\nsimilarity index 90%\nrename from a\nrename to b\n'; check "mechanical refuses rename" 1 'renames'
+setup; comments=""; PR_DIFF="$SUBST"; checks="Checks: PASS head=$SHA"$'\nUnchecked paths: script/foo.sh'; check "mechanical refuses unchecked paths" 1 'unchecked'
+setup; comments=""; PR_DIFF="$SUBST"; files='[{"path":".codex/config.toml"}]'; check "mechanical still refuses protected paths" 1 'owner through Elon'
+setup; comments=""; PR_DIFF="$SUBST"; files='[{"path":"script/lead-merge.sh"}]'; check "mechanical gate file still needs countersign" 1 'Countersign'
+setup; comments=""; PR_DIFF="$SUBST"; checks=""; check "mechanical still needs Checks PASS" 1 'Checks'
+unset MECH
 setup; MERGE_FAILS=1; check "one retry then success" 0 '^MERGED' 2
 setup; MERGE_FAILS=2; check "merge failure prints error, exits 1" 1 'merge failed: boom' 2
 setup; FINAL_JSON='{"state":"OPEN","url":"u"}'; check "unconfirmed merge fails" 1 'not MERGED' 1
