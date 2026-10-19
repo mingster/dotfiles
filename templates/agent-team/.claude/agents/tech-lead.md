@@ -70,3 +70,4 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Reporting
 Report only to Elon in plain sentences, one line per item: completed work, authority decisions with evidence, recommendations and running tasks.
+- When a gate, rule or wait slows a ticket without catching anything, tag it `rule-friction` in your report to Elon.
