@@ -5,9 +5,6 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export ORCA_CLI_COMMAND=orca HOME="$tmp/home" PATH="$tmp/bin:$PATH" WATCHDOG_TEST_ACTIONS="$tmp/actions" WATCHDOG_TEST_MODE=idle
 mkdir -p "$HOME" "$tmp/bin"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$WATCHDOG_TEST_NOTIFY"\n' > "$tmp/bin/osascript"
-chmod +x "$tmp/bin/osascript"
-export WATCHDOG_TEST_NOTIFY="$tmp/notify"
 cat > "$tmp/bin/orca" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -133,11 +130,10 @@ WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --i
 [[ $(count 'orchestration send') == 2 ]]
 grep -q 'unread-report msg_a' "$tmp/actions" && grep -q 'unread-report msg_b' "$tmp/actions"
 ! grep -q 'msg_new\|msg_read\|msg_status\|msg_other' "$tmp/actions"
-# A failed send lands in alerts.log and a notification; the third consecutive failure is flagged.
-rm -rf "$HOME/.orca"; : > "$tmp/actions"; : > "$tmp/notify"
+# A failed send lands in alerts.log; the third consecutive failure is flagged.
+rm -rf "$HOME/.orca"; : > "$tmp/actions";
 WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
 [[ $(grep -c 'undelivered (run run_live): unread-report' "$HOME/.orca/state/worker-watchdog/alerts.log") == 2 ]]
-[[ $(wc -l < "$tmp/notify") == 2 ]]
 rm -rf "$HOME/.orca"
 python3 - "$tmp/inbox.json" "$now_old" <<'PY'
 import json,sys

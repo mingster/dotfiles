@@ -48,12 +48,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp" "$state/lock"' EXIT
 trap 'exit 0' INT TERM
 log_action() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$log"; }
-# Alerts that cannot be delivered must still reach a human: alerts.log plus a macOS notification.
+# Alerts that cannot be delivered must still reach a human: they go to alerts.log.
 alert_fallback() {
   printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$alerts"
-  if command -v osascript > /dev/null 2>&1; then
-    osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "Worker watchdog"' -e 'end run' "$1" > /dev/null 2>&1 || true
-  fi
 }
 # escalate RUN SUBJECT BODY: send to that run's coordinator on that run.
 escalate() {
