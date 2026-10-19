@@ -36,8 +36,11 @@ Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/
 * dotfiles `AGENTS.md` named `implement-spec`, which is not vendored (`skills-inventory.md` explains why).
 * `script/init-agent-project.sh` wrote `$to-tickets` inside an unquoted heredoc, which aborts under `set -u`; escaped, and the "Invoking skills" block now covers Claude Code. <project-a> `AGENTS.md` gained the block <project-b> already had.
 
-## Open
+## Open items closed
 
-* `docs/agents/agent-team-architecture.md` (with its SVG and PDF) still shows `tickets.md`; regenerate it with the diagrams.
-* No cadence for `improve-codebase-architecture`; upstream suggests every few days.
-* Upstream `pr` (PR body shape) is not vendored; Elon writes PR bodies by hand.
+Closed by owner rulings (issue 73):
+
+* `agent-team-architecture.md` and its SVGs now say GitHub issues instead of `tickets.md`; the PDF is deleted.
+* `improve-codebase-architecture` gets no cadence. Owner decision: no change.
+* Upstream `pr` stays unvendored; `create-pr` stays. Owner decision: no change.
+* The `team-audit` default projects come from the untracked `script/team-audit.local.conf` (one real checkout per line), never a bare repo.

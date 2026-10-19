@@ -29,7 +29,7 @@ flowchart TD
     CEO --> BA
     CEO --> TL
     
-    BA -- "Machine-Checkable Ticket Contracts (tickets.md)" --> TL
+    BA -- "Machine-Checkable Ticket Contracts (GitHub issues)" --> TL
     CEO --> Dev
     CEO --> QA
     CEO --> SecOps
@@ -43,7 +43,7 @@ Not drawn: `support-csm` (customer support and success) in both projects, and `s
 - **Mingster (board).** Talks to Elon (`/elon` or `/ceo`) as executive peer and sounding board. Keeps approval over permanent pricing, discounts and plan fees; irreversible production data migrations or schema drops; production deployments (go or no go); external spending and advertising.
 - **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (Tech Lead and workers). Plans, dispatches every teammate with Orca orchestration (skill `orchestration`, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents or experimental agent teams. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; progress, merges, reviews and staging deploys are not reported. On request the format is **Now**, **Needs owner**, **Running**.
 - **Sales and Marketing (`sales-marketing`).** Validates demand and acquisition channels (CAC, LTV, churn, activation) and supplies evidence based problem definitions. Never sends unapproved marketing email, touches production ledgers or offers unapproved discounts.
-- **BA (`architect-pm` / 需求分析師).** Turns pain points and owner vision into `intent.md`, then `spec.md` (PRD), then machine checkable ticket contracts (`tickets.md`); works with the Tech Lead on handoffs. Never writes application code.
+- **BA (`architect-pm` / 需求分析師).** Turns pain points and owner vision into `intent.md`, then `spec.md` (PRD), then machine checkable ticket contracts (GitHub issues); works with the Tech Lead on handoffs. Never writes application code.
 - **Tech Lead (`lead`).** Reports delivery status and capacity to Elon. Publishes and integrates reviewed branches, keeps branches and worktrees clean, coordinates releases, starts and supervises engineering workers in Orca with the same usage gate. Receives ticket contracts from the BA. *Merging:* the Tech Lead pushes branches, opens PRs and merges reviewed work ("Commit, push and merge" in `.claude/model-routing.md`); workers commit on their own branches and report; Elon owns priorities and owner decisions. Once required risk-based reviewers (including SecOps or stream-health where required) approve the current full head SHA, checks are green and the PR is mergeable, the lead merges at once, never with `--admin`. PRs accepting an intent or spec, every production deploy and migrations still go to the owner. Release-manager pushes only the staging and production branches.
 - **Support tickets (owner rule 2026-10-12).** When a ticket or support email arrives: the problem is resolved first when it needs a fix, `support-csm` drafts the reply in the customer's language, and Elon notifies Mingster at once with the ticket, what was done and the draft. Nothing is sent before he approves. A ticket found in the daily run or a status check is reported the same day.
 
@@ -64,7 +64,7 @@ sequenceDiagram
     CEO->>BA: Analyze requirements & draft intent
     BA->>Owner: Present intent.md (Accepted by Owner)
     BA->>BA: Grill & compile spec.md (PRD + ADRs)
-    BA->>TL: Hand off tickets.md (Machine-checkable contracts)
+    BA->>TL: Hand off GitHub issue tickets (Machine-checkable contracts)
     
     CEO->>TL: Hand off engineering scope and owner gates
     alt Fast-Path (<= 3 files, chore, bug)
@@ -89,7 +89,7 @@ sequenceDiagram
 
 ## 4. Ticket and review contracts
 
-Each BA ticket (`tickets.md`) defines:
+Each BA ticket (a GitHub issue) defines:
 
 1. **Allowed files:** the exact files or folders the agent may touch. Any edit outside fails review.
 2. **Verification command:** the deterministic test that gates the ticket (for example `bun test --isolate <path>`, `bun run lint`).
