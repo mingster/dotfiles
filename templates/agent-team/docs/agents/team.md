@@ -82,7 +82,7 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 5. **Evidence:** report diff statistics, check counts and open items. Do not paste full diffs into chat.
 6. **Zero secrets:** never print environment files, secrets or keys to terminal output or markdown.
 7. **Strikes:** follow the project's token budget and strike enforcement instructions in `AGENTS.md`.
-8. **Automate last:** a new hook, gate, lint or check script needs one paragraph in its PR showing the requirement and the manual step survive "requirement owner" and "Deleted:" (applies to all guard and hook PRs).
+8. **The Algorithm (every role):** before adding or changing any step, rule, check or brief, apply in order: question the requirement (name its owner and reason), delete the step, simplify what survives, accelerate the wait points, automate last (https://github.com/cursor/plugins/blob/main/dyl-stack/skills/principle-the-algorithm/SKILL.md). The PR names the requirement questioned, its owner and what was deleted; a new hook, gate, lint or check script without that paragraph is not merged. Process findings go in `docs/agents/process-review.md` (evidence, finding, fix, Algorithm step).
 9. **No is a valid outcome:** a teammate may decline a request with evidence. Owner reserved decisions (pricing, legal, production, irreversible data) are never declined by the team, only pushed back to the owner with evidence.
 
 ## Gated actions
