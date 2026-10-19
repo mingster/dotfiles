@@ -54,6 +54,8 @@ git push -q origin lane/38-b
 git worktree add -qb lane/38-c "$tmp/wt-c" main
 echo staged > "$tmp/wt-c/s.txt"; git -C "$tmp/wt-c" add s.txt
 echo more >> "$tmp/wt-c/file"
+echo untracked-small > "$tmp/wt-c/new small.txt"
+head -c 1100000 /dev/zero > "$tmp/wt-c/big.bin"
 # Unrelated: 3848 must not match issue 38.
 git worktree add -qb lane/3848-x "$tmp/wt-x" main
 git push -q origin lane/3848-x
@@ -66,9 +68,18 @@ git push -q origin main
 export FAKE_RELEASED="$tmp/wt-b $tmp/wt-c"
 
 # DRY_RUN changes nothing.
+refs_before=$(git for-each-ref; git --git-dir="$tmp/origin" for-each-ref)
 DRY_RUN=1 bash "$here/merge-cleanup.sh" --branch mingster/38-head --issue 38 > "$tmp/dry"
+[ "$refs_before" = "$(git for-each-ref; git --git-dir="$tmp/origin" for-each-ref)" ] || fail "dry run changed refs"
+grep -q 'no fetch' "$tmp/dry" || fail "dry run did not say it skipped fetch"
 has_local mingster/38-head && has_remote lane/38-b && [ -d "$tmp/wt-c" ] || fail "dry run deleted something"
 [ ! -e "$tmp/_ref" ] || fail "dry run wrote patch"
+# A remote ref added behind our back must not appear after a dry run (no fetch).
+git clone -q --bare "$tmp/origin" "$tmp/other"
+git --git-dir="$tmp/other" push -q origin main:refs/heads/surprise
+DRY_RUN=1 bash "$here/merge-cleanup.sh" --branch mingster/38-head > /dev/null
+git show-ref --verify --quiet refs/remotes/origin/surprise && fail "dry run fetched"
+git --git-dir="$tmp/origin" update-ref -d refs/heads/surprise
 echo 'ok dry run changes nothing'
 
 bash "$here/merge-cleanup.sh" --branch mingster/38-head --issue 38 > "$tmp/out" 2>&1
@@ -78,6 +89,8 @@ for d in wt-head wt-a wt-b wt-c; do [ -e "$tmp/$d" ] && fail "$d kept"; done
 has_local lane/3848-x && has_remote lane/3848-x && [ -d "$tmp/wt-x" ] || fail "3848 lane touched"
 has_local recovery/fresh && has_local main || fail "fresh recovery or main removed"
 grep -q staged "$tmp/_ref/lane-38-c.patch" && grep -q '^+more' "$tmp/_ref/lane-38-c.patch" || fail "dirty patch missing staged or unstaged"
+grep -q 'untracked-small' "$tmp/_ref/lane-38-c.patch" || fail "small untracked file not in patch"
+grep -qx 'new small.txt' "$tmp/_ref/lane-38-c.untracked.txt" && grep -q 'big.bin (over 1 MB' "$tmp/_ref/lane-38-c.untracked.txt" || fail "untracked list wrong"
 echo 'ok head, lanes cleaned, dirty saved to patch, 3848 and fresh recovery kept'
 
 # A dirty PR head worktree is kept and printed.
@@ -93,3 +106,11 @@ echo 'ok dirty head worktree kept and printed'
 bash "$here/merge-cleanup.sh" --branch main > "$tmp/out" || true
 has_local main && has_remote main || fail "main deleted"
 echo 'ok main never deleted'
+
+# If the patch cannot be saved, the dirty worktree stays.
+git worktree add -qb lane/60-a "$tmp/wt-e" main
+echo u > "$tmp/wt-e/u.txt"
+touch "$tmp/blocker"
+FAKE_RELEASED="$tmp/wt-e" MERGE_CLEANUP_REF_DIR="$tmp/blocker/sub" bash "$here/merge-cleanup.sh" --branch mingster/none --issue 60 > "$tmp/out" 2>&1
+[ -d "$tmp/wt-e" ] && [ -f "$tmp/wt-e/u.txt" ] || fail "worktree removed though patch unsaved"
+echo 'ok unsaved patch keeps worktree'

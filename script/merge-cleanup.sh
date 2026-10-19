@@ -4,7 +4,9 @@
 # 1. Remove the PR head: remote branch, its worktree (kept when dirty), local branch.
 # 2. With an issue: remove clean worktrees and branches whose name has N as a whole number
 #    and that are in origin/main or belong to a released worker. Dirty worktrees get their
-#    `git diff HEAD` saved to $MERGE_CLEANUP_REF_DIR/<branch>.patch first.
+#    `git diff HEAD` plus untracked files saved to $MERGE_CLEANUP_REF_DIR/<branch>.patch
+#    (and <branch>.untracked.txt listing them) first; if saving fails the worktree is kept.
+#    DRY_RUN=1 does no fetch, prune, delete or write.
 # 3. Prune recovery/* branches whose last commit is older than 7 days.
 # Never touches main, master, staging, production or the current branch.
 set -euo pipefail
@@ -31,7 +33,11 @@ protected() {
   [ "$1" != "$current" ] || return 0
   return 1
 }
-git fetch -q origin >/dev/null 2>&1 || echo "merge-cleanup: fetch failed; using existing refs" >&2
+if [ "$dry" = 1 ]; then
+  echo "[dry-run] no fetch; using already-fetched refs"
+else
+  git fetch -q origin >/dev/null 2>&1 || echo "merge-cleanup: fetch failed; using existing refs" >&2
+fi
 
 # Worktree path of each branch, and released worktree paths.
 wt_of() { git worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{p=substr($0,10)} $0=="branch " b {print p; exit}'; }
@@ -67,7 +73,7 @@ drop() {
       if [ "$mode" != force ]; then
         echo "Kept worktree $wt (dirty, branch $b)"; return 0
       fi
-      mkdir_patch "$b" "$wt"
+      mkdir_patch "$b" "$wt" || { echo "merge-cleanup: could not save $b; worktree $wt kept" >&2; return 0; }
     fi
     DRY_RUN=$dry bash "$here/worker-finish.sh" --worktree "$wt"
   fi
@@ -78,13 +84,25 @@ drop() {
     echo "Delete remote $b"; run git push -q origin --delete "$b" || echo "merge-cleanup: remote delete of $b failed" >&2
   fi
 }
+# Saves tracked changes, untracked files under 1 MB (as new-file hunks) and a list of all
+# untracked files. Returns non-zero when anything could not be written.
 mkdir_patch() {
-  local file="$ref_dir/${1//\//-}.patch"
-  echo "Save diff of $1 to $file"
-  if [ "$dry" != 1 ]; then
-    mkdir -p "$ref_dir"
-    git -C "$2" diff HEAD > "$file"
-  fi
+  local base="$ref_dir/${1//\//-}" f
+  echo "Save diff of $1 to $base.patch"
+  [ "$dry" = 1 ] && return 0
+  mkdir -p "$ref_dir" || return 1
+  git -C "$2" diff HEAD > "$base.patch" || return 1
+  : > "$base.untracked.txt" || return 1
+  while IFS= read -r -d '' f; do
+    printf '%s\n' "$f" >> "$base.untracked.txt" || return 1
+    if [ "$(wc -c < "$2/$f")" -lt 1048576 ]; then
+      (cd "$2" && git diff --no-index -- /dev/null "$f" >> "$base.patch" || [ $? -eq 1 ]) || return 1
+    else
+      printf '%s\n' "$f (over 1 MB, not in patch)" >> "$base.untracked.txt" || return 1
+    fi
+  done < <(git -C "$2" ls-files -o --exclude-standard -z)
+  [ -s "$base.untracked.txt" ] || rm -f "$base.untracked.txt"
+  return 0
 }
 
 drop "$branch"
