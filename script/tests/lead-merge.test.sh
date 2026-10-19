@@ -143,6 +143,16 @@ setup; comments="Verdict: PASS head=$SHA verifier=ctx_same author=ctx_same"; che
 setup; PR_DIFF=$'+test.skip("case", () => {})'; check "test skip needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// @ts-expect-error intentional'; check "suppression needs countersign" 1 'Countersign'
 setup; files='[{"path":"script/copy-only.config.json"}]'; PR_DIFF=$'+++ b/script/copy-only.config.json\n+{"sensitive_words":[]}'; check "copy gate config needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+System.exit(1);'; check "System.exit is not a skip trigger" 0 '^MERGED' 1
+setup; PR_DIFF=$'+foo.exit(0)'; check "foo.exit is not a skip trigger" 0 '^MERGED' 1
+setup; PR_DIFF=$'+xit("case", () => {})'; check "xit needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+  xit('"'"; check "indented xit needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+.skip("case")'; check "trigger .skip needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+.only("case")'; check "trigger .only needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+test.todo("case")'; check "trigger test.todo needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+// eslint-disable-next-line'; check "trigger eslint-disable-next-line needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+// biome-ignore lint'; check "trigger biome-ignore lint needs countersign" 1 'Countersign'
+setup; PR_DIFF=$'+// @ts-ignore'; check "trigger @ts-ignore needs countersign" 1 'Countersign'
 setup; files='[{"path":".agents/head-checks.conf"}]'; PR_DIFF=$'+++ b/.agents/head-checks.conf\n+echo changed'; check "check config prints countersign trigger" 1 'head-checks.conf:\+echo changed'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$SHA reason=fixture only"; check "countersigned skip allowed" 0 '^MERGED' 1
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'

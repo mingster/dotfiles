@@ -305,7 +305,7 @@ if [ "$sensitive" = true ]; then
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
-triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo|xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
+triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo|(^|[^A-Za-z0-9_.])xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
 while IFS= read -r f; do
   case "$f" in
     .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh|script/copy-only.config.json|*/script/copy-only.config.json)
