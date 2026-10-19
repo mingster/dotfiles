@@ -1,0 +1,1 @@
+Copy-only tooling now sends changed spelled-out quantities (such as 一百 to 二百, 百 to 千, one hundred to two hundred) to owner Copy approval, with semantic-review guidance in the vocabulary doc. A missing guard-bash.py now falls back to the configured approval namespace or refuses with a clear message instead of exiting silently.
