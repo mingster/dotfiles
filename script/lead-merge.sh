@@ -75,10 +75,12 @@ checks=${check_body%%$'\n'*}
 [ "$checks" = "Checks: PASS head=$head" ] || die "missing current-head Checks: PASS"
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
+skip_review=false
+if grep -qiE '^review: skipped \(.+\)$' <<<"$normalized_body"; then skip_review=true; fi
 docs_only=true
 while IFS= read -r f; do
   case "$f" in
-    .claude/agents/*|*/.claude/agents/*|.agents/skills/*|*/.agents/skills/*) docs_only=false ;;
+    .claude/agents/*|*/.claude/agents/*|.agents/skills/*|*/.agents/skills/*) [ "$skip_review" = true ] || docs_only=false ;;
     docs/*|*.md|changelog.d/*) ;;
     *) docs_only=false ;;
   esac
