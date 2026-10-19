@@ -52,6 +52,8 @@ python3 - <<EOF
 import json, os
 
 src = json.load(open("$SRC_DESKTOP"))
+# The tracked file holds __HOME__ instead of the home folder; render it for this machine.
+src = json.loads(json.dumps(src).replace("__HOME__", os.path.expanduser("~")))
 
 dst = {}
 if os.path.isfile("$DST_DESKTOP") and not os.path.islink("$DST_DESKTOP"):

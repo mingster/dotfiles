@@ -194,14 +194,14 @@ function on_exit --on-event fish_exit
 end
 
 # Added by Antigravity
-fish_add_path /Users/mtsai/.antigravity/antigravity/bin
+fish_add_path $HOME/.antigravity/antigravity/bin
 
 # Added by Antigravity IDE
-fish_add_path /Users/mtsai/.antigravity-ide/antigravity-ide/bin
+fish_add_path $HOME/.antigravity-ide/antigravity-ide/bin
 
 
 # Added by Antigravity CLI installer
-set -gx PATH "/Users/mtsai/.local/bin" $PATH
+set -gx PATH "$HOME/.local/bin" $PATH
 
 # >>> grok installer >>>
 fish_add_path $HOME/.grok/bin

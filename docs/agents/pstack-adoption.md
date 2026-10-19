@@ -2,9 +2,9 @@
 
 Phase 1 study only, 18 October 2026. No team configuration changes are made by this document. Adopt the useful decisions inside our existing roles, skills and checks. Do not install pstack or import its 55 skills. Source text was treated as reference material; none of its scripts were executed.
 
-Source snapshot: pstack checkout commit `0b8e952052d482ee6de06deebf14d590d77b1b34`, under `/Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/`. Our study branch starts at dotfiles `f6c43281ed91324201fb8cffa7af37507ffb76ca`. Plan the three audited roles against dotfiles **`788c067`**, the coordinator supplied final audit revision, rather than their older copies on this branch. References to those three roles below identify their paths; their baseline content is `git show 788c067:<path>`. <project-a> checkout inspected at `bad5cba956bd2cf2e8ae2bba9a966f026f7cb1e7`.
+Source snapshot: pstack checkout commit `0b8e952052d482ee6de06deebf14d590d77b1b34`, under `~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/`. Our study branch starts at dotfiles `f6c43281ed91324201fb8cffa7af37507ffb76ca`. Plan the three audited roles against dotfiles **`788c067`**, the coordinator supplied final audit revision, rather than their older copies on this branch. References to those three roles below identify their paths; their baseline content is `git show 788c067:<path>`. <project-a> checkout inspected at `bad5cba956bd2cf2e8ae2bba9a966f026f7cb1e7`.
 
-For exact targets below, **T** means `templates/agent-team/` in dotfiles. **R** means `/Users/mtsai/projects/<app>/`. **P** means the pstack source root above. Links resolve to actual local source files. Proposed files are explicitly marked new. The five incidents motivating the ranking are owner reported observations, not measured causal findings from this study.
+For exact targets below, **T** means `templates/agent-team/` in dotfiles. **R** means `~/projects/<app>/`. **P** means the pstack source root above. Links resolve to actual local source files. Proposed files are explicitly marked new. The five incidents motivating the ranking are owner reported observations, not measured causal findings from this study.
 
 ## Adopted owner rules, 19 October 2026
 
@@ -115,38 +115,38 @@ Credit **pstack by Lauren Tan**, MIT License, at the source snapshot above. Link
 This plan paraphrases ideas with file attribution. When implementation copies or substantially adapts pstack text, put the complete source MIT license, including its disclaimer, in proposed `docs/agents/pstack-attribution.md`; identify the original paths and pinned upstream revision there. Add a concise attribution pointer beside adapted material, including templates so downstream project copies carry that provenance. Do not relabel our existing work as pstack, copy its entire skill catalog or assume MIT changes our operating authority. Verify the notice survives generated skill sync and role rollout before publication.
 
 
-[p-mode]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/SKILL.md
-[p-route]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/02-poteto-mode.md
-[p-prompt]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-help/references/prompting.md
-[p-orchestrate]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/orchestrate.md
-[p-bug]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/bug-fix.md
-[p-feature]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/feature.md
-[p-figure]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/figure-it-out/SKILL.md
-[p-design]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/04-design.md
-[p-principles]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/08-principles.md
-[p-agent]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/agents/poteto-agent.md
-[p-swarm]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/swarm/SKILL.md
-[p-authority]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-never-block-on-the-human/SKILL.md
-[p-verify]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/06-verify-and-ship.md
-[p-shipping]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/shipping.md
-[p-cleanup]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/worktree-cleanup.md
-[p-pr]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/opening-a-pr.md
-[p-auto]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/autonomous-run.md
-[p-work]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/show-me-your-work/SKILL.md
-[p-pickup]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/session-pickup.md
-[p-pause]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/pause-safely.md
-[p-recall]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/recall/SKILL.md
-[p-babysit]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/babysit.md
-[p-correct]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/correct/SKILL.md
-[p-custom]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/09-make-it-yours.md
-[p-reflect]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/reflect/SKILL.md
-[p-license]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/LICENSE
-[p-manifest]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/.claude-plugin/plugin.json
-[r-team]: /Users/mtsai/projects/<app>/docs/agents/team.md
-[r-routing]: /Users/mtsai/projects/<app>/.claude/model-routing.md
+[p-mode]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/SKILL.md
+[p-route]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/02-poteto-mode.md
+[p-prompt]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-help/references/prompting.md
+[p-orchestrate]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/orchestrate.md
+[p-bug]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/bug-fix.md
+[p-feature]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/feature.md
+[p-figure]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/figure-it-out/SKILL.md
+[p-design]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/04-design.md
+[p-principles]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/08-principles.md
+[p-agent]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/agents/poteto-agent.md
+[p-swarm]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/swarm/SKILL.md
+[p-authority]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-never-block-on-the-human/SKILL.md
+[p-verify]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/06-verify-and-ship.md
+[p-shipping]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/shipping.md
+[p-cleanup]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/worktree-cleanup.md
+[p-pr]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/opening-a-pr.md
+[p-auto]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/autonomous-run.md
+[p-work]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/show-me-your-work/SKILL.md
+[p-pickup]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/session-pickup.md
+[p-pause]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/pause-safely.md
+[p-recall]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/recall/SKILL.md
+[p-babysit]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/poteto-mode/playbooks/babysit.md
+[p-correct]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/correct/SKILL.md
+[p-custom]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/docs/guide/09-make-it-yours.md
+[p-reflect]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/reflect/SKILL.md
+[p-license]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/LICENSE
+[p-manifest]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/.claude-plugin/plugin.json
+[r-team]: ~/projects/<app>/docs/agents/team.md
+[r-routing]: ~/projects/<app>/.claude/model-routing.md
 [sdlc]: sdlc-skill-map.md
 [agent-files]: agent-files.md
-[orca-skill]: /Users/mtsai/.agents/skills/orchestration/SKILL.md
+[orca-skill]: ~/.agents/skills/orchestration/SKILL.md
 [lead-merge]: ../../script/lead-merge.sh
 [team-tests]: ../../script/agent-team.test.sh
 [audit-tests]: ../../script/tests/team-audit.test.sh
@@ -172,30 +172,30 @@ This plan paraphrases ideas with file attribution. When implementation copies or
 [t-release]: ../../templates/agent-team/.claude/agents/release-manager.md
 [t-sales]: ../../templates/agent-team/.claude/agents/sales-marketing.md
 [t-support]: ../../templates/agent-team/.claude/agents/support-csm.md
-[pr-attack-the-premise]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-attack-the-premise/SKILL.md
-[pr-boundary-discipline]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-boundary-discipline/SKILL.md
-[pr-build-the-lever]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-build-the-lever/SKILL.md
-[pr-encode-lessons-in-structure]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-encode-lessons-in-structure/SKILL.md
-[pr-exhaust-the-design-space]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-exhaust-the-design-space/SKILL.md
-[pr-experience-first]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-experience-first/SKILL.md
-[pr-explain-the-number]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-explain-the-number/SKILL.md
-[pr-fix-root-causes]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-fix-root-causes/SKILL.md
-[pr-foundational-thinking]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-foundational-thinking/SKILL.md
-[pr-guard-the-context-window]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-guard-the-context-window/SKILL.md
-[pr-laziness-protocol]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-laziness-protocol/SKILL.md
-[pr-make-operations-idempotent]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-make-operations-idempotent/SKILL.md
-[pr-migrate-callers-then-delete-legacy-apis]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md
-[pr-minimize-reader-load]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-minimize-reader-load/SKILL.md
-[pr-model-the-domain]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-model-the-domain/SKILL.md
-[pr-never-block-on-the-human]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-never-block-on-the-human/SKILL.md
-[pr-outcome-oriented-execution]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-outcome-oriented-execution/SKILL.md
-[pr-prove-it-works]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-prove-it-works/SKILL.md
-[pr-redesign-from-first-principles]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-redesign-from-first-principles/SKILL.md
-[pr-separate-before-serializing-shared-state]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-separate-before-serializing-shared-state/SKILL.md
-[pr-sequence-verifiable-units]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-sequence-verifiable-units/SKILL.md
-[pr-subtract-before-you-add]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-subtract-before-you-add/SKILL.md
-[pr-test-behavior-not-implementation]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-test-behavior-not-implementation/SKILL.md
-[pr-type-system-discipline]: /Users/mtsai/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-type-system-discipline/SKILL.md
+[pr-attack-the-premise]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-attack-the-premise/SKILL.md
+[pr-boundary-discipline]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-boundary-discipline/SKILL.md
+[pr-build-the-lever]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-build-the-lever/SKILL.md
+[pr-encode-lessons-in-structure]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-encode-lessons-in-structure/SKILL.md
+[pr-exhaust-the-design-space]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-exhaust-the-design-space/SKILL.md
+[pr-experience-first]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-experience-first/SKILL.md
+[pr-explain-the-number]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-explain-the-number/SKILL.md
+[pr-fix-root-causes]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-fix-root-causes/SKILL.md
+[pr-foundational-thinking]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-foundational-thinking/SKILL.md
+[pr-guard-the-context-window]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-guard-the-context-window/SKILL.md
+[pr-laziness-protocol]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-laziness-protocol/SKILL.md
+[pr-make-operations-idempotent]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-make-operations-idempotent/SKILL.md
+[pr-migrate-callers-then-delete-legacy-apis]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md
+[pr-minimize-reader-load]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-minimize-reader-load/SKILL.md
+[pr-model-the-domain]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-model-the-domain/SKILL.md
+[pr-never-block-on-the-human]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-never-block-on-the-human/SKILL.md
+[pr-outcome-oriented-execution]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-outcome-oriented-execution/SKILL.md
+[pr-prove-it-works]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-prove-it-works/SKILL.md
+[pr-redesign-from-first-principles]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-redesign-from-first-principles/SKILL.md
+[pr-separate-before-serializing-shared-state]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-separate-before-serializing-shared-state/SKILL.md
+[pr-sequence-verifiable-units]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-sequence-verifiable-units/SKILL.md
+[pr-subtract-before-you-add]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-subtract-before-you-add/SKILL.md
+[pr-test-behavior-not-implementation]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-test-behavior-not-implementation/SKILL.md
+[pr-type-system-discipline]: ~/orca/workspaces/_ref/cursor-plugins/harness/pstack/claude-code/skills/principle-type-system-discipline/SKILL.md
 
 ## Merge gates
 

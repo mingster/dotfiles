@@ -74,8 +74,8 @@
 [core]
 
 	# Use custom `.gitignore` and `.gitattributes`
-	attributesfile = /home/mtsai/dotfiles/.gitattributes
-	excludesfile = /home/mtsai/dotfiles/.gitignore_global
+	attributesfile = ~/dotfiles/.gitattributes
+	excludesfile = ~/dotfiles/.gitignore_global
 
 	# Treat spaces before tabs and all kinds of trailing whitespace as an error
 	# [default] trailing-space: looks for spaces at the end of a line
@@ -175,7 +175,7 @@
 	name = mingster
 	email = mingster@users.noreply.github.com
 [commit]
-	template = /Users/mtsai/.stCommitMsg
+	template = ~/.stCommitMsg
 [filter "lfs"]
 	smudge = git-lfs smudge -- %f
 	process = git-lfs filter-process

@@ -1,0 +1,1 @@
+- Removed the local account name from tracked files: shell and git configs use `$HOME` or `~`, the Claude Desktop and iTerm2 exports no longer carry a home folder (setup renders `__HOME__`), the retired obsidian vault doc, a shell history dump and a fish config backup are deleted, and the no project names guard now rejects the account name too.

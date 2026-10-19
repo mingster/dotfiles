@@ -84,7 +84,7 @@ Owner approvals and protected files:
 * The lead merges reviewed PRs through `script/lead-merge.sh` only, never with `--admin`. Workers commit on their own branch and never push or merge.
 * Owner only files stay out of the lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh` (in each project), `.codex`, `*.rules`, and intents that become Accepted.
 * Accepting an intent or spec, every production deploy and every migration go to you.
-* You allow the merge script once, by appending `templates/codex/lead-merge.rules` to `~/.codex/rules/default.rules`. Agents never edit `~/.codex`.
+* You allow the merge script once, by appending the rendered `templates/codex/lead-merge.rules` to `~/.codex/rules/default.rules` (`sed "s|__HOME__|$HOME|g" templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules`). Agents never edit `~/.codex`.
 
 Roles, project files and the full command table per stage: [Agent team reference](docs/agents/team-reference.md). Design: [Agent team architecture](docs/agents/agent-team-architecture.md).
 
