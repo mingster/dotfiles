@@ -156,6 +156,7 @@ class EnsureDependenciesTests(unittest.TestCase):
         self.assertEqual(commands[0], ['bun', 'install', '--frozen-lockfile', '--ignore-scripts'])
         self.assertEqual(commands[1], ['bunx', '--no-install', 'prisma', 'generate'])
         self.assertEqual(self.calls[1][1], self.mod.PLACEHOLDER_DATABASE)
+        self.assertEqual(self.mod.PLACEHOLDER_DATABASE, 'postgresql://test:test@localhost:5432/test')
         self.assertEqual(commands[2][:2], ['bun', 'test'])
 
     def test_generate_falls_back_to_bunx_without_no_install(self):
