@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # The Tech Lead's only way to merge a reviewed PR.
-# Usage: lead-merge.sh --repo owner/name --pr N --head <sha>
+# Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
+# --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
 set -euo pipefail
 
 die() { echo "lead-merge: refused: $*" >&2; exit 1; }
 
-repo="" pr="" head=""
+repo="" pr="" head="" mechanical=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
     --pr) pr="${2:-}"; shift 2 ;;
     --head) head="${2:-}"; shift 2 ;;
+    --mechanical) mechanical=true; shift ;;
     *) die "unknown argument $1" ;;
   esac
 done
-[ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha>"
+[ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]"
 case "$pr" in *[!0-9]*) die "--pr must be a number" ;; esac
 
 # 1. Caller is the lead. Orca sets no role variable (ORCA_TERMINAL_HANDLE and
@@ -267,7 +269,26 @@ load_dispatches() {
   done
   die "run-list has too many pages to verify verdict dispatch ids"
 }
-if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; then
+# Mechanical lane: no Verdict, but only for a diff that is pure substitution or deletion.
+# Every hunk must remove as many lines as it adds (a whole deleted file is fine), the only
+# new files are changelog fragments, and no file is renamed, copied or binary. Protected
+# paths were refused above; gate files still need their Countersign below.
+if [ "$mechanical" = true ]; then
+  [ "$lane" = normal ] && [ "$sensitive" = false ] || die "--mechanical is not for copy-only changes"
+  [ "$unchecked" = false ] || die "--mechanical needs every path checked (head-checks lists unchecked paths)"
+  grep -qE '^(rename|copy|similarity|Binary files|GIT binary patch)' <<<"$diff" && die "--mechanical refuses renames, copies and binary changes"
+  bad=$(awk '
+    function flush() { if (file != "" && !deleted && !created && (plus != minus)) print file ": " minus " removed, " plus " added"; plus = minus = 0 }
+    /^diff --git / { flush(); file = $4; sub(/^b\//, "", file); deleted = created = 0; next }
+    /^new file mode/ { created = 1; if (file !~ /^changelog\.d\//) print file ": new file"; next }
+    /^deleted file mode/ { deleted = 1; next }
+    /^\+\+\+ |^--- / { next }
+    /^\+/ { plus++ } /^-/ { minus++ }
+    END { flush() }' <<<"$diff")
+  [ -z "$bad" ] || die "--mechanical needs a pure substitution or deletion diff: $bad"
+  echo "lead-merge: mechanical lane, Verdict not required"
+fi
+if [ "$mechanical" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; }; then
   current_patch=""
   applicable=()
   passes=0 fails=0
