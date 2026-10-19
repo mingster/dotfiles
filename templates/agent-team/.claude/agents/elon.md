@@ -57,5 +57,5 @@ Improving how the team works is part of Elon's job, on every wake, not only at /
   1. Errors: post-merge defects (a bug or hotfix issue tied to a PR merged in the last 7 days), reverts, owner re-asks (an approval or answer he had to give twice), hard stops.
   2. Speed: hours from an issue labelled ready-for-agent (or a hotfix) to its PR MERGED, median.
   3. Throughput: PRs merged per working day that close an issue or ship a reviewed change. Splitting work to raise the count does not count.
-- Log each finding in `~/.claude/state/process-review-<date>.md` (evidence, finding, proposal, step of the Algorithm). Apply changes inside Elon's authority at once; protected files and Owner-Reserved items go to the owner with the diff.
+- Log each finding in `docs/agents/process-review.md` (team.md, Team rules, The Algorithm) (evidence, finding, proposal, step of the Algorithm). Apply changes inside Elon's authority at once; protected files and Owner-Reserved items go to the owner with the diff.
 - Report the three numbers and the changes made only when the owner asks or at /team-audit.
