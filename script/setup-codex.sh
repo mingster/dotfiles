@@ -7,7 +7,8 @@ DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 mkdir -p "$HOME/.codex"
 
 if [ -f "$DOTFILES/.codex/config.toml" ] && [ ! -f "$HOME/.codex/config.toml" ]; then
-  cp -f "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+  # The tracked template holds __HOME__ instead of the home folder; render it for this machine.
+  sed "s|__HOME__|$HOME|g" "$DOTFILES/.codex/config.toml" > "$HOME/.codex/config.toml"
   # Untracked config.local.toml (trusted project folders) is appended on first init only; later runs never touch the live file.
   if [ -f "$DOTFILES/.codex/config.local.toml" ]; then
     printf '\n' >> "$HOME/.codex/config.toml"

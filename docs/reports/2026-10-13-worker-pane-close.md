@@ -1,7 +1,7 @@
 # Verified worker terminal cleanup
 
 Branch: `mingster/dotfiles-pane-close`
-Worktree: `/Users/mtsai/orca/workspaces/dotfiles/dotfiles-pane-close`
+Worktree: `~/orca/workspaces/dotfiles/dotfiles-pane-close`
 
 ## Cause evidence
 

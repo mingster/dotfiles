@@ -46,7 +46,7 @@ The wrappers call Matt Pocock skills by name and name the file when a harness ma
 ## Validation and handoff
 
 Branch: `mingster/dotfiles-skilldedupe`.
-Worktree: `/Users/mtsai/orca/workspaces/dotfiles/dotfiles-skilldedupe`.
+Worktree: `~/orca/workspaces/dotfiles/dotfiles-skilldedupe`.
 
 | Check | Result |
 | --- | --- |

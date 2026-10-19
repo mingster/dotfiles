@@ -25,7 +25,7 @@ if [ ! -f "$SRC" ]; then
 fi
 
 python3 - <<EOF
-import json
+import json, os
 
 # Keys under "preferences" that are machine-local and should not be committed
 LOCAL_PREF_KEYS = {
@@ -44,6 +44,9 @@ if "preferences" in config:
     config["preferences"] = {k: v for k, v in prefs.items() if k not in LOCAL_PREF_KEYS}
 else:
     stripped = []
+
+# Keep the home folder out of the tracked file.
+config = json.loads(json.dumps(config).replace(os.path.expanduser("~"), "__HOME__"))
 
 with open("$DST", "w") as f:
     json.dump(config, f, indent=2)

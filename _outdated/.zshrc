@@ -55,7 +55,7 @@ POWERLEVEL10K_RIGHT_PROMPT_ELEMENTS=(status ram)
 #POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status background_jobs history ram load time)
 
 # 若當前登入的帳號為你的帳號 xxx，就不用特別顯示出來
-#DEFAULT_USER="mtsai"
+#DEFAULT_USER="$USER"
 #POWERLEVEL9K_MODE='nerdfont-complete'
 
 plugins=(
@@ -72,7 +72,7 @@ source $ZSH/oh-my-zsh.sh
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
 # bun completions
-[ -s "/Users/mtsai/.bun/_bun" ] && source "/Users/mtsai/.bun/_bun"
+[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 
 # bun
 export BUN_INSTALL="$HOME/.bun"

@@ -1,5 +1,5 @@
 {
-  "coworkUserFilesPath": "/Users/mtsai/Claude",
+  "coworkUserFilesPath": "__HOME__/Claude",
   "preferences": {
     "launchPreviewPersistSession": true,
     "allowAllBrowserActions": true,

@@ -22,7 +22,7 @@ brew services restart mysql
 # --plugin-dir=/usr/local/opt/mysql/lib/plugin --log-error=niteking.local.err --pid-file=niteking.local.pid
 
 ## result:
-#==> /usr/local/Cellar/mysql/8.3.0_1/bin/mysqld --initialize-insecure --user=mtsai --basedir=/usr/local/Cellar/mysql/8.3.0_1 --datadir=/usr/local/var/mysql --tmpdir=/tmp
+#==> /usr/local/Cellar/mysql/8.3.0_1/bin/mysqld --initialize-insecure --user=$USER --basedir=/usr/local/Cellar/mysql/8.3.0_1 --datadir=/usr/local/var/mysql --tmpdir=/tmp
 
 
 # to create new db user
