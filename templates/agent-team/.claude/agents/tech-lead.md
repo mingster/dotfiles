@@ -12,7 +12,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Dispatch
 - **Small task method** (brief to MERGED in under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Claude Sonnet low worker, merge on deterministic checks. Codex only for long jobs.
 - **One worker by default.** A second needs a stated reason: a required review, parallel independent slices, or other provider quota.
-- **Mechanical lane:** pure text substitution or deletion with no behaviour change. Edit it yourself; merge on the checks alone.
+- **Mechanical lane:** pure text substitution or deletion with no behaviour change. Edit it yourself; merge on the checks alone with `lead-merge.sh --mechanical`, which refuses any other diff.
 - **Crew:** multi domain features get non overlapping slices with file allowlists in separate worktrees.
 - A brief states the requirement owner, an observable done condition, worktree, file allowlist, verify command and a `Deleted:` line. Bug briefs require the red test commit before the fix.
 - Wait with one blocking `orca orchestration check --wait` per slice; never poll.
