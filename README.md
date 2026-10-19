@@ -1,6 +1,14 @@
 # Ming's dotfiles
 
-Personal configuration for macOS, Arch and Debian. `install.sh` wires everything up and is safe to re-run.
+One repo that sets up a Mac, Arch or Debian machine, wires the same AI skills into Claude Code, Codex, Cursor and Antigravity, and ships a small agent team you can drop into any project.
+
+It is for you if you want a new machine ready in a few commands, or you want an AI "company" (a front door called Elon, a tech lead, and specialist workers) that plans, builds, reviews and ships your project while you only make the calls that are yours.
+
+What you get:
+
+* A machine that is set up the same way every time. `install.sh` is safe to re-run.
+* About 30 shared skills (slash commands) for planning, test first coding and review.
+* An agent team template: roles, skills, hooks and rules you adopt into a project.
 
 ## Quick start
 
@@ -11,9 +19,172 @@ sh mac/osxprep.sh   # macOS only: Command Line Tools
 sh install.sh
 ```
 
-`install.sh` links `~/dotfiles` to this repo, links shell and git dotfiles into `$HOME`, creates real home skill directories, sets up the AI tooling below, then runs the OS installer (`mac/`, `arch/` or `debian/` `system_setup.sh`). Already installed software is skipped. `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` only refreshes links. `DOTFILES_BREW_UPGRADE=1` also runs `brew upgrade` on macOS.
+`install.sh` links `~/dotfiles` to this repo, links shell and git dotfiles into `$HOME`, creates real home skill directories, sets up the AI tooling, then runs the OS installer (`mac/`, `arch/` or `debian/` `system_setup.sh`). Already installed software is skipped.
 
-## AI tooling
+| Flag | Effect |
+| --- | --- |
+| `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Only refresh links, install no software |
+| `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also run `brew upgrade` on macOS |
+
+How the skills reach each tool:
+
+```mermaid
+flowchart LR
+    repo[".agents/skills in this repo"] --> install["install.sh"]
+    install --> agents["~/.agents/skills"]
+    install --> claude["~/.claude/skills"]
+    agents --> codex[Codex]
+    claude --> cc[Claude Code]
+    claude --> cursor[Cursor]
+    install --> gem["Antigravity skills.json"]
+```
+
+## Use the agent team in a project
+
+You talk to one person, Elon. He plans, hands work to a lead, and the lead runs workers. You are asked only for decisions that are yours: money, production deploys, contracts, accepting an intent or spec.
+
+```mermaid
+flowchart TD
+    owner([Owner]) --> elon[Elon, front door]
+    elon --> lead[Tech lead]
+    lead --> dev[fullstack-dev]
+    lead --> qa[qa-sdet]
+    lead --> arch[architect-pm]
+    dev --> gates{Review gates}
+    qa --> gates
+    gates -->|"approved at current head, checks green"| merge[lead-merge]
+    merge --> staging[Staging]
+    staging -->|"owner go"| prod[Production]
+    elon -.->|"decisions only"| owner
+```
+
+Set it up once per project:
+
+```bash
+~/dotfiles/script/adopt-agent-team.sh --project-name acme ~/projects/acme   # roles, skills, hooks, routing
+~/dotfiles/script/init-agent-project.sh --labels ~/projects/acme            # tracker, labels, domain docs
+```
+
+Then fill in `docs/agents/team-facts.md` and `deploy-facts.md` in the project. `script/agent-team.sh` handles machine setup and safe reset previews. Details, backups and owner steps: [Agent team setup](docs/agents/agent-team-setup.md).
+
+What you do day to day (slash commands work in Claude Code, Cursor and Antigravity; in Codex write `$skill-name`):
+
+| You want to | Say |
+| --- | --- |
+| Start or pick the next objective | `/elon Help me choose the next objective.` |
+| Get status | `/elon status` (Now, Needs owner, Running) or `/tl status` |
+| Deliver a batch of tickets | `/elon Deliver the ready setup tickets using /crew and /tdd.` |
+| Clear decisions blocking the queue | `/grill-backlog` |
+| Promote a release | `/deploy staging`, then `/deploy production` |
+| Run the daily checklist | `/elon daily run` |
+| Check the team files for drift | `/team-audit` |
+
+Owner approvals and protected files:
+
+* The lead merges reviewed PRs through `script/lead-merge.sh` only, never with `--admin`. Workers commit on their own branch and never push or merge.
+* Owner only files stay out of the lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh` (in each project), `.codex`, `*.rules`, and intents that become Accepted.
+* Accepting an intent or spec, every production deploy and every migration go to you.
+* You allow the merge script once, by appending `templates/codex/lead-merge.rules` to `~/.codex/rules/default.rules`. Agents never edit `~/.codex`.
+
+Roles, project files and the full command table per stage: [Agent team reference](docs/agents/team-reference.md). Design: [Agent team architecture](docs/agents/agent-team-architecture.md).
+
+## Engineering workflow
+
+The default path for any feature, refactor or bug that is not trivial. Name the stage you are in.
+
+```mermaid
+flowchart LR
+    A["capture-intent"] --> B["grill-with-docs"]
+    B --> C["write-spec or to-spec"]
+    C --> D["to-tickets"]
+    D --> E["tdd"]
+    E --> F["code-review"]
+    S1["bug, refactor, chore: skip intent"] -.-> B
+    S2["one line fix: straight to tdd"] -.-> E
+    S3["already discussed: start at to-spec"] -.-> C
+    S4["single slice: skip tickets"] -.-> E
+```
+
+| Stage | Skill | What happens |
+| --- | --- | --- |
+| Intent | `/capture-intent` | The problem and wanted outcome, in your words, until you accept it. New features only. |
+| Grill | `/grill-with-docs` | One question at a time until the design fits the codebase. Writes ADRs and a glossary. |
+| Spec | `/write-spec` or `/to-spec` | `spec.md` next to the intent, or a spec on the issue tracker. No second interview. |
+| Tickets | `/to-tickets` | Small vertical slices with blocking edges, each sized for a fresh context. |
+| Build | `/tdd` | One failing test, then the least code that passes it. |
+| Review | `/code-review` | The diff against repo standards and against the spec. Never skipped. |
+
+Each repo needs its tracker config first. Run `~/dotfiles/script/init-agent-project.sh --labels` in the repo root (add `--dry-run` to preview). Use `setup-matt-pocock-skills` instead for a monorepo or a non GitHub tracker.
+
+## Skills catalog
+
+Everything below lives in `.agents/skills/<name>/`. Team skills (`elon`, `crew`, `tl`, `deploy`, `wrap-up` and others) come from `templates/agent-team/.agents/skills/`. Full inventory: [skills inventory](docs/agents/skills-inventory.md).
+
+**Plan and spec**
+
+* `capture-intent`: turn an idea or incident into an `intent.md`.
+* `grill-me`, `grilling`, `grill-with-docs`: stress test a plan, optionally recording docs.
+* `write-spec`, `to-spec`: write the spec from an intent or from the conversation.
+* `to-tickets`: split a spec into tracer bullet tickets.
+* `wayfinder`: map work too big for one session as decision tickets.
+* `triage`: move issues through the triage labels.
+* `domain-modeling`, `codebase-design`: sharpen terms, ADRs and module boundaries.
+
+**Build and review**
+
+* `tdd`: red, green, refactor.
+* `implement`: build from a spec or tickets.
+* `code-review`: standards and spec review in parallel.
+* `diagnosing-bugs`: loop for hard bugs and slow code.
+* `prototype`: throwaway code to answer a design question.
+* `improve-codebase-architecture`: find deepening opportunities, report as HTML.
+* `resolving-merge-conflicts`: finish a merge or rebase.
+* `laravel-inertia-react-structure`: frontend layout for Laravel Inertia React.
+* `create-pr`: commit, check and publish a PR.
+
+**Research and notes**
+
+* `research`: gather primary source facts into a Markdown file.
+* `retro`: retrospective on a coding session.
+* `handoff`: compact a conversation for another agent.
+* `writing-for-agents`: rules for writing skills and `AGENTS.md`.
+
+**Tools and setup**
+
+* `setup-matt-pocock-skills`: configure a repo's tracker, labels and domain docs.
+* `agent-browser`: drive a browser for tests, forms and screenshots.
+* `computer-use`: drive a visible desktop app window.
+* `orca-cli`, `orca-team`, `orca-per-workspace-env`: operate Orca worktrees, worker panes and per workspace environments.
+* `wizard`: a bash wizard for steps only a human can do.
+
+## Model routing and usage gate
+
+Strong models take ambiguous decisions, specs, security and money review. Workhorse models take building, QA, release and support. Before every `worker-start`, `usage-gate.py check` reads real provider usage and blocks only at the 95% weekly ceiling. Rules live in the project's `.claude/model-routing.md`. More: [architecture, section on models and usage](docs/agents/agent-team-architecture.md) and [ADR 0001](docs/adr/0001-shared-team-skills-and-usage-caps.md).
+
+## Maintenance
+
+| Task | Command |
+| --- | --- |
+| Clean finished branches, worktrees and ended panes | `/wrap-up`, or `script/wrap-up.sh --repo "$PWD"` (dry run; add `--apply`) |
+| Clean up after a merge | `script/merge-cleanup.sh --branch <pr head> [--issue N] [--pr N]` (`DRY_RUN=1` previews) |
+| Regenerate project team skills from the template | `script/sync-team-skills.sh` (`--check` fails on drift). Edit the template, never the generated copies. |
+| Audit team files | `/team-audit` or `script/team-audit.sh` |
+| Find shadowed or broken skills | `script/check-skill-collisions.sh` |
+| Migrate legacy skill links | `bash script/setup-agent-skills.sh` |
+| Add a lesson to the shared notes | `~/dotfiles/script/contribute-to-agents.sh nextjs "Nested route-group layouts cause dev 404s"` |
+| Back up app settings | `bash script/backup-claude-desktop.sh`, `fish script/backup-tide.fish` |
+
+A project skill with the same name as a central one silently wins, so keep reusable skills here only and project skills in `<project>/.agents/skills/`. Sharing rules and the notes tiers: [Agent team reference](docs/agents/team-reference.md).
+
+## Machine setup per OS
+
+| OS | Installer | Notes |
+| --- | --- | --- |
+| macOS | `mac/system_setup.sh` | Run `mac/osxprep.sh` first. `mac/stowall` stows app configs. |
+| Arch | `arch/system_setup.sh` | Chosen from `$OSTYPE` and `/etc/os-release`. |
+| Debian | `debian/system_setup.sh` | Same detection. |
+
+AI tooling scripts, all called from `install.sh`:
 
 | Script | Sets up |
 | --- | --- |
@@ -24,96 +195,7 @@ sh install.sh
 | `script/setup-vscode.sh` | VS Code settings |
 | `script/setup-obsidian.sh` | Obsidian vault at `~/Documents/Obsidian`, synced with MEGAcmd |
 
-### Skills
-
-Reusable skills live in `.agents/skills/<name>/` and are visible to Claude Code, Codex, Cursor and Antigravity through individual links in `~/.agents/skills` and `~/.claude/skills` (also read by Cursor), and the Antigravity `skills.json`. A project skill with the same name as a central one silently wins, so keep the two sets apart:
-
-| Kind | Lives in |
-| --- | --- |
-| Reusable across projects | here, `.agents/skills/<name>/`, and nowhere else |
-| Project specific | `<project>/.agents/skills/<name>/`, with symlinks from `<project>/.claude/skills/` and `<project>/.cursor/skills/` |
-
-Run `bash script/setup-agent-skills.sh` to migrate legacy tree links to real directories. It retains tool-installed skills and their lock data, leaves the old source intact, links only tracked dotfiles skills, and prints its actions. Existing tool folders and foreign links are preserved, including same-name conflicts. `DOTFILES_SKIP_SYSTEM_SETUP=1 bash install.sh` also performs this migration without installing software. The skill inventory requires a Git checkout.
-
-Run `script/check-skill-collisions.sh` to find a project skill that shadows a central one, a broken symlink, or a missing `SKILL.md`. MCP secrets go in `~/.claude/settings.local.json` (gitignored). Paths reference: [AGENTS.md](AGENTS.md).
-
-### Agent team template
-
-Use `script/agent-team.sh` for machine setup, new projects and safe reset previews. See [Agent team setup](docs/agents/agent-team-setup.md) for commands, backups and owner steps.
-
-The team files give agents their jobs, working rules and repeatable steps. Elon is the front door: give him an objective and he plans, dispatches teammates through Orca orchestration and collects their results. See [Agent team architecture](docs/agents/agent-team-architecture.md) for the full design.
-
-`script/adopt-agent-team.sh [--project-name <name>] <dir>` installs from [templates/agent-team](templates/agent-team/): roles, generated team skills, facts file skeletons, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
-
-Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers their role file path in the task prompt, including workers on other providers.
-
-| Role | Owns |
-| --- | --- |
-| `elon` | Priorities, delegation, owner decisions, pushing branches, opening PRs and merging. |
-| `tech-lead` | Engineering coordination, local branch integration, worktree cleanup and release coordination. |
-| `architect-pm` | User problems, intent, requirements, specs and tickets. |
-| `fullstack-dev` | Features and fixes built with tests first, committed on its own branch. |
-| `qa-sdet` | Regression tests, independent reviews and checks after deployment. |
-| `release-manager` | Local, staging and production deployments, release evidence and rollback plans. |
-| `sales-marketing` | Self service acquisition, positioning, conversion experiments and business metrics. |
-| `secops-finops` | Security, tenant isolation, financial reconciliation, cost and privacy reviews. |
-| `support-csm` | Customer ticket triage, reply drafts, recurring pain points and closure drafts. |
-
-The adoption script installs every role in the template, including support.
-
-Team skills come from [templates/agent-team/.agents/skills](templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `tl` handles engineering requests, `deploy` promotes releases, `grill-backlog` clears owner decisions and `team-audit` checks team files. Adoption runs `script/sync-team-skills.sh` to generate project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and sync again; do not edit generated copies.
-
-Team skills add project policy and call Orca and Matt Pocock skills for shared procedures. The [ownership and overlap decisions](docs/agents/skill-overlap-decisions.md) cover every owned skill and explain which steps belong upstream.
-
-Other project files tell the team how this repo works:
-
-| File | What to set or read |
-| --- | --- |
-| `.claude/model-routing.md` | Provider and model choices, worker launch rules, usage limits and who may push or merge. |
-| `.claude/settings.json`, `.claude/hooks/` | Claude session setup, Bash safeguards and repeated test failure limits; `session-start.md` puts Elon at the front door. Other providers follow their own controls and the role instructions. |
-| `docs/agents/team.md` | Team roles, orchestration, reporting, handoffs, hotfix loop, rules and gated actions. |
-| `docs/agents/team-facts.md` | Repository, check commands, review rules and project shortcuts. |
-| `docs/agents/deploy-facts.md` | Components, hosts, stage commands, production approval and rollback steps. |
-| `docs/agents/issue-tracker.md` | Where specs and tickets go and how to read or update them. |
-| `docs/agents/triage-labels.md` | The project's issue labels and what each means. |
-| `docs/agents/domain.md` | Where agents read domain terms and design decisions. |
-
-Adoption creates `team.md`, `team-facts.md` and `deploy-facts.md` if missing. Create the tracker, label and domain files separately with `~/dotfiles/script/init-agent-project.sh --labels <dir>` before using the ticket and review skills. Configure `docs/agents/daily-run.md` in the project before asking for a daily run. Decisions belong in `docs/adr/`.
-
-Use slash commands below in Claude Code, Cursor and Antigravity; in Codex use `$skill-name` with the same arguments. A worker prompt can instead name the skill's `SKILL.md` path and ask it to follow the file.
-
-| Stage | What happens | Skill or command | Example prompt |
-| --- | --- | --- | --- |
-| Adopt the team | Install the files, then fill in project facts and tracker setup. | `script/adopt-agent-team.sh`, `script/init-agent-project.sh --labels` | Adopt the team into `~/projects/acme` and show me the facts I need to fill in. |
-| Start a session | Talk to Elon, who routes the work. | `/elon` or `/ceo` | `/elon Help me choose the next objective.` |
-| Intent | Record the user problem and wanted outcome for owner acceptance. | `/capture-intent` | `/capture-intent New users cannot tell whether setup is complete.` |
-| Grill | Resolve open decisions; record terms and design choices. For owner blocked issues, record answers and relabel resolved issues `ready-for-agent`. | `/grill-with-docs`, `/grilling`, `/grill-backlog` | `/grill-backlog Ask me the decisions holding up the queue.` |
-| Spec | Write a spec from an accepted intent, or publish the settled conversation as a tracker spec. | `/write-spec` for an intent file; `/to-spec` for a tracker spec | `/write-spec Use the accepted setup intent.` |
-| Tickets | Split the accepted spec into small tickets with checks and blocking dependencies. | `/to-tickets` | `/to-tickets Split the accepted setup spec into buildable slices.` |
-| Dispatch and build | Elon assigns work; workers build with tests first in their own worktrees and report results. | `/elon <objective>`, `/crew`, `orca orchestration worker-start`, `/tdd` | `/elon Deliver the ready setup tickets using /crew and /tdd.` |
-| Review | Check the current diff against project rules and the ticket; add security review where needed. | `/code-review` | `/code-review Check this branch against main and its ticket.` |
-| Merge | Elon pushes, opens the PR and merges after the required checks. Build and review workers never push or merge. | Ask Elon | Elon, merge the reviewed setup branch when its checks pass. |
-| Deploy | Release-manager promotes through local, staging and production; production needs the owner's explicit go for that release. | `/deploy local`, `/deploy staging`, `/deploy production` | `/deploy staging Promote the commit that passed local checks.` |
-| Status and daily run | Get company or engineering status, or run the project's daily checklist. | `/elon status`, `/elon daily run`, `/tl status` | `/elon status Show Now, Needs owner and Running.` |
-| Audit | Check team files for drift, contradictions and unused skills. | `/team-audit` | `/team-audit Check this repo's team files and propose fixes.` |
-| Support | Elon routes fixes and support drafts the customer reply; the owner approves before sending or closing. | Ask Elon to assign `support-csm` | Elon, resolve this support ticket and bring me the reply draft for approval. |
-
-### Context and notes
-
-Project instructions (`AGENTS.md`) load always. Short cross-project rules live in `~/.claude/notes/` (`.agents/claude/notes/`) and the Obsidian vault holds deep docs. Add a lesson from any project:
-
-```bash
-~/dotfiles/script/contribute-to-agents.sh nextjs "Nested route-group layouts cause dev 404s"
-```
-
-## Backups
-
-```bash
-bash script/backup-claude-desktop.sh   # Claude Desktop settings into init/
-fish script/backup-tide.fish           # Tide prompt config
-```
-
-## Layout
+MCP secrets go in `~/.claude/settings.local.json` (gitignored). Path map and boundaries: [AGENTS.md](AGENTS.md).
 
 | Path | Role |
 | --- | --- |
@@ -123,20 +205,3 @@ fish script/backup-tide.fish           # Tide prompt config
 | `.agents/` | Skills and Claude Code config (`claude/`) |
 | `templates/agent-team/` | The agent team template |
 | `.config/`, `ide/cursor/`, `vscode/`, `Antigravity/` | App and editor configs |
-
-## Example prompts
-
-```text
-Adopt the agent team into ~/projects/acme with script/adopt-agent-team.sh, then show me what it installed.
-```
-
-```text
-/capture-intent New users need a clear setup checklist.
-/grill-with-docs Resolve the open setup decisions.
-/write-spec Use the accepted setup intent.
-/to-tickets Split the accepted setup spec into tickets.
-/elon Deliver the ready setup tickets.
-/elon status
-/deploy staging
-/elon daily run
-```
