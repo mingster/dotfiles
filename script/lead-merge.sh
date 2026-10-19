@@ -354,5 +354,5 @@ echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
 head_branch=$(field .headRefName)
 issue=$(field .body | sed -nE 's/.*[Cc]loses[[:space:]]+#([0-9]+).*/\1/p' | head -n1)
 [ -n "$issue" ] || issue=$(sed -nE 's/[^0-9]*([0-9]+).*/\1/p' <<<"$head_branch" | head -n1)
-bash "$(dirname "$0")/merge-cleanup.sh" --branch "$head_branch" ${issue:+--issue "$issue"} \
+bash "$(dirname "$0")/merge-cleanup.sh" --branch "$head_branch" ${issue:+--issue "$issue"} ${pr:+--pr "$pr"} \
   || echo "lead-merge: cleanup incomplete (merge succeeded); run script/wrap-up.sh" >&2

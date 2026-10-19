@@ -136,3 +136,23 @@ done
 (cd "$tmp/wt-cur" && bash "$here/merge-cleanup.sh" --branch wip/cur > "$tmp/out" 2>&1) || fail "cleanup failed for current"
 grep -q 'protected: kept wip/cur' "$tmp/out" && has_local wip/cur || fail "current branch deleted"
 echo 'ok protected names, refs, origin/ and last components kept'
+
+# PR number matching: qa-<PR> lanes go, other numbers stay, whole-number only.
+git worktree add -qb qa-345 "$tmp/wt-q1" main
+git push -q origin qa-345
+git worktree add -qb qa-346 "$tmp/wt-q2" main
+git worktree add -qb qa-12345 "$tmp/wt-q3" main
+git worktree add -qb qa-3450 "$tmp/wt-q4" main
+git worktree add -qb qa-345-dirty "$tmp/wt-q5" main
+echo wip > "$tmp/wt-q5/w.txt"
+bash "$here/merge-cleanup.sh" --branch mingster/none --issue 9001 --pr 345 > "$tmp/out" 2>&1 || fail "pr cleanup failed"
+has_local qa-345 || has_remote qa-345 || [ -d "$tmp/wt-q1" ] && fail "qa-345 kept"
+for b in qa-346 qa-12345 qa-3450; do has_local "$b" || fail "$b wrongly removed"; done
+[ -d "$tmp/wt-q2" ] && [ -d "$tmp/wt-q3" ] && [ -d "$tmp/wt-q4" ] || fail "non-matching worktree removed"
+has_local qa-345-dirty && [ -d "$tmp/wt-q5" ] && fail "dirty qa-345-dirty not handled"
+echo 'ok --pr matches qa-<PR> only as a whole number'
+# Dirty PR lane that is released: patch saved, then removed (same as issue lanes).
+export FAKE_RELEASED="$tmp/wt-q5"
+bash "$here/merge-cleanup.sh" --branch mingster/none --pr 345 > "$tmp/out" 2>&1 || fail "dirty pr cleanup failed"
+grep -q '^+wip' "$tmp/_ref/qa-345-dirty.patch" || fail "dirty qa-<PR> patch not saved"
+echo 'ok dirty qa-<PR> saved as patch'

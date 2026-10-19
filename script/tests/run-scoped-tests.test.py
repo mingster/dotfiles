@@ -123,5 +123,66 @@ class ScopedTests(unittest.TestCase):
         self.assertIn('./job.test.ts', (self.repo/'calls').read_text())
 
 
+class EnsureDependenciesTests(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('run_scoped_tests', HELPER)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        (self.root / 'package.json').write_text('{}')
+        (self.root / 'prisma').mkdir()
+        (self.root / 'prisma/schema.prisma').write_text('')
+        (self.root / 'a.test.ts').write_text('')
+        self.calls = []
+
+    def fake_run(self, codes=()):
+        codes = list(codes)
+        def run(command, **kwargs):
+            self.calls.append((command, kwargs.get('env', {}).get('DATABASE_URL')))
+            return subprocess.CompletedProcess(command, codes.pop(0) if codes else 0)
+        return run
+
+    def run_scoped(self, codes=()):
+        from unittest import mock
+        with mock.patch.object(self.mod.subprocess, 'run', self.fake_run(codes)):
+            return self.mod.run_scoped_tests(self.root, 'bun test', [str(self.root / 'a.test.ts')])
+
+    def test_installs_and_generates_when_node_modules_missing(self):
+        self.assertEqual(self.run_scoped(), 0)
+        commands = [call[0] for call in self.calls]
+        self.assertEqual(commands[0], ['bun', 'install', '--frozen-lockfile', '--ignore-scripts'])
+        self.assertEqual(commands[1], ['bunx', '--no-install', 'prisma', 'generate'])
+        self.assertEqual(self.calls[1][1], self.mod.PLACEHOLDER_DATABASE)
+        self.assertEqual(self.mod.PLACEHOLDER_DATABASE, 'postgresql://test:test@localhost:5432/test')
+        self.assertEqual(commands[2][:2], ['bun', 'test'])
+
+    def test_generate_falls_back_to_bunx_without_no_install(self):
+        self.assertEqual(self.run_scoped([0, 1, 0]), 0)
+        self.assertEqual(self.calls[2][0], ['bunx', 'prisma', 'generate'])
+
+    def test_skipped_when_node_modules_present(self):
+        (self.root / 'node_modules').mkdir()
+        self.assertEqual(self.run_scoped(), 0)
+        self.assertEqual([call[0][0] for call in self.calls], ['bun'])
+        self.assertEqual(self.calls[0][0][:2], ['bun', 'test'])
+
+    def test_skipped_when_no_tests_selected(self):
+        from unittest import mock
+        with mock.patch.object(self.mod.subprocess, 'run', self.fake_run()):
+            self.assertEqual(self.mod.run_scoped_tests(self.root, 'bun test', []), 0)
+        self.assertEqual(self.calls, [])
+
+    def test_install_failure_propagates_and_skips_tests(self):
+        self.assertEqual(self.run_scoped([3]), 3)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_generate_failure_propagates(self):
+        self.assertEqual(self.run_scoped([0, 1, 5]), 5)
+        self.assertEqual(len(self.calls), 3)
+
+
 if __name__ == '__main__':
     unittest.main()
