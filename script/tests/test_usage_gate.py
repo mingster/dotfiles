@@ -5,6 +5,8 @@ spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
 NO_CURSOR = "/nonexistent/cursor-summary.json"
 ug.READERS["antigravity"] = lambda: None  # tests never query the local server
+ug.antigravity_models = lambda: None  # tests never run the Antigravity CLI
+ug.BANNER_FILE = "/nonexistent/antigravity-banner.json"  # tests never read real banners
 ug.refresh_reading = lambda provider: None  # isolate provider refresh transport in legacy unit cases
 ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
@@ -559,6 +561,16 @@ class Pick(unittest.TestCase):
         self.assertGreater(claude["headroom"], codex["headroom"])
         self.assertEqual((status, result["selected"]["provider"]), (0, "claude"))
 
+    def test_near_tie_keeps_the_preset_provider_whichever_reads_higher(self):
+        # Readings 1 point apart in either direction must not flip the pick (issue 107).
+        for claude, codex in ((44, 44), (45, 44), (44, 45), (46, 44)):
+            with self.subTest(claude=claude, codex=codex):
+                self.assertIn("--agent claude", self.invoke(claude=claude, codex=codex, cap=None)[1])
+
+    def test_clearly_lower_preset_switches_and_blocked_preset_switches(self):
+        self.assertIn("--agent codex", self.invoke(claude=60, codex=44, cap=None)[1])
+        self.assertIn("--agent codex", self.invoke(claude=95, codex=44, cap=None)[1])
+
     def test_ties_keep_chain_order_and_reserve_can_block_all_gated_providers(self):
         self.assertIn("--agent claude", self.invoke(codex=44)[1])
         self.assertEqual(self.invoke(claude=94, codex=94, running=1)[0], 4)   # cursor has no reading, which proves nothing
@@ -773,3 +785,48 @@ for line in sys.stdin:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Banner(unittest.TestCase):
+    TEXT = "Individual quota reached for claude-sonnet-5-5-high. Resets in 94h29m"
+
+    def test_parses_pool_and_reset(self):
+        self.assertEqual(ug.parse_quota_banner(self.TEXT, NOW), ("claude", NOW + 94 * 3600 + 29 * 60))
+        self.assertEqual(ug.parse_quota_banner("gemini-4 quota reached, resets in 2h", NOW),
+                         ("gemini", NOW + 7200))
+        self.assertIsNone(ug.parse_quota_banner("all good", NOW))
+        self.assertIsNone(ug.parse_quota_banner("quota reached. Resets in 5h", NOW))  # no pool named
+
+    def test_banner_blocks_the_pool_until_reset_and_unknown_is_not_eligible(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = t + "/banner.json"
+            self.assertEqual(ug.record_quota_banner(self.TEXT, NOW, path), "claude")
+            with mock.patch.object(ug, "BANNER_FILE", path), \
+                    mock.patch.object(ug, "antigravity_pools", return_value=None), \
+                    mock.patch.object(ug, "running_workers", return_value=0), \
+                    mock.patch.object(ug.time, "time", return_value=NOW + 60):
+                pools = ug.antigravity_reading()
+                self.assertEqual(set(pools), {"claude"})
+                row = ug.antigravity_result(pools, 95, NOW + 60, model="claude-sonnet-5-5-high")
+                self.assertEqual((row["verdict"], row["blocked_until"]), ("blocked", NOW + 94 * 3600 + 29 * 60))
+                self.assertEqual(ug.antigravity_result(pools, 95, NOW + 60, model="gemini-4-argon-low")["verdict"],
+                                 "unknown")
+            with mock.patch.object(ug, "BANNER_FILE", path), \
+                    mock.patch.object(ug, "antigravity_pools", return_value=None), \
+                    mock.patch.object(ug.time, "time", return_value=NOW + 95 * 3600):
+                self.assertIsNone(ug.antigravity_reading())
+
+    def test_unlisted_model_id_is_not_eligible(self):
+        pools = {"gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+        chain = [{"provider": "antigravity", "model": "gemini-3.1-pro-high"}]
+        with tempfile.TemporaryDirectory() as t, \
+                mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.object(ug, "antigravity_models", return_value={"gemini-4-argon-low"}), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            with open(t + "/p.json", "w") as f:
+                json.dump({"roles": {"dev": {"chain": chain}}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": t + "/p.json"}):
+                result = ug.pick("dev", None, None, 95, 1)
+        self.assertIsNone(result["selected"])
+        self.assertEqual(result["candidates"][0]["verdict"], "model not recognized")
