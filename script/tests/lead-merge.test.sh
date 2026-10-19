@@ -41,7 +41,20 @@ case "$2" in
     echo ok >> "$MERGE_LOG" ;;
 esac
 EOS
+# orca stub: worker-list pages of FAKE_DISPATCHES (space separated), two ids per page.
+cat > "$tmp/bin/orca" <<'EOS'
+#!/usr/bin/env bash
+[ "$1 $2" = "orchestration worker-list" ] || exit 1
+[ "${FAKE_ORCA_FAIL:-}" != 1 ] || exit 1
+read -ra ids <<<"$FAKE_DISPATCHES"
+start=0; prev=""
+for a in "$@"; do [ "$prev" = --cursor ] && start=$a; prev=$a; done
+w=""; for ((i=start; i<start+2 && i<${#ids[@]}; i++)); do w="$w${w:+,}{\"dispatchId\":\"${ids[i]}\"}"; done
+next=null; [ $((start+2)) -ge ${#ids[@]} ] || next="\"$((start+2))\""
+printf '{"ok":true,"result":{"workers":[%s],"page":{"nextCursor":%s}}}\n' "$w" "$next"
+EOS
 chmod +x "$tmp/bin/"*
+export ORCA_CLI_COMMAND="$tmp/bin/orca"
 export PATH="$tmp/bin:$PATH"
 export MERGE_LOG="$tmp/merge.log"
 
@@ -57,6 +70,7 @@ setup() {
   comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"; OLD_PATCH=current
   checks="Checks: PASS head=$SHA"; countersign=""; TRUNK_FILES=""
   export TRUNK_FILES
+  export FAKE_DISPATCHES="ctx_a ctx_b ctx_author ctx_other ctx_same ctx_verify"; unset FAKE_ORCA_FAIL
   export OLD OLD_PATCH
   state=OPEN base=main headsha=$SHA mergeable=MERGEABLE branch=feature
   FINAL_JSON='{"state":"MERGED","mergeCommit":{"oid":"dddddddddddddddddddddddddddddddddddddddd"},"url":"https://github.com/o/r/pull/7"}'
@@ -143,6 +157,12 @@ setup; comments="Verdict: PASS head=$SHA verifier=ctx_same author=ctx_same"; che
 setup; PR_DIFF=$'+test.skip("case", () => {})'; check "test skip needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// @ts-expect-error intentional'; check "suppression needs countersign" 1 'Countersign'
 setup; files='[{"path":"script/copy-only.config.json"}]'; PR_DIFF=$'+++ b/script/copy-only.config.json\n+{"sensitive_words":[]}'; check "copy gate config needs countersign" 1 'Countersign'
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=ctx_author"; check "unknown verifier dispatch refused" 1 'ctx_ghost is not a known dispatch'
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_ghost"; check "unknown author dispatch refused" 1 'ctx_ghost is not a known dispatch'
+setup; export FAKE_ORCA_FAIL=1; check "worker-list failure refuses" 1 'cannot read orca worker-list'
+setup; FAKE_DISPATCHES="ctx_a ctx_b ctx_c ctx_d ctx_author ctx_verify"; check "dispatch ids found on a later page" 0 '^MERGED' 1
+setup; PR_DIFF=$'+  it("test.todos", () => {})'; check "test.todos is not a skip trigger" 0 '^MERGED' 1
+setup; PR_DIFF=$'+test.todo("later")'; check "test.todo needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+System.exit(1);'; check "System.exit is not a skip trigger" 0 '^MERGED' 1
 setup; PR_DIFF=$'+foo.exit(0)'; check "foo.exit is not a skip trigger" 0 '^MERGED' 1
 setup; PR_DIFF=$'+xit("case", () => {})'; check "xit needs countersign" 1 'Countersign'
