@@ -82,7 +82,7 @@ What you do day to day (slash commands work in Claude Code, Cursor and Antigravi
 Owner approvals and protected files:
 
 * The lead merges reviewed PRs through `script/lead-merge.sh` only, never with `--admin`. Workers commit on their own branch and never push or merge.
-* Owner only files stay out of the lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `.codex`, `*.rules`, and intents that become Accepted.
+* Owner only files stay out of the lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh` (in each project), `.codex`, `*.rules`, and intents that become Accepted.
 * Accepting an intent or spec, every production deploy and every migration go to you.
 * You allow the merge script once, by appending `templates/codex/lead-merge.rules` to `~/.codex/rules/default.rules`. Agents never edit `~/.codex`.
 
