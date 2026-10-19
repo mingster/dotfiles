@@ -75,6 +75,27 @@ def select_changed_tests(root, files):
     return sorted(tests)
 
 
+def ensure_dependencies(root):
+    """Install packages and generate the Prisma client in a fresh checkout. 0 means ready."""
+    root = Path(root)
+    if not (root / 'package.json').is_file() or (root / 'node_modules').exists():
+        return 0
+    env = dict(os.environ, DATABASE_URL=PLACEHOLDER_DATABASE)
+    commands = [['bun', 'install', '--frozen-lockfile', '--ignore-scripts']]
+    if (root / 'prisma' / 'schema.prisma').is_file() or (root / 'prisma.config.ts').is_file():
+        commands.append(['bunx', '--no-install', 'prisma', 'generate'])
+    for command in commands:
+        print('Component check:', shlex.join(command), 'cwd=' + str(root), flush=True)
+        result = subprocess.run(command, cwd=root, env=env)
+        if result.returncode and command[:2] == ['bunx', '--no-install']:
+            fallback = ['bunx', 'prisma', 'generate']
+            print('Component check:', shlex.join(fallback), 'cwd=' + str(root), flush=True)
+            result = subprocess.run(fallback, cwd=root, env=env)
+        if result.returncode:
+            return result.returncode
+    return 0
+
+
 def run_scoped_tests(root, runner, files):
     tests = select_changed_tests(root, files)
     paths = ['./' + str(path.relative_to(root.resolve())) for path in tests]
@@ -83,6 +104,9 @@ def run_scoped_tests(root, runner, files):
         print('Selected:', path, flush=True)
     if not paths:
         return 0
+    result = ensure_dependencies(root)
+    if result:
+        return result
     env = dict(os.environ, DATABASE_URL=PLACEHOLDER_DATABASE)
     return subprocess.run(shlex.split(runner) + paths, cwd=root, env=env).returncode
 
