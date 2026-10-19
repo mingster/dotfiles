@@ -128,6 +128,11 @@ rm dirty-main
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test "$(git rev-parse HEAD)" = "$(git --git-dir="$tmp/origin" rev-parse main)"
 echo 'ok clean main fast forwards'
+git worktree add -qb lq-merged "$tmp/lead-queue"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test -d "$tmp/lead-queue"
+git show-ref --verify --quiet refs/heads/lq-merged
+echo 'ok lead-queue worktree kept even when merged and clean'
 git worktree add -qb settled "$tmp/settled"
 export FAKE_TERMINALS="[{\"handle\":\"ended\",\"worktreePath\":\"$tmp/settled\"}]"
 export FAKE_WORKERS='[{"agentTerminalHandle":"ended","dispatchId":"ctx_done","dispatchStatus":"completed"}]'

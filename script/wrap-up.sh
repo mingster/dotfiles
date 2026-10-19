@@ -78,7 +78,7 @@ while IFS= read -r active_path; do
 done < "$tmp/active" > "$tmp/active-normalized"
 mv "$tmp/active-normalized" "$tmp/active"
 protected() {
-  case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD) return 0 ;; esac
+  case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD|lead-queue|*/lead-queue) return 0 ;; esac
   return 1
 }
 eligible() {
@@ -97,6 +97,7 @@ process_worktree() {
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ]; then why='detached HEAD'
   elif protected "$branch"; then why='protected'
+  elif [ "${path##*/}" = lead-queue ]; then why='lead-queue lane'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ]; then why='dirty'

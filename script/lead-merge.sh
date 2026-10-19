@@ -235,6 +235,35 @@ patch_id() {
   awk 'NR == 1 {print $1}' <<<"$patch"
 }
 verdict_head="$head"
+# Dispatch ids Orca knows about, read lazily and once, following page cursors.
+known_dispatches=""
+load_dispatches() {
+  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
+  # worker-list without --run sees only the caller's bound run, so read every run.
+  for n in $(seq 1 50); do
+    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+      || die "cannot read orca run-list to verify verdict dispatch ids"
+    runs+=$(jq -r '.result.runs[]?.id' <<<"$page" 2>/dev/null)$'\n' \
+      || die "cannot parse orca run-list to verify verdict dispatch ids"
+    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
+    [ -n "$cursor" ] && continue
+    while IFS= read -r run; do
+      [ -n "$run" ] || continue
+      cursor=""
+      for m in $(seq 1 50); do
+        page=$("$orca" orchestration worker-list --run "$run" --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+          || die "cannot read orca worker-list to verify verdict dispatch ids"
+        known_dispatches+=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null)$'\n' \
+          || die "cannot parse orca worker-list to verify verdict dispatch ids"
+        cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
+        [ -n "$cursor" ] || break
+      done
+      [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
+    done <<<"$runs"
+    return 0
+  done
+  die "run-list has too many pages to verify verdict dispatch ids"
+}
 if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; then
   current_patch=""
   applicable=()
@@ -247,6 +276,7 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only 
     line=${comment%%$'\n'*}
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
+      verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
       [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || die "author cannot supply verifier verdict"
       applies=false
       if [ "$candidate_head" = "$head" ]; then
@@ -257,6 +287,10 @@ if [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only 
         [ "$old_patch" != "$current_patch" ] || applies=true
       fi
       if [ "$applies" = true ]; then
+        [ -n "$known_dispatches" ] || load_dispatches
+        grep -Fxq -- "$verifier_id" <<<"$known_dispatches" || die "verdict verifier $verifier_id is not a known dispatch"
+        # author=unknown is the one literal allowed without a dispatch; any other author must be known.
+        [ "$author_id" = unknown ] || grep -Fxq -- "$author_id" <<<"$known_dispatches" || die "verdict author $author_id is not a known dispatch"
         [ "$flagged" = false ] || die "verdict comment was edited or minimized; post a fresh Verdict"
         [ ${#applicable[@]} -gt 0 ] || verdict_head="$candidate_head"
         applicable+=("$verdict"$'\n'"$comment")
@@ -314,7 +348,7 @@ if [ "$sensitive" = true ]; then
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
-triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo|(^|[^A-Za-z0-9_.])xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
+triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.])xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
 while IFS= read -r f; do
   case "$f" in
     .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh|script/copy-only.config.json|*/script/copy-only.config.json)

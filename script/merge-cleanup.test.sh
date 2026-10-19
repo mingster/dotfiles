@@ -137,6 +137,13 @@ done
 grep -q 'protected: kept wip/cur' "$tmp/out" && has_local wip/cur || fail "current branch deleted"
 echo 'ok protected names, refs, origin/ and last components kept'
 
+# The lead-queue worktree is never removed, even for a merged clean branch.
+git worktree add -qb lane/80-lq "$tmp/lead-queue" main
+git push -q origin lane/80-lq
+bash "$here/merge-cleanup.sh" --branch lane/80-lq > "$tmp/out" 2>&1 || fail "cleanup failed for lead-queue"
+[ -d "$tmp/lead-queue" ] && has_local lane/80-lq || fail "lead-queue worktree removed"
+grep -q 'protected: kept worktree.*lead-queue' "$tmp/out" || fail "no lead-queue protected message"
+echo 'ok lead-queue worktree kept'
 # PR number matching: qa-<PR> lanes go, other numbers stay, whole-number only.
 git worktree add -qb qa-345 "$tmp/wt-q1" main
 git push -q origin qa-345
