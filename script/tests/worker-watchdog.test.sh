@@ -96,4 +96,23 @@ assert 94*3600+28*60 < left <= 94*3600+29*60, left
 PY
 WATCHDOG_TEST_PROVIDER=antigravity run_case idle 1
 if rg -q 'Ask Codex|usage limit|❯' "$HOME/.orca/logs/worker-watchdog.log"; then exit 1; fi
-echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner)'
+# Without timeout or gtimeout (stock macOS) a hanging command must still be cut off.
+nt="$tmp/no-timeout"; mkdir -p "$nt"
+for f in /bin/* /usr/bin/* "$(command -v python3)" "$(command -v rg)" "$(command -v bash)"; do
+  case ${f##*/} in timeout|gtimeout) continue ;; esac
+  ln -sf "$f" "$nt/${f##*/}" 2> /dev/null || true
+done
+cat > "$tmp/bin/orca" <<'SH'
+#!/bin/sh
+exec sleep 30
+SH
+rm -rf "$HOME/.orca"; : > "$tmp/actions"
+PATH="$nt" env -i HOME="$HOME" PATH="$nt" ORCA_CLI_COMMAND="$tmp/bin/orca" WATCHDOG_BOUND_SECONDS=1 \
+  bash -c 'command -v timeout gtimeout && exit 1; exec bash "$0" "$@"' "$root/script/worker-watchdog.sh" \
+  --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks 1 &
+hang_pid=$!
+for _ in $(seq 1 100); do kill -0 "$hang_pid" 2> /dev/null || break; sleep 0.1; done
+if kill -0 "$hang_pid" 2> /dev/null; then kill "$hang_pid"; echo 'watchdog hung without timeout binary' >&2; exit 1; fi
+wait "$hang_pid"
+grep -q 'read-run-failed run_test' "$HOME/.orca/logs/worker-watchdog.log"
+echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary)'

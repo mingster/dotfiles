@@ -20,7 +20,14 @@ done
 orca_cli=${ORCA_CLI_COMMAND:-orca}
 gate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/usage-gate.py"
 # Bound every external command so a hung CLI cannot stall the loop.
-bounded() { if command -v timeout > /dev/null 2>&1; then timeout 30 "$@"; else "$@"; fi; }
+# macOS ships no timeout, so fall back to perl, where alarm survives exec and kills the command.
+bound=${WATCHDOG_BOUND_SECONDS:-30}
+bounded() {
+  if command -v timeout > /dev/null 2>&1; then timeout "$bound" "$@"
+  elif command -v gtimeout > /dev/null 2>&1; then gtimeout "$bound" "$@"
+  else perl -e 'alarm shift; exec @ARGV or exit 127' "$bound" "$@"
+  fi
+}
 state="$HOME/.orca/state/worker-watchdog/$notify_run"
 log="$HOME/.orca/logs/worker-watchdog.log"
 mkdir -p "$state" "$(dirname "$log")"
