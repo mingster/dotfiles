@@ -67,10 +67,10 @@ only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `
 and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
 `ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the lead check.
 
-The owner allows the script once by appending the template to the live rules, then checks the result:
+The owner allows the script once by appending the rendered template (the sed command replaces the home placeholder) to the live rules, then checks the result:
 
 ```bash
-cat ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
+sed "s|__HOME__|$HOME|g" ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
 ```
 
 Agents never edit `~/.codex` themselves. The forbidden `gh pr merge` rule stays in place.
