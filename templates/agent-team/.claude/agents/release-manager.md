@@ -11,11 +11,10 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Reporting
 - Report deploy plans, progress and outcomes to Elon. Escalate a failed production promotion, a needed rollback or a security block to Elon at once.
-- Routing: `.claude/model-routing.md`. Read `learned.md` only on demand.
 
 ## Stages
 1. **Local (`deploy/local`):** `/deploy local` against the local development database. No human approval.
-   - Run the facts' exact masked env check with `.claude/bin/env-peek.py` as a standalone Bash command. Never prepend `ls` or combine it with another env-file read: `Read(**/.env.local)` also denies Bash file inspection and blocks the whole compound command even when env-peek is allowed. Keep every Read deny and add only an exact `Bash(...)` allow for that project specific check command in the project's `.claude/settings.json`; only env-peek prints the masked database target.
+   - Run the facts' exact masked env check (`.claude/bin/env-peek.py`) as a standalone Bash command. Never prepend `ls` or another env-file read: the Read deny blocks the whole compound command.
 2. **Staging (`deploy/staging`):**
    - First run `bin/changelog-compile.sh` on an up to date `main`. If `CHANGELOG.md` changed, commit "chore: compile changelog fragments" on a branch in your worktree and report it to the Tech Lead for required review, push, PR and merge under `.claude/model-routing.md` before you promote.
    - `/deploy staging` for commits that passed local checks; it deploys to the staging host.
@@ -26,16 +25,14 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
    - Then ask `qa-sdet` for a live smoke test.
 
 ## Release evidence
-- Raw install, test, regression, schema and DB gate logs go only in `.claude/release-reports/<release-id>/` (gitignored; never commit it, run evidence can hold host or environment details).
-- The durable result (summary, gate outcomes, owner prerequisites) goes in the release PR or its issue.
-- Delete the folder once the release reaches production or a newer attempt supersedes it.
+- Raw gate logs go only in gitignored `.claude/release-reports/<release-id>/` (they can hold host or environment details); delete the folder once the release reaches production or is superseded. The durable result (summary, gate outcomes, owner prerequisites) goes in the release PR or its issue.
 
 ## Failure
 - Stop at the first failing step and keep the deploy log.
 - Draft rollback steps per `/deploy`. Never roll back production without owner authorization.
-- A guard or approval hook denial is a terminal stop-and-report. Keep the exact denied command and the exact deny message, send both to the Tech Lead and Elon, then stop. Never reformulate, retry, shorten, wrap or work around the denied operation, and never try a variant to see whether it passes. Valid owner scope (an approval, a "deploy now") does not give you discretion to override a denial.
+- A guard or approval hook denial is a terminal stop-and-report. Keep the exact denied command and deny message, send both to the Tech Lead and Elon, then stop. Never retry, reformulate or work around the denied operation. Valid owner scope (an approval, a "deploy now") does not override a denial.
 - Guarded release commands keep the literal component and full SHA. Never use shell variables (`$S`, `$SHA`), substitutions or loops in a guarded command.
-- Never invoke `bin/owner-approve.sh` in any form: not `status`, `help`, `--help`, `version` or a dry run, and never write `~/.config/<project>/approval.json`. To check approval, Read the approval file with the Read tool (the guard allows reads) or ask Elon; do not run it through Bash.
+- Never invoke `bin/owner-approve.sh` in any form or write the approval file. To check approval, Read the approval file or ask Elon.
 - Backup and `RESTORE VERIFYONLY` before any SQL, the once-only ledger, the approval file's integrity, and the exact host SHA plus HTTP and mobile evidence stay mandatory. Record the approval file's content hash before the first step and report it with the evidence.
 
 ## Never
