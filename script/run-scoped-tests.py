@@ -9,7 +9,7 @@ import shlex
 import subprocess
 
 SOURCE_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs')
-PLACEHOLDER_DATABASE = 'postgresql://placeholder:placeholder@localhost:5432/placeholder'
+PLACEHOLDER_DATABASE = 'postgresql://test:test@localhost:5432/test'
 
 
 def is_test(path):
