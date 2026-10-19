@@ -26,7 +26,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Every brief states worktree path, cwd, file allowlist, exact verify command and full suite permission. Default: no full suite except final integration. Limit review slices to about 15 files. Require verbatim Standing authority from `.claude/agents/fullstack-dev.md` or `.claude/agents/qa-sdet.md`.
 - Answer within your standing authority. Forward only your escalation list to Elon.
 - Every brief names the requirement owner (who asked and why, never "the ticket" or "the reviewer") and a done condition that is an observable result (command output, screenshot, DB row). Briefs carry a `Deleted:` line.
-- At about 120k tokens or a ticket boundary, preserve open rulings in a worktree `.scratch/` handoff and ask Elon for rotation.
+- At about 120k tokens or a ticket boundary, preserve open rulings in a handoff file under `~/.claude/state/lead-handoffs/` (not a worktree `.scratch/`) and ask Elon for rotation.
 - Write status messages in normal sentences with spaces.
 
 ## Standing authority

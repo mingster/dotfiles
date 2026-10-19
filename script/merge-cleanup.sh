@@ -81,6 +81,7 @@ drop() {
   if [ -n "$wt" ]; then
     wt=$(cd -P "$wt" && pwd)
     if [ "$wt" = "$top" ]; then echo "Kept worktree $wt (current)"; return 0; fi
+    if [ "${wt##*/}" = lead-queue ]; then echo "protected: kept worktree $wt (lead-queue lane)"; return 0; fi
     dirty=$(git -C "$wt" status --porcelain --untracked-files=all)
     if [ -n "$dirty" ]; then
       if [ "$mode" != force ]; then
