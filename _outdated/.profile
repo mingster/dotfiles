@@ -22,6 +22,6 @@ if [ -d "$HOME/bin" ] ; then
 fi
 
 # Add the directory of Tizen .NET Command Line Tools to user path.
-export PATH=/Users/mtsai/tizen-studio/tools/ide/bin:$PATH
+export PATH=$HOME/tizen-studio/tools/ide/bin:$PATH
 
 export WMSJAVA_HOME="/Library/WowzaStreamingEngine-4.8.26+4/java"

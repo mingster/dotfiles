@@ -124,8 +124,7 @@ Context is loaded in three tiers to keep sessions lean:
 | **Quick reference notes** | `~/.claude/notes/` (source: `.agents/claude/notes/`) | On demand — `@`-include when needed for a task |
 | **Deep docs and memory** | Obsidian vault `~/Documents/Obsidian` | On demand — `obsidian` MCP |
 
-Vault layout and MEGAcmd sync setup: `docs/agents/obsidian.md`. Read it before changing
-`script/setup-obsidian.sh`, the vault structure, or the sync configuration.
+Vault sync setup lives in `script/setup-obsidian.sh` (header comment lists the steps). Read it before changing the vault structure or the sync configuration.
 
 ## Contributing learnings back from a project
 
