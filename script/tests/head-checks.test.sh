@@ -59,6 +59,15 @@ else: sys.exit(1)
     run('unrelated base refuses checks',line('should not run'),1)
     env['GH_BASE']=base
     run('empty checklist fails closed','# only a comment',1)
+    # A PR that adds a path matched by the base's .claude/deploy-guard-paths fails before any check runs.
+    (repo/'.claude').mkdir(); (repo/'.claude/deploy-guard-paths').write_text('# deploy refuses these\nweb/.env*\n')
+    git('add','.'); git('commit','-qm','deploy guard config'); env['GH_BASE']=git('rev-parse','HEAD')
+    run('guarded path is allowed when not added',line('guard clean'),0)
+    (repo/'web').mkdir(exist_ok=True); (repo/'web/.env.example').write_text('KEY=\n')
+    result,_=run('PR adding a deploy-guard path fails',line('guard should not run'),1)
+    if 'Deploy guard: PR adds web/.env.example' in comments.read_text() and not order.exists(): passed+=1; print('ok   deploy guard names the path, no check ran')
+    else: failed+=1; print('FAIL deploy guard receipt',comments.read_text())
+    env['GH_BASE']=base
     result,_=run('unchecked receipt lists all paths',"printf 'UNCHECKED: jellyfin/Thing.cs\\n'; printf 'UNCHECKED: roku/main.brs\\n'",0)
     if 'Unchecked paths: jellyfin/Thing.cs, roku/main.brs' in comments.read_text(): passed+=1; print('ok   unchecked receipt summary')
     else: failed+=1; print('FAIL missing unchecked receipt summary',comments.read_text())
