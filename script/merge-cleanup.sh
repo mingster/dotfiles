@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Cleanup after lead-merge.sh reads MERGED. Run from a checkout of the repo.
-# Usage: merge-cleanup.sh --branch <pr head> [--issue N]    DRY_RUN=1 only prints.
+# Usage: merge-cleanup.sh --branch <pr head> [--issue N] [--pr N]    DRY_RUN=1 only prints.
 # 1. Remove the PR head: remote branch, its worktree (kept when dirty), local branch.
-# 2. With an issue: remove clean worktrees and branches whose name has N as a whole number
+# 2. With an issue and/or PR number: remove clean worktrees and branches whose name has either
+#    number as a whole number (qa-3847 for PR 3847; 3846 never matches 38460 or 13846)
 #    and that are in origin/main or belong to a released worker. Dirty worktrees get their
 #    `git diff HEAD` plus untracked files saved to $MERGE_CLEANUP_REF_DIR/<branch>.patch
 #    (and <branch>.untracked.txt listing them) first; if saving fails the worktree is kept.
@@ -15,16 +16,18 @@ here=$(cd "$(dirname "$0")" && pwd)
 dry=${DRY_RUN:-0}
 orca=${ORCA_CLI_COMMAND:-orca}
 ref_dir=${MERGE_CLEANUP_REF_DIR:-$HOME/orca/workspaces/_ref}
-branch="" issue=""
+branch="" issue="" pr=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --branch) branch=${2:-}; shift 2 ;;
     --issue) issue=${2:-}; shift 2 ;;
+    --pr) pr=${2:-}; shift 2 ;;
     *) echo "merge-cleanup: unknown argument $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$branch" ] || { echo "usage: merge-cleanup.sh --branch <name> [--issue N]" >&2; exit 2; }
+[ -n "$branch" ] || { echo "usage: merge-cleanup.sh --branch <name> [--issue N] [--pr N]" >&2; exit 2; }
 case "$issue" in *[!0-9]*) echo "merge-cleanup: --issue must be a number" >&2; exit 2 ;; esac
+case "$pr" in *[!0-9]*) echo "merge-cleanup: --pr must be a number" >&2; exit 2 ;; esac
 
 top=$(cd -P "$(git rev-parse --show-toplevel)" && pwd)
 current=$(git symbolic-ref --quiet --short HEAD || true)
@@ -118,8 +121,9 @@ mkdir_patch() {
 
 drop "$branch"
 
-if [ -n "$issue" ]; then
-  re="(^|[^0-9])${issue}([^0-9]|\$)"
+if [ -n "$issue" ] || [ -n "$pr" ]; then
+  nums=${issue}${issue:+${pr:+|}}${pr}
+  re="(^|[^0-9])(${nums})([^0-9]|\$)"
   while IFS= read -r b; do
     [[ "$b" =~ $re ]] || continue
     keep_protected "$b" && continue
