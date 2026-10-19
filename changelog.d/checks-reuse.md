@@ -1,0 +1,1 @@
+head-checks reuses a persistent `_checks` worktree (locked per run) so installed packages survive between runs, and the worker watchdog escalates zero live workers once per empty episode and ignores finished runs.

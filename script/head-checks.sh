@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
 set -euo pipefail
-repo="" pr="" ref="" sha="" worktree="" created=false
+repo="" pr="" ref="" sha="" worktree="" lock=""
 override="" changed="" explicit_base=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -27,9 +27,7 @@ finish() {
   local status=$? result=FAIL
   trap - EXIT
   set +e
-  if [ "$created" = true ]; then
-    git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1 || status=1
-  fi
+  [ -z "$lock" ] || rm -rf "$lock"
   [ "$status" -ne 0 ] || result=PASS
   {
     printf 'Checks: %s head=%s\n\n' "$result" "$sha"
@@ -74,10 +72,29 @@ remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
 worktree="$HOME/orca/workspaces/$name/_checks"
-[ ! -e "$worktree" ] || usage "check worktree already exists: $worktree"
 mkdir -p "$(dirname "$worktree")"
-git -C "$repo" worktree add --detach "$worktree" "$sha" >> "$log" 2>&1
-created=true
+# The worktree persists so installed packages survive between runs; one run at a time may use it.
+lock="$worktree.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+  holder=$(cat "$lock/pid" 2>/dev/null || true)
+  if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
+    lock=""; usage "check worktree is in use by pid $holder: $worktree"
+  fi
+  rm -rf "$lock"; mkdir "$lock" || { lock=""; usage "cannot lock check worktree: $worktree"; }
+fi
+printf '%s\n' "$$" > "$lock/pid"
+common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+if [ -e "$worktree" ] && [ "$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common" ] \
+    && [ -z "$(git -C "$worktree" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  git -C "$worktree" checkout -q --detach "$sha" >> "$log" 2>&1
+  git -C "$worktree" clean -fdq -e node_modules >> "$log" 2>&1
+else
+  if [ -e "$worktree" ]; then
+    git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1 || usage "cannot replace unusable check worktree: $worktree"
+  fi
+  git -C "$repo" worktree prune
+  git -C "$repo" worktree add --detach "$worktree" "$sha" >> "$log" 2>&1
+fi
 config="${override:-$worktree/.agents/head-checks.conf}"
 [ -f "$config" ] || usage "missing .agents/head-checks.conf"
 printf "Checklist: %s\n" "$(shasum -a 256 "$config")" >> "$log"

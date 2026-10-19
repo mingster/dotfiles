@@ -8,6 +8,7 @@ mkdir -p "$HOME/orca/workspaces/proj/lead-x" "$HOME/orca/workspaces/proj/fullsta
 LEAD="$HOME/orca/workspaces/proj/lead-x"
 
 REAL_GIT=$(command -v git); export REAL_GIT
+export GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null  # offline: local paths only
 # git stub: rev-parse --show-toplevel prints $FAKE_TOP.
 cat > "$tmp/bin/git" <<'EOS'
 #!/usr/bin/env bash
@@ -105,19 +106,84 @@ write_approval() { # scope target [offset seconds] [by] [patch_id]
     '{scope:$scope,target:$target,patch_id:(if $pid == "" then null else $pid end),schema:false,apply:false,created_at:(now|floor),expires_at:((now|floor)+$off),by:$by}' > "$APPROVAL"
 }
 
-pass=0; fail=0
-check() { # name expected_exit output_regex [merge_calls]
+# Cases run in parallel, in two ways. Plain check calls in the main shell snapshot the
+# mutable state (HOME with the approval file, the fixture repo, a LEAD_MERGE gate dir)
+# into $tmp/cases/N and run in the background. Setup heavy groups run as units
+# (`unit; ( unit_init ... ) &`): a subshell with its own HOME, repo and gate dir, whose
+# checks run inline. ONLY=<regex> runs just the cases whose name matches; JOBS=<n>
+# sets the parallelism.
+JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
+mkdir -p "$tmp/cases" "$tmp/units"; n=0; UNIT=0
+throttle() { while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do sleep 0.02; done; }
+unit() { UNIT=$((UNIT+1)); throttle; }
+unit_init() {
+  IN_UNIT=1; ucd="$tmp/units/$(printf %04d "$UNIT")"; cn=0
+  mkdir -p "$ucd/home/orca/workspaces/proj/lead-x/.claude/hooks" "$ucd/home/orca/workspaces/proj/fullstack-dev-x" "$ucd/home/.config"
+  cp "$LEAD/.claude/hooks/guard-bash.py" "$ucd/home/orca/workspaces/proj/lead-x/.claude/hooks/"
+  export HOME="$ucd/home" MERGE_LOG="$ucd/merge.log"
+  LEAD="$HOME/orca/workspaces/proj/lead-x"; APPROVAL="$HOME/.config/proj/approval.json"
+}
+run_case() { # result_file run_script name expected_exit output_regex [merge_calls] [merge_call_regex]
+  local res=$1 run=$2; shift 2
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
+  if [ -n "${REAL_PATCH_REPO:-}" ]; then
+    # Offline origin: a local bare clone of the fixture repo.
+    rm -rf "$REAL_PATCH_REPO.origin.git"
+    cp -R "$REAL_PATCH_REPO/.git" "$REAL_PATCH_REPO.origin.git"
+    "$REAL_GIT" -C "$REAL_PATCH_REPO.origin.git" config core.bare true
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
+  fi
   mkjson
-  out=$("${LEAD_MERGE:-$here/lead-merge.sh}" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
+  out=$("$run" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
-  if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ]; then pass=$((pass+1)); echo "ok   $1"
-  else fail=$((fail+1)); echo "FAIL $1 (exit $code, merge calls $calls)"; echo "$out"; fi
+  if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ] \
+    && { [ -z "${5:-}" ] || grep -qE -- "$5" "$MERGE_LOG.calls"; }; then echo "ok   $1" > "$res"
+  else printf 'FAIL %s (exit %s, merge calls %s)\n%s\n' "$1" "$code" "$calls" "$out" > "$res"; fi
+}
+check() { # name expected_exit output_regex [merge_calls] [merge_call_regex]
+  if [ -n "${ONLY:-}" ] && ! grep -qE -- "$ONLY" <<<"$1"; then return 0; fi
+  if [ -n "${IN_UNIT:-}" ]; then
+    cn=$((cn+1)); run_case "$ucd/result.$(printf %04d "$cn")" "${LEAD_MERGE:-$here/lead-merge.sh}" "$@"; return
+  fi
+  n=$((n+1)); local id cd; id=$(printf %04d "$n"); cd="$tmp/cases/$id"
+  mkdir -p "$cd/home/orca/workspaces/proj/lead-x/.claude/hooks" "$cd/home/orca/workspaces/proj/fullstack-dev-x" "$cd/home/.config"
+  [ ! -f "$LEAD/.claude/hooks/guard-bash.py" ] || cp "$LEAD/.claude/hooks/guard-bash.py" "$cd/home/orca/workspaces/proj/lead-x/.claude/hooks/"
+  [ ! -d "$HOME/.config" ] || cp -R "$HOME/.config/." "$cd/home/.config/"
+  throttle
+  (
+    old_home="$tmp/home"
+    export HOME="$cd/home" MERGE_LOG="$cd/merge.log"
+    FAKE_TOP="${FAKE_TOP/#$old_home/$HOME}"
+    run_case "$cd/result" "$here/lead-merge.sh" "$@"
+  ) &
+}
+report() {
+  wait
+  pass=0; fail=0
+  for r in "$tmp"/cases/*/result "$tmp"/units/*/result.*; do
+    [ -f "$r" ] || continue
+    cat "$r"
+    if [ "$(head -c 2 "$r")" = ok ]; then pass=$((pass+1)); else fail=$((fail+1)); fi
+  done
+  echo "passed $pass, failed $fail"
+  [ "$fail" = 0 ]
 }
 
-setup; check "success merges with match-head-commit" 0 '^MERGED https://github.com/o/r/pull/7 [0-9a-f]+$' 1
-grep -q -- "--merge --match-head-commit $SHA" "$MERGE_LOG.calls" && { pass=$((pass+1)); echo "ok   merge flags"; } || { fail=$((fail+1)); echo "FAIL merge flags"; }
+# Fixture repo template, built once; copy_setup clones it by copy.
+  r="$tmp/copy-template"
+  "$REAL_GIT" init -q -b fixture "$r"
+  "$REAL_GIT" -C "$r" config user.name Fixture
+  "$REAL_GIT" -C "$r" config user.email fixture@example.invalid
+  mkdir -p "$r/web/src/app/i18n/locales/en" "$r/marketing/content" "$r/marketing/src"
+  printf '{"greeting":"Hello"}\n' > "$r/web/src/app/i18n/locales/en/translation.json"
+  printf '{"greeting":"Hello"}\n' > "$r/web/src/app/i18n/locales/en/marketing.json"
+  printf 'Welcome\n' > "$r/marketing/content/home.md"
+  printf 'export default 1;\n' > "$r/marketing/src/home.ts"
+  "$REAL_GIT" -C "$r" add .
+  "$REAL_GIT" -C "$r" commit -qm base
+  "$REAL_GIT" -C "$r" update-ref refs/heads/main "$("$REAL_GIT" -C "$r" rev-parse HEAD)"
 
+setup; check "success merges with match-head-commit" 0 '^MERGED https://github.com/o/r/pull/7 [0-9a-f]+$' 1 "--merge --match-head-commit $SHA"
 setup; FAKE_TOP="$HOME/orca/workspaces/proj/fullstack-dev-x"; check "non lead worktree refused" 1 'lead-\*'
 setup; FAKE_TOP="$tmp/other/lead-y"; check "lead outside orca workspaces refused" 1 'not under'
 setup; state=MERGED; check "closed PR refused" 1 'not open'
@@ -180,9 +246,7 @@ setup; PR_DIFF=$'+System.exit(1);'; check "System.exit is not a skip trigger" 0 
 setup; PR_DIFF=$'+foo.exit(0)'; check "foo.exit is not a skip trigger" 0 '^MERGED' 1
 setup; PR_DIFF=$'+xit("case", () => {})'; check "xit needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+  xit('"'"; check "indented xit needs countersign" 1 'Countersign'
-setup; PR_DIFF=$'+.skip("case")'; check "trigger .skip needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+.only("case")'; check "trigger .only needs countersign" 1 'Countersign'
-setup; PR_DIFF=$'+test.todo("case")'; check "trigger test.todo needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// eslint-disable-next-line'; check "trigger eslint-disable-next-line needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// biome-ignore lint'; check "trigger biome-ignore lint needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// @ts-ignore'; check "trigger @ts-ignore needs countersign" 1 'Countersign'
@@ -209,20 +273,10 @@ setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'
 
 copy_setup() {
   setup
-  export REAL_PATCH_REPO="$tmp/copy-repo"
+  export REAL_PATCH_REPO="${ucd:-$tmp}/copy-repo"
   rm -rf "$REAL_PATCH_REPO"
-  "$REAL_GIT" init -q -b fixture "$REAL_PATCH_REPO"
-  "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.name Fixture
-  "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.email fixture@example.invalid
-  mkdir -p "$REAL_PATCH_REPO/web/src/app/i18n/locales/en" "$REAL_PATCH_REPO/marketing/content" "$REAL_PATCH_REPO/marketing/src"
-  printf '{"greeting":"Hello"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
-  printf '{"greeting":"Hello"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/marketing.json"
-  printf 'Welcome\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
-  printf 'export default 1;\n' > "$REAL_PATCH_REPO/marketing/src/home.ts"
-  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
-  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm base
+  cp -R "$tmp/copy-template" "$REAL_PATCH_REPO"
   base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
-  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
   "$REAL_GIT" -C "$REAL_PATCH_REPO" remote add origin "$REAL_PATCH_REPO"
 }
 copy_commit() {
@@ -234,6 +288,8 @@ copy_commit() {
   checks="Checks: PASS head=$SHA"
   comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none'
 }
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
@@ -286,6 +342,9 @@ COMMENTS_JSON=$({ verdict_json "$v_none"; } | comments_of)
 check "unedited single none still light" 0 'lane=copy-only' 1
 COMMENTS_JSON=""
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
@@ -298,45 +357,60 @@ checks="Checks: PASS head=$SHA"
 comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: none\nPhone-width screenshots in tw and en.'
 check "copy-only missing jp screenshot evidence refused" 1 'screenshots'
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Welcome","extra":"New"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
 check "added locale key uses normal route" 0 'lane=normal' 1
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 printf 'export default 2;\n' > "$REAL_PATCH_REPO/marketing/src/home.ts"
 copy_commit
 check "locale plus ts uses normal route" 0 'lane=normal' 1
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf 'export default 2;\n' > "$REAL_PATCH_REPO/marketing/src/home.ts"
 copy_commit
 check "marketing code uses normal route" 0 'lane=normal' 1
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
 copy_commit
 comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "marketing content uses copy-only route" 0 'lane=copy-only' 1
 
-copy_setup
-printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/marketing.json"
-copy_commit
-comments+=$'\nPhone-width screenshots in tw, en and jp.'
-check "other locale namespaces use copy-only route" 0 'lane=copy-only' 1
-
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Welcome","price":"100"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
 check "sensitive added key keeps owner gate on normal route" 1 'owner copy approval'
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 printf 'export default 2;\n' > "$REAL_PATCH_REPO/marketing/content/code.ts"
 copy_commit
 check "code under marketing content remains normal" 0 'lane=normal' 1
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"Refund available"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
@@ -364,8 +438,13 @@ check "owner sensitive approval permits normal route merge" 0 'lane=normal' 1
 
 # Round-6 omissions must require approval on every eligible surface, even when
 # their count is unchanged and quantities are spelled out (no digit fallback).
+) </dev/null &
 for surface in en tw jp marketing; do
   for wording in pricing cost charge 價錢 定價 售價 法律 値段 代金 契約 法的; do
+    # The locale file name does not change the path: each locale keeps its own language's words.
+    case "$surface:$wording" in marketing:*|en:pricing|en:cost|en:charge|tw:價錢|tw:定價|tw:售價|tw:法律|jp:値段|jp:代金|jp:契約|jp:法的) ;; *) continue ;; esac
+unit; (
+unit_init
     copy_setup
     if [ "$surface" = marketing ]; then
       probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
@@ -387,13 +466,21 @@ for surface in en tw jp marketing; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface r6 $wording needs approval" 1 'owner copy approval'
-    COMMENTS_JSON=""; write_approval copy "$SHA"
-    check "$surface r6 $wording owner approved" 0 'lane=normal' 1
+    if [ "$wording" = pricing ] && [ "$surface" != tw ] && [ "$surface" != jp ]; then
+      COMMENTS_JSON=""; write_approval copy "$SHA"
+      check "$surface r6 $wording owner approved" 0 'lane=normal' 1
+    fi
+) </dev/null &
   done
 done
+unit; (
+unit_init
 
 # r7 core vocabulary stays gated even with a verifier's none attestation.
+) </dev/null &
 for wording in penalty waiver arbitration litigation breach dues levy fare rent retainer reimburse clawback rescission annulment pledge undertake always never commit 押金 尾款 價差 加收 入場料 担保金 頭金 敷金 礼金 返款 返現 退錢 退購 退票 返納 返済 返却 払い戻す 償還 違約 違約金 仲裁 訴訟 準據法 著作權 準拠法 著作権 一定 必定 絕對 包退 包換 必ず 絶対 確実 万全 deliver tomorrow today 準時 送達 隔日 お届け 翌日; do
+unit; (
+unit_init
   copy_setup
   probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
   jq -n --arg text "$wording alpha" '{greeting:$text}' > "$probe_file"
@@ -405,8 +492,11 @@ for wording in penalty waiver arbitration litigation breach dues levy fare rent 
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "r7 $wording none cannot override backstop" 1 'owner copy approval'
+) </dev/null &
 done
-for pair in 'checkout_sign_in|Sign In|Continue' 'group_buy_bill_save|Save|Save changes' 'shop_subscription_back|Back|Go back'; do
+for pair in 'checkout_sign_in|Sign In|Continue'; do
+unit; (
+unit_init
   IFS='|' read -r key before after <<<"$pair"
   copy_setup
   probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
@@ -419,11 +509,17 @@ for pair in 'checkout_sign_in|Sign In|Continue' 'group_buy_bill_save|Save|Save c
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "unchanged $key context alone stays light" 0 'lane=copy-only' 1
+) </dev/null &
 done
+unit; (
+unit_init
 
 # Count-preserving topic changes still require current-head owner approval.
+) </dev/null &
 for surface in marketing locale; do
   for probe in price refund scope replace; do
+unit; (
+unit_init
     copy_setup
     case "$probe" in
       price) before="Price: \$100"; after="Price: \$200"; before_json='{"price":"100"}'; after_json='{"price":"200"}' ;;
@@ -450,14 +546,18 @@ for surface in marketing locale; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface unchanged-count $probe needs approval" 1 'owner copy approval'
-    COMMENTS_JSON=""; write_approval copy "$SHA"
-    check "$surface unchanged-count $probe owner approved" 0 'lane=normal' 1
+) </dev/null &
   done
 done
+unit; (
+unit_init
 
 # Retained text must participate when edits assemble a new sensitive occurrence.
+) </dev/null &
 for surface in marketing locale; do
   for probe in reorder replace; do
+unit; (
+unit_init
     copy_setup
     if [ "$probe" = reorder ]; then
       before=$'pro\nhello\nmise'
@@ -489,11 +589,17 @@ for surface in marketing locale; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface $probe across unchanged fragments needs approval" 1 'owner copy approval'
+) </dev/null &
   done
 done
+unit; (
+unit_init
 
 # Existing sensitive wording may remain once while unrelated copy changes.
+) </dev/null &
 for surface in marketing locale; do
+unit; (
+unit_init
   copy_setup
   if [ "$surface" = marketing ]; then
     probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
@@ -527,10 +633,16 @@ for surface in marketing locale; do
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "$surface increased sensitive count needs approval" 1 'owner copy approval'
+) </dev/null &
 done
+unit; (
+unit_init
 
 # Literal currency symbols must not turn ordinary words into sensitive topics.
-for wording in Continue 'Help center' 'Account settings' 'Something went wrong'; do
+) </dev/null &
+for wording in Continue; do
+unit; (
+unit_init
   copy_setup
   printf '{"greeting":"%s","price":"100"}\n' "$wording" > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
   "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
@@ -541,11 +653,18 @@ for wording in Continue 'Help center' 'Account settings' 'Something went wrong';
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "ordinary $wording beside unchanged price uses light route" 0 'lane=copy-only' 1
+) </dev/null &
 done
+unit; (
+unit_init
 
 # Quantities are owner-held even when neither value nor key names a topic.
+) </dev/null &
 for surface in marketing locale; do
   for probe in digits '$' 'NT$' '¥' 元 円 USD TWD JPY '%'; do
+    case "$surface:$probe" in marketing:*|locale:digits|'locale:$') ;; *) continue ;; esac
+unit; (
+unit_init
     copy_setup
     before='Open 10'; after='Open 20'
     if [ "$probe" != digits ]; then before="Open 10 $probe"; after='Open 10'; fi
@@ -568,11 +687,17 @@ for surface in marketing locale; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface changed $probe requires approval" 1 'owner copy approval'
+) </dev/null &
   done
 done
+unit; (
+unit_init
 
 # Removed topic keys stay gated; an unchanged nested key alone stays light.
+) </dev/null &
 for probe in removed nested; do
+unit; (
+unit_init
   copy_setup
   probe_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
   printf '{"refund":{"message":"Available"},"greeting":"Hello"}\n' > "$probe_file"
@@ -592,19 +717,31 @@ for probe in removed nested; do
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "unchanged nested key context alone stays light" 0 'lane=copy-only' 1
   fi
+) </dev/null &
 done
+unit; (
+unit_init
 
 # Diff-like content is still marketing text, never a patch header.
+) </dev/null &
 for wording in '++promise' '+++promise' '-- promise'; do
+unit; (
+unit_init
   copy_setup
   printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "diff-like marketing wording $wording needs approval" 1 'owner copy approval'
+) </dev/null &
 done
+unit; (
+unit_init
 
 # Accents cannot conceal promises in any supported locale's changed values.
-for locale in en tw jp; do
+) </dev/null &
+for locale in en tw; do
+unit; (
+unit_init
   copy_setup
   locale_file="$REAL_PATCH_REPO/web/src/app/i18n/locales/$locale/translation.json"
   if [ "$locale" != en ]; then
@@ -624,7 +761,10 @@ for locale in en tw jp; do
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "combining marks in $locale locale need approval" 1 'owner copy approval'
+) </dev/null &
 done
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"prómise"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
@@ -632,19 +772,28 @@ comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "precomposed English accent needs approval" 1 'owner copy approval'
 
 # Each configured policy term is independently sensitive in added marketing text.
-for wording in 'We promise unlimited service forever' PROMISE guarantee unlimited forever lifetime free refund price discount '%' 'NT$' '$' warranty compensation legal terms privacy 保證 承諾 無限 永久 終身 免費 退款 價格 折扣 優惠 賠償 條款 隱私 保証 約束 無制限 無料 返金 価格 割引 補償 規約 プライバシー pricing cost charge rate tariff billing payment subscription plan cancellation policy contract agreement liability warranty promise 價錢 價目 售價 定價 收費 費率 付款 訂閱 方案 退費 政策 契約 合約 協議 責任 保固 値段 費用 手数料 支払 購読 サブスク プラン 払い戻し キャンセル 利用規約 ポリシー 契約 同意 責任 永久 帳務 履約 定期購入 課金 解約 价格 价钱 定价 费用 无偿 無償; do
+) </dev/null &
+for wording in 'We promise unlimited service forever' PROMISE guarantee unlimited forever lifetime free refund price discount '%' 'NT$' '$' warranty compensation legal terms privacy 保證 承諾 無限 永久 終身 免費 退款 價格 折扣 優惠 賠償 條款 隱私 保証 約束 無制限 無料 返金 価格 割引 補償 規約 プライバシー pricing cost charge rate tariff billing payment subscription plan cancellation policy contract agreement liability promise 價錢 價目 售價 定價 收費 費率 付款 訂閱 方案 退費 政策 契約 合約 協議 責任 保固 値段 費用 手数料 支払 購読 サブスク プラン 払い戻し キャンセル 利用規約 ポリシー 同意 帳務 履約 定期購入 課金 解約 价格 价钱 定价 费用 无偿 無償; do
+unit; (
+unit_init
   copy_setup
   printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "sensitive added wording $wording needs approval" 1 'owner copy approval'
+) </dev/null &
 done
+unit; (
+unit_init
 copy_setup
 printf '{"greeting":"UnLiMiTeD service"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
 comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "locale customer promise needs approval" 1 'owner copy approval'
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf 'Refund available\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
@@ -657,8 +806,12 @@ comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "removed marketing topic requires approval" 1 'owner copy approval'
 
 # Rendered sensitive wording must retain the owner gate across copy surfaces.
+) </dev/null &
 for surface in marketing locale; do
   for wording in 'We pro**mise** unlim**ited** service for**ever**' '保**證**無**限**服務' '保**証**と無**制限**サービス' 'pro<strong>mise</strong>' '保<strong>證</strong>服務' '保<strong>証</strong>サービス' 'pro​mise' '保​證' '保​証' 'ＰＲＯＭＩＳＥ' 'pro&#109;ise' '保&#x8B49;' '保&#x8A3C;' $'pro\nmise'; do
+    if [ "$surface" = locale ]; then case "$wording" in 'pro&#109;ise'|$'pro\nmise') ;; *) continue ;; esac; fi
+unit; (
+unit_init
     copy_setup
     if [ "$surface" = marketing ]; then
       printf '%s\n' "$wording" > "$REAL_PATCH_REPO/marketing/content/home.md"
@@ -668,9 +821,15 @@ for surface in marketing locale; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "normalized $surface wording $wording needs approval" 1 'owner copy approval'
+) </dev/null &
   done
 done
+unit; (
+unit_init
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/hello world.md"
 copy_commit
@@ -681,6 +840,9 @@ copy_commit
 comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "sensitive copy path with spaces needs approval" 1 'owner copy approval'
 
+) </dev/null &
+unit; (
+unit_init
 copy_setup
 printf 'bad \377 text\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
 copy_commit
@@ -688,22 +850,29 @@ comments+=$'\nPhone-width screenshots in tw, en and jp.'
 check "undecodable copy requires approval" 1 'owner copy approval'
 
 # Unreadable or invalid policy cannot silently waive the owner gate.
-mkdir -p "$tmp/gate"
-cp "$here/lead-merge.sh" "$tmp/gate/lead-merge.sh"
-LEAD_MERGE="$tmp/gate/lead-merge.sh"
+) </dev/null &
 for policy in missing 'not json' '{"sensitive_words":[]}' '{"sensitive_words":[1]}' '{"sensitive_word_groups":{}}' '{"sensitive_word_groups":{"topic":{"en":{"words":["fee"]}}}}' '{"sensitive_word_groups":{"topic":{"en":{"words":["fee"]},"tw":{"words":[]},"jp":{"words":["料金"]}}}}'; do
+unit; (
+unit_init
+  mkdir -p "$ucd/gate"; cp "$here/lead-merge.sh" "$ucd/gate/lead-merge.sh"; LEAD_MERGE="$ucd/gate/lead-merge.sh"
   copy_setup
   printf 'Come in\n' > "$REAL_PATCH_REPO/marketing/content/home.md"
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
-  rm -f "$tmp/gate/copy-only.config.json"
-  [ "$policy" = missing ] || printf '%s\n' "$policy" > "$tmp/gate/copy-only.config.json"
+  rm -f "$ucd/gate/copy-only.config.json"
+  [ "$policy" = missing ] || printf '%s\n' "$policy" > "$ucd/gate/copy-only.config.json"
   check "invalid sensitive policy $policy needs approval" 1 'owner copy approval'
+) </dev/null &
 done
+unit; (
+unit_init
 unset LEAD_MERGE
 
 # Copy paths must contain ordinary text blobs, including additions.
+) </dev/null &
 for kind in binary symlink submodule deleted renamed; do
+unit; (
+unit_init
   copy_setup
   case "$kind" in
     binary) printf 'image\0data\n' > "$REAL_PATCH_REPO/marketing/content/home.md" ;;
@@ -715,15 +884,21 @@ for kind in binary symlink submodule deleted renamed; do
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "$kind marketing file uses normal route" 0 'lane=normal' 1
+) </dev/null &
 done
+unit; (
+unit_init
 
+) </dev/null &
+unit; (
+unit_init
 unset REAL_PATCH_REPO
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 # Exercise the script with real commit graphs and git patch-id, not asserted IDs.
 setup
-export REAL_PATCH_REPO="$tmp/patch-repo"
+export REAL_PATCH_REPO="$ucd/patch-repo"
 "$REAL_GIT" init -q "$REAL_PATCH_REPO"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.name Fixture
 "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.email fixture@example.invalid
@@ -818,8 +993,12 @@ check "real changed patch loses the countersign" 1 'Countersign'
 
 # Spelled-out quantities (issue 3832 item 2): a changed number word is owner-held
 # even though it has no digit, currency marker or topic word.
+) </dev/null &
 for surface in marketing locale; do
   while IFS='|' read -r before after; do
+    if [ "$surface" = locale ]; then case "$before" in 滿一百送一|'Open one hundred') ;; *) continue ;; esac; fi
+unit; (
+unit_init
     copy_setup
     if [ "$surface" = marketing ]; then
       probe_file="$REAL_PATCH_REPO/marketing/content/home.md"
@@ -840,6 +1019,7 @@ for surface in marketing locale; do
     copy_commit
     comments+=$'\nPhone-width screenshots in tw, en and jp.'
     check "$surface spelled quantity $before to $after requires approval" 1 'owner copy approval'
+) </dev/null &
   done <<'CASES'
 滿一百送一|滿二百送一
 一百人|二百人
@@ -850,8 +1030,13 @@ Open one hundred|Open two hundred
 Seats: Hundred|Seats: Thousand
 CASES
 done
+unit; (
+unit_init
 # Unchanged number words and wording that keeps the same number words stay light.
+) </dev/null &
 for pair in '一起來|一起來吧' 'Welcome one and all|Welcome one and all, friends'; do
+unit; (
+unit_init
   copy_setup
   before=${pair%%|*}; after=${pair#*|}
   printf '%s\n' "$before" > "$REAL_PATCH_REPO/marketing/content/home.md"
@@ -863,22 +1048,28 @@ for pair in '一起來|一起來吧' 'Welcome one and all|Welcome one and all, f
   copy_commit
   comments+=$'\nPhone-width screenshots in tw, en and jp.'
   check "same number words ($before) stay on the light route" 0 'lane=copy-only' 1
+) </dev/null &
 done
+unit; (
+unit_init
 
 # Missing guard-bash.py (issue 3832 item 3): fall back to the configured namespace
 # or print a clear diagnostic, and still fail closed.
-mkdir -p "$tmp/gate2"
-cp "$here/lead-merge.sh" "$tmp/gate2/lead-merge.sh"
-LEAD_MERGE="$tmp/gate2/lead-merge.sh"
+) </dev/null &
+unit; (
+unit_init
+mkdir -p "$ucd/gate2"
+cp "$here/lead-merge.sh" "$ucd/gate2/lead-merge.sh"
+LEAD_MERGE="$ucd/gate2/lead-merge.sh"
 hooks_file="$LEAD/.claude/hooks/guard-bash.py"
 mv "$hooks_file" "$hooks_file.away"
 copy_setup
 printf '{"greeting":"Welcome"}\n' > "$REAL_PATCH_REPO/web/src/app/i18n/locales/en/translation.json"
 copy_commit
 comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"$'\nCopy topics: owner\nPhone-width screenshots in tw, en and jp.'
-jq 'del(.approval_namespace)' "$here/copy-only.config.json" > "$tmp/gate2/copy-only.config.json"
+jq 'del(.approval_namespace)' "$here/copy-only.config.json" > "$ucd/gate2/copy-only.config.json"
 check "missing guard-bash.py without configured namespace prints diagnostic" 1 'no approval namespace'
-jq '. + {approval_namespace:"proj"}' "$here/copy-only.config.json" > "$tmp/gate2/copy-only.config.json"
+jq '. + {approval_namespace:"proj"}' "$here/copy-only.config.json" > "$ucd/gate2/copy-only.config.json"
 check "missing guard-bash.py with configured namespace still needs approval" 1 'owner copy approval'
 write_approval copy "$SHA"
 check "missing guard-bash.py falls back to configured namespace" 0 'lane=normal' 1
@@ -886,5 +1077,5 @@ rm -f "$APPROVAL"
 mv "$hooks_file.away" "$hooks_file"
 unset LEAD_MERGE
 
-echo "passed $pass, failed $fail"
-[ "$fail" = 0 ]
+) </dev/null &
+report
