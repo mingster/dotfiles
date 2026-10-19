@@ -60,9 +60,10 @@ escalate() {
   local run=$1 to=$notify rr=$notify_run fails=0
   if [[ "$all" == 1 ]]; then to=$(cat "$tmp/coord-$run" 2>/dev/null || true); rr=$run; fi
   [[ ! -f "$state/send-fails" ]] || read -r fails < "$state/send-fails"
-  if [[ -n "$to" ]] && bounded "$orca_cli" orchestration send --to "$to" --run "$rr" --type escalation \
+  if [[ -n "$to" ]] && bounded "$orca_cli" orchestration send --to "$to" --run "$rr" --type status \
       --subject "Watchdog: $2" --body "$3" --json > /dev/null 2>&1; then
     log_action "escalation $2"
+    alert_fallback "sent (run $rr): $2"
     printf '0\n' > "$state/send-fails"
     return 0
   fi
