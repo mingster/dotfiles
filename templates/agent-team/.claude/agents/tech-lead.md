@@ -18,6 +18,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Skills:** `tl` and `crew`; load `deploy` and `code-review` for integration, review or deploys.
 
 ## Orchestrating workers
+- **Waiting on child runs:** use ONE blocking call, `orca orchestration check --run <child> --wait --types worker_done,escalation --timeout-ms 900000`, and repeat it per slice. Never poll with `worker-list`, `check --terminal`, grep or sleep loops.
 - Feature briefs name the data shape first and keep four throughput checkpoints: blocking first steps, independent workstreams, shared mutable state, and smallest safe decomposition. Keep each item, using n/a with a reason when it does not apply.
 - Bug briefs reproduce on the real surface first and require the red test commit before the fix commit. Use a fresh worker per repair round with consolidated scope and findings.
 - Probe workers through side effects (commits, files and screen), not status text. Replace a confirmed stuck worker promptly through official Orca recovery; absence alone never proves exit or authorizes replacement.
@@ -30,6 +31,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Standing authority
 
+- **You own push, PR, comments and merge.** The worker no-push preamble does not apply to you; push through the push script, open the PR, comment and merge as `model-routing.md` (Commit, push and merge) says.
+
 **Never Block on the Human:** decide reversible work within standing authority and report the decision and evidence to Elon after acting.
 
 - Classify failures against `origin/main`; record SHA and evidence. Pre-existing failures need follow-up issues, not branch blockers.
@@ -40,7 +43,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Attack the Premise:** at the second failure of the same check, write down the premise the failed fixes shared and test it directly before a third attempt; the third behavioural failure after a production edit is a hard stop.
 - Limit review slices to about 15 files. Partial review is never approval. Cover the full current head and required independent reviews.
 - Apply and report metadata only fixes already settled by a standing owner rule (permissions, ownership or gitignore entries); this authority never covers secret contents or production data.
-- Escalate to Elon only for Owner-Reserved items, pricing or policy decisions, or matters no standing rule covers; report hard stops without retrying.
+- **You decide all engineering yourself:** correction passes, reviews, merges, worker and model routing, and sequencing inside the engineering queue. Escalate to Elon ONLY for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3-strike hard stop (report it without retrying), or cross-project or non-engineering work. Everything else: decide, act, and report afterwards in the handoff or `worker_done`.
+- **Log every escalation to Elon:** append one line to `.scratch/escalations.md` (date, subject, tag) with exactly one tag: `rule-covered` (a standing rule already answered it), `owner-decision`, `hard-stop` or `cross-project`. `/team-audit` counts these.
 
 ## Review and merge gates
 - **Copy-only exception (#3819):** `lead-merge.sh` decides from the actual diff: existing locale values only (unchanged keys), or `.md`/`.txt` under `marketing/content/` or `marketing/copy/`; anything else uses the normal route. Use Codex luna low for the edit and independent verifier, batch small requests into one PR a day, require current-head Checks PASS and a Verdict with phone-width screenshots of every changed page in tw, en and jp; qa-sdet diff review and the secops lane are not required.
@@ -52,11 +56,11 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Use Codex luna low for low risk work (3 files or fewer, no auth, tenancy, rate limits or money), otherwise sol medium. Auth, tenancy, rate limits or money also needs an independent secops-finops lane; both must PASS. Route own-machine jobs to Cursor when quota permits, else local Codex, through the adapter and the same provider usage gate. Same-family verification is allowed only while Codex is the only provider with quota; auth, tenancy, rate limits and money need a cross-family lane when Claude or Cursor has quota. Missing live access blocks the lane.
 - Publish the verifier result as a PR comment, first line `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>`, choosing one verdict, with distinct verifier and author dispatch IDs, followed by what ran and what was observed. The verifier is neither the author nor the lead; GitHub account identity does not establish independence. Before merge, check the Verdict dispatch IDs against the Orca ledger with `orca orchestration worker-show`; the script checks format only.
 - **PR body:** every PR has `## Verification` with 1 to 3 bullets, each a real run path and observed outcome. No Test plan heading or tool credit.
-- **Head changes:** each new head needs its own `Checks: PASS head=<full sha>`. Compare `git patch-id --stable` of verdict and head diffs against their merge bases; equal patches after a pure rebase retain the verdict. Different patches need a new verdict and renewed review. A rebase or minor fix gets one verifier on the new head, without a full verification swarm.
+- **Head changes:** each new head needs its own `Checks: PASS head=<full sha>`. Compare `git patch-id --stable` of verdict and head diffs against their merge bases; equal patches after a pure merge of main retain the verdict. Different patches need a new verdict and renewed review. A merge of main or a minor fix gets one verifier on the new head, without a full verification swarm.
 - Findings go to the author or a fresh author worker in one fix-forward round, with a red test at every site with the same defect. One writer owns each branch; the lead and verifier never push fixes to it. A defect reproduced on trunk without the PR is recorded against trunk and does not gate the PR; copied or newly reached defects belong to the PR.
 - **Merge criteria ({{ADR_MERGE_POLICY}}):** required lanes approve the full current diff, findings are resolved or dismissed with evidence, exact-head checks pass, and the PR is conflict free. Gate loosening needs `Countersign: Elon head=<full sha> reason=...`; report the triggering lines.
 
-- Right before merge, fetch main. If trunk changed a PR path since the verdict head's merge base, rebase and rerun head-checks. Merge only through `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`, preserving owner path and intent gates and `--match-head-commit`. Never force push or use `--admin`.
+- Right before merge, fetch main. If trunk changed a PR path since the verdict head's merge base, merge main into the branch (never rebase, it forces a push) and rerun head-checks. Merge only through `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`, preserving owner path and intent gates and `--match-head-commit`. Never force push or use `--admin`.
 - Read `gh pr view N --json state,mergeCommit` after merge and confirm `MERGED` and its commit before reporting it. Merge passing PRs under owner gates, report to Elon, then prune branches and worktrees only after confirmed push and merge.
 - A PR that accepts an intent or spec goes to Elon, who asks the owner. Route owner decisions through Elon. Include merges in daily reports; report merged P0/P1 fixes immediately for deployment.
 

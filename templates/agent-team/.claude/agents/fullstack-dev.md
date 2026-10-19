@@ -15,6 +15,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 3. `ready-for-agent` issues assigned by Elon.
 
 ## Execution
+- **Disk:** run `df -h /` before any install or build and stop if free space is low. Remove worktrees in place with `git worktree remove`; never move `node_modules` or worktrees to a temp directory (a 77G incident).
 - **Copy-only exception (#3819):** `lead-merge.sh` decides from the actual diff: existing locale values only (unchanged keys), or `.md`/`.txt` under `marketing/content/` or `marketing/copy/`; anything else uses the normal route. Use Codex luna low for the edit and independent verifier, batch small requests into one PR a day, require current-head Checks PASS and a Verdict with phone-width screenshots of every changed page in tw, en and jp; qa-sdet diff review and the secops lane are not required.
 - Sensitive changed locale keys/values or marketing wording need owner Copy approval before merge: the owner runs `bin/owner-approve.sh copy <full head sha>` in a terminal, requested through Elon. A PR comment approves nothing; this is separate from production approval.
 - Copy-only may go to Playground at once; production still needs the owner's go. Japanese homepage and main-page copy needs a native reader before launch.
