@@ -134,7 +134,7 @@ run_case() { # result_file run_script name expected_exit output_regex [merge_cal
     "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
   fi
   mkjson
-  out=$("$run" --repo o/r --pr 7 --head "$SHA" ${MECH:+--mechanical} 2>&1); code=$?
+  out=$("$run" --repo o/r --pr 7 --head "$SHA" ${MECH:+--mechanical} ${VCMD:+--verify-command "$VCMD"} 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
   if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ] \
     && { [ -z "${5:-}" ] || grep -qE -- "$5" "$MERGE_LOG.calls"; }; then echo "ok   $1" > "$res"
@@ -354,6 +354,16 @@ COMMENTS_JSON=$({ verdict_json "$v_owner"; verdict_json "$v_none" true; } | comm
 check "edited none after owner refused" 1 'edited or minimized'
 COMMENTS_JSON=$({ verdict_json "$v_none"; } | comments_of)
 check "unedited single none still light" 0 'lane=copy-only' 1
+# --verify-command: the newest Verdict must carry the same Command: line.
+VCMD="bun test --isolate a.test.ts"
+COMMENTS_JSON=$({ verdict_json "$v_none"$'\nCommand:  bun test --isolate a.test.ts '; } | comments_of)
+check "verify-command match merges" 0 'lane=copy-only' 1
+COMMENTS_JSON=$({ verdict_json "$v_none"$'\nCommand: bun test --isolate --no-deps a.test.ts'; } | comments_of)
+check "verify-command mismatch refused" 1 'Command mismatch'
+COMMENTS_JSON=$({ verdict_json "$v_none"; } | comments_of)
+check "verify-command missing line refused" 1 'no Command: line'
+VCMD=""
+check "no verify-command flag leaves missing line alone" 0 'lane=copy-only' 1
 COMMENTS_JSON=""
 
 ) </dev/null &

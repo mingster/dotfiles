@@ -30,7 +30,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Standing authority
 
-- The brief overrides role defaults. Run the full suite only when the brief allows it, by the command it names, with no added runner flags (`--no-deps` cost two review rounds, 2026-10-19).
+- Run the command the brief names, with no added runner flags. Your PASS Verdict carries `Command: <exact command run>`; `lead-merge.sh --verify-command` refuses a missing or different one.
 - Classify a failure against `origin/main` first. Report a pre-existing failure on main as a follow-up, not a blocker.
 - Fix tests or fixtures inside the allowlist without weakening assertions, one check run per edit.
 - **Strikes:** `docs/agents/team.md`, Delivery contract 8 (Attack the Premise, tooling failures are not strikes, three-strike hard stop).

@@ -2,21 +2,24 @@
 # The Tech Lead's only way to merge a reviewed PR.
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
+# --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
+#   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
 set -euo pipefail
 
 die() { echo "lead-merge: refused: $*" >&2; exit 1; }
 
-repo="" pr="" head="" mechanical=false
+repo="" pr="" head="" mechanical=false verify_command=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
     --pr) pr="${2:-}"; shift 2 ;;
     --head) head="${2:-}"; shift 2 ;;
     --mechanical) mechanical=true; shift ;;
+    --verify-command) verify_command="${2:-}"; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
 done
-[ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]"
+[ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical] [--verify-command <cmd>]"
 case "$pr" in *[!0-9]*) die "--pr must be a number" ;; esac
 
 # 1. Caller is the lead. Orca sets no role variable (ORCA_TERMINAL_HANDLE and
@@ -328,6 +331,13 @@ if [ "$mechanical" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = t
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
   [ "$passes" -gt 0 ] || die "missing passing verifier verdict for current head or stable patch-id"
   [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or stable patch-id"
+  if [ -n "$verify_command" ]; then
+    want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
+    newest=${applicable[0]#*$'\n'}
+    got=$(grep -m1 '^Command:' <<<"$newest" | sed -E 's/^Command:[[:space:]]*//; s/[[:space:]]+$//' || true)
+    [ -n "$got" ] || die "newest Verdict has no Command: line; expected: $want"
+    [ "$got" = "$want" ] || die "Verdict Command mismatch: verdict ran [$got], brief says [$want]"
+  fi
   for entry in "${applicable[@]}"; do
     comment=${entry#*$'\n'}
     if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
