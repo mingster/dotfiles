@@ -1153,5 +1153,12 @@ f=$(ls "$REAL_PATCH_REPO"/.agents/skills/*/SKILL.md | head -n1); echo "hand edit
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
 check "verdict-from refuses a hand edited generated copy" 1 'sync-team-skills.sh --check fails'
+# A symlink slipped into an owned skill directory is refused (sync --check lists regular files only).
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+d=$(ls -d "$REAL_PATCH_REPO"/.agents/skills/*/ | head -n1); ln -s /etc/passwd "$d/evil"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm link
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a symlink inside an owned skill directory" 1 'refuses symlink'
 ) </dev/null &
 report

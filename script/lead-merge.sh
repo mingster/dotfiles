@@ -295,6 +295,11 @@ if [ -n "$verdict_from" ]; then
     # sync-team-skills.sh --check below byte-verifies every file in those directories.
     gen=false
     if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"; then gen=true; fi
+    if [ "$gen" = true ]; then
+      # A symlink is allowed only as the skills link itself (.claude|.cursor/skills/<name>); sync --check does not list other links.
+      mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
+      if [ "$mode" = 120000 ] && ! [[ "$f" =~ ^\.(claude|cursor)/skills/[^/]+$ ]]; then die "--verdict-from refuses symlink $f"; fi
+    fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
   sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"' EXIT
