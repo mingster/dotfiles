@@ -24,6 +24,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Failures also on `origin/main` get a follow-up issue, not a block. Setup failures are not strikes.
 - **Back to design:** if 2 correction passes fail on one premise, or the build needs casts, `any` or workarounds, return the ticket to architect-pm.
 - **Metadata fixes:** apply and report metadata only fixes settled by a standing owner rule (permissions, ownership, gitignore entries); never secret contents or production data.
+- **Verifier brief:** name the exact test command; pass it as `lead-merge.sh --verify-command`.
 - **Verdict ledger:** before merge, confirm the Verdict verifier and author dispatch IDs with `orca orchestration worker-show`; lead-merge checks format only.
 
 ## Review and tests
