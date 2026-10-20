@@ -2,19 +2,23 @@
 # The Tech Lead's only way to merge a reviewed PR.
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
+# --verdict-from <owner/dotfiles#N>: a riben.life or pstv PR whose changed files are all generated team copies
+#   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
+#   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
 set -euo pipefail
 
 die() { echo "lead-merge: refused: $*" >&2; exit 1; }
 
-repo="" pr="" head="" mechanical=false verify_command="" verify_set=false
+repo="" pr="" head="" mechanical=false verify_command="" verify_set=false verdict_from=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
     --pr) pr="${2:-}"; shift 2 ;;
     --head) head="${2:-}"; shift 2 ;;
     --mechanical) mechanical=true; shift ;;
+    --verdict-from) [ $# -ge 2 ] || die "--verdict-from needs owner/repo#N"; verdict_from="${2:-}"; shift 2 ;;
     --verify-command) [ $# -ge 2 ] || die "--verify-command needs a value"; verify_command="${2:-}"; verify_set=true; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
@@ -274,6 +278,66 @@ load_dispatches() {
   done
   die "run-list has too many pages to verify verdict dispatch ids"
 }
+# Generated team copies: merge on the Verdict of the matching MERGED dotfiles PR.
+generated_ok=false
+if [ -n "$verdict_from" ]; then
+  [ "$mechanical" = false ] || die "--verdict-from and --mechanical are exclusive"
+  case "$repo" in */riben.life|*/pstv) ;; *) die "--verdict-from is only for riben.life and pstv PRs" ;; esac
+  [[ "$verdict_from" =~ ^([A-Za-z0-9_.-]+/dotfiles)#([0-9]+)$ ]] || die "--verdict-from must look like owner/dotfiles#N"
+  src_repo="${BASH_REMATCH[1]}"; src_pr="${BASH_REMATCH[2]}"
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "--verdict-from needs a full head sha"
+  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head"
+  dotfiles_root=$(cd "$(dirname "$0")/.." && pwd)
+  # An unmerged template must not vouch for its own generated copies.
+  git -C "$dotfiles_root" rev-parse --verify -q origin/main >/dev/null || die "--verdict-from: cannot resolve origin/main in the dotfiles tree"
+  git -C "$dotfiles_root" diff --quiet origin/main -- templates/agent-team \
+    || die "--verdict-from: dotfiles tree is not at origin/main for templates/agent-team; merge and pull dotfiles first"
+[ -z "$(git -C "$dotfiles_root" status --porcelain --ignored -- templates/agent-team)" ] \
+  || die "--verdict-from: templates/agent-team has local changes, not at origin/main; clean or commit them first"
+  skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true) \
+    || die "cannot list dotfiles team skills"
+  while IFS= read -r f; do
+    # Only paths sync-team-skills.sh owns count: a header string inside a file proves nothing, and
+    # sync-team-skills.sh --check below byte-verifies every file in those directories.
+    gen=false
+    if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"; then gen=true; fi
+    if [ "$gen" = true ]; then
+      # A symlink is allowed only as the skills link itself (.claude|.cursor/skills/<name>); sync --check does not list other links.
+      mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
+      if [ "$mode" = 120000 ] && ! [[ "$f" =~ ^\.(claude|cursor)/skills/[^/]+$ ]]; then die "--verdict-from refuses symlink $f"; fi
+    fi
+    [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
+  done < <(jq -r '.[]' <<<"$files")
+  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"' EXIT
+  git archive "$head" .agents .claude .cursor 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
+  DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/sync-team-skills.sh" --check "$sync_dir" >&2 \
+    || die "sync-team-skills.sh --check fails at head $head"
+  src=$(gh pr view "$src_pr" --repo "$src_repo" --json state,headRefOid,comments) || die "cannot read $verdict_from"
+  [ "$(jq -r .state <<<"$src")" = MERGED ] || die "$verdict_from is not MERGED"
+  src_head=$(jq -r .headRefOid <<<"$src")
+  src_pass="" src_fail=false
+  while IFS= read -r row; do
+    c=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\""); fl=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
+    l=${c%%$'\n'*}
+    if [[ "$l" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=$src_head\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
+      [ "${BASH_REMATCH[2]}" != "${BASH_REMATCH[3]}" ] || die "author cannot supply verifier verdict"
+      [ -n "$known_dispatches" ] || load_dispatches
+      grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$known_dispatches" || die "verdict verifier ${BASH_REMATCH[2]} is not a known dispatch"
+      [ "${BASH_REMATCH[3]}" = unknown ] || grep -Fxq -- "${BASH_REMATCH[3]}" <<<"$known_dispatches" || die "verdict author ${BASH_REMATCH[3]} is not a known dispatch"
+      [ "$fl" = false ] || die "verdict comment was edited or minimized; post a fresh Verdict"
+      if [ "${BASH_REMATCH[1]}" = FAIL ]; then src_fail=true; elif [ -z "$src_pass" ]; then src_pass="$c"; fi
+    fi
+  done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$src")
+  [ -n "$src_pass" ] || die "$verdict_from has no passing Verdict for its merged head $src_head"
+  [ "$src_fail" = false ] || die "$verdict_from has a FAIL Verdict for its merged head"
+  if [ "$verify_set" = true ]; then
+    want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
+    got=$(grep -m1 '^Command:' <<<"$src_pass" | sed -E 's/^Command:[[:space:]]*//; s/[[:space:]]+$//' || true)
+    [ -n "$want" ] && [ "$got" = "$want" ] || die "Verdict Command mismatch: verdict ran [$got], brief says [$want]"
+  fi
+  generated_ok=true
+  echo "lead-merge: generated team copies, Verdict from $verdict_from"
+fi
 # Mechanical lane: no Verdict, but only for a diff that is pure substitution or deletion.
 # Every hunk must remove as many lines as it adds (a whole deleted file is fine), the only
 # new files are changelog fragments, and no file is renamed, copied or binary. Protected
@@ -296,7 +360,7 @@ if [ "$mechanical" = true ]; then
   [ -z "$bad" ] || die "--mechanical needs a pure substitution or deletion diff: $bad"
   echo "lead-merge: mechanical lane, Verdict not required"
 fi
-if [ "$mechanical" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; }; then
+if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; }; then
   current_patch=""
   applicable=()
   passes=0 fails=0

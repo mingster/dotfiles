@@ -33,7 +33,7 @@ if [ "$1" = api ]; then
 fi
 case "$2" in
   view)
-    if [ -f "$MERGE_LOG" ] && grep -q ok "$MERGE_LOG"; then printf '%s' "$FINAL_JSON"; else printf '%s' "$PR_JSON"; fi ;;
+    if [[ "$*" == *"--repo d/dotfiles"* ]]; then printf '%s' "$VERDICT_PR_JSON"; elif [ -f "$MERGE_LOG" ] && grep -q ok "$MERGE_LOG"; then printf '%s' "$FINAL_JSON"; else printf '%s' "$PR_JSON"; fi ;;
   diff) printf '%s' "$PR_DIFF" ;;
   merge)
     echo "$*" >> "$MERGE_LOG.calls"
@@ -134,7 +134,7 @@ run_case() { # result_file run_script name expected_exit output_regex [merge_cal
     "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
   fi
   mkjson
-  out=$("$run" --repo o/r --pr 7 --head "$SHA" ${MECH:+--mechanical} ${VCMD:+--verify-command "$VCMD"} 2>&1); code=$?
+  out=$("$run" --repo "${REPO:-o/r}" --pr 7 --head "$SHA" ${VFROM:+--verdict-from "$VFROM"} ${MECH:+--mechanical} ${VCMD:+--verify-command "$VCMD"} 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
   if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ] \
     && { [ -z "${5:-}" ] || grep -qE -- "$5" "$MERGE_LOG.calls"; }; then echo "ok   $1" > "$res"
@@ -1103,5 +1103,78 @@ rm -f "$APPROVAL"
 mv "$hooks_file.away" "$hooks_file"
 unset LEAD_MERGE
 
+) </dev/null &
+# Generated team copies merge on the Verdict of the matching MERGED dotfiles PR.
+unit; (
+unit_init
+copy_setup
+DOTFILES="$here/.." bash "$here/sync-team-skills.sh" "$REAL_PATCH_REPO" >/dev/null 2>&1
+copy_commit
+comments=""; REPO=mingster/riben.life; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
+# Fixture dotfiles root: a git repo whose origin/main matches its templates (the gate reads its own checkout).
+fx="$ucd/dot"; mkdir -p "$fx/script"
+cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$fx/script/"; cp -R "$here/../templates" "$fx/templates"
+"$REAL_GIT" -C "$fx" init -q -b main && "$REAL_GIT" -C "$fx" add . && "$REAL_GIT" -C "$fx" -c user.name=t -c user.email=t@t commit -qm fx
+"$REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
+LEAD_MERGE="$fx/script/lead-merge.sh"
+DH=dddddddddddddddddddddddddddddddddddddd99
+vpr() { VERDICT_PR_JSON=$(jq -nc --arg st "$1" --arg h "$DH" --arg c "$2" '{state:$st,headRefOid:$h,comments:[{body:$c}]}'); export VERDICT_PR_JSON; }
+vprx() { VERDICT_PR_JSON=$(jq -nc --arg h "$DH" --argjson c "$1" '{state:"MERGED",headRefOid:$h,comments:$c}'); export VERDICT_PR_JSON; }
+BADF="Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author"
+GOOD="Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author"
+vpr MERGED "$GOOD"
+check "generated copies merge on the dotfiles PR Verdict" 0 'generated team copies' 1
+VFROM=""; check "same PR without the flag still needs its own Verdict" 1 'missing passing verifier verdict'
+VFROM=d/dotfiles#9
+REPO=o/r; check "verdict-from refuses a repo that is not riben.life or pstv" 1 'only for riben.life and pstv'
+REPO=mingster/pstv; check "verdict-from works for pstv" 0 'generated team copies' 1
+REPO=mingster/riben.life
+vpr OPEN "$GOOD"; check "verdict-from refuses an unmerged dotfiles PR" 1 'not MERGED'
+vpr MERGED "Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author"; check "verdict-from refuses a FAIL Verdict" 1 'no passing Verdict'
+vpr MERGED "Verdict: PASS head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb verifier=ctx_verify author=ctx_author"; check "verdict-from refuses a Verdict for another head" 1 'no passing Verdict'
+vpr MERGED "Verdict: PASS head=$DH verifier=ctx_nobody author=ctx_author"; check "verdict-from refuses an unknown verifier dispatch" 1 'not a known dispatch'
+vprx "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$g},{body:$f}]')"; check "verdict-from: a newer FAIL beats an older PASS" 1 'FAIL Verdict'
+vprx "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$f},{body:$g}]')"; check "verdict-from: an older FAIL beside a newer PASS refuses" 1 'FAIL Verdict'
+vprx "$(jq -nc --arg g "$GOOD" '[{body:$g,includesCreatedEdit:true}]')"; check "verdict-from: an edited Verdict is refused" 1 'edited or minimized'
+vprx "$(jq -nc --arg g "$GOOD" '[{body:$g,isMinimized:true}]')"; check "verdict-from: a minimized Verdict is refused" 1 'edited or minimized'
+vpr MERGED "Verdict: PASS head=$DH verifier=ctx_verify author=ctx_nobody"; check "verdict-from: an unknown author dispatch is refused" 1 'author ctx_nobody is not a known dispatch'
+vpr MERGED "Verdict: PASS head=$DH verifier=ctx_verify author=ctx_verify"; check "verdict-from: author equal to verifier is refused" 1 'author cannot supply'
+vpr MERGED "$GOOD"
+# A non-generated file keeps the normal rule.
+echo hand > "$REAL_PATCH_REPO/notes.txt"; "$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm extra
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a diff with a non-generated file" 1 'notes.txt is not'
+# A file that merely carries the header string is not a generated copy.
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+printf '<!-- Generated from dotfiles templates/agent-team/.agents/skills/x by script/sync-team-skills.sh, do not edit. -->\n' > "$REAL_PATCH_REPO/spoof.md"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm spoof
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a file that only carries the header string" 1 'spoof.md is not'
+# A hand edited generated copy fails sync-team-skills --check.
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+f=$(ls "$REAL_PATCH_REPO"/.agents/skills/*/SKILL.md | head -n1); echo "hand edit" >> "$f"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm edit
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a hand edited generated copy" 1 'sync-team-skills.sh --check fails'
+# A symlink slipped into an owned skill directory is refused (sync --check lists regular files only).
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+d=$(ls -d "$REAL_PATCH_REPO"/.agents/skills/*/ | head -n1); ln -s /etc/passwd "$d/evil"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm link
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a symlink inside an owned skill directory" 1 'refuses symlink'
+# A PR that changes a template must not vouch for its own generated copies: the dotfiles tree has to match origin/main.
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+echo "unmerged template edit" >> "$(ls "$fx"/templates/agent-team/.agents/skills/*/SKILL.md | head -n1)"
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses when the dotfiles tree differs from origin/main for templates/agent-team" 1 'not at origin/main'
+# An untracked template file is invisible to git diff but sync-team-skills.sh copies it, so it must be refused too.
+"$REAL_GIT" -C "$fx" checkout -q -- templates/agent-team
+echo "untracked" > "$fx/templates/agent-team/untracked-template.md"
+check "verdict-from refuses an untracked file under templates/agent-team" 1 'not at origin/main'
 ) </dev/null &
 report
