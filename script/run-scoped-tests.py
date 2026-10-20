@@ -13,8 +13,9 @@ PLACEHOLDER_DATABASE = 'postgresql://test:test@localhost:5432/test'
 
 
 def is_test(path):
-    # Playwright specs under an e2e directory are not bun tests.
-    if 'e2e' in path.parts:
+    # Playwright specs (*.spec.*) under an e2e directory are not bun tests.
+    # *.test.* files there stay bun tests (for example app/api/e2e route tests).
+    if 'e2e' in path.parts and '.spec.' in path.name:
         return False
     return any(marker in path.name for marker in ('.test.', '.spec.')) and path.suffix in SOURCE_SUFFIXES
 
