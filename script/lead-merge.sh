@@ -292,6 +292,8 @@ if [ -n "$verdict_from" ]; then
   git -C "$dotfiles_root" rev-parse --verify -q origin/main >/dev/null || die "--verdict-from: cannot resolve origin/main in the dotfiles tree"
   git -C "$dotfiles_root" diff --quiet origin/main -- templates/agent-team \
     || die "--verdict-from: dotfiles tree is not at origin/main for templates/agent-team; merge and pull dotfiles first"
+[ -z "$(git -C "$dotfiles_root" status --porcelain --ignored -- templates/agent-team)" ] \
+  || die "--verdict-from: templates/agent-team has local changes, not at origin/main; clean or commit them first"
   skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true) \
     || die "cannot list dotfiles team skills"
   while IFS= read -r f; do

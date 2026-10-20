@@ -1175,6 +1175,6 @@ check "verdict-from refuses when the dotfiles tree differs from origin/main for 
 # An untracked template file is invisible to git diff but sync-team-skills.sh copies it, so it must be refused too.
 "$REAL_GIT" -C "$fx" checkout -q -- templates/agent-team
 echo "untracked" > "$fx/templates/agent-team/untracked-template.md"
-check "verdict-from refuses an untracked file under templates/agent-team" 1 'not at origin/main\|local changes'
+check "verdict-from refuses an untracked file under templates/agent-team" 1 'not at origin/main'
 ) </dev/null &
 report
