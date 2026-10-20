@@ -32,7 +32,10 @@ r['result']['terminals'].append({'handle':'term_coordinator','worktreePath':os.g
 print(json.dumps(r))
 LIST
     ;;
-  "terminal split"*) echo '{"result":{"terminal":{"handle":"term_new"}}}' ;;
+  "terminal split"*) if [ -f "$FAKE_DIR/split.json" ]; then
+    cp "$FAKE_DIR/split-after.json" "$FAKE_DIR/terminals.json"
+    cat "$FAKE_DIR/split.json"; exit 0
+    fi; echo '{"result":{"terminal":{"handle":"term_new"}}}' ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -49,6 +52,39 @@ closes() { [ -f "$tmp/closes.log" ] && wc -l < "$tmp/closes.log" | tr -d ' ' || 
 "$here/worker-panes.sh" run_x term_coordinator dnew >/dev/null 2>&1
 check "worker-panes records the pane handle" "$([ "$(cat "$tmp/state/dnew" 2>/dev/null)" = term_new ]; echo $?)"
 rm "$tmp/state/dnew"
+
+# The anchor is a separate main checkout shell, not the caller of cleanup.
+cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_anchor","title":"elon","tabId":"t1","worktreePath":"$tmp/main"},
+ {"handle":"term_worker","tabId":"t2","worktreePath":"$tmp/linked"},
+ {"handle":"term_setup","tabId":"t2","worktreePath":"$tmp/linked"}]}}
+JSON
+python3 - "$tmp/terminals.json" "$tmp/split-after.json" <<'SPLIT'
+import json,sys
+r=json.load(open(sys.argv[1]))
+r["result"]["terminals"].append({"handle":"term_pane","tabId":"t1"})
+json.dump(r,open(sys.argv[2],"w"))
+SPLIT
+cat > "$tmp/split.json" <<'JSON'
+{"result":{"parent":{"handle":"term_anchor"},"terminal":{"handle":"term_pane"}}}
+JSON
+cat > "$tmp/show.anchor_case" <<JSON
+{"result":{"dispatch":{"status":"released","assigneeHandle":"term_worker"},"worker":{
+ "agentTerminalHandle":"term_worker","effects":[
+ {"kind":"worktree","action":"reused","id":"wt1::$tmp/linked"},
+ {"kind":"terminal","action":"created","id":"term_setup"}]}}}
+JSON
+"$here/worker-panes.sh" run_x term_anchor anchor_case >/dev/null 2>&1
+"$here/worker-pane-close.sh" anchor_case >/dev/null
+check "split parent anchor survives cleanup from another terminal" "$(python3 - "$tmp/terminals.json" <<'ANCHOR'
+import json,sys
+terms=json.load(open(sys.argv[1]))["result"]["terminals"]
+sys.exit(0 if any(t["handle"]=="term_anchor" for t in terms) else 1)
+ANCHOR
+echo $?
+)"
+check "split cleanup closes the worker pane and terminals" "$(grep -qx term_pane "$tmp/closes.log" && grep -qx term_worker "$tmp/closes.log" && grep -qx term_setup "$tmp/closes.log"; echo $?)"
+rm -f "$tmp/split.json" "$tmp/split-after.json" "$tmp/show.anchor_case" "$tmp/terminals.json" "$tmp/closes.log" "$tmp/state/anchor_case"
 
 echo completed > "$tmp/status.d1"
 echo term_a > "$tmp/state/d1"; echo term_b > "$tmp/state/d2"
