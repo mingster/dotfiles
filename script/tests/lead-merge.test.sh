@@ -1111,6 +1111,12 @@ copy_setup
 DOTFILES="$here/.." bash "$here/sync-team-skills.sh" "$REAL_PATCH_REPO" >/dev/null 2>&1
 copy_commit
 comments=""; REPO=mingster/riben.life; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
+# Fixture dotfiles root: a git repo whose origin/main matches its templates (the gate reads its own checkout).
+fx="$ucd/dot"; mkdir -p "$fx/script"
+cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$fx/script/"; cp -R "$here/../templates" "$fx/templates"
+"$REAL_GIT" -C "$fx" init -q -b main && "$REAL_GIT" -C "$fx" add . && "$REAL_GIT" -C "$fx" -c user.name=t -c user.email=t@t commit -qm fx
+"$REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
+LEAD_MERGE="$fx/script/lead-merge.sh"
 DH=dddddddddddddddddddddddddddddddddddddd99
 vpr() { VERDICT_PR_JSON=$(jq -nc --arg st "$1" --arg h "$DH" --arg c "$2" '{state:$st,headRefOid:$h,comments:[{body:$c}]}'); export VERDICT_PR_JSON; }
 vprx() { VERDICT_PR_JSON=$(jq -nc --arg h "$DH" --argjson c "$1" '{state:"MERGED",headRefOid:$h,comments:$c}'); export VERDICT_PR_JSON; }
@@ -1160,5 +1166,11 @@ d=$(ls -d "$REAL_PATCH_REPO"/.agents/skills/*/ | head -n1); ln -s /etc/passwd "$
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
 check "verdict-from refuses a symlink inside an owned skill directory" 1 'refuses symlink'
+# A PR that changes a template must not vouch for its own generated copies: the dotfiles tree has to match origin/main.
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+echo "unmerged template edit" >> "$(ls "$fx"/templates/agent-team/.agents/skills/*/SKILL.md | head -n1)"
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses when the dotfiles tree differs from origin/main for templates/agent-team" 1 'not at origin/main'
 ) </dev/null &
 report
