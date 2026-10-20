@@ -1172,5 +1172,9 @@ echo "unmerged template edit" >> "$(ls "$fx"/templates/agent-team/.agents/skills
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
 check "verdict-from refuses when the dotfiles tree differs from origin/main for templates/agent-team" 1 'not at origin/main'
+# An untracked template file is invisible to git diff but sync-team-skills.sh copies it, so it must be refused too.
+"$REAL_GIT" -C "$fx" checkout -q -- templates/agent-team
+echo "untracked" > "$fx/templates/agent-team/untracked-template.md"
+check "verdict-from refuses an untracked file under templates/agent-team" 1 'not at origin/main\|local changes'
 ) </dev/null &
 report
