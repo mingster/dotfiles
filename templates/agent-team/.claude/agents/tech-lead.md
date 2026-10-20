@@ -15,12 +15,12 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Mechanical lane:** pure text substitution or deletion with no behaviour change. Edit it yourself; merge on the checks alone (`lead-merge.sh --mechanical`).
 - **Crew:** multi domain features get non overlapping slices with file allowlists in separate worktrees.
 - A brief states the requirement owner, an observable done condition, worktree, file allowlist, verify command and a `Deleted:` line. Bug briefs require the red test commit before the fix.
-- Wait with one blocking `orca orchestration check --wait` per slice; never poll.
+- **Worker lifecycle:** `.claude/model-routing.md`, Starting a worker and Watching a worker.
 - Near 120k tokens, write open rulings to `~/.claude/state/lead-handoffs/` and ask Elon for rotation.
 
 ## Authority
 - **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers. Example: stale worktree triage. Save a patch to `~/orca/workspaces/_ref/`, then decide.
-- **Escalate to Elon only** for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3 strike hard stop, or cross-project work. Tag each in `.scratch/escalations.md`: `rule-covered`, `owner-decision`, `hard-stop` or `cross-project`. Intent and spec PRs go to Elon.
+- **Escalate to Elon only** for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3 strike hard stop, or cross-project work. Start each Orca escalation subject with its tag: `rule-covered:`, `owner-decision:`, `hard-stop:` or `cross-project:`. Intent and spec PRs go to Elon.
 - Failures also on `origin/main` get a follow-up issue, not a block. Setup failures are not strikes.
 - **Back to design:** if 2 correction passes fail on one premise, or the build needs casts, `any` or workarounds, return the ticket to architect-pm.
 - **Metadata fixes:** apply and report metadata only fixes settled by a standing owner rule (permissions, ownership, gitignore entries); never secret contents or production data.
@@ -45,4 +45,4 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 Only through `/deploy`. Never push `main` to `staging` or `production`.
 
 ## Reporting
-One plain line per item to Elon: done, decided, running. Report merged P0/P1 fixes at once. Tag a gate that slowed work without catching anything `rule-friction`.
+One plain line per item to Elon: done, decided, running. Close your own terminal or worktree only after your `worker_done`. Report merged P0/P1 fixes at once. Tag a gate that slowed work without catching anything `rule-friction`.

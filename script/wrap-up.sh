@@ -110,7 +110,7 @@ process_worktree() {
   else
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
     [ "$apply" -eq 0 ] || git worktree remove -- "$path"
-    removed=$((removed+1))
+    removed=$((removed+1)); printf '%s\n' "${path##*/}" >> "$tmp/found"
   fi
 }
 while IFS= read -r -d '' field; do
@@ -135,7 +135,7 @@ while IFS= read -r branch; do
         git branch -D -- "$branch"
       fi
     fi
-    local_deleted=$((local_deleted+1))
+    local_deleted=$((local_deleted+1)); printf '%s\n' "$branch" >> "$tmp/found"
   else keep "local $branch" 'unmerged without closed PR'
   fi
 done < <(git for-each-ref --format='%(refname:strip=2)' refs/heads)
@@ -151,7 +151,7 @@ while IFS= read -r ref; do
     keep "remote $branch" 'protected or checked out in kept worktree'
   elif eligible "$ref" "$branch"; then
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
-    batch+=("$branch"); remote_deleted=$((remote_deleted+1))
+    batch+=("$branch"); remote_deleted=$((remote_deleted+1)); printf '%s\n' "$branch" >> "$tmp/found"
     [ ${#batch[@]} -lt 50 ] || flush_remote
   else keep "remote $branch" 'unmerged without closed PR'
   fi
@@ -169,10 +169,12 @@ else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept"
-# Weekly safety net: anything found here means lead-merge.sh cleanup missed it. Log it for team-audit.
-if [ $((removed + local_deleted + remote_deleted)) -gt 0 ]; then
+# Weekly safety net: anything found here means lead-merge.sh cleanup missed it. Log it for team-audit,
+# on --apply only (a preview then an apply logged the same leftovers twice), naming what was found.
+if [ "$apply" -eq 1 ] && [ $((removed + local_deleted + remote_deleted)) -gt 0 ]; then
   obs=${TEAM_OBSERVATIONS_FILE:-$HOME/.claude/state/team-observations.md}
   mkdir -p "$(dirname "$obs")"
-  printf '%s | %s | wrap-up | %s found worktrees=%s local=%s remote=%s | lead-merge cleanup missed these; fix script/merge-cleanup.sh\n' \
-    "$(date +%F)" "$(basename "$repo")" "$([ "$apply" -eq 1 ] && echo applied || echo previewed)" "$removed" "$local_deleted" "$remote_deleted" >> "$obs"
+  names=$(sort -u "$tmp/found" | head -12 | paste -sd ' ' -)
+  printf '%s | %s | wrap-up | applied found worktrees=%s local=%s remote=%s (%s) | lead-merge cleanup missed these; fix script/merge-cleanup.sh\n' \
+    "$(date +%F)" "$(basename "$repo")" "$removed" "$local_deleted" "$remote_deleted" "$names" >> "$obs"
 fi
