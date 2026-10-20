@@ -8,14 +8,14 @@ set -euo pipefail
 
 die() { echo "lead-merge: refused: $*" >&2; exit 1; }
 
-repo="" pr="" head="" mechanical=false verify_command=""
+repo="" pr="" head="" mechanical=false verify_command="" verify_set=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
     --pr) pr="${2:-}"; shift 2 ;;
     --head) head="${2:-}"; shift 2 ;;
     --mechanical) mechanical=true; shift ;;
-    --verify-command) verify_command="${2:-}"; shift 2 ;;
+    --verify-command) [ $# -ge 2 ] || die "--verify-command needs a value"; verify_command="${2:-}"; verify_set=true; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
 done
@@ -331,8 +331,9 @@ if [ "$mechanical" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = t
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
   [ "$passes" -gt 0 ] || die "missing passing verifier verdict for current head or stable patch-id"
   [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or stable patch-id"
-  if [ -n "$verify_command" ]; then
+  if [ "$verify_set" = true ]; then
     want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
+    [ -n "$want" ] || die "--verify-command is empty"
     newest=${applicable[0]#*$'\n'}
     got=$(grep -m1 '^Command:' <<<"$newest" | sed -E 's/^Command:[[:space:]]*//; s/[[:space:]]+$//' || true)
     [ -n "$got" ] || die "newest Verdict has no Command: line; expected: $want"

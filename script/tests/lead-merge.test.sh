@@ -362,6 +362,8 @@ COMMENTS_JSON=$({ verdict_json "$v_none"$'\nCommand: bun test --isolate --no-dep
 check "verify-command mismatch refused" 1 'Command mismatch'
 COMMENTS_JSON=$({ verdict_json "$v_none"; } | comments_of)
 check "verify-command missing line refused" 1 'no Command: line'
+VCMD="  "
+check "empty verify-command value refused" 1 'is empty'
 VCMD=""
 check "no verify-command flag leaves missing line alone" 0 'lane=copy-only' 1
 COMMENTS_JSON=""
