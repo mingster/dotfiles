@@ -59,13 +59,15 @@ find_new_pane() { # $1 target handle, $2 tabs snapshot taken before the split
 for d in ${ids[@]+"${ids[@]}"}; do
   before=$(tabs)
   if rec=$("$orca" terminal split --terminal "$target" --direction "$dir" --command "$here/worker-pane.sh $d" --json); then
-    # Record the pane handle so the coordinator can close it (worker-pane-close.sh).
+    # Split receipts can include the parent first. Only record a newly created handle.
     h=$(printf '%s' "$rec" | python3 -c '
 import sys,json
+existing={line.split()[0] for line in sys.argv[1].splitlines() if line.split()}
+existing.update(sys.argv[2:])
 def find(o):
   if isinstance(o,dict):
     v=o.get("handle")
-    if isinstance(v,str) and v: return v
+    if isinstance(v,str) and v and v not in existing: return v
     for x in o.values():
       r=find(x)
       if r: return r
@@ -74,7 +76,7 @@ def find(o):
       r=find(x)
       if r: return r
 try: print(find(json.load(sys.stdin)) or "")
-except Exception: print("")')
+except Exception: print("")' "$before" "$base" "$target")
     [ -n "$h" ] && { printf '%s\n' "$h" > "$state/$d"; target="$h"; dir=horizontal; }
     echo "pane $d"
   else
