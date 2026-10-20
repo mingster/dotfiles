@@ -78,6 +78,8 @@ The single source for this rule (owner 2026-10-17). The Tech Lead owns repositor
 
 ## Starting a worker
 
+Host ssh work routes to a Claude worker. The Codex exec layer blocks ssh and remote shells by design; do not change those rules. Codex keeps the local parts of the same ticket.
+
 **Usage gate (never run out of AI usage).** Before every `worker-start`:
 
 - Pick: `~/dotfiles/script/usage-gate.py pick --role <role>` ranks providers by headroom and respects role pins; pass its flags. A reviewer adds `--avoid-family <author family>`.
