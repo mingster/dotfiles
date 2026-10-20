@@ -62,5 +62,13 @@ DRY_RUN=1 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/worker-finish.sh" --wor
 grep -q "\[dry-run\].*checks-fail" "$tmp/out" && ok || bad "dry run prints the checks command"
 [ -d "$tmp/w3" ] && [ ! -s "$CHECKS_LOG" ] && ok || bad "dry run executes nothing"
 
+# 5. missing head-checks script refuses, touches nothing
+newwt w4; reset
+HEAD_CHECKS="$tmp/does-not-exist" run bash "$here/worker-finish.sh" --worktree "$tmp/w4" --dispatch d4
+[ "$(cat "$tmp/rc")" = 1 ] && ok || bad "missing checks exit 1"
+grep -q "worker-finish: head-checks failed, refusing worker_done" "$tmp/err" && ok || bad "missing checks message"
+[ -d "$tmp/w4" ] && ok || bad "missing checks keep worktree"
+[ ! -s "$ORCA_LOG" ] && ok || bad "missing checks leave dispatch untouched"
+
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
