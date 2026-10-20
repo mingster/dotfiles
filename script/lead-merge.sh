@@ -3,7 +3,7 @@
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
 # --verdict-from <owner/dotfiles#N>: a riben.life or pstv PR whose changed files are all generated team copies
-#   (Generated-from-dotfiles header, or inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
+#   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
 #   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
@@ -291,9 +291,10 @@ if [ -n "$verdict_from" ]; then
   skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true) \
     || die "cannot list dotfiles team skills"
   while IFS= read -r f; do
+    # Only paths sync-team-skills.sh owns count: a header string inside a file proves nothing, and
+    # sync-team-skills.sh --check below byte-verifies every file in those directories.
     gen=false
-    if git show "$head:$f" 2>/dev/null | grep -qF 'Generated from dotfiles templates'; then gen=true; fi
-    if [ "$gen" = false ] && [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"; then gen=true; fi
+    if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"; then gen=true; fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
   sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"' EXIT
