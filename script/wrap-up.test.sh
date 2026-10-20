@@ -151,5 +151,9 @@ export TEAM_OBSERVATIONS_FILE="$tmp/obs.md"
 git branch leftover
 git push -q origin leftover
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
-grep -q '| wrap-up | applied found' "$tmp/obs.md"
-echo 'ok wrap-up logs findings to team observations'
+grep -q '| wrap-up | applied found.*(.*leftover.*)' "$tmp/obs.md"
+echo 'ok wrap-up logs findings to team observations with their names'
+git branch leftover2
+bash "$here/wrap-up.sh" > "$tmp/output"
+test "$(grep -c 'wrap-up' "$tmp/obs.md")" -eq 1
+echo 'ok a preview logs no observation'
