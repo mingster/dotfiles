@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # One finish path for a worker: release its dispatch, close its pane, remove its worktree.
-# Usage: worker-finish.sh --worktree <path> [--dispatch <id>]...   DRY_RUN=1 only prints.
-# Callers decide whether the worktree may go (clean, or its diff saved first); this removes it.
+# Usage: worker-finish.sh --worktree <path> [--dispatch <id>]... [--skip-head-checks "<reason>"]   DRY_RUN=1 only prints.
+# Head-checks run first and a failure refuses everything. Callers decide whether the worktree may go (clean, or its diff saved first); this removes it.
 set -euo pipefail
 dry=${DRY_RUN:-0}
 orca=${ORCA_CLI_COMMAND:-orca}
-wt="" dispatches=()
+wt="" dispatches=() skip="" skip_set=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --worktree) wt=${2:-}; shift 2 ;;
     --dispatch) dispatches+=("${2:-}"); shift 2 ;;
+    --skip-head-checks) skip_set=1; skip=${2:-}; [ $# -ge 2 ] && shift; shift ;;
     *) echo "worker-finish: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -17,6 +18,19 @@ done
 run() { if [ "$dry" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
 real() { if [ -d "$1" ]; then (cd -P "$1" && pwd); else printf '%s\n' "$1"; fi; }
 wt=$(real "$wt")
+
+if [ "$skip_set" = 1 ]; then
+  [ -n "$skip" ] || { echo "worker-finish: --skip-head-checks needs a reason" >&2; exit 2; }
+  echo "worker-finish: skipping head-checks: $skip"
+else
+  checks=${HEAD_CHECKS:-$HOME/dotfiles/script/head-checks.sh}
+  if [ "$dry" = 1 ]; then
+    echo "[dry-run] $checks --repo $wt --ref HEAD --base origin/main"
+  elif ! "$checks" --repo "$wt" --ref HEAD --base origin/main; then
+    echo "worker-finish: head-checks failed, refusing worker_done" >&2
+    exit 1
+  fi
+fi
 
 if [ ${#dispatches[@]} -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   while IFS=$'\t' read -r id path; do

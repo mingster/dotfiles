@@ -32,6 +32,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Required means one cross-family reviewer, covering security, who reads the Checks receipt (never reruns it) and posts the Verdict `lead-merge.sh` checks.
 - **Test only the change:** run the touched tests. Full regression only before a deploy batch or for shared code, with the reason.
 - **Test judge:** a new test or check must name the real failure it prevents; you approve it (Elon for gate checks). Per-PR checks stay under 60 s; cut a test before adding one over budget.
+- **Iterating:** while working on a test file run it with `ONLY=<new cases>`; run the full suite once at the end with `JOBS=<n>`. Every wait has a timeout.
 - You run `~/dotfiles/script/head-checks.sh` once per head.
 - **PR body:** `## Verification` with 1 to 3 real runs and outcomes. No Test plan, no tool credit.
 

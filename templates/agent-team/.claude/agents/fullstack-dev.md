@@ -34,6 +34,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Lint first:** before every local commit run changed-file lint, the repo typecheck and scoped tests, then build only when repo rules require it. Record the full head SHA. A red cheap check stops the line.
 - Supply `## Verification` for the PR body with 1 to 3 bullets, each a real run path and observed outcome. Your tests do not replace the independent verifier's verdict.
 - Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the changelog entry line(s). Update living design notes in `docs/<AREA>/`.
+- Before `worker_done` run `~/dotfiles/script/head-checks.sh --repo <worktree> --ref HEAD --base origin/main` and report its result line.
 - Report in `worker_done` per `.claude/model-routing.md` (Commit, push and merge, rule 1).
 - Skills: primary `tdd`. Run a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`), and start a bug with `diagnosing-bugs`. Never `create-pr`. Load other skills only when the feature or a merge conflict needs them.
 
