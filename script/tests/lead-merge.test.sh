@@ -33,7 +33,7 @@ if [ "$1" = api ]; then
 fi
 case "$2" in
   view)
-    if [ -f "$MERGE_LOG" ] && grep -q ok "$MERGE_LOG"; then printf '%s' "$FINAL_JSON"; else printf '%s' "$PR_JSON"; fi ;;
+    if [[ "$*" == *"--repo d/dotfiles"* ]]; then printf '%s' "$VERDICT_PR_JSON"; elif [ -f "$MERGE_LOG" ] && grep -q ok "$MERGE_LOG"; then printf '%s' "$FINAL_JSON"; else printf '%s' "$PR_JSON"; fi ;;
   diff) printf '%s' "$PR_DIFF" ;;
   merge)
     echo "$*" >> "$MERGE_LOG.calls"
@@ -134,7 +134,7 @@ run_case() { # result_file run_script name expected_exit output_regex [merge_cal
     "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
   fi
   mkjson
-  out=$("$run" --repo o/r --pr 7 --head "$SHA" ${MECH:+--mechanical} ${VCMD:+--verify-command "$VCMD"} 2>&1); code=$?
+  out=$("$run" --repo "${REPO:-o/r}" --pr 7 --head "$SHA" ${VFROM:+--verdict-from "$VFROM"} ${MECH:+--mechanical} ${VCMD:+--verify-command "$VCMD"} 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
   if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ] \
     && { [ -z "${5:-}" ] || grep -qE -- "$5" "$MERGE_LOG.calls"; }; then echo "ok   $1" > "$res"
@@ -1103,5 +1103,40 @@ rm -f "$APPROVAL"
 mv "$hooks_file.away" "$hooks_file"
 unset LEAD_MERGE
 
+) </dev/null &
+# Generated team copies merge on the Verdict of the matching MERGED dotfiles PR.
+unit; (
+unit_init
+copy_setup
+DOTFILES="$here/.." bash "$here/sync-team-skills.sh" "$REAL_PATCH_REPO" >/dev/null 2>&1
+copy_commit
+comments=""; REPO=mingster/riben.life; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
+DH=dddddddddddddddddddddddddddddddddddddd99
+vpr() { VERDICT_PR_JSON=$(jq -nc --arg st "$1" --arg h "$DH" --arg c "$2" '{state:$st,headRefOid:$h,comments:[{body:$c}]}'); export VERDICT_PR_JSON; }
+GOOD="Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author"
+vpr MERGED "$GOOD"
+check "generated copies merge on the dotfiles PR Verdict" 0 'generated team copies' 1
+VFROM=""; check "same PR without the flag still needs its own Verdict" 1 'missing passing verifier verdict'
+VFROM=d/dotfiles#9
+REPO=o/r; check "verdict-from refuses a repo that is not riben.life or pstv" 1 'only for riben.life and pstv'
+REPO=mingster/pstv; check "verdict-from works for pstv" 0 'generated team copies' 1
+REPO=mingster/riben.life
+vpr OPEN "$GOOD"; check "verdict-from refuses an unmerged dotfiles PR" 1 'not MERGED'
+vpr MERGED "Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author"; check "verdict-from refuses a FAIL Verdict" 1 'no passing Verdict'
+vpr MERGED "Verdict: PASS head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb verifier=ctx_verify author=ctx_author"; check "verdict-from refuses a Verdict for another head" 1 'no passing Verdict'
+vpr MERGED "Verdict: PASS head=$DH verifier=ctx_nobody author=ctx_author"; check "verdict-from refuses an unknown verifier dispatch" 1 'not a known dispatch'
+vpr MERGED "$GOOD"
+# A non-generated file keeps the normal rule.
+echo hand > "$REAL_PATCH_REPO/notes.txt"; "$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm extra
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a diff with a non-generated file" 1 'notes.txt is not'
+# A hand edited generated copy fails sync-team-skills --check.
+"$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
+f=$(ls "$REAL_PATCH_REPO"/.agents/skills/*/SKILL.md | head -n1); echo "hand edit" >> "$f"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm edit
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
+files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+check "verdict-from refuses a hand edited generated copy" 1 'sync-team-skills.sh --check fails'
 ) </dev/null &
 report

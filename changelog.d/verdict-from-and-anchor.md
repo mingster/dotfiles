@@ -1,0 +1,1 @@
+lead-merge.sh: `--verdict-from <owner/dotfiles#N>` lets a riben.life or pstv PR made only of generated team copies (and passing `sync-team-skills.sh --check` at its head) merge on the Verdict of the matching merged dotfiles PR. worker-panes.sh now refuses a missing anchor terminal before splitting.
