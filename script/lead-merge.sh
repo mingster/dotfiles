@@ -288,6 +288,10 @@ if [ -n "$verdict_from" ]; then
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "--verdict-from needs a full head sha"
   git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head"
   dotfiles_root=$(cd "$(dirname "$0")/.." && pwd)
+  # An unmerged template must not vouch for its own generated copies.
+  git -C "$dotfiles_root" rev-parse --verify -q origin/main >/dev/null || die "--verdict-from: cannot resolve origin/main in the dotfiles tree"
+  git -C "$dotfiles_root" diff --quiet origin/main -- templates/agent-team \
+    || die "--verdict-from: dotfiles tree is not at origin/main for templates/agent-team; merge and pull dotfiles first"
   skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true) \
     || die "cannot list dotfiles team skills"
   while IFS= read -r f; do
