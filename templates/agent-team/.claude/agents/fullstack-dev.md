@@ -19,7 +19,6 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Copy-only route:** follow `docs/agents/team.md`, Handoffs (Copy-only exception, Verdict line 2, owner Copy approval).
 - **Fast path:** a task touching 3 files or fewer is implemented directly in your workspace with TDD.
 - **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root, written at the start (allowlisted files, verify command) and when blocked.
-- **Cost gate:** autonomous loops pause every 10 turns to snapshot state in `active_run.md` and check in with the lead.
 - **Local servers:** start your own server on your own port and stop it by PID. Never pkill, killall or kill by name.
 - **Paths:** quote bracketed paths; avoid escaped paths, `..` or leaving the worktree, which stall approval. Keep scratch files in `<worktree>/.scratch/`.
 - **Delete before adding:** the PR body carries one line `Deleted:` naming the flag, step, layer or requirement you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
