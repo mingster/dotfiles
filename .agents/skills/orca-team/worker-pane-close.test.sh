@@ -46,7 +46,7 @@ pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
 closes() { [ -f "$tmp/closes.log" ] && wc -l < "$tmp/closes.log" | tr -d ' ' || echo 0; }
 
-"$here/worker-panes.sh" run_x term_base dnew >/dev/null 2>&1
+"$here/worker-panes.sh" run_x term_coordinator dnew >/dev/null 2>&1
 check "worker-panes records the pane handle" "$([ "$(cat "$tmp/state/dnew" 2>/dev/null)" = term_new ]; echo $?)"
 rm "$tmp/state/dnew"
 

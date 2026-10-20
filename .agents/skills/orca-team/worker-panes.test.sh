@@ -45,6 +45,14 @@ check "splits only active workers" "$([ "$(wc -l < "$tmp/splits.log")" -eq 2 ]; 
 check "first pane splits the coordinator to the right" "$(sed -n 1p "$tmp/splits.log" | grep -q -- '--terminal term_base --direction vertical.*worker-pane.sh d1 --json'; echo $?)"
 check "second pane splits the first worker pane below" "$(sed -n 2p "$tmp/splits.log" | grep -q -- '--terminal pane_1 --direction horizontal.*worker-pane.sh d3 --json'; echo $?)"
 
+# The anchor terminal is not in orca terminal list: refuse before any split.
+reset; terms term_other_only
+out=$("$here/worker-panes.sh" run_x term_gone d1 2>&1); code=$?
+check "missing anchor exits non-zero" "$([ "$code" -ne 0 ]; echo $?)"
+check "missing anchor names the handle and the fix" "$(printf '%s' "$out" | grep -qF 'anchor terminal term_gone not found; create a shell titled elon and pass its handle'; echo $?)"
+check "missing anchor opens no split" "$([ ! -f "$tmp/splits.log" ]; echo $?)"
+terms term_base
+
 reset
 "$here/worker-panes.sh" run_x term_base d2 >/dev/null 2>&1
 check "explicit dispatch id overrides the list" "$(grep -q 'worker-pane.sh d2 --json' "$tmp/splits.log"; echo $?)"

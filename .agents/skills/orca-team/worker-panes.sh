@@ -21,6 +21,10 @@ live=$("$orca" terminal list --json 2>/dev/null | python3 -c '
 import sys,json
 try: print("\n".join(x.get("handle","") for x in json.load(sys.stdin)["result"]["terminals"]))
 except Exception: pass')
+if ! printf '%s\n' "$live" | grep -qxF "$base"; then
+  echo "anchor terminal $base not found; create a shell titled elon and pass its handle" >&2
+  exit 1
+fi
 if [ -n "$live" ]; then
   for f in $(ls -t "$state" 2>/dev/null); do
     [ -f "$state/$f" ] || continue
