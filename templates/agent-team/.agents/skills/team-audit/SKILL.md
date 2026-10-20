@@ -5,7 +5,7 @@ description: Audit agent roles, team skills, model-routing.md and team docs when
 
 # Team audit
 
-Run only when the owner says "team-audit", by architect-pm (or Elon). Edits only on a branch in your own worktree; the Tech Lead publishes and merges reviewed branches under `.claude/model-routing.md`; Elon owns priorities and owner decisions.
+Run only when the owner says "team-audit", by architect-pm (or Elon). Edits only on a branch in your own worktree; Elon publishes and merges docs-only audit branches through the mechanical lane under `docs/agents/team.md`; engineering branches go to the Tech Lead.
 
 ## 1. Deterministic checks
 
