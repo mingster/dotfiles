@@ -69,6 +69,20 @@ class ScopedTests(unittest.TestCase):
         self.assertIn('Scoped tests: 0', result.stdout)
         self.assertFalse((self.repo / 'web/selected.json').exists())
 
+    def test_playwright_specs_under_e2e_are_not_bun_tests(self):
+        self.write('web/e2e/regression/rsvp/booking.spec.ts', '')
+        result = self.run_helper('web/e2e/regression/rsvp/booking.spec.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Scoped tests: 0', result.stdout)
+        self.assertFalse((self.repo / 'web/selected.json').exists())
+
+    def test_bun_tests_under_an_e2e_directory_still_run(self):
+        self.write('web/src/app/api/e2e/route/__tests__/route.test.ts', '')
+        result = self.run_helper('web/src/app/api/e2e/route/__tests__/route.test.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads((self.repo / 'web/selected.json').read_text())
+        self.assertEqual(selected, ['./src/app/api/e2e/route/__tests__/route.test.ts'])
+
     def components(self, phase, *files):
         tools = self.repo / 'tools'
         tools.mkdir(exist_ok=True)
