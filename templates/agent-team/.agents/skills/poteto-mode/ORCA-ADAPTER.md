@@ -4,7 +4,7 @@ Read this adapter before `SKILL.md` and the selected playbook. This is the pinne
 
 ## Our gates win
 
-Existing project instructions, the assigned brief, standing authority, token budget, strike rule and owner approval gates override every upstream autonomy instruction. Do not change their numbers or widen scope because a playbook says to continue. Elon is the owner's only contact; workers ask the lead, and the lead routes owner decisions through Elon. Workers commit locally; the lead publishes reviewed work. Release-manager retains its existing staging and production promotion authority, and production requires the owner's explicit go relayed by Elon. Do not send external messages merely because an upstream playbook suggests it.
+Existing project instructions, the assigned brief, standing authority, token budget, strike rule and owner approval gates override every upstream autonomy instruction. Do not change their numbers or widen scope because a playbook says to continue. Elon is the owner's only contact; workers ask the tech-lead, and the tech-lead routes owner decisions through Elon. Workers commit locally; the tech-lead publishes reviewed work. Release-manager retains its existing staging and production promotion authority, and production requires the owner's explicit go relayed by Elon. Do not send external messages merely because an upstream playbook suggests it.
 
 Read `.claude/model-routing.md` and run `~/dotfiles/script/usage-gate.py` as prescribed there before dispatch or changing providers. One gate governs every provider and the entire team. A depleted provider never authorizes on-demand spending or bypassing a gate. Keep existing review, security, money, tenancy, exact-head and release evidence requirements. A skipped or blocked check is not a pass.
 
@@ -12,7 +12,7 @@ Internally, read each cited principle's leaf skill and name the principle and th
 
 ## Runtime and worker dispatch
 
-The lead and engineering workers default to local Codex. Cursor is reserved for jobs needing their own machine, including E2E and browser smoke checks, and cross-model second-opinion reviews. Cursor has no on-demand spending: when its quota is exhausted, fall back to local Codex under the same usage gate. A fallback without the needed machine or independent model family must report that gate blocked; it cannot claim equivalent verification. Source tests never stand in for a browser, device, provider, host or deployment check.
+The tech-lead and engineering workers default to local Codex. Cursor is reserved for jobs needing their own machine, including E2E and browser smoke checks, and cross-model second-opinion reviews. Cursor has no on-demand spending: when its quota is exhausted, fall back to local Codex under the same usage gate. A fallback without the needed machine or independent model family must report that gate blocked; it cannot claim equivalent verification. Source tests never stand in for a browser, device, provider, host or deployment check.
 
 Map upstream model slugs, strong/fast tiers, `high` and `xhigh` through `.claude/model-routing.md` and available presets. Its Codex effort constraint applies: never dispatch Codex at high effort. Unsupported names are not literal CLI arguments. This adapter's engineering provider policy supersedes older provider defaults in that routing document; other roles keep their existing routing.
 
@@ -28,11 +28,11 @@ Do not guess helper flags or run absent upstream scripts. Follow local helper do
 
 ## Lead loop and handoff
 
-**Orchestrate** maps to the lead's existing run loop: classify scope, dispatch bounded work, answer within standing authority, inspect evidence, obtain required independent review of the full current head, integrate and report to Elon. Use `crew` for dispatch and delivery. Apply the existing review-by-risk rule; upstream fixed review lanes do not replace it. The lead delegates code and reviews.
+**Orchestrate** maps to the tech-lead's existing run loop: classify scope, dispatch bounded work, answer within standing authority, inspect evidence, obtain required independent review of the full current head, integrate and report to Elon. Use `crew` for dispatch and delivery. Apply the existing review-by-risk rule; upstream fixed review lanes do not replace it. The tech-lead delegates code and reviews.
 
 **Session pickup** and **Pause safely** use a worktree `.scratch/` handoff with ticket, branch and head, worker/dispatch IDs, rulings, completed and pending checks, baseline failures, next action and gates. At the existing rotation boundary ask Elon for rotation. Do not kill unknown processes, delete worktrees with unmerged commits or silently abandon active workers. Resume only after reading the handoff and reconciling current Git and dispatch state.
 
-**Babysit**, **Opening a PR** and **Shipping** use the existing delivery contract and `script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Workers stop at local commits; the lead owns push, PR and merge. There is no PR CI: use recorded local checks and required exact-head review rather than waiting for or inventing CI success. The merge helper enforces current-head and owner-file gates. Deployment remains `/deploy` with the project's facts and owner production approval. Worktree cleanup follows `wrap-up`, after publication and successful merge are verified.
+**Babysit**, **Opening a PR** and **Shipping** use the existing delivery contract and `script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Workers stop at local commits; the tech-lead owns push, PR and merge. There is no PR CI: use recorded local checks and required exact-head review rather than waiting for or inventing CI success. The merge helper enforces current-head and owner-file gates. Deployment remains `/deploy` with the project's facts and owner production approval. Worktree cleanup follows `wrap-up`, after publication and successful merge are verified.
 
 ## Skill and tool translations
 
@@ -50,6 +50,6 @@ Read a local skill before using it and confirm it exists. A referenced upstream 
 | `create-skill` | Local `writing-for-agents` and `skill-creator` only for an assigned skill change; otherwise skip. |
 | `in-cloud`, cloud-only tools | Skip; use local supervised workers for authorized equivalent work. |
 | Short principle names | Resolve to the vendored `principle-<name>/SKILL.md`; read it before citing it. |
-| Any other unavailable route or bundled script | Skip and state what was omitted and why; ask the lead only if it blocks acceptance. |
+| Any other unavailable route or bundled script | Skip and state what was omitted and why; ask the tech-lead only if it blocks acceptance. |
 
 The vendored upstream harness adapter applies only when running a Claude worker; this Orca adapter takes precedence. The vendored benchmark-checklist is a principle dependency; apply its measurement guidance through local tools. Do not fetch or install omitted dependencies to satisfy a playbook.

@@ -5,10 +5,10 @@
 | Role | File | Stage | Primary output |
 | --- | --- | --- | --- |
 | Elon (CEO) | `elon.md` | Executive supervision | Priorities, cross project strategy, trade offs and owner reporting |
-| Tech Lead (`lead`) | `tech-lead.md` | Tech orchestration | Engineering publication and integration, engineering workers and branch hygiene |
+| Tech Lead (`tech-lead`) | `tech-lead.md` | Tech orchestration | Engineering publication and integration, engineering workers and branch hygiene |
 | architect-pm | `architect-pm.md` | Plan, Design | Intents, specs, tickets and ADRs |
 | fullstack-dev | `fullstack-dev.md` | Build | Isolated branch, tested implementation and change report |
-| qa-sdet | `qa-sdet.md` | Test, Maintain | Reproduction, regression tests, independent reviews and checks |
+| qa-sdet | `qa-sdet.md` | Test, Maintain | Reproduction, Functional tests, independent reviews and checks |
 | secops-finops | `secops-finops.md` | Design and Test audit | Security, tenancy, financial and privacy reviews |
 | support-csm | `support-csm.md` | Maintain | Ticket triage, reply drafts and recurring pain points |
 | release-manager | `release-manager.md` | Deploy | Release evidence, deployment and rollback plans |
@@ -18,11 +18,11 @@
 
 1. **Task tree:** Elon builds tasks from the accepted spec. Use the project's configured workflow and add specialist slices only when the work requires them.
 2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when the Tech Lead judges a full crew unnecessary.
-3. **Reports:** Engineering work goes Elon, then the Tech Lead, then the SDLC cycle (owner rule 2026-10-20): Elon hands each engineering issue to the lead; the lead dispatches fullstack-dev and qa-sdet (triage, implement or tdd, code-review), and they report to the lead, who publishes and merges reviewed branches and reports results to Elon. PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-marketing, accepts their output and merges their PRs. Docs-only PRs (specs, tickets, marketing copy) take the mechanical lane: merge on checks through Elon, never through the lead. Customer-facing copy still needs owner approval before merge. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go) and reports directly to Elon; a failed gate is its job to diagnose and report. The lead only merges code. Every other role reports to Elon. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
+3. **Reports:** Engineering work goes Elon, then the Tech Lead, then the SDLC cycle (owner rule 2026-10-20): Elon hands each engineering issue to the tech-lead; the tech-lead dispatches fullstack-dev and qa-sdet (triage, implement or tdd, code-review), and they report to the tech-lead, who publishes and merges reviewed branches and reports results to Elon. PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-marketing, accepts their output and merges their PRs. Docs-only PRs (specs, tickets, marketing copy) take the mechanical lane: merge on checks through Elon, never through the tech-lead. Customer-facing copy still needs owner approval before merge. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go) and reports directly to Elon; a failed gate is its job to diagnose and report. The tech-lead only merges code. Every other role reports to Elon. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
 4. **Monitor and close workers:** follow Delivery contract for the child ledger, inbox classification, read-only liveness and closure; use the official Orca guide and model-routing for lifecycle transitions.
 5. **Merge and queue:** the responsible coordinator merges passing branches under `.claude/model-routing.md` and reports to Elon. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
 
-The lead decides reversible work within standing authority and reports after acting, including metadata only fixes settled by an owner rule (permissions, ownership or gitignore entries, never secret contents or production data); only Owner-Reserved items, pricing or policy decisions and matters no standing rule covers go to Elon. Up to 2 in-scope correction passes per ticket remain subject to the strike hard stop.
+The tech-lead decides reversible work within standing authority and reports after acting, including metadata only fixes settled by an owner rule (permissions, ownership or gitignore entries, never secret contents or production data); only Owner-Reserved items, pricing or policy decisions and matters no standing rule covers go to Elon. Up to 2 in-scope correction passes per ticket remain subject to the strike hard stop.
 
 ## Delivery contract
 
@@ -36,16 +36,17 @@ Read this section before framing an objective, dispatching, reviewing a delivery
 6. **Head and findings:** key required review and verification evidence to the full current head SHA and record author/reviewer identities. Use independent review where the risk policy requires it, under the current owner model override. Triage each finding as fix, dismiss with evidence or escalate for a decision; severity or an approval label alone is insufficient. A changed head invalidates prior approval. Reconcile late or superseded findings against the current head; salvage unique findings into a fresh scoped task, never accept an obsolete verdict or blindly integrate its branch.
 7. **Honest evidence:** report exact commands, exits, actual test counts, skips, errors, baseline failures and unverified paths. Measured claims identify actual executed work, reuse/cache and coverage; source tests do not prove browser, device, provider, database or deployment behavior. For user-facing work, the brief names real pages and subpages, affected store/user kinds and useful content (purpose, steps, a common mistake). Before reporting completion, the worker opens them as the target user and reports pages checked; before merge, the coordinator or QA opens one named page. Missing access is an explicit gate, never an inferred pass. Measure on the current tool versions in the real environment; a number from another setup is unverified.
 8. **Premise and close:** Attack the Premise at the second failure of the same check: write down the premise the failed fixes shared and test it directly before a third attempt; only behavioural failures after a production edit count toward the three-strike hard stop, while tooling or setup failures (missing dependencies, Prisma generation or typegen) do not; a hard stop allows no retry. Before closing, drain the final inbox and reconcile every ledger child. For every settled child, including FAILED, validate and accept the correct task ID, dispatch ID, explicit outcome and full report, then call official `worker-release` and close ended panes/terminals through official guidance. Never skip release because a worker is idle. Retain dirty/unmerged worktrees separately with a named owner; external-terminal retained resource state does not permit leaving a settled worker active. Name open gates and next actors; check each exit predicate against current evidence. Partial coverage never earns PASS.
-9. **New UI page:** a change that adds a new user-facing page or screen is finished only after the owner has looked at it and approved it. The Tech Lead sends Elon the preview or Playground URL with phone screenshots, Elon asks the owner, and the lead merges only after his approval and notes it on the PR. Changes to existing pages follow the normal gates.
+9. **New UI page:** a change that adds a new user-facing page or screen is finished only after the owner has looked at it and approved it. The Tech Lead sends Elon the preview or Playground URL with phone screenshots, Elon asks the owner, and the tech-lead merges only after his approval and notes it on the PR. Changes to existing pages follow the normal gates.
 
 ## Handoffs
 
 Docs-only PRs follow Orchestration rule 3; runtime copy changes follow the copy-only exception where defined below.
 
 - **Copy-only exception (#3819):** `lead-merge.sh` decides from the actual diff: existing locale values only (unchanged keys), or `.md`/`.txt` under `marketing/content/` or `marketing/copy/`; anything else uses the normal route. Use Codex sol low for the edit and independent verifier, batch small requests into one PR a day, require current-head Checks PASS and a Verdict with phone-width screenshots of every changed page in tw, en and jp; qa-sdet diff review and the secops lane are not required.
-- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. The lead passes it to `lead-merge.sh --verify-command`, which refuses a missing or different one.
+- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. The tech-lead passes it to `lead-merge.sh --verify-command`, which refuses a missing or different one.
 - Verdict line 2 is exactly `Copy topics: none` or `Copy topics: owner`. Write `owner` if the change touches prices or money, refunds or cancellation, legal or privacy, or promises (delivery, timing, guarantees). When unsure write `owner`. Never edit or minimize a Verdict; post a new one. lead-merge ignores an edited or minimized PASS and still counts an edited FAIL. Owner Copy approval is `bin/owner-approve.sh copy <full head sha>`, run by the owner in a terminal. A PR comment approves nothing.
 - Copy-only may go to Playground at once; production still needs the owner's go. Japanese homepage and main-page copy needs a native reader before launch.
+- **Native en and jp copy (owner rule 2026-10-21):** write `en` as fluent American English and `jp` as natural Japanese, natively from the intent, never a word-for-word translation of `tw`. A menu or button name quotes the real label in that locale's file. Copy reviewers reject literal translations.
 
 Handoffs use committed artifacts such as intents, specs, branches, pull requests and reviews, with `active_run.md` for long tasks. Always name the next actor by role.
 
@@ -61,9 +62,9 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 
 ## Hotfix loop
 
-1. **Alert:** the role finding a severe bug records it without personal data and alerts Elon, who dispatches architect-pm for triage and hands engineering work to the lead.
+1. **Alert:** the role finding a severe bug records it without personal data and alerts Elon, who dispatches architect-pm for triage and hands engineering work to the tech-lead.
 2. **Rate:** architect-pm sets severity; QA or SecOps may provisionally identify urgent incidents.
-3. **Reproduce:** qa-sdet records the failing behavior and provides a regression test to fullstack-dev.
+3. **Reproduce:** qa-sdet records the failing behavior and provides a failing reproduction test (a Functional test case) to fullstack-dev.
 4. **Fix:** fullstack-dev makes the test pass, adds the project's required changelog entry and reports the branch for review.
 5. **Verify:** qa-sdet and required reviewers audit the change and checks.
 6. **Ship:** Tech Lead merges code; release-manager owns the release gates, staging and production after the owner go.
@@ -103,4 +104,4 @@ Project specific gates and deployment stages are documented in `deploy-facts.md`
 
 ## Coordinator procedures
 
-Before status or process review, Elon reads [Coordinator operations](coordinator-operations.md). Before judging engineering reviews or tests, the lead reads [Engineering integration](engineering-integration.md). Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
+Before status or process review, Elon reads [Coordinator operations](coordinator-operations.md). Before judging engineering reviews or tests, the tech-lead reads [Engineering integration](engineering-integration.md). Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.

@@ -67,7 +67,7 @@ classification, not the original commit's complete route or merge readiness.
 Known limit: Codex workers run without the Claude hooks, so the approval file
 is protected from agents only for Claude workers (guard-bash.py denies running
 `owner-approve.sh` and writing the file). A Codex worker on the owner's account
-could write it. Keep Codex workers out of the lead worktree's merge step and
+could write it. Keep Codex workers out of the tech-lead worktree's merge step and
 the owner's home directory until a sandbox rule covers it.
 
 Spelled-out quantities: the quantity guard also counts CJK numeral characters

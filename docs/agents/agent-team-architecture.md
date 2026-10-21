@@ -4,7 +4,7 @@ Overview of the AI agent team across **<project-a>**, **<project-b>** and future
 
 ## 1. Organization
 
-Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of <project-a> and <project-b>. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. <project-a> has nine roles (Elon, the Tech Lead `lead`, seven specialists); <project-b> has ten (plus `stream-health`).
+Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of <project-a> and <project-b>. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. <project-a> has nine roles (Elon, the Tech Lead `tech-lead`, seven specialists); <project-b> has ten (plus `stream-health`).
 
 ```mermaid
 flowchart TD
@@ -14,12 +14,12 @@ flowchart TD
     subgraph Direct_Reports["Teammates reporting to Elon"]
         Sales["Sales & Marketing\n(sales-marketing)\nCommercial strategy, demand signals & unit economics"]
         BA["BA & Product Architect\n(architect-pm / 需求分析師)\nProduct requirements, PRDs, domain modeling, ticket contracts"]
-        TL["Tech Lead\n(lead)\nEngineering integration, merges reviewed PRs, release coordination"]
+        TL["Tech Lead\n(tech-lead)\nEngineering integration, merges reviewed PRs, release coordination"]
     end
     
     subgraph Tech_Specialists["Technical Execution Specialists (also report to Elon with worker_done)"]
         Dev["Fullstack-Dev\n(fullstack-dev)\nTDD implementation in isolated worktrees"]
-        QA["QA-SDET\n(qa-sdet)\nDual-axis audits (Standards & Spec), regression tests"]
+        QA["QA-SDET\n(qa-sdet)\nDual-axis audits (Standards & Spec), Functional tests"]
         SecOps["SecOps-FinOps\n(secops-finops)\nSecurity, auth, tenancy & money reconciliation audits"]
         RM["Release-Manager\n(release-manager)\nThree-stage deploy pipeline (Local -> Staging -> Prod)"]
     end
@@ -44,7 +44,7 @@ Not drawn: `support-csm` (customer support and success) in both projects, and `s
 - **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (Tech Lead and workers). Plans, dispatches every teammate with Orca orchestration (skill `orchestration`, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents or experimental agent teams. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; progress, merges, reviews and staging deploys are not reported. On request the format is **Now**, **Needs owner**, **Running**.
 - **Sales and Marketing (`sales-marketing`).** Validates demand and acquisition channels (CAC, LTV, churn, activation) and supplies evidence based problem definitions. Never sends unapproved marketing email, touches production ledgers or offers unapproved discounts.
 - **BA (`architect-pm` / 需求分析師).** Turns pain points and owner vision into `intent.md`, then `spec.md` (PRD), then machine checkable ticket contracts (GitHub issues); works with the Tech Lead on handoffs. Never writes application code.
-- **Tech Lead (`lead`).** Reports delivery status and capacity to Elon. Publishes and integrates reviewed branches, keeps branches and worktrees clean, coordinates releases, starts and supervises engineering workers in Orca with the same usage gate. Receives ticket contracts from the BA. *Merging:* the Tech Lead pushes branches, opens PRs and merges reviewed work ("Commit, push and merge" in `.claude/model-routing.md`); workers commit on their own branches and report; Elon owns priorities and owner decisions. Once required risk-based reviewers (including SecOps or stream-health where required) approve the current full head SHA, checks are green and the PR is mergeable, the lead merges at once, never with `--admin`. PRs accepting an intent or spec, every production deploy and migrations still go to the owner. Release-manager pushes only the staging and production branches.
+- **Tech Lead (`tech-lead`).** Reports delivery status and capacity to Elon. Publishes and integrates reviewed branches, keeps branches and worktrees clean, coordinates releases, starts and supervises engineering workers in Orca with the same usage gate. Receives ticket contracts from the BA. *Merging:* the Tech Lead pushes branches, opens PRs and merges reviewed work ("Commit, push and merge" in `.claude/model-routing.md`); workers commit on their own branches and report; Elon owns priorities and owner decisions. Once required risk-based reviewers (including SecOps or stream-health where required) approve the current full head SHA, checks are green and the PR is mergeable, the tech-lead merges at once, never with `--admin`. PRs accepting an intent or spec, every production deploy and migrations still go to the owner. Release-manager pushes only the staging and production branches.
 - **Support tickets (owner rule 2026-10-12).** When a ticket or support email arrives: the problem is resolved first when it needs a fix, `support-csm` drafts the reply in the customer's language, and Elon notifies Mingster at once with the ticket, what was done and the draft. Nothing is sent before he approves. A ticket found in the daily run or a status check is reported the same day.
 
 ## 3. Delivery lifecycle
@@ -55,7 +55,7 @@ sequenceDiagram
     actor Owner as Mingster (Owner)
     participant CEO as Elon (CEO)
     participant BA as architect-pm (BA)
-    participant TL as Tech Lead (lead)
+    participant TL as Tech Lead (tech-lead)
     participant Dev as Fullstack-Dev
     participant QA as QA-SDET / SecOps
     participant RM as Release-Manager

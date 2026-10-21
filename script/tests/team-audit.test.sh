@@ -15,7 +15,7 @@ setup() { # a clean dotfiles tree and a project synced from it
     touch "$D/.agents/skills/orca-team/$h"
   done
   printf '{"version": 3, "skills": {"orca-cli": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
-  printf -- '---\nname: lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
+  printf -- '---\nname: tech-lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
   printf 'The Tech Lead merges every PR.\n' > "$P/docs/agents/team.md"
   DOTFILES="$D" "$D/script/sync-team-skills.sh" "$P" >/dev/null 2>&1
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
@@ -116,8 +116,11 @@ check "role skills all present" 0 'team-audit: clean'
 setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; echo spec > "$P/docs/intent/2026-10-21-tier/spec.md"
 check "spec without intent.md" 1 'FINDING sdlc: .*2026-10-21-tier/spec.md: no intent.md'
 
-setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; echo spec > "$P/docs/intent/2026-10-21-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-21-tier/intent.md"
+setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; printf 'spec\n\n## Test plan\n1. case\n' > "$P/docs/intent/2026-10-21-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-21-tier/intent.md"
 check "spec beside its intent.md" 0 'team-audit: clean'
+
+setup; mkdir -p "$P/docs/intent/2026-10-22-tier"; echo spec > "$P/docs/intent/2026-10-22-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-22-tier/intent.md"
+check "new spec without a Test plan" 1 'FINDING sdlc: .*2026-10-22-tier/spec.md: no ## Test plan'
 
 setup; mkdir -p "$P/docs/intent/2026-10-09-old"; echo spec > "$P/docs/intent/2026-10-09-old/spec.md"
 ( cd "$P" && git init -q && git add -A && GIT_AUTHOR_DATE=2026-10-09T00:00:00Z GIT_COMMITTER_DATE=2026-10-09T00:00:00Z git -c user.name=t -c user.email=t@t commit -qm old )
