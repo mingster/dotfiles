@@ -1116,10 +1116,10 @@ unit_init
 copy_setup
 DOTFILES="$here/.." bash "$here/sync-team-skills.sh" "$REAL_PATCH_REPO" >/dev/null 2>&1
 copy_commit
-comments=""; REPO=mingster/riben.life; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
+comments=""; REPO=acme/project-alpha; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
 # Fixture dotfiles root: a git repo whose origin/main matches its templates (the gate reads its own checkout).
 fx="$ucd/dot"; mkdir -p "$fx/script"
-cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$fx/script/"; cp -R "$here/../templates" "$fx/templates"
+cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"; cp -R "$here/../templates" "$fx/templates"
 "$REAL_GIT" -C "$fx" init -q -b main && "$REAL_GIT" -C "$fx" add . && "$REAL_GIT" -C "$fx" -c user.name=t -c user.email=t@t commit -qm fx
 "$REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
 LEAD_MERGE="$fx/script/lead-merge.sh"
@@ -1129,12 +1129,14 @@ vprx() { VERDICT_PR_JSON=$(jq -nc --arg h "$DH" --argjson c "$1" '{state:"MERGED
 BADF="Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author"
 GOOD="Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author"
 vpr MERGED "$GOOD"
+check "verdict-from refuses without local config" 1 'no configured verdict_from_repos'
+printf '{"verdict_from_repos":["acme/project-alpha","acme/project-beta"]}\n' > "$fx/script/lead-merge.local.json"
 check "generated copies merge on the dotfiles PR Verdict" 0 'generated team copies' 1
 VFROM=""; check "same PR without the flag still needs its own Verdict" 1 'missing passing verifier verdict'
 VFROM=d/dotfiles#9
-REPO=o/r; check "verdict-from refuses a repo that is not riben.life or pstv" 1 'only for riben.life and pstv'
-REPO=mingster/pstv; check "verdict-from works for pstv" 0 'generated team copies' 1
-REPO=mingster/riben.life
+REPO=o/r; check "verdict-from refuses an unconfigured repo" 1 'repo is not configured'
+REPO=acme/project-beta; check "verdict-from works for a second configured repo" 0 'generated team copies' 1
+REPO=acme/project-alpha
 vpr OPEN "$GOOD"; check "verdict-from refuses an unmerged dotfiles PR" 1 'not MERGED'
 vpr MERGED "Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author"; check "verdict-from refuses a FAIL Verdict" 1 'no passing Verdict'
 vpr MERGED "Verdict: PASS head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb verifier=ctx_verify author=ctx_author"; check "verdict-from refuses a Verdict for another head" 1 'no passing Verdict'
