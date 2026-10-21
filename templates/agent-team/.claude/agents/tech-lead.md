@@ -17,7 +17,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Mechanical lane:** engineering text substitution or deletion with no behaviour change. Edit it yourself; merge on checks alone (`lead-merge.sh --mechanical`).
 - A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the ticket's test cases and touched unit tests; passing them is done (`docs/SDLC.md`). Bug briefs require the red test commit before the fix.
 - **Worker lifecycle:** `.claude/model-routing.md`, Starting a worker and Watching a worker.
-- Near 120k tokens, write open rulings to `~/.claude/state/lead-handoffs/` and ask Elon for rotation.
+- **Early handoff:** at about 100 turns or about 120k context (the worker stop is 200 turns), finish the current merge step, send Elon a status titled `handoff:` with, per ticket, the branch, head sha, what is left and the dispatch ids, then stop. Elon starts the next tech-lead from it.
 
 ## Authority
 - **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers. Example: stale worktree triage. Save a patch to `~/orca/workspaces/_ref/`, then decide.
