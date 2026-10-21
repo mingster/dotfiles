@@ -113,6 +113,16 @@ check "role names a missing Matt Pocock skill" 1 'FINDING mp-upstream: .*dev.md:
 setup; printf -- '---\nname: dev\nskills: [tdd, orchestration]\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"
 check "role skills all present" 0 'team-audit: clean'
 
+setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; echo spec > "$P/docs/intent/2026-10-21-tier/spec.md"
+check "spec without intent.md" 1 'FINDING sdlc: .*2026-10-21-tier/spec.md: no intent.md'
+
+setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; echo spec > "$P/docs/intent/2026-10-21-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-21-tier/intent.md"
+check "spec beside its intent.md" 0 'team-audit: clean'
+
+setup; mkdir -p "$P/docs/intent/2026-10-09-old"; echo spec > "$P/docs/intent/2026-10-09-old/spec.md"
+( cd "$P" && git init -q && git add -A && GIT_AUTHOR_DATE=2026-10-09T00:00:00Z GIT_COMMITTER_DATE=2026-10-09T00:00:00Z git -c user.name=t -c user.email=t@t commit -qm old )
+check "spec committed before the rule is grandfathered" 0 'team-audit: clean'
+
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'
 

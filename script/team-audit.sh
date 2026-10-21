@@ -12,6 +12,8 @@
 #   skill     every SKILL.md has name and description frontmatter
 #   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
 #   helpers   the orca-team helper scripts exist
+#   sdlc      every docs/intent/*/spec.md has a sibling intent.md (Plan before Design, owner rule
+#             2026-10-21); a spec first committed before SPEC_INTENT_SINCE (2026-10-21) is grandfathered
 #   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
 #             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
 #             network failure prints "WARN mp-upstream" and is not a finding.
@@ -89,6 +91,16 @@ done < <(wording_files))
 if [ -n "$hits" ]; then
   while IFS= read -r h; do finding wording "$h"; done <<< "$hits"
 fi
+
+SPEC_INTENT_SINCE="${SPEC_INTENT_SINCE:-2026-10-21}"
+for proj in "${PROJECTS[@]}"; do
+  for s in "$proj"/docs/intent/*/spec.md; do
+    [ -f "$s" ] && [ ! -f "$(dirname "$s")/intent.md" ] || continue
+    added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
+    [ -n "$added" ] && [[ "$added" < "$SPEC_INTENT_SINCE" ]] && continue
+    finding sdlc "$s: no intent.md beside it (intent before spec)"
+  done
+done
 
 for root in "$DOTFILES" "$TEMPLATE" "${PROJECTS[@]}"; do
   for f in "$root"/.agents/skills/*/SKILL.md; do
