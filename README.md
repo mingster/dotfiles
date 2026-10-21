@@ -46,10 +46,10 @@ You talk to one person, Elon. He plans, hands work to a tech-lead, and the tech-
 ```mermaid
 flowchart TD
     owner([Owner]) --> elon[Elon, front door]
-    elon --> TL[tech-lead]
+    elon --> arch[architect-pm]
+    arch -->|"accepted spec + tickets"| TL[tech-lead]
     TL --> dev[fullstack-dev]
     TL --> qa[qa-sdet]
-    TL --> arch[architect-pm]
     dev --> gates{Review gates}
     qa --> gates
     gates -->|"approved at current head, checks green"| merge[lead-merge]
