@@ -19,7 +19,7 @@ this split explicit in task messages and completion reports; CEO recommendations
 human-owner approval or required independent review.
 
 `worker-watch.sh <run_id>` next to this file flags STOPPED (provider limit or network error),
-IDLE (empty input prompt without busy markers), BLOCKED_DIALOG (trust dialog) and LOW_CONTEXT;
+IDLE (empty input prompt without busy markers), BLOCKED_DIALOG (trust dialog), BLOCKED_APPROVAL (pending tool approval prompt) and LOW_CONTEXT;
 each exits 4, while OK exits 0. Run it as `~/.claude/skills/orca-team/worker-watch.sh`.
 On IDLE or network STOPPED, send the worker a resume message with
 `orca terminal send --terminal <handle> --text "Resume the assigned task and report its outcome." --enter`
