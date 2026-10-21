@@ -315,7 +315,7 @@ if [ -n "$verdict_from" ]; then
   src=$(gh pr view "$src_pr" --repo "$src_repo" --json state,headRefOid,comments) || die "cannot read $verdict_from"
   [ "$(jq -r .state <<<"$src")" = MERGED ] || die "$verdict_from is not MERGED"
   src_head=$(jq -r .headRefOid <<<"$src")
-  src_pass="" src_fail=false
+  src_pass="" src_fail=false src_edited=0
   while IFS= read -r row; do
     c=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\""); fl=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
     l=${c%%$'\n'*}
@@ -324,11 +324,12 @@ if [ -n "$verdict_from" ]; then
       [ -n "$known_dispatches" ] || load_dispatches
       grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$known_dispatches" || die "verdict verifier ${BASH_REMATCH[2]} is not a known dispatch"
       [ "${BASH_REMATCH[3]}" = unknown ] || grep -Fxq -- "${BASH_REMATCH[3]}" <<<"$known_dispatches" || die "verdict author ${BASH_REMATCH[3]} is not a known dispatch"
-      [ "$fl" = false ] || die "verdict comment was edited or minimized; post a fresh Verdict"
+      # An edited or minimized PASS never counts; an edited FAIL still blocks.
+      if [ "$fl" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then src_edited=$((src_edited+1)); continue; fi
       if [ "${BASH_REMATCH[1]}" = FAIL ]; then src_fail=true; elif [ -z "$src_pass" ]; then src_pass="$c"; fi
     fi
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$src")
-  [ -n "$src_pass" ] || die "$verdict_from has no passing Verdict for its merged head $src_head"
+  [ -n "$src_pass" ] || die "$verdict_from has no passing Verdict for its merged head $src_head$([ "$src_edited" -eq 0 ] || echo "; $src_edited edited or minimized PASS ignored, post a fresh Verdict")"
   [ "$src_fail" = false ] || die "$verdict_from has a FAIL Verdict for its merged head"
   if [ "$verify_set" = true ]; then
     want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
@@ -363,13 +364,15 @@ fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; }; then
   current_patch=""
   applicable=()
-  passes=0 fails=0
+  passes=0 fails=0 edited=0 misplaced=0
   # Every Verdict for this head (or an equal patch) counts. Newest first; none
-  # of them can erase another, and an edited or minimized one fails closed.
+  # of them can erase another. An edited or minimized PASS never counts (the
+  # verifier posts a fresh one); an edited or minimized FAIL still blocks.
   while IFS= read -r row; do
     comment=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\"")
     flagged=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
     line=${comment%%$'\n'*}
+    [[ "$line" == Verdict:* ]] || ! grep -q '^Verdict: ' <<<"$comment" || misplaced=$((misplaced+1))
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
@@ -387,13 +390,17 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
         grep -Fxq -- "$verifier_id" <<<"$known_dispatches" || die "verdict verifier $verifier_id is not a known dispatch"
         # author=unknown is the one literal allowed without a dispatch; any other author must be known.
         [ "$author_id" = unknown ] || grep -Fxq -- "$author_id" <<<"$known_dispatches" || die "verdict author $author_id is not a known dispatch"
-        [ "$flagged" = false ] || die "verdict comment was edited or minimized; post a fresh Verdict"
+        if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then edited=$((edited+1)); continue; fi
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
     fi
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
-  [ "$passes" -gt 0 ] || die "missing passing verifier verdict for current head or stable patch-id"
+  if [ "$passes" -eq 0 ]; then
+    [ "$edited" -eq 0 ] || die "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
+    [ "$misplaced" -eq 0 ] || die "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
+    die "missing passing verifier verdict for current head or stable patch-id"
+  fi
   [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or stable patch-id"
   if [ "$verify_set" = true ]; then
     want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")

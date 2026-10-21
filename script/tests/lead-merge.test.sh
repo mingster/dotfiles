@@ -351,7 +351,13 @@ check "edited verdict refused" 1 'edited or minimized'
 COMMENTS_JSON=$({ verdict_json "$v_none" false true; } | comments_of)
 check "minimized verdict refused" 1 'edited or minimized'
 COMMENTS_JSON=$({ verdict_json "$v_owner"; verdict_json "$v_none" true; } | comments_of)
-check "edited none after owner refused" 1 'edited or minimized'
+check "edited none after owner still needs owner approval" 1 'owner copy approval'
+COMMENTS_JSON=$({ verdict_json "$v_none" true; verdict_json "$v_none"; } | comments_of)
+check "fresh Verdict after an edited one merges" 0 'lane=copy-only' 1
+COMMENTS_JSON=$({ verdict_json "$v_fail" true; verdict_json "$v_none"; } | comments_of)
+check "edited FAIL still blocks a fresh PASS" 1 'conflicting'
+COMMENTS_JSON=$({ verdict_json "Findings first."$'\n'"$v_none"; } | comments_of)
+check "Verdict below other text names the first-line rule" 1 'not the first line'
 COMMENTS_JSON=$({ verdict_json "$v_none"; } | comments_of)
 check "unedited single none still light" 0 'lane=copy-only' 1
 # --verify-command: the newest Verdict must carry the same Command: line.
@@ -1137,6 +1143,8 @@ vprx "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$g},{body:$f}]')"; check 
 vprx "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$f},{body:$g}]')"; check "verdict-from: an older FAIL beside a newer PASS refuses" 1 'FAIL Verdict'
 vprx "$(jq -nc --arg g "$GOOD" '[{body:$g,includesCreatedEdit:true}]')"; check "verdict-from: an edited Verdict is refused" 1 'edited or minimized'
 vprx "$(jq -nc --arg g "$GOOD" '[{body:$g,isMinimized:true}]')"; check "verdict-from: a minimized Verdict is refused" 1 'edited or minimized'
+vprx "$(jq -nc --arg g "$GOOD" '[{body:$g,includesCreatedEdit:true},{body:$g}]')"; check "verdict-from: a fresh Verdict after an edited one merges" 0 'generated team copies' 1
+vprx "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$f,includesCreatedEdit:true},{body:$g}]')"; check "verdict-from: an edited FAIL still refuses" 1 'FAIL Verdict'
 vpr MERGED "Verdict: PASS head=$DH verifier=ctx_verify author=ctx_nobody"; check "verdict-from: an unknown author dispatch is refused" 1 'author ctx_nobody is not a known dispatch'
 vpr MERGED "Verdict: PASS head=$DH verifier=ctx_verify author=ctx_verify"; check "verdict-from: author equal to verifier is refused" 1 'author cannot supply'
 vpr MERGED "$GOOD"
