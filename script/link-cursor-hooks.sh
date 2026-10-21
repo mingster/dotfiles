@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Symlink global Cursor hooks from dotfiles into ~/.cursor/
+# Copy global Cursor hooks.json and symlink hook scripts from dotfiles into ~/.cursor/.
+# hooks.json is copied, not linked: Orca rewrites its own entries in it with the
+# absolute home path, which must stay out of this public repo.
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
@@ -14,7 +16,8 @@ if [[ ! -f "$HOOKS_JSON" ]]; then
 	exit 1
 fi
 
-ln -sfn "$HOOKS_JSON" "$HOME/.cursor/hooks.json"
+rm -f "$HOME/.cursor/hooks.json"
+cp "$HOOKS_JSON" "$HOME/.cursor/hooks.json"
 
 shopt -s nullglob
 for script in "$HOOKS_SRC"/*.sh; do
@@ -24,4 +27,4 @@ shopt -u nullglob
 
 chmod +x "$HOOKS_SRC"/*.sh 2>/dev/null || true
 
-echo "link-cursor-hooks: linked ~/.cursor/hooks.json and hook scripts from $HOOKS_SRC"
+echo "link-cursor-hooks: copied ~/.cursor/hooks.json and linked hook scripts from $HOOKS_SRC"
