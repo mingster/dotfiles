@@ -93,3 +93,7 @@ mac/bin/claude
 *.local.json
 *.local.toml
 *.local.conf
+
+# Local leftovers agents write: backups and PR review copies (these hold private project data)
+*.bak
+.agents/claude/notes/pr*-review.md
