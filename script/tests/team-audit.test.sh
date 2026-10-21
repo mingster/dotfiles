@@ -64,6 +64,15 @@ check "task_plan ledger is banned" 1 'FINDING wording: .*task_plan'
 setup; echo 'Run orca claude-teams for panes.' >> "$P/docs/agents/team.md"
 check "old pane layout is banned" 1 'FINDING wording: .*claude-teams'
 
+setup; echo 'Light tier: codex gpt-6-luna low.' >> "$P/.claude/model-routing.md"
+check "retired luna model is banned" 1 'FINDING wording: .*model-routing.md'
+
+setup; echo 'Wait with `check --wait --types worker_done,escalation --timeout-ms 900000`.' >> "$P/docs/agents/team.md"
+check "a wait filter without status is banned" 1 'FINDING wording: .*team.md'
+
+setup; echo 'Wait with `check --wait --types worker_done,escalation,status --timeout-ms 900000`.' >> "$P/docs/agents/team.md"
+check "a wait filter with status is allowed" 0 'team-audit: clean'
+
 setup; echo 'The lead merges it. <!-- team-audit: allow -->' >> "$P/docs/agents/team.md"
 check "allow comment opts a line out" 0 'team-audit: clean'
 

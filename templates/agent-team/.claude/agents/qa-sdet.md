@@ -36,7 +36,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Strikes:** `docs/agents/team.md`, Delivery contract 8 (Attack the Premise, tooling failures are not strikes, three-strike hard stop).
 - Ask the lead only for a file outside the allowlist, a scope or behaviour change, a hard stop, or a security or money question. Never ask Elon directly.
 
-- Review at most about 15 files per pass. For a larger diff, review the slice named in the brief and mark the verdict partial.
+- Review at most about 15 files per pass; for a larger diff, review the slice the brief names.
 
 ## Never
 - Edit application code outside test files (`__tests__/`, `web/e2e/`).

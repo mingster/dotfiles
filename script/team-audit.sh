@@ -7,7 +7,8 @@
 #   sync      sync-team-skills.sh --check passes for each project
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
 #   wording   no banned wording in team files: implementation workers merge, push or open PRs,
-#             task_plan.md or progress.md ledgers, the old orca claude-teams layout
+#             task_plan.md or progress.md ledgers, the old orca claude-teams layout, the retired
+#             gpt-6-luna model (400 since 2026-10-21), a coordinator wait whose --types omit status
 #   skill     every SKILL.md has name and description frontmatter
 #   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
 #   helpers   the orca-team helper scripts exist
@@ -47,6 +48,8 @@ BANNED=(
   'task_plan\.md'
   '(^|[^_[:alnum:]])progress\.md'
   'orca claude-teams'
+  'gpt-6-luna'
+  '--types (worker_done|escalation|decision_gate|question|heartbeat)(,(worker_done|escalation|decision_gate|question|heartbeat))*([^,_[:alnum:]]|$)'
 )
 
 # Team files of one root: role files, model routing, team skills, team docs.

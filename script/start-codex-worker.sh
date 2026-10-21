@@ -6,7 +6,9 @@
 # Briefs must list Allowed files and say: Read only these; Grep before Read; Read with offset/limit.
 # Reviewer slices may inspect at most 40 files.
 #          (--worktree-path <path> | --name <new worktree> --repo <path> [--base-branch <ref>])
-#          [--model gpt-6.1-sol] [--effort medium]
+#          [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
+# --from defaults to $ORCA_TERMINAL_HANDLE; a coordinator without one (Elon in Claude Code) passes its
+# orca_session_id, or worker-start fails consumer_fenced after the worktree and terminal exist.
 # Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running.
 set -u
 poll="${START_CODEX_POLL:-1}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=
@@ -15,12 +17,13 @@ off=; for p in codex-app-tools@openai-bundled unified-computer-use@openai-bundle
   documents@openai-primary-runtime pdf@openai-primary-runtime spreadsheets@openai-primary-runtime \
   presentations@openai-primary-runtime template-creator@openai-primary-runtime; do
   off="$off -c plugins.\"$p\".enabled=false"; done
-run= spec= title= wt= name= repo=
+run= spec= title= wt= name= repo= from="${ORCA_TERMINAL_HANDLE:-}"
 while [ $# -gt 0 ]; do case "$1" in
   --run) run=$2;; --spec) spec=$2;; --title) title=$2;; --worktree-path) wt=$2;;
-  --name) name=$2;; --repo) repo=$2;; --base-branch) base=$2;; --model) model=$2;; --effort) effort=$2;;
+  --name) name=$2;; --repo) repo=$2;; --base-branch) base=$2;; --model) model=$2;; --effort) effort=$2;; --from) from=$2;;
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift 2; done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] || { echo "need --run --spec --title" >&2; exit 2; }
+[ -n "$from" ] || { echo "need --from <coordinator handle> (no ORCA_TERMINAL_HANDLE)" >&2; exit 2; }
 j() { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1"; }
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || { echo "need --worktree-path or --name and --repo" >&2; exit 2; }
@@ -40,7 +43,7 @@ for i in $(seq 1 90); do   # up to 90 s for the warm-up turn to finish
   sleep "$poll"; scr=$("$orca" terminal read --terminal "$term" --screen --json 2>/dev/null)
   echo "$scr" | grep -q 'Working' || { echo "$scr" | grep -qi 'ready' && break; }; done
 out=$("$orca" orchestration worker-start --run "$run" --spec "$(cat "$spec")" --terminal "$term" \
-  --worktree "path:$wt" --task-title "$title" --json) || { echo "$out" >&2; exit 1; }
+  --worktree "path:$wt" --task-title "$title" --from "$from" --json) || { echo "$out" >&2; exit 1; }
 disp=$(echo "$out" | j 'd["result"]["dispatchId"]'); st=$(echo "$out" | j 'd["result"]["state"]')
 "$orca" terminal rename --terminal "$term" --title "$title" --json >/dev/null   # Codex overwrites the title
 echo "$disp $term $st"; [ "$st" = ready ] || [ "$st" = dispatched ]
