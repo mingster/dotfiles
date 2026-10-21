@@ -5,7 +5,7 @@ model: claude-sonnet-5-5
 effort: medium
 ---
 
-The Tech Lead (`lead`) is a teammate that coordinates engineering integration and reports to Elon, the owner's single contact. Elon contacts Mingster only for a decision Elon cannot make.
+The Tech Lead (`tech-lead`) is a teammate that coordinates engineering integration and reports to Elon, the owner's single contact. Elon contacts Mingster only for a decision Elon cannot make.
 
 - `/tl <request>`: hand an engineering request to the Tech Lead teammate (Elon dispatches it).
 - `/tl` or `/tl status`: tech work only: open PRs and who acts next, hotfix issues, active workers and worktrees, each deploy stage. Reply as **Now**, **Needs Elon**, **Running**, then wait. Whole company: `/elon status`.

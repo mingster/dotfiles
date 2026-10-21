@@ -7,10 +7,15 @@
 #   sync      sync-team-skills.sh --check passes for each project
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
 #   wording   no banned wording in team files: implementation workers merge, push or open PRs,
-#             task_plan.md or progress.md ledgers, the old orca claude-teams layout
+#             task_plan.md or progress.md ledgers, the old orca claude-teams layout, the retired
+#             gpt-6-luna model (400 since 2026-10-21), a coordinator wait whose --types omit status
 #   skill     every SKILL.md has name and description frontmatter
 #   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
 #   helpers   the orca-team helper scripts exist
+#   sdlc      every docs/intent/*/spec.md has a sibling intent.md (Plan before Design, owner rule
+#             2026-10-21); a spec first committed before SPEC_INTENT_SINCE (2026-10-21) is grandfathered
+#             and has a '## Test plan' section (owner rule 2026-10-21); a spec first committed before
+#             TEST_PLAN_SINCE (2026-10-22) is grandfathered
 #   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
 #             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
 #             network failure prints "WARN mp-upstream" and is not a finding.
@@ -47,6 +52,8 @@ BANNED=(
   'task_plan\.md'
   '(^|[^_[:alnum:]])progress\.md'
   'orca claude-teams'
+  'gpt-6-luna'
+  '--types (worker_done|escalation|decision_gate|question|heartbeat)(,(worker_done|escalation|decision_gate|question|heartbeat))*([^,_[:alnum:]]|$)'
 )
 
 # Team files of one root: role files, model routing, team skills, team docs.
@@ -86,6 +93,23 @@ done < <(wording_files))
 if [ -n "$hits" ]; then
   while IFS= read -r h; do finding wording "$h"; done <<< "$hits"
 fi
+
+SPEC_INTENT_SINCE="${SPEC_INTENT_SINCE:-2026-10-21}"
+TEST_PLAN_SINCE="${TEST_PLAN_SINCE:-2026-10-22}"
+for proj in "${PROJECTS[@]}"; do
+  for s in "$proj"/docs/intent/*/spec.md; do
+    [ -f "$s" ] && [ ! -f "$(dirname "$s")/intent.md" ] || continue
+    added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
+    [ -n "$added" ] && [[ "$added" < "$SPEC_INTENT_SINCE" ]] && continue
+    finding sdlc "$s: no intent.md beside it (intent before spec)"
+  done
+  for s in "$proj"/docs/intent/*/spec.md; do
+    [ -f "$s" ] && ! grep -q '^## Test plan' "$s" || continue
+    added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
+    [ -n "$added" ] && [[ "$added" < "$TEST_PLAN_SINCE" ]] && continue
+    finding sdlc "$s: no ## Test plan section (owner rule 2026-10-21)"
+  done
+done
 
 for root in "$DOTFILES" "$TEMPLATE" "${PROJECTS[@]}"; do
   for f in "$root"/.agents/skills/*/SKILL.md; do

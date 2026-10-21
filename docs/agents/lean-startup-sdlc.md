@@ -4,7 +4,7 @@
 
 ## 1. 核心開發編制與角色職責
 
-全流程遵循專案 SDLC 規範。需求由 `architect-pm` 分析，工程排程由 `lead` (Tech Lead) 統籌，程式碼實作由 `fullstack-dev` 負責，品質由 QA 與安全團隊獨立審查，上線由 `release-manager` 推進，最終發布門禁由人類創辦人把關。
+全流程遵循專案 SDLC 規範。需求由 `architect-pm` 分析，工程排程由 `tech-lead` (Tech Lead) 統籌，程式碼實作由 `fullstack-dev` 負責，品質由 QA 與安全團隊獨立審查，上線由 `release-manager` 推進，最終發布門禁由人類創辦人把關。
 
 ### 需求分析師兼產品架構師 (`architect-pm`)
 

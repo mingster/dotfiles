@@ -44,8 +44,8 @@ What this spec deliberately leaves out.
 ## Risk checklist
 One line each: tenancy, money, auth, data deletion. Security and cross-family review run on the first built slice, not on this spec.
 
-## Verification
-The tests and regression areas that prove each requirement. Every requirement maps to at least one check, and each done condition is an observable result (command output, screenshot, DB row), never only "tests pass".
+## Test plan
+The Functional tests that prove each requirement (owner rule 2026-10-21): numbered test cases, each naming the requirement it proves, the test file or command, and the observable result (command output, screenshot, DB row), never only "tests pass". Every requirement maps to at least one case. Each ticket later lists the cases it owns; passing them is the ticket's definition of done. Do not list Regression (the full suite) here: it runs only in the development pass before staging, or for a very large update with owner approval.
 
 ## Rollout
 Migrations, backfills, flags, environments, anything the deploy needs.
@@ -53,7 +53,7 @@ Migrations, backfills, flags, environments, anything the deploy needs.
 
 ## After writing
 
-Show the draft, apply corrections, and when the owner accepts it set `Status: Proposed ... · Accepted <date>` in both files' history as appropriate, then commit (`docs: spec <slug>`). Next: break it into issues (`to-tickets`). If the plan changes during Build, record the change in the PR or a new ADR; do not edit the frozen pair.
+Show the draft, apply corrections, and when the owner accepts it set `Status: Proposed ... · Accepted <date>` in both files' history as appropriate, then commit (`docs: spec <slug>`). Next: break it into issues (`to-tickets`); each ticket copies the Test plan cases it owns. If the plan changes during Build, record the change in the PR or a new ADR; do not edit the frozen pair.
 
 ## Writing rules
 

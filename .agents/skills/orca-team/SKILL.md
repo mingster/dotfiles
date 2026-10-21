@@ -14,7 +14,7 @@ skill and its lifecycle commands. Dotfiles owns the pane and watch helpers here.
 
 In a project with the agent team (it has `.claude/agents/elon.md`), the default Orca coordinator
 is the `elon` role. Elon owns the cross-project objective, cross-role DAG, dispatch and completion
-review. `lead` is a teammate that coordinates engineering integration and reports to Elon. Keep
+review. `tech-lead` is a teammate that coordinates engineering integration and reports to Elon. Keep
 this split explicit in task messages and completion reports; CEO recommendations never replace
 human-owner approval or required independent review.
 

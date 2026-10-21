@@ -15,7 +15,7 @@ setup() { # a clean dotfiles tree and a project synced from it
     touch "$D/.agents/skills/orca-team/$h"
   done
   printf '{"version": 3, "skills": {"orca-cli": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
-  printf -- '---\nname: lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
+  printf -- '---\nname: tech-lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
   printf 'The Tech Lead merges every PR.\n' > "$P/docs/agents/team.md"
   DOTFILES="$D" "$D/script/sync-team-skills.sh" "$P" >/dev/null 2>&1
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
@@ -64,6 +64,15 @@ check "task_plan ledger is banned" 1 'FINDING wording: .*task_plan'
 setup; echo 'Run orca claude-teams for panes.' >> "$P/docs/agents/team.md"
 check "old pane layout is banned" 1 'FINDING wording: .*claude-teams'
 
+setup; echo 'Light tier: codex gpt-6-luna low.' >> "$P/.claude/model-routing.md"
+check "retired luna model is banned" 1 'FINDING wording: .*model-routing.md'
+
+setup; echo 'Wait with `check --wait --types worker_done,escalation --timeout-ms 900000`.' >> "$P/docs/agents/team.md"
+check "a wait filter without status is banned" 1 'FINDING wording: .*team.md'
+
+setup; echo 'Wait with `check --wait --types worker_done,escalation,status --timeout-ms 900000`.' >> "$P/docs/agents/team.md"
+check "a wait filter with status is allowed" 0 'team-audit: clean'
+
 setup; echo 'The lead merges it. <!-- team-audit: allow -->' >> "$P/docs/agents/team.md"
 check "allow comment opts a line out" 0 'team-audit: clean'
 
@@ -103,6 +112,19 @@ check "role names a missing Matt Pocock skill" 1 'FINDING mp-upstream: .*dev.md:
 
 setup; printf -- '---\nname: dev\nskills: [tdd, orchestration]\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"
 check "role skills all present" 0 'team-audit: clean'
+
+setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; echo spec > "$P/docs/intent/2026-10-21-tier/spec.md"
+check "spec without intent.md" 1 'FINDING sdlc: .*2026-10-21-tier/spec.md: no intent.md'
+
+setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; printf 'spec\n\n## Test plan\n1. case\n' > "$P/docs/intent/2026-10-21-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-21-tier/intent.md"
+check "spec beside its intent.md" 0 'team-audit: clean'
+
+setup; mkdir -p "$P/docs/intent/2026-10-22-tier"; echo spec > "$P/docs/intent/2026-10-22-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-22-tier/intent.md"
+check "new spec without a Test plan" 1 'FINDING sdlc: .*2026-10-22-tier/spec.md: no ## Test plan'
+
+setup; mkdir -p "$P/docs/intent/2026-10-09-old"; echo spec > "$P/docs/intent/2026-10-09-old/spec.md"
+( cd "$P" && git init -q && git add -A && GIT_AUTHOR_DATE=2026-10-09T00:00:00Z GIT_COMMITTER_DATE=2026-10-09T00:00:00Z git -c user.name=t -c user.email=t@t commit -qm old )
+check "spec committed before the rule is grandfathered" 0 'team-audit: clean'
 
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'

@@ -41,15 +41,15 @@ flowchart LR
 
 ## Use the agent team in a project
 
-You talk to one person, Elon. He plans, hands work to a lead, and the lead runs workers. You are asked only for decisions that are yours: money, production deploys, contracts, accepting an intent or spec.
+You talk to one person, Elon. He plans, hands work to a tech-lead, and the tech-lead runs workers. You are asked only for decisions that are yours: money, production deploys, contracts, accepting an intent or spec.
 
 ```mermaid
 flowchart TD
     owner([Owner]) --> elon[Elon, front door]
-    elon --> lead[Tech lead]
-    lead --> dev[fullstack-dev]
-    lead --> qa[qa-sdet]
-    lead --> arch[architect-pm]
+    elon --> arch[architect-pm]
+    arch -->|"accepted spec + tickets"| TL[tech-lead]
+    TL --> dev[fullstack-dev]
+    TL --> qa[qa-sdet]
     dev --> gates{Review gates}
     qa --> gates
     gates -->|"approved at current head, checks green"| merge[lead-merge]
@@ -81,8 +81,8 @@ What you do day to day (slash commands work in Claude Code, Cursor and Antigravi
 
 Owner approvals and protected files:
 
-* The lead merges reviewed PRs through `script/lead-merge.sh` only, never with `--admin`. Workers commit on their own branch and never push or merge.
-* Owner only files stay out of the lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh` (in each project), `.codex`, `*.rules`, and intents that become Accepted.
+* The tech-lead merges reviewed PRs through `script/lead-merge.sh` only, never with `--admin`. Workers commit on their own branch and never push or merge.
+* Owner only files stay out of the tech-lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh` (in each project), `.codex`, `*.rules`, and intents that become Accepted.
 * Accepting an intent or spec, every production deploy and every migration go to you.
 * You allow the merge script once, by appending the rendered `templates/codex/lead-merge.rules` to `~/.codex/rules/default.rules` (`sed "s|__HOME__|$HOME|g" templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules`). Agents never edit `~/.codex`.
 

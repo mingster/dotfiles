@@ -15,7 +15,7 @@ Bugs, chores and small tasks touching 3 files or fewer use `tdd` directly, with 
 
 ## Step 1. Scope and plan
 
-Elon aligns the objective with Sales-Marketing and assigns architect-pm to use the `to-tickets` skill for ticket contracts and dependencies. Read `~/.agents/skills/to-tickets/SKILL.md` and follow it. The Tech Lead reviews the resulting plan for integration risks. Existing accepted tickets need no second breakdown.
+Elon aligns the objective with Sales-Marketing and assigns architect-pm to use the `to-tickets` skill for ticket contracts and dependencies. Read `~/.agents/skills/to-tickets/SKILL.md` and follow it. The Tech Lead reviews the resulting plan for integration risks. Existing accepted tickets need no second breakdown. Each ticket lists its test cases from the spec's Test plan (owner rule 2026-10-21).
 
 ## Step 2. Dispatch
 
@@ -24,6 +24,7 @@ Use the `orchestration` skill for task contracts, dispatch, supervision, questio
 Team additions to its task contract:
 
 - Name the role file by absolute path, the Token budget in `AGENTS.md`, and the skill file to read. Use `implement` for a whole ticket, `tdd` for a build slice, `diagnosing-bugs` for diagnosis, `code-review` for review and `resolving-merge-conflicts` for conflicts. Read the named `~/.agents/skills/<name>/SKILL.md` even when the harness hides it.
+- Name the ticket's test cases as the verify command: those plus touched unit tests, never the full suite (Regression).
 - State rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`: workers commit on their own branches and worktrees, never push, open PRs or merge PRs; reviewers report locally to Elon.
 - Apply the usage gate before every launch and use the role's provider, model and effort from `.claude/model-routing.md`. Cap each independent wave at 3 workers. Use child worktrees and the placement flags in team facts.
 - Use the `orca-team` skill for colored panes and worker watch helpers. Keep runtime lifecycle authority with `orchestration`; project routing supplies team policy, not permission to bypass Orca's recovery rules.
@@ -40,7 +41,7 @@ Include the branch, commits, worktree path, `git diff <default branch>...HEAD --
 
 Use the `code-review` skill against the default branch and ticket, with `AGENTS.md` and the team facts checklist as standards. Apply the review by risk rule in `.claude/agents/tech-lead.md`; add `secops-finops` for auth, tenancy, entitlement, rate limits, money or payments, and any reviewers named in team facts.
 
-The reviewer verifies the ticket's check command passes. Report `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. Allow at most two remediation rounds; after both fail, use the `retro` skill on the worker session and file its top finding under the project's issue budget. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
+The reviewer verifies the ticket's listed test cases pass; that is the ticket's definition of done. Report `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. Allow at most two remediation rounds; after both fail, use the `retro` skill on the worker session and file its top finding under the project's issue budget. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
 
 ## Step 5. Integration and completion
 

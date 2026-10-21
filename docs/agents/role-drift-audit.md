@@ -130,7 +130,7 @@ A commit time only says when the file was last touched. "Newest copy" below is d
 | R: `<APP>_AGENT_RO_URL` | a | n/a | None. |
 | P: `skills: [diagnosing-bugs]` removed, `tools:` has no `SendMessage` | b | T | Add `skills: [diagnosing-bugs]` back to P (body says load on demand) and fix `SendMessage` as above. |
 | P: mailbox `support@5ik.tv`, "subscriber" wording, prices in USD | a | n/a | None. |
-| P: escalates severe bugs straight to `architect-pm`, `qa-sdet` and `lead`, and sends channel requests straight to `architect-pm` and churn to `sales-marketing`. T and R route all of it through Elon. The same P file still says in step 3 that requests go to Elon, who routes them | b | P is the newest file (15:02) but contradicts itself | Port the T routing (severe bugs and requests go to Elon, who routes) to P. If the owner wants direct escalation, change step 3 to match and update T and R too. Needs an owner decision. |
+| P: escalates severe bugs straight to `architect-pm`, `qa-sdet` and `tech-lead`, and sends channel requests straight to `architect-pm` and churn to `sales-marketing`. T and R route all of it through Elon. The same P file still says in step 3 that requests go to Elon, who routes them | b | P is the newest file (15:02) but contradicts itself | Port the T routing (severe bugs and requests go to Elon, who routes) to P. If the owner wants direct escalation, change step 3 to match and update T and R too. Needs an owner decision. |
 | P: ingestion list drops "store admin and sysAdmin" and the `psql` read | a | n/a | None. |
 | P: FAQ rule drops ">= 2 times in a month", adds ">= 5 requests" for channels | a | n/a | None. |
 | P: Closure Notices drop "After `qa-sdet` and `release-manager` confirm" | b | T | Port the confirmation condition to P. Without it support could draft closure notices before QA confirms. |
@@ -158,7 +158,7 @@ Checked against the template conventions.
 | Frontmatter model and effort | Pass. `model: sonnet`, `effort: medium`, which is the Workhorse tier, and `model-routing.md` lists `stream-health` under Workhorse. |
 | `tools:` line | Read only plus Bash and Skill, consistent with its Never section. Missing `SendMessage`, same gap as every other P role. |
 | `skills:` line | None. Body says load `agent-browser`, `diagnosing-bugs` and `research` on demand. Matches the on demand pattern used by the other roles, but unlike qa-sdet it lists none in frontmatter. Fine. |
-| Reporting and handoffs section | Pass. Reports to Elon and escalates severe outages (more than 1 channel or 1 channel over 15 minutes) to `architect-pm`, `fullstack-dev` and `lead`. Note this escalation skips Elon, same direct style as P support-csm. |
+| Reporting and handoffs section | Pass. Reports to Elon and escalates severe outages (more than 1 channel or 1 channel over 15 minutes) to `architect-pm`, `fullstack-dev` and `tech-lead`. Note this escalation skips Elon, same direct style as P support-csm. |
 | `worker_done` reporting | Not present, and not present in any other worker role in T, R or P. Only `elon.md` and `tech-lead.md` mention `worker_done`, because they receive it. Workers get the `worker_done` instruction from the Orca dispatch preamble. So this is consistent, not a gap. |
 | Never section | Present ("Absolute Boundaries"). It covers channel status, cron imports, recordings, Wowza and other servers, DNS and CDN. |
 | Memory and routing line | Pass. Points to `.claude/model-routing.md`. |
