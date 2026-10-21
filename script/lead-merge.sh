@@ -2,7 +2,7 @@
 # The Tech Lead's only way to merge a reviewed PR.
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
-# --verdict-from <owner/dotfiles#N>: a riben.life or pstv PR whose changed files are all generated team copies
+# --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
 #   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
@@ -282,7 +282,18 @@ load_dispatches() {
 generated_ok=false
 if [ -n "$verdict_from" ]; then
   [ "$mechanical" = false ] || die "--verdict-from and --mechanical are exclusive"
-  case "$repo" in */riben.life|*/pstv) ;; *) die "--verdict-from is only for riben.life and pstv PRs" ;; esac
+  # Copy this empty example to lead-merge.local.json beside the script and set
+  # verdict_from_repos to exact owner/repo names; local overlays are gitignored.
+  config_dir=$(cd "$(dirname "$0")" && pwd)
+  verdict_config=$(python3 "$config_dir/apply-local-overlay.py" \
+    "$config_dir/lead-merge.config.example.json" "$config_dir/lead-merge.local.json") \
+    || die "--verdict-from: cannot read local repo config"
+  jq -e '.verdict_from_repos | type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' \
+    <<<"$verdict_config" >/dev/null || die "--verdict-from: invalid verdict_from_repos config"
+  [ "$(jq '.verdict_from_repos | length' <<<"$verdict_config")" -gt 0 ] \
+    || die "--verdict-from: no configured verdict_from_repos; set $config_dir/lead-merge.local.json"
+  jq -e --arg repo "$repo" '.verdict_from_repos | index($repo) != null' \
+    <<<"$verdict_config" >/dev/null || die "--verdict-from: repo is not configured in lead-merge.local.json"
   [[ "$verdict_from" =~ ^([A-Za-z0-9_.-]+/dotfiles)#([0-9]+)$ ]] || die "--verdict-from must look like owner/dotfiles#N"
   src_repo="${BASH_REMATCH[1]}"; src_pr="${BASH_REMATCH[2]}"
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "--verdict-from needs a full head sha"
