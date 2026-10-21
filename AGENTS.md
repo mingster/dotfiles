@@ -46,7 +46,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 | Claude Code (CLI + [Desktop](https://code.claude.com/download)) | `~/.claude/` (symlinks into place; skills at `~/.claude/skills`) | `~/dotfiles/.agents/` (`skills/` shared; `claude/` for CLAUDE.md, settings, agents) |
 | Cursor rules (global) | `~/.cursor/rules` | `~/dotfiles/ide/cursor/rules` (generic only; project rules live in each repo) |
 | Cursor User settings | `…/Cursor/User/{settings,keybindings,environment}.json` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-user.sh`) |
-| Cursor hooks (global) | `~/.cursor/hooks.json`, `~/.cursor/hooks/*.sh` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-hooks.sh`) |
+| Cursor hooks (global) | `~/.cursor/hooks.json`, `~/.cursor/hooks/*.sh` | `~/dotfiles/ide/cursor/` (via `script/link-cursor-hooks.sh`; hooks.json is copied, so rerun it after editing) |
 | VS Code User settings | macOS: `…/Code/User/` Linux: `…/Code - OSS/User/` | `~/dotfiles/ide/vscode/` (via `script/setup-vscode.sh`) |
 | Antigravity IDE User settings | macOS: `…/Antigravity IDE/User/` Linux: `~/.config/Antigravity IDE/User/` | `~/dotfiles/ide/antigravity/` (via `script/setup-antigravity.sh`) |
 | Obsidian vault (agent memory) | `~/Documents/Obsidian` | created and synced by `script/setup-obsidian.sh`; MCP config in `~/.claude/settings.local.json` (generated per machine) |
