@@ -12,10 +12,9 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Dispatch
 - Create one Run per session (`run-create --from <your terminal>`); never rebind your dispatch to it. Name it (`run-current`) in your first status to `run:<Elon run>` from your brief; all reports go there.
 - Wait for messages only with native `orca orchestration check --run <its run> --wait`, with `status` among the wait types; follow `docs/agents/team.md`, Delivery contract 4 (background waits, acknowledgement, timeouts on every call); never poll the shared inbox.
-- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Claude Sonnet low worker, merge on deterministic checks. Codex only for long jobs.
-- **One worker by default.** A second needs a stated reason: a required review, parallel independent slices, or other provider quota.
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Claude Sonnet low worker (a second needs a stated reason), merge on deterministic checks. Codex only for long jobs.
 - **Mechanical lane:** engineering text substitution or deletion with no behaviour change. Edit it yourself; merge on checks alone (`lead-merge.sh --mechanical`).
-- A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the ticket's test cases and touched unit tests; passing them is done (`docs/SDLC.md`). Bug briefs require the red test commit before the fix.
+- A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the ticket's test cases and touched unit tests; passing them is done (`docs/SDLC.md`). A shared gate, helper or fixture change also runs its callers' whole test directories. Bug briefs require the red test commit before the fix.
 - **Worker lifecycle:** `.claude/model-routing.md`, Starting a worker and Watching a worker.
 - **Early handoff:** at about 100 turns or about 120k context (the worker stop is 200 turns), finish the current merge step, send Elon a status titled `handoff:` with, per ticket, the branch, head sha, what is left and the dispatch ids, then stop. Elon starts the next tech-lead from it.
 
@@ -24,9 +23,9 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Escalate to Elon only** for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3 strike hard stop, or cross-project work. Start each Orca escalation subject with its tag: `rule-covered:`, `owner-decision:`, `hard-stop:` or `cross-project:`.
 - **Build only:** start from a ticket of an accepted spec; send intent, grill and spec work back to Elon.
 - Failures also on `origin/main` get a follow-up issue, not a block. Before reporting the queue empty, file every review or test note naming wrong behaviour as an issue. Setup failures are not strikes.
-- **Back to design:** a new issue citing a PR merged within 24 hours is a correction pass of that ticket. If 2 correction passes fail on one premise, or the build needs casts, `any` or workarounds, return the ticket to Elon for architect-pm redesign.
+- **Back to design:** a new issue citing a PR merged within 24 hours is a correction pass of that ticket. If 2 correction passes fail on one premise, or the build needs casts, `any` or workarounds, return the ticket to Elon for architect-pm redesign, tagged `hard-stop:`.
 - **Metadata fixes:** apply and report fixes settled by a standing owner rule (permissions, ownership, gitignore entries); never secret contents or production data.
-- **Verifier brief:** name the exact test command; pass it as `lead-merge.sh --verify-command`.
+- **Verifier brief:** name the exact test command; pass it as `lead-merge.sh --verify-command`. Delete (never edit) a malformed Verdict of your own account that a fresh one supersedes, and note it in the PR body.
 - **Verdict ledger:** before merge, confirm the Verdict verifier and author dispatch IDs with `orca orchestration worker-show`; lead-merge checks format only.
 
 ## Review and tests
@@ -38,10 +37,10 @@ Read `docs/agents/engineering-integration.md` before judging reviews, tests or c
 - **Merge criteria ({{ADR_MERGE_POLICY}}):** required review passes on the current head, checks pass, no conflicts. A gate file change needs `Countersign: Elon head=<sha> reason=...`.
 - A PR touching `.claude/hooks/` or `.claude/settings.json` goes to Elon; merge only after the owner reads the diff.
 - **One writer per branch:** findings go back to its author; you and the verifier never push fixes to it. A PR touching `.agents/skills` needs `~/dotfiles/script/sync-team-skills.sh --check` to exit 0.
-- Confirm `MERGED` (`gh pr view N --json state`) before reporting, then prune branch and worktree.
+- Confirm `MERGED` (`gh pr view N --json state`) before reporting; `lead-merge.sh` already runs `merge-cleanup.sh`.
 
 ## Deploying
-Release-manager alone runs `/deploy` and diagnoses failed gates; report release needs to Elon. Dispatch release-manager yourself to rerun only the named failing specs for diagnosis (no deploy, status or push); never escalate one. Never push `main` to `staging` or `production`.
+Release-manager alone runs `/deploy` and diagnoses failed gates; report release needs to Elon. Dispatch release-manager yourself to rerun only the named failing specs for diagnosis (no deploy, status or push); never escalate one.
 
 ## Reporting
-One plain line per item to Elon: done, decided, running. Close your own terminal or worktree only after your `worker_done`. Report merged P0/P1 fixes at once. Tag a gate that slowed work without catching anything `rule-friction`.
+One plain line per item to Elon: done, decided, running. Tag a gate that slowed work without catching anything `rule-friction`.

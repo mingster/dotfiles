@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # worker-watch.sh <run_id>
 # Flags Orca workers stopped by a provider limit or network error (STOPPED), at an
-# empty input prompt without busy markers (IDLE), waiting on a dialog (BLOCKED_DIALOG)
+# empty input prompt without busy markers (IDLE), waiting on a dialog (BLOCKED_DIALOG) or a
+# tool approval prompt (BLOCKED_APPROVAL)
 # near full context (LOW_CONTEXT) or a long Codex session (LONG_SESSION).
 # Heartbeats and a live terminal do not prove progress, so read the screen.
 # Exit 0 all OK, 4 any STOPPED, IDLE, BLOCKED_DIALOG, LOW_CONTEXT or LONG_SESSION, 2 usage or orca error.
@@ -48,6 +49,7 @@ stop = re.compile(
     r"|spendLimitHit: true|usage limit reached|limit will reset|Context limit reached"
     r"|Run /compact to|You.ve hit your usage limit|Switch to a different model or set a Spend Limit|Selected model is at capacity", re.I)
 dialog = re.compile(r"Workspace Trust Required", re.I)
+approval = re.compile(r"Do you want to (?:proceed|make this edit|create)\?|Would you like to run the following command\?|Yes, proceed \(y\)", re.I)
 network = re.compile(r"^\s*(?:⚠\s*)?There was a network issue connecting to the server, please try again\.\s*$", re.I)
 marker = re.compile(r"^\s*[⚠■✗✖!]")
 # Source, diffs and shell lines are not provider notices.
@@ -56,6 +58,9 @@ ui = tail[-8:]
 for l in tail[-8:]:
     if dialog.search(l):
         print("BLOCKED_DIALOG", l.strip()[:160]); sys.exit(0)
+for l in tail[-8:]:
+    if approval.search(l) and not code.search(l):
+        print("BLOCKED_APPROVAL", l.strip()[:160]); sys.exit(0)
 for l in tail:
     if network.fullmatch(l) and (l in ui or marker.match(l)):
         print("STOPPED", l.strip()[:160]); sys.exit(0)
