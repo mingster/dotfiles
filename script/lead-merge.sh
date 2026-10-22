@@ -11,6 +11,10 @@ set -euo pipefail
 
 die() { echo "lead-merge: refused: $*" >&2; exit 1; }
 
+issue_from_branch() {
+  printf '%s\n' "$1" | grep -oE '[0-9]{3,}' | tail -n1 || true
+}
+
 repo="" pr="" head="" mechanical=false verify_command="" verify_set=false verdict_from=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -525,9 +529,9 @@ merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
 
 # Cleanup after the merge: head branch, ticket lanes, old recovery branches. Never fails the merge.
-# Issue N: "Closes #N" in the PR body, else the first number in the branch name. DRY_RUN=1 previews.
+# Issue N: "Closes #N" in the PR body, else the last run of 3+ digits in the branch name. DRY_RUN=1 previews.
 head_branch=$(field .headRefName)
 issue=$(field .body | sed -nE 's/.*[Cc]loses[[:space:]]+#([0-9]+).*/\1/p' | head -n1)
-[ -n "$issue" ] || issue=$(sed -nE 's/[^0-9]*([0-9]+).*/\1/p' <<<"$head_branch" | head -n1)
+[ -n "$issue" ] || issue=$(issue_from_branch "$head_branch")
 bash "$(dirname "$0")/merge-cleanup.sh" --branch "$head_branch" ${issue:+--issue "$issue"} ${pr:+--pr "$pr"} \
   || echo "lead-merge: cleanup incomplete (merge succeeded); run script/wrap-up.sh" >&2
