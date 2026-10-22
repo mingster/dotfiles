@@ -153,7 +153,8 @@ def antigravity_fetch():
         processes = subprocess.run(["ps", "-axo", "pid,command"], capture_output=True,
                                    text=True, timeout=2).stdout
         for line in processes.splitlines():
-            if "language_server_macos" not in line:
+            # The binary is language_server_macos in older builds, language_server since 2026-10.
+            if not re.search(r"/language_server(?:_macos)?\s", line):
                 continue
             token = re.search(r"--csrf_token(?:=|\s+)(\S+)", line)
             if not token or not line.split()[0].isdigit():
@@ -215,7 +216,8 @@ def antigravity_pools(fetch=None):
             if pool is None:
                 continue
             quota = config["quotaInfo"]
-            remaining = float(quota["remainingFraction"])
+            # An exhausted pool omits remainingFraction (protobuf drops zero values).
+            remaining = float(quota.get("remainingFraction", 0))
             resets = epoch(quota["resetTime"])
             if not 0 <= remaining <= 1 or resets is None:
                 continue

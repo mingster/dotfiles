@@ -33,6 +33,15 @@ class Antigravity(unittest.TestCase):
         self.assertAlmostEqual(readings["gemini"]["pct"], 2)
         self.assertEqual(readings["claude"]["resets_at"], ug.epoch("2026-10-20T01:49:00Z"))
 
+    def test_exhausted_pool_omits_remaining_fraction(self):
+        payload = {"userStatus": {"cascadeModelConfigData": {"clientModelConfigs": [
+            {"label": "Claude Opus", "quotaInfo": {"resetTime": "2026-10-28T05:51:14Z"}},
+            {"label": "Gemini Flash", "quotaInfo": {"remainingFraction": 1,
+                                                    "resetTime": "2026-10-22T08:26:09Z"}}]}}}
+        readings = ug.antigravity_reading(fetch=lambda: payload)
+        self.assertEqual(readings["claude"]["pct"], 100)
+        self.assertEqual(readings["gemini"]["pct"], 0)
+
     def test_check_selects_model_pool_and_blocks_at_ceiling(self):
         pools = {"claude": {"pct": 95, "resets_at": FUT, "observed_at": NOW},
                  "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
