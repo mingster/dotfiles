@@ -18,7 +18,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Early handoff:** at about 100 calls or 120k context, finish the current merge step, send Elon a `handoff:` status with, per ticket, the branch, head sha, what is left and the dispatch ids, then stop. Never run past 200 calls or a second compaction.
 
 ## Authority
-- **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers, such as an isolated local test database per lane or a `head-checks.sh` run. Save a patch to `~/orca/workspaces/_ref/`, then decide.
+- **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers, such as an isolated local test database per lane, a `head-checks.sh` run, or adding a test fixture the ticket's own tests need to its allowlist. Save a patch to `~/orca/workspaces/_ref/`, then decide.
 - **Escalate to Elon only** for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3 strike hard stop, or cross-project work. Start each Orca escalation subject with its tag: `rule-covered:`, `owner-decision:`, `hard-stop:` or `cross-project:`.
 - Failures also on `origin/main` get a follow-up issue, not a block. Before reporting the queue empty, file every review or test note naming wrong behaviour as an issue.
 - **Back to design:** a new issue citing a PR merged within 24 hours is a correction pass of that ticket. After 2 failed passes on one premise, or a build needing casts, `any` or workarounds, return the ticket to Elon for redesign, tagged `hard-stop:`.
