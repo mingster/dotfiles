@@ -2,22 +2,25 @@
 # Observe rendered agent prompts, nudge idleness, and escalate to the owning coordinator.
 # No terminal text is logged. The watchdog never stops or retries workers.
 set -euo pipefail
-runs=() notify='' notify_run='' interval=90 checks=0 all=0
+runs=() notify='' notify_run='' fallback='' fallback_run='' interval=90 checks=0 all=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all-runs) all=1; shift ;;
     --run) runs+=("$2"); shift 2 ;;
     --notify) notify=$2; shift 2 ;;
     --notify-run) notify_run=$2; shift 2 ;;
+    --fallback) fallback=$2; shift 2 ;;
+    --fallback-run) fallback_run=$2; shift 2 ;;
     --interval) interval=$2; shift 2 ;;
     --checks) checks=$2; shift 2 ;;
-    *) echo 'usage: worker-watchdog.sh (--all-runs | --run ID [--run ID] --notify HANDLE --notify-run ID) [--interval 90] [--checks N]' >&2; exit 2 ;;
+    *) echo 'usage: worker-watchdog.sh (--all-runs | --run ID [--run ID] --notify HANDLE --notify-run ID) [--fallback HANDLE --fallback-run ID] [--interval 90] [--checks N]' >&2; exit 2 ;;
   esac
 done
 [[ "$interval" =~ ^[0-9]+$ && "$checks" =~ ^[0-9]+$ ]] || exit 2
 [[ "$all" == 1 || (${#runs[@]} -gt 0 && -n "$notify" && -n "$notify_run") ]] || exit 2
 [[ "$all" == 1 ]] && notify_run=all-runs
-for id in ${runs[@]+"${runs[@]}"} ${notify:+"$notify"} "$notify_run"; do
+[[ -z "$fallback$fallback_run" || (-n "$fallback" && -n "$fallback_run") ]] || exit 2
+for id in ${runs[@]+"${runs[@]}"} ${notify:+"$notify"} "$notify_run" ${fallback:+"$fallback" "$fallback_run"}; do
   [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
 done
 orca_cli=${ORCA_CLI_COMMAND:-orca}
@@ -65,6 +68,14 @@ escalate() {
     return 0
   fi
   log_action "escalation-failed $2"
+  # The run's coordinator is gone (for example a lead that handed off): try the fallback coordinator.
+  if [[ -n "$fallback" ]] && bounded "$orca_cli" orchestration send --to "$fallback" --run "$fallback_run" --type escalation \
+      --subject "Watchdog: $2" --body "Coordinator of run $rr unreachable. $3" --json > /dev/null 2>&1; then
+    log_action "escalation-fallback $2"
+    alert_fallback "sent to fallback (run $fallback_run): $2"
+    printf '0\n' > "$state/send-fails"
+    return 0
+  fi
   fails=$((fails + 1))
   printf '%s\n' "$fails" > "$state/send-fails"
   alert_fallback "undelivered (run $rr): $2. $3"
