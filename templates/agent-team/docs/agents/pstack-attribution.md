@@ -31,9 +31,7 @@ Paths below are relative to `.agents/`; upstream `skills/` is retained. Only the
 - `skills/principle-attack-the-premise/SKILL.md`
 - `skills/principle-boundary-discipline/SKILL.md`
 - `skills/principle-build-the-lever/SKILL.md`
-- `skills/principle-encode-lessons-in-structure/SKILL.md`
 - `skills/principle-exhaust-the-design-space/SKILL.md`
-- `skills/principle-experience-first/SKILL.md`
 - `skills/principle-explain-the-number/SKILL.md`
 - `skills/principle-fix-root-causes/SKILL.md`
 - `skills/principle-foundational-thinking/SKILL.md`

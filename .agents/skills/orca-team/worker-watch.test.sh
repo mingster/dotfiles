@@ -67,6 +67,24 @@ with open(sys.argv[1], 'w') as f:
     for _ in range(10): f.write(json.dumps({'type':'event_msg','payload':{'type':'token_count'}})+'\n')
 PY3
 
+# Restarts must not reset the count: a second session of the same worktree adds to the first.
+python3 - "$tmp/sessions/2026/10/18/lead2.jsonl" <<'PY4'
+import json,sys
+with open(sys.argv[1], 'w') as f:
+    f.write(json.dumps({'type':'session_meta','payload':{'cwd':__import__('os').environ['FAKE_DIR']+'/lead-queue'}})+'\n')
+    for _ in range(115): f.write(json.dumps({'type':'event_msg','payload':{'type':'token_count'}})+'\n')
+PY4
+printf 'Working on spec\n' > "$tmp/term_a.txt"
+check "calls are summed across sessions of one worktree (10 + 115)" 4 'ctx_a term_a LONG_SESSION 125 calls$'
+python3 - "$tmp/sessions/2026/10/18/lead2.jsonl" <<'PY5'
+import json,sys
+with open(sys.argv[1], 'w') as f:
+    f.write(json.dumps({'type':'session_meta','payload':{'cwd':__import__('os').environ['FAKE_DIR']+'/lead-queue'}})+'\n')
+    f.write(json.dumps({'type':'turn_context','payload':{'model':'gpt-6-astra'}})+'\n')
+PY5
+check "gpt-6-astra session is flagged ASTRA_MODEL" 4 'ctx_a term_a ASTRA_MODEL'
+rm "$tmp/sessions/2026/10/18/lead2.jsonl"
+
 cat > "$tmp/term_a.txt" <<'SCREEN'
   assertions) and initiated the Playwright regression test suite. I am waiting for the test execution to complete.
 ────────────────────────────────────────
