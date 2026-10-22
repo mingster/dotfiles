@@ -29,6 +29,13 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Back to design:** a new issue citing a PR merged within 24 hours is a correction pass of that ticket. After 2 failed passes on one premise, or a build needing casts, `any` or workarounds, return the ticket to Elon for redesign, tagged `hard-stop:`.
 - **Verifier brief:** name the exact test command (`lead-merge.sh --verify-command`). Before merge confirm the Verdict's verifier and author dispatch IDs with `orca orchestration worker-show`. Delete, never edit, a malformed Verdict of your own account that a fresh one supersedes, and note it in the PR body.
 
+## Ticket flow
+- Refuse to dispatch a ticket without a spec link and a test plan.
+- Pick the next ticket yourself, with at most 3 lanes running.
+- On a coding worker's `worker_done`, run `~/dotfiles/script/on-worker-done.sh` to start the reviewer.
+- Handle exceptions only: a FAIL Verdict, a second failed fix, splits and cross area calls.
+- Batch owner gates into one list to Elon. Ask for copy approval only after the PR merges cleanly into current main, and never merge main in after approval.
+
 ## Review and tests
 Read `docs/agents/engineering-integration.md` before judging reviews, tests or check receipts.
 
