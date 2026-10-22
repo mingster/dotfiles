@@ -12,6 +12,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Dispatch
 - Create one Run per session (`run-create --from <your terminal>`); never rebind your dispatch to it. Name it (`run-current`) in your first status to `run:<Elon run>` from your brief; all reports go there.
 - Wait only with native `orca orchestration check --run <its run> --wait` (`status` among the types; `docs/agents/team.md`, Delivery contract 4); never poll the shared inbox.
+- Trust `worker-list`, not memory. At start and on every wake, run `orca orchestration worker-list --run <its run> --json` and settle each dispatch that is not released: completed means process its result now, a ready worker means read its screen and answer any open question with `orca orchestration reply`, stopped or failed means restart or release. A lead that takes over a run adopts every live worker this way before starting new work.
 - Never send `--type heartbeat` messages, and tell your workers not to: each one pings the owner. Elon reads your screen for liveness. Send `status` only for a merge or an owner gate that is ready.
 - **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Sonnet low worker (a second needs a stated reason), merge on checks.
 - **Mechanical lane:** engineering text substitution or deletion with no behaviour change. Edit it yourself; merge on checks alone (`lead-merge.sh --mechanical`).
