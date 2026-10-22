@@ -20,7 +20,7 @@ setup() { # a clean dotfiles tree and a project synced from it
   DOTFILES="$D" "$D/script/sync-team-skills.sh" "$P" >/dev/null 2>&1
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
   printf 'sha=aaa1111\nskills=tdd research\n' > "$D/.agents/skills/.mattpocock-upstream"
-  GH_LATEST=aaa1111 GH_FILES="" GH_FAIL=""
+  GH_LATEST=aaa1111 GH_FILES="" GH_FAIL="" GH_ISSUES="[]"
 }
 
 # Fake gh on PATH: commits/main prints $GH_LATEST, compare prints $GH_FILES, GH_FAIL makes both fail.
@@ -28,6 +28,7 @@ mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'EOS'
 #!/usr/bin/env bash
 [ -n "$GH_FAIL" ] && exit 1
+[ "$1 $2" = "issue list" ] && { printf '%s' "$GH_ISSUES"; exit 0; }
 case "$2" in
   */commits/main) echo "$GH_LATEST" ;;
   */compare/*) printf '%s' "$GH_FILES" ;;
@@ -35,6 +36,10 @@ esac
 EOS
 chmod +x "$tmp/bin/gh"
 export PATH="$tmp/bin:$PATH"
+
+export GH_ISSUES="[]"
+withremote() { ( cd "$P" && git init -q && git remote add origin https://github.com/acme/project-alpha.git ); }
+BRIEF=$'## Acceptance criteria\nx\n\nRequirement owner: me\n**Done condition:** y\n- Deleted: nothing'
 
 pass=0; fail=0
 check() { # name expected_exit output_regex
@@ -125,6 +130,25 @@ check "new spec without a Test plan" 1 'FINDING sdlc: .*2026-10-22-tier/spec.md:
 setup; mkdir -p "$P/docs/intent/2026-10-09-old"; echo spec > "$P/docs/intent/2026-10-09-old/spec.md"
 ( cd "$P" && git init -q && git add -A && GIT_AUTHOR_DATE=2026-10-09T00:00:00Z GIT_COMMITTER_DATE=2026-10-09T00:00:00Z git -c user.name=t -c user.email=t@t commit -qm old )
 check "spec committed before the rule is grandfathered" 0 'team-audit: clean'
+
+setup; withremote; GH_ISSUES=$(jq -n --arg b "$BRIEF" '[{number:7,body:$b,labels:[],comments:[]}]'); export GH_ISSUES
+check "ready issue with all four fields passes" 0 'team-audit: clean'
+
+setup; withremote; GH_ISSUES='[{"number":8,"body":"Acceptance criteria: a\nDeleted: none","labels":[{"name":"ready-for-agent"}],"comments":[{"body":"Done condition: z"}]}]'; export GH_ISSUES
+check "missing fields name the best text's gaps" 1 '^FINDING ready-brief acme/project-alpha#8 missing: Requirement owner, Done condition$'
+
+setup; withremote; GH_ISSUES=$(jq -n --arg b "$BRIEF" '[{number:9,body:"see comments",labels:[],comments:[{body:"thanks"},{body:$b}]}]'); export GH_ISSUES
+check "fields all in one comment pass" 0 'team-audit: clean'
+
+setup; withremote; GH_ISSUES='[{"number":10,"body":"nothing","labels":[{"name":"team-audit: allow"}],"comments":[]}]'; export GH_ISSUES
+check "label opts an issue out" 0 'team-audit: clean'
+
+setup; withremote; GH_ISSUES='[{"number":11,"body":"nothing","labels":[],"comments":[{"body":"ok\nteam-audit: allow"}]}]'; export GH_ISSUES
+check "allow line in a comment opts an issue out" 0 'team-audit: clean'
+
+setup; withremote; GH_FAIL=1; export GH_FAIL
+check "gh failure on issues is a warning, not a finding" 0 'WARN ready-brief'
+unset GH_FAIL; export GH_ISSUES="[]"
 
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'
