@@ -222,30 +222,6 @@
           "model": "claude-sonnet-5-5-medium"
         }
       ]
-    },
-    "stream-health": {
-      "tier": "workhorse",
-      "description": "Stream health monitoring and media server diagnostics",
-      "chain": [
-        {
-          "provider": "claude",
-          "model": "sonnet",
-          "effort": "medium"
-        },
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
-        },
-        {
-          "provider": "cursor",
-          "model": "claude-sonnet-5-5-medium"
-        },
-        {
-          "provider": "antigravity",
-          "model": "claude-sonnet-5-5-medium"
-        }
-      ]
     }
   }
 }

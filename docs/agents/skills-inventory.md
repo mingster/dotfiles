@@ -36,19 +36,19 @@ Proposed home uses the three tiers the owner approved (Tier 1 general, Tier 2 te
 
 | Skill | Referenced by | Copies and paths | Status | Proposed home |
 | --- | --- | --- | --- | --- |
-| agent-browser | qa-sdet (R, P, T), P stream-health | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
+| agent-browser | qa-sdet (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | capture-intent | architect-pm (R, P, T) | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | code-review | elon, qa-sdet, secops-finops, tech-lead (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). Shows twice in Claude Code (`code-review` and `mattpocock-skills:code-review`) only when the plugin is enabled. | Tier 1: dotfiles shared |
 | codebase-design | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | create-pr | fullstack-dev, tech-lead (R, P, T) | D dir | Single copy, but project aware: detects `web/` (R) or `<project-b>_web/` (P), <project-a> `HOME.md` rule. | Tier 1: dotfiles shared; move the R and P branches into per repo config later |
-| diagnosing-bugs | qa-sdet, support-csm (R, P, T), P stream-health | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
+| diagnosing-bugs | qa-sdet, support-csm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | domain-modeling | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | elon | elon role frontmatter and every role body (R, P, T); `AGENTS.md` (R, P); crew, tl, daily-run (R, P); P orchestration | D `elon/` dir | Drifted duplicate of `ceo`. `elon` is newer (2026-10-05 vs 2026-10-04) and adds the Commands section and direct dispatch wording. | Tier 2: dotfiles template, one copy (move out of D so it stops loading in every repo) |
 | ceo | named only in elon's description ("or /ceo") | D `ceo/` dir | Older drifted copy of `elon` (`effort: max`, Tech Lead orchestrates). Both show in the skill list with the same description. | Tier 2: delete, or a 3 line stub next to `elon` that loads it |
 | grill-with-docs | architect-pm (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | orca-cli | model-routing (R, P, T); tl SKILL and other-tools (R, P); P orchestration | D dir | Single copy. Absent in cloud. | Tier 1: dotfiles shared |
 | orchestration | elon role, `AGENTS.md`, crew SKILL, model-routing (R, P, T) | D `SKILL.md` only. P `.agents` dir with `SKILL.md` plus `worker-watch.sh` and `worker-watch.test.sh`, links in P `.claude` and `.cursor`. R `.agents` dir with the two scripts only, no `SKILL.md`, no `.claude` or `.cursor` link. T dir with the two scripts only. | Drifted. P `SKILL.md` is D plus one paragraph (Elon is the default coordinator), P newer (2026-10-05 vs 2026-09-29). The two scripts are byte identical in R, P and T. `check-skill-collisions.sh` reports FAIL: the R and P dirs shadow D, and R's dir has no `SKILL.md`. In R, Claude Code loads D's copy. | Tier 1: dotfiles shared; merge P's paragraph and both scripts into D, remove the R, P and T copies |
-| research | architect-pm, sales-marketing, secops-finops (R, P, T), P stream-health | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
+| research | architect-pm, sales-marketing, secops-finops (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | resolving-merge-conflicts | fullstack-dev (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | tdd | elon, fullstack-dev, qa-sdet (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
 | to-spec | elon (R, P, T) | D dir; MP twice | Matches MP 1.3.1 except the `CONTEXT.md` naming (see Mattpocock sync). | Tier 1: dotfiles shared |
