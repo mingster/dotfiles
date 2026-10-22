@@ -4,6 +4,14 @@ Vendored from [cursor/plugins](https://github.com/cursor/plugins/tree/0b8e952052
 
 Paths below are relative to `.agents/`; upstream `skills/` is retained. Only the provenance comment and the adapter-first instruction in poteto-mode were added. `ORCA-ADAPTER.md` is local integration guidance.
 
+- `skills/bro/SKILL.md`
+- `skills/correct/SKILL.md`
+- `skills/ketchup/SKILL.md`
+- `skills/recall/SKILL.md`
+- `skills/show-me-your-work/SKILL.md`
+- `skills/show-me-your-work/references/decision-log-template.tsv`
+- `skills/show-me-your-work/scripts/log.sh`
+- `skills/unslop/SKILL.md`
 - `skills/poteto-mode/SKILL.md`
 - `skills/poteto-mode/playbooks/authoring-a-skill.md`
 - `skills/poteto-mode/playbooks/autonomous-run.md`
@@ -31,6 +39,7 @@ Paths below are relative to `.agents/`; upstream `skills/` is retained. Only the
 - `skills/principle-attack-the-premise/SKILL.md`
 - `skills/principle-boundary-discipline/SKILL.md`
 - `skills/principle-build-the-lever/SKILL.md`
+- `skills/principle-encode-lessons-in-structure/SKILL.md`
 - `skills/principle-exhaust-the-design-space/SKILL.md`
 - `skills/principle-explain-the-number/SKILL.md`
 - `skills/principle-fix-root-causes/SKILL.md`

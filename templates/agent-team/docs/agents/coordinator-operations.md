@@ -15,3 +15,14 @@ Read before reporting status or reviewing process performance.
   2. Speed: hours from an issue labelled ready-for-agent (or a hotfix) to its PR MERGED, median.
   3. Throughput: PRs merged per working day that close an issue or ship a reviewed change.
 - Log each finding in `docs/agents/process-review.md` (evidence, finding, proposal, step of the Algorithm). Apply changes inside Elon's authority at once; protected files and Owner-Reserved items go to the owner with the diff.
+
+## Tech-lead run
+
+The tech-lead reads this before its first dispatch.
+
+- Elon messages the tech-lead only with native `orca orchestration send --to run:<tech-lead run>`, never on Elon's Run or to the lead's old dispatch (both go unread). The tech-lead names its Run in its first status; else `run-list --json` shows the Run whose `coordinator_handle` is the tech-lead's terminal.
+
+- Create one Run per session (`run-create --from <your terminal>`); never rebind your dispatch to it. Name it (`run-current`) in your first status to `run:<Elon run>` from your brief; all reports go there.
+- Wait only with native `orca orchestration check --run <its run> --wait` (`status` among the types; `docs/agents/team.md`, Delivery contract 4); never poll the shared inbox.
+- At start and on every wake, run `orca orchestration worker-list --run <its run> --json` and settle each unreleased dispatch: completed, process its result now; ready, read its screen and answer open questions with `orca orchestration reply`; stopped or failed, restart or release. A lead taking over a run adopts every live worker this way before new work.
+- Never send `--type heartbeat` messages, and tell workers not to: each pings the owner. Elon reads your screen. Send `status` only for a ready merge or owner gate.
