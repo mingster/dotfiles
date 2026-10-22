@@ -112,7 +112,7 @@ trust_gate() {   # $1 = raw terminal screen
   echo "$1" | grep -qiE 'hooks? (are|is) new or changed' || return 0
   [ -z "$trusted" ] || return 0
   verdict=$(echo "$1" | python3 -c "$hooks_check" "$wt") || { echo "start-codex-worker: hooks prompt left untouched; escalate to the owner" >&2; exit 4; }
-  "$orca" terminal send --terminal "$term" --text "$(echo "$verdict" | head -1)" --json >/dev/null
+  "$orca" terminal send --terminal "$term" --text "$(echo "$verdict" | head -1)" --enter --json >/dev/null
   echo "$verdict" | tail -n +2 | sed 's/^/start-codex-worker: trusted /' >&2; trusted=1
 }
 term=$("$orca" terminal create --worktree "path:$wt" --title "$title" \
