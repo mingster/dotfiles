@@ -1,0 +1,1 @@
+start-codex-worker.sh trusts the Codex "hooks are new or changed" prompt only when the hooks files and the files they run are identical to origin/main; otherwise it selects nothing and exits 4 with the diff.

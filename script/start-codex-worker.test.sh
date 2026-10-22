@@ -8,7 +8,10 @@ echo "$*" >> "$FAKE_DIR/calls.log"
 case "$*" in
   "worktree create"*) echo '{"ok":true,"result":{"worktree":{"path":"/wt/new"}}}' ;;
   "terminal create"*) echo '{"ok":true,"result":{"terminal":{"handle":"term_x"}}}' ;;
-  "terminal read"*) echo "{\"result\":{\"screen\":\"${FAKE_SCREEN:-Ask Codex  ready}\"}}" ;;
+  "terminal read"*) scr="${FAKE_SCREEN:-Ask Codex  ready}"
+    { [ -z "${FAKE_PROMPT:-}" ] || [ -f "$FAKE_DIR/trusted" ]; } || scr=$FAKE_PROMPT
+    echo "{\"result\":{\"screen\":\"$scr\"}}" ;;
+  "terminal send"*"--text 2 "*) touch "$FAKE_DIR/trusted"; echo '{"ok":true}' ;;
   "terminal send"*) echo '{"ok":true}' ;;
   "terminal rename"*) echo '{"ok":true}' ;;
   "orchestration worker-start"*) echo "{\"ok\":true,\"result\":{\"dispatchId\":\"ctx_1\",\"state\":\"${FAKE_STATE:-ready}\"}}" ;;
@@ -60,5 +63,43 @@ check "no handle: exit 2 before any worktree or terminal" "$([ $rc = 2 ] && [ ! 
 check "gpt-6-astra without OWNER_ASTRA_YES: exit 3 before any orca call" "$([ $rc = 3 ] && [ ! -s "$tmp/calls.log" ]; echo $?)"
 OWNER_ASTRA_YES="owner 2026-10-22 issue 1" "$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path /wt/e --model gpt-6-astra >/dev/null 2>&1; rc=$?
 check "gpt-6-astra with OWNER_ASTRA_YES starts the worker" "$([ $rc = 0 ] && grep -q 'codex -m gpt-6-astra' "$tmp/calls.log"; echo $?)"
+
+# Hooks trust prompt: a real repo whose origin/main holds the hooks file and the script it runs.
+repo="$tmp/repo"; git init -q "$repo"; mkdir "$repo/.codex"
+printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"bash .codex/guard.sh"}]}]}}\n' > "$repo/.codex/hooks.json"
+printf 'echo guard\n' > "$repo/.codex/guard.sh"
+git -C "$repo" add -A; git -C "$repo" -c user.name=t -c user.email=t@t commit -qm init
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+prompt='Codex\nhooks are new or changed\n  '"$repo"'/.codex/hooks.json\n  1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting'
+hooks_run() { rm -f "$tmp/trusted"; : > "$tmp/calls.log"
+  FAKE_PROMPT=$1 "$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path "$repo" 2>&1; }
+sent_choice() { grep -q -- 'terminal send.*--text [0-9] ' "$tmp/calls.log"; }
+
+out=$(hooks_run "$prompt"); rc=$?
+sha=$(shasum -a 256 "$repo/.codex/hooks.json" | cut -d' ' -f1)
+check "hooks identical to origin/main: selects Trust all, logs sha256, finishes warm-up" "$([ $rc = 0 ] && grep -q -- 'terminal send.*--text 2 ' "$tmp/calls.log" && echo "$out" | grep -q "$sha" && [ "$(echo "$out" | tail -1)" = "ctx_1 term_x ready" ]; echo $?)"
+
+echo ' ' >> "$repo/.codex/hooks.json"
+out=$(hooks_run "$prompt"); rc=$?
+check "changed hooks file: exit 4, nothing selected, diff printed, no worker-start" "$([ $rc = 4 ] && ! sent_choice && ! grep -q worker-start "$tmp/calls.log" && echo "$out" | grep -q '^+++'; echo $?)"
+git -C "$repo" checkout -q -- .
+
+echo '# tampered' >> "$repo/.codex/guard.sh"
+out=$(hooks_run "$prompt"); rc=$?
+check "changed referenced script: exit 4, nothing selected, diff printed" "$([ $rc = 4 ] && ! sent_choice && ! grep -q worker-start "$tmp/calls.log" && echo "$out" | grep -q 'guard.sh'; echo $?)"
+git -C "$repo" checkout -q -- .
+
+printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"bash .codex/new.sh"}]}]}}\n' > "$repo/.codex/hooks.json"
+echo 'echo new' > "$repo/.codex/new.sh"; git -C "$repo" add -A; git -C "$repo" -c user.name=t -c user.email=t@t commit -qm local
+out=$(hooks_run "$prompt"); rc=$?
+check "hooks and script both new relative to origin/main: exit 4" "$([ $rc = 4 ] && ! sent_choice; echo $?)"
+git -C "$repo" reset -q --hard origin/main
+
+out=$(hooks_run 'Codex\nhooks are new or changed\n  1. Review hooks\n  2. Trust all and continue'); rc=$?
+check "prompt without a hooks file path: exit 4, nothing selected" "$([ $rc = 4 ] && ! sent_choice; echo $?)"
+out=$(hooks_run 'Codex\nhooks are new or changed\n  '"$repo"'/.codex/hooks.json\n  Press enter'); rc=$?
+check "prompt without a Trust all option: exit 4, nothing selected" "$([ $rc = 4 ] && ! sent_choice; echo $?)"
+out=$(hooks_run 'Codex\nhooks are new or changed\n  '"$tmp"'/other/hooks.json\n  2. Trust all and continue'); rc=$?
+check "listed hooks file outside the worktree: exit 4, nothing selected" "$([ $rc = 4 ] && ! sent_choice; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
