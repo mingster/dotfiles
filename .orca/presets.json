@@ -1,7 +1,6 @@
 {
   "version": "1.0.0",
   "default_chain": [
-    "codex",
     "claude",
     "cursor",
     "antigravity"
@@ -15,11 +14,6 @@
           "provider": "claude",
           "model": "opus",
           "effort": "high"
-        },
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
         },
         {
           "provider": "cursor",
@@ -41,11 +35,6 @@
           "effort": "high"
         },
         {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
-        },
-        {
           "provider": "cursor",
           "model": "claude-opus-5-5-high"
         },
@@ -65,11 +54,6 @@
           "effort": "high"
         },
         {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
-        },
-        {
           "provider": "cursor",
           "model": "claude-opus-5-5-high"
         },
@@ -83,11 +67,6 @@
       "tier": "workhorse",
       "description": "Fullstack developer implementing features test-first",
       "chain": [
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
-        },
         {
           "provider": "claude",
           "model": "sonnet",
@@ -110,11 +89,6 @@
         {
           "provider": "claude",
           "model": "sonnet",
-          "effort": "medium"
-        },
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -143,11 +117,6 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
-        },
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
         }
       ]
     },
@@ -158,11 +127,6 @@
         {
           "provider": "claude",
           "model": "sonnet",
-          "effort": "medium"
-        },
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
@@ -185,11 +149,6 @@
           "effort": "medium"
         },
         {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
-          "effort": "medium"
-        },
-        {
           "provider": "cursor",
           "model": "claude-sonnet-5-5-medium"
         },
@@ -206,11 +165,6 @@
         {
           "provider": "claude",
           "model": "sonnet",
-          "effort": "medium"
-        },
-        {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         {
