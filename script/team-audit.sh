@@ -19,6 +19,13 @@
 #   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
 #             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
 #             network failure prints "WARN mp-upstream" and is not a finding.
+#   ready-brief  every open GitHub issue labeled ready-for-agent (repo read from the project's origin
+#             remote) has one text, the body or a single comment, holding all four brief fields:
+#             Acceptance criteria, Requirement owner, Done condition, Deleted (heading or "Field:" label,
+#             case-insensitive). Prints "FINDING ready-brief <owner/repo>#<n> missing: <fields>", the
+#             fields missing from the text with the most. Opt out with the label "team-audit: allow" or a
+#             line containing "team-audit: allow" in the body or a comment. A gh or network failure
+#             prints "WARN ready-brief" and is not a finding.
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles).
 set -uo pipefail
@@ -29,7 +36,7 @@ LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
 
-case "${1:-}" in -h|--help) sed -n '2,19p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,30p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
@@ -162,6 +169,39 @@ else
     done
   done
 fi
+
+# ready-brief: open ready-for-agent issues must carry the AGENT-BRIEF fields in one text.
+BRIEF_PY='
+import json, re, sys
+FIELDS = ["Acceptance criteria", "Requirement owner", "Done condition", "Deleted"]
+def has(text, f):
+    f = re.escape(f)
+    return re.search(r"^\s*#+\s*\**" + f + r"\b|^\s*(?:[-*]\s*)?\**" + f + r"(?:\**\s*:|\s*:\**)", text, re.I | re.M)
+for i in json.load(sys.stdin):
+    texts = [i.get("body") or ""] + [c.get("body") or "" for c in i.get("comments") or []]
+    if any(l.get("name") == "team-audit: allow" for l in i.get("labels") or []): continue
+    if any("team-audit: allow" in t for t in texts): continue
+    best = min(([f for f in FIELDS if not has(t, f)] for t in texts), key=len)
+    if best: print("%s\t%s" % (i["number"], ", ".join(best)))
+'
+for proj in "${PROJECTS[@]}"; do
+  [ -d "$proj" ] || continue
+  url=$(git -C "$proj" remote get-url origin 2>/dev/null) || continue
+  repo=$(echo "$url" | sed -nE 's#^(https://([^@/]+@)?|ssh://git@|git@)github\.com[:/]([^/]+/[^/]+)$#\3#p'); repo="${repo%.git}"
+  [ -n "$repo" ] || continue
+  if ! issues=$(gh issue list --repo "$repo" --label ready-for-agent --state open --limit 200 --json number,body,labels,comments 2>/dev/null); then
+    echo "WARN ready-brief: could not list ready-for-agent issues for $repo (gh or network); skipped"
+    continue
+  fi
+  if ! rows=$(echo "$issues" | python3 -c "$BRIEF_PY" 2>/dev/null); then
+    echo "WARN ready-brief: could not read the issue list for $repo; skipped"
+    continue
+  fi
+  while IFS=$'\t' read -r num missing; do
+    [ -n "$num" ] || continue
+    echo "FINDING ready-brief $repo#$num missing: $missing"; findings=$((findings + 1))
+  done <<< "$rows"
+done
 
 if [ "$findings" -eq 0 ]; then echo "team-audit: clean"; exit 0; fi
 echo "team-audit: $findings finding(s)"
