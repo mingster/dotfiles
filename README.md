@@ -1,36 +1,30 @@
-# Ming's dotfiles
+# Ming's Dotfiles and AI Agent Organization
 
-One repo that sets up a Mac, Arch or Debian machine, wires the same AI skills into Claude Code, Codex, Cursor and Antigravity, and ships a small agent team you can drop into any project.
+Welcome to Ming's dotfiles. This repository serves two purposes. First, it automates machine setup across macOS, Arch Linux, and Debian, configuring shells, tools, and developer environments. Second, it equips modern AI coding assistants (Claude Code, Codex, Cursor, and Antigravity) with a shared library of engineering skills and an autonomous agent team ready to adopt into any software project.
 
-It is for you if you want a new machine ready in a few commands, or you want an AI "company" (a front door called Elon, a tech lead, and specialist workers) that plans, builds, reviews and ships your project while you only make the calls that are yours.
+## 1. Overview for Newcomers
 
-What you get:
+If you are new to this repository, here is what it provides and how the pieces connect.
 
-* A machine that is set up the same way every time. `install.sh` is safe to re-run.
-* About 30 shared skills (slash commands) for planning, test first coding and review.
-* An agent team template: roles, skills, hooks and rules you adopt into a project.
+### What is this repository?
 
-## Quick start
+This repository contains everything needed to turn a fresh operating system installation into a fully configured developer workstation, paired with an AI engineering organization.
 
-```bash
-mkdir -p ~/GitHub && cd ~/GitHub
-git clone https://github.com/mingster/dotfiles.git && cd dotfiles
-sh mac/osxprep.sh   # macOS only: Command Line Tools
-sh install.sh
-```
+* **Unified system configuration:** Installs core developer tooling, shells (Fish and Zsh), Git configuration, and application preferences across macOS, Arch Linux, and Debian.
+* **Universal AI skills:** Supplies over 30 reusable engineering skills (slash commands) shared uniformly across Claude Code, Codex, Cursor, and Antigravity.
+* **Autonomous AI agent team:** Packages a drop in virtual software company led by a single executive front door (Elon), backed by a Product Architect, a Tech Lead, and specialist execution workers.
 
-`install.sh` links `~/dotfiles` to this repo, links shell and git dotfiles into `$HOME`, creates real home skill directories, sets up the AI tooling, then runs the OS installer (`mac/`, `arch/` or `debian/` `system_setup.sh`). Already installed software is skipped.
+### Core philosophy
 
-| Flag | Effect |
-| --- | --- |
-| `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Only refresh links, install no software |
-| `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also run `brew upgrade` on macOS |
+* **Idempotent and safe:** Running `install.sh` multiple times will never destroy existing data. Unmodified tools are skipped, and existing conflicting configurations are backed up.
+* **Separation of concerns:** You remain the human owner and board member. You retain full control over financial commitments, production deployments, legal agreements, and contract acceptance. Routine implementation, testing, review, and staging operations are delegated to agents.
+* **Single source of truth:** Central skills live in `.agents/skills/`. When you update a skill here, every supported AI tool immediately shares the improvement.
 
-How the skills reach each tool:
+### How skills reach your AI tools
 
 ```mermaid
 flowchart LR
-    repo[".agents/skills in this repo"] --> install["install.sh"]
+    repo[".agents/skills in dotfiles"] --> install["install.sh"]
     install --> agents["~/.agents/skills"]
     install --> claude["~/.claude/skills"]
     agents --> codex[Codex]
@@ -39,58 +33,165 @@ flowchart LR
     install --> gem["Antigravity skills.json"]
 ```
 
-## Use the agent team in a project
+## 2. Quick Start Guide
 
-You talk to one person, Elon. He plans, hands work to a tech-lead, and the tech-lead runs workers. You are asked only for decisions that are yours: money, production deploys, contracts, accepting an intent or spec.
+### Step 1: Bootstrap the machine
+
+Clone the repository and run the installation script:
+
+```bash
+mkdir -p ~/GitHub && cd ~/GitHub
+git clone https://github.com/mingster/dotfiles.git && cd dotfiles
+sh mac/osxprep.sh   # macOS only: installs Command Line Tools
+sh install.sh
+```
+
+`install.sh` creates a symlink at `~/dotfiles`, links your home configuration files, connects the shared AI skill folders, configures editor settings, and delegates package installation to your platform script (`mac/`, `arch/`, or `debian/`).
+
+#### Useful installer flags
+
+| Command | Effect |
+| --- | --- |
+| `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Refreshes configuration symlinks without installing operating system packages |
+| `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Upgrades installed Homebrew packages on macOS during installation |
+
+#### Verifying AI provider tools
+
+To verify provider CLIs and machine readiness for agent teams, run:
+
+```bash
+script/agent-team.sh machine
+```
+
+Add `--dry-run` to preview checks without applying changes.
+
+### Step 2: Adopt the agent team in a project
+
+To equip any repository with the full autonomous agent team, run the unified setup command:
+
+```bash
+~/dotfiles/script/agent-team.sh project /path/to/project --project-name acme
+```
+
+This automated command executes four tasks:
+
+1. Copies team roles, skills, and routing rules into the project.
+2. Initializes tracker configuration and creates GitHub triage labels (`init-agent-project.sh --labels`).
+3. Generates committed copies of team skills (`sync-team-skills.sh`).
+4. Runs an audit to verify configuration consistency (`team-audit.sh`).
+
+#### Complete project facts
+
+After adoption, open the project and fill in two documentation files:
+
+* `docs/agents/team-facts.md`: Specific project context, team roster, repository urls, and tech stack details.
+* `docs/agents/deploy-facts.md`: Deployment targets, environment urls, and automated smoke test commands.
+
+#### Authorize Tech Lead merges (one time setup)
+
+Codex workers are blocked from executing `gh pr merge` directly. The Tech Lead merges exclusively through the verified `script/lead-merge.sh` utility. Allow this command once by appending the rules template to your local Codex rules:
+
+```bash
+sed "s|__HOME__|$HOME|g" ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
+```
+
+Agents never modify `~/.codex` themselves, guaranteeing that unverified merges remain blocked.
+
+## 3. The Agent Team Organization
+
+The agent team functions like an agile software organization. You interact with a single executive point of contact, Elon. Teammates coordinate through Orca orchestration in isolated worktrees, reporting progress back up the hierarchy.
+
+### Organization chart
 
 ```mermaid
 flowchart TD
-    owner([Owner]) --> elon[Elon, front door]
-    elon --> arch[architect-pm]
-    arch -->|"accepted spec + tickets"| TL[tech-lead]
-    TL --> dev[fullstack-dev]
-    TL --> qa[qa-sdet]
-    dev --> gates{Review gates}
-    qa --> gates
-    gates -->|"approved at current head, checks green"| merge[lead-merge]
-    merge --> staging[Staging]
-    staging -->|"owner go"| prod[Production]
-    elon -.->|"decisions only"| owner
+    Board["Human Owner (Mingster / Board)<br/>Holds reserved gates: Money, Production Deploys, Legal, Contracts"]
+    CEO["Elon (Shared CEO)<br/>Single front door, coordinates execution, enforces usage budget"]
+    
+    subgraph Direct_Reports["Direct Reports to Elon"]
+        Sales["Sales and Marketing (sales-marketing)<br/>Commercial validation, demand signals, unit economics"]
+        BA["BA and Product Architect (architect-pm)<br/>Product requirements, PRDs, domain modeling, ticket contracts"]
+        TL["Tech Lead (tech-lead)<br/>Engineering integration, reviewed PR merges, release coordination"]
+    end
+    
+    subgraph Tech_Specialists["Technical Execution Specialists (Supervised by Tech Lead)"]
+        Dev["Fullstack Dev (fullstack-dev)<br/>TDD implementation inside isolated worktrees"]
+        QA["QA SDET (qa-sdet)<br/>Dual axis audits (Standards and Spec), test suites"]
+        SecOps["SecOps FinOps (secops-finops)<br/>Security boundaries, authentication, financial reconciliation"]
+        RM["Release Manager (release-manager)<br/>Three stage deployment pipeline: Local to Staging to Production"]
+    end
+
+    subgraph Service_Specialists["Operational Specialists"]
+        CSM["Support CSM (support-csm)<br/>Drafts customer responses for human owner review"]
+        Stream["Stream Health (stream-health)<br/>Media and streaming infrastructure audits"]
+    end
+
+    Board --> CEO
+    CEO --> Sales
+    CEO --> BA
+    CEO --> TL
+    
+    BA -->|"Machine-checkable ticket contracts"| TL
+    TL --> Dev
+    TL --> QA
+    TL --> SecOps
+    TL --> RM
+    CEO --> CSM
+    CEO --> Stream
 ```
 
-Set it up once per project:
+### Roles and responsibilities
 
-```bash
-~/dotfiles/script/adopt-agent-team.sh --project-name acme ~/projects/acme   # roles, skills, hooks, routing
-~/dotfiles/script/init-agent-project.sh --labels ~/projects/acme            # tracker, labels, domain docs
+* **Human Owner (Board):** You hold the ultimate keys. Only you can authorize production deployments, approve permanent pricing changes, sign contracts, and accept new product intents or specifications.
+* **Elon (CEO):** Your direct peer and single front door. Dispatches teammates using Orca orchestration, monitors delivery progress, runs usage gates, and contacts you only when an Owner Reserved decision is reached.
+* **Sales and Marketing (`sales-marketing`):** Evaluates user acquisition channels, customer lifetime value, churn metrics, and market demand before software is built.
+* **BA and Product Architect (`architect-pm`):** Translates ideas into clear specifications (`intent.md` and `spec.md`). Breaks specifications into machine checkable GitHub issue tickets containing strict file allowlists and test criteria.
+* **Tech Lead (`tech-lead`):** Supervises engineering workers, opens pull requests, validates risk reviews, and merges pull requests via `script/lead-merge.sh`.
+* **Fullstack Dev (`fullstack-dev`):** Implements code strictly through test-driven development inside isolated Git worktrees. Only touches allowlisted files.
+* **QA SDET (`qa-sdet`):** Performs rigorous dual axis reviews on the pull request head commit (Standards conformity and Spec adherence).
+* **SecOps and FinOps (`secops-finops`):** Audits security, token access boundaries, multi-tenant isolation, and billing calculations.
+* **Release Manager (`release-manager`):** Manages release promotions across Local, Staging, and Production environments following human approval.
+* **Support CSM (`support-csm`):** Drafts responses to customer issues for owner approval before anything is sent.
+
+## 4. Designated Workflow
+
+Every major feature, refactor, or bug fix follows a structured lifecycle to eliminate regressions and maintain auditability.
+
+### End to end delivery lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner as Human Owner (Board)
+    participant CEO as Elon (CEO)
+    participant BA as Product Architect (architect-pm)
+    participant TL as Tech Lead (tech-lead)
+    participant Dev as Fullstack Dev (fullstack-dev)
+    participant QA as QA SDET / SecOps
+    participant RM as Release Manager (release-manager)
+
+    Owner->>CEO: High level product vision or goal
+    CEO->>BA: Analyze requirements and draft intent
+    BA->>Owner: Present intent.md for acceptance
+    Note over Owner,BA: Owner reviews and explicitly accepts intent
+    BA->>BA: Stress test edge cases and write spec.md with ADRs
+    BA->>TL: Hand off tickets as machine checkable contracts
+    CEO->>TL: Authorize engineering scope and usage budget
+    TL->>Dev: Dispatch tickets in isolated worktrees
+    Dev->>Dev: Red Green Refactor TDD with verification command
+    Dev->>TL: Report worker_done with branch, head SHA, and tests
+    TL->>QA: Request dual axis audit of current head SHA
+    QA->>TL: Report worker_done with standards and spec verification
+    TL->>TL: Validate reviews, green checks, and merge via lead-merge.sh
+    TL->>CEO: Deliver consolidated integration report
+    CEO->>Owner: Deliver release recommendation
+    Owner->>RM: Explicit Go approval for exact production commit
+    RM->>RM: Execute /deploy (Local to Staging to Production)
 ```
 
-Then fill in `docs/agents/team-facts.md` and `deploy-facts.md` in the project. `script/agent-team.sh` handles machine setup and safe reset previews. Details, backups and owner steps: [Agent team setup](docs/agents/agent-team-setup.md).
+### Engineering stages and skills
 
-What you do day to day (slash commands work in Claude Code, Cursor and Antigravity; in Codex write `$skill-name`):
-
-| You want to | Say |
-| --- | --- |
-| Start or pick the next objective | `/elon Help me choose the next objective.` |
-| Get status | `/elon status` (Now, Needs owner, Running) or `/tl status` |
-| Deliver a batch of tickets | `/elon Deliver the ready setup tickets using /crew and /tdd.` |
-| Clear decisions blocking the queue | `/grill-backlog` |
-| Promote a release | `/deploy staging`, then `/deploy production` |
-| Run the daily checklist | `/elon daily run` |
-| Check the team files for drift | `/team-audit` |
-
-Owner approvals and protected files:
-
-* The tech-lead merges reviewed PRs through `script/lead-merge.sh` only, never with `--admin`. Workers commit on their own branch and never push or merge.
-* Owner only files stay out of the tech-lead's merges: `.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh` (in each project), `.codex`, `*.rules`, and intents that become Accepted.
-* Accepting an intent or spec, every production deploy and every migration go to you.
-* You allow the merge script once, by appending the rendered `templates/codex/lead-merge.rules` to `~/.codex/rules/default.rules` (`sed "s|__HOME__|$HOME|g" templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules`). Agents never edit `~/.codex`.
-
-Roles, project files and the full command table per stage: [Agent team reference](docs/agents/team-reference.md). Design: [Agent team architecture](docs/agents/agent-team-architecture.md).
-
-## Engineering workflow
-
-The default path for any feature, refactor or bug that is not trivial. Name the stage you are in.
+For day to day engineering tasks, follow the standard six stage cycle:
 
 ```mermaid
 flowchart LR
@@ -107,101 +208,80 @@ flowchart LR
 
 | Stage | Skill | What happens |
 | --- | --- | --- |
-| Intent | `/capture-intent` | The problem and wanted outcome, in your words, until you accept it. New features only. |
-| Grill | `/grill-with-docs` | One question at a time until the design fits the codebase. Writes ADRs and a glossary. |
-| Spec | `/write-spec` or `/to-spec` | `spec.md` next to the intent, or a spec on the issue tracker. No second interview. |
-| Tickets | `/to-tickets` | Small vertical slices with blocking edges, each sized for a fresh context. |
-| Build | `/tdd` | One failing test, then the least code that passes it. |
-| Review | `/code-review` | The diff against repo standards and against the spec. Never skipped. |
+| 1. Intent | `/capture-intent` | Captures the problem and desired outcome in your words. Produces an `intent.md` file for human acceptance. Required for new features. |
+| 2. Grill | `/grill-with-docs` | Conducts a structured interview one question at a time to uncover edge cases and document Architectural Decision Records (ADRs). |
+| 3. Spec | `/write-spec` or `/to-spec` | Synthesizes the agreed plan into a definitive `spec.md` or tracker specification. No second interview required. |
+| 4. Tickets | `/to-tickets` | Decomposes the specification into small, testable vertical slices with explicit file allowlists and test gates. |
+| 5. Build | `/tdd` | Executes strict test driven development (write failing test, write minimal passing code, refactor). |
+| 6. Review | `/code-review` | Audits the pull request along two parallel axes: Repo Standards and Spec Adherence. Never skipped. |
 
-Each repo needs its tracker config first. Run `~/dotfiles/script/init-agent-project.sh --labels` in the repo root (add `--dry-run` to preview). Use `setup-matt-pocock-skills` instead for a monorepo or a non GitHub tracker.
+#### Workflow escape hatches
 
-## Skills catalog
+For smaller tasks, you can bypass early stages, but Stage 6 (Review) is never skipped:
 
-Everything below lives in `.agents/skills/<name>/`. Team skills (`elon`, `crew`, `tl`, `deploy`, `wrap-up` and others) come from `templates/agent-team/.agents/skills/`. Full inventory: [skills inventory](docs/agents/skills-inventory.md).
+* **One line fix, typo, or configuration tweak:** Proceed straight to `/tdd`, or directly edit if behavior is unchanged.
+* **Bug fix:** Run `/diagnosing-bugs` until a test reproduces the failure, then resolve using `/tdd`.
+* **Previously discussed task:** Begin directly at `/to-spec`.
+* **Single slice requiring no decomposition:** Skip `/to-tickets` and build directly with `/tdd`.
 
-**Plan and spec**
+## 5. Day to Day Operations
 
-* `capture-intent`: turn an idea or incident into an `intent.md`.
-* `grill-me`, `grilling`, `grill-with-docs`: stress test a plan, optionally recording docs.
-* `write-spec`, `to-spec`: write the spec from an intent or from the conversation.
-* `to-tickets`: split a spec into tracer bullet tickets.
-* `wayfinder`: map work too big for one session as decision tickets.
-* `triage`: move issues through the triage labels.
-* `domain-modeling`, `codebase-design`: sharpen terms, ADRs and module boundaries.
+Slash commands work in Claude Code, Cursor, and Antigravity. In OpenAI Codex, invoke skills by prefixing with a dollar sign (for example, `$elon`).
 
-**Build and review**
+### Common commands
 
-* `tdd`: red, green, refactor.
-* `implement`: build from a spec or tickets.
-* `code-review`: standards and spec review in parallel.
-* `diagnosing-bugs`: loop for hard bugs and slow code.
-* `prototype`: throwaway code to answer a design question.
-* `improve-codebase-architecture`: find deepening opportunities, report as HTML.
-* `resolving-merge-conflicts`: finish a merge or rebase.
-* `laravel-inertia-react-structure`: frontend layout for Laravel Inertia React.
-* `create-pr`: commit, check and publish a PR.
+| Goal | Command | Description |
+| --- | --- | --- |
+| Start or plan next objective | `/elon Help me choose the next objective.` | Elon reviews backlog and recommends priorities |
+| Check project status | `/elon status` or `/tl status` | Returns concise status categorized into Now, Needs Owner, and Running |
+| Deliver a batch of tickets | `/elon Deliver ready tickets using /crew and /tdd.` | Hands scoped tickets to Tech Lead for worker dispatch |
+| Unblock decision backlog | `/grill-backlog` | Walks through unresolved tickets to clear decisions |
+| Deploy to Staging | `/deploy staging` | Promotes verified main branch to staging environment |
+| Deploy to Production | `/deploy production` | Requests owner approval, then deploys to production |
+| Run daily health checklist | `/elon daily run` | Runs automated team health and project checks |
+| Audit team configuration | `/team-audit` | Checks for drift between project team files and dotfiles |
+| Clean completed worktrees | `/wrap-up` | Prunes merged branches, clean worktrees, and ended panes |
 
-**Research and notes**
+### Model routing and usage gate
 
-* `research`: gather primary source facts into a Markdown file.
-* `retro`: retrospective on a coding session.
-* `handoff`: compact a conversation for another agent.
-* `writing-for-agents`: rules for writing skills and `AGENTS.md`.
+To optimize cost and performance, tasks are routed based on complexity:
 
-**Tools and setup**
+* **Frontier models (such as Claude 3.7 Sonnet or Claude Opus):** Reserved for ambiguous decisions, architecture specifications, security reviews, and financial reconciliation.
+* **Workhorse models:** Assigned to focused implementation, unit test writing, and bug reproduction.
+* **Usage gate safety:** Before any worker process starts, `usage-gate.py` checks provider consumption. Worker dispatch is automatically paused if the 95% weekly token budget ceiling is reached.
 
-* `setup-matt-pocock-skills`: configure a repo's tracker, labels and domain docs.
-* `agent-browser`: drive a browser for tests, forms and screenshots.
-* `computer-use`: drive a visible desktop app window.
-* `orca-cli`, `orca-team`, `orca-per-workspace-env`: operate Orca worktrees, worker panes and per workspace environments.
-* `wizard`: a bash wizard for steps only a human can do.
+## 6. Shared Skills Catalog
 
-## Model routing and usage gate
+All skills live in `.agents/skills/<name>/` and are automatically linked into your tools.
 
-Strong models take ambiguous decisions, specs, security and money review. Workhorse models take building, QA, release and support. Before every `worker-start`, `usage-gate.py check` reads real provider usage and blocks only at the 95% weekly ceiling. Rules live in the project's `.claude/model-routing.md`. More: [architecture, section on models and usage](docs/agents/agent-team-architecture.md) and [ADR 0001](docs/adr/0001-shared-team-skills-and-usage-caps.md).
+* **Planning and specification:** `capture-intent`, `grill-me`, `grilling`, `grill-with-docs`, `write-spec`, `to-spec`, `to-tickets`, `wayfinder`, `triage`, `domain-modeling`, `codebase-design`.
+* **Implementation and testing:** `tdd`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
+* **Research and documentation:** `research`, `retro`, `handoff`, `writing-for-agents`.
+* **Tooling and environment control:** `setup-matt-pocock-skills`, `agent-browser`, `computer-use`, `orca-cli`, `orca-team`, `orca-per-workspace-env`, `wizard`.
 
-## Maintenance
+## 7. Maintenance and Housekeeping
+
+Keep your machine and project environments tidy with these maintenance scripts:
 
 | Task | Command |
 | --- | --- |
-| Clean finished branches, worktrees and ended panes | `/wrap-up`, or `script/wrap-up.sh --repo "$PWD"` (dry run; add `--apply`) |
-| Clean up after a merge | `script/merge-cleanup.sh --branch <pr head> [--issue N] [--pr N]` (`DRY_RUN=1` previews) |
-| Regenerate project team skills from the template | `script/sync-team-skills.sh` (`--check` fails on drift). Edit the template, never the generated copies. |
-| Audit team files | `/team-audit` or `script/team-audit.sh` |
-| Find shadowed or broken skills | `script/check-skill-collisions.sh` |
-| Migrate legacy skill links | `bash script/setup-agent-skills.sh` |
-| Add a lesson to the shared notes | `~/dotfiles/script/contribute-to-agents.sh nextjs "Nested route-group layouts cause dev 404s"` |
-| Back up app settings | `bash script/backup-claude-desktop.sh`, `fish script/backup-tide.fish` |
+| Preview and prune finished branches and worktrees | `script/wrap-up.sh --repo "$PWD"` (add `--apply` to execute) |
+| Clean up worktrees after pull request merge | `script/merge-cleanup.sh --branch <branch-name> [--issue N] [--pr N]` |
+| Sync project team skills with updated templates | `script/sync-team-skills.sh` (use `--check` to detect drift) |
+| Reset project team files to fresh template state | `script/agent-team.sh reset /path/to/project` (add `--apply` to execute) |
+| Detect shadowed or colliding skill names | `script/check-skill-collisions.sh` |
+| Share reusable knowledge across all projects | `~/dotfiles/script/contribute-to-agents.sh <topic> "Insight learned"` |
 
-A project skill with the same name as a central one silently wins, so keep reusable skills here only and project skills in `<project>/.agents/skills/`. Sharing rules and the notes tiers: [Agent team reference](docs/agents/team-reference.md).
+## 8. Repository Layout
 
-## Machine setup per OS
-
-| OS | Installer | Notes |
-| --- | --- | --- |
-| macOS | `mac/system_setup.sh` | Run `mac/osxprep.sh` first. `mac/stowall` stows app configs. |
-| Arch | `arch/system_setup.sh` | Chosen from `$OSTYPE` and `/etc/os-release`. |
-| Debian | `debian/system_setup.sh` | Same detection. |
-
-AI tooling scripts, all called from `install.sh`:
-
-| Script | Sets up |
+| Directory or File | Purpose |
 | --- | --- |
-| `script/setup-claude-code.sh` | `~/.claude/` from `.agents/claude/`, skills at `~/.claude/skills/` |
-| `script/setup-claude-desktop.sh` | Claude Desktop config |
-| `script/setup-cursor.sh`, `link-cursor-user.sh` | Cursor app, rules, settings, hooks, and `~/.cursor/skills` |
-| `script/setup-antigravity.sh` | Antigravity settings and `~/.gemini/config/skills.json` |
-| `script/setup-vscode.sh` | VS Code settings |
-| `script/setup-obsidian.sh` | Obsidian vault at `~/Documents/Obsidian`, synced with MEGAcmd |
-
-MCP secrets go in `~/.claude/settings.local.json` (gitignored). Path map and boundaries: [AGENTS.md](AGENTS.md).
-
-| Path | Role |
-| --- | --- |
-| `install.sh` | Single entry point |
-| `mac/` `arch/` `debian/` | Platform installers |
-| `script/` | Setup, backup and agent team scripts |
-| `.agents/` | Skills and Claude Code config (`claude/`) |
-| `templates/agent-team/` | The agent team template |
-| `.config/`, `ide/cursor/`, `vscode/`, `Antigravity/` | App and editor configs |
+| `install.sh` | Main bootstrap script for all operating systems |
+| `mac/`, `arch/`, `debian/` | Operating system packages and system installers |
+| `script/` | Setup scripts, maintenance tools, and agent team automation |
+| `.agents/skills/` | Central catalog of shared agent skills |
+| `.agents/claude/` | Global Claude Code configuration, prompts, and notes |
+| `templates/agent-team/` | Template files and roles adopted into projects |
+| `.config/` | Application configurations managed via GNU Stow |
+| `ide/` | Settings and keybindings for Cursor, VS Code, and Antigravity |
+| `docs/agents/` | Deep documentation covering team architecture, setup, and skills |
