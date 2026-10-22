@@ -20,7 +20,7 @@ Map upstream model slugs, strong/fast tiers, `high` and `xhigh` through `.claude
 | --- | --- |
 | Subagent, Task tool, cloud subagent, `poteto-agent` | A supervised Orca worker with a complete local brief; no cloud worker. |
 | Agent prompt | Include role, ticket, exact worktree and cwd, file allowlist, acceptance criteria, exact checks, full-suite permission, budget and escalation gates, verbatim role Standing authority, and absolute paths to this adapter, poteto-mode and selected leaf skills. |
-| Start or fan out | Read `docs/agents/team.md` and the `orchestration` skill; create the supervised Run/tasks, start workers in plain terminals per `.claude/model-routing.md`, use `worker-panes.sh` according to its help and team facts, and respect capacity. |
+| Start or fan out | Read `docs/agents/team.md` and the `orchestration` skill; create the supervised Run/tasks, start workers with `worker-start --agent` per `.claude/model-routing.md`, use `worker-panes.sh` according to its help and team facts, and respect capacity. |
 | Agent result | Require `worker_done` with matching task and dispatch IDs, evidence, local commit and remaining gates. A terminal message alone does not settle a dispatch. |
 | Review/fix iteration | Use a fresh worker for every fix round and an independent reviewer for the resulting head. Keep the existing strike rule; no iteration floor or broad fan-out overrides the brief or budget. |
 

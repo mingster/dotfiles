@@ -74,8 +74,6 @@ Publication authority (owner 2026-10-20). The Tech Lead owns engineering integra
 
 ## Starting a worker
 
-Workers start in a plain terminal (`orca terminal create --command "claude --model M --effort E"`, then `worker-start --terminal <handle>`), never with `worker-start --agent`, which opens a chat window.
-
 Host ssh work routes to a Claude worker.
 
 **Usage gate (never run out of AI usage).** Before every `worker-start`:
