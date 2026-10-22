@@ -39,6 +39,7 @@ elif args[:2] == ['orchestration','task-list']:
 elif args[:2] in (['terminal','send'], ['orchestration','send']):
     with open(os.environ['WATCHDOG_TEST_ACTIONS'],'a') as f: f.write(json.dumps(args)+'\n')
     if os.environ.get('WATCHDOG_TEST_SEND_FAIL') and args[0]=='orchestration': sys.exit(1)
+    if args[0]=='orchestration' and args[args.index('--to')+1]==os.environ.get('WATCHDOG_TEST_FAIL_TO'): sys.exit(1)
     output({})
 else: sys.exit(1)
 PY
@@ -134,6 +135,11 @@ grep -q 'unread-report msg_a' "$tmp/actions" && grep -q 'unread-report msg_b' "$
 rm -rf "$HOME/.orca"; : > "$tmp/actions";
 WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
 [[ $(grep -c 'undelivered (run run_live): unread-report' "$HOME/.orca/state/worker-watchdog/alerts.log") == 2 ]]
+# An unreachable run coordinator falls back to --fallback on --fallback-run, as an escalation.
+rm -rf "$HOME/.orca"; : > "$tmp/actions"
+WATCHDOG_TEST_FAIL_TO=coord_run_live WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --fallback term_elon --fallback-run run_elon --interval 0 --checks 1
+[[ $(grep -c '"term_elon", "--run", "run_elon", "--type", "escalation"' "$tmp/actions") == 2 ]]
+! grep -q 'undelivered' "$HOME/.orca/state/worker-watchdog/alerts.log"
 rm -rf "$HOME/.orca"
 python3 - "$tmp/inbox.json" "$now_old" <<'PY'
 import json,sys
