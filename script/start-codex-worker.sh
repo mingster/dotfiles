@@ -9,7 +9,7 @@
 #          [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
 # --from defaults to $ORCA_TERMINAL_HANDLE; a coordinator without one (Elon in Claude Code) passes its
 # orca_session_id, or worker-start fails consumer_fenced after the worktree and terminal exist.
-# Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running.
+# Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running, 3 if --model gpt-6-astra lacks OWNER_ASTRA_YES.
 set -u
 poll="${START_CODEX_POLL:-1}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=
 # Plugins a coding or review worker does not need; each one slows Codex startup.
@@ -24,6 +24,10 @@ while [ $# -gt 0 ]; do case "$1" in
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift 2; done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] || { echo "need --run --spec --title" >&2; exit 2; }
 [ -n "$from" ] || { echo "need --from <coordinator handle> (no ORCA_TERMINAL_HANDLE)" >&2; exit 2; }
+# gpt-6-astra costs about 4 times gpt-6.1-sol per token (2026-10-22: one astra worker moved the weekly reading 65% to 95%).
+# Owner rule 2026-10-22: only with the owner'"'"'s yes for that specific use; OWNER_ASTRA_YES names the issue or message of that yes.
+case "$model" in gpt-6-astra*) [ -n "${OWNER_ASTRA_YES:-}" ] || {
+  echo "start-codex-worker: refused: $model needs the owner's yes for this use; set OWNER_ASTRA_YES=<issue or message ref>, or use gpt-6.1-sol" >&2; exit 3; } ;; esac
 j() { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1"; }
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || { echo "need --worktree-path or --name and --repo" >&2; exit 2; }

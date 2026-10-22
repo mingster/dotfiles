@@ -55,4 +55,10 @@ check "--from overrides ORCA_TERMINAL_HANDLE" "$(grep 'worker-start' "$tmp/calls
 ORCA_TERMINAL_HANDLE= "$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --name lane --repo /r >/dev/null 2>&1; rc=$?
 check "no handle: exit 2 before any worktree or terminal" "$([ $rc = 2 ] && [ ! -s "$tmp/calls.log" ]; echo $?)"
 
+: > "$tmp/calls.log"
+"$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path /wt/e --model gpt-6-astra >/dev/null 2>&1; rc=$?
+check "gpt-6-astra without OWNER_ASTRA_YES: exit 3 before any orca call" "$([ $rc = 3 ] && [ ! -s "$tmp/calls.log" ]; echo $?)"
+OWNER_ASTRA_YES="owner 2026-10-22 issue 1" "$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path /wt/e --model gpt-6-astra >/dev/null 2>&1; rc=$?
+check "gpt-6-astra with OWNER_ASTRA_YES starts the worker" "$([ $rc = 0 ] && grep -q 'codex -m gpt-6-astra' "$tmp/calls.log"; echo $?)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

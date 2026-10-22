@@ -668,7 +668,8 @@ class CodexWorkerBase(unittest.TestCase):
                 f.write("  echo '{\"result\":{\"worktree\":{\"path\":\"/tmp/unused\"}}}'\n")
                 f.write("else exit 1; fi\n")
             os.chmod(stub, 0o755)
-            env = {**os.environ, "ORCA_CLI_COMMAND": stub, "TEST_BASE_LOG": t + "/args"}
+            env = {**os.environ, "ORCA_CLI_COMMAND": stub, "TEST_BASE_LOG": t + "/args",
+                   "ORCA_TERMINAL_HANDLE": "term_test"}
             args = ["bash", script, "--run", "unused", "--spec", "unused", "--title", "unused",
                     "--name", "unused", "--repo", t]
             for override, expected in (([], "origin/master"), (["--base-branch", "origin/release"], "origin/release")):
