@@ -59,7 +59,22 @@ if top.returncode: refuse("not a git worktree: " + wt)
 top = os.path.realpath(top.stdout.decode().strip())
 choice = re.search(r"(\d+)[.)]\s*Trust all and continue", text)
 listed = {os.path.realpath(os.path.join(wt, os.path.expanduser(p))) for p in re.findall(r"[\w@%+./~-]*hooks\.json", text)}
-if not choice or wt + "/.codex/hooks.json" not in listed: refuse("cannot parse the hooks prompt (no Trust all option or no <worktree>/.codex/hooks.json)")
+mine = wt + "/.codex/hooks.json"
+if not choice: refuse("cannot parse the hooks prompt (no Trust all option)")
+if listed:
+    if mine not in listed: refuse("cannot parse the hooks prompt (no <worktree>/.codex/hooks.json)")
+else:   # the real prompt lists no paths, only a count: it must equal the commands in <worktree>/.codex/hooks.json
+    m = re.search(r"(\S+)\s+hooks?\s+(?:are|is)\s+new or changed", text)
+    if not m or not m.group(1).isdigit() or int(m.group(1)) == 0: refuse("cannot parse the hooks prompt (no usable hook count)")
+    try: d = json.load(open(mine))
+    except (OSError, ValueError): refuse("cannot read hooks file: " + mine)
+    n = 0
+    for groups in (d.get("hooks") or {}).values() if isinstance(d, dict) and isinstance(d.get("hooks"), dict) else []:
+        for g in groups if isinstance(groups, list) else []:
+            for h in (g.get("hooks") or []) if isinstance(g, dict) and isinstance(g.get("hooks"), list) else []:
+                if isinstance(h, dict) and isinstance(h.get("command"), str): n += 1
+    if int(m.group(1)) != n: refuse("prompt says %s hooks are new or changed but .codex/hooks.json has %d commands (other hooks changed too)" % (m.group(1), n))
+    listed = {mine}
 checked = {}
 def same(path):
     if path in checked: return
@@ -94,7 +109,7 @@ for path, sha in sorted(checked.items()): print("sha256 " + sha + " " + path)
 PY
 trusted=
 trust_gate() {   # $1 = raw terminal screen
-  echo "$1" | grep -qi 'hooks are new or changed' || return 0
+  echo "$1" | grep -qiE 'hooks? (are|is) new or changed' || return 0
   [ -z "$trusted" ] || return 0
   verdict=$(echo "$1" | python3 -c "$hooks_check" "$wt") || { echo "start-codex-worker: hooks prompt left untouched; escalate to the owner" >&2; exit 4; }
   "$orca" terminal send --terminal "$term" --text "$(echo "$verdict" | head -1)" --json >/dev/null
