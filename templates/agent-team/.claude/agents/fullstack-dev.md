@@ -34,6 +34,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Supply `## Verification` for the PR body with 1 to 3 bullets, each a real run path and observed outcome. Your tests do not replace the independent verifier's verdict.
 - Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the changelog entry line(s). Update living design notes in `docs/<AREA>/`.
 - Before `worker_done` run `~/dotfiles/script/head-checks.sh --repo <worktree> --ref HEAD --base origin/main` and report its result line.
+- **Before `worker_done`:** merge `origin/main` and resolve conflicts (locale files by key union), re-run the touched tests, and run `head-checks.sh` once the PR exists.
+- **Leave the PR body ready:** `Closes #N`, one `## Verification` section with 1 to 3 bullets, a `Review:` line, no Test plan, no footer.
 - Report in `worker_done` per `.claude/model-routing.md` (Commit, push and merge, rule 1).
 - Skills: primary `tdd`. Run a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`), and start a bug with `diagnosing-bugs`. Never `create-pr`. Load other skills only when the feature or a merge conflict needs them.
 
