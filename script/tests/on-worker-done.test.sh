@@ -17,25 +17,19 @@ run() { "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --
 
 out=$(run); rc=$?
 check "gate ok: exit 0" "$rc"
-check "gate ok: non-claude family" "$(echo "$out" | grep -q -- 'cursor-agent'; echo $?)"
+check "gate ok: non-claude family" "$(echo "$out" | grep -q -- '--agent cursor'; echo $?)"
 check "gate ok: no fallback note" "$(! grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+check "reviewer task title for pane color" "$(echo "$out" | grep -q -- '--task-title "reviewer - PR 42"'; echo $?)"
 check "gate asked to avoid the author family" "$(grep -q -- 'pick --role reviewer --avoid-family claude' "$tmp/gate.log"; echo $?)"
 
 out=$(GATE_RC=3 run); rc=$?
 check "gate blocked: exit 0" "$rc"
-check "gate blocked: claude opus high" "$(echo "$out" | grep -q -- 'claude --model opus --effort high'; echo $?)"
+check "gate blocked: claude opus high" "$(echo "$out" | grep -q -- '--agent claude --model opus --effort high'; echo $?)"
 check "gate blocked: prints cross-family unavailable" "$(grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
 
 out=$(GATE_RC=4 run)
-check "gate error also falls back" "$(echo "$out" | grep -q -- 'claude --model opus'; echo $?)"
+check "gate error also falls back" "$(echo "$out" | grep -q -- '--agent claude --model opus'; echo $?)"
 
-out=$(run)
-check "dry run: plain terminal, no worker-start --agent" "$(echo "$out" | grep -q -- 'orca terminal create' && ! echo "$out" | grep -q -- 'worker-start.*--agent'; echo $?)"
-check "dry run: cursor launch command" "$(echo "$out" | grep -q -- 'cursor-agent --model gpt-5.6-sol-high'; echo $?)"
-out=$(GATE_RC=3 run)
-check "claude launch command with effort" "$(echo "$out" | grep -q -- '--command "claude --model opus --effort high"'; echo $?)"
-out=$(GATE_OUT='--agent antigravity --model gemini-4-argon-high' run)
-check "antigravity launch command" "$(echo "$out" | grep -q -- '--command "agy"'; echo $?)"
 run cursor >/dev/null
 check "cursor author avoids gpt" "$(grep -q -- '--avoid-family gpt' "$tmp/gate.log"; echo $?)"
 
