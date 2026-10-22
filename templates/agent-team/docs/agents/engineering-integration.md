@@ -11,3 +11,7 @@ Read before judging engineering reviews or tests. Docs-only PRs follow Elon's me
 - **Iterating:** while working on a test file run it with `ONLY=<new cases>`; run that file's whole case list once at the end with `JOBS=<n>`.
 - You run `~/dotfiles/script/head-checks.sh` once per head.
 - **PR body:** `## Verification` with 1 to 3 real runs and outcomes. No Test plan section in the PR body (the test plan lives in the spec and the ticket), no tool credit.
+
+## Verifier brief (tech-lead)
+
+- **Verifier brief:** name the exact test command (`lead-merge.sh --verify-command`). Before merge confirm the Verdict's verifier and author dispatch IDs with `orca orchestration worker-show`. Delete, never edit, a malformed Verdict of your own account that a fresh one supersedes, and note it in the PR body.
