@@ -2,7 +2,7 @@
 # Start the cross family reviewer for a coding worker_done.
 # on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|antigravity
 #                   --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]
-# Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
+# Opens a plain terminal for the reviewer (never a chat window), then worker-start --terminal (runs unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides the usage-gate.py path (tests).
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA --author-family claude|cursor|antigravity --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]" >&2; exit 2; }
@@ -47,8 +47,32 @@ Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$aut
 Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
 EOF
 
-cmd="orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree path:$wt $flags --json"
+# The reviewer runs in a plain terminal, never a chat window: no --agent on worker-start.
+agent="" model="" effort=""
+set -- $flags
+while [ $# -gt 1 ]; do
+  case "$1" in --agent) agent=$2 ;; --model) model=$2 ;; --effort) effort=$2 ;; esac
+  shift 2
+done
+case "$agent" in
+  claude) launch="claude --model $model --effort $effort" ;;
+  cursor) launch="cursor-agent --model $model" ;;
+  antigravity) launch="agy" ;;
+  *) echo "unknown reviewer agent: $agent" >&2; exit 1 ;;
+esac
+title="reviewer - PR $pr"
+cmd="orca terminal create --worktree path:$wt --title \"$title\" --command \"$launch\"; orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --terminal <handle> --worktree path:$wt --task-title \"$title\" --json"
 echo "$cmd"
 [ "$dry" = 1 ] && exit 0
-# shellcheck disable=SC2086
-exec orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "path:$wt" $flags --json
+t=$(orca terminal create --worktree "path:$wt" --title "$title" --command "$launch" --json | jq -r .result.terminal.handle) || exit 1
+[ -n "$t" ] && [ "$t" != null ] || { echo "terminal create failed" >&2; exit 1; }
+# Wait for the agent prompt. Claude shows its permission mode line; others get a fixed settle time.
+n=0
+if [ "$agent" = claude ]; then
+  until orca terminal read --terminal "$t" --screen --json | grep -q 'bypass permissions'; do
+    sleep 2; n=$((n+1)); [ $n -gt 45 ] && { echo "startup timeout $t" >&2; exit 1; }
+  done
+else
+  sleep 8
+fi
+exec orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --terminal "$t" --worktree "path:$wt" --task-title "$title" --json
