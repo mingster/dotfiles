@@ -9,6 +9,7 @@
 #          [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
 # --from defaults to $ORCA_TERMINAL_HANDLE; a coordinator without one (Elon in Claude Code) passes its
 # orca_session_id, or worker-start fails consumer_fenced after the worktree and terminal exist.
+# A "hooks are new or changed" prompt is trusted only when the hooks and what they run match origin/main; else exit 4.
 # Prints the dispatch id and terminal handle; exits 1 if the dispatch is not running, 3 if --model gpt-6-astra lacks OWNER_ASTRA_YES.
 set -u
 poll="${START_CODEX_POLL:-1}"; orca="${ORCA_CLI_COMMAND:-orca}"; model=gpt-6.1-sol; effort=medium; base=
@@ -38,13 +39,75 @@ if [ -z "$wt" ]; then
   fi
   wt=$("$orca" worktree create --name "$name" --repo "path:$repo" --base-branch "$base" --setup run --json | j 'd["result"]["worktree"]["path"]') || exit 1
 fi
+# Codex keys hook trust by path, so every new worktree stops at "hooks are new or changed".
+# Trust all only when every listed hooks file, and every file its commands reference, is byte
+# identical to origin/main of the same repo. Anything else: select nothing, print the diff, exit 4.
+read -r -d '' hooks_check <<'PY'
+import sys, os, re, json, subprocess, hashlib, difflib
+wt = os.path.realpath(sys.argv[1]); raw = sys.stdin.read()
+def strs(d):
+    if isinstance(d, str): yield d
+    elif isinstance(d, (dict, list)):
+        for v in (d.values() if isinstance(d, dict) else d): yield from strs(v)
+try: text = "\n".join(strs(json.loads(raw)))
+except ValueError: text = raw
+def git(*a): return subprocess.run(["git", "-C", wt] + list(a), capture_output=True)
+def refuse(msg, diff=""):
+    sys.stderr.write("start-codex-worker: " + msg + "\n" + diff); sys.exit(1)
+top = git("rev-parse", "--show-toplevel")
+if top.returncode: refuse("not a git worktree: " + wt)
+top = os.path.realpath(top.stdout.decode().strip())
+choice = re.search(r"(\d+)[.)]\s*Trust all and continue", text)
+listed = {os.path.realpath(os.path.join(wt, os.path.expanduser(p))) for p in re.findall(r"[\w@%+./~-]*hooks\.json", text)}
+if not choice or wt + "/.codex/hooks.json" not in listed: refuse("cannot parse the hooks prompt (no Trust all option or no <worktree>/.codex/hooks.json)")
+checked = {}
+def same(path):
+    if path in checked: return
+    rel = os.path.relpath(path, top)
+    if rel.startswith("..") or not os.path.isfile(path): refuse("not a file inside the repo: " + path)
+    main = git("show", "origin/main:" + rel)
+    if main.returncode: refuse("not on origin/main (untracked or new): " + rel)
+    cur = open(path, "rb").read()
+    if cur != main.stdout:
+        refuse("differs from origin/main: " + rel, "".join(difflib.unified_diff(
+            main.stdout.decode(errors="replace").splitlines(True), cur.decode(errors="replace").splitlines(True),
+            "origin/main:" + rel, rel)))
+    checked[path] = hashlib.sha256(cur).hexdigest()
+for path in sorted(listed):
+    same(path)
+    cmds = []
+    def walk(d):
+        if isinstance(d, dict): [cmds.append(v) if k == "command" and isinstance(v, str) else walk(v) for k, v in d.items()]
+        elif isinstance(d, list): [walk(v) for v in d]
+    try: walk(json.load(open(path)))
+    except ValueError: refuse("hooks file is not valid JSON: " + path)
+    for cmd in cmds:
+        for tok in re.findall(r"[^\s\"'`;|&<>()=,{}\[\]]+", cmd):
+            tok = re.sub(r"^\$\{?\w+\}?(?=/)", "", tok)
+            if tok == "/dev/null" or not ("/" in tok or re.search(r"\.(sh|bash|py|js|mjs|cjs|ts|rb|pl|php)$", tok)): continue
+            found = [c for c in (os.path.join(top, tok), top + tok) if os.path.exists(c)] if tok.startswith("/") else [os.path.join(top, tok)]
+            if tok.startswith("/") and os.path.exists(tok) and not found: refuse("hook command references a file outside the repo: " + tok)
+            if not found or not os.path.exists(found[0]): refuse("hook command references a path I cannot resolve: " + tok)
+            same(os.path.realpath(found[0]))
+print(choice.group(1))
+for path, sha in sorted(checked.items()): print("sha256 " + sha + " " + path)
+PY
+trusted=
+trust_gate() {   # $1 = raw terminal screen
+  echo "$1" | grep -qi 'hooks are new or changed' || return 0
+  [ -z "$trusted" ] || return 0
+  verdict=$(echo "$1" | python3 -c "$hooks_check" "$wt") || { echo "start-codex-worker: hooks prompt left untouched; escalate to the owner" >&2; exit 4; }
+  "$orca" terminal send --terminal "$term" --text "$(echo "$verdict" | head -1)" --json >/dev/null
+  echo "$verdict" | tail -n +2 | sed 's/^/start-codex-worker: trusted /' >&2; trusted=1
+}
 term=$("$orca" terminal create --worktree "path:$wt" --title "$title" \
   --command "codex -m $model -c model_reasoning_effort=$effort$off" --json | j 'd["result"]["terminal"]["handle"]') || exit 1
 for i in $(seq 1 180); do   # up to 180 s for the Codex prompt
-  "$orca" terminal read --terminal "$term" --screen --json 2>/dev/null | grep -q 'Ask Codex\|? for shortcuts\|GPT-[0-9]' && break; sleep "$poll"; done
+  scr=$("$orca" terminal read --terminal "$term" --screen --json 2>/dev/null); trust_gate "$scr"
+  echo "$scr" | grep -q 'Ask Codex\|? for shortcuts\|GPT-[0-9]' && break; sleep "$poll"; done
 "$orca" terminal send --terminal "$term" --text "Say ready and wait for your task." --enter --json >/dev/null
 for i in $(seq 1 90); do   # up to 90 s for the warm-up turn to finish
-  sleep "$poll"; scr=$("$orca" terminal read --terminal "$term" --screen --json 2>/dev/null)
+  sleep "$poll"; scr=$("$orca" terminal read --terminal "$term" --screen --json 2>/dev/null); trust_gate "$scr"
   echo "$scr" | grep -q 'Working' || { echo "$scr" | grep -qi 'ready' && break; }; done
 out=$("$orca" orchestration worker-start --run "$run" --spec "$(cat "$spec")" --terminal "$term" \
   --worktree "path:$wt" --task-title "$title" --from "$from" --json) || { echo "$out" >&2; exit 1; }
