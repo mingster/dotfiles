@@ -135,10 +135,10 @@ grep -q 'unread-report msg_a' "$tmp/actions" && grep -q 'unread-report msg_b' "$
 rm -rf "$HOME/.orca"; : > "$tmp/actions";
 WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
 [[ $(grep -c 'undelivered (run run_live): unread-report' "$HOME/.orca/state/worker-watchdog/alerts.log") == 2 ]]
-# An unreachable run coordinator falls back to --fallback on --fallback-run, as an escalation.
+# An unreachable run coordinator falls back to the --fallback-run mailbox, as an escalation.
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
-WATCHDOG_TEST_FAIL_TO=coord_run_live WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --fallback term_elon --fallback-run run_elon --interval 0 --checks 1
-[[ $(grep -c '"term_elon", "--run", "run_elon", "--type", "escalation"' "$tmp/actions") == 2 ]]
+WATCHDOG_TEST_FAIL_TO=coord_run_live WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --fallback-run run_elon --interval 0 --checks 1
+[[ $(grep -c '"run:run_elon", "--run", "run_elon", "--type", "escalation"' "$tmp/actions") == 2 ]]
 ! grep -q 'undelivered' "$HOME/.orca/state/worker-watchdog/alerts.log"
 rm -rf "$HOME/.orca"
 python3 - "$tmp/inbox.json" "$now_old" <<'PY'
