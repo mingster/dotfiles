@@ -123,7 +123,6 @@ flowchart TD
 
     subgraph Service_Specialists["Operational Specialists"]
         CSM["Support CSM (support-csm)<br/>Drafts customer responses for human owner review"]
-        Stream["Stream Health (stream-health)<br/>Media and streaming infrastructure audits"]
     end
 
     Board --> CEO
@@ -137,7 +136,6 @@ flowchart TD
     TL --> SecOps
     TL --> RM
     CEO --> CSM
-    CEO --> Stream
 ```
 
 ### Roles and responsibilities

@@ -4,7 +4,7 @@ Overview of the AI agent team across **<project-a>**, **<project-b>** and future
 
 ## 1. Organization
 
-Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of <project-a> and <project-b>. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. <project-a> has nine roles (Elon, the Tech Lead `tech-lead`, seven specialists); <project-b> has ten (plus `stream-health`).
+Mingster talks only to **Elon (`elon`)**, the shared CEO and single front door of <project-a> and <project-b>. Elon delegates to teammates, every teammate reports to Elon, and Elon reports to Mingster. Each project has nine shared roles (Elon, the Tech Lead `tech-lead`, seven specialists); a project may add its own roles in its `.claude/agents/`.
 
 ```mermaid
 flowchart TD
@@ -36,7 +36,7 @@ flowchart TD
     CEO --> RM
 ```
 
-Not drawn: `support-csm` (customer support and success) in both projects, and `stream-health` (streaming and infrastructure checks) in <project-b> only. Each reports to Elon.
+Not drawn: `support-csm` (customer support and success) in both projects. It reports to Elon.
 
 ## 2. Responsibilities and decision boundaries
 
@@ -44,7 +44,7 @@ Not drawn: `support-csm` (customer support and success) in both projects, and `s
 - **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (Tech Lead and workers). Plans, dispatches every teammate with Orca orchestration (skill `orchestration`, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents or experimental agent teams. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; progress, merges, reviews and staging deploys are not reported. On request the format is **Now**, **Needs owner**, **Running**.
 - **Sales and Marketing (`sales-marketing`).** Validates demand and acquisition channels (CAC, LTV, churn, activation) and supplies evidence based problem definitions. Never sends unapproved marketing email, touches production ledgers or offers unapproved discounts.
 - **BA (`architect-pm` / 需求分析師).** Turns pain points and owner vision into `intent.md`, then `spec.md` (PRD), then machine checkable ticket contracts (GitHub issues); works with the Tech Lead on handoffs. Never writes application code.
-- **Tech Lead (`tech-lead`).** Reports delivery status and capacity to Elon. Publishes and integrates reviewed branches, keeps branches and worktrees clean, coordinates releases, starts and supervises engineering workers in Orca with the same usage gate. Receives ticket contracts from the BA. *Merging:* the Tech Lead pushes branches, opens PRs and merges reviewed work ("Commit, push and merge" in `.claude/model-routing.md`); workers commit on their own branches and report; Elon owns priorities and owner decisions. Once required risk-based reviewers (including SecOps or stream-health where required) approve the current full head SHA, checks are green and the PR is mergeable, the tech-lead merges at once, never with `--admin`. PRs accepting an intent or spec, every production deploy and migrations still go to the owner. Release-manager pushes only the staging and production branches.
+- **Tech Lead (`tech-lead`).** Reports delivery status and capacity to Elon. Publishes and integrates reviewed branches, keeps branches and worktrees clean, coordinates releases, starts and supervises engineering workers in Orca with the same usage gate. Receives ticket contracts from the BA. *Merging:* the Tech Lead pushes branches, opens PRs and merges reviewed work ("Commit, push and merge" in `.claude/model-routing.md`); workers commit on their own branches and report; Elon owns priorities and owner decisions. Once required risk-based reviewers (including SecOps where required) approve the current full head SHA, checks are green and the PR is mergeable, the tech-lead merges at once, never with `--admin`. PRs accepting an intent or spec, every production deploy and migrations still go to the owner. Release-manager pushes only the staging and production branches.
 - **Support tickets (owner rule 2026-10-12).** When a ticket or support email arrives: the problem is resolved first when it needs a fix, `support-csm` drafts the reply in the customer's language, and Elon notifies Mingster at once with the ticket, what was done and the draft. Nothing is sent before he approves. A ticket found in the daily run or a status check is reported the same day.
 
 ## 3. Delivery lifecycle
@@ -131,6 +131,6 @@ Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role bounda
 
 The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled in copies (`docs/agents/team.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are the exception: generated, never edited in place. Edit `templates/agent-team/.agents/skills/` and run `script/sync-team-skills.sh <project>`; `--check` fails on drift.
 
-Per project: hostnames, environments and deploy stages (for example <project-b>'s staging and production hosts); ADR numbers (<project-a> cites ADR 0058 and 0060, <project-b> fileServer ADR 0002 and 0004); product wording, language rules and domain terms; extra roles (<project-b> adds `stream-health`).
+Per project: hostnames, environments and deploy stages (for example <project-b>'s staging and production hosts); ADR numbers (<project-a> cites ADR 0058 and 0060, <project-b> fileServer ADR 0002 and 0004); product wording, language rules and domain terms; extra project only roles.
 
 Shared: Elon as the single front door, Orca orchestration with `worker_done` reports, the usage gate, the provider fallback order, eager merging by the Tech Lead, the owner's gated actions, and the commit, push and merge owner rule (`.claude/model-routing.md`).

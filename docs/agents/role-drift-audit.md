@@ -35,7 +35,7 @@ A commit time only says when the file was last touched. "Newest copy" below is d
 | Changelog line: T says "one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the entry line(s), never edit CHANGELOG.md in a PR". R and P keep the older "read CHANGELOG.md with limit: 5 for the format" wording | b | T | Port the T wording (no issue fallback, "never edit CHANGELOG.md in a PR") to R. Port the same to P, keeping P's `<component>/changelog.d/` path. |
 | T changelog line has a typo: "Update update living design notes" | b | T has the typo, R and P do not | Fix the double "update" in T. Do not port to R or P. |
 | R and P have a stray blank line before or after the changelog bullet (R line 34, P line 21) | b | T is clean | Remove the blank lines in R and P so the bullet list stays one block. |
-| P: description and body describe web2, stream health, backend | a | n/a | None. |
+| P: description and body describe web2, backend | a | n/a | None. |
 | P: intro adds "You run on Codex by default ... the `model:` line applies only under Claude Code ... Never rules and strike rule are yours to keep" | a | n/a | None, but see the next row for the cost gate. |
 | P: drops the **Cost Gate (10 Turns)** bullet | b | T | Port the 10 turn cost gate to P. A Codex worker has no hooks, so this rule matters more there, not less. |
 | P: `tools:` has no `SendMessage` (same on every P role) | b | T | Add `SendMessage` to every P role `tools:` line, or write one line in P `AGENTS.md` saying why Codex roles omit it. It is not documented today. |
@@ -55,7 +55,7 @@ A commit time only says when the file was last touched. "Newest copy" below is d
 | Staging step: T has the full changelog step (run `bin/changelog-compile.sh` on an up to date `main`, commit "chore: compile changelog fragments" on a branch, open a PR, `gh pr merge --merge`, then promote). R has only "starts by compiling `changelog.d` fragments". P has "see /deploy staging step 0" | b | T | Port the T changelog steps to R. Port to P with the `<component>/changelog.d/` path and keep the pointer to `/deploy staging` step 0. |
 | P: description names `<project-b>_op/bin/deploy-stage.sh` | a | n/a | None. |
 | P: Local step is "Local & Component Checks" against `_test` DBs | a | n/a | None. |
-| P: drops the exact smoke handoff messages (`Ready for qa-sdet smoke check: staging <sha>`, `Ready for owner to approve production: <sha>`) | b | T | Port both message formats to P, adding `stream-health` as a second recipient for the smoke message. |
+| P: drops the exact smoke handoff messages (`Ready for qa-sdet smoke check: staging <sha>`, `Ready for owner to approve production: <sha>`) | b | T | Port both message formats to P. |
 | P: production step uses the 15:00 to 17:00 Asia/Taipei window | a | n/a | None. |
 | P: "Escalate failed promotions" (drops "production") and "Draft rollback steps" (drops "per /deploy skill") | b | T | Port "per `/deploy` skill" to P. The "production" word is cosmetic, port it too for consistency. |
 | P: `Memory and routing ... Read memory only on demand` | a | n/a | None. |
@@ -73,7 +73,7 @@ A commit time only says when the file was last touched. "Newest copy" below is d
 | P: "enforce system boundaries" and no Multi-Tenant Boundary Tests bullet | a | n/a | None. <project-b> has no store tenancy. |
 | P: Standards axis mentions session rules, Spec axis adds Roku 5.9 backwards compatibility | a | n/a | None. |
 | P: review line drops "Never rely on teammate claims" and `main...<branch>` becomes `<default>...<branch>` | b | T | Port "Never rely on teammate claims" to P. The `<default>` wording is fine as is. |
-| P: smoke check is "read-only checks on live endpoints", T uses `agent-browser` on sign in, storefront, checkout | a | n/a | None. Playback smoke is split with `stream-health`. |
+| P: smoke check is "read-only checks on live endpoints", T uses `agent-browser` on sign in, storefront, checkout | a | n/a | None. |
 | P: `bun test --isolate` dropped in two places, Never rule says "outside test files" with no paths | a | n/a | None. Paths are R specific. |
 | P: "Read memory only on demand" and "playback regressions" wording | a | n/a | None. |
 
@@ -142,38 +142,15 @@ A commit time only says when the file was last touched. "Newest copy" below is d
 | Hunk | Class | Newest copy | Recommended action |
 | --- | --- | --- | --- |
 | Light row: T says "changelog fragment lines", R and P say "changelog lines" | b | T | Port "fragment" to R and P. Wording only. |
-| Workhorse row: P adds `stream-health` | a | n/a | None. Add the same to T only if stream-health becomes a template role (see the last section). |
 | Fallback line 19: P adds "(below)" | b | P | Port "(below)" to T and R. Cosmetic. |
 | Line 50: P uses absolute repo paths and adds "Use the absolute path, so the worker reads the role file on the main checkout, not a stale copy in its own branch", and also reads `AGENTS.md` (Token budget) | b | P | Port the stale copy warning to T and R, using the repo root path of each repo. This is a real fix. A worker in a branch worktree could read an old role file. |
 | Line 62: T names the worktree location `~/orca/workspaces/<project>`, R and P omit it | b | T | Port the worktree path hint to R and P. |
 | Line 74: P says fallback order "starting at the role's default provider and wrapping around (fullstack-dev: Codex, Cursor, Antigravity, Claude)", T and R say a flat Claude, Codex, Cursor, Antigravity order | b | P | Port the wrap around wording to T and R. For T, keep the fullstack-dev example as a placeholder or drop it. |
 | Line 80: P says "the role's default provider again", T and R say "the preferred provider again" | b | P | Port "the role's default provider" to T and R. The default provider table already exists in all three. |
 
-## stream-health.md (<project-b> only)
-
-Checked against the template conventions.
-
-| Check | Result |
-| --- | --- |
-| Frontmatter model and effort | Pass. `model: sonnet`, `effort: medium`, which is the Workhorse tier, and `model-routing.md` lists `stream-health` under Workhorse. |
-| `tools:` line | Read only plus Bash and Skill, consistent with its Never section. Missing `SendMessage`, same gap as every other P role. |
-| `skills:` line | None. Body says load `agent-browser`, `diagnosing-bugs` and `research` on demand. Matches the on demand pattern used by the other roles, but unlike qa-sdet it lists none in frontmatter. Fine. |
-| Reporting and handoffs section | Pass. Reports to Elon and escalates severe outages (more than 1 channel or 1 channel over 15 minutes) to `architect-pm`, `fullstack-dev` and `tech-lead`. Note this escalation skips Elon, same direct style as P support-csm. |
-| `worker_done` reporting | Not present, and not present in any other worker role in T, R or P. Only `elon.md` and `tech-lead.md` mention `worker_done`, because they receive it. Workers get the `worker_done` instruction from the Orca dispatch preamble. So this is consistent, not a gap. |
-| Never section | Present ("Absolute Boundaries"). It covers channel status, cron imports, recordings, Wowza and other servers, DNS and CDN. |
-| Memory and routing line | Pass. Points to `.claude/model-routing.md`. |
-| Token Saver rules | Short version only. The other roles also say "never paste full diffs into chat" and "never read whole files". |
-
-Missing compared with the other roles (four items):
-
-1. No "Never expose secrets in logs" or Zero-Env line. It reads production telemetry through `agent-sql.sh`, so add "Never write secrets or connection strings into reports".
-2. No "Never write to database tables" line. It says "read only queries" in prose but the Never section does not state it. `model-routing.md` says a read only role is held only by its Never section, so this line matters. Add "Never write to database tables".
-3. No `SendMessage` in `tools:`. Same fix as the other P roles.
-4. No "Never push to default branches or merge PRs" line. It posts PR review comments, so add the usual no merge rule.
-
 ## Summary
 
-Hunk counts by class (stream-health is a checklist, not counted):
+Hunk counts by class:
 
 | File | a | b |
 | --- | --- | --- |
