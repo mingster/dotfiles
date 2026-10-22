@@ -1,6 +1,6 @@
 ---
 name: team-audit
-description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Produce structural fixes and report delivery and post-merge metrics.
+description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Produce structural fixes, report delivery and post-merge metrics, and tune throughput (more workers, faster tickets, more merged PRs).
 ---
 
 # Team audit
@@ -43,6 +43,12 @@ Record the previous audit date and current cutoff, with source references and co
 
 Report tech-lead escalations to Elon since the last audit: count the tech-lead's Orca `escalation` messages (`orca orchestration inbox --json`, filtered by the tech-lead's handles) by the tag that starts the subject (`rule-covered`, `owner-decision`, `hard-stop`, `cross-project`). Every `rule-covered` escalation is a failure of the tech-lead's standing authority: name it and fix the rule or the brief so the tech-lead decides it next time. An untagged subject counts as unknown.
 
-## 5. Output
+## 5. Throughput tune up
 
-A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the structural fix with verification or its approval gate, plus every role's performance entry, both metrics and the evidence coverage. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, <project-a>, <project-b>), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.
+Every audit answers three questions with readings from the same run: how to run more workers at once, how to finish each ticket faster, and how to merge more PRs. Measure first: provider headroom and reset times (`usage-gate.py show`), workers running per lane, the agent ready queue against the owner blocked queue, PRs merged per day, and where tickets waited (owner approval, review, an integration branch, quota).
+
+For each bottleneck, propose one concrete lever with its expected gain and cost, for example: an unused provider credit before it expires, more independent lanes on disjoint files, per ticket PRs instead of one integration PR, batched owner approvals, or a `/grill-backlog` round for owner blocked issues. Changes within standing authority go into the audit branch. Ask the owner in one numbered round for anything that spends quota or credit, changes an owner rule, or touches a protected path, each with a recommendation. Record accepted levers as rules, and the next audit checks whether each one delivered its gain.
+
+## 6. Output
+
+A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the structural fix with verification or its approval gate, plus every role's performance entry, both metrics, the throughput levers and the evidence coverage. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, <project-a>, <project-b>), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.
