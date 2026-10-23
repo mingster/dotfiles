@@ -20,7 +20,7 @@ class GateTests(unittest.TestCase):
         reader = self.root/'reader'
         reader.write_text('''#!/usr/bin/env bash
 case "$1" in
-  hardware) printf '12 8 1000000000\\n' ;;
+  hardware) printf '%s\\n' "${HEAVY_GATE_HARDWARE:-12 8 1000000000}" ;;
   model) printf 'fixture\\n' ;;
   *) IFS= read -r reading < "$HEAVY_GATE_SAMPLE"; printf '%s\\n' "$reading" ;;
 esac
@@ -160,7 +160,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         path = self.config(slots='oops')
         result = self.probe('--force', '--calibrate', 'true')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertRegex(path.read_text(), r'^slots=[123]\nload_max=10\n')
+        self.assertRegex(path.read_text(), r'^slots=[123]\nload_max=14\n')
         self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
 
     def test_weight_two_claims_atomically(self):
@@ -290,16 +290,48 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.assertEqual(path.read_text(), before)
         self.assertFalse((self.root/'ran').exists())
 
+    def test_calibration_load_limit_uses_total_cores(self):
+        self.env['HEAVY_GATE_HARDWARE'] = '10 4 1000000000'
+        self.set_reading('8 90')
+        result = self.probe('--calibrate', 'true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.root/'.config/heavy-gate/slots.conf'
+        self.assertIn('load_max=12\n', path.read_text())
+        # The recorded limit must also permit later calibration at idle team load.
+        result = self.probe('--force', '--calibrate', 'true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_calibration_excludes_cold_warmup_from_baseline(self):
+        workload = self.root/'workload.py'
+        workload.write_text('''import fcntl, pathlib, time
+counter = pathlib.Path(__file__).with_name('invocations')
+with counter.open('a+') as stream:
+    fcntl.flock(stream, fcntl.LOCK_EX)
+    stream.seek(0)
+    invocation = len(stream.readlines()) + 1
+    stream.write('run\\n')
+time.sleep(1.5 if invocation == 1 else 0.15 if invocation == 2 else 0.6)
+''')
+        import shlex
+        result = self.probe('--calibrate', shlex.join([sys.executable, str(workload)]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        contents = (self.root/'.config/heavy-gate/slots.conf').read_text()
+        self.assertTrue(contents.startswith('slots=1\n'), contents)
+        self.assertRegex(result.stdout, r'(?m)^warmup wall_seconds=\d+\.\d+$')
+        self.assertEqual(result.stdout.count('round copies='), 3)
+        self.assertEqual(contents.count('wall_seconds='), 3)
+        self.assertEqual((self.root/'invocations').read_text().splitlines(), ['run']*7)
+
     def test_synthetic_default_workload_persists_readings_and_fingerprint(self):
         local = self.root/'.config/heavy-gate/calibration.conf'
         local.parent.mkdir(parents=True)
         local.write_text('command=printf "run\\n" >> '+str(self.root/'runs')+'\n')
         result = self.probe('--calibrate')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.root/'runs').read_text().splitlines(), ['run']*6)
+        self.assertEqual((self.root/'runs').read_text().splitlines(), ['run']*7)
         path = local.with_name('slots.conf')
         contents = path.read_text()
-        self.assertRegex(contents, r'^slots=[123]\nload_max=10\n')
+        self.assertRegex(contents, r'^slots=[123]\nload_max=14\n')
         self.assertIn('# date=', contents)
         self.assertIn('# fingerprint=', contents)
         self.assertIn('"hw.model": "fixture"', contents)
