@@ -68,13 +68,13 @@
       "description": "Fullstack developer implementing features test-first",
       "chain": [
         {
+          "provider": "cursor",
+          "model": "gpt-5.6-sol-medium"
+        },
+        {
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
-        },
-        {
-          "provider": "cursor",
-          "model": "claude-sonnet-5-5-medium"
         },
         {
           "provider": "antigravity",
@@ -176,6 +176,37 @@
           "model": "claude-sonnet-5-5-medium"
         }
       ]
+    },
+    "fullstack-dev-small": {
+      "tier": "light",
+      "description": "Fix or chore touching 3 files or fewer (owner 2026-10-09)",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "haiku"
+        },
+        {
+          "provider": "cursor",
+          "model": "gemini-3.8-flash-low"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash-low"
+        }
+      ]
+    }
+  },
+  "tiers": {
+    "light": {
+      "claude": {
+        "model": "haiku"
+      },
+      "cursor": {
+        "model": "gemini-3.8-flash-low"
+      },
+      "antigravity": {
+        "model": "gemini-3.8-flash-low"
+      }
     }
   }
 }
