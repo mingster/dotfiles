@@ -94,6 +94,10 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 11. **Heavy jobs (owner rule 2026-10-23):** at most 2 heavy jobs run on the machine at once (tsc, bun test, next build, Playwright; a dev or regression run counts as 2). Start one only when the 1 minute load average is under 12 (`sysctl -n vm.loadavg`); otherwise wait and say so.
 12. **Push an explicit branch (owner rule 2026-10-23):** `git push origin HEAD:refs/heads/<branch>`, never a bare `git push` or a target taken from `@{u}`, which pushed a fix straight to main once.
 
+### Heavy jobs
+
+Run `tsc`, `bun test`, `next build` and Playwright through `~/dotfiles/script/heavy-gate.sh -- <command>` to read the persisted machine limits. Run a regression with `~/dotfiles/script/heavy-gate.sh --weight 2 -- <command>` so it takes two slots. Only Elon runs `~/dotfiles/script/hw-probe.sh --calibrate`, once per machine at a quiet time; agents never calibrate themselves. The optional default workload lives in the untracked `~/.config/heavy-gate/calibration.conf` as `command=<command>`; replacing persisted limits requires `--force`.
+
 ## Gated actions
 
 Holding back a gated action is the default. Only the owner approves actions identified by project policy, including:

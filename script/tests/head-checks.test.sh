@@ -2,12 +2,14 @@
 # Real fixture commits and worktrees; only the forge is faked.
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/.." && pwd)/head-checks.sh" <<'PY'
-import json, os, pathlib, subprocess, sys, tempfile
+import hashlib, json, os, pathlib, select, subprocess, sys, tempfile, time
 runner=sys.argv[1]
 passed=failed=0
 with tempfile.TemporaryDirectory() as temp:
     root=pathlib.Path(temp); repo=root/'fixture'; repo.mkdir(); binpath=root/'bin'; binpath.mkdir()
     gh=binpath/'gh'
+    reader=binpath/'reader'
+    reader.write_text('#!/usr/bin/env bash\ncase "$1" in hardware) echo "12 8 1000000000";; model) echo fixture;; *) echo "0 90";; esac\n'); reader.chmod(0o755)
     gh.write_text('''#!/usr/bin/env python3
 import json,os,sys,pathlib
 if sys.argv[2]=='view': print(json.dumps({'headRefOid':os.environ['GH_HEAD'],'baseRefOid':os.environ['GH_BASE']}))
@@ -19,7 +21,8 @@ else: sys.exit(1)
     git('init','-q'); git('config','user.name','Fixture'); git('config','user.email','fixture@example.invalid')
     (repo/'code.txt').write_text('base\n'); git('add','.'); git('commit','-qm','base'); base=git('rev-parse','HEAD'); git('update-ref','refs/remotes/origin/main',base)
     (repo/'.agents').mkdir(); conf=repo/'.agents/head-checks.conf'; order=root/'order'; comments=root/'comments'
-    env=dict(os.environ,PATH=str(binpath)+os.pathsep+os.environ['PATH'],HOME=str(root/'home'),GH_BASE=base,COMMENTS=str(comments),ORCA_TEST_SECRET='SECRET_MUST_NOT_APPEAR')
+    env=dict(os.environ,PATH=str(binpath)+os.pathsep+os.environ['PATH'],HOME=str(root/'home'),GH_BASE=base,COMMENTS=str(comments),ORCA_TEST_SECRET='SECRET_MUST_NOT_APPEAR',HEAVY_GATE_READER=str(reader),HEAVY_GATE_POLL_SECONDS='0.02')
+    env.pop('HEAD_CHECKS_SLOTS',None)
     def run(name,commands,expected,pr=True,override=False):
         global passed,failed
         conf.write_text(commands+'\n'); (repo/'code.txt').write_text(name+'\n'); git('add','.'); git('commit','-qm',name); head=git('rev-parse','HEAD'); env['GH_HEAD']=head
@@ -121,6 +124,56 @@ else: sys.exit(1)
     if locked.returncode==1 and 'in use' in locked.stdout+locked.stderr and 'Checks:' not in locked.stdout and lock.exists(): passed+=1; print('ok   all slots busy refuses without a verdict')
     else: failed+=1; print('FAIL lock',locked.stdout,locked.stderr)
     import shutil; shutil.rmtree(lock)
+    # Persisted limits govern both worktree selection and the shared machine budget.
+    settings=root/'home/.config/heavy-gate/slots.conf'; settings.parent.mkdir(parents=True)
+    fingerprint=hashlib.sha256(json.dumps({'hw.model':'fixture','hw.ncpu':12,'hw.memsize':1000000000},sort_keys=True).encode()).hexdigest()
+    def limits(slots):
+        settings.write_text(f'slots={slots}\nload_max=12\n# fingerprint={fingerprint}\n')
+    def invoke(extra=None):
+        return subprocess.run(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env={**env,**(extra or {})},text=True,capture_output=True,timeout=30)
+    limits(1); lock.mkdir(); (lock/'pid').write_text(str(os.getpid()))
+    limited=invoke()
+    if limited.returncode==1 and 'in use' in limited.stdout+limited.stderr:
+        passed+=1; print('ok   persisted slot count limits check worktrees')
+    else: failed+=1; print('FAIL persisted count',limited.stdout,limited.stderr)
+    overridden=invoke({'HEAD_CHECKS_SLOTS':'2'})
+    if overridden.returncode==0:
+        passed+=1; print('ok   explicit HEAD_CHECKS_SLOTS overrides persisted count')
+    else: failed+=1; print('FAIL persisted override',overridden.stdout,overridden.stderr)
+    limits(3)
+    lock2=pathlib.Path(str(wt)+'-2.lock'); lock2.mkdir(); (lock2/'pid').write_text(str(os.getpid()))
+    third=invoke()
+    if third.returncode==0 and pathlib.Path(str(wt)+'-3').is_dir():
+        passed+=1; print('ok   calibrated third slot can select third worktree')
+    else: failed+=1; print('FAIL calibrated third slot',third.stdout,third.stderr)
+    shutil.rmtree(lock); shutil.rmtree(lock2)
+    # A direct heavy-gate job occupies the same budget as a real head-checks run.
+    heavy=subprocess.Popen(['bash',str(pathlib.Path(runner).with_name('heavy-gate.sh')),'--weight','3','--','sleep','30'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    pending=None
+    try:
+        deadline=time.time()+10
+        while len(list((root/'home/.cache/heavy-gate').glob('slot-*')))!=3 and time.time()<deadline:
+            time.sleep(0.02)
+        order.unlink(missing_ok=True)
+        pending=subprocess.Popen(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        ready=select.select([pending.stderr],[],[],10)[0]
+        notice=pending.stderr.readline() if ready else ''
+        held=not order.exists() and pending.poll() is None and 'slots' in notice
+        heavy.terminate(); heavy.communicate(timeout=10)
+        out,err=pending.communicate(timeout=30)
+        if held and pending.returncode==0 and order.exists():
+            passed+=1; print('ok   direct heavy jobs and head-checks share slots')
+        else: failed+=1; print('FAIL shared slots',notice,out,err)
+    finally:
+        for process in (heavy,pending):
+            if process is not None:
+                if process.poll() is None: process.terminate()
+                process.communicate(timeout=10)
+    settings.write_text(settings.read_text().replace('# fingerprint=','# old='))
+    mismatch=invoke()
+    if mismatch.returncode==0 and mismatch.stderr.count('recalibrate')==1:
+        passed+=1; print('ok   head-checks warns once on hardware mismatch and falls back')
+    else: failed+=1; print('FAIL fingerprint fallback',mismatch.stdout,mismatch.stderr)
 print(f'passed {passed}, failed {failed}')
 sys.exit(bool(failed))
 PY

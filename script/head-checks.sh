@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
 set -euo pipefail
+# Claim the machine budget for the whole checklist, across repositories and tools.
+# The marker is consumed here so a nested head-checks invocation gates normally.
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
+  [ -z "${HEAD_CHECKS_SLOTS:-}" ] || [[ "$HEAD_CHECKS_SLOTS" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_SLOTS must be a positive number' >&2; exit 1; }
+  exec python3 "$script_dir/heavy-gate.py" gate --head-checks -- \
+    env HEAD_CHECKS_GATE_HELD=1 bash "$0" "$@"
+fi
+unset HEAD_CHECKS_GATE_HELD
 repo="" pr="" ref="" sha="" worktree="" lock="" refused=""
 override="" changed="" explicit_base=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
@@ -72,7 +81,7 @@ base=$(git -C "$repo" merge-base "$base" "$sha") || usage "cannot resolve PR mer
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
-slots="${HEAD_CHECKS_SLOTS:-2}"
+slots="$HEAD_CHECKS_SLOTS"
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
 mkdir -p "$HOME/orca/workspaces/$name"
 # Each check worktree persists so installed packages survive between runs; one run at a time may use each.
