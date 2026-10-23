@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC2016 # expanded on the remote host
-host="" repo_dir="" dir="" sub="" weight=1 gate='$HOME/dotfiles/script/heavy-gate.sh'
+host="" repo_dir="" dir="" sub=. weight=1 gate='$HOME/dotfiles/script/heavy-gate.sh'
 while [ $# -gt 0 ]; do
   case "$1" in
     --host) host="$2"; shift 2 ;;
@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$host" ] && [ -n "$repo_dir" ] && [ -n "$dir" ] && [ $# -gt 0 ] \
   || { echo "usage: remote-heavy.sh --host H --repo-dir R --dir D [--sub S] [--weight N] -- cmd" >&2; exit 64; }
-case "$host" in *[!A-Za-z0-9._-]*) echo "remote-heavy: bad host $host" >&2; exit 64 ;; esac
+case "$host" in -*|*[!A-Za-z0-9._-]*) echo "remote-heavy: bad host $host" >&2; exit 64 ;; esac
 
 sha=$(git rev-parse HEAD)
 git push -q "ssh://$host/$repo_dir" "$sha:refs/heavy/$sha"
@@ -44,11 +44,14 @@ cd "$dir"
 git checkout -q --detach "$sha"
 cd "./$sub"
 stamp=.remote-heavy-lock-sha
-lock_sum=$(cat bun.lock 2>/dev/null | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)
-if [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
-  DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:x@127.0.0.1:5432/placeholder}" \
-    bun install --frozen-lockfile >/tmp/remote-heavy-install.log 2>&1
-  echo "$lock_sum" > "$stamp"
+if [ -f bun.lock ]; then
+  lock_sum=$({ sha256sum 2>/dev/null || shasum -a 256; } < bun.lock | cut -d' ' -f1)
+  if [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
+    DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:x@127.0.0.1:5432/placeholder}" \
+      bun install --frozen-lockfile >/tmp/remote-heavy-install.log 2>&1 \
+      || { tail -20 /tmp/remote-heavy-install.log >&2; exit 1; }
+    echo "$lock_sum" > "$stamp"
+  fi
 fi
 [ -f next-env.d.ts ] || [ ! -f next.config.ts ] || bunx next typegen >/dev/null 2>&1 || true
 exec "$gate" --weight "$weight" -- bash -c "$cmd"
