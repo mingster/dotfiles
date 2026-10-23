@@ -100,7 +100,12 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-# Recompute both patches; never trust a patch-id asserted in a comment.
+# Byte-exact fingerprint of a diff: every byte but the @@ hunk headers (they shift when main moves).
+# Unlike git patch-id, whitespace changes alter it.
+diff_fingerprint() { # <git diff revisions>
+  git diff --no-color --no-ext-diff --full-index "$@" -- | { grep -v '^@@' || true; } | git hash-object --stdin
+}
+# Recompute both fingerprints; never trust a patch-id asserted in a comment.
 patch_id() {
   local sha="$1" base patch
   base=$(field .baseRefOid)
@@ -108,20 +113,16 @@ patch_id() {
   for ref in "$base" "$sha"; do
     git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || return 1
   done
-  patch=$(git diff "$base...$sha" -- | git patch-id --stable) || return 1
-  [ -n "$patch" ] || return 1
-  awk 'NR == 1 {print $1}' <<<"$patch"
+  diff_fingerprint "$base...$sha"
 }
 # Carry a Verdict across a clean merge of main: V is an ancestor of H, everything after V on the
-# first-parent chain is a merge of main only, and the PR's own diff is byte-identical (same patch-id).
+# first-parent chain is a merge of main only, and the PR's own diff is byte-identical (same fingerprint).
 # Fails closed; sets carry_why to the failed check.
 carry_why=""
-carry_patch_id() { # <sha>: patch-id of the PR's own change against its merge-base with origin/main
-  local mb out
+carry_patch_id() { # <sha>: fingerprint of the PR's own change against its merge-base with origin/main
+  local mb
   mb=$(git merge-base origin/main "$1") || return 1
-  out=$(git diff "$mb" "$1" -- | git patch-id --stable) || return 1
-  [ -n "$out" ] || return 1
-  awk 'NR == 1 {print $1}' <<<"$out"
+  diff_fingerprint "$mb" "$1"
 }
 verdict_carry() { # <verdict head> <current head>
   local v="$1" h="$2" commits c parents p pv ph
@@ -287,6 +288,8 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       else
         current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for verdict"
         old_patch=$(patch_id "$candidate_head") || old_patch=""
+        # Byte-identical PR diff means no unreviewed content reaches main, whoever authored the commits
+        # (the existing rebase/squash path), so no ancestry checks here.
         if [ -n "$old_patch" ] && [ "$old_patch" = "$current_patch" ]; then
           applies=true
         else
