@@ -26,7 +26,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Ticket flow
 - **Build only:** dispatch only a ticket of an accepted spec that links the spec and has a test plan; send intent, grill and spec work back to Elon.
-- Pick the next ticket yourself, with at most 6 lanes running (Codex 5, Claude 1; start none while load average exceeds 2x cores); when your review or merge queue waits over 30 minutes, drop to 3 and tell Elon.
+- Pick the next ticket yourself, with at most 5 lanes running (Codex 3, Claude 2); when your review or merge queue waits over 30 minutes, drop to 3 and tell Elon.
 - On a coding worker's `worker_done`, run `~/dotfiles/script/on-worker-done.sh` to start the reviewer.
 - Handle exceptions only: a FAIL Verdict, a second failed fix, splits and cross area calls.
 - Batch owner gates into one list to Elon. Copy needs no owner gate at merge; a ticket missing its copy goes back to architect-pm.
