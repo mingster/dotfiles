@@ -100,10 +100,11 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-# Byte-exact fingerprint of a diff: every byte but the @@ hunk headers (they shift when main moves).
+# Byte-exact fingerprint of a diff: every byte but the @@ hunk headers and the index lines (both shift
+# when main changes the same file elsewhere). --binary keeps binary content in the patch data.
 # Unlike git patch-id, whitespace changes alter it.
 diff_fingerprint() { # <git diff revisions>
-  git diff --no-color --no-ext-diff --full-index "$@" -- | { grep -v '^@@' || true; } | git hash-object --stdin
+  git diff --no-color --no-ext-diff --binary "$@" -- | { grep -v -e '^@@' -e '^index ' || true; } | git hash-object --stdin
 }
 # Recompute both fingerprints; never trust a patch-id asserted in a comment.
 patch_id() {

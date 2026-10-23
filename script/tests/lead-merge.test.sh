@@ -18,7 +18,7 @@ case "$1" in
   cat-file|fetch) exit 0 ;;
   merge-base) echo cccccccccccccccccccccccccccccccccccccccc ;;
   diff) case "$*" in *--name-only*) printf '%s\n' "$TRUNK_FILES" ;; *"$OLD"*) echo "$OLD_PATCH" ;; *) echo current ;; esac ;;
-  patch-id) read -r patch; [ -n "$patch" ] && echo "$patch commit" ;;
+  hash-object) cat ;;  # the fingerprint hashes the diff text; echoing it keeps equal diffs equal and different ones different
   *) exit 1 ;;
 esac
 EOS

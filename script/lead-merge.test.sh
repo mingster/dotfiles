@@ -84,4 +84,18 @@ git checkout -q -b prrb "$VW" && git rebase -q main
 [ "$(diff_fingerprint "main...$VW")" = "$(diff_fingerprint "main...$(git rev-parse HEAD)")" ] \
   || { echo "FAIL: rebase changed the fingerprint" >&2; exit 1; }
 echo "ok rebase onto newer main is accepted"
-echo 'PASS: 7 verdict carry cases'
+# 8. main edits another part of a file the PR also touches, PR hunks unchanged: carried
+git checkout -q main && seq 1 20 > big.txt && git add big.txt && git commit -q -m big && git update-ref refs/remotes/origin/main main
+git checkout -q -b prsame main && sed -i.bak 's/^15$/fifteen/' big.txt && rm -f big.txt.bak && git commit -q -am "pr edits line 15"
+VS=$(git rev-parse HEAD)
+git checkout -q main && sed -i.bak 's/^2$/two/' big.txt && rm -f big.txt.bak && git commit -q -am "main edits line 2" && git update-ref refs/remotes/origin/main main
+git checkout -q prsame && git merge -q --no-ff -m "merge main" main
+carry "merge of main changing another part of the same file is carried" 0 "$VS" "$(git rev-parse HEAD)"
+
+# 9. binary file change hidden in a merge of main: refused (check b)
+git checkout -q -b prbin main && echo pr > prbin.txt && git add prbin.txt && git commit -q -m prbin
+VB=$(git rev-parse HEAD)
+git checkout -q main && printf '\000\001\002' > blob.bin && git add blob.bin && git commit -q -m "main blob" && git update-ref refs/remotes/origin/main main
+git checkout -q prbin && git merge -q --no-ff --no-commit main && printf '\000\001\003' > blob.bin && git add blob.bin && git commit -q -m "merge main (binary)"
+carry "binary change hidden in a merge of main is refused" 1 "$VB" "$(git rev-parse HEAD)" "check b"
+echo 'PASS: 9 verdict carry cases'
