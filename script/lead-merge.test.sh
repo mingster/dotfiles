@@ -107,7 +107,7 @@ carry "non-main parent is refused" 1 "$V" "$(git rev-parse HEAD)" "not in origin
 
 # 11. git merge-tree failure: refused
 git checkout -q pr
-git() { if [ "${1:-}" = merge-tree ]; then return 128; fi; command git "$@"; }
-carry "git merge-tree failure is refused" 1 "$V" "$H1" "conflicted merge"
-unset -f git
+# Subshell: the git override stays local to this case.
+( git() { if [ "${1:-}" = merge-tree ]; then return 128; fi; command git "$@"; }
+  carry "git merge-tree failure is refused" 1 "$V" "$H1" "conflicted merge" ) || exit 1
 echo 'PASS: 11 verdict carry cases'
