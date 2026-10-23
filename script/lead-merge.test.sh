@@ -19,3 +19,48 @@ check mingster/4105-fix-4146 4146
 check mingster/4105-fix-13 4105
 check mingster/no-digits ''
 echo 'PASS: 7 branch issue extraction cases'
+
+# Verdict carry across a merge of main, in a throwaway repo with origin/main as a local ref.
+eval "$(sed -n '/^carry_why=""$/,/^verdict_carry() {/p' "$here/lead-merge.sh" | sed '$d')"
+eval "$(sed -n '/^verdict_carry() {/,/^}$/p' "$here/lead-merge.sh")"
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+cd "$tmp"
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+git init -q -b main . && git commit -q --allow-empty -m base
+printf 'a\nb\nc\n' > shared.txt && git add shared.txt && git commit -q -m shared
+git checkout -q -b pr && echo feature > feature.txt && git add feature.txt && git commit -q -m feature
+V=$(git rev-parse HEAD)
+git checkout -q main && echo m1 > m1.txt && git add m1.txt && git commit -q -m main1
+git update-ref refs/remotes/origin/main main
+
+carry() { # name expect(0|1) V H [why-substring]
+  local rc=0
+  verdict_carry "$3" "$4" || rc=$?
+  [ "$rc" = "$2" ] || { echo "FAIL: $1: expected rc $2, got $rc ($carry_why)" >&2; exit 1; }
+  if [ -n "${5:-}" ]; then
+    case "$carry_why" in *"$5"*) ;; *) echo "FAIL: $1: reason '$carry_why' lacks '$5'" >&2; exit 1 ;; esac
+  fi
+  echo "ok $1"
+}
+
+# 1. merge of main only, same diff: carried
+git checkout -q pr && git merge -q --no-ff -m "merge main" main
+H1=$(git rev-parse HEAD)
+carry "merge of main only is carried" 0 "$V" "$H1"
+
+# 2. an authored commit after the merge: refused (check a)
+echo more > extra.txt && git add extra.txt && git commit -q -m extra
+H2=$(git rev-parse HEAD)
+carry "extra authored commit is refused" 1 "$V" "$H2" "check a"
+
+# 3. a merge that also edits the PR's change (conflict resolution): refused (check b)
+git checkout -q -b pr3 "$V"
+git merge -q --no-ff --no-commit main
+echo sneaky >> feature.txt && git add feature.txt && git commit -q -m "merge main (edited)"
+H3=$(git rev-parse HEAD)
+carry "merge that changes the diff is refused" 1 "$V" "$H3" "check b"
+
+# 4. verdict head not an ancestor of the PR head: refused
+git checkout -q -b other main && echo o > o.txt && git add o.txt && git commit -q -m other
+carry "verdict head not an ancestor is refused" 1 "$(git rev-parse HEAD)" "$H1" "not an ancestor"
+echo 'PASS: 4 verdict carry cases'

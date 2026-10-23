@@ -1,0 +1,1 @@
+lead-merge now carries a PASS Verdict across a clean merge of main (only merge commits of main after the Verdict head and the same stable patch-id), so merging main no longer forces a re-review. The team doc also states a cap of 6 open PRs per project.
