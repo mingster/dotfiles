@@ -5,6 +5,7 @@
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
 #   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
+# A Verdict also carries across a clean merge of main (see verdict_carry).
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
 set -euo pipefail
@@ -110,6 +111,33 @@ patch_id() {
   patch=$(git diff "$base...$sha" -- | git patch-id --stable) || return 1
   [ -n "$patch" ] || return 1
   awk 'NR == 1 {print $1}' <<<"$patch"
+}
+# Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
+# first-parent chain is a two parent merge of main that replays to exactly the same tree.
+# Fails closed; sets carry_why to the failed check.
+carry_why=""
+verdict_carry() { # <verdict head> <current head>
+  local v="$1" h="$2" commits c parents p replay
+  carry_why=""
+  git cat-file -e "$v^{commit}" 2>/dev/null || git fetch origin "$v" >&2 || { carry_why="cannot read verdict head"; return 1; }
+  git merge-base --is-ancestor "$v" "$h" || { carry_why="verdict head is not an ancestor of the PR head"; return 1; }
+  # --first-parent: the commits main brought in are reachable only through the merge's second parent.
+  commits=$(git rev-list --first-parent "$v..$h") || { carry_why="check a: cannot list commits after the verdict head"; return 1; }
+  for c in $commits; do
+    parents=$(git rev-list --parents -n1 "$c") || { carry_why="check a: cannot read parents of $c"; return 1; }
+    set -- $parents
+    shift
+    [ $# -ge 2 ] || { carry_why="check a: ${c:0:12} is an authored commit after the verdict head, not a merge of main"; return 1; }
+    [ $# -eq 2 ] || { carry_why="check a: merge ${c:0:12} has more than two parents"; return 1; }
+    shift
+    for p in "$@"; do
+      git merge-base --is-ancestor "$p" origin/main || { carry_why="check a: merge ${c:0:12} takes a parent that is not in origin/main"; return 1; }
+    done
+    # Check b: replay the merge. A clean replay must give the merge's own tree, so the merge added nothing.
+    replay=$(git merge-tree --write-tree "$c^1" "$c^2" 2>/dev/null) || { carry_why="check b: conflicted merge ${c:0:12} needs a new Verdict"; return 1; }
+    replay=${replay%%$'\n'*}
+    [ "$replay" = "$(git rev-parse "$c^{tree}")" ] || { carry_why="check b: merge ${c:0:12} differs from a clean replay"; return 1; }
+  done
 }
 # Dispatch ids Orca knows about, read lazily and once, following page cursors.
 known_dispatches=""
@@ -236,7 +264,7 @@ fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   current_patch=""
   applicable=()
-  passes=0 fails=0 edited=0 misplaced=0
+  passes=0 fails=0 edited=0 misplaced=0 main_fetched=false carry_notes=""
   # Every Verdict for this head (or an equal patch) counts. Newest first; none
   # of them can erase another. An edited or minimized PASS never counts (the
   # verifier posts a fresh one); an edited or minimized FAIL still blocks.
@@ -249,13 +277,22 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
       [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || die "author cannot supply verifier verdict"
-      applies=false
+      applies=false carried=""
       if [ "$candidate_head" = "$head" ]; then
         applies=true
       else
         current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for verdict"
-        old_patch=$(patch_id "$candidate_head") || continue
-        [ "$old_patch" != "$current_patch" ] || applies=true
+        old_patch=$(patch_id "$candidate_head") || old_patch=""
+        if [ -n "$old_patch" ] && [ "$old_patch" = "$current_patch" ]; then
+          applies=true
+        else
+          [ "$main_fetched" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry a verdict"; main_fetched=true; }
+          if verdict_carry "$candidate_head" "$head"; then
+            applies=true; carried="$candidate_head"
+          else
+            carry_notes+="${candidate_head:0:12}: $carry_why; "
+          fi
+        fi
       fi
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
@@ -263,6 +300,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
         # author=unknown is the one literal allowed without a dispatch; any other author must be known.
         [ "$author_id" = unknown ] || grep -Fxq -- "$author_id" <<<"$known_dispatches" || die "verdict author $author_id is not a known dispatch"
         if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then edited=$((edited+1)); continue; fi
+        [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
@@ -271,7 +309,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
   if [ "$passes" -eq 0 ]; then
     [ "$edited" -eq 0 ] || die "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
     [ "$misplaced" -eq 0 ] || die "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
-    die "missing passing verifier verdict for current head or stable patch-id"
+    die "missing passing verifier verdict for current head or stable patch-id${carry_notes:+; not carried: ${carry_notes%; }}"
   fi
   [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or stable patch-id"
   if [ "$verify_set" = true ]; then
