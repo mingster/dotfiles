@@ -24,11 +24,11 @@ Fallback begins at the provider after the role's default.
 
 | Role | Default provider | Flags |
 | --- | --- | --- |
-| fullstack-dev | Codex, then Claude | `--agent codex --model gpt-6.1-sol --effort medium` (owner rule above); past 3 Codex lanes, the Claude Workhorse row |
+| fullstack-dev | Codex, then Cursor GPT, then Claude | `--agent codex --model gpt-6.1-sol --effort medium` (owner rule above); past 3 Codex lanes or when Codex is out, the `fullstack-dev` preset chain: Cursor `gpt-5.6-sol-medium`, then Claude `sonnet` medium, then Antigravity `claude-sonnet-5-5-medium`. Never Gemini for implementation. |
 | qa-sdet | Claude / Cursor | the Strong row: `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
 | every other role | Claude | the Claude column for the role's tier |
 
-Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. When fullstack-dev ran on Codex (GPT), qa-sdet audits on Claude Opus. When fullstack-dev ran on Claude, qa-sdet audits on a non Claude model (`--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high`). Role fallback chains: `~/.orca/presets.json`.
+Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. When fullstack-dev ran on Codex or Cursor GPT, qa-sdet audits on Claude Opus. When fullstack-dev ran on Claude, qa-sdet audits on a non Claude model (`--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high`). Role fallback chains: `~/.orca/presets.json`.
 
 ## Worker flags by provider
 
