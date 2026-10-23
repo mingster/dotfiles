@@ -21,14 +21,12 @@ check mingster/no-digits ''
 echo 'PASS: 7 branch issue extraction cases'
 
 # Verdict carry across a merge of main, in a throwaway repo with origin/main as a local ref.
-eval "$(sed -n '/^diff_fingerprint() {/,/^}$/p' "$here/lead-merge.sh")"
 eval "$(sed -n '/^carry_why=""$/,/^verdict_carry() {/p' "$here/lead-merge.sh" | sed '$d')"
 eval "$(sed -n '/^verdict_carry() {/,/^}$/p' "$here/lead-merge.sh")"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 git init -q -b main . && git commit -q --allow-empty -m base
-printf 'a\nb\nc\n' > shared.txt && git add shared.txt && git commit -q -m shared
 git checkout -q -b pr && echo feature > feature.txt && git add feature.txt && git commit -q -m feature
 V=$(git rev-parse HEAD)
 git checkout -q main && echo m1 > m1.txt && git add m1.txt && git commit -q -m main1
@@ -43,59 +41,73 @@ carry() { # name expect(0|1) V H [why-substring]
   fi
   echo "ok $1"
 }
+advance_main() { git update-ref refs/remotes/origin/main main; }
 
-# 1. merge of main only, same diff: carried
+# 1. clean merge of main: carried
 git checkout -q pr && git merge -q --no-ff -m "merge main" main
 H1=$(git rev-parse HEAD)
-carry "merge of main only is carried" 0 "$V" "$H1"
+carry "clean merge of main is carried" 0 "$V" "$H1"
 
-# 2. an authored commit after the merge: refused (check a)
+# 2. authored commit after the merge: refused (check a)
 echo more > extra.txt && git add extra.txt && git commit -q -m extra
-H2=$(git rev-parse HEAD)
-carry "extra authored commit is refused" 1 "$V" "$H2" "check a"
+carry "authored commit after V is refused" 1 "$V" "$(git rev-parse HEAD)" "check a"
 
-# 3. a merge that also edits the PR's change (conflict resolution): refused (check b)
-git checkout -q -b pr3 "$V"
-git merge -q --no-ff --no-commit main
+# 3. merge of main with a hand edit to the PR's file: refused (check b)
+git checkout -q -b pr3 "$V" && git merge -q --no-ff --no-commit main
 echo sneaky >> feature.txt && git add feature.txt && git commit -q -m "merge main (edited)"
-H3=$(git rev-parse HEAD)
-carry "merge that changes the diff is refused" 1 "$V" "$H3" "check b"
+carry "merge that edits the PR's change is refused" 1 "$V" "$(git rev-parse HEAD)" "differs from a clean replay"
 
 # 4. verdict head not an ancestor of the PR head: refused
 git checkout -q -b other main && echo o > o.txt && git add o.txt && git commit -q -m other
-carry "verdict head not an ancestor is refused" 1 "$(git rev-parse HEAD)" "$H1" "not an ancestor"
+carry "V not an ancestor is refused" 1 "$(git rev-parse HEAD)" "$H1" "not an ancestor"
 
-# 5. whitespace-only edit hidden in a merge of main: refused (check b)
-printf 'a\nb\nc\n' > ws.py && git checkout -q main && git add ws.py && git commit -q -m ws && git update-ref refs/remotes/origin/main main
+# 5. whitespace-only evil merge: refused
+git checkout -q main && printf 'x\n' > ws.txt && git add ws.txt && git commit -q -m ws && advance_main
 git checkout -q -b prws "$V" && printf 'def f():\n    return 1\n' > f.py && git add f.py && git commit -q -m f
 VW=$(git rev-parse HEAD)
 git merge -q --no-ff --no-commit main && printf 'def f():\n    return 1 \n' > f.py && git add f.py && git commit -q -m "merge main (whitespace)"
-carry "whitespace-only edit in a merge of main is refused" 1 "$VW" "$(git rev-parse HEAD)" "check b"
+carry "whitespace-only evil merge is refused" 1 "$VW" "$(git rev-parse HEAD)" "differs from a clean replay"
 
-# 6. whitespace-only authored change after V: the equal-patch shortcut compares fingerprints, so they differ
-git checkout -q -b prws2 "$VW" && printf 'def f():\n    return 1 \n' > f.py && git commit -q -am "trailing space"
-[ "$(diff_fingerprint "main...$VW")" != "$(diff_fingerprint "main...$(git rev-parse HEAD)")" ] \
-  || { echo "FAIL: whitespace-only change keeps the same fingerprint" >&2; exit 1; }
-echo "ok whitespace-only authored change is refused by the shortcut"
-
-# 7. same change rebased onto newer main with identical bytes: same fingerprint
-git checkout -q main && echo m2 > m2.txt && git add m2.txt && git commit -q -m main2
-git checkout -q -b prrb "$VW" && git rebase -q main
-[ "$(diff_fingerprint "main...$VW")" = "$(diff_fingerprint "main...$(git rev-parse HEAD)")" ] \
-  || { echo "FAIL: rebase changed the fingerprint" >&2; exit 1; }
-echo "ok rebase onto newer main is accepted"
-# 8. main edits another part of a file the PR also touches, PR hunks unchanged: carried
-git checkout -q main && seq 1 20 > big.txt && git add big.txt && git commit -q -m big && git update-ref refs/remotes/origin/main main
+# 6. main edits another part of a file the PR also touches: carried
+git checkout -q main && seq 1 20 > big.txt && git add big.txt && git commit -q -m big && advance_main
 git checkout -q -b prsame main && sed -i.bak 's/^15$/fifteen/' big.txt && rm -f big.txt.bak && git commit -q -am "pr edits line 15"
 VS=$(git rev-parse HEAD)
-git checkout -q main && sed -i.bak 's/^2$/two/' big.txt && rm -f big.txt.bak && git commit -q -am "main edits line 2" && git update-ref refs/remotes/origin/main main
+git checkout -q main && sed -i.bak 's/^2$/two/' big.txt && rm -f big.txt.bak && git commit -q -am "main edits line 2" && advance_main
 git checkout -q prsame && git merge -q --no-ff -m "merge main" main
-carry "merge of main changing another part of the same file is carried" 0 "$VS" "$(git rev-parse HEAD)"
+carry "same-file merge of main elsewhere is carried" 0 "$VS" "$(git rev-parse HEAD)"
 
-# 9. binary file change hidden in a merge of main: refused (check b)
+# 7. relocated edit in a file of repeated lines: refused
+git checkout -q main && printf 'x\nx\nx\nx\nx\nx\n' > rep.txt && git add rep.txt && git commit -q -m rep && advance_main
+git checkout -q -b prrep main && sed -i.bak '2s/x/y/' rep.txt && rm -f rep.txt.bak && git commit -q -am "pr edits line 2"
+VR=$(git rev-parse HEAD)
+git checkout -q main && echo m3 > m3.txt && git add m3.txt && git commit -q -m main3 && advance_main
+git checkout -q prrep && git merge -q --no-ff --no-commit main
+printf 'x\nx\nx\nx\ny\nx\n' > rep.txt && git add rep.txt && git commit -q -m "merge main (relocated edit)"
+carry "relocated edit in repeated lines is refused" 1 "$VR" "$(git rev-parse HEAD)" "differs from a clean replay"
+
+# 8. binary change hidden in a merge of main: refused
 git checkout -q -b prbin main && echo pr > prbin.txt && git add prbin.txt && git commit -q -m prbin
 VB=$(git rev-parse HEAD)
-git checkout -q main && printf '\000\001\002' > blob.bin && git add blob.bin && git commit -q -m "main blob" && git update-ref refs/remotes/origin/main main
+git checkout -q main && printf '\000\001\002' > blob.bin && git add blob.bin && git commit -q -m "main blob" && advance_main
 git checkout -q prbin && git merge -q --no-ff --no-commit main && printf '\000\001\003' > blob.bin && git add blob.bin && git commit -q -m "merge main (binary)"
-carry "binary change hidden in a merge of main is refused" 1 "$VB" "$(git rev-parse HEAD)" "check b"
-echo 'PASS: 9 verdict carry cases'
+carry "hidden binary change in a merge is refused" 1 "$VB" "$(git rev-parse HEAD)" "differs from a clean replay"
+
+# 9. conflict-resolved merge: refused
+git checkout -q main && echo main > c.txt && git add c.txt && git commit -q -m cmain && advance_main
+git checkout -q -b prc "$V" && echo pr > c.txt && git add c.txt && git commit -q -m cpr
+VC=$(git rev-parse HEAD)
+git merge -q --no-ff main >/dev/null 2>&1 || true
+echo resolved > c.txt && git add c.txt && git commit -q -m "merge main (resolved)"
+carry "conflict-resolved merge is refused" 1 "$VC" "$(git rev-parse HEAD)" "conflicted merge"
+
+# 10. non-main second parent: refused (check a)
+git checkout -q -b prnm "$V" && git checkout -q -b side "$V" && echo side > side.txt && git add side.txt && git commit -q -m side
+git checkout -q prnm && git merge -q --no-ff -m "merge side" side
+carry "non-main parent is refused" 1 "$V" "$(git rev-parse HEAD)" "not in origin/main"
+
+# 11. git merge-tree failure: refused
+git checkout -q pr
+git() { if [ "${1:-}" = merge-tree ]; then return 128; fi; command git "$@"; }
+carry "git merge-tree failure is refused" 1 "$V" "$H1" "conflicted merge"
+unset -f git
+echo 'PASS: 11 verdict carry cases'

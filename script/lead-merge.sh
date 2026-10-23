@@ -100,13 +100,7 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-# Byte-exact fingerprint of a diff: every byte but the @@ hunk headers and the index lines (both shift
-# when main changes the same file elsewhere). --binary keeps binary content in the patch data.
-# Unlike git patch-id, whitespace changes alter it.
-diff_fingerprint() { # <git diff revisions>
-  git diff --no-color --no-ext-diff --binary "$@" -- | { grep -v -e '^@@' -e '^index ' || true; } | git hash-object --stdin
-}
-# Recompute both fingerprints; never trust a patch-id asserted in a comment.
+# Recompute both patches; never trust a patch-id asserted in a comment.
 patch_id() {
   local sha="$1" base patch
   base=$(field .baseRefOid)
@@ -114,19 +108,16 @@ patch_id() {
   for ref in "$base" "$sha"; do
     git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || return 1
   done
-  diff_fingerprint "$base...$sha"
+  patch=$(git diff "$base...$sha" -- | git patch-id --stable) || return 1
+  [ -n "$patch" ] || return 1
+  awk 'NR == 1 {print $1}' <<<"$patch"
 }
-# Carry a Verdict across a clean merge of main: V is an ancestor of H, everything after V on the
-# first-parent chain is a merge of main only, and the PR's own diff is byte-identical (same fingerprint).
+# Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
+# first-parent chain is a two parent merge of main that replays to exactly the same tree.
 # Fails closed; sets carry_why to the failed check.
 carry_why=""
-carry_patch_id() { # <sha>: fingerprint of the PR's own change against its merge-base with origin/main
-  local mb
-  mb=$(git merge-base origin/main "$1") || return 1
-  diff_fingerprint "$mb" "$1"
-}
 verdict_carry() { # <verdict head> <current head>
-  local v="$1" h="$2" commits c parents p pv ph
+  local v="$1" h="$2" commits c parents p replay
   carry_why=""
   git cat-file -e "$v^{commit}" 2>/dev/null || git fetch origin "$v" >&2 || { carry_why="cannot read verdict head"; return 1; }
   git merge-base --is-ancestor "$v" "$h" || { carry_why="verdict head is not an ancestor of the PR head"; return 1; }
@@ -137,13 +128,16 @@ verdict_carry() { # <verdict head> <current head>
     set -- $parents
     shift
     [ $# -ge 2 ] || { carry_why="check a: ${c:0:12} is an authored commit after the verdict head, not a merge of main"; return 1; }
+    [ $# -eq 2 ] || { carry_why="check a: merge ${c:0:12} has more than two parents"; return 1; }
     shift
     for p in "$@"; do
       git merge-base --is-ancestor "$p" origin/main || { carry_why="check a: merge ${c:0:12} takes a parent that is not in origin/main"; return 1; }
     done
+    # Check b: replay the merge. A clean replay must give the merge's own tree, so the merge added nothing.
+    replay=$(git merge-tree --write-tree "$c^1" "$c^2" 2>/dev/null) || { carry_why="check b: conflicted merge ${c:0:12} needs a new Verdict"; return 1; }
+    replay=${replay%%$'\n'*}
+    [ "$replay" = "$(git rev-parse "$c^{tree}")" ] || { carry_why="check b: merge ${c:0:12} differs from a clean replay"; return 1; }
   done
-  pv=$(carry_patch_id "$v") && ph=$(carry_patch_id "$h") || { carry_why="check b: cannot compute patch-ids"; return 1; }
-  [ "$pv" = "$ph" ] || { carry_why="check b: the PR's own diff changed between the verdict head and the PR head"; return 1; }
 }
 # Dispatch ids Orca knows about, read lazily and once, following page cursors.
 known_dispatches=""
@@ -289,8 +283,6 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       else
         current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for verdict"
         old_patch=$(patch_id "$candidate_head") || old_patch=""
-        # Byte-identical PR diff means no unreviewed content reaches main, whoever authored the commits
-        # (the existing rebase/squash path), so no ancestry checks here.
         if [ -n "$old_patch" ] && [ "$old_patch" = "$current_patch" ]; then
           applies=true
         else
@@ -308,7 +300,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
         # author=unknown is the one literal allowed without a dispatch; any other author must be known.
         [ "$author_id" = unknown ] || grep -Fxq -- "$author_id" <<<"$known_dispatches" || die "verdict author $author_id is not a known dispatch"
         if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then edited=$((edited+1)); continue; fi
-        [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, same patch-id)"
+        [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
