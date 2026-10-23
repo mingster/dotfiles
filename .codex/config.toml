@@ -1,6 +1,6 @@
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
-model = "gpt-5.5"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 notify = [ "__HOME__/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended" ]
 service_tier = "default"

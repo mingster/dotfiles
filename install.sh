@@ -58,7 +58,8 @@ DOTFILES="$DOTFILES_ROOT" bash "$DOTFILES_ROOT/script/setup-agent-skills.sh" || 
 
 if [ "${DOTFILES_SKIP_SYSTEM_SETUP:-}" = "1" ]; then
   echo "dotfiles: DOTFILES_SKIP_SYSTEM_SETUP=1 — skipping system_setup scripts."
-  exit 0
+  bash "$DOTFILES_ROOT/script/setup-check.sh"
+  exit $?
 fi
 
 case "$OSTYPE" in
@@ -69,7 +70,8 @@ case "$OSTYPE" in
   linux-gnu* | linux-musl*)
     if [ ! -r /etc/os-release ]; then
       echo "dotfiles: Linux but /etc/os-release not readable; skipping system_setup." >&2
-      exit 0
+      bash "$DOTFILES_ROOT/script/setup-check.sh"
+      exit $?
     fi
     # shellcheck source=/dev/null
     . /etc/os-release
@@ -123,3 +125,5 @@ case "$OSTYPE" in
     echo "  bash $DOTFILES_ROOT/mac/osx.sh"
     ;;
 esac
+
+bash "$DOTFILES_ROOT/script/setup-check.sh"
