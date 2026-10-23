@@ -13,7 +13,7 @@ Placeholders: `<repo>` the repository, `<dev>` the development branch, `<staging
 
 ## Rules for every stage
 
-1. **Who starts a stage.** local and staging: release-manager, any time. production: release-manager only, on the owner's explicit go for that exact commit, inside the production window when the facts name one.
+1. **Who starts a stage.** local and staging: release-manager, any time; promote main to staging after merges, without waiting for the queue to drain or an owner word. production: release-manager only, on the owner's explicit go for that exact commit, inside the production window when the facts name one.
 2. **Promotion.** A stage deploys only a commit with a `success` status from the stage before: the local context for staging, the staging context for production. Production deploys exactly the commit `<staging branch>` points at, even when `<dev>` has moved on.
 3. **Fast forward only.** release-manager pushes only `<staging branch>` and `<production branch>`; other branches go to the responsible coordinator, Elon for docs and the Tech Lead for code ("Commit, push and merge" in `.claude/model-routing.md`). Stage branches move with `git push origin <sha>:<stage branch>` and nothing else (the first push creates the branch). If the push is refused as non fast forward, stop and tell Elon; never add `--force`.
 4. **One path to a server.** Deploy only with the facts' command for the stage. No host scripts or `ssh` around it, except the manual fallback steps the facts name for when the command cannot run (those ask for approval). When the command refuses, report the reason to Elon; never work around it.

@@ -6,7 +6,7 @@
 # Reads .agents/skills/.mattpocock-upstream (sha=, skills=). For each listed skill it copies the
 # upstream folder over the local one, then re-applies the intentional local edits:
 #   * GLOSSARY becomes CONTEXT in every copied file and GLOSSARY-FORMAT.md is renamed CONTEXT-FORMAT.md
-#   * .agents/skills/.mattpocock-local.patch (the to-tickets "Machine-checkable contract" sections and the design process edits to to-tickets and triage)
+#   * .agents/skills/.mattpocock-local.patch (the to-tickets "Machine-checkable contract" sections, the to-spec and to-tickets "User-facing copy" sections, and the design process edits to to-tickets and triage)
 # If the patch no longer applies, nothing is changed and the script exits 1 (update the patch by hand).
 # A skill that exists only locally is never touched, and no local skill is ever deleted.
 # Upstream is cloned shallow into a mktemp directory that is removed on exit. Prints the diff stat.

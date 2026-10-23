@@ -12,7 +12,7 @@ Internally, read each cited principle's leaf skill and name the principle and th
 
 ## Runtime and worker dispatch
 
-The tech-lead and engineering workers run on Claude (owner 2026-10-22: Codex is removed from the agent team). Cursor is reserved for jobs needing their own machine, including E2E and browser smoke checks, and cross-model second-opinion reviews. Cursor has no on-demand spending: when its quota is exhausted, fall back to Claude under the same usage gate. A fallback without the needed machine or independent model family must report that gate blocked; it cannot claim equivalent verification. Source tests never stand in for a browser, device, provider, host or deployment check.
+Implementation workers run on Codex by default, up to 3 lanes, then Claude; the tech-lead and reviewers run on Claude (owner 2026-10-23, `.claude/model-routing.md`). Codex is not in `~/.orca/presets.json`: start Codex workers by hand with `~/dotfiles/script/start-codex-worker.sh`. Cursor is reserved for jobs needing their own machine, including E2E and browser smoke checks, and cross-model second-opinion reviews. Cursor has no on-demand spending: when its quota is exhausted, fall back to Claude under the same usage gate. A fallback without the needed machine or independent model family must report that gate blocked; it cannot claim equivalent verification. Source tests never stand in for a browser, device, provider, host or deployment check.
 
 Map upstream model slugs, strong/fast tiers, `high` and `xhigh` through `.claude/model-routing.md` and available presets. Unsupported names are not literal CLI arguments. Provider policy lives in that routing document; this adapter never overrides it.
 
