@@ -312,6 +312,13 @@ def probe(args):
     try:
         if not slots.claim(settings['slots'], exclusive=True):
             raise ValueError('calibration refused: heavy jobs are running')
+        start = time.monotonic()
+        with children() as processes:
+            proc = subprocess.Popen(['bash', '-c', args.calibrate], start_new_session=True)
+            processes.append(proc)
+            if proc.wait() != 0:
+                raise ValueError('calibration command failed; existing configuration retained')
+        print(f'warmup wall_seconds={time.monotonic() - start}', flush=True)
         readings = []
         for copies in (1, 2, 3):
             peak_load, free = sample()
@@ -336,7 +343,7 @@ def probe(args):
             readings.append(reading)
             print('round ' + ' '.join(f'{k}={v}' for k, v in reading.items()), flush=True)
         selected = choose_slots(readings)
-        limit = max(1, math.floor(1.2 * performance + 0.5))
+        limit = max(1, math.floor(1.2 * total + 0.5))
         digest, fields = fingerprint()
         path = config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
