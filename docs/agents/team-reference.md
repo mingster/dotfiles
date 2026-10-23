@@ -26,7 +26,7 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 
 The adoption script installs every role in the template, including support.
 
-Team skills come from [templates/agent-team/.agents/skills](../../templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `tl` handles engineering requests, `deploy` promotes releases, `grill-backlog` clears owner decisions and `team-audit` checks team files. Adoption runs `script/sync-team-skills.sh` to generate project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and sync again; do not edit generated copies.
+Team skills come from [templates/agent-team/.agents/skills](../../templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `teddy` handles engineering requests, `deploy` promotes releases, `grill-backlog` clears owner decisions and `team-audit` checks team files. Adoption runs `script/sync-team-skills.sh` to generate project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and sync again; do not edit generated copies.
 
 Team skills add project policy and call Orca and Matt Pocock skills for shared procedures. The [ownership and overlap decisions](skill-overlap-decisions.md) cover every owned skill and explain which steps belong upstream.
 
@@ -59,7 +59,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity; in Codex use `$
 | Review | Check the current diff against project rules and the ticket; add security review where needed. | `/code-review` | `/code-review Check this branch against main and its ticket.` |
 | Merge | Elon pushes, opens the PR and merges after the required checks. Build and review workers never push or merge. | Ask Elon | Elon, merge the reviewed setup branch when its checks pass. |
 | Deploy | Release-manager promotes through local, staging and production; production needs the owner's explicit go for that release. | `/deploy local`, `/deploy staging`, `/deploy production` | `/deploy staging Promote the commit that passed local checks.` |
-| Status and daily run | Get company or engineering status, or run the project's daily checklist. | `/elon status`, `/elon daily run`, `/tl status` | `/elon status Show Now, Needs owner and Running.` |
+| Status and daily run | Get company or engineering status, or run the project's daily checklist. | `/elon status`, `/elon daily run`, `/teddy status` | `/elon status Show Now, Needs owner and Running.` |
 | Audit | Check team files for drift, contradictions and unused skills. | `/team-audit` | `/team-audit Check this repo's team files and propose fixes.` |
 | Support | Elon routes fixes and support drafts the customer reply; the owner approves before sending or closing. | Ask Elon to assign `support-csm` | Elon, resolve this support ticket and bring me the reply draft for approval. |
 
