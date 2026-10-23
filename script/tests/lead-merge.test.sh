@@ -12,13 +12,12 @@ export GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_C
 # git stub: rev-parse --show-toplevel prints $FAKE_TOP.
 cat > "$tmp/bin/git" <<'EOS'
 #!/usr/bin/env bash
-[ "$1" = rev-parse ] && { echo "$FAKE_TOP"; exit 0; }
+[ "$1" = rev-parse ] && [ "${2:-}" = --show-toplevel ] && { echo "$FAKE_TOP"; exit 0; }
 [ -z "${REAL_PATCH_REPO:-}" ] || exec "$REAL_GIT" -C "$REAL_PATCH_REPO" "$@"
 case "$1" in
   cat-file|fetch) exit 0 ;;
   merge-base) echo cccccccccccccccccccccccccccccccccccccccc ;;
-  diff) case "$*" in *--name-only*) printf '%s\n' "$TRUNK_FILES" ;; *"$OLD"*) echo "$OLD_PATCH" ;; *) echo current ;; esac ;;
-  patch-id) read -r patch; [ -n "$patch" ] && echo "$patch commit" ;;
+  diff) case "$*" in *--name-only*) printf '%s\n' "$TRUNK_FILES" ;; *) echo current ;; esac ;;
   *) exit 1 ;;
 esac
 EOS
@@ -76,11 +75,11 @@ setup() {
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"script/foo.sh"}]'
   body=$'## Verification\n- Ran script successfully.'
-  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"; OLD_PATCH=current
+  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
   checks="Checks: PASS head=$SHA"; countersign=""; TRUNK_FILES=""
   export TRUNK_FILES
   export FAKE_DISPATCHES="ctx_a ctx_b ctx_author ctx_other ctx_same ctx_verify"; unset FAKE_ORCA_FAIL FAKE_DISPATCHES_B
-  export OLD OLD_PATCH
+  export OLD
   state=OPEN base=main headsha=$SHA mergeable=MERGEABLE branch=feature
   FINAL_JSON='{"state":"MERGED","mergeCommit":{"oid":"dddddddddddddddddddddddddddddddddddddddd"},"url":"https://github.com/o/r/pull/7"}'
 }
@@ -92,7 +91,6 @@ mkjson() {
   API_FILES=${API_OVERRIDE:-$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")}
   PR_JSON=$(jq --argjson count "${COUNT_OVERRIDE:-$(jq length <<<"$API_FILES")}" '.changedFiles=$count' <<<"$PR_JSON")
   export API_FILES
-  export OLD_PATCH
   export PR_JSON FINAL_JSON PR_DIFF FAKE_TOP MERGE_FAILS
 }
 
@@ -216,8 +214,7 @@ setup; body=$'## Verification\n- one\n- two\n- three\n- four'; check "excess Ver
 setup; FINAL_JSON='{"state":"MERGED","url":"u","mergeCommit":null}'; check "missing merge commit refused" 1 'no merge commit' 1
 setup; comments=""; check "missing verdict refused" 1 'verdict'
 setup; comments="Verdict: FAIL head=$SHA verifier=ctx_verify author=ctx_author"; check "FAIL verdict refused" 1 'verdict'
-setup; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; OLD_PATCH=different; check "stale different patch refused" 1 'verdict'
-setup; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; check "stale equal patch allowed" 0 '^MERGED' 1
+setup; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; check "stale verdict without clean merge proof refused" 1 'verdict'
 setup; comments="Verdict: PASS+NOTES head=$SHA verifier=ctx_verify author=ctx_author"; check "PASS+NOTES allowed" 0 '^MERGED' 1
 setup; files='[{"path":"docs/guide.txt"},{"path":"README.md"},{"path":"changelog.d/change.txt"}]'; comments=""; check "docs only skips verdict" 0 '^MERGED' 1
 setup; files='[{"path":".claude/agents/qa-sdet.md"}]'; comments=""; check "agent instructions require verdict" 1 'verdict'
@@ -254,9 +251,8 @@ setup; PR_DIFF=$'+// biome-ignore lint'; check "trigger biome-ignore lint needs 
 setup; PR_DIFF=$'+// @ts-ignore'; check "trigger @ts-ignore needs countersign" 1 'Countersign'
 setup; files='[{"path":".agents/head-checks.conf"}]'; PR_DIFF=$'+++ b/.agents/head-checks.conf\n+echo changed'; check "check config prints countersign trigger" 1 'head-checks.conf:\+echo changed'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$SHA reason=fixture only"; check "countersigned skip allowed" 0 '^MERGED' 1
-# A countersign follows an equal patch-id head (checks and verdict still bind the current head).
-setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; check "countersign retained on equal patch-id" 0 '^MERGED' 1
-setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; OLD_PATCH=different; check "countersign refused on different patch-id" 1 'Countersign'
+# A stale countersign requires proof that only clean merges of main followed it.
+setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; check "stale countersign without clean merge proof refused" 1 'Countersign'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; checks="Checks: PASS head=$OLD"; check "countersign refused without checks on the current head" 1 'Checks: PASS'
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'
 setup; TRUNK_FILES="unrelated.sh"; export TRUNK_FILES; check "disjoint trunk drift allowed" 0 '^MERGED' 1
@@ -339,7 +335,7 @@ unset REAL_PATCH_REPO
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
-# Exercise the script with real commit graphs and git patch-id, not asserted IDs.
+# Exercise the script with real commit graphs and content changes.
 setup
 export REAL_PATCH_REPO="$ucd/patch-repo"
 "$REAL_GIT" init -q "$REAL_PATCH_REPO"
@@ -349,7 +345,7 @@ printf 'base\n' > "$REAL_PATCH_REPO/code"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" add code
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm base
 base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
-printf 'change\n' >> "$REAL_PATCH_REPO/code"
+printf 'value = "ab"\n' >> "$REAL_PATCH_REPO/code"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam change
 OLD=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
 "$REAL_GIT" -C "$REAL_PATCH_REPO" checkout -q --detach "$base_sha"
@@ -363,7 +359,25 @@ base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
 comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"
 checks="Checks: PASS head=$SHA"
-check "real rebase keeps stable patch verdict" 0 '^MERGED' 1
+check "real rebase requires fresh verdict" 1 'verdict'
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
+PR_DIFF=$'+test.skip("case", () => {})'
+countersign="Countersign: Elon head=$OLD reason=fixture only"
+check "real rebase requires fresh countersign" 1 'Countersign'
+PR_DIFF=""; countersign=""
+whitespace_verdict_head=$SHA
+printf 'base\nvalue = "a b"\n' > "$REAL_PATCH_REPO/code"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam whitespace
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+checks="Checks: PASS head=$SHA"
+comments="Verdict: PASS head=$whitespace_verdict_head verifier=ctx_verify author=ctx_author"
+check "real inline whitespace change invalidates verdict" 1 'verdict'
+comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
+PR_DIFF=$'+test.skip("case", () => {})'
+countersign="Countersign: Elon head=$whitespace_verdict_head reason=fixture only"
+check "real inline whitespace change invalidates countersign" 1 'Countersign'
+PR_DIFF=""; countersign=""
+comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"
 rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
 printf 'different\n' >> "$REAL_PATCH_REPO/code"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam different
