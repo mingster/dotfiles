@@ -17,6 +17,9 @@ def is_test(path):
     # *.test.* files there stay bun tests (for example app/api/e2e route tests).
     if 'e2e' in path.parts and '.spec.' in path.name:
         return False
+    # *.db.spec.* files are integration specs that need a test database.
+    if '.db.spec.' in path.name:
+        return False
     return any(marker in path.name for marker in ('.test.', '.spec.')) and path.suffix in SOURCE_SUFFIXES
 
 
@@ -60,7 +63,7 @@ def select_changed_tests(root, files):
             tests.add(path)
         if path.suffix in SOURCE_SUFFIXES:
             for pattern in (path.stem + '.test.*', path.stem + '.spec.*', '__tests__/*.test.*', '__tests__/*.spec.*'):
-                tests.update(item for item in path.parent.glob(pattern) if item.is_file())
+                tests.update(item for item in path.parent.glob(pattern) if item.is_file() and is_test(item))
     if modules:
         base, aliases = read_aliases(root)
         for directory, dirs, names in os.walk(root):
