@@ -13,7 +13,15 @@
  A list of implementation decisions that were made. This can include:
 --- a/to-tickets/SKILL.md
 +++ b/to-tickets/SKILL.md
-@@ -76,9 +76,19 @@
+@@ -32,6 +32,7 @@
+ - A completed slice is demoable or verifiable on its own
+ - Each slice is sized to fit in a single fresh context window
+ - Any prefactoring should be done first
++- Bundle small slices: slices that each take under about 30 minutes of work in the same area (same feature folder or module) merge into one ticket whose acceptance criteria and test cases are the union of theirs, as long as the bundle still fits one fresh context window. For a slice that small, starting, reviewing and merging the ticket costs more than the work (owner rule 2026-10-23: the median ticket merged 17 minutes after its first commit)
+ 
+ </vertical-slice-rules>
+ 
+@@ -76,9 +77,19 @@
  
  **Status:** ready-for-agent
  
@@ -33,7 +41,7 @@
  </local-ticket-template>
  
  <issue-template>
-@@ -96,6 +106,16 @@
+@@ -96,6 +107,16 @@
  - [ ] Criterion 1
  - [ ] Criterion 2
  
