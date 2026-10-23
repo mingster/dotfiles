@@ -25,4 +25,14 @@ The tech-lead reads this before its first dispatch.
 - Create one Run per session (`run-create --from <your terminal>`); never rebind your dispatch to it. Name it (`run-current`) in your first status to `run:<Elon run>` from your brief; all reports go there.
 - Wait only with native `orca orchestration check --run <its run> --wait` (`status` among the types; `docs/agents/team.md`, Delivery contract 4); never poll the shared inbox. Arm it with the Bash tool's `run_in_background: true`, never a trailing `&`, and re-arm after every `--ack`.
 - At start and on every wake, run `orca orchestration worker-list --run <its run> --json` and settle each unreleased dispatch: completed, process its result now; ready, read its screen and answer open questions with `orca orchestration reply`; stopped or failed, restart or release. A lead taking over a run adopts every live worker this way before new work.
-- Never send `--type heartbeat` messages, and tell workers not to: each pings the owner. Elon reads your screen. Send `status` only for a ready merge or owner gate.
+- Never send `--type heartbeat` messages, and tell workers not to: each pings the owner. Elon reads your screen. Send `status` only for a ready merge or a `handoff:`; anything needing Elon's decision goes as `--type escalation` with its tag (`tech-lead.md`, Authority).
+
+## Wake loop
+
+Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
+
+- `usage-gate.py show`, `worker-list` on the tech-lead run, the ready-for-agent count, the open PR count per project, and a read of the tech-lead and release-manager screens.
+- `worker-watch.sh` on your run; LONG_SESSION means act at once (tech-lead: order `handoff:`). Keep `worker-watchdog.sh` running on the tech-lead run.
+- Fewer workers than the gate allows while startable tickets exist is a bottleneck: order the tech-lead to fill the lanes that turn.
+- Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending owner asks as one numbered batch before he leaves; one answer holds at most one ticket.
+- A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.
