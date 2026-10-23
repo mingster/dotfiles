@@ -91,6 +91,10 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 9. **No is a valid outcome:** a teammate may decline a request with evidence. Owner reserved decisions (pricing, legal, production, irreversible data) are never declined by the team, only pushed back to the owner with evidence.
 10. **No substitute tooling:** never replace or bypass a standard team mechanism (Orca orchestration, hooks, gates, deploy scripts, worker lifecycle) with self-built tooling. Root-cause the standard tool first; a substitute needs the owner approval with reason and diff (owner rule 2026-10-20).
 
+### Heavy jobs
+
+Run `tsc`, `bun test`, `next build` and Playwright through `~/dotfiles/script/heavy-gate.sh -- <command>` to read the persisted machine limits. Run a regression with `~/dotfiles/script/heavy-gate.sh --weight 2 -- <command>` so it takes two slots. Only Elon runs `~/dotfiles/script/hw-probe.sh --calibrate`, once per machine at a quiet time; agents never calibrate themselves. The optional default workload lives in the untracked `~/.config/heavy-gate/calibration.conf` as `command=<command>`; replacing persisted limits requires `--force`.
+
 ## Gated actions
 
 Holding back a gated action is the default. Only the owner approves actions identified by project policy, including:
