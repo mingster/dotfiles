@@ -48,22 +48,29 @@ def fingerprint():
 
 
 def config():
-    values = {'slots': 2, 'load_max': 12.0}
+    defaults = {'slots': 2, 'load_max': 12.0}
     path = config_path()
-    if path.exists():
+    try:
         lines = path.read_text().splitlines()
         recorded = next((line.removeprefix('# fingerprint=') for line in lines
                          if line.startswith('# fingerprint=')), None)
         if recorded != fingerprint()[0]:
             print('heavy-gate: hardware fingerprint changed or missing; ask Elon to recalibrate; '
                   'using slots=2 load_max=12', file=sys.stderr)
-            return values
+            return defaults
+        values = {}
         for line in lines:
             key, sep, value = line.partition('=')
-            if sep and key in values:
+            if sep and key in defaults:
                 values[key] = int(value) if key == 'slots' else float(value)
-    if values['slots'] < 1 or not math.isfinite(values['load_max']) or values['load_max'] <= 0:
-        raise ValueError('slots and load_max must be positive')
+        if values.keys() != defaults.keys():
+            raise ValueError('both slots and load_max are required')
+        if values['slots'] < 1 or not math.isfinite(values['load_max']) or values['load_max'] <= 0:
+            raise ValueError('slots and load_max must be positive and finite')
+    except (OSError, ValueError) as exc:
+        print(f'heavy-gate: warning: cannot use {path}: {exc}; '
+              'using slots=2 load_max=12', file=sys.stderr)
+        return defaults
     return values
 
 

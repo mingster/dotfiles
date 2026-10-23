@@ -110,6 +110,59 @@ with open(sys.argv[1], 'a', buffering=1) as f:
             self.finish(p)
         self.assert_overlap({str(i): 1 for i in range(3)}, 1)
 
+    def assert_config_fallback(self):
+        self.set_reading('11 90')
+        out, err = self.finish(self.run_gate(['sh', '-c', 'echo ran; exit 7'], weight=2), 7)
+        self.assertEqual(out, 'ran\n')
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertIn('using slots=2 load_max=12', err)
+        _, err = self.finish(self.job(weight=3), 1)
+        self.assertIn('weight', err)
+        self.set_reading('12.1 90')
+        p = self.job(weight=2)
+        self.wait_for(lambda: bool(select.select([p.stderr], [], [], 0)[0]))
+        warning = p.stderr.readline()
+        self.assertIn('using slots=2 load_max=12', warning)
+        self.assertIn('load 12.10 exceeds 12', p.stderr.readline())
+        self.assertEqual(self.events(), [])
+        self.set_reading('11 90')
+        _, err = self.finish(p)
+        self.assertEqual(err, '')
+        self.assertEqual(len(self.events()), 2)
+
+    def test_missing_config_warns_and_uses_complete_fallback(self):
+        self.assert_config_fallback()
+
+    def test_partial_config_warns_and_uses_complete_fallback(self):
+        path = self.config(slots=1, load=1)
+        path.write_text(path.read_text().replace('load_max=1\n', ''))
+        self.assert_config_fallback()
+
+    def test_non_numeric_slots_warns_and_uses_complete_fallback(self):
+        self.config(slots='oops', load=1)
+        self.assert_config_fallback()
+
+    def test_zero_slots_warns_and_uses_complete_fallback(self):
+        self.config(slots=0, load=1)
+        self.assert_config_fallback()
+
+    def test_nan_load_warns_and_uses_complete_fallback(self):
+        self.config(slots=1, load='nan')
+        self.assert_config_fallback()
+
+    def test_unreadable_config_warns_and_uses_complete_fallback(self):
+        path = self.config()
+        path.unlink()
+        path.mkdir()
+        self.assert_config_fallback()
+
+    def test_force_synthetic_calibration_replaces_malformed_config(self):
+        path = self.config(slots='oops')
+        result = self.probe('--force', '--calibrate', 'true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(path.read_text(), r'^slots=[123]\nload_max=10\n')
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+
     def test_weight_two_claims_atomically(self):
         self.config(2)
         heavy = self.job('heavy', 0.4, 2)
@@ -162,6 +215,8 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                     os.kill(pid, 0)
 
     def wait_on_reading(self, reading, expected):
+        if not (self.root/'.config/heavy-gate/slots.conf').exists():
+            self.config()
         self.set_reading(reading)
         p = self.job()
         self.wait_for(lambda: bool(select.select([p.stderr], [], [], 0)[0]))
@@ -181,6 +236,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.wait_on_reading('3.1 90', 'exceeds 3')
 
     def test_waiter_signal_leaves_no_slots(self):
+        self.config()
         self.set_reading('20 90')
         p = self.job()
         self.wait_for(lambda: bool(select.select([p.stderr], [], [], 0)[0]))
@@ -264,8 +320,9 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.assertIn('slots=2 load_max=12', err)
 
     def test_calibration_has_exclusive_machine_budget(self):
+        self.config()
         command = 'printf "start\\n" >> '+str(self.root/'calibrating')+'; sleep 0.2'
-        p = subprocess.Popen(['bash', str(scripts/'hw-probe.sh'), '--calibrate', command],
+        p = subprocess.Popen(['bash', str(scripts/'hw-probe.sh'), '--force', '--calibrate', command],
                              env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.processes.append(p)
         self.wait_for(lambda: (self.root/'calibrating').exists())
