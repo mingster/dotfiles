@@ -17,6 +17,9 @@ def is_test(path):
     # *.test.* files there stay bun tests (for example app/api/e2e route tests).
     if 'e2e' in path.parts and '.spec.' in path.name:
         return False
+    # *.db.spec.* files are integration specs that need a test database.
+    if '.db.spec.' in path.name:
+        return False
     return any(marker in path.name for marker in ('.test.', '.spec.')) and path.suffix in SOURCE_SUFFIXES
 
 

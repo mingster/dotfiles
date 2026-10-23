@@ -76,6 +76,15 @@ class ScopedTests(unittest.TestCase):
         self.assertIn('Scoped tests: 0', result.stdout)
         self.assertFalse((self.repo / 'web/selected.json').exists())
 
+    def test_db_integration_specs_are_not_unit_tests(self):
+        # *.db.spec.* files need a test database and run under the integration config.
+        self.write('web/src/orders/order.server.ts', 'export const order = 1;')
+        self.write('web/src/orders/order.server.db.spec.ts', 'import {order} from "./order.server";')
+        result = self.run_helper('web/src/orders/order.server.db.spec.ts', 'web/src/orders/order.server.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Scoped tests: 0', result.stdout)
+        self.assertFalse((self.repo / 'web/selected.json').exists())
+
     def test_bun_tests_under_an_e2e_directory_still_run(self):
         self.write('web/src/app/api/e2e/route/__tests__/route.test.ts', '')
         result = self.run_helper('web/src/app/api/e2e/route/__tests__/route.test.ts')

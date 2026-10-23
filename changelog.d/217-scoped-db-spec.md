@@ -1,0 +1,1 @@
+* `run-scoped-tests.py` no longer selects `*.db.spec.*` files. They are integration specs that need a test database, so a PR that changes only those specs now passes the scoped unit step with no tests selected (#217).
