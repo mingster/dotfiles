@@ -100,18 +100,6 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-# Recompute both patches; never trust a patch-id asserted in a comment.
-patch_id() {
-  local sha="$1" base patch
-  base=$(field .baseRefOid)
-  [[ "$base" =~ ^[0-9a-f]{40}$ ]] || return 1
-  for ref in "$base" "$sha"; do
-    git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || return 1
-  done
-  patch=$(git diff "$base...$sha" -- | git patch-id --stable) || return 1
-  [ -n "$patch" ] || return 1
-  awk 'NR == 1 {print $1}' <<<"$patch"
-}
 # Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
 # first-parent chain is a two parent merge of main that replays to exactly the same tree.
 # Fails closed; sets carry_why to the failed check.
@@ -262,10 +250,9 @@ if [ "$mechanical" = true ]; then
   echo "lead-merge: mechanical lane, Verdict not required"
 fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
-  current_patch=""
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0 main_fetched=false carry_notes=""
-  # Every Verdict for this head (or an equal patch) counts. Newest first; none
+  # Every Verdict for this head (or carried across clean merges of main) counts. Newest first; none
   # of them can erase another. An edited or minimized PASS never counts (the
   # verifier posts a fresh one); an edited or minimized FAIL still blocks.
   while IFS= read -r row; do
@@ -281,17 +268,11 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       if [ "$candidate_head" = "$head" ]; then
         applies=true
       else
-        current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for verdict"
-        old_patch=$(patch_id "$candidate_head") || old_patch=""
-        if [ -n "$old_patch" ] && [ "$old_patch" = "$current_patch" ]; then
-          applies=true
+        [ "$main_fetched" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry a verdict"; main_fetched=true; }
+        if verdict_carry "$candidate_head" "$head"; then
+          applies=true; carried="$candidate_head"
         else
-          [ "$main_fetched" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry a verdict"; main_fetched=true; }
-          if verdict_carry "$candidate_head" "$head"; then
-            applies=true; carried="$candidate_head"
-          else
-            carry_notes+="${candidate_head:0:12}: $carry_why; "
-          fi
+          carry_notes+="${candidate_head:0:12}: $carry_why; "
         fi
       fi
       if [ "$applies" = true ]; then
@@ -309,9 +290,9 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
   if [ "$passes" -eq 0 ]; then
     [ "$edited" -eq 0 ] || die "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
     [ "$misplaced" -eq 0 ] || die "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
-    die "missing passing verifier verdict for current head or stable patch-id${carry_notes:+; not carried: ${carry_notes%; }}"
+    die "missing passing verifier verdict for current head or clean merge of main${carry_notes:+; not carried: ${carry_notes%; }}"
   fi
-  [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or stable patch-id"
+  [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or clean merge of main"
   if [ "$verify_set" = true ]; then
     want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
     [ -n "$want" ] || die "--verify-command is empty"
@@ -341,26 +322,25 @@ if [ -n "$triggers" ]; then
   echo "lead-merge: countersign triggers:" >&2
   printf '%s\n' "$triggers" >&2
   # Checks: PASS for the current head is already required above. Like a retained
-  # Verdict, a Countersign for an older head holds when its patch-id equals the current head's.
+  # Verdict, a Countersign for an older head carries only across clean merges of main.
   countersigned() { # head
     jq -e --arg prefix "Countersign: Elon head=$1 reason=" \
       'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]")))' <<<"$info" >/dev/null
   }
   if ! countersigned "$head"; then
-    current_patch=""
+    countersign_ok=false
     while IFS= read -r candidate_head; do
       [ "$candidate_head" != "$head" ] || continue
-      current_patch="${current_patch:-$(patch_id "$head")}" || die "cannot compute head patch-id for countersign"
-      old_patch=$(patch_id "$candidate_head") || continue
-      if [ "$old_patch" = "$current_patch" ] && countersigned "$candidate_head"; then countersign_ok=true; break; fi
+      [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry a countersign"; main_fetched=true; }
+      if countersigned "$candidate_head" && verdict_carry "$candidate_head" "$head"; then countersign_ok=true; break; fi
     done < <(jq -r '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=").h?' <<<"$info" | awk '!seen[$0]++')
-    [ "${countersign_ok:-}" = true ] || die "missing Countersign: Elon for current head or stable patch-id"
+    [ "$countersign_ok" = true ] || die "missing Countersign: Elon for current head or clean merge of main"
   fi
 fi
 
 # Fetch immediately before merge; any shared changed path needs a new exact-head run.
 git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
-# A Verdict retained by patch-id is judged against the current head, which has the trunk it was checked on.
+# A carried Verdict is judged against the current head, which includes the merged main commits.
 ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
 trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
 while IFS= read -r f; do
