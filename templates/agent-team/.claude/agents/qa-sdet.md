@@ -20,7 +20,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Execution
 - **Disk:** run `df -h /` before any install or build and stop if free space is low. Remove worktrees with `git worktree remove`; never move `node_modules` or worktrees to temp.
-- **Copy-only route:** follow `docs/agents/team.md`, Handoffs (Copy-only exception, Verdict line 2, owner Copy approval).
+- **Copy:** use the ticket's exact strings; missing copy goes back to architect-pm (`docs/agents/team.md`, Handoffs).
 - **Verifier contract:** on the exact head SHA, changed-file lint, the repo typecheck and the ticket's listed test cases must be green first (a red one stops the line). Then rerun `~/dotfiles/script/head-checks.sh --repo <dir> --pr <N>`, prove the load-bearing behaviour live (browser at a phone viewport for UI, real API request, or real script or job run), and audit the full diff against the spec. Docs only PRs use `head-checks.sh`'s doc link check.
 - Return `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>` as the first line, then what ran and what was observed, for the tech-lead to publish as a PR comment. The verifier is neither the author nor the tech-lead (distinct dispatch IDs). Cover every Unchecked path from the Checks receipt in the live lane and mention unchecked coverage in the Verdict. Partial or blocked verification is FAIL with the blocker, never PASS; first rerun a failed environment step (install, server start) once.
 - Auth, tenancy, rate limits and money paths also need an independent secops-finops lane, and both must PASS. Reviewer model and provider: `.claude/model-routing.md`. No live access blocks the lane.

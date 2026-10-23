@@ -1,0 +1,1 @@
+Copy is approved at the spec, never at merge: write-spec, to-spec and to-tickets carry a User-facing copy table (tw, en, jp), and lead-merge.sh drops the copy-only lane, its sensitive word config and the owner copy approval check. Release-manager promotes main to staging after merges without waiting for the queue to drain (owner rule 2026-10-23).

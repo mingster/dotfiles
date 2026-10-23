@@ -99,148 +99,6 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-lane=normal
-sensitive=false
-base=$(field .baseRefOid)
-if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]]; then
-  for ref in "$base" "$head"; do
-    git cat-file -e "$ref^{commit}" 2>/dev/null || git fetch origin "$ref" >&2 || die "cannot inspect copy-only diff"
-  done
-  classification=$(python3 - "$base" "$head" "$files" "$(dirname "$0")/copy-only.config.json" <<'PYTHON'
-import html
-from html.parser import HTMLParser
-import json
-import re
-import subprocess
-import sys
-import unicodedata
-
-base, head, inventory, config = sys.argv[1:]
-def git(*args):
-    return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode()
-class VisibleText(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts = []
-    def handle_data(self, data):
-        self.parts.append(data)
-def visible_folded(text):
-    text.encode("utf-8", errors="strict")
-    parser = VisibleText()
-    parser.feed(html.unescape(text))
-    parser.close()
-    decomposed = unicodedata.normalize("NFKD", "".join(parser.parts))
-    unmarked = "".join(char for char in decomposed if not unicodedata.category(char).startswith("M"))
-    folded = unicodedata.normalize("NFKC", unmarked).casefold()
-    return folded
-def normalize(text):
-    return "".join(char for char in visible_folded(text) if unicodedata.category(char)[0] in "LN")
-def term_counts(text):
-    normalized, visible = normalize(text), visible_folded(text)
-    # Preserve currency symbols: NT$ must never become the ordinary substring nt.
-    return [visible.count(visible_folded(raw))
-            if any(unicodedata.category(char) == "Sc" or char == "%" for char in raw) or not word
-            else normalized.count(word) for raw, word in zip(words, normalized_words)]
-def contains_topic(text):
-    return any(term_counts(text))
-def increased(before, after):
-    return any(new > old for old, new in zip(term_counts(before), term_counts(after)))
-def quantities(values):
-    # Compare tokens per value so independent locale keys cannot assemble numbers.
-    from collections import Counter
-    # Spelled-out numbers (CJK numerals and English number words) are compared too, so
-    # 一百→二百, 百→千 and "one hundred"→"two hundred" route to owner review. This is a
-    # conservative tripwire for a changed count, not a lexicon: semantic review still decides.
-    return Counter(token for value in values for token in
-                   re.findall(r"\d+|NT\$|\$|¥|元|円|USD|TWD|JPY|%|[零〇一二三四五六七八九十百千萬万億亿兩两壹貳參叁肆伍陸柒捌玖拾佰仟]|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty|hundred|thousand|million|billion|half|dozen)\b",
-                                    html.unescape(value), re.IGNORECASE))
-def flatten(value, path=()):
-    if isinstance(value, str):
-        return {path: value}
-    if not isinstance(value, dict) or not value:
-        raise ValueError("not a translation object")
-    result = {}
-    for key, child in value.items():
-        result.update(flatten(child, (*path, key)))
-    return result
-try:
-    ancestor = git("merge-base", base, head).strip()
-    paths = git("diff", "--name-only", "-z", "--no-renames", ancestor, head, "--").split("\0")[:-1]
-    eligible = bool(paths) and sorted(paths) == sorted(json.loads(inventory))
-    groups = json.load(open(config))["sensitive_word_groups"]
-    if not isinstance(groups, dict) or not groups:
-        raise ValueError("invalid sensitive wording groups")
-    # Group metadata documents provenance; only explicit word arrays are matched.
-    words = []
-    for locales in groups.values():
-        if not isinstance(locales, dict) or set(locales) != {"en", "tw", "jp"}:
-            raise ValueError("invalid sensitive wording locales")
-        for group in locales.values():
-            if not isinstance(group, dict) or not isinstance(group.get("words"), list) or not group["words"]:
-                raise ValueError("invalid sensitive wording group")
-            words.extend(group["words"])
-    if not isinstance(words, list) or not words or any(not isinstance(word, str) or not word.strip() for word in words):
-        raise ValueError("invalid sensitive wording policy")
-    normalized_words = [normalize(word) for word in words]
-    sensitive = False
-    for path in paths:
-        entry = git("diff", "--raw", "-z", "--no-renames", ancestor, head, "--", path).split("\0")
-        if len(entry) != 3 or entry[1] != path or entry[2]:
-            raise ValueError("unknown diff entry")
-        raw = entry[0].split()
-        if len(raw) != 5:
-            raise ValueError("unknown diff metadata")
-        if raw[4] not in ("A", "M") or raw[0] not in (":100644", ":100755", ":000000") or raw[1] not in ("100644", "100755"):
-            eligible = False
-        stats = git("diff", "--numstat", "-z", "--no-renames", ancestor, head, "--", path).split("\t", 2)
-        if len(stats) != 3 or "-" in stats[:2]:
-            eligible = False
-        if re.fullmatch(r"web/src/app/i18n/locales/(tw|en|jp)/[^/]+\.json", path):
-            if raw[4] != "M":
-                eligible = False
-            before = {} if raw[4] == "A" else flatten(json.loads(git("show", f"{ancestor}:{path}")))
-            after = {} if raw[4] == "D" else flatten(json.loads(git("show", f"{head}:{path}")))
-            if before.keys() != after.keys():
-                eligible = False
-            changed = [key for key in before.keys() | after.keys()
-                       if before.get(key) != after.get(key)]
-            # Added/deleted keys still retain the owner gate; only unchanged
-            # key context is ignored when both values are ordinary UI wording.
-            sensitive |= any(contains_topic(" ".join(key)) for key in
-                             before.keys() ^ after.keys())
-            # Unchanged key context alone cannot make an ordinary label sensitive.
-            sensitive |= any(contains_topic(before.get(key, "")) or
-                             contains_topic(after.get(key, "")) for key in changed)
-            sensitive |= quantities(before[key] for key in changed if key in before) != quantities(
-                after[key] for key in changed if key in after)
-            before, after = "".join(before.values()), "".join(after.values())
-        elif re.fullmatch(r"marketing/(content|copy)/(?:[^/]+/)*[^/]+\.(md|txt)", path):
-            # Absent files and gitlinks contain no text blob on that side.
-            before = "" if raw[4] == "A" or raw[0] == ":160000" else git("show", f"{ancestor}:{path}")
-            after = "" if raw[4] == "D" or raw[1] == "160000" else git("show", f"{head}:{path}")
-            sensitive |= contains_topic(before) or contains_topic(after)
-            sensitive |= quantities([before]) != quantities([after])
-        else:
-            eligible = False
-            continue
-        # Whole-file counts include retained context and reordered locale values.
-        sensitive |= increased(before, after)
-    if sensitive:
-        eligible = False
-    print(("copy-only" if eligible else "normal") + (" sensitive" if sensitive else ""))
-except (ValueError, KeyError, OSError, subprocess.SubprocessError):
-    # Copy changes with unreadable blobs or policy still need the owner gate.
-    copy_changed = any(path.startswith(("web/src/app/i18n/locales/", "marketing/content/", "marketing/copy/"))
-                       for path in json.loads(inventory))
-    print("normal sensitive" if copy_changed else "normal")
-PYTHON
-) || die "cannot classify copy-only diff"
-  case "$classification" in
-    copy-only) lane=copy-only ;;
-    'copy-only sensitive') lane=copy-only; sensitive=true ;;
-    'normal sensitive') sensitive=true ;;
-  esac
-fi
 # Recompute both patches; never trust a patch-id asserted in a comment.
 patch_id() {
   local sha="$1" base patch
@@ -359,7 +217,6 @@ fi
 # new files are changelog fragments, and no file is renamed, copied or binary. Protected
 # paths were refused above; gate files still need their Countersign below.
 if [ "$mechanical" = true ]; then
-  [ "$lane" = normal ] && [ "$sensitive" = false ] || die "--mechanical is not for copy-only changes"
   [ "$unchecked" = false ] || die "--mechanical needs every path checked (head-checks lists unchecked paths)"
   grep -qE '^(rename|copy|similarity|Binary files|GIT binary patch)' <<<"$diff" && die "--mechanical refuses renames, copies and binary changes"
   # Paths come from the ---/+++ lines (to end of line, so spaces and quoted names work), not from the diff --git line.
@@ -376,7 +233,7 @@ if [ "$mechanical" = true ]; then
   [ -z "$bad" ] || die "--mechanical needs a pure substitution or deletion diff: $bad"
   echo "lead-merge: mechanical lane, Verdict not required"
 fi
-if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ] || [ "$lane" = copy-only ]; }; then
+if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   current_patch=""
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0
@@ -430,59 +287,14 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
     if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
       die "verdict must cover unchecked paths in its live lane"
     fi
-    # The topic attestation belongs to an independent Verdict, never a separate
-    # comment. Any owner attestation keeps the owner gate on.
-    topics=$(printf '%s\n' "$comment" | sed -n '2p')
-    case "$topics" in
-      'Copy topics: owner') sensitive=true; lane=normal ;;
-      'Copy topics: none') ;;
-      *) lane=normal ;;
-    esac
   done
-  if [ "$lane" = copy-only ]; then
-    for entry in "${applicable[@]}"; do
-      comment=${entry#*$'\n'}
-      for evidence in 'screenshots?' 'phone[ -]width' '\btw\b' '\ben\b' '\bjp\b'; do
-        grep -qiE "$evidence" <<<"${comment#*$'\n'}" || die "copy-only verdict needs phone-width screenshots in tw, en and jp"
-      done
-    done
-  fi
-fi
-
-echo "lead-merge: lane=$lane"
-if [ "$sensitive" = true ]; then
-  # Owner Copy approval is `bin/owner-approve.sh copy <sha>`, a terminal-only file.
-  # No GitHub comment approves anything: every agent's gh login is the owner's.
-  # A missing or unreadable guard-bash.py must not end the script under set -e before
-  # the configured fallback; it only leaves the namespace empty, which still refuses.
-  ns=""
-  if [ -r "$top/.claude/hooks/guard-bash.py" ]; then
-    ns=$(sed -n 's/^APPROVAL_NAMESPACE *= *"\([a-z0-9_-]*\)".*/\1/p' "$top/.claude/hooks/guard-bash.py" 2>/dev/null | head -n1) || ns=""
-  fi
-  [ -n "$ns" ] || ns=$(jq -r '.approval_namespace // empty' "$(dirname "$0")/copy-only.config.json" 2>/dev/null) || ns=""
-  [ -n "$ns" ] || die "no approval namespace (APPROVAL_NAMESPACE in .claude/hooks/guard-bash.py, missing or unreadable at $top/.claude/hooks/guard-bash.py, or approval_namespace in copy-only.config.json)"
-  case "$ns" in *[!a-z0-9_-]*) die "invalid approval namespace" ;; esac
-  approval_file="$HOME/.config/$ns/approval.json"
-  # An approval holds while the head moves without changing content: it matches the
-  # head sha, or the zero context stable patch-id against the merge base with main.
-  approved() { # patch-id (empty matches by head only)
-    jq -e --arg head "$head" --arg pid "$1" --argjson now "$(date +%s)" \
-      '(if type == "object" and has("approvals") then .approvals else [.] end) | any(.[]; .scope == "copy" and (.target == $head or ($pid != "" and .patch_id == $pid)) and (.expires_at | type == "number") and .expires_at > $now and .expires_at <= $now + 1860)' \
-      "$approval_file" >/dev/null 2>&1
-  }
-  if ! approved ""; then
-    git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || true
-    git fetch origin main >&2 || true
-    pid=$(git diff -U0 "$(git merge-base origin/main "$head")" "$head" -- 2>/dev/null | git patch-id --stable | awk 'NR == 1 {print $1}') || pid=""
-    approved "$pid" || die "missing owner copy approval for current head or its patch (owner runs: bin/owner-approve.sh copy $head)"
-  fi
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
 triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.])xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
 while IFS= read -r f; do
   case "$f" in
-    .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh|script/copy-only.config.json|*/script/copy-only.config.json)
+    .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh)
       gate_lines=$(awk -v path="$f" '/^\+\+\+ / {active=($0 == "+++ b/" path)} active && /^[+-]/ && !/^\+\+\+ / && !/^--- / {print path ":" $0}' <<<"$diff")
       triggers="${triggers}${triggers:+$'\n'}${gate_lines:-gate definition changed: $f}" ;;
   esac

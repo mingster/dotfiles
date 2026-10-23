@@ -29,10 +29,10 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Pick the next ticket yourself, with at most 3 lanes running.
 - On a coding worker's `worker_done`, run `~/dotfiles/script/on-worker-done.sh` to start the reviewer.
 - Handle exceptions only: a FAIL Verdict, a second failed fix, splits and cross area calls.
-- Batch owner gates into one list to Elon. Ask for copy approval only after the PR merges cleanly into current main (for a batch, each PR in merge order), and never merge main in after approval.
+- Batch owner gates into one list to Elon. Copy needs no owner gate at merge; a ticket missing its copy goes back to architect-pm.
 
 ## Merge
-- Merge an owner-approved copy PR in the same turn the approval arrives, ahead of the queue (owner 2026-10-22); docs-only copy goes to Elon under `docs/agents/team.md`, Orchestration rule 3.
+- Docs-only copy goes to Elon under `docs/agents/team.md`, Orchestration rule 3.
 - You own engineering push, PR and merge (`model-routing.md`). Merge only with `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Merge main in, never rebase, force push or `--admin`.
 - **Merge criteria ({{ADR_MERGE_POLICY}}):** required review passes on the current head, checks pass, any owner approval covers that head, no conflicts.
 - `lead-merge.sh` refuses a PR touching `.claude/hooks/`, `.claude/settings.json` or `bin/owner-approve.sh`: send Elon the PR; merge only after the owner reads the diff.

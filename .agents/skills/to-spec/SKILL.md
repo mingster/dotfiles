@@ -40,6 +40,10 @@ A LONG, numbered list of user stories. Each user story should be in the format o
 
 This list of user stories should be extremely extensive and cover all aspects of the feature.
 
+## User-facing copy
+
+Every new or changed string a user will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording. The owner approves this copy when he accepts the spec; there is no copy approval at merge. Write "none" when nothing user-facing changes.
+
 ## Implementation Decisions
 
 A list of implementation decisions that were made. This can include:

@@ -16,7 +16,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Execution
 - **Disk:** run `df -h /` before any install or build and stop if free space is low. Remove worktrees with `git worktree remove`; never move `node_modules` or worktrees to a temp directory.
-- **Copy-only route:** follow `docs/agents/team.md`, Handoffs (Copy-only exception, Verdict line 2, owner Copy approval).
+- **Copy:** use the ticket's exact strings; missing copy goes back to architect-pm (`docs/agents/team.md`, Handoffs).
 - **Fast path:** 3 files or fewer: implement directly in your workspace with TDD.
 - **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root, written at the start (allowlisted files, verify command) and when blocked.
 - **Local servers:** start your own server on your own port and stop it by PID, never by name.

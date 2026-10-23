@@ -40,12 +40,11 @@ Read this section before framing an objective, dispatching, reviewing a delivery
 
 ## Handoffs
 
-Docs-only PRs follow Orchestration rule 3; runtime copy changes follow the copy-only exception where defined below.
+Docs-only PRs follow Orchestration rule 3.
 
-- **Copy-only exception (#3819):** `lead-merge.sh` decides from the actual diff: existing locale values only (unchanged keys), or `.md`/`.txt` under `marketing/content/` or `marketing/copy/`; anything else uses the normal route. Route the edit and the independent verifier by `.claude/model-routing.md`, batch small requests into one PR a day, require current-head Checks PASS and a Verdict with phone-width screenshots of every changed page in tw, en and jp; qa-sdet diff review and the secops lane are not required.
-- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. The tech-lead passes it to `lead-merge.sh --verify-command`, which refuses a missing or different one.
-- Verdict line 2 is exactly `Copy topics: none` or `Copy topics: owner`. Write `owner` if the change touches prices or money, refunds or cancellation, legal or privacy, or promises (delivery, timing, guarantees). When unsure write `owner`. Never edit or minimize a Verdict; post a new one. lead-merge ignores an edited or minimized PASS and still counts an edited FAIL. Owner Copy approval is `bin/owner-approve.sh copy <full head sha>`, run by the owner in a terminal. A PR comment approves nothing. Merge an approved PR in the same turn the approval arrives (owner 2026-10-22).
-- Copy-only may go to Playground at once; production still needs the owner's go. Japanese homepage and main-page copy needs a native reader before launch.
+- **Copy is approved at the spec (owner rule 2026-10-23):** the spec and each ticket carry the exact new user-facing strings in tw, en and jp, and the owner's acceptance of the spec approves them. Nobody asks the owner about copy at merge. A ticket that needs copy its ticket does not list goes back to architect-pm for a spec amendment.
+- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. The tech-lead passes it to `lead-merge.sh --verify-command`, which refuses a missing or different one. Never edit or minimize a Verdict; post a new one. lead-merge ignores an edited or minimized PASS and still counts an edited FAIL.
+- **Straight to staging (owner rule 2026-10-23):** release-manager promotes main to Playground after merges, without waiting for the queue to drain or an owner word. Production still needs the owner's go per release. Japanese homepage and main-page copy needs a native reader before launch.
 - **Native en and jp copy (owner rule 2026-10-21):** write `en` as fluent American English and `jp` as natural Japanese, natively from the intent, never a word-for-word translation of `tw`. A menu or button name quotes the real label in that locale's file. Copy reviewers reject literal translations.
 
 Handoffs use committed artifacts such as intents, specs, branches, pull requests and reviews, with `active_run.md` for long tasks. Always name the next actor by role.

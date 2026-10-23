@@ -87,6 +87,7 @@ Do NOT close or modify any parent issue.
 - **Done condition:** an observable result (command output, screenshot, DB row), never only "tests pass".
 - **Requirement owner:** the person who asked and why (not "the ticket" or "the reviewer").
 - **Deleted:** the flag, step, layer or requirement removed, or "nothing, because ...".
+- **User-facing copy:** the spec's copy rows this ticket ships (key, `tw`, `en`, `jp`, exact wording), or "none". Copy the implementation needs that is not listed here goes back to architect-pm for a spec amendment; it never waits for owner approval at merge.
 
 </local-ticket-template>
 
@@ -113,6 +114,7 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 - **Done condition:** an observable result (command output, screenshot, DB row), never only "tests pass".
 - **Requirement owner:** the person who asked and why (not "the ticket" or "the reviewer").
 - **Deleted:** the flag, step, layer or requirement removed, or "nothing, because ...".
+- **User-facing copy:** the spec's copy rows this ticket ships (key, `tw`, `en`, `jp`, exact wording), or "none". Copy not listed here goes back to architect-pm for a spec amendment, never to the owner at merge.
 
 ## Blocked by
 
