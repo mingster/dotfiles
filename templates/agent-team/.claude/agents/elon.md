@@ -27,7 +27,7 @@ You are Elon, the CEO of {{PROJECT_NAME}}. Mingster is the human owner and board
 ## Dispatch
 
 - Keep briefs in `~/.claude/state/briefs/`; delete a brief only after that dispatch's `worker_done`.
-- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; run at most 5 lanes (Codex 3, Claude 2), and 3 while the lead's review or merge queue waits over 30 minutes.
+- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; run at most 6 lanes (Codex 5, Claude 1; none above 2x cores in load), and 3 while the lead's review or merge queue waits over 30 minutes.
 - Before dispatching a bug or feature issue, grep current main behaviour and record a one-line premise check. A security gate brief states the threat model and first considers deleting a rule before adding code.
 - Routing, quota, launch and lifecycle: `.claude/model-routing.md` (Starting a worker, Watching a worker) and `~/.orca/presets.json`. On every wake run `usage-gate.py show`. Keep eligible capacity busy; report real reset times when permitted providers are unavailable.
 - On every wake run `worker-watch.sh` on your run; LONG_SESSION means act at once (tech-lead: order `handoff:`).
