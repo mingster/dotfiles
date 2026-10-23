@@ -4,7 +4,7 @@ Tiers, Orca worker flags, worker launch and supervision, fallback, and the commi
 
 Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for tech-lead, fullstack-dev, qa-sdet and release-manager work. Provider policy lives in this file; the adapter never overrides it, and its usage, effort, token, strike, independent-review and publication gates still apply.
 
-Owner rule (2026-10-23, replaces the 2026-10-22 removal): Codex is the default for implementation tickets, up to 3 Codex lanes at once (`--agent codex --model gpt-6.1-sol --effort medium`). Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity. Codex workers run without the Claude hooks and the `settings.json` deny list; their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules`.
+Owner rule (2026-10-23, replaces the 2026-10-22 removal): Codex is the default for implementation tickets, up to 3 Codex lanes at once (`--agent codex --model gpt-6.1-sol --effort medium`). Codex is not in `~/.orca/presets.json` fallback chains: start Codex workers by hand with `~/dotfiles/script/start-codex-worker.sh`. Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity. Codex workers run without the Claude hooks and the `settings.json` deny list; their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules`.
 
 ## Tiers
 
