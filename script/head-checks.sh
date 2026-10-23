@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
 set -euo pipefail
-repo="" pr="" ref="" sha="" worktree="" lock=""
+repo="" pr="" ref="" sha="" worktree="" lock="" refused=""
 override="" changed="" explicit_base=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -28,6 +28,7 @@ finish() {
   trap - EXIT
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
+  [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
   [ "$status" -ne 0 ] || result=PASS
   {
     printf 'Checks: %s head=%s\n\n' "$result" "$sha"
@@ -71,17 +72,25 @@ base=$(git -C "$repo" merge-base "$base" "$sha") || usage "cannot resolve PR mer
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
-worktree="$HOME/orca/workspaces/$name/_checks"
-mkdir -p "$(dirname "$worktree")"
-# The worktree persists so installed packages survive between runs; one run at a time may use it.
-lock="$worktree.lock"
-if ! mkdir "$lock" 2>/dev/null; then
-  holder=$(cat "$lock/pid" 2>/dev/null || true)
-  if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
-    lock=""; usage "check worktree is in use by pid $holder: $worktree"
+slots="${HEAD_CHECKS_SLOTS:-2}"
+[[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
+mkdir -p "$HOME/orca/workspaces/$name"
+# Each check worktree persists so installed packages survive between runs; one run at a time may use each.
+worktree="" busy=""
+for i in $(seq 1 "$slots"); do
+  candidate="$HOME/orca/workspaces/$name/_checks"; [ "$i" -eq 1 ] || candidate="$candidate-$i"
+  lock="$candidate.lock"
+  if ! mkdir "$lock" 2>/dev/null; then
+    holder=$(cat "$lock/pid" 2>/dev/null || true)
+    if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
+      busy="$busy $holder"; lock=""; continue
+    fi
+    rm -rf "$lock"; mkdir "$lock" || { lock=""; continue; }
   fi
-  rm -rf "$lock"; mkdir "$lock" || { lock=""; usage "cannot lock check worktree: $worktree"; }
-fi
+  worktree="$candidate"; break
+done
+# A busy refusal checked nothing, so it posts no Checks verdict.
+[ -n "$worktree" ] || { refused=1; usage "every check worktree is in use by pid$busy"; }
 printf '%s\n' "$$" > "$lock/pid"
 common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
 if [ -e "$worktree" ] && [ "$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common" ] \
