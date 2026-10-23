@@ -231,7 +231,7 @@ Slash commands work in Claude Code, Cursor, and Antigravity. In OpenAI Codex, in
 | Goal | Command | Description |
 | --- | --- | --- |
 | Start or plan next objective | `/elon Help me choose the next objective.` | Elon reviews backlog and recommends priorities |
-| Check project status | `/elon status` or `/tl status` | Returns concise status categorized into Now, Needs Owner, and Running |
+| Check project status | `/elon status` or `/teddy status` | Returns concise status categorized into Now, Needs Owner, and Running |
 | Deliver a batch of tickets | `/elon Deliver ready tickets using /crew and /tdd.` | Hands scoped tickets to Tech Lead for worker dispatch |
 | Unblock decision backlog | `/grill-backlog` | Walks through unresolved tickets to clear decisions |
 | Deploy to Staging | `/deploy staging` | Promotes verified main branch to staging environment |

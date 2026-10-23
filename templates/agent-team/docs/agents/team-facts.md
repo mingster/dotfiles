@@ -1,6 +1,6 @@
 # Team facts
 
-Product facts read by the generated team skills (`crew`, `tl`), which hold none themselves. This project owns this file. Keep the headings: the skills look values up by heading.
+Product facts read by the generated team skills (`crew`, `teddy`), which hold none themselves. This project owns this file. Keep the headings: the skills look values up by heading.
 
 ## Repository
 

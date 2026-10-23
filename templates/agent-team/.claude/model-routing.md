@@ -14,7 +14,7 @@ Owner rule (2026-10-23, replaces the 2026-10-22 removal): Codex is the default f
 | Workhorse | Implementation, coordination, QA, release, support, drafts | tech-lead, fullstack-dev, release-manager, sales-marketing, support-csm |
 | Light | Clerical subtasks: formatting, extraction, changelog fragment lines | none by default, chosen per task |
 
-A session is plain Claude Code until the owner calls the agent team with `/elon`, `/ceo`, `/crew`, `/tl` or the `team` launcher; Elon then follows `elon.md`.
+A session is plain Claude Code until the owner calls the agent team with `/elon`, `/ceo`, `/crew`, `/teddy` or the `team` launcher; Elon then follows `elon.md`.
 
 Raise one assignment a tier, never the whole role, when it touches money, auth, tenancy or production, or after two failed attempts at a hard diagnosis (for example the qa-sdet review of a payment PR runs at Strong). Record the reason in the task. A higher tier grants no extra strike.
 
