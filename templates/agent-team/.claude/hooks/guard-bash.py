@@ -194,6 +194,15 @@ def check_segment(segment, depth=0):
                 deny(f"{base} would print ${name}. Use ${{{name}:+set}} to show it is set, or ${{#{name}}} for its length.")
 
 
+BACKGROUND_WAIT = re.compile(r"orchestration\s+check\b[^;|]*--wait[^;|]*?(?<!&)&\s*(?:$|;|\n)")
+
+
+def check_background_wait(command):
+    if BACKGROUND_WAIT.search(command):
+        deny("An `orca orchestration check --wait` started with a trailing shell `&` never wakes this session, so deliveries sit "
+             "unread. Run it as its own Bash call with run_in_background: true, and re-arm it after each --ack.")
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -202,6 +211,7 @@ def main():
     if data.get("tool_name") != "Bash":
         return
     command = (data.get("tool_input") or {}).get("command") or ""
+    check_background_wait(command)
     try:
         for seg in segments(command):
             check_segment(seg)
