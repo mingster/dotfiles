@@ -63,7 +63,7 @@ def select_changed_tests(root, files):
             tests.add(path)
         if path.suffix in SOURCE_SUFFIXES:
             for pattern in (path.stem + '.test.*', path.stem + '.spec.*', '__tests__/*.test.*', '__tests__/*.spec.*'):
-                tests.update(item for item in path.parent.glob(pattern) if item.is_file())
+                tests.update(item for item in path.parent.glob(pattern) if item.is_file() and is_test(item))
     if modules:
         base, aliases = read_aliases(root)
         for directory, dirs, names in os.walk(root):
