@@ -91,17 +91,20 @@ keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
-path=''; branch=''; locked=0
+path=''; branch=''; head=''; locked=0
 process_worktree() {
   local why=''
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
-  elif [ -z "$branch" ]; then why='detached HEAD'
+  elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why='protected'
   elif [ "${path##*/}" = lead-queue ]; then why='lead-queue lane'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ]; then why='dirty'
   elif grep -Fxq -- "$path" "$tmp/active" || grep -Fxq '*' "$tmp/active"; then why='active or unknown Orca terminal'
+  elif [ -z "$branch" ]; then
+    # Detached review, QA and release worktrees have no PR; only a merged HEAD frees them.
+    if git merge-base --is-ancestor "$head" origin/main; then reason='detached at merged commit'; else why='detached with unmerged commits'; fi
   elif ! eligible "refs/heads/$branch" "$branch"; then why='unmerged without closed PR'
   fi
   if [ -n "$why" ]; then
@@ -115,7 +118,8 @@ process_worktree() {
 }
 while IFS= read -r -d '' field; do
   case "$field" in
-    'worktree '*) path=${field#worktree }; branch=''; locked=0 ;;
+    'worktree '*) path=${field#worktree }; branch=''; head=''; locked=0 ;;
+    'HEAD '*) head=${field#HEAD } ;;
     'branch refs/heads/'*) branch=${field#branch refs/heads/} ;;
     locked*) locked=1 ;;
     '') process_worktree ;;
