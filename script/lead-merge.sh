@@ -64,7 +64,7 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 # 3b. Generated team copies change only through the dotfiles template, then merge with --verdict-from
-# (riben.life #4565 hand edited a generated deploy skill and the next sync would have reverted it).
+# (a project PR hand edited a generated deploy skill and the next sync would have reverted it).
 if [ -z "$verdict_from" ]; then
   tmpl_skills="$(cd "$(dirname "$0")/.." && pwd)/templates/agent-team/.agents/skills"
   while IFS= read -r f; do
