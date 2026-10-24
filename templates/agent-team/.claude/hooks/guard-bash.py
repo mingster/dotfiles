@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse guard for Bash, from the shared agent team template.
 
-Blocks two kinds of accident, and nothing else:
+Blocks these kinds of accident:
 
 1. Running a raw deploy script that only the pipeline wrapper may run. The check
    looks at the program a command segment executes, so `git add bin/deploy-win.sh`,
@@ -11,6 +11,9 @@ Blocks two kinds of accident, and nothing else:
    files, or echoing secret environment variables. Use `.claude/bin/env-peek.py`
    to check a value without printing it.
 3. A PayPal API call other than GET and the token request.
+4. Running tests, type checks or builds outside the shared heavy job gate.
+   Gate wrappers execute their children outside PreToolUse, so no environment
+   escape hatch is needed.
 
 Anything it cannot parse is let through: the deny rules in settings.json are the
 backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
@@ -136,6 +139,32 @@ def check_segment(segment, depth=0):
     if not prog:
         return
     base = os.path.basename(prog)
+
+    # 4. Heavy jobs must acquire the shared machine budget.
+    try:
+        heavy_prog, heavy_args = program_and_args(shlex.split(segment, comments=True))
+    except ValueError:
+        heavy_prog, heavy_args = None, []
+    heavy_base = os.path.basename(heavy_prog or "")
+    weight = None
+    if heavy_base in {"tsc", "playwright"}:
+        weight = 2 if heavy_base == "playwright" else 1
+    elif heavy_base == "next" and heavy_args[:1] == ["build"]:
+        weight = 2
+    elif heavy_base == "bun":
+        if heavy_args[:1] == ["test"] or heavy_args[:2] == ["run", "test"]:
+            weight = 1
+        elif heavy_args[:2] == ["run", "build"] or (
+                len(heavy_args) > 1 and heavy_args[0] == "run" and heavy_args[1].startswith("test:regression")):
+            weight = 2
+    elif heavy_base in {"bunx", "npx"}:
+        if heavy_args[:1] == ["tsc"]:
+            weight = 1
+        elif heavy_args[:1] == ["playwright"] or heavy_args[:2] == ["next", "build"]:
+            weight = 2
+    if weight:
+        deny("Heavy jobs must run through the shared machine gate. "
+             f"Run: ~/dotfiles/script/heavy-gate.sh --weight {weight} -- {segment}")
 
     # 1. Raw deploy scripts.
     if base in BLOCKED_SCRIPTS:
