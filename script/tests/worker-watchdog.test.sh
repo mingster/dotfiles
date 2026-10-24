@@ -54,16 +54,22 @@ run_case() {
   rm -rf "$HOME/.orca"; : > "$tmp/actions"
   WATCHDOG_TEST_MODE=$1 bash "$root/script/worker-watchdog.sh" --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks "$2"
 }
+pass=0 fail=0
+# check ACTUAL EXPECTED [LABEL]: a failed bare [[ ]] does not trip set -e in bash 3.2, so count every assert.
+check() {
+  if [[ $1 == "$2" ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL line ${BASH_LINENO[0]}: got '$1', want '$2' ${3:-}" >&2; fi
+}
+check_empty() { check "$(wc -c < "$1" | tr -d ' ')" 0 "($1 not empty)"; }
 count() { python3 - "$tmp/actions" "$1" <<'PY'
 import json,sys
 print(sum(json.loads(l)[:2] == sys.argv[2].split() for l in open(sys.argv[1])))
 PY
 }
 run_case idle 1
-[[ $(count 'terminal send') == 0 ]]
+check "$(count 'terminal send')" 0 "terminal send"
 run_case idle 8
-[[ $(count 'terminal send') == 1 ]] # worker once despite cooldown; its coordinator waits on it and is never nudged
-[[ $(count 'orchestration send') == 1 ]] # three idle checks after nudge
+check "$(count 'terminal send')" 1 "terminal send" # worker once despite cooldown; its coordinator waits on it and is never nudged
+check "$(count 'orchestration send')" 1 "orchestration send" # three idle checks after nudge
 python3 - "$tmp/actions" <<'PY'
 import json,sys
 for row in map(json.loads,open(sys.argv[1])):
@@ -76,55 +82,55 @@ PY
 # A restart and a screen read failure must retain each terminal's ten-minute cooldown.
 WATCHDOG_TEST_MODE=failed-read bash "$root/script/worker-watchdog.sh" --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks 1
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks 2
-[[ $(count 'terminal send') == 2 ]]
+check "$(count 'terminal send')" 1 "terminal send" # worker only; the busy coordinator is never nudged
 run_case paginated 3
-[[ $(count 'terminal send') == 2 && $(count 'orchestration send') == 0 ]]
+check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 0 "orchestration send"
 # Failed worker state is unknown, never evidence for a zero-worker escalation.
 run_case failed-list 3
-[[ $(count 'orchestration send') == 0 ]]
+check "$(count 'orchestration send')" 0 "orchestration send"
 run_case working 5
-[[ ! -s "$tmp/actions" ]]
+check_empty "$tmp/actions"
 run_case unavailable 5
-[[ ! -s "$tmp/actions" ]]
+check_empty "$tmp/actions"
 run_case stopped 3
-[[ $(count 'terminal send') == 0 && $(count 'orchestration send') == 2 ]]
+check "$(count 'terminal send')" 0 "terminal send"; check "$(count 'orchestration send')" 2 "orchestration send"
 for stopped_mode in capacity rate quota; do
   run_case "$stopped_mode" 2
-  [[ $(count 'terminal send') == 0 && $(count 'orchestration send') == 2 ]]
+  check "$(count 'terminal send')" 0 "terminal send"; check "$(count 'orchestration send')" 2 "orchestration send"
 done
 run_case claude 2
-[[ $(count 'terminal send') == 2 ]]
+check "$(count 'terminal send')" 1 "terminal send"
 # A coordinator with no live worker really is idle and is still nudged.
 run_case emptyidle 2
-[[ $(count 'terminal send') == 1 ]]
+check "$(count 'terminal send')" 1 "terminal send"
 grep -q term_coord "$tmp/actions"
 run_case empty 3
-[[ $(count 'orchestration send') == 1 ]]
+check "$(count 'orchestration send')" 1 "orchestration send"
 # One escalation per empty episode, even when the send is rejected.
 run_case empty 8
-[[ $(count 'orchestration send') == 1 ]]
+check "$(count 'orchestration send')" 1 "orchestration send"
 WATCHDOG_TEST_SEND_FAIL=1 run_case empty 8
-[[ $(count 'orchestration send') == 1 ]]
+check "$(count 'orchestration send')" 1 "orchestration send"
 # A finished run (no pending or ready tasks) with zero workers is not an alarm.
 WATCHDOG_TEST_TASKS=none run_case empty 5
-[[ $(count 'orchestration send') == 0 ]]
+check "$(count 'orchestration send')" 0 "orchestration send"
 # A prompt waiting on a background shell or monitor is not idle: no nudge, no idle-after-nudge escalation.
 for waiting_mode in bgshell monitor; do
   run_case "$waiting_mode" 8
-  [[ ! -s "$tmp/actions" ]]
+  check_empty "$tmp/actions"
 done
 # A coordinator with no live worker but an armed `check --run RUN --wait` waiter is not escalated; an idle one still is.
 WATCHDOG_TEST_TASKS=none run_case emptyidle 8
-[[ $(count 'terminal send') == 1 && $(count 'orchestration send') == 1 ]]
+check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 1 "orchestration send"
 grep -q 'idle-after-nudge term_coord' "$tmp/actions"
 WATCHDOG_TEST_PS='orca orchestration check --run run_test --wait --timeout-ms 900000' WATCHDOG_TEST_TASKS=none run_case emptyidle 8
-[[ ! -s "$tmp/actions" ]]
+check_empty "$tmp/actions"
 WATCHDOG_TEST_PS='orca orchestration check --run run_other --wait' WATCHDOG_TEST_TASKS=none run_case emptyidle 8
-[[ $(count 'orchestration send') == 1 ]]
+check "$(count 'orchestration send')" 1 "orchestration send"
 # Repeatable run flags still deduplicate shared terminal handles.
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_a --run run_b --notify term_owner --notify-run run_owner --interval 0 --checks 2
-[[ $(count 'terminal send') == 2 ]]
+check "$(count 'terminal send')" 1 "terminal send"
 # --all-runs: only runs with a live worker are watched, and each escalates to its own coordinator.
 export WATCHDOG_TEST_PER_RUN=1 WATCHDOG_TEST_RUNS='run_live run_dead'
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
@@ -147,17 +153,17 @@ PY
 export WATCHDOG_TEST_INBOX="$tmp/inbox.json"
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 3
-[[ $(count 'orchestration send') == 2 ]]
+check "$(count 'orchestration send')" 2 "orchestration send"
 grep -q 'unread-report msg_a' "$tmp/actions" && grep -q 'unread-report msg_b' "$tmp/actions"
 ! grep -q 'msg_new\|msg_read\|msg_status\|msg_other' "$tmp/actions"
 # A failed send lands in alerts.log; the third consecutive failure is flagged.
 rm -rf "$HOME/.orca"; : > "$tmp/actions";
 WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
-[[ $(grep -c 'undelivered (run run_live): unread-report' "$HOME/.orca/state/worker-watchdog/alerts.log") == 2 ]]
+check "$(grep -c 'undelivered (run run_live): unread-report' "$HOME/.orca/state/worker-watchdog/alerts.log")" 2
 # An unreachable run coordinator falls back to the --fallback-run mailbox, as an escalation.
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_FAIL_TO=coord_run_live WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --fallback-run run_elon --interval 0 --checks 1
-[[ $(grep -c '"run:run_elon", "--run", "run_elon", "--type", "escalation"' "$tmp/actions") == 2 ]]
+check "$(grep -c '"run:run_elon", "--run", "run_elon", "--type", "escalation"' "$tmp/actions")" 2
 ! grep -q 'undelivered' "$HOME/.orca/state/worker-watchdog/alerts.log"
 rm -rf "$HOME/.orca"
 python3 - "$tmp/inbox.json" "$now_old" <<'PY'
@@ -170,7 +176,7 @@ unset WATCHDOG_TEST_PER_RUN WATCHDOG_TEST_RUNS WATCHDOG_TEST_INBOX
 # An Antigravity quota banner blocks its pool until reset; other providers are never fed to the parser.
 export USAGE_GATE_BANNER_FILE="$tmp/banner.json"
 WATCHDOG_TEST_PROVIDER=codex run_case banner 2
-[[ ! -e "$USAGE_GATE_BANNER_FILE" ]]
+check "$([[ -e $USAGE_GATE_BANNER_FILE ]] && echo exists)" "" "banner file"
 WATCHDOG_TEST_PROVIDER=antigravity run_case banner 2
 python3 - "$USAGE_GATE_BANNER_FILE" <<'PY'
 import json,sys,time
@@ -198,4 +204,6 @@ for _ in $(seq 1 100); do kill -0 "$hang_pid" 2> /dev/null || break; sleep 0.1; 
 if kill -0 "$hang_pid" 2> /dev/null; then kill "$hang_pid"; echo 'watchdog hung without timeout binary' >&2; exit 1; fi
 wait "$hang_pid"
 grep -q 'read-run-failed run_test' "$HOME/.orca/logs/worker-watchdog.log"
+echo "worker-watchdog: $pass passed, $fail failed"
+[[ $fail == 0 ]] || exit 1
 echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, background shell or monitor, armed --wait waiter, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary, all-runs discovery, unread reports, alerts.log fallback)'
