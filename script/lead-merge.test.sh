@@ -13,7 +13,7 @@ check() {
 
 check mingster/fullstack-dev-s4a-4105 4105
 check mingster/fullstack-dev-c4145 4145
-check mingster/dev-riben-q13-audit ''
+check mingster/dev-project-q13-audit ''
 check mingster/d4146b-hooks-prompt 4146
 check mingster/4105-fix-4146 4146
 check mingster/4105-fix-13 4105
