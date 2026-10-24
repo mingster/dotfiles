@@ -89,7 +89,9 @@ drop() {
       fi
       mkdir_patch "$b" "$wt" || { echo "merge-cleanup: could not save $b; worktree $wt kept" >&2; return 0; }
     fi
-    DRY_RUN=$dry bash "$here/worker-finish.sh" --worktree "$wt"
+    # Cleanup follows a merge or an owner-saved diff: head-checks are heavy, can hang or fail, and one failure must not leave the remote branch behind.
+    DRY_RUN=$dry bash "$here/worker-finish.sh" --worktree "$wt" --skip-head-checks "post-merge cleanup" \
+      || echo "merge-cleanup: worker-finish failed for $wt; deleting the branches anyway" >&2
   fi
   if git show-ref --verify --quiet "refs/heads/$b"; then
     echo "Delete local $b"; run git branch -D -- "$b" >/dev/null

@@ -163,3 +163,14 @@ export FAKE_RELEASED="$tmp/wt-q5"
 bash "$here/merge-cleanup.sh" --branch mingster/none --pr 345 > "$tmp/out" 2>&1 || fail "dirty pr cleanup failed"
 grep -q '^+wip' "$tmp/_ref/qa-345-dirty.patch" || fail "dirty qa-<PR> patch not saved"
 echo 'ok dirty qa-<PR> saved as patch'
+# A released lane whose head is not in main must not run head-checks (heavy, can hang or fail) and must not stop cleanup.
+printf '#!/usr/bin/env bash\necho ran >> "%s/checks-ran"; exit 1\n' "$tmp" > "$tmp/bin/failing-checks"; chmod +x "$tmp/bin/failing-checks"
+git worktree add -qb qa-777 "$tmp/wt-r1" main
+commit_on qa-777 "$tmp/wt-r1" r1.txt
+git push -q origin qa-777
+export FAKE_RELEASED="$tmp/wt-r1" HEAD_CHECKS="$tmp/bin/failing-checks"
+bash "$here/merge-cleanup.sh" --branch mingster/none --pr 777 > "$tmp/out" 2>&1 || fail "cleanup failed with failing head-checks"
+[ ! -e "$tmp/checks-ran" ] || fail "head-checks ran during cleanup"
+has_local qa-777 || has_remote qa-777 && fail "qa-777 left behind"
+unset HEAD_CHECKS
+echo 'ok cleanup skips head-checks and still removes the lane'
