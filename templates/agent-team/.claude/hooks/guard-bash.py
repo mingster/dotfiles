@@ -142,17 +142,28 @@ def check_segment(segment, depth=0):
 
     # 4. Heavy jobs must acquire the shared machine budget.
     try:
-        heavy_prog, heavy_args = program_and_args(shlex.split(segment, comments=True))
+        heavy_tokens = shlex.split(segment, comments=True)
+        while heavy_tokens and heavy_tokens[0] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
+            heavy_tokens = heavy_tokens[1:]
+        heavy_prog, heavy_args = program_and_args(heavy_tokens)
     except ValueError:
         heavy_prog, heavy_args = None, []
     heavy_base = os.path.basename(heavy_prog or "")
+    if heavy_base == "bun":
+        # Bun global options precede the command; some consume a separate value.
+        while heavy_args and heavy_args[0].startswith("-"):
+            option = heavy_args[0]
+            takes_value = option in {"--cwd", "--config", "--env-file", "--preload", "--require", "--tsconfig-override"}
+            heavy_args = heavy_args[2 if takes_value else 1:]
+        if heavy_args[:1] == ["x"]:
+            heavy_base, heavy_args = "bunx", heavy_args[1:]
     weight = None
     if heavy_base in {"tsc", "playwright"}:
         weight = 2 if heavy_base == "playwright" else 1
     elif heavy_base == "next" and heavy_args[:1] == ["build"]:
         weight = 2
     elif heavy_base == "bun":
-        if heavy_args[:1] == ["test"] or heavy_args[:2] == ["run", "test"]:
+        if heavy_args[:1] == ["test"] or heavy_args[:2] in (["run", "test"], ["run", "tsc"]):
             weight = 1
         elif heavy_args[:2] == ["run", "build"] or (
                 len(heavy_args) > 1 and heavy_args[0] == "run" and heavy_args[1].startswith("test:regression")):

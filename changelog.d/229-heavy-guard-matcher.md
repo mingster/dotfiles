@@ -1,0 +1,1 @@
+The heavy job guard now recognizes Bun global options, bun x, bun run tsc and commands inside shell control flow. These commands require the shared machine gate while lint and development commands remain allowed.
