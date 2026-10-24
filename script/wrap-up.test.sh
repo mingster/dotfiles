@@ -157,3 +157,18 @@ git branch leftover2
 bash "$here/wrap-up.sh" > "$tmp/output"
 test "$(grep -c 'wrap-up' "$tmp/obs.md")" -eq 1
 echo 'ok a preview logs no observation'
+git worktree add -q --detach "$tmp/review" main
+git worktree add -q --detach "$tmp/_checks" main
+git worktree add -q --detach "$tmp/detached-dirty" main
+echo dirty > "$tmp/detached-dirty/untracked"
+git worktree add -q --detach "$tmp/detached-ahead" main
+git -C "$tmp/detached-ahead" commit -q --allow-empty -m ahead
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$tmp/review"
+echo 'ok clean detached worktree at a merged commit removed'
+test -d "$tmp/_checks"
+echo 'ok script-owned _ worktree kept'
+test -d "$tmp/detached-dirty"
+echo 'ok dirty detached worktree kept'
+test -d "$tmp/detached-ahead"
+echo 'ok detached worktree with unmerged commits kept'
