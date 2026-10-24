@@ -10,6 +10,7 @@ Read before judging engineering reviews or tests. Docs-only PRs follow Elon's me
 - **Test judge:** a new test or check must name the real failure it prevents; you approve it (Elon for gate checks). Per-PR checks stay under 60 s; cut a test before adding one over budget.
 - **Iterating:** while working on a test file run it with `ONLY=<new cases>`; run that file's whole case list once at the end with `JOBS=<n>`.
 - You run `~/dotfiles/script/head-checks.sh` once per head.
+- **Exemption evidence:** verify a bypass, exemption or allowlist only with a receipt showing the exempt path ran (a log line with the exempt value), or a run from the client that fails without it. A pass on a path that never took the exemption proves nothing (2026-10-24: #4480).
 - **PR body:** `## Verification` with 1 to 3 real runs and outcomes. No Test plan section in the PR body (the test plan lives in the spec and the ticket), no tool credit.
 
 ## Verifier brief (tech-lead)

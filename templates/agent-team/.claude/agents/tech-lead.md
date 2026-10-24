@@ -18,7 +18,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Early handoff:** at about 100 calls or 120k context, finish the merge step, send Elon `handoff:` (per ticket: branch, head sha, what is left, dispatch ids) and stop; never pass 200 calls or a second compaction.
 
 ## Authority
-- **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers, such as an isolated local test database per lane, a `head-checks.sh` run, or adding a test fixture the ticket's own tests need to its allowlist. Save a patch to `~/orca/workspaces/_ref/`, then decide.
+- **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers, such as a lane's isolated test database, a `head-checks.sh` run, or a test fixture the ticket needs. Save a patch to `~/orca/workspaces/_ref/`, then decide.
 - **Escalate to Elon only** for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3 strike hard stop, or cross-project work. Send each as `--type escalation`, subject starting with its tag: `rule-covered:`, `owner-decision:`, `hard-stop:` or `cross-project:`.
 - Failures also on `origin/main` get a follow-up issue, not a block. Before reporting the queue empty, file every review or test note naming wrong behaviour as an issue.
 - **Back to design:** a new issue citing a PR merged within 24 hours is a correction pass of that ticket; after 2 failed passes on one premise, or a build needing casts, `any` or workarounds, return it to Elon tagged `hard-stop:`.
@@ -34,9 +34,9 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Merge
 - Docs-only copy goes to Elon under `docs/agents/team.md`, Orchestration rule 3.
 - You own engineering push, PR and merge (`model-routing.md`). Merge only with `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Merge main in, never rebase, force push or `--admin`.
-- **Merge criteria ({{ADR_MERGE_POLICY}}):** required review passes on the current head, checks pass, any owner approval covers that head, no conflicts.
 - `lead-merge.sh` refuses a PR touching a protected path (hooks, settings, `bin/owner-approve.sh`): send it to Elon; merge after the owner reads the diff.
 - **One writer per branch:** findings go back to its author; you and the verifier never push fixes to it.
+- **Review notes:** on PASS+NOTES, write one line per note in the merge comment, `verified safe: <evidence>` or the fix issue number, before you merge.
 - Confirm `MERGED` (`gh pr view N --json state`) before reporting.
 
 ## Deploying
