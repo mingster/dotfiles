@@ -63,6 +63,16 @@ while IFS= read -r f; do
       die "PR touches $f, which waits for the owner through Elon" ;;
   esac
 done < <(jq -r '.[]' <<<"$files")
+# 3b. Generated team copies change only through the dotfiles template, then merge with --verdict-from
+# (riben.life #4565 hand edited a generated deploy skill and the next sync would have reverted it).
+if [ -z "$verdict_from" ]; then
+  tmpl_skills="$(cd "$(dirname "$0")/.." && pwd)/templates/agent-team/.agents/skills"
+  while IFS= read -r f; do
+    if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)/ ]] && [ -f "$tmpl_skills/${BASH_REMATCH[2]}/SKILL.md" ]; then
+      die "PR edits generated team copy $f; edit the dotfiles template, re-sync, then merge with --verdict-from"
+    fi
+  done < <(jq -r '.[]' <<<"$files")
+fi
 diff=$(gh pr diff "$pr" --repo "$repo") || die "cannot read diff of PR $pr"
 if awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//)} intent && /^\+Status:.*Accepted/{found=1} END{exit !found}' <<<"$diff"; then
   die "PR accepts an intent under docs/intent/, which waits for the owner through Elon"

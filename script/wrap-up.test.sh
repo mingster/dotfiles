@@ -151,12 +151,12 @@ export TEAM_OBSERVATIONS_FILE="$tmp/obs.md"
 git branch leftover
 git push -q origin leftover
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
-grep -q '| wrap-up | applied found.*(.*leftover.*)' "$tmp/obs.md"
-echo 'ok wrap-up logs findings to team observations with their names'
+test ! -e "$tmp/obs.md"
+echo 'ok wrap-up --apply writes no team observation (it runs every wake; leftovers are its job)'
 git branch leftover2
 bash "$here/wrap-up.sh" > "$tmp/output"
-test "$(grep -c 'wrap-up' "$tmp/obs.md")" -eq 1
-echo 'ok a preview logs no observation'
+test ! -e "$tmp/obs.md"
+echo 'ok a preview writes no team observation'
 git worktree add -q --detach "$tmp/review" main
 git worktree add -q --detach "$tmp/_checks" main
 git worktree add -q --detach "$tmp/detached-dirty" main

@@ -431,7 +431,7 @@ vpr MERGED "$GOOD"
 check "verdict-from refuses without local config" 1 'no configured verdict_from_repos'
 printf '{"verdict_from_repos":["acme/project-alpha","acme/project-beta"]}\n' > "$fx/script/lead-merge.local.json"
 check "generated copies merge on the dotfiles PR Verdict" 0 'generated team copies' 1
-VFROM=""; check "same PR without the flag still needs its own Verdict" 1 'missing passing verifier verdict'
+VFROM=""; check "same PR without the flag is refused as a hand edit of a generated copy" 1 'edits generated team copy'
 VFROM=d/dotfiles#9
 REPO=o/r; check "verdict-from refuses an unconfigured repo" 1 'repo is not configured'
 REPO=acme/project-beta; check "verdict-from works for a second configured repo" 0 'generated team copies' 1

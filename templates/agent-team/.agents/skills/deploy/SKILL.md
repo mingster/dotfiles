@@ -17,12 +17,12 @@ Placeholders: `<repo>` the repository, `<dev>` the development branch, `<staging
 2. **Promotion.** A stage deploys only a commit with a `success` status from the stage before: the local context for staging, the staging context for production. Production deploys exactly the commit `<staging branch>` points at, even when `<dev>` has moved on.
 3. **Fast forward only.** release-manager pushes only `<staging branch>` and `<production branch>`; other branches go to the responsible coordinator, Elon for docs and the Tech Lead for code ("Commit, push and merge" in `.claude/model-routing.md`). Stage branches move with `git push origin <sha>:<stage branch>` and nothing else (the first push creates the branch). If the push is refused as non fast forward, stop and tell Elon; never add `--force`.
 4. **One path to a server.** Deploy only with the facts' command for the stage. No host scripts or `ssh` around it, except the manual fallback steps the facts name for when the command cannot run (those ask for approval). When the command refuses, report the reason to Elon; never work around it.
-5. **The record.** Set the stage's status on the commit when it passes, and `failure` when it fails:
+5. **The record.** Set the stage's status on the commit when it passes, and `failure` when it fails (except a failed mandatory gate the facts name, which leaves the status unset):
    `gh api -X POST repos/<repo>/statuses/<sha> -f state=success -f context=<context> -f description="<one line>"`
 6. **Smoke checks belong to the role the facts name** (qa-sdet unless they say otherwise). After staging or production, send `Ready for <role> smoke check: [<component>] <stage> <sha>` and set the status only after `Smoke passed: [<component>] <stage> <sha>`.
 7. **One deploy at a time** when the facts say so (a lock or a shared host). Stop at the first failure: report the step, the command and the first error line to Elon. Do not retry a step that may have changed a database.
 8. **Ten minute limit.** A single step (test suite, build, deploy command) running over 10 minutes is a failure, not a wait. Exception: the development pass full regression suite may run up to 20 minutes (owner decision 2026-10-10). A step silent for 5 minutes counts the same. Stop it, set nothing to success, and report to Elon at once: step, command, run time, last output line.
-9. **Deploys test the deployment, not the code** (owner rule). A stage checks only that the build succeeds, the schema sync works and the site serves the candidate sha. Unit and regression suites run in development before any deploy; the local stage requires the facts' development pass (a commit status) instead of running them. A missing or failed pass stops the stage and is fixed in development.
+9. **Deploys test the deployment, not the code** (owner rule). A stage checks only that the build succeeds, the schema sync works, the site serves the candidate sha and any mandatory gate the facts name passes. Unit and regression suites run in development before any deploy; the local stage requires the facts' development pass (a commit status) instead of running them. A missing or failed pass stops the stage and is fixed in development.
 10. **Prepare the candidate before the development pass** (owner rule). Run the facts' format script (for example `bun run format`) in every Bun package the facts name and set its package.json `"version"` to today as `YYYY.MM.DD` (for example `2026.10.09`). Commit it, formatting included, as `chore: format and version YYYY.MM.DD` on a branch and report it to the Tech Lead, who pushes, opens the PR to `<dev>` and merges; then run the development pass on that merged commit, so the commit that passed is the one that deploys. A second deploy the same day keeps the date and skips the version change. No package updates here (rule 11).
 11. **Dependency update on its own cycle** (owner rule 2026-10-12). Right after a production deploy succeeds, and every Monday with no production deploy in the past 7 days, release-manager runs `bun upgrade && bun update` in every Bun package the facts name, updates every Bun version pin the facts name when Bun changed, runs the unit tests and the build, commits it on its own branch as `chore: dependency update YYYY-MM-DD` and reports it to the Tech Lead, who pushes, opens the PR to `<dev>` and merges. Exact pins in package.json stay; upgrading a pinned package is its own ticket. Revert a bad update for that package alone, never hold it into a release, so feature work runs on new packages for days before the next deploy.
 
@@ -45,8 +45,8 @@ and, when the facts name a host status command, what the hosts actually run (a h
 The commit is the tip of `<dev>` unless Elon names another.
 
 1. Prepare a throwaway worktree at the candidate commit in the location named by the facts. In Orca, use the `orca-cli` skill for creation and cleanup. Outside Orca, use Git worktrees. Preserve an existing worktree with unshipped changes.
-2. Copy the env file the facts name into the worktree with `cp`.
-3. **Database guard.** Every database URL in that env file must point where the facts allow for local (a local host or a `_test` database). Check with the facts' masking tool or check command; never print the file or its credentials. Anything else stops the stage.
+2. Load the env file the facts name exactly as they say: copied into the worktree, or read in place through the facts' wrapper. Never print it.
+3. **Database guard.** Every database URL in that env file (checked where the steps read it) must point where the facts allow for local (a local host or a `_test` database). Check with the facts' masking tool or check command; never print the file or its credentials. Anything else stops the stage.
 4. A port the stage needs must be free. If the owner's dev server holds it, stop and ask Elon; never kill it.
 5. **Development pass.** The commit must carry the facts' development pass status (for example `dev/<component>`) as `success` before any step; otherwise stop promotion: release-manager runs or diagnoses the development pass in development, first running the facts' dev schema sync preflight when they name one, and reports the result to Elon. Never run the unit or regression suites here. Then run the facts' local steps for the component, in order, in the worktree. A step the facts mark advisory fails the gate only as the facts describe.
 6. All passed: set the local context to `success` with what ran (build, development pass) in the description. Clean up the throwaway worktree through the same tool that created it.
@@ -57,7 +57,7 @@ The commit is the tip of `<dev>` unless Elon names another.
 1. Pick the commit: the newest commit on `<dev>` with the local context `success`. Check the status before anything else.
 2. `git push origin <sha>:<staging branch>`, then run the staging deploy command from the facts.
 3. Follow the facts' staging steps: waiting for the build, the guards, applying staging migrations, the app page that must answer 200. A failed build or deploy leaves staging on the previous commit: set the staging context to `failure` and report.
-4. Send the smoke check message. On `Smoke passed`, set the staging context to `success`, then send Elon `Ready for owner to approve production: [<component>] <sha>, <N> PRs` with the summary below.
+4. Every mandatory staging gate the facts name must pass first; a failed gate leaves the staging context unset. Send the smoke check message. On `Smoke passed`, set the staging context to `success`, then send Elon `Ready for owner to approve production: [<component>] <sha>, <N> PRs` with the summary below.
 
 ## production
 
@@ -72,13 +72,15 @@ Before asking for go, build the summary for Elon to put in the owner decision me
 
 **Owner go.** Production always needs the owner's explicit go for that release; no earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after Elon relays the go for that exact commit. When the facts name an owner approval script, also give Elon the exact command for the owner, component and commit filled in, and deploy only after it ran. A rollback needs the owner's go too.
 
+**High risk release.** When the facts define a high risk release, follow their rule for it (for example: deploy it alone, owner online, the named gates before and after).
+
 **Production prerequisites.** When the facts name a production SQL apply script or secret script and the owner's approval covers them (scope in the facts), release-manager runs them itself before moving `<production branch>`: the SQL script dry run first, then without it, one database at a time; the secret script per required key. Only these scripts: never raw SQL or `ssh`, never `owner-approve` or the approval file. The owner never runs SQL. Stop on the first failure; never retry a file or write that may have applied. If a guard denies a command, report the deny message to Elon; never work around it.
 
 Then:
 
 1. Run the production deploy command from the facts, including the `git push origin <sha>:<production branch>` when the facts list it (some commands push the branch themselves, some check that it already points at the commit). Set only the overrides the facts allow, and only when the owner said so.
 2. Confirm the host runs the commit with the check in the facts.
-3. Send the smoke check message. On `Smoke passed`, set the production context to `success` and tell Elon: component, commit, PRs shipped, deploy time.
+3. Every mandatory production gate the facts name must pass first. Send the smoke check message. On `Smoke passed`, set the production context to `success` and tell Elon: component, commit, PRs shipped, deploy time.
 
 ## Release evidence
 - Raw gate logs go only in gitignored `.claude/release-reports/<release-id>/` (they can hold host or environment details); delete the folder once the release reaches production or is superseded. The durable result (summary, gate outcomes, owner prerequisites) goes in the release PR or its issue.
