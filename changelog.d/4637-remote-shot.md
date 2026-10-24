@@ -1,0 +1,1 @@
+Add remote-heavy artifact fetching with repeatable --fetch globs and --into, preserving the remote command exit status. Add remote-shot to guard the expected remote database before running a Playwright capture spec and fetching PNGs locally without copying the env file.
