@@ -13,7 +13,11 @@ class RemoteTests(unittest.TestCase):
         self.out = self.root/'local shots'
         self.log = self.root/'calls'
         self.env = dict(os.environ, HOME=str(self.root), PATH=str(self.bin)+':'+os.environ['PATH'], CALLS=str(self.log))
-        self.stub('git', '#!/bin/sh\n[ "$1" != rev-parse ] || echo fixture-sha\n')
+        self.stub('git', '''#!/bin/sh
+printf 'git %s\\n' "$*" >> "$CALLS"
+[ "$1" != rev-parse ] || echo fixture-sha
+if [ "$1" = -C ] && [ "$3" = worktree ]; then mkdir -p "$7"; fi
+''')
         self.stub('ssh', '''#!/bin/sh
 printf 'ssh\\n' >> "$CALLS"
 shift
@@ -38,11 +42,17 @@ shutil.copyfile(a[0].split(':',1)[1], a[1])
         target=self.out/'shot.png'
         self.assertEqual(target.read_text(),'image')
         self.assertIn(str(target),result.stdout)
+    def test_missing_remote_dir_is_created_as_worktree(self):
+        self.remote=self.root/'new lane'
+        result=self.run_heavy([],['sh','-c','pwd'])
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn(f'git -C checkout worktree add -q --detach {self.remote} fixture-sha',self.log.read_text())
+        self.assertEqual(result.stdout.strip(),str(self.remote))
     def test_no_fetch_keeps_single_ssh_and_status(self):
         result=self.run_heavy([],['sh','-c','printf job-output; exit 9'])
         self.assertEqual(result.returncode,9,result.stderr)
         self.assertEqual(result.stdout,'job-output')
-        self.assertEqual(self.log.read_text(),'ssh\n')
+        self.assertEqual([l for l in self.log.read_text().splitlines() if not l.startswith('git ')],['ssh'])
     def test_repeat_fetch_and_unmatched_glob(self):
         result=self.run_heavy(['--fetch','test-results/**/*.png','--fetch','other file.txt','--fetch','missing/*','--into',str(self.out)],['sh','-c','mkdir test-results; printf root > test-results/root.png; printf other > "other file.txt"'])
         self.assertEqual(result.returncode,0,result.stderr)

@@ -7,7 +7,8 @@
 #
 # Sends HEAD to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
 # detached in the remote worktree, reinstalls packages when the lockfile changed, and runs
-# the command under the remote heavy-gate. Exit status is the command's.
+# the command under the remote heavy-gate. Exit status is the command's. A missing
+# --dir is created as a detached worktree of --repo-dir.
 # Fetches use remote Python 3 globbing and OpenSSH scp (SFTP); files land by basename
 # in --into, so select unique artifact names when fetching from multiple directories.
 set -euo pipefail
@@ -54,9 +55,11 @@ b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 remote=$(cat <<'REMOTE'
 set -euo pipefail
 d() { printf '%s' "$1" | base64 -d; }
-dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(d "$6")
+dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(d "$6") repo_dir=$(d "$7")
 gate="${gate/#\$HOME/$HOME}"
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
+# A new lane's directory is created once as a worktree of the remote checkout.
+[ -d "$dir" ] || git -C "$repo_dir" worktree add -q --detach "$dir" "$sha"
 cd "$dir"
 git checkout -q --detach "$sha"
 cd "./$sub"
@@ -77,7 +80,7 @@ REMOTE
 status=0
 # shellcheck disable=SC2029
 ssh "$host" bash -c "\"\$(echo $(b64 "$remote") | base64 -d)\"" remote-heavy \
-  "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" || status=$?
+  "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" "$(b64 "$repo_dir")" || status=$?
 
 if [ "${#fetches[@]}" -gt 0 ]; then
   # Use the same shell-independent transport for remote glob expansion. NUL records
