@@ -20,11 +20,16 @@ cat > "$tmp/checks-fail" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$CHECKS_LOG"; echo "head-checks: FAIL"; exit 1
 EOS
-chmod +x "$tmp/orca" "$tmp/checks-pass" "$tmp/checks-fail"
-export ORCA_CLI_COMMAND="$tmp/orca" ORCA_LOG="$tmp/orca.log" CHECKS_LOG="$tmp/checks.log"
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/gh" <<'EOS'
+#!/usr/bin/env bash
+[ -n "${GH_STATE:-}" ] && echo "$GH_STATE"
+EOS
+chmod +x "$tmp/orca" "$tmp/checks-pass" "$tmp/checks-fail" "$tmp/bin/gh"
+export ORCA_CLI_COMMAND="$tmp/orca" ORCA_LOG="$tmp/orca.log" CHECKS_LOG="$tmp/checks.log" PATH="$tmp/bin:$PATH"
 
 newwt() { git -C "$tmp/main" worktree add -q "$tmp/$1" -b "$1"; }
-run() { (cd "$tmp/main" && "$@") >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
+run() { (cd "${REPO:-$tmp/main}" && "$@") >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
 reset() { : > "$ORCA_LOG"; : > "$CHECKS_LOG"; }
 
 # 1. failing checks refuse, touch nothing
@@ -69,6 +74,30 @@ HEAD_CHECKS="$tmp/does-not-exist" run bash "$here/worker-finish.sh" --worktree "
 grep -q "worker-finish: head-checks failed, refusing worker_done" "$tmp/err" && ok || bad "missing checks message"
 [ -d "$tmp/w4" ] && ok || bad "missing checks keep worktree"
 [ ! -s "$ORCA_LOG" ] && ok || bad "missing checks leave dispatch untouched"
+
+# 6. post-merge: a head already in origin/main, or a merged PR, skips the checks without blocking
+git init -q -b main "$tmp/up" && git -C "$tmp/up" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git clone -q "$tmp/up" "$tmp/m2"
+git -C "$tmp/m2" worktree add -q "$tmp/w5" -b w5 origin/main 2>/dev/null
+git -C "$tmp/w5" -c user.name=t -c user.email=t@t commit -q --allow-empty -m work
+git -C "$tmp/up" fetch -q "$tmp/m2" w5 && git -C "$tmp/up" merge -q --ff-only FETCH_HEAD
+reset
+REPO="$tmp/m2" HEAD_CHECKS="$tmp/checks-fail" run bash "$here/worker-finish.sh" --worktree "$tmp/w5" --dispatch d5
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "merged head exits 0"
+grep -q "skipping head-checks, HEAD is already in origin/main" "$tmp/out" && ok || bad "merged head prints one skip line"
+[ ! -s "$CHECKS_LOG" ] && ok || bad "merged head does not run checks"
+[ ! -d "$tmp/w5" ] && ok || bad "merged head removes worktree"
+git -C "$tmp/m2" worktree add -q "$tmp/w6" -b w6 origin/main 2>/dev/null
+git -C "$tmp/w6" -c user.name=t -c user.email=t@t commit -q --allow-empty -m squashed
+reset
+REPO="$tmp/m2" GH_STATE=OPEN HEAD_CHECKS="$tmp/checks-fail" run bash "$here/worker-finish.sh" --worktree "$tmp/w6" --dispatch d6
+[ "$(cat "$tmp/rc")" = 1 ] && ok || bad "unmerged head with open PR still runs failing checks"
+[ -s "$CHECKS_LOG" ] && [ -d "$tmp/w6" ] && ok || bad "unmerged head runs checks and keeps worktree"
+reset
+REPO="$tmp/m2" GH_STATE=MERGED HEAD_CHECKS="$tmp/checks-fail" run bash "$here/worker-finish.sh" --worktree "$tmp/w6" --dispatch d6
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "merged PR exits 0"
+grep -q "skipping head-checks, its PR is already merged" "$tmp/out" && ok || bad "merged PR prints one skip line"
+[ ! -s "$CHECKS_LOG" ] && ok || bad "merged PR does not run checks"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

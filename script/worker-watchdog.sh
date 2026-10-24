@@ -105,6 +105,12 @@ PY
     n=$((n + 1))
   done
 }
+# A coordinator blocked in `orchestration check --run RUN --wait` is waiting, not idle.
+waiter_armed() {
+  [[ "$2" == "$(cat "$tmp/coord-$1" 2>/dev/null)" ]] || return 1
+  ps -Ao args= > "$tmp/ps" 2>/dev/null || return 1
+  awk -v r="--run $1" '/orchestration check/ && / --wait( |$)/ && index($0 " ", r " ") { f = 1 } END { exit !f }' "$tmp/ps"
+}
 cycle=0
 while :; do
   : > "$tmp/terminals"; : > "$tmp/busy-coord"
@@ -239,6 +245,8 @@ s=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',s)
 if re.search(r"(?:you(?:'ve| have)? (?:hit|reached|exceeded).*?(?:usage|rate|quota|capacity).*?limit|(?:usage|rate) limit (?:reached|exceeded)|(?:at|over) capacity|(?:no|insufficient) capacity(?: available)?|quota (?:exceeded|exhausted)|out of (?:usage|quota)|hit your limit)",s,re.I):
     print('stopped')
 elif re.search(r'\bWorking\b|esc to interrupt',s,re.I): print('working')
+# A background shell, monitor or job still running: the agent waits on it, so its prompt is not idle.
+elif re.search(r'\b\d+ (?:background )?(?:shells?|monitors?)\b|\bstill running\b',s,re.I): print('waiting')
 elif 'Ask Codex to do anything' in s or re.search(r'^\s*[❯>]\s*$',s,re.M): print('idle')
 else: print('unknown')
 PY
@@ -253,7 +261,7 @@ PY
           escalate "$run" "provider-stopped $terminal" "Run $run terminal $terminal shows a provider capacity, quota, rate or usage limit; check fresh real provider usage and recover its queue." && alerted=1
         fi ;;
       idle)
-        if grep -qx -- "$terminal" "$tmp/busy-coord"; then idle=0; after=0; alerted=0; else
+        if grep -qx -- "$terminal" "$tmp/busy-coord" || waiter_armed "$run" "$terminal"; then idle=0; after=0; alerted=0; else
         idle=$((idle + 1))
         if [[ "$after" -gt 0 ]]; then
           after=$((after + 1))

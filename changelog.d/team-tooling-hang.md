@@ -1,0 +1,2 @@
+- `worker-finish.sh` skips head-checks when the worktree head is already in `origin/main` or its PR is merged, so post-merge cleanup no longer blocks on the heavy gate.
+- `worker-watchdog.sh` no longer nudges or escalates a terminal that waits on a background shell or monitor, or a coordinator with an armed `orchestration check --run <run> --wait` waiter.
