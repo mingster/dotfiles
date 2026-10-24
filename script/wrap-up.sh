@@ -26,12 +26,13 @@ else
 fi
 git rev-parse --verify origin/main >/dev/null
 # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
-if ! gh pr list --state all --limit 1000 --json headRefName,state > "$tmp/prs"; then
+if ! gh pr list --state all --limit 1000 --json headRefName,headRefOid,state > "$tmp/prs"; then
   echo 'Warning: PR lookup unavailable; using ancestry only.' >&2
   echo '[]' > "$tmp/prs"
 fi
 jq -e 'type == "array"' "$tmp/prs" >/dev/null
 jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
+jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
 : > "$tmp/active"
 orca=${ORCA_CLI_COMMAND:-orca}
 if command -v "$orca" >/dev/null 2>&1; then
@@ -86,6 +87,15 @@ eligible() {
   if [ -n "$2" ] && grep -Fxq -- "$2" "$tmp/closed"; then reason='closed PR'; return 0; fi
   return 1
 }
+active_worktree() {
+  local active_path
+  while IFS= read -r active_path; do
+    case "$active_path" in
+      '*'|"$1"|"$1"/*) return 0 ;;
+    esac
+  done < "$tmp/active"
+  return 1
+}
 removed=0; local_deleted=0; remote_deleted=0; kept=0
 keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
@@ -101,10 +111,15 @@ process_worktree() {
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ]; then why='dirty'
-  elif grep -Fxq -- "$path" "$tmp/active" || grep -Fxq '*' "$tmp/active"; then why='active or unknown Orca terminal'
+  elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif [ -z "$branch" ]; then
-    # Detached review, QA and release worktrees have no PR; only a merged HEAD frees them.
-    if git merge-base --is-ancestor "$head" origin/main; then reason='detached at merged commit'; else why='detached with unmerged commits'; fi
+    # A PR match alone must never discard a commit absent from all remote branches.
+    git for-each-ref --contains "$head" --format='%(refname)' refs/remotes > "$tmp/containing-remotes"
+    if [ ! -s "$tmp/containing-remotes" ]; then why='detached with unmerged commits'
+    elif git merge-base --is-ancestor "$head" origin/main; then reason='detached at merged commit'
+    elif grep -Fxq -- "$head" "$tmp/closed-heads"; then reason='detached at closed PR head'
+    else why='detached with unmerged commits'
+    fi
   elif ! eligible "refs/heads/$branch" "$branch"; then why='unmerged without closed PR'
   fi
   if [ -n "$why" ]; then
