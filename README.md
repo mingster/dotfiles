@@ -283,3 +283,40 @@ Keep your machine and project environments tidy with these maintenance scripts:
 | `.config/` | Application configurations managed via GNU Stow |
 | `ide/` | Settings and keybindings for Cursor, VS Code, and Antigravity |
 | `docs/agents/` | Deep documentation covering team architecture, setup, and skills |
+
+## 9. Agent Team Key Features
+
+A short tour of the parts that keep the agent team safe and tidy, for a reader who has never seen it.
+
+### AI usage gate
+
+[`script/usage-gate.py`](script/usage-gate.py) decides whether a provider may take another worker. It reads real usage from each provider (Codex, Claude, Cursor and Antigravity each have their own source), never a guess. A reading older than 5 minutes is refreshed. If no fresh reading can be had, the answer is "unknown", and unknown does not block a start.
+
+* **Weekly limit:** a provider is blocked once it reaches the weekly ceiling (95% by default). Each running worker also holds back 1 percentage point of headroom.
+* **Daily pacing:** a daily cap is only a hint. Past it, the worker is still allowed, with a note to prefer a lighter model.
+* **Tight provider:** when one provider is tight, the `pick` command ranks providers by remaining weekly headroom, so work moves to the one with the most room.
+
+### Resource guardrails
+
+Heavy jobs (type checks, test suites, browser runs) share one machine budget so parallel workers do not freeze it.
+
+* [`script/heavy-gate.sh`](script/heavy-gate.sh) and [`script/heavy-gate.py`](script/heavy-gate.py) hand out heavy job slots. A job waits while the load is above the limit or free memory is under 20%.
+* [`script/head-checks.sh`](script/head-checks.sh) runs a repository's checklist in a clean worktree at one exact commit, and holds the gate for the whole run.
+* [`script/hw-probe.sh`](script/hw-probe.sh) inspects the hardware. When run at a quiet time with a workload command, it calibrates the slot count and load limit for this machine and writes them to `~/.config/heavy-gate/slots.conf`. Without that file, the defaults are 2 slots and a load limit of 12.
+* [`script/remote-heavy.sh`](script/remote-heavy.sh) sends the current commit to a `<remote host>`, runs a heavy command there under that host's gate, and can fetch artifacts back.
+
+### Roles and templates
+
+The team's role files and skills live once in [`templates/agent-team/`](templates/agent-team/). [`script/sync-team-skills.sh`](script/sync-team-skills.sh) writes them into each project as committed copies, and `--check` fails when a project has drifted. The roles and their duties are listed in [`docs/agents/team-reference.md`](docs/agents/team-reference.md). Adoption steps are in [`docs/agents/agent-team-setup.md`](docs/agents/agent-team-setup.md).
+
+### Worker lifecycle
+
+* **Start:** the coordinator dispatches a worker with `orca orchestration worker-start`. The worker gets its own worktree.
+* **Panes and titles:** [`orca-team`](.agents/skills/orca-team/SKILL.md) shows each worker in a pane whose title bar color comes from the role in the task title, using [`role-colors.tsv`](.agents/skills/orca-team/role-colors.tsv).
+* **Watching:** [`script/worker-watchdog.sh`](script/worker-watchdog.sh) nudges an idle worker and escalates to the owning coordinator if it stays idle or a report goes unread. It never stops or retries a worker.
+* **Finish:** [`script/worker-finish.sh`](script/worker-finish.sh) runs the head checks, then releases the dispatch, closes the pane and removes the worktree.
+* **Wrap up:** [`script/wrap-up.sh`](script/wrap-up.sh) previews and prunes finished branches and worktrees (add `--apply` to execute).
+
+### Team audit
+
+[`script/team-audit.sh`](script/team-audit.sh) runs fixed checks on the team files, such as sync with the templates, role file length, banned wording and the shape of ready tickets. It exits 0 when clean and 1 on any finding. The `team-audit` skill adds a judgement pass. It reads the observation log, a private file at `~/.claude/state/team-observations.md` where Elon notes problems as work happens, and turns them into lasting fixes such as a check or a role rule. That log stays private and is never copied into a repository.
