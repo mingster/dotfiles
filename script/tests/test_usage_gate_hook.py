@@ -96,6 +96,8 @@ class Hook(unittest.TestCase):
             allowed = argv[5:] == ["--model", "gemini-flash"]
             if argv[5:] == ["--model", "unknown-model"]:
                 return mock.Mock(returncode=4, stdout=json.dumps({"reason": "unknown model"}))
+            if argv[5:] == ["--model", "--x"]:
+                return mock.Mock(returncode=2, stdout="")
             return mock.Mock(returncode=0 if allowed else 3, stdout=json.dumps({
                 "weekly_used": 0 if allowed else 100, "ceiling": 95}))
 
@@ -128,7 +130,9 @@ class Hook(unittest.TestCase):
         self.assertEqual(checks, [[]])
 
     def test_antigravity_unknown_model_falls_back_to_worst_pool(self):
-        for option in ("--model unknown-model", '--model "$M"'):
+        for option in ("--model unknown-model", '--model "$M"', "--model=--x", "--model -h",
+                       "--model gemini-flash --model claude-sonnet",
+                       "--model claude-sonnet --model=gemini-flash"):
             with self.subTest(option=option):
                 out, checks = self.run_stubbed_pool_hook(
                     "orca orchestration worker-start --agent antigravity " + option)

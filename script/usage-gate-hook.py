@@ -83,8 +83,13 @@ def starts(cmd):
                 override = word.split("=", 1)[1].strip() or None
         m = VAR.match(agent or "")
         providers = env.get(m.group(1), [agent]) if m else [agent]
+        # Only one plain --model value names a pool; anything else gates on the worst pool.
+        models = [w.split("=", 1)[1] if "=" in w else (flags[j + 1] if j + 1 < len(flags) else "")
+                  for j, w in enumerate(flags) if w == "--model" or w.startswith("--model=")]
+        model = models[0] if len(models) == 1 and re.match(r"^[\w.:-]+$", models[0]) \
+            and not models[0].startswith("-") else None
         out += [{"provider": provider.lower() if provider else None, "role": role,
-                 "override": override, "model": option("--model")} for provider in providers]
+                 "override": override, "model": model} for provider in providers]
     return out
 
 
@@ -162,10 +167,10 @@ def main():
             continue
         try:
             args = [sys.executable, GATE, "check", "--provider", provider]
-            # An unexpanded or unknown model never skips the gate: it falls back to the worst pool.
-            if model and "$" not in model:
+            # A model the gate cannot answer for (any exit but 0 or 3) falls back to the worst pool.
+            if model:
                 r = subprocess.run(args + ["--model", model], capture_output=True, text=True, timeout=25)
-            if not model or "$" in model or r.returncode == 4:
+            if not model or r.returncode not in (0, 3):
                 r = subprocess.run(args, capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
