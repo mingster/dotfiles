@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One finish path for a worker: release its dispatch, close its pane, remove its worktree.
 # Usage: worker-finish.sh --worktree <path> [--dispatch <id>]... [--skip-head-checks "<reason>"]   DRY_RUN=1 only prints.
-# Head-checks run first and a failure refuses everything. Callers decide whether the worktree may go (clean, or its diff saved first); this removes it.
+# Head-checks run first and a failure refuses everything. A head already in origin/main, or a merged PR, skips them (post-merge cleanup must not block). Callers decide whether the worktree may go (clean, or its diff saved first); this removes it.
 set -euo pipefail
 dry=${DRY_RUN:-0}
 orca=${ORCA_CLI_COMMAND:-orca}
@@ -18,13 +18,21 @@ done
 run() { if [ "$dry" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
 real() { if [ -d "$1" ]; then (cd -P "$1" && pwd); else printf '%s\n' "$1"; fi; }
 wt=$(real "$wt")
+# Prints why the worktree head is already merged; fails when it is not.
+merged() {
+  git -C "$wt" fetch -q origin main 2>/dev/null || true
+  if git -C "$wt" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then echo "HEAD is already in origin/main"; return 0; fi
+  [ "$(cd "$wt" && gh pr view --json state -q .state 2>/dev/null)" = MERGED ] && echo "its PR is already merged"
+}
 
 if [ "$skip_set" = 1 ]; then
   [ -n "$skip" ] || { echo "worker-finish: --skip-head-checks needs a reason" >&2; exit 2; }
   echo "worker-finish: skipping head-checks: $skip"
 else
   checks=${HEAD_CHECKS:-$HOME/dotfiles/script/head-checks.sh}
-  if [ "$dry" = 1 ]; then
+  if why=$(merged); then
+    echo "worker-finish: skipping head-checks, $why"
+  elif [ "$dry" = 1 ]; then
     echo "[dry-run] $checks --repo $wt --ref HEAD --base origin/main"
   elif ! "$checks" --repo "$wt" --ref HEAD --base origin/main; then
     echo "worker-finish: head-checks failed, refusing worker_done" >&2

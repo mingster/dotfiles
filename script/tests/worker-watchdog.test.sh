@@ -31,6 +31,7 @@ elif args[:2] == ['terminal','read']:
     text={'idle':'› Ask Codex to do anything', 'working':'Working (esc to interrupt)\n› Ask Codex to do anything',
           'stopped':"You've hit your usage limit", 'capacity':'No capacity available',
           'rate':'Rate limit reached', 'quota':'Quota exhausted', 'claude':'❯ ', 'empty':'Working (esc to interrupt)',
+          'bgshell':'› Ask Codex to do anything\n  ⏵⏵ bypass permissions on · 1 shell', 'monitor':'❯ \n  · 1 monitor still running',
           'unavailable':'› Ask Codex to do anything', 'emptyidle':'› Ask Codex to do anything',
           'banner':'Gemini 3 Pro\nModel quota reached for Gemini. Resets in 94h29m\n› '}[mode]
     output({'terminal':{'tail':text.splitlines(),'source':'screen-unavailable' if mode=='unavailable' else 'screen'}})
@@ -43,7 +44,12 @@ elif args[:2] in (['terminal','send'], ['orchestration','send']):
     output({})
 else: sys.exit(1)
 PY
-chmod +x "$tmp/bin/orca"
+cat > "$tmp/bin/ps" <<'SH'
+#!/bin/sh
+[ -n "${WATCHDOG_TEST_PS:-}" ] && { printf '%s\n' "$WATCHDOG_TEST_PS"; exit 0; }
+exec /bin/ps "$@"
+SH
+chmod +x "$tmp/bin/orca" "$tmp/bin/ps"
 run_case() {
   rm -rf "$HOME/.orca"; : > "$tmp/actions"
   WATCHDOG_TEST_MODE=$1 bash "$root/script/worker-watchdog.sh" --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks "$2"
@@ -102,6 +108,19 @@ WATCHDOG_TEST_SEND_FAIL=1 run_case empty 8
 # A finished run (no pending or ready tasks) with zero workers is not an alarm.
 WATCHDOG_TEST_TASKS=none run_case empty 5
 [[ $(count 'orchestration send') == 0 ]]
+# A prompt waiting on a background shell or monitor is not idle: no nudge, no idle-after-nudge escalation.
+for waiting_mode in bgshell monitor; do
+  run_case "$waiting_mode" 8
+  [[ ! -s "$tmp/actions" ]]
+done
+# A coordinator with no live worker but an armed `check --run RUN --wait` waiter is not escalated; an idle one still is.
+WATCHDOG_TEST_TASKS=none run_case emptyidle 8
+[[ $(count 'terminal send') == 1 && $(count 'orchestration send') == 1 ]]
+grep -q 'idle-after-nudge term_coord' "$tmp/actions"
+WATCHDOG_TEST_PS='orca orchestration check --run run_test --wait --timeout-ms 900000' WATCHDOG_TEST_TASKS=none run_case emptyidle 8
+[[ ! -s "$tmp/actions" ]]
+WATCHDOG_TEST_PS='orca orchestration check --run run_other --wait' WATCHDOG_TEST_TASKS=none run_case emptyidle 8
+[[ $(count 'orchestration send') == 1 ]]
 # Repeatable run flags still deduplicate shared terminal handles.
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_a --run run_b --notify term_owner --notify-run run_owner --interval 0 --checks 2
@@ -179,4 +198,4 @@ for _ in $(seq 1 100); do kill -0 "$hang_pid" 2> /dev/null || break; sleep 0.1; 
 if kill -0 "$hang_pid" 2> /dev/null; then kill "$hang_pid"; echo 'watchdog hung without timeout binary' >&2; exit 1; fi
 wait "$hang_pid"
 grep -q 'read-run-failed run_test' "$HOME/.orca/logs/worker-watchdog.log"
-echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary, all-runs discovery, unread reports, alerts.log fallback)'
+echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, background shell or monitor, armed --wait waiter, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary, all-runs discovery, unread reports, alerts.log fallback)'
