@@ -94,6 +94,8 @@ class Hook(unittest.TestCase):
         def gate(argv, **kwargs):
             self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
             allowed = argv[5:] == ["--model", "gemini-flash"]
+            if argv[5:] == ["--model", "unknown-model"]:
+                return mock.Mock(returncode=4, stdout=json.dumps({"reason": "unknown model"}))
             return mock.Mock(returncode=0 if allowed else 3, stdout=json.dumps({
                 "weekly_used": 0 if allowed else 100, "ceiling": 95}))
 
@@ -124,6 +126,14 @@ class Hook(unittest.TestCase):
             "orca orchestration worker-start --agent antigravity")
         self.assertIn("blocked antigravity: weekly ceiling", out)
         self.assertEqual(checks, [[]])
+
+    def test_antigravity_unknown_model_falls_back_to_worst_pool(self):
+        for option in ("--model unknown-model", '--model "$M"'):
+            with self.subTest(option=option):
+                out, checks = self.run_stubbed_pool_hook(
+                    "orca orchestration worker-start --agent antigravity " + option)
+                self.assertIn("blocked antigravity: weekly ceiling", out)
+                self.assertEqual(checks[-1], [])
 
     def test_antigravity_chain_checks_each_model_and_model_less_start(self):
         for suffix, expected in (("--model claude-sonnet", ["--model", "claude-sonnet"]),

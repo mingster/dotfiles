@@ -162,10 +162,11 @@ def main():
             continue
         try:
             args = [sys.executable, GATE, "check", "--provider", provider]
-            if model:
-                args += ["--model", model]
-            r = subprocess.run(args,
-                               capture_output=True, text=True, timeout=25)
+            # An unexpanded or unknown model never skips the gate: it falls back to the worst pool.
+            if model and "$" not in model:
+                r = subprocess.run(args + ["--model", model], capture_output=True, text=True, timeout=25)
+            if not model or "$" in model or r.returncode == 4:
+                r = subprocess.run(args, capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
             print(f"usage-gate-hook: gate failed for {provider} ({e}); worker-start allowed.", file=sys.stderr)
