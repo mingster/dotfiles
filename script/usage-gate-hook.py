@@ -5,7 +5,7 @@ Wired from each agent team's .claude/settings.json. For every
 `orca orchestration worker-start ... --agent <id>` in the command it runs
 `usage-gate.py check --provider <id>` (claude, codex, cursor and antigravity) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
-Antigravity is checked without a model, so the hook gates on its worst pool.
+Antigravity gates on the named --model pool, or its worst pool without a model.
 Known roles from the task title receive advisory `pick --role` recommendations. The Codex launcher
 is checked the same way. A command scoped USAGE_GATE_OVERRIDE reason bypasses
 routing enforcement and is logged, but never bypasses the weekly ceiling gate.
@@ -84,7 +84,7 @@ def starts(cmd):
         m = VAR.match(agent or "")
         providers = env.get(m.group(1), [agent]) if m else [agent]
         out += [{"provider": provider.lower() if provider else None, "role": role,
-                 "override": override} for provider in providers]
+                 "override": override, "model": option("--model")} for provider in providers]
     return out
 
 
@@ -153,13 +153,18 @@ def main():
             denial = routing(start)
             if denial:
                 blocked.append(denial)
-    for provider in dict.fromkeys(start["provider"] for start in commands):
+    checks = dict.fromkeys((start["provider"], start.get("model")
+                            if start["provider"] == "antigravity" else None) for start in commands)
+    for provider, model in checks:
         if provider not in GATED:
             print(f"usage-gate-hook: no usage reading for agent {provider or '(none given)'}; "
                   "worker-start allowed without the gate.", file=sys.stderr)
             continue
         try:
-            r = subprocess.run([sys.executable, GATE, "check", "--provider", provider],
+            args = [sys.executable, GATE, "check", "--provider", provider]
+            if model:
+                args += ["--model", model]
+            r = subprocess.run(args,
                                capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
