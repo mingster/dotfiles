@@ -1,0 +1,1 @@
+- worker-watchdog test: every assert now goes through a counting check helper and the suite exits non-zero with a pass and fail summary, since a failed bare `[[ ]]` does not stop macOS bash 3.2. Four stale asserts that still expected a coordinator nudge now expect only the worker nudge.
