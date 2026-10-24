@@ -11,7 +11,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Work
 - **Functional tests:** write or confirm the ticket's listed test cases; passing them is done. Run only those and touched unit tests, never Regression (`docs/SDLC.md`).
-- **Reproduce first** (`diagnosing-bugs`, its feedback loop phase): turn a user issue from `support-csm` into a failing repro test (`bun test --isolate <path>` or a Playwright spec) before the fix starts. Strip personal data from fixtures.
+- **Reproduce first** (`diagnosing-bugs`, its feedback loop phase): turn a user issue from `support-csm` into a failing repro test (`~/dotfiles/script/heavy-gate.sh --weight 1 -- bun test --isolate <path>` or a Playwright spec through `~/dotfiles/script/heavy-gate.sh --weight 2 -- <command>`) before the fix starts. Strip personal data from fixtures.
 - **Tenant boundaries:** for every spec with Tenancy requirements, write contract tests for store isolation (store A cannot reach store B; unauthenticated 401, unauthorized 403, internal failure 500).
 - **Dual-Axis review** with the `code-review` skill (fixed point the default branch, spec the ticket): read the diff yourself (`git fetch origin && git diff origin/main...<full head sha from the Verdict>`; name that sha in your report) in the worker's worktree; never rely on teammate claims. Findings go in your `worker_done`, not PR comments.
   - Standards: conventions in `AGENTS.md`, safe action boundaries, BigInt epochs, mobile first layout, Fowler smells.

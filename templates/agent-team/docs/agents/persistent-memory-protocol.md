@@ -18,7 +18,7 @@ Written once before modifying code, and again only when blocked or at a handoff.
 
 ## 2. Machine-Checkable Verification Criteria
 - [ ] Test command: `<test command> path/to/test` (Expected: 0 failures)
-- [ ] Type check: `bunx tsc --noEmit` (Expected: 0 errors)
+- [ ] Type check: `~/dotfiles/script/heavy-gate.sh --weight 1 -- bunx tsc --noEmit` (Expected: 0 errors)
 - [ ] Linter: `bun run lint` (Expected: clean)
 
 ## 3. Execution Milestones
