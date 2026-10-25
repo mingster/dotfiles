@@ -76,7 +76,7 @@ Before asking for go, build the summary for Elon to put in the owner decision me
 
 **Production prerequisites.** When the facts name a production SQL apply script or secret script and the owner's approval covers them (scope in the facts), release-manager runs them itself before moving `<production branch>`: the SQL script dry run first, then without it, one database at a time; the secret script per required key. Only these scripts: never raw SQL or `ssh`, never `owner-approve` or the approval file. The owner never runs SQL. Stop on the first failure; never retry a file or write that may have applied. If a guard denies a command, report the deny message to Elon; never work around it.
 
-**Host approval preflight.** Before any production host job, when the facts name an owner host approval, check that it is still valid for the expected job length (read only its expiry, never other fields). If it is missing, expired or shorter than the job, stop before the first ssh and ask Elon for a fresh owner host approval. The expiry itself stays as the facts set it.
+**Host approval preflight.** Before any production host job, when the facts name an owner approval, check that it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and is still valid for the expected job length (read only its scope and expiry, never other fields). If it is missing, expired, another scope or shorter than the job, stop before the first ssh and ask Elon for a fresh owner approval of that scope. The expiry itself stays as the facts set it.
 
 Then:
 
