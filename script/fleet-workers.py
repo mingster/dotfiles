@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Print live Orca workers per machine, e.g. "host-a: 3 | host-b: 2 | host-c: 0".
 
-Counts dispatched workers of every run on this Orca, grouped by the machine the
-worker runs on (this one, or a paired Orca environment). Machine names come from
+Counts live terminals in workspace worktrees (~/orca/workspaces/<project>/<name>) on
+this machine and on each paired Orca environment, minus coordinator terminals (worktree
+names starting lead- or elon). Orca marks a running worker completed early, so run
+status is not used. Machine names come from
 `hostname -s` and `orca environment list`, never from this file.
 
 Usage: fleet-workers.py [--cache FILE]   (--cache writes the line to FILE)
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -22,32 +25,25 @@ def orca(*args):
         return {}
 
 
-def env_id(node):
-    """First environmentId anywhere in a worker-show result."""
-    if isinstance(node, dict):
-        if node.get("environmentId"):
-            return node["environmentId"]
-        node = list(node.values())
-    if isinstance(node, list):
-        for child in node:
-            found = env_id(child)
-            if found:
-                return found
-    return None
+WORKTREE = re.compile(r"/orca/workspaces/[^/]+/([^/]+)")
+COORDINATORS = ("lead-", "elon")  # tech-lead worktrees are lead-<slug>; Elon's start with elon
+
+
+def is_worker(terminal):
+    """A terminal in a workspace worktree that is not a coordinator's."""
+    found = WORKTREE.search(terminal.get("worktreePath") or "")
+    return bool(found) and not found.group(1).startswith(COORDINATORS)
+
+
+def live_workers(*env):
+    result = orca("terminal", "list", "--limit", "500", *env)
+    return sum(1 for t in result.get("terminals", []) if is_worker(t))
 
 
 local = socket.gethostname().split(".")[0]
 names = {e["id"]: e["name"] for e in orca("environment", "list").get("environments", [])}
-counts = {local: 0, **{n: 0 for n in names.values()}}
-
-for run in orca("orchestration", "run-list").get("runs", []):
-    workers = orca("orchestration", "worker-list", "--run", run["id"], "--limit", "100").get("workers", [])
-    for w in workers:
-        if w.get("dispatchStatus") != "dispatched":
-            continue
-        shown = orca("orchestration", "worker-show", "--dispatch", w["dispatchId"])
-        machine = names.get(env_id(shown), local)
-        counts[machine] += 1
+counts = {local: live_workers()}
+counts.update({name: live_workers("--environment", eid) for eid, name in names.items()})
 
 line = " | ".join(f"{n}: {c}" for n, c in counts.items())
 
