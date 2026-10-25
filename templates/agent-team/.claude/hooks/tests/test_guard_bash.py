@@ -101,6 +101,11 @@ class PatternKills(GuardTest):
             "kill -9 `pgrep node`",
             "pgrep -f next | xargs kill",
             "sudo pkill -f next",
+            "command pkill -f next",
+            "env pkill -f next",
+            "echo $(pkill -f next)",
+            'bash -c "pkill -f next"',
+            "if true; then pkill foo; fi",
         ]:
             self.assertDenied(cmd, "lsof -ti tcp:<port> -sTCP:LISTEN")
 
@@ -109,7 +114,11 @@ class PatternKills(GuardTest):
             "kill $(lsof -ti tcp:3016 -sTCP:LISTEN)",
             "kill $(cat /tmp/dev-3016.pid)",
             "kill 12345",
+            "kill %1",
+            "kill $!",
             "echo 'never pkill -f'",
+            'echo "never pkill"',
+            "grep -rn pkill .claude",
         ]:
             self.assertAllowed(cmd)
 

@@ -25,7 +25,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Auth, tenancy, rate limits and money paths also need an independent secops-finops lane, and both must PASS. Reviewer model and provider: `.claude/model-routing.md`. No live access blocks the lane.
 - Each new head needs fresh checks. Equal `git patch-id --stable` values for verdict and head diffs against their merge bases retain the verdict across a pure merge of main; different patches need a new verdict. Gate loosening needs Elon's current-head countersign.
 - Skills: `tdd`, `code-review`. Load `diagnosing-bugs` and `agent-browser` only for bug reproduction, E2E tests or browser smoke tests.
-- **Local servers:** start your own server on your own port and stop it by PID. Never pkill, killall or kill by name.
+- **Local servers:** start your own server on your own port. Never stop one by name (`pkill`, `killall`; the guard denies it). Stop it with `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`, or `kill` on a pid saved from `$!` in a pidfile.
 - **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`.
 
 ## Standing authority

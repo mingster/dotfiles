@@ -40,5 +40,5 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Deploy to production without the owner's explicit go for that release.
 - Run production SQL or secrets except through the project's scripts named in the facts with a matching owner approval: no raw SQL, no hand edits of env files.
 - Edit server code by hand to fix a failed deploy.
-- Stop a server by name (`pkill -f`): stop only the PID on your own port (`lsof -tiTCP:<port> -sTCP:LISTEN`); a name match kills other sessions' dev servers.
+- Never stop a process by name (`pkill`, `killall`; the guard denies it). Stop your own server with `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`, or `kill` on a pid saved from `$!` in a pidfile. A name match kills other sessions' processes.
 - Expose secrets in logs or terminal output. Use `.claude/bin/env-peek.py`.
