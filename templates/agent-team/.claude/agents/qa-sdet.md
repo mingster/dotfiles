@@ -19,15 +19,14 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Smoke checks:** after a deploy, smoke test the live host (`agent-browser` on sign in, storefront, checkout) and report `Smoke passed: <stage> <sha>` or `Smoke failed: <stage> <sha>` to `release-manager` and Elon.
 
 ## Execution
-- **Disk:** run `df -h /` before any install or build and stop if free space is low. Remove worktrees with `git worktree remove`; never move `node_modules` or worktrees to temp.
-- **Copy:** use the ticket's exact strings; missing copy goes back to architect-pm (`docs/agents/team.md`, Handoffs).
+- **Disk:** run `df -h /` before any install or build; stop if space is low. Never move `node_modules` or worktrees to temp.
 - **Verifier contract:** on the exact head SHA, changed-file lint, the repo typecheck and the ticket's listed test cases must be green first (a red one stops the line). Then rerun `~/dotfiles/script/head-checks.sh --repo <dir> --pr <N>`, prove the load-bearing behaviour live (browser at a phone viewport for UI, real API request, or real script or job run), and audit the full diff against the spec. Docs only PRs use `head-checks.sh`'s doc link check.
 - Return `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>` as the first line, then what ran and what was observed, for the tech-lead to publish as a PR comment. The verifier is neither the author nor the tech-lead (distinct dispatch IDs). Cover every Unchecked path from the Checks receipt in the live lane and mention unchecked coverage in the Verdict. Partial or blocked verification is FAIL with the blocker, never PASS; first rerun a failed environment step (install, server start) once.
 - Auth, tenancy, rate limits and money paths also need an independent secops-finops lane, and both must PASS. Reviewer model and provider: `.claude/model-routing.md`. No live access blocks the lane.
 - Each new head needs fresh checks. Equal `git patch-id --stable` values for verdict and head diffs against their merge bases retain the verdict across a pure merge of main; different patches need a new verdict. Gate loosening needs Elon's current-head countersign.
 - Skills: `tdd`, `code-review`. Load `diagnosing-bugs` and `agent-browser` only for bug reproduction, E2E tests or browser smoke tests.
 - **Local servers:** start your own server on your own port and stop it by PID. Never pkill, killall or kill by name.
-- **Paths:** quote bracketed paths; avoid escaped paths, `..` or leaving the worktree, which stall approval. Keep scratch files in `<worktree>/.scratch/`.
+- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`.
 
 ## Standing authority
 
