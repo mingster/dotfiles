@@ -51,5 +51,18 @@ if GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
   git_part=$(printf ' \033[01;32m%s%s\033[00m' "$branch" "$dirty")
 fi
 
-printf '\033[90m[%s]\033[00m \033[01;36m%s\033[00m%s | ctx: %b%s%%\033[00m' \
-  "$model" "$dir" "$git_part" "$ctx_color" "$ctx_pct"
+# Live Orca workers per machine, from a cache refreshed in the background at most once a minute
+fleet_part=""
+fleet_cache="$HOME/.claude/state/fleet-workers.txt"
+fleet_script="$HOME/dotfiles/script/fleet-workers.py"
+if command -v orca > /dev/null 2>&1 && [ -x "$fleet_script" ]; then
+  if [ ! -f "$fleet_cache" ] || [ -n "$(find "$fleet_cache" -mmin +1 2>/dev/null)" ]; then
+    touch "$fleet_cache" # claims this refresh so parallel status lines do not start another
+    (nohup "$fleet_script" --cache "$fleet_cache" > /dev/null 2>&1 &)
+  fi
+  fleet=$(head -n 1 "$fleet_cache" 2>/dev/null)
+  [ -n "$fleet" ] && fleet_part=$(printf ' | \033[01;35m%s\033[00m' "$fleet")
+fi
+
+printf '\033[90m[%s]\033[00m \033[01;36m%s\033[00m%s | ctx: %b%s%%\033[00m%s' \
+  "$model" "$dir" "$git_part" "$ctx_color" "$ctx_pct" "$fleet_part"
