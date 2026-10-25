@@ -170,6 +170,22 @@ def check_secrets_dir(segment, base, args):
          f"secrets dir.{exception} Anything else, ask Elon.")
 
 
+KILL_FORMS = ("Stop a port owner with kill $(lsof -ti tcp:<port> -sTCP:LISTEN), or a job you started "
+              "with kill on the pid you saved from $! in its own pidfile.")
+
+
+def check_pattern_kill(segment, base, args):
+    # A name or command line match also hits agent sessions and Orca shells, whose
+    # arguments carry long briefs; pkill -f "next dev" killed Orca twice (#4989).
+    if base in {"pkill", "killall"}:
+        deny(f"{base} kills every process whose name or command line matches, Orca and other "
+             f"sessions included. {KILL_FORMS}")
+    if base == "kill" and re.search(r"pgrep|pidof", segment):
+        deny(f"kill on a pgrep or pidof result is a pattern kill. {KILL_FORMS}")
+    if base == "kill" and "xargs" in (os.path.basename(w) for w in words(segment)):
+        deny(f"xargs kill takes its pids from a pipe the guard cannot see. {KILL_FORMS}")
+
+
 def check_segment(segment, depth=0):
     if depth > 3:
         return
@@ -177,6 +193,7 @@ def check_segment(segment, depth=0):
     if not prog:
         return
     base = os.path.basename(prog)
+    check_pattern_kill(segment, base, args)
 
     # 4. Heavy jobs must acquire the shared machine budget.
     try:
