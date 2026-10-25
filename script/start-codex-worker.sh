@@ -6,7 +6,7 @@
 # Briefs must list Allowed files and say: Read only these; Grep before Read; Read with offset/limit.
 # Reviewer slices may inspect at most 40 files.
 #          (--worktree-path <path> | --name <new worktree> --repo <path> [--base-branch <ref>])
-#          [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
+#          [--host <name>] [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
 # --from defaults to $ORCA_TERMINAL_HANDLE; a coordinator without one (Elon in Claude Code) passes its
 # orca_session_id, or worker-start fails consumer_fenced after the worktree and terminal exist.
 # A "hooks are new or changed" prompt is trusted only when the hooks and what they run match origin/main; else exit 4.
@@ -18,10 +18,10 @@ off=; for p in codex-app-tools@openai-bundled unified-computer-use@openai-bundle
   documents@openai-primary-runtime pdf@openai-primary-runtime spreadsheets@openai-primary-runtime \
   presentations@openai-primary-runtime template-creator@openai-primary-runtime; do
   off="$off -c plugins.\"$p\".enabled=false"; done
-run= spec= title= wt= name= repo= from="${ORCA_TERMINAL_HANDLE:-}"
+run= spec= title= wt= name= repo= host= from="${ORCA_TERMINAL_HANDLE:-}"
 while [ $# -gt 0 ]; do case "$1" in
   --run) run=$2;; --spec) spec=$2;; --title) title=$2;; --worktree-path) wt=$2;;
-  --name) name=$2;; --repo) repo=$2;; --base-branch) base=$2;; --model) model=$2;; --effort) effort=$2;; --from) from=$2;;
+  --name) name=$2;; --repo) repo=$2;; --base-branch) base=$2;; --host) host=$2;; --model) model=$2;; --effort) effort=$2;; --from) from=$2;;
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift 2; done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] || { echo "need --run --spec --title" >&2; exit 2; }
 [ -n "$from" ] || { echo "need --from <coordinator handle> (no ORCA_TERMINAL_HANDLE)" >&2; exit 2; }
@@ -39,6 +39,8 @@ if [ -z "$wt" ]; then
   fi
   wt=$("$orca" worktree create --name "$name" --repo "path:$repo" --base-branch "$base" --setup run --json | j 'd["result"]["worktree"]["path"]') || exit 1
 fi
+# Warn (never block) when the host's bun is older than the repo's pin; --host defaults to this machine.
+"$(dirname "$0")/bun-pin-check.sh" "${host:-$(hostname -s)}" "${repo:-$wt}" || true
 # Codex keys hook trust by path, so every new worktree stops at "hooks are new or changed".
 # Trust all only when every listed hooks file, and every file its commands reference, is byte
 # identical to origin/main of the same repo. Anything else: select nothing, print the diff, exit 4.
