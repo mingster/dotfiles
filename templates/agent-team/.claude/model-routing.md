@@ -32,13 +32,13 @@ Different family review: qa-sdet never uses the model family fullstack-dev used 
 
 ## Worker flags by provider
 
-The owner's standing choice: pass these on every `worker-start`. Ids checked 2026-10-05 (Claude `claude --help`, Cursor `cursor-agent --list-models`, Antigravity `agy models`); re-check when they drift.
+The owner's standing choice: pass these on every `worker-start`. Ids checked 2026-10-25 (Claude `claude --help`, Cursor `cursor-agent --list-models`, Antigravity `agy models`); re-check when they drift.
 
 | Tier | Claude | Cursor | Antigravity |
 | --- | --- | --- | --- |
 | Strong | `--agent claude --model opus --effort high` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model claude-opus-5-5-high` |
 | Workhorse | `--agent claude --model sonnet --effort medium` | `--agent cursor --model claude-sonnet-5-5-medium` | `--agent antigravity --model claude-sonnet-5-5-medium` |
-| Light | `--agent claude --model haiku` | `--agent cursor --model gemini-3.8-flash-low` | `--agent antigravity --model gemini-3.8-flash-low` |
+| Light | `--agent claude --model haiku` | `--agent cursor --model composer-2.5` | `--agent antigravity --model gemini-3.8-flash-low` |
 
 - Provisional, not in force (owner direction 2026-10-21): from 2026-11-01, after a trial, DeepSeek V4 through the `opencode` agent may take the engineering work Codex used to run. The owner still decides the account and budget. Elon stays on Claude; Antigravity stays for docs, translation, walkthrough and research workers.
 - Cursor and Antigravity put the effort in the model id: pass no `--effort`.
@@ -49,7 +49,7 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 ## Saving quota (owner 2026-10-09)
 
 - A fix or chore touching 3 files or fewer runs as `fullstack-dev-small`, a Light role in `~/.orca/presets.json`, titled `fullstack-dev-small - <job>` so the usage gate picks from the Light tier. Features, schema changes, money and security stay on `fullstack-dev`.
-- Small and mechanical tickets (copy, text substitutions, one-file fixes) route to a Cursor worker (`fullstack-dev-small` or the Light tier; owner 2026-10-25). After starting a Cursor worker, read its screen and accept the "Trust this workspace" prompt, then send the task again: the prompt swallows the first task. Judge a Cursor worker done by its screen and its commits, not by dispatch status (it may send no worker_done).
+- Small and mechanical tickets (copy, text substitutions, one-file fixes) route to a Cursor worker (`--agent cursor --model composer-2.5`; owner 2026-10-25). After starting a Cursor worker, read its screen and accept the "Trust this workspace" prompt, then send the task again: the prompt swallows the first task. Judge a Cursor worker done by its screen and its commits, not by dispatch status (it may send no worker_done).
 - Docs, translation, deploys and Playground walkthroughs start on `--agent antigravity --model gemini-4-argon-high` (the usage gate reads Antigravity per model pool, Claude and Gemini: check with `--provider antigravity --model <id>`), which keeps Claude for code. Before merge, audit a Gemini worker's file list and new i18n keys: it reformats files and copies English into tw and jp.
 - Sales (owner 2026-10-15): sales-marketing stays on Claude Sonnet for Traditional Chinese copy, outreach, pricing strategy and data analysis. Market research, competitor price comparison and Taiwan merchant lookups go to `--agent antigravity --model gemini-4-argon-high` (Google search grounding; spares Claude quota). Gemini must give a source URL for every number and merchant fact; sales-marketing spot checks them before any decision, and a fact without a source is not used.
 - Antigravity's Claude models and Cursor's Opus have their own quotas that can run out for days. On a quota message in the startup screen, fall back to the next provider; do not retry.
