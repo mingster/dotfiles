@@ -36,6 +36,17 @@ SECRET_FILE = re.compile(
     r"|id_(rsa|ed25519|ecdsa)"
     r")$"
 )
+# Any Bash command that reads under the secrets dir is denied (#4926). SECRETS_DIR matches the
+# project's secrets path; set SIGN_IN_SCRIPT to the one script allowed to read a secret file for the
+# agent (it reads the file itself, so the path never appears in a command), or None for no exception.
+SECRETS_DIR = re.compile(r"(^|[/\s='\"<(])secrets(/|$|[\s'\")])")
+SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
+SECRETS_NONREAD = {"ls", "stat", "test", "[", "[[", "mkdir", "chmod", "chown", "touch", "rm", "rmdir", "pwd"}
+SECRETS_COPIERS = {"cp", "mv", "ln", "rsync", "scp", "install"}
+SIGN_IN_SCRIPT = None
+# Compiled patterns for commands that may take a secret file as stdin and nothing else. The whole
+# segment must match. Empty by default.
+SECRETS_STDIN_OK = []
 SECRET_VAR = re.compile(r"SECRET|PASSW|TOKEN|KEY|PRIVATE|CRED|DATABASE_URL|_RO_URL|DSN|AUTH", re.I)
 
 READERS = {
@@ -132,6 +143,33 @@ def program_and_args(tokens):
     return None, []
 
 
+def check_secrets_dir(segment, base, args):
+    """Deny a segment that reads the secrets dir: readers, interpreters, redirects, copies out, cd."""
+    text = SECRETS_WRITE_REDIRECT.sub("", segment)
+    if not SECRETS_DIR.search(text) or base in SECRETS_NONREAD:
+        return
+    if any(p.fullmatch(segment.strip()) for p in SECRETS_STDIN_OK):
+        return
+    if base in SECRETS_COPIERS:
+        operands, target_dir, i = [], False, 0
+        while i < len(args):
+            a = args[i]
+            if a in {"-t", "--target-directory"}:
+                target_dir, i = True, i + 1
+            elif a.startswith("--target-directory=") or (a.startswith("-t") and not a.startswith("--")):
+                target_dir = True
+            elif not a.startswith("-"):
+                operands.append(a)
+            i += 1
+        sources = operands if target_dir else operands[:-1]
+        if not any(SECRETS_DIR.search(a) for a in sources):
+            return
+    exception = (f" The only exception is `{SIGN_IN_SCRIPT}`, which reads the file itself without printing it."
+                 if SIGN_IN_SCRIPT else "")
+    deny(f"{base} would read a file under the secrets dir into the session log. Agents never read the "
+         f"secrets dir.{exception} Anything else, ask Elon.")
+
+
 def check_segment(segment, depth=0):
     if depth > 3:
         return
@@ -210,6 +248,9 @@ def check_segment(segment, depth=0):
             deny("The team calls the PayPal API with GET only (plus the oauth2/token request). Refunds, cancellations "
                  "and any other write are gated: report them to Elon, who asks the owner.")
 
+    # 2a. Anything that reads under the secrets dir.
+    check_secrets_dir(segment, base, args)
+
     # 2. Secrets.
     secret_args = [a for a in args if SECRET_FILE.search(a)]
     if base in READERS and secret_args:
@@ -243,6 +284,22 @@ def check_background_wait(command):
              "unread. Run it as its own Bash call with run_in_background: true, and re-arm it after each --ack.")
 
 
+def substitutions(command):
+    """The text inside $( ... ) and backticks, so a read hidden in one is checked like any command."""
+    out = re.findall(r"`([^`]*)`", command)
+    depth, start = 0, None
+    for i, c in enumerate(command):
+        if command.startswith("$(", i):
+            if depth == 0:
+                start = i + 2
+            depth += 1
+        elif c == ")" and depth:
+            depth -= 1
+            if depth == 0:
+                out.append(command[start:i])
+    return out
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -253,8 +310,9 @@ def main():
     command = (data.get("tool_input") or {}).get("command") or ""
     check_background_wait(command)
     try:
-        for seg in segments(command):
-            check_segment(seg)
+        for text in [command, *substitutions(command)]:
+            for seg in segments(text):
+                check_segment(seg)
     except SystemExit:
         raise
     except Exception:
