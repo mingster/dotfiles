@@ -42,7 +42,7 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 
 - Provisional, not in force (owner direction 2026-10-21): from 2026-11-01, after a trial, DeepSeek V4 through the `opencode` agent may take the engineering work Codex used to run. The owner still decides the account and budget. Elon stays on Claude; Antigravity stays for docs, translation, walkthrough and research workers.
 - Cursor and Antigravity put the effort in the model id: pass no `--effort`.
-- Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17).
+- Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17). Cursor reviewers never run tests or heavy-gate jobs (Elon 2026-10-26): they review code only, and the lead runs the tests.
 - Cursor quota runs out per model family (2026-10-07: Gemini exhausted until 10/25, Opus spend limit hit earlier). A Cursor usage limit is a provider stop: fall back, never retry the same Cursor model.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt and report the effective model.
 
