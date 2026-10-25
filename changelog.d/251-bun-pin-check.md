@@ -1,0 +1,1 @@
+- bun-pin-check.sh warns when a host's bun is older than the repo's pin (packageManager or engines.bun), or differs from this machine's bun when there is no pin. start-codex-worker.sh runs it (new --host flag); coordinators run it before any other worker-start.
