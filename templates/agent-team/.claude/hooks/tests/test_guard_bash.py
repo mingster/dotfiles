@@ -88,5 +88,40 @@ class SecretsDirReads(GuardTest):
                 self.assertDenied(f"{cmd} < {self.S}", "secrets")
 
 
+class PatternKills(GuardTest):
+    def test_pattern_kills_denied(self):
+        for cmd in [
+            'pkill -f "next dev"',
+            'pkill -f "next dev" -n; pkill -f "next-server"',
+            "pkill -f lead-merge.sh; pkill -f worker-finish",
+            "pkill -x node",
+            "killall node",
+            "/usr/bin/pkill next",
+            "kill $(pgrep -f next-server)",
+            "kill -9 `pgrep node`",
+            "pgrep -f next | xargs kill",
+            "sudo pkill -f next",
+            "command pkill -f next",
+            "env pkill -f next",
+            "echo $(pkill -f next)",
+            'bash -c "pkill -f next"',
+            "if true; then pkill foo; fi",
+        ]:
+            self.assertDenied(cmd, "lsof -ti tcp:<port> -sTCP:LISTEN")
+
+    def test_port_owner_and_pidfile_allowed(self):
+        for cmd in [
+            "kill $(lsof -ti tcp:3016 -sTCP:LISTEN)",
+            "kill $(cat /tmp/dev-3016.pid)",
+            "kill 12345",
+            "kill %1",
+            "kill $!",
+            "echo 'never pkill -f'",
+            'echo "never pkill"',
+            "grep -rn pkill .claude",
+        ]:
+            self.assertAllowed(cmd)
+
+
 if __name__ == "__main__":
     unittest.main()
