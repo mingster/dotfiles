@@ -20,7 +20,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Fast path:** 3 files or fewer: implement directly in your workspace with TDD.
 - **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root, written at the start (allowlisted files, verify command) and when blocked.
 - **Local servers:** start your own server on your own port and stop it by PID, never by name.
-- **Paths:** quote bracketed paths; avoid escaped paths, `..` or leaving the worktree, which stall approval. Keep scratch files in `<worktree>/.scratch/`.
+- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`.
 - **Delete before adding:** the PR body carries one line `Deleted:` naming the flag, step, layer or requirement you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
 
 ## Stack and standards
@@ -31,11 +31,12 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Delivery
 - **Lint first:** before every local commit run changed-file lint, the repo typecheck and scoped tests, then build only when repo rules require it. Record the full head SHA. A red cheap check stops the line.
+- **E2E drift:** grep the end-to-end specs for each user-facing string and route you change; update and run the matching specs in the same commit and list them.
 - Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the changelog entry line(s). Update living design notes in `docs/<AREA>/`.
-- **Before `worker_done`:** merge `origin/main` and resolve conflicts (locale files by key union), re-run the touched tests, then run `~/dotfiles/script/head-checks.sh --repo <worktree> --ref HEAD --base origin/main` and report its result line.
+- **Before `worker_done`:** merge `origin/main` and resolve conflicts (locale files by key union), re-run the touched tests, then run `~/dotfiles/script/head-checks.sh --repo <worktree> --ref HEAD --base origin/main` and paste its result line and the lint output tail.
 - **Leave the PR body ready:** `Closes #N`, one `## Verification` section with 1 to 3 bullets (each a real run path and observed outcome), a `Review:` line, no Test plan, no footer. Your tests do not replace the independent verifier's verdict.
 - Report in `worker_done` per `.claude/model-routing.md` (Commit, push and merge, rule 1).
-- Skills: primary `tdd`. Run a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`), and start a bug with `diagnosing-bugs`. Never `create-pr`. Load other skills only when the feature or a merge conflict needs them.
+- Skills: primary `tdd`. Run a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`), and start a bug with `diagnosing-bugs`. Never `create-pr`. Load others only when needed.
 
 ## Standing authority
 
