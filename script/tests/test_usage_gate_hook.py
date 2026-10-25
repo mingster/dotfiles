@@ -84,22 +84,83 @@ class Hook(unittest.TestCase):
         self.assertIsNone(deny)
         self.assertIn("no usage reading for agent unknown", err)
 
-    def test_antigravity_hook_checks_worst_pool_even_with_model(self):
+    def run_stubbed_pool_hook(self, command, provider="antigravity"):
         spec = importlib.util.spec_from_file_location("hook", HOOK)
         hook = importlib.util.module_from_spec(spec)
         with mock.patch("sys.stdin", io.StringIO('{"tool_name":"Read"}')), \
                 mock.patch("sys.exit"):
             spec.loader.exec_module(hook)
-        command = "orca orchestration worker-start --agent antigravity --model gemini-flash"
+
+        def gate(argv, **kwargs):
+            self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
+            allowed = argv[5:] == ["--model", "gemini-flash"]
+            if argv[5:] == ["--model", "unknown-model"]:
+                return mock.Mock(returncode=4, stdout=json.dumps({"reason": "unknown model"}))
+            if argv[5:] == ["--model", "--x"]:
+                return mock.Mock(returncode=2, stdout="")
+            return mock.Mock(returncode=0 if allowed else 3, stdout=json.dumps({
+                "weekly_used": 0 if allowed else 100, "ceiling": 95}))
+
         data = {"tool_name": "Bash", "tool_input": {"command": command}}
-        result = mock.Mock(returncode=3, stdout=json.dumps({"reason": "pool ceiling",
-                           "weekly_used": 95, "ceiling": 95}))
         with mock.patch("sys.stdin", io.StringIO(json.dumps(data))), \
-                mock.patch.object(hook.subprocess, "run", return_value=result) as run, \
+                mock.patch.object(hook.subprocess, "run", side_effect=gate) as run, \
+                mock.patch.object(hook, "routing", return_value=None), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             hook.main()
-        self.assertIn("blocked antigravity", out.getvalue())
-        self.assertEqual(run.call_args.args[0][-3:], ["check", "--provider", "antigravity"])
+        return out.getvalue(), [call.args[0][5:] for call in run.call_args_list]
+
+    def test_antigravity_gemini_allowed_while_claude_pool_blocked(self):
+        for option in ("--model gemini-flash", "--model=gemini-flash", "--model 'gemini-flash'"):
+            with self.subTest(option=option):
+                out, checks = self.run_stubbed_pool_hook(
+                    "orca orchestration worker-start --agent antigravity " + option)
+                self.assertEqual(out, "")
+                self.assertEqual(checks, [["--model", "gemini-flash"]])
+
+    def test_antigravity_claude_pool_still_denied(self):
+        out, checks = self.run_stubbed_pool_hook(
+            "orca orchestration worker-start --agent antigravity --model claude-sonnet")
+        self.assertIn("blocked antigravity: weekly ceiling", out)
+        self.assertEqual(checks, [["--model", "claude-sonnet"]])
+
+    def test_antigravity_without_model_still_checks_worst_pool(self):
+        out, checks = self.run_stubbed_pool_hook(
+            "orca orchestration worker-start --agent antigravity")
+        self.assertIn("blocked antigravity: weekly ceiling", out)
+        self.assertEqual(checks, [[]])
+
+    def test_antigravity_unknown_model_falls_back_to_worst_pool(self):
+        for option in ("--model unknown-model", '--model "$M"', "--model=--x", "--model -h",
+                       "--model gemini-flash --model claude-sonnet",
+                       "--model claude-sonnet --model=gemini-flash"):
+            with self.subTest(option=option):
+                out, checks = self.run_stubbed_pool_hook(
+                    "orca orchestration worker-start --agent antigravity " + option)
+                self.assertIn("blocked antigravity: weekly ceiling", out)
+                self.assertEqual(checks[-1], [])
+
+    def test_antigravity_chain_checks_each_model_and_model_less_start(self):
+        for suffix, expected in (("--model claude-sonnet", ["--model", "claude-sonnet"]),
+                                 ("", [])):
+            with self.subTest(suffix=suffix):
+                out, checks = self.run_stubbed_pool_hook(
+                    "orca orchestration worker-start --agent antigravity --model gemini-flash && "
+                    "orca orchestration worker-start --agent antigravity " + suffix)
+                self.assertIn("blocked antigravity: weekly ceiling", out)
+                self.assertEqual(checks, [["--model", "gemini-flash"], expected])
+
+    def test_other_providers_and_codex_launcher_do_not_forward_model(self):
+        for provider in ("claude", "codex", "cursor"):
+            with self.subTest(provider=provider):
+                out, checks = self.run_stubbed_pool_hook(
+                    "orca orchestration worker-start --agent " + provider + " --model gemini-flash",
+                    provider=provider)
+                self.assertIn("blocked " + provider + ": weekly ceiling", out)
+                self.assertEqual(checks, [[]])
+        out, checks = self.run_stubbed_pool_hook(
+            "script/start-codex-worker.sh --model gemini-flash", provider="codex")
+        self.assertIn("blocked codex: weekly ceiling", out)
+        self.assertEqual(checks, [[]])
 
     def cursor(self, pct, baseline):
         ends = datetime.fromtimestamp(FUT, timezone.utc).isoformat()

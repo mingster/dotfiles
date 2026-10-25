@@ -5,7 +5,7 @@ Wired from each agent team's .claude/settings.json. For every
 `orca orchestration worker-start ... --agent <id>` in the command it runs
 `usage-gate.py check --provider <id>` (claude, codex, cursor and antigravity) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
-Antigravity is checked without a model, so the hook gates on its worst pool.
+Antigravity gates on the named --model pool, or its worst pool without a model.
 Known roles from the task title receive advisory `pick --role` recommendations. The Codex launcher
 is checked the same way. A command scoped USAGE_GATE_OVERRIDE reason bypasses
 routing enforcement and is logged, but never bypasses the weekly ceiling gate.
@@ -83,8 +83,13 @@ def starts(cmd):
                 override = word.split("=", 1)[1].strip() or None
         m = VAR.match(agent or "")
         providers = env.get(m.group(1), [agent]) if m else [agent]
+        # Only one plain --model value names a pool; anything else gates on the worst pool.
+        models = [w.split("=", 1)[1] if "=" in w else (flags[j + 1] if j + 1 < len(flags) else "")
+                  for j, w in enumerate(flags) if w == "--model" or w.startswith("--model=")]
+        model = models[0] if len(models) == 1 and re.match(r"^[\w.:-]+$", models[0]) \
+            and not models[0].startswith("-") else None
         out += [{"provider": provider.lower() if provider else None, "role": role,
-                 "override": override} for provider in providers]
+                 "override": override, "model": model} for provider in providers]
     return out
 
 
@@ -153,14 +158,20 @@ def main():
             denial = routing(start)
             if denial:
                 blocked.append(denial)
-    for provider in dict.fromkeys(start["provider"] for start in commands):
+    checks = dict.fromkeys((start["provider"], start.get("model")
+                            if start["provider"] == "antigravity" else None) for start in commands)
+    for provider, model in checks:
         if provider not in GATED:
             print(f"usage-gate-hook: no usage reading for agent {provider or '(none given)'}; "
                   "worker-start allowed without the gate.", file=sys.stderr)
             continue
         try:
-            r = subprocess.run([sys.executable, GATE, "check", "--provider", provider],
-                               capture_output=True, text=True, timeout=25)
+            args = [sys.executable, GATE, "check", "--provider", provider]
+            # A model the gate cannot answer for (any exit but 0 or 3) falls back to the worst pool.
+            if model:
+                r = subprocess.run(args + ["--model", model], capture_output=True, text=True, timeout=25)
+            if not model or r.returncode not in (0, 3):
+                r = subprocess.run(args, capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
             print(f"usage-gate-hook: gate failed for {provider} ({e}); worker-start allowed.", file=sys.stderr)
