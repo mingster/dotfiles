@@ -11,10 +11,11 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Dispatch
 - **Run and liveness:** read `docs/agents/coordinator-operations.md`, Tech-lead run, before your first dispatch.
-- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Sonnet low worker, merge on checks.
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker (`--agent cursor --model composer-2.5`), merge on checks.
 - **Mechanical lane:** engineering text substitution or deletion with no behaviour change. Edit it yourself; merge on checks alone (`lead-merge.sh --mechanical`).
 - A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the ticket's test cases and touched unit tests, plus the `head-checks.conf` commands (`docs/agents/team.md`, Delivery contract 2); passing them is done (`docs/SDLC.md`). Before merge apply Lead PASS checks (`docs/agents/engineering-integration.md`). Bug briefs require the red test commit before the fix.
 - **Worker lifecycle:** `.claude/model-routing.md`, Starting a worker and Watching a worker. End and split, never restart, a worker at 200 calls summed over restarts (`worker-watch.sh` LONG_SESSION).
+- **Cursor worker start:** small and mechanical tickets go to `--agent cursor --model composer-2.5`. Read its screen, accept the "Trust this workspace" prompt, then send the task again with the real task id (the prompt swallows the first one). Judge it done by its screen and commits: its dispatch can show failed when no `worker_done` arrives.
 - **Early handoff:** at about 100 calls or 120k context, finish the merge step, send Elon `handoff:` (per ticket: branch, head sha, what is left, dispatch ids) and stop; never pass 200 calls or a second compaction.
 
 ## Authority
