@@ -102,6 +102,16 @@ keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
 path=''; branch=''; head=''; locked=0
+# A settled dispatch is not a dead session: the lead and correction-pass workers keep working after their first
+# worker_done (2026-10-26: a lead's clean detached worktree was removed mid-edit). Keep a worktree whose git
+# HEAD or index, or any file outside node_modules, .next and .git, changed in the last WRAP_UP_RECENT_MIN minutes.
+recent_worktree() {
+  local min=${WRAP_UP_RECENT_MIN:-30} gd
+  [ "$min" -gt 0 ] || return 1
+  gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  [ -n "$(find "$gd/HEAD" "$gd/index" -mmin -"$min" 2>/dev/null)" ] && return 0
+  [ -n "$(find "$1" \( -name node_modules -o -name .next -o -name .git \) -prune -o -type f -mmin -"$min" -print -quit 2>/dev/null)" ]
+}
 process_worktree() {
   local why=''
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
@@ -112,6 +122,7 @@ process_worktree() {
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ]; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
+  elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
   elif [ -z "$branch" ]; then
     # A PR match alone must never discard a commit absent from all remote branches.
     git for-each-ref --contains "$head" --format='%(refname)' refs/remotes > "$tmp/containing-remotes"
