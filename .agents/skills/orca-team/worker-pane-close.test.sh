@@ -44,6 +44,8 @@ chmod +x "$tmp/orca"
 export ORCA_TERMINAL_HANDLE=term_coordinator ORCA_CLI_COMMAND="$tmp/orca" FAKE_DIR="$tmp" ORCA_PANE_STATE_DIR="$tmp/state"
 mkdir -p "$tmp/state" "$tmp/bin" "$tmp/linked" "$tmp/main/.git"
 printf 'gitdir: /fixture/worktrees/linked\n' > "$tmp/linked/.git"
+# The fake lists the coordinator at the cwd; run outside any git checkout so the script's project root matches it.
+cd "$tmp"
 printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "$FAKE_DIR/sleeps.log"\n' > "$tmp/bin/sleep"; chmod +x "$tmp/bin/sleep"
 export PATH="$tmp/bin:$PATH"
 pass=0; fail=0
