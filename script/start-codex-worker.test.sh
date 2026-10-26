@@ -45,6 +45,10 @@ check "non-running state exits 1" "$([ $? = 1 ]; echo $?)"
 check "missing args exit 2" "$([ $? = 2 ]; echo $?)"
 
 : > "$tmp/calls.log"
+"$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path /wt/e --host not-this-host >/dev/null 2>&1
+check "remote --host exits 2 before any orca call (it would start on this machine)" "$([ $? = 2 ] && [ ! -s "$tmp/calls.log" ]; echo $?)"
+
+: > "$tmp/calls.log"
 FAKE_SCREEN='GPT-6.1-Sol low · ~/x' "$here/start-codex-worker.sh" --run run_1 --spec "$tmp/spec.txt" --title t --worktree-path /wt/e >/dev/null 2>&1
 check "0.163 footer (GPT-n) counts as ready without waiting" "$([ "$(grep -c '^terminal read' "$tmp/calls.log")" -le 91 ]; echo $?)"
 

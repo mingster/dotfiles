@@ -6,7 +6,7 @@
 # Briefs must list Allowed files and say: Read only these; Grep before Read; Read with offset/limit.
 # Reviewer slices may inspect at most 40 files.
 #          (--worktree-path <path> | --name <new worktree> --repo <path> [--base-branch <ref>])
-#          [--host <name>] [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
+#          [--host <this machine only>] [--model gpt-6.1-sol] [--effort medium] [--from <coordinator handle>]
 # --from defaults to $ORCA_TERMINAL_HANDLE; a coordinator without one (Elon in Claude Code) passes its
 # orca_session_id, or worker-start fails consumer_fenced after the worktree and terminal exist.
 # A "hooks are new or changed" prompt is trusted only when the hooks and what they run match origin/main; else exit 4.
@@ -25,6 +25,9 @@ while [ $# -gt 0 ]; do case "$1" in
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift 2; done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] || { echo "need --run --spec --title" >&2; exit 2; }
 [ -n "$from" ] || { echo "need --from <coordinator handle> (no ORCA_TERMINAL_HANDLE)" >&2; exit 2; }
+# The worktree and terminal are created on this machine, so a remote --host would be ignored silently.
+case "$host" in ""|"$(hostname -s)"|localhost) ;; *)
+  echo "start-codex-worker: refused: --host $host; this script starts only on $(hostname -s). Use orca orchestration worker-start --on $host" >&2; exit 2 ;; esac
 # gpt-6-astra costs about 4 times gpt-6.1-sol per token (2026-10-22: one astra worker moved the weekly reading 65% to 95%).
 # Owner rule 2026-10-22: only with the owner'"'"'s yes for that specific use; OWNER_ASTRA_YES names the issue or message of that yes.
 case "$model" in gpt-6-astra*) [ -n "${OWNER_ASTRA_YES:-}" ] || {
@@ -39,7 +42,7 @@ if [ -z "$wt" ]; then
   fi
   wt=$("$orca" worktree create --name "$name" --repo "path:$repo" --base-branch "$base" --setup run --json | j 'd["result"]["worktree"]["path"]') || exit 1
 fi
-# Warn (never block) when the host's bun is older than the repo's pin; --host defaults to this machine.
+# Warn (never block) when the host's bun is older than the repo's pin; --host can only be this machine.
 "$(dirname "$0")/bun-pin-check.sh" "${host:-$(hostname -s)}" "${repo:-$wt}" || true
 # Codex keys hook trust by path, so every new worktree stops at "hooks are new or changed".
 # Trust all only when every listed hooks file, and every file its commands reference, is byte
