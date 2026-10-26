@@ -1,0 +1,1 @@
+- Add a shared coding agent session counter for Claude Code, Codex, and Cursor CLI, excluding Codex daemons and child processes and Cursor IDE helpers.
