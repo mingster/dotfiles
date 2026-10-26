@@ -2,6 +2,8 @@
 # Close what a finished worker left open. The coordinator runs this after worker-release.
 # Usage: worker-pane-close.sh <dispatch_id> [...]   close those workers' panes and leftover terminals
 #        worker-pane-close.sh                       sweep recorded panes and discover ended workers in the caller's Run
+# The sweep closes a settled dispatch only once its linked worktree is gone: a dispatch settles at its first
+# worker_done, and the worker may still be on a correction pass in that worktree. Explicit ids skip that check.
 # Closes the pane worker-panes.sh recorded, then every terminal of that worker still in `orca terminal list`:
 # the handles worker-show reports (agent and setup terminals) and any terminal whose worktreePath matches
 # the linked git worktree the worker created or reused. A dispatch that is still running keeps its terminals,
@@ -49,6 +51,20 @@ for t in terms:
   if h in own or (path and t.get("worktreePath")==path):
     seen.add(h); print(h)'
 }
+worktree_gone() { # $1 worker-show json -> rc 0 only when the dispatch names a worktree path that no longer exists
+  SHOW="$1" python3 -c '
+import os,sys,json
+try: w=json.loads(os.environ["SHOW"])["result"].get("worker") or {}
+except Exception: sys.exit(1)
+path=""
+for e in w.get("effects") or []:
+  if e.get("kind")=="worktree": path=(e.get("id") or "").split("::",1)[-1]
+if not path: path=(w.get("worktreeId") or "").split("::",1)[-1]
+if not path:
+  option=(w.get("startOptions") or {}).get("worktree") or ""
+  if option.startswith("path:"): path=option[len("path:"):]
+sys.exit(0 if path and not os.path.exists(path) else 1)'
+}
 busy_handles() { # $1 dispatch to ignore -> terminal handles used by any other dispatch not in a final state; rc 1 if the list cannot be read
   local cursor="" args workers page next
   while :; do
@@ -82,6 +98,7 @@ close_one() {
   show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || return 0
   status=$(printf '%s' "$show" | dispatch_status)
   case "$status" in completed|failed|cancelled|released) ;; *) return 0;; esac
+  [ "${2:-}" != sweep ] || worktree_gone "$show" || return 0
   [ -f "$f" ] && while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < "$f"
   list=$(close_rpc terminal list --json 2>/dev/null)
   while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < <(leftovers "$show" "$list")
@@ -157,5 +174,5 @@ $(printf '%s\n' "$page" | sed '/^CURSOR=/d')"
   [ -n "$next" ] && [ "$next" != "$cursor" ] || break
   cursor="$next"
 done
-while IFS= read -r d; do [ -z "$d" ] || close_one "$d"; done < <(printf '%s\n' "$dispatches" | sort -u)
+while IFS= read -r d; do [ -z "$d" ] || close_one "$d" sweep; done < <(printf '%s\n' "$dispatches" | sort -u)
 exit 0
