@@ -1,1 +1,2 @@
 - orca-team: `worker-pane-close.sh --release <id>` releases a validated worker, marks it released and closes its terminals. The sweep (run by wrap-up) now closes a marked worker even while its worktree still exists, so Codex workers on external terminals no longer pile up after release.
+- orca-team: `worker-panes.sh` no longer opens a second pane for a worker whose recorded pane is still open. Each run with no ids used to add one duplicate mirror per running worker (36 mirrors for 4 workers on 2026-10-26, each polling Orca).

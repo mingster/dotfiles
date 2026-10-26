@@ -57,6 +57,11 @@ find_new_pane() { # $1 target handle, $2 tabs snapshot taken before the split
   return 0
 }
 for d in ${ids[@]+"${ids[@]}"}; do
+  # One pane per dispatch: a recorded pane that is still listed means this worker already has one.
+  if [ -f "$state/$d" ]; then
+    h=$(head -n 1 "$state/$d")
+    if [ -n "$h" ] && printf '%s\n' "$live" | grep -qxF "$h"; then echo "pane $d (already open)"; continue; fi
+  fi
   before=$(tabs)
   if rec=$("$orca" terminal split --terminal "$target" --direction "$dir" --command "$here/worker-pane.sh $d" --json); then
     # Split receipts can include the parent first. Only record a newly created handle.
