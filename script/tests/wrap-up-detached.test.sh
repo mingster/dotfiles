@@ -76,7 +76,7 @@ expect "Remove worktree $tmp/closed (detached at closed PR head)" 'closed PR exa
 expect "Remove worktree $tmp/merged-pr (detached at closed PR head)" 'merged PR exact head eligible'
 expect "Kept worktree $tmp/unpublished-pr (detached with unmerged commits)" 'PR head with no remote branch kept'
 expect "Kept worktree $tmp/unrelated (detached with unmerged commits)" 'remote head without finished PR kept'
-expect "Kept worktree $tmp/reopened (detached with unmerged commits)" 'open PR overrides historical closed PR'
+expect "Kept worktree $tmp/reopened (open PR head)" 'open PR overrides historical closed PR'
 expect "Kept worktree $tmp/newer-head (detached with unmerged commits)" 'descendant of closed PR head kept'
 expect "Kept worktree $tmp/open-pr-image (open PR head)" 'detached at open PR head kept despite untracked image'
 expect "Remove worktree $tmp/active-root-sibling (detached at merged commit)" 'terminal path prefix does not protect sibling'
