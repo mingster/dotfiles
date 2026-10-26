@@ -41,4 +41,22 @@ for f in "$T"/.claude/agents/*.md; do
   done
 done
 
+# Adoption installs every template doc a role names, even when the project already has deploy-facts.md.
+A=$(mktemp -d); trap 'rm -rf "$A"' EXIT
+mkdir -p "$A/proj/docs/agents"; echo "# project owned" > "$A/proj/docs/agents/deploy-facts.md"
+DOTFILES="$here" bash "$here/script/adopt-agent-team.sh" --project-name acme "$A/proj" >/dev/null 2>&1
+for f in "$T"/.claude/agents/*.md; do
+  for p in $(grep -oE 'docs/agents/[a-z0-9-]+\.md' "$f" | sort -u); do
+    [ -f "$T/$p" ] || continue
+    case "$p" in */team.md|*/team-facts.md|*/deploy-facts.md) continue ;; esac
+    [ -f "$A/proj/$p" ] && ok "adoption installs $p" || bad "$(basename "$f") names $p but adoption does not install it"
+  done
+done
+# Rules that moved behind a pointer must be in an always installed page, not the project owned deploy-facts.
+has "$A/proj/docs/agents/coordinator-operations.md" 'Production job order' "adopted coordinator-operations holds the production job order"
+has "$T/.claude/agents/release-manager.md" 'coordinator-operations.md`, Production job order' "release-manager points the job order at coordinator-operations"
+has "$T/.claude/agents/tech-lead.md" 'even a new spec no worker could run' "tech-lead keeps rerun of a new spec"
+has "$T/docs/agents/coordinator-operations.md" '{{PROJECT_NAME}}/<lane>' "small task method keeps the project placeholder"
+has "$A/proj/docs/agents/coordinator-operations.md" 'workspaces/acme/<lane>' "adopted small task method renders the project name"
+
 echo "pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
