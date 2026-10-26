@@ -21,6 +21,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones"
 # Fixture worktrees are all new; 0 turns the recent-activity guard off except in its own case.
 export WRAP_UP_RECENT_MIN=0
 git init -q --bare "$tmp/origin"
