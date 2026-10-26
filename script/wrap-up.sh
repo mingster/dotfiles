@@ -37,6 +37,7 @@ jq -e 'type == "array"' "$tmp/prs" >/dev/null
 jq -r '.[] | select(.state == "OPEN") | .headRefName' "$tmp/prs" | sort -u > "$tmp/open"
 jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
 jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
+jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
 : > "$tmp/active"
 orca=${ORCA_CLI_COMMAND:-orca}
 if command -v "$orca" >/dev/null 2>&1; then
@@ -141,6 +142,8 @@ process_worktree() {
   elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
+  elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
+  elif [ -z "$branch" ] && grep -Fxq -- "$head" "$tmp/open-heads"; then why='open PR head'
   elif [ -z "$branch" ]; then
     # A PR match alone must never discard a commit absent from all remote branches.
     git for-each-ref --contains "$head" --format='%(refname)' refs/remotes > "$tmp/containing-remotes"
