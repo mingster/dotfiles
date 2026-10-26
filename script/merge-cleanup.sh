@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cleanup after lead-merge.sh reads MERGED. Run from a checkout of the repo.
 # Usage: merge-cleanup.sh --branch <pr head> [--issue N] [--pr N]    DRY_RUN=1 only prints.
-# 1. Remove the PR head: remote branch, its worktree (kept when dirty), local branch.
+# 1. Remove the PR head: remote branch, its worktree (kept when dirty or named lead-*), local branch.
 # 2. With an issue and/or PR number: remove clean worktrees and branches whose name has either
 #    number as a whole number (qa-3847 for PR 3847; 3846 never matches 38460 or 13846)
 #    and that are in origin/main or belong to a released worker. Dirty worktrees get their
@@ -81,7 +81,7 @@ drop() {
   if [ -n "$wt" ]; then
     wt=$(cd -P "$wt" && pwd)
     if [ "$wt" = "$top" ]; then echo "Kept worktree $wt (current)"; return 0; fi
-    if [ "${wt##*/}" = lead-queue ]; then echo "protected: kept worktree $wt (lead-queue lane)"; return 0; fi
+    case "${wt##*/}" in lead-*) echo "protected: kept worktree $wt (lead worktree)"; return 0 ;; esac
     dirty=$(git -C "$wt" status --porcelain --untracked-files=all)
     if [ -n "$dirty" ]; then
       if [ "$mode" != force ]; then

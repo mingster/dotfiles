@@ -409,6 +409,18 @@ SHA=$R; headsha=$R; checks="Checks: PASS head=$R"; comments="Verdict: PASS head=
 check "real changed patch loses the countersign" 1 'Countersign'
 
 ) </dev/null &
+# Cleanup after the merge never removes a lead-* worktree, even when it holds the PR branch.
+unit; (
+unit_init
+copy_setup
+printf 'echo hi\n' > "$REAL_PATCH_REPO/marketing/src/hello.sh"
+copy_commit
+LEADY="$HOME/orca/workspaces/proj/lead-y"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" worktree add -q -b feature "$LEADY" HEAD
+check "cleanup keeps a lead-* worktree that holds the PR branch" 0 'protected: kept worktree .*lead-y' 1
+if [ -d "$LEADY" ]; then echo "ok   lead-y worktree still on disk" > "$ucd/result.9999"
+else echo "FAIL lead-y worktree removed" > "$ucd/result.9999"; fi
+) </dev/null &
 # Generated team copies merge on the Verdict of the matching MERGED dotfiles PR.
 unit; (
 unit_init

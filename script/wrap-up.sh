@@ -136,7 +136,7 @@ process_worktree() {
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why='protected'
-  elif [ "${path##*/}" = lead-queue ]; then why='lead-queue lane'
+  elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
