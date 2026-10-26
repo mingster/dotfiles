@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Exercise wrap-up --apply rules (patch-merged, screenshot dirt, stale) in disposable repos only.
 set -euo pipefail
+# Fixture worktrees are all new; 0 turns the recent-activity guard off.
+export WRAP_UP_RECENT_MIN=0
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)

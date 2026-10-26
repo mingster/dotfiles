@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Exercise dry-run decisions through the CLI, with disposable Git repositories.
 set -euo pipefail
+# Fixture worktrees are all new; 0 turns the recent-activity guard off.
+export WRAP_UP_RECENT_MIN=0
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
