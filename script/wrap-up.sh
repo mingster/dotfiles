@@ -136,7 +136,7 @@ process_worktree() {
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why='protected'
-  elif [ "${path##*/}" = lead-queue ]; then why='lead-queue lane'
+  elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
@@ -211,6 +211,28 @@ while IFS= read -r ref; do
   fi
 done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 flush_remote
+# Each Chrome launch leaves a code_sign_clone under the per-user temp dir (macOS). Remove those no process holds open.
+clone_removed=0; clone_kept=0
+clone_root=${WRAP_UP_CLONE_ROOT-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)}
+if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
+  for clone in "$clone_root"/com.google.Chrome*.code_sign_clone/code_sign_clone.*; do
+    [ -d "$clone" ] || continue
+    if ! command -v lsof >/dev/null 2>&1; then
+      printf 'Kept Chrome clone %s (lsof unavailable)\n' "$clone"; clone_kept=$((clone_kept+1)); continue
+    fi
+    # Rule: remove only when lsof ends 0 or 1 (1 = no open files) with no output and no stderr. Any other result keeps.
+    lsof_status=0; holders=$(lsof -t +D "$clone" 2>"$tmp/lsof-err") || lsof_status=$?
+    if [ -n "$holders" ]; then
+      printf 'Kept Chrome clone %s (held open by a running process)\n' "$clone"; clone_kept=$((clone_kept+1))
+    elif [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then
+      printf 'Kept Chrome clone %s (lsof failed)\n' "$clone"; clone_kept=$((clone_kept+1))
+    else
+      printf 'Remove Chrome clone %s\n' "$clone"
+      [ "$apply" -eq 0 ] || rm -rf -- "$clone"
+      clone_removed=$((clone_removed+1))
+    fi
+  done
+fi
 # Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
 stale_found=0; stale_deleted=0
 if [ "$pr_ok" -eq 1 ]; then
@@ -266,3 +288,4 @@ else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
+printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"

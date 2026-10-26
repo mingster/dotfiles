@@ -21,6 +21,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones"
 # Fixture worktrees are all new; 0 turns the recent-activity guard off except in its own case.
 export WRAP_UP_RECENT_MIN=0
 git init -q --bare "$tmp/origin"
@@ -135,6 +136,11 @@ bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test -d "$tmp/lead-queue"
 git show-ref --verify --quiet refs/heads/lq-merged
 echo 'ok lead-queue worktree kept even when merged and clean'
+git worktree add -qb lx-merged "$tmp/lead-x"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test -d "$tmp/lead-x"
+git show-ref --verify --quiet refs/heads/lx-merged
+echo 'ok lead-* worktree kept even when merged and clean'
 git worktree add -q --detach "$tmp/live-merge" HEAD
 WRAP_UP_RECENT_MIN=30 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test -d "$tmp/live-merge"
