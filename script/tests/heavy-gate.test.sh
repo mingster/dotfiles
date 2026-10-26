@@ -96,6 +96,59 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.finish(self.run_gate(['sh', '-c', 'test "$1" = "a b" || exit 9; exit 7', 'sh', 'a b']), 7)
         self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
 
+    def test_timeout_reports_command_and_releases_all_slots(self):
+        self.config()
+        self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
+        _, err = self.finish(self.run_gate(['sleep', '4'], weight=2), 124)
+        self.assertEqual(err, 'heavy-gate: timed out after 2s: sleep 4\n')
+        self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
+
+    def test_timeout_stops_spawned_child(self):
+        self.config()
+        self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
+        pid_file = self.root/'child-pid'
+        code = '''import pathlib, signal, subprocess, sys
+child = subprocess.Popen(['sleep', '5'])
+pathlib.Path(sys.argv[1]).write_text(str(child.pid))
+def stop(*args):
+    child.wait()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+child.wait()
+'''
+        p = self.run_gate([sys.executable, '-c', code, str(pid_file)])
+        self.wait_for(pid_file.exists)
+        pid = int(pid_file.read_text())
+        self.finish(p, 124)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
+
+    def test_timeout_kills_command_ignoring_sigterm(self):
+        self.config()
+        self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
+        # Finite even before timeout support, so the RED run leaves no job behind.
+        command = ['bash', '-c', "trap '' TERM; end=$((SECONDS+8)); while ((SECONDS<end)); do :; done; echo survived"]
+        p = self.run_gate(command)
+        started = time.monotonic()
+        out, _ = self.finish(p, 124)
+        self.assertEqual(out, '')
+        self.assertLess(time.monotonic()-started, 8)
+        self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
+
+    def test_fast_command_preserves_output_and_status_with_timeout(self):
+        self.config()
+        self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
+        out, err = self.finish(self.run_gate(['sh', '-c', 'echo output; echo error >&2; exit 7']), 7)
+        self.assertEqual((out, err), ('output\n', 'error\n'))
+
+    def test_timeout_can_be_disabled(self):
+        self.config()
+        for value in ('0', 'none'):
+            with self.subTest(value=value):
+                self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = value
+                self.finish(self.run_gate(['sleep', '2.2']))
+
     def test_fallback_without_config_respects_two_slots(self):
         jobs = [self.job(str(i), 0.3) for i in range(6)]
         for p in jobs:
