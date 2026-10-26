@@ -48,12 +48,16 @@ git push -q origin "$(git -C "$tmp/reopened" rev-parse HEAD):refs/heads/reopened
 git -C "$tmp/newer-head" checkout -q --detach "$(git -C "$tmp/closed" rev-parse HEAD)"
 git -C "$tmp/newer-head" commit -qm newer --allow-empty
 git push -q origin "$(git -C "$tmp/newer-head" rev-parse HEAD):refs/heads/newer-head"
+git -C "$tmp/repo" commit -qm 'open pr head' --allow-empty
+git push -q origin main
+git worktree add -q --detach "$tmp/open-pr-image" main
+: > "$tmp/open-pr-image/review.png"
 mkdir -p "$tmp/active nested/subdir"
 export FAKE_TERMINALS="[{\"handle\":\"coordinator\",\"cwd\":\"$tmp/active-root\"},{\"handle\":\"worker\",\"cwd\":\"$tmp/active nested/subdir\"}]"
 FAKE_PRS=$(printf '[{"headRefName":"closed","headRefOid":"%s","state":"CLOSED"},{"headRefName":"merged-pr","headRefOid":"%s","state":"MERGED"},{"headRefName":"unpublished-pr","headRefOid":"%s","state":"CLOSED"}]' \
   "$(git -C "$tmp/closed" rev-parse HEAD)" "$(git -C "$tmp/merged-pr" rev-parse HEAD)" "$(git -C "$tmp/unpublished-pr" rev-parse HEAD)")
 export FAKE_PRS
-FAKE_PRS=$(jq --arg head "$(git -C "$tmp/reopened" rev-parse HEAD)" '. + [{headRefName:"reopened",headRefOid:$head,state:"CLOSED"},{headRefName:"reopened",headRefOid:$head,state:"OPEN"}]' <<< "$FAKE_PRS")
+FAKE_PRS=$(jq --arg head "$(git -C "$tmp/reopened" rev-parse HEAD)" --arg open "$(git -C "$tmp/open-pr-image" rev-parse HEAD)" '. + [{headRefName:"reopened",headRefOid:$head,state:"CLOSED"},{headRefName:"reopened",headRefOid:$head,state:"OPEN"},{headRefName:"open-pr",headRefOid:$open,state:"OPEN"}]' <<< "$FAKE_PRS")
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --dry-run > "$tmp/output"
 passed=0; failed=0
 expect() {
@@ -74,8 +78,9 @@ expect "Kept worktree $tmp/unpublished-pr (detached with unmerged commits)" 'PR 
 expect "Kept worktree $tmp/unrelated (detached with unmerged commits)" 'remote head without finished PR kept'
 expect "Kept worktree $tmp/reopened (detached with unmerged commits)" 'open PR overrides historical closed PR'
 expect "Kept worktree $tmp/newer-head (detached with unmerged commits)" 'descendant of closed PR head kept'
+expect "Kept worktree $tmp/open-pr-image (open PR head)" 'detached at open PR head kept despite untracked image'
 expect "Remove worktree $tmp/active-root-sibling (detached at merged commit)" 'terminal path prefix does not protect sibling'
-for name in merged dirty unpushed active-root 'active nested' closed merged-pr unpublished-pr unrelated reopened newer-head active-root-sibling; do
+for name in merged dirty unpushed active-root 'active nested' closed merged-pr unpublished-pr unrelated reopened newer-head active-root-sibling open-pr-image; do
   test -d "$tmp/$name" || { echo "FAIL dry run removed $name"; exit 1; }
 done
 echo "ok dry run preserves all fixture worktrees"
