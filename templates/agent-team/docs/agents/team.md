@@ -5,7 +5,7 @@
 | Role | File | Stage | Primary output |
 | --- | --- | --- | --- |
 | Elon (CEO) | `elon.md` | Executive supervision | Priorities, cross project strategy, trade offs and owner reporting |
-| Tech Lead (`tech-lead`) | `tech-lead.md` | Tech orchestration | Engineering publication and integration, engineering workers and branch hygiene |
+| Teddy, the Tech Lead (`tech-lead`) | `tech-lead.md` | Tech orchestration | Engineering publication and integration, engineering workers and branch hygiene |
 | architect-pm | `architect-pm.md` | Plan, Design | Intents, specs, tickets and ADRs |
 | fullstack-dev | `fullstack-dev.md` | Build | Isolated branch, tested implementation and change report |
 | qa-sdet | `qa-sdet.md` | Test, Maintain | Reproduction, Functional tests, independent reviews and checks |
