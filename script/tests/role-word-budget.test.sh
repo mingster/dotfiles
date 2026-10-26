@@ -18,6 +18,9 @@ has() { grep -qF -- "$2" "$1" && ok "$3" || bad "$3"; }
 has "$T/docs/agents/coordinator-operations.md" 'workspace-trusted' "cursor trust marker lives in coordinator-operations"
 has "$T/.claude/agents/tech-lead.md" 'Cursor worker start' "tech-lead points at the cursor worker start rule"
 has "$T/docs/agents/deploy-facts.md" 'Host preflight' "host preflight lives in deploy-facts"
+has "$T/docs/agents/deploy-facts.md" 'Production job order' "production job order lives in deploy-facts"
+has "$T/.claude/agents/release-manager.md" 'Production job order' "release-manager points at the production job order"
+has "$T/docs/agents/coordinator-operations.md" 'Small task method' "small task method lives in coordinator-operations"
 has "$T/.claude/agents/release-manager.md" 'Host preflight' "release-manager still names host preflight"
 
 # Rules that must survive the trim.

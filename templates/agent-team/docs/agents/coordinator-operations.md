@@ -28,6 +28,8 @@ The tech-lead reads this before its first dispatch.
 - **Cursor worker trust marker:** before `worker-start`, write the workspace trust marker for the worktree it will create, with `wt` its absolute path (`--worktree new-top-level` creates `~/orca/workspaces/<repo>/<name>`): `d=$HOME/.cursor/projects/$(printf %s "${wt#/}" | tr '/.' '--'); mkdir -p "$d"; printf '{"trustedAt":"%s","workspacePath":"%s"}' "$(date -u +%FT%TZ)" "$wt" > "$d/.workspace-trusted"`. Cursor then shows no Trust prompt, the dispatch passes `agent_readiness` and `worker_done` arrives as for any worker.
 - Never send `--type heartbeat` messages, and tell workers not to: each pings the owner. Elon reads your screen. Send `status` only for a ready merge or a `handoff:`; anything needing Elon's decision goes as `--type escalation` with its tag (`tech-lead.md`, Authority).
 
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/<project>/<lane>`, one Cursor `composer-2.5` worker, merge on checks.
+
 ## Wake loop
 
 Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
