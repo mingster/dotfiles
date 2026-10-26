@@ -58,4 +58,4 @@ Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 firs
 
 The round is done when every ticket is merged or has a named blocker. Deploy to staging (quick path, no full regression), then start the next round from step 0 if the owner asked for more rounds or the last round found any P0 or P1. Stop when a round finds no P0 or P1.
 
-Report to the owner once per round: findings by severity, tickets filed and merged, and only the items that need him.
+Report to the owner once per round: the round name, findings by severity against the previous round, tickets filed and merged, and only the items that need him.
