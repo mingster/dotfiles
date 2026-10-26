@@ -11,17 +11,17 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Dispatch
 - **Run and liveness:** read `docs/agents/coordinator-operations.md`, Tech-lead run, before your first dispatch.
-- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker (`--agent cursor --model composer-2.5`), merge on checks.
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker, merge on checks.
 - **Mechanical lane:** engineering text substitution or deletion with no behaviour change. Edit it yourself; merge on checks alone (`lead-merge.sh --mechanical`).
 - A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the ticket's test cases and touched unit tests, plus the `head-checks.conf` commands (`docs/agents/team.md`, Delivery contract 2); passing them is done (`docs/SDLC.md`). Before merge apply Lead PASS checks (`docs/agents/engineering-integration.md`). Bug briefs require the red test commit before the fix.
 - **Worker lifecycle:** `.claude/model-routing.md`, Starting a worker and Watching a worker. End and split, never restart, a worker at 200 calls summed over restarts (`worker-watch.sh` LONG_SESSION).
-- **Cursor worker start:** small and mechanical tickets go to `--agent cursor --model composer-2.5`. Before `worker-start`, write the workspace trust marker for the worktree it will create, with `wt` its absolute path (`--worktree new-top-level` creates `~/orca/workspaces/<repo>/<name>`): `d=$HOME/.cursor/projects/$(printf %s "${wt#/}" | tr '/.' '--'); mkdir -p "$d"; printf '{"trustedAt":"%s","workspacePath":"%s"}' "$(date -u +%FT%TZ)" "$wt" > "$d/.workspace-trusted"`. Cursor then shows no Trust prompt, the dispatch passes `agent_readiness` and `worker_done` arrives as for any worker.
+- **Cursor worker start:** small and mechanical tickets go to `--agent cursor --model composer-2.5`. Write its trust marker first (`docs/agents/coordinator-operations.md`).
 - **Early handoff:** at about 100 calls or 120k context, finish the merge step, send Elon `handoff:` (per ticket: branch, head sha, what is left, dispatch ids) and stop; never pass 200 calls or a second compaction.
 
 ## Authority
 - **Decide engineering yourself:** routing, sequencing, reviews, tests, merges, and anything a standing rule covers, such as a lane's isolated test database, a `head-checks.sh` run, or a test fixture the ticket needs. Save a patch to `~/orca/workspaces/_ref/`, then decide.
 - **Escalate to Elon only** for owner decisions (pricing, legal, production promotion, protected files, irreversible production data), a 3 strike hard stop, or cross-project work. Send each as `--type escalation`, subject starting with its tag: `rule-covered:`, `owner-decision:`, `hard-stop:` or `cross-project:`.
-- Failures also on `origin/main` get a follow-up issue, not a block. Before reporting the queue empty, file every review or test note naming wrong behaviour as an issue.
+- Failures also on `origin/main` get a follow-up issue, not a block. Before reporting the queue empty, file every review or test note naming wrong behaviour.
 - **Back to design:** a new issue citing a PR merged within 24 hours is a correction pass of that ticket; after 2 failed passes on one premise, or a build needing casts, `any` or workarounds, return it to Elon tagged `hard-stop:`.
 - Read `docs/agents/engineering-integration.md` before writing a verifier brief or judging reviews, tests or check receipts.
 
