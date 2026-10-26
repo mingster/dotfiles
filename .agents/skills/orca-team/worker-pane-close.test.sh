@@ -22,6 +22,7 @@ p,h=sys.argv[1:]; r=json.load(open(p)); r['result']['terminals']=[t for t in r['
 json.dump(r,open(p,'w'))
 REMOVE
     fi ;;
+  "orchestration worker-release --dispatch "*) echo "$*" >> "$FAKE_DIR/rpc.log"; echo '{"result":{"state":"retained"}}' ;;
   "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
   "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; python3 - "$FAKE_DIR/terminals.json" <<'LIST'
@@ -43,6 +44,8 @@ chmod +x "$tmp/orca"
 export ORCA_TERMINAL_HANDLE=term_coordinator ORCA_CLI_COMMAND="$tmp/orca" FAKE_DIR="$tmp" ORCA_PANE_STATE_DIR="$tmp/state"
 mkdir -p "$tmp/state" "$tmp/bin" "$tmp/linked" "$tmp/main/.git"
 printf 'gitdir: /fixture/worktrees/linked\n' > "$tmp/linked/.git"
+# The fake lists the coordinator at the cwd; run outside any git checkout so the script's project root matches it.
+cd "$tmp"
 printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "$FAKE_DIR/sleeps.log"\n' > "$tmp/bin/sleep"; chmod +x "$tmp/bin/sleep"
 export PATH="$tmp/bin:$PATH"
 pass=0; fail=0
@@ -119,8 +122,22 @@ echo term_live > "$tmp/state/dlive"
 echo '{"result":{"terminals":[{"handle":"term_live","worktreePath":"'"$tmp"'/linked"}]}}' > "$tmp/terminals.json"
 "$here/worker-pane-close.sh" >/dev/null
 check "sweep keeps the pane of a settled dispatch whose worktree still exists" "$([ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/dlive" ]; echo $?)"
+
 "$here/worker-pane-close.sh" dlive >/dev/null
 check "explicit id still closes a settled dispatch whose worktree exists" "$(grep -qx term_live "$tmp/closes.log"; echo $?)"
+# Restore the live record for the marker cases.
+echo term_live > "$tmp/state/dlive"; rm -f "$tmp/closes.log"
+echo '{"result":{"terminals":[{"handle":"term_live","worktreePath":"'"$tmp"'/linked"}]}}' > "$tmp/terminals.json"
+# A --release marker lets the sweep close a released worker whose worktree still exists (Orca retains external terminals).
+mkdir -p "$tmp/state/released"; : > "$tmp/state/released/dlive"
+"$here/worker-pane-close.sh" >/dev/null
+check "sweep closes a released dispatch whose worktree still exists" "$(grep -qx term_live "$tmp/closes.log" && [ ! -e "$tmp/state/dlive" ] && [ ! -e "$tmp/state/released/dlive" ]; echo $?)"
+rm -f "$tmp/closes.log"
+echo term_rel > "$tmp/state/drel"
+printf '{"result":{"dispatch":{"status":"completed"},"worker":{"effects":[{"kind":"worktree","action":"created_child","id":"wt1::%s/linked"}]}}}' "$tmp" > "$tmp/show.drel"
+echo '{"result":{"terminals":[{"handle":"term_rel","worktreePath":"'"$tmp"'/linked"}]}}' > "$tmp/terminals.json"
+"$here/worker-pane-close.sh" --release drel >/dev/null
+check "--release releases, closes and clears its marker" "$(grep -q 'worker-release --dispatch drel' "$tmp/rpc.log" && grep -qx term_rel "$tmp/closes.log" && [ ! -e "$tmp/state/released/drel" ]; echo $?)"
 rm -f "$tmp/closes.log" "$tmp/show.dlive" "$tmp/terminals.json"
 
 # Leftover terminals: a validated worker leaves its agent and setup terminals, a shell in its worktree and
