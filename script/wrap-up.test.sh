@@ -21,6 +21,8 @@ esac
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
+# Fixture worktrees are all new; 0 turns the recent-activity guard off except in its own case.
+export WRAP_UP_RECENT_MIN=0
 git init -q --bare "$tmp/origin"
 git init -q -b main "$tmp/repo"
 cd "$tmp/repo"
@@ -133,6 +135,14 @@ bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test -d "$tmp/lead-queue"
 git show-ref --verify --quiet refs/heads/lq-merged
 echo 'ok lead-queue worktree kept even when merged and clean'
+git worktree add -q --detach "$tmp/live-merge" HEAD
+WRAP_UP_RECENT_MIN=30 bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test -d "$tmp/live-merge"
+grep -q "live-merge (changed in the last 30 minutes)" "$tmp/output"
+echo 'ok detached merged worktree with recent activity kept (a live lead may be editing)'
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$tmp/live-merge"
+echo 'ok same worktree removed once the guard window has passed'
 git worktree add -qb settled "$tmp/settled"
 export FAKE_TERMINALS="[{\"handle\":\"ended\",\"worktreePath\":\"$tmp/settled\"}]"
 export FAKE_WORKERS='[{"agentTerminalHandle":"ended","dispatchId":"ctx_done","dispatchStatus":"completed"}]'

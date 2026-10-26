@@ -42,7 +42,7 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 
 - Provisional, not in force (owner direction 2026-10-21): from 2026-11-01, after a trial, DeepSeek V4 through the `opencode` agent may take the engineering work Codex used to run. The owner still decides the account and budget. Elon stays on Claude; Antigravity stays for docs, translation, walkthrough and research workers.
 - Cursor and Antigravity put the effort in the model id: pass no `--effort`.
-- Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17).
+- Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17). Cursor reviewers never run tests or heavy-gate jobs (Elon 2026-10-26): they review code only, and the lead runs the tests.
 - Cursor quota runs out per model family (2026-10-07: Gemini exhausted until 10/25, Opus spend limit hit earlier). A Cursor usage limit is a provider stop: fall back, never retry the same Cursor model.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt and report the effective model.
 
@@ -85,6 +85,8 @@ Host ssh work routes to a Claude worker.
 - `usage-gate.py show` lists every provider with its reading source, age and reset time. The gate checks at `worker-start` and never stops a running worker. Never raise the 95% ceiling without Mingster.
 - The `usage-gate-hook.py` PreToolUse hook denies only a start blocked by the real usage ceiling, and warns on unknown readings. Provider routing recommendations are advisory; `USAGE_GATE_OVERRIDE='<reason>'` records a deliberate routing choice and never bypasses the usage ceiling. Daily cap overrides remain pacing hints and are unnecessary to dispatch with weekly headroom.
 - Read each provider's startup notice and record each unavailable provider's reset time in the status report.
+- Host routing: browser tests and browser walks start only on a host that has the browser installed. Pass `--on <host>` to `orca orchestration worker-start` yourself, since `start-codex-worker.sh` starts only on the local machine, and report lane counts from the fleet load output, never from dispatch notes.
+- Bun drift: when the worker runs on another host, run `~/dotfiles/script/bun-pin-check.sh <host> <repo>` first. It prints one warning if the host's bun is older than the repo's pin (never blocks). A mass of init-time `ReferenceError` failures on one host is usually an old bun, not a regression. `start-codex-worker.sh --host <name>` runs it for you.
 
 **Start.**
 

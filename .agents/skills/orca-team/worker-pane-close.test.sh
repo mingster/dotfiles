@@ -99,12 +99,29 @@ check "re-running close is a no-op" "$([ "$rc" = 0 ] && [ "$(closes)" = 1 ]; ech
 check "unknown dispatch is not an error" "$([ "$(closes)" = 1 ]; echo $?)"
 
 echo term_c > "$tmp/state/d3"; echo term_d > "$tmp/state/d4"
+cat > "$tmp/show.d2" <<JSON
+{"result":{"dispatch":{"status":"completed"},"worker":{"effects":[{"kind":"worktree","action":"created_child","id":"wt1::$tmp/gone"}]}}}
+JSON
 echo completed > "$tmp/status.d2"; echo running > "$tmp/status.d3"; echo dispatched > "$tmp/status.d4"
 "$here/worker-pane-close.sh" >/dev/null
 check "no args closes the ended dispatch" "$(grep -qx term_b "$tmp/closes.log"; echo $?)"
 check "no args keeps running and dispatched" "$([ -e "$tmp/state/d3" ] && [ -e "$tmp/state/d4" ] && ! grep -qE 'term_(c|d)' "$tmp/closes.log"; echo $?)"
 "$here/worker-pane-close.sh" >/dev/null
 check "no args re-run is a no-op" "$([ "$(closes)" = 2 ]; echo $?)"
+
+# Sweep: a settled dispatch whose linked worktree still exists keeps its panes (it may be on a correction pass).
+rm -f "$tmp/closes.log"
+cat > "$tmp/show.dlive" <<JSON
+{"result":{"dispatch":{"status":"completed","assigneeHandle":"term_live"},"worker":{"agentTerminalHandle":"term_live","effects":[
+  {"kind":"worktree","action":"created_child","id":"wt1::$tmp/linked"}]}}}
+JSON
+echo term_live > "$tmp/state/dlive"
+echo '{"result":{"terminals":[{"handle":"term_live","worktreePath":"'"$tmp"'/linked"}]}}' > "$tmp/terminals.json"
+"$here/worker-pane-close.sh" >/dev/null
+check "sweep keeps the pane of a settled dispatch whose worktree still exists" "$([ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/dlive" ]; echo $?)"
+"$here/worker-pane-close.sh" dlive >/dev/null
+check "explicit id still closes a settled dispatch whose worktree exists" "$(grep -qx term_live "$tmp/closes.log"; echo $?)"
+rm -f "$tmp/closes.log" "$tmp/show.dlive" "$tmp/terminals.json"
 
 # Leftover terminals: a validated worker leaves its agent and setup terminals, a shell in its worktree and
 # maybe a pane whose split timed out. Close the ones still listed, never the owner's or other projects'.
@@ -232,6 +249,7 @@ JSON
 cat > "$tmp/terminals.json" <<JSON
 {"result":{"terminals":[{"handle":"term_agent","worktreePath":"$tmp/linked"},{"handle":"term_other","worktreePath":"/other"}]}}
 JSON
+sed "s#$tmp/linked#$tmp/gone#" "$tmp/show.d6" > "$tmp/show.d6.gone" && mv "$tmp/show.d6.gone" "$tmp/show.d6"
 echo '{"result":{"dispatch":{"status":"completed","assigneeHandle":"term_other"}}}' > "$tmp/show.other"
 rm -f "$tmp/closes.log"
 "$here/worker-pane-close.sh" >/dev/null

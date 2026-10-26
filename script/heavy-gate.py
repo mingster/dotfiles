@@ -6,6 +6,10 @@ reclamation, never workloads, so multi-slot claims are atomic on macOS and Linux
 HEAVY_GATE_READER is an executable: sample prints load and free-memory percent;
 hardware prints total cores, performance cores, and memory bytes; model prints
 the hardware model. Overrides are for synthetic tests, never real calibration.
+Gated commands have a 1200-second (20-minute) wall clock limit, excluding slot
+wait time. HEAVY_GATE_TIMEOUT_SECONDS overrides it; 0 or "none" disables it.
+Timeouts terminate the process group, force-kill after a 3-second grace, release
+slots, and exit 124.
 """
 import argparse
 import contextlib
@@ -19,6 +23,7 @@ import platform
 from pathlib import Path
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -242,7 +247,18 @@ def poll_interval():
     return value
 
 
+def command_timeout():
+    value = os.environ.get('HEAVY_GATE_TIMEOUT_SECONDS', '1200')
+    if value == 'none':
+        return None
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError('HEAVY_GATE_TIMEOUT_SECONDS must be nonnegative and finite, or "none"')
+    return seconds or None
+
+
 def gate(args):
+    timeout = command_timeout()
     settings = config()
     count = settings['slots']
     if args.head_checks and os.environ.get('HEAD_CHECKS_SLOTS'):
@@ -272,7 +288,13 @@ def gate(args):
             env = dict(os.environ, HEAD_CHECKS_SLOTS=str(count)) if args.head_checks else None
             proc = subprocess.Popen(args.command[1:], start_new_session=True, env=env)
             processes.append(proc)
-            status = proc.wait()
+            try:
+                status = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                command = shlex.join(args.command[1:]).replace('\n', r'\n').replace('\r', r'\r')
+                print(f'heavy-gate: timed out after {timeout:g}s: {command}',
+                      file=sys.stderr, flush=True)
+                return 124
         return status if status >= 0 else 128 - status
     finally:
         slots.release()
@@ -369,7 +391,11 @@ def probe(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='mode', required=True)
-    run = commands.add_parser('gate')
+    run = commands.add_parser('gate', description=(
+        'Run a command with a 1200-second (20-minute) wall clock limit after slot '
+        'admission. HEAVY_GATE_TIMEOUT_SECONDS overrides the limit; 0 or "none" '
+        'disables it. Timeout stops the process group (TERM, then KILL after a '
+        '3-second grace), releases slots, and exits 124.'))
     run.add_argument('--weight', type=int, default=1)
     run.add_argument('--head-checks', action='store_true', help=argparse.SUPPRESS)
     run.add_argument('command', nargs=argparse.REMAINDER)

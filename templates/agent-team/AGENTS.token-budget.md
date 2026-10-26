@@ -4,7 +4,7 @@
 Every agent and teammate pays for what it reads, on every turn after. These hold in every session.
 
 - Search, then read the part. Grep or Glob first, then Read with `offset` and `limit`.
-- Keep command output short: pipe test, build and lint output through `tail -40`. Run only the ticket's listed test cases and the test files you touch, never the full suite: Regression runs only in the development pass before staging, or with the owner's approval.
+- Keep command output short: pipe test, build and lint output through `tail -40`. Lint only the files you edited, never a whole repo lint with autofix (it rewrites every file). Run only the ticket's listed test cases and the test files you touch, never the full suite: Regression runs only in the development pass before staging, or with the owner's approval.
 - Plan before you edit: 3 to 5 lines naming the files, the change and the test that proves it.
 - Strikes. The same test failing twice after your change means stop editing: check whether a fake is stale or the test database is wrong. The same command failing 3 times in a row is a hard stop, enforced by `.claude/hooks/strikes.py`. Report the failing output and what was ruled out, and wait for the owner. This is the only strike rule; role files point here.
 - Use `active_run.md` (git ignored) only on a ticket with more than one slice: write it at the start and when blocked.
