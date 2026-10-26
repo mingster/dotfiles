@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The Tech Lead's only way to merge a reviewed PR.
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
+#        lead-merge.sh --repo owner/name --batch N N [N ...]
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
@@ -16,20 +17,39 @@ issue_from_branch() {
   printf '%s\n' "$1" | grep -oE '[0-9]{3,}' | tail -n1 || true
 }
 
-repo="" pr="" head="" mechanical=false verify_command="" verify_set=false verdict_from=""
+repo="" pr="" head="" mechanical=false verify_command="" verify_set=false verdict_from="" batch_requested=false
+batch_prs=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
     --pr) pr="${2:-}"; shift 2 ;;
     --head) head="${2:-}"; shift 2 ;;
+    --batch)
+      batch_requested=true
+      shift
+      while [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; do batch_prs+=("$1"); shift; done
+      ;;
     --mechanical) mechanical=true; shift ;;
     --verdict-from) [ $# -ge 2 ] || die "--verdict-from needs owner/repo#N"; verdict_from="${2:-}"; shift 2 ;;
     --verify-command) [ $# -ge 2 ] || die "--verify-command needs a value"; verify_command="${2:-}"; verify_set=true; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
 done
-[ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical] [--verify-command <cmd>]"
-case "$pr" in *[!0-9]*) die "--pr must be a number" ;; esac
+[ -n "$repo" ] || die "usage: lead-merge.sh --repo owner/name (--pr N --head SHA | --batch N N [N ...])"
+if [ "${#batch_prs[@]}" -gt 0 ]; then
+  [ -z "$pr$head$verdict_from" ] && [ "$verify_set" = false ] && [ "$mechanical" = false ] \
+    || die "--batch cannot be combined with single-PR options"
+  [ "${#batch_prs[@]}" -ge 2 ] || die "--batch needs at least two PR numbers"
+  duplicate_pr=$(printf '%s\n' "${batch_prs[@]}" | sort | uniq -d | head -n1)
+  [ -z "$duplicate_pr" ] || die "--batch repeats PR $duplicate_pr"
+else
+  [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical] [--verify-command <cmd>]"
+  case "$pr" in *[!0-9]*) die "--pr must be a number" ;; esac
+  if [ "$batch_requested" = true ]; then
+    [ -n "${LEAD_MERGE_TRAIN_HEAD:-}" ] && [ -n "${LEAD_MERGE_TRAIN_HEADS:-}" ] \
+      || die "internal --batch item needs a train head and PR heads"
+  fi
+fi
 
 # 1. Caller is the lead. Orca sets no role variable (ORCA_TERMINAL_HANDLE and
 # ORCA_AGENT_SESSION_ID exist for every agent), so the worktree name is the check.
@@ -39,10 +59,165 @@ root=$(cd -P "$HOME/orca/workspaces" 2>/dev/null && pwd) || die "no $HOME/orca/w
 case "$top" in "$root"/*) ;; *) die "worktree is not under $root" ;; esac
 case "$(basename "$top")" in lead-*) ;; *) die "only the lead worktree (lead-*) may merge" ;; esac
 
+if [ "${#batch_prs[@]}" -gt 0 ]; then
+  script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  head_checks=${LEAD_MERGE_HEAD_CHECKS:-$(dirname "$script")/head-checks.sh}
+  dry=${DRY_RUN:-0}
+  git fetch origin main >&2 || die "cannot fetch main for batch"
+  batch_base=$(git rev-parse --verify 'origin/main^{commit}') || die "cannot resolve origin/main"
+  ready_prs=() ready_heads=()
+
+  for batch_pr in "${batch_prs[@]}"; do
+    batch_info=$(gh pr view "$batch_pr" --repo "$repo" --json headRefOid) || die "cannot read PR $batch_pr"
+    batch_head=$(jq -r .headRefOid <<<"$batch_info")
+    [[ "$batch_head" =~ ^[0-9a-f]{40}$ ]] || die "PR $batch_pr has an invalid head"
+    git cat-file -e "$batch_head^{commit}" 2>/dev/null || git fetch origin "$batch_head" >&2 || die "cannot fetch PR $batch_pr head"
+    ready_prs+=("$batch_pr"); ready_heads+=("$batch_head")
+  done
+
+  append_train() {
+    local current=$1 number=$2 pr_head=$3 tree
+    tree=$(git merge-tree --write-tree "$current" "$pr_head" 2>/dev/null) || return 1
+    tree=${tree%%$'\n'*}
+    printf 'lead merge train PR #%s\n' "$number" \
+      | GIT_AUTHOR_NAME=lead-merge GIT_AUTHOR_EMAIL=lead-merge@example.invalid \
+        GIT_COMMITTER_NAME=lead-merge GIT_COMMITTER_EMAIL=lead-merge@example.invalid \
+        git commit-tree "$tree" -p "$current" -p "$pr_head"
+  }
+  # Compose once in queue order. A conflicting PR is reported and left out of the train.
+  train=$batch_base
+  composed_prs=() composed_heads=()
+  for i in "${!ready_prs[@]}"; do
+    if next_train=$(append_train "$train" "${ready_prs[$i]}" "${ready_heads[$i]}"); then
+      train=$next_train
+      composed_prs+=("${ready_prs[$i]}"); composed_heads+=("${ready_heads[$i]}")
+    else
+      echo "lead-merge: batch conflict PR #${ready_prs[$i]} head=${ready_heads[$i]} (skipped)" >&2
+    fi
+  done
+  [ "${#composed_prs[@]}" -gt 0 ] || die "no conflict-free PRs remain in batch"
+  if [ "${#composed_prs[@]}" -eq 1 ]; then
+    if [ "$dry" = 1 ]; then
+      echo "[dry-run] single PR #${composed_prs[0]} uses the unchanged single-PR path"
+      exit 0
+    fi
+    exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
+  fi
+
+  build_train() {
+    local current=$batch_base index
+    for index in "$@"; do
+      current=$(append_train "$current" "${composed_prs[$index]}" "${composed_heads[$index]}") || return 1
+    done
+    printf '%s\n' "$current"
+  }
+  indexes=("${!composed_prs[@]}")
+  train=$(build_train "${indexes[@]}") || die "cannot rebuild batch train"
+  train_heads=$(IFS=,; echo "${composed_heads[*]}")
+  if [ "$dry" = 1 ]; then
+    echo "[dry-run] head-checks train=$train train-heads=$train_heads"
+    for i in "${!composed_prs[@]}"; do
+      echo "[dry-run] merge PR #${composed_prs[$i]} head=${composed_heads[$i]}"
+    done
+    exit 0
+  fi
+
+  declare -a pass_train pass_heads
+  failures=0
+  check_group() { # recursively bisect red trains
+    local ids=("$@") group_train group_heads group_prs receipt_file mid failures_before
+    group_train=$(build_train "${ids[@]}") || die "cannot build bisect train"
+    group_heads=""
+    for i in "${ids[@]}"; do group_heads+="${group_heads:+,}${composed_heads[$i]}"; done
+    receipt_file=$(mktemp)
+    if "$head_checks" --repo "$top" --ref "$group_train" --base "$batch_base" --train-heads "$group_heads" >"$receipt_file"; then
+      for i in "${ids[@]}"; do
+        gh pr comment "${composed_prs[$i]}" --repo "$repo" --body-file "$receipt_file" >/dev/null \
+          || die "cannot attach train Checks to PR ${composed_prs[$i]}"
+        pass_train[i]=$group_train; pass_heads[i]=$group_heads
+      done
+      rm -f "$receipt_file"
+      return 0
+    fi
+    rm -f "$receipt_file"
+    if [ "${#ids[@]}" -eq 1 ]; then
+      i=${ids[0]}; failures=$((failures+1))
+      echo "lead-merge: batch failing PR #${composed_prs[$i]} head=${composed_heads[$i]}" >&2
+      return 0
+    fi
+    mid=$((${#ids[@]} / 2))
+    failures_before=$failures
+    check_group "${ids[@]:0:mid}"
+    check_group "${ids[@]:mid}"
+    if [ "$failures" -eq "$failures_before" ]; then
+      group_prs=""
+      for i in "${ids[@]}"; do
+        unset 'pass_train[i]' 'pass_heads[i]'
+        group_prs+="${group_prs:+,}${composed_prs[$i]}"
+      done
+      failures=$((failures+${#ids[@]}))
+      echo "lead-merge: red interaction could not isolate one PR; returning PRs $group_prs" >&2
+    fi
+  }
+  check_group "${indexes[@]}"
+
+  # After removing a failing PR, verify all survivors together; separately green
+  # halves do not prove their combination is green.
+  survivor_indexes=()
+  for i in "${!composed_prs[@]}"; do
+    [ -z "${pass_train[$i]:-}" ] || survivor_indexes+=("$i")
+  done
+  if [ "$failures" -gt 0 ] && [ "${#survivor_indexes[@]}" -gt 1 ]; then
+    survivor_train=$(build_train "${survivor_indexes[@]}") || die "cannot build survivor train"
+    survivor_heads=""
+    for i in "${survivor_indexes[@]}"; do survivor_heads+="${survivor_heads:+,}${composed_heads[$i]}"; done
+    survivor_receipt=$(mktemp)
+    if "$head_checks" --repo "$top" --ref "$survivor_train" --base "$batch_base" --train-heads "$survivor_heads" >"$survivor_receipt"; then
+      for i in "${survivor_indexes[@]}"; do
+        gh pr comment "${composed_prs[$i]}" --repo "$repo" --body-file "$survivor_receipt" >/dev/null \
+          || die "cannot attach survivor Checks to PR ${composed_prs[$i]}"
+        pass_train[i]=$survivor_train; pass_heads[i]=$survivor_heads
+      done
+    else
+      for i in "${survivor_indexes[@]}"; do unset 'pass_train[i]' 'pass_heads[i]'; done
+      failures=$((failures+${#survivor_indexes[@]}))
+      echo "lead-merge: survivor train is red; returning every survivor" >&2
+    fi
+    rm -f "$survivor_receipt"
+  fi
+
+  # Run every per-PR path and Countersign gate before the first merge mutates main.
+  for i in "${!composed_prs[@]}"; do
+    [ -n "${pass_train[$i]:-}" ] || continue
+    LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
+      bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
+  done
+  merged=0
+  expected_main=$batch_base
+  for i in "${!composed_prs[@]}"; do
+    [ -n "${pass_train[$i]:-}" ] || continue
+    expected_main_tree=$(git rev-parse "$expected_main^{tree}") || die "cannot read expected batch prefix tree"
+    LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
+      LEAD_MERGE_EXPECTED_MAIN_TREE=$expected_main_tree \
+      bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
+    expected_main=$(append_train "$expected_main" "${composed_prs[$i]}" "${composed_heads[$i]}") \
+      || die "cannot advance expected batch prefix"
+    merged=$((merged+1))
+  done
+  echo "lead-merge: batch complete: merged $merged, returned $failures, conflicted $((${#ready_prs[@]}-${#composed_prs[@]}))"
+  exit 0
+fi
+
 # 2. PR state
 info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid) \
   || die "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
+for mergeable_retry in 1 2 3; do
+  [ "$(field .mergeable)" = UNKNOWN ] || break
+  sleep 2
+  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid) \
+    || die "cannot reread PR $pr while mergeability is UNKNOWN"
+done
 [ "$(field .state)" = OPEN ] || die "PR $pr is not open"
 [ "$(field .baseRefName)" = main ] || die "PR $pr base is not main"
 [ "$(field .headRefOid)" = "$head" ] || die "PR $pr head is $(field .headRefOid), not $head"
@@ -94,9 +269,20 @@ grep -qE '^## verification$' <<<"$normalized_body" || die "missing ## Verificati
 if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then die "Test plan heading is forbidden"; fi
 bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
 [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ] || die "Verification needs 1 to 3 run and outcome bullets"
-check_body=$(jq -r --arg head "$head" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head))] | last // ""' <<<"$info")
+train_check=""
+if [ "$batch_requested" = true ]; then
+  [[ "${LEAD_MERGE_TRAIN_HEAD:-}" =~ ^[0-9a-f]{40}$ ]] || die "invalid batch train head"
+  [[ "${LEAD_MERGE_TRAIN_HEADS:-}" =~ ^[0-9a-f]{40}(,[0-9a-f]{40})*$ ]] || die "invalid batch train PR heads"
+  grep -Eq "(^|,)$head(,|$)" <<<"${LEAD_MERGE_TRAIN_HEADS:-}" || die "batch train does not contain PR $pr head"
+  git cat-file -e "$LEAD_MERGE_TRAIN_HEAD^{commit}" 2>/dev/null \
+    && git merge-base --is-ancestor "$head" "$LEAD_MERGE_TRAIN_HEAD" \
+    || die "batch train commit does not contain PR $pr head"
+  train_check="Checks: PASS head=$LEAD_MERGE_TRAIN_HEAD train-heads=$LEAD_MERGE_TRAIN_HEADS"
+fi
+check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
 checks=${check_body%%$'\n'*}
-[ "$checks" = "Checks: PASS head=$head" ] || die "missing current-head Checks: PASS"
+{ [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; } \
+  || die "missing current-head or containing-train Checks: PASS"
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
 skip_review=false
@@ -348,14 +534,23 @@ if [ -n "$triggers" ]; then
   fi
 fi
 
+[ "${LEAD_MERGE_GATE_ONLY:-0}" != 1 ] || exit 0
+
 # Fetch immediately before merge; any shared changed path needs a new exact-head run.
 git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
-# A carried Verdict is judged against the current head, which includes the merged main commits.
-ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
-trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
-while IFS= read -r f; do
-  if grep -Fxq -- "$f" <<<"$trunk_files"; then die "trunk changed $f; rebase and rerun head-checks"; fi
-done < <(jq -r '.[]' <<<"$files")
+if [ -n "$train_check" ]; then
+  [[ "${LEAD_MERGE_EXPECTED_MAIN_TREE:-}" =~ ^[0-9a-f]{40}$ ]] || die "batch item has no valid expected main tree"
+  current_main_tree=$(git rev-parse --verify 'origin/main^{tree}') || die "cannot read current main tree"
+  [ "$current_main_tree" = "$LEAD_MERGE_EXPECTED_MAIN_TREE" ] \
+    || die "main changed since batch train checks; stop the batch and rebuild it"
+else
+  # A carried Verdict is judged against the current head, which includes the merged main commits.
+  ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
+  trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
+  while IFS= read -r f; do
+    if grep -Fxq -- "$f" <<<"$trunk_files"; then die "trunk changed $f; rebase and rerun head-checks"; fi
+  done < <(jq -r '.[]' <<<"$files")
+fi
 
 merge() { gh pr merge "$pr" --repo "$repo" --merge --match-head-commit "$head"; }
 if ! out=$(merge 2>&1); then
@@ -373,5 +568,23 @@ echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
 head_branch=$(field .headRefName)
 issue=$(field .body | sed -nE 's/.*[Cc]loses[[:space:]]+#([0-9]+).*/\1/p' | head -n1)
 [ -n "$issue" ] || issue=$(issue_from_branch "$head_branch")
-bash "$(dirname "$0")/merge-cleanup.sh" --branch "$head_branch" ${issue:+--issue "$issue"} ${pr:+--pr "$pr"} \
-  || echo "lead-merge: cleanup incomplete (merge succeeded); run script/wrap-up.sh" >&2
+retarget_ok=true
+stacked=$(gh pr list --repo "$repo" --state open --base "$head_branch" --limit 1000 --json number) || retarget_ok=false
+if [ "$retarget_ok" = true ]; then
+  [ -n "$stacked" ] || stacked='[]'
+  while IFS= read -r stacked_pr; do
+    [ -n "$stacked_pr" ] || continue
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+      echo "[dry-run] retarget PR #$stacked_pr from $head_branch to main"
+    else
+      gh pr edit "$stacked_pr" --repo "$repo" --base main >/dev/null || { retarget_ok=false; break; }
+    fi
+  done < <(jq -r '.[].number' <<<"$stacked")
+fi
+if [ "$retarget_ok" = true ]; then
+  cleanup=${LEAD_MERGE_CLEANUP:-$(dirname "$0")/merge-cleanup.sh}
+  bash "$cleanup" --branch "$head_branch" ${issue:+--issue "$issue"} ${pr:+--pr "$pr"} \
+    || echo "lead-merge: cleanup incomplete (merge succeeded); run script/wrap-up.sh" >&2
+else
+  echo "lead-merge: cleanup skipped (merge succeeded); could not retarget every PR based on $head_branch" >&2
+fi

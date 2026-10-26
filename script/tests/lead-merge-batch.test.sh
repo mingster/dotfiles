@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# Batch train tests for lead-merge.sh; forge and network-facing git calls are fake.
+set -u
+here=$(cd "$(dirname "$0")/.." && pwd)
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+export HOME="$tmp/home" PATH="$tmp/bin:$PATH"
+mkdir -p "$HOME/orca/workspaces/fixture/lead-x" "$tmp/bin"
+export FAKE_TOP="$HOME/orca/workspaces/fixture/lead-x"
+export EVENT_LOG="$tmp/events" COMMENT_DIR="$tmp/comments" MERGED_DIR="$tmp/merged"
+export MAIN_TREE_FILE="$tmp/main-tree" UNKNOWN_COUNT_FILE="$tmp/unknown-count"
+mkdir -p "$COMMENT_DIR" "$MERGED_DIR"
+
+heads=(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  cccccccccccccccccccccccccccccccccccccccc
+)
+base=dddddddddddddddddddddddddddddddddddddddd
+BATCH_PRS_JSON=$(jq -nc --arg base "$base" --arg h1 "${heads[0]}" --arg h2 "${heads[1]}" --arg h3 "${heads[2]}" '
+  {"11":{state:"OPEN",baseRefName:"main",headRefName:"feature-11",headRefOid:$h1,mergeable:"MERGEABLE",url:"https://example.invalid/pull/11",changedFiles:1,body:"## Verification\n- Passed.",comments:[],baseRefOid:$base},
+   "12":{state:"OPEN",baseRefName:"main",headRefName:"feature-12",headRefOid:$h2,mergeable:"MERGEABLE",url:"https://example.invalid/pull/12",changedFiles:1,body:"## Verification\n- Passed.",comments:[],baseRefOid:$base},
+   "13":{state:"OPEN",baseRefName:"main",headRefName:"feature-13",headRefOid:$h3,mergeable:"MERGEABLE",url:"https://example.invalid/pull/13",changedFiles:1,body:"## Verification\n- Passed.",comments:[],baseRefOid:$base}}')
+export BATCH_PRS_JSON BASE_SHA="$base"
+
+cat > "$tmp/bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = rev-parse ] && [ "${2:-}" = --show-toplevel ]; then echo "$FAKE_TOP"; exit 0; fi
+if [ "$1" = rev-parse ] && [[ "${*: -1}" == 'origin/main^{tree}' ]]; then
+  [ ! -f "$MAIN_TREE_FILE" ] || { cat "$MAIN_TREE_FILE"; exit 0; }
+  echo "$BASE_SHA"; exit 0
+fi
+if [ "$1" = rev-parse ] && [[ "${*: -1}" == *'^{tree}' ]]; then
+  value=${*: -1}; echo "${value%\^\{tree\}}"; exit 0
+fi
+if [ "$1" = rev-parse ] && [[ "${*: -1}" == origin/main* ]]; then echo "$BASE_SHA"; exit 0; fi
+case "$1" in
+  cat-file|fetch) exit 0 ;;
+  merge-base) echo "$BASE_SHA" ;;
+  diff) [ "${2:-}" = --name-only ] && printf '%s\n' "${TRUNK_FILES:-}" || echo "" ;;
+  merge-tree) printf '%040x\n' "$((16#${3:0:2} + 1))" ;;
+  commit-tree)
+    while [ $# -gt 0 ]; do [ "$1" = -p ] && last=$2; shift; done
+    case "$last" in
+      a*) echo 1111111111111111111111111111111111111111 ;;
+      b*) echo 2222222222222222222222222222222222222222 ;;
+      c*) echo 3333333333333333333333333333333333333333 ;;
+    esac ;;
+  *) exit 0 ;;
+esac
+EOF
+
+cat > "$tmp/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = api ]; then jq -nc --arg file "${BATCH_FILE:-docs/change.md}" '[{filename:$file}]'; exit 0; fi
+cmd=$2; pr=${3:-}
+case "$cmd" in
+  view)
+    data=$(jq -c --arg pr "$pr" '.[$pr]' <<<"$BATCH_PRS_JSON")
+    if [ "${UNKNOWN_PR:-}" = "$pr" ] && [[ "$*" == *mergeable* ]]; then
+      count=0; [ ! -f "$UNKNOWN_COUNT_FILE" ] || count=$(cat "$UNKNOWN_COUNT_FILE")
+      if [ "$count" -lt "${UNKNOWN_READS:-0}" ]; then
+        count=$((count+1)); printf '%s\n' "$count" > "$UNKNOWN_COUNT_FILE"
+        data=$(jq -c '.mergeable="UNKNOWN"' <<<"$data")
+      fi
+    fi
+    if [ -f "$COMMENT_DIR/$pr" ]; then
+      data=$(jq --rawfile body "$COMMENT_DIR/$pr" '.comments += [{body:$body}]' <<<"$data")
+    fi
+    if [ -f "$MERGED_DIR/$pr" ]; then
+      jq -c --arg pr "$pr" '.state="MERGED" | .mergeCommit={oid:("e"+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+$pr+"0000000000000000000")[:40]}' <<<"$data"
+    else printf '%s\n' "$data"; fi ;;
+  diff) printf '%s' "${BATCH_DIFF:-}" ;;
+  comment)
+    body_file=""; prev=""
+    for arg in "$@"; do [ "$prev" = --body-file ] && body_file=$arg; prev=$arg; done
+    cp "$body_file" "$COMMENT_DIR/$pr"; echo "comment $pr" >> "$EVENT_LOG" ;;
+  merge)
+    touch "$MERGED_DIR/$pr"; echo "merge $pr" >> "$EVENT_LOG"
+    case "$pr" in 11) tree=1111111111111111111111111111111111111111 ;; 12) tree=2222222222222222222222222222222222222222 ;; 13) tree=3333333333333333333333333333333333333333 ;; esac
+    [ "${DRIFT_AFTER_PR:-}" != "$pr" ] || tree=ffffffffffffffffffffffffffffffffffffffff
+    printf '%s\n' "$tree" > "$MAIN_TREE_FILE" ;;
+  list)
+    if [ -n "${STACKED_PR:-}" ] && [[ "$*" == *"--base $STACKED_BASE"* ]]; then
+      printf '[{"number":%s}]\n' "$STACKED_PR"
+    else echo '[]'; fi ;;
+  edit) echo "retarget $pr" >> "$EVENT_LOG" ;;
+  *) exit 1 ;;
+esac
+EOF
+
+cat > "$tmp/bin/head-checks" <<'EOF'
+#!/usr/bin/env bash
+head=""; heads=""; prev=""
+for arg in "$@"; do
+  [ "$prev" = --ref ] && head=$arg
+  [ "$prev" = --train-heads ] && heads=$arg
+  prev=$arg
+done
+echo "head-checks $head $heads" >> "$EVENT_LOG"
+printf 'Checks: %s head=%s train-heads=%s\n' "$([ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]] && echo FAIL || echo PASS)" "$head" "$heads"
+if [ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]]; then exit 1; fi
+if [ -n "${FAIL_EXACT_HEADS:-}" ] && [ "$heads" = "$FAIL_EXACT_HEADS" ]; then
+  exit 1
+fi
+EOF
+
+cat > "$tmp/bin/cleanup" <<'EOF'
+#!/usr/bin/env bash
+echo "cleanup $*" >> "$EVENT_LOG"
+EOF
+cat > "$tmp/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+echo "sleep $*" >> "$EVENT_LOG"
+EOF
+chmod +x "$tmp/bin/"*
+export LEAD_MERGE_HEAD_CHECKS="$tmp/bin/head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
+
+pass=0 fail=0
+check() {
+  name=$1; shift
+  if "$@"; then echo "ok   $name"; pass=$((pass+1)); else echo "FAIL $name"; fail=$((fail+1)); fi
+}
+
+: > "$EVENT_LOG"
+rm -f "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+out=$(DRY_RUN=1 bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "dry run succeeds" test "$code" -eq 0
+check "dry run prints one head-checks run" test "$(grep -c 'head-checks' <<<"$out")" -eq 1
+check "dry run prints three merges" test "$(grep -c '\[dry-run\] merge PR' <<<"$out")" -eq 3
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+FAIL_HEAD=${heads[1]}; export FAIL_HEAD
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "red train still merges passing PRs" test "$code" -eq 0
+check "red train names the failing PR" grep -q 'failing PR #12' <<<"$out"
+check "red train does not merge the failing PR" test "$(grep -c '^merge 12$' "$EVENT_LOG")" -eq 0
+check "red train merges both passing PRs" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 2
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
+FAIL_EXACT_HEADS=$(IFS=,; echo "${heads[*]}"); export FAIL_EXACT_HEADS
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "interaction-red train returns cleanly" test "$code" -eq 0
+check "interaction-red train is reported" grep -q 'red interaction could not isolate one PR' <<<"$out"
+check "interaction-red train merges nothing" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 0
+unset FAIL_EXACT_HEADS
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+BATCH_FILE='.codex/rules'; export BATCH_FILE
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "batch still refuses a protected path" test "$code" -eq 1
+check "protected batch merges nothing" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 0
+unset BATCH_FILE
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+BATCH_DIFF=$'+test.skip("case", () => {})\n'; export BATCH_DIFF
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "batch still requires Countersign" test "$code" -eq 1
+check "uncountersigned batch merges nothing" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 0
+unset BATCH_DIFF
+
+# Main changing to an untested tree after the first merge stops the batch before PR 12.
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+export DRIFT_AFTER_PR=11
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "main drift stops the batch" test "$code" -eq 1
+check "main drift reports stale train" grep -q 'main changed since batch train checks' <<<"$out"
+check "main drift prevents the next merge" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 1
+unset DRIFT_AFTER_PR
+
+# Environment variables alone cannot turn a plain single-PR call into train mode.
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+printf 'Checks: PASS head=%s train-heads=%s\n' \
+  1111111111111111111111111111111111111111 "$(IFS=,; echo "${heads[*]}")" > "$COMMENT_DIR/11"
+out=$(LEAD_MERGE_TRAIN_HEAD=1111111111111111111111111111111111111111 \
+  LEAD_MERGE_TRAIN_HEADS="$(IFS=,; echo "${heads[*]}")" \
+  bash "$here/lead-merge.sh" --repo example/repo --pr 11 --head "${heads[0]}" 2>&1); code=$?
+check "plain PR ignores train environment" test "$code" -eq 1
+check "plain PR still requires exact head checks" grep -q 'missing current-head' <<<"$out"
+check "plain PR with train environment merges nothing" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 0
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+printf 'Checks: PASS head=%s\n' "${heads[0]}" > "$COMMENT_DIR/11"
+export TRUNK_FILES=docs/change.md
+out=$(LEAD_MERGE_TRAIN_HEAD=1111111111111111111111111111111111111111 \
+  LEAD_MERGE_TRAIN_HEADS="$(IFS=,; echo "${heads[*]}")" \
+  bash "$here/lead-merge.sh" --repo example/repo --pr 11 --head "${heads[0]}" 2>&1); code=$?
+check "plain PR with train environment runs trunk drift check" test "$code" -eq 1
+check "plain PR reports overlapping trunk drift" grep -q 'trunk changed docs/change.md' <<<"$out"
+unset TRUNK_FILES
+
+# GitHub can transiently report UNKNOWN after the previous batch item merges.
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+export UNKNOWN_PR=12 UNKNOWN_READS=2
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "UNKNOWN mergeability is retried" test "$code" -eq 0
+check "UNKNOWN retry waits briefly" test "$(grep -c '^sleep ' "$EVENT_LOG")" -eq 2
+check "batch merges after UNKNOWN clears" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 3
+unset UNKNOWN_PR UNKNOWN_READS
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+export UNKNOWN_PR=11 UNKNOWN_READS=9
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+check "persistent UNKNOWN stops the batch" test "$code" -eq 1
+check "persistent UNKNOWN retries three times" test "$(grep -c '^sleep ' "$EVENT_LOG")" -eq 3
+check "persistent UNKNOWN merges nothing" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 0
+unset UNKNOWN_PR UNKNOWN_READS
+
+# A stacked PR is retargeted before cleanup can delete the merged branch.
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
+export STACKED_PR=99 STACKED_BASE=feature-11
+printf 'Checks: PASS head=%s\n' "${heads[0]}" > "$COMMENT_DIR/11"
+bash "$here/lead-merge.sh" --repo example/repo --pr 11 --head "${heads[0]}" >/dev/null 2>&1
+retarget_line=$(grep -n '^retarget 99$' "$EVENT_LOG" | cut -d: -f1)
+cleanup_line=$(grep -n '^cleanup ' "$EVENT_LOG" | cut -d: -f1)
+check "retarget happens before cleanup" test -n "$retarget_line" -a "$retarget_line" -lt "$cleanup_line"
+
+echo "passed $pass, failed $fail"
+test "$fail" -eq 0
