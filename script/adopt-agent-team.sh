@@ -160,6 +160,11 @@ for f in team.md team-facts.md deploy-facts.md; do
   fi
 done
 
+# 4c. Template owned docs the roles point at: always installed or updated.
+for f in coordinator-operations.md engineering-integration.md; do
+  copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
+done
+
 # 5. Install persistent memory protocol
 if [ -f "$TEMPLATES/docs/agents/persistent-memory-protocol.md" ]; then
   copy_file "$TEMPLATES/docs/agents/persistent-memory-protocol.md" "$TARGET_DIR/docs/agents/persistent-memory-protocol.md"

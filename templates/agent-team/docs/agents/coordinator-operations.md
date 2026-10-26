@@ -25,7 +25,10 @@ The tech-lead reads this before its first dispatch.
 - Create one Run per session (`run-create --from <your terminal>`); never rebind your dispatch to it. Name it (`run-current`) in your first status to `run:<Elon run>` from your brief; all reports go there.
 - Wait only with native `orca orchestration check --run <its run> --wait` (`status` among the types; `docs/agents/team.md`, Delivery contract 4); never poll the shared inbox. Arm it with the Bash tool's `run_in_background: true`, never a trailing `&`, and re-arm after every `--ack`.
 - At start and on every wake, run `orca orchestration worker-list --run <its run> --json` and settle each unreleased dispatch: completed, process its result now; ready, read its screen and answer open questions with `orca orchestration reply`; stopped or failed, restart or release. A lead taking over a run adopts every live worker this way before new work. `orca orchestration reply` does not wake an idle Sonnet worker: after replying to one sitting at its prompt, run `orca terminal send --terminal <handle> --text "check your inbox" --enter` (2026-10-24).
+- **Cursor worker trust marker:** before `worker-start`, write the workspace trust marker for the worktree it will create, with `wt` its absolute path (`--worktree new-top-level` creates `~/orca/workspaces/<repo>/<name>`): `d=$HOME/.cursor/projects/$(printf %s "${wt#/}" | tr '/.' '--'); mkdir -p "$d"; printf '{"trustedAt":"%s","workspacePath":"%s"}' "$(date -u +%FT%TZ)" "$wt" > "$d/.workspace-trusted"`. Cursor then shows no Trust prompt, the dispatch passes `agent_readiness` and `worker_done` arrives as for any worker.
 - Never send `--type heartbeat` messages, and tell workers not to: each pings the owner. Elon reads your screen. Send `status` only for a ready merge or a `handoff:`; anything needing Elon's decision goes as `--type escalation` with its tag (`tech-lead.md`, Authority).
+
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker, merge on checks.
 
 ## Wake loop
 
@@ -36,3 +39,9 @@ Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 - Fewer workers than the gate allows while startable tickets exist is a bottleneck: order the tech-lead to fill the lanes that turn.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending owner asks as one numbered batch before he leaves; one answer holds at most one ticket.
 - A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.
+
+## Production job order
+
+Release-manager reads this before moving the production branch.
+
+Only inside a matching owner approval, before moving the production branch, run the project's SQL apply script (dry run first, then apply) and secret script from the list above. When the deploy scripts check one time data steps before the schema push and print a line per pending step with its apply command, run those lines; never skip them. Before promote, when the facts name a schema rehearsal script (a schema only dump of production, then the data steps and the schema push on a throwaway database at the exact sha), its pass at that sha is required.

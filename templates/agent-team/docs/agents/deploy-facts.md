@@ -55,6 +55,7 @@ Release-manager applies production SQL and secrets itself, through the project's
 
 ## Owner approval
 
+* **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): read only the scope and expiry of the owner approval and check it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and covers the expected job length. If it is missing, expired, another scope or too short, stop before the first ssh and ask Elon for a fresh owner approval of that scope. The expiry itself stays.
 * Production needs the owner's explicit go for each release.
 * Owner approval script: `<path and exact command, for example bin/owner-approve.sh <component> <sha>, or none>`. The owner runs it; the deploy skill gives them the exact command.
 
