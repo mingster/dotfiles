@@ -2,13 +2,15 @@
 # Preview finished work cleanup; --apply performs the proposed changes.
 set -euo pipefail
 apply=0
+stale=0
 repo=.
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) apply=0 ;;
     --apply) apply=1 ;;
+    --stale) stale=1 ;;
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
-    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--repo <path>]'; exit 0 ;;
+    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--repo <path>]'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -26,13 +28,16 @@ else
 fi
 git rev-parse --verify origin/main >/dev/null
 # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
+pr_ok=1
 if ! gh pr list --state all --limit 1000 --json headRefName,headRefOid,state > "$tmp/prs"; then
-  echo 'Warning: PR lookup unavailable; using ancestry only.' >&2
-  echo '[]' > "$tmp/prs"
+  echo 'Warning: PR lookup unavailable; using ancestry only, stale branches not listed.' >&2
+  echo '[]' > "$tmp/prs"; pr_ok=0
 fi
 jq -e 'type == "array"' "$tmp/prs" >/dev/null
+jq -r '.[] | select(.state == "OPEN") | .headRefName' "$tmp/prs" | sort -u > "$tmp/open"
 jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
 jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
+jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
 : > "$tmp/active"
 orca=${ORCA_CLI_COMMAND:-orca}
 if command -v "$orca" >/dev/null 2>&1; then
@@ -83,9 +88,22 @@ protected() {
   return 1
 }
 eligible() {
+  reason='unmerged without closed PR'
+  if [ -n "$2" ] && grep -Fxq -- "$2" "$tmp/open"; then reason='open PR'; return 1; fi
   if git merge-base --is-ancestor "$1" origin/main; then reason=ancestor; return 0; fi
   if [ -n "$2" ] && grep -Fxq -- "$2" "$tmp/closed"; then reason='closed PR'; return 0; fi
+  # Squash or rebase merges: every commit has a patch-equivalent on origin/main.
+  if [ "$pr_ok" -eq 1 ] && [ -n "$2" ] && cherry=$(git cherry origin/main "$1") && ! grep -q '^+' <<< "$cherry"; then reason='patch-merged'; return 0; fi
   return 1
+}
+# True when every status line is an untracked image (screenshot dirt).
+screenshots_only() {
+  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
+}
+# True when a process has the worktree open; unknown (no lsof) counts as running.
+running_in() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  [ -n "$(lsof -t +D "$1" 2>/dev/null || true)" ]
 }
 active_worktree() {
   local active_path
@@ -99,19 +117,33 @@ active_worktree() {
 removed=0; local_deleted=0; remote_deleted=0; kept=0
 keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
+: > "$tmp/stale-ok"
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
 path=''; branch=''; head=''; locked=0
+# A settled dispatch is not a dead session: the lead and correction-pass workers keep working after their first
+# worker_done (2026-10-26: a lead's clean detached worktree was removed mid-edit). Keep a worktree whose git
+# HEAD or index, or any file outside node_modules, .next and .git, changed in the last WRAP_UP_RECENT_MIN minutes.
+recent_worktree() {
+  local min=${WRAP_UP_RECENT_MIN:-30} gd
+  [ "$min" -gt 0 ] || return 1
+  gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  [ -n "$(find "$gd/HEAD" "$gd/index" -mmin -"$min" 2>/dev/null)" ] && return 0
+  [ -n "$(find "$1" \( -name node_modules -o -name .next -o -name .git \) -prune -o -type f -mmin -"$min" -print -quit 2>/dev/null)" ]
+}
 process_worktree() {
-  local why=''
+  local why='' force=''
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why='protected'
   elif [ "${path##*/}" = lead-queue ]; then why='lead-queue lane'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
-  elif [ -s "$tmp/status" ]; then why='dirty'
+  elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
+  elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
+  elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
+  elif [ -z "$branch" ] && grep -Fxq -- "$head" "$tmp/open-heads"; then why='open PR head'
   elif [ -z "$branch" ]; then
     # A PR match alone must never discard a commit absent from all remote branches.
     git for-each-ref --contains "$head" --format='%(refname)' refs/remotes > "$tmp/containing-remotes"
@@ -120,14 +152,17 @@ process_worktree() {
     elif grep -Fxq -- "$head" "$tmp/closed-heads"; then reason='detached at closed PR head'
     else why='detached with unmerged commits'
     fi
-  elif ! eligible "refs/heads/$branch" "$branch"; then why='unmerged without closed PR'
+  elif ! eligible "refs/heads/$branch" "$branch"; then
+    why=$reason
+    [ "$reason" = 'open PR' ] || printf '%s\t%s\n' "$branch" "$path" >> "$tmp/stale-ok"
   fi
+  [ ! -s "$tmp/status" ] || force=--force
   if [ -n "$why" ]; then
     keep "worktree $path" "$why"
     [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
   else
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
-    [ "$apply" -eq 0 ] || git worktree remove -- "$path"
+    [ "$apply" -eq 0 ] || git worktree remove ${force:+"$force"} -- "$path"
     removed=$((removed+1))
   fi
 }
@@ -155,7 +190,7 @@ while IFS= read -r branch; do
       fi
     fi
     local_deleted=$((local_deleted+1))
-  else keep "local $branch" 'unmerged without closed PR'
+  else keep "local $branch" "$reason"
   fi
 done < <(git for-each-ref --format='%(refname:strip=2)' refs/heads)
 batch=()
@@ -172,7 +207,7 @@ while IFS= read -r ref; do
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
     batch+=("$branch"); remote_deleted=$((remote_deleted+1))
     [ ${#batch[@]} -lt 50 ] || flush_remote
-  else keep "remote $branch" 'unmerged without closed PR'
+  else keep "remote $branch" "$reason"
   fi
 done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 flush_remote
@@ -194,6 +229,49 @@ if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
     fi
   done
 fi
+# Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
+stale_found=0; stale_deleted=0
+if [ "$pr_ok" -eq 1 ]; then
+  now=$(date +%s)
+  {
+    git for-each-ref --format='%(refname:strip=2)' refs/heads
+    git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin
+  } | sort -u > "$tmp/names"
+  while IFS= read -r name; do
+    [ -n "$name" ] && ! protected "$name" || continue
+    wt=$(awk -F'\t' -v n="$name" '$1 == n { print substr($0, length(n) + 2); exit }' "$tmp/stale-ok")
+    if [ -z "$wt" ] && grep -Fxq -- "$name" "$tmp/kept-branches"; then continue; fi
+    if [ -n "$wt" ] && running_in "$wt"; then continue; fi
+    refs=()
+    for ref in "refs/heads/$name" "refs/remotes/origin/$name"; do
+      git show-ref --verify --quiet "$ref" || continue
+      ! eligible "$ref" "$name" || continue
+      [ "$reason" != 'open PR' ] || { refs=(); break; }
+      refs+=("$ref")
+    done
+    [ ${#refs[@]} -gt 0 ] || continue
+    newest=0
+    for ref in "${refs[@]}"; do
+      t=$(git log -1 --format=%ct "$ref"); [ "$t" -le "$newest" ] || newest=$t
+    done
+    [ $((now - newest)) -ge 86400 ] || continue
+    if [ "$stale_found" -eq 0 ]; then echo 'Stale (needs a decision)'; fi
+    stale_found=$((stale_found+1))
+    subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
+    printf '  %s, %sh old, %s\n' "$name" $(( (now - newest) / 3600 )) "$subject"
+    [ "$stale" -eq 1 ] || continue
+    printf 'Delete stale %s\n' "$name"
+    if [ -n "$wt" ] && [ "$apply" -eq 1 ]; then git worktree remove --force -- "$wt"; fi
+    for ref in "${refs[@]}"; do
+      case "$ref" in
+        refs/heads/*) [ "$apply" -eq 0 ] || git branch -D -- "$name" ;;
+        *) batch+=("$name") ;;
+      esac
+    done
+    stale_deleted=$((stale_deleted+1))
+  done < "$tmp/names"
+  flush_remote
+fi
 pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
@@ -205,5 +283,5 @@ if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = ma
 else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
-printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept"
+printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"

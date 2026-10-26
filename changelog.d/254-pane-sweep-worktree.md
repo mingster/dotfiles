@@ -1,0 +1,1 @@
+- worker-pane-close.sh in sweep mode (no arguments, as run by wrap-up.sh) now closes a settled dispatch's terminals only once its linked worktree is gone, so a lead or worker on a correction pass keeps its pane. Explicit dispatch ids, as used by worker-finish.sh, behave as before.
