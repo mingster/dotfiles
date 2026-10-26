@@ -144,7 +144,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp)
-  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
+  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
