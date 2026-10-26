@@ -60,6 +60,11 @@ else: sys.exit(1)
     if order.read_text()=='lint\n': passed+=1; print('ok   later checks never start')
     else: failed+=1; print('FAIL later checks ran')
     run('ref checks do not post',line('ref'),0,False)
+    train_heads=base+','+env['GH_HEAD']
+    train=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf),'--train-heads',train_heads],env=env,text=True,capture_output=True)
+    if train.returncode==0 and 'Checks: PASS head='+env['GH_HEAD']+' train-heads='+train_heads in train.stdout:
+        passed+=1; print('ok   train receipt names train and every PR head')
+    else: failed+=1; print('FAIL train receipt',train.stdout,train.stderr)
     (repo/'path with space.txt').write_text('quoted path\n')
     run('local baseline checklist override',line('baseline override'),0,False,True)
     comments.unlink(missing_ok=True)
