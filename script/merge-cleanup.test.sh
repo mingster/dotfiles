@@ -144,6 +144,13 @@ bash "$here/merge-cleanup.sh" --branch lane/80-lq > "$tmp/out" 2>&1 || fail "cle
 [ -d "$tmp/lead-queue" ] && has_local lane/80-lq || fail "lead-queue worktree removed"
 grep -q 'protected: kept worktree.*lead-queue' "$tmp/out" || fail "no lead-queue protected message"
 echo 'ok lead-queue worktree kept'
+# Any lead-* worktree is kept, including the one that holds the PR branch itself.
+git worktree add -qb lane/81-lx "$tmp/lead-x" main
+git push -q origin lane/81-lx
+bash "$here/merge-cleanup.sh" --branch lane/81-lx > "$tmp/out" 2>&1 || fail "cleanup failed for lead-x"
+[ -d "$tmp/lead-x" ] && has_local lane/81-lx || fail "lead-x worktree removed"
+grep -q 'protected: kept worktree.*lead-x' "$tmp/out" || fail "no lead-x protected message"
+echo 'ok lead-* worktree kept'
 # PR number matching: qa-<PR> lanes go, other numbers stay, whole-number only.
 git worktree add -qb qa-345 "$tmp/wt-q1" main
 git push -q origin qa-345
