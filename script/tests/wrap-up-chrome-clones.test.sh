@@ -59,6 +59,13 @@ check 'apply removes stale clone of another Chrome build' test ! -e "$dev/code_s
 check 'apply keeps held clone' test -d "$chrome/code_sign_clone.held1"
 check 'apply leaves non Chrome clones alone' test -d "$clones/org.other.App.code_sign_clone/code_sign_clone.other"
 check 'counts report chrome clones' has 'chrome clones removed=2 kept=1'
+# An lsof that fails (exit 2, no output) must keep the clone: it proves nothing about holders.
+mkdir -p "$chrome/code_sign_clone.broken" "$tmp/badbin"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$tmp/badbin/lsof"
+chmod +x "$tmp/badbin/lsof"
+PATH="$tmp/badbin:$PATH" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
+check 'failing lsof keeps clone' test -d "$chrome/code_sign_clone.broken"
+check 'failing lsof reports reason' has "Kept Chrome clone $chrome/code_sign_clone.broken (lsof failed)"
 # A missing lsof must keep everything, never delete blindly.
 mkdir -p "$chrome/code_sign_clone.unknown"
 mv "$tmp/bin/lsof" "$tmp/lsof.off"
