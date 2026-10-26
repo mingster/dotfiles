@@ -24,6 +24,7 @@ export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca"
 # Ignore the caller's global config without changing its HOME.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export FAKE_PRS='[]' FAKE_TERMINALS='[]'
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones"
 git init -q --bare "$tmp/origin"
 git init -q -b main "$tmp/repo"
 git -C "$tmp/repo" config user.email test@example.invalid

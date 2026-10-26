@@ -176,6 +176,24 @@ while IFS= read -r ref; do
   fi
 done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 flush_remote
+# Each Chrome launch leaves a code_sign_clone under the per-user temp dir (macOS). Remove those no process holds open.
+clone_removed=0; clone_kept=0
+clone_root=${WRAP_UP_CLONE_ROOT-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)}
+if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
+  for clone in "$clone_root"/com.google.Chrome*.code_sign_clone/code_sign_clone.*; do
+    [ -d "$clone" ] || continue
+    if ! command -v lsof >/dev/null 2>&1; then
+      printf 'Kept Chrome clone %s (lsof unavailable)\n' "$clone"; clone_kept=$((clone_kept+1)); continue
+    fi
+    if [ -n "$(lsof -t +D "$clone" 2>/dev/null || true)" ]; then
+      printf 'Kept Chrome clone %s (held open by a running process)\n' "$clone"; clone_kept=$((clone_kept+1))
+    else
+      printf 'Remove Chrome clone %s\n' "$clone"
+      [ "$apply" -eq 0 ] || rm -rf -- "$clone"
+      clone_removed=$((clone_removed+1))
+    fi
+  done
+fi
 pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
@@ -188,3 +206,4 @@ else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept"
+printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"

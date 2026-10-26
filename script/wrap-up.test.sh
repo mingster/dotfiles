@@ -21,6 +21,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones"
 git init -q --bare "$tmp/origin"
 git init -q -b main "$tmp/repo"
 cd "$tmp/repo"
