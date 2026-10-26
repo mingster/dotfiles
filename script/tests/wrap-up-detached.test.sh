@@ -10,6 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
+test -z "${FAKE_GH_FAIL:-}" || exit 1
 test "$*" = 'pr list --state all --limit 1000 --json headRefName,headRefOid,state' || exit 1
 printf '%s\n' "$FAKE_PRS"
 FAKE
@@ -84,6 +85,18 @@ for name in merged dirty unpushed active-root 'active nested' closed merged-pr u
   test -d "$tmp/$name" || { echo "FAIL dry run removed $name"; exit 1; }
 done
 echo "ok dry run preserves all fixture worktrees"
+passed=$((passed+1))
+# A failed gh lookup must keep detached worktrees under --apply.
+FAKE_GH_FAIL=1 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output-gh-fail" 2>&1 || true
+for name in merged closed open-pr-image; do
+  test -d "$tmp/$name" || { echo "FAIL failed gh removed $name"; exit 1; }
+done
+echo "ok failed gh keeps detached worktrees under apply"
+passed=$((passed+1))
+bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output-apply" 2>&1
+test -d "$tmp/open-pr-image" || { echo "FAIL apply removed open PR head worktree"; exit 1; }
+test ! -d "$tmp/merged" || { echo "FAIL apply kept merged worktree"; exit 1; }
+echo "ok apply keeps open PR head worktree and removes merged one"
 passed=$((passed+1))
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
