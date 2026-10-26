@@ -42,6 +42,7 @@ brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
 cat > "$brief" <<EOF
 Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
 Check the diff against the PR's spec and the repo's standards. Run the tests.
+Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
 Post exactly one PR comment whose first line is:
 Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$author_dispatch
 Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
