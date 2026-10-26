@@ -24,7 +24,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 3. **Production (`deploy/production`):**
    - When the staging smoke test passes, message Elon `Ready for owner to approve production: <sha>`. Elon asks the owner; deploy only after Elon relays the owner's explicit go for that release. If `docs/agents/deploy-facts.md` names an owner approval script, give Elon the exact command the owner must run, with the scope that covers any production SQL or secrets (Production prerequisites in the facts).
    - **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): check the owner approval's scope and expiry as `docs/agents/deploy-facts.md`, Owner approval, says. If missing, expired or the wrong scope, stop before the first ssh and ask Elon.
-   - Production SQL and secrets are yours, never the owner's, and run only inside a matching owner approval. Before you move the production branch, follow `docs/agents/deploy-facts.md`, Production job order, including the pending data steps and the schema rehearsal pass at the exact sha.
+   - Production SQL and secrets are yours, never the owner's, and run only inside a matching owner approval. Before you move the production branch, follow `docs/agents/coordinator-operations.md`, Production job order, including the pending data steps and the schema rehearsal pass at the exact sha.
    - Then ask `qa-sdet` for a live smoke test.
 
 ## Failure

@@ -53,10 +53,6 @@ Release-manager applies production SQL and secrets itself, through the project's
 * Backup before the first write: `<how it is made and verified, and where it lands>`. A failed backup stops the run.
 * One time owner dry run: `<what the owner runs once to prove the scripts, login and backup work, and the date it passed>`.
 
-### Production job order
-
-Only inside a matching owner approval, before moving the production branch, run the project's SQL apply script (dry run first, then apply) and secret script from the list above. When the deploy scripts check one time data steps before the schema push and print a line per pending step with its apply command, run those lines; never skip them. Before promote, when the facts name a schema rehearsal script (a schema only dump of production, then the data steps and the schema push on a throwaway database at the exact sha), its pass at that sha is required.
-
 ## Owner approval
 
 * **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): read only the scope and expiry of the owner approval and check it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and covers the expected job length. If it is missing, expired, another scope or too short, stop before the first ssh and ask Elon for a fresh owner approval of that scope. The expiry itself stays.
