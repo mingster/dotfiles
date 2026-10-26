@@ -220,8 +220,12 @@ if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
     if ! command -v lsof >/dev/null 2>&1; then
       printf 'Kept Chrome clone %s (lsof unavailable)\n' "$clone"; clone_kept=$((clone_kept+1)); continue
     fi
-    if [ -n "$(lsof -t +D "$clone" 2>/dev/null || true)" ]; then
+    # Rule: remove only when lsof ends 0 or 1 (1 = no open files) with no output and no stderr. Any other result keeps.
+    lsof_status=0; holders=$(lsof -t +D "$clone" 2>"$tmp/lsof-err") || lsof_status=$?
+    if [ -n "$holders" ]; then
       printf 'Kept Chrome clone %s (held open by a running process)\n' "$clone"; clone_kept=$((clone_kept+1))
+    elif [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then
+      printf 'Kept Chrome clone %s (lsof failed)\n' "$clone"; clone_kept=$((clone_kept+1))
     else
       printf 'Remove Chrome clone %s\n' "$clone"
       [ "$apply" -eq 0 ] || rm -rf -- "$clone"
