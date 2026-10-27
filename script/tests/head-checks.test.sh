@@ -149,6 +149,12 @@ else: sys.exit(1)
     elapsed=time.monotonic()-started
     if waited.returncode!=0 and elapsed>=2 and 'Checks:' not in waited.stdout and not comments.exists() and lock.exists(): passed+=1; print('ok   busy worktrees wait, then refuse with no comment')
     else: failed+=1; print('FAIL busy wait',waited.returncode,elapsed,waited.stdout,waited.stderr)
+    # A run killed while it waits checked nothing, so it posts no verdict.
+    comments.unlink(missing_ok=True)
+    killed=subprocess.Popen(['bash',runner,'--repo',str(repo),'--pr','7'],env={**env,'HEAD_CHECKS_SLOTS':'1','HEAD_CHECKS_WAIT_SECONDS':'20','GH_HEAD':git('rev-parse','HEAD')},text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    time.sleep(1); killed.terminate(); out=killed.communicate(timeout=30)[0]
+    if killed.returncode!=0 and 'Checks:' not in out and not comments.exists() and lock.exists(): passed+=1; print('ok   a run killed while waiting posts no comment')
+    else: failed+=1; print('FAIL killed wait',killed.returncode,out)
     # A worktree freed during the wait is taken instead of refusing.
     releaser=subprocess.Popen(['bash','-c','sleep 1; rm -rf "$0"',str(lock)])
     freed=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env={**env,'HEAD_CHECKS_SLOTS':'1','HEAD_CHECKS_WAIT_SECONDS':'20'},text=True,capture_output=True,timeout=30)

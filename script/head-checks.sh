@@ -66,6 +66,8 @@ sys.stdout.write(text)
   [ "$status" -eq 0 ] || exit 1
 }
 trap finish EXIT
+# A killed run must not read as a pass: bash hands the EXIT trap status 0 after SIGTERM.
+trap 'exit 143' TERM; trap 'exit 130' INT
 if [ -n "$pr" ]; then
   info=$(cd "$repo" && gh pr view "$pr" --json headRefOid,baseRefOid)
   sha=$(jq -r .headRefOid <<<"$info"); base=$(jq -r .baseRefOid <<<"$info")
@@ -98,7 +100,8 @@ wait_seconds="${HEAD_CHECKS_WAIT_SECONDS:-600}"
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_WAIT_SECONDS must be a whole number"
 mkdir -p "$HOME/orca/workspaces/$name"
 # Each check worktree persists so installed packages survive between runs; one run at a time may use each.
-worktree="" busy="" attempt=0
+# Until a worktree is held nothing is checked, so a run killed while waiting posts no verdict.
+worktree="" busy="" attempt=0 refused=1
 while :; do
   busy=""
   for i in $(seq 1 "$slots"); do
@@ -118,7 +121,8 @@ while :; do
   attempt=$((attempt+1)); sleep 0.5
 done
 # A busy refusal checked nothing, so it posts no Checks verdict.
-[ -n "$worktree" ] || { refused=1; usage "every check worktree is in use by pid$busy"; }
+[ -n "$worktree" ] || usage "every check worktree is in use by pid$busy"
+refused=""
 printf '%s\n' "$$" > "$lock/pid"
 common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
 if [ -e "$worktree" ] && [ "$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common" ] \
