@@ -28,7 +28,8 @@ def alerts(config, state, now, messages, workers, waiter_alive):
     for worker in workers:
         status = worker.get('dispatchStatus')
         dispatch = worker['dispatchId']
-        if status == 'failed' and dispatch not in state.setdefault('failed', []):
+        retried = any(w.get('taskId') == worker.get('taskId') and w.get('dispatchStatus') != 'failed' for w in workers) if worker.get('taskId') else False
+        if status == 'failed' and not retried and dispatch not in state.setdefault('failed', []):
             notices.append('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity')
             state['failed'].append(dispatch)
         if status not in ('completed', 'failed', 'cancelled', 'released'):
