@@ -536,7 +536,7 @@ if [ -n "$verdict_from" ]; then
     fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
-  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"' EXIT
+  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"; lock_release' EXIT
   git archive "$head" .agents .claude .cursor 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
   DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/sync-team-skills.sh" --check "$sync_dir" >&2 \
     || die "sync-team-skills.sh --check fails at head $head"
