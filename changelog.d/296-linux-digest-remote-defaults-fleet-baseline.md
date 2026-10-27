@@ -1,0 +1,1 @@
+- head-checks.sh falls back to sha256sum when shasum is absent. remote-heavy.sh defaults --gate to the remote DOTFILES_DIR checkout and its export lines are tested. fleet-watch.py records existing failed dispatches on its first pass and reports only new ones.
