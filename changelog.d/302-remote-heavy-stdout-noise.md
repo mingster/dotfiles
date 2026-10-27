@@ -1,0 +1,1 @@
+- remote-heavy.sh now works on hosts whose login shell prints to stdout over ssh. HEAD travels as a base64 git bundle on stdin instead of a git ssh push, and the job output and the artifact listing are framed between tagged markers, so banner or exit lines are dropped.

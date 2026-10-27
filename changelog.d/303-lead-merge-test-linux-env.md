@@ -1,0 +1,1 @@
+Fix `script/tests/lead-merge.test.sh` failing 20 verdict-from cases on Linux. The generated copy diff was exported in the environment and passed the 128KB per-variable exec limit that Linux enforces (macOS does not). The gh stub now reads the diff from a file, and a guard fails any case that exports a variable over 100KB.

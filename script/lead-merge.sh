@@ -47,10 +47,16 @@ done
 if [ "${#batch_prs[@]}" -gt 0 ]; then
   [ -z "$pr$head$verdict_from" ] && [ "$verify_set" = false ] && [ "$mechanical" = false ] \
     || die "--batch cannot be combined with single-PR options"
-  [ "${#batch_prs[@]}" -ge 2 ] || die "--batch needs at least two PR numbers"
   duplicate_pr=$(printf '%s\n' "${batch_prs[@]}" | sort | uniq -d | head -n1)
   [ -z "$duplicate_pr" ] || die "--batch repeats PR $duplicate_pr"
-else
+  if [ "${#batch_prs[@]}" -eq 1 ]; then
+    # One PR is a plain single merge: same gates, same receipt.
+    pr=${batch_prs[0]}; batch_requested=false; batch_prs=()
+    head_info=$(gh pr view "$pr" --repo "$repo" --json headRefOid) || die "cannot read PR $pr"
+    head=$(jq -r .headRefOid <<<"$head_info")
+  fi
+fi
+if [ "${#batch_prs[@]}" -eq 0 ]; then
   [ -n "$pr" ] && [ -n "$head" ] || die "usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical] [--verify-command <cmd>]"
   case "$pr" in *[!0-9]*) die "--pr must be a number" ;; esac
   if [ "$batch_requested" = true ]; then
