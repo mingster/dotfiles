@@ -552,7 +552,7 @@ fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0 main_fetched=${main_fetched:-false} carry_notes=""
-  ignored_notes=() row_n=0
+  ignored_notes=() row_n=0 retired_seen=false
   verdict_fix="post a fresh comment with script/post-verdict.sh (it builds the first line; edits never count)"
   # A FAIL is retired only by "Countersign: Elon head=<current head> reason=supersedes <comment url>".
   superseded=$(jq -r --arg h "$head" '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=supersedes (?<u>[^[:space:]]+)[[:space:]]*$")? | select(.h == $h) | .u' <<<"$info")
@@ -574,7 +574,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
       if [ "${BASH_REMATCH[3]}" = "${BASH_REMATCH[4]}" ]; then refuse "author cannot supply verifier verdict"; continue; fi
       if [ "$verdict" = FAIL ] && [[ "$ref" != "comment #"* ]] && grep -Fxq -- "$ref" <<<"$superseded"; then
-        echo "lead-merge: FAIL Verdict $ref retired by a supersedes Countersign"; continue
+        echo "lead-merge: FAIL Verdict $ref retired by a supersedes Countersign"; retired_seen=true; continue
       fi
       applies=false carried=""
       if [ "$candidate_head" = "$head" ]; then
@@ -599,6 +599,10 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
           edited=$((edited+1))
           ignored_notes+=("ignored Verdict $ref: it was edited or minimized, so it does not count. Fix: $verdict_fix")
           continue
+        fi
+        # Newest first: a PASS read after a retired FAIL is older than that FAIL and cannot replace it.
+        if [ "$retired_seen" = true ] && [ "$verdict" != FAIL ]; then
+          ignored_notes+=("ignored Verdict $ref: it is older than the FAIL it would replace. Fix: $verdict_fix"); continue
         fi
         [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
@@ -649,7 +653,7 @@ if [ -n "$triggers" ]; then
   # Verdict, a Countersign for an older head carries only across clean merges of main.
   countersigned() { # head
     jq -e --arg prefix "Countersign: Elon head=$1 reason=" \
-      'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]")))' <<<"$info" >/dev/null
+      'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]") and (startswith("supersedes ") | not)))' <<<"$info" >/dev/null
   }
   if ! countersigned "$head"; then
     countersign_ok=false

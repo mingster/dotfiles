@@ -264,6 +264,10 @@ setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" --arg c "Counter
 check "T22 a supersedes Countersign for another head does not retire the FAIL" 1 'conflicting'
 setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$f,url:"https://x.test/c#fail"},{body:$c}]')")
 check "T22 a retired FAIL with no PASS still refuses for the missing PASS" 1 'missing passing verifier verdict'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$p,url:"https://x.test/c#pass"},{body:$f,url:"https://x.test/c#fail"},{body:$c}]')")
+check "T22 a PASS older than the FAIL it retires does not count" 1 'missing passing verifier verdict'
+setup; PR_DIFF=$'+test.todo("later")'; COMMENTS_JSON=$(vc "$(jq -nc --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$p,url:"https://x.test/c#pass"},{body:$c}]')")
+check "T22 a supersedes Countersign is not the gate Countersign" 1 'Countersign'
 setup; FAKE_DISPATCHES="ctx_a ctx_b ctx_c ctx_d ctx_author ctx_verify"; check "dispatch ids found on a later page" 0 '^MERGED' 1
 setup; PR_DIFF=$'+  it("test.todos", () => {})'; check "test.todos is not a skip trigger" 0 '^MERGED' 1
 setup; PR_DIFF=$'+test.todo("later")'; check "test.todo needs countersign" 1 'Countersign'
