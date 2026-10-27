@@ -21,7 +21,7 @@ else: sys.exit(1)
     git('init','-q'); git('config','user.name','Fixture'); git('config','user.email','fixture@example.invalid')
     (repo/'code.txt').write_text('base\n'); git('add','.'); git('commit','-qm','base'); base=git('rev-parse','HEAD'); git('update-ref','refs/remotes/origin/main',base)
     (repo/'.agents').mkdir(); conf=repo/'.agents/head-checks.conf'; order=root/'order'; comments=root/'comments'
-    env=dict(os.environ,PATH=str(binpath)+os.pathsep+os.environ['PATH'],HOME=str(root/'home'),GH_BASE=base,COMMENTS=str(comments),ORCA_TEST_SECRET='SECRET_MUST_NOT_APPEAR',HEAVY_GATE_READER=str(reader),HEAVY_GATE_POLL_SECONDS='0.02')
+    env=dict(os.environ,PATH=str(binpath)+os.pathsep+os.environ['PATH'],HOME=str(root/'home'),GH_BASE=base,COMMENTS=str(comments),ORCA_TEST_SECRET='SECRET_MUST_NOT_APPEAR',HEAVY_GATE_READER=str(reader),HEAVY_GATE_POLL_SECONDS='0.02',HEAD_CHECKS_WAIT_SECONDS='0')
     env.pop('HEAD_CHECKS_SLOTS',None)
     def run(name,commands,expected,pr=True,override=False):
         global passed,failed
@@ -84,9 +84,12 @@ else: sys.exit(1)
     git('add','.'); git('commit','-qm','deploy guard config'); env['GH_BASE']=git('rev-parse','HEAD')
     run('guarded path is allowed when not added',line('guard clean'),0)
     (repo/'web').mkdir(exist_ok=True); (repo/'web/.env.example').write_text('KEY=\n')
-    result,_=run('PR adding a deploy-guard path fails',line('guard should not run'),1)
-    if 'Deploy guard: PR adds web/.env.example' in comments.read_text() and not order.exists(): passed+=1; print('ok   deploy guard names the path, no check ran')
-    else: failed+=1; print('FAIL deploy guard receipt',comments.read_text())
+    # T30: a deploy guard refusal checked nothing, so it posts no Checks comment.
+    (repo/'code.txt').write_text('guard refusal\n'); conf.write_text(line('guard should not run')+'\n'); git('add','.'); git('commit','-qm','guard refusal'); env['GH_HEAD']=git('rev-parse','HEAD')
+    order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+    guarded=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    if guarded.returncode==1 and 'Deploy guard: PR adds web/.env.example' in guarded.stdout and not comments.exists() and not order.exists(): passed+=1; print('ok   deploy guard refusal names the path, posts no comment, no check ran')
+    else: failed+=1; print('FAIL deploy guard refusal',guarded.returncode,guarded.stdout,comments.exists())
     env['GH_BASE']=base
     result,_=run('unchecked receipt lists all paths',"printf 'UNCHECKED: jellyfin/Thing.cs\\n'; printf 'UNCHECKED: roku/main.brs\\n'",0)
     if 'Unchecked paths: jellyfin/Thing.cs, roku/main.brs' in comments.read_text(): passed+=1; print('ok   unchecked receipt summary')
@@ -140,6 +143,19 @@ else: sys.exit(1)
     locked=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env={**env,'HEAD_CHECKS_SLOTS':'1'},text=True,capture_output=True)
     if locked.returncode==1 and 'in use' in locked.stdout+locked.stderr and 'Checks:' not in locked.stdout and lock.exists(): passed+=1; print('ok   all slots busy refuses without a verdict')
     else: failed+=1; print('FAIL lock',locked.stdout,locked.stderr)
+    # T18: with every check worktree held, wait HEAD_CHECKS_WAIT_SECONDS, then refuse with no verdict.
+    comments.unlink(missing_ok=True); started=time.monotonic()
+    waited=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env={**env,'HEAD_CHECKS_SLOTS':'1','HEAD_CHECKS_WAIT_SECONDS':'2','GH_HEAD':git('rev-parse','HEAD')},text=True,capture_output=True,timeout=30)
+    elapsed=time.monotonic()-started
+    if waited.returncode!=0 and elapsed>=2 and 'Checks:' not in waited.stdout and not comments.exists() and lock.exists(): passed+=1; print('ok   busy worktrees wait, then refuse with no comment')
+    else: failed+=1; print('FAIL busy wait',waited.returncode,elapsed,waited.stdout,waited.stderr)
+    # A worktree freed during the wait is taken instead of refusing.
+    releaser=subprocess.Popen(['bash','-c','sleep 1; rm -rf "$0"',str(lock)])
+    freed=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env={**env,'HEAD_CHECKS_SLOTS':'1','HEAD_CHECKS_WAIT_SECONDS':'20'},text=True,capture_output=True,timeout=30)
+    releaser.wait()
+    if freed.returncode==0: passed+=1; print('ok   worktree freed during the wait is used')
+    else: failed+=1; print('FAIL freed wait',freed.stdout,freed.stderr)
+    lock.mkdir(); (lock/'pid').write_text(str(os.getppid()))
     import shutil; shutil.rmtree(lock)
     # Persisted limits govern both worktree selection and the shared machine budget.
     settings=root/'home/.config/heavy-gate/slots.conf'; settings.parent.mkdir(parents=True)
