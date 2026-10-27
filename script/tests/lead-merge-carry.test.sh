@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Test the real extraction helper without running merge commands or calling GitHub.
 set -euo pipefail
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(cd "$(dirname "$0")/.." && pwd)
 eval "$(sed -n '/^issue_from_branch() {$/,/^}$/p' "$here/lead-merge.sh")"
 
 check() {
