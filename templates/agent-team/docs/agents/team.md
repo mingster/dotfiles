@@ -98,6 +98,8 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 
 Run `tsc` and `bun test` through `~/dotfiles/script/heavy-gate.sh --weight 1 -- <command>` to read the persisted machine limits. Run `next build`, Playwright and regressions with `~/dotfiles/script/heavy-gate.sh --weight 2 -- <command>` so they take two slots. Only Elon runs `~/dotfiles/script/hw-probe.sh --calibrate`, once per machine at a quiet time; agents never calibrate themselves. The optional default workload lives in the untracked `~/.config/heavy-gate/calibration.conf` as `command=<command>`; replacing persisted limits requires `--force`.
 
+Waiting on the gate (Elon 2026-10-27): never wait through a background shell you poll (Cursor AwaitShell and similar). Each poll starts a shell, so several waiting agents keep the load above the gate and none is admitted (two waiting Cursor workers held an 8 core host at load 20 for 40 minutes; stopping one dropped it to 12 in 2 minutes). If the gate has not admitted your command within 2 minutes, stop the wait, send one escalation whose subject starts `gate-blocked`, and idle with no command running until Elon resumes you.
+
 ## Gated actions
 
 Holding back a gated action is the default. Only the owner approves actions identified by project policy, including:
