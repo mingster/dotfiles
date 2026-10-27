@@ -396,6 +396,26 @@ if grep -qE '^## verification$' <<<"$normalized_body"; then
   { [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ]; } || refuse "Verification needs 1 to 3 run and outcome bullets"
 else refuse "missing ## Verification heading"; fi
 if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then refuse "Test plan heading is forbidden"; fi
+# UI changes need a phone screenshot: ui_path_patterns (path prefixes) come from lead-merge.local.json.
+ui_dir=$(cd "$(dirname "$0")" && pwd)
+ui_cfg=$(python3 "$ui_dir/apply-local-overlay.py" "$ui_dir/lead-merge.config.example.json" "$ui_dir/lead-merge.local.json") \
+  || die "cannot read local UI path config"
+ui_patterns=$(jq -r '.ui_path_patterns // [] | if type == "array" and all(.[]; type == "string") then .[] else error("ui_path_patterns") end' <<<"$ui_cfg") \
+  || die "invalid ui_path_patterns config"
+if [ -n "$ui_patterns" ]; then
+  ui_touched=false
+  while IFS= read -r f; do
+    case "$f" in *.test.*|*.spec.*|*/__tests__/*) continue ;; esac
+    while IFS= read -r prefix; do
+      [ -n "$prefix" ] && [ "${f#"$prefix"}" != "$f" ] && ui_touched=true
+    done <<<"$ui_patterns"
+  done < <(jq -r '.[]' <<<"$files")
+  if [ "$ui_touched" = true ]; then
+    awk '/^## screenshots$/ {inside=1; next} inside && /^#+ / {inside=0} inside' <<<"$normalized_body" \
+      | grep -qE '!\[[^]]*\]\([^)]+\)|user-attachments' \
+      || refuse "UI change needs a ## Screenshots section with a phone image"
+  fi
+fi
 # Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
 # first-parent chain is a two parent merge of main that replays to exactly the same tree.
 # Fails closed; sets carry_why to the failed check.

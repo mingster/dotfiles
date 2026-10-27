@@ -1,4 +1,5 @@
 {
   "verdict_from_repos": [],
-  "coordinator_ids": []
+  "coordinator_ids": [],
+  "ui_path_patterns": []
 }
