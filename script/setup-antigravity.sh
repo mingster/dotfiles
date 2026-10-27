@@ -87,3 +87,12 @@ fi
 
 echo "setup-antigravity: configured agent skills and full permissions in $HOME/.gemini"
 
+
+# Merge the usage gate hook into the global Antigravity hooks (Orca owns other entries in the same file).
+AGY_HOOKS="$HOME/.gemini/config/hooks.json"
+if command -v jq >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$AGY_HOOKS")"
+  [ -f "$AGY_HOOKS" ] || echo '{}' > "$AGY_HOOKS"
+  jq -s '.[0] * .[1]' "$AGY_HOOKS" "$AG_SRC/hooks.json" > "$AGY_HOOKS.tmp" && mv "$AGY_HOOKS.tmp" "$AGY_HOOKS"
+  echo "setup-antigravity: merged usage-gate hook into $AGY_HOOKS"
+fi
