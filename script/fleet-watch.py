@@ -25,12 +25,16 @@ def rpc(*args):
 def alerts(config, state, now, messages, workers, waiter_alive):
     notices = []
     counts = {}
+    # The first pass only records the failures that already exist.
+    baseline = 'failed' not in state
+    state.setdefault('failed', [])
     for worker in workers:
         status = worker.get('dispatchStatus')
         dispatch = worker['dispatchId']
         retried = any(w.get('taskId') == worker.get('taskId') and w.get('dispatchStatus') != 'failed' for w in workers) if worker.get('taskId') else False
-        if status == 'failed' and not retried and dispatch not in state.setdefault('failed', []):
-            notices.append('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity')
+        if status == 'failed' and not retried and dispatch not in state['failed']:
+            if not baseline:
+                notices.append('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity')
             state['failed'].append(dispatch)
         if status not in ('completed', 'failed', 'cancelled', 'released'):
             host = ((worker.get('projection') or {}).get('host') or {}).get('id', 'local')

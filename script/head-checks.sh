@@ -154,7 +154,8 @@ else
 fi
 config="${override:-$worktree/.agents/head-checks.conf}"
 [ -f "$config" ] || usage "missing .agents/head-checks.conf"
-printf "Checklist: %s\n" "$(shasum -a 256 "$config")" >> "$log"
+if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
+printf "Checklist: %s\n" "$checklist_sum" >> "$log"
 changed=$(mktemp)
 : > "$changed.unchecked"
 git -C "$worktree" diff --name-only -z "$base...$sha" -- > "$changed" 2>> "$log" || usage "cannot determine changed paths"
