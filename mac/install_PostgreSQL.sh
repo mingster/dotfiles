@@ -14,10 +14,8 @@ brew install postgresql@18
 
 architecture=$(uname -m)
 if [ "$architecture" == "arm64" ]; then
-  fish_add_path /opt/homebrew/opt/postgresql@18/bin
   pg_ctl -D /opt/homebrew/var/postgresql@18 start && brew services start postgresql@18
 elif [ "$architecture" == "x86_64" ]; then
-  fish_add_path /usr/local/opt/postgresql@18/bin
   pg_ctl -D /usr/local/var/postgresql@18 start && brew services start postgresql@18
 else
     echo "Unknown architecture: $architecture"
