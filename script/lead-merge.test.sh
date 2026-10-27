@@ -137,4 +137,23 @@ git checkout -q main && echo main > cc.txt && git add cc.txt && git commit -q -m
 git checkout -q prckc && git merge -q --no-ff main >/dev/null 2>&1 || true
 echo resolved > cc.txt && git add cc.txt && git commit -q -m "merge main (resolved)"
 cc "conflicted merge is refused" 1 "$VX" "$(git rev-parse HEAD)"
-echo 'PASS: 3 checks carry cases'
+ccm() { # name expect(0|1) H body...  (comments oldest first)
+  local name="$1" want="$2" h="$3" rc=0 info; shift 3
+  info=$(printf '%s\n' "$@" | jq -R '{body:.}' | jq -s '{comments:.}')
+  checks_carry "$info" "$h" >/dev/null 2>&1 || rc=$?
+  [ "$rc" = "$want" ] || { echo "FAIL: $name: expected rc $want, got $rc" >&2; exit 1; }
+  echo "ok $name"
+}
+# FAIL at a head between V and H, or at H itself, blocks the carry; a FAIL on an unrelated head does not.
+git checkout -q prck && git reset -q --hard "$HK"
+ccm "PASS at V with no FAIL still carries" 0 "$HK" "Checks: PASS head=$VK"
+ccm "FAIL at the current head blocks the carry" 1 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$HK"
+git checkout -q main && echo m10 > m10.txt && git add m10.txt && git commit -q -m main10 && advance_main
+git checkout -q prck && git merge -q --no-ff -m "merge main again" main
+HK2=$(git rev-parse HEAD)
+ccm "FAIL at a head between V and H blocks the carry" 1 "$HK2" "Checks: PASS head=$VK" "Checks: FAIL head=$HK"
+ccm "PASS carries over two clean merges of main" 0 "$HK2" "Checks: PASS head=$VK"
+ccm "FAIL at V blocks the carry" 1 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$VK"
+ccm "FAIL on an unrelated head does not block" 0 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$V"
+echo 'PASS: 9 checks carry cases'
+

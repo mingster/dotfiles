@@ -298,16 +298,23 @@ verdict_carry() { # <verdict head> <current head>
 }
 # The same rule for the Checks comment: a "Checks: PASS head=<V>" comment counts for head H when
 # verdict_carry V H holds. Prints the newest such comment body; fails closed.
-checks_carry() { # <pr json with .comments> <current head>
-  local info="$1" h="$2" row body v
+checks_carry() { # <pr json with .comments> <current head>; the caller has fetched main
+  local info="$1" h="$2" row body v x fails
+  fails=$(jq -r '.comments[].body | split("\n")[0] | capture("^Checks: FAIL head=(?<x>[0-9a-f]{40})$").x' <<<"$info" 2>/dev/null || true)
   while IFS= read -r row; do
     body=$(printf '%s' "$row" | base64 -d)
     v=${body%%$'\n'*}
     [[ "$v" =~ ^Checks:\ PASS\ head=([0-9a-f]{40})$ ]] || continue
     v=${BASH_REMATCH[1]}
     [ "$v" != "$h" ] || continue
-    [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Checks"; main_fetched=true; }
+    # A Checks FAIL on V or on any later head of this chain outvotes the PASS.
+    for x in $fails; do
+      if git cat-file -e "$x^{commit}" 2>/dev/null && git merge-base --is-ancestor "$v" "$x"; then
+        echo "lead-merge: Checks FAIL at ${x:0:12} blocks the carry from ${v:0:12}" >&2; return 1
+      fi
+    done
     if verdict_carry "$v" "$h"; then printf '%s\n' "$body"; return 0; fi
+    echo "lead-merge: Checks not carried from ${v:0:12}: $carry_why" >&2
   done < <(jq -r '[.comments[].body] | reverse | .[] | @base64' <<<"$info" 2>/dev/null | head -50)
   return 1
 }
@@ -324,7 +331,14 @@ fi
 check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
 checks=${check_body%%$'\n'*}
 { [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; } \
-  || { check_body=$(checks_carry "$info" "$head") && checks="Checks: PASS head=$head" && echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"; } \
+  || {
+    # Never carry past a run that happened, and never in a batch (the train Checks is the proof there).
+    [[ "$checks" != "Checks: FAIL head=$head" ]] || die "Checks: FAIL at the current head"
+    [ "$batch_requested" = false ] || die "missing current-head or containing-train Checks: PASS"
+    [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Checks"; main_fetched=true; }
+    check_body=$(checks_carry "$info" "$head") && checks="Checks: PASS head=$head" \
+      && echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"
+  } \
   || die "missing current-head or containing-train Checks: PASS"
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
@@ -463,7 +477,7 @@ if [ "$mechanical" = true ]; then
 fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   applicable=()
-  passes=0 fails=0 edited=0 misplaced=0 main_fetched=false carry_notes=""
+  passes=0 fails=0 edited=0 misplaced=0 main_fetched=${main_fetched:-false} carry_notes=""
   # Every Verdict for this head (or carried across clean merges of main) counts. Newest first; none
   # of them can erase another. An edited or minimized PASS never counts (the
   # verifier posts a fresh one); an edited or minimized FAIL still blocks.
