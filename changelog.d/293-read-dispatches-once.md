@@ -1,0 +1,1 @@
+A lead-merge batch now reads the dispatch inventory once and passes it to its preflight and gate children through LEAD_MERGE_DISPATCHES_FILE, falling back to one live read when the file is missing or unreadable.
