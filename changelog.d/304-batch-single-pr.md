@@ -1,0 +1,1 @@
+- lead-merge.sh --batch with one PR now runs as a plain single merge (same gates, same receipt) instead of refusing.
