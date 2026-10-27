@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exercise merge-cleanup.sh in a disposable repo with a bare remote. No network, no gh.
 set -euo pipefail
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1
