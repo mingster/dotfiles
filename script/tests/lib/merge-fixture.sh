@@ -42,19 +42,21 @@ exec "$MF_REAL_GIT" "$@"
 EOS
 }
 
-# mf_pr_add <number> <branch> [body]: commit a file on <branch>, push it, record the PR.
+# mf_pr_add <number> <branch> [body] [file]: commit <file> (default <branch>.txt) on <branch>, push it, record the PR.
 mf_pr_add() {
-  local n=$1 branch=$2 body=${3:-} head files
+  local n=$1 branch=$2 body=${3:-} path=${4:-$2.txt} head files base
+  base=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse origin/main)
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q -B "$branch" origin/main
-  echo "$branch" > "$MF_REPO/$branch.txt"
-  "$MF_REAL_GIT" -C "$MF_REPO" add "$branch.txt"
+  mkdir -p "$MF_REPO/$(dirname "$path")"
+  echo "$branch" > "$MF_REPO/$path"
+  "$MF_REAL_GIT" -C "$MF_REPO" add "$path"
   "$MF_REAL_GIT" -C "$MF_REPO" commit -q -m "$branch"
   "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$branch"
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
   head=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$branch")
-  files=$(jq -n --arg f "$branch.txt" '[{path:$f}]')
-  jq -n --argjson n "$n" --arg b "$branch" --arg h "$head" --arg body "$body" --argjson files "$files" \
-    '{number:$n, state:"OPEN", baseRefName:"main", headRefName:$b, headRefOid:$h, body:$body, files:$files,
+  files=$(jq -n --arg f "$path" '[{path:$f, filename:$f}]')
+  jq -n --argjson n "$n" --arg b "$branch" --arg h "$head" --arg body "$body" --argjson files "$files" --arg base "$base" \
+    '{number:$n, state:"OPEN", baseRefName:"main", headRefName:$b, headRefOid:$h, baseRefOid:$base, changedFiles:($files|length), body:$body, files:$files,
       comments:[], closingIssuesReferences:[], mergeable:"MERGEABLE", mergeCommit:null,
       url:("https://example.test/pull/" + ($n|tostring))}' > "$MF_GH_DIR/pr-$n.json"
 }
@@ -70,15 +72,17 @@ _mf_write_gh() {
 #!/usr/bin/env bash
 echo "gh $*" >> "$MF_GH_LOG"
 cmd="$1 ${2:-}"; shift 2 || true
-pr="" body="" body_file="" json="" match="" base="" jq_expr=""
-# A missing PR number means the PR of the current branch, as with the real gh.
-if [ "$cmd" != "api " ]; then
-  case "${1:-}" in -*|"") ;; *) pr=$1; shift ;; esac
-  if [ -z "$pr" ] && [ "$cmd" = "pr view" ]; then
-    pr=$(jq -s -r --arg b "$("$MF_REAL_GIT" rev-parse --abbrev-ref HEAD 2>/dev/null)" '[.[] | select(.headRefName == $b)][0].number // empty' "$MF_GH_DIR"/pr-*.json)
-    [ -n "$pr" ] || { echo "no pull requests found for current branch" >&2; exit 1; }
-  fi
-fi
+  pr="" body="" body_file="" json="" match="" base="" jq_expr=""
+  case "$cmd" in
+    api*) for a in "$@"; do case "$a" in repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;; esac; done ;;
+    *)
+      # A missing PR number means the PR of the current branch, as with the real gh.
+      case "${1:-}" in -*|"") ;; *) pr=$1; shift ;; esac
+      if [ -z "$pr" ] && [ "$cmd" = "pr view" ]; then
+        pr=$(jq -s -r --arg b "$("$MF_REAL_GIT" rev-parse --abbrev-ref HEAD 2>/dev/null)" '[.[] | select(.headRefName == $b)][0].number // empty' "$MF_GH_DIR"/pr-*.json)
+        [ -n "$pr" ] || { echo "no pull requests found for current branch" >&2; exit 1; }
+      fi ;;
+  esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --body) body=$2; shift ;;
@@ -97,7 +101,8 @@ case "$cmd" in
   "pr view")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
     if [ -n "$json" ]; then
-      out=$(jq --arg f "$json" '. as $o | ($f | split(",")) | map({(.): $o[.]}) | add' "$file")
+      out=$(jq --arg f "$json" '. as $o | ($f | split(",")) | map({(.): $o[.]}) | add
+        | if has("comments") then .comments |= map(. + {includesCreatedEdit: .edited, isMinimized: .minimized}) else . end' "$file")
       if [ -n "$jq_expr" ]; then jq -r "$jq_expr" <<<"$out"; else printf '%s\n' "$out"; fi
     else jq -r '.body' "$file"; fi ;;
   "pr comment")
@@ -118,7 +123,7 @@ case "$cmd" in
       && "$MF_REAL_GIT" -C "$work" push -q origin HEAD:main || { rm -rf "$work"; exit 1; }
     sha=$("$MF_REAL_GIT" -C "$work" rev-parse HEAD); rm -rf "$work"
     save ".state = \"MERGED\" | .mergeCommit = {oid: \"$sha\"}" ;;
-  "api ") jq '[.files[]]' "$MF_GH_DIR"/pr-*.json | jq -s 'add' ;;
+  api*) jq '[.files[]]' "$file" ;;
   *) echo "fake gh: unsupported: $cmd" >&2; exit 1 ;;
 esac
 EOS
@@ -147,7 +152,7 @@ echo "orca $*" >> "$MF_ORCA_LOG"
 d="$MF_ORCA_DIR"
 upd() { jq "$1" "$d/$2" > "$d/$2.tmp" && mv "$d/$2.tmp" "$d/$2"; }
 case "$1 ${2:-}" in
-  "orchestration run-list") cat "$d/runs.json" ;;
+  "orchestration run-list") jq '. + {ok: true, result: .}' "$d/runs.json" ;;
   "orchestration worker-list")
     run=""; shift 2
     while [ $# -gt 0 ]; do [ "$1" = --run ] && run=$2; shift; done

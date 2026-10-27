@@ -498,6 +498,31 @@ check "verdict-from refuses when the dotfiles tree differs from origin/main for 
 echo "untracked" > "$fx/templates/agent-team/untracked-template.md"
 check "verdict-from refuses an untracked file under templates/agent-team" 1 'not at origin/main'
 ) </dev/null &
+# T1: every refusal that needs no head-checks prints in one run, before any gh comment or merge.
+(
+  unit; unit_init
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}   # the git stub must not shadow real git
+  mf_setup
+  export HOME="$MF_DIR/home" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"; cd "$MF_REPO" || exit 1
+  res="$ucd/result.9001"; fails=""
+  body=$'## Verification\n- a\n- b\n- c\n- d\n- e\n\n## Test plan\n- x'
+  mf_pr_add 5 t1 "$body" docs/t1.md
+  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q -B main origin/main
+  mkdir -p docs; echo drift > docs/t1.md; "$MF_REAL_GIT" add docs/t1.md; "$MF_REAL_GIT" commit -q -m drift; "$MF_REAL_GIT" push -q origin main
+  : > "$MF_GH_LOG"
+  head=$(jq -r .headRefOid "$MF_GH_DIR/pr-5.json")
+  out=$(bash "$here/lead-merge.sh" --repo o/r --pr 5 --head "$head" 2>&1); code=$?
+  [ "$code" = 1 ] || fails="$fails exit=$code"
+  for want in 'Test plan heading is forbidden' 'Verification needs 1 to 3' 'trunk changed docs/t1.md' 'missing current-head or containing-train Checks'; do
+    grep -q "$want" <<<"$out" || fails="$fails missing[$want]"
+  done
+  ! grep -qE '^gh pr (comment|merge)' "$MF_GH_LOG" || fails="$fails mutated"
+  mf_teardown
+  if [ -z "$fails" ]; then echo "ok   T1 every refusal prints in one run and nothing mutates" > "$res"; else printf 'FAIL T1%s\n%s\n' "$fails" "$out" > "$res"; fi
+) </dev/null &
+
 # Cleanup call site (spec #286 T5, T12): the issue comes only from closingIssuesReferences, a failing cleanup never fails the merge.
 unit; (
 unit_init
