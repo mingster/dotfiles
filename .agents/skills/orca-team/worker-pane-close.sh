@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Close what a finished worker left open. The coordinator runs this after worker-release.
 # Usage: worker-pane-close.sh <dispatch_id> [...]   close those workers' panes and leftover terminals
+#        worker-pane-close.sh --release <dispatch_id> [...]   worker-release, mark released, then close
 #        worker-pane-close.sh                       sweep recorded panes and discover ended workers in the caller's Run
 # The sweep closes a settled dispatch only once its linked worktree is gone: a dispatch settles at its first
-# worker_done, and the worker may still be on a correction pass in that worktree. Explicit ids skip that check.
+# worker_done, and the worker may still be on a correction pass in that worktree. Explicit ids skip that check,
+# and so does a dispatch marked by --release ($state/released/<id>): Orca retains external terminals (Codex
+# workers) on release, so the marker is what lets a later sweep finish a close that did not complete.
 # Closes the pane worker-panes.sh recorded, then every terminal of that worker still in `orca terminal list`:
 # the handles worker-show reports (agent and setup terminals) and any terminal whose worktreePath matches
 # the linked git worktree the worker created or reused. A dispatch that is still running keeps its terminals,
@@ -98,7 +101,7 @@ close_one() {
   show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || return 0
   status=$(printf '%s' "$show" | dispatch_status)
   case "$status" in completed|failed|cancelled|released) ;; *) return 0;; esac
-  [ "${2:-}" != sweep ] || worktree_gone "$show" || return 0
+  [ "${2:-}" != sweep ] || [ -e "$state/released/$d" ] || worktree_gone "$show" || return 0
   [ -f "$f" ] && while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < "$f"
   list=$(close_rpc terminal list --json 2>/dev/null)
   while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < <(leftovers "$show" "$list")
@@ -128,11 +131,26 @@ close_one() {
   if [ "${#handles[@]}" -gt 0 ]; then
     printf '%s\n' "${handles[@]}" > "$f"
   else
-    rm -f "$f"
+    rm -f "$f" "$state/released/$d"
     echo "closed $d (${#pending[@]})"
   fi
   return 0
 }
+if [ "${1:-}" = --release ]; then
+  shift
+  [ "$#" -gt 0 ] || { echo "worker-pane-close: --release requires a dispatch id" >&2; exit 2; }
+  for d in "$@"; do
+    show=$(close_rpc orchestration worker-show --dispatch "$d" --json) || exit 1
+    status=$(printf '%s' "$show" | dispatch_status)
+    case "$status" in completed|failed|cancelled|released) ;;
+      *) echo "worker-pane-close: refusing --release $d (status=${status:-unknown}); settle it, or use worker-stop explicitly before release" >&2; exit 1 ;;
+    esac
+    close_rpc orchestration worker-release --dispatch "$d" --json || { echo "worker-pane-close: release failed for $d; retaining terminals" >&2; exit 1; }
+    mkdir -p "$state/released" && : > "$state/released/$d"
+    close_one "$d"
+  done
+  exit 0
+fi
 if [ $# -gt 0 ]; then
   for d in "$@"; do close_one "$d"; done
   exit 0

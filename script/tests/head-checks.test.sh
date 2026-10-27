@@ -38,6 +38,18 @@ else: sys.exit(1)
     run('ordered exact head checks',line('lint')+'\n'+line('typecheck')+'\n'+line('tests')+'\n'+'test ! -f .env.local\ntest "$(git rev-parse HEAD)" = "$HEAD_CHECK_SHA"\nprintf "%s" "${ORCA_TEST_SECRET:-}"',0)
     if order.read_text()=='lint\ntypecheck\ntests\n': passed+=1; print('ok   cheapest first order')
     else: failed+=1; print('FAIL order')
+    # Checklist helpers follow the remote dotfiles checkout, including paths with spaces.
+    helper='python3 "${DOTFILES_DIR:-$HOME/dotfiles}/script/check-path.py"'
+    custom=root/'remote dotfiles'
+    (custom/'script').mkdir(parents=True)
+    (custom/'script/check-path.py').write_text('print("custom dotfiles helper")\n')
+    env['DOTFILES_DIR']=str(custom)
+    run('checklist receives DOTFILES_DIR',helper,0)
+    env.pop('DOTFILES_DIR')
+    default=root/'home/dotfiles/script'
+    default.mkdir(parents=True)
+    (default/'check-path.py').write_text('print("default dotfiles helper")\n')
+    run('checklist defaults to home dotfiles',helper,0)
     # The fetched PR base can be ahead of stale origin/main and diverge from HEAD.
     fresh=git('commit-tree',git('rev-parse',base+'^{tree}'),'-p',env['GH_HEAD'],'-m','fresh PR base')
     env['GH_BASE']=fresh
@@ -48,6 +60,11 @@ else: sys.exit(1)
     if order.read_text()=='lint\n': passed+=1; print('ok   later checks never start')
     else: failed+=1; print('FAIL later checks ran')
     run('ref checks do not post',line('ref'),0,False)
+    train_heads=base+','+env['GH_HEAD']
+    train=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf),'--train-heads',train_heads],env=env,text=True,capture_output=True)
+    if train.returncode==0 and 'Checks: PASS head='+env['GH_HEAD']+' train-heads='+train_heads in train.stdout:
+        passed+=1; print('ok   train receipt names train and every PR head')
+    else: failed+=1; print('FAIL train receipt',train.stdout,train.stderr)
     (repo/'path with space.txt').write_text('quoted path\n')
     run('local baseline checklist override',line('baseline override'),0,False,True)
     comments.unlink(missing_ok=True)
@@ -78,7 +95,7 @@ else: sys.exit(1)
     if all(name in comments.read_text().splitlines() for name in ['Scoped tests: 3','Selected: ./notification-service.test.ts','Selected: ./no-update-many-claims-contract.test.ts','Selected: ./route.test.ts']): passed+=1; print('ok   scoped selection survives output tail')
     else: failed+=1; print('FAIL scoped selection was truncated')
     # Run both real repository checklists against committed component fixtures.
-    tools_home=root/'home/dotfiles/script'; tools_home.mkdir(parents=True)
+    tools_home=root/'home/dotfiles/script'; tools_home.mkdir(parents=True,exist_ok=True)
     (tools_home/'run-scoped-tests.py').symlink_to(pathlib.Path(runner).with_name('run-scoped-tests.py'))
     tool_log=root/'tool-calls'
     for tool in ['bun','bunx']:

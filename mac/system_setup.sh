@@ -245,40 +245,29 @@ fi
 #ln -s $HOME/dotfiles/.config/amethyst $HOME/.config/
 
 echo ""
-echo -e "\033[1;35m fish shell \033[0m"
+echo -e "\033[1;35m zsh \033[0m"
 echo ""
 
-# On Intel Macs, download and install the official pkg release; on Apple Silicon use Homebrew
-if [ "$(uname -m)" = "x86_64" ]; then
-  if ! command -v fish >/dev/null 2>&1; then
-    FISH_VERSION="4.7.1"
-    FISH_PKG="fish-${FISH_VERSION}.pkg"
-    curl -fsSL "https://github.com/fish-shell/fish-shell/releases/download/${FISH_VERSION}/${FISH_PKG}" -o "/tmp/${FISH_PKG}"
-    sudo installer -pkg "/tmp/${FISH_PKG}" -target /
-    rm -f "/tmp/${FISH_PKG}"
+# Oh My Zsh (unattended install if not already present)
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+  RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+fi
+
+# Themes and plugins
+if [ -d "$HOME/.oh-my-zsh" ]; then
+  if [ ! -d "$HOME/.oh-my-zsh/custom/themes/powerlevel10k" ]; then
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
   fi
-else
-  brew list fish >/dev/null 2>&1 || brew install fish
+  if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
+    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+  fi
 fi
 
-ln -sfn $HOME/dotfiles/.config/fish/config.fish $HOME/.config/fish/config.fish
-
-# add fish to system shells list (idempotent)
-if ! grep -qF "$(which fish)" /etc/shells; then
-    echo "$(which fish)" | sudo tee -a /etc/shells
-fi
-
-# change default shell to fish (skip if already set)
-if [ "$SHELL" != "$(which fish)" ]; then
-    echo ' change default shell to fish'
-    chsh -s "$(which fish)"
-fi
-
-# install fisher and fish plugins
-if command -v fish >/dev/null 2>&1; then
-  fish "$HOME/dotfiles/script/setup_fishshell.fish"
-else
-  echo "system_setup: fish not found; skipping setup_fishshell.fish" >&2
+# Set default shell to zsh (skip if already zsh)
+target_zsh="$(command -v zsh 2>/dev/null || echo "/bin/zsh")"
+if [ "$SHELL" != "$target_zsh" ] && [ "$SHELL" != "/bin/zsh" ]; then
+  echo 'change default shell to zsh'
+  chsh -s "$target_zsh"
 fi
 
 # Remove outdated versions from the cellar.

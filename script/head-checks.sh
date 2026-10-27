@@ -10,7 +10,7 @@ if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
     env HEAD_CHECKS_GATE_HELD=1 bash "$0" "$@"
 fi
 unset HEAD_CHECKS_GATE_HELD
-repo="" pr="" ref="" sha="" worktree="" lock="" refused=""
+repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
 override="" changed="" explicit_base=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -19,6 +19,7 @@ while [ $# -gt 0 ]; do
     --pr) pr="${2:-}"; shift 2 ;;
     --ref) ref="${2:-}"; shift 2 ;;
     --base) explicit_base="${2:-}"; shift 2 ;;
+    --train-heads) train_heads="${2:-}"; shift 2 ;;
     --config) override="${2:-}"; shift 2 ;;
     *) usage "unknown argument $1" ;;
   esac
@@ -28,6 +29,8 @@ done
 [ -z "$pr" ] || [ -z "$ref" ] || usage "choose --pr or --ref, not both"
 [ -z "$explicit_base" ] || [ -n "$ref" ] || usage "--base is only for --ref"
 [ -z "$override" ] || { [ -n "$ref" ] && [ -f "$override" ]; } || usage "--config is a local --ref-only checklist override"
+[ -z "$train_heads" ] || [ -n "$ref" ] || usage "--train-heads is only for --ref"
+[ -z "$train_heads" ] || [[ "$train_heads" =~ ^[0-9a-f]{40}(,[0-9a-f]{40})*$ ]] || usage "--train-heads needs comma-separated full SHAs"
 [ -z "$override" ] || override=$(cd "$(dirname "$override")" && printf "%s/%s" "$PWD" "$(basename "$override")")
 case "$pr" in *[!0-9]*) usage "--pr must be numeric" ;; esac
 repo=$(cd "$repo" && git rev-parse --show-toplevel)
@@ -40,7 +43,7 @@ finish() {
   [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
   [ "$status" -ne 0 ] || result=PASS
   {
-    printf 'Checks: %s head=%s\n\n' "$result" "$sha"
+    printf 'Checks: %s head=%s%s\n\n' "$result" "$sha" "${train_heads:+ train-heads=$train_heads}"
     if [ -n "$changed" ]; then
       unchecked_paths=$(sed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
       [ -z "$unchecked_paths" ] || printf 'Unchecked paths: %s\n\n' "$unchecked_paths"
@@ -77,6 +80,14 @@ fi
 for commit in "$sha" "$base"; do
   git -C "$repo" cat-file -e "$commit^{commit}" 2>/dev/null || git -C "$repo" fetch origin "$commit" >> "$log" 2>&1
  done
+if [ -n "$train_heads" ]; then
+  IFS=, read -ra contained_heads <<<"$train_heads"
+  for commit in "${contained_heads[@]}"; do
+    git -C "$repo" cat-file -e "$commit^{commit}" 2>/dev/null \
+      && git -C "$repo" merge-base --is-ancestor "$commit" "$sha" \
+      || usage "train head does not contain $commit"
+  done
+fi
 base=$(git -C "$repo" merge-base "$base" "$sha") || usage "cannot resolve PR merge base"
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
@@ -144,7 +155,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp)
-  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
+  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"

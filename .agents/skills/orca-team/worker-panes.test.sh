@@ -63,6 +63,12 @@ terms term_base w1
 "$here/worker-panes.sh" run_x term_base d4 >/dev/null 2>&1
 check "later call splits the live worker pane below" "$(grep -q -- '--terminal w1 --direction horizontal.*worker-pane.sh d4 --json' "$tmp/splits.log"; echo $?)"
 
+# A rerun never opens a second pane for a worker whose recorded pane is still listed.
+reset; mkdir -p "$tmp/state"; echo w1 > "$tmp/state/d1"
+terms term_base w1
+"$here/worker-panes.sh" run_x term_base >/dev/null 2>&1
+check "rerun skips a worker that already has a live pane" "$(! grep -q 'worker-pane.sh d1 --json' "$tmp/splits.log" && grep -q 'worker-pane.sh d3 --json' "$tmp/splits.log"; echo $?)"
+
 # The recorded pane is gone: back to splitting the coordinator to the right.
 reset; mkdir -p "$tmp/state"; echo w_gone > "$tmp/state/dold"
 terms term_base

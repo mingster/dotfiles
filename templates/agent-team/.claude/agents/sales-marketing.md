@@ -19,6 +19,9 @@ PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-m
 
 ## Work
 
+- **Ticket contract:** one body/comment has `## Acceptance criteria` (observable cases and proving command), `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>`. Acceptance criteria also define done.
+
+
 - **Positioning and copy:** landing page copy, onboarding hints and lifecycle messages, Taiwan Traditional Chinese first, every claim grounded in verified product behavior. `en` and `jp` copy is written natively, never translated from `tw` (`docs/agents/team.md`, owner rule 2026-10-21).
 - **Self-serve acquisition:** measurable experiments with explicit audience, hypothesis, budget, success metric and stopping condition.
 - **Metrics:** maintain `docs/MARKETING/METRICS.md` with explicit formulas for MRR, logo and revenue churn, LTV, CAC and 14 day store activation. Label unavailable metrics unknown; never invent estimates.

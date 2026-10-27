@@ -41,3 +41,7 @@ bun ~/dotfiles/script/prepend-recent-change.ts \
 Override base branch: `PR_BASE_BRANCH=develop gh pr create ...`
 
 Reload hooks in Cursor after editing `hooks.json` (or restart Cursor).
+
+## `usage-gate.sh`
+
+Runs the usage gate on every Orca `worker-start` (and the Codex launcher). It only translates formats: the decision stays in `script/usage-gate-hook.py`. The same script serves Cursor (`beforeShellExecution`, deny exits 2) and Antigravity (`PreToolUse` on `run_command`, wired by `script/setup-antigravity.sh` from `ide/antigravity/hooks.json`). Tests: `bash ide/cursor/hooks/usage-gate.test.sh`.

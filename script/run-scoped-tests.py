@@ -103,8 +103,26 @@ def ensure_dependencies(root):
     return 0
 
 
+def browser_test(path):
+    return bool(re.search(r"(?:from\s*|require\s*\()?[\"'](?:@playwright/test|playwright(?:-core)?)[\"']|chromium\.launch", path.read_text()))
+
+
+def browser_available(root):
+    # Probe the installed browser path without launching a browser.
+    try:
+        probe = subprocess.run(['bun', '-e', 'const {chromium}=await import("playwright"); process.exit(require("fs").existsSync(chromium.executablePath())?0:1)'], cwd=root, capture_output=True, timeout=10)
+        return probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def run_scoped_tests(root, runner, files):
     tests = select_changed_tests(root, files)
+    browser = [path for path in tests if browser_test(path)]
+    if browser and not browser_available(root):
+        for path in browser:
+            print('UNCHECKED: ' + str(path.relative_to(root.resolve())) + ' (Playwright browser unavailable; rerun on browser host)', flush=True)
+        tests = [path for path in tests if path not in browser]
     paths = ['./' + str(path.relative_to(root.resolve())) for path in tests]
     print('Scoped tests:', len(paths), flush=True)
     for path in paths:

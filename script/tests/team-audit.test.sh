@@ -124,6 +124,12 @@ check "spec without intent.md" 1 'FINDING sdlc: .*2026-10-21-tier/spec.md: no in
 setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; printf 'spec\n\n## Test plan\n1. case\n' > "$P/docs/intent/2026-10-21-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-21-tier/intent.md"
 check "spec beside its intent.md" 0 'team-audit: clean'
 
+setup; mkdir -p "$P/docs/intent/2026-10-22-numbered"; printf '## 10. Test plan\n1. observable case\n' > "$P/docs/intent/2026-10-22-numbered/spec.md"; echo intent > "$P/docs/intent/2026-10-22-numbered/intent.md"
+check "numbered Test plan heading passes" 0 'team-audit: clean'
+
+setup; withremote; GH_ISSUES='[{"number":12,"body":"## Done check (functional cases)\n- observable proof\nRequirement owner: owner request\n## Blocking edges and deletions\nS1 -> S2. Deleted: old flow","labels":[],"comments":[]}]'; export GH_ISSUES
+check "functional done check and inline deletion pass without duplicate Done condition" 0 'team-audit: clean'
+
 setup; mkdir -p "$P/docs/intent/2026-10-22-tier"; echo spec > "$P/docs/intent/2026-10-22-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-22-tier/intent.md"
 check "new spec without a Test plan" 1 'FINDING sdlc: .*2026-10-22-tier/spec.md: no ## Test plan'
 
@@ -132,13 +138,16 @@ setup; mkdir -p "$P/docs/intent/2026-10-09-old"; echo spec > "$P/docs/intent/202
 check "spec committed before the rule is grandfathered" 0 'team-audit: clean'
 
 setup; withremote; GH_ISSUES=$(jq -n --arg b "$BRIEF" '[{number:7,body:$b,labels:[],comments:[]}]'); export GH_ISSUES
-check "ready issue with all four fields passes" 0 'team-audit: clean'
+check "ready issue with all required fields passes" 0 'team-audit: clean'
 
 setup; withremote; GH_ISSUES='[{"number":8,"body":"Acceptance criteria: a\nDeleted: none","labels":[{"name":"ready-for-agent"}],"comments":[{"body":"Done condition: z"}]}]'; export GH_ISSUES
-check "missing fields name the best text's gaps" 1 '^FINDING ready-brief acme/project-alpha#8 missing: Requirement owner, Done condition$'
+check "missing fields name the best text's gaps" 1 '^FINDING ready-brief acme/project-alpha#8 missing: Requirement owner$'
 
 setup; withremote; GH_ISSUES=$(jq -n --arg b "$BRIEF" '[{number:9,body:"see comments",labels:[],comments:[{body:"thanks"},{body:$b}]}]'); export GH_ISSUES
 check "fields all in one comment pass" 0 'team-audit: clean'
+
+setup; withremote; GH_ISSUES='[{"number":12,"body":"## Done check (functional cases)\n- public outcome\n## Requirement owner\nCoordinator\nInline Deleted: obsolete bypass","labels":[],"comments":[]}]'; export GH_ISSUES
+check "Done check and inline Deleted satisfy one contract" 0 'team-audit: clean'
 
 setup; withremote; GH_ISSUES='[{"number":10,"body":"nothing","labels":[{"name":"team-audit: allow"}],"comments":[]}]'; export GH_ISSUES
 check "label opts an issue out" 0 'team-audit: clean'

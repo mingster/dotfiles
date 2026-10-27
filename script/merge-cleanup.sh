@@ -82,6 +82,9 @@ drop() {
     wt=$(cd -P "$wt" && pwd)
     if [ "$wt" = "$top" ]; then echo "Kept worktree $wt (current)"; return 0; fi
     case "${wt##*/}" in lead-*) echo "protected: kept worktree $wt (lead worktree)"; return 0 ;; esac
+    if ! python3 "$here/worktree-idle.py" "$wt"; then
+      echo "protected: kept worktree $wt (live terminal or unknown inventory)"; return 0
+    fi
     dirty=$(git -C "$wt" status --porcelain --untracked-files=all)
     if [ -n "$dirty" ]; then
       if [ "$mode" != force ]; then
@@ -91,7 +94,8 @@ drop() {
     fi
     # Cleanup follows a merge or an owner-saved diff: head-checks are heavy, can hang or fail, and one failure must not leave the remote branch behind.
     DRY_RUN=$dry bash "$here/worker-finish.sh" --worktree "$wt" --skip-head-checks "post-merge cleanup" \
-      || echo "merge-cleanup: worker-finish failed for $wt; deleting the branches anyway" >&2
+      || { echo "merge-cleanup: worker-finish failed for $wt; keeping branches" >&2; return 0; }
+    if [ -n "$(wt_of "$b")" ] && [ "$dry" != 1 ]; then echo "protected: kept $b (still checked out)"; return 0; fi
   fi
   if git show-ref --verify --quiet "refs/heads/$b"; then
     echo "Delete local $b"; run git branch -D -- "$b" >/dev/null

@@ -30,6 +30,10 @@ The tech-lead reads this before its first dispatch.
 
 - **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker, merge on checks.
 
+## Independent inbox watchdog
+
+Configure `script/fleet-watch.py` from dotfiles with this run, coordinator terminal and unique waiter pattern in a private config. An independent minute scheduler runs it; the coordinator waiter cannot supervise itself. It warns after ten minutes of unacked deliveries without a waiter, on failed dispatches and on host caps including children. See dotfiles `docs/agents/fleet-watch.md`; scheduling and terminal selection are explicit activation steps.
+
 ## Wake loop
 
 Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).

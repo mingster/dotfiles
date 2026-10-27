@@ -1,0 +1,1 @@
+- Usage gate now also covers coordinators running in Cursor and Antigravity: `ide/cursor/hooks/usage-gate.sh` adapts `usage-gate-hook.py` to Cursor `beforeShellExecution` and Antigravity `PreToolUse`, and `setup-antigravity.sh` merges the Antigravity hook into `~/.gemini/config/hooks.json`.

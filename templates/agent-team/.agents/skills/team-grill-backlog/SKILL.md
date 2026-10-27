@@ -21,6 +21,8 @@ From the repo root, with the tracker in `docs/agents/issue-tracker.md`, list eve
 
 ## 2. Dispatch
 
+Every ready-for-agent ticket has `## Acceptance criteria` (observable cases and exact proving command), `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>` in one body or comment. A second Done condition repeats acceptance criteria and is unnecessary.
+
 Start one read-only worker per role with Orca orchestration (the `orchestration` skill), light load, no browser. Brief, in English, for each:
 
 ```
@@ -32,6 +34,7 @@ For each issue read the body, the last comments and any linked spec or ADR, then
 3. Product, scope or copy call: comment "Proposed decision (Elon to confirm)" with A (recommended, one line why) and B.
 4. Needs the owner's own hands: make sure the exact steps are on the issue, paste ready.
 5. Blocked: check the blocker is still real. If a slice can be built now, file it as a new ready-for-agent issue with acceptance criteria and the proving test (search first, docs/agents/issue-budget.md).
+On a non-Owner-Reserved ask timeout, proceed with recommended A and label "Elon decision pending"; report it to Elon. Owner-Reserved work remains blocked.
 Never change a priority or close an issue. Never touch Owner-Reserved items (pricing rulings, prod data, credentials). Never read secrets.
 Finish within 30 minutes. worker_done: one line per issue (number, kind, action), new ready-for-agent numbers, proposed decisions as a numbered A/B list.
 ```
