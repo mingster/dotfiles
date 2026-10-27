@@ -333,7 +333,70 @@ EOS
   jq -r '.comments[0].body' "$MF_GH_DIR/pr-21.json" | grep -q "Full log: $HEAD_CHECKS_LOG_DIR/" && echo "ok   T24 receipt names the full log" || echo "FAIL T24 no log name"
 }
 
-fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1 )
+# T13 and T34: one merge run per repo, and a batch that finds main moved merges nothing.
+fx_lock() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"; cd "$MF_REPO" || return 1
+  export LEAD_MERGE_CLEANUP=true
+  local ok=$'## Verification\n- Passed.' out code n lock holder dead
+  lock="$MF_REPO/.git/lead-merge.lock"
+  mf_barrier_make hc
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+if [ -n "${FX_BLOCK:-}" ]; then : > "$MF_DIR/barrier-hc.waiting"; read -r _ < "$MF_DIR/barrier-hc"; fi
+if [ -n "${FX_PUSH_MAIN:-}" ]; then
+  w=$(mktemp -d); "$MF_REAL_GIT" clone -q "$MF_ORIGIN" "$w"; echo outside > "$w/outside.txt"
+  "$MF_REAL_GIT" -C "$w" add outside.txt; "$MF_REAL_GIT" -C "$w" commit -q -m outside; "$MF_REAL_GIT" -C "$w" push -q origin HEAD:main; rm -rf "$w"
+fi
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks"
+  for n in 11 12 13 14; do mf_pr_add "$n" "k$n" "$ok" "docs/k$n.md"; done
+
+  # T13: a batch blocked in head-checks holds the lock; a single merge waits, then refuses naming the holder.
+  FX_BLOCK=1 mf_run_limited 60 bash "$here/lead-merge.sh" --repo o/r --batch 11 12 > "$MF_DIR/batch.out" 2>&1 &
+  local bp=$!
+  mf_barrier_wait_until_blocked hc 20 && echo "ok   T13 batch reaches head-checks" || echo "FAIL T13 batch never reached head-checks"
+  holder=$(cat "$lock/pid" 2>/dev/null)
+  [ -n "$holder" ] && echo "ok   T13 batch holds a lock dir with its pid" || echo "FAIL T13 no lock dir with a pid"
+  out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1); code=$?
+  [ "$code" -ne 0 ] && echo "ok   T13 single merge refuses while the batch holds the lock" || echo "FAIL T13 single exit $code"
+  grep -q "holder.*$holder\|pid $holder" <<<"$out" && echo "ok   T13 refusal names the holder pid" || echo "FAIL T13 holder not named: $out"
+  mf_barrier_release hc
+  wait "$bp"; code=$?
+  [ "$code" -eq 0 ] && [ "$(jq -r .state "$MF_GH_DIR/pr-11.json")$(jq -r .state "$MF_GH_DIR/pr-12.json")" = MERGEDMERGED ] \
+    && echo "ok   T13 after the fifo opens the batch merges every PR" || echo "FAIL T13 batch exit $code: $(tail -5 "$MF_DIR/batch.out")"
+  [ ! -e "$lock" ] && echo "ok   T13 lock is released after the batch" || echo "FAIL T13 lock left behind"
+
+  # T13: a stale takeover is serialized; while another waiter is mid-takeover nobody else clears the lock.
+  dead=$(bash -c 'echo $$'); mkdir "$lock" "$lock.takeover"; echo "$dead" > "$lock/pid"; date +%s > "$lock/started"
+  out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1); code=$?
+  [ "$code" -ne 0 ] && [ "$(cat "$lock/pid" 2>/dev/null)" = "$dead" ] \
+    && echo "ok   T13 no second takeover while one is in progress" || echo "FAIL T13 took over during another takeover (exit $code): $out"
+  rm -rf "$lock" "$lock.takeover"
+
+  # T13: a lock dir whose pid is gone is taken over, and released again on a refusal exit.
+  dead=$(bash -c 'echo $$'); mkdir "$lock"; echo "$dead" > "$lock/pid"; date +%s > "$lock/started"
+  out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1)
+  grep -qi 'stale' <<<"$out" && echo "ok   T13 dead pid lock is taken over" || echo "FAIL T13 no takeover: $out"
+  grep -q 'missing current-head' <<<"$out" && echo "ok   T13 run past the lock reaches preflight" || echo "FAIL T13 did not reach preflight: $out"
+  [ ! -e "$lock" ] && echo "ok   T13 lock is released on a refusal exit" || echo "FAIL T13 lock left after refusal"
+
+  # T34: an outside push moves origin/main during the train run: nothing merges.
+  out=$(FX_PUSH_MAIN=1 bash "$here/lead-merge.sh" --repo o/r --batch 13 14 2>&1); code=$?
+  [ "$code" -ne 0 ] && echo "ok   T34 exit is non-zero" || echo "FAIL T34 exit $code"
+  grep -q 'main moved' <<<"$out" && echo "ok   T34 prints main moved" || echo "FAIL T34 message: $out"
+  [ "$(jq -r .state "$MF_GH_DIR/pr-13.json")$(jq -r .state "$MF_GH_DIR/pr-14.json")" = OPENOPEN ] && echo "ok   T34 0 merges" || echo "FAIL T34 merged something"
+  [ ! -e "$lock" ] && echo "ok   T34 lock is released" || echo "FAIL T34 lock left behind"
+}
+
+fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1 )
 printf '%s\n' "$fx_out"
 pass=$((pass+$(grep -c '^ok ' <<<"$fx_out"))); fail=$((fail+$(grep -c '^FAIL' <<<"$fx_out")))
 echo "passed $pass, failed $fail"
