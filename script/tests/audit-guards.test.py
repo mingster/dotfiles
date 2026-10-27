@@ -45,6 +45,24 @@ class Guards(unittest.TestCase):
         self.assertIn('2/1', notices[1])
         self.assertEqual(len(watch.alerts(self.config, state, 1, [], workers, {'r': True})), 1)
 
+    def test_failed_dispatch_without_retry_alerts(self):
+        state = {}
+        workers = [{'dispatchId': 'f', 'dispatchStatus': 'failed', 'taskId': 't1'}]
+        self.assertEqual(len(watch.alerts(self.config, state, 0, [], workers, {'r': True})), 1)
+        self.assertEqual(state['failed'], ['f'])
+
+    def test_failed_dispatch_with_live_retry_is_silent_and_not_recorded(self):
+        state = {}
+        workers = [{'dispatchId': 'f', 'dispatchStatus': 'failed', 'taskId': 't1'}, {'dispatchId': 'g', 'dispatchStatus': 'completed', 'taskId': 't1'}]
+        self.assertEqual(watch.alerts(self.config, state, 0, [], workers, {'r': True}), [])
+        self.assertEqual(state.get('failed', []), [])
+
+    def test_task_with_every_dispatch_failed_alerts_each_once(self):
+        state = {}
+        workers = [{'dispatchId': 'f', 'dispatchStatus': 'failed', 'taskId': 't1'}, {'dispatchId': 'g', 'dispatchStatus': 'failed', 'taskId': 't1'}]
+        self.assertEqual(len(watch.alerts(self.config, state, 0, [], workers, {'r': True})), 2)
+        self.assertEqual(watch.alerts(self.config, state, 1, [], workers, {'r': True}), [])
+
     def test_watchdog_pass_delivers_one_wake_and_persists_only_after_delivery(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as directory:
