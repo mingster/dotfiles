@@ -137,6 +137,11 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   echo "lead-merge: train receipt is at most $receipt_cap characters per comment (GitHub limit $receipt_limit)" >&2
   [ "$dry" != 1 ] || echo "[dry-run] receipt cap $receipt_cap characters (GitHub limit $receipt_limit)"
 
+  # One inventory read for the whole run, and only if a PR needs a Verdict: the first child that does
+  # fills this file, later children read it.
+  dispatches_file=$(mktemp); trap 'rm -f "$dispatches_file"; lock_release' EXIT
+  export LEAD_MERGE_DISPATCHES_FILE=$dispatches_file
+
   for batch_pr in "${batch_prs[@]}"; do
     batch_info=$(gh pr view "$batch_pr" --repo "$repo" --json headRefOid) || die "cannot read PR $batch_pr"
     batch_head=$(jq -r .headRefOid <<<"$batch_info")
@@ -181,6 +186,8 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
       echo "[dry-run] single PR #${composed_prs[0]} uses the unchanged single-PR path"
       exit 0
     fi
+    # exec skips the exit trap: drop the inventory file and let the single path read live.
+    rm -f "$dispatches_file"; unset LEAD_MERGE_DISPATCHES_FILE
     # exec keeps this pid, so the single run takes the lock over without a gap.
     unset LEAD_MERGE_LOCK_HELD
     exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
@@ -298,6 +305,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   expected_main=$batch_base
   cleanup_file=$(mktemp)
   batch_cleanup() {
+    rm -f "$dispatches_file"
     lock_release
     [ -s "$cleanup_file" ] || { rm -f "$cleanup_file"; return 0; }
     local args=() b s
@@ -495,10 +503,16 @@ is_coordinator() { # <id>
   grep -Fxq -- "$1" <<<"$coordinator_ids"
 }
 
-# Dispatch ids Orca knows about, read lazily and once, following page cursors.
+# Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent
+# creates LEAD_MERGE_DISPATCHES_FILE empty; the first child that needs the list fills it and the
+# rest read it. A missing or unreadable file falls back to one live read.
 known_dispatches=""
 load_dispatches() {
   local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
+  if [ -n "${LEAD_MERGE_DISPATCHES_FILE:-}" ] && [ -r "$LEAD_MERGE_DISPATCHES_FILE" ]; then
+    known_dispatches=$(cat "$LEAD_MERGE_DISPATCHES_FILE") || known_dispatches=""
+    [ -z "$known_dispatches" ] || return 0
+  fi
   # worker-list without --run sees only the caller's bound run, so read every run.
   for n in $(seq 1 50); do
     page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
@@ -520,6 +534,8 @@ load_dispatches() {
       done
       [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
     done <<<"$runs"
+    [ -z "${LEAD_MERGE_DISPATCHES_FILE:-}" ] || [ ! -w "$LEAD_MERGE_DISPATCHES_FILE" ] \
+      || printf '%s\n' "$known_dispatches" > "$LEAD_MERGE_DISPATCHES_FILE" 2>/dev/null || true
     return 0
   done
   die "run-list has too many pages to verify verdict dispatch ids"
