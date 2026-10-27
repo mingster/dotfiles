@@ -70,13 +70,21 @@ _mf_write_gh() {
 #!/usr/bin/env bash
 echo "gh $*" >> "$MF_GH_LOG"
 cmd="$1 ${2:-}"; shift 2 || true
-pr="" body="" body_file="" json="" match="" base=""
-[ "$cmd" != "api " ] && { pr=${1:-}; shift || true; }
+pr="" body="" body_file="" json="" match="" base="" jq_expr=""
+# A missing PR number means the PR of the current branch, as with the real gh.
+if [ "$cmd" != "api " ]; then
+  case "${1:-}" in -*|"") ;; *) pr=$1; shift ;; esac
+  if [ -z "$pr" ] && [ "$cmd" = "pr view" ]; then
+    pr=$(jq -s -r --arg b "$("$MF_REAL_GIT" rev-parse --abbrev-ref HEAD 2>/dev/null)" '[.[] | select(.headRefName == $b)][0].number // empty' "$MF_GH_DIR"/pr-*.json)
+    [ -n "$pr" ] || { echo "no pull requests found for current branch" >&2; exit 1; }
+  fi
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --body) body=$2; shift ;;
     --body-file) body_file=$2; shift ;;
     --json) json=$2; shift ;;
+    -q|--jq) jq_expr=$2; shift ;;
     --match-head-commit) match=$2; shift ;;
     --base) base=$2; shift ;;
     --repo|--limit|--state) shift ;;
@@ -89,7 +97,8 @@ case "$cmd" in
   "pr view")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
     if [ -n "$json" ]; then
-      jq --arg f "$json" '. as $o | ($f | split(",")) | map({(.): $o[.]}) | add' "$file"
+      out=$(jq --arg f "$json" '. as $o | ($f | split(",")) | map({(.): $o[.]}) | add' "$file")
+      if [ -n "$jq_expr" ]; then jq -r "$jq_expr" <<<"$out"; else printf '%s\n' "$out"; fi
     else jq -r '.body' "$file"; fi ;;
   "pr comment")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
@@ -116,13 +125,16 @@ EOS
 }
 
 mf_orca_add_run() { _mf_orca_append runs.json runs "$(jq -n --arg id "$1" '{id:$id}')"; }
-# mf_orca_add_worker <run> <dispatch> <dispatchStatus> <worktree>
+# mf_orca_add_worker <run> <dispatch> <dispatchStatus> <worktree> [terminal handle]
+# Entries carry the real Orca field names too: worktreeId ("repo::<path>") and agentTerminalHandle.
 mf_orca_add_worker() {
-  _mf_orca_append workers.json workers "$(jq -n --arg r "$1" --arg d "$2" --arg s "$3" --arg w "$4" \
-    '{runId:$r, dispatchId:$d, dispatchStatus:$s, worktree:$w}')"
+  _mf_orca_append workers.json workers "$(jq -n --arg r "$1" --arg d "$2" --arg s "$3" --arg w "$4" --arg h "${5:-}" \
+    '{runId:$r, dispatchId:$d, dispatchStatus:$s, worktree:$w, worktreeId:("repo::" + $w), agentTerminalHandle:$h}')"
 }
-# mf_orca_add_terminal <handle> <worktree>
-mf_orca_add_terminal() { _mf_orca_append terminals.json terminals "$(jq -n --arg h "$1" --arg w "$2" '{handle:$h, worktree:$w}')"; }
+# mf_orca_add_terminal <handle> <cwd>: cwd is a worktree root or any directory under it.
+mf_orca_add_terminal() {
+  _mf_orca_append terminals.json terminals "$(jq -n --arg h "$1" --arg w "$2" '{handle:$h, worktree:$w, cwd:$w, worktreePath:$w}')"
+}
 _mf_orca_append() {
   local f="$MF_ORCA_DIR/$1"
   jq --arg k "$2" --argjson v "$3" '.[$k] += [$v]' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
@@ -139,12 +151,12 @@ case "$1 ${2:-}" in
   "orchestration worker-list")
     run=""; shift 2
     while [ $# -gt 0 ]; do [ "$1" = --run ] && run=$2; shift; done
-    jq --arg r "$run" '.workers |= map(select($r=="" or .runId==$r))' "$d/workers.json" ;;
+    jq --arg r "$run" '.workers |= map(select($r=="" or .runId==$r)) | . + {ok:true, result:.}' "$d/workers.json" ;;
   "orchestration worker-release")
     id=""; shift 2
     while [ $# -gt 0 ]; do [ "$1" = --dispatch ] && id=$2; shift; done
     upd ".workers |= map(if .dispatchId==\"$id\" then .dispatchStatus=\"released\" else . end)" workers.json ;;
-  "terminal list") cat "$d/terminals.json" ;;
+  "terminal list") jq '. + {ok:true, result:.}' "$d/terminals.json" ;;
   "terminal close")
     h=""; shift 2
     while [ $# -gt 0 ]; do [ "$1" = --terminal ] && h=$2; shift; done
