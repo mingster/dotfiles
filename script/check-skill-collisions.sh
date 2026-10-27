@@ -56,8 +56,10 @@ has_global() {
 # --- names Orca bundles (it installs them itself; a copy shadows its install) ----
 orca_names=
 orca_ok=0
-if command -v orca >/dev/null 2>&1; then
-  orca_names=$(orca skills list 2>/dev/null | sed -n 's/^\([A-Za-z0-9][A-Za-z0-9_-]*\):.*/\1/p')
+orca_bin=$(command -v orca 2>/dev/null || true)
+[ -n "$orca_bin" ] || { [ -x "$HOME/.orca/cli/bin/orca" ] && orca_bin="$HOME/.orca/cli/bin/orca"; }
+if [ -n "$orca_bin" ]; then
+  orca_names=$("$orca_bin" skills list 2>/dev/null | sed -n 's/^\([A-Za-z0-9][A-Za-z0-9_-]*\):.*/\1/p')
   [ -n "$orca_names" ] && orca_ok=1
 fi
 [ "$orca_ok" -eq 1 ] || warn "orca not found or lists no skills, bundled-name rule skipped"

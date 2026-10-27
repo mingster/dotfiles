@@ -68,4 +68,17 @@ PATH="$base_path" DOTFILES="$D" bash "$ROOT/script/check-skill-collisions.sh" "$
 check "missing orca warns and passes" test "$rc" -eq 0
 check "missing orca prints WARN" has 'WARN.*orca' "$out"
 
+# 7. orca only at $HOME/.orca/cli/bin/orca (not on PATH): both scripts use it.
+export HOME="$tmp/home3"; mkdir -p "$HOME/.orca/cli/bin"
+cp "$tmp/bin/orca" "$HOME/.orca/cli/bin/orca"
+: > "$ORCA_LOG"
+PATH="$base_path" DOTFILES="$D" bash "$ROOT/script/setup-agent-skills.sh" > "$tmp/setup3.out" 2>&1
+check "setup uses orca from home cli dir" has 'skills install --all' "$ORCA_LOG"
+check "setup with home cli orca prints no missing line" lacks 'orca not found' "$tmp/setup3.out"
+mkdir -p "$P/.claude/skills/orca-cli"; echo x > "$P/.claude/skills/orca-cli/SKILL.md"
+out="$tmp/coll5.out"
+PATH="$base_path" DOTFILES="$D" bash "$ROOT/script/check-skill-collisions.sh" "$P" > "$out" 2>&1; rc=$?
+check "collision check uses orca from home cli dir" test "$rc" -eq 1
+check "home cli orca collision names bundling" has 'bundled by orca' "$out"
+
 [ "$fails" -eq 0 ] && echo "PASS" || { echo "$fails failure(s)"; exit 1; }
