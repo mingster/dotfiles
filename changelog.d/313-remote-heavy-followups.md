@@ -1,0 +1,1 @@
+- remote-heavy.sh now explains when the remote lacks the bundle's base commit, documents that the remote command gets no caller stdin, and has tests for the missing end marker, branch-equal-to-main and failed remote fetch paths.

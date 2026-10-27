@@ -13,6 +13,7 @@
 # markers, so lines a login shell prints around the command never reach the caller.
 # Fetches use remote Python 3 globbing and OpenSSH scp (SFTP); files land by basename
 # in --into, so select unique artifact names when fetching from multiple directories.
+# The remote command does not inherit the caller's stdin: the remote shell's stdin is the bundle stream.
 set -euo pipefail
 
 # shellcheck disable=SC2016 # expanded on the remote host
@@ -69,7 +70,8 @@ trap 'rm -f "$bundle"' EXIT
 base64 -d > "$bundle"
 # The bundle holds only commits past main, so the remote needs main first; a full bundle does not.
 git -C "$repo_dir" fetch -q origin main 2>/dev/null || true
-git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha"
+git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha" \
+  || { echo "remote-heavy: the remote checkout lacks the base commit of the bundle (its origin/main is behind this one); update origin/main there and retry" >&2; exit 1; }
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
 [ ! -d "$HOME/dotfiles-main" ] || export DOTFILES_DIR="$HOME/dotfiles-main"
 [ ! -d /usr/bin/core_perl ] || export PATH="$PATH:/usr/bin/core_perl"
