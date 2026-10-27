@@ -1,0 +1,1 @@
+Add generic coordinator move scripts (new-coordinator.sh, secrets-pack.sh, secrets-unpack.sh) with tests, and a dotfiles .zshenv (Homebrew, bun and npm settings, PATH, optional ~/.zshenv.local) linked by install.sh.

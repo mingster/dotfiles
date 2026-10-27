@@ -42,6 +42,7 @@ ln -sfn "$DOTFILES_ROOT/.hgignore_global" "$HOME/.hgignore_global"
 ln -sfn "$DOTFILES_ROOT/.nanorc" "$HOME/.nanorc"
 ln -sfn "$DOTFILES_ROOT/.vimrc" "$HOME/.vimrc"
 ln -sfn "$DOTFILES_ROOT/.vim" "$HOME/.vim"
+ln -sfn "$DOTFILES_ROOT/.zshenv" "$HOME/.zshenv"
 ln -sfn "$DOTFILES_ROOT/.zshrc" "$HOME/.zshrc"
 ln -sfn "$DOTFILES_ROOT/.p10k.zsh" "$HOME/.p10k.zsh"
 
