@@ -64,6 +64,43 @@ root=$(cd -P "$HOME/orca/workspaces" 2>/dev/null && pwd) || die "no $HOME/orca/w
 case "$top" in "$root"/*) ;; *) die "worktree is not under $root" ;; esac
 case "$(basename "$top")" in lead-*) ;; *) die "only the lead worktree (lead-*) may merge" ;; esac
 
+# Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent
+# creates LEAD_MERGE_DISPATCHES_FILE empty; the first child that needs the list fills it and the
+# rest read it. A missing or unreadable file falls back to one live read.
+known_dispatches=""
+load_dispatches() {
+  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
+  if [ -n "${LEAD_MERGE_DISPATCHES_FILE:-}" ] && [ -r "$LEAD_MERGE_DISPATCHES_FILE" ]; then
+    known_dispatches=$(cat "$LEAD_MERGE_DISPATCHES_FILE") || known_dispatches=""
+    [ -z "$known_dispatches" ] || return 0
+  fi
+  # worker-list without --run sees only the caller's bound run, so read every run.
+  for n in $(seq 1 50); do
+    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+      || die "cannot read orca run-list to verify verdict dispatch ids"
+    runs+=$(jq -r '.result.runs[]?.id' <<<"$page" 2>/dev/null)$'\n' \
+      || die "cannot parse orca run-list to verify verdict dispatch ids"
+    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
+    [ -n "$cursor" ] && continue
+    while IFS= read -r run; do
+      [ -n "$run" ] || continue
+      cursor=""
+      for m in $(seq 1 50); do
+        page=$("$orca" orchestration worker-list --run "$run" --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+          || die "cannot read orca worker-list to verify verdict dispatch ids"
+        known_dispatches+=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null)$'\n' \
+          || die "cannot parse orca worker-list to verify verdict dispatch ids"
+        cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
+        [ -n "$cursor" ] || break
+      done
+      [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
+    done <<<"$runs"
+    [ -z "${LEAD_MERGE_DISPATCHES_FILE:-}" ] || [ ! -w "$LEAD_MERGE_DISPATCHES_FILE" ] \
+      || printf '%s\n' "$known_dispatches" > "$LEAD_MERGE_DISPATCHES_FILE" 2>/dev/null || true
+    return 0
+  done
+  die "run-list has too many pages to verify verdict dispatch ids"
+}
 if [ "${#batch_prs[@]}" -gt 0 ]; then
   script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
   head_checks=${LEAD_MERGE_HEAD_CHECKS:-$(dirname "$script")/head-checks.sh}
@@ -77,6 +114,11 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     || die "head-checks receipt cap $receipt_cap does not fit a $receipt_limit character comment"
   echo "lead-merge: train receipt is at most $receipt_cap characters per comment (GitHub limit $receipt_limit)" >&2
   [ "$dry" != 1 ] || echo "[dry-run] receipt cap $receipt_cap characters (GitHub limit $receipt_limit)"
+
+  # One inventory read for the whole run, and only if a PR needs a Verdict: the first child that does
+  # fills this file, later children read it.
+  dispatches_file=$(mktemp); trap 'rm -f "$dispatches_file"' EXIT
+  export LEAD_MERGE_DISPATCHES_FILE=$dispatches_file
 
   for batch_pr in "${batch_prs[@]}"; do
     batch_info=$(gh pr view "$batch_pr" --repo "$repo" --json headRefOid) || die "cannot read PR $batch_pr"
@@ -122,6 +164,8 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
       echo "[dry-run] single PR #${composed_prs[0]} uses the unchanged single-PR path"
       exit 0
     fi
+    # exec skips the exit trap: drop the inventory file and let the single path read live.
+    rm -f "$dispatches_file"; unset LEAD_MERGE_DISPATCHES_FILE
     exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
   fi
 
@@ -226,6 +270,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   expected_main=$batch_base
   cleanup_file=$(mktemp)
   batch_cleanup() {
+    rm -f "$dispatches_file"
     [ -s "$cleanup_file" ] || { rm -f "$cleanup_file"; return 0; }
     local args=() b s
     while read -r b s; do args+=(--branch "$b" --head-sha "$s"); done < "$cleanup_file"
@@ -405,35 +450,6 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-# Dispatch ids Orca knows about, read lazily and once, following page cursors.
-known_dispatches=""
-load_dispatches() {
-  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
-  # worker-list without --run sees only the caller's bound run, so read every run.
-  for n in $(seq 1 50); do
-    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
-      || die "cannot read orca run-list to verify verdict dispatch ids"
-    runs+=$(jq -r '.result.runs[]?.id' <<<"$page" 2>/dev/null)$'\n' \
-      || die "cannot parse orca run-list to verify verdict dispatch ids"
-    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
-    [ -n "$cursor" ] && continue
-    while IFS= read -r run; do
-      [ -n "$run" ] || continue
-      cursor=""
-      for m in $(seq 1 50); do
-        page=$("$orca" orchestration worker-list --run "$run" --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
-          || die "cannot read orca worker-list to verify verdict dispatch ids"
-        known_dispatches+=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null)$'\n' \
-          || die "cannot parse orca worker-list to verify verdict dispatch ids"
-        cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
-        [ -n "$cursor" ] || break
-      done
-      [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
-    done <<<"$runs"
-    return 0
-  done
-  die "run-list has too many pages to verify verdict dispatch ids"
-}
 # Generated team copies: merge on the Verdict of the matching MERGED dotfiles PR.
 generated_ok=false
 if [ -n "$verdict_from" ]; then

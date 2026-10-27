@@ -316,7 +316,53 @@ EOS
   jq -r '.comments[0].body' "$MF_GH_DIR/pr-21.json" | grep -q "Full log: $HEAD_CHECKS_LOG_DIR/" && echo "ok   T24 receipt names the full log" || echo "FAIL T24 no log name"
 }
 
-fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1 )
+# T15: a batch of 3 PRs that each need a Verdict reads the dispatch inventory once, parent and children together.
+fx_dispatches() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"
+  export FX_HC_LOG="$MF_DIR/hc.log" EVENT_LOG="$MF_DIR/events"; : > "$EVENT_LOG"
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+echo "head-checks $heads" >> "$FX_HC_LOG"
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
+  mf_orca_add_run run_1; mf_orca_add_worker run_1 ctx_verify dispatched "$MF_DIR/wt"
+  cd "$MF_REPO" || return 1
+  local ok=$'## Verification\n- Passed.' n h out code runs merged=0
+  for n in 41 42 43; do
+    mf_pr_add "$n" "v$n" "$ok" "src/v$n.sh"
+    h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+    jq --arg b "Verdict: PASS head=$h verifier=ctx_verify author=unknown" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' \
+      "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  done
+  : > "$MF_ORCA_LOG"
+  out=$(mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --batch 41 42 43 2>&1); code=$?
+  [ "$code" -eq 0 ] && echo "ok   T15 batch with Verdicts exits 0" || echo "FAIL T15 exit $code: $out"
+  for n in 41 42 43; do [ "$(jq -r .state "$MF_GH_DIR/pr-$n.json")" != MERGED ] || merged=$((merged+1)); done
+  [ "$merged" -eq 3 ] && echo "ok   T15 every PR merges" || echo "FAIL T15 merged $merged of 3: $out"
+  runs=$(grep -c 'run-list' "$MF_ORCA_LOG")
+  [ "$runs" -eq 1 ] && echo "ok   T15 run-list called once across parent and children" || echo "FAIL T15 run-list called $runs times"
+  # A missing inventory file falls back to one live read per child, not to a refusal.
+  mf_pr_add 44 v44 "$ok" src/v44.sh; mf_pr_add 45 v45 "$ok" src/v45.sh
+  for n in 44 45; do
+    h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+    jq --arg b "Verdict: PASS head=$h verifier=ctx_verify author=unknown" --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false},{body:$b, author:"fixture", edited:false, minimized:false}]' \
+      "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  done
+  : > "$MF_ORCA_LOG"
+  out=$(LEAD_MERGE_DISPATCHES_FILE="$MF_DIR/missing" mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --pr 44 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-44.json")" 2>&1); code=$?
+  [ "$code" -eq 0 ] && grep -q '^MERGED' <<<"$out" && echo "ok   T15 missing inventory file falls back to a live read" || echo "FAIL T15 fallback exit $code: $out"
+  [ "$(grep -c 'run-list' "$MF_ORCA_LOG")" -eq 1 ] && echo "ok   T15 fallback reads once" || echo "FAIL T15 fallback reads"
+}
+
+fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_dispatches) 2>&1 )
 printf '%s\n' "$fx_out"
 pass=$((pass+$(grep -c '^ok ' <<<"$fx_out"))); fail=$((fail+$(grep -c '^FAIL' <<<"$fx_out")))
 echo "passed $pass, failed $fail"

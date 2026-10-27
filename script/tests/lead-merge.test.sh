@@ -215,6 +215,20 @@ setup; FINAL_JSON='{"state":"MERGED","url":"u","mergeCommit":null}'; check "miss
 setup; comments=""; check "missing verdict refused" 1 'verdict'
 setup; comments="Verdict: FAIL head=$SHA verifier=ctx_verify author=ctx_author"; check "FAIL verdict refused" 1 'verdict'
 setup; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; check "stale verdict without clean merge proof refused" 1 'verdict'
+# T32: a single PR with Checks: PASS at its exact head runs no head-checks.
+unit; (
+unit_init
+setup
+cat > "$tmp/bin/hc-log" <<'EOS'
+#!/usr/bin/env bash
+echo "head-checks $*" >> "$HC_LOG"
+EOS
+chmod +x "$tmp/bin/hc-log"
+export LEAD_MERGE_HEAD_CHECKS="$tmp/bin/hc-log" HC_LOG="$ucd/hc.log"; : > "$HC_LOG"
+check "exact head Checks PASS merges" 0 '^MERGED' 1
+if [ -s "$HC_LOG" ]; then cn=$((cn+1)); printf 'FAIL T32 head-checks ran: %s\n' "$(cat "$HC_LOG")" > "$ucd/result.$(printf %04d "$cn")"
+else cn=$((cn+1)); echo "ok   T32 no head-checks run for an exact head Checks PASS" > "$ucd/result.$(printf %04d "$cn")"; fi
+) </dev/null &
 setup; comments="Verdict: PASS+NOTES head=$SHA verifier=ctx_verify author=ctx_author"; check "PASS+NOTES allowed" 0 '^MERGED' 1
 setup; files='[{"path":"docs/guide.txt"},{"path":"README.md"},{"path":"changelog.d/change.txt"}]'; comments=""; check "docs only skips verdict" 0 '^MERGED' 1
 setup; files='[{"path":".claude/agents/qa-sdet.md"}]'; comments=""; check "agent instructions require verdict" 1 'verdict'
