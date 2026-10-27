@@ -16,6 +16,11 @@ class RemoteTests(unittest.TestCase):
         self.stub('git', '''#!/bin/sh
 printf 'git %s\\n' "$*" >> "$CALLS"
 [ "$1" != rev-parse ] || echo fixture-sha
+[ "$1" != merge-base ] || echo "$MERGE_BASE"
+if [ "$1" = -C ] && [ "$3" = fetch ]; then
+  [ "$5" != origin ] || [ -z "$FAIL_ORIGIN_FETCH" ] || exit 1
+  [ "$5" = origin ] || [ -z "$FAIL_BUNDLE_FETCH" ] || { echo 'error: Repository lacks these prerequisite commits' >&2; exit 1; }
+fi
 if [ "$1" = -C ] && [ "$3" = worktree ]; then mkdir -p "$7"; fi
 ''')
         self.stub('ssh', '''#!/bin/sh
@@ -48,6 +53,26 @@ shutil.copyfile(a[0].split(':',1)[1], a[1])
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn(f'git -C checkout worktree add -q --detach {self.remote} fixture-sha',self.log.read_text())
         self.assertEqual(result.stdout.strip(),str(self.remote))
+    def test_no_end_marker_exits_255(self):
+        self.stub('ssh','#!/bin/sh\nexit 0\n')
+        result=self.run_heavy([],['true'])
+        self.assertEqual(result.returncode,255)
+        self.assertIn('remote setup failed',result.stderr)
+    def test_branch_equal_to_main_bundle_stays_non_empty(self):
+        self.env['MERGE_BASE']='fixture-sha'
+        result=self.run_heavy([],['true'])
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('git bundle create - HEAD ^fixture-sha^',self.log.read_text())
+    def test_failed_origin_fetch_still_runs_command(self):
+        self.env['FAIL_ORIGIN_FETCH']='1'
+        result=self.run_heavy([],['sh','-c','printf ran'])
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'ran')
+    def test_missing_bundle_prerequisite_is_explained(self):
+        self.env['FAIL_BUNDLE_FETCH']='1'
+        result=self.run_heavy([],['true'])
+        self.assertEqual(result.returncode,255)
+        self.assertIn('lacks the base commit of the bundle',result.stderr)
     def test_no_fetch_keeps_single_ssh_and_status(self):
         result=self.run_heavy([],['sh','-c','printf job-output; exit 9'])
         self.assertEqual(result.returncode,9,result.stderr)
