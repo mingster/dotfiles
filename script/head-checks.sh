@@ -82,6 +82,8 @@ sys.stdout.write(text)
   [ "$status" -eq 0 ] || exit 1
 }
 trap finish EXIT
+# A killed run must not read as a pass: bash hands the EXIT trap status 0 after SIGTERM.
+trap 'exit 143' TERM; trap 'exit 130' INT
 if [ -n "$pr" ]; then
   info=$(cd "$repo" && gh pr view "$pr" --json headRefOid,baseRefOid)
   sha=$(jq -r .headRefOid <<<"$info"); base=$(jq -r .baseRefOid <<<"$info")
@@ -110,23 +112,33 @@ name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
 slots="$HEAD_CHECKS_SLOTS"
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
+wait_seconds="${HEAD_CHECKS_WAIT_SECONDS:-600}"
+[[ "$wait_seconds" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_WAIT_SECONDS must be a whole number"
 mkdir -p "$HOME/orca/workspaces/$name"
 # Each check worktree persists so installed packages survive between runs; one run at a time may use each.
-worktree="" busy=""
-for i in $(seq 1 "$slots"); do
-  candidate="$HOME/orca/workspaces/$name/_checks"; [ "$i" -eq 1 ] || candidate="$candidate-$i"
-  lock="$candidate.lock"
-  if ! mkdir "$lock" 2>/dev/null; then
-    holder=$(cat "$lock/pid" 2>/dev/null || true)
-    if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
-      busy="$busy $holder"; lock=""; continue
+# Until a worktree is held nothing is checked, so a run killed while waiting posts no verdict.
+worktree="" busy="" attempt=0 refused=1
+while :; do
+  busy=""
+  for i in $(seq 1 "$slots"); do
+    candidate="$HOME/orca/workspaces/$name/_checks"; [ "$i" -eq 1 ] || candidate="$candidate-$i"
+    lock="$candidate.lock"
+    if ! mkdir "$lock" 2>/dev/null; then
+      holder=$(cat "$lock/pid" 2>/dev/null || true)
+      if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
+        busy="$busy $holder"; lock=""; continue
+      fi
+      rm -rf "$lock"; mkdir "$lock" || { lock=""; continue; }
     fi
-    rm -rf "$lock"; mkdir "$lock" || { lock=""; continue; }
-  fi
-  worktree="$candidate"; break
+    worktree="$candidate"; break
+  done
+  # Wait for a worktree to free up, polling twice a second.
+  [ -z "$worktree" ] && [ "$attempt" -lt $((wait_seconds * 2)) ] || break
+  attempt=$((attempt+1)); sleep 0.5
 done
 # A busy refusal checked nothing, so it posts no Checks verdict.
-[ -n "$worktree" ] || { refused=1; usage "every check worktree is in use by pid$busy"; }
+[ -n "$worktree" ] || usage "every check worktree is in use by pid$busy"
+refused=""
 printf '%s\n' "$$" > "$lock/pid"
 common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
 if [ -e "$worktree" ] && [ "$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common" ] \
@@ -158,8 +170,9 @@ if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/nu
       case "$glob" in ''|\#*) continue ;; esac
       # shellcheck disable=SC2254
       case "$file" in $glob)
-        printf '\nDeploy guard: PR adds %s, which matches %s in .claude/deploy-guard-paths\n' "$file" "$glob" >> "$log"
-        exit 1 ;;
+        # A guard refusal checked nothing, so it posts no Checks verdict.
+        refused=1
+        usage "Deploy guard: PR adds $file, which matches $glob in .claude/deploy-guard-paths" ;;
       esac
     done <<<"$guards"
   done < <(git -C "$worktree" diff --name-only --diff-filter=A -z "$base...$sha" --)

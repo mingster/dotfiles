@@ -257,6 +257,21 @@ def command_timeout():
     return seconds or None
 
 
+def holds_slot():
+    """True when HEAVY_GATE_TOKEN names a slot a live process still holds."""
+    token = os.environ.get('HEAVY_GATE_TOKEN')
+    if not token:
+        return False
+    root = Path.home() / '.cache/heavy-gate'
+    for path in root.glob('slot-*'):
+        try:
+            if (path / 'token').read_text() == token and alive(int((path / 'pid').read_text())):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def gate(args):
     timeout = command_timeout()
     settings = config()
@@ -269,8 +284,9 @@ def gate(args):
         raise ValueError('usage: heavy-gate.sh [--weight N] -- <cmd...>')
     slots = Slots(count)
     last_notice = -math.inf
+    nested = holds_slot()
     try:
-        while True:
+        while not nested:
             load, free = sample()
             reason = (f'load {load:.2f} exceeds {settings["load_max"]:g}' if load > settings['load_max']
                       else f'free memory {free:.1f}% is below 20%' if free < 20
@@ -285,7 +301,11 @@ def gate(args):
                 last_notice = now
             time.sleep(poll_interval())
         with children() as processes:
-            env = dict(os.environ, HEAD_CHECKS_SLOTS=str(count)) if args.head_checks else None
+            env = dict(os.environ)
+            if not nested:
+                env['HEAVY_GATE_TOKEN'] = slots.token
+            if args.head_checks:
+                env['HEAD_CHECKS_SLOTS'] = str(count)
             proc = subprocess.Popen(args.command[1:], start_new_session=True, env=env)
             processes.append(proc)
             try:

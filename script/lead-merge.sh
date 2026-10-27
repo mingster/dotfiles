@@ -21,10 +21,6 @@ flush_refusals() { [ "${#refusals[@]}" -eq 0 ] || { print_refusals; exit 1; }; }
 # A fatal error still reports the refusals collected before it.
 die() { print_refusals; echo "lead-merge: refused: $*" >&2; exit 1; }
 
-issue_from_branch() {
-  printf '%s\n' "$1" | grep -oE '[0-9]{3,}' | tail -n1 || true
-}
-
 repo="" pr="" head="" mechanical=false verify_command="" verify_set=false verdict_from="" batch_requested=false
 batch_prs=()
 while [ $# -gt 0 ]; do
@@ -228,11 +224,23 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   done
   merged=0
   expected_main=$batch_base
+  cleanup_file=$(mktemp)
+  batch_cleanup() {
+    [ -s "$cleanup_file" ] || { rm -f "$cleanup_file"; return 0; }
+    local args=() b s
+    while read -r b s; do args+=(--branch "$b" --head-sha "$s"); done < "$cleanup_file"
+    rm -f "$cleanup_file"
+    echo "cleanup: starting after the last merge"
+    bash "${LEAD_MERGE_CLEANUP:-$(dirname "$0")/merge-cleanup.sh}" "${args[@]}" \
+      || echo "cleanup: incomplete (merges succeeded); run script/wrap-up.sh" >&2
+    return 0
+  }
+  trap batch_cleanup EXIT
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
     expected_main_tree=$(git rev-parse "$expected_main^{tree}") || die "cannot read expected batch prefix tree"
     LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
-      LEAD_MERGE_EXPECTED_MAIN_TREE=$expected_main_tree \
+      LEAD_MERGE_EXPECTED_MAIN_TREE=$expected_main_tree LEAD_MERGE_CLEANUP_FILE=$cleanup_file \
       bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
     expected_main=$(append_train "$expected_main" "${composed_prs[$i]}" "${composed_heads[$i]}") \
       || die "cannot advance expected batch prefix"
@@ -243,13 +251,13 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
 fi
 
 # 2. PR state
-info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid) \
+info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
   || die "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
 for mergeable_retry in 1 2 3; do
   [ "$(field .mergeable)" = UNKNOWN ] || break
   sleep 2
-  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid) \
+  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
     || die "cannot reread PR $pr while mergeability is UNKNOWN"
 done
 preflight_only=${LEAD_MERGE_PREFLIGHT_ONLY:-0}
@@ -653,11 +661,10 @@ merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || die "MERGED read-back has no merge commit"
 echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
 
-# Cleanup after the merge: head branch, ticket lanes, old recovery branches. Never fails the merge.
-# Issue N: "Closes #N" in the PR body, else the last run of 3+ digits in the branch name. DRY_RUN=1 previews.
+# Cleanup after the merge: the merged head branch and finished worktrees. Never fails the merge.
+# The issue comes only from the PR's closing references. DRY_RUN=1 previews.
 head_branch=$(field .headRefName)
-issue=$(field .body | sed -nE 's/.*[Cc]loses[[:space:]]+#([0-9]+).*/\1/p' | head -n1)
-[ -n "$issue" ] || issue=$(issue_from_branch "$head_branch")
+issue=$(field '.closingIssuesReferences[0].number // empty')
 retarget_ok=true
 stacked=$(gh pr list --repo "$repo" --state open --base "$head_branch" --limit 1000 --json number) || retarget_ok=false
 if [ "$retarget_ok" = true ]; then
@@ -672,9 +679,15 @@ if [ "$retarget_ok" = true ]; then
   done < <(jq -r '.[].number' <<<"$stacked")
 fi
 if [ "$retarget_ok" = true ]; then
-  cleanup=${LEAD_MERGE_CLEANUP:-$(dirname "$0")/merge-cleanup.sh}
-  bash "$cleanup" --branch "$head_branch" ${issue:+--issue "$issue"} ${pr:+--pr "$pr"} \
-    || echo "lead-merge: cleanup incomplete (merge succeeded); run script/wrap-up.sh" >&2
+  if [ -n "${LEAD_MERGE_CLEANUP_FILE:-}" ]; then
+    # In a batch, cleanup runs once after the last merge.
+    printf '%s %s\n' "$head_branch" "$head" >> "$LEAD_MERGE_CLEANUP_FILE"
+    echo "cleanup: deferred until the batch ends ($head_branch)"
+  else
+    echo "cleanup: starting for $head_branch"
+    bash "${LEAD_MERGE_CLEANUP:-$(dirname "$0")/merge-cleanup.sh}" --branch "$head_branch" --head-sha "$head" ${issue:+--issue "$issue"} \
+      || echo "cleanup: incomplete (merge succeeded); run script/wrap-up.sh" >&2
+  fi
 else
-  echo "lead-merge: cleanup skipped (merge succeeded); could not retarget every PR based on $head_branch" >&2
+  echo "cleanup: skipped (merge succeeded); could not retarget every PR based on $head_branch" >&2
 fi

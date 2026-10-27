@@ -112,6 +112,7 @@ EOF
 cat > "$tmp/bin/cleanup" <<'EOF'
 #!/usr/bin/env bash
 echo "cleanup $*" >> "$EVENT_LOG"
+exit "${CLEANUP_EXIT:-0}"
 EOF
 cat > "$tmp/bin/sleep" <<'EOF'
 #!/usr/bin/env bash
@@ -141,6 +142,19 @@ check "red train still merges passing PRs" test "$code" -eq 0
 check "red train names the failing PR" grep -q 'failing PR #12' <<<"$out"
 check "red train does not merge the failing PR" test "$(grep -c '^merge 12$' "$EVENT_LOG")" -eq 0
 check "red train merges both passing PRs" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 2
+
+# T33: cleanup runs once, after the last merge, and a failing cleanup never fails the batch.
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
+CLEANUP_EXIT=1; export CLEANUP_EXIT
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+unset CLEANUP_EXIT
+check "batch exits 0 though cleanup fails" test "$code" -eq 0
+check "batch merges all three" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 3
+check "batch runs cleanup once" test "$(grep -c '^cleanup ' "$EVENT_LOG")" -eq 1
+check "cleanup starts after the last merge" test "$(grep -n '^cleanup ' "$EVENT_LOG" | cut -d: -f1)" -gt "$(grep -n '^merge 13$' "$EVENT_LOG" | cut -d: -f1)"
+check "the one cleanup names all three merged heads" test "$(grep '^cleanup ' "$EVENT_LOG" | grep -o -- '--head-sha' | wc -l | tr -d ' ')" -eq 3
+check "every MERGED prints before the cleanup line" test "$(grep -n '^MERGED' <<<"$out" | tail -1 | cut -d: -f1)" -lt "$(grep -n '^cleanup: starting' <<<"$out" | cut -d: -f1)"
+check "a failing cleanup is reported" grep -q 'cleanup: incomplete' <<<"$out"
 
 : > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
 FAIL_EXACT_HEADS=$(IFS=,; echo "${heads[*]}"); export FAIL_EXACT_HEADS

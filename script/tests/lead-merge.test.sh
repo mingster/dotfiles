@@ -86,7 +86,7 @@ setup() {
 mkjson() {
   PR_JSON=$(printf '{"state":"%s","baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeable":"%s","url":"https://github.com/o/r/pull/7","files":%s}' \
     "$state" "$base" "$branch" "$headsha" "$mergeable" "$files")
-  PR_JSON=$(jq --arg body "$body" --arg comments "$comments" --arg checks "$checks" --arg countersign "$countersign" --arg base "$base_sha" '. + {body:$body, baseRefOid:$base, comments:[$checks,$comments,$countersign | {body:.}]}' <<<"$PR_JSON")
+  PR_JSON=$(jq --arg body "$body" --arg comments "$comments" --arg checks "$checks" --arg countersign "$countersign" --arg base "$base_sha" '. + {body:$body, baseRefOid:$base, closingIssuesReferences:('"${CLOSING_JSON:-[]}"'), comments:[$checks,$comments,$countersign | {body:.}]}' <<<"$PR_JSON")
   [ -z "$COMMENTS_JSON" ] || PR_JSON=$(jq --argjson comments "$COMMENTS_JSON" '.comments=$comments' <<<"$PR_JSON")
   API_FILES=${API_OVERRIDE:-$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")}
   PR_JSON=$(jq --argjson count "${COUNT_OVERRIDE:-$(jq length <<<"$API_FILES")}" '.changedFiles=$count' <<<"$PR_JSON")
@@ -523,4 +523,27 @@ check "verdict-from refuses an untracked file under templates/agent-team" 1 'not
   if [ -z "$fails" ]; then echo "ok   T1 every refusal prints in one run and nothing mutates" > "$res"; else printf 'FAIL T1%s\n%s\n' "$fails" "$out" > "$res"; fi
 ) </dev/null &
 
+# Cleanup call site (spec #286 T5, T12): the issue comes only from closingIssuesReferences, a failing cleanup never fails the merge.
+unit; (
+unit_init
+cat > "$ucd/cleanup-stub" <<'EOS'
+#!/usr/bin/env bash
+echo "cleanup-args: $*"
+exit "${CLEANUP_EXIT:-0}"
+EOS
+chmod +x "$ucd/cleanup-stub"
+export LEAD_MERGE_CLEANUP="$ucd/cleanup-stub"
+setup; branch=s9-2105; CLOSING_JSON='[]'
+check "T5 no closing reference: no issue passed to cleanup, even with a number in the branch name" 0 'cleanup-args: --branch s9-2105 --head-sha [0-9a-f]+$' 1
+CLOSING_JSON='[{"number":2105}]'
+check "T5 closing reference 2105 is passed to cleanup" 0 'cleanup-args: --branch s9-2105 --head-sha [0-9a-f]+ --issue 2105$' 1
+CLOSING_JSON='[]'; body=$'## Verification\n- Ran script successfully.\nCloses #4411'
+check "T5 a Closes line in the body is not used" 0 'cleanup-args: --branch s9-2105 --head-sha [0-9a-f]+$' 1
+CLEANUP_EXIT=1; export CLEANUP_EXIT
+check "T12 failing cleanup: merge still exits 0 and says so" 0 'cleanup: incomplete \(merge succeeded\)' 1
+check "T12 a cleanup: line prints before cleanup starts" 0 'cleanup: starting for s9-2105' 1
+cn=$((cn+1)); rm -f "$MERGE_LOG" "$MERGE_LOG.calls"; mkjson; out=$("$here/lead-merge.sh" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
+if [ "$code" = 0 ] && [ "$(echo "$out" | grep -n '^MERGED' | cut -d: -f1)" -lt "$(echo "$out" | grep -n '^cleanup: starting' | cut -d: -f1)" ]; then echo "ok   T12 MERGED prints before the cleanup: line" > "$ucd/result.$(printf %04d "$cn")"
+else printf 'FAIL T12 order (exit %s)\n%s\n' "$code" "$out" > "$ucd/result.$(printf %04d "$cn")"; fi
+) </dev/null &
 report
