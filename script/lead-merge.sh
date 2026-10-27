@@ -405,6 +405,21 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
+# Coordinator ids allowed as a Verdict author (not a dispatch): coordinator_ids in lead-merge.local.json, read lazily.
+coordinator_ids="" coordinators_loaded=false
+is_coordinator() { # <id>
+  if [ "$coordinators_loaded" = false ]; then
+    local dir cfg
+    dir=$(cd "$(dirname "$0")" && pwd)
+    cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
+      || die "cannot read local coordinator config"
+    coordinator_ids=$(jq -r '.coordinator_ids // [] | if type == "array" and all(.[]; type == "string") then .[] else error("coordinator_ids") end' <<<"$cfg") \
+      || die "invalid coordinator_ids config"
+    coordinators_loaded=true
+  fi
+  grep -Fxq -- "$1" <<<"$coordinator_ids"
+}
+
 # Dispatch ids Orca knows about, read lazily and once, following page cursors.
 known_dispatches=""
 load_dispatches() {
@@ -530,18 +545,30 @@ fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0 main_fetched=${main_fetched:-false} carry_notes=""
+  ignored_notes=() row_n=0
+  verdict_fix="post a fresh comment with script/post-verdict.sh (it builds the first line; edits never count)"
+  # A FAIL is retired only by "Countersign: Elon head=<current head> reason=supersedes <comment url>".
+  superseded=$(jq -r --arg h "$head" '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=supersedes (?<u>[^[:space:]]+)[[:space:]]*$")? | select(.h == $h) | .u' <<<"$info")
   # Every Verdict for this head (or carried across clean merges of main) counts. Newest first; none
   # of them can erase another. An edited or minimized PASS never counts (the
   # verifier posts a fresh one); an edited or minimized FAIL still blocks.
   while IFS= read -r row; do
     comment=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\"")
     flagged=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
+    row_n=$((row_n+1))
+    ref=$(jq -r --arg n "$row_n" '@base64d | fromjson | .url // ("comment #" + $n + " (newest first)")' <<<"\"$row\"")
     line=${comment%%$'\n'*}
-    [[ "$line" == Verdict:* ]] || ! grep -q '^Verdict: ' <<<"$comment" || misplaced=$((misplaced+1))
+    if [[ "$line" != Verdict:* ]] && grep -q '^Verdict: ' <<<"$comment"; then
+      misplaced=$((misplaced+1))
+      ignored_notes+=("ignored Verdict $ref: the Verdict line is not the first line of its comment. Fix: $verdict_fix")
+    fi
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
       if [ "${BASH_REMATCH[3]}" = "${BASH_REMATCH[4]}" ]; then refuse "author cannot supply verifier verdict"; continue; fi
+      if [ "$verdict" = FAIL ] && [[ "$ref" != "comment #"* ]] && grep -Fxq -- "$ref" <<<"$superseded"; then
+        echo "lead-merge: FAIL Verdict $ref retired by a supersedes Countersign"; continue
+      fi
       applies=false carried=""
       if [ "$candidate_head" = "$head" ]; then
         applies=true
@@ -556,19 +583,29 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
         if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then refuse "verdict verifier $verifier_id is not a known dispatch"; continue; fi
-        # author=unknown is the one literal allowed without a dispatch; any other author must be known.
-        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches"; then refuse "verdict author $author_id is not a known dispatch"; continue; fi
-        if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then edited=$((edited+1)); continue; fi
+        # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
+        # or a configured coordinator id.
+        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id"; then
+          refuse "verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"; continue
+        fi
+        if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then
+          edited=$((edited+1))
+          ignored_notes+=("ignored Verdict $ref: it was edited or minimized, so it does not count. Fix: $verdict_fix")
+          continue
+        fi
         [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
+    elif [[ "$line" == Verdict:* ]]; then
+      ignored_notes+=("ignored Verdict $ref: the first line must be exactly 'Verdict: PASS|PASS+NOTES|FAIL head=<40 hex sha> verifier=<id> author=<id>' (author= missing or the line is malformed). Fix: $verdict_fix")
     fi
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
   if [ "$passes" -eq 0 ]; then
     if [ "$edited" -ne 0 ]; then refuse "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
     elif [ "$misplaced" -ne 0 ]; then refuse "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
     else refuse "missing passing verifier verdict for current head or clean merge of main${carry_notes:+; not carried: ${carry_notes%; }}"; fi
+    for note in ${ignored_notes[@]+"${ignored_notes[@]}"}; do refuse "$note"; done
   elif [ "$fails" -ne 0 ]; then
     refuse "conflicting PASS and FAIL verdicts for current head or clean merge of main"
   else
