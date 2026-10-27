@@ -35,6 +35,8 @@ done
 case "$pr" in *[!0-9]*) usage "--pr must be numeric" ;; esac
 repo=$(cd "$repo" && git rev-parse --show-toplevel)
 log=$(mktemp); receipt=$(mktemp)
+# Fixed cap on the posted receipt; GitHub rejects a comment body over 65536 characters.
+receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
 finish() {
   local status=$? result=FAIL
   trap - EXIT
@@ -55,8 +57,22 @@ text=sys.stdin.read()
 for key,value in os.environ.items():
     if len(value)>3 and re.search(r"SECRET|TOKEN|PASSWORD|DATABASE_URL|API_KEY",key,re.I): text=text.replace(value,"[redacted]")
 text=re.sub(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|sqlserver)://[^\s]+", "[redacted database URL]", text)
+cap=int(sys.argv[1]); path=sys.argv[2]
+if len(text)>cap:
+    # Bounded summary: keep the status lines and the last lines of the log; the full redacted log goes to a file.
+    open(path,"w").write(text)
+    lines=text.split("\n"); keep=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Command: |Result: |Scoped tests: |Selected: )")
+    tail_from=max(len(lines)-40,0)
+    out=[]; omitted=0
+    for i,l in enumerate(lines):
+        if keep.match(l) or i>=tail_from:
+            if omitted: out.append("[... %d lines omitted]" % omitted); omitted=0
+            out.append(l if len(l)<=300 or l.startswith("Checks: ") else l[:300]+"[... line cut]")
+        else: omitted+=1
+    footer="\nReceipt cut to fit %d characters. Full log: %s\n" % (cap,path)
+    text="\n".join(out)[:max(cap-len(footer),0)]+footer
 sys.stdout.write(text)
-' > "$receipt"
+' "$receipt_cap" "${HEAD_CHECKS_LOG_DIR:-${TMPDIR:-/tmp}}/head-checks-${sha:0:12}.log" > "$receipt"
   cat "$receipt"
   if [ -n "$pr" ] && [ -n "$sha" ]; then
     (cd "$repo" && gh pr comment "$pr" --body-file "$receipt") || status=1

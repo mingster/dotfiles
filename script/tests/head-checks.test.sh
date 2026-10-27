@@ -56,6 +56,14 @@ else: sys.exit(1)
     expected=env['GH_HEAD']
     run('checklist receives actual PR merge base', 'test "$HEAD_CHECK_BASE" = "'+expected+'"',0)
     env['GH_BASE']=base
+    # A huge log yields a receipt at or under the cap that names the full log file.
+    env['HEAD_CHECKS_LOG_DIR']=str(root/'logs'); (root/'logs').mkdir(exist_ok=True)
+    big,big_head=run('large log receipt is bounded',"head -c 200000 /dev/zero | tr '\\0' x; echo",0)
+    text=comments.read_text()
+    full=root/'logs'/('head-checks-'+big_head[:12]+'.log')
+    if len(text)<=20000 and ('Full log: '+str(full)) in text and full.exists() and len(full.read_text())>200000 and text.startswith('Checks: PASS head='+big_head):
+        passed+=1; print('ok   receipt is capped and names the full log')
+    else: failed+=1; print('FAIL bounded receipt',len(text),full.exists())
     run('stop at first red',line('lint')+'\nexit 9\n'+line('tests'),1)
     if order.read_text()=='lint\n': passed+=1; print('ok   later checks never start')
     else: failed+=1; print('FAIL later checks ran')

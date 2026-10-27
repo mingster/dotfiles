@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The Tech Lead's only way to merge a reviewed PR.
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
-#        lead-merge.sh --repo owner/name --batch N N [N ...]
+#        lead-merge.sh --repo owner/name --batch N N [N ...] [--dry-run]
+# Every refusal that needs no head-checks is collected and printed in one run (preflight); a batch drops the
+# PRs preflight refuses and merges the rest.
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
@@ -11,7 +13,13 @@
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
 set -euo pipefail
 
-die() { echo "lead-merge: refused: $*" >&2; exit 1; }
+# Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
+refusals=()
+refuse() { refusals+=("$*"); }
+print_refusals() { local r; for r in ${refusals[@]+"${refusals[@]}"}; do echo "lead-merge: refused: $r" >&2; done; }
+flush_refusals() { [ "${#refusals[@]}" -eq 0 ] || { print_refusals; exit 1; }; }
+# A fatal error still reports the refusals collected before it.
+die() { print_refusals; echo "lead-merge: refused: $*" >&2; exit 1; }
 
 repo="" pr="" head="" mechanical=false verify_command="" verify_set=false verdict_from="" batch_requested=false
 batch_prs=()
@@ -26,6 +34,7 @@ while [ $# -gt 0 ]; do
       while [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; do batch_prs+=("$1"); shift; done
       ;;
     --mechanical) mechanical=true; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
     --verdict-from) [ $# -ge 2 ] || die "--verdict-from needs owner/repo#N"; verdict_from="${2:-}"; shift 2 ;;
     --verify-command) [ $# -ge 2 ] || die "--verify-command needs a value"; verify_command="${2:-}"; verify_set=true; shift 2 ;;
     *) die "unknown argument $1" ;;
@@ -61,15 +70,31 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   dry=${DRY_RUN:-0}
   git fetch origin main >&2 || die "cannot fetch main for batch"
   batch_base=$(git rev-parse --verify 'origin/main^{commit}') || die "cannot resolve origin/main"
-  ready_prs=() ready_heads=()
+  ready_prs=() ready_heads=() refused_prs=()
+  # A head-checks receipt is posted as a comment on every PR of its train; GitHub rejects a body over 65536 characters.
+  receipt_limit=65536 receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
+  [[ "$receipt_cap" =~ ^[0-9]+$ ]] && [ "$receipt_cap" -le "$receipt_limit" ] \
+    || die "head-checks receipt cap $receipt_cap does not fit a $receipt_limit character comment"
+  echo "lead-merge: train receipt is at most $receipt_cap characters per comment (GitHub limit $receipt_limit)" >&2
+  [ "$dry" != 1 ] || echo "[dry-run] receipt cap $receipt_cap characters (GitHub limit $receipt_limit)"
 
   for batch_pr in "${batch_prs[@]}"; do
     batch_info=$(gh pr view "$batch_pr" --repo "$repo" --json headRefOid) || die "cannot read PR $batch_pr"
     batch_head=$(jq -r .headRefOid <<<"$batch_info")
     [[ "$batch_head" =~ ^[0-9a-f]{40}$ ]] || die "PR $batch_pr has an invalid head"
     git cat-file -e "$batch_head^{commit}" 2>/dev/null || git fetch origin "$batch_head" >&2 || die "cannot fetch PR $batch_pr head"
-    ready_prs+=("$batch_pr"); ready_heads+=("$batch_head")
+    # Preflight: every refusal that needs no head-checks, before this PR can join a train.
+    if batch_why=$(LEAD_MERGE_PREFLIGHT_ONLY=1 bash "$script" --repo "$repo" --pr "$batch_pr" --head "$batch_head" 2>&1); then
+      ready_prs+=("$batch_pr"); ready_heads+=("$batch_head")
+    else
+      refused_prs+=("$batch_pr")
+      echo "lead-merge: preflight dropped PR #$batch_pr; its refusals:" >&2
+      if grep -q '^lead-merge: refused: ' <<<"$batch_why"; then
+        grep '^lead-merge: refused: ' <<<"$batch_why" | sed 's/^lead-merge: refused: /  - /' >&2
+      else printf '%s\n' "$batch_why" >&2; fi
+    fi
   done
+  [ "${#ready_prs[@]}" -gt 0 ] || die "no PR passed batch preflight"
 
   append_train() {
     local current=$1 number=$2 pr_head=$3 tree
@@ -120,6 +145,13 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
 
   declare -a pass_train pass_heads
   failures=0
+  # Post a train receipt as a comment, after proving it fits.
+  post_receipt() { # <pr> <file> <label>
+    local size
+    size=$(wc -c < "$2" | tr -d ' ')
+    [ "$size" -le "$receipt_limit" ] || die "$3 Checks receipt is $size characters, over the $receipt_limit character comment limit"
+    gh pr comment "$1" --repo "$repo" --body-file "$2" >/dev/null || die "cannot attach $3 Checks to PR $1"
+  }
   check_group() { # recursively bisect red trains
     local ids=("$@") group_train group_heads group_prs receipt_file mid failures_before
     group_train=$(build_train "${ids[@]}") || die "cannot build bisect train"
@@ -128,8 +160,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     receipt_file=$(mktemp)
     if "$head_checks" --repo "$top" --ref "$group_train" --base "$batch_base" --train-heads "$group_heads" >"$receipt_file"; then
       for i in "${ids[@]}"; do
-        gh pr comment "${composed_prs[$i]}" --repo "$repo" --body-file "$receipt_file" >/dev/null \
-          || die "cannot attach train Checks to PR ${composed_prs[$i]}"
+        post_receipt "${composed_prs[$i]}" "$receipt_file" train
         pass_train[i]=$group_train; pass_heads[i]=$group_heads
       done
       rm -f "$receipt_file"
@@ -170,8 +201,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     survivor_receipt=$(mktemp)
     if "$head_checks" --repo "$top" --ref "$survivor_train" --base "$batch_base" --train-heads "$survivor_heads" >"$survivor_receipt"; then
       for i in "${survivor_indexes[@]}"; do
-        gh pr comment "${composed_prs[$i]}" --repo "$repo" --body-file "$survivor_receipt" >/dev/null \
-          || die "cannot attach survivor Checks to PR ${composed_prs[$i]}"
+        post_receipt "${composed_prs[$i]}" "$survivor_receipt" survivor
         pass_train[i]=$survivor_train; pass_heads[i]=$survivor_heads
       done
     else
@@ -182,11 +212,22 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     rm -f "$survivor_receipt"
   fi
 
-  # Run every per-PR path and Countersign gate before the first merge mutates main.
+  # Run every per-PR path and Countersign gate before the first merge mutates main. Preflight already
+  # passed, so a refusal here is rare. It drops its own PR and every later train-mate, whose checks
+  # included the dropped commits, so main only receives a tested prefix of the train.
+  gate_dropped=""
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
-    LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
-      bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
+    if [ -n "$gate_dropped" ]; then
+      echo "lead-merge: dropped PR #${composed_prs[$i]}: its train checks are untested without PR #$gate_dropped" >&2
+      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}")
+      continue
+    fi
+    if ! LEAD_MERGE_PREFLIGHT_ONLY=0 LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
+        bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"; then
+      echo "lead-merge: gate dropped PR #${composed_prs[$i]} after train checks" >&2
+      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}"); gate_dropped=${composed_prs[$i]}
+    fi
   done
   merged=0
   expected_main=$batch_base
@@ -205,14 +246,14 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
     expected_main_tree=$(git rev-parse "$expected_main^{tree}") || die "cannot read expected batch prefix tree"
-    LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
+    LEAD_MERGE_PREFLIGHT_ONLY=0 LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
       LEAD_MERGE_EXPECTED_MAIN_TREE=$expected_main_tree LEAD_MERGE_CLEANUP_FILE=$cleanup_file \
       bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
     expected_main=$(append_train "$expected_main" "${composed_prs[$i]}" "${composed_heads[$i]}") \
       || die "cannot advance expected batch prefix"
     merged=$((merged+1))
   done
-  echo "lead-merge: batch complete: merged $merged, returned $failures, conflicted $((${#ready_prs[@]}-${#composed_prs[@]}))"
+  echo "lead-merge: batch complete: merged $merged, returned $failures, conflicted $((${#ready_prs[@]}-${#composed_prs[@]})), refused ${#refused_prs[@]}"
   exit 0
 fi
 
@@ -226,13 +267,14 @@ for mergeable_retry in 1 2 3; do
   info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
     || die "cannot reread PR $pr while mergeability is UNKNOWN"
 done
-[ "$(field .state)" = OPEN ] || die "PR $pr is not open"
-[ "$(field .baseRefName)" = main ] || die "PR $pr base is not main"
-[ "$(field .headRefOid)" = "$head" ] || die "PR $pr head is $(field .headRefOid), not $head"
-[ "$(field .mergeable)" = MERGEABLE ] || die "PR $pr is not MERGEABLE"
+preflight_only=${LEAD_MERGE_PREFLIGHT_ONLY:-0}
+[ "$(field .state)" = OPEN ] || refuse "PR $pr is not open"
+[ "$(field .baseRefName)" = main ] || refuse "PR $pr base is not main"
+[ "$(field .headRefOid)" = "$head" ] || refuse "PR $pr head is $(field .headRefOid), not $head"
+[ "$(field .mergeable)" = MERGEABLE ] || refuse "PR $pr is not MERGEABLE"
 
 # 4. Head branch
-case "$(field .headRefName)" in main|staging|production) die "head branch $(field .headRefName) is not mergeable here" ;; esac
+case "$(field .headRefName)" in main|staging|production) refuse "head branch $(field .headRefName) is not mergeable here" ;; esac
 
 # gh pr view truncates files at 100; every path gate shares this complete list.
 file_pages=$(gh api --paginate "repos/$repo/pulls/$pr/files") || die "cannot read complete PR files"
@@ -243,7 +285,7 @@ files=$(jq -s '[.[][] | .filename]' <<<"$file_pages") || die "invalid PR file in
 while IFS= read -r f; do
   case "$f" in
     .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|.codex/*|*/.codex/*|*.rules)
-      die "PR touches $f, which waits for the owner through Elon" ;;
+      refuse "PR touches $f, which waits for the owner through Elon" ;;
   esac
 done < <(jq -r '.[]' <<<"$files")
 # 3b. Generated team copies change only through the dotfiles template, then merge with --verdict-from
@@ -252,13 +294,13 @@ if [ -z "$verdict_from" ]; then
   tmpl_skills="$(cd "$(dirname "$0")/.." && pwd)/templates/agent-team/.agents/skills"
   while IFS= read -r f; do
     if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)/ ]] && [ -f "$tmpl_skills/${BASH_REMATCH[2]}/SKILL.md" ]; then
-      die "PR edits generated team copy $f; edit the dotfiles template, re-sync, then merge with --verdict-from"
+      refuse "PR edits generated team copy $f; edit the dotfiles template, re-sync, then merge with --verdict-from"
     fi
   done < <(jq -r '.[]' <<<"$files")
 fi
 diff=$(gh pr diff "$pr" --repo "$repo") || die "cannot read diff of PR $pr"
 if awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//)} intent && /^\+Status:.*Accepted/{found=1} END{exit !found}' <<<"$diff"; then
-  die "PR accepts an intent under docs/intent/, which waits for the owner through Elon"
+  refuse "PR accepts an intent under docs/intent/, which waits for the owner through Elon"
 fi
 
 # 5. Verification is required even for documentation changes.
@@ -273,10 +315,11 @@ normalized_body=$(field .body | awk '
   print hashes " " tolower(title); next
 }
 {print}')
-grep -qE '^## verification$' <<<"$normalized_body" || die "missing ## Verification heading"
-if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then die "Test plan heading is forbidden"; fi
-bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
-[ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ] || die "Verification needs 1 to 3 run and outcome bullets"
+if grep -qE '^## verification$' <<<"$normalized_body"; then
+  bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
+  { [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ]; } || refuse "Verification needs 1 to 3 run and outcome bullets"
+else refuse "missing ## Verification heading"; fi
+if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then refuse "Test plan heading is forbidden"; fi
 # Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
 # first-parent chain is a two parent merge of main that replays to exactly the same tree.
 # Fails closed; sets carry_why to the failed check.
@@ -336,18 +379,26 @@ if [ "$batch_requested" = true ]; then
     || die "batch train commit does not contain PR $pr head"
   train_check="Checks: PASS head=$LEAD_MERGE_TRAIN_HEAD train-heads=$LEAD_MERGE_TRAIN_HEADS"
 fi
-check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
-checks=${check_body%%$'\n'*}
-{ [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; } \
-  || {
-    # Never carry past a run that happened, and never in a batch (the train Checks is the proof there).
-    [[ "$checks" != "Checks: FAIL head=$head" ]] || die "Checks: FAIL at the current head"
-    [ "$batch_requested" = false ] || die "missing current-head or containing-train Checks: PASS"
+check_body="" checks=""
+# A preflight-only run (batch) has no Checks yet: the train receipt is the proof, and it is verified after head-checks.
+if [ "$preflight_only" != 1 ]; then
+  check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
+  checks=${check_body%%$'\n'*}
+  if [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; then :
+  elif [ "$checks" = "Checks: FAIL head=$head" ]; then
+    # Never carry past a run that happened.
+    refuse "Checks: FAIL at the current head"
+  elif [ "$batch_requested" = true ]; then
+    # Never carry in a batch (the train Checks is the proof there).
+    refuse "missing current-head or containing-train Checks: PASS"
+  else
     [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Checks"; main_fetched=true; }
-    check_body=$(checks_carry "$info" "$head") && checks="Checks: PASS head=$head" \
-      && echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"
-  } \
-  || die "missing current-head or containing-train Checks: PASS"
+    if check_body=$(checks_carry "$info" "$head"); then
+      checks="Checks: PASS head=$head"
+      echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"
+    else refuse "missing current-head or containing-train Checks: PASS"; fi
+  fi
+fi
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
 skip_review=false
@@ -497,7 +548,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
-      [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || die "author cannot supply verifier verdict"
+      if [ "${BASH_REMATCH[3]}" = "${BASH_REMATCH[4]}" ]; then refuse "author cannot supply verifier verdict"; continue; fi
       applies=false carried=""
       if [ "$candidate_head" = "$head" ]; then
         applies=true
@@ -511,9 +562,9 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       fi
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
-        grep -Fxq -- "$verifier_id" <<<"$known_dispatches" || die "verdict verifier $verifier_id is not a known dispatch"
+        if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then refuse "verdict verifier $verifier_id is not a known dispatch"; continue; fi
         # author=unknown is the one literal allowed without a dispatch; any other author must be known.
-        [ "$author_id" = unknown ] || grep -Fxq -- "$author_id" <<<"$known_dispatches" || die "verdict author $author_id is not a known dispatch"
+        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches"; then refuse "verdict author $author_id is not a known dispatch"; continue; fi
         if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then edited=$((edited+1)); continue; fi
         [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
@@ -522,25 +573,27 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
     fi
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
   if [ "$passes" -eq 0 ]; then
-    [ "$edited" -eq 0 ] || die "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
-    [ "$misplaced" -eq 0 ] || die "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
-    die "missing passing verifier verdict for current head or clean merge of main${carry_notes:+; not carried: ${carry_notes%; }}"
-  fi
-  [ "$fails" -eq 0 ] || die "conflicting PASS and FAIL verdicts for current head or clean merge of main"
-  if [ "$verify_set" = true ]; then
-    want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
-    [ -n "$want" ] || die "--verify-command is empty"
-    newest=${applicable[0]#*$'\n'}
-    got=$(grep -m1 '^Command:' <<<"$newest" | sed -E 's/^Command:[[:space:]]*//; s/[[:space:]]+$//' || true)
-    [ -n "$got" ] || die "newest Verdict has no Command: line; expected: $want"
-    [ "$got" = "$want" ] || die "Verdict Command mismatch: verdict ran [$got], brief says [$want]"
-  fi
-  for entry in "${applicable[@]}"; do
-    comment=${entry#*$'\n'}
-    if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
-      die "verdict must cover unchecked paths in its live lane"
+    if [ "$edited" -ne 0 ]; then refuse "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
+    elif [ "$misplaced" -ne 0 ]; then refuse "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
+    else refuse "missing passing verifier verdict for current head or clean merge of main${carry_notes:+; not carried: ${carry_notes%; }}"; fi
+  elif [ "$fails" -ne 0 ]; then
+    refuse "conflicting PASS and FAIL verdicts for current head or clean merge of main"
+  else
+    if [ "$verify_set" = true ]; then
+      want=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$verify_command")
+      newest=${applicable[0]#*$'\n'}
+      got=$(grep -m1 '^Command:' <<<"$newest" | sed -E 's/^Command:[[:space:]]*//; s/[[:space:]]+$//' || true)
+      if [ -z "$want" ]; then refuse "--verify-command is empty"
+      elif [ -z "$got" ]; then refuse "newest Verdict has no Command: line; expected: $want"
+      elif [ "$got" != "$want" ]; then refuse "Verdict Command mismatch: verdict ran [$got], brief says [$want]"; fi
     fi
-  done
+    for entry in "${applicable[@]}"; do
+      comment=${entry#*$'\n'}
+      if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
+        refuse "verdict must cover unchecked paths in its live lane"; break
+      fi
+    done
+  fi
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
@@ -568,10 +621,28 @@ if [ -n "$triggers" ]; then
       [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry a countersign"; main_fetched=true; }
       if countersigned "$candidate_head" && verdict_carry "$candidate_head" "$head"; then countersign_ok=true; break; fi
     done < <(jq -r '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=").h?' <<<"$info" | awk '!seen[$0]++')
-    [ "$countersign_ok" = true ] || die "missing Countersign: Elon for current head or clean merge of main"
+    [ "$countersign_ok" = true ] || refuse "missing Countersign: Elon for current head or clean merge of main"
   fi
 fi
 
+# Trunk drift of a single PR needs no head-checks, so it is part of preflight (a batch checks its train instead).
+trunk_check() {
+  local f ancestor trunk_files
+  # A carried Verdict is judged against the current head, which includes the merged main commits.
+  ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
+  trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
+  while IFS= read -r f; do
+    if grep -Fxq -- "$f" <<<"$trunk_files"; then refuse "trunk changed $f; rebase and rerun head-checks"; fi
+  done < <(jq -r '.[]' <<<"$files")
+}
+if [ -z "$train_check" ] && [ "$preflight_only" != 1 ]; then
+  git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
+  trunk_check
+fi
+
+# Preflight ends here: every refusal that needs no head-checks has been collected.
+flush_refusals
+if [ "$preflight_only" = 1 ]; then echo "lead-merge: preflight passed for PR $pr"; exit 0; fi
 [ "${LEAD_MERGE_GATE_ONLY:-0}" != 1 ] || exit 0
 
 # Fetch immediately before merge; any shared changed path needs a new exact-head run.
@@ -582,12 +653,8 @@ if [ -n "$train_check" ]; then
   [ "$current_main_tree" = "$LEAD_MERGE_EXPECTED_MAIN_TREE" ] \
     || die "main changed since batch train checks; stop the batch and rebuild it"
 else
-  # A carried Verdict is judged against the current head, which includes the merged main commits.
-  ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
-  trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
-  while IFS= read -r f; do
-    if grep -Fxq -- "$f" <<<"$trunk_files"; then die "trunk changed $f; rebase and rerun head-checks"; fi
-  done < <(jq -r '.[]' <<<"$files")
+  trunk_check
+  flush_refusals
 fi
 
 merge() { gh pr merge "$pr" --repo "$repo" --merge --match-head-commit "$head"; }
