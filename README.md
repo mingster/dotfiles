@@ -255,7 +255,7 @@ All skills live in `.agents/skills/<name>/` and are automatically linked into yo
 * **Planning and specification:** `capture-intent`, `grill-me`, `grilling`, `grill-with-docs`, `write-spec`, `to-spec`, `to-tickets`, `wayfinder`, `triage`, `domain-modeling`, `codebase-design`.
 * **Implementation and testing:** `tdd`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
 * **Research and documentation:** `research`, `retro`, `handoff`, `writing-for-agents`.
-* **Tooling and environment control:** `setup-matt-pocock-skills`, `agent-browser`, `computer-use`, `orca-cli`, `orca-team`, `orca-per-workspace-env`, `wizard`.
+* **Tooling and environment control:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard` (Orca's own skills such as `orca-cli` and `computer-use` come from `orca skills install --all`).
 
 ## 7. Maintenance and Housekeeping
 

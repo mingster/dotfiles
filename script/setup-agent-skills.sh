@@ -5,6 +5,19 @@ DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DOTFILES=$(cd "$DOTFILES" && pwd -P)
 SKILLS="$DOTFILES/.agents/skills"
 
+# Orca owns its bundled skills: install them through orca, never link or copy them.
+orca_bundled=
+orca_bin=$(command -v orca 2>/dev/null || true)
+[ -n "$orca_bin" ] || { [ -x "$HOME/.orca/cli/bin/orca" ] && orca_bin="$HOME/.orca/cli/bin/orca"; }
+if [ -n "$orca_bin" ]; then
+  orca_bundled=$("$orca_bin" skills list 2>/dev/null | sed -n 's/^\([A-Za-z0-9][A-Za-z0-9_-]*\):.*/\1/p')
+  "$orca_bin" skills install --all || echo "agent-skills: orca skills install --all failed" >&2
+else
+  echo "agent-skills: orca not found, skipping bundled Orca skills"
+fi
+
+bundled() { printf '%s\n' "$orca_bundled" | grep -qx -- "$1"; }
+
 # Use the tracked inventory, never ignored tool installations (or synced plugins).
 owned() {
   [ -f "$SKILLS/$1/SKILL.md" ] &&
@@ -67,6 +80,7 @@ materialize "$HOME/.claude/skills" skills
 for entry in "$SKILLS"/*; do
   name=$(basename "$entry")
   owned "$name" || continue
+  bundled "$name" && continue
   for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     target="$dst/$name"
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$entry" ]; then

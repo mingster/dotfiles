@@ -53,6 +53,23 @@ has_global() {
   return 1
 }
 
+# --- names Orca bundles (it installs them itself; a copy shadows its install) ----
+orca_names=
+orca_ok=0
+orca_bin=$(command -v orca 2>/dev/null || true)
+[ -n "$orca_bin" ] || { [ -x "$HOME/.orca/cli/bin/orca" ] && orca_bin="$HOME/.orca/cli/bin/orca"; }
+if [ -n "$orca_bin" ]; then
+  orca_names=$("$orca_bin" skills list 2>/dev/null | sed -n 's/^\([A-Za-z0-9][A-Za-z0-9_-]*\):.*/\1/p')
+  [ -n "$orca_names" ] && orca_ok=1
+fi
+[ "$orca_ok" -eq 1 ] || warn "orca not found or lists no skills, bundled-name rule skipped"
+
+is_orca_bundled() { [ "$orca_ok" -eq 1 ] && printf '%s\n' "$orca_names" | grep -qx -- "$1"; }
+
+for n in "${global_names[@]}"; do
+  is_orca_bundled "$n" && fail "$GLOBAL_SKILLS/$n is bundled by orca, remove it and use orca skills install"
+done
+
 # --- project skill directories ----------------------------------------------
 skill_dirs=()
 for root in "${ROOTS[@]}"; do
@@ -96,6 +113,10 @@ for dir in "${skill_dirs[@]}"; do
     if [ -L "$entry" ] && [ ! -e "$entry" ]; then
       fail "$name -> $(readlink "$entry") (broken symlink)"
       continue
+    fi
+
+    if is_orca_bundled "$name"; then
+      fail "$name is bundled by orca, remove this copy and use orca skills install"
     fi
 
     # Shadowing: the central version can never load while this exists.
