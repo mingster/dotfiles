@@ -8,6 +8,9 @@
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
 #   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
+# One merge run per repo: a lead-merge.lock/ directory in the git common dir (pid and start time) is held from
+#   the start of the run to the last merge and released before cleanup. A second run waits up to
+#   LEAD_MERGE_LOCK_WAIT_SECONDS (default 1200), printing the holder, then refuses. A lock whose pid is gone is stale.
 # A Verdict and the Checks: PASS comment also carry across a clean merge of main (see verdict_carry).
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
@@ -70,6 +73,56 @@ root=$(cd -P "$HOME/orca/workspaces" 2>/dev/null && pwd) || die "no $HOME/orca/w
 case "$top" in "$root"/*) ;; *) die "worktree is not under $root" ;; esac
 case "$(basename "$top")" in lead-*) ;; *) die "only the lead worktree (lead-*) may merge" ;; esac
 
+# One merge run per repo. Children of a batch inherit LEAD_MERGE_LOCK_HELD and never take the lock themselves.
+lock_dir="" lock_owned=false
+lock_release() {
+  if [ "$lock_owned" = true ] && [ "$(cat "$lock_dir/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$lock_dir"; fi
+  lock_owned=false
+}
+lock_acquire() {
+  [ "${LEAD_MERGE_LOCK_HELD:-0}" != 1 ] || return 0
+  local common wait waited=0 holder started noted=false
+  common=$(git rev-parse --git-common-dir 2>/dev/null) && common=$(cd -P "$common" 2>/dev/null && pwd) \
+    || { echo "lead-merge: no git common dir; running without the merge lock" >&2; return 0; }
+  lock_dir="$common/lead-merge.lock"
+  wait=${LEAD_MERGE_LOCK_WAIT_SECONDS:-1200}
+  [[ "$wait" =~ ^[0-9]+$ ]] || die "LEAD_MERGE_LOCK_WAIT_SECONDS must be a number"
+  trap 'lock_release' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
+    if [ "$holder" = "$$" ]; then lock_owned=true; return 0; fi # handed over through exec
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      # One waiter at a time clears a stale lock, and only after reading the dead pid again under that guard:
+      # a waiter that read the pid before another takeover finished would otherwise delete the new live lock.
+      if mkdir "$lock_dir.takeover" 2>/dev/null; then
+        if [ "$(cat "$lock_dir/pid" 2>/dev/null || true)" = "$holder" ]; then
+          echo "lead-merge: taking over stale merge lock of pid $holder" >&2
+          rm -rf "$lock_dir"
+        fi
+        rmdir "$lock_dir.takeover"
+        continue
+      fi
+      # A guard left by a run killed mid-takeover is cleared after a minute.
+      [ -z "$(find "$lock_dir.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$lock_dir.takeover" 2>/dev/null || true
+    fi
+    started=$(cat "$lock_dir/started" 2>/dev/null || true)
+    if [ "$noted" = false ]; then
+      echo "lead-merge: waiting for the merge lock held by pid ${holder:-unknown}${started:+ since $(date -r "$started" '+%F %T' 2>/dev/null || echo "$started")}" >&2
+      noted=true
+    fi
+    if [ "$waited" -ge "$wait" ]; then
+      die "merge lock held by pid ${holder:-unknown}${started:+ since $started}; waited ${waited}s (LEAD_MERGE_LOCK_WAIT_SECONDS=$wait)"
+    fi
+    sleep 1; waited=$((waited+1))
+  done
+  lock_owned=true
+  echo "$$" > "$lock_dir/pid"; date +%s > "$lock_dir/started"
+}
+lock_acquire
+export LEAD_MERGE_LOCK_HELD=1
+
 if [ "${#batch_prs[@]}" -gt 0 ]; then
   script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
   head_checks=${LEAD_MERGE_HEAD_CHECKS:-$(dirname "$script")/head-checks.sh}
@@ -128,6 +181,8 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
       echo "[dry-run] single PR #${composed_prs[0]} uses the unchanged single-PR path"
       exit 0
     fi
+    # exec keeps this pid, so the single run takes the lock over without a gap.
+    unset LEAD_MERGE_LOCK_HELD
     exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
   fi
 
@@ -218,6 +273,10 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     rm -f "$survivor_receipt"
   fi
 
+  # An outside push during the run leaves the train checks proving an old base: merge nothing.
+  git fetch origin main >&2 || die "cannot fetch main after train checks"
+  now_main=$(git rev-parse --verify 'origin/main^{commit}') || die "cannot resolve origin/main after train checks"
+  [ "$now_main" = "$batch_base" ] || die "main moved from ${batch_base:0:12} to ${now_main:0:12} during the run; merged nothing, rebuild the batch"
   # Run every per-PR path and Countersign gate before the first merge mutates main. Preflight already
   # passed, so a refusal here is rare. It drops its own PR and every later train-mate, whose checks
   # included the dropped commits, so main only receives a tested prefix of the train.
@@ -239,6 +298,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   expected_main=$batch_base
   cleanup_file=$(mktemp)
   batch_cleanup() {
+    lock_release
     [ -s "$cleanup_file" ] || { rm -f "$cleanup_file"; return 0; }
     local args=() b s
     while read -r b s; do args+=(--branch "$b" --head-sha "$s"); done < "$cleanup_file"
@@ -249,6 +309,8 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     return 0
   }
   trap batch_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
     expected_main_tree=$(git rev-parse "$expected_main^{tree}") || die "cannot read expected batch prefix tree"
@@ -488,7 +550,7 @@ if [ -n "$verdict_from" ]; then
     fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
-  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"' EXIT
+  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"; lock_release' EXIT
   git archive "$head" .agents .claude .cursor 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
   DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/sync-team-skills.sh" --check "$sync_dir" >&2 \
     || die "sync-team-skills.sh --check fails at head $head"
@@ -673,6 +735,7 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit,url) || { echo 
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || die "MERGED read-back has no merge commit"
 echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
+lock_release
 
 # Cleanup after the merge: the merged head branch and finished worktrees. Never fails the merge.
 # The issue comes only from the PR's closing references. DRY_RUN=1 previews.
