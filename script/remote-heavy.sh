@@ -5,10 +5,12 @@
 #                   [--sub <subdir>] [--weight N] [--gate <remote heavy-gate.sh>]
 #                   [--fetch <worktree-relative path/glob> ... --into <local dir>] -- <command>
 #
-# Sends HEAD to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
+# Sends HEAD (as a git bundle over ssh) to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
 # detached in the remote worktree, reinstalls packages when the lockfile changed, and runs
 # the command under the remote heavy-gate. Exit status is the command's. A missing
 # --dir is created as a detached worktree of --repo-dir.
+# Every ssh call runs a base64 transported script and frames its stdout between tagged
+# markers, so lines a login shell prints around the command never reach the caller.
 # Fetches use remote Python 3 globbing and OpenSSH scp (SFTP); files land by basename
 # in --into, so select unique artifact names when fetching from multiple directories.
 set -euo pipefail
@@ -46,16 +48,21 @@ if [ "${#fetches[@]}" -gt 0 ] || [ -n "$into" ]; then
 fi
 
 sha=$(git rev-parse HEAD)
-git push -q "ssh://$host/$repo_dir" "$sha:refs/heavy/$sha"
 
 cmd=$(printf '%q ' "$@")
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+tag="remote-heavy-$$-$RANDOM"
 # The remote login shell may not be bash (fish eats a heredoc on stdin), so the script
 # and every argument travel as base64 inside one plain word list.
 remote=$(cat <<'REMOTE'
 set -euo pipefail
 d() { printf '%s' "$1" | base64 -d; }
-dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(d "$6") repo_dir=$(d "$7")
+dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(d "$6") repo_dir=$(d "$7") tag=$(d "$8")
+# The bundle on stdin carries HEAD, so no git transport shares stdout with the login shell.
+bundle=$(mktemp)
+trap 'rm -f "$bundle"' EXIT
+base64 -d > "$bundle"
+git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha"
 gate="${gate/#\$HOME/$HOME}"
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
 [ ! -d "$HOME/dotfiles-main" ] || export DOTFILES_DIR="$HOME/dotfiles-main"
@@ -76,13 +83,34 @@ if [ -f bun.lock ]; then
   fi
 fi
 [ -f next-env.d.ts ] || [ ! -f next.config.ts ] || bunx next typegen >/dev/null 2>&1 || true
-exec "$gate" --weight "$weight" -- bash -c "$cmd"
+printf '%s\n' "@@begin-$tag@@"
+status=0
+"$gate" --weight "$weight" -- bash -c "$cmd" || status=$?
+printf '\n%s\n' "@@end-$tag-$status@@"
 REMOTE
 )
-status=0
+# Lines between the markers are the command's output. Each line is held back until the
+# next one arrives so the newline before the end marker is not part of the output.
+framed=$(cat <<'AWK'
+$0 == "@@begin-" tag "@@" { on = 1; next }
+on && index($0, "@@end-" tag "-") == 1 {
+  s = substr($0, length("@@end-" tag "-") + 1); sub(/@@$/, "", s)
+  if (have) printf "%s", prev
+  print s > sf; close(sf); on = 0; next
+}
+on { if (have) print prev; prev = $0; have = 1 }
+AWK
+)
+status_file=$(mktemp)
+trap 'rm -f "$status_file"' EXIT
 # shellcheck disable=SC2029
-ssh "$host" bash -c "\"\$(echo $(b64 "$remote") | base64 -d)\"" remote-heavy \
-  "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" "$(b64 "$repo_dir")" || status=$?
+{ git bundle create - HEAD 2>/dev/null | base64 | tr -d '\n'; } \
+  | ssh "$host" bash -c "\"\$(echo $(b64 "$remote") | base64 -d)\"" remote-heavy \
+    "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" "$(b64 "$repo_dir")" "$(b64 "$tag")" \
+  | awk -v tag="$tag" -v sf="$status_file" "$framed" || true
+# No end marker means the remote setup failed before the command ran.
+status=$(cat "$status_file")
+[ -n "$status" ] || { echo 'remote-heavy: remote setup failed' >&2; status=255; }
 
 if [ "${#fetches[@]}" -gt 0 ]; then
   # Use the same shell-independent transport for remote glob expansion. NUL records
@@ -90,12 +118,12 @@ if [ "${#fetches[@]}" -gt 0 ]; then
   listing=$(cat <<'REMOTE'
 set -euo pipefail
 d() { printf '%s' "$1" | base64 -d; }
-dir=$(d "$1")
-shift
+dir=$(d "$1") tag=$(d "$2")
+shift 2
 patterns=()
 for encoded in "$@"; do patterns+=("$(d "$encoded")"); done
 # Python is also required by heavy-gate; glob supports ** on older remote Bash.
-python3 - "$dir" "${patterns[@]}" <<'PYTHON'
+found=$(python3 - "$dir" "${patterns[@]}" <<'PYTHON' | base64 | tr -d '\n'
 import glob, os, sys
 os.chdir(sys.argv[1])
 for pattern in sys.argv[2:]:
@@ -103,6 +131,8 @@ for pattern in sys.argv[2:]:
         if os.path.isfile(path):
             sys.stdout.buffer.write(os.fsencode(path) + b'\0')
 PYTHON
+)
+printf '%s\n' "$tag$found"
 REMOTE
 )
   encoded_fetches=()
@@ -111,10 +141,12 @@ REMOTE
     echo 'remote-heavy: cannot create artifact manifest' >&2
     exit "$status"
   fi
-  trap 'rm -f "$manifest"' EXIT
+  trap 'rm -f "$manifest" "$status_file"' EXIT
   # shellcheck disable=SC2029
+  listing_tag="@@listing-$tag@@"
   if ssh "$host" bash -c "\"\$(echo $(b64 "$listing") | base64 -d)\"" remote-heavy-fetch \
-      "$(b64 "$dir")" "${encoded_fetches[@]}" > "$manifest"; then
+      "$(b64 "$dir")" "$(b64 "$listing_tag")" "${encoded_fetches[@]}" </dev/null \
+      | sed -n "s/^$listing_tag//p" | head -n 1 | base64 -d > "$manifest"; then
     if mkdir -p "$into"; then
       while IFS= read -r -d '' file; do
         target="$into/$(basename "$file")"
