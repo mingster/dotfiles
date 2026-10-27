@@ -52,7 +52,8 @@ if command -v "$orca" >/dev/null 2>&1; then
   done
 fi
 pane_close=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
-if [ -f "$pane_close" ]; then
+# Never without dispatch ids: with none the helper sweeps every recorded pane and can loop until killed.
+if [ ${#dispatches[@]} -gt 0 ] && [ -f "$pane_close" ]; then
   run bash "$pane_close" ${dispatches[@]+"${dispatches[@]}"} >/dev/null 2>&1 || echo "worker-finish: pane close failed" >&2
 fi
 if [ -d "$wt" ]; then

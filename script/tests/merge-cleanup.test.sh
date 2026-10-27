@@ -1,193 +1,160 @@
 #!/usr/bin/env bash
-# Exercise merge-cleanup.sh in a disposable repo with a bare remote. No network, no gh.
-set -euo pipefail
-here=$(cd "$(dirname "$0")/.." && pwd)
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-export HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1
-mkdir -p "$HOME" "$tmp/bin"
-export PATH="$tmp/bin:$PATH"
-cat > "$tmp/bin/gh" <<'FAKE'
-#!/usr/bin/env bash
-echo "gh must not be called" >&2; exit 99
-FAKE
-# orca stub: worktree "$FAKE_RELEASED" belongs to a released worker.
-cat > "$tmp/bin/orca" <<'FAKE'
-#!/usr/bin/env bash
-case "$*" in
-  'orchestration worker-list'*)
-    w=""; for p in $FAKE_RELEASED; do w="$w${w:+,}{\"dispatchId\":\"d\",\"dispatchStatus\":\"released\",\"worktreeId\":\"repo::$p\"}"; done
-    printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
-  *) printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
-esac
-FAKE
-chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
-export ORCA_CLI_COMMAND="$tmp/bin/orca" MERGE_CLEANUP_REF_DIR="$tmp/_ref"
-fail() { echo "FAIL: $*" >&2; cat "$tmp/out" >&2 2>/dev/null || true; exit 1; }
-has_local() { git show-ref --verify --quiet "refs/heads/$1"; }
-has_remote() { git --git-dir="$tmp/origin" show-ref --verify --quiet "refs/heads/$1"; }
+# merge-cleanup.sh acts by ownership: the merged PR head, and released, idle, merged worktrees (spec #286, T4 to T12, T23, T27 to T29, T33).
+here=$(cd "$(dirname "$0")" && pwd)
+pass=0 fail=0
+ok() { pass=$((pass + 1)); }
+bad() { fail=$((fail + 1)); echo "FAIL: $1"; [ -f "$MF_DIR/out" ] && sed 's/^/    /' "$MF_DIR/out"; }
 
-git init -q --bare "$tmp/origin"
-git init -q -b main "$tmp/repo"
-cd "$tmp/repo"
-git config user.email test@example.invalid
-git config user.name Test
-echo initial > file; git add file; git commit -qm initial
-git remote add origin "$tmp/origin"
-git push -q -u origin main
-commit_on() { # branch worktree-path file
-  echo "$1" >> "$2/$3"; git -C "$2" add "$3"; git -C "$2" commit -qm "$1"
+# shellcheck source=lib/merge-fixture.sh
+. "$here/lib/merge-fixture.sh"
+mf_setup
+trap mf_teardown EXIT
+G() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
+export MERGE_CLEANUP_CALL_TIMEOUT_SECONDS=5
+cleanup="$here/../merge-cleanup.sh"
+cd "$MF_REPO" || exit 1
+
+# Fake pane close helper: closes the terminal of each dispatch id it is given. Logs its arguments.
+cat > "$MF_DIR/pane-close" <<'EOS'
+#!/usr/bin/env bash
+echo "pane-close $*" >> "$MF_DIR/pane.log"
+[ "$#" -gt 0 ] || { while :; do sleep 1; done; }
+for id in "$@"; do
+  h=$(orca orchestration worker-list --json | jq -r --arg d "$id" '.workers[] | select(.dispatchId==$d) | .agentTerminalHandle')
+  [ -z "$h" ] || orca terminal close --terminal "$h"
+done
+EOS
+cat > "$MF_DIR/pane-hang" <<'EOS'
+#!/usr/bin/env bash
+while :; do sleep 1; done
+EOS
+export WORKER_PANE_CLOSE="$MF_DIR/pane-close"
+
+n=0
+# wt <name> <branch> [commit]: worktree on a new branch pushed to origin; "commit" adds a commit not in main.
+wt() {
+  mkdir -p "$MF_DIR/wt"
+  G worktree add -q -b "$2" "$MF_DIR/wt/$1" origin/main
+  if [ "${3:-}" = commit ]; then
+    echo "$2" > "$MF_DIR/wt/$1/$2.txt"
+    git -C "$MF_DIR/wt/$1" add . && git -C "$MF_DIR/wt/$1" commit -q -m "$2"
+  fi
+  G push -q origin "$2"
 }
-# PR head 38-head: merged into main, worktree clean, pushed.
-git worktree add -qb mingster/38-head "$tmp/wt-head"
-commit_on head "$tmp/wt-head" head.txt
-git push -q origin mingster/38-head
-git merge -q --no-ff mingster/38-head -m "Merge PR"
-# lane A: same issue, merged into main via the head merge (ancestor), clean.
-git worktree add -qb lane/38-a "$tmp/wt-a" main
-git push -q origin lane/38-a
-# lane B: same issue, NOT in main, worker released, clean.
-git worktree add -qb lane/38-b "$tmp/wt-b" main
-commit_on b "$tmp/wt-b" b.txt
-git push -q origin lane/38-b
-# lane C: same issue, dirty (staged + unstaged), worker released.
-git worktree add -qb lane/38-c "$tmp/wt-c" main
-echo staged > "$tmp/wt-c/s.txt"; git -C "$tmp/wt-c" add s.txt
-echo more >> "$tmp/wt-c/file"
-echo untracked-small > "$tmp/wt-c/new small.txt"
-head -c 1100000 /dev/zero > "$tmp/wt-c/big.bin"
-# Unrelated: 3848 must not match issue 38.
-git worktree add -qb lane/3848-x "$tmp/wt-x" main
-git push -q origin lane/3848-x
-# Old recovery branch (8 days) and fresh one.
-GIT_COMMITTER_DATE="$(date -v-8d +%s 2>/dev/null || date -d '8 days ago' +%s) +0000" \
-  git -c user.name=T -c user.email=t@x commit-tree -m old "main^{tree}" -p main > "$tmp/oldsha"
-git update-ref refs/heads/recovery/old "$(cat "$tmp/oldsha")"
-git branch recovery/fresh
-git push -q origin main
-export FAKE_RELEASED="$tmp/wt-b $tmp/wt-c"
+# land <branch>: merge into main and push.
+land() { G merge -q --no-ff -m "merge $1" "$1" && G push -q origin main; }
+path() { (cd -P "$MF_DIR/wt/$1" && pwd); }
+dispatch() { n=$((n + 1)); mf_orca_add_worker run1 "d$n" "$2" "$(path "$1")" "${3:-}"; }
+run() { rm -f "$MF_DIR/out"; "$@" > "$MF_DIR/out" 2>&1; echo $? > "$MF_DIR/rc"; }
+has_local() { G show-ref --verify --quiet "refs/heads/$1"; }
+has_remote() { "$MF_REAL_GIT" --git-dir="$MF_ORIGIN" show-ref --verify --quiet "refs/heads/$1"; }
+rc_is() { [ "$(cat "$MF_DIR/rc")" = "$1" ]; }
+says() { grep -q -- "$1" "$MF_DIR/out"; }
+kept() { [ -d "$MF_DIR/wt/$1" ] && has_local "$2"; }
+gone() { [ ! -d "$MF_DIR/wt/$1" ] && ! has_local "$2" && ! has_remote "$2"; }
+clean_run() { run bash "$cleanup" --branch merged-head --head-sha "$headsha" "$@"; }
+
+# The merged PR head: pushed, merged into main.
+G checkout -q -b merged-head origin/main; echo h > h.txt; G add h.txt; G commit -qm head; G push -q origin merged-head
+G checkout -q main; land merged-head; headsha=$(G rev-parse merged-head)
+
+# T4: a branch name carrying a date number never selects another worktree.
+wt rm-x-1027 rm-x-1027; dispatch rm-x-1027 released
+G branch -q merge-process-1027 main; G push -q origin merge-process-1027
+run bash "$cleanup" --branch merge-process-1027 --head-sha "$(G rev-parse main)"
+rc_is 0 && kept rm-x-1027 rm-x-1027 && has_remote rm-x-1027 && ok || bad "T4 rm worktree and branch kept"
+says 'kept' && ok || bad "T4 prints kept"
+gone nothing merge-process-1027 && ok || bad "T4 the PR head itself is deleted"
+
+# T6: a live terminal at the worktree root, and one in a subdirectory, keeps worktree and branch.
+for where in root sub; do
+  wt "live-$where" "live-$where"; dispatch "live-$where" released
+  dir=$(path "live-$where"); [ "$where" = sub ] && { mkdir -p "$dir/deep"; dir="$dir/deep"; }
+  mf_orca_add_terminal "term-$where" "$dir"
+  clean_run
+  kept "live-$where" "live-$where" && has_remote "live-$where" && ok || bad "T6 live terminal at $where keeps worktree and branch"
+done
+
+# T7: a branch checked out in an idle worktree is kept; a failing worktree removal keeps local and remote branch.
+wt checked-out checked-out; run bash "$cleanup" --branch checked-out --head-sha "$(G rev-parse checked-out)"
+kept checked-out checked-out && has_remote checked-out && ok || bad "T7 checked out branch kept"
+wt locked locked; dispatch locked released; G worktree lock "$MF_DIR/wt/locked"
+clean_run
+kept locked locked && has_remote locked && ok || bad "T7 failed worktree removal keeps both branches"
+says 'kept' && ok || bad "T7 prints kept"
+G worktree unlock "$MF_DIR/wt/locked"
+
+# T8, T27: an unreleased dispatch keeps the worktree, even on a branch with no commits. No release call is made.
+wt busy busy commit; dispatch busy dispatched
+wt fresh fresh; dispatch fresh dispatched
+clean_run
+kept busy busy && kept fresh fresh && has_remote fresh && ok || bad "T8/T27 unreleased dispatch keeps worktree and branch"
+! grep -q worker-release "$MF_ORCA_LOG" && ok || bad "T8 no worker-release call"
+
+# T9: a released worker named by PR number goes in one run.
+wt qa-345 qa-345; dispatch qa-345 released
+clean_run
+gone qa-345 qa-345 && ok || bad "T9 released qa-<PR> worker removed"
+
+# T10: a released worker's branch with a commit outside main survives and is listed.
+wt lane-b lane-b commit; dispatch lane-b released
+clean_run
+kept lane-b lane-b && has_remote lane-b && ok || bad "T10 unmerged commit keeps worktree and branch"
+says 'lane-b' && ok || bad "T10 lists the kept branch"
+
+# T11: an ended pane is closed, then the worktree goes, in one run.
+wt ended ended; dispatch ended released term-ended; mf_orca_add_terminal term-ended "$(path ended)"
+clean_run
+gone ended ended && ok || bad "T11 ended pane closed and worktree removed"
+grep -q "pane-close d$n" "$MF_DIR/pane.log" && ok || bad "T11 pane close got the dispatch id"
+
+# T28: the merged head branch gained a commit after the merged sha: kept. At the merged sha it goes even when not in main.
+G checkout -q -b grown origin/main; echo 1 > g1.txt; G add g1.txt; G commit -qm g1; mergedsha=$(G rev-parse HEAD)
+echo 2 > g2.txt; G add g2.txt; G commit -qm g2; G push -q origin grown; G checkout -q main
+run bash "$cleanup" --branch grown --head-sha "$mergedsha"
+has_local grown && has_remote grown && ok || bad "T28 head with a later commit kept"
+says 'grown' && ok || bad "T28 lists it"
+G checkout -q -b squashed origin/main; echo s > s.txt; G add s.txt; G commit -qm s; G push -q origin squashed; G checkout -q main
+run bash "$cleanup" --branch squashed --head-sha "$(G rev-parse squashed)"
+! has_local squashed && ! has_remote squashed && ok || bad "T28 head at the merged sha deleted though not in main"
+
+# T29 and T23: an idle rm-* or lead-* worktree with a released dispatch and all commits in main is kept.
+wt rm-keep rm-keep; dispatch rm-keep released
+wt lead-keep lead-keep; dispatch lead-keep released
+clean_run
+kept rm-keep rm-keep && kept lead-keep lead-keep && ok || bad "T29/T23 rm-* and lead-* kept"
+says 'protected: kept worktree .*lead-keep' && ok || bad "T23 lead-* protected message"
+
+# Unsaved changes in a released, merged worktree: kept and listed (open question 3).
+wt dirty dirty; dispatch dirty released; echo wip > "$MF_DIR/wt/dirty/w.txt"
+clean_run
+kept dirty dirty && says 'dirty' && ok || bad "dirty released worktree kept and listed"
+
+# A worktree with no dispatch at all has no proven owner: kept.
+wt unowned unowned
+clean_run
+kept unowned unowned && ok || bad "worktree without a dispatch kept"
+
+# T33 (cleanup half): a pane close that never returns is cut off by the call timeout and reported as kept.
+wt stuck stuck; dispatch stuck released term-stuck; mf_orca_add_terminal term-stuck "$(path stuck)"
+start=$SECONDS
+WORKER_PANE_CLOSE="$MF_DIR/pane-hang" MERGE_CLEANUP_CALL_TIMEOUT_SECONDS=2 mf_run_limited 15 bash -c \
+  "bash '$cleanup' --branch merged-head --head-sha '$headsha' > '$MF_DIR/out' 2>&1"; echo $? > "$MF_DIR/rc"
+rc_is 0 && [ $((SECONDS - start)) -lt 15 ] && ok || bad "T33 hung pane close ends within the limit"
+says 'timed out' && kept stuck stuck && ok || bad "T33 timeout printed as kept"
 
 # DRY_RUN changes nothing.
-refs_before=$(git for-each-ref; git --git-dir="$tmp/origin" for-each-ref)
-DRY_RUN=1 bash "$here/merge-cleanup.sh" --branch mingster/38-head --issue 38 > "$tmp/dry"
-[ "$refs_before" = "$(git for-each-ref; git --git-dir="$tmp/origin" for-each-ref)" ] || fail "dry run changed refs"
-grep -q 'no fetch' "$tmp/dry" || fail "dry run did not say it skipped fetch"
-has_local mingster/38-head && has_remote lane/38-b && [ -d "$tmp/wt-c" ] || fail "dry run deleted something"
-[ ! -e "$tmp/_ref" ] || fail "dry run wrote patch"
-# A remote ref added behind our back must not appear after a dry run (no fetch).
-git clone -q --bare "$tmp/origin" "$tmp/other"
-git --git-dir="$tmp/other" push -q origin main:refs/heads/surprise
-DRY_RUN=1 bash "$here/merge-cleanup.sh" --branch mingster/38-head > /dev/null
-git show-ref --verify --quiet refs/remotes/origin/surprise && fail "dry run fetched"
-git --git-dir="$tmp/origin" update-ref -d refs/heads/surprise
-echo 'ok dry run changes nothing'
+wt dry dry; dispatch dry released
+refs=$(G for-each-ref; G worktree list)
+DRY_RUN=1 clean_run
+[ "$refs" = "$(G for-each-ref; G worktree list)" ] && kept dry dry && ok || bad "dry run changes nothing"
 
-bash "$here/merge-cleanup.sh" --branch mingster/38-head --issue 38 > "$tmp/out" 2>&1
-for b in mingster/38-head lane/38-a lane/38-b lane/38-c recovery/old; do has_local "$b" && fail "local $b kept"; done
-for b in mingster/38-head lane/38-a lane/38-b; do has_remote "$b" && fail "remote $b kept"; done
-for d in wt-head wt-a wt-b wt-c; do [ -e "$tmp/$d" ] && fail "$d kept"; done
-has_local lane/3848-x && has_remote lane/3848-x && [ -d "$tmp/wt-x" ] || fail "3848 lane touched"
-has_local recovery/fresh && has_local main || fail "fresh recovery or main removed"
-grep -q staged "$tmp/_ref/lane-38-c.patch" && grep -q '^+more' "$tmp/_ref/lane-38-c.patch" || fail "dirty patch missing staged or unstaged"
-grep -q 'untracked-small' "$tmp/_ref/lane-38-c.patch" || fail "small untracked file not in patch"
-grep -qx 'new small.txt' "$tmp/_ref/lane-38-c.untracked.txt" && grep -q 'big.bin (over 1 MB' "$tmp/_ref/lane-38-c.untracked.txt" || fail "untracked list wrong"
-echo 'ok head, lanes cleaned, dirty saved to patch, 3848 and fresh recovery kept'
+# Protected branches survive.
+run bash "$cleanup" --branch main
+has_local main && has_remote main && says 'protected: kept main' && ok || bad "main never deleted"
 
-# A dirty PR head worktree is kept and printed.
-git worktree add -qb mingster/50-head "$tmp/wt-d" main
-git push -q origin mingster/50-head
-echo wip > "$tmp/wt-d/w.txt"
-bash "$here/merge-cleanup.sh" --branch mingster/50-head > "$tmp/out"
-[ -d "$tmp/wt-d" ] && has_local mingster/50-head || fail "dirty head worktree removed"
-grep -q 'Kept worktree.*wt-d' "$tmp/out" || fail "dirty head not printed"
-echo 'ok dirty head worktree kept and printed'
+# Cleanup never releases a dispatch.
+! grep -q worker-release "$MF_ORCA_LOG" && ok || bad "T8 no worker-release call in the whole run"
 
-# Protected branches and the current branch survive.
-bash "$here/merge-cleanup.sh" --branch main > "$tmp/out" || true
-has_local main && has_remote main || fail "main deleted"
-echo 'ok main never deleted'
-
-# If the patch cannot be saved, the dirty worktree stays.
-git worktree add -qb lane/60-a "$tmp/wt-e" main
-echo u > "$tmp/wt-e/u.txt"
-touch "$tmp/blocker"
-FAKE_RELEASED="$tmp/wt-e" MERGE_CLEANUP_REF_DIR="$tmp/blocker/sub" bash "$here/merge-cleanup.sh" --branch mingster/none --issue 60 > "$tmp/out" 2>&1
-[ -d "$tmp/wt-e" ] && [ -f "$tmp/wt-e/u.txt" ] || fail "worktree removed though patch unsaved"
-echo 'ok unsaved patch keeps worktree'
-
-# Protected names match as heads, refs, origin/ refs and last path components.
-GIT_COMMITTER_DATE="$(date -v-8d +%s 2>/dev/null || date -d '8 days ago' +%s) +0000" \
-  git -c user.name=T -c user.email=t@x commit-tree -m old "main^{tree}" -p main > "$tmp/oldsha2"
-for b in feature/main recovery/main production staging release/production; do
-  git branch "$b" main; git push -q origin "$b"
-done
-git update-ref refs/heads/recovery/main "$(cat "$tmp/oldsha2")"
-git branch wip/cur main; git branch lane/70/main main
-git worktree add -q "$tmp/wt-cur" wip/cur
-for h in feature/main recovery/main production origin/staging refs/heads/staging release/production; do
-  bash "$here/merge-cleanup.sh" --branch "$h" > "$tmp/out" 2>&1 || fail "cleanup failed for $h"
-  grep -q "protected: kept $h" "$tmp/out" || fail "no protected message for $h"
-done
-bash "$here/merge-cleanup.sh" --branch mingster/none --issue 70 > "$tmp/out" 2>&1 || true
-grep -q 'protected: kept lane/70/main' "$tmp/out" && has_local lane/70/main || fail "ticket lane lane/70/main deleted"
-for b in feature/main recovery/main production staging release/production; do
-  has_local "$b" && has_remote "$b" || fail "protected $b deleted"
-done
-(cd "$tmp/wt-cur" && bash "$here/merge-cleanup.sh" --branch wip/cur > "$tmp/out" 2>&1) || fail "cleanup failed for current"
-grep -q 'protected: kept wip/cur' "$tmp/out" && has_local wip/cur || fail "current branch deleted"
-echo 'ok protected names, refs, origin/ and last components kept'
-
-# The lead-queue worktree is never removed, even for a merged clean branch.
-git worktree add -qb lane/80-lq "$tmp/lead-queue" main
-git push -q origin lane/80-lq
-bash "$here/merge-cleanup.sh" --branch lane/80-lq > "$tmp/out" 2>&1 || fail "cleanup failed for lead-queue"
-[ -d "$tmp/lead-queue" ] && has_local lane/80-lq || fail "lead-queue worktree removed"
-grep -q 'protected: kept worktree.*lead-queue' "$tmp/out" || fail "no lead-queue protected message"
-echo 'ok lead-queue worktree kept'
-# Any lead-* worktree is kept, including the one that holds the PR branch itself.
-git worktree add -qb lane/81-lx "$tmp/lead-x" main
-git push -q origin lane/81-lx
-bash "$here/merge-cleanup.sh" --branch lane/81-lx > "$tmp/out" 2>&1 || fail "cleanup failed for lead-x"
-[ -d "$tmp/lead-x" ] && has_local lane/81-lx || fail "lead-x worktree removed"
-grep -q 'protected: kept worktree.*lead-x' "$tmp/out" || fail "no lead-x protected message"
-echo 'ok lead-* worktree kept'
-# PR number matching: qa-<PR> lanes go, other numbers stay, whole-number only.
-git worktree add -qb qa-345 "$tmp/wt-q1" main
-git push -q origin qa-345
-git worktree add -qb qa-346 "$tmp/wt-q2" main
-git worktree add -qb qa-12345 "$tmp/wt-q3" main
-git worktree add -qb qa-3450 "$tmp/wt-q4" main
-git worktree add -qb qa-345-dirty "$tmp/wt-q5" main
-echo wip > "$tmp/wt-q5/w.txt"
-bash "$here/merge-cleanup.sh" --branch mingster/none --issue 9001 --pr 345 > "$tmp/out" 2>&1 || fail "pr cleanup failed"
-has_local qa-345 || has_remote qa-345 || [ -d "$tmp/wt-q1" ] && fail "qa-345 kept"
-for b in qa-346 qa-12345 qa-3450; do has_local "$b" || fail "$b wrongly removed"; done
-[ -d "$tmp/wt-q2" ] && [ -d "$tmp/wt-q3" ] && [ -d "$tmp/wt-q4" ] || fail "non-matching worktree removed"
-has_local qa-345-dirty && [ -d "$tmp/wt-q5" ] && fail "dirty qa-345-dirty not handled"
-echo 'ok --pr matches qa-<PR> only as a whole number'
-# Dirty PR lane that is released: patch saved, then removed (same as issue lanes).
-export FAKE_RELEASED="$tmp/wt-q5"
-bash "$here/merge-cleanup.sh" --branch mingster/none --pr 345 > "$tmp/out" 2>&1 || fail "dirty pr cleanup failed"
-grep -q '^+wip' "$tmp/_ref/qa-345-dirty.patch" || fail "dirty qa-<PR> patch not saved"
-echo 'ok dirty qa-<PR> saved as patch'
-# A released lane whose head is not in main must not run head-checks (heavy, can hang or fail) and must not stop cleanup.
-printf '#!/usr/bin/env bash\necho ran >> "%s/checks-ran"; exit 1\n' "$tmp" > "$tmp/bin/failing-checks"; chmod +x "$tmp/bin/failing-checks"
-git worktree add -qb qa-777 "$tmp/wt-r1" main
-commit_on qa-777 "$tmp/wt-r1" r1.txt
-git push -q origin qa-777
-export FAKE_RELEASED="$tmp/wt-r1" HEAD_CHECKS="$tmp/bin/failing-checks"
-bash "$here/merge-cleanup.sh" --branch mingster/none --pr 777 > "$tmp/out" 2>&1 || fail "cleanup failed with failing head-checks"
-[ ! -e "$tmp/checks-ran" ] || fail "head-checks ran during cleanup"
-has_local qa-777 || has_remote qa-777 && fail "qa-777 left behind"
-unset HEAD_CHECKS
-echo 'ok cleanup skips head-checks and still removes the lane'
-
-# A merged, clean release worker with a live terminal keeps both refs and files.
-git worktree add -qb lane/82-live "$tmp/wt-live" main
-git push -q origin lane/82-live
-export FAKE_TERMINALS="[{\"worktreePath\":\"$tmp/wt-live\"}]"
-bash "$here/merge-cleanup.sh" --branch lane/82-live > "$tmp/out" 2>&1
-has_local lane/82-live && has_remote lane/82-live && [ -d "$tmp/wt-live" ] || fail "live worktree or branch removed"
-grep -q 'live terminal or unknown inventory' "$tmp/out" || fail "no live refusal"
-unset FAKE_TERMINALS
-echo 'ok live terminal protects worktree and both branches'
+echo "merge-cleanup tests: $pass passed, $fail failed"
+[ "$fail" = 0 ]
