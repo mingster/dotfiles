@@ -13,7 +13,9 @@ cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 case "$1 $2" in
   "skills list") printf 'orca-cli: Operate worktrees.\nbundled-one: Something.\n' ;;
-  "skills install") echo "$*" >> "$ORCA_LOG" ;;
+  "skills install")
+    echo "$*" >> "$ORCA_LOG"
+    [ -z "${ORCA_WRITES:-}" ] || { mkdir -p "$HOME/.agents/skills/orca-cli"; echo x > "$HOME/.agents/skills/orca-cli/SKILL.md"; } ;;
 esac
 EOS
 chmod +x "$tmp/bin/orca"
@@ -80,5 +82,15 @@ out="$tmp/coll5.out"
 PATH="$base_path" DOTFILES="$D" bash "$ROOT/script/check-skill-collisions.sh" "$P" > "$out" 2>&1; rc=$?
 check "collision check uses orca from home cli dir" test "$rc" -eq 1
 check "home cli orca collision names bundling" has 'bundled by orca' "$out"
+
+# 8. old layout (tree links): orca installs after migration, so the repo gets no untracked Orca folder.
+export HOME="$tmp/home4"; mkdir -p "$HOME"
+touch "$D/install.sh"
+ln -s "$D/.agents" "$HOME/.agents"
+mkdir -p "$HOME/.claude"; ln -s "$D/.agents/skills" "$HOME/.claude/skills"
+ORCA_WRITES=1 PATH="$tmp/bin:$base_path" DOTFILES="$D" bash "$ROOT/script/setup-agent-skills.sh" > "$tmp/setup4.out" 2>&1
+check "tree link host: repo has no untracked orca folder" test ! -e "$D/.agents/skills/orca-cli"
+check "tree link host: orca skill lands in the real home folder" test -f "$HOME/.agents/skills/orca-cli/SKILL.md"
+check "tree link host: home is migrated to real directories" test ! -L "$HOME/.agents"
 
 [ "$fails" -eq 0 ] && echo "PASS" || { echo "$fails failure(s)"; exit 1; }
