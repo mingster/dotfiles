@@ -411,7 +411,7 @@ if [ -n "$ui_patterns" ]; then
     done <<<"$ui_patterns"
   done < <(jq -r '.[]' <<<"$files")
   if [ "$ui_touched" = true ]; then
-    awk '/^## screenshots$/ {inside=1; next} inside && /^#+ / {inside=0} inside' <<<"$normalized_body" \
+    awk '/^## screenshots$/ {inside=1; next} inside && /^##? / {inside=0} inside' <<<"$normalized_body" \
       | grep -qE '!\[[^]]*\]\([^)]+\)|user-attachments' \
       || refuse "UI change needs a ## Screenshots section with a phone image"
   fi

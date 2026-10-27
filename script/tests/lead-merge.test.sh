@@ -676,6 +676,10 @@ setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script s
 check "UI320 user-attachments URL counts as an image" 0 '^MERGED' 1
 setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\nnone yet'
 check "UI320 Screenshots heading without an image is refused" 1 "$ui_msg"
+setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\n### Phone\n![phone](https://example.invalid/p.png)\n### Tablet\n![tablet](https://example.invalid/t.png)'
+check "UI320 images under ### sub-headings in Screenshots count" 0 '^MERGED' 1
+setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\nnone yet\n## Notes\n![phone](https://example.invalid/p.png)'
+check "UI320 an image under a later ## section does not count" 1 "$ui_msg"
 setup; files='[{"path":"app/page.test.tsx"}]'
 check "UI320 test-only change under a UI prefix merges" 0 '^MERGED' 1
 setup; files='[{"path":"script/foo.sh"}]'
