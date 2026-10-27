@@ -16,7 +16,7 @@ import socket
 import subprocess
 import sys
 
-COUNT_AGENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "count-agents.sh")
+COUNT_AGENTS = os.environ.get("COUNT_AGENTS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "count-agents.sh")
 
 
 def orca(*args):
@@ -50,8 +50,8 @@ def sessions(host=None):
     try:
         with open(COUNT_AGENTS) as script:
             out = subprocess.run(cmd, stdin=script if host else None, capture_output=True, text=True, timeout=15)
-        # A remote login shell can print its own lines; the count is the numeric one.
-        return int(next(line for line in out.stdout.split() if line.isdigit()))
+        # A remote login shell can print its own lines; the count is the last line that is only a number.
+        return int(next(line for line in reversed(out.stdout.splitlines()) if line.strip().isdigit()))
     except (subprocess.SubprocessError, StopIteration, OSError):
         return None
 
