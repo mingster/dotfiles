@@ -374,6 +374,13 @@ EOS
     && echo "ok   T13 after the fifo opens the batch merges every PR" || echo "FAIL T13 batch exit $code: $(tail -5 "$MF_DIR/batch.out")"
   [ ! -e "$lock" ] && echo "ok   T13 lock is released after the batch" || echo "FAIL T13 lock left behind"
 
+  # T13: a stale takeover is serialized; while another waiter is mid-takeover nobody else clears the lock.
+  dead=$(bash -c 'echo $$'); mkdir "$lock" "$lock.takeover"; echo "$dead" > "$lock/pid"; date +%s > "$lock/started"
+  out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1); code=$?
+  [ "$code" -ne 0 ] && [ "$(cat "$lock/pid" 2>/dev/null)" = "$dead" ] \
+    && echo "ok   T13 no second takeover while one is in progress" || echo "FAIL T13 took over during another takeover (exit $code): $out"
+  rm -rf "$lock" "$lock.takeover"
+
   # T13: a lock dir whose pid is gone is taken over, and released again on a refusal exit.
   dead=$(bash -c 'echo $$'); mkdir "$lock"; echo "$dead" > "$lock/pid"; date +%s > "$lock/started"
   out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1)

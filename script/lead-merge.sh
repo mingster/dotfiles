@@ -88,10 +88,18 @@ lock_acquire() {
     holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
     if [ "$holder" = "$$" ]; then lock_owned=true; return 0; fi # handed over through exec
     if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-      echo "lead-merge: taking over stale merge lock of pid $holder" >&2
-      # The rename is atomic, so only one waiter clears a given stale lock.
-      if mv "$lock_dir" "$lock_dir.stale.$$" 2>/dev/null; then rm -rf "$lock_dir.stale.$$"; fi
-      continue
+      # One waiter at a time clears a stale lock, and only after reading the dead pid again under that guard:
+      # a waiter that read the pid before another takeover finished would otherwise delete the new live lock.
+      if mkdir "$lock_dir.takeover" 2>/dev/null; then
+        if [ "$(cat "$lock_dir/pid" 2>/dev/null || true)" = "$holder" ]; then
+          echo "lead-merge: taking over stale merge lock of pid $holder" >&2
+          rm -rf "$lock_dir"
+        fi
+        rmdir "$lock_dir.takeover"
+        continue
+      fi
+      # A guard left by a run killed mid-takeover is cleared after a minute.
+      [ -z "$(find "$lock_dir.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$lock_dir.takeover" 2>/dev/null || true
     fi
     started=$(cat "$lock_dir/started" 2>/dev/null || true)
     if [ "$noted" = false ]; then
