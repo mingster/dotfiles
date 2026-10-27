@@ -256,6 +256,10 @@ ref="" heads="" prev=""
 for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
 echo "head-checks $heads" >> "$FX_HC_LOG"
 printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+# FX_BREAK_PR: the PR body loses its Verification heading after preflight, so the gate drops it.
+if [ -n "${FX_BREAK_PR:-}" ]; then
+  f="$MF_GH_DIR/pr-$FX_BREAK_PR.json"; jq '.body="Verification:\n- Edited."' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+fi
 EOS
   chmod +x "$MF_BIN/fake-head-checks"
   export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
@@ -273,6 +277,19 @@ EOS
   # T26: the survivors merge.
   [ "$(jq -r .state "$MF_GH_DIR/pr-11.json")$(jq -r .state "$MF_GH_DIR/pr-13.json")" = MERGEDMERGED ] && echo "ok   T26 the rest of the batch merges" || echo "FAIL T26 merge states"
   [ "$(jq -r .state "$MF_GH_DIR/pr-12.json")" = OPEN ] && echo "ok   T26 the refused PR stays open" || echo "FAIL T26 refused PR merged"
+
+  # T27: a PR the gate drops after train checks takes every later train-mate with it, so main only
+  # ever receives a prefix of the train that head-checks tested.
+  local n states
+  for n in 14 15 16; do mf_pr_add "$n" "f$n" "$ok" "docs/a$n.md"; done
+  out=$(FX_BREAK_PR=14 bash "$here/lead-merge.sh" --repo example/repo --batch 14 15 16 2>&1); code=$?
+  states=$(for n in 14 15 16; do jq -r .state "$MF_GH_DIR/pr-$n.json"; done | tr '\n' ' ')
+  [ "$states" = "OPEN OPEN OPEN " ] && echo "ok   T27 nothing merges after the first train PR is dropped" || echo "FAIL T27 states $states: $out"
+  grep -q 'PR #15: .*untested without PR #14' <<<"$out" && echo "ok   T27 later train-mates are reported" || echo "FAIL T27 report: $out"
+  for n in 17 18 19; do mf_pr_add "$n" "f$n" "$ok" "docs/a$n.md"; done
+  out=$(FX_BREAK_PR=19 bash "$here/lead-merge.sh" --repo example/repo --batch 17 18 19 2>&1)
+  states=$(for n in 17 18 19; do jq -r .state "$MF_GH_DIR/pr-$n.json"; done | tr '\n' ' ')
+  [ "$states" = "MERGED MERGED OPEN " ] && echo "ok   T27 the tested prefix before the dropped PR merges" || echo "FAIL T27 prefix states $states: $out"
 }
 
 # T24: a 13 PR train with a huge log posts every receipt through a gh that rejects bodies over 65536.

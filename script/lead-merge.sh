@@ -213,13 +213,20 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   fi
 
   # Run every per-PR path and Countersign gate before the first merge mutates main. Preflight already
-  # passed, so a refusal here is rare; it drops its own PR and never aborts the batch.
+  # passed, so a refusal here is rare. It drops its own PR and every later train-mate, whose checks
+  # included the dropped commits, so main only receives a tested prefix of the train.
+  gate_dropped=""
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
-    if ! LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
+    if [ -n "$gate_dropped" ]; then
+      echo "lead-merge: dropped PR #${composed_prs[$i]}: its train checks are untested without PR #$gate_dropped" >&2
+      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}")
+      continue
+    fi
+    if ! LEAD_MERGE_PREFLIGHT_ONLY=0 LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
         bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"; then
       echo "lead-merge: gate dropped PR #${composed_prs[$i]} after train checks" >&2
-      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}")
+      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}"); gate_dropped=${composed_prs[$i]}
     fi
   done
   merged=0
@@ -239,7 +246,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
     expected_main_tree=$(git rev-parse "$expected_main^{tree}") || die "cannot read expected batch prefix tree"
-    LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
+    LEAD_MERGE_PREFLIGHT_ONLY=0 LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
       LEAD_MERGE_EXPECTED_MAIN_TREE=$expected_main_tree LEAD_MERGE_CLEANUP_FILE=$cleanup_file \
       bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
     expected_main=$(append_train "$expected_main" "${composed_prs[$i]}" "${composed_heads[$i]}") \
