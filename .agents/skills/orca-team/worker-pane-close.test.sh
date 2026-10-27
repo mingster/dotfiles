@@ -296,4 +296,9 @@ sed -i.bak 's/terminal close --terminal/terminal closeX --terminal/' "$tmp/orca"
 "$here/worker-pane-close.sh" d5 >/dev/null; rc=$?
 check "already-closed pane (close fails) is not an error" "$([ "$rc" = 0 ] && [ ! -e "$tmp/state/d5" ]; echo $?)"
 
+echo dispatched > "$tmp/status.live-release"
+rm -f "$tmp/state/released/live-release"
+"$here/worker-pane-close.sh" --release live-release > "$tmp/live-release.out" 2>&1; rc=$?
+check "live --release refuses with actionable message and no marker" "$([ "$rc" != 0 ] && grep -q 'worker-stop explicitly' "$tmp/live-release.out" && [ ! -e "$tmp/state/released/live-release" ]; echo $?)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

@@ -65,6 +65,8 @@ A model named in documentation is not proof this account can run it: check the s
 
 ## Commit, push and merge (owner rule)
 
+Changes under `templates/agent-team/` always use a PR with an independent Verdict, including docs-only changes; publish through the responsible coordinator. Direct pushes to main are outside that lane.
+
 Publication authority (owner 2026-10-20). The Tech Lead owns engineering integration; Elon owns PM, sales and docs integration under `docs/agents/team.md`, Orchestration rule 3. Enforced by instruction until the worker hook (blocks `git push`, `gh pr create` and `gh pr merge` in worker terminals) and the push script are built. Every worker spec states rules 1 and 2.
 
 1. An implementation worker edits and commits only on its own branch in its own worktree, at each green checkpoint. It never runs `git push`, `gh pr create` or merges. Its `worker_done` reports the branch, worktree path, `git diff main...HEAD --stat` and test counts.
@@ -121,3 +123,5 @@ Order: Claude, Cursor, Antigravity. Every worker gets its provider, model and ef
 4. **Hooks run only in Claude Code.** Elsewhere the strike rule in `AGENTS.md` is the only guard: follow it as written.
 5. **Finish the task where it landed.** The next task starts on the preferred provider again.
 6. **Record the runner** (provider and model) in the PR description.
+
+Supervised leads cannot cross hosts: send a status capacity request to the coordinator, which starts the remote worker in its own Run and forwards the result. Never spoof the lead handle or Run. A runtime host restriction is not an owner decision.

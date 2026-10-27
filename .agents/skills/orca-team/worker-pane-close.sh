@@ -138,8 +138,14 @@ close_one() {
 }
 if [ "${1:-}" = --release ]; then
   shift
+  [ "$#" -gt 0 ] || { echo "worker-pane-close: --release requires a dispatch id" >&2; exit 2; }
   for d in "$@"; do
-    close_rpc orchestration worker-release --dispatch "$d" --json >/dev/null 2>&1 || true
+    show=$(close_rpc orchestration worker-show --dispatch "$d" --json) || exit 1
+    status=$(printf '%s' "$show" | dispatch_status)
+    case "$status" in completed|failed|cancelled|released) ;;
+      *) echo "worker-pane-close: refusing --release $d (status=${status:-unknown}); settle it, or use worker-stop explicitly before release" >&2; exit 1 ;;
+    esac
+    close_rpc orchestration worker-release --dispatch "$d" --json || { echo "worker-pane-close: release failed for $d; retaining terminals" >&2; exit 1; }
     mkdir -p "$state/released" && : > "$state/released/$d"
     close_one "$d"
   done

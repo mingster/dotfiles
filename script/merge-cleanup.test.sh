@@ -18,7 +18,7 @@ case "$*" in
   'orchestration worker-list'*)
     w=""; for p in $FAKE_RELEASED; do w="$w${w:+,}{\"dispatchId\":\"d\",\"dispatchStatus\":\"released\",\"worktreeId\":\"repo::$p\"}"; done
     printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
-  *) printf '{"ok":true,"result":{"terminals":[]}}\n' ;;
+  *) printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
 esac
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
@@ -181,3 +181,13 @@ bash "$here/merge-cleanup.sh" --branch mingster/none --pr 777 > "$tmp/out" 2>&1 
 has_local qa-777 || has_remote qa-777 && fail "qa-777 left behind"
 unset HEAD_CHECKS
 echo 'ok cleanup skips head-checks and still removes the lane'
+
+# A merged, clean release worker with a live terminal keeps both refs and files.
+git worktree add -qb lane/82-live "$tmp/wt-live" main
+git push -q origin lane/82-live
+export FAKE_TERMINALS="[{\"worktreePath\":\"$tmp/wt-live\"}]"
+bash "$here/merge-cleanup.sh" --branch lane/82-live > "$tmp/out" 2>&1
+has_local lane/82-live && has_remote lane/82-live && [ -d "$tmp/wt-live" ] || fail "live worktree or branch removed"
+grep -q 'live terminal or unknown inventory' "$tmp/out" || fail "no live refusal"
+unset FAKE_TERMINALS
+echo 'ok live terminal protects worktree and both branches'
