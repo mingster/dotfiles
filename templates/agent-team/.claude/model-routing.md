@@ -28,7 +28,7 @@ Fallback begins at the provider after the role's default.
 | qa-sdet | Claude / Cursor | the Strong row: `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
 | every other role | Claude | the Claude column for the role's tier |
 
-Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. When fullstack-dev ran on Codex or Cursor GPT, qa-sdet audits on Claude Opus. When fullstack-dev ran on Claude, qa-sdet audits on a non Claude model (`--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high`). Role fallback chains: `~/.orca/presets.json`.
+Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. When fullstack-dev ran on Codex or Cursor GPT, qa-sdet audits on Claude Opus. When fullstack-dev ran on Claude, qa-sdet audits on a non Claude model (`--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high`). Owner 2026-10-27: a cross review is needed only for the Opus tier of the review judge, and that reviewer is Claude Opus whatever family the author used. Role fallback chains: `~/.orca/presets.json`.
 
 ## Worker flags by provider
 

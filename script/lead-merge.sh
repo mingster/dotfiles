@@ -6,7 +6,7 @@
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
 #   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
-# A Verdict also carries across a clean merge of main (see verdict_carry).
+# A Verdict and the Checks: PASS comment also carry across a clean merge of main (see verdict_carry).
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
 set -euo pipefail
@@ -269,33 +269,6 @@ grep -qE '^## verification$' <<<"$normalized_body" || die "missing ## Verificati
 if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then die "Test plan heading is forbidden"; fi
 bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
 [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ] || die "Verification needs 1 to 3 run and outcome bullets"
-train_check=""
-if [ "$batch_requested" = true ]; then
-  [[ "${LEAD_MERGE_TRAIN_HEAD:-}" =~ ^[0-9a-f]{40}$ ]] || die "invalid batch train head"
-  [[ "${LEAD_MERGE_TRAIN_HEADS:-}" =~ ^[0-9a-f]{40}(,[0-9a-f]{40})*$ ]] || die "invalid batch train PR heads"
-  grep -Eq "(^|,)$head(,|$)" <<<"${LEAD_MERGE_TRAIN_HEADS:-}" || die "batch train does not contain PR $pr head"
-  git cat-file -e "$LEAD_MERGE_TRAIN_HEAD^{commit}" 2>/dev/null \
-    && git merge-base --is-ancestor "$head" "$LEAD_MERGE_TRAIN_HEAD" \
-    || die "batch train commit does not contain PR $pr head"
-  train_check="Checks: PASS head=$LEAD_MERGE_TRAIN_HEAD train-heads=$LEAD_MERGE_TRAIN_HEADS"
-fi
-check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
-checks=${check_body%%$'\n'*}
-{ [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; } \
-  || die "missing current-head or containing-train Checks: PASS"
-unchecked=false
-if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
-skip_review=false
-if grep -qiE '^review: skipped \(.+\)$' <<<"$normalized_body"; then skip_review=true; fi
-docs_only=true
-while IFS= read -r f; do
-  case "$f" in
-    .claude/agents/*|*/.claude/agents/*|.agents/skills/*|*/.agents/skills/*) [ "$skip_review" = true ] || docs_only=false ;;
-    docs/*|*.md|changelog.d/*) ;;
-    *) docs_only=false ;;
-  esac
-done < <(jq -r '.[]' <<<"$files")
-
 # Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
 # first-parent chain is a two parent merge of main that replays to exactly the same tree.
 # Fails closed; sets carry_why to the failed check.
@@ -323,6 +296,49 @@ verdict_carry() { # <verdict head> <current head>
     [ "$replay" = "$(git rev-parse "$c^{tree}")" ] || { carry_why="check b: merge ${c:0:12} differs from a clean replay"; return 1; }
   done
 }
+# The same rule for the Checks comment: a "Checks: PASS head=<V>" comment counts for head H when
+# verdict_carry V H holds. Prints the newest such comment body; fails closed.
+checks_carry() { # <pr json with .comments> <current head>
+  local info="$1" h="$2" row body v
+  while IFS= read -r row; do
+    body=$(printf '%s' "$row" | base64 -d)
+    v=${body%%$'\n'*}
+    [[ "$v" =~ ^Checks:\ PASS\ head=([0-9a-f]{40})$ ]] || continue
+    v=${BASH_REMATCH[1]}
+    [ "$v" != "$h" ] || continue
+    [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Checks"; main_fetched=true; }
+    if verdict_carry "$v" "$h"; then printf '%s\n' "$body"; return 0; fi
+  done < <(jq -r '[.comments[].body] | reverse | .[] | @base64' <<<"$info" 2>/dev/null | head -50)
+  return 1
+}
+train_check=""
+if [ "$batch_requested" = true ]; then
+  [[ "${LEAD_MERGE_TRAIN_HEAD:-}" =~ ^[0-9a-f]{40}$ ]] || die "invalid batch train head"
+  [[ "${LEAD_MERGE_TRAIN_HEADS:-}" =~ ^[0-9a-f]{40}(,[0-9a-f]{40})*$ ]] || die "invalid batch train PR heads"
+  grep -Eq "(^|,)$head(,|$)" <<<"${LEAD_MERGE_TRAIN_HEADS:-}" || die "batch train does not contain PR $pr head"
+  git cat-file -e "$LEAD_MERGE_TRAIN_HEAD^{commit}" 2>/dev/null \
+    && git merge-base --is-ancestor "$head" "$LEAD_MERGE_TRAIN_HEAD" \
+    || die "batch train commit does not contain PR $pr head"
+  train_check="Checks: PASS head=$LEAD_MERGE_TRAIN_HEAD train-heads=$LEAD_MERGE_TRAIN_HEADS"
+fi
+check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
+checks=${check_body%%$'\n'*}
+{ [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; } \
+  || { check_body=$(checks_carry "$info" "$head") && checks="Checks: PASS head=$head" && echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"; } \
+  || die "missing current-head or containing-train Checks: PASS"
+unchecked=false
+if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
+skip_review=false
+if grep -qiE '^review: skipped \(.+\)$' <<<"$normalized_body"; then skip_review=true; fi
+docs_only=true
+while IFS= read -r f; do
+  case "$f" in
+    .claude/agents/*|*/.claude/agents/*|.agents/skills/*|*/.agents/skills/*) [ "$skip_review" = true ] || docs_only=false ;;
+    docs/*|*.md|changelog.d/*) ;;
+    *) docs_only=false ;;
+  esac
+done < <(jq -r '.[]' <<<"$files")
+
 # Dispatch ids Orca knows about, read lazily and once, following page cursors.
 known_dispatches=""
 load_dispatches() {

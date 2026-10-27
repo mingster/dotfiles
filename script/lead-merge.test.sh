@@ -111,3 +111,30 @@ git checkout -q pr
 ( git() { if [ "${1:-}" = merge-tree ]; then return 128; fi; command git "$@"; }
   carry "git merge-tree failure is refused" 1 "$V" "$H1" "conflicted merge" ) || exit 1
 echo 'PASS: 11 verdict carry cases'
+
+# Checks carry: a "Checks: PASS head=<V>" comment counts for head H when verdict_carry V H holds.
+eval "$(sed -n '/^checks_carry() {/,/^}$/p' "$here/lead-merge.sh")"
+main_fetched=true
+cc() { # name expect(0|1) V H
+  local rc=0 info
+  info=$(jq -n --arg b "Checks: PASS head=$3" '{comments:[{body:$b}]}')
+  checks_carry "$info" "$4" >/dev/null || rc=$?
+  [ "$rc" = "$2" ] || { echo "FAIL: $1: expected rc $2, got $rc" >&2; exit 1; }
+  echo "ok $1"
+}
+git checkout -q main && git update-ref refs/remotes/origin/main main
+git checkout -q -b prck main~0 && echo ck > ck.txt && git add ck.txt && git commit -q -m ck
+VK=$(git rev-parse HEAD)
+git checkout -q main && echo m9 > m9.txt && git add m9.txt && git commit -q -m main9 && advance_main
+git checkout -q prck && git merge -q --no-ff -m "merge main" main
+HK=$(git rev-parse HEAD)
+cc "Checks PASS carries across a clean merge of main" 0 "$VK" "$HK"
+echo more > more.txt && git add more.txt && git commit -q -m authored
+cc "authored commit after the Checks head is refused" 1 "$VK" "$(git rev-parse HEAD)"
+git checkout -q -b prckc "$V" && echo pr > cc.txt && git add cc.txt && git commit -q -m ccpr
+VX=$(git rev-parse HEAD)
+git checkout -q main && echo main > cc.txt && git add cc.txt && git commit -q -m ccmain && advance_main
+git checkout -q prckc && git merge -q --no-ff main >/dev/null 2>&1 || true
+echo resolved > cc.txt && git add cc.txt && git commit -q -m "merge main (resolved)"
+cc "conflicted merge is refused" 1 "$VX" "$(git rev-parse HEAD)"
+echo 'PASS: 3 checks carry cases'
