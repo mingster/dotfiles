@@ -21,7 +21,7 @@ case "$1" in
   *) exit 1 ;;
 esac
 EOS
-# gh stub: view prints $PR_JSON (or $FINAL_JSON after a merge), diff prints $PR_DIFF,
+# gh stub: view prints $PR_JSON (or $FINAL_JSON after a merge), diff prints the file $PR_DIFF_FILE,
 # merge logs the call and fails MERGE_FAILS times first.
 cat > "$tmp/bin/gh" <<'EOS'
 #!/usr/bin/env bash
@@ -33,7 +33,7 @@ fi
 case "$2" in
   view)
     if [[ "$*" == *"--repo d/dotfiles"* ]]; then printf '%s' "$VERDICT_PR_JSON"; elif [ -f "$MERGE_LOG" ] && grep -q ok "$MERGE_LOG"; then printf '%s' "$FINAL_JSON"; else printf '%s' "$PR_JSON"; fi ;;
-  diff) printf '%s' "$PR_DIFF" ;;
+  diff) cat "$PR_DIFF_FILE" ;;
   merge)
     echo "$*" >> "$MERGE_LOG.calls"
     n=$(wc -l < "$MERGE_LOG.calls")
@@ -91,7 +91,8 @@ mkjson() {
   API_FILES=${API_OVERRIDE:-$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")}
   PR_JSON=$(jq --argjson count "${COUNT_OVERRIDE:-$(jq length <<<"$API_FILES")}" '.changedFiles=$count' <<<"$PR_JSON")
   export API_FILES
-  export PR_JSON FINAL_JSON PR_DIFF FAKE_TOP MERGE_FAILS
+  printf '%s' "$PR_DIFF" > "$MERGE_LOG.diff"; export PR_DIFF_FILE="$MERGE_LOG.diff"
+  export PR_JSON FINAL_JSON FAKE_TOP MERGE_FAILS
 }
 
 # Cases run in parallel, in two ways. Plain check calls in the main shell snapshot the
@@ -121,6 +122,10 @@ run_case() { # result_file run_script name expected_exit output_regex [merge_cal
     "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
   fi
   mkjson
+  # Linux refuses to exec anything when one env string passes 128KB (macOS does not); the generated
+  # copy diff is far bigger, so it must reach the gh stub through a file, never the environment.
+  big=$(awk 'BEGIN { for (k in ENVIRON) if (length(ENVIRON[k]) > m) m = length(ENVIRON[k]); print m + 0 }')
+  if [ "$big" -gt 100000 ]; then printf 'FAIL %s (an exported variable is %s bytes, over the 128KB Linux exec limit)\n' "$1" "$big" > "$res"; return; fi
   out=$("$run" --repo "${REPO:-o/r}" --pr 7 --head "$SHA" ${VFROM:+--verdict-from "$VFROM"} ${MECH:+--mechanical} ${VCMD:+--verify-command "$VCMD"} 2>&1); code=$?
   calls=0; [ -f "$MERGE_LOG.calls" ] && calls=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
   if [ "$code" = "$2" ] && echo "$out" | grep -qE "$3" && [ "$calls" = "${4:-0}" ] \
