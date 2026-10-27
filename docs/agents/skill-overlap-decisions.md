@@ -61,3 +61,5 @@ Worktree: `~/orca/workspaces/dotfiles/dotfiles-skilldedupe`.
 | Added prose punctuation and `git diff --check` | Pass, no dash punctuation or whitespace errors |
 
 No skill was removed, so there are no removed skill references to repair. Existing Step 0 through Step 5 references to crew still resolve. The `ceo`, `elon`, `teddy` and relay file paths remain valid. Product adoption and sync into <project-a> or <project-b> are left to Elon after merge.
+
+Update: `orca-cli`, `computer-use` and `orca-per-workspace-env` are no longer tracked here. `script/setup-agent-skills.sh` runs `orca skills install --all` when `orca` is on PATH and never links a name Orca bundles. `script/check-skill-collisions.sh` fails when a dotfiles or project skill set holds a bundled name.
