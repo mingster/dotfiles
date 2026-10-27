@@ -5,6 +5,17 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="$TEST_ROOT/home"
 mkdir -p "$HOME"
+# Never run the installer against the real home: it repoints ~/dotfiles and every home link.
+case "$HOME" in "$TEST_ROOT"/*) ;; *) echo "FAIL: HOME is not a temp dir: $HOME"; exit 1 ;; esac
+
+# A linked worktree's installer refuses the account's real home (DOTFILES_REAL_HOME stands in for it here).
+wt="$TEST_ROOT/wt"
+git -C "$ROOT" worktree add -q --detach "$wt" HEAD
+cp "$ROOT/install.sh" "$wt/install.sh"
+rc=0; DOTFILES_REAL_HOME="$HOME" DOTFILES_SKIP_SYSTEM_SETUP=1 bash "$wt/install.sh" >"$TEST_ROOT/wt.log" 2>&1 || rc=$?
+git -C "$ROOT" worktree remove --force "$wt"
+[ "$rc" = 1 ] && grep -q 'linked worktree' "$TEST_ROOT/wt.log" && [ ! -e "$HOME/dotfiles" ] || { echo "FAIL: worktree install touched the real home"; cat "$TEST_ROOT/wt.log"; exit 1; }
+echo 'PASS: linked worktree refuses the real home'
 # install.sh ends with setup-check.sh, which exits 1 when host tooling is missing (clean HOME).
 # Tolerate that readiness report only; any other failure still fails the test.
 run_install() {
