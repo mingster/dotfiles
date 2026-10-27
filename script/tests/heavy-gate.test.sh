@@ -418,6 +418,36 @@ time.sleep(1.5 if invocation == 1 else 0.15 if invocation == 2 else 0.6)
         self.finish(p)
         self.finish(job)
 
+    def nested(self, inner_count):
+        # Every inner gate call runs inside the one slot the outer call holds.
+        gate = str(scripts/'heavy-gate.sh')
+        inner = f'for i in $(seq 1 {inner_count}); do bash {gate} --head-checks -- sh -c \'echo "n$i slots=$HEAD_CHECKS_SLOTS"\' & done; wait'
+        return subprocess.run(['bash', gate, '--', 'bash', '-c', inner], env=self.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+
+    def test_nested_gate_runs_inside_the_held_slot(self):
+        self.config(slots=1)
+        done = self.nested(1)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn('slots=1', done.stdout)
+
+    def test_four_parallel_nested_jobs_finish_with_one_slot(self):
+        self.config(slots=1)
+        done = self.nested(4)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.count('slots=1'), 4)
+
+    def test_stale_token_does_not_bypass_the_budget(self):
+        self.config(slots=1)
+        self.env['HEAVY_GATE_TOKEN'] = 'stale'
+        holder = self.job(delay=1)
+        self.wait_for(lambda: self.events())
+        waiting = self.job(label='second')
+        self.wait_for(lambda: bool(select.select([waiting.stderr], [], [], 0)[0]))
+        self.assertIn('slots', waiting.stderr.readline())
+        self.finish(holder)
+        self.finish(waiting)
+
 
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):
