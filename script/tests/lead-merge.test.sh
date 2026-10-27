@@ -553,6 +553,53 @@ check "verdict-from refuses an untracked file under templates/agent-team" 1 'not
   if [ -z "$fails" ]; then echo "ok   T1 every refusal prints in one run and nothing mutates" > "$res"; else printf 'FAIL T1%s\n%s\n' "$fails" "$out" > "$res"; fi
 ) </dev/null &
 
+# T14: two single runs started together on disjoint PRs serialize on the merge lock; both end MERGED, no trunk refusal.
+(
+  unit_init
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}   # the git stub must not shadow real git
+  mf_setup
+  export HOME="$MF_DIR/home" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"; cd "$MF_REPO" || exit 1
+  res="$ucd/result.9014"; fails=""
+  export LEAD_MERGE_CLEANUP=true
+  mf_pr_add 1 t14a $'## Verification\n- Passed.' docs/t14a.md
+  mf_pr_add 2 t14b $'## Verification\n- Passed.' docs/t14b.md
+  for n in 1 2; do
+    h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+    jq --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false}]' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  done
+  # A gh that holds each merge for two seconds, so an unserialized second run overlaps the first.
+  mkdir -p "$MF_DIR/slow"
+  cat > "$MF_DIR/slow/gh" <<EOS
+#!/usr/bin/env bash
+if [ "\$1 \$2" = "pr merge" ]; then
+  echo "gh MERGE-BEGIN \$3" >> "$MF_GH_LOG"; sleep 2; "$MF_BIN/gh" "\$@"; rc=\$?; echo "gh MERGE-END \$3" >> "$MF_GH_LOG"; exit \$rc
+fi
+exec "$MF_BIN/gh" "\$@"
+EOS
+  chmod +x "$MF_DIR/slow/gh"; export PATH="$MF_DIR/slow:$PATH"
+  : > "$MF_GH_LOG"
+  h1=$(jq -r .headRefOid "$MF_GH_DIR/pr-1.json"); h2=$(jq -r .headRefOid "$MF_GH_DIR/pr-2.json")
+  mf_run_limited 60 bash "$here/lead-merge.sh" --repo o/r --pr 1 --head "$h1" > "$MF_DIR/out1" 2>&1 &
+  p1=$!
+  i=0; until grep -q 'MERGE-BEGIN' "$MF_GH_LOG"; do i=$((i+1)); [ "$i" -gt 300 ] && break; sleep 0.1; done
+  mf_run_limited 60 bash "$here/lead-merge.sh" --repo o/r --pr 2 --head "$h2" > "$MF_DIR/out2" 2>&1; c2=$?
+  wait "$p1"; c1=$?
+  [ "$c1" = 0 ] && [ "$c2" = 0 ] || fails="$fails exit=$c1/$c2"
+  [ "$(jq -r .state "$MF_GH_DIR/pr-1.json")$(jq -r .state "$MF_GH_DIR/pr-2.json")" = MERGEDMERGED ] || fails="$fails notmerged"
+  cat "$MF_DIR/out1" "$MF_DIR/out2" | grep -q 'trunk changed' && fails="$fails trunk-refusal"
+  # The second run reads nothing until the first has finished its merge.
+  end_line=$(grep -n 'MERGE-END' "$MF_GH_LOG" | head -1 | cut -d: -f1)
+  begin_line=$(grep -n 'MERGE-BEGIN' "$MF_GH_LOG" | head -1 | cut -d: -f1)
+  between=$(sed -n "${begin_line},${end_line}p" "$MF_GH_LOG" | grep -c 'pr view')
+  [ "$between" = 0 ] || fails="$fails overlapped"
+  [ ! -e "$("$MF_REAL_GIT" rev-parse --git-common-dir)/lead-merge.lock" ] || fails="$fails lock-left"
+  out=$(cat "$MF_DIR/out1" "$MF_DIR/out2")
+  mf_teardown
+  if [ -z "$fails" ]; then echo "ok   T14 two single runs on disjoint PRs serialize and both merge" > "$res"; else printf 'FAIL T14%s\n%s\n' "$fails" "$out" > "$res"; fi
+) </dev/null &
+
 # Cleanup call site (spec #286 T5, T12): the issue comes only from closingIssuesReferences, a failing cleanup never fails the merge.
 unit; (
 unit_init

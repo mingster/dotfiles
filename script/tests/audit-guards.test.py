@@ -38,7 +38,7 @@ class Guards(unittest.TestCase):
         self.assertEqual(watch.alerts(self.config, state, 9999, [], [], {'r': False}), [])
 
     def test_failed_capacity_dispatch_reported_once_and_children_count(self):
-        state = {}
+        state = {'failed': []}
         workers = [{'dispatchId': 'f', 'dispatchStatus': 'failed'}, {'dispatchId': 'p', 'dispatchStatus': 'dispatched'}, {'dispatchId': 'c', 'dispatchStatus': 'dispatched', 'parentDispatchId': 'p'}]
         notices = watch.alerts(self.config, state, 0, [], workers, {'r': True})
         self.assertEqual(len(notices), 2)
@@ -46,7 +46,7 @@ class Guards(unittest.TestCase):
         self.assertEqual(len(watch.alerts(self.config, state, 1, [], workers, {'r': True})), 1)
 
     def test_failed_dispatch_without_retry_alerts(self):
-        state = {}
+        state = {'failed': []}
         workers = [{'dispatchId': 'f', 'dispatchStatus': 'failed', 'taskId': 't1'}]
         self.assertEqual(len(watch.alerts(self.config, state, 0, [], workers, {'r': True})), 1)
         self.assertEqual(state['failed'], ['f'])
@@ -58,7 +58,7 @@ class Guards(unittest.TestCase):
         self.assertEqual(state.get('failed', []), [])
 
     def test_task_with_every_dispatch_failed_alerts_each_once(self):
-        state = {}
+        state = {'failed': []}
         workers = [{'dispatchId': 'f', 'dispatchStatus': 'failed', 'taskId': 't1'}, {'dispatchId': 'g', 'dispatchStatus': 'failed', 'taskId': 't1'}]
         self.assertEqual(len(watch.alerts(self.config, state, 0, [], workers, {'r': True})), 2)
         self.assertEqual(watch.alerts(self.config, state, 1, [], workers, {'r': True}), [])
