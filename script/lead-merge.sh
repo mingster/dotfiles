@@ -8,6 +8,9 @@
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
 #   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
 #   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
+# One merge run per repo: a lead-merge.lock/ directory in the git common dir (pid and start time) is held from
+#   the start of the run to the last merge and released before cleanup. A second run waits up to
+#   LEAD_MERGE_LOCK_WAIT_SECONDS (default 1200), printing the holder, then refuses. A lock whose pid is gone is stale.
 # A Verdict and the Checks: PASS comment also carry across a clean merge of main (see verdict_carry).
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
@@ -64,43 +67,56 @@ root=$(cd -P "$HOME/orca/workspaces" 2>/dev/null && pwd) || die "no $HOME/orca/w
 case "$top" in "$root"/*) ;; *) die "worktree is not under $root" ;; esac
 case "$(basename "$top")" in lead-*) ;; *) die "only the lead worktree (lead-*) may merge" ;; esac
 
-# Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent
-# creates LEAD_MERGE_DISPATCHES_FILE empty; the first child that needs the list fills it and the
-# rest read it. A missing or unreadable file falls back to one live read.
-known_dispatches=""
-load_dispatches() {
-  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
-  if [ -n "${LEAD_MERGE_DISPATCHES_FILE:-}" ] && [ -r "$LEAD_MERGE_DISPATCHES_FILE" ]; then
-    known_dispatches=$(cat "$LEAD_MERGE_DISPATCHES_FILE") || known_dispatches=""
-    [ -z "$known_dispatches" ] || return 0
-  fi
-  # worker-list without --run sees only the caller's bound run, so read every run.
-  for n in $(seq 1 50); do
-    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
-      || die "cannot read orca run-list to verify verdict dispatch ids"
-    runs+=$(jq -r '.result.runs[]?.id' <<<"$page" 2>/dev/null)$'\n' \
-      || die "cannot parse orca run-list to verify verdict dispatch ids"
-    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
-    [ -n "$cursor" ] && continue
-    while IFS= read -r run; do
-      [ -n "$run" ] || continue
-      cursor=""
-      for m in $(seq 1 50); do
-        page=$("$orca" orchestration worker-list --run "$run" --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
-          || die "cannot read orca worker-list to verify verdict dispatch ids"
-        known_dispatches+=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null)$'\n' \
-          || die "cannot parse orca worker-list to verify verdict dispatch ids"
-        cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
-        [ -n "$cursor" ] || break
-      done
-      [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
-    done <<<"$runs"
-    [ -z "${LEAD_MERGE_DISPATCHES_FILE:-}" ] || [ ! -w "$LEAD_MERGE_DISPATCHES_FILE" ] \
-      || printf '%s\n' "$known_dispatches" > "$LEAD_MERGE_DISPATCHES_FILE" 2>/dev/null || true
-    return 0
-  done
-  die "run-list has too many pages to verify verdict dispatch ids"
+# One merge run per repo. Children of a batch inherit LEAD_MERGE_LOCK_HELD and never take the lock themselves.
+lock_dir="" lock_owned=false
+lock_release() {
+  if [ "$lock_owned" = true ] && [ "$(cat "$lock_dir/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$lock_dir"; fi
+  lock_owned=false
 }
+lock_acquire() {
+  [ "${LEAD_MERGE_LOCK_HELD:-0}" != 1 ] || return 0
+  local common wait waited=0 holder started noted=false
+  common=$(git rev-parse --git-common-dir 2>/dev/null) && common=$(cd -P "$common" 2>/dev/null && pwd) \
+    || { echo "lead-merge: no git common dir; running without the merge lock" >&2; return 0; }
+  lock_dir="$common/lead-merge.lock"
+  wait=${LEAD_MERGE_LOCK_WAIT_SECONDS:-1200}
+  [[ "$wait" =~ ^[0-9]+$ ]] || die "LEAD_MERGE_LOCK_WAIT_SECONDS must be a number"
+  trap 'lock_release' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
+    if [ "$holder" = "$$" ]; then lock_owned=true; return 0; fi # handed over through exec
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      # One waiter at a time clears a stale lock, and only after reading the dead pid again under that guard:
+      # a waiter that read the pid before another takeover finished would otherwise delete the new live lock.
+      if mkdir "$lock_dir.takeover" 2>/dev/null; then
+        if [ "$(cat "$lock_dir/pid" 2>/dev/null || true)" = "$holder" ]; then
+          echo "lead-merge: taking over stale merge lock of pid $holder" >&2
+          rm -rf "$lock_dir"
+        fi
+        rmdir "$lock_dir.takeover"
+        continue
+      fi
+      # A guard left by a run killed mid-takeover is cleared after a minute.
+      [ -z "$(find "$lock_dir.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$lock_dir.takeover" 2>/dev/null || true
+    fi
+    started=$(cat "$lock_dir/started" 2>/dev/null || true)
+    if [ "$noted" = false ]; then
+      echo "lead-merge: waiting for the merge lock held by pid ${holder:-unknown}${started:+ since $(date -r "$started" '+%F %T' 2>/dev/null || echo "$started")}" >&2
+      noted=true
+    fi
+    if [ "$waited" -ge "$wait" ]; then
+      die "merge lock held by pid ${holder:-unknown}${started:+ since $started}; waited ${waited}s (LEAD_MERGE_LOCK_WAIT_SECONDS=$wait)"
+    fi
+    sleep 1; waited=$((waited+1))
+  done
+  lock_owned=true
+  echo "$$" > "$lock_dir/pid"; date +%s > "$lock_dir/started"
+}
+lock_acquire
+export LEAD_MERGE_LOCK_HELD=1
+
 if [ "${#batch_prs[@]}" -gt 0 ]; then
   script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
   head_checks=${LEAD_MERGE_HEAD_CHECKS:-$(dirname "$script")/head-checks.sh}
@@ -117,7 +133,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
 
   # One inventory read for the whole run, and only if a PR needs a Verdict: the first child that does
   # fills this file, later children read it.
-  dispatches_file=$(mktemp); trap 'rm -f "$dispatches_file"' EXIT
+  dispatches_file=$(mktemp); trap 'rm -f "$dispatches_file"; lock_release' EXIT
   export LEAD_MERGE_DISPATCHES_FILE=$dispatches_file
 
   for batch_pr in "${batch_prs[@]}"; do
@@ -166,6 +182,8 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     fi
     # exec skips the exit trap: drop the inventory file and let the single path read live.
     rm -f "$dispatches_file"; unset LEAD_MERGE_DISPATCHES_FILE
+    # exec keeps this pid, so the single run takes the lock over without a gap.
+    unset LEAD_MERGE_LOCK_HELD
     exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
   fi
 
@@ -256,14 +274,25 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     rm -f "$survivor_receipt"
   fi
 
+  # An outside push during the run leaves the train checks proving an old base: merge nothing.
+  git fetch origin main >&2 || die "cannot fetch main after train checks"
+  now_main=$(git rev-parse --verify 'origin/main^{commit}') || die "cannot resolve origin/main after train checks"
+  [ "$now_main" = "$batch_base" ] || die "main moved from ${batch_base:0:12} to ${now_main:0:12} during the run; merged nothing, rebuild the batch"
   # Run every per-PR path and Countersign gate before the first merge mutates main. Preflight already
-  # passed, so a refusal here is rare; it drops its own PR and never aborts the batch.
+  # passed, so a refusal here is rare. It drops its own PR and every later train-mate, whose checks
+  # included the dropped commits, so main only receives a tested prefix of the train.
+  gate_dropped=""
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
-    if ! LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
+    if [ -n "$gate_dropped" ]; then
+      echo "lead-merge: dropped PR #${composed_prs[$i]}: its train checks are untested without PR #$gate_dropped" >&2
+      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}")
+      continue
+    fi
+    if ! LEAD_MERGE_PREFLIGHT_ONLY=0 LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} LEAD_MERGE_GATE_ONLY=1 \
         bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"; then
       echo "lead-merge: gate dropped PR #${composed_prs[$i]} after train checks" >&2
-      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}")
+      unset 'pass_train[i]' 'pass_heads[i]'; refused_prs+=("${composed_prs[$i]}"); gate_dropped=${composed_prs[$i]}
     fi
   done
   merged=0
@@ -271,6 +300,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   cleanup_file=$(mktemp)
   batch_cleanup() {
     rm -f "$dispatches_file"
+    lock_release
     [ -s "$cleanup_file" ] || { rm -f "$cleanup_file"; return 0; }
     local args=() b s
     while read -r b s; do args+=(--branch "$b" --head-sha "$s"); done < "$cleanup_file"
@@ -281,10 +311,12 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     return 0
   }
   trap batch_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   for i in "${!composed_prs[@]}"; do
     [ -n "${pass_train[$i]:-}" ] || continue
     expected_main_tree=$(git rev-parse "$expected_main^{tree}") || die "cannot read expected batch prefix tree"
-    LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
+    LEAD_MERGE_PREFLIGHT_ONLY=0 LEAD_MERGE_TRAIN_HEAD=${pass_train[$i]} LEAD_MERGE_TRAIN_HEADS=${pass_heads[$i]} \
       LEAD_MERGE_EXPECTED_MAIN_TREE=$expected_main_tree LEAD_MERGE_CLEANUP_FILE=$cleanup_file \
       bash "$script" --repo "$repo" --batch --pr "${composed_prs[$i]}" --head "${composed_heads[$i]}"
     expected_main=$(append_train "$expected_main" "${composed_prs[$i]}" "${composed_heads[$i]}") \
@@ -450,6 +482,58 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
+# Coordinator ids allowed as a Verdict author (not a dispatch): coordinator_ids in lead-merge.local.json, read lazily.
+coordinator_ids="" coordinators_loaded=false
+is_coordinator() { # <id>
+  if [ "$coordinators_loaded" = false ]; then
+    local dir cfg
+    dir=$(cd "$(dirname "$0")" && pwd)
+    cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
+      || die "cannot read local coordinator config"
+    coordinator_ids=$(jq -r '.coordinator_ids // [] | if type == "array" and all(.[]; type == "string") then .[] else error("coordinator_ids") end' <<<"$cfg") \
+      || die "invalid coordinator_ids config"
+    coordinators_loaded=true
+  fi
+  grep -Fxq -- "$1" <<<"$coordinator_ids"
+}
+
+# Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent
+# creates LEAD_MERGE_DISPATCHES_FILE empty; the first child that needs the list fills it and the
+# rest read it. A missing or unreadable file falls back to one live read.
+known_dispatches=""
+load_dispatches() {
+  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
+  if [ -n "${LEAD_MERGE_DISPATCHES_FILE:-}" ] && [ -r "$LEAD_MERGE_DISPATCHES_FILE" ]; then
+    known_dispatches=$(cat "$LEAD_MERGE_DISPATCHES_FILE") || known_dispatches=""
+    [ -z "$known_dispatches" ] || return 0
+  fi
+  # worker-list without --run sees only the caller's bound run, so read every run.
+  for n in $(seq 1 50); do
+    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+      || die "cannot read orca run-list to verify verdict dispatch ids"
+    runs+=$(jq -r '.result.runs[]?.id' <<<"$page" 2>/dev/null)$'\n' \
+      || die "cannot parse orca run-list to verify verdict dispatch ids"
+    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
+    [ -n "$cursor" ] && continue
+    while IFS= read -r run; do
+      [ -n "$run" ] || continue
+      cursor=""
+      for m in $(seq 1 50); do
+        page=$("$orca" orchestration worker-list --run "$run" --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+          || die "cannot read orca worker-list to verify verdict dispatch ids"
+        known_dispatches+=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null)$'\n' \
+          || die "cannot parse orca worker-list to verify verdict dispatch ids"
+        cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
+        [ -n "$cursor" ] || break
+      done
+      [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
+    done <<<"$runs"
+    [ -z "${LEAD_MERGE_DISPATCHES_FILE:-}" ] || [ ! -w "$LEAD_MERGE_DISPATCHES_FILE" ] \
+      || printf '%s\n' "$known_dispatches" > "$LEAD_MERGE_DISPATCHES_FILE" 2>/dev/null || true
+    return 0
+  done
+  die "run-list has too many pages to verify verdict dispatch ids"
+}
 # Generated team copies: merge on the Verdict of the matching MERGED dotfiles PR.
 generated_ok=false
 if [ -n "$verdict_from" ]; then
@@ -491,7 +575,7 @@ if [ -n "$verdict_from" ]; then
     fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
-  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"' EXIT
+  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"; lock_release' EXIT
   git archive "$head" .agents .claude .cursor 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
   DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/sync-team-skills.sh" --check "$sync_dir" >&2 \
     || die "sync-team-skills.sh --check fails at head $head"
@@ -546,18 +630,30 @@ fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0 main_fetched=${main_fetched:-false} carry_notes=""
+  ignored_notes=() row_n=0 retired_seen=false
+  verdict_fix="post a fresh comment with script/post-verdict.sh (it builds the first line; edits never count)"
+  # A FAIL is retired only by "Countersign: Elon head=<current head> reason=supersedes <comment url>".
+  superseded=$(jq -r --arg h "$head" '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=supersedes (?<u>[^[:space:]]+)[[:space:]]*$")? | select(.h == $h) | .u' <<<"$info")
   # Every Verdict for this head (or carried across clean merges of main) counts. Newest first; none
   # of them can erase another. An edited or minimized PASS never counts (the
   # verifier posts a fresh one); an edited or minimized FAIL still blocks.
   while IFS= read -r row; do
     comment=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\"")
     flagged=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
+    row_n=$((row_n+1))
+    ref=$(jq -r --arg n "$row_n" '@base64d | fromjson | .url // ("comment #" + $n + " (newest first)")' <<<"\"$row\"")
     line=${comment%%$'\n'*}
-    [[ "$line" == Verdict:* ]] || ! grep -q '^Verdict: ' <<<"$comment" || misplaced=$((misplaced+1))
+    if [[ "$line" != Verdict:* ]] && grep -q '^Verdict: ' <<<"$comment"; then
+      misplaced=$((misplaced+1))
+      ignored_notes+=("ignored Verdict $ref: the Verdict line is not the first line of its comment. Fix: $verdict_fix")
+    fi
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
       if [ "${BASH_REMATCH[3]}" = "${BASH_REMATCH[4]}" ]; then refuse "author cannot supply verifier verdict"; continue; fi
+      if [ "$verdict" = FAIL ] && [[ "$ref" != "comment #"* ]] && grep -Fxq -- "$ref" <<<"$superseded"; then
+        echo "lead-merge: FAIL Verdict $ref retired by a supersedes Countersign"; retired_seen=true; continue
+      fi
       applies=false carried=""
       if [ "$candidate_head" = "$head" ]; then
         applies=true
@@ -572,19 +668,33 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
         if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then refuse "verdict verifier $verifier_id is not a known dispatch"; continue; fi
-        # author=unknown is the one literal allowed without a dispatch; any other author must be known.
-        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches"; then refuse "verdict author $author_id is not a known dispatch"; continue; fi
-        if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then edited=$((edited+1)); continue; fi
+        # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
+        # or a configured coordinator id.
+        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id"; then
+          refuse "verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"; continue
+        fi
+        if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then
+          edited=$((edited+1))
+          ignored_notes+=("ignored Verdict $ref: it was edited or minimized, so it does not count. Fix: $verdict_fix")
+          continue
+        fi
+        # Newest first: a PASS read after a retired FAIL is older than that FAIL and cannot replace it.
+        if [ "$retired_seen" = true ] && [ "$verdict" != FAIL ]; then
+          ignored_notes+=("ignored Verdict $ref: it is older than the FAIL it would replace. Fix: $verdict_fix"); continue
+        fi
         [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi
       fi
+    elif [[ "$line" == Verdict:* ]]; then
+      ignored_notes+=("ignored Verdict $ref: the first line must be exactly 'Verdict: PASS|PASS+NOTES|FAIL head=<40 hex sha> verifier=<id> author=<id>' (author= missing or the line is malformed). Fix: $verdict_fix")
     fi
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
   if [ "$passes" -eq 0 ]; then
     if [ "$edited" -ne 0 ]; then refuse "missing passing verifier verdict: $edited edited or minimized PASS ignored; post a fresh Verdict"
     elif [ "$misplaced" -ne 0 ]; then refuse "missing passing verifier verdict: a Verdict line is not the first line of its comment; post a fresh comment that starts with it"
     else refuse "missing passing verifier verdict for current head or clean merge of main${carry_notes:+; not carried: ${carry_notes%; }}"; fi
+    for note in ${ignored_notes[@]+"${ignored_notes[@]}"}; do refuse "$note"; done
   elif [ "$fails" -ne 0 ]; then
     refuse "conflicting PASS and FAIL verdicts for current head or clean merge of main"
   else
@@ -621,7 +731,7 @@ if [ -n "$triggers" ]; then
   # Verdict, a Countersign for an older head carries only across clean merges of main.
   countersigned() { # head
     jq -e --arg prefix "Countersign: Elon head=$1 reason=" \
-      'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]")))' <<<"$info" >/dev/null
+      'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]") and (startswith("supersedes ") | not)))' <<<"$info" >/dev/null
   }
   if ! countersigned "$head"; then
     countersign_ok=false
@@ -676,6 +786,7 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit,url) || { echo 
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || die "MERGED read-back has no merge commit"
 echo "MERGED $(jq -r .url <<<"$final") $merge_sha"
+lock_release
 
 # Cleanup after the merge: the merged head branch and finished worktrees. Never fails the merge.
 # The issue comes only from the PR's closing references. DRY_RUN=1 previews.
