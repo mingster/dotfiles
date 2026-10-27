@@ -43,4 +43,4 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Waive a failed review without reproducible proof.
 - Merge PRs, deploy to hosts, run production migrations or write to production tables.
 
-Browser work assigns a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. Post a new Verdict when the decision changes; preserve prior Verdict comments.
+Browser work assigns a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict; delete, never edit, a malformed Verdict of your own.

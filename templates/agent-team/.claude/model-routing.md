@@ -65,7 +65,6 @@ A model named in documentation is not proof this account can run it: check the s
 
 ## Commit, push and merge (owner rule)
 
-Changes under `templates/agent-team/` always use a PR with an independent Verdict, including docs-only changes; publish through the responsible coordinator. Direct pushes to main are outside that lane.
 
 Publication authority (owner 2026-10-20). The Tech Lead owns engineering integration; Elon owns PM, sales and docs integration under `docs/agents/team.md`, Orchestration rule 3. Enforced by instruction until the worker hook (blocks `git push`, `gh pr create` and `gh pr merge` in worker terminals) and the push script are built. Every worker spec states rules 1 and 2.
 
