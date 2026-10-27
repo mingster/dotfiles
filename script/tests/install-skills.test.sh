@@ -5,8 +5,15 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="$TEST_ROOT/home"
 mkdir -p "$HOME"
+# install.sh ends with setup-check.sh, which exits 1 when host tooling is missing (clean HOME).
+# Tolerate that readiness report only; any other failure still fails the test.
+run_install() {
+  local log=$1 rc=0
+  DOTFILES_SKIP_SYSTEM_SETUP=1 bash "$ROOT/install.sh" >"$log" 2>&1 || rc=$?
+  [ "$rc" = 0 ] || { [ "$rc" = 1 ] && grep -q '^\(OK\|MISSING\) ' "$log"; }
+}
 for pass in 1 2; do
-  DOTFILES_SKIP_SYSTEM_SETUP=1 bash "$ROOT/install.sh" >"$TEST_ROOT/install-$pass.log" 2>&1
+  run_install "$TEST_ROOT/install-$pass.log"
   for dir in "$HOME/.agents" "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     [ -d "$dir" ] && [ ! -L "$dir" ] || { echo "FAIL: real directory required: $dir"; exit 1; }
   done
@@ -30,7 +37,7 @@ git -C "$TEST_ROOT/legacy-tree" add .agents/skills/tdd/SKILL.md
 ln -s "$legacy" "$HOME/.agents"
 ln -s "$legacy/skills" "$HOME/.claude/skills"
 for pass in 1 2; do
-  DOTFILES_SKIP_SYSTEM_SETUP=1 bash "$ROOT/install.sh" >"$TEST_ROOT/migrate-$pass.log" 2>&1
+  run_install "$TEST_ROOT/migrate-$pass.log"
   for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     [ ! -L "$dst" ]
     [ ! -L "$dst/orchestration" ]
@@ -53,7 +60,7 @@ printf 'tool owned\n' > "$HOME/.agents/skills/tdd/SKILL.md"
 printf 'foreign\n' > "$TEST_ROOT/foreign/SKILL.md"
 ln -s "$TEST_ROOT/foreign" "$HOME/.claude/skills/tdd"
 for pass in 1 2; do
-  DOTFILES_SKIP_SYSTEM_SETUP=1 bash "$ROOT/install.sh" >"$TEST_ROOT/conflict-$pass.log" 2>&1
+  run_install "$TEST_ROOT/conflict-$pass.log"
   [ ! -L "$HOME/.agents/skills/tdd" ]
   [ "$(cat "$HOME/.agents/skills/tdd/SKILL.md")" = 'tool owned' ]
   [ "$(readlink "$HOME/.claude/skills/tdd")" = "$TEST_ROOT/foreign" ]
