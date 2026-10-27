@@ -396,7 +396,43 @@ EOS
   [ ! -e "$lock" ] && echo "ok   T34 lock is released" || echo "FAIL T34 lock left behind"
 }
 
-fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1 )
+# T20: an edited PASS drops its PR in preflight, named by comment URL; the rest of the batch merges.
+fx_verdict() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"
+  export FX_HC_LOG="$MF_DIR/hc.log" EVENT_LOG="$MF_DIR/events"; : > "$EVENT_LOG"
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+echo "head-checks $heads" >> "$FX_HC_LOG"
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
+  mf_orca_add_run run_a; mf_orca_add_worker run_a ctx_verify completed /w/v; mf_orca_add_worker run_a ctx_author completed /w/a
+  cd "$MF_REPO" || return 1
+  local ok=$'## Verification\n- Passed.' n h out code f
+  for n in 51 52 53; do mf_pr_add "$n" "v$n" "$ok" "script/v$n.sh"; done
+  for n in 51 52 53; do
+    h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+    f="$MF_GH_DIR/pr-$n.json"
+    jq --arg v "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author" --arg u "https://example.test/pull/$n#c1" --argjson e "$([ "$n" = 52 ] && echo true || echo false)" \
+      '.comments += [{body:$v, url:$u, edited:$e, minimized:false}]' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-52.json")
+  out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 51 52 53 2>&1); code=$?
+  [ "$code" -eq 0 ] && echo "ok   T20 batch with an edited PASS exits 0" || echo "FAIL T20 exit $code: $out"
+  grep -A4 'dropped PR #52' <<<"$out" | grep -q 'ignored Verdict https://example.test/pull/52#c1: .*edited or minimized' && echo "ok   T20 the dropped PR names the edited Verdict by URL" || echo "FAIL T20 report: $out"
+  ! grep -q "$h" "$FX_HC_LOG" && echo "ok   T20 head-checks never saw the dropped head" || echo "FAIL T20 train held the dropped head"
+  [ "$(jq -r .state "$MF_GH_DIR/pr-51.json")$(jq -r .state "$MF_GH_DIR/pr-53.json")" = MERGEDMERGED ] && echo "ok   T20 the rest of the batch merges" || echo "FAIL T20 merge states: $out"
+  [ "$(jq -r .state "$MF_GH_DIR/pr-52.json")" = OPEN ] && echo "ok   T20 the dropped PR stays open" || echo "FAIL T20 dropped PR merged"
+}
+
+fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1 )
 printf '%s\n' "$fx_out"
 pass=$((pass+$(grep -c '^ok ' <<<"$fx_out"))); fail=$((fail+$(grep -c '^FAIL' <<<"$fx_out")))
 echo "passed $pass, failed $fail"
