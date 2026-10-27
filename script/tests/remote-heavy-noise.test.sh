@@ -44,6 +44,32 @@ exit $status
         result=self.run_heavy([],['sh','-c','echo line'])
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(result.stdout,'line\n')
+    def test_bundle_sends_only_commits_past_main(self):
+        (self.local/'e').write_text('z')
+        subprocess.run(['git','-C',str(self.local),'add','e'],check=True,env=self.env)
+        subprocess.run(['git','-C',str(self.local),'commit','-qm','main 2'],check=True,env=self.env)
+        subprocess.run(['git','-C',str(self.local),'branch','-M','main'],check=True,env=self.env)
+        origin=self.root/'origin.git'
+        subprocess.run(['git','clone','-q','--bare',str(self.local),str(origin)],check=True,env=self.env)
+        subprocess.run(['git','-C',str(self.local),'remote','add','origin',str(origin)],check=True,env=self.env)
+        subprocess.run(['git','-C',str(self.local),'fetch','-q','origin'],check=True,env=self.env)
+        subprocess.run(['git','-C',str(self.remote),'remote','add','origin',str(origin)],check=True,env=self.env)
+        (self.local/'g').write_text('y')
+        subprocess.run(['git','-C',str(self.local),'add','g'],check=True,env=self.env)
+        subprocess.run(['git','-C',str(self.local),'commit','-qm','d'],check=True,env=self.env)
+        head=subprocess.run(['git','-C',str(self.local),'rev-parse','HEAD'],check=True,env=self.env,text=True,capture_output=True).stdout.strip()
+        self.stub('ssh', '''#!/bin/sh
+shift
+cat > "$HOME/stdin.b64"
+/bin/sh -c "$*" < "$HOME/stdin.b64"
+''')
+        result=self.run_heavy([],['sh','-c','echo ok'])
+        self.assertEqual(result.returncode,0,result.stderr)
+        bundle=subprocess.run(['base64','-d','-i',str(self.root/'stdin.b64')],capture_output=True).stdout
+        header=bundle.split(b'\n\n',1)[0].decode()
+        self.assertTrue(any(l.startswith('-') for l in header.splitlines()),header)
+        ref=subprocess.run(['git','-C',str(self.remote),'rev-parse',f'refs/heavy/{head}'],env=self.env,text=True,capture_output=True)
+        self.assertEqual(ref.stdout.strip(),head,ref.stderr)
     def test_fetch_survives_stdout_noise(self):
         result=self.run_heavy(['--fetch','*.png','--into',str(self.out)],['sh','-c','printf image > shot.png'])
         self.assertEqual(result.returncode,0,result.stderr)

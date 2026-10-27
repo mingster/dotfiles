@@ -48,6 +48,11 @@ if [ "${#fetches[@]}" -gt 0 ] || [ -n "$into" ]; then
 fi
 
 sha=$(git rev-parse HEAD)
+# Send only the commits past main (a full history is hundreds of MiB for a large repo).
+# Excluding the merge base's parent keeps the bundle non-empty when HEAD is on main.
+bundle_range=(HEAD)
+base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+if [ -n "$base" ] && git rev-parse -q --verify "$base^" > /dev/null; then bundle_range=(HEAD "^$base^"); fi
 
 cmd=$(printf '%q ' "$@")
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
@@ -62,6 +67,8 @@ dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(
 bundle=$(mktemp)
 trap 'rm -f "$bundle"' EXIT
 base64 -d > "$bundle"
+# The bundle holds only commits past main, so the remote needs main first; a full bundle does not.
+git -C "$repo_dir" fetch -q origin main 2>/dev/null || true
 git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha"
 gate="${gate/#\$HOME/$HOME}"
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
@@ -104,7 +111,7 @@ AWK
 status_file=$(mktemp)
 trap 'rm -f "$status_file"' EXIT
 # shellcheck disable=SC2029
-{ git bundle create - HEAD 2>/dev/null | base64 | tr -d '\n'; } \
+{ git bundle create - "${bundle_range[@]}" 2>/dev/null | base64 | tr -d '\n'; } \
   | ssh "$host" bash -c "\"\$(echo $(b64 "$remote") | base64 -d)\"" remote-heavy \
     "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" "$(b64 "$repo_dir")" "$(b64 "$tag")" \
   | awk -v tag="$tag" -v sf="$status_file" "$framed" || true
