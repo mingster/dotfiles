@@ -61,10 +61,8 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 | `script/setup-vscode.sh` | Links VS Code settings and keybindings |
 | `script/setup-antigravity.sh` | Links Antigravity IDE settings and keybindings |
 | `script/setup-obsidian.sh` | Installs Obsidian + MEGAcmd; creates vault; configures sync; writes obsidian MCP to `~/.claude/settings.local.json` |
-| `script/setup_fishshell.fish` | Installs fisher + plugins; restores tide config |
 | `script/init-agent-project.sh` | Not called from `install.sh`. Run per project to scaffold `docs/agents/` for the engineering skills |
 | `script/sync-team-skills.sh` | Not called from `install.sh`. Writes the team skills (elon, ceo, crew, tl, deploy) from `templates/agent-team` into a project as committed generated copies; `--check` fails on drift. See `docs/agents/skills-inventory.md` |
-| `script/backup-tide.fish` | Saves current tide config to `.config/fish/tide_config.fish` |
 
 ## `.agents/` structure
 

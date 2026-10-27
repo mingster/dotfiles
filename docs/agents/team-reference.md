@@ -88,5 +88,4 @@ Project instructions (`AGENTS.md`) load always. Short cross-project rules live i
 
 ```bash
 bash script/backup-claude-desktop.sh   # Claude Desktop settings into init/
-fish script/backup-tide.fish           # Tide prompt config
 ```
