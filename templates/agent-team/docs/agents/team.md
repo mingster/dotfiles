@@ -95,6 +95,7 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 10. **No substitute tooling:** never replace or bypass a standard team mechanism (Orca orchestration, hooks, gates, deploy scripts, worker lifecycle) with self-built tooling. Root-cause the standard tool first; a substitute needs the owner approval with reason and diff (owner rule 2026-10-20).
 11. **Heavy jobs (owner rule 2026-10-23):** at most 2 heavy jobs run on the machine at once (tsc, bun test, next build, Playwright; a dev or regression run counts as 2). Run every heavy job through `~/dotfiles/script/heavy-gate.sh` (owner rule 2026-10-24); it waits until a slot is free, the 1 minute load is under 12 and free memory is at least 20%, and the Bash hook blocks un-gated jobs.
 12. **Push an explicit branch (owner rule 2026-10-23):** `git push origin HEAD:refs/heads/<branch>`, never a bare `git push` or a target taken from `@{u}`, which pushed a fix straight to main once.
+13. **Close browsers when done (owner rule 2026-10-28):** a worker or coordinator that starts Chrome Dev (or any browser with its own `--remote-debugging-port` profile) stops it by PID when its browser task ends, before `worker_done`. Elon checks `pgrep -lf "Google Chrome Dev"` on each wake and stops leftovers by PID only, never by name; the owner's own CDP browser stays only while it is in use. Four finished QA browsers once held 2.4 GB on the busiest host.
 
 ### Heavy jobs
 
