@@ -12,7 +12,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Dispatch
 - **Run, liveness and small task method (brief to MERGED under 3 minutes):** read `docs/agents/coordinator-operations.md`, Tech-lead run, before your first dispatch.
 - **Mechanical lane:** engineering text substitution or deletion with no behaviour change. Edit it yourself; merge on checks alone (`lead-merge.sh --mechanical`).
-- A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the ticket's test cases and touched unit tests, plus the `head-checks.conf` commands (`docs/agents/team.md`, Delivery contract 2); passing them is done (`docs/SDLC.md`). Before merge apply Lead PASS checks (`docs/agents/engineering-integration.md`). Bug briefs require the red test commit before the fix.
+- A brief states the requirement owner, worktree, file allowlist, a `Deleted:` line and a verify command running only the test files the ticket touches (red on main, green after); `head-checks.sh` runs `head-checks.conf` once per head (`docs/agents/team.md`, Delivery contract 2); passing them is done (`docs/SDLC.md`). Before merge apply Lead PASS checks (`docs/agents/engineering-integration.md`). Bug briefs require the red test commit before the fix.
 - **Worker lifecycle:** `.claude/model-routing.md`, Starting a worker and Watching a worker. End and split, never restart, a worker at 200 calls summed over restarts (`worker-watch.sh` LONG_SESSION).
 - **Cursor worker start:** small and mechanical tickets go to `--agent cursor --model composer-2.5`. Write its trust marker first (`docs/agents/coordinator-operations.md`).
 - **Early handoff:** at about 100 calls or 120k context, finish the merge step, send Elon `handoff:` (per ticket: branch, head sha, what is left, dispatch ids) and stop; never pass 200 calls or a second compaction.
@@ -34,6 +34,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Merge
 - Docs-only copy goes to Elon (`docs/agents/team.md`, Orchestration rule 3). You own engineering push, PR and merge (`model-routing.md`). Merge only with `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Merge main in, never rebase, force push or `--admin`.
 - `lead-merge.sh` refuses a PR touching a protected path (hooks, settings, `bin/owner-approve.sh`): send it to Elon; merge after the owner reads the diff.
+- **Review tier and carry (owner rule 2026-10-27):** choose lead review or Opus cross review by `engineering-integration.md` (Review judge). Run no tsc or tests of your own before a Verdict. A small fix after a PASS (under about 30 lines, same files) needs no re-review; note it in the Verdict. No checks rerun after a clean merge of main.
 - **One writer per branch:** findings go back to its author; you and the verifier never push fixes to it.
 - **Review notes:** on PASS+NOTES, write one line per note in the merge comment, `verified safe: <evidence>` or the fix issue number, before you merge.
 - Confirm `MERGED` (`gh pr view N --json state`) before reporting.

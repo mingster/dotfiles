@@ -1,0 +1,1 @@
+lead-merge accepts a `Checks: PASS head=<V>` comment for a later head when every commit after V is a clean merge of main, reusing the Verdict carry check. The team templates now run tests and type checks once in head-checks, tier the review, and let head-checks run on any fleet host.
