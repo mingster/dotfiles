@@ -114,6 +114,10 @@ free_worktree() {
   if ! settled "$(git -C "$wt" rev-parse HEAD)" "$sha"; then
     echo "Kept worktree $wt ($label has commits not in origin/main)"; return 1
   fi
+  # Checked before panes close, so a kept worktree keeps the scrollback that explains it.
+  if [ -n "$(git -C "$wt" status --porcelain --untracked-files=all)" ]; then
+    echo "Kept worktree $wt (dirty, $label has unsaved changes)"; return 1
+  fi
   if [ -f "$pane_close" ]; then
     if [ "$dry" = 1 ]; then echo "[dry-run] close panes of ${released_ids[*]}"
     else
@@ -126,9 +130,6 @@ free_worktree() {
     if [ $rc = 124 ]; then echo "Kept worktree $wt ($label, terminal check timed out)"
     else echo "protected: kept worktree $wt (live terminal or unknown inventory)"; fi
     return 1
-  fi
-  if [ -n "$(git -C "$wt" status --porcelain --untracked-files=all)" ]; then
-    echo "Kept worktree $wt (dirty, $label has unsaved changes)"; return 1
   fi
   echo "Remove worktree $wt"
   if [ "$dry" != 1 ]; then
@@ -154,7 +155,9 @@ drop_branch() {
   if git show-ref --verify --quiet "refs/heads/$b"; then
     echo "Delete local $b"; run git branch -D -- "$b" >/dev/null
   fi
-  if git show-ref --verify --quiet "refs/remotes/origin/$b"; then
+  if git show-ref --verify --quiet "refs/remotes/origin/$b" && ! settled "refs/remotes/origin/$b" "$sha"; then
+    echo "Kept remote $b (commits not in origin/main)"
+  elif git show-ref --verify --quiet "refs/remotes/origin/$b"; then
     echo "Delete remote $b"
     if [ "$dry" = 1 ]; then echo "[dry-run] git push -q origin --delete $b"
     else

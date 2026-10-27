@@ -118,6 +118,12 @@ G checkout -q -b squashed origin/main; echo s > s.txt; G add s.txt; G commit -qm
 run bash "$cleanup" --branch squashed --head-sha "$(G rev-parse squashed)"
 ! has_local squashed && ! has_remote squashed && ok || bad "T28 head at the merged sha deleted though not in main"
 
+# The remote head gained a commit after the merged sha while the local branch stayed at it: the remote branch is kept.
+G checkout -q -b ahead origin/main; echo a1 > a1.txt; G add a1.txt; G commit -qm a1; aheadsha=$(G rev-parse HEAD)
+echo a2 > a2.txt; G add a2.txt; G commit -qm a2; G push -q origin ahead; G reset -q --hard "$aheadsha"; G checkout -q main
+run bash "$cleanup" --branch ahead --head-sha "$aheadsha"
+has_remote ahead && says 'Kept remote ahead' && ok || bad "remote head with a later commit kept"
+
 # T29 and T23: an idle rm-* or lead-* worktree with a released dispatch and all commits in main is kept.
 wt rm-keep rm-keep; dispatch rm-keep released
 wt lead-keep lead-keep; dispatch lead-keep released
@@ -126,9 +132,9 @@ kept rm-keep rm-keep && kept lead-keep lead-keep && ok || bad "T29/T23 rm-* and 
 says 'protected: kept worktree .*lead-keep' && ok || bad "T23 lead-* protected message"
 
 # Unsaved changes in a released, merged worktree: kept and listed (open question 3).
-wt dirty dirty; dispatch dirty released; echo wip > "$MF_DIR/wt/dirty/w.txt"
+wt wip wip; dispatch wip released; echo wip > "$MF_DIR/wt/wip/w.txt"
 clean_run
-kept dirty dirty && says 'dirty' && ok || bad "dirty released worktree kept and listed"
+kept wip wip && says 'wip has unsaved changes' && ! says 'Remove worktree .*wip' && ok || bad "dirty released worktree kept and listed"
 
 # A worktree with no dispatch at all has no proven owner: kept.
 wt unowned unowned
