@@ -103,9 +103,10 @@ for arg in "$@"; do
 done
 echo "head-checks $head $heads" >> "$EVENT_LOG"
 printf 'Checks: %s head=%s train-heads=%s\n' "$([ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]] && echo FAIL || echo PASS)" "$head" "$heads"
-if [ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]]; then exit 1; fi
+red() { printf 'Command: bun run test\n(fail) widget keeps its label\n 1 fail\nResult: exit 1; remaining checks stopped\n\nReceipt cut to fit 20000 characters. Full log: /logs/head-checks-%s.log\n' "${head:0:12}"; exit 1; }
+if [ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]]; then red; fi
 if [ -n "${FAIL_EXACT_HEADS:-}" ] && [ "$heads" = "$FAIL_EXACT_HEADS" ]; then
-  exit 1
+  red
 fi
 EOF
 
@@ -151,6 +152,9 @@ check "red train still merges passing PRs" test "$code" -eq 0
 check "red train names the failing PR" grep -q 'failing PR #12' <<<"$out"
 check "red train does not merge the failing PR" test "$(grep -c '^merge 12$' "$EVENT_LOG")" -eq 0
 check "red train merges both passing PRs" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 2
+check "red train prints the failing command" grep -q 'Command: bun run test' <<<"$out"
+check "red train prints the failing test line" grep -q '(fail) widget keeps its label' <<<"$out"
+check "red train prints the full log path" grep -q 'Full log: /logs/head-checks-' <<<"$out"
 
 # T33: cleanup runs once, after the last merge, and a failing cleanup never fails the batch.
 : > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
@@ -159,6 +163,7 @@ out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); cod
 unset CLEANUP_EXIT
 check "batch exits 0 though cleanup fails" test "$code" -eq 0
 check "batch merges all three" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 3
+check "a green train prints no failure excerpt" test "$(grep -c 'train checks failed' <<<"$out")" -eq 0
 check "batch runs cleanup once" test "$(grep -c '^cleanup ' "$EVENT_LOG")" -eq 1
 check "cleanup starts after the last merge" test "$(grep -n '^cleanup ' "$EVENT_LOG" | cut -d: -f1)" -gt "$(grep -n '^merge 13$' "$EVENT_LOG" | cut -d: -f1)"
 check "the one cleanup names all three merged heads" test "$(grep '^cleanup ' "$EVENT_LOG" | grep -o -- '--head-sha' | wc -l | tr -d ' ')" -eq 3
@@ -171,6 +176,7 @@ out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); cod
 check "interaction-red train returns cleanly" test "$code" -eq 0
 check "interaction-red train is reported" grep -q 'red interaction could not isolate one PR' <<<"$out"
 check "interaction-red train merges nothing" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 0
+check "interaction-red train prints why it failed" grep -q '(fail) widget keeps its label' <<<"$out"
 unset FAIL_EXACT_HEADS
 
 # A refused PR is dropped and reported; the rest of the batch merges.

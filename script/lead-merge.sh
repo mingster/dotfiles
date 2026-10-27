@@ -220,6 +220,13 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     [ "$size" -le "$receipt_limit" ] || die "$3 Checks receipt is $size characters, over the $receipt_limit character comment limit"
     gh pr comment "$1" --repo "$repo" --body-file "$2" >/dev/null || die "cannot attach $3 Checks to PR $1"
   }
+  # A red receipt is not posted, so show the failing step and the full log path here.
+  show_red() { # <file> <label>
+    echo "lead-merge: $1 train checks failed; failing step:" >&2
+    awk '/^Command: /{n=0} {buf[n++]=$0} /^Result: exit [1-9]/{s=n>16?n-16:0; for(i=s;i<n;i++) print "  " buf[i]; done=1; exit}
+         END{if(!done) for(i=(n>16?n-16:0);i<n;i++) print "  " buf[i]}' "$2" >&2
+    grep '^Receipt cut.*Full log: ' "$2" | sed 's/^/  /' >&2 || true
+  }
   check_group() { # recursively bisect red trains
     local ids=("$@") group_train group_heads group_prs receipt_file mid failures_before
     group_train=$(build_train "${ids[@]}") || die "cannot build bisect train"
@@ -234,6 +241,9 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
       rm -f "$receipt_file"
       return 0
     fi
+    group_prs=""
+    for i in "${ids[@]}"; do group_prs+="${group_prs:+,}#${composed_prs[$i]}"; done
+    show_red "PRs $group_prs" "$receipt_file"
     rm -f "$receipt_file"
     if [ "${#ids[@]}" -eq 1 ]; then
       i=${ids[0]}; failures=$((failures+1))
@@ -275,6 +285,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     else
       for i in "${survivor_indexes[@]}"; do unset 'pass_train[i]' 'pass_heads[i]'; done
       failures=$((failures+${#survivor_indexes[@]}))
+      show_red "survivor" "$survivor_receipt"
       echo "lead-merge: survivor train is red; returning every survivor" >&2
     fi
     rm -f "$survivor_receipt"
