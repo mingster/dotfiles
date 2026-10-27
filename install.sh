@@ -6,6 +6,14 @@
 # or the repo path repeats the same link chain).
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
+# A linked worktree (agent or review copy) must never repoint the account's real home at itself.
+real_home="${DOTFILES_REAL_HOME:-$(eval echo "~$(id -un)")}"
+if [ "$(git -C "$DOTFILES_ROOT" rev-parse --git-dir 2>/dev/null)" != "$(git -C "$DOTFILES_ROOT" rev-parse --git-common-dir 2>/dev/null)" ] \
+  && [ "$(cd "$HOME" && pwd -P)" = "$(cd "$real_home" && pwd -P)" ]; then
+  echo "install: error: $DOTFILES_ROOT is a linked worktree; run install.sh from the main checkout, or set HOME to a temp dir." >&2
+  exit 1
+fi
+
 if [ -e "$HOME/dotfiles" ] && [ ! -L "$HOME/dotfiles" ]; then
   echo "install: error: $HOME/dotfiles exists and is not a symlink. Remove or rename it, then re-run." >&2
   exit 1
