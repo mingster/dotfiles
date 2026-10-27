@@ -405,7 +405,7 @@ ui_patterns=$(jq -r '.ui_path_patterns // [] | if type == "array" and all(.[]; t
 if [ -n "$ui_patterns" ]; then
   ui_touched=false
   while IFS= read -r f; do
-    case "$f" in *.test.*|*.spec.*|*/__tests__/*) continue ;; esac
+    case "$f" in *.test.*|*.spec.*|*/__tests__/*|*.json|*/i18n/locales/*) continue ;; esac
     while IFS= read -r prefix; do
       [ -n "$prefix" ] && [ "${f#"$prefix"}" != "$f" ] && ui_touched=true
     done <<<"$ui_patterns"

@@ -682,6 +682,12 @@ setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script s
 check "UI320 an image under a later ## section does not count" 1 "$ui_msg"
 setup; files='[{"path":"app/page.test.tsx"}]'
 check "UI320 test-only change under a UI prefix merges" 0 '^MERGED' 1
+setup; files='[{"path":"app/i18n/locales/en/menu.json"}]'
+check "UI320 translation JSON alone under a UI prefix merges" 0 '^MERGED' 1
+setup; files='[{"path":"app/i18n/locales/en/menu.ts"}]'
+check "UI320 any file under i18n/locales merges" 0 '^MERGED' 1
+setup; files='[{"path":"app/i18n/locales/en/menu.json"},{"path":"app/page.tsx"}]'
+check "UI320 translation JSON plus a page still needs Screenshots" 1 "$ui_msg"
 setup; files='[{"path":"script/foo.sh"}]'
 check "UI320 non-UI file merges" 0 '^MERGED' 1
 printf '{"ui_path_patterns":[]}\n' > "$ux/script/lead-merge.local.json"
