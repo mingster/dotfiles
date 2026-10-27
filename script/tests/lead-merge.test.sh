@@ -238,6 +238,36 @@ setup; FAKE_DISPATCHES="ctx_author"; export FAKE_DISPATCHES_B="ctx_other"; check
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=unknown"; check "author=unknown accepted" 0 '^MERGED' 1
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=unknown"; check "author=unknown still needs known verifier" 1 'ctx_ghost is not a known dispatch'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_random"; check "random author id refused" 1 'ctx_random is not a known dispatch'
+# T3, T20, T22 (spec #286, R6): ignored Verdicts are named by comment URL with a fix; a FAIL is retired only by a supersedes Countersign.
+vc() { jq -nc --arg checks "Checks: PASS head=$SHA" --argjson rest "$1" '[{body:$checks}] + $rest'; }
+VP="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
+VF="Verdict: FAIL head=$SHA verifier=ctx_other author=ctx_author"
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg v "$VP" '[{body:("Findings first."+"\n"+$v),url:"https://x.test/c#line2"}]')")
+check "T3 Verdict on line 2 is named by URL with the fix line" 1 'ignored Verdict https://x.test/c#line2: .*first line.*Fix: .*post-verdict\.sh'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg v "Verdict: PASS head=$SHA verifier=ctx_verify" '[{body:$v,url:"https://x.test/c#noauthor"}]')")
+check "T3 Verdict without author= is named by URL with the fix line" 1 'ignored Verdict https://x.test/c#noauthor: .*author=.*Fix: .*post-verdict\.sh'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg v "$VP" '[{body:$v,url:"https://x.test/c#edited",includesCreatedEdit:true}]')")
+check "T20 an edited PASS is ignored and named by URL" 1 'ignored Verdict https://x.test/c#edited: .*edited or minimized.*Fix: .*post-verdict\.sh'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg v "$VP" '[{body:$v,url:"https://x.test/c#min",isMinimized:true}]')")
+check "T20 a minimized PASS is ignored and named by URL" 1 'ignored Verdict https://x.test/c#min: .*edited or minimized'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg v "$VP" '[{body:$v,url:"https://x.test/c#edited",includesCreatedEdit:true},{body:$v,url:"https://x.test/c#fresh"}]')")
+check "T20 a fresh PASS after an edited one merges and names nothing" 0 '^MERGED' 1
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" '[{body:$f,url:"https://x.test/c#fail",includesCreatedEdit:true},{body:$p,url:"https://x.test/c#pass"}]')")
+check "T20 an edited FAIL still blocks and is not named as ignored" 1 'conflicting'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" '[{body:$f,url:"https://x.test/c#fail"},{body:$p,url:"https://x.test/c#pass"}]')")
+check "T22 FAIL then PASS without a Countersign refuses" 1 'conflicting'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$f,url:"https://x.test/c#fail"},{body:$p,url:"https://x.test/c#pass"},{body:$c}]')")
+check "T22 FAIL, supersedes Countersign naming it, newer PASS: merges" 0 '^MERGED' 1
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#other" '[{body:$f,url:"https://x.test/c#fail"},{body:$p,url:"https://x.test/c#pass"},{body:$c}]')")
+check "T22 a Countersign naming another comment does not retire the FAIL" 1 'conflicting'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" --arg c "Countersign: Elon head=$OLD reason=supersedes https://x.test/c#fail" '[{body:$f,url:"https://x.test/c#fail"},{body:$p,url:"https://x.test/c#pass"},{body:$c}]')")
+check "T22 a supersedes Countersign for another head does not retire the FAIL" 1 'conflicting'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$f,url:"https://x.test/c#fail"},{body:$c}]')")
+check "T22 a retired FAIL with no PASS still refuses for the missing PASS" 1 'missing passing verifier verdict'
+setup; COMMENTS_JSON=$(vc "$(jq -nc --arg f "$VF" --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$p,url:"https://x.test/c#pass"},{body:$f,url:"https://x.test/c#fail"},{body:$c}]')")
+check "T22 a PASS older than the FAIL it retires does not count" 1 'missing passing verifier verdict'
+setup; PR_DIFF=$'+test.todo("later")'; COMMENTS_JSON=$(vc "$(jq -nc --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$p,url:"https://x.test/c#pass"},{body:$c}]')")
+check "T22 a supersedes Countersign is not the gate Countersign" 1 'Countersign'
 setup; FAKE_DISPATCHES="ctx_a ctx_b ctx_c ctx_d ctx_author ctx_verify"; check "dispatch ids found on a later page" 0 '^MERGED' 1
 setup; PR_DIFF=$'+  it("test.todos", () => {})'; check "test.todos is not a skip trigger" 0 '^MERGED' 1
 setup; PR_DIFF=$'+test.todo("later")'; check "test.todo needs countersign" 1 'Countersign'
@@ -523,6 +553,53 @@ check "verdict-from refuses an untracked file under templates/agent-team" 1 'not
   if [ -z "$fails" ]; then echo "ok   T1 every refusal prints in one run and nothing mutates" > "$res"; else printf 'FAIL T1%s\n%s\n' "$fails" "$out" > "$res"; fi
 ) </dev/null &
 
+# T14: two single runs started together on disjoint PRs serialize on the merge lock; both end MERGED, no trunk refusal.
+(
+  unit_init
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}   # the git stub must not shadow real git
+  mf_setup
+  export HOME="$MF_DIR/home" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"; cd "$MF_REPO" || exit 1
+  res="$ucd/result.9014"; fails=""
+  export LEAD_MERGE_CLEANUP=true
+  mf_pr_add 1 t14a $'## Verification\n- Passed.' docs/t14a.md
+  mf_pr_add 2 t14b $'## Verification\n- Passed.' docs/t14b.md
+  for n in 1 2; do
+    h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+    jq --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false}]' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  done
+  # A gh that holds each merge for two seconds, so an unserialized second run overlaps the first.
+  mkdir -p "$MF_DIR/slow"
+  cat > "$MF_DIR/slow/gh" <<EOS
+#!/usr/bin/env bash
+if [ "\$1 \$2" = "pr merge" ]; then
+  echo "gh MERGE-BEGIN \$3" >> "$MF_GH_LOG"; sleep 2; "$MF_BIN/gh" "\$@"; rc=\$?; echo "gh MERGE-END \$3" >> "$MF_GH_LOG"; exit \$rc
+fi
+exec "$MF_BIN/gh" "\$@"
+EOS
+  chmod +x "$MF_DIR/slow/gh"; export PATH="$MF_DIR/slow:$PATH"
+  : > "$MF_GH_LOG"
+  h1=$(jq -r .headRefOid "$MF_GH_DIR/pr-1.json"); h2=$(jq -r .headRefOid "$MF_GH_DIR/pr-2.json")
+  mf_run_limited 60 bash "$here/lead-merge.sh" --repo o/r --pr 1 --head "$h1" > "$MF_DIR/out1" 2>&1 &
+  p1=$!
+  i=0; until grep -q 'MERGE-BEGIN' "$MF_GH_LOG"; do i=$((i+1)); [ "$i" -gt 300 ] && break; sleep 0.1; done
+  mf_run_limited 60 bash "$here/lead-merge.sh" --repo o/r --pr 2 --head "$h2" > "$MF_DIR/out2" 2>&1; c2=$?
+  wait "$p1"; c1=$?
+  [ "$c1" = 0 ] && [ "$c2" = 0 ] || fails="$fails exit=$c1/$c2"
+  [ "$(jq -r .state "$MF_GH_DIR/pr-1.json")$(jq -r .state "$MF_GH_DIR/pr-2.json")" = MERGEDMERGED ] || fails="$fails notmerged"
+  cat "$MF_DIR/out1" "$MF_DIR/out2" | grep -q 'trunk changed' && fails="$fails trunk-refusal"
+  # The second run reads nothing until the first has finished its merge.
+  end_line=$(grep -n 'MERGE-END' "$MF_GH_LOG" | head -1 | cut -d: -f1)
+  begin_line=$(grep -n 'MERGE-BEGIN' "$MF_GH_LOG" | head -1 | cut -d: -f1)
+  between=$(sed -n "${begin_line},${end_line}p" "$MF_GH_LOG" | grep -c 'pr view')
+  [ "$between" = 0 ] || fails="$fails overlapped"
+  [ ! -e "$("$MF_REAL_GIT" rev-parse --git-common-dir)/lead-merge.lock" ] || fails="$fails lock-left"
+  out=$(cat "$MF_DIR/out1" "$MF_DIR/out2")
+  mf_teardown
+  if [ -z "$fails" ]; then echo "ok   T14 two single runs on disjoint PRs serialize and both merge" > "$res"; else printf 'FAIL T14%s\n%s\n' "$fails" "$out" > "$res"; fi
+) </dev/null &
+
 # Cleanup call site (spec #286 T5, T12): the issue comes only from closingIssuesReferences, a failing cleanup never fails the merge.
 unit; (
 unit_init
@@ -545,5 +622,23 @@ check "T12 a cleanup: line prints before cleanup starts" 0 'cleanup: starting fo
 cn=$((cn+1)); rm -f "$MERGE_LOG" "$MERGE_LOG.calls"; mkjson; out=$("$here/lead-merge.sh" --repo o/r --pr 7 --head "$SHA" 2>&1); code=$?
 if [ "$code" = 0 ] && [ "$(echo "$out" | grep -n '^MERGED' | cut -d: -f1)" -lt "$(echo "$out" | grep -n '^cleanup: starting' | cut -d: -f1)" ]; then echo "ok   T12 MERGED prints before the cleanup: line" > "$ucd/result.$(printf %04d "$cn")"
 else printf 'FAIL T12 order (exit %s)\n%s\n' "$code" "$out" > "$ucd/result.$(printf %04d "$cn")"; fi
+) </dev/null &
+# T31 (spec #286, R6): a configured coordinator id may be the author, the verifier must still be a known dispatch.
+unit; (
+unit_init
+cx="$ucd/dot"; mkdir -p "$cx/script"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"
+LEAD_MERGE="$cx/script/lead-merge.sh"
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_coord"
+check "T31 a coordinator author is refused when none is configured" 1 'author ctx_coord is not a known dispatch or a configured coordinator id.*coordinator_ids'
+printf '{"coordinator_ids":["ctx_coord"]}\n' > "$cx/script/lead-merge.local.json"
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_coord"
+check "T31 a configured coordinator author with a dispatch verifier merges" 0 '^MERGED' 1
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=ctx_coord"
+check "T31 the same author with an unknown verifier is refused" 1 'verifier ctx_ghost is not a known dispatch'
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_coord author=ctx_coord"
+check "T31 a coordinator cannot be both author and verifier" 1 'author cannot supply verifier verdict'
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_random"
+check "T31 an id that is not configured is still refused" 1 'ctx_random is not a known dispatch'
 ) </dev/null &
 report

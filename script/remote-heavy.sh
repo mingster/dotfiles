@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC2016 # expanded on the remote host
-host="" repo_dir="" dir="" sub=. weight=1 gate='$HOME/dotfiles/script/heavy-gate.sh'
+host="" repo_dir="" dir="" sub=. weight=1 gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh'
 fetches=()
 into=""
 while [ $# -gt 0 ]; do
@@ -70,10 +70,11 @@ base64 -d > "$bundle"
 # The bundle holds only commits past main, so the remote needs main first; a full bundle does not.
 git -C "$repo_dir" fetch -q origin main 2>/dev/null || true
 git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha"
-gate="${gate/#\$HOME/$HOME}"
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
 [ ! -d "$HOME/dotfiles-main" ] || export DOTFILES_DIR="$HOME/dotfiles-main"
 [ ! -d /usr/bin/core_perl ] || export PATH="$PATH:/usr/bin/core_perl"
+gate="${gate//\$\{DOTFILES_DIR:-\$HOME\/dotfiles\}/${DOTFILES_DIR:-$HOME/dotfiles}}"
+gate="${gate/#\$HOME/$HOME}"
 # A new lane's directory is created once as a worktree of the remote checkout.
 [ -d "$dir" ] || git -C "$repo_dir" worktree add -q --detach "$dir" "$sha"
 cd "$dir"

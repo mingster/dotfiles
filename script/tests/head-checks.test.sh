@@ -160,7 +160,11 @@ else: sys.exit(1)
     # A run killed while it waits checked nothing, so it posts no verdict.
     comments.unlink(missing_ok=True)
     killed=subprocess.Popen(['bash',runner,'--repo',str(repo),'--pr','7'],env={**env,'HEAD_CHECKS_SLOTS':'1','HEAD_CHECKS_WAIT_SECONDS':'20','GH_HEAD':git('rev-parse','HEAD')},text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-    time.sleep(1); killed.terminate(); out=killed.communicate(timeout=30)[0]
+    # Kill only once the run sleeps in the wait loop; a fixed delay raced setup on a loaded host.
+    for _ in range(150):
+        if subprocess.run(['pgrep','-P',str(killed.pid),'sleep'],capture_output=True).returncode==0: break
+        time.sleep(0.1)
+    killed.terminate(); out=killed.communicate(timeout=30)[0]
     if killed.returncode!=0 and 'Checks:' not in out and not comments.exists() and lock.exists(): passed+=1; print('ok   a run killed while waiting posts no comment')
     else: failed+=1; print('FAIL killed wait',killed.returncode,out)
     # A worktree freed during the wait is taken instead of refusing.
