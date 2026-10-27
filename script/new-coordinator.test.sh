@@ -73,7 +73,7 @@ nc --orca-data "$tmp/orca-old" >"$tmp/run3" 2>&1
 DESC="Orca data is restored from a folder"
 check test -f "$HOME/Library/Application Support/orca/f"
 DESC="no names of projects, hosts or people in the script"
-check test -z "$(grep -n -i -E 'mingster|riben|pstv|niteking|miniu|elon|mtsai' "$here/new-coordinator.sh")"
+check bash "$here/tests/no-project-names.test.sh"
 
 FAKE_GH_AUTH=1 nc >"$tmp/run4" 2>&1; rc=$?
 DESC="stops with a clear message when gh is not signed in"
