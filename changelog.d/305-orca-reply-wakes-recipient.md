@@ -1,0 +1,1 @@
+- Added script/orca-reply.sh: one helper that replies to an orchestration message and then nudges the recipient terminal so an idle session wakes, and refuses an empty recipient. Coordinator docs now use it instead of the bare reply command.

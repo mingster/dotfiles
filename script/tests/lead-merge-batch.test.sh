@@ -136,6 +136,15 @@ check "dry run prints one head-checks run" test "$(grep -c 'head-checks' <<<"$ou
 check "dry run prints three merges" test "$(grep -c '\[dry-run\] merge PR' <<<"$out")" -eq 3
 
 : > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+printf 'Checks: PASS head=%s\n' "${heads[0]}" > "$COMMENT_DIR/11"
+out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 2>&1); code=$?
+check "batch of one succeeds" test "$code" -eq 0
+check "batch of one is not refused for its size" test "$(grep -c 'at least two' <<<"$out")" -eq 0
+check "batch of one merges as a single PR" grep -qx 'merge 11' "$EVENT_LOG"
+check "batch of one builds no train" test "$(grep -c '^head-checks' "$EVENT_LOG")" -eq 0
+check "batch of one prints no batch summary" test "$(grep -c 'batch complete' <<<"$out")" -eq 0
+
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
 FAIL_HEAD=${heads[1]}; export FAIL_HEAD
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "red train still merges passing PRs" test "$code" -eq 0
