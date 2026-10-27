@@ -140,7 +140,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   # One inventory read for the whole run, and only if a PR needs a Verdict: the first child that does
   # fills this file, later children read it.
   dispatches_file=$(mktemp); trap 'rm -f "$dispatches_file"; lock_release' EXIT
-  export LEAD_MERGE_DISPATCHES_FILE=$dispatches_file
+  export LEAD_MERGE_DISPATCHES_FILE=$dispatches_file LEAD_MERGE_BATCH_CHILD=1
 
   for batch_pr in "${batch_prs[@]}"; do
     batch_info=$(gh pr view "$batch_pr" --repo "$repo" --json headRefOid) || die "cannot read PR $batch_pr"
@@ -187,7 +187,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
       exit 0
     fi
     # exec skips the exit trap: drop the inventory file and let the single path read live.
-    rm -f "$dispatches_file"; unset LEAD_MERGE_DISPATCHES_FILE
+    rm -f "$dispatches_file"; unset LEAD_MERGE_DISPATCHES_FILE LEAD_MERGE_BATCH_CHILD
     # exec keeps this pid, so the single run takes the lock over without a gap.
     unset LEAD_MERGE_LOCK_HELD
     exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
@@ -505,12 +505,14 @@ is_coordinator() { # <id>
 
 # Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent
 # creates LEAD_MERGE_DISPATCHES_FILE empty; the first child that needs the list fills it and the
-# rest read it. A missing or unreadable file falls back to one live read.
+# rest read it. Only batch children use the file, so a stray export never feeds a plain run. A missing
+# or unreadable file falls back to one live read.
 known_dispatches=""
 load_dispatches() {
-  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs=""
-  if [ -n "${LEAD_MERGE_DISPATCHES_FILE:-}" ] && [ -r "$LEAD_MERGE_DISPATCHES_FILE" ]; then
-    known_dispatches=$(cat "$LEAD_MERGE_DISPATCHES_FILE") || known_dispatches=""
+  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs="" cache="" tmp_cache
+  [ "${LEAD_MERGE_BATCH_CHILD:-0}" != 1 ] || cache=${LEAD_MERGE_DISPATCHES_FILE:-}
+  if [ -n "$cache" ] && [ -r "$cache" ]; then
+    known_dispatches=$(cat "$cache") || known_dispatches=""
     [ -z "$known_dispatches" ] || return 0
   fi
   # worker-list without --run sees only the caller's bound run, so read every run.
@@ -534,8 +536,10 @@ load_dispatches() {
       done
       [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"
     done <<<"$runs"
-    [ -z "${LEAD_MERGE_DISPATCHES_FILE:-}" ] || [ ! -w "$LEAD_MERGE_DISPATCHES_FILE" ] \
-      || printf '%s\n' "$known_dispatches" > "$LEAD_MERGE_DISPATCHES_FILE" 2>/dev/null || true
+    # Temp file then mv, so a child killed mid-write never leaves a cut-off last id.
+    if [ -n "$cache" ] && [ -w "$cache" ] && tmp_cache=$(mktemp "$cache.XXXXXX" 2>/dev/null); then
+      { printf '%s\n' "$known_dispatches" > "$tmp_cache" && mv "$tmp_cache" "$cache"; } 2>/dev/null || rm -f "$tmp_cache"
+    fi
     return 0
   done
   die "run-list has too many pages to verify verdict dispatch ids"

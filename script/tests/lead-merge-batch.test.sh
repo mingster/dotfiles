@@ -475,17 +475,40 @@ EOS
   [ "$merged" -eq 3 ] && echo "ok   T15 every PR merges" || echo "FAIL T15 merged $merged of 3: $out"
   runs=$(grep -c 'run-list' "$MF_ORCA_LOG")
   [ "$runs" -eq 1 ] && echo "ok   T15 run-list called once across parent and children" || echo "FAIL T15 run-list called $runs times"
-  # A missing inventory file falls back to one live read per child, not to a refusal.
-  mf_pr_add 44 v44 "$ok" src/v44.sh; mf_pr_add 45 v45 "$ok" src/v45.sh
-  for n in 44 45; do
+  # Helper: a PR whose Verdict names verifier $2.
+  fx_verdict_pr() {
+    local n=$1 who=$2 h
+    mf_pr_add "$n" "v$n" "$ok" "src/v$n.sh"
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
-    jq --arg b "Verdict: PASS head=$h verifier=ctx_verify author=unknown" --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false},{body:$b, author:"fixture", edited:false, minimized:false}]' \
+    jq --arg b "Verdict: PASS head=$h verifier=$who author=unknown" --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false},{body:$b, author:"fixture", edited:false, minimized:false}]' \
       "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
-  done
+  }
+  fx_verdict_pr 44 ctx_verify; fx_verdict_pr 45 ctx_verify
+  # A batch child with a missing inventory file falls back to one live read, not to a refusal.
   : > "$MF_ORCA_LOG"
-  out=$(LEAD_MERGE_DISPATCHES_FILE="$MF_DIR/missing" mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --pr 44 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-44.json")" 2>&1); code=$?
-  [ "$code" -eq 0 ] && grep -q '^MERGED' <<<"$out" && echo "ok   T15 missing inventory file falls back to a live read" || echo "FAIL T15 fallback exit $code: $out"
-  [ "$(grep -c 'run-list' "$MF_ORCA_LOG")" -eq 1 ] && echo "ok   T15 fallback reads once" || echo "FAIL T15 fallback reads"
+  out=$(LEAD_MERGE_BATCH_CHILD=1 LEAD_MERGE_LOCK_HELD=1 LEAD_MERGE_DISPATCHES_FILE="$MF_DIR/missing" mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --pr 44 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-44.json")" 2>&1); code=$?
+  [ "$code" -eq 0 ] && grep -q '^MERGED' <<<"$out" && echo "ok   T15 batch child with a missing inventory file falls back to a live read" || echo "FAIL T15 child fallback exit $code: $out"
+  [ "$(grep -c 'run-list' "$MF_ORCA_LOG")" -eq 1 ] && echo "ok   T15 child fallback reads once" || echo "FAIL T15 child fallback reads"
+  # A plain run ignores an inherited inventory file, even one that would validate the Verdict.
+  printf 'ctx_verify\n' > "$MF_DIR/stray"
+  : > "$MF_ORCA_LOG"
+  out=$(LEAD_MERGE_DISPATCHES_FILE="$MF_DIR/stray" mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --pr 45 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-45.json")" 2>&1); code=$?
+  [ "$code" -eq 0 ] && grep -q '^MERGED' <<<"$out" && echo "ok   T15 plain run with a stray export merges" || echo "FAIL T15 stray exit $code: $out"
+  [ "$(grep -c 'run-list' "$MF_ORCA_LOG")" -eq 1 ] && echo "ok   T15 plain run ignores an inherited inventory file" || echo "FAIL T15 plain run used the stray file"
+  # The cache is replaced by mv, never truncated in place, and holds whole ids.
+  fx_verdict_pr 49 ctx_verify
+  : > "$MF_DIR/cache"; before=$(ls -i "$MF_DIR/cache" | awk '{print $1}')
+  out=$(LEAD_MERGE_BATCH_CHILD=1 LEAD_MERGE_LOCK_HELD=1 LEAD_MERGE_DISPATCHES_FILE="$MF_DIR/cache" mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --pr 49 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-49.json")" 2>&1); code=$?
+  after=$(ls -i "$MF_DIR/cache" | awk '{print $1}')
+  [ "$before" != "$after" ] && echo "ok   T15 cache is written by temp file and mv" || echo "FAIL T15 cache rewritten in place"
+  grep -Fxq ctx_verify "$MF_DIR/cache" && [ "$(ls "$MF_DIR" | grep -c '^cache\.')" -eq 0 ] && echo "ok   T15 cache holds the whole id and no temp file is left" || echo "FAIL T15 cache content: $(cat "$MF_DIR/cache")"
+  # Once the cache is filled, a later child still refuses an unknown verifier.
+  fx_verdict_pr 46 ctx_verify; fx_verdict_pr 47 ctx_ghost; fx_verdict_pr 48 ctx_verify
+  : > "$MF_ORCA_LOG"
+  out=$(mf_run_limited 120 bash "$here/lead-merge.sh" --repo example/repo --batch 46 47 48 2>&1); code=$?
+  [ "$(jq -r .state "$MF_GH_DIR/pr-47.json")" = OPEN ] && echo "ok   T15 unknown verifier refused from the filled cache" || echo "FAIL T15 unknown verifier merged: $out"
+  [ "$(jq -r .state "$MF_GH_DIR/pr-46.json")$(jq -r .state "$MF_GH_DIR/pr-48.json")" = MERGEDMERGED ] && echo "ok   T15 known verifiers around it merge" || echo "FAIL T15 neighbours: $out"
+  [ "$(grep -c 'run-list' "$MF_ORCA_LOG")" -eq 1 ] && echo "ok   T15 refusal batch reads the inventory once" || echo "FAIL T15 refusal batch reads"
 }
 
 
