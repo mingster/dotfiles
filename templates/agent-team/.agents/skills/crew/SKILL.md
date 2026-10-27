@@ -23,6 +23,10 @@ Use the `orchestration` skill for task contracts, dispatch, supervision, questio
 
 Team additions to its task contract:
 
+- The assigned worker performs the slice itself; sub-dispatch requires an explicit coordinator grant and every child counts against the same host/provider cap.
+- Browser briefs assign a unique `--session <dispatch>-<purpose>` on every agent-browser call.
+- Reviewer briefs use the canonical Verdict line with verifier and author IDs; post a new Verdict for a new decision, preserving previous Verdicts. On a non-Owner-Reserved ask timeout, proceed with recommended A labelled "Elon decision pending".
+
 - Name the role file by absolute path, the Token budget in `AGENTS.md`, and the skill file to read. Use `implement` for a whole ticket, `tdd` for a build slice, `diagnosing-bugs` for diagnosis, `code-review` for review and `resolving-merge-conflicts` for conflicts. Read the named `~/.agents/skills/<name>/SKILL.md` even when the harness hides it.
 - Name the ticket's test cases as the verify command: those plus touched unit tests, never the full suite (Regression).
 - State rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`: workers commit on their own branches and worktrees, never push, open PRs or merge PRs; reviewers report locally to Elon.

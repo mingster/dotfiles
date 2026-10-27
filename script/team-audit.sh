@@ -20,8 +20,8 @@
 #             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
 #             network failure prints "WARN mp-upstream" and is not a finding.
 #   ready-brief  every open GitHub issue labeled ready-for-agent (repo read from the project's origin
-#             remote) has one text, the body or a single comment, holding all four brief fields:
-#             Acceptance criteria, Requirement owner, Done condition, Deleted (heading or "Field:" label,
+#             remote) has one text, the body or a single comment, holding all three brief fields:
+#             Acceptance criteria, Requirement owner, Deleted (heading or "Field:" label,
 #             case-insensitive). Prints "FINDING ready-brief <owner/repo>#<n> missing: <fields>", the
 #             fields missing from the text with the most. Opt out with the label "team-audit: allow" or a
 #             line containing "team-audit: allow" in the body or a comment. A gh or network failure
@@ -111,7 +111,7 @@ for proj in "${PROJECTS[@]}"; do
     finding sdlc "$s: no intent.md beside it (intent before spec)"
   done
   for s in "$proj"/docs/intent/*/spec.md; do
-    [ -f "$s" ] && ! grep -q '^## Test plan' "$s" || continue
+    [ -f "$s" ] && ! grep -qE '^## ([0-9]+[.)] +)?Test plan([[:space:]]|$)' "$s" || continue
     added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
     [ -n "$added" ] && [[ "$added" < "$TEST_PLAN_SINCE" ]] && continue
     finding sdlc "$s: no ## Test plan section (owner rule 2026-10-21)"
@@ -173,8 +173,10 @@ fi
 # ready-brief: open ready-for-agent issues must carry the AGENT-BRIEF fields in one text.
 BRIEF_PY='
 import json, re, sys
-FIELDS = ["Acceptance criteria", "Requirement owner", "Done condition", "Deleted"]
+FIELDS = ["Acceptance criteria", "Requirement owner", "Deleted"]
 def has(text, f):
+    if f == "Acceptance criteria" and re.search(r"^## (?:[0-9]+[.)] +)?Done check\b", text, re.I | re.M): return True
+    if f == "Deleted" and re.search(r"\bDeleted:", text, re.I): return True
     f = re.escape(f)
     return re.search(r"^\s*#+\s*\**" + f + r"\b|^\s*(?:[-*]\s*)?\**" + f + r"(?:\**\s*:|\s*:\**)", text, re.I | re.M)
 for i in json.load(sys.stdin):

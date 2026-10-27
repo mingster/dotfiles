@@ -24,7 +24,7 @@ Brief, in English, per area:
 ```
 Role: <role> (read .claude/agents/<role>.md). Staging page by page review, round <round>, no code.
 Your area: <area and its source paths>. Act as <customer | store staff | platform operator> on <devices>.
-Staging only: <staging URL>, never production. Browser: your own agent-browser, CDP port <port>, AGENT_BROWSER_SESSION=<name>. Sign in with the project's sign-in helper (it never prints the password; never read the secrets directory).
+Staging only: <staging URL>, never production. Browser: your own agent-browser, CDP port <port>, AGENT_BROWSER_SESSION=<name>; pass `--session <name>` on every agent-browser command from the first call, including attach and close. Sign in with the project's sign-in helper (it never prints the password; never read the secrets directory).
 Page list: build it from the route files under your area so no page is skipped.
 For each page: loads with no error and no console error; every button, form, filter, tab and dialog does what it says (create, edit, delete only your own test rows, named "QA-<round>"); empty, error and long text states; wording in every locale reads native (switch locale on each page); layout at each device size; links and back navigation; anything a first-time user would not understand.
 Output: <round folder>/findings-<area>.md, one line per finding: URL | P0-P3 | broken, wording, layout, missing, confusing | what you saw | proposed fix. Screenshots <area>-<n>.png beside it. Search open issues first and cite the number instead of a duplicate. Do not file issues.
@@ -36,14 +36,17 @@ A P0 (data loss, payment wrong, sign-in or checkout broken) goes to the tech-lea
 
 ## 2. Grill (architect-pm and sales-marketing)
 
+Every ready-for-agent ticket has `## Acceptance criteria` (observable cases and exact proving command), `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>` in one body or comment. A second Done condition repeats acceptance criteria and is unnecessary.
+
 When every findings file is in, start both roles on the same input:
 
 ```
 Role: <role>. Peer grill on the round <round> staging findings, no code.
 Input: every findings-*.md in <round folder>.
-1. Challenge the other role's findings: real (recheck on staging with your own browser session if unsure), right severity, smallest fix, duplicate of an open issue. Write grill-<role>.md in the folder; answer the other role's challenges once.
+1. Challenge the other role's findings: real (recheck on staging with your own browser session (`agent-browser --session <round>-<role>-grill` on every call) if unsure), right severity, smallest fix, duplicate of an open issue. Write grill-<role>.md in the folder; answer the other role's challenges once.
 2. Group the agreed findings into tickets, one per independent fix on disjoint files so many workers run at once. Each ticket: title, page, severity, acceptance criteria, the proving test (unit or e2e spec path), files likely touched. Wording tickets carry the exact strings for every locale, native, never a direct translation.
 3. File your side's tickets (search first; the issue budget and triage label docs apply), ready-for-agent when fully specified. A product, scope or copy call goes to Elon with `orca orchestration ask` (A recommended, B); record "Elon decision (owner to review)" on the issue. Only Owner-Reserved items become ready-for-human.
+On a non-Owner-Reserved ask timeout, proceed with recommended A and label the ticket "Elon decision pending"; send the unresolved decision to Elon. Owner-Reserved work remains blocked.
 Never change priorities of existing issues, never close issues, never read secrets. No heartbeats. Finish within 40 minutes.
 worker_done: issues filed (number, severity, label), open disagreements as a numbered A/B list, Owner-Reserved questions (expect none).
 ```
