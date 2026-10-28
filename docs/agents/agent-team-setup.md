@@ -103,3 +103,19 @@ The only gate block is fresh real provider usage plus running worker reserve at
 the weekly/cycle ceiling; daily pacing is advisory, and failed provider refreshes
 report unknown with the source and reason. A watchdog nudge does not replace the
 coordinator's screen check on every wake.
+
+## Interpreters (asdf)
+
+The root `.tool-versions` pins python and nodejs. Every host runs both through asdf, so
+`python3` and `node` resolve the same way everywhere. Scripts keep `#!/usr/bin/env python3`
+and never hardcode an interpreter path.
+
+The owner runs the bootstrap once per host:
+
+```bash
+bash ~/dotfiles/script/bootstrap-asdf-tools.sh
+```
+
+It installs asdf if missing, adds the plugins, installs the pinned versions, writes the same
+pins into `~/.tool-versions`, and prints the resolved `python3` and `node`. A second run
+changes nothing and says so. Pass `--dotfiles <dir>` to read the pins from another checkout.
