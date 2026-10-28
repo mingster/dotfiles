@@ -44,5 +44,11 @@ mine=$(git -C "$tmp/wt" rev-parse HEAD)
 (cd "$tmp/wt" && bash "$script") && ok || bad "diverged run exits 0"
 [ "$(git -C "$tmp/wt" rev-parse HEAD)" = "$mine" ] && ok || bad "own commits kept"
 
+# a project in a subfolder (package.json under web/) gets its install there
+mkdir "$tmp/wt/web"; echo '{}' > "$tmp/wt/web/package.json"
+(cd "$tmp/wt" && bash "$script") && ok || bad "subfolder run exits 0"
+[ -d "$tmp/wt/web/node_modules" ] && ok || bad "install ran in web/"
+[ "$(wc -l < "$BUN_LOG" | tr -d ' ')" = 2 ] && ok || bad "one install for web/"
+
 echo "worktree-setup: $pass passed, $fail failed"
 [ "$fail" = 0 ]
