@@ -1,0 +1,4 @@
+# Orca repo hooks. A new worker worktree is brought to a fresh origin/main and gets its
+# dependencies before the agent starts (start workers with --setup run).
+scripts:
+  setup: bash "$HOME/dotfiles/script/worktree-setup.sh"
