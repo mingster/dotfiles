@@ -653,7 +653,10 @@ fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0 main_fetched=${main_fetched:-false} carry_notes=""
-  ignored_notes=() row_n=0 retired_seen=false
+  ignored_notes=() row_n=0 retired_seen=false newest_seen=false
+  # The newest Verdict at the head decides: an invalid one refuses only while nothing newer applies, so a
+  # corrected Verdict replaces a bad one and a bad one posted after a good one still refuses.
+  bad_verdict() { if [ "$newest_seen" = true ]; then ignored_notes+=("ignored Verdict $ref: $1, and a newer Verdict replaces it"); else refuse "$1"; fi; }
   verdict_fix="post a fresh comment with script/post-verdict.sh (it builds the first line; edits never count)"
   # A FAIL is retired only by "Countersign: Elon head=<current head> reason=supersedes <comment url>".
   superseded=$(jq -r --arg h "$head" '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=supersedes (?<u>[^[:space:]]+)[[:space:]]*$")? | select(.h == $h) | .u' <<<"$info")
@@ -673,7 +676,10 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
     if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       verdict="${BASH_REMATCH[1]}"; candidate_head="${BASH_REMATCH[2]}"
       verifier_id="${BASH_REMATCH[3]}"; author_id="${BASH_REMATCH[4]}"
-      if [ "${BASH_REMATCH[3]}" = "${BASH_REMATCH[4]}" ]; then refuse "author cannot supply verifier verdict"; continue; fi
+      if [ "${BASH_REMATCH[3]}" = "${BASH_REMATCH[4]}" ]; then
+        if [ "$candidate_head" = "$head" ]; then bad_verdict "author cannot supply verifier verdict"; newest_seen=true; else refuse "author cannot supply verifier verdict"; fi
+        continue
+      fi
       if [ "$verdict" = FAIL ] && [[ "$ref" != "comment #"* ]] && grep -Fxq -- "$ref" <<<"$superseded"; then
         echo "lead-merge: FAIL Verdict $ref retired by a supersedes Countersign"; retired_seen=true; continue
       fi
@@ -690,11 +696,11 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       fi
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
-        if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then refuse "verdict verifier $verifier_id is not a known dispatch"; continue; fi
+        if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then bad_verdict "verdict verifier $verifier_id is not a known dispatch"; newest_seen=true; continue; fi
         # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
         # or a configured coordinator id.
         if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id"; then
-          refuse "verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"; continue
+          bad_verdict "verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"; newest_seen=true; continue
         fi
         if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then
           edited=$((edited+1))
@@ -705,6 +711,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
         if [ "$retired_seen" = true ] && [ "$verdict" != FAIL ]; then
           ignored_notes+=("ignored Verdict $ref: it is older than the FAIL it would replace. Fix: $verdict_fix"); continue
         fi
+        newest_seen=true
         [ -z "$carried" ] || echo "lead-merge: verdict carried from ${carried:0:12} to ${head:0:12} (merge of main only, clean replay)"
         applicable+=("$verdict"$'\n'"$comment")
         if [ "$verdict" = FAIL ]; then fails=$((fails+1)); else passes=$((passes+1)); fi

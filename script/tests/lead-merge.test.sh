@@ -257,6 +257,9 @@ setup; FAKE_DISPATCHES="ctx_author"; export FAKE_DISPATCHES_B="ctx_other"; check
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=unknown"; check "author=unknown accepted" 0 '^MERGED' 1
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=unknown"; check "author=unknown still needs known verifier" 1 'ctx_ghost is not a known dispatch'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_random"; check "random author id refused" 1 'ctx_random is not a known dispatch'
+# Issue #352: the newest Verdict at the head decides; a corrected Verdict replaces an invalid older one.
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_random")},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "T352 corrected Verdict after an invalid one merges" 0 '^MERGED' 1
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_random")}]'); check "T352 invalid Verdict newest at the head refuses" 1 'ctx_random is not a known dispatch'
 # T3, T20, T22 (spec #286, R6): ignored Verdicts are named by comment URL with a fix; a FAIL is retired only by a supersedes Countersign.
 vc() { jq -nc --arg checks "Checks: PASS head=$SHA" --argjson rest "$1" '[{body:$checks}] + $rest'; }
 VP="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
