@@ -19,7 +19,6 @@ su postgres
 initdb --locale en_US.UTF-8 -D /var/lib/postgres/data --data-checksums
 #sudo -u postgres initdb --locale en_US.UTF-8 -D /var/lib/postgres/data --data-checksums
 
-#fish_add_path /usr/local/opt/postgresql@18/bin
 
 sudo systemctl enable --now postgresql
 sudo systemctl status postgresql

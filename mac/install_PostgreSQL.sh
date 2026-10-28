@@ -24,9 +24,6 @@ fi
 #postgresql@18 is keg-only, which means it was not symlinked into /usr/local,
 #because this is an alternate version of another formula.
 
-#If you need to have postgresql@18 first in your PATH, run:
-#  fish_add_path /usr/local/opt/postgresql@18/bin
-#
 #For compilers to find postgresql@18 you may need to set:
 #  set -gx LDFLAGS "-L/usr/local/opt/postgresql@18/lib"
 #  set -gx CPPFLAGS "-I/usr/local/opt/postgresql@18/include"
