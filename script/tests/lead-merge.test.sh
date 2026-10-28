@@ -49,7 +49,7 @@ cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 [ "${FAKE_ORCA_FAIL:-}" != 1 ] || exit 1
 if [ "$1 $2" = "orchestration run-list" ]; then
-  echo '{"ok":true,"result":{"runs":[{"id":"run_a","coordinator_handle":"'"${FAKE_COORD_A:-}"'"},{"id":"run_b","coordinator_handle":null}],"nextCursor":null}}'; exit 0
+  echo '{"ok":true,"result":{"runs":[{"id":"run_a","coordinator_handle":"'"${FAKE_COORD_A:-}"'"},{"id":"run_b","coordinator_handle":"'"${FAKE_COORD_B:-}"'"}],"nextCursor":null}}'; exit 0
 fi
 [ "$1 $2" = "orchestration worker-list" ] || exit 1
 start=0; prev=""; run=""
@@ -685,6 +685,28 @@ rm -f "$cx/script/lead-merge.local.json"
 FAKE_COORD_A=
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_runcoord"
 check "T373 no run coordinator and no host file refuses the author" 1 'ctx_runcoord is not a known dispatch'
+) </dev/null &
+# #373 correction: only the coordinator of the run that owns the verifier dispatch counts as author.
+unit; (
+unit_init
+cx="$ucd/dot"; mkdir -p "$cx/script"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"
+LEAD_MERGE="$cx/script/lead-merge.sh"
+export FAKE_COORD_A=ctx_runcoord FAKE_COORD_B=ctx_oldcoord
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_oldcoord"
+check "T373b an unrelated run's coordinator is refused" 1 'ctx_oldcoord is not a known dispatch'
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_runcoord"
+check "T373b the owning run's coordinator is accepted" 0 '^MERGED' 1
+setup; FAKE_DISPATCHES="ctx_author"; export FAKE_DISPATCHES_B="ctx_verify"; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_runcoord"
+check "T373b the coordinator of a run that does not own the verifier is refused" 1 'ctx_runcoord is not a known dispatch'
+setup; FAKE_DISPATCHES="ctx_author"; export FAKE_DISPATCHES_B="ctx_verify"; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_oldcoord"
+check "T373b the coordinator of the other owning run is accepted" 0 '^MERGED' 1
+export FAKE_COORD_A=
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_oldcoord"
+check "T373b an owning run with no coordinator leaves only the host file" 1 'ctx_oldcoord is not a known dispatch'
+printf '{"coordinator_ids":["ctx_hostcoord"]}\n' > "$cx/script/lead-merge.local.json"
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_hostcoord"
+check "T373b the host file coordinator still counts" 0 '^MERGED' 1
 ) </dev/null &
 # #353: a UI path PR without a ## Screenshots section is not refused.
 unit; (

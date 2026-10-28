@@ -504,7 +504,7 @@ done < <(jq -r '.[]' <<<"$files")
 # Coordinator ids allowed as a Verdict author (not a dispatch): the run coordinator from Orca, or coordinator_ids in
 # lead-merge.local.json (read lazily).
 coordinator_ids="" coordinators_loaded=false
-is_coordinator() { # <id>
+is_coordinator() { # <id> <verifier dispatch id>
   if [ "$coordinators_loaded" = false ]; then
     local dir cfg
     dir=$(cd "$(dirname "$0")" && pwd)
@@ -515,52 +515,54 @@ is_coordinator() { # <id>
     coordinators_loaded=true
   fi
   grep -Fxq -- "$1" <<<"$coordinator_ids" && return 0
-  run_coordinator "$1"
+  run_coordinator "$1" "$2"
 }
 
-# True when <id> is the coordinator_handle of an Orca run. The host file above stays an extra allow list.
-# Orca unreadable or unparseable refuses, never guesses.
-run_coordinator() { # <id>
-  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page handles="" n
-  for n in $(seq 1 50); do
-    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
-      || die "cannot read orca run-list to verify the run coordinator"
-    handles+=$(jq -r '.result.runs[]?.coordinator_handle // empty' <<<"$page" 2>/dev/null)$'\n' \
-      || die "cannot parse orca run-list to verify the run coordinator"
-    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
-    [ -n "$cursor" ] || { grep -Fxq -- "$1" <<<"$handles"; return; }
-  done
-  die "run-list has too many pages to verify the run coordinator"
+# True when <id> is the coordinator_handle of the run that owns dispatch <dispatch>, recorded by load_dispatches.
+# Other runs, finished ones included, never count. No known owner means only the host file above applies.
+run_coordinator() { # <id> <dispatch>
+  local dispatch handle
+  [ -n "$known_dispatches" ] || load_dispatches
+  while IFS=$'\t' read -r dispatch handle; do
+    [ "$dispatch" = "$2" ] && [ -n "$handle" ] && [ "$handle" = "$1" ] && return 0
+  done <<<"$known_owners"
+  return 1
 }
 
 # Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent
 # creates LEAD_MERGE_DISPATCHES_FILE empty; the first child that needs the list fills it and the
 # rest read it. Only batch children use the file, so a stray export never feeds a plain run. A missing
 # or unreadable file falls back to one live read.
-known_dispatches=""
+known_dispatches="" known_owners=""
 load_dispatches() {
-  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run n m runs="" cache="" tmp_cache
+  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page run handle ids id n m runs="" cache="" tmp_cache
   [ "${LEAD_MERGE_BATCH_CHILD:-0}" != 1 ] || cache=${LEAD_MERGE_DISPATCHES_FILE:-}
   if [ -n "$cache" ] && [ -r "$cache" ]; then
     known_dispatches=$(cat "$cache") || known_dispatches=""
-    [ -z "$known_dispatches" ] || return 0
+    known_owners=$(cat "$cache-owners" 2>/dev/null) || known_owners=""
+    [ -z "$known_dispatches" ] || [ -z "$known_owners" ] || return 0
+    known_dispatches="" known_owners=""
   fi
   # worker-list without --run sees only the caller's bound run, so read every run.
   for n in $(seq 1 50); do
     page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
       || die "cannot read orca run-list to verify verdict dispatch ids"
-    runs+=$(jq -r '.result.runs[]?.id' <<<"$page" 2>/dev/null)$'\n' \
+    runs+=$(jq -r '.result.runs[]? | [.id, (.coordinator_handle // "")] | @tsv' <<<"$page" 2>/dev/null)$'\n' \
       || die "cannot parse orca run-list to verify verdict dispatch ids"
     cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
     [ -n "$cursor" ] && continue
-    while IFS= read -r run; do
+    while IFS=$'\t' read -r run handle; do
       [ -n "$run" ] || continue
       cursor=""
       for m in $(seq 1 50); do
         page=$("$orca" orchestration worker-list --run "$run" --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
           || die "cannot read orca worker-list to verify verdict dispatch ids"
-        known_dispatches+=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null)$'\n' \
+        ids=$(jq -r '.result.workers[]?.dispatchId // empty' <<<"$page" 2>/dev/null) \
           || die "cannot parse orca worker-list to verify verdict dispatch ids"
+        known_dispatches+="$ids"$'\n'
+        while IFS= read -r id; do
+          [ -z "$id" ] || known_owners+="$id"$'\t'"$handle"$'\n'
+        done <<<"$ids"
         cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
         [ -n "$cursor" ] || break
       done
@@ -568,7 +570,8 @@ load_dispatches() {
     done <<<"$runs"
     # Temp file then mv, so a child killed mid-write never leaves a cut-off last id.
     if [ -n "$cache" ] && [ -w "$cache" ] && tmp_cache=$(mktemp "$cache.XXXXXX" 2>/dev/null); then
-      { printf '%s\n' "$known_dispatches" > "$tmp_cache" && mv "$tmp_cache" "$cache"; } 2>/dev/null || rm -f "$tmp_cache"
+      { printf '%s\n' "$known_owners" > "$tmp_cache" && mv "$tmp_cache" "$cache-owners" \
+          && printf '%s\n' "$known_dispatches" > "$tmp_cache" && mv "$tmp_cache" "$cache"; } 2>/dev/null || rm -f "$tmp_cache"
     fi
     return 0
   done
@@ -716,7 +719,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
         if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then bad_verdict "verdict verifier $verifier_id is not a known dispatch"; newest_seen=true; continue; fi
         # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
         # or a configured coordinator id.
-        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id"; then
+        if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id" "$verifier_id"; then
           bad_verdict "verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"; newest_seen=true; continue
         fi
         if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then
