@@ -223,7 +223,12 @@ def check_segment(segment, depth=0):
     elif heavy_base == "next" and heavy_args[:1] == ["build"]:
         weight = 2
     elif heavy_base == "bun":
-        if heavy_args[:1] == ["test"] or heavy_args[:2] in (["run", "test"], ["run", "tsc"]):
+        if heavy_args[:1] == ["test"]:
+            # One *.test.ts(x) file is a cheap red run; a second path, a directory or a bare run stays gated.
+            operands = [a for a in heavy_args[1:] if not a.startswith("-")]
+            if not (len(operands) == 1 and re.search(r"\.test\.tsx?$", operands[0])):
+                weight = 1
+        elif heavy_args[:2] in (["run", "test"], ["run", "tsc"]):
             weight = 1
         elif heavy_args[:2] == ["run", "build"] or (
                 len(heavy_args) > 1 and heavy_args[0] == "run" and heavy_args[1].startswith("test:regression")):

@@ -123,5 +123,32 @@ class PatternKills(GuardTest):
             self.assertAllowed(cmd)
 
 
+class SingleTestFile(GuardTest):
+    """A bun test run on exactly one *.test.ts(x) file skips the gate; anything wider stays gated."""
+
+    def test_single_file_allowed(self):
+        for cmd in [
+            "bun test web/src/x/__tests__/a.test.ts",
+            "bun test web/src/x/__tests__/a.test.tsx",
+            "bun test --isolate web/src/x/__tests__/a.test.ts",
+            "bun test web/src/x/__tests__/a.test.ts --isolate",
+            "bun test web/src/x/__tests__/a.test.ts | tail -40",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertAllowed(cmd)
+
+    def test_wider_runs_denied(self):
+        for cmd in [
+            "bun test",
+            "bun test web/src/x/__tests__/a.test.ts web/src/x/__tests__/b.test.ts",
+            "bun test web/src/x/__tests__",
+            "bun test --isolate",
+            "bun test a.test.ts && bun run build",
+            "bun run test web/src/x/__tests__/a.test.ts",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertDenied(cmd, "heavy-gate")
+
+
 if __name__ == "__main__":
     unittest.main()
