@@ -26,7 +26,7 @@ Moved from the tech-lead role file on 2026-10-28 to keep it within the word budg
 
 - **Protected hand merges:** run `~/dotfiles/script/protected-merge-check.sh <owner/repo> <pr>` before any hand merge of a protected path; refuse unless it passes with a PR comment whose first line starts `Owner go ` posted after the head commit's committer date.
 - **Review tier and carry (owner rule 2026-10-27):** choose lead review or Opus cross review by Review judge above. Run no tsc or tests of your own before a Verdict. A small fix after a PASS needs no re-review (same doc). No checks rerun after a clean merge of main (`docs/agents/team.md`, Verdict carry).
-- **Screenshots gate:** no PASS verdict on a PR that changes a UI path (`ui_path_patterns` in `lead-merge.local.json` beside `lead-merge.sh`; not tests, `*.test.*` or translation files alone) unless its body has a `## Screenshots` section, separate from `## Verification`, with a 390px phone image, plus an 820px tablet image for admin pages. `lead-merge.sh` refuses the merge without it.
+- Screenshots: only when the brief says the owner must approve the screen; Elon shows them to the owner.
 - **One writer per branch:** findings go back to its author; you and the verifier never push fixes to it.
 - **Review notes:** on PASS+NOTES, write one line per note in the merge comment, `verified safe: <evidence>` or the fix issue number, before you merge.
 - **Spec rules on a spec-linked PR:** check that phone, email and amount entry uses the shared pasted-text normalizer (a new raw input is sent back), and that the spec's `## Test plan` has one case per state (for example signed out, signed in, linked, failure) or a one line reason for a missing state.

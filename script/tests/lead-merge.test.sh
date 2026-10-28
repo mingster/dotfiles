@@ -660,47 +660,14 @@ check "T31 a coordinator cannot be both author and verifier" 1 'author cannot su
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_random"
 check "T31 an id that is not configured is still refused" 1 'ctx_random is not a known dispatch'
 ) </dev/null &
-# #320: UI path prefixes from the local overlay need a ## Screenshots section with an image.
+# #353: a UI path PR without a ## Screenshots section is not refused.
 unit; (
 unit_init
 ux="$ucd/dot"; mkdir -p "$ux/script"
 cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$ux/script/"
 LEAD_MERGE="$ux/script/lead-merge.sh"
-ui_msg='UI change needs a ## Screenshots section with a phone image'
 printf '{"ui_path_patterns":["app/"]}\n' > "$ux/script/lead-merge.local.json"
 setup; files='[{"path":"app/page.tsx"}]'
-check "UI320 UI file without Screenshots is refused" 1 "$ui_msg"
-setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\n![phone](https://example.invalid/p.png)'
-check "UI320 UI file with Screenshots image merges" 0 '^MERGED' 1
-setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\nhttps://github.com/user-attachments/assets/abc'
-check "UI320 user-attachments URL counts as an image" 0 '^MERGED' 1
-setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\nnone yet'
-check "UI320 Screenshots heading without an image is refused" 1 "$ui_msg"
-setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\n### Phone\n![phone](https://example.invalid/p.png)\n### Tablet\n![tablet](https://example.invalid/t.png)'
-check "UI320 images under ### sub-headings in Screenshots count" 0 '^MERGED' 1
-setup; files='[{"path":"app/page.tsx"}]'; body=$'## Verification\n- Ran script successfully.\n## Screenshots\nnone yet\n## Notes\n![phone](https://example.invalid/p.png)'
-check "UI320 an image under a later ## section does not count" 1 "$ui_msg"
-setup; files='[{"path":"app/page.test.tsx"}]'
-check "UI320 test-only change under a UI prefix merges" 0 '^MERGED' 1
-setup; files='[{"path":"app/i18n/locales/en/menu.json"}]'
-check "UI320 translation JSON alone under a UI prefix merges" 0 '^MERGED' 1
-setup; files='[{"path":"app/i18n/locales/en/menu.ts"}]'
-check "UI320 any file under i18n/locales merges" 0 '^MERGED' 1
-setup; files='[{"path":"app/i18n/locales/en/menu.json"},{"path":"app/page.tsx"}]'
-check "UI320 translation JSON plus a page still needs Screenshots" 1 "$ui_msg"
-setup; files='[{"path":"app/api/x/route.ts"}]'
-check "UI320 API route alone under a UI prefix merges" 0 '^MERGED' 1
-setup; files='[{"path":"app/lib/load.server.ts"}]'
-check "UI320 server-only module under a UI prefix merges" 0 '^MERGED' 1
-setup; files='[{"path":"app/api/x/route.ts"},{"path":"app/page.tsx"}]'
-check "UI320 API route plus a page still needs Screenshots" 1 "$ui_msg"
-setup; files='[{"path":"script/foo.sh"}]'
-check "UI320 non-UI file merges" 0 '^MERGED' 1
-printf '{"ui_path_patterns":[]}\n' > "$ux/script/lead-merge.local.json"
-setup; files='[{"path":"app/page.tsx"}]'
-check "UI320 empty patterns merge" 0 '^MERGED' 1
-rm -f "$ux/script/lead-merge.local.json"
-setup; files='[{"path":"app/page.tsx"}]'
-check "UI320 no overlay merges" 0 '^MERGED' 1
+check "UI353 UI file without Screenshots merges" 0 '^MERGED' 1
 ) </dev/null &
 report
