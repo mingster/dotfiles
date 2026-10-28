@@ -32,8 +32,8 @@ asdf plugin add python
 
 #asdf list all python
 
-asdf install python 3.14.8
-asdf set -u python 3.14.8
+asdf install python 3.15.2
+asdf set -u python 3.15.2
 
 asdf plugin add direnv
 
