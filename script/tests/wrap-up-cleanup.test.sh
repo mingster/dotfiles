@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # Exercise wrap-up --apply rules (patch-merged, screenshot dirt, stale) in disposable repos only.
 set -euo pipefail
 # Fixture worktrees are all new; 0 turns the recent-activity guard off.

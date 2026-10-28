@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # Real fixture commits and worktrees; only the forge is faked.
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/.." && pwd)/head-checks.sh" <<'PY'

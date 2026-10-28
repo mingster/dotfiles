@@ -1,6 +1,9 @@
 import contextlib, importlib.util, io, json, os, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 from datetime import datetime, timezone
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import asdf_pin  # noqa: E402
+asdf_pin.pin()  # before any test sets HOME
 HOOK = os.path.join(os.path.dirname(__file__), "..", "usage-gate-hook.py")
 FUT = time.time() + 3 * 86400
 
