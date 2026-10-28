@@ -1,0 +1,1 @@
+run-scoped-tests.py takes `--on-test-change <glob>`: the matching tests under `--root` run whenever any changed file is a test (added, renamed, modified or deleted), so repo-wide contract suites that scan every test file are no longer skipped (#357).
