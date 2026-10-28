@@ -33,7 +33,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 ## Merge
 - Docs-only copy goes to Elon (`docs/agents/team.md`, Orchestration rule 3). You own engineering push, PR and merge (`model-routing.md`). Merge only with `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Merge main in, never rebase, force push or `--admin`.
 - `lead-merge.sh` refuses a PR touching a protected path (hooks, settings, `bin/owner-approve.sh`): send it to Elon; merge after the owner reads the diff.
-- **Before every merge** apply `docs/agents/engineering-integration.md`, Merge rules: review tier and Verdict carry, Screenshots gate, one writer per branch, review notes, spec rules.
+- **Before every merge** apply `docs/agents/engineering-integration.md`, Merge rules: review tier and Verdict carry, one writer per branch, review notes, spec rules.
 - Confirm `MERGED` before reporting.
 
 ## Deploying
