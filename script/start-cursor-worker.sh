@@ -21,6 +21,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$model" ] && [ -n "$from" ] || usage
 brief=$(cat "$spec")
+[ -n "${brief//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || usage
   if [ -z "$base" ]; then

@@ -88,8 +88,9 @@ def starts(cmd):
                   for j, w in enumerate(flags) if w == "--model" or w.startswith("--model=")]
         model = models[0] if len(models) == 1 and re.match(r"^[\w.:-]+$", models[0]) \
             and not models[0].startswith("-") else None
+        spec = option("--spec")
         out += [{"provider": provider.lower() if provider else None, "role": role,
-                 "override": override, "model": model} for provider in providers]
+                 "override": override, "model": model, "spec": spec} for provider in providers]
     return out
 
 
@@ -153,6 +154,11 @@ def main():
         return
     blocked = []
     commands = starts(cmd)
+    # A heredoc inside $( ) can expand to nothing; Orca then starts a worker with no brief.
+    if any(c.get("spec") is not None and (not c["spec"].strip() or re.match(r"\$\(\s*cat\s*<<", c["spec"]))
+           for c in commands):
+        blocked.append("Refused an empty --spec (or a heredoc inside $( ), which can expand empty): "
+                       "write the brief to a file and pass --spec \"$(cat <file>)\".")
     for start in commands:
         if start["provider"] in GATED:
             denial = routing(start)

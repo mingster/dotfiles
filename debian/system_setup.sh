@@ -30,16 +30,15 @@ simple() {
         zram-tools
 
     sudo apt install -y git ufw rsync unzip curl wget wput
-    sudo apt install -y kdiff3 fish tmux neovim lf kitty fastfetch fzf
+    sudo apt install -y kdiff3 zsh tmux neovim lf kitty fastfetch fzf
     sudo apt install -y chromium-browser
 
-    # add fish to system shell
-    echo $(which fish) | sudo tee -a /etc/shells
+    # add zsh to system shells
+    grep -qxF "$(command -v zsh)" /etc/shells || command -v zsh | sudo tee -a /etc/shells
 
     # micro editor
     sudo apt install -y micro
     micro -plugin install editorconfig
-    micro -plugin install fish
     micro -plugin install fzf
 
     if [ ! -d ${HOME}/.config/micro ];
@@ -260,18 +259,13 @@ simple() {
     sudo ln -s -f ~/dotfiles/config/index.theme /usr/share/icons/default/index.theme
     sudo ln -s -f ~/dotfiles/config/lightdm/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf
 
-    #ln -s -f ~/dotfiles/.config/fish $HOME/.config/fish
-    #ln -s ~/dotfiles/.config/fish $HOME/.config/fish
-    if [ ! -d ${HOME}/.config/fish ];
-    then
-        mkdir -p ${HOME}/.config/fish
-    fi
-    cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/
-
-    #
-    echo 'change default shell to fish'
-    #
-    chsh -s $(which fish)
+    case "$SHELL" in
+        */zsh) ;;
+        *)
+            echo 'change default shell to zsh'
+            chsh -s "$(command -v zsh)"
+            ;;
+    esac
 
     ln -s -f ~/dotfiles/.config/tmux $HOME/.config/tmux
     ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
@@ -334,11 +328,6 @@ simple() {
     wget https://github.com/browsh-org/browsh/releases/download/v1.8.0/browsh_1.8.0_linux_amd64.deb
     sudo apt install ./browsh_1.8.0_linux_amd64.deb
     rm ./browsh_1.8.0_linux_amd64.deb
-
-    # ----------------------------------------------------------------------------------------------
-    # more fish shell setup
-    # ----------------------------------------------------------------------------------------------
-    fish "../script/setup_fishshell.fish"
 }
 
 simple

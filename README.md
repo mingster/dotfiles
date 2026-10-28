@@ -10,7 +10,7 @@ If you are new to this repository, here is what it provides and how the pieces c
 
 This repository contains everything needed to turn a fresh operating system installation into a fully configured developer workstation, paired with an AI engineering organization.
 
-* **Unified system configuration:** Installs core developer tooling, shells (Fish and Zsh), Git configuration, and application preferences across macOS, Arch Linux, and Debian.
+* **Unified system configuration:** Installs core developer tooling, the Zsh shell, Git configuration, and application preferences across macOS, Arch Linux, and Debian.
 * **Universal AI skills:** Supplies over 30 reusable engineering skills (slash commands) shared uniformly across Claude Code, Codex, Cursor, and Antigravity.
 * **Autonomous AI agent team:** Packages a drop in virtual software company led by a single executive front door (Elon), backed by a Product Architect, a Tech Lead, and specialist execution workers.
 
@@ -300,7 +300,7 @@ A short tour of the parts that keep the agent team safe and tidy, for a reader w
 
 Heavy jobs (type checks, test suites, browser runs) share one machine budget so parallel workers do not freeze it.
 
-* [`script/heavy-gate.sh`](script/heavy-gate.sh) and [`script/heavy-gate.py`](script/heavy-gate.py) hand out heavy job slots. A job waits while the load is above the limit or free memory is under 20%.
+* [`script/heavy-gate.sh`](script/heavy-gate.sh) and [`script/heavy-gate.py`](script/heavy-gate.py) hand out heavy job slots. A job waits while the load is above the limit or free memory is under 20%. A job started with `HEAVY_GATE_CLASS=long` (a full regression run or long build) leaves one slot free for short scoped test jobs.
 * [`script/head-checks.sh`](script/head-checks.sh) runs a repository's checklist in a clean worktree at one exact commit, and holds the gate for the whole run.
 * [`script/hw-probe.sh`](script/hw-probe.sh) inspects the hardware. When run at a quiet time with a workload command, it calibrates the slot count and load limit for this machine and writes them to `~/.config/heavy-gate/slots.conf`. Without that file, the defaults are 2 slots and a load limit of 12.
 * [`script/remote-heavy.sh`](script/remote-heavy.sh) sends the current commit to a `<remote host>`, runs a heavy command there under that host's gate, and can fetch artifacts back.

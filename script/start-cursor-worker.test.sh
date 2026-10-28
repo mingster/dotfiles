@@ -4,6 +4,10 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd -P)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
+# Resolve python before HOME changes; the asdf shim otherwise loses its installs.
+if command -v asdf >/dev/null 2>&1; then PATH="$(dirname "$(asdf which python3)"):$PATH"; fi
 mkdir -p "$tmp/home" "$tmp/bin"
 export HOME="$tmp/home" CURSOR_TEST_LOG="$tmp/calls" ORCA_CLI_COMMAND="$tmp/bin/orca"
 cat > "$ORCA_CLI_COMMAND" <<'STUB'
@@ -46,4 +50,11 @@ for option in --on --host; do
   test ! -s "$CURSOR_TEST_LOG"
 done
 echo 'PASS: remote placement is refused before any Orca call'
-echo 'PASS: 3 tests'
+printf ' \n' > "$tmp/spec"; : > "$CURSOR_TEST_LOG"
+if launch --worktree-path /tmp/fixture > "$tmp/result" 2>&1; then
+  echo 'FAIL: blank spec was accepted' >&2; exit 1
+fi
+grep -q 'spec file is empty' "$tmp/result"
+test ! -s "$CURSOR_TEST_LOG"
+echo 'PASS: blank spec is refused before any Orca call'
+echo 'PASS: 4 tests'

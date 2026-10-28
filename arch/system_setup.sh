@@ -56,17 +56,15 @@ simple() {
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
     sudo pacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
-    sudo pacman -S --noconfirm --needed github-cli kdiff3 fish zsh tmux neovim lf kitty fastfetch fzf net-tools
+    sudo pacman -S --noconfirm --needed github-cli kdiff3 zsh tmux neovim lf kitty fastfetch fzf net-tools
     sudo pacman -S --noconfirm --needed chromium firefox
 
     echo ""
-    echo -e "\033[1;35m fish and zsh shells \033[0m"
+    echo -e "\033[1;35m zsh shell \033[0m"
     echo ""
-    for sh_name in fish zsh; do
-        if ! grep -qxF "$(command -v "$sh_name")" /etc/shells; then
-            command -v "$sh_name" | sudo tee -a /etc/shells
-        fi
-    done
+    if ! grep -qxF "$(command -v zsh)" /etc/shells; then
+        command -v zsh | sudo tee -a /etc/shells
+    fi
 
     echo ""
     echo -e "\033[1;35m alacritty \033[0m"
@@ -96,7 +94,6 @@ simple() {
     echo ""
     sudo pacman -S --noconfirm --needed micro
     micro -plugin install editorconfig
-    micro -plugin install fish
     micro -plugin install fzf
 
     if [ ! -d ${HOME}/.config/micro ]; then
@@ -184,9 +181,6 @@ simple() {
     sh "$HOME/dotfiles/script/install_node.sh"
     sh "$HOME/dotfiles/script/install_java_dev.sh"
 
-    mkdir -p "${HOME}/.config/fish"
-    ln -sfn "$HOME/dotfiles/.config/fish/config.fish" "$HOME/.config/fish/config.fish"
-
     case "$SHELL" in
         */zsh) ;;
         *)
@@ -194,12 +188,6 @@ simple() {
             chsh -s "$(command -v zsh)"
             ;;
     esac
-
-    if command -v fish >/dev/null 2>&1; then
-        fish "$HOME/dotfiles/script/setup_fishshell.fish"
-    else
-        echo "system_setup: fish not found; skipping setup_fishshell.fish" >&2
-    fi
 
     ln -sfn "$HOME/dotfiles/.config/tmux" "$HOME/.config/tmux"
     ln -sfn "$HOME/dotfiles/.config/nvim" "$HOME/.config/nvim"

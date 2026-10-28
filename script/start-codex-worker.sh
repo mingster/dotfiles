@@ -24,6 +24,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --name) name=$2;; --repo) repo=$2;; --base-branch) base=$2;; --host) host=$2;; --model) model=$2;; --effort) effort=$2;; --from) from=$2;;
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift 2; done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] || { echo "need --run --spec --title" >&2; exit 2; }
+grep -q '[^[:space:]]' "$spec" 2>/dev/null || { echo "spec file is empty: $spec" >&2; exit 2; }
 [ -n "$from" ] || { echo "need --from <coordinator handle> (no ORCA_TERMINAL_HANDLE)" >&2; exit 2; }
 # The worktree and terminal are created on this machine, so a remote --host would be ignored silently.
 case "$host" in ""|"$(hostname -s)"|localhost) ;; *)

@@ -1,0 +1,1 @@
+- Stopped installing fish everywhere: the mac, arch and debian setups install and link only zsh, the fish config and fisher/tide scripts are removed, and kitty, nvim and lf use the login shell or zsh.
