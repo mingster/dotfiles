@@ -50,6 +50,11 @@ else
     echo "Unknown architecture: $architecture"
 fi
 
+# asdf shims after brew shellenv, so login shells that skip .zshrc pick asdf python and node over Homebrew
+if ! grep -q 'asdf}/shims' "$HOME/.zprofile" 2>/dev/null; then
+    echo 'export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"' >> "$HOME/.zprofile"
+fi
+
 # Refresh Homebrew metadata; optional full upgrade (slow on reruns)
 brew update
 if [ "${DOTFILES_BREW_UPGRADE:-}" = "1" ]; then
