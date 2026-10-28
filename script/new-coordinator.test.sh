@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/tests/lib/asdf-pin.sh"
 # Run new-coordinator.sh against a fake HOME, fake tools and a local fake agent-state repo.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)

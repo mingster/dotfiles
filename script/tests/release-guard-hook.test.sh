@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # Behavioural regression for mingster/projb#563: drives the REAL guard hook (.claude/hooks/guard-bash.py)
 # with PreToolUse JSON on stdin. The hook only reads the command text and never runs it, so nothing
 # executes. HOME is a temp dir, so no real approval file or ledger is read or written; a sentinel file

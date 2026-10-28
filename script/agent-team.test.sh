@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/tests/lib/asdf-pin.sh"
 # Public CLI tests. All project writes and installer effects stay in a temp tree.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)

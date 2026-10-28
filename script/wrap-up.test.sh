@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/tests/lib/asdf-pin.sh"
 # Exercise the public CLI in disposable repositories only.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)

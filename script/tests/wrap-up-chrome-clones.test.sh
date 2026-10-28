@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # Chrome code_sign_clone cleanup: fake clone dirs and a fake lsof, disposable repo only.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)

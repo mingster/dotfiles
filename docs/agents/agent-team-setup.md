@@ -119,3 +119,7 @@ bash ~/dotfiles/script/bootstrap-asdf-tools.sh
 It installs asdf if missing, adds the plugins, installs the pinned versions, writes the same
 pins into `~/.tool-versions`, and prints the resolved `python3` and `node`. A second run
 changes nothing and says so. Pass `--dotfiles <dir>` to read the pins from another checkout.
+
+Tests that set `HOME` to a temp dir source `script/tests/lib/asdf-pin.sh` (python tests import
+`asdf_pin.py`) first. It exports the version pins and `ASDF_DATA_DIR`, since asdf looks for its
+installs under `$HOME/.asdf`. `script/tests/asdf-pin-coverage.test.sh` fails when a test skips it.
