@@ -69,6 +69,7 @@ DOTFILES="$DOTFILES_ROOT" bash "$DOTFILES_ROOT/script/setup-agent-skills.sh" || 
 
 if [ "${DOTFILES_SKIP_SYSTEM_SETUP:-}" = "1" ]; then
   echo "dotfiles: DOTFILES_SKIP_SYSTEM_SETUP=1 — skipping system_setup scripts."
+  [ "${DOTFILES_SKIP_SETUP_CHECK:-}" = "1" ] && exit 0
   bash "$DOTFILES_ROOT/script/setup-check.sh"
   exit $?
 fi
@@ -137,4 +138,7 @@ case "$OSTYPE" in
     ;;
 esac
 
-bash "$DOTFILES_ROOT/script/setup-check.sh"
+# DOTFILES_SKIP_SETUP_CHECK=1 skips the host readiness check (tests run in a bare temp HOME).
+if [ "${DOTFILES_SKIP_SETUP_CHECK:-}" != "1" ]; then
+  bash "$DOTFILES_ROOT/script/setup-check.sh"
+fi
