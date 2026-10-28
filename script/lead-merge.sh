@@ -501,7 +501,8 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-# Coordinator ids allowed as a Verdict author (not a dispatch): coordinator_ids in lead-merge.local.json, read lazily.
+# Coordinator ids allowed as a Verdict author (not a dispatch): the run coordinator from Orca, or coordinator_ids in
+# lead-merge.local.json (read lazily).
 coordinator_ids="" coordinators_loaded=false
 is_coordinator() { # <id>
   if [ "$coordinators_loaded" = false ]; then
@@ -513,7 +514,23 @@ is_coordinator() { # <id>
       || die "invalid coordinator_ids config"
     coordinators_loaded=true
   fi
-  grep -Fxq -- "$1" <<<"$coordinator_ids"
+  grep -Fxq -- "$1" <<<"$coordinator_ids" && return 0
+  run_coordinator "$1"
+}
+
+# True when <id> is the coordinator_handle of an Orca run. The host file above stays an extra allow list.
+# Orca unreadable or unparseable refuses, never guesses.
+run_coordinator() { # <id>
+  local orca="${ORCA_CLI_COMMAND:-orca}" cursor="" page handles="" n
+  for n in $(seq 1 50); do
+    page=$("$orca" orchestration run-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) \
+      || die "cannot read orca run-list to verify the run coordinator"
+    handles+=$(jq -r '.result.runs[]?.coordinator_handle // empty' <<<"$page" 2>/dev/null)$'\n' \
+      || die "cannot parse orca run-list to verify the run coordinator"
+    cursor=$(jq -r '.result.nextCursor // empty' <<<"$page")
+    [ -n "$cursor" ] || { grep -Fxq -- "$1" <<<"$handles"; return; }
+  done
+  die "run-list has too many pages to verify the run coordinator"
 }
 
 # Dispatch ids Orca knows about, read once per invocation, following page cursors. A batch parent

@@ -1,0 +1,1 @@
+lead-merge now accepts the coordinator of an Orca run as a Verdict author, so a coordinator authored PR merges on a host with no coordinator_ids entry. The host file stays as an extra allow list, and an unreadable Orca run refuses.

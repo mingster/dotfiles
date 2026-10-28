@@ -49,7 +49,7 @@ cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 [ "${FAKE_ORCA_FAIL:-}" != 1 ] || exit 1
 if [ "$1 $2" = "orchestration run-list" ]; then
-  echo '{"ok":true,"result":{"runs":[{"id":"run_a"},{"id":"run_b"}],"nextCursor":null}}'; exit 0
+  echo '{"ok":true,"result":{"runs":[{"id":"run_a","coordinator_handle":"'"${FAKE_COORD_A:-}"'"},{"id":"run_b","coordinator_handle":null}],"nextCursor":null}}'; exit 0
 fi
 [ "$1 $2" = "orchestration worker-list" ] || exit 1
 start=0; prev=""; run=""
@@ -664,6 +664,27 @@ setup; comments="Verdict: PASS head=$SHA verifier=ctx_coord author=ctx_coord"
 check "T31 a coordinator cannot be both author and verifier" 1 'author cannot supply verifier verdict'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_random"
 check "T31 an id that is not configured is still refused" 1 'ctx_random is not a known dispatch'
+) </dev/null &
+# #373: the run coordinator reported by Orca is accepted as a Verdict author without a host file entry.
+unit; (
+unit_init
+cx="$ucd/dot"; mkdir -p "$cx/script"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"
+LEAD_MERGE="$cx/script/lead-merge.sh"
+export FAKE_COORD_A=ctx_runcoord
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_runcoord"
+check "T373 the Orca run coordinator is accepted as author with no host file" 0 '^MERGED' 1
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_random"
+check "T373 an unknown author is still refused" 1 'ctx_random is not a known dispatch'
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_runcoord author=ctx_runcoord"
+check "T373 the run coordinator cannot be both author and verifier" 1 'author cannot supply verifier verdict'
+printf '{"coordinator_ids":["ctx_coord"]}\n' > "$cx/script/lead-merge.local.json"
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_coord"
+check "T373 a host file coordinator id still works beside the run coordinator" 0 '^MERGED' 1
+rm -f "$cx/script/lead-merge.local.json"
+FAKE_COORD_A=
+setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_runcoord"
+check "T373 no run coordinator and no host file refuses the author" 1 'ctx_runcoord is not a known dispatch'
 ) </dev/null &
 # #353: a UI path PR without a ## Screenshots section is not refused.
 unit; (
