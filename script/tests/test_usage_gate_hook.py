@@ -73,6 +73,15 @@ class Hook(unittest.TestCase):
         cmd = "git commit -F - <<'EOF'\nDocs: don't run orca orchestration worker-start --agent codex\nEOF"
         self.assertEqual(self.run_hook(cmd), (None, ""))
 
+    def test_empty_or_heredoc_spec_is_denied_before_orca(self):
+        # 2026-10-28: a heredoc inside $( ) expanded to an empty --spec and Orca got no brief.
+        self.claude(11)
+        for cmd in ('orca orchestration worker-start --task t --agent claude --spec ""',
+                    "orca orchestration worker-start --task t --agent claude --spec \"$(cat <<'EOF'\nDo x.\nEOF\n)\""):
+            self.assertIn("empty --spec", self.run_hook(cmd)[0] or "", cmd)
+        deny, _ = self.run_hook('orca orchestration worker-start --task t --agent claude --spec "$(cat brief.md)"')
+        self.assertIsNone(deny)
+
     def test_one_blocked_start_in_a_chain_blocks_the_command(self):
         self.claude(11); self.codex_reading(100)
         deny, _ = self.run_hook("orca orchestration worker-start --task a --agent claude && "
