@@ -366,6 +366,8 @@ case "$(field .headRefName)" in main|staging|production) refuse "head branch $(f
 # gh pr view truncates files at 100; every path gate shares this complete list.
 file_pages=$(gh api --paginate "repos/$repo/pulls/$pr/files") || die "cannot read complete PR files"
 files=$(jq -s '[.[][] | .filename]' <<<"$file_pages") || die "invalid PR file inventory"
+# A removed file is not a UI change; a file with no status still counts.
+live_files=$(jq -s '[.[][] | select(.status != "removed") | .filename]' <<<"$file_pages") || die "invalid PR file inventory"
 [ "$(jq length <<<"$files")" = "$(field .changedFiles)" ] || die "PR file count differs from changed_files"
 
 # 3. Owner only paths
@@ -420,7 +422,7 @@ if [ -n "$ui_patterns" ]; then
     while IFS= read -r prefix; do
       [ -n "$prefix" ] && [ "${f#"$prefix"}" != "$f" ] && ui_touched=true
     done <<<"$ui_patterns"
-  done < <(jq -r '.[]' <<<"$files")
+  done < <(jq -r '.[]' <<<"$live_files")
   if [ "$ui_touched" = true ]; then
     awk '/^## screenshots$/ {inside=1; next} inside && /^##? / {inside=0} inside' <<<"$normalized_body" \
       | grep -qE '!\[[^]]*\]\([^)]+\)|user-attachments' \
