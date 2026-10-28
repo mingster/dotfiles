@@ -1,0 +1,1 @@
+lead-merge: `--dry-run` now holds on the single PR path (`--pr N --head S`, and `--batch` with one PR). All gates run, it prints `[dry-run] would merge PR N head=<sha>` and exits 0 without merging, retargeting or cleaning up. Fixes #333.

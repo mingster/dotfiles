@@ -817,6 +817,12 @@ else
   flush_refusals
 fi
 
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  echo "[dry-run] would merge PR $pr head=$head"
+  lock_release
+  exit 0
+fi
+
 merge() { gh pr merge "$pr" --repo "$repo" --merge --match-head-commit "$head"; }
 if ! out=$(merge 2>&1); then
   out=$(merge 2>&1) || { echo "lead-merge: merge failed: $out" >&2; exit 1; }
