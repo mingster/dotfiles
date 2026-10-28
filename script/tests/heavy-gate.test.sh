@@ -181,17 +181,54 @@ child.wait()
         self.assertEqual(len(list((self.root/'.cache/heavy-gate').glob('slot-*'))), 1)
         self.finish(long)
 
-    def test_sensor_applies_to_reserved_slot(self):
+    def test_short_job_bypasses_load_sensor_while_only_long_jobs_hold_slots(self):
         self.config(2)
         long = self.job('long', 1.5, gate_class='long')
         self.wait_for(lambda: self.started('long'))
         self.set_reading('13 90')
+        for label, gate_class in (('short', 'short'), ('unmarked', None)):
+            self.finish(self.job(label, 0.1, gate_class=gate_class))
+            self.assertTrue(self.started(label))
+        self.finish(long)
+
+    def test_short_job_held_at_high_load_when_short_job_holds_reserve(self):
+        self.config(2)
+        long = self.job('long', 2.5, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.set_reading('13 90')
+        first = self.job('short1', 1.0)
+        self.wait_for(lambda: self.started('short1'))
+        second = self.job('short2', 0.1)
+        time.sleep(0.5)
+        self.assertFalse(self.started('short2'))
+        self.set_reading('0 90')
+        self.finish(second)
+        self.finish(first)
+        self.finish(long)
+
+    def test_memory_floor_blocks_short_job_at_high_load(self):
+        self.config(2)
+        long = self.job('long', 1.5, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.set_reading('13 10')
         short = self.job('short', 0.1)
         time.sleep(0.5)
         self.assertFalse(self.started('short'))
         self.set_reading('0 90')
         self.finish(short)
         self.finish(long)
+
+    def test_long_job_still_waits_on_load_sensor(self):
+        self.config(3)
+        first = self.job('long1', 1.5, gate_class='long')
+        self.wait_for(lambda: self.started('long1'))
+        self.set_reading('13 90')
+        second = self.job('long2', 0.1, gate_class='long')
+        time.sleep(0.5)
+        self.assertFalse(self.started('long2'))
+        self.set_reading('0 90')
+        self.finish(second)
+        self.finish(first)
 
     def test_single_slot_has_nothing_to_reserve(self):
         self.config(1)

@@ -14,6 +14,10 @@ HEAVY_GATE_CLASS=long marks a long job (full regression, build). A long job is
 admitted only while the slots in use, itself included, stay at or under slots
 minus 1, so one slot stays free for short scoped jobs. Its weight is capped at
 slots minus 1. With a single slot there is nothing to reserve.
+A short job (HEAVY_GATE_CLASS=short, or unmarked with weight 1) skips the load
+sensor when only long jobs hold slots, so it can take the reserved slot while a
+long job keeps the machine hot. The free-memory floor always applies, and long
+jobs always wait on the load sensor.
 """
 import argparse
 import contextlib
@@ -170,11 +174,13 @@ class Slots:
             if not alive(pid):
                 shutil.rmtree(path)
 
-    def claim(self, weight, exclusive=False, reserve=0):
+    def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False):
         with self.allocation():
             self.reclaim()
             occupied = list(self.root.glob('slot-*'))
             if any((p / 'exclusive').exists() for p in occupied) or (exclusive and occupied):
+                return False
+            if only_long and (not occupied or not all((p / 'long').exists() for p in occupied)):
                 return False
             # Count even slots above a lowered configuration or a caller override.
             if len(occupied) + weight > self.count - reserve:
@@ -188,6 +194,8 @@ class Slots:
                 (path / 'token').write_text(self.token)
                 if exclusive:
                     (path / 'exclusive').touch()
+                if long_job:
+                    (path / 'long').touch()
             return True
 
     def release(self):
@@ -295,17 +303,21 @@ def gate(args):
         raise ValueError('usage: heavy-gate.sh [--weight N] -- <cmd...>')
     long_job = job_class() == 'long' and count > 1
     weight = min(args.weight, count - 1) if long_job else args.weight
+    short_job = job_class() != 'long' and weight == 1
     slots = Slots(count)
     last_notice = -math.inf
     nested = holds_slot()
     try:
         while not nested:
             load, free = sample()
-            reason = (f'load {load:.2f} exceeds {settings["load_max"]:g}' if load > settings['load_max']
-                      else f'free memory {free:.1f}% is below 20%' if free < 20
+            hot = load > settings['load_max']
+            reason = (f'free memory {free:.1f}% is below 20%' if free < 20
+                      else f'load {load:.2f} exceeds {settings["load_max"]:g}' if hot
                       else '')
+            if hot and free >= 20 and short_job and slots.claim(weight, only_long=True):
+                break
             if not reason:
-                if slots.claim(weight, reserve=int(long_job)):
+                if slots.claim(weight, reserve=int(long_job), long_job=long_job):
                     break
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
