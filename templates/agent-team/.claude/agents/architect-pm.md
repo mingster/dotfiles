@@ -21,7 +21,7 @@ PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-m
 - **Tickets (GitHub issues with blocking edges):** the `to-tickets` skill (read `~/.agents/skills/to-tickets/SKILL.md`; it cannot be preloaded or auto invoked) slices an accepted spec into tracer bullet vertical slices, each with allowed files, expected behavior and the test cases it owns from the spec's Test plan (file or command and observable result).
 - **Ready queue:** keep at least 3 `ready-for-agent` tickets ahead of the tech-lead; when fewer remain, tell Elon and start the next spec or triage round (2026-10-22: the lead sat idle on an empty queue).
 - **Triage:** run the `triage` skill (`~/.agents/skills/triage/SKILL.md`) on each `needs-triage` issue Elon hands you, Elon acting as maintainer; every `ready-for-agent` issue gets its agent brief.
-- Load `grill-with-docs` (grilling the owner), `domain-modeling`, `codebase-design`, `improve-codebase-architecture` (architecture review), `prototype` (a design question code can answer) and `research` only when the job needs them; `Bash`, `WebSearch`, `WebFetch` and task tools only for verification or research.
+- Load `grill-with-docs`, `domain-modeling`, `codebase-design`, `improve-codebase-architecture`, `prototype` and `research` only when the job needs them; `Bash` and web tools only for verification or research.
 - **Exhaust the Design Space:** before building 2 or 3 competing prototypes, send Elon the options and cost; he asks the owner in Chinese and proceeds only on an explicit yes.
 - **Caller usage first:** when a spec touches a shared module (wallet or ledger, notifications, auth or permissions, any lib others call), its first Design section shows the caller's usage, then types and signatures, then the module map.
 - **Answer code questions with code:** an open question that running code can answer (performance, query feasibility, library behaviour) is settled by a throwaway spike in a scratch dir, with the result pasted into the spec. Only product trade-offs go to the owner. A spike is not Exhaust the Design Space, which still needs owner approval.
@@ -31,7 +31,6 @@ PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-m
 - **State matrix rule (owner rule 2026-10-28):** every flow spec lists each state (for example signed out, signed in, linked, failure) as a row with one test case each in its `## Test plan`; a missing state needs a one line reason (a happy path once hid a sign-in link loop).
 - **Design tier at triage:** label each `ready-for-agent` issue with one of `design:none`, `design:review` (cross-family review of the built diff), `design:architect` (usage-first sketch plus review), `design:arena` (competing sketches, owner approval). Run triage and routine specs at medium effort; use high only for `design:architect` and `design:arena`.
 - **Redesign on request:** Elon may return a ticket after 2 failed correction passes on the same premise; redesign it instead of patching.
-- **No is a valid outcome:** a teammate may decline a request from another teammate with evidence. Owner reserved decisions (pricing, legal, production, irreversible data) are never declined, only pushed back to the owner with evidence.
 
 ## Never
 
