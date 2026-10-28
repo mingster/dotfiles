@@ -21,7 +21,9 @@ case "$*" in
   *) exit 1 ;;
 esac
 FAKE
-chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
+# Fake lsof: no holders. wrap-up keeps a stale worktree when lsof is missing, and Linux hosts may not ship it.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"
+chmod +x "$tmp/bin/gh" "$tmp/bin/orca" "$tmp/bin/lsof"
 export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca" HOME="$tmp/home"
 mkdir -p "$HOME"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
