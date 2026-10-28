@@ -1,0 +1,1 @@
+Close the elon.md role gaps in the agent team template: owner updates, 5 minute rule, full Owner-Reserved list, no hand merges or Verdicts, copy, secrets, success metrics, host fill rule, and pillars and roles in the elon skill.
