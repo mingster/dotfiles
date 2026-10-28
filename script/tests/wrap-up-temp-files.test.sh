@@ -58,6 +58,9 @@ check() { if "${@:2}"; then printf 'ok %s\n' "$1"; passed=$((passed+1)); else pr
 has() { grep -Fq -- "$1" "$tmp/output"; }
 gone() { [ ! -e "$1" ]; }
 cd "$tmp/repo"
+refused=0
+env -u WRAP_UP_SCRATCH_ROOT bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || refused=$?
+check 'test mode refuses --apply without the temp root overrides' test "$refused" -eq 2
 bash "$root/script/wrap-up.sh" --dry-run > "$tmp/output"
 check 'dry run lists stale scratch dir with size' has "Remove temp $scratch/$gone_slug/stale ("
 check 'dry run deletes nothing' test -d "$scratch/$gone_slug/stale" -a -f "$loose/1234-old.log" -a -d "$scratch/qa-old"

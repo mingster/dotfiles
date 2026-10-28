@@ -15,6 +15,10 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# A fake orca CLI means a test: never let --apply reach the real temp roots from there.
+if [ "$apply" -eq 1 ] && [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_SCRATCH_ROOT+x}" ] || [ -z "${WRAP_UP_LOOSE_ROOT+x}" ]; }; then
+  echo 'wrap-up: ORCA_CLI_COMMAND is set (test mode); set WRAP_UP_SCRATCH_ROOT and WRAP_UP_LOOSE_ROOT before --apply' >&2; exit 2
+fi
 command -v jq >/dev/null || { echo 'wrap-up requires jq' >&2; exit 1; }
 repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
