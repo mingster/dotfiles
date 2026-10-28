@@ -10,6 +10,10 @@ Gated commands have a 1200-second (20-minute) wall clock limit, excluding slot
 wait time. HEAVY_GATE_TIMEOUT_SECONDS overrides it; 0 or "none" disables it.
 Timeouts terminate the process group, force-kill after a 3-second grace, release
 slots, and exit 124.
+HEAVY_GATE_CLASS=long marks a long job (full regression, build). A long job is
+admitted only while the slots in use, itself included, stay at or under slots
+minus 1, so one slot stays free for short scoped jobs. Its weight is capped at
+slots minus 1. With a single slot there is nothing to reserve.
 """
 import argparse
 import contextlib
@@ -166,14 +170,14 @@ class Slots:
             if not alive(pid):
                 shutil.rmtree(path)
 
-    def claim(self, weight, exclusive=False):
+    def claim(self, weight, exclusive=False, reserve=0):
         with self.allocation():
             self.reclaim()
             occupied = list(self.root.glob('slot-*'))
             if any((p / 'exclusive').exists() for p in occupied) or (exclusive and occupied):
                 return False
             # Count even slots above a lowered configuration or a caller override.
-            if len(occupied) + weight > self.count:
+            if len(occupied) + weight > self.count - reserve:
                 return False
             available = [self.root / f'slot-{i}' for i in range(1, self.count + 1)
                          if not (self.root / f'slot-{i}').exists()]
@@ -272,6 +276,13 @@ def holds_slot():
     return False
 
 
+def job_class():
+    value = os.environ.get('HEAVY_GATE_CLASS', '')
+    if value not in ('', 'short', 'long'):
+        raise ValueError('HEAVY_GATE_CLASS must be "long" or "short"')
+    return value
+
+
 def gate(args):
     timeout = command_timeout()
     settings = config()
@@ -282,6 +293,8 @@ def gate(args):
         raise ValueError('weight must be positive and no greater than slots')
     if not args.command or args.command[0] != '--' or len(args.command) < 2:
         raise ValueError('usage: heavy-gate.sh [--weight N] -- <cmd...>')
+    long_job = job_class() == 'long' and count > 1
+    weight = min(args.weight, count - 1) if long_job else args.weight
     slots = Slots(count)
     last_notice = -math.inf
     nested = holds_slot()
@@ -292,9 +305,10 @@ def gate(args):
                       else f'free memory {free:.1f}% is below 20%' if free < 20
                       else '')
             if not reason:
-                if slots.claim(args.weight):
+                if slots.claim(weight, reserve=int(long_job)):
                     break
-                reason = f'waiting for {args.weight} of {count} slots'
+                reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
+                          if long_job else f'waiting for {weight} of {count} slots')
             now = time.monotonic()
             if now - last_notice >= 60:
                 print(f'heavy-gate: {reason}', file=sys.stderr, flush=True)
