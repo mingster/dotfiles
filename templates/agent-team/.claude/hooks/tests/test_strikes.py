@@ -30,15 +30,24 @@ class StrikesTest(unittest.TestCase):
         result = self.run_hook("PostToolUse", " 1 pass\n 2 fail\nerror: expect(received).toBe(expected)")
         self.assertIn("Strike 1 of 3", result["additionalContext"])
 
+    def test_gate_waiting_line_does_not_hide_a_real_failure(self):
+        result = self.run_hook("PostToolUse", "heavy-gate: waiting for 1 of 2 slots\n 1 fail\nerror: expect(received).toBe(expected)")
+        self.assertIn("Strike 1 of 3", result["additionalContext"])
+
+    def test_node_modules_stack_frame_still_counts(self):
+        result = self.run_hook("PostToolUse", " 1 fail\nerror: expect(received).toBe(expected)\n  at /repo/node_modules/bun-test/x.js:1:1")
+        self.assertIn("Strike 1 of 3", result["additionalContext"])
+
     def test_tooling_failures_do_not_count(self):
         for output in [
             "error: Cannot find module 'zod' from '/repo/web/src/a.ts'\n 1 fail",
             "error: Cannot find package 'next' from '/repo/web/src/a.ts'\n 1 fail",
             "error: Could not resolve: \"@/lib/x\"\n 1 fail",
-            "ENOENT node_modules/.bin/tsc\n 1 fail",
             "Run prisma generate first\n 1 fail",
             "@prisma/client did not initialize yet\n 1 fail",
-            "heavy-gate: budget exceeded\n 1 fail",
+            "heavy-gate: timed out after 600s waiting for a slot\n 1 fail",
+            "heavy-gate: hardware fingerprint changed\n 1 fail",
+            "CANNOT FIND MODULE 'zod'\n 1 fail",
         ]:
             with self.subTest(output=output):
                 result = self.run_hook("PostToolUse", output)

@@ -37,10 +37,11 @@ FAILED = re.compile(
 TOOLING = re.compile(
     r"Cannot find (module|package)"
     r"|Could not resolve"
-    r"|node_modules"
     r"|prisma generate"
     r"|@prisma/client did not initialize"
-    r"|heavy-gate"
+    r"|heavy-gate: timed out after"
+    r"|heavy-gate: hardware fingerprint changed",
+    re.I,
 )
 PASSED = re.compile(r"\b0\s+fail\b|\b\d+\s+passed\b|Compiled successfully")
 
