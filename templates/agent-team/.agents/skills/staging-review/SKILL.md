@@ -11,7 +11,7 @@ Product facts (staging URL, demo store, sign-in helper, areas, devices, locales,
 
 ## 0. Before
 
-- Staging runs the latest main (the `deploy` skill). Read its build sha and name the round `<date>-<sha8>`.
+- Staging runs the latest main (the `deploy` skill). Read its build sha and name the round `<date>-<sha8>`. Review the same sha that the `deploy` skill's regression run covers, after the staging deploy; start only when the staging context is `pending` for that sha.
 - Make a round folder outside the repo (the project file names the parent). Briefs, findings, screenshots and grill files go there.
 - Round 2 and later: give each reviewer the previous round's findings for its area. It first rechecks what was fixed since, then reviews the pages changed since the last round sha (`git diff --stat <last sha>..<sha> -- <area paths>`), then the rest.
 
@@ -59,6 +59,6 @@ Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 firs
 
 ## 4. Close the round
 
-The round is done when every ticket is merged or has a named blocker. Deploy to staging (quick path, no full regression), then start the next round from step 0 if the owner asked for more rounds or the last round found any P0 or P1. Stop when a round finds no P0 or P1.
+A P0 or P1 finding on the reviewed sha keeps that sha's staging context at `failure` (release-manager sets it, Elon reports the finding numbers); with no P0 or P1 and a passing regression run the sha can reach `success`. P2 and P3 findings become tickets for the next sha and do not block. The round is done when every ticket is merged or has a named blocker. Deploy the next sha to staging (the regression run starts beside the deploy, not before it), then start the next round from step 0 if the owner asked for more rounds or the last round found any P0 or P1. Stop when a round finds no P0 or P1.
 
 Report to the owner once per round: the round name, findings by severity against the previous round, tickets filed and merged, and only the items that need him.
