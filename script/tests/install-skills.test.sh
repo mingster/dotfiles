@@ -3,6 +3,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+# shellcheck source=lib/asdf-pin.sh
+. "$ROOT/script/tests/lib/asdf-pin.sh"
 export HOME="$TEST_ROOT/home"
 mkdir -p "$HOME"
 # Never run the installer against the real home: it repoints ~/dotfiles and every home link.

@@ -1,0 +1,1 @@
+* Pin python and nodejs in a root `.tool-versions`. Tests that change HOME now export the asdf pin first so the shim keeps working (#359, closes #356). New `no-hardcoded-interpreter.test.sh` fails on a hardcoded python path.

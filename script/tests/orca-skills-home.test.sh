@@ -18,6 +18,8 @@ if command -v asdf >/dev/null 2>&1; then
   npx_path=$(asdf which npx)
   export PATH="$(dirname "$npx_path"):$PATH"
 fi
+# shellcheck source=lib/asdf-pin.sh
+. "$ROOT/script/tests/lib/asdf-pin.sh"
 export HOME="$TEST_ROOT/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_CACHE_HOME="$HOME/.cache"

@@ -6,6 +6,8 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/merge-fixture.sh
 . "$here/tests/lib/merge-fixture.sh"
 mf_setup; trap mf_teardown EXIT
+# shellcheck source=lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
 mkdir -p "$MF_TOPLEVEL"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MF_BIN/cleanup"; chmod +x "$MF_BIN/cleanup"
