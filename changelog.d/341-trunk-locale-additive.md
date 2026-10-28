@@ -1,0 +1,1 @@
+lead-merge: the trunk check accepts a shared locale JSON file when main and the PR only added distinct keys and the three way merge is clean. Changed or removed keys, the same key added on both sides, text conflicts and non locale files are still refused.

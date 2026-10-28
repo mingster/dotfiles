@@ -788,13 +788,31 @@ if [ -n "$triggers" ]; then
 fi
 
 # Trunk drift of a single PR needs no head-checks, so it is part of preflight (a batch checks its train instead).
+# A shared locale JSON file is accepted when both sides only added keys and the three way merge is clean (fails closed).
+locale_additive() { # ancestor main head file
+  local ancestor=$1 trunk=$2 tip=$3 f=$4 dir ok=1
+  case "$f" in locales/*.json|*/locales/*.json) ;; *) return 1 ;; esac
+  dir=$(mktemp -d) || return 1
+  git show "$ancestor:$f" >"$dir/base" 2>/dev/null && git show "$trunk:$f" >"$dir/main" 2>/dev/null \
+    && git show "$tip:$f" >"$dir/head" 2>/dev/null \
+    && git merge-file -p "$dir/head" "$dir/base" "$dir/main" >"$dir/merged" 2>/dev/null \
+    && jq -e -n --slurpfile b "$dir/base" --slurpfile m "$dir/main" --slurpfile h "$dir/head" --slurpfile x "$dir/merged" '
+      def leaves: [paths(scalars) as $p | {key: ($p | tojson), value: getpath($p)}] | from_entries;
+      ($b[0] | leaves) as $b | ($m[0] | leaves) as $m | ($h[0] | leaves) as $h
+      | all($b | keys[]; . as $k | $m[$k] == $b[$k] and $h[$k] == $b[$k])
+        and ((($m | keys) - ($b | keys)) - (($m | keys) - ($h | keys)) | length) == 0
+        and ($x[0] | type) == "object"' >/dev/null 2>&1 && ok=0
+  rm -rf "$dir"; return "$ok"
+}
 trunk_check() {
   local f ancestor trunk_files
   # A carried Verdict is judged against the current head, which includes the merged main commits.
   ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
   trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
   while IFS= read -r f; do
-    if grep -Fxq -- "$f" <<<"$trunk_files"; then refuse "trunk changed $f; rebase and rerun head-checks"; fi
+    if grep -Fxq -- "$f" <<<"$trunk_files"; then
+      locale_additive "$ancestor" origin/main "$head" "$f" || refuse "trunk changed $f; rebase and rerun head-checks"
+    fi
   done < <(jq -r '.[]' <<<"$files")
 }
 if [ -z "$train_check" ] && [ "$preflight_only" != 1 ]; then
