@@ -20,7 +20,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Fast path:** 3 files or fewer: implement directly in your workspace with TDD.
 - **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root, written at the start (allowlisted files, verify command) and when blocked.
 - **Local servers:** start your own server on your own port and stop it by PID, never by name.
-- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`.
+- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`; temp files never loose in `/tmp`.
 - **Delete before adding:** the PR body carries one line `Deleted:` naming the flag, step, layer or requirement you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
 
 ## Stack and standards

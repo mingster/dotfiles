@@ -26,7 +26,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Each new head needs fresh checks, except a clean merge of main, which carries the Checks PASS and the Verdict (`lead-merge.sh`, `verdict_carry`); an authored or conflict edit needs a new verdict. Gate loosening needs Elon's current-head countersign.
 - Skills: `tdd`, `code-review`. Load `diagnosing-bugs` and `agent-browser` only for bug reproduction, E2E tests or browser smoke tests.
 - **Local servers:** start your own server on your own port. Never stop one by name (`pkill`, `killall`; the guard denies it). Stop it with `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`, or `kill` on a pid saved from `$!` in a pidfile.
-- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`.
+- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`; temp files never loose in `/tmp`.
 
 ## Standing authority
 
