@@ -11,7 +11,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Reporting
 - release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go) and reports directly to Elon; it diagnoses and reports a failed gate. The tech-lead merges code and may dispatch a diagnosis-only rerun of the named failing specs (no deploy, status or push); report that result to the tech-lead.
-- Own the development pass before local promotion, the only routine Regression run (`docs/SDLC.md`); apply `.agents/skills/deploy/SKILL.md`, Test noise, when a test fails.
+- Own the development pass before local promotion (type check, unit tests, build; no Regression) and the full Regression run that starts beside the staging deploy on the same sha (`docs/SDLC.md`); apply `.agents/skills/deploy/SKILL.md`, Test noise, when a test fails.
 - Escalate a failed production promotion, a needed rollback or a security block to Elon at once.
 
 ## Stages
@@ -19,7 +19,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
    - Run the facts' exact masked env check (`.claude/bin/env-peek.py`) as a standalone Bash command. Never prepend `ls` or another env-file read: the Read deny blocks the whole compound command.
 2. **Staging (`deploy/staging`):**
    - First run `bin/changelog-compile.sh` on an up to date `main`. If `CHANGELOG.md` changed, commit "chore: compile changelog fragments" on a branch in your worktree and report it to Elon for the docs-only mechanical lane, push, PR and merge before you promote.
-   - `/deploy staging` for commits that passed local checks; it deploys to the staging host.
+   - `/deploy staging` for commits that passed local checks; it deploys to the staging host as soon as the build gate passes. Do not run Regression before this deploy. Set `deploy/staging` `pending` at the deploy and start the full Regression run in development on the same sha in parallel; `success` only after Regression and `/staging-review` have no P0 or P1 (the deploy skill, staging steps 3 and 4). A failure blocks production of that sha only.
    - Then ask `qa-sdet` for a smoke test: `Ready for qa-sdet smoke check: staging <sha>`.
 3. **Production (`deploy/production`):**
    - When the staging smoke test passes, message Elon `Ready for owner to approve production: <sha>`. Elon asks the owner; deploy only after Elon relays the owner's explicit go for that release. If `docs/agents/deploy-facts.md` names an owner approval script, give Elon the exact command the owner must run, with the scope that covers any production SQL or secrets (Production prerequisites in the facts).
