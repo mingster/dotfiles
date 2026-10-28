@@ -27,6 +27,7 @@ FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca" "$tmp/bin/lsof"
 export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca" HOME="$tmp/home"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
 mkdir -p "$HOME"
 git init -q --bare "$tmp/origin"
 git init -q -b main "$tmp/repo"

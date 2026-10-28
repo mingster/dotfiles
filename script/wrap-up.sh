@@ -233,6 +233,80 @@ if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
     fi
   done
 fi
+# Agent temp files (inventory: docs/agents/wrap-up-temp-files.md). Removable when nothing holds the item open and either
+# its worktree is gone or nothing in it changed for 24 h. The coordinator inbox waiter files are never touched.
+temp_removed=0; temp_kept=0; temp_bytes=0
+scratch_root=${WRAP_UP_SCRATCH_ROOT-/tmp/claude-$(id -u)}
+loose_root=${WRAP_UP_LOOSE_ROOT-/tmp}
+state_dir=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
+# Slug of a path as the Claude Code scratch tree names it: every non alphanumeric character becomes a dash.
+slugify() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+# True when some directory on disk has this slug. Walks down from / matching entries, so dashes need no guessing.
+slug_exists() {
+  local dir=$1 rest=$2 entry name s
+  for entry in "$dir"/* "$dir"/.[!.]*; do
+    [ -d "$entry" ] || continue
+    name=${entry##*/}; s=$(slugify "$name")
+    if [ "$rest" = "$s" ]; then return 0; fi
+    case "$rest" in "$s"-*) slug_exists "$entry" "${rest#"$s"-}" && return 0 ;; esac
+  done
+  return 1
+}
+# temp_item <path> <worktree gone: 0|1>
+temp_item() {
+  local item=$1 gone=$2 why='' kb holders lsof_status=0 sid
+  case "${item##*/}" in elon-wait.sh|elon-waiter.json) return 0 ;; esac
+  case "$item" in "$state_dir"|"$state_dir"/*) return 0 ;; esac
+  kb=$(du -sk -- "$item" | cut -f1)
+  for sid in "${CLAUDE_CODE_SESSION_ID:-}" "${CLAUDE_SESSION_ID:-}"; do
+    [ -z "$sid" ] || [ "${item##*/}" != "$sid" ] || why="current session's own scratch dir"
+  done
+  case "$PWD/" in "$item"/*) why="current session's own scratch dir" ;; esac
+  if [ -n "$why" ]; then :
+  elif [ "$gone" -eq 0 ] && [ -n "$(find "$item" -mmin -1440 -print -quit)" ]; then why='touched in the last 24 h'
+  elif ! command -v lsof >/dev/null 2>&1; then why='lsof unavailable'
+  else
+    if [ -d "$item" ]; then holders=$(lsof -t +D "$item" 2>"$tmp/lsof-err") || lsof_status=$?
+    else holders=$(lsof -t -- "$item" 2>"$tmp/lsof-err") || lsof_status=$?
+    fi
+    if [ -n "$holders" ]; then why='held open by a running process'
+    elif [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then why='lsof failed'
+    fi
+  fi
+  if [ -n "$why" ]; then
+    printf 'Kept temp %s (%s)\n' "$item" "$why"; temp_kept=$((temp_kept+1)); return 0
+  fi
+  if [ "$gone" -eq 1 ]; then why='worktree gone'; else why='untouched for 24 h'; fi
+  printf 'Remove temp %s (%s KB, %s)\n' "$item" "$kb" "$why"
+  [ "$apply" -eq 0 ] || rm -rf -- "$item"
+  temp_removed=$((temp_removed+1)); temp_bytes=$((temp_bytes + kb * 1024))
+}
+if [ -d "$scratch_root" ]; then
+  for entry in "$scratch_root"/*/; do
+    entry=${entry%/}; [ -d "$entry" ] || continue
+    case "${entry##*/}" in
+      -*)
+        slug=${entry##*/}; gone=1
+        if slug_exists '' "${slug#-}"; then gone=0; fi
+        for session in "$entry"/*/; do
+          session=${session%/}; [ -d "$session" ] || continue
+          temp_item "$session" "$gone"
+        done
+        [ "$apply" -eq 0 ] || rmdir -- "$entry" 2>/dev/null || true ;;
+      qa-*) temp_item "$entry" 0 ;;
+    esac
+  done
+fi
+if [ -d "$loose_root" ]; then
+  for entry in "$loose_root"/[0-9][0-9]*-*.log "$loose_root"/[0-9][0-9]*-*.sh; do
+    [ -f "$entry" ] && [ -O "$entry" ] || continue
+    temp_item "$entry" 0
+  done
+  for entry in "$loose_root"/playwright-artifacts-* "$loose_root"/playwright_chromiumdev_profile-*; do
+    [ -d "$entry" ] && [ -O "$entry" ] || continue
+    temp_item "$entry" 0
+  done
+fi
 # Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
 stale_found=0; stale_deleted=0
 if [ "$pr_ok" -eq 1 ]; then
@@ -289,3 +363,4 @@ fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
+printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
