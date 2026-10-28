@@ -3,6 +3,8 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 export HOME="$tmp/home" PATH="$tmp/bin:$PATH"
 mkdir -p "$HOME/orca/workspaces/fixture/lead-x" "$tmp/bin"
 export FAKE_TOP="$HOME/orca/workspaces/fixture/lead-x"

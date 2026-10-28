@@ -3,6 +3,8 @@
 # shellcheck disable=SC2089,SC2090,SC2015
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 export HOME="$tmp/home"
 mkdir -p "$HOME/orca/workspaces/proj/lead-x" "$HOME/orca/workspaces/proj/fullstack-dev-x" "$tmp/other/lead-y" "$tmp/bin"
 LEAD="$HOME/orca/workspaces/proj/lead-x"

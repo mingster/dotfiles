@@ -32,6 +32,8 @@ git -C "$D" init -q
 git -C "$D" add -f .agents/skills/tdd/SKILL.md .agents/skills/bundled-one/SKILL.md
 
 # 1. setup with orca: install --all runs, bundled names never linked.
+# shellcheck source=lib/asdf-pin.sh
+. "$ROOT/script/tests/lib/asdf-pin.sh"
 export HOME="$tmp/home1"; mkdir -p "$HOME"
 PATH="$tmp/bin:$base_path" DOTFILES="$D" bash "$ROOT/script/setup-agent-skills.sh" > "$tmp/setup1.out" 2>&1
 check "setup runs orca skills install --all" has 'skills install --all' "$ORCA_LOG"
