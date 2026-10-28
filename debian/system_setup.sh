@@ -30,7 +30,7 @@ simple() {
         zram-tools
 
     sudo apt install -y git ufw rsync unzip curl wget wput
-    sudo apt install -y kdiff3 fish tmux neovim lf kitty fastfetch fzf
+    sudo apt install -y kdiff3 fish zsh tmux neovim lf kitty fastfetch fzf
     sudo apt install -y chromium-browser
 
     # add fish to system shell
@@ -268,10 +268,13 @@ simple() {
     fi
     cp -rf -v ~/dotfiles/.config/fish/ ${HOME}/.config/
 
-    #
-    echo 'change default shell to fish'
-    #
-    chsh -s $(which fish)
+    case "$SHELL" in
+        */zsh) ;;
+        *)
+            echo 'change default shell to zsh'
+            chsh -s "$(command -v zsh)"
+            ;;
+    esac
 
     ln -s -f ~/dotfiles/.config/tmux $HOME/.config/tmux
     ln -s -f ~/dotfiles/.config/nvim $HOME/.config/nvim
