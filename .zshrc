@@ -25,12 +25,12 @@ if type brew &>/dev/null; then
 fi
 
 ARCH=$(uname -m)
-if [[ "$ARCH" == "arm64" ]]; then
+if [[ "$ARCH" == "arm64" && -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
   export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
   export LDFLAGS="-L/opt/homebrew/opt/postgresql@18/lib"
   export CPPFLAGS="-I/opt/homebrew/opt/postgresql@18/include"
-elif [[ "$ARCH" == "x86_64" ]]; then
+elif [[ "$ARCH" == "x86_64" && -x /usr/local/bin/brew ]]; then
   eval "$(/usr/local/bin/brew shellenv)"
   export PATH="/usr/local/share/google-cloud-sdk/bin:$PATH"
   export PATH="/usr/local/opt/postgresql@18/bin:$PATH"

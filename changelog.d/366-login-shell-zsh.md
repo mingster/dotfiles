@@ -1,0 +1,1 @@
+- switch-login-shell-zsh.sh makes zsh the login shell on a set up host. arch/system_setup.sh and mac/system_setup.sh now chsh to zsh when $SHELL is not zsh (fish stays installed). .zshrc only evals brew shellenv when brew exists, so Arch hosts load it cleanly.

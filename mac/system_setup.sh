@@ -268,12 +268,14 @@ if [ -d "$HOME/.oh-my-zsh" ]; then
   fi
 fi
 
-# Set default shell to zsh (skip if already zsh)
-target_zsh="$(command -v zsh 2>/dev/null || echo "/bin/zsh")"
-if [ "$SHELL" != "$target_zsh" ] && [ "$SHELL" != "/bin/zsh" ]; then
-  echo 'change default shell to zsh'
-  chsh -s "$target_zsh"
-fi
+# Set default shell to zsh (covers hosts whose login shell was set to fish or bash by hand)
+case "$SHELL" in
+  */zsh) ;;
+  *)
+    echo 'change default shell to zsh'
+    chsh -s /bin/zsh
+    ;;
+esac
 
 # Remove outdated versions from the cellar.
 brew cleanup && brew doctor
