@@ -10,7 +10,7 @@ If you are new to this repository, here is what it provides and how the pieces c
 
 This repository contains everything needed to turn a fresh operating system installation into a fully configured developer workstation, paired with an AI engineering organization.
 
-* **Unified system configuration:** Installs core developer tooling, shells (Fish and Zsh), Git configuration, and application preferences across macOS, Arch Linux, and Debian.
+* **Unified system configuration:** Installs core developer tooling, the Zsh shell, Git configuration, and application preferences across macOS, Arch Linux, and Debian.
 * **Universal AI skills:** Supplies over 30 reusable engineering skills (slash commands) shared uniformly across Claude Code, Codex, Cursor, and Antigravity.
 * **Autonomous AI agent team:** Packages a drop in virtual software company led by a single executive front door (Elon), backed by a Product Architect, a Tech Lead, and specialist execution workers.
 
