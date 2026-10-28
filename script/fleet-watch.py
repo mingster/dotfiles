@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One bounded watchdog pass; schedule every minute outside the coordinator.
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
-host_caps {host: count}; --state FILE persists missing-waiter timers and alerts.
+host_caps {host: count} and leads [{name, terminal}] whose panes must stay alive;
+--state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. No lifecycle mutations.
 """
 import argparse
@@ -22,7 +23,7 @@ def rpc(*args):
     return receipt['result']
 
 
-def alerts(config, state, now, messages, workers, waiter_alive):
+def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None):
     notices = []
     counts = {}
     # The first pass only records the failures that already exist.
@@ -42,6 +43,16 @@ def alerts(config, state, now, messages, workers, waiter_alive):
     for host, cap in config.get('host_caps', {}).items():
         if counts.get(host, 0) > cap:
             notices.append('host cap exceeded: %s %d/%d (includes child dispatches)' % (host, counts[host], cap))
+    # A lead pane can vanish (terminal_not_found) while its merges silently stop.
+    dead = state.setdefault('dead_leads', [])
+    for lead in config.get('leads', []):
+        handle = lead['terminal']
+        if (lead_alive or {}).get(handle, True):
+            if handle in dead:
+                dead.remove(handle)
+        elif handle not in dead:
+            notices.append('lead pane gone: %s (%s); restart it or move its PRs to a live lead' % (lead['name'], handle))
+            dead.append(handle)
     for run in config['runs']:
         key = run['id']
         pending = any(m.get('run_id') == key and not m.get('read') for m in messages)
@@ -77,7 +88,14 @@ def main():
     workers = list({worker['dispatchId']: worker for worker in workers}.values())
     # pgrep observes the dedicated waiter process; no process is stopped here.
     alive = {run['id']: subprocess.run(['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5).returncode == 0 for run in config['runs']}
-    notices = alerts(config, state, time.time(), inbox['messages'], workers, alive)
+    leads = {}
+    for lead in config.get('leads', []):
+        try:
+            rpc('terminal', 'show', '--terminal', lead['terminal'])
+            leads[lead['terminal']] = True
+        except (subprocess.CalledProcessError, RuntimeError):
+            leads[lead['terminal']] = False
+    notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     if notices:
         line = 'fleet-watch: ' + '; '.join(notices)
         for run in config['runs']:
