@@ -53,10 +53,14 @@ def import_targets(specifier, test, root, base, aliases):
     return targets
 
 
-def select_changed_tests(root, files):
+def select_changed_tests(root, files, on_test_change=()):
     root = root.resolve()
     changed = [Path(name).resolve() for name in files if Path(name).resolve().is_relative_to(root)]
     tests = set()
+    # Repo-wide contract suites scan every test file, so any added, renamed or deleted test triggers them.
+    if any(is_test(path) for path in changed):
+        for pattern in on_test_change:
+            tests.update(item for item in root.glob(pattern) if item.is_file() and is_test(item))
     modules = {source_key(path) for path in changed if path.suffix in SOURCE_SUFFIXES}
     for path in changed:
         if path.is_file() and is_test(path):
@@ -116,8 +120,8 @@ def browser_available(root):
         return False
 
 
-def run_scoped_tests(root, runner, files):
-    tests = select_changed_tests(root, files)
+def run_scoped_tests(root, runner, files, on_test_change=()):
+    tests = select_changed_tests(root, files, on_test_change)
     browser = [path for path in tests if browser_test(path)]
     if browser and not browser_available(root):
         for path in browser:
@@ -195,12 +199,14 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--runner', required=True)
     parser.add_argument('--components', choices=('lint', 'typecheck', 'tests'))
+    parser.add_argument('--on-test-change', action='append', default=[], metavar='GLOB',
+                        help='tests under --root to add whenever any changed file is a test')
     parser.add_argument('files', nargs='*')
     args = parser.parse_args()
     try:
         if args.components:
             return component_checks(args.root, args.components, args.files)
-        return run_scoped_tests(args.root, args.runner, args.files)
+        return run_scoped_tests(args.root, args.runner, args.files, args.on_test_change)
     except subprocess.CalledProcessError as error:
         return error.returncode
 

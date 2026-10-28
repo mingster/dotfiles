@@ -69,6 +69,31 @@ class ScopedTests(unittest.TestCase):
         self.assertIn('Scoped tests: 0', result.stdout)
         self.assertFalse((self.repo / 'web/selected.json').exists())
 
+    def test_renamed_test_selects_configured_contract_tests(self):
+        # A rename reaches the selector as the new path; the old path no longer exists.
+        self.write('web/src/__tests__/mocks-contract.test.ts', '')
+        self.write('web/src/moved/__tests__/moved.test.ts', '')
+        result = self.run_helper('--on-test-change', 'src/__tests__/*-contract.test.ts',
+                                 'web/src/old/__tests__/moved.test.ts', 'web/src/moved/__tests__/moved.test.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads((self.repo / 'web/selected.json').read_text())
+        self.assertIn('./src/__tests__/mocks-contract.test.ts', selected)
+        self.assertIn('./src/moved/__tests__/moved.test.ts', selected)
+
+    def test_deleted_test_selects_configured_contract_tests(self):
+        self.write('web/src/__tests__/mocks-contract.test.ts', '')
+        result = self.run_helper('--on-test-change', 'src/__tests__/*-contract.test.ts', 'web/src/gone/__tests__/gone.test.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads((self.repo / 'web/selected.json').read_text())
+        self.assertEqual(selected, ['./src/__tests__/mocks-contract.test.ts'])
+
+    def test_no_test_change_does_not_select_contract_tests(self):
+        self.write('web/src/__tests__/mocks-contract.test.ts', '')
+        result = self.run_helper('--on-test-change', 'src/__tests__/*-contract.test.ts', 'web/src/lib/send.server.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads((self.repo / 'web/selected.json').read_text())
+        self.assertNotIn('./src/__tests__/mocks-contract.test.ts', selected)
+
     def test_playwright_specs_under_e2e_are_not_bun_tests(self):
         self.write('web/e2e/regression/rsvp/booking.spec.ts', '')
         result = self.run_helper('web/e2e/regression/rsvp/booking.spec.ts')
