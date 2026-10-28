@@ -58,5 +58,16 @@ FAKE_SEND_FAIL=1 run --to term_a --id msg_1 --body hi
 [ "$(cat "$tmp/rc")" = 1 ] && ok || bad "nudge failure exits 1"
 grep -q "nudge" "$tmp/err" && ok || bad "nudge failure message"
 
+# 7. --subject sends a new message to the recipient, then nudges
+run --to term_b --subject "batch ready" --body hi --from term_me
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "send exit 0"
+grep -q -- "orchestration send --to term_b --subject batch ready --body hi --json --from term_me" "$ORCA_LOG" && ok || bad "send carries to, subject, body, from"
+grep -q -- "terminal send --terminal term_b" "$ORCA_LOG" && ok || bad "send nudges the recipient"
+
+# 8. both --id and --subject refuse, call nothing
+run --to term_b --id msg_1 --subject x --body hi
+[ "$(cat "$tmp/rc")" = 2 ] && ok || bad "both id and subject exit 2"
+[ ! -s "$ORCA_LOG" ] && ok || bad "both id and subject call nothing"
+
 echo "orca-reply: $pass passed, $fail failed"
 [ "$fail" = 0 ]
