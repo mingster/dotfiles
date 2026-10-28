@@ -33,6 +33,16 @@ FAILED = re.compile(
     r"|Failed to compile"
     r"|Build error occurred"
 )
+# Environment problems, not code the agent can fix by editing: never a strike.
+TOOLING = re.compile(
+    r"Cannot find (module|package)"
+    r"|Could not resolve"
+    r"|prisma generate"
+    r"|@prisma/client did not initialize"
+    r"|heavy-gate: timed out after"
+    r"|heavy-gate: hardware fingerprint changed",
+    re.I,
+)
 PASSED = re.compile(r"\b0\s+fail\b|\b\d+\s+passed\b|Compiled successfully")
 
 
@@ -102,7 +112,15 @@ def main():
 
     if event == "PostToolUse":
         text = output_text(data.get("tool_response"))
-        if FAILED.search(text):
+        if FAILED.search(text) and TOOLING.search(text):
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": f"`{key}` failed on tooling, not on the code: tooling failure, not a strike. "
+                                         "Fix the environment (install, prisma generate, gate) and rerun.",
+                }
+            }))
+        elif FAILED.search(text):
             state[key] = state.get(key, 0) + 1
             save(path, state)
             note = f"Strike {state[key]} of {LIMIT} for `{key}`."
