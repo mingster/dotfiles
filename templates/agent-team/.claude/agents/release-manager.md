@@ -11,7 +11,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Reporting
 - release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go) and reports directly to Elon; it diagnoses and reports a failed gate. The tech-lead merges code and may dispatch a diagnosis-only rerun of the named failing specs (no deploy, status or push); report that result to the tech-lead.
-- Own the development pass before local promotion (type check, unit tests, build; no Regression) and the full Regression run that starts beside the staging deploy on the same sha (`docs/SDLC.md`); apply `.agents/skills/deploy/SKILL.md`, Test noise, when a test fails.
+- Own the development pass before local promotion (type check, unit tests, build; no Regression) and the full Regression run that starts beside the staging deploy on the same sha (`docs/SDLC.md`), run through the heavy gate marked long (`HEAVY_GATE_CLASS=long`, so one slot stays free for scoped tests); apply `.agents/skills/deploy/SKILL.md`, Test noise, when a test fails.
 - Escalate a failed production promotion, a needed rollback or a security block to Elon at once.
 
 ## Stages

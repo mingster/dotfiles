@@ -34,6 +34,8 @@ The tech-lead reads this before its first dispatch.
 
 Configure `script/fleet-watch.py` from dotfiles with this run, coordinator terminal and unique waiter pattern in a private config. An independent minute scheduler runs it; the coordinator waiter cannot supervise itself. It warns after ten minutes of unacked deliveries without a waiter, on failed dispatches, on host caps including children, and once when a lead pane listed under `leads` (name and terminal handle) is gone; update `leads` whenever a lead restarts. See dotfiles `docs/agents/fleet-watch.md`; scheduling and terminal selection are explicit activation steps.
 
+The inbox waiter script and its output file live in `~/.local/state/agent-team/` (`elon-wait.sh`, `elon-waiter.json`), never in `/tmp`, where wrap-up cleans agent temp files. Briefs tell workers to write temp files only inside their scratch dir or worktree.
+
 ## Wake loop
 
 Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).

@@ -52,13 +52,14 @@ esac
         temporary.write_text(value)
         temporary.replace(self.reading)
 
-    def run_gate(self, command, weight=1):
+    def run_gate(self, command, weight=1, gate_class=None):
+        env = dict(self.env, HEAVY_GATE_CLASS=gate_class) if gate_class else self.env
         p = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), '--weight', str(weight), '--', *command],
-                             env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.processes.append(p)
         return p
 
-    def job(self, label='job', delay=0.15, weight=1):
+    def job(self, label='job', delay=0.15, weight=1, gate_class=None):
         # Independent append-only workload events reveal actual overlap.
         code = '''import os,sys,time
 with open(sys.argv[1], 'a', buffering=1) as f:
@@ -66,7 +67,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
  time.sleep(float(sys.argv[3]))
  f.write(f'{time.time()} end {sys.argv[2]} {os.getpid()}\\n')
 '''
-        return self.run_gate([sys.executable, '-c', code, str(self.root/'events'), label, str(delay)], weight)
+        return self.run_gate([sys.executable, '-c', code, str(self.root/'events'), label, str(delay)], weight, gate_class)
 
     def wait_for(self, predicate):
         deadline = time.monotonic() + 8
@@ -150,6 +151,97 @@ child.wait()
             with self.subTest(value=value):
                 self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = value
                 self.finish(self.run_gate(['sleep', '2.2']))
+
+    def started(self, label):
+        return any(e.split()[1:3] == ['start', label] for e in self.events())
+
+    def test_long_job_keeps_last_slot_for_short_job(self):
+        self.config(2)
+        first = self.job('long1', 1.5, gate_class='long')
+        self.wait_for(lambda: self.started('long1'))
+        second = self.job('long2', 0.1, gate_class='long')
+        short = self.job('short', 0.1)
+        self.finish(short)
+        self.assertTrue(self.started('short'))
+        self.assertFalse(self.started('long2'), self.events())
+        self.finish(first)
+        self.finish(second)
+        self.assertTrue(self.started('long2'))
+
+    def test_without_long_job_admission_is_unchanged(self):
+        self.config(2)
+        jobs = [self.job(str(i), 0.3, gate_class=c) for i, c in enumerate(('short', None, 'short', None))]
+        for p in jobs:
+            self.finish(p)
+        self.assert_overlap({str(i): 1 for i in range(4)}, 2)
+
+    def test_long_job_weight_is_capped_to_leave_a_slot(self):
+        self.config(2)
+        long = self.job('long', 1.5, weight=2, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.finish(self.job('short', 0.1))
+        self.assertEqual(len(list((self.root/'.cache/heavy-gate').glob('slot-*'))), 1)
+        self.finish(long)
+
+    def test_short_job_bypasses_load_sensor_while_only_long_jobs_hold_slots(self):
+        self.config(2)
+        long = self.job('long', 1.5, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.set_reading('13 90')
+        for label, gate_class in (('short', 'short'), ('unmarked', None)):
+            self.finish(self.job(label, 0.1, gate_class=gate_class))
+            self.assertTrue(self.started(label))
+        self.finish(long)
+
+    def test_short_job_held_at_high_load_when_short_job_holds_reserve(self):
+        self.config(2)
+        long = self.job('long', 2.5, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.set_reading('13 90')
+        first = self.job('short1', 1.0)
+        self.wait_for(lambda: self.started('short1'))
+        second = self.job('short2', 0.1)
+        time.sleep(0.5)
+        self.assertFalse(self.started('short2'))
+        self.set_reading('0 90')
+        self.finish(second)
+        self.finish(first)
+        self.finish(long)
+
+    def test_memory_floor_blocks_short_job_at_high_load(self):
+        self.config(2)
+        long = self.job('long', 1.5, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.set_reading('13 10')
+        short = self.job('short', 0.1)
+        time.sleep(0.5)
+        self.assertFalse(self.started('short'))
+        self.set_reading('0 90')
+        self.finish(short)
+        self.finish(long)
+
+    def test_long_job_still_waits_on_load_sensor(self):
+        self.config(3)
+        first = self.job('long1', 1.5, gate_class='long')
+        self.wait_for(lambda: self.started('long1'))
+        self.set_reading('13 90')
+        second = self.job('long2', 0.1, gate_class='long')
+        time.sleep(0.5)
+        self.assertFalse(self.started('long2'))
+        self.set_reading('0 90')
+        self.finish(second)
+        self.finish(first)
+
+    def test_single_slot_has_nothing_to_reserve(self):
+        self.config(1)
+        self.finish(self.job('long', 0.1, gate_class='long'))
+        self.assertTrue(self.started('long'))
+
+    def test_unknown_class_is_rejected(self):
+        self.config(2)
+        _, err = self.finish(self.job('x', 0.1, gate_class='lng'), 1)
+        self.assertIn('HEAVY_GATE_CLASS', err)
+        self.assertFalse(self.started('x'))
 
     def test_fallback_without_config_respects_two_slots(self):
         jobs = [self.job(str(i), 0.3) for i in range(6)]

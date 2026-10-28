@@ -1,0 +1,1 @@
+- `wrap-up.sh` previews and, with `--apply`, removes agent temp files: stale Claude Code scratch session dirs, throwaway Chrome profiles, loose numbered logs and scripts, and Playwright output. Held open items, the current session and the coordinator waiter files are kept. See `docs/agents/wrap-up-temp-files.md`.
