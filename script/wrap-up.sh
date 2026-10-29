@@ -45,8 +45,12 @@ jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort 
 : > "$tmp/active"
 orca=${ORCA_CLI_COMMAND:-orca}
 # Close finished terminals on the local host and every listed environment, before the worktree check reads the inventory.
-# Closed: a terminal of a settled dispatch, or one whose process exited. Kept: our own, a live dispatch's, and a running
-# terminal with unknown ownership (reported). Handles belong to the host that issued them, so each host is handled alone.
+# A released dispatch has no agentTerminalHandle and its leftover terminals still look connected, so a terminal is linked to
+# dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
+# no agent on a path where every dispatch is settled (shells, worker-pane.sh panes). Kept: our own, a live dispatch's, one
+# running an agent, a lead- worktree's, and a terminal on a path with no dispatch (reported as unknown owner).
+# worker-list is newest first; only the newest WRAP_UP_WORKER_PAGES pages of 100 are read (older dispatches never match,
+# so their paths count as unknown owner and stay). Handles belong to the host that issued them, so each host is handled alone.
 term_closed=0; term_kept=0
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
 close_terminal() {
@@ -55,7 +59,7 @@ close_terminal() {
   fi
 }
 close_finished_terminals() {
-  local env=$1 label=${1:-local} eargs=() wargs cursor='' handle reason action
+  local env=$1 label=${1:-local} eargs=() wargs cursor='' handle reason action pages=0
   [ -z "$env" ] || eargs=(--environment "$env")
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
@@ -63,25 +67,32 @@ close_finished_terminals() {
   fi
   : > "$tmp/h-workers"
   while :; do
-    wargs=(); [ -z "$cursor" ] || wargs=(--cursor "$cursor")
-    if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} ${wargs[@]+"${wargs[@]}"} --json > "$tmp/h-page" 2>/dev/null \
+    wargs=(--limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
+    if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
       || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
       echo "Warning: dispatch discovery failed on $label; closing nothing there." >&2; return 0
     fi
     cat "$tmp/h-page" >> "$tmp/h-workers"
     cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/h-page")
-    [ -n "$cursor" ] || break
+    pages=$((pages+1))
+    [ -n "$cursor" ] && [ "$pages" -lt "${WRAP_UP_WORKER_PAGES:-2}" ] || break
   done
   jq -r -s --slurpfile terms "$tmp/h-terminals" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
     def settled: .dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s);
-    [.[].result.workers[] | select(.agentTerminalHandle != null)] as $w
-    | $terms[0].result.terminals[] | .handle as $h
+    def path: (.projection.workspace.id // "") | split("::")[1] // "";
+    [.[].result.workers[]] as $w
+    | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "") as $p
     | ([$w[] | select(.agentTerminalHandle == $h)]) as $mine
+    | ([$w[] | select($p != "" and path == $p)]) as $onpath
     | (.connected == false or .writable == false) as $exited
     | if $h == $own then [$h, "own terminal", "keep"]
-      elif any($mine[]; settled | not) then [$h, "live dispatch", "keep"]
+      elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
+      elif ($p | split("/") | last | startswith("lead-")) then [$h, "lead worktree", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
+      elif ($onpath | length) > 0 and .agentIdentity != null then [$h, "agent running", "keep"]
+      elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
+      elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
       else [$h, "unknown owner, still running", "keep"] end
     | @tsv' "$tmp/h-workers" > "$tmp/h-plan"
   while IFS=$'\t' read -r handle reason action; do

@@ -234,3 +234,44 @@ for kept in t-own t-live t-unknown e1-unknown e2-live; do
 done
 grep -q 'terminals closed=5 kept=5' "$tmp/output"
 echo 'ok apply closes settled and exited terminals; own, live and unknown-running kept'
+# Real orca output differs from the cases above: a released dispatch has no agentTerminalHandle, its leftover terminals
+# still report connected and writable with no agent identity, and a pane from worker-pane.sh is just such a terminal.
+# So terminals are linked to dispatches by worktree path. worker-list is newest first and read for 2 pages only.
+rm -rf "$fake"; mkdir -p "$fake"
+cat > "$tmp/bin/orca-real" <<'FAKE'
+#!/usr/bin/env bash
+args=("$@"); cursor=''
+for i in "${!args[@]}"; do [ "${args[$i]}" = --cursor ] && cursor=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/terminals")" ;;
+  *'terminal close'*)
+    for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && echo "${args[$((i+1))]}" >> "$FAKE_DIR/closed.log"; done ;;
+  *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
+  *worker-list*)
+    echo "$*" >> "$FAKE_DIR/list.log"
+    case "$cursor" in
+      '') page=1; more=true; next=c2 ;; c2) page=2; more=true; next=c3 ;; *) page=3; more=false; next=null ;;
+    esac
+    printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":%s,"nextCursor":"%s"}}}\n' "$(cat "$FAKE_DIR/workers$page")" "$more" "$next" ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-real"
+export ORCA_CLI_COMMAND="$tmp/bin/orca-real"
+rt() { printf '{"handle":"%s","title":"%s","worktreePath":"/nowhere/%s","connected":true,"writable":true,"agentIdentity":%s}' "$1" "$3" "$2" "${4:-null}"; }
+rw() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s-%s","dispatchStatus":"%s","projection":{"workspace":{"id":"repo-1::/nowhere/%s"}}}' "$1" "$3" "$2" "$1"; }
+echo "[$(rt t-own p-own x),$(rt t-shell p-rel '~/p-rel'),$(rt t-pane p-rel 'worker-pane.sh d-p-rel-a'),$(rt t-agent p-rel claude '"claude"'),$(rt t-mixed p-mix '~/p-mix'),$(rt t-none p-none '~/p-none'),$(rt t-lead lead-x '~/lead-x'),$(rt t-late p-late '~/p-late')]" > "$fake/terminals"
+echo "[$(rw p-own released a),$(rw p-rel released a),$(rw p-rel failed b),$(rw p-mix released a)]" > "$fake/workers1"
+echo "[$(rw p-mix dispatched b),$(rw lead-x completed a)]" > "$fake/workers2"
+echo "[$(rw p-late completed a)]" > "$fake/workers3"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+sort "$fake/closed.log" > "$tmp/closed"
+printf '%s\n' t-pane t-shell | cmp - "$tmp/closed"
+for kept in t-own t-agent t-mixed t-none t-lead t-late; do
+  grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
+done
+grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
+grep -Fq 'Kept terminal t-none (local, unknown owner, still running)' "$tmp/output"
+grep -q 'terminals closed=2 kept=6' "$tmp/output"
+grep -q -- '--limit 100' "$fake/list.log"
+echo 'ok released dispatch without a handle: terminals linked by path; panes close; live, agent, lead and unknown paths kept'
