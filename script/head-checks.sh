@@ -60,34 +60,54 @@ for key,value in os.environ.items():
 text=re.sub(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|sqlserver)://[^\s]+", "[redacted database URL]", text)
 cap=int(sys.argv[1]); path=sys.argv[2]
 if len(text)>cap:
-    # Bounded summary: the status and closing Total lines always survive, Duration lines slowest first as far as they fit; the full redacted log goes to a file.
+    # Budget each section once; sorting durations is O(n log n), selection is O(n).
     open(path,"w").write(text)
-    footer="\nReceipt cut to fit %d characters. Full log: %s\n" % (cap,path)
     lines=text.rstrip("\n").split("\n")
+    header=lines.pop(0)
     total=lines.pop() if lines and lines[-1].startswith("Total: ") else ""
-    must=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Result: )")
+    closing=total+"\n" if total else ""
+    footer="\nReceipt cut to fit %d characters. Full log: %s\n" % (cap,path)
     dur=re.compile(r"^Duration: (\d+)s$")
-    nice=re.compile(r"^(Command: |Scoped tests: |Selected: )")
-    tail_from=max(len(lines)-40,0)
-    cut=lambda l: l if len(l)<=300 or l.startswith("Checks: ") else l[:300]+"[... line cut]"
-    dur_idx=sorted((i for i,l in enumerate(lines) if dur.match(l)), key=lambda i:(-int(dur.match(lines[i]).group(1)),i))
-    def render(chosen):
-        out=[]; omitted=0
-        for i,l in enumerate(lines):
-            if i in chosen:
-                if omitted: out.append("[... %d lines omitted]" % omitted); omitted=0
-                out.append(cut(l))
-            else: omitted+=1
-        if omitted: out.append("[... %d lines omitted]" % omitted)
-        skipped=len(dur_idx)-len(chosen.intersection(dur_idx))
-        if skipped: out.append("Duration: %d more checks omitted (see full log)" % skipped)
-        return "\n".join(out)+footer+total+"\n"
-    chosen={i for i,l in enumerate(lines) if must.match(l)}
-    for i in dur_idx:
-        if len(render(chosen|{i}))<=cap: chosen.add(i)
-    for i,l in enumerate(lines):
-        if i not in chosen and (nice.match(l) or i>=tail_from) and len(render(chosen|{i}))<=cap: chosen.add(i)
-    text=render(chosen)
+    duration_seconds={i:int(m.group(1)) for i,l in enumerate(lines) if (m:=dur.match(l))}
+    dur_idx=sorted(duration_seconds, key=lambda i:(-duration_seconds[i],i))
+    failures=[i for i,l in enumerate(lines) if l.startswith("Result: ") and not l.startswith("Result: exit 0")]
+    metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
+    results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
+    nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
+    cut=lambda l: l if len(l)<=300 else l[:300]+"[... line cut]"
+    # Reserve the largest possible omission counters, including their newlines.
+    omitted_line="[... %d lines omitted]\n" % len(lines)
+    omitted_durations="Durations omitted: %d (see full log)\n" % len(dur_idx)
+    budget=cap-len(header)-1-len(closing)-len(footer)-len(omitted_line)-len(omitted_durations)
+    chosen={}; kept_durations=0
+    for group in (failures,metadata,results,dur_idx,nice):
+        for i in group:
+            if i in chosen: continue
+            line=cut(lines[i])+"\n"
+            if len(line)<=budget:
+                chosen[i]=line
+                budget-=len(line)
+                kept_durations+=i in duration_seconds
+    # Emit failing results first as well as selecting them first.
+    out=[header+"\n"]
+    out.extend(chosen[i] for i in failures if i in chosen)
+    failed_indices=set(failures)
+    out.extend(chosen[i] for i in sorted(chosen) if i not in failed_indices)
+    omitted=len(lines)-len(chosen)
+    if omitted: out.append("[... %d lines omitted]\n" % omitted)
+    skipped=len(dur_idx)-kept_durations
+    if skipped: out.append("Durations omitted: %d (see full log)\n" % skipped)
+    text="".join(out)+footer+closing
+    if len(text)>cap:
+        # Last resort for very small caps or unusually long header/log paths:
+        # cut the middle, preserving the complete header and final Total if possible.
+        opening=header+"\n"
+        available=max(cap-len(opening)-len(closing),0)
+        text=opening+text[len(opening):len(opening)+available]+closing
+        if len(text)>cap:
+            # A cap smaller than the two boundary lines cannot hold both in full.
+            text=opening[:max(cap-len(closing),0)]+closing[:cap]
+
 sys.stdout.write(text)
 ' "$receipt_cap" "${HEAD_CHECKS_LOG_DIR:-${TMPDIR:-/tmp}}/head-checks-${sha:0:12}.log" > "$receipt"
   cat "$receipt"

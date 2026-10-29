@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as temp:
     print('ok   sha256sum digest when shasum is absent' if ok else 'FAIL sha256sum fallback rc=%s\n%s' % (result.returncode, result.stdout))
     if not ok: sys.exit(1)
     # A two-check checklist records a Duration line per check and a closing Total line.
-    conf.write_text('true\nsleep 1\n'); git('add', '.'); git('commit', '-qm', 'two checks'); head = git('rev-parse', 'HEAD')
+    conf.write_text('true\ntrue\n'); git('add', '.'); git('commit', '-qm', 'two checks'); head = git('rev-parse', 'HEAD')
     result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     import re
     durations = re.findall(r'^Duration: (\d+)s$', result.stdout, re.M)
@@ -43,24 +43,37 @@ with tempfile.TemporaryDirectory() as temp:
     ok = result.returncode == 0 and len(durations) == 2 and total is not None and len(result.stdout) <= 65536
     print('ok   per-check Duration and closing Total in the receipt' if ok else 'FAIL duration/total rc=%s\n%s' % (result.returncode, result.stdout))
     if not ok: sys.exit(1)
-    # A capped receipt keeps every Duration line and ends with Total.
-    n = 210
-    conf.write_text(''.join('true # %s\n' % ('x' * 500) for _ in range(n))); git('add', '.'); git('commit', '-qm', 'many checks'); head = git('rev-parse', 'HEAD')
-    capenv = dict(env, HEAD_CHECKS_RECEIPT_CAP='65536', HEAD_CHECKS_LOG_DIR=str(root))
-    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=capenv, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    receipt = result.stdout[result.stdout.index('Checks: '):]
-    durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
-    ok = result.returncode == 0 and len(receipt) <= 65536 and 'Receipt cut to fit' in receipt and len(durations) == n and re.search(r'^Total: (\d+)s\n?\Z', receipt, re.M) is not None
-    print('ok   capped receipt keeps all Duration lines and closing Total' if ok else 'FAIL capped receipt rc=%s len=%d durations=%d' % (result.returncode, len(receipt), len(durations)))
-    if not ok: sys.exit(1)
-    # Too many checks for every Duration line: slowest kept, the rest summarised, Total still last.
-    n = 1500
-    conf.write_text(''.join('true # %s\n' % ('x' * 500) for _ in range(n))); git('add', '.'); git('commit', '-qm', 'huge checks'); head = git('rev-parse', 'HEAD')
-    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=capenv, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    receipt = result.stdout[result.stdout.index('Checks: '):]
-    durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
-    omitted = re.search(r'^Duration: (\d+) more checks omitted \(see full log\)$', receipt, re.M)
-    ok = result.returncode == 0 and len(receipt) <= 65536 and re.search(r'^Total: (\d+)s\n\Z', receipt, re.M) is not None and omitted is not None and len(durations) + int(omitted.group(1)) == n
-    print('ok   1500 checks stay within the cap with an omitted Duration line and Total last' if ok else 'FAIL huge receipt rc=%s len=%d durations=%d omitted=%s' % (result.returncode, len(receipt), len(durations), omitted and omitted.group(1)))
-    sys.exit(0 if ok else 1)
+    # Generate receipt inputs instead of running thousands of shell checks.
+    formatter = pathlib.Path(runner).read_text().split("| python3 -c '\n", 1)[1].split("\n' \"$receipt_cap\"", 1)[0]
+    failures = 0
+    for n, cap in [(50, 500), (700, 20000), (3000, 65536), (210, 65536), (1500, 65536)]:
+        log = 'Checks: FAIL head=' + head + '\n\nChecklist: fixture\n'
+        log += ''.join('Command: true # ' + 'x' * 500 + '\nResult: exit 0\nDuration: 1s\n' for _ in range(n - 1))
+        log += 'Command: false\nResult: exit 1; remaining checks stopped\nDuration: 9s\nTotal: 12s\n'
+        result = subprocess.run([sys.executable, '-c', formatter, str(cap), str(root/'full.log')], input=log, text=True, capture_output=True)
+        receipt = result.stdout
+        durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
+        omitted = re.search(r'^Durations omitted: (\d+) \(see full log\)$', receipt, re.M)
+        skipped = int(omitted.group(1)) if omitted else 0
+        ok = (result.returncode == 0 and len(receipt) <= cap
+              and receipt.splitlines()[0] == 'Checks: FAIL head=' + head
+              and receipt.endswith('Total: 12s\n')
+              and 'Result: exit 1; remaining checks stopped\n' in receipt
+              and ('Result: exit 0' not in receipt
+                   or receipt.index('Result: exit 1') < receipt.index('Result: exit 0')))
+        ok = (ok and len(durations) + skipped == n and '9' in durations
+              and (n not in (210, 1500) or len(durations) == n))
+        print('%s %d checks cap=%d length=%d' % ('ok  ' if ok else 'FAIL', n, cap, len(receipt)), flush=True)
+        failures += not ok
+    # Tiny budgets and long boundary lines exercise the final truncation backstop.
+    for cap in (0, 1, 10, 70, 100, 300, 500):
+        header = 'Checks: FAIL head=' + head + ' train-heads=' + head * 8
+        log = header + '\n' + 'x' * 2000 + '\nTotal: 12s\n'
+        result = subprocess.run([sys.executable, '-c', formatter, str(cap), str(root/('x' * 200))], input=log, text=True, capture_output=True)
+        ok = result.returncode == 0 and len(result.stdout) <= cap
+        if cap >= len(header) + len('\nTotal: 12s\n'):
+            ok = ok and result.stdout.startswith(header + '\n') and result.stdout.endswith('Total: 12s\n')
+        print('%s backstop cap=%d length=%d' % ('ok  ' if ok else 'FAIL', cap, len(result.stdout)))
+        failures += not ok
+    sys.exit(bool(failures))
 PY
