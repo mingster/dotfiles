@@ -1,0 +1,1 @@
+Fix wrap-up cleanup to keep default, Pages, and protected branches locally and remotely. Refresh remote refs before planning, recheck remote branch SHAs before deleting with leases, and report counted worktree and clone keeps when lsof is unavailable.

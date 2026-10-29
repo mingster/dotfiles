@@ -30,12 +30,9 @@ repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-if [ "$apply" -eq 1 ]; then
-  git fetch --prune origin
-else
-  echo 'Dry run: fetch preview only; eligibility uses existing origin/main.'
-  git fetch --dry-run --prune origin
-fi
+# Preview also refreshes tracking refs; only apply changes branches or worktrees.
+git fetch --prune origin
+git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin > "$tmp/remote-planned"
 git rev-parse --verify origin/main >/dev/null
 # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
 pr_ok=1
@@ -185,8 +182,42 @@ while IFS= read -r active_path; do
   fi
 done < "$tmp/active" > "$tmp/active-normalized"
 mv "$tmp/active-normalized" "$tmp/active"
+# Missing or malformed safety metadata never authorizes a branch deletion.
+protection_ok=1
+: > "$tmp/protected"
+default_branch=''
+if gh repo view --json defaultBranchRef > "$tmp/default" 2>/dev/null; then
+  default_branch=$(jq -er '.defaultBranchRef.name | select(type == "string" and length > 0)' "$tmp/default" 2>/dev/null) || default_branch=''
+fi
+if [ -z "$default_branch" ]; then
+  default_branch=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || default_branch=''
+  default_branch=${default_branch#refs/remotes/origin/}
+fi
+[ -n "$default_branch" ] || protection_ok=0
+pages_branch=''
+if gh api 'repos/{owner}/{repo}/pages' > "$tmp/pages" 2> "$tmp/pages-err"; then
+  if jq -e 'type == "object" and (.source == null or (.source.branch | type == "string" and length > 0))' "$tmp/pages" >/dev/null 2>&1; then
+    pages_branch=$(jq -r '.source.branch // empty' "$tmp/pages")
+  else protection_ok=0
+  fi
+elif ! grep -Eq 'HTTP 404|HTTP/[^ ]+ 404' "$tmp/pages-err"; then
+  protection_ok=0
+fi
+if gh api --paginate 'repos/{owner}/{repo}/branches?protected=true&per_page=100' > "$tmp/protection-pages" 2>/dev/null \
+  && jq -es 'length > 0 and all(.[]; type == "array" and all(.[]; .name | type == "string" and length > 0))' "$tmp/protection-pages" >/dev/null 2>&1; then
+  jq -rs '.[][] | .name' "$tmp/protection-pages" > "$tmp/protected"
+else protection_ok=0
+fi
 protected() {
+  protected_reason=protected
+  [ -n "$1" ] || return 1
+  if [ "$1" = "$default_branch" ]; then protected_reason='default branch'; return 0; fi
+  if [ "$1" = gh-pages ] || { [ -n "$pages_branch" ] && [ "$1" = "$pages_branch" ]; }; then
+    protected_reason='GitHub Pages branch'; return 0
+  fi
   case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD|lead-queue|*/lead-queue) return 0 ;; esac
+  grep -Fxq -- "$1" "$tmp/protected" && return 0
+  if [ "$protection_ok" -eq 0 ]; then protected_reason='branch protection lookup unavailable'; return 0; fi
   return 1
 }
 eligible() {
@@ -275,29 +306,44 @@ guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason
   echo "Warning: could not delete $2; kept." >&2; guard_keep "$1" "$2" 'delete failed'; return 1
 }
 guarded_remote_branch_delete() { # <name...>: sets remote_gone to how many went; kept ones count in kept
-  local name status=0 live=()
+  local name status=0 live=() leases=()
   remote_gone=0
   remote_live "$@" || status=1
   [ ${#live[@]} -gt 0 ] || return "$status"
-  if git push origin --delete "${live[@]}"; then remote_gone=${#live[@]}; return "$status"; fi
+  if git push origin --delete "${live[@]}" "${leases[@]}" --atomic; then remote_gone=${#live[@]}; return "$status"; fi
   # One bad ref fails the whole push; retry one by one, each behind a fresh inventory, so only the failing ones are kept.
   for name in "${live[@]}"; do
     remote_live "$name" || { status=1; continue; }
-    if git push origin --delete "$name"; then remote_gone=$((remote_gone+1)); continue; fi
+    if git push origin --delete "$name" "${leases[@]}"; then remote_gone=$((remote_gone+1)); continue; fi
     echo "Warning: could not delete remote $name; kept." >&2
     guard_keep kept "remote $name" 'delete failed'; status=1
   done
   return "$status"
 }
-remote_live() { # <name...>: sets live (the caller's) to the names no worktree has checked out in one fresh inventory
-  local name status=0
+remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets caller's push leases
+  local name status=0 expected actual
   live=()
+  leases=()
   if ! fresh_inventory; then
     for name in "$@"; do guard_keep kept "remote $name" 'worktree inventory unavailable'; done
     return 2
   fi
   for name in "$@"; do
-    if branch_free kept "remote $name" "$name"; then live+=("$name"); else status=1; fi
+    if ! branch_free kept "remote $name" "$name"; then status=1; continue; fi
+    expected=$(awk -v r="refs/remotes/origin/$name" '$1 == r { print $2 }' "$tmp/remote-planned")
+    if ! git ls-remote --heads origin "refs/heads/$name" > "$tmp/remote-now"; then
+      guard_keep kept "remote $name" 'live remote lookup failed'; status=1; continue
+    fi
+    actual=$(awk -v r="refs/heads/$name" '$2 == r { print $1 }' "$tmp/remote-now")
+    if [ -z "$actual" ]; then
+      guard_keep kept "remote $name" 'vanished from remote'; status=1; continue
+    fi
+    if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+      guard_keep kept "remote $name" 'remote SHA changed since fetch'; status=1; continue
+    fi
+    live+=("$name")
+    # Keep the check atomic if a writer races the ls-remote response.
+    leases+=("--force-with-lease=refs/heads/$name:$expected")
   done
   return "$status"
 }
@@ -342,7 +388,7 @@ process_worktree() {
   local why='' force=''
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
-  elif protected "$branch"; then why='protected'
+  elif protected "$branch"; then why=$protected_reason
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
@@ -390,8 +436,10 @@ while IFS= read -r -d '' field; do
 done < "$tmp/worktrees"
 [ "$apply" -eq 0 ] || git worktree prune
 while IFS= read -r branch; do
-  if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
-    keep "local $branch" 'protected or checked out in kept worktree'
+  if protected "$branch"; then
+    keep "local $branch" "$protected_reason"
+  elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
+    keep "local $branch" 'checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch"; then
     printf 'Delete local %s (%s)\n' "$branch" "$reason"
     if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" "$reason"; then
@@ -449,12 +497,18 @@ drop_build_caches() {
   done < "$tmp/kept-worktrees"
 }
 drop_build_caches
+missing_lsof_summary() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    printf 'lsof unavailable: kept all worktrees=%s and Chrome clones=%s\n' "$(wc -l < "$tmp/kept-worktrees" | tr -d ' ')" "${clone_kept:-0}"
+  fi
+}
 # A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once, and a
 # checkout there is never fast forwarded.
 if [ "$worktrees_only" -eq 1 ]; then
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
   printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
+  missing_lsof_summary
   exit "$inventory_failed"
 fi
 batch=()
@@ -468,8 +522,10 @@ flush_remote() {
 }
 while IFS= read -r ref; do
   branch=${ref#refs/remotes/origin/}
-  if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
-    keep "remote $branch" 'protected or checked out in kept worktree'
+  if protected "$branch"; then
+    keep "remote $branch" "$protected_reason"
+  elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
+    keep "remote $branch" 'checked out in kept worktree'
   elif eligible "$ref" "$branch"; then
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
     batch+=("$branch")
@@ -648,6 +704,7 @@ printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
+missing_lsof_summary
 # --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only).
 # Config: {"hosts": [{"host": "<ssh host>", "repo_dir": "<checkout on that host>"}]}; see wrap-up-fleet.config.example.json.
 # An unreachable or failing host only warns. The script and arguments travel as base64 so a login shell's own output
