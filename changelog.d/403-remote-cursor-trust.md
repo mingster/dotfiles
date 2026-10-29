@@ -1,0 +1,1 @@
+Allow remote Cursor workers through `start-cursor-worker.sh --on`, writing workspace trust in the execution environment through an Orca terminal before dispatch. Preserve local launches and stop dispatch when worktree creation or remote trust fails.
