@@ -219,6 +219,90 @@ in_use() {
   done < "$tmp/ps"
   return 1
 }
+# Every destructive command below runs inside one of the guarded_* functions (wrap-up.test.sh lints this). Each one,
+# as its last step before the command, re-reads the checkout inventory and runs in_use on every worktree the delete
+# touches. Busy, unknown or a failed inventory keeps the item: it is reported and counted (in the counter named by the
+# first argument) and the function returns non-zero. A failed inventory stops every later delete in this run.
+inventory_failed=0
+guard_keep() { # <counter> <label> <why>
+  printf 'Kept %s (%s)\n' "$2" "$3"
+  printf -v "$1" '%s' "$(( ${!1} + 1 ))"
+}
+fresh_inventory() { # [what the warning says stops]
+  [ "$inventory_failed" -eq 0 ] && git worktree list --porcelain > "$tmp/wt-now" && return 0
+  [ "$inventory_failed" -eq 1 ] || echo "Warning: could not list worktrees; ${1:-deleting nothing more in this repo}." >&2
+  inventory_failed=1; return 1
+}
+# The worktree that has the branch checked out in the fresh inventory, if any.
+checkout_of() { awk -v b="branch refs/heads/$1" '/^worktree /{ p = substr($0, 10) } $0 == b { print p; exit }' "$tmp/wt-now"; }
+guard_paths() { # <counter> <label> <path...>: fresh inventory, then in_use on each path
+  local counter=$1 label=$2 p; shift 2
+  fresh_inventory || { guard_keep "$counter" "$label" 'worktree inventory unavailable'; return 2; }
+  for p in "$@"; do
+    if in_use "$p"; then guard_keep "$counter" "$label" "$busy"; return 1; fi
+  done
+}
+branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the item when a worktree has the branch now
+  local wt
+  wt=$(checkout_of "$3") || { inventory_failed=1; guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
+  [ -n "$wt" ] || return 0
+  echo "Warning: $2 is checked out in a worktree now; kept." >&2
+  if in_use "$wt"; then guard_keep "$1" "$2" "checked out in $wt, $busy"; else guard_keep "$1" "$2" "checked out in $wt"; fi
+  return 1
+}
+guarded_worktree_remove() { # <counter> <label> <path> [--force]
+  guard_paths "$1" "$2" "$3" || return
+  git worktree remove ${4:+"$4"} -- "$3" && return 0
+  echo "Warning: could not remove $2; kept." >&2; guard_keep "$1" "$2" 'remove failed'; return 1
+}
+guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason]
+  fresh_inventory || { guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
+  branch_free "$1" "$2" "$3" || return
+  if [ "${4:-}" = ancestor ]; then
+    # -d checks HEAD/upstream, so give it the authoritative merge target.
+    git -c "branch.$3.remote=origin" -c "branch.$3.merge=refs/heads/main" branch -d -- "$3" && return 0
+  else
+    git branch -D -- "$3" && return 0
+  fi
+  echo "Warning: could not delete $2; kept." >&2; guard_keep "$1" "$2" 'delete failed'; return 1
+}
+guarded_remote_branch_delete() { # <name...>: sets remote_gone to how many went; kept ones count in kept
+  local name status=0 live=()
+  remote_gone=0
+  remote_live "$@" || status=1
+  [ ${#live[@]} -gt 0 ] || return "$status"
+  if git push origin --delete "${live[@]}"; then remote_gone=${#live[@]}; return "$status"; fi
+  # One bad ref fails the whole push; retry one by one, each behind a fresh inventory, so only the failing ones are kept.
+  for name in "${live[@]}"; do
+    remote_live "$name" || { status=1; continue; }
+    if git push origin --delete "$name"; then remote_gone=$((remote_gone+1)); continue; fi
+    echo "Warning: could not delete remote $name; kept." >&2
+    guard_keep kept "remote $name" 'delete failed'; status=1
+  done
+  return "$status"
+}
+remote_live() { # <name...>: sets live (the caller's) to the names no worktree has checked out in one fresh inventory
+  local name status=0
+  live=()
+  if ! fresh_inventory; then
+    for name in "$@"; do guard_keep kept "remote $name" 'worktree inventory unavailable'; done
+    return 2
+  fi
+  for name in "$@"; do
+    if branch_free kept "remote $name" "$name"; then live+=("$name"); else status=1; fi
+  done
+  return "$status"
+}
+guarded_rm() { # <counter> <label> <rf|dir> <path> [more paths to probe]
+  local counter=$1 label=$2 mode=$3 target=$4; shift 3
+  guard_paths "$counter" "$label" "$@" || return
+  if [ "$mode" = dir ]; then
+    rmdir -- "$target" && return 0
+  else
+    rm -rf -- "$target" && return 0
+  fi
+  echo "Warning: could not remove $label; kept." >&2; guard_keep "$counter" "$label" 'remove failed'; return 1
+}
 active_worktree() {
   local active_path
   while IFS= read -r active_path; do
@@ -232,7 +316,6 @@ removed=0; local_deleted=0; remote_deleted=0; kept=0; stale_deleted=0
 keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
 : > "$tmp/kept-worktrees"
-: > "$tmp/remote-planned"
 : > "$tmp/stale-ok"
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
@@ -280,11 +363,9 @@ process_worktree() {
     [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
   else
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
-    if [ "$apply" -eq 0 ] || git worktree remove ${force:+"$force"} -- "$path"; then
+    if [ "$apply" -eq 0 ] || guarded_worktree_remove kept "worktree $path" "$path" "$force"; then
       removed=$((removed+1))
     else
-      echo "Warning: could not remove worktree $path; kept." >&2
-      keep "worktree $path" 'remove failed'
       printf '%s\n' "$path" >> "$tmp/kept-worktrees"
       [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
     fi
@@ -300,43 +381,15 @@ while IFS= read -r -d '' field; do
   esac
 done < "$tmp/worktrees"
 [ "$apply" -eq 0 ] || git worktree prune
-# True when any worktree has the branch checked out right now (a worker may have started since the listing above).
-# Returns 2 when the inventory itself fails: the caller (an if condition runs with errexit off) must not read that as "no".
-checked_out() {
-  git worktree list --porcelain > "$tmp/wt-now" || return 2
-  grep -Fxq -- "branch refs/heads/$1" "$tmp/wt-now"
-}
 while IFS= read -r branch; do
   if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "local $branch" 'protected or checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch"; then
-    inventory=1
-    if [ "$apply" -eq 1 ]; then checked_out "$branch" && inventory=0 || inventory=$?; fi
-    if [ "$inventory" -gt 1 ]; then
-      echo "Warning: could not list worktrees; deleting nothing more in this repo." >&2
-      exit 1
-    elif [ "$inventory" -eq 0 ]; then
-      echo "Warning: local $branch is checked out in a worktree now; kept." >&2
-      keep "local $branch" 'checked out in a worktree'
-      printf '%s\n' "$branch" >> "$tmp/kept-branches"
+    printf 'Delete local %s (%s)\n' "$branch" "$reason"
+    if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" "$reason"; then
+      local_deleted=$((local_deleted+1))
     else
-      printf 'Delete local %s (%s)\n' "$branch" "$reason"
-      deleted=1
-      if [ "$apply" -eq 1 ]; then
-        if [ "$reason" = ancestor ]; then
-          # -d checks HEAD/upstream, so give it the authoritative merge target.
-          git -c "branch.$branch.remote=origin" -c "branch.$branch.merge=refs/heads/main" branch -d -- "$branch" || deleted=0
-        else
-          git branch -D -- "$branch" || deleted=0
-        fi
-      fi
-      if [ "$deleted" -eq 1 ]; then
-        local_deleted=$((local_deleted+1))
-      else
-        echo "Warning: could not delete local $branch; kept." >&2
-        keep "local $branch" 'delete failed'
-        printf '%s\n' "$branch" >> "$tmp/kept-branches"
-      fi
+      printf '%s\n' "$branch" >> "$tmp/kept-branches"
     fi
   else keep "local $branch" "$reason"
   fi
@@ -381,10 +434,8 @@ drop_build_caches() {
       kb=$(du -sk -- "$cache" 2>/dev/null | cut -f1) || kb=0
       kb=${kb:-0}
       printf 'Remove build cache %s (%s KB)\n' "$cache" "$kb"
-      if [ "$apply" -eq 0 ] || rm -rf -- "$cache"; then
+      if [ "$apply" -eq 0 ] || guarded_rm cache_kept "build cache $cache" rf "$cache" "$wt"; then
         cache_removed=$((cache_removed+1)); cache_bytes=$((cache_bytes + kb * 1024))
-      else
-        echo "Warning: could not remove build cache $cache; kept." >&2; cache_kept=$((cache_kept+1))
       fi
     done
   done < "$tmp/kept-worktrees"
@@ -396,22 +447,14 @@ if [ "$worktrees_only" -eq 1 ]; then
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
   printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
-  exit 0
+  exit "$inventory_failed"
 fi
 batch=()
 flush_remote() {
-  local name
   [ ${#batch[@]} -gt 0 ] || return 0
-  if [ "$apply" -eq 1 ] && ! git push origin --delete "${batch[@]}"; then
-    # One bad ref fails the whole push; retry one by one so only the failing ones are kept.
-    for name in "${batch[@]}"; do
-      git push origin --delete "$name" && continue
-      echo "Warning: could not delete remote $name; kept." >&2
-      keep "remote $name" 'delete failed'
-      if grep -Fxq -- "$name" "$tmp/remote-planned"; then remote_deleted=$((remote_deleted-1))
-      elif [ "$stale_deleted" -gt 0 ]; then stale_deleted=$((stale_deleted-1))
-      fi
-    done
+  if [ "$apply" -eq 1 ]; then
+    guarded_remote_branch_delete "${batch[@]}" || true
+    remote_deleted=$((remote_deleted+remote_gone))
   fi
   batch=()
 }
@@ -421,7 +464,8 @@ while IFS= read -r ref; do
     keep "remote $branch" 'protected or checked out in kept worktree'
   elif eligible "$ref" "$branch"; then
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
-    batch+=("$branch"); printf '%s\n' "$branch" >> "$tmp/remote-planned"; remote_deleted=$((remote_deleted+1))
+    batch+=("$branch")
+    [ "$apply" -eq 1 ] || remote_deleted=$((remote_deleted+1))
     [ ${#batch[@]} -lt 50 ] || flush_remote
   else keep "remote $branch" "$reason"
   fi
@@ -445,8 +489,7 @@ for clone_dir in ${clone_dirs[@]+"${clone_dirs[@]}"}; do
       printf 'Kept Chrome clone %s (%s)\n' "$clone" "$busy"; clone_kept=$((clone_kept+1))
     else
       printf 'Remove Chrome clone %s\n' "$clone"
-      [ "$apply" -eq 0 ] || rm -rf -- "$clone"
-      clone_removed=$((clone_removed+1))
+      if [ "$apply" -eq 0 ] || guarded_rm clone_kept "Chrome clone $clone" rf "$clone"; then clone_removed=$((clone_removed+1)); fi
     fi
   done
 done
@@ -488,8 +531,9 @@ temp_item() {
   fi
   if [ "$gone" -eq 1 ]; then why='worktree gone'; else why='untouched for 24 h'; fi
   printf 'Remove temp %s (%s KB, %s)\n' "$item" "$kb" "$why"
-  [ "$apply" -eq 0 ] || rm -rf -- "$item"
-  temp_removed=$((temp_removed+1)); temp_bytes=$((temp_bytes + kb * 1024))
+  if [ "$apply" -eq 0 ] || guarded_rm temp_kept "temp $item" rf "$item"; then
+    temp_removed=$((temp_removed+1)); temp_bytes=$((temp_bytes + kb * 1024))
+  fi
 }
 if [ -d "$scratch_root" ]; then
   for entry in "$scratch_root"/*/; do
@@ -505,7 +549,7 @@ if [ -d "$scratch_root" ]; then
         # The emptied slug parent goes too, unless something may still run there.
         if [ -z "$(ls -A -- "$entry" 2>/dev/null)" ]; then
           if in_use "$entry"; then printf 'Kept temp %s (%s)\n' "$entry" "$busy"; temp_kept=$((temp_kept+1))
-          elif [ "$apply" -eq 1 ]; then rmdir -- "$entry" 2>/dev/null || true
+          elif [ "$apply" -eq 1 ]; then guarded_rm temp_kept "temp $entry" dir "$entry" || true
           fi
         fi ;;
       qa-*) temp_item "$entry" 0 ;;
@@ -523,7 +567,7 @@ if [ -d "$loose_root" ]; then
   done
 fi
 # Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
-stale_found=0; stale_inventory=0
+stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
   {
@@ -555,13 +599,8 @@ if [ "$pr_ok" -eq 1 ]; then
     [ "$stale" -eq 1 ] || continue
     # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
     if [ "$apply" -eq 1 ]; then
-      [ "$stale_inventory" -gt 1 ] || { checked_out "$name" && stale_inventory=0 || stale_inventory=$?; }
-      if [ "$stale_inventory" -gt 1 ]; then
-        [ "$stale_inventory" -eq 3 ] || echo 'Warning: could not list worktrees; deleting no more stale branches.' >&2
-        stale_inventory=3; keep "stale $name" 'worktree inventory unavailable'; continue
-      fi
-      now_wt=''
-      [ "$stale_inventory" -ne 0 ] || now_wt=$(awk -v b="branch refs/heads/$name" '/^worktree /{ p = substr($0, 10) } $0 == b { print p; exit }' "$tmp/wt-now")
+      if ! fresh_inventory 'deleting no more stale branches'; then keep "stale $name" 'worktree inventory unavailable'; continue; fi
+      now_wt=$(checkout_of "$name")
       if [ -n "$now_wt" ] && [ "$now_wt" != "$wt" ]; then
         if in_use "$now_wt"; then keep "stale $name" "checked out in $now_wt, $busy"
         else keep "stale $name" "checked out in $now_wt"
@@ -570,24 +609,19 @@ if [ "$pr_ok" -eq 1 ]; then
       fi
     fi
     printf 'Delete stale %s\n' "$name"
-    if [ -n "$wt" ] && [ "$apply" -eq 1 ]; then
-      git worktree remove --force -- "$wt" || echo "Warning: could not remove worktree $wt; kept." >&2
-    fi
     stale_failed=0
-    for ref in "${refs[@]}"; do
-      case "$ref" in
-        refs/heads/*)
-          if [ "$apply" -eq 1 ] && ! git branch -D -- "$name"; then
-            echo "Warning: could not delete local $name; kept." >&2
-            keep "local $name" 'delete failed'; stale_failed=1; break
-          fi ;;
-        *) batch+=("$name") ;;
-      esac
-    done
-    # The local branch comes first in refs, so a failed delete leaves the remote one out of the batch too.
+    if [ "$apply" -eq 1 ]; then
+      # A kept worktree keeps its refs too. The local branch comes first in refs, so a kept one keeps the remote one.
+      if [ -n "$wt" ] && ! guarded_worktree_remove kept "stale $name" "$wt" --force; then stale_failed=1; fi
+      for ref in "${refs[@]}"; do
+        [ "$stale_failed" -eq 0 ] || break
+        case "$ref" in
+          refs/heads/*) guarded_local_branch_delete kept "local $name" "$name" || stale_failed=1 ;;
+          *) guarded_remote_branch_delete "$name" || stale_failed=1 ;;
+        esac
+      done
+    fi
     [ "$stale_failed" -eq 1 ] || stale_deleted=$((stale_deleted+1))
-    # Push now, so no other candidate's checks sit between this inventory check and the remote delete.
-    flush_remote
   done < "$tmp/names"
 fi
 pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
@@ -660,3 +694,4 @@ REMOTE
   printf '\nFleet total (local plus %s of %s hosts reached):\n' "$t_up" "$t_hosts"
   printf 'removed worktrees=%s deleted local=%s kept=%s\n' "$t_removed" "$t_local" "$t_kept"
 fi
+exit "$inventory_failed"

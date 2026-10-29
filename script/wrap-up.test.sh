@@ -425,17 +425,24 @@ echo 'ok chrome clones in the sibling X dir are removed unless held open'
 # #394: a failed single delete warns, counts as kept and the run goes on. The git shim fails the calls whose arguments match
 # FAKE_GIT_FAIL (space separated globs) and, on the first call matching FAKE_GIT_LATE_ON (default: a worktree removal),
 # checks out FAKE_GIT_LATE in a new worktree (a worker starting after the preview). FAKE_INV_FAIL makes every worktree
-# list fail once a call matching FAKE_INV_ON has run. Everything runs in a disposable clone.
+# list fail once a call matching FAKE_INV_ON has run. FAKE_FLIP_DIR swaps in its lsof and ps (process state changing) on
+# the first call matching FAKE_FLIP_ON after one matching FAKE_FLIP_ARM. Everything runs in a disposable clone.
 export REAL_GIT="$(command -v git)"
 mkdir -p "$tmp/gitshim"
 cat > "$tmp/gitshim/git" <<'FAKE'
 #!/usr/bin/env bash
-for pat in ${FAKE_GIT_FAIL:-}; do
-  case "$*" in *$pat*) echo "fatal: simulated failure for $pat" >&2; exit 1 ;; esac
-done
 if [ -n "${FAKE_GIT_LATE:-}" ] && [ ! -e "$FAKE_GIT_LATE_PATH" ]; then
   case "$*" in ${FAKE_GIT_LATE_ON:-worktree remove*}) "$REAL_GIT" worktree add -q "$FAKE_GIT_LATE_PATH" "$FAKE_GIT_LATE" ;; esac
 fi
+if [ -n "${FAKE_FLIP_DIR:-}" ] && [ ! -e "$FAKE_FLIP_DIR/flipped" ]; then
+  case "$*" in $FAKE_FLIP_ARM) : > "$FAKE_FLIP_DIR/armed" ;; esac
+  if [ -e "$FAKE_FLIP_DIR/armed" ]; then
+    case "$*" in $FAKE_FLIP_ON) cp "$FAKE_FLIP_DIR/lsof" "$FAKE_FLIP_DIR/ps" "$FAKE_FLIP_BIN/"; : > "$FAKE_FLIP_DIR/flipped" ;; esac
+  fi
+fi
+for pat in ${FAKE_GIT_FAIL:-}; do
+  case "$*" in *$pat*) echo "fatal: simulated failure for $pat" >&2; exit 1 ;; esac
+done
 if [ -n "${FAKE_INV_FAIL:-}" ]; then
   case "$*" in ${FAKE_INV_ON:-*for-each-ref*refs/heads}) : > "$FAKE_INV_FAIL" ;; esac
   if [ -e "$FAKE_INV_FAIL" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = list ]; then echo 'fatal: simulated inventory failure' >&2; exit 1; fi
@@ -739,3 +746,85 @@ kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
 echo "review fix cases: 3 cases, $r_failed failed"
 [ "$r_failed" -eq 0 ] || exit 1
+# 8. Review fixes, round 5. A fresh disposable repo keeps the counts exact.
+git init -q --bare "$tmp/origin5"
+git clone -q "$tmp/origin5" "$tmp/frepo" 2>/dev/null
+cd "$tmp/frepo"
+git config user.email test@example.invalid; git config user.name Test
+git checkout -qb main; echo f > file; git add file; git commit -qm initial; git push -q -u origin main
+fold=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo z | git hash-object -w --stdin)" | git mktree)")
+export WRAP_UP_CLONE_ROOT="$tmp/f-none" WRAP_UP_LOOSE_ROOT="$tmp/f-none" WRAP_UP_SCRATCH_ROOT="$tmp/f-none"
+f_cases=0; f_failed=0
+fcheck() { # <what> <command...>
+  local what=$1; shift
+  f_cases=$((f_cases+1))
+  if "$@"; then echo "ok   $what"; else echo "FAIL $what"; f_failed=$((f_failed+1)); fi
+}
+fprobe() { # <dir> <lsof body> <ps body>
+  mkdir -p "$1"
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/lsof"; printf '#!/usr/bin/env bash\n%s\n' "$3" > "$1/ps"
+  chmod +x "$1/lsof" "$1/ps"
+}
+# a. P1: a stale worktree passes in_use at selection, then its probe turns busy or unknown before removal (the process
+# state flips at the first worktree inventory after the subject lookup). The worktree and both refs stay, counted as kept.
+for mode in lsof-status-stderr ps-status ps-stderr lsof-holder; do
+  case "$mode" in
+    lsof-status-stderr) busy_lsof='echo "lsof: WARNING: can not stat" >&2; exit 2'; busy_ps='echo init'; want='lsof failed' ;;
+    ps-status) busy_lsof='exit 1'; busy_ps='exit 1'; want='ps failed' ;;
+    ps-stderr) busy_lsof='exit 1'; busy_ps='echo init; echo "ps: warning" >&2'; want='ps failed' ;;
+    lsof-holder) busy_lsof='echo 4242'; busy_ps='echo init'; want='held open by a running process' ;;
+  esac
+  git worktree prune
+  [ -d "$tmp/f-stale" ] || git worktree add -q -B f-stale "$tmp/f-stale" "$fold"
+  git push -q -f origin "$fold:refs/heads/f-stale"
+  fprobe "$tmp/bin" 'exit 1' 'echo init'
+  rm -rf "$tmp/flip"; fprobe "$tmp/flip" "$busy_lsof" "$busy_ps"
+  PATH="$tmp/gitshim:$PATH" FAKE_FLIP_DIR="$tmp/flip" FAKE_FLIP_BIN="$tmp/bin" FAKE_FLIP_ARM='log --reverse*' FAKE_FLIP_ON='worktree list*' \
+    bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+  stale_wt_kept() {
+    test -e "$tmp/flip/flipped" && test -d "$tmp/f-stale" && git show-ref --verify --quiet refs/heads/f-stale \
+      && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-stale \
+      && has "Kept stale f-stale ($want)" && has 'stale deleted=0'
+  }
+  fcheck "$mode turning busy after selection keeps the stale worktree and its refs" stale_wt_kept
+done
+fprobe "$tmp/bin" 'exit 1' 'echo init'
+git worktree remove --force "$tmp/f-stale" 2>/dev/null || true; git branch -D f-stale >/dev/null 2>&1 || true
+git push -q origin --delete f-stale 2>/dev/null || true
+# b. P2: a remote-only merged branch checked out during its own remote eligibility lookup keeps its remote ref.
+git push -q origin "main:refs/heads/f-late"
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_LATE=f-late FAKE_GIT_LATE_PATH="$tmp/f-late" FAKE_GIT_LATE_ON='merge-base --is-ancestor refs/remotes/origin/f-late*' \
+  bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || true
+remote_late_kept() {
+  test -d "$tmp/f-late" && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-late \
+    && has "Kept remote f-late (checked out in $real/f-late" && has 'deleted remote=0 '
+}
+fcheck 'a remote branch checked out during its eligibility lookup is kept' remote_late_kept
+git worktree remove --force "$tmp/f-late" 2>/dev/null || true; git branch -D f-late >/dev/null 2>&1 || true; git push -q origin --delete f-late 2>/dev/null || true
+# c. P2: the same during a failing batch push; the one by one fallback re-reads the inventory before each retry.
+git push -q origin "main:refs/heads/f-retry" "main:refs/heads/f-stuck"
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL='push*f-stuck' FAKE_GIT_LATE=f-retry FAKE_GIT_LATE_PATH="$tmp/f-retry" FAKE_GIT_LATE_ON='push origin --delete*' \
+  bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || true
+retry_kept() {
+  test -d "$tmp/f-retry" && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-retry \
+    && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-stuck \
+    && has "Kept remote f-retry (checked out in $real/f-retry" && has 'Kept remote f-stuck (delete failed)' && has 'deleted remote=0 '
+}
+fcheck 'a remote branch checked out during a failed batch push is kept by the fallback retry' retry_kept
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+# 9. Lint: every destructive command in wrap-up.sh sits inside a guarded_* function; only the mktemp EXIT trap is exempt.
+lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"' EXIT" '
+  /^guarded_[a-z_]*\(\) *\{/ { inside = 1 }
+  inside { if ($0 ~ /^\}/) inside = 0; next }
+  /^[[:space:]]*#/ || $0 == allow { next }
+  /worktree remove|branch +(-[A-Za-z]*[dD]|--delete)|push .*(--delete| :)|(^|[^[:alnum:]_.-])(rm|rmdir|unlink)( |$)|find .*-delete|update-ref +-d/ { print NR ": " $0 }
+' "$here/wrap-up.sh")
+lint_clean() {
+  [ -z "$lint_hits" ] || { printf 'unguarded destructive command at wrap-up.sh:%s\n' "$lint_hits"; return 1; }
+  for g in guarded_worktree_remove guarded_local_branch_delete guarded_remote_branch_delete guarded_rm; do
+    grep -q "^$g() {" "$here/wrap-up.sh" || { echo "missing $g"; return 1; }
+  done
+}
+fcheck 'every destructive command in wrap-up.sh runs through a guarded function' lint_clean
+echo "round 5 review fix cases: $f_cases cases, $f_failed failed"
+[ "$f_failed" -eq 0 ] || exit 1
