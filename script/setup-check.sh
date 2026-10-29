@@ -2,6 +2,13 @@
 # Read-only readiness checks. Never install tools or download browser binaries.
 set -uo pipefail
 
+DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+export DOTFILES
+case "${1:-}" in
+  --agent-settings-only) exec python3 -B "$DOTFILES/script/agent-settings-check.py" ;;
+  '') ;;
+  *) echo 'Usage: setup-check.sh [--agent-settings-only]' >&2; exit 2 ;;
+esac
 missing=0
 report() {
   local label=$1
@@ -107,4 +114,5 @@ report 'agent sign-in file' test -f "$cursor_auth"
 printf 'INFO agy sign-in file: system keyring (file presence unavailable; owner checks sign-in)\n'
 report 'bun' command -v bun
 report 'playwright browsers' playwright_browsers
+python3 -B "$DOTFILES/script/agent-settings-check.py" || missing=1
 exit "$missing"
