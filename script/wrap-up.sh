@@ -281,15 +281,21 @@ while IFS= read -r -d '' field; do
 done < "$tmp/worktrees"
 [ "$apply" -eq 0 ] || git worktree prune
 # True when any worktree has the branch checked out right now (a worker may have started since the listing above).
+# Returns 2 when the inventory itself fails: the caller (an if condition runs with errexit off) must not read that as "no".
 checked_out() {
-  git worktree list --porcelain > "$tmp/wt-now"
+  git worktree list --porcelain > "$tmp/wt-now" || return 2
   grep -Fxq -- "branch refs/heads/$1" "$tmp/wt-now"
 }
 while IFS= read -r branch; do
   if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "local $branch" 'protected or checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch"; then
-    if [ "$apply" -eq 1 ] && checked_out "$branch"; then
+    inventory=1
+    if [ "$apply" -eq 1 ]; then checked_out "$branch" && inventory=0 || inventory=$?; fi
+    if [ "$inventory" -gt 1 ]; then
+      echo "Warning: could not list worktrees; deleting nothing more in this repo." >&2
+      exit 1
+    elif [ "$inventory" -eq 0 ]; then
       echo "Warning: local $branch is checked out in a worktree now; kept." >&2
       keep "local $branch" 'checked out in a worktree'
       printf '%s\n' "$branch" >> "$tmp/kept-branches"
@@ -321,25 +327,41 @@ build_cache_dirs=${WRAP_UP_BUILD_CACHE_DIRS-.next}
 cache_removed=0; cache_kept=0; cache_bytes=0
 # True when a process command line names the path; an unreadable process list counts as running.
 named_by_process() {
-  local line
+  local line esc
+  # Also the shell escaped spelling (a\ b). After the path only an argument boundary counts, so a sibling prefix does not.
+  esc=$(printf '%s' "$1" | sed 's/[^A-Za-z0-9_.\/:=-]/\\&/g')
   ps -axo command= > "$tmp/ps" 2>/dev/null || return 0
   while IFS= read -r line; do
-    case "$line" in *"$1"|*"$1"[/\ :=]*) return 0 ;; esac
+    case "$line" in
+      *"$1"|*"$1"[/\ :=\"\',\;]*|*"$esc"|*"$esc"[/\ :=\"\',\;]*) return 0 ;;
+    esac
   done < "$tmp/ps"
   return 1
 }
 drop_build_caches() {
-  local wt cache parent name kb busy found names=()
+  local wt wt_real cache parent parent_real name kb busy found names=() valid=()
   read -r -a names <<< "$build_cache_dirs"
-  [ ${#names[@]} -gt 0 ] || return 0
+  # Plain directory names only: a path, "." or ".." could point outside the worktree.
+  for name in ${names[@]+"${names[@]}"}; do
+    case "$name" in
+      */*|.|..) echo "Warning: ignoring build cache name '$name' (must be a plain directory name)." >&2 ;;
+      *) valid+=("$name") ;;
+    esac
+  done
+  [ ${#valid[@]} -gt 0 ] || return 0
   while IFS= read -r wt; do
     [ -d "$wt" ] || continue
+    wt_real=$(cd "$wt" && pwd -P) || continue
     found=()
-    for name in "${names[@]}"; do
+    for name in "${valid[@]}"; do
       for cache in "$wt/$name" "$wt"/*/"$name"; do
         [ -d "$cache" ] && [ ! -L "$cache" ] || continue
+        # The real parent must be the worktree root or a real child of it, so no symlinked ancestor can leak out.
         parent=${cache%/*}
-        [ "$parent" = "$wt" ] || [ ! -L "$parent" ] || continue
+        parent_real=$(cd "$parent" && pwd -P) || continue
+        if [ "$parent_real" != "$wt_real" ] && [ "${parent_real%/*}" != "$wt_real" ]; then
+          echo "Warning: build cache $cache resolves outside the worktree; skipped." >&2; continue
+        fi
         found+=("$cache")
       done
     done
@@ -540,13 +562,19 @@ if [ "$pr_ok" -eq 1 ]; then
     if [ -n "$wt" ] && [ "$apply" -eq 1 ]; then
       git worktree remove --force -- "$wt" || echo "Warning: could not remove worktree $wt; kept." >&2
     fi
+    stale_failed=0
     for ref in "${refs[@]}"; do
       case "$ref" in
-        refs/heads/*) [ "$apply" -eq 0 ] || git branch -D -- "$name" || echo "Warning: could not delete local $name; kept." >&2 ;;
+        refs/heads/*)
+          if [ "$apply" -eq 1 ] && ! git branch -D -- "$name"; then
+            echo "Warning: could not delete local $name; kept." >&2
+            keep "local $name" 'delete failed'; stale_failed=1; break
+          fi ;;
         *) batch+=("$name") ;;
       esac
     done
-    stale_deleted=$((stale_deleted+1))
+    # The local branch comes first in refs, so a failed delete leaves the remote one out of the batch too.
+    [ "$stale_failed" -eq 1 ] || stale_deleted=$((stale_deleted+1))
   done < "$tmp/names"
   flush_remote
 fi

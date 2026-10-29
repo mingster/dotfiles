@@ -435,6 +435,10 @@ done
 if [ -n "${FAKE_GIT_LATE:-}" ] && [ ! -e "$FAKE_GIT_LATE_PATH" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = remove ]; then
   "$REAL_GIT" worktree add -q "$FAKE_GIT_LATE_PATH" "$FAKE_GIT_LATE"
 fi
+if [ -n "${FAKE_INV_FAIL:-}" ]; then
+  case "$*" in *for-each-ref*refs/heads) : > "$FAKE_INV_FAIL" ;; esac
+  if [ -e "$FAKE_INV_FAIL" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = list ]; then echo 'fatal: simulated inventory failure' >&2; exit 1; fi
+fi
 exec "$REAL_GIT" "$@"
 FAKE
 chmod +x "$tmp/gitshim/git"
@@ -518,4 +522,63 @@ test ! -d "$tmp/c-free/.turbo" && test -d "$tmp/c-busy/.turbo"
 echo 'ok WRAP_UP_BUILD_CACHE_DIRS picks the directory names'
 bash "$here/wrap-up.sh" --worktrees-only --dry-run | grep -q '^build caches removed=' || { echo 'no cache line under --worktrees-only'; exit 1; }
 echo 'ok --worktrees-only reports build caches'
+# Review fixes for #393/#394. Each case runs in the disposable clone above.
+mkkept() { # <dir name>: a kept worktree (unmerged branch) with an idle .next
+  git worktree add -q -b "u-$1" "$tmp/$1"
+  git -C "$tmp/$1" commit -q --allow-empty -m "u-$1"
+  mkdir -p "$tmp/$1/.next"; echo data > "$tmp/$1/.next/x"
+}
+# 1. Cache removal never leaves the worktree: no ../ names, no symlinked ancestor, no symlinked cache.
+mkkept c-esc
+mkdir -p "$tmp/outside-a/cache" "$tmp/outside-b/.next" "$tmp/outside-c" "$tmp/c-esc/web/.next"
+echo keep > "$tmp/outside-a/cache/f"; echo keep > "$tmp/outside-b/.next/f"; echo keep > "$tmp/outside-c/f"
+ln -s "$tmp/outside-b" "$tmp/c-esc/link"
+rm -rf "$tmp/c-esc/.next"; ln -s "$tmp/outside-c" "$tmp/c-esc/.next"
+WRAP_UP_BUILD_CACHE_DIRS='../outside-a/cache' bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -f "$tmp/outside-a/cache/f" || { echo 'a ../ cache name deleted a directory outside the worktree'; exit 1; }
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -f "$tmp/outside-b/.next/f" || { echo 'a symlinked ancestor let the cache removal leave the worktree'; exit 1; }
+test -f "$tmp/outside-c/f" || { echo 'a symlinked .next was followed'; exit 1; }
+test ! -d "$tmp/c-esc/web/.next" || { echo 'the real cache inside the worktree was not removed'; exit 1; }
+echo 'ok cache removal refuses ../ names, symlinked ancestors and symlinked caches, and still removes real ones'
+# 2. A command line may quote or escape the worktree path.
+for n in q-dq q-sq q-esc q-sib q-sib-other; do mkkept "$n"; done
+git worktree add -q -b u-qsp "$tmp/c q-sp"; git -C "$tmp/c q-sp" commit -q --allow-empty -m qsp
+mkdir -p "$tmp/c q-sp/.next" "$tmp/c q-esc2"; echo data > "$tmp/c q-sp/.next/x"
+export FAKE_PS="node --project=\"$real/q-dq\" next dev
+node '$real/q-sq' dev
+node --root $real/q-esc/ dev
+node -r \"$real/c q-sp\" dev
+node $real/q-sib dev"
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+for n in q-dq q-sq q-esc q-sib "c q-sp"; do
+  test -d "$tmp/$n/.next" || { echo "a command line naming $n (quoted or escaped) did not protect its cache"; exit 1; }
+done
+test ! -d "$tmp/q-sib-other/.next" || { echo 'a sibling path prefix was matched'; exit 1; }
+export FAKE_PS="node --project=$real/c\\ q-sp dev"
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c q-sp/.next" || { echo 'a shell escaped path did not protect the cache'; exit 1; }
+unset FAKE_PS
+echo 'ok quoted and escaped paths in a command line protect the cache; siblings are not matched'
+# 3. A failed stale local delete counts as kept.
+old=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo x | git hash-object -w --stdin)" | git mktree)")
+git branch stale-stuck "$old"; git branch stale-ok "$old"
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="branch*stale-stuck" bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -eq 0 ] || { echo "a failed stale delete changed the exit status ($status)"; exit 1; }
+git show-ref --verify --quiet refs/heads/stale-stuck
+if git show-ref --verify --quiet refs/heads/stale-ok; then echo 'the good stale branch was not deleted'; exit 1; fi
+grep -Fq 'Warning: could not delete local stale-stuck; kept.' "$tmp/stderr"
+grep -Fq 'Kept local stale-stuck (delete failed)' "$tmp/output" || { echo 'failed stale delete not counted as kept'; exit 1; }
+grep -Fq 'stale=2 stale deleted=1' "$tmp/output" || { echo 'stale deleted count wrong'; grep 'stale' "$tmp/output"; exit 1; }
+echo 'ok a failed stale local delete counts as kept, not deleted'
+# 4. A failed checkout inventory aborts deletion for the repo, never deletes blind.
+git branch inv-b; git push -q origin inv-b
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_INV_FAIL="$tmp/inv-flag" bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -ne 0 ] || { echo 'a failed worktree inventory still exited 0'; exit 1; }
+grep -Fq 'Warning: could not list worktrees' "$tmp/stderr" || { echo 'no inventory warning'; cat "$tmp/stderr"; exit 1; }
+git show-ref --verify --quiet refs/heads/inv-b || { echo 'a branch was deleted without an inventory'; exit 1; }
+git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/inv-b || { echo 'a remote branch was deleted without an inventory'; exit 1; }
+echo 'ok a failed worktree inventory aborts with a warning and a non-zero exit, deleting nothing'
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
