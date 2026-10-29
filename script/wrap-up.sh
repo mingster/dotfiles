@@ -475,7 +475,8 @@ if [ "$fleet" -eq 1 ]; then
   fleet_config=${WRAP_UP_FLEET_CONFIG:-$here/wrap-up-fleet.config.json}
   ssh_cmd=${WRAP_UP_FLEET_SSH:-ssh}
   t_hosts=0; t_up=0; t_removed=$removed; t_local=$local_deleted; t_kept=$kept
-  remote_script=$(cat <<'REMOTE'
+  # read, not $(cat <<...): bash 3.2 misparses the case pattern's ')' inside a command substitution.
+  IFS= read -r -d '' remote_script <<'REMOTE' || true
 d() { printf '%s' "$1" | base64 -d; }
 repo=$(d "$1") flags=$(d "$2") tag=$(d "$3")
 case "$repo" in '~'|'~/'*) repo="$HOME${repo#\~}" ;; esac
@@ -488,7 +489,6 @@ status=0
 bash "$root/script/wrap-up.sh" --worktrees-only $flags --repo "$repo" 2>&1 || status=$?
 printf '\n%s\n' "@@end-$tag-$status@@"
 REMOTE
-)
   b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
   if [ ! -f "$fleet_config" ] || ! jq -e '.hosts | type == "array"' "$fleet_config" >/dev/null 2>&1; then
     echo "Warning: fleet config $fleet_config missing or invalid; no fleet host cleaned." >&2
