@@ -52,6 +52,7 @@ orca=${ORCA_CLI_COMMAND:-orca}
 # worker-list is newest first; only the newest WRAP_UP_WORKER_PAGES pages of 100 are read (older dispatches never match,
 # so their paths count as unknown owner and stay). Handles belong to the host that issued them, so each host is handled alone.
 term_closed=0; term_kept=0
+: > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
 close_terminal() {
   if command -v timeout >/dev/null 2>&1; then timeout 30 "$orca" terminal close "$@" >/dev/null 2>&1
@@ -98,6 +99,7 @@ close_finished_terminals() {
   while IFS=$'\t' read -r handle reason action; do
     if [ "$action" = keep ]; then terminal_kept "$handle" "$label" "$reason"; continue; fi
     printf 'Close terminal %s (%s, %s)\n' "$handle" "$label" "$reason"
+    [ -n "$env" ] || printf '%s\n' "$handle" >> "$tmp/closing"
     if [ "$apply" -eq 1 ]; then
       close_terminal ${eargs[@]+"${eargs[@]}"} --terminal "$handle" || echo "Warning: closing $handle on $label failed." >&2
     fi
@@ -126,22 +128,30 @@ if command -v "$orca" >/dev/null 2>&1; then
         echo '*' >> "$tmp/active"; break
       fi
       if ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/workers" >/dev/null; then
+        echo 'Warning: unexpected worker-list page shape; retaining all worktrees.' >&2
         echo '*' >> "$tmp/active"; break
       fi
       cat "$tmp/workers" >> "$tmp/worker-pages"
-      while IFS= read -r dispatch; do
+      while IFS=$'\t' read -r dispatch status; do
+        [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
           jq -r 'select(.result.dispatch.status as $s | ["completed","failed","cancelled","released"] | index($s) | not) | .result | (.terminal.cwd // .terminal.worktreePath // empty), ((.worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
+        elif [ "$status" = pending ]; then
+          # Never started: no worker and no worktree, so worker-show has nothing to return.
+          echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
         else
+          echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2
           echo '*' >> "$tmp/active"
         fi
-      done < <(jq -r '.result.workers[]? | select(.dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s) | not) | .dispatchId // empty' "$tmp/workers")
+      done < <(jq -r '.result.workers[]? | select(.dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s) | not) | [.dispatchId // empty, .dispatchStatus // ""] | @tsv' "$tmp/workers")
       cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/workers")
       [ -n "$cursor" ] || break
     done
     # Discard terminals positively owned only by settled dispatches. Unknown owners stay safe.
     jq -s '[.[].result.workers[]] | group_by(.agentTerminalHandle) | map(select(all(.[]; .dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s))) | .[0].agentTerminalHandle) | map(select(. != null))' "$tmp/worker-pages" > "$tmp/ended-handles"
-    jq -r --slurpfile ended "$tmp/ended-handles" '.result.terminals[] | select(.handle as $h | $ended[0] | index($h) | not) | .cwd // .worktreePath // empty' "$tmp/terminals" >> "$tmp/active"
+    # A preview leaves the terminals it plans to close open; apply has closed them, so count them as gone in both.
+    jq -R . "$tmp/closing" | jq -s . > "$tmp/closing-handles"
+    jq -r --slurpfile ended "$tmp/ended-handles" --slurpfile closing "$tmp/closing-handles" '.result.terminals[] | select(.handle as $h | ($ended[0] | index($h) | not) and ($closing[0] | index($h) | not)) | .cwd // .worktreePath // empty' "$tmp/terminals" >> "$tmp/active"
   else
     echo 'Warning: Orca terminal inventory incomplete; retaining all worktrees.' >&2
     echo '*' >> "$tmp/active"

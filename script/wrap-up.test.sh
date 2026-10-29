@@ -275,3 +275,57 @@ grep -Fq 'Kept terminal t-none (local, unknown owner, still running)' "$tmp/outp
 grep -q 'terminals closed=2 kept=6' "$tmp/output"
 grep -q -- '--limit 100' "$fake/list.log"
 echo 'ok released dispatch without a handle: terminals linked by path; panes close; live, agent, lead and unknown paths kept'
+# #386: a dry run left every worktree with a leftover terminal on a released dispatch as "active or unknown", because
+# the terminal it plans to close was still open when the worktree check ran. Apply closes it first, so the preview must agree.
+for n in rel-shell rel-none live-term unk-term; do git worktree add -q --detach "$tmp/$n" main; done
+git worktree add -q --detach "$tmp/live-disp" main
+rm -rf "$fake"; mkdir -p "$fake"
+echo "[{\"handle\":\"t-own\",\"title\":\"x\",\"worktreePath\":\"$tmp/own\",\"connected\":true,\"writable\":true,\"agentIdentity\":null},{\"handle\":\"t-rel\",\"title\":\"~/rel\",\"worktreePath\":\"$tmp/rel-shell\",\"connected\":true,\"writable\":true,\"agentIdentity\":null},{\"handle\":\"t-live\",\"title\":\"~/l\",\"worktreePath\":\"$tmp/live-term\",\"connected\":true,\"writable\":true,\"agentIdentity\":\"claude\"},{\"handle\":\"t-unk\",\"title\":\"~/u\",\"worktreePath\":\"$tmp/unk-term\",\"connected\":true,\"writable\":true,\"agentIdentity\":null}]" > "$fake/terminals"
+rw2() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s","dispatchStatus":"%s","projection":{"workspace":{"id":"repo-1::%s/%s"}}}' "$1" "$2" "$tmp" "$1"; }
+echo "[$(rw2 rel-shell released),$(rw2 rel-none released),$(rw2 live-term released),$(rw2 live-disp dispatched)]" > "$fake/workers1"
+echo '[]' > "$fake/workers2"; echo '[]' > "$fake/workers3"
+cat > "$tmp/bin/orca-real" <<'FAKE'
+#!/usr/bin/env bash
+args=("$@"); cursor=''
+for i in "${!args[@]}"; do [ "${args[$i]}" = --cursor ] && cursor=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/terminals")" ;;
+  *'terminal close'*) ;;
+  *worker-show*) case "$*" in *d-pend*|*d-bad*) exit 1 ;; *d-live-disp*) printf '{"ok":true,"result":{"dispatch":{"status":"dispatched"},"terminal":{"cwd":"%s"}}}\n' "$FAKE_LIVE_CWD" ;; *) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;; esac ;;
+  *worker-list*)
+    case "$cursor" in '') page=1; more=false ;; esac
+    [ ! -e "$FAKE_DIR/shape" ] || { cat "$FAKE_DIR/shape"; exit 0; }
+    printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false,"nextCursor":null}}}\n' "$(cat "$FAKE_DIR/workers1")" ;;
+esac
+FAKE
+real=$(cd "$tmp" && pwd -P)
+export FAKE_LIVE_CWD="$tmp/live-disp"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+grep -Fq "Remove worktree $real/rel-shell" "$tmp/output" || { echo 'released dispatch with a closable leftover terminal still kept in preview'; exit 1; }
+grep -Fq "Remove worktree $real/rel-none" "$tmp/output" || { echo 'released dispatch with no terminal kept'; exit 1; }
+grep -Fq "Kept worktree $real/live-term (active or unknown Orca terminal)" "$tmp/output"
+grep -Fq "Kept worktree $real/unk-term (active or unknown Orca terminal)" "$tmp/output"
+grep -Fq "Kept worktree $real/live-disp (active or unknown Orca terminal)" "$tmp/output"
+echo 'ok preview frees a worktree whose only terminal is a finished one; agent, unknown owner and live dispatch kept'
+# A pending dispatch has no worker and no worktree, so a failed worker-show on it must not keep every worktree.
+rw3() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s","dispatchStatus":"%s","projection":{"workspace":null}}' "$1" "$2"; }
+echo "[$(rw2 rel-shell released),$(rw2 rel-none released),$(rw2 live-term released),$(rw2 live-disp dispatched),$(rw3 pend-1 pending)]" > "$fake/workers1"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr"
+grep -Fq "Warning: worker-show failed for pending dispatch d-pend-1; skipped." "$tmp/stderr"
+grep -Fq "Remove worktree $real/rel-none" "$tmp/output" || { echo 'pending dispatch with failed worker-show kept every worktree'; exit 1; }
+grep -Fq "Kept worktree $real/live-disp (active or unknown Orca terminal)" "$tmp/output"
+echo 'ok pending dispatch with failed worker-show is skipped with a warning'
+# Any other worker-show failure still keeps everything, now with a warning.
+echo "[$(rw2 rel-none released),$(rw3 bad-1 dispatched)]" > "$fake/workers1"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr"
+grep -Fq "Warning: worker-show failed for d-bad-1; retaining all worktrees." "$tmp/stderr"
+if grep -Fq "Remove worktree $real/rel-none" "$tmp/output"; then echo 'failed worker-show on a dispatched dispatch freed a worktree'; exit 1; fi
+echo 'ok other worker-show failures keep all worktrees with a warning'
+# A worker-list page of the wrong shape keeps everything and says so.
+echo '{"ok":true,"result":{"workers":"x"}}' > "$fake/shape"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr"
+grep -Fq "Warning: unexpected worker-list page shape; retaining all worktrees." "$tmp/stderr"
+if grep -Fq "Remove worktree $real/rel-none" "$tmp/output"; then echo 'bad page shape freed a worktree'; exit 1; fi
+rm -f "$fake/shape"
+echo 'ok malformed worker-list page keeps all worktrees with a warning'
