@@ -15,7 +15,13 @@ cat > "$ORCA_CLI_COMMAND" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >> "$CURSOR_TEST_LOG"
 case "$*" in
-  'worktree create '*) [ -z "${CURSOR_FAIL_CREATE:-}" ] || exit 17; printf '%s\n' '{"result":{"worktree":{"path":"/tmp/example.repo/work tree.v1"}}}' ;;
+  'worktree create '*)
+    if [ -n "${CURSOR_FAIL_CREATE:-}" ]; then
+      echo '{"ok":false,"error":"fixture create failed"}'
+      echo 'fixture create stderr' >&2
+      exit 17
+    fi
+    printf '%s\n' '{"result":{"worktree":{"path":"/tmp/example.repo/work tree.v1"}}}' ;;
   'orchestration worker-start '*)
     python3 - <<'PY'
 import json, os
@@ -37,6 +43,32 @@ grep -q 'worktree create.*--base-branch origin/main' "$CURSOR_TEST_LOG"
 grep -q 'worker-start.*--agent cursor.*--model composer-2.5' "$CURSOR_TEST_LOG"
 grep -q -- '--worktree path:/tmp/example.repo/work tree.v1' "$CURSOR_TEST_LOG"
 echo 'PASS: new worktree is trusted at the encoded path before dispatch'
+for selector in id:abc path:/tmp/example.repo; do
+  : > "$CURSOR_TEST_LOG"
+  launch --name fixture --repo "$selector" --base-branch origin/main > "$tmp/result"
+  grep -Fq -- "--repo $selector --base-branch" "$CURSOR_TEST_LOG"
+  echo "PASS: local repo selector $selector is passed through unchanged"
+done
+: > "$CURSOR_TEST_LOG"
+launch --name fixture --repo id:abc > "$tmp/result"
+grep -Fq -- '--repo id:abc --setup' "$CURSOR_TEST_LOG"
+echo 'PASS: local id selector uses the Orca default base without local git access'
+cat > "$tmp/bin/git" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+test "$#" -eq 6
+test "$1" = -C && test "$2" = '/tmp/example repo'
+test "$3 $4 $5 $6" = 'symbolic-ref --quiet --short refs/remotes/origin/HEAD'
+echo origin/fixture-main
+STUB
+chmod +x "$tmp/bin/git"
+export PATH="$tmp/bin:$PATH"
+for selector in '/tmp/example repo' 'path:/tmp/example repo'; do
+  : > "$CURSOR_TEST_LOG"
+  launch --name fixture --repo "$selector" > "$tmp/result"
+  grep -Fq -- '--repo path:/tmp/example repo --base-branch origin/fixture-main' "$CURSOR_TEST_LOG"
+  echo 'PASS: local path resolves its default base using the unprefixed directory'
+done
 : > "$CURSOR_TEST_LOG"
 launch --worktree-path '/tmp/example.repo/work tree.v1' > "$tmp/result"
 ! grep -q 'worktree create' "$CURSOR_TEST_LOG"
@@ -44,9 +76,15 @@ echo 'PASS: existing worktree can be trusted and dispatched again'
 : > "$CURSOR_TEST_LOG"
 if CURSOR_FAIL_CREATE=1 launch --name fixture --repo /tmp/example.repo --base-branch origin/main > "$tmp/result" 2>&1; then
   echo 'FAIL: failed local creation was accepted' >&2; exit 1
+else
+  test "$?" -eq 17
 fi
-! grep -q 'worker-start' "$CURSOR_TEST_LOG"
-echo 'PASS: failed local worktree creation stops dispatch'
+grep -q 'fixture create failed' "$tmp/result"
+grep -q 'fixture create stderr' "$tmp/result"
+if grep -q 'worker-start' "$CURSOR_TEST_LOG"; then
+  echo 'FAIL: failed local worktree creation dispatched a worker' >&2; exit 1
+fi
+echo 'PASS: failed local worktree creation prints diagnostics and preserves exit status before dispatch'
 # The remote command must write into the execution host HOME before dispatch.
 export CURSOR_REMOTE_HOME="$tmp/remote-home"
 mkdir -p "$CURSOR_REMOTE_HOME"
@@ -66,8 +104,10 @@ def reply(result):
     print(json.dumps({'ok': True, 'result': result}))
 if args[:2] == ['worktree', 'create']:
     assert value('--environment') == 'fixture-environment'
-    assert value('--repo') == 'path:/srv/example.repo'
+    assert value('--repo') == os.environ.get('CURSOR_EXPECT_REPO', 'path:/srv/example.repo')
     if os.environ.get('CURSOR_FAIL_CREATE'):
+        print('{"ok":false,"error":"fixture create failed"}')
+        print('fixture create stderr', file=sys.stderr)
         sys.exit(17)
     reply({'worktree': {'path': '/srv/example.repo/work tree.v1'}})
 elif args[:2] == ['terminal', 'create']:
@@ -121,6 +161,11 @@ assert '--base-branch' in calls[0]
 assert '/srv/example.repo/work tree.v1' in calls[1][calls[1].index('--command') + 1]
 PYTEST
 echo 'PASS: remote worktree is trusted in the remote HOME before dispatch'
+for selector in id:abc path:/srv/example.repo; do
+  : > "$CURSOR_TEST_LOG"
+  CURSOR_EXPECT_REPO="$selector" launch --on fixture-environment --name fixture --repo "$selector" > "$tmp/result"
+  echo "PASS: remote repo selector $selector is passed through unchanged"
+done
 : > "$CURSOR_TEST_LOG"
 launch --on fixture-environment --name fixture --repo /srv/example.repo > "$tmp/result"
 python3 - "$CURSOR_TEST_LOG" <<'PYTEST'
@@ -136,10 +181,15 @@ echo 'PASS: existing remote worktree is trusted before dispatch'
 : > "$CURSOR_TEST_LOG"
 if CURSOR_FAIL_CREATE=1 launch --on fixture-environment --name fixture --repo /srv/example.repo --base-branch origin/main > "$tmp/result" 2>&1; then
   echo 'FAIL: failed remote creation was accepted' >&2; exit 1
+else
+  test "$?" -eq 17
 fi
-! grep -q 'terminal' "$CURSOR_TEST_LOG"
-! grep -q 'worker-start' "$CURSOR_TEST_LOG"
-echo 'PASS: failed remote worktree creation stops trust and dispatch'
+grep -q 'fixture create failed' "$tmp/result"
+grep -q 'fixture create stderr' "$tmp/result"
+if grep -Eq 'terminal|worker-start' "$CURSOR_TEST_LOG"; then
+  echo 'FAIL: failed remote worktree creation continued to trust or dispatch' >&2; exit 1
+fi
+echo 'PASS: failed remote worktree creation prints diagnostics and preserves exit status before trust or dispatch'
 : > "$CURSOR_TEST_LOG"
 if CURSOR_FAIL_TRUST=1 launch --on fixture-environment --worktree-path '/srv/example.repo/work tree.v1' > "$tmp/result" 2>&1; then
   echo 'FAIL: failed remote trust was accepted' >&2; exit 1
@@ -171,4 +221,4 @@ fi
 grep -q 'spec file is empty' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: blank spec is refused before any Orca call'
-echo 'PASS: 12 tests'
+echo 'PASS: 19 tests'
