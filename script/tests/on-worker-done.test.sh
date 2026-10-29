@@ -55,10 +55,35 @@ check "bad pr exits nonzero" "$([ $? -ne 0 ]; echo $?)"
 "$here/on-worker-done.sh" --dry-run --repo o/n --pr 1 --head "$head" --author-family gpt --worktree /wt --run r >/dev/null 2>&1
 check "bad family exits nonzero" "$([ $? -ne 0 ]; echo $?)"
 
+# Shared family across providers: Antigravity Claude vs Claude reviewer
+rc=0
+GATE_OUT="--agent claude --model claude-3-5-sonnet" \
+  "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-provider antigravity --author-model claude-3-5-sonnet --worktree /wt --run run_1 >/dev/null 2>"$tmp/err" || rc=$?
+check "shared claude family across antigravity and claude rejected" "$([ "$rc" -ne 0 ] && grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+
+# Shared family across providers: Antigravity GPT vs Codex reviewer
+rc=0
+GATE_OUT="--agent codex --model gpt-6.1-sol" \
+  "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-provider antigravity --author-model gpt-4o --worktree /wt --run run_1 >/dev/null 2>"$tmp/err" || rc=$?
+check "shared gpt family across antigravity and codex rejected" "$([ "$rc" -ne 0 ] && grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+
+# Unknown author model blocks independence acceptance
+rc=0
+GATE_OUT="--agent codex --model gpt-6.1-sol" \
+  "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-provider antigravity --author-model unknown-model-x --worktree /wt --run run_1 >/dev/null 2>"$tmp/err" || rc=$?
+check "unknown author model blocks independence acceptance" "$([ "$rc" -ne 0 ] && grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+
+# Unknown verifier model blocks independence acceptance
+rc=0
+GATE_OUT="--agent codex --model mystery-model-v9" \
+  "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-provider antigravity --author-model gemini-3.8-flash --worktree /wt --run run_1 >/dev/null 2>"$tmp/err" || rc=$?
+check "unknown verifier model blocks independence acceptance" "$([ "$rc" -ne 0 ] && grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+
 run >/dev/null
 brief=$(ls -t "${TMPDIR:-/tmp}"/reviewer-brief.* | head -1)
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
 check "brief has the verdict line template with the head" "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
+check "brief records author and verifier families separately from provider" "$(grep -q 'Author: provider=' "$brief" && grep -q 'family=' "$brief" && grep -q 'Verifier: provider=' "$brief"; echo $?)"
 rm -f "$brief"
 
 echo "$pass passed, $fail failed"
