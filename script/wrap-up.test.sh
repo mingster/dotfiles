@@ -191,3 +191,87 @@ test -d "$tmp/detached-dirty"
 echo 'ok dirty detached worktree kept'
 test -d "$tmp/detached-ahead"
 echo 'ok detached worktree with unmerged commits kept'
+# Finished terminals close on the local host and every listed environment. The stub never touches a real terminal.
+fake="$tmp/fake-orca"; mkdir -p "$fake"
+cat > "$tmp/bin/orca-envs" <<'FAKE'
+#!/usr/bin/env bash
+env=local; args=("$@")
+for i in "${!args[@]}"; do [ "${args[$i]}" = --environment ] && env=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) printf '{"ok":true,"result":{"environments":[{"id":"env-a","name":"a"},{"id":"env-b","name":"b"}]}}\n' ;;
+  *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/$env.terminals")" ;;
+  *'terminal close'*)
+    for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && h=${args[$((i+1))]}; done
+    echo "$env $h" >> "$FAKE_DIR/closed.log"
+    jq -c --arg h "$h" 'map(select(.handle != $h))' "$FAKE_DIR/$env.terminals" > "$FAKE_DIR/$env.tmp" && mv "$FAKE_DIR/$env.tmp" "$FAKE_DIR/$env.terminals" ;;
+  *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
+  *worker-list*) printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false}}}\n' "$(cat "$FAKE_DIR/$env.workers")" ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-envs"
+export FAKE_DIR="$fake" ORCA_CLI_COMMAND="$tmp/bin/orca-envs" ORCA_TERMINAL_HANDLE=t-own
+t() { printf '{"handle":"%s","worktreePath":"/nowhere/%s","connected":true,"writable":%s}' "$1" "$1" "${2:-true}"; }
+w() { printf '{"agentTerminalHandle":"%s","dispatchId":"d-%s","dispatchStatus":"%s"}' "$1" "$1" "$2"; }
+echo "[$(t t-own),$(t t-done),$(t t-live),$(t t-unknown),$(t t-exited false)]" > "$fake/local.terminals"
+echo "[$(w t-own completed),$(w t-done completed),$(w t-live dispatched)]" > "$fake/local.workers"
+echo "[$(t e1-done),$(t e1-unknown),$(t e1-exited false)]" > "$fake/env-a.terminals"
+echo "[$(w e1-done failed)]" > "$fake/env-a.workers"
+echo "[$(t e2-gone),$(t e2-live)]" > "$fake/env-b.terminals"
+echo "[$(w e2-gone released),$(w e2-live dispatched)]" > "$fake/env-b.workers"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+test ! -e "$fake/closed.log"
+for want in 'Close terminal t-done (local, settled dispatch)' 'Close terminal t-exited (local, exited)' \
+  'Close terminal e1-done (env-a, settled dispatch)' 'Close terminal e1-exited (env-a, exited)' 'Close terminal e2-gone (env-b, settled dispatch)'; do
+  grep -Fxq "$want" "$tmp/output" || { echo "missing: $want"; exit 1; }
+done
+grep -q 'terminals closed=5 kept=' "$tmp/output"
+echo 'ok dry run lists finished terminals on two environments and closes nothing'
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+sort "$fake/closed.log" > "$tmp/closed"
+printf '%s\n' 'env-a e1-done' 'env-a e1-exited' 'env-b e2-gone' 'local t-done' 'local t-exited' | cmp - "$tmp/closed"
+for kept in t-own t-live t-unknown e1-unknown e2-live; do
+  grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
+done
+grep -q 'terminals closed=5 kept=5' "$tmp/output"
+echo 'ok apply closes settled and exited terminals; own, live and unknown-running kept'
+# Real orca output differs from the cases above: a released dispatch has no agentTerminalHandle, its leftover terminals
+# still report connected and writable with no agent identity, and a pane from worker-pane.sh is just such a terminal.
+# So terminals are linked to dispatches by worktree path. worker-list is newest first and read for 2 pages only.
+rm -rf "$fake"; mkdir -p "$fake"
+cat > "$tmp/bin/orca-real" <<'FAKE'
+#!/usr/bin/env bash
+args=("$@"); cursor=''
+for i in "${!args[@]}"; do [ "${args[$i]}" = --cursor ] && cursor=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/terminals")" ;;
+  *'terminal close'*)
+    for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && echo "${args[$((i+1))]}" >> "$FAKE_DIR/closed.log"; done ;;
+  *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
+  *worker-list*)
+    echo "$*" >> "$FAKE_DIR/list.log"
+    case "$cursor" in
+      '') page=1; more=true; next=c2 ;; c2) page=2; more=true; next=c3 ;; *) page=3; more=false; next=null ;;
+    esac
+    printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":%s,"nextCursor":"%s"}}}\n' "$(cat "$FAKE_DIR/workers$page")" "$more" "$next" ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-real"
+export ORCA_CLI_COMMAND="$tmp/bin/orca-real"
+rt() { printf '{"handle":"%s","title":"%s","worktreePath":"/nowhere/%s","connected":true,"writable":true,"agentIdentity":%s}' "$1" "$3" "$2" "${4:-null}"; }
+rw() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s-%s","dispatchStatus":"%s","projection":{"workspace":{"id":"repo-1::/nowhere/%s"}}}' "$1" "$3" "$2" "$1"; }
+echo "[$(rt t-own p-own x),$(rt t-shell p-rel '~/p-rel'),$(rt t-pane p-rel 'worker-pane.sh d-p-rel-a'),$(rt t-agent p-rel claude '"claude"'),$(rt t-mixed p-mix '~/p-mix'),$(rt t-none p-none '~/p-none'),$(rt t-lead lead-x '~/lead-x'),$(rt t-late p-late '~/p-late')]" > "$fake/terminals"
+echo "[$(rw p-own released a),$(rw p-rel released a),$(rw p-rel failed b),$(rw p-mix released a)]" > "$fake/workers1"
+echo "[$(rw p-mix dispatched b),$(rw lead-x completed a)]" > "$fake/workers2"
+echo "[$(rw p-late completed a)]" > "$fake/workers3"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+sort "$fake/closed.log" > "$tmp/closed"
+printf '%s\n' t-pane t-shell | cmp - "$tmp/closed"
+for kept in t-own t-agent t-mixed t-none t-lead t-late; do
+  grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
+done
+grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
+grep -Fq 'Kept terminal t-none (local, unknown owner, still running)' "$tmp/output"
+grep -q 'terminals closed=2 kept=6' "$tmp/output"
+grep -q -- '--limit 100' "$fake/list.log"
+echo 'ok released dispatch without a handle: terminals linked by path; panes close; live, agent, lead and unknown paths kept'
