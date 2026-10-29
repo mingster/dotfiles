@@ -162,6 +162,10 @@ if command -v "$orca" >/dev/null 2>&1; then
     echo 'Warning: Orca terminal inventory incomplete; retaining all worktrees.' >&2
     echo '*' >> "$tmp/active"
   fi
+elif [ "$worktrees_only" -eq 1 ]; then
+  # A fleet host with no Orca CLI cannot prove a worktree is idle, so it keeps them all.
+  echo 'Warning: Orca unavailable; retaining all worktrees.' >&2
+  echo '*' >> "$tmp/active"
 else
   echo 'Warning: Orca unavailable; skipping active dispatch check.' >&2
 fi
@@ -475,7 +479,7 @@ if [ "$fleet" -eq 1 ]; then
 d() { printf '%s' "$1" | base64 -d; }
 repo=$(d "$1") flags=$(d "$2") tag=$(d "$3")
 case "$repo" in '~'|'~/'*) repo="$HOME${repo#\~}" ;; esac
-export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+export PATH="$PATH:$HOME/.local/bin:$HOME/.orca/cli/bin:/opt/homebrew/bin:/usr/local/bin"
 root=${DOTFILES_DIR:-$HOME/dotfiles}
 [ ! -d "$HOME/dotfiles-main" ] || root="$HOME/dotfiles-main"
 printf '%s\n' "@@begin-$tag@@"

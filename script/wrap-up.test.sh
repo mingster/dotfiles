@@ -379,6 +379,25 @@ grep -Fq 'removed worktrees=1 deleted local=1 deleted remote=0' "$tmp/output"
 echo 'ok fleet host never deletes remote branches'
 grep -Fq 'Fleet total' "$tmp/output"
 if bash "$here/wrap-up.sh" --fleet --worktrees-only >/dev/null 2>&1; then echo '--fleet and --worktrees-only accepted together'; exit 1; fi
+# #389 review: a fleet host without a usable Orca CLI must keep every worktree (fail safe), and orca in ~/.orca/cli/bin
+# must be found by the remote command.
+git -C "$tmp/rrepo" branch rdone2; git -C "$tmp/rrepo" push -q origin rdone2
+git -C "$tmp/rrepo" worktree add -q "$tmp/rwt2" rdone2
+(cd "$tmp/rrepo" && ORCA_CLI_COMMAND="$tmp/does-not-exist/orca" bash "$here/wrap-up.sh" --worktrees-only --apply --repo "$tmp/rrepo") > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/rwt2"
+grep -Fq 'Orca unavailable' "$tmp/stderr"
+grep -Fq 'removed worktrees=0' "$tmp/output"
+echo 'ok --worktrees-only without orca keeps every worktree'
+mkdir -p "$HOME/.orca/cli/bin"; cp "$tmp/bin/orca" "$HOME/.orca/cli/bin/orca"
+mv "$tmp/bin/orca" "$tmp/bin/orca.off"
+unset ORCA_CLI_COMMAND
+printf '{"hosts":[{"host":"alpha","repo_dir":"%s"}]}\n' "$tmp/rrepo" > "$tmp/fleet.json"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+if grep -Fq 'Orca unavailable' "$tmp/stderr" "$tmp/output"; then echo 'remote PATH misses ~/.orca/cli/bin'; exit 1; fi
+test -d "$tmp/rwt2"
+rm -rf "$HOME/.orca"; mv "$tmp/bin/orca.off" "$tmp/bin/orca"
+export ORCA_CLI_COMMAND="$tmp/bin/orca"
+echo 'ok remote PATH includes ~/.orca/cli/bin'
 rm "$tmp/fleet.json"
 bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
 grep -Fq 'fleet config' "$tmp/stderr"
