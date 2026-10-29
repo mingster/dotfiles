@@ -90,6 +90,21 @@ report 'Codex agent hooks' agent_hooks "$HOME/.codex/hooks.json"
 report 'Cursor agent hooks' agent_hooks "$HOME/.cursor/hooks.json"
 report 'gh auth' gh auth status
 report 'orca CLI' command -v orca
+for cli in claude codex agent agy; do
+  report "$cli CLI" command -v "$cli"
+done
+# Presence only: do not open credentials or invoke provider login/status calls.
+# A missing file does not prove signed out (keyrings/API keys may be used).
+report 'claude sign-in file' test -f "$HOME/.claude/.credentials.json"
+report 'codex sign-in file' test -f "${CODEX_HOME:-$HOME/.codex}/auth.json"
+case "$(uname -s)" in
+  Darwin) cursor_auth="$HOME/.cursor/auth.json" ;;
+  MINGW*|MSYS*|CYGWIN*) cursor_auth="${APPDATA:-$HOME/AppData/Roaming}/Cursor/auth.json" ;;
+  *) cursor_auth="${XDG_CONFIG_HOME:-$HOME/.config}/cursor/auth.json" ;;
+esac
+report 'agent sign-in file' test -f "$cursor_auth"
+# Antigravity documents system-keyring authentication, with no sign-in file.
+printf 'INFO agy sign-in file: system keyring (file presence unavailable; owner checks sign-in)\n'
 report 'bun' command -v bun
 report 'playwright browsers' playwright_browsers
 exit "$missing"

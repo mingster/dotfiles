@@ -118,6 +118,8 @@ case "$OSTYPE" in
     ;;
 esac
 
+# Platform setup above supplies asdf/Node. Skip mode returned before any installs.
+bash "$DOTFILES_ROOT/script/install-agent-clis.sh" || exit 1
 
 # AI tooling and editor config (install app first if needed, then configure)
 bash "$DOTFILES_ROOT/script/setup-claude-code.sh"

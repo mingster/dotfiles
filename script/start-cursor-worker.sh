@@ -64,7 +64,7 @@ if not (wait.get("satisfied") is True and wait.get("status") == "exited" and wai
     sys.exit("remote workspace trust did not complete successfully")
 '
   "$orca" terminal close --environment "$environment" --terminal "$terminal" --json >/dev/null
-  exec "$orca" orchestration worker-start --run "$run" --spec "$brief" --agent cursor --model "$model" \
+  exec bash "$(dirname "$0")/start-remote-worker.sh" --run "$run" --spec "$brief" --agent cursor --model "$model" \
     --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json
 else
 # Cursor omits the leading slash, then replaces remaining slashes and dots.

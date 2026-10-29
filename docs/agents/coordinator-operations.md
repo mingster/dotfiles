@@ -1,5 +1,28 @@
 # Coordinator operations
 
+Start remote workers through `bash script/start-remote-worker.sh` with the same
+arguments as `orca orchestration worker-start`, including `--on <environment>`
+and `--agent claude|codex|cursor|antigravity`. The helper checks the required CLI
+on the execution environment's login-shell PATH in an Orca terminal before
+dispatch. A missing CLI, failed probe, or unconfirmed exit refuses dispatch and
+names the required CLI. Install missing tools on that environment with
+`script/install-agent-clis.sh`; sign-in remains an owner action. Direct Orca
+invocations bypass this dotfiles preflight. The Cursor helper below includes it.
+
+The standard bootstrap runs `script/install-agent-clis.sh` after platform setup
+supplies Node/npm. It skips installed tools, removes vendor additions to tracked
+shell rc files while preserving prior local changes, and lists outside rc files
+the installers touched. Vendor CLIs under `arch/bin` are ignored to protect
+existing Linux bin-directory symlinks. New setups already copy helper scripts.
+
+`script/setup-check.sh` reports each provider CLI and sign-in file presence
+without reading credentials. Cursor uses `.cursor/auth.json` on macOS and
+`$XDG_CONFIG_HOME/cursor/auth.json` (default `~/.config`) on Linux. Antigravity
+uses the system keyring, so its sign-in file status is unavailable; see its
+[official authentication description](https://github.com/google-antigravity/antigravity-cli#authentication).
+File presence does not establish valid sign-in, and absent files can coexist
+with keyring or API-key authentication. Owner sign-in checks remain separate.
+
 Start Cursor through `script/start-cursor-worker.sh` so the exact worktree is trusted before the worker starts.
 
 For remote Cursor, pass `--on <environment>` with a saved Orca environment and absolute repository paths on that environment. The brief file remains local to the coordinator.
