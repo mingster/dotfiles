@@ -21,6 +21,8 @@ Elon aligns the objective with Sales-Marketing and assigns architect-pm to use t
 
 Use the `orchestration` skill for task contracts, dispatch, supervision, questions, recovery and settlement. Load the installed guide with `orca skills get orchestration` and follow its conditional references. Use Orca for supervised work across every provider.
 
+Before a launch or completion, read `OPERATIONS.md` beside this skill for inbox, host accounting, Verdict, mock and review-loop contracts.
+
 Team additions to its task contract:
 
 - The assigned worker performs the slice itself; sub-dispatch requires an explicit coordinator grant and every child counts against the same host/provider cap.
@@ -45,7 +47,7 @@ Include the branch, commits, worktree path, `git diff <default branch>...HEAD --
 
 Use the `code-review` skill against the default branch and ticket, with `AGENTS.md` and the team facts checklist as standards. Apply the review by risk rule in `.claude/agents/tech-lead.md`; add `secops-finops` for auth, tenancy, entitlement, rate limits, money or payments, and any reviewers named in team facts.
 
-The reviewer verifies the ticket's listed test cases pass; that is the ticket's definition of done. Report `PASSING AUDIT` or `FAILED AUDIT` with concrete remediation. Allow at most two remediation rounds; after both fail, use the `retro` skill on the worker session and file its top finding under the project's issue budget. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
+The reviewer verifies the ticket's listed test cases pass; that is the ticket's definition of done. Use the canonical Verdict in `docs/agents/team.md`; apply its Delivery contract premise and strike rules, recording concrete remediation. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
 
 ## Step 5. Integration and completion
 

@@ -17,3 +17,5 @@ Pillars: engineering, product, sales and marketing, support, security and financ
 Roles Elon dispatches or hears from: `tech-lead`, `architect-pm`, `fullstack-dev`, `qa-sdet`, `secops-finops`, `support-csm`, `release-manager`, `sales-marketing` (`docs/agents/team.md`).
 - `/elon daily run`: read the project's `docs/agents/daily-run.md` and do the run, dispatching each step to the role that owns it.
 - `/teddy status` reports engineering only; `/teddy <request>` hands an engineering request to the Tech Lead.
+
+Before dispatch, completion handling or a wake, read `.agents/skills/crew/OPERATIONS.md`.

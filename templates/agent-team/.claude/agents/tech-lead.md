@@ -42,3 +42,5 @@ Release-manager alone runs `/deploy` and diagnoses failed gates; report release 
 ## Reporting
 Every message to the other lead, or to a worker that already sent `worker_done`, goes through `~/dotfiles/script/orca-reply.sh` (it nudges the terminal); a bare `send` or `reply` leaves an idle session asleep (one lead sat unread 30 minutes).
 One plain line per item to Elon: done, decided, running. Tag a gate that slowed work without catching anything `rule-friction`.
+
+Before dispatch, implementation or review, read `.agents/skills/crew/OPERATIONS.md` for the applicable completion and review contracts.
