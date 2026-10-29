@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Start the cross family reviewer for a coding worker_done.
-# on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|antigravity
+# on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|codex|antigravity
 #                   --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides the usage-gate.py path (tests).
 set -u
-usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA --author-family claude|cursor|antigravity --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]" >&2; exit 2; }
+usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA --author-family claude|cursor|codex|antigravity --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]" >&2; exit 2; }
 repo="" pr="" head="" fam="" wt="" run="" author_dispatch=unknown dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -23,11 +23,12 @@ done
 [[ "$pr" =~ ^[0-9]+$ ]] || usage
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || usage
 [[ "$author_dispatch" =~ ^[a-zA-Z0-9_-]+$ ]] || usage
-case "$fam" in claude|cursor|antigravity) ;; *) usage ;; esac
+case "$fam" in claude|cursor|codex|antigravity) ;; *) usage ;; esac
 
 gate=${ON_WORKER_DONE_USAGE_GATE:-$HOME/dotfiles/script/usage-gate.py}
-# usage-gate knows two families. Cursor authors run GPT models; Antigravity has no single family, so no avoid flag.
-case "$fam" in claude) avoid="--avoid-family claude" ;; cursor) avoid="--avoid-family gpt" ;; *) avoid="" ;; esac
+orca=${ORCA_CLI_COMMAND:-orca}
+# usage-gate knows two families. Cursor and Codex authors run GPT models; Antigravity has no single family, so no avoid flag.
+case "$fam" in claude) avoid="--avoid-family claude" ;; cursor|codex) avoid="--avoid-family gpt" ;; *) avoid="" ;; esac
 flags=""
 if [ -x "$gate" ] || [ -f "$gate" ]; then
   # shellcheck disable=SC2086
@@ -35,7 +36,7 @@ if [ -x "$gate" ] || [ -f "$gate" ]; then
 fi
 if [ -z "$flags" ]; then
   echo "cross-family unavailable" >&2
-  flags="--agent claude --model opus --effort high"
+  exit 1
 fi
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
@@ -48,8 +49,8 @@ Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$aut
 Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
 EOF
 
-cmd="orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree path:$wt --task-title \"reviewer - PR $pr\" $flags --json"
+cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree path:$wt --task-title \"reviewer - PR $pr\" $flags --json"
 echo "$cmd"
 [ "$dry" = 1 ] && exit 0
 # shellcheck disable=SC2086
-exec orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "path:$wt" --task-title "reviewer - PR $pr" $flags --json
+exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "path:$wt" --task-title "reviewer - PR $pr" $flags --json
