@@ -128,16 +128,22 @@ if command -v "$orca" >/dev/null 2>&1; then
         echo '*' >> "$tmp/active"; break
       fi
       if ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/workers" >/dev/null; then
+        echo 'Warning: unexpected worker-list page shape; retaining all worktrees.' >&2
         echo '*' >> "$tmp/active"; break
       fi
       cat "$tmp/workers" >> "$tmp/worker-pages"
-      while IFS= read -r dispatch; do
+      while IFS=$'\t' read -r dispatch status; do
+        [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
           jq -r 'select(.result.dispatch.status as $s | ["completed","failed","cancelled","released"] | index($s) | not) | .result | (.terminal.cwd // .terminal.worktreePath // empty), ((.worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
+        elif [ "$status" = pending ]; then
+          # Never started: no worker and no worktree, so worker-show has nothing to return.
+          echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
         else
+          echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2
           echo '*' >> "$tmp/active"
         fi
-      done < <(jq -r '.result.workers[]? | select(.dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s) | not) | .dispatchId // empty' "$tmp/workers")
+      done < <(jq -r '.result.workers[]? | select(.dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s) | not) | [.dispatchId // empty, .dispatchStatus // ""] | @tsv' "$tmp/workers")
       cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/workers")
       [ -n "$cursor" ] || break
     done
