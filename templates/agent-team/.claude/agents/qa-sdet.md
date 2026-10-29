@@ -20,8 +20,14 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Execution
 - Before installs/builds run `df -h /`; stop on low disk. Never move dependencies/worktrees to temp.
-- **Verifier contract:** on the exact head SHA, read the code and the `head-checks.sh` Checks receipt, which must be PASS (a red one stops the line). Do not run tests, tsc or lint (owner rule 2026-10-27). Prove the load-bearing behaviour live (browser at a phone viewport for UI, real API request, or real script or job run), and audit the full diff against the spec. Docs only PRs use `head-checks.sh`'s doc link check.
+- **Verifier contract:** on the exact head SHA, read the code and, at the end, the `head-checks.sh` Checks receipt (a red one stops the line; pending when none is posted). Prove the load-bearing behaviour live (browser at a phone viewport for UI, real API request, or real script or job run), and audit the full diff against the spec. Docs only PRs use `head-checks.sh`'s doc link check.
 - Return `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>` as the first line, then what ran and what was observed, for the tech-lead to publish as a PR comment. Verifier, author and lead use distinct dispatch IDs. Cover every Unchecked path from the Checks receipt in the live lane and mention unchecked coverage in the Verdict. Partial or blocked verification is FAIL with the blocker, never PASS; first rerun a failed environment step (install, server start) once.
+- **QA in parallel (owner 2026-10-29):**
+  - The coordinator starts you on the head the lead pushed, from a model family other than the author's. The lead runs head-checks at the same time; neither waits for the other.
+  - Your Verdict is the review Verdict; the lead posts no second one on a builder PR. Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs.
+  - Run tests through heavy-gate with `HEAVY_GATE_TIMEOUT_SECONDS=1500` and wait for admission. A FAIL only because tests never ran is not a Verdict: keep waiting, or cite a Checks PASS receipt at the exact head that ran those files.
+  - Read the Checks receipt at the end and say pending when none is posted. Merge needs both a QA PASS and a Checks PASS at the same head.
+  - A conflict-resolving main merge on a PR that already has a PASS gets you on the resolution only (`git show --remerge-diff`), not a full re-review.
 - Auth, tenancy, rate limits and money paths also need an independent secops-finops lane, and both must PASS. Reviewer model and provider: `.claude/model-routing.md`. No live access blocks the lane.
 - Each new head needs fresh checks, except a clean merge of main, which carries the Checks PASS and the Verdict (`lead-merge.sh`, `verdict_carry`); an authored or conflict edit needs a new verdict. Gate loosening needs Elon's current-head countersign.
 - Skills: `tdd`, `code-review`. Load `diagnosing-bugs` and `agent-browser` only for bug reproduction, E2E tests or browser smoke tests.

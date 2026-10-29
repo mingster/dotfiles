@@ -1,6 +1,6 @@
 # Spec: cut merge train time (#398)
 
-Status: Draft, waiting for owner accept. No code yet.
+Status: Accepted (owner 2026-10-29). No code yet.
 Source: issue #398. Measure before and after with the per check durations from #396.
 
 ## Problem
@@ -186,6 +186,14 @@ Proving test: new `script/tests/lead-merge-queue.test.sh` on the shared merge fi
 When slice 4 lands, the split of PRs between two leads for merging is deleted from the role files
 and team docs.
 
+## QA in parallel (owner 2026-10-29)
+- When a builder reports worker_done, the owning lead pushes at once and sends Elon the PR number and head sha.
+- Elon starts the QA reviewer on that head right away, from a model family other than the author's. The lead runs head-checks in parallel; neither waits for the other.
+- The QA Verdict is the review Verdict. On a builder PR that gets a QA Verdict, the lead posts no second Verdict; the lead pushes, runs head-checks and merges. Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs.
+- QA runs tests through heavy-gate with HEAVY_GATE_TIMEOUT_SECONDS=1500 and waits for admission. A FAIL only because tests never ran is not a Verdict: keep waiting, or cite a Checks PASS receipt at the exact head that ran those files.
+- QA reads the Checks receipt at the end and says pending when none is posted. Merge needs both a QA PASS and a Checks PASS at the same head.
+- A conflict-resolving main merge on a PR that already has a PASS gets QA on the resolution only (git show --remerge-diff), not a full re-review.
+
 ## Risks
 
 | Risk | Where | Mitigation |
@@ -214,6 +222,8 @@ The issue lists slice 1 first. That order is also defensible if most red trains 
 interactions between PRs that each passed alone, which slice 3 cannot catch. #396's data can tell.
 
 ## Open questions
+
+All resolved: A for every question (Elon decisions 2026-10-29).
 
 1. Order. A (recommended): slice 3 first, then 1, 2, 4. B: the issue's order, 1, 2, 3, 4.
 2. Confirm a direct drop. A (recommended): no confirm run; the green recheck is enough and the PR is
