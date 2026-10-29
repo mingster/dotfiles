@@ -43,6 +43,7 @@ finish() {
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
   [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
+  printf '\nTotal: %ss\n' "$SECONDS" >> "$log"
   [ "$status" -ne 0 ] || result=PASS
   {
     printf 'Checks: %s head=%s%s\n\n' "$result" "$sha" "${train_heads:+ train-heads=$train_heads}"
@@ -59,18 +60,65 @@ for key,value in os.environ.items():
 text=re.sub(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|sqlserver)://[^\s]+", "[redacted database URL]", text)
 cap=int(sys.argv[1]); path=sys.argv[2]
 if len(text)>cap:
-    # Bounded summary: keep the status lines and the last lines of the log; the full redacted log goes to a file.
+    # Budget each section once; sorting durations is O(n log n), selection is O(n).
     open(path,"w").write(text)
-    lines=text.split("\n"); keep=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Command: |Result: |Scoped tests: |Selected: )")
-    tail_from=max(len(lines)-40,0)
-    out=[]; omitted=0
-    for i,l in enumerate(lines):
-        if keep.match(l) or i>=tail_from:
-            if omitted: out.append("[... %d lines omitted]" % omitted); omitted=0
-            out.append(l if len(l)<=300 or l.startswith("Checks: ") else l[:300]+"[... line cut]")
-        else: omitted+=1
+    lines=text.rstrip("\n").split("\n")
+    header=lines.pop(0)
+    total=lines.pop() if lines and lines[-1].startswith("Total: ") else ""
+    closing=total+"\n" if total else ""
     footer="\nReceipt cut to fit %d characters. Full log: %s\n" % (cap,path)
-    text="\n".join(out)[:max(cap-len(footer),0)]+footer
+    dur=re.compile(r"^Duration: (\d+)s$")
+    duration_seconds={i:int(m.group(1)) for i,l in enumerate(lines) if (m:=dur.match(l))}
+    dur_idx=sorted(duration_seconds, key=lambda i:(-duration_seconds[i],i))
+    failures=[i for i,l in enumerate(lines) if l.startswith("Result: ") and not l.startswith("Result: exit 0")]
+    # A failing check keeps its own Duration even when the budget is tight.
+    failure_duration={i:d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None}
+    failure_durations=list(failure_duration.values())
+    metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
+    results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
+    nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
+    cut=lambda l: l if len(l)<=300 else l[:300]+"[... line cut]"
+    # Reserve the largest possible omission counters, including their newlines.
+    omitted_line="[... %d lines omitted]\n" % len(lines)
+    omitted_durations="Durations omitted: %d (see full log)\n" % len(dur_idx)
+    budget=cap-len(header)-1-len(closing)-len(omitted_line)-len(omitted_durations)
+    # A long log path (long TMPDIR) must not crowd out the failing checks: drop
+    # the path from the footer when it and the failure lines cannot both fit.
+    essential=sum(len(cut(lines[i])+"\n") for i in set(failures)|set(failure_durations))
+    if budget-len(footer)<essential:
+        footer="\nReceipt cut to fit %d characters. Full log path too long to show.\n" % cap
+    budget-=len(footer)
+    chosen={}; kept_durations=0
+    for group in (failures,failure_durations,metadata,results,dur_idx,nice):
+        for i in group:
+            if i in chosen: continue
+            line=cut(lines[i])+"\n"
+            if len(line)<=budget:
+                chosen[i]=line
+                budget-=len(line)
+                kept_durations+=i in duration_seconds
+    # Emit failing results first as well as selecting them first.
+    out=[header+"\n"]
+    # Each failing Result is followed directly by its own Duration.
+    for i in failures:
+        out.extend(chosen[j] for j in (i,failure_duration.get(i)) if j in chosen)
+    failed_indices=set(failures)|set(failure_durations)
+    out.extend(chosen[i] for i in sorted(chosen) if i not in failed_indices)
+    omitted=len(lines)-len(chosen)
+    if omitted: out.append("[... %d lines omitted]\n" % omitted)
+    skipped=len(dur_idx)-kept_durations
+    if skipped: out.append("Durations omitted: %d (see full log)\n" % skipped)
+    text="".join(out)+footer+closing
+    if len(text)>cap:
+        # Last resort for very small caps or unusually long header/log paths:
+        # cut the middle, preserving the complete header and final Total if possible.
+        opening=header+"\n"
+        available=max(cap-len(opening)-len(closing),0)
+        text=opening+text[len(opening):len(opening)+available]+closing
+        if len(text)>cap:
+            # A cap smaller than the two boundary lines cannot hold both in full.
+            text=opening[:max(cap-len(closing),0)]+closing[:cap]
+
 sys.stdout.write(text)
 ' "$receipt_cap" "${HEAD_CHECKS_LOG_DIR:-${TMPDIR:-/tmp}}/head-checks-${sha:0:12}.log" > "$receipt"
   cat "$receipt"
@@ -184,20 +232,20 @@ while IFS= read -r command || [ -n "$command" ]; do
   count=$((count+1))
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
-  output=$(mktemp)
+  output=$(mktemp); started=$SECONDS
   if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     tail -20 "$output" >> "$log"
-    printf 'Result: exit 0\n' >> "$log"
+    printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
     rm -f "$output"
   else
     status=$?
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     tail -20 "$output" >> "$log"
-    printf 'Result: exit %s; remaining checks stopped\n' "$status" >> "$log"
+    printf 'Result: exit %s; remaining checks stopped\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
     rm -f "$output"
     exit 1
   fi
