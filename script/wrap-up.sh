@@ -502,7 +502,12 @@ if [ -d "$scratch_root" ]; then
           session=${session%/}; [ -d "$session" ] || continue
           temp_item "$session" "$gone"
         done
-        [ "$apply" -eq 0 ] || rmdir -- "$entry" 2>/dev/null || true ;;
+        # The emptied slug parent goes too, unless something may still run there.
+        if [ -z "$(ls -A -- "$entry" 2>/dev/null)" ]; then
+          if in_use "$entry"; then printf 'Kept temp %s (%s)\n' "$entry" "$busy"; temp_kept=$((temp_kept+1))
+          elif [ "$apply" -eq 1 ]; then rmdir -- "$entry" 2>/dev/null || true
+          fi
+        fi ;;
       qa-*) temp_item "$entry" 0 ;;
     esac
   done
@@ -518,7 +523,7 @@ if [ -d "$loose_root" ]; then
   done
 fi
 # Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
-stale_found=0
+stale_found=0; stale_inventory=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
   {
@@ -548,6 +553,22 @@ if [ "$pr_ok" -eq 1 ]; then
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
     printf '  %s, %sh old, %s\n' "$name" $(( (now - newest) / 3600 )) "$subject"
     [ "$stale" -eq 1 ] || continue
+    # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
+    if [ "$apply" -eq 1 ]; then
+      [ "$stale_inventory" -gt 1 ] || { checked_out "$name" && stale_inventory=0 || stale_inventory=$?; }
+      if [ "$stale_inventory" -gt 1 ]; then
+        [ "$stale_inventory" -eq 3 ] || echo 'Warning: could not list worktrees; deleting no more stale branches.' >&2
+        stale_inventory=3; keep "stale $name" 'worktree inventory unavailable'; continue
+      fi
+      now_wt=''
+      [ "$stale_inventory" -ne 0 ] || now_wt=$(awk -v b="branch refs/heads/$name" '/^worktree /{ p = substr($0, 10) } $0 == b { print p; exit }' "$tmp/wt-now")
+      if [ -n "$now_wt" ] && [ "$now_wt" != "$wt" ]; then
+        if in_use "$now_wt"; then keep "stale $name" "checked out in $now_wt, $busy"
+        else keep "stale $name" "checked out in $now_wt"
+        fi
+        continue
+      fi
+    fi
     printf 'Delete stale %s\n' "$name"
     if [ -n "$wt" ] && [ "$apply" -eq 1 ]; then
       git worktree remove --force -- "$wt" || echo "Warning: could not remove worktree $wt; kept." >&2
@@ -565,8 +586,9 @@ if [ "$pr_ok" -eq 1 ]; then
     done
     # The local branch comes first in refs, so a failed delete leaves the remote one out of the batch too.
     [ "$stale_failed" -eq 1 ] || stale_deleted=$((stale_deleted+1))
+    # Push now, so no other candidate's checks sit between this inventory check and the remote delete.
+    flush_remote
   done < "$tmp/names"
-  flush_remote
 fi
 pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
 if [ -f "$pane_script" ]; then

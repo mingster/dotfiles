@@ -423,8 +423,9 @@ WRAP_UP_CLONE_ROOT="$croot/" bash "$here/wrap-up.sh" --apply > "$tmp/output"
 rm -f "$tmp/bin/lsof"
 echo 'ok chrome clones in the sibling X dir are removed unless held open'
 # #394: a failed single delete warns, counts as kept and the run goes on. The git shim fails the calls whose arguments match
-# FAKE_GIT_FAIL (space separated globs) and, on the first worktree removal, checks out FAKE_GIT_LATE in a new worktree (a
-# worker starting after the preview). Everything runs in a disposable clone.
+# FAKE_GIT_FAIL (space separated globs) and, on the first call matching FAKE_GIT_LATE_ON (default: a worktree removal),
+# checks out FAKE_GIT_LATE in a new worktree (a worker starting after the preview). FAKE_INV_FAIL makes every worktree
+# list fail once a call matching FAKE_INV_ON has run. Everything runs in a disposable clone.
 export REAL_GIT="$(command -v git)"
 mkdir -p "$tmp/gitshim"
 cat > "$tmp/gitshim/git" <<'FAKE'
@@ -432,11 +433,11 @@ cat > "$tmp/gitshim/git" <<'FAKE'
 for pat in ${FAKE_GIT_FAIL:-}; do
   case "$*" in *$pat*) echo "fatal: simulated failure for $pat" >&2; exit 1 ;; esac
 done
-if [ -n "${FAKE_GIT_LATE:-}" ] && [ ! -e "$FAKE_GIT_LATE_PATH" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = remove ]; then
-  "$REAL_GIT" worktree add -q "$FAKE_GIT_LATE_PATH" "$FAKE_GIT_LATE"
+if [ -n "${FAKE_GIT_LATE:-}" ] && [ ! -e "$FAKE_GIT_LATE_PATH" ]; then
+  case "$*" in ${FAKE_GIT_LATE_ON:-worktree remove*}) "$REAL_GIT" worktree add -q "$FAKE_GIT_LATE_PATH" "$FAKE_GIT_LATE" ;; esac
 fi
 if [ -n "${FAKE_INV_FAIL:-}" ]; then
-  case "$*" in *for-each-ref*refs/heads) : > "$FAKE_INV_FAIL" ;; esac
+  case "$*" in ${FAKE_INV_ON:-*for-each-ref*refs/heads}) : > "$FAKE_INV_FAIL" ;; esac
   if [ -e "$FAKE_INV_FAIL" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = list ]; then echo 'fatal: simulated inventory failure' >&2; exit 1; fi
 fi
 exec "$REAL_GIT" "$@"
@@ -690,3 +691,51 @@ test ! -d "$tmp/t-wt" && test ! -d "$tmp/t-stale" && test ! -d "$tmp/t-cache/.ne
   || { echo 'clean lsof and ps did not let the idle fixtures go'; cat "$tmp/output"; exit 1; }
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
 echo 'ok a clean lsof and ps still let idle items go'
+# 7. Review fixes: stale deletion re-reads the worktree inventory, and the empty scratch parent goes through in_use.
+r_failed=0
+rcheck() { # <what> <command...>
+  local what=$1; shift
+  if "$@"; then echo "ok   $what"; else echo "FAIL $what"; r_failed=$((r_failed+1)); fi
+}
+# a. A remote-only stale branch checked out in a new worktree after selection is kept; ps exit 1 is reported for it.
+git push -q origin "$told:refs/heads/r-stale"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"; printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/ps"
+chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_LATE=r-stale FAKE_GIT_LATE_PATH="$tmp/r-late" FAKE_GIT_LATE_ON='log -1*origin/r-stale' \
+  bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+late_kept() {
+  git --git-dir="$tmp/origin4" show-ref --verify --quiet refs/heads/r-stale && has "Kept stale r-stale (checked out in $real/r-late, ps failed)" \
+    && has 'stale deleted=0'
+}
+rcheck 'a stale remote branch checked out after selection is kept with the new worktree in_use reason' late_kept
+git worktree remove --force "$tmp/r-late" 2>/dev/null || true
+git branch -D r-stale >/dev/null 2>&1 || true
+git push -q origin "$told:refs/heads/r-stale" 2>/dev/null || true
+# b. A failed worktree inventory before stale deletion deletes no stale branch and keeps every remaining candidate.
+git branch s-inv1 "$told"; git branch s-inv2 "$told"
+printf '#!/usr/bin/env bash\necho init\n' > "$tmp/bin/ps"
+rm -f "$tmp/inv-flag4"
+PATH="$tmp/gitshim:$PATH" FAKE_INV_FAIL="$tmp/inv-flag4" FAKE_INV_ON='log -1*' \
+  bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+inv_kept() {
+  git show-ref --verify --quiet refs/heads/s-inv1 && git show-ref --verify --quiet refs/heads/s-inv2 \
+    && git --git-dir="$tmp/origin4" show-ref --verify --quiet refs/heads/r-stale \
+    && has 'Kept stale r-stale (worktree inventory unavailable)' && has 'Kept stale s-inv1 (worktree inventory unavailable)' \
+    && has 'Kept stale s-inv2 (worktree inventory unavailable)' && has 'stale deleted=0' \
+    && grep -Fq 'Warning: could not list worktrees; deleting no more stale branches.' "$tmp/stderr"
+}
+rcheck 'a failed inventory before stale deletion keeps every remaining candidate' inv_kept
+# c. An empty scratch slug parent held as a cwd, with lsof exit 2 plus error output and ps exit 1, is kept and counted.
+tparent="$tmp/t-scratch/-gone-slug-parent"
+mkdir -p "$tparent"
+(cd "$tparent" && exec sleep 120) &
+holder=$!
+printf '#!/usr/bin/env bash\necho "lsof: WARNING: can not stat" >&2\nexit 2\n' > "$tmp/bin/lsof"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/ps"
+WRAP_UP_SCRATCH_ROOT="$tmp/t-scratch" bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || true
+parent_kept() { test -d "$tparent" && kill -0 "$holder" && has "Kept temp $tparent (lsof failed)" && has 'temp removed=0 kept=1 '; }
+rcheck 'an empty scratch parent with failing lsof and ps is kept and counted' parent_kept
+kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+echo "review fix cases: 3 cases, $r_failed failed"
+[ "$r_failed" -eq 0 ] || exit 1
