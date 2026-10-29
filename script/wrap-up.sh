@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 # Preview finished work cleanup; --apply performs the proposed changes.
 set -euo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 apply=0
 stale=0
+fleet=0
+worktrees_only=0
 repo=.
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) apply=0 ;;
     --apply) apply=1 ;;
     --stale) stale=1 ;;
+    --fleet) fleet=1 ;;
+    --worktrees-only) worktrees_only=1 ;;
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
-    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--repo <path>]'; exit 0 ;;
+    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>]'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
+[ "$fleet" -eq 0 ] || [ "$worktrees_only" -eq 0 ] || { echo 'wrap-up: --fleet and --worktrees-only exclude each other' >&2; exit 2; }
 # A fake orca CLI means a test: never let --apply reach the real temp roots from there.
 if [ "$apply" -eq 1 ] && [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_SCRATCH_ROOT+x}" ] || [ -z "${WRAP_UP_LOOSE_ROOT+x}" ]; }; then
   echo 'wrap-up: ORCA_CLI_COMMAND is set (test mode); set WRAP_UP_SCRATCH_ROOT and WRAP_UP_LOOSE_ROOT before --apply' >&2; exit 2
@@ -106,7 +112,7 @@ close_finished_terminals() {
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
-if command -v "$orca" >/dev/null 2>&1; then
+if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1; then
   close_finished_terminals ''
   if "$orca" environment list --json > "$tmp/envs" 2>/dev/null && jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
     while IFS= read -r env_id; do
@@ -226,6 +232,7 @@ process_worktree() {
   elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
+  elif [ "$worktrees_only" -eq 1 ] && running_in "$path"; then why='a process is running in it'
   elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
   elif [ -z "$branch" ] && grep -Fxq -- "$head" "$tmp/open-heads"; then why='open PR head'
   elif [ -z "$branch" ]; then
@@ -277,6 +284,13 @@ while IFS= read -r branch; do
   else keep "local $branch" "$reason"
   fi
 done < <(git for-each-ref --format='%(refname:strip=2)' refs/heads)
+# A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once, and a
+# checkout there is never fast forwarded.
+if [ "$worktrees_only" -eq 1 ]; then
+  if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
+  printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
+  exit 0
+fi
 batch=()
 flush_remote() {
   [ ${#batch[@]} -gt 0 ] || return 0
@@ -449,3 +463,57 @@ printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s
 printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
+# --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only).
+# Config: {"hosts": [{"host": "<ssh host>", "repo_dir": "<checkout on that host>"}]}; see wrap-up-fleet.config.example.json.
+# An unreachable or failing host only warns. The script and arguments travel as base64 so a login shell's own output
+# never reaches the parse; the remote output is framed between tagged markers.
+if [ "$fleet" -eq 1 ]; then
+  fleet_config=${WRAP_UP_FLEET_CONFIG:-$here/wrap-up-fleet.config.json}
+  ssh_cmd=${WRAP_UP_FLEET_SSH:-ssh}
+  t_hosts=0; t_up=0; t_removed=$removed; t_local=$local_deleted; t_kept=$kept
+  remote_script=$(cat <<'REMOTE'
+d() { printf '%s' "$1" | base64 -d; }
+repo=$(d "$1") flags=$(d "$2") tag=$(d "$3")
+case "$repo" in '~'|'~/'*) repo="$HOME${repo#\~}" ;; esac
+export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+root=${DOTFILES_DIR:-$HOME/dotfiles}
+[ ! -d "$HOME/dotfiles-main" ] || root="$HOME/dotfiles-main"
+printf '%s\n' "@@begin-$tag@@"
+status=0
+# shellcheck disable=SC2086 # flags is a fixed word list built by the caller
+bash "$root/script/wrap-up.sh" --worktrees-only $flags --repo "$repo" 2>&1 || status=$?
+printf '\n%s\n' "@@end-$tag-$status@@"
+REMOTE
+)
+  b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+  if [ ! -f "$fleet_config" ] || ! jq -e '.hosts | type == "array"' "$fleet_config" >/dev/null 2>&1; then
+    echo "Warning: fleet config $fleet_config missing or invalid; no fleet host cleaned." >&2
+  else
+    flags=--dry-run; [ "$apply" -eq 0 ] || flags=--apply
+    while IFS=$'\t' read -r fhost frepo; do
+      [ -n "$fhost" ] || continue
+      t_hosts=$((t_hosts+1))
+      printf '\n== Fleet host %s ==\n' "$fhost"
+      case "$fhost" in -*|*[!A-Za-z0-9._-]*) echo "Warning: bad host name in fleet config; skipped." >&2; continue ;; esac
+      [ -n "$frepo" ] || { echo "Warning: no repo_dir for $fhost; skipped." >&2; continue; }
+      ftag="wrap-up-$$-$RANDOM"
+      fstatus=0
+      fwrap=("$ssh_cmd" -o BatchMode=yes -o ConnectTimeout=10 "$fhost" bash -c "\"\$(echo $(b64 "$remote_script") | base64 -d)\"" wrap-up "$(b64 "$frepo")" "$(b64 "$flags")" "$(b64 "$ftag")")
+      if command -v timeout >/dev/null 2>&1; then fwrap=(timeout "${WRAP_UP_FLEET_TIMEOUT:-300}" "${fwrap[@]}"); fi
+      "${fwrap[@]}" < /dev/null > "$tmp/fleet-out" 2> "$tmp/fleet-err" || fstatus=$?
+      rstatus=$(sed -n "s/^@@end-$ftag-\([0-9][0-9]*\)@@\$/\1/p" "$tmp/fleet-out" | tail -n 1)
+      if [ "$fstatus" -ne 0 ] || [ -z "$rstatus" ]; then
+        echo "Warning: fleet host $fhost unreachable or incomplete (status $fstatus); skipped." >&2; continue
+      fi
+      awk -v t="$ftag" '$0 == "@@begin-" t "@@" { on = 1; next } index($0, "@@end-" t "-") == 1 { on = 0; next } on' "$tmp/fleet-out" > "$tmp/fleet-body"
+      cat "$tmp/fleet-body"
+      if [ "$rstatus" -ne 0 ]; then echo "Warning: wrap-up failed on fleet host $fhost (status $rstatus); not counted." >&2; continue; fi
+      counts=$(sed -n 's/^removed worktrees=\([0-9][0-9]*\) deleted local=\([0-9][0-9]*\) deleted remote=[0-9]* kept=\([0-9][0-9]*\) .*$/\1 \2 \3/p' "$tmp/fleet-body" | tail -n 1)
+      if [ -z "$counts" ]; then echo "Warning: no counts line from fleet host $fhost; not counted." >&2; continue; fi
+      read -r c_removed c_local c_kept <<< "$counts"
+      t_up=$((t_up+1)); t_removed=$((t_removed+c_removed)); t_local=$((t_local+c_local)); t_kept=$((t_kept+c_kept))
+    done < <(jq -r '.hosts[] | [.host // "", .repo_dir // ""] | @tsv' "$fleet_config")
+  fi
+  printf '\nFleet total (local plus %s of %s hosts reached):\n' "$t_up" "$t_hosts"
+  printf 'removed worktrees=%s deleted local=%s kept=%s\n' "$t_removed" "$t_local" "$t_kept"
+fi

@@ -1,0 +1,1 @@
+wrap-up.sh --fleet also cleans finished worktrees and local branches on every host in an untracked fleet config, over ssh. Dry run by default, per host counts and a fleet total, unreachable hosts only warn.
