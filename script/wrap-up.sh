@@ -295,11 +295,19 @@ while IFS= read -r ref; do
   fi
 done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 flush_remote
-# Each Chrome launch leaves a code_sign_clone under the per-user temp dir (macOS). Remove those no process holds open.
+# Each Chrome launch leaves a code_sign_clone under the per-user temp dir (macOS), in the T dir or its sibling X dir.
+# Remove those no process holds open.
 clone_removed=0; clone_kept=0
 clone_root=${WRAP_UP_CLONE_ROOT-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)}
-if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
-  for clone in "$clone_root"/com.google.Chrome*.code_sign_clone/code_sign_clone.*; do
+clone_dirs=()
+if [ -n "$clone_root" ]; then
+  clone_root=${clone_root%/}
+  clone_dirs=("$clone_root")
+  case "$clone_root" in */T) clone_dirs+=("${clone_root%/T}/X") ;; esac
+fi
+for clone_dir in ${clone_dirs[@]+"${clone_dirs[@]}"}; do
+  [ -d "$clone_dir" ] || continue
+  for clone in "$clone_dir"/com.google.Chrome*.code_sign_clone/code_sign_clone.*; do
     [ -d "$clone" ] || continue
     if ! command -v lsof >/dev/null 2>&1; then
       printf 'Kept Chrome clone %s (lsof unavailable)\n' "$clone"; clone_kept=$((clone_kept+1)); continue
@@ -316,7 +324,7 @@ if [ -n "$clone_root" ] && [ -d "$clone_root" ]; then
       clone_removed=$((clone_removed+1))
     fi
   done
-fi
+done
 # Agent temp files (inventory: docs/agents/wrap-up-temp-files.md). Removable when nothing holds the item open and either
 # its worktree is gone or nothing in it changed for 24 h. The coordinator inbox waiter files are never touched.
 temp_removed=0; temp_kept=0; temp_bytes=0
