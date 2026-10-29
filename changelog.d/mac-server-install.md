@@ -1,0 +1,1 @@
+Add mac/install_mac_server.sh to install agent team software on macOS servers using Homebrew and asdf, skipping personal applications, and applying macOS server tune-ups including power recovery, sleep prevention, network ordering, and global spotlight disabling.
