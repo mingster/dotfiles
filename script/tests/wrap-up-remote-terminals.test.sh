@@ -11,6 +11,11 @@ export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
 export WRAP_UP_CLONE_ROOT="$tmp/no-clones" ORCA_TERMINAL_HANDLE=t-own
 cat > "$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
+case "$*" in
+  'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
+  'api repos/{owner}/{repo}/pages') echo '{"source":null}'; exit 0 ;;
+  'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]'; exit 0 ;;
+esac
 echo '[]'
 STUB
 cat > "$tmp/bin/orca" <<'STUB'

@@ -38,3 +38,26 @@ Temp files go only inside the session scratch dir or `<worktree>/.scratch/`, nev
 ## Testing
 
 `script/tests/wrap-up-temp-files.test.sh`. Any test that runs `wrap-up.sh --apply` must point `WRAP_UP_SCRATCH_ROOT`, `WRAP_UP_LOOSE_ROOT` and `WRAP_UP_STATE_DIR` at disposable dirs, or it cleans the real host.
+
+## Branch safety and planning
+
+Both preview and apply run a real `git fetch --prune origin` before planning. Preview
+updates remote-tracking refs while leaving local and remote branches, worktrees,
+and files intact.
+
+Local and remote branches are kept when they are the repository default branch,
+`gh-pages`, the GitHub Pages source branch, or a protected branch. The default comes
+from GitHub with `origin/HEAD` as a fallback; Pages and protected branch metadata
+come from GitHub. Unavailable or malformed safety metadata keeps all branches,
+with a reason, rather than guessing that they are disposable.
+
+Apply checks each remote branch with `git ls-remote` immediately before deletion.
+A missing branch, a changed SHA, or a failed lookup is reported as kept. Deletion
+leases also reject a change after the check; batch pushes are atomic and failed
+batches retry branches individually with fresh checks.
+
+When `lsof` is missing, the summary includes one line with the counts of worktrees
+and Chrome clones kept because process activity could not be checked.
+
+Run `bash script/tests/wrap-up-branch-safety.test.sh` for branch protection,
+fetch/prune and deletion races, and the missing-`lsof` summary.

@@ -11,6 +11,11 @@ mkdir -p "$HOME" "$tmp/bin"
 export PATH="$tmp/bin:$PATH"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
+case "$*" in
+  'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
+  'api repos/{owner}/{repo}/pages') echo '{"source":null}'; exit 0 ;;
+  'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]'; exit 0 ;;
+esac
 printf '%s\n' "${FAKE_PRS:-[]}"
 FAKE
 cat > "$tmp/bin/orca" <<'FAKE'
