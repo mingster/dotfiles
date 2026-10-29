@@ -46,11 +46,16 @@ with tempfile.TemporaryDirectory() as temp:
     # Generate receipt inputs instead of running thousands of shell checks.
     formatter = pathlib.Path(runner).read_text().split("| python3 -c '\n", 1)[1].split("\n' \"$receipt_cap\"", 1)[0]
     failures = 0
-    for n, cap in [(50, 500), (700, 20000), (3000, 65536), (210, 65536), (1500, 65536)]:
+    # The receipt must not depend on how long TMPDIR is: run each case with a short
+    # and a 300-character log path.
+    long_dir = root.joinpath(*(['d' * 60] * 5)); long_dir.mkdir(parents=True)
+    cases = [(n, cap, path) for n, cap in [(50, 500), (700, 20000), (3000, 65536), (210, 65536), (1500, 65536)]
+             for path in (root/'full.log', long_dir/'full.log')]
+    for n, cap, path in cases:
         log = 'Checks: FAIL head=' + head + '\n\nChecklist: fixture\n'
         log += ''.join('Command: true # ' + 'x' * 500 + '\nResult: exit 0\nDuration: 1s\n' for _ in range(n - 1))
         log += 'Command: false\nResult: exit 1; remaining checks stopped\nDuration: 9s\nTotal: 12s\n'
-        result = subprocess.run([sys.executable, '-c', formatter, str(cap), str(root/'full.log')], input=log, text=True, capture_output=True)
+        result = subprocess.run([sys.executable, '-c', formatter, str(cap), str(path)], input=log, text=True, capture_output=True)
         receipt = result.stdout
         durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
         omitted = re.search(r'^Durations omitted: (\d+) \(see full log\)$', receipt, re.M)
@@ -62,8 +67,10 @@ with tempfile.TemporaryDirectory() as temp:
               and ('Result: exit 0' not in receipt
                    or receipt.index('Result: exit 1') < receipt.index('Result: exit 0')))
         ok = (ok and len(durations) + skipped == n and '9' in durations
-              and (n not in (210, 1500) or len(durations) == n))
-        print('%s %d checks cap=%d length=%d' % ('ok  ' if ok else 'FAIL', n, cap, len(receipt)), flush=True)
+              and (n not in (210, 1500) or len(durations) == n)
+              # The failing check's Duration follows its Result directly.
+              and 'Result: exit 1; remaining checks stopped\nDuration: 9s\n' in receipt)
+        print('%s %d checks cap=%d path=%d length=%d' % ('ok  ' if ok else 'FAIL', n, cap, len(str(path)), len(receipt)), flush=True)
         failures += not ok
     # Tiny budgets and long boundary lines exercise the final truncation backstop.
     for cap in (0, 1, 10, 70, 100, 300, 500):

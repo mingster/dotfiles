@@ -72,7 +72,8 @@ if len(text)>cap:
     dur_idx=sorted(duration_seconds, key=lambda i:(-duration_seconds[i],i))
     failures=[i for i,l in enumerate(lines) if l.startswith("Result: ") and not l.startswith("Result: exit 0")]
     # A failing check keeps its own Duration even when the budget is tight.
-    failure_durations=[d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None]
+    failure_duration={i:d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None}
+    failure_durations=list(failure_duration.values())
     metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
     results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
     nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
@@ -80,7 +81,13 @@ if len(text)>cap:
     # Reserve the largest possible omission counters, including their newlines.
     omitted_line="[... %d lines omitted]\n" % len(lines)
     omitted_durations="Durations omitted: %d (see full log)\n" % len(dur_idx)
-    budget=cap-len(header)-1-len(closing)-len(footer)-len(omitted_line)-len(omitted_durations)
+    budget=cap-len(header)-1-len(closing)-len(omitted_line)-len(omitted_durations)
+    # A long log path (long TMPDIR) must not crowd out the failing checks: drop
+    # the path from the footer when it and the failure lines cannot both fit.
+    essential=sum(len(cut(lines[i])+"\n") for i in set(failures)|set(failure_durations))
+    if budget-len(footer)<essential:
+        footer="\nReceipt cut to fit %d characters. Full log path too long to show.\n" % cap
+    budget-=len(footer)
     chosen={}; kept_durations=0
     for group in (failures,failure_durations,metadata,results,dur_idx,nice):
         for i in group:
@@ -92,8 +99,10 @@ if len(text)>cap:
                 kept_durations+=i in duration_seconds
     # Emit failing results first as well as selecting them first.
     out=[header+"\n"]
-    out.extend(chosen[i] for i in failures if i in chosen)
-    failed_indices=set(failures)
+    # Each failing Result is followed directly by its own Duration.
+    for i in failures:
+        out.extend(chosen[j] for j in (i,failure_duration.get(i)) if j in chosen)
+    failed_indices=set(failures)|set(failure_durations)
     out.extend(chosen[i] for i in sorted(chosen) if i not in failed_indices)
     omitted=len(lines)-len(chosen)
     if omitted: out.append("[... %d lines omitted]\n" % omitted)
