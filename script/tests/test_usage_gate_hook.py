@@ -96,7 +96,7 @@ class Hook(unittest.TestCase):
         self.assertIsNone(deny)
         self.assertIn("no usage reading for agent unknown", err)
 
-    def run_stubbed_pool_hook(self, command, provider="antigravity"):
+    def run_stubbed_pool_hook(self, command, provider="antigravity", unavailable_model=None):
         spec = importlib.util.spec_from_file_location("hook", HOOK)
         hook = importlib.util.module_from_spec(spec)
         with mock.patch("sys.stdin", io.StringIO('{"tool_name":"Read"}')), \
@@ -106,6 +106,10 @@ class Hook(unittest.TestCase):
         def gate(argv, **kwargs):
             self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
             allowed = argv[5:] in ([], ["--model", "gemini-flash"]) if provider == "antigravity" else False
+            if unavailable_model and argv[5:] == ["--model", unavailable_model]:
+                return mock.Mock(returncode=4, stdout=json.dumps({"reason": "no pool reading"}))
+            if unavailable_model and not argv[5:]:
+                allowed = False
             if argv[5:] == ["--model", "unknown-model"]:
                 return mock.Mock(returncode=4, stdout=json.dumps({"reason": "unknown model"}))
             if argv[5:] == ["--model", "--x"]:
@@ -141,8 +145,17 @@ class Hook(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertEqual(checks, [[]])
 
-    def test_antigravity_unknown_model_falls_back_to_default_flash_pool(self):
-        for option in ("--model unknown-model", '--model "$M"', "--model=--x", "--model -h",
+    def test_antigravity_missing_named_pool_never_uses_exhausted_flash(self):
+        for model in ("gemini-4-argon-low", "claude-sonnet", "unknown-model"):
+            with self.subTest(model=model):
+                out, checks = self.run_stubbed_pool_hook(
+                    "orca orchestration worker-start --agent antigravity --model " + model,
+                    unavailable_model=model)
+                self.assertEqual(out, "")
+                self.assertEqual(checks, [["--model", model]])
+
+    def test_antigravity_invalid_model_arguments_use_default_flash_pool(self):
+        for option in ('--model "$M"', "--model=--x", "--model -h",
                        "--model gemini-flash --model claude-sonnet",
                        "--model claude-sonnet --model=gemini-flash"):
             with self.subTest(option=option):

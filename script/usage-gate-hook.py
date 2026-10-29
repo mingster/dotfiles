@@ -173,11 +173,10 @@ def main():
             continue
         try:
             args = [sys.executable, GATE, "check", "--provider", provider]
-            # A model the gate cannot answer for (any exit but 0 or 3) falls back to the approved default pool.
+            # Preserve unknown for a named pool; another pool cannot supply its quota.
             if model:
-                r = subprocess.run(args + ["--model", model], capture_output=True, text=True, timeout=25)
-            if not model or r.returncode not in (0, 3):
-                r = subprocess.run(args, capture_output=True, text=True, timeout=25)
+                args += ["--model", model]
+            r = subprocess.run(args, capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
             print(f"usage-gate-hook: gate failed for {provider} ({e}); worker-start allowed.", file=sys.stderr)

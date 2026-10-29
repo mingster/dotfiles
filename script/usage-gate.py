@@ -730,7 +730,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["check", "show", "pick", "banner"])
     ap.add_argument("--provider")
-    ap.add_argument("--model", help="Antigravity model id; omitted selects the worst pool")
+    ap.add_argument("--model", help="Antigravity model id; omitted selects the Gemini Flash pool")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt"])
     ap.add_argument("--cap", type=float, default=None,
