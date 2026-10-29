@@ -1,0 +1,1 @@
+Correct Antigravity quota mapping to keep Gemini Flash, Gemini Pro/Argon, and Claude pools separate, with Gemini Flash as the default check. Ignore ambiguous legacy Gemini banners. Report Cursor Composer 2.5 usage as unknown with a dashboard instruction when its allowance cannot be verified, rather than substituting aggregate plan usage.
