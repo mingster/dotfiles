@@ -105,7 +105,7 @@ class Hook(unittest.TestCase):
 
         def gate(argv, **kwargs):
             self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
-            allowed = argv[5:] == ["--model", "gemini-flash"]
+            allowed = argv[5:] in ([], ["--model", "gemini-flash"]) if provider == "antigravity" else False
             if argv[5:] == ["--model", "unknown-model"]:
                 return mock.Mock(returncode=4, stdout=json.dumps({"reason": "unknown model"}))
             if argv[5:] == ["--model", "--x"]:
@@ -135,20 +135,20 @@ class Hook(unittest.TestCase):
         self.assertIn("blocked antigravity: weekly ceiling", out)
         self.assertEqual(checks, [["--model", "claude-sonnet"]])
 
-    def test_antigravity_without_model_still_checks_worst_pool(self):
+    def test_antigravity_without_model_uses_default_flash_pool(self):
         out, checks = self.run_stubbed_pool_hook(
             "orca orchestration worker-start --agent antigravity")
-        self.assertIn("blocked antigravity: weekly ceiling", out)
+        self.assertEqual(out, "")
         self.assertEqual(checks, [[]])
 
-    def test_antigravity_unknown_model_falls_back_to_worst_pool(self):
+    def test_antigravity_unknown_model_falls_back_to_default_flash_pool(self):
         for option in ("--model unknown-model", '--model "$M"', "--model=--x", "--model -h",
                        "--model gemini-flash --model claude-sonnet",
                        "--model claude-sonnet --model=gemini-flash"):
             with self.subTest(option=option):
                 out, checks = self.run_stubbed_pool_hook(
                     "orca orchestration worker-start --agent antigravity " + option)
-                self.assertIn("blocked antigravity: weekly ceiling", out)
+                self.assertEqual(out, "")
                 self.assertEqual(checks[-1], [])
 
     def test_antigravity_chain_checks_each_model_and_model_less_start(self):
@@ -158,7 +158,10 @@ class Hook(unittest.TestCase):
                 out, checks = self.run_stubbed_pool_hook(
                     "orca orchestration worker-start --agent antigravity --model gemini-flash && "
                     "orca orchestration worker-start --agent antigravity " + suffix)
-                self.assertIn("blocked antigravity: weekly ceiling", out)
+                if suffix:
+                    self.assertIn("blocked antigravity: weekly ceiling", out)
+                else:
+                    self.assertEqual(out, "")
                 self.assertEqual(checks, [["--model", "gemini-flash"], expected])
 
     def test_other_providers_and_codex_launcher_do_not_forward_model(self):
@@ -184,13 +187,14 @@ class Hook(unittest.TestCase):
         os.environ["USAGE_GATE_CURSOR_SUMMARY"] = self.state + "/summary.json"
         self.addCleanup(os.environ.pop, "USAGE_GATE_CURSOR_SUMMARY", None)
 
-    def test_cursor_start_goes_through_the_gate(self):
+    def test_cursor_aggregate_usage_warns_without_blocking_composer(self):
         cmd = "orca orchestration worker-start --task t --agent cursor"
         self.cursor(40, 38)
         self.assertIsNone(self.run_hook(cmd)[0])
         self.cursor(95, 90)
-        deny, _ = self.run_hook(cmd)
-        self.assertIn("Usage gate blocked cursor", deny)
+        deny, err = self.run_hook(cmd)
+        self.assertIsNone(deny)
+        self.assertIn("read the Cursor dashboard", err)
 
     def test_no_reading_passes_with_warning(self):
         deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")
