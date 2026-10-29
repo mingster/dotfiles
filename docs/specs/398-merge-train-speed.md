@@ -56,6 +56,64 @@ Each slice is one PR. Proving tests use the existing fixture (`script/tests/lib/
 real git, fake gh and a fake head-checks that logs every run to `FX_HC_LOG`). A new test file must
 also be added to `.agents/head-checks.conf`.
 
+### Slice 0: extend the QA start script
+
+The QA start script already exists: `script/on-worker-done.sh` (flags `--repo --pr --head
+--author-family --worktree --run [--author-dispatch] [--dry-run]`). It starts the cross family
+reviewer. The lead runs it right after the push, so no one else has to start QA. This slice
+extends it; there is no new script.
+
+Requirements
+
+1. R0.1 `--author-family` also accepts `codex`; the reviewer is then a non Codex family (the
+   usage-gate avoid flag for that family).
+2. R0.2 A new `--resolution` flag, for a conflict-resolving main merge on a PR that already has a
+   PASS. The brief asks for a review of the resolution only (`git show --remerge-diff`), not a full
+   review. Without the flag the brief is the full review (Dual-Axis, Verdict).
+3. R0.3 The host comes from the usage gate under its cap. With every host at cap the script refuses
+   and prints the counts, so the coordinator sees the cap.
+4. R0.4 The brief tells the reviewer to run tests through heavy-gate with
+   `HEAVY_GATE_TIMEOUT_SECONDS=1500`, to wait for admission, and to read the Checks receipt last.
+5. R0.5 Behaviour for `claude`, `cursor` and `antigravity` authors without `--resolution` is
+   unchanged.
+
+Acceptance criteria
+
+- Author family `codex`: the picked reviewer family is not Codex.
+- With `--resolution` the brief names `git show --remerge-diff` and no full review; without it the
+  brief asks for the full review.
+- Every host at cap: refusal that names the counts, no reviewer started.
+- Every brief carries `HEAVY_GATE_TIMEOUT_SECONDS=1500` and the pending Checks rule.
+- Existing `script/tests/on-worker-done.test.sh` cases still pass.
+
+Proving test: new cases in `script/tests/on-worker-done.test.sh` (it already fakes the usage gate
+and runs `--dry-run`).
+
+### Slice 0b: routine relay script
+
+Routine handoffs are automatic. The coordinator watches and steps in only when needed.
+
+Requirements
+
+1. R0b.1 A builder's `worker_done` goes to the owning lead by a relay script. The dispatch records
+   the owning lead; the waiter forwards the message with branch, sha and payload path.
+2. R0b.2 The lead pushes, starts QA (slice 0), runs head-checks and merges. After the push the lead
+   releases the committer with the release script.
+3. R0b.3 The coordinator receives nothing for these steps. It steps in only for a decision outside
+   the lead's authority, a stalled or failed worker, a host or provider cap, an owner ask, or a
+   bottleneck the counts show.
+4. R0b.4 A `worker_done` with no recorded owning lead is not dropped: it goes to the coordinator.
+
+Acceptance criteria
+
+- A builder `worker_done` for a dispatch owned by lead L reaches L with branch, sha and payload
+  path, and reaches no one else.
+- After the push the committer is released once; a second release is a no-op.
+- A `worker_done` with no recorded owner reaches the coordinator.
+
+Proving test: new `script/tests/worker-done-relay.test.sh` with fake dispatch records and a fake
+`orca`. Add it to `.agents/head-checks.conf`.
+
 ### Slice 1: direct drop
 
 When a red train's failing step names files that only one PR in the train changed, drop that PR
@@ -187,8 +245,7 @@ When slice 4 lands, the split of PRs between two leads for merging is deleted fr
 and team docs.
 
 ## QA in parallel (owner 2026-10-29)
-- When a builder reports worker_done, the owning lead pushes at once and sends Elon the PR number and head sha.
-- Elon starts the QA reviewer on that head right away, from a model family other than the author's. The lead runs head-checks in parallel; neither waits for the other.
+- The lead starts the QA reviewer itself right after the push, with the QA start script, `script/on-worker-done.sh` (it picks a model family other than the author's, a host under its cap, and the brief template: full review for a new PR, resolution only for a main merge). The coordinator is not in the loop and does not forward or start QA; it only watches counts and caps. The lead runs head-checks in parallel; neither waits for the other.
 - The QA Verdict is the review Verdict. On a builder PR that gets a QA Verdict, the lead posts no second Verdict; the lead pushes, runs head-checks and merges. Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs.
 - QA runs tests through heavy-gate with HEAVY_GATE_TIMEOUT_SECONDS=1500 and waits for admission. A FAIL only because tests never ran is not a Verdict: keep waiting, or cite a Checks PASS receipt at the exact head that ran those files.
 - QA reads the Checks receipt at the end and says pending when none is posted. Merge needs both a QA PASS and a Checks PASS at the same head.
@@ -209,7 +266,7 @@ and team docs.
 
 ## Order
 
-Do slice 3 first. It is the smallest change: the Checks rule and `checks_carry` already exist for
+Do slices 0 and 0b first, since the QA rule depends on them. Then slice 3. It is the smallest change: the Checks rule and `checks_carry` already exist for
 the single path, preflight only has to call them. It is the lowest risk: it only refuses, it never
 merges anything more. And it attacks the cause, not the cost: a train whose PRs each passed on
 their own head is usually green on the first run, so it needs no bisect at all. Slices 1 and 2 then

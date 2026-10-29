@@ -27,6 +27,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Build only:** dispatch only a ticket of an accepted spec that links the spec and has a test plan; send intent, grill and spec work back to Elon.
 - Pick the next ticket yourself, within the lane cap in `.claude/model-routing.md`; start no feature ticket at 6 or more open PRs (`docs/agents/team.md`, WIP cap) and no heavy job outside Team rules, Heavy jobs.
 - **Refill at once (owner rule 2026-10-23):** the turn a worker finishes, start the next startable ticket in its lane. When no ticket is startable, tell Elon which tickets wait and on what.
+- On a coding `worker_done`, run `~/dotfiles/script/on-worker-done.sh` to start the reviewer.
 - Batch owner gates into one list to Elon. Copy needs no owner gate at merge; a ticket missing copy goes back to architect-pm.
 
 ## Merge
@@ -34,8 +35,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - `lead-merge.sh` refuses a PR touching a protected path (hooks, settings, `bin/owner-approve.sh`): send it to Elon; merge after the owner reads the diff.
 - **Before every merge** apply `docs/agents/engineering-integration.md`, Merge rules: review tier and Verdict carry, one writer per branch, review notes, spec rules.
 - **QA in parallel (owner 2026-10-29):**
-  - When a builder reports `worker_done`, you push at once and send the coordinator the PR number and head sha.
-  - The coordinator starts the QA reviewer on that head right away, from a model family other than the author's. Run head-checks in parallel; neither waits for the other.
+  - When a builder reports `worker_done` (the relay forwards it to you with branch, sha and payload path), push at once, then release the committer with the release script.
+  - Start the QA reviewer yourself right after the push, with the QA start script, `~/dotfiles/script/on-worker-done.sh` (it picks a model family other than the author's, a host under its cap, and the brief template: full review for a new PR, resolution only for a main merge). The coordinator does not forward or start QA. Run head-checks in parallel; neither waits for the other.
   - The QA Verdict is the review Verdict. On a builder PR that gets a QA Verdict, post no second Verdict; push, run head-checks and merge. Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs.
   - A conflict-resolving main merge on a PR that already has a PASS gets QA on the resolution only (`git show --remerge-diff`), not a full re-review.
   - Merge needs both a QA PASS and a Checks PASS at the same head.
