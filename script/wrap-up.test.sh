@@ -422,3 +422,100 @@ WRAP_UP_CLONE_ROOT="$croot/" bash "$here/wrap-up.sh" --apply > "$tmp/output"
 [ -d "$tmp/darwin/X/com.google.Chrome.dev.code_sign_clone/code_sign_clone.x-held" ] || { echo 'held X clone removed'; exit 1; }
 rm -f "$tmp/bin/lsof"
 echo 'ok chrome clones in the sibling X dir are removed unless held open'
+# #394: a failed single delete warns, counts as kept and the run goes on. The git shim fails the calls whose arguments match
+# FAKE_GIT_FAIL (space separated globs) and, on the first worktree removal, checks out FAKE_GIT_LATE in a new worktree (a
+# worker starting after the preview). Everything runs in a disposable clone.
+export REAL_GIT="$(command -v git)"
+mkdir -p "$tmp/gitshim"
+cat > "$tmp/gitshim/git" <<'FAKE'
+#!/usr/bin/env bash
+for pat in ${FAKE_GIT_FAIL:-}; do
+  case "$*" in *$pat*) echo "fatal: simulated failure for $pat" >&2; exit 1 ;; esac
+done
+if [ -n "${FAKE_GIT_LATE:-}" ] && [ ! -e "$FAKE_GIT_LATE_PATH" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = remove ]; then
+  "$REAL_GIT" worktree add -q "$FAKE_GIT_LATE_PATH" "$FAKE_GIT_LATE"
+fi
+exec "$REAL_GIT" "$@"
+FAKE
+chmod +x "$tmp/gitshim/git"
+git init -q --bare "$tmp/origin3"
+git clone -q "$tmp/origin3" "$tmp/crepo" 2>/dev/null
+git -C "$tmp/crepo" config user.email test@example.invalid
+git -C "$tmp/crepo" config user.name Test
+git -C "$tmp/crepo" checkout -qb main
+echo c > "$tmp/crepo/file"; git -C "$tmp/crepo" add file; git -C "$tmp/crepo" commit -qm initial
+git -C "$tmp/crepo" push -q -u origin main
+echo '.next' >> "$tmp/crepo/.git/info/exclude"
+for b in lb-stuck lb-ok late; do git -C "$tmp/crepo" branch "$b"; done
+for b in rok rstuck; do git -C "$tmp/crepo" push -q origin "main:refs/heads/$b"; done
+git -C "$tmp/crepo" worktree add -qb wt-stuck "$tmp/c-wt-stuck"
+git -C "$tmp/crepo" worktree add -qb wt-ok "$tmp/c-wt-ok"
+cd "$tmp/crepo"
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck branch*lb-stuck push*rstuck" \
+  FAKE_GIT_LATE=late FAKE_GIT_LATE_PATH="$tmp/c-late" \
+  bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -eq 0 ] || { echo "a failed single delete stopped the run (exit $status)"; cat "$tmp/stderr"; exit 1; }
+test -d "$tmp/c-wt-stuck"; test ! -d "$tmp/c-wt-ok"
+grep -Fq "Warning: could not remove worktree $real/c-wt-stuck" "$tmp/stderr"
+grep -Fq 'Kept worktree' "$tmp/output"
+echo 'ok a failed worktree remove warns, is kept, and the run continues'
+git show-ref --verify --quiet refs/heads/lb-stuck; if git show-ref --verify --quiet refs/heads/lb-ok; then exit 1; fi
+grep -Fq 'Warning: could not delete local lb-stuck; kept.' "$tmp/stderr"
+echo 'ok a failed local branch delete warns and the other branches still go'
+git show-ref --verify --quiet refs/heads/late
+grep -Fq 'Warning: local late is checked out in a worktree now; kept.' "$tmp/stderr"
+echo 'ok a branch checked out after the preview is kept with a warning'
+git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/rstuck
+if git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/rok; then echo 'good remote branch kept after batch failure'; exit 1; fi
+grep -Fq 'Warning: could not delete remote rstuck; kept.' "$tmp/stderr"
+echo 'ok a failed remote delete warns and the rest of the batch is deleted one by one'
+grep -Fq 'removed worktrees=1 deleted local=2 deleted remote=1 ' "$tmp/output" || { echo 'counts wrong'; cat "$tmp/output"; exit 1; }
+grep -q '^temp removed=' "$tmp/output" && grep -q '^chrome clones removed=' "$tmp/output"
+echo 'ok failures count as kept and later steps still run'
+# The fleet path (--worktrees-only) takes the same failures.
+git worktree add -q -b wt-stuck2 "$tmp/c-wt-stuck2"
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck2" bash "$here/wrap-up.sh" --worktrees-only --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -eq 0 ] || { echo "--worktrees-only stopped on a failed delete (exit $status)"; exit 1; }
+test -d "$tmp/c-wt-stuck2"
+grep -Fq "Warning: could not remove worktree $real/c-wt-stuck2" "$tmp/stderr"
+grep -q '^removed worktrees=[0-9]* deleted local=' "$tmp/output"
+echo 'ok --worktrees-only survives a failed delete'
+# #393: build caches in kept worktrees. Unmerged branches keep their worktrees. Fake lsof/ps stand in for the process checks.
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+case "${*: -1}" in *c-busy*) echo 4242 ;; esac
+FAKE
+cat > "$tmp/bin/ps" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "${FAKE_PS:-}"
+FAKE
+chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
+for n in free busy cmd cmd-other; do
+  git worktree add -q -b "u-$n" "$tmp/c-$n"
+  git -C "$tmp/c-$n" commit -q --allow-empty -m "u-$n"
+  mkdir -p "$tmp/c-$n/.next/cache" "$tmp/c-$n/web/.next" "$tmp/c-$n/.turbo"
+  echo data > "$tmp/c-$n/.next/cache/blob"; echo data > "$tmp/c-$n/web/.next/x"; echo data > "$tmp/c-$n/.turbo/t"
+done
+export FAKE_PS="node $real/c-cmd/node_modules/.bin/next dev"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+grep -Eq "^Remove build cache $real/c-free/\.next \([0-9]+ KB\)$" "$tmp/output"
+grep -Eq "^Remove build cache $real/c-free/web/\.next \([0-9]+ KB\)$" "$tmp/output"
+test -d "$tmp/c-free/.next" || { echo 'preview deleted a cache'; exit 1; }
+echo 'ok preview lists top level and one level down build caches and deletes nothing'
+grep -Fq "Kept build cache $real/c-busy/.next (a process is running in the worktree)" "$tmp/output"
+grep -Fq "Kept build cache $real/c-cmd/.next (a process command line names the worktree)" "$tmp/output"
+if grep -Fq "Kept build cache $real/c-cmd-other" "$tmp/output"; then echo 'process naming c-cmd also kept c-cmd-other'; exit 1; fi
+grep -Fq 'build caches removed=4 kept=4 bytes=' "$tmp/output" || { echo 'cache counts wrong'; grep 'build' "$tmp/output"; exit 1; }
+echo 'ok a worktree with a running process or a command line naming it keeps its caches'
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$tmp/c-free/.next" && test ! -d "$tmp/c-free/web/.next" && test ! -d "$tmp/c-cmd-other/.next"
+test -d "$tmp/c-busy/.next" && test -d "$tmp/c-cmd/web/.next" && test -d "$tmp/c-free/.turbo"
+echo 'ok apply removes idle caches only and leaves other directories alone'
+WRAP_UP_BUILD_CACHE_DIRS='.turbo .next' bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$tmp/c-free/.turbo" && test -d "$tmp/c-busy/.turbo"
+echo 'ok WRAP_UP_BUILD_CACHE_DIRS picks the directory names'
+bash "$here/wrap-up.sh" --worktrees-only --dry-run | grep -q '^build caches removed=' || { echo 'no cache line under --worktrees-only'; exit 1; }
+echo 'ok --worktrees-only reports build caches'
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"

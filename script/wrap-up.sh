@@ -208,9 +208,11 @@ active_worktree() {
   done < "$tmp/active"
   return 1
 }
-removed=0; local_deleted=0; remote_deleted=0; kept=0
+removed=0; local_deleted=0; remote_deleted=0; kept=0; stale_deleted=0
 keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
+: > "$tmp/kept-worktrees"
+: > "$tmp/remote-planned"
 : > "$tmp/stale-ok"
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
@@ -254,11 +256,18 @@ process_worktree() {
   [ ! -s "$tmp/status" ] || force=--force
   if [ -n "$why" ]; then
     keep "worktree $path" "$why"
+    printf '%s\n' "$path" >> "$tmp/kept-worktrees"
     [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
   else
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
-    [ "$apply" -eq 0 ] || git worktree remove ${force:+"$force"} -- "$path"
-    removed=$((removed+1))
+    if [ "$apply" -eq 0 ] || git worktree remove ${force:+"$force"} -- "$path"; then
+      removed=$((removed+1))
+    else
+      echo "Warning: could not remove worktree $path; kept." >&2
+      keep "worktree $path" 'remove failed'
+      printf '%s\n' "$path" >> "$tmp/kept-worktrees"
+      [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
+    fi
   fi
 }
 while IFS= read -r -d '' field; do
@@ -271,34 +280,113 @@ while IFS= read -r -d '' field; do
   esac
 done < "$tmp/worktrees"
 [ "$apply" -eq 0 ] || git worktree prune
+# True when any worktree has the branch checked out right now (a worker may have started since the listing above).
+checked_out() {
+  git worktree list --porcelain > "$tmp/wt-now"
+  grep -Fxq -- "branch refs/heads/$1" "$tmp/wt-now"
+}
 while IFS= read -r branch; do
   if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "local $branch" 'protected or checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch"; then
-    printf 'Delete local %s (%s)\n' "$branch" "$reason"
-    if [ "$apply" -eq 1 ]; then
-      if [ "$reason" = ancestor ]; then
-        # -d checks HEAD/upstream, so give it the authoritative merge target.
-        git -c "branch.$branch.remote=origin" -c "branch.$branch.merge=refs/heads/main" branch -d -- "$branch"
+    if [ "$apply" -eq 1 ] && checked_out "$branch"; then
+      echo "Warning: local $branch is checked out in a worktree now; kept." >&2
+      keep "local $branch" 'checked out in a worktree'
+      printf '%s\n' "$branch" >> "$tmp/kept-branches"
+    else
+      printf 'Delete local %s (%s)\n' "$branch" "$reason"
+      deleted=1
+      if [ "$apply" -eq 1 ]; then
+        if [ "$reason" = ancestor ]; then
+          # -d checks HEAD/upstream, so give it the authoritative merge target.
+          git -c "branch.$branch.remote=origin" -c "branch.$branch.merge=refs/heads/main" branch -d -- "$branch" || deleted=0
+        else
+          git branch -D -- "$branch" || deleted=0
+        fi
+      fi
+      if [ "$deleted" -eq 1 ]; then
+        local_deleted=$((local_deleted+1))
       else
-        git branch -D -- "$branch"
+        echo "Warning: could not delete local $branch; kept." >&2
+        keep "local $branch" 'delete failed'
+        printf '%s\n' "$branch" >> "$tmp/kept-branches"
       fi
     fi
-    local_deleted=$((local_deleted+1))
   else keep "local $branch" "$reason"
   fi
 done < <(git for-each-ref --format='%(refname:strip=2)' refs/heads)
+# Build caches (WRAP_UP_BUILD_CACHE_DIRS, default .next) take up to 10G each. Drop them in every worktree kept above when no
+# process has its cwd or open files there and no process command line names it. Top level and one level down (web/.next).
+build_cache_dirs=${WRAP_UP_BUILD_CACHE_DIRS-.next}
+cache_removed=0; cache_kept=0; cache_bytes=0
+# True when a process command line names the path; an unreadable process list counts as running.
+named_by_process() {
+  local line
+  ps -axo command= > "$tmp/ps" 2>/dev/null || return 0
+  while IFS= read -r line; do
+    case "$line" in *"$1"|*"$1"[/\ :=]*) return 0 ;; esac
+  done < "$tmp/ps"
+  return 1
+}
+drop_build_caches() {
+  local wt cache parent name kb busy found names=()
+  read -r -a names <<< "$build_cache_dirs"
+  [ ${#names[@]} -gt 0 ] || return 0
+  while IFS= read -r wt; do
+    [ -d "$wt" ] || continue
+    found=()
+    for name in "${names[@]}"; do
+      for cache in "$wt/$name" "$wt"/*/"$name"; do
+        [ -d "$cache" ] && [ ! -L "$cache" ] || continue
+        parent=${cache%/*}
+        [ "$parent" = "$wt" ] || [ ! -L "$parent" ] || continue
+        found+=("$cache")
+      done
+    done
+    [ ${#found[@]} -gt 0 ] || continue
+    busy=''
+    if running_in "$wt"; then busy='a process is running in the worktree'
+    elif named_by_process "$wt"; then busy='a process command line names the worktree'
+    fi
+    for cache in "${found[@]}"; do
+      if [ -n "$busy" ]; then
+        printf 'Kept build cache %s (%s)\n' "$cache" "$busy"; cache_kept=$((cache_kept+1)); continue
+      fi
+      kb=$(du -sk -- "$cache" 2>/dev/null | cut -f1) || kb=0
+      kb=${kb:-0}
+      printf 'Remove build cache %s (%s KB)\n' "$cache" "$kb"
+      if [ "$apply" -eq 0 ] || rm -rf -- "$cache"; then
+        cache_removed=$((cache_removed+1)); cache_bytes=$((cache_bytes + kb * 1024))
+      else
+        echo "Warning: could not remove build cache $cache; kept." >&2; cache_kept=$((cache_kept+1))
+      fi
+    done
+  done < "$tmp/kept-worktrees"
+}
+drop_build_caches
 # A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once, and a
 # checkout there is never fast forwarded.
 if [ "$worktrees_only" -eq 1 ]; then
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
   printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
+  printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
   exit 0
 fi
 batch=()
 flush_remote() {
+  local name
   [ ${#batch[@]} -gt 0 ] || return 0
-  [ "$apply" -eq 0 ] || git push origin --delete "${batch[@]}"
+  if [ "$apply" -eq 1 ] && ! git push origin --delete "${batch[@]}"; then
+    # One bad ref fails the whole push; retry one by one so only the failing ones are kept.
+    for name in "${batch[@]}"; do
+      git push origin --delete "$name" && continue
+      echo "Warning: could not delete remote $name; kept." >&2
+      keep "remote $name" 'delete failed'
+      if grep -Fxq -- "$name" "$tmp/remote-planned"; then remote_deleted=$((remote_deleted-1))
+      elif [ "$stale_deleted" -gt 0 ]; then stale_deleted=$((stale_deleted-1))
+      fi
+    done
+  fi
   batch=()
 }
 while IFS= read -r ref; do
@@ -307,7 +395,7 @@ while IFS= read -r ref; do
     keep "remote $branch" 'protected or checked out in kept worktree'
   elif eligible "$ref" "$branch"; then
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
-    batch+=("$branch"); remote_deleted=$((remote_deleted+1))
+    batch+=("$branch"); printf '%s\n' "$branch" >> "$tmp/remote-planned"; remote_deleted=$((remote_deleted+1))
     [ ${#batch[@]} -lt 50 ] || flush_remote
   else keep "remote $branch" "$reason"
   fi
@@ -418,7 +506,7 @@ if [ -d "$loose_root" ]; then
   done
 fi
 # Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
-stale_found=0; stale_deleted=0
+stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
   {
@@ -449,10 +537,12 @@ if [ "$pr_ok" -eq 1 ]; then
     printf '  %s, %sh old, %s\n' "$name" $(( (now - newest) / 3600 )) "$subject"
     [ "$stale" -eq 1 ] || continue
     printf 'Delete stale %s\n' "$name"
-    if [ -n "$wt" ] && [ "$apply" -eq 1 ]; then git worktree remove --force -- "$wt"; fi
+    if [ -n "$wt" ] && [ "$apply" -eq 1 ]; then
+      git worktree remove --force -- "$wt" || echo "Warning: could not remove worktree $wt; kept." >&2
+    fi
     for ref in "${refs[@]}"; do
       case "$ref" in
-        refs/heads/*) [ "$apply" -eq 0 ] || git branch -D -- "$name" ;;
+        refs/heads/*) [ "$apply" -eq 0 ] || git branch -D -- "$name" || echo "Warning: could not delete local $name; kept." >&2 ;;
         *) batch+=("$name") ;;
       esac
     done
@@ -473,6 +563,7 @@ fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
+printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
 # --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only).
