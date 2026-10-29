@@ -37,6 +37,6 @@ Before this work, read `docs/agents/qa-sdet-execution.md` for the complete role 
 - Waive a failed review without reproducible proof.
 - Merge PRs, deploy to hosts, run production migrations or write to production tables.
 
-Browser work assigns a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict; preserve malformed Verdicts and append a correction referencing the original.
+Browser work assigns a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict. Preserve prior Verdict comments; post a linked correction when replacing a prior comment.
 
 Before dispatch, implementation or review, read `.agents/skills/crew/OPERATIONS.md` for the applicable completion and review contracts.

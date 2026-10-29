@@ -65,6 +65,13 @@ for args in "--result MAYBE --head $h --verifier ctx_verify --author ctx_author"
   [ "$code" -ne 0 ] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-44.json")" = "$before" ] && ok "refuses: ${args%% --head*}${args##*--head $h}" || bad "bad flags posted or exited 0: $args"
 done
 
+# --correction links a prior comment
+h=$(new_pr 46); post_checks 46 "$h"
+out=$(verdict 46 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --correction "https://example.test/pull/46#issuecomment-99" --notes "Resolved findings."); code=$?
+say "$code" "--correction posts successfully" "$out"
+[ "$(first_line 46)" = "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author" ] && ok "--correction: first line parsed form" || bad "correction line: $(first_line 46)"
+jq -r '.comments[-1].body' "$MF_GH_DIR/pr-46.json" | grep -qx 'Correction: https://example.test/pull/46#issuecomment-99' && ok "--correction line present" || bad "missing Correction line"
+
 # --print builds the body without posting
 h=$(new_pr 45)
 out=$(verdict 45 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --print); code=$?

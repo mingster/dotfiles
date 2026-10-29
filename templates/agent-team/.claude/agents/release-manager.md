@@ -34,6 +34,6 @@ Before this work, read `docs/agents/release-manager-work.md` for the complete ro
 - Never stop a process by name (`pkill`, `killall`; the guard denies it). Stop your own server with `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`, or a saved pid.
 - Expose secrets in logs or output. Use `.claude/bin/env-peek.py`.
 
-Browser work uses a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict; preserve malformed Verdicts and append a correction referencing the original.
+Browser work uses a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict. Preserve prior Verdict comments; post a linked correction when replacing a prior comment.
 
 When gate admission or a remote browser blocks verification, report the gate job, host and last receipt separately from test results; retain the worker until admission resolves or an authorized handoff accepts it.
