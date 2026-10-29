@@ -44,6 +44,65 @@ jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[]
 jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
 : > "$tmp/active"
 orca=${ORCA_CLI_COMMAND:-orca}
+# Close finished terminals on the local host and every listed environment, before the worktree check reads the inventory.
+# Closed: a terminal of a settled dispatch, or one whose process exited. Kept: our own, a live dispatch's, and a running
+# terminal with unknown ownership (reported). Handles belong to the host that issued them, so each host is handled alone.
+term_closed=0; term_kept=0
+terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
+close_terminal() {
+  if command -v timeout >/dev/null 2>&1; then timeout 30 "$orca" terminal close "$@" >/dev/null 2>&1
+  else "$orca" terminal close "$@" >/dev/null 2>&1
+  fi
+}
+close_finished_terminals() {
+  local env=$1 label=${1:-local} eargs=() wargs cursor='' handle reason action
+  [ -z "$env" ] || eargs=(--environment "$env")
+  if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
+    || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
+    echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
+  fi
+  : > "$tmp/h-workers"
+  while :; do
+    wargs=(); [ -z "$cursor" ] || wargs=(--cursor "$cursor")
+    if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} ${wargs[@]+"${wargs[@]}"} --json > "$tmp/h-page" 2>/dev/null \
+      || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
+      echo "Warning: dispatch discovery failed on $label; closing nothing there." >&2; return 0
+    fi
+    cat "$tmp/h-page" >> "$tmp/h-workers"
+    cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/h-page")
+    [ -n "$cursor" ] || break
+  done
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
+    def settled: .dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s);
+    [.[].result.workers[] | select(.agentTerminalHandle != null)] as $w
+    | $terms[0].result.terminals[] | .handle as $h
+    | ([$w[] | select(.agentTerminalHandle == $h)]) as $mine
+    | (.connected == false or .writable == false) as $exited
+    | if $h == $own then [$h, "own terminal", "keep"]
+      elif any($mine[]; settled | not) then [$h, "live dispatch", "keep"]
+      elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
+      elif $exited then [$h, "exited", "close"]
+      else [$h, "unknown owner, still running", "keep"] end
+    | @tsv' "$tmp/h-workers" > "$tmp/h-plan"
+  while IFS=$'\t' read -r handle reason action; do
+    if [ "$action" = keep ]; then terminal_kept "$handle" "$label" "$reason"; continue; fi
+    printf 'Close terminal %s (%s, %s)\n' "$handle" "$label" "$reason"
+    if [ "$apply" -eq 1 ]; then
+      close_terminal ${eargs[@]+"${eargs[@]}"} --terminal "$handle" || echo "Warning: closing $handle on $label failed." >&2
+    fi
+    term_closed=$((term_closed+1))
+  done < "$tmp/h-plan"
+}
+if command -v "$orca" >/dev/null 2>&1; then
+  close_finished_terminals ''
+  if "$orca" environment list --json > "$tmp/envs" 2>/dev/null && jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
+    while IFS= read -r env_id; do
+      [ -z "$env_id" ] || close_finished_terminals "$env_id"
+    done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
+  else
+    echo 'Warning: Orca environment list unavailable; closed local terminals only.' >&2
+  fi
+fi
 if command -v "$orca" >/dev/null 2>&1; then
   if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
     # Unknown ownership is retained too: a live terminal can belong to another Run.
@@ -366,5 +425,6 @@ else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
+printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"

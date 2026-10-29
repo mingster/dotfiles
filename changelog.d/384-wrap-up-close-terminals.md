@@ -1,0 +1,1 @@
+- wrap-up: closes every finished Orca terminal (settled dispatch or exited process) on the local host and all listed environments, keeps its own, live and unknown-running ones, and reports `terminals closed=N kept=M`.

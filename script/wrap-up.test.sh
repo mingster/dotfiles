@@ -191,3 +191,46 @@ test -d "$tmp/detached-dirty"
 echo 'ok dirty detached worktree kept'
 test -d "$tmp/detached-ahead"
 echo 'ok detached worktree with unmerged commits kept'
+# Finished terminals close on the local host and every listed environment. The stub never touches a real terminal.
+fake="$tmp/fake-orca"; mkdir -p "$fake"
+cat > "$tmp/bin/orca-envs" <<'FAKE'
+#!/usr/bin/env bash
+env=local; args=("$@")
+for i in "${!args[@]}"; do [ "${args[$i]}" = --environment ] && env=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) printf '{"ok":true,"result":{"environments":[{"id":"env-a","name":"a"},{"id":"env-b","name":"b"}]}}\n' ;;
+  *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/$env.terminals")" ;;
+  *'terminal close'*)
+    for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && h=${args[$((i+1))]}; done
+    echo "$env $h" >> "$FAKE_DIR/closed.log"
+    jq -c --arg h "$h" 'map(select(.handle != $h))' "$FAKE_DIR/$env.terminals" > "$FAKE_DIR/$env.tmp" && mv "$FAKE_DIR/$env.tmp" "$FAKE_DIR/$env.terminals" ;;
+  *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
+  *worker-list*) printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false}}}\n' "$(cat "$FAKE_DIR/$env.workers")" ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-envs"
+export FAKE_DIR="$fake" ORCA_CLI_COMMAND="$tmp/bin/orca-envs" ORCA_TERMINAL_HANDLE=t-own
+t() { printf '{"handle":"%s","worktreePath":"/nowhere/%s","connected":true,"writable":%s}' "$1" "$1" "${2:-true}"; }
+w() { printf '{"agentTerminalHandle":"%s","dispatchId":"d-%s","dispatchStatus":"%s"}' "$1" "$1" "$2"; }
+echo "[$(t t-own),$(t t-done),$(t t-live),$(t t-unknown),$(t t-exited false)]" > "$fake/local.terminals"
+echo "[$(w t-own completed),$(w t-done completed),$(w t-live dispatched)]" > "$fake/local.workers"
+echo "[$(t e1-done),$(t e1-unknown),$(t e1-exited false)]" > "$fake/env-a.terminals"
+echo "[$(w e1-done failed)]" > "$fake/env-a.workers"
+echo "[$(t e2-gone),$(t e2-live)]" > "$fake/env-b.terminals"
+echo "[$(w e2-gone released),$(w e2-live dispatched)]" > "$fake/env-b.workers"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+test ! -e "$fake/closed.log"
+for want in 'Close terminal t-done (local, settled dispatch)' 'Close terminal t-exited (local, exited)' \
+  'Close terminal e1-done (env-a, settled dispatch)' 'Close terminal e1-exited (env-a, exited)' 'Close terminal e2-gone (env-b, settled dispatch)'; do
+  grep -Fxq "$want" "$tmp/output" || { echo "missing: $want"; exit 1; }
+done
+grep -q 'terminals closed=5 kept=' "$tmp/output"
+echo 'ok dry run lists finished terminals on two environments and closes nothing'
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+sort "$fake/closed.log" > "$tmp/closed"
+printf '%s\n' 'env-a e1-done' 'env-a e1-exited' 'env-b e2-gone' 'local t-done' 'local t-exited' | cmp - "$tmp/closed"
+for kept in t-own t-live t-unknown e1-unknown e2-live; do
+  grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
+done
+grep -q 'terminals closed=5 kept=5' "$tmp/output"
+echo 'ok apply closes settled and exited terminals; own, live and unknown-running kept'
