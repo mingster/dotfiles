@@ -55,8 +55,8 @@ orca=${ORCA_CLI_COMMAND:-orca}
 # dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
 # no agent on a path where every dispatch is settled (shells, worker-pane.sh panes). Kept: our own, a live dispatch's, one
 # running an agent, a lead- worktree's, and a terminal on a path with no dispatch (reported as unknown owner).
-# worker-list is newest first; only the newest WRAP_UP_WORKER_PAGES pages of 100 are read (older dispatches never match,
-# so their paths count as unknown owner and stay). Handles belong to the host that issued them, so each host is handled alone.
+# Dispatches come from the coordinator, including its remote workers. Reuse that inventory
+# for every environment; a remote Orca need not own the dispatch of a terminal it hosts.
 term_closed=0; term_kept=0
 : > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
@@ -65,25 +65,33 @@ close_terminal() {
   else "$orca" terminal close "$@" >/dev/null 2>&1
   fi
 }
+terminal_dispatches() {
+  local wargs cursor=''
+  : > "$tmp/h-workers"
+  : > "$tmp/h-cursors"
+  while :; do
+    wargs=(--include-remote --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
+    if ! "$orca" orchestration worker-list "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
+      || ! jq -e '.ok != false and (.result.workers | type == "array")
+        and (.result.page.hasMore | type == "boolean")' "$tmp/h-page" >/dev/null 2>&1; then
+      echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; return 1
+    fi
+    cat "$tmp/h-page" >> "$tmp/h-workers"
+    jq -e '.result.page.hasMore' "$tmp/h-page" >/dev/null || break
+    if ! cursor=$(jq -er '.result.page.nextCursor | select(type == "string" and length > 0)' "$tmp/h-page") \
+      || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
+      echo 'Warning: coordinator dispatch pagination incomplete; closing no terminals.' >&2; return 1
+    fi
+    printf '%s\n' "$cursor" >> "$tmp/h-cursors"
+  done
+}
 close_finished_terminals() {
-  local env=$1 label=${1:-local} eargs=() wargs cursor='' handle reason action pages=0
+  local env=$1 label=${1:-local} eargs=() handle reason action
   [ -z "$env" ] || eargs=(--environment "$env")
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
   fi
-  : > "$tmp/h-workers"
-  while :; do
-    wargs=(--limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
-    if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
-      echo "Warning: dispatch discovery failed on $label; closing nothing there." >&2; return 0
-    fi
-    cat "$tmp/h-page" >> "$tmp/h-workers"
-    cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/h-page")
-    pages=$((pages+1))
-    [ -n "$cursor" ] && [ "$pages" -lt "${WRAP_UP_WORKER_PAGES:-2}" ] || break
-  done
   jq -r -s --slurpfile terms "$tmp/h-terminals" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
     def settled: .dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s);
     def path: (.projection.workspace.id // "") | split("::")[1] // "";
@@ -112,7 +120,7 @@ close_finished_terminals() {
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
-if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1; then
+if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && terminal_dispatches; then
   close_finished_terminals ''
   if "$orca" environment list --json > "$tmp/envs" 2>/dev/null && jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
     while IFS= read -r env_id; do

@@ -1,0 +1,1 @@
+Fix wrap-up terminal cleanup to use every page of the coordinator's dispatch inventory, including remote workers, when matching local and remote terminals. Preserve existing keep rules and close no terminals if dispatch discovery or pagination is incomplete.
