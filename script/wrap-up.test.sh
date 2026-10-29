@@ -581,4 +581,44 @@ grep -Fq 'Warning: could not list worktrees' "$tmp/stderr" || { echo 'no invento
 git show-ref --verify --quiet refs/heads/inv-b || { echo 'a branch was deleted without an inventory'; exit 1; }
 git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/inv-b || { echo 'a remote branch was deleted without an inventory'; exit 1; }
 echo 'ok a failed worktree inventory aborts with a warning and a non-zero exit, deleting nothing'
+# 5. A failing lsof or ps never lets a cache or worktree be deleted: unknown counts as in use.
+find "$tmp" -mindepth 2 -maxdepth 3 -name .next -type d -prune -exec rm -rf {} + 2>/dev/null || true
+mkkept c-lsof
+mkdir -p "$tmp/c-lsof/web"
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+exit 2
+FAKE
+cat > "$tmp/bin/ps" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "${FAKE_PS:-}"
+FAKE
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c-lsof/.next" || { echo 'a failing lsof let the cache be deleted'; cat "$tmp/output"; exit 1; }
+grep -Fq "Kept build cache $real/c-lsof/.next (a process is running in the worktree)" "$tmp/output" || { echo 'lsof failure kept the cache without a reason'; cat "$tmp/output"; exit 1; }
+grep -Fq 'build caches removed=0 kept=1 bytes=0' "$tmp/output" || { echo 'lsof failure not counted as kept=1'; grep 'build' "$tmp/output"; exit 1; }
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+echo 'lsof: WARNING: something went wrong' >&2
+FAKE
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c-lsof/.next" || { echo 'lsof error output let the cache be deleted'; exit 1; }
+echo 'ok a failing lsof (bad status or error output) keeps the cache and counts it as kept'
+# The worktree removal paths share the helper: a failing lsof keeps a merged worktree too.
+git worktree add -q -b m-lsof "$tmp/m-lsof"
+bash "$here/wrap-up.sh" --apply --worktrees-only > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/m-lsof" || { echo 'a failing lsof let --worktrees-only remove a worktree'; cat "$tmp/output"; exit 1; }
+echo 'ok a failing lsof keeps worktrees under --worktrees-only'
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+exit 1
+FAKE
+cat > "$tmp/bin/ps" <<'FAKE'
+#!/usr/bin/env bash
+echo 'ps: failure' >&2
+exit 1
+FAKE
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c-lsof/.next" || { echo 'a failing ps let the cache be deleted'; exit 1; }
+echo 'ok a failing ps keeps the cache'
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"

@@ -194,10 +194,13 @@ eligible() {
 screenshots_only() {
   ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
 }
-# True when a process has the worktree open; unknown (no lsof) counts as running.
+# True when a process has the worktree open. Unknown counts as running: no lsof, a status above 1 (1 = no open files),
+# or any error output.
 running_in() {
+  local holders lsof_status=0
   command -v lsof >/dev/null 2>&1 || return 0
-  [ -n "$(lsof -t +D "$1" 2>/dev/null || true)" ]
+  holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || lsof_status=$?
+  [ -n "$holders" ] || [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]
 }
 active_worktree() {
   local active_path
