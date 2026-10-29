@@ -60,15 +60,17 @@ for key,value in os.environ.items():
 text=re.sub(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|sqlserver)://[^\s]+", "[redacted database URL]", text)
 cap=int(sys.argv[1]); path=sys.argv[2]
 if len(text)>cap:
-    # Bounded summary: the status, Duration and closing Total lines always survive; the full redacted log goes to a file.
+    # Bounded summary: the status and closing Total lines always survive, Duration lines slowest first as far as they fit; the full redacted log goes to a file.
     open(path,"w").write(text)
     footer="\nReceipt cut to fit %d characters. Full log: %s\n" % (cap,path)
     lines=text.rstrip("\n").split("\n")
     total=lines.pop() if lines and lines[-1].startswith("Total: ") else ""
-    must=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Result: |Duration: )")
+    must=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Result: )")
+    dur=re.compile(r"^Duration: (\d+)s$")
     nice=re.compile(r"^(Command: |Scoped tests: |Selected: )")
     tail_from=max(len(lines)-40,0)
     cut=lambda l: l if len(l)<=300 or l.startswith("Checks: ") else l[:300]+"[... line cut]"
+    dur_idx=sorted((i for i,l in enumerate(lines) if dur.match(l)), key=lambda i:(-int(dur.match(lines[i]).group(1)),i))
     def render(chosen):
         out=[]; omitted=0
         for i,l in enumerate(lines):
@@ -77,8 +79,12 @@ if len(text)>cap:
                 out.append(cut(l))
             else: omitted+=1
         if omitted: out.append("[... %d lines omitted]" % omitted)
+        skipped=len(dur_idx)-len(chosen.intersection(dur_idx))
+        if skipped: out.append("Duration: %d more checks omitted (see full log)" % skipped)
         return "\n".join(out)+footer+total+"\n"
     chosen={i for i,l in enumerate(lines) if must.match(l)}
+    for i in dur_idx:
+        if len(render(chosen|{i}))<=cap: chosen.add(i)
     for i,l in enumerate(lines):
         if i not in chosen and (nice.match(l) or i>=tail_from) and len(render(chosen|{i}))<=cap: chosen.add(i)
     text=render(chosen)

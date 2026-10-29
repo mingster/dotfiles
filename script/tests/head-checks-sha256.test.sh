@@ -52,5 +52,15 @@ with tempfile.TemporaryDirectory() as temp:
     durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
     ok = result.returncode == 0 and len(receipt) <= 65536 and 'Receipt cut to fit' in receipt and len(durations) == n and re.search(r'^Total: (\d+)s\n?\Z', receipt, re.M) is not None
     print('ok   capped receipt keeps all Duration lines and closing Total' if ok else 'FAIL capped receipt rc=%s len=%d durations=%d' % (result.returncode, len(receipt), len(durations)))
+    if not ok: sys.exit(1)
+    # Too many checks for every Duration line: slowest kept, the rest summarised, Total still last.
+    n = 1500
+    conf.write_text(''.join('true # %s\n' % ('x' * 500) for _ in range(n))); git('add', '.'); git('commit', '-qm', 'huge checks'); head = git('rev-parse', 'HEAD')
+    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=capenv, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    receipt = result.stdout[result.stdout.index('Checks: '):]
+    durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
+    omitted = re.search(r'^Duration: (\d+) more checks omitted \(see full log\)$', receipt, re.M)
+    ok = result.returncode == 0 and len(receipt) <= 65536 and re.search(r'^Total: (\d+)s\n\Z', receipt, re.M) is not None and omitted is not None and len(durations) + int(omitted.group(1)) == n
+    print('ok   1500 checks stay within the cap with an omitted Duration line and Total last' if ok else 'FAIL huge receipt rc=%s len=%d durations=%d omitted=%s' % (result.returncode, len(receipt), len(durations), omitted and omitted.group(1)))
     sys.exit(0 if ok else 1)
 PY
