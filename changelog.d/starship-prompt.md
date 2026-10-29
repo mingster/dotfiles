@@ -1,0 +1,1 @@
+- Replace Powerlevel10k with Starship across macOS, Arch, and Debian setups, remove .p10k.zsh, initialize Starship in .zshrc, and alias ls with color support.

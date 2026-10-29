@@ -253,16 +253,16 @@ echo ""
 echo -e "\033[1;35m zsh \033[0m"
 echo ""
 
+brew list starship >/dev/null 2>&1 || brew install starship
+
 # Oh My Zsh (unattended install if not already present)
 if [ ! -d "$HOME/.oh-my-zsh" ]; then
   RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
 fi
 
-# Themes and plugins
+# Plugins
 if [ -d "$HOME/.oh-my-zsh" ]; then
-  if [ ! -d "$HOME/.oh-my-zsh/custom/themes/powerlevel10k" ]; then
-    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
-  fi
+  rm -rf "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
   if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
     git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
   fi

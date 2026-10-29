@@ -402,3 +402,23 @@ rm "$tmp/fleet.json"
 bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
 grep -Fq 'fleet config' "$tmp/stderr"
 echo 'ok missing fleet config warns and the local run still succeeds'
+# Chrome clones live in the per-user temp dir (T) and in its sibling X dir. Both are scanned with the same lsof rule.
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+case "${*: -1}" in *held*) echo 4242 ;; esac
+FAKE
+chmod +x "$tmp/bin/lsof"
+croot="$tmp/darwin/T"
+mkdir -p "$croot/com.google.Chrome.code_sign_clone/code_sign_clone.t-free" \
+  "$tmp/darwin/X/com.google.Chrome.code_sign_clone/code_sign_clone.x-free" \
+  "$tmp/darwin/X/com.google.Chrome.dev.code_sign_clone/code_sign_clone.x-held"
+WRAP_UP_CLONE_ROOT="$croot/" bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+grep -Fq "Remove Chrome clone $tmp/darwin/X/com.google.Chrome.code_sign_clone/code_sign_clone.x-free" "$tmp/output"
+grep -Fq "Kept Chrome clone $tmp/darwin/X/com.google.Chrome.dev.code_sign_clone/code_sign_clone.x-held (held open" "$tmp/output"
+grep -Fq "chrome clones removed=2 kept=1" "$tmp/output" || { echo 'X dir clones not counted'; exit 1; }
+WRAP_UP_CLONE_ROOT="$croot/" bash "$here/wrap-up.sh" --apply > "$tmp/output"
+[ ! -d "$tmp/darwin/X/com.google.Chrome.code_sign_clone/code_sign_clone.x-free" ] || { echo 'free X clone not removed'; exit 1; }
+[ ! -d "$croot/com.google.Chrome.code_sign_clone/code_sign_clone.t-free" ] || { echo 'free T clone not removed'; exit 1; }
+[ -d "$tmp/darwin/X/com.google.Chrome.dev.code_sign_clone/code_sign_clone.x-held" ] || { echo 'held X clone removed'; exit 1; }
+rm -f "$tmp/bin/lsof"
+echo 'ok chrome clones in the sibling X dir are removed unless held open'

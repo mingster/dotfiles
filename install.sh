@@ -52,7 +52,7 @@ ln -sfn "$DOTFILES_ROOT/.vimrc" "$HOME/.vimrc"
 ln -sfn "$DOTFILES_ROOT/.vim" "$HOME/.vim"
 ln -sfn "$DOTFILES_ROOT/.zshenv" "$HOME/.zshenv"
 ln -sfn "$DOTFILES_ROOT/.zshrc" "$HOME/.zshrc"
-ln -sfn "$DOTFILES_ROOT/.p10k.zsh" "$HOME/.p10k.zsh"
+rm -f "$HOME/.p10k.zsh"
 
 git config --global core.excludesfile "$DOTFILES_ROOT/.gitignore_global"
 git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
