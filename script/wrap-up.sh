@@ -194,13 +194,30 @@ eligible() {
 screenshots_only() {
   ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
 }
-# True when a process has the worktree open. Unknown counts as running: no lsof, a status above 1 (1 = no open files),
-# or any error output.
-running_in() {
-  local holders lsof_status=0
-  command -v lsof >/dev/null 2>&1 || return 0
-  holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || lsof_status=$?
-  [ -n "$holders" ] || [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]
+# The one gate before anything is deleted because nothing runs there (worktrees, stale branches, build caches, Chrome
+# clones, temp items). True, with the reason in $busy, unless lsof and ps both answered cleanly and found nothing: lsof
+# with no holder, ps with no command line naming the path. A missing binary, a bad status (lsof: above 1, 1 = no open
+# files; ps: any) or any error output counts as in use.
+in_use() {
+  local holders lsof_status=0 ps_status=0 line esc
+  busy=''
+  if ! command -v lsof >/dev/null 2>&1; then busy='lsof unavailable'; return 0; fi
+  if [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || lsof_status=$?
+  else holders=$(lsof -t -- "$1" 2>"$tmp/lsof-err") || lsof_status=$?
+  fi
+  if [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
+  if [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then busy='lsof failed'; return 0; fi
+  if ! command -v ps >/dev/null 2>&1; then busy='ps unavailable'; return 0; fi
+  ps -axo command= > "$tmp/ps" 2>"$tmp/ps-err" || ps_status=$?
+  if [ "$ps_status" -ne 0 ] || [ -s "$tmp/ps-err" ]; then busy='ps failed'; return 0; fi
+  # Also the shell escaped spelling (a\ b). After the path only an argument boundary counts, so a sibling prefix does not.
+  esc=$(printf '%s' "$1" | sed 's/[^A-Za-z0-9_.\/:=-]/\\&/g')
+  while IFS= read -r line; do
+    case "$line" in
+      *"$1"|*"$1"[/\ :=\"\',\;]*|*"$esc"|*"$esc"[/\ :=\"\',\;]*) busy='a process command line names it'; return 0 ;;
+    esac
+  done < "$tmp/ps"
+  return 1
 }
 active_worktree() {
   local active_path
@@ -241,7 +258,6 @@ process_worktree() {
   elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
-  elif [ "$worktrees_only" -eq 1 ] && running_in "$path"; then why='a process is running in it'
   elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
   elif [ -z "$branch" ] && grep -Fxq -- "$head" "$tmp/open-heads"; then why='open PR head'
   elif [ -z "$branch" ]; then
@@ -256,6 +272,7 @@ process_worktree() {
     why=$reason
     [ "$reason" = 'open PR' ] || printf '%s\t%s\n' "$branch" "$path" >> "$tmp/stale-ok"
   fi
+  if [ -z "$why" ] && in_use "$path"; then why=$busy; fi
   [ ! -s "$tmp/status" ] || force=--force
   if [ -n "$why" ]; then
     keep "worktree $path" "$why"
@@ -328,21 +345,8 @@ done < <(git for-each-ref --format='%(refname:strip=2)' refs/heads)
 # process has its cwd or open files there and no process command line names it. Top level and one level down (web/.next).
 build_cache_dirs=${WRAP_UP_BUILD_CACHE_DIRS-.next}
 cache_removed=0; cache_kept=0; cache_bytes=0
-# True when a process command line names the path; an unreadable process list counts as running.
-named_by_process() {
-  local line esc
-  # Also the shell escaped spelling (a\ b). After the path only an argument boundary counts, so a sibling prefix does not.
-  esc=$(printf '%s' "$1" | sed 's/[^A-Za-z0-9_.\/:=-]/\\&/g')
-  ps -axo command= > "$tmp/ps" 2>/dev/null || return 0
-  while IFS= read -r line; do
-    case "$line" in
-      *"$1"|*"$1"[/\ :=\"\',\;]*|*"$esc"|*"$esc"[/\ :=\"\',\;]*) return 0 ;;
-    esac
-  done < "$tmp/ps"
-  return 1
-}
 drop_build_caches() {
-  local wt wt_real cache parent parent_real name kb busy found names=() valid=()
+  local wt wt_real cache parent parent_real name kb found names=() valid=()
   read -r -a names <<< "$build_cache_dirs"
   # Plain directory names only: a path, "." or ".." could point outside the worktree.
   for name in ${names[@]+"${names[@]}"}; do
@@ -369,10 +373,7 @@ drop_build_caches() {
       done
     done
     [ ${#found[@]} -gt 0 ] || continue
-    busy=''
-    if running_in "$wt"; then busy='a process is running in the worktree'
-    elif named_by_process "$wt"; then busy='a process command line names the worktree'
-    fi
+    in_use "$wt" || true
     for cache in "${found[@]}"; do
       if [ -n "$busy" ]; then
         printf 'Kept build cache %s (%s)\n' "$cache" "$busy"; cache_kept=$((cache_kept+1)); continue
@@ -440,15 +441,8 @@ for clone_dir in ${clone_dirs[@]+"${clone_dirs[@]}"}; do
   [ -d "$clone_dir" ] || continue
   for clone in "$clone_dir"/com.google.Chrome*.code_sign_clone/code_sign_clone.*; do
     [ -d "$clone" ] || continue
-    if ! command -v lsof >/dev/null 2>&1; then
-      printf 'Kept Chrome clone %s (lsof unavailable)\n' "$clone"; clone_kept=$((clone_kept+1)); continue
-    fi
-    # Rule: remove only when lsof ends 0 or 1 (1 = no open files) with no output and no stderr. Any other result keeps.
-    lsof_status=0; holders=$(lsof -t +D "$clone" 2>"$tmp/lsof-err") || lsof_status=$?
-    if [ -n "$holders" ]; then
-      printf 'Kept Chrome clone %s (held open by a running process)\n' "$clone"; clone_kept=$((clone_kept+1))
-    elif [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then
-      printf 'Kept Chrome clone %s (lsof failed)\n' "$clone"; clone_kept=$((clone_kept+1))
+    if in_use "$clone"; then
+      printf 'Kept Chrome clone %s (%s)\n' "$clone" "$busy"; clone_kept=$((clone_kept+1))
     else
       printf 'Remove Chrome clone %s\n' "$clone"
       [ "$apply" -eq 0 ] || rm -rf -- "$clone"
@@ -477,7 +471,7 @@ slug_exists() {
 }
 # temp_item <path> <worktree gone: 0|1>
 temp_item() {
-  local item=$1 gone=$2 why='' kb holders lsof_status=0 sid
+  local item=$1 gone=$2 why='' kb sid
   case "${item##*/}" in elon-wait.sh|elon-waiter.json) return 0 ;; esac
   case "$item" in "$state_dir"|"$state_dir"/*) return 0 ;; esac
   kb=$(du -sk -- "$item" | cut -f1)
@@ -487,14 +481,7 @@ temp_item() {
   case "$PWD/" in "$item"/*) why="current session's own scratch dir" ;; esac
   if [ -n "$why" ]; then :
   elif [ "$gone" -eq 0 ] && [ -n "$(find "$item" -mmin -1440 -print -quit)" ]; then why='touched in the last 24 h'
-  elif ! command -v lsof >/dev/null 2>&1; then why='lsof unavailable'
-  else
-    if [ -d "$item" ]; then holders=$(lsof -t +D "$item" 2>"$tmp/lsof-err") || lsof_status=$?
-    else holders=$(lsof -t -- "$item" 2>"$tmp/lsof-err") || lsof_status=$?
-    fi
-    if [ -n "$holders" ]; then why='held open by a running process'
-    elif [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then why='lsof failed'
-    fi
+  elif in_use "$item"; then why=$busy
   fi
   if [ -n "$why" ]; then
     printf 'Kept temp %s (%s)\n' "$item" "$why"; temp_kept=$((temp_kept+1)); return 0
@@ -542,7 +529,6 @@ if [ "$pr_ok" -eq 1 ]; then
     [ -n "$name" ] && ! protected "$name" || continue
     wt=$(awk -F'\t' -v n="$name" '$1 == n { print substr($0, length(n) + 2); exit }' "$tmp/stale-ok")
     if [ -z "$wt" ] && grep -Fxq -- "$name" "$tmp/kept-branches"; then continue; fi
-    if [ -n "$wt" ] && running_in "$wt"; then continue; fi
     refs=()
     for ref in "refs/heads/$name" "refs/remotes/origin/$name"; do
       git show-ref --verify --quiet "$ref" || continue
@@ -556,6 +542,7 @@ if [ "$pr_ok" -eq 1 ]; then
       t=$(git log -1 --format=%ct "$ref"); [ "$t" -le "$newest" ] || newest=$t
     done
     [ $((now - newest)) -ge 86400 ] || continue
+    if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
     if [ "$stale_found" -eq 0 ]; then echo 'Stale (needs a decision)'; fi
     stale_found=$((stale_found+1))
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)

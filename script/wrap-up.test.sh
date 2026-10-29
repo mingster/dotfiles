@@ -508,8 +508,8 @@ grep -Eq "^Remove build cache $real/c-free/\.next \([0-9]+ KB\)$" "$tmp/output"
 grep -Eq "^Remove build cache $real/c-free/web/\.next \([0-9]+ KB\)$" "$tmp/output"
 test -d "$tmp/c-free/.next" || { echo 'preview deleted a cache'; exit 1; }
 echo 'ok preview lists top level and one level down build caches and deletes nothing'
-grep -Fq "Kept build cache $real/c-busy/.next (a process is running in the worktree)" "$tmp/output"
-grep -Fq "Kept build cache $real/c-cmd/.next (a process command line names the worktree)" "$tmp/output"
+grep -Fq "Kept build cache $real/c-busy/.next (held open by a running process)" "$tmp/output"
+grep -Fq "Kept build cache $real/c-cmd/.next (a process command line names it)" "$tmp/output"
 if grep -Fq "Kept build cache $real/c-cmd-other" "$tmp/output"; then echo 'process naming c-cmd also kept c-cmd-other'; exit 1; fi
 grep -Fq 'build caches removed=4 kept=4 bytes=' "$tmp/output" || { echo 'cache counts wrong'; grep 'build' "$tmp/output"; exit 1; }
 echo 'ok a worktree with a running process or a command line naming it keeps its caches'
@@ -595,7 +595,7 @@ printf '%s\n' "${FAKE_PS:-}"
 FAKE
 bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
 test -d "$tmp/c-lsof/.next" || { echo 'a failing lsof let the cache be deleted'; cat "$tmp/output"; exit 1; }
-grep -Fq "Kept build cache $real/c-lsof/.next (a process is running in the worktree)" "$tmp/output" || { echo 'lsof failure kept the cache without a reason'; cat "$tmp/output"; exit 1; }
+grep -Fq "Kept build cache $real/c-lsof/.next (lsof failed)" "$tmp/output" || { echo 'lsof failure kept the cache without a reason'; cat "$tmp/output"; exit 1; }
 grep -Fq 'build caches removed=0 kept=1 bytes=0' "$tmp/output" || { echo 'lsof failure not counted as kept=1'; grep 'build' "$tmp/output"; exit 1; }
 cat > "$tmp/bin/lsof" <<'FAKE'
 #!/usr/bin/env bash
@@ -622,3 +622,71 @@ bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
 test -d "$tmp/c-lsof/.next" || { echo 'a failing ps let the cache be deleted'; exit 1; }
 echo 'ok a failing ps keeps the cache'
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+# 6. One table: every path that deletes because "nothing runs here" x every way lsof or ps can fail. Each must keep and
+# count the item as kept. A fresh disposable repo keeps the counts exact.
+git init -q --bare "$tmp/origin4"
+git clone -q "$tmp/origin4" "$tmp/trepo" 2>/dev/null
+cd "$tmp/trepo"
+git config user.email test@example.invalid; git config user.name Test
+git checkout -qb main; echo t > file; git add file; git commit -qm initial; git push -q -u origin main
+echo '.next' >> .git/info/exclude
+told=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo y | git hash-object -w --stdin)" | git mktree)")
+export WRAP_UP_CLONE_ROOT="$tmp/t-clones" WRAP_UP_LOOSE_ROOT="$tmp/t-loose"
+tclone="$tmp/t-clones/com.google.Chrome.code_sign_clone/code_sign_clone.t1"
+ttemp="$tmp/t-loose/12-t.log"
+tfixtures() { # recreate whatever a failing case deleted
+  git worktree prune
+  [ -d "$tmp/t-wt" ] || git worktree add -q -B t-wt "$tmp/t-wt" main
+  [ -d "$tmp/t-wto" ] || git worktree add -q -B t-wto "$tmp/t-wto" main
+  [ -d "$tmp/t-stale" ] || git worktree add -q -B t-stale "$tmp/t-stale" "$told"
+  if [ ! -d "$tmp/t-cache" ]; then
+    git worktree add -q -B t-cache "$tmp/t-cache" main; git -C "$tmp/t-cache" commit -q --allow-empty -m t-cache
+  fi
+  mkdir -p "$tmp/t-cache/.next" "$tmp/t-loose" "$tclone"; echo data > "$tmp/t-cache/.next/x"
+  [ -f "$ttemp" ] || { echo log > "$ttemp"; touch -t 202001010000 "$ttemp"; }
+}
+tfake() { # <mode>: write the failing lsof or ps; the other one answers "nothing here"
+  local lsof_body='exit 1' ps_body='echo "init"'
+  case "$1" in
+    lsof-status) lsof_body='exit 2' ;;
+    lsof-stderr) lsof_body='echo "lsof: WARNING: can not stat" >&2; exit 1' ;;
+    ps-status) ps_body='exit 1' ;;
+    ps-stderr) ps_body='echo "init"; echo "ps: warning" >&2' ;;
+  esac
+  printf '#!/usr/bin/env bash\n%s\n' "$lsof_body" > "$tmp/bin/lsof"
+  printf '#!/usr/bin/env bash\n%s\n' "$ps_body" > "$tmp/bin/ps"
+  chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
+}
+t_cases=0; t_failed=0
+tcheck() { # <mode> <path> <command...>
+  local mode=$1 what=$2; shift 2
+  t_cases=$((t_cases+1))
+  if "$@"; then echo "ok   $mode keeps $what"; else echo "FAIL $mode deleted or did not count $what"; t_failed=$((t_failed+1)); fi
+}
+has() { grep -Fq -- "$1" "$tmp/output"; }
+kept_wt() { test -d "$tmp/$1" && has "Kept worktree $real/$1 (" && has 'removed worktrees=0 '; }
+kept_stale() { test -d "$tmp/t-stale" && git show-ref --verify --quiet refs/heads/t-stale && has 'Kept stale t-stale (' && has 'stale deleted=0'; }
+kept_cache() { test -d "$tmp/t-cache/.next" && has 'build caches removed=0 kept=1 '; }
+kept_clone() { test -d "$tclone" && has 'chrome clones removed=0 kept=1'; }
+kept_temp() { test -f "$ttemp" && has 'temp removed=0 kept=1 '; }
+for mode in lsof-status lsof-stderr ps-status ps-stderr; do
+  tfixtures; tfake "$mode"
+  bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+  tcheck "$mode" 'worktree (--apply)' kept_wt t-wt
+  tcheck "$mode" 'stale branch (--apply --stale)' kept_stale
+  tcheck "$mode" 'build cache' kept_cache
+  tcheck "$mode" 'Chrome clone' kept_clone
+  tcheck "$mode" 'temp item' kept_temp
+  tfixtures
+  bash "$here/wrap-up.sh" --apply --worktrees-only > "$tmp/output" 2> "$tmp/stderr" || true
+  tcheck "$mode" 'worktree (--worktrees-only)' kept_wt t-wto
+done
+echo "process check table: $t_cases cases, $t_failed failed"
+[ "$t_failed" -eq 0 ] || exit 1
+# Control: when lsof and ps both answer cleanly, the same fixtures go.
+tfixtures; tfake clean
+bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr"
+test ! -d "$tmp/t-wt" && test ! -d "$tmp/t-stale" && test ! -d "$tmp/t-cache/.next" && test ! -d "$tclone" && test ! -f "$ttemp" \
+  || { echo 'clean lsof and ps did not let the idle fixtures go'; cat "$tmp/output"; exit 1; }
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+echo 'ok a clean lsof and ps still let idle items go'
