@@ -24,12 +24,15 @@ class SetupTests(unittest.TestCase):
         self.config = self.home / '.codex/config.toml'
         self.config.parent.mkdir()
         self.env = dict(os.environ, HOME=str(self.home), DOTFILES=str(ROOT))
+        self.env.update(CODEX_HOME=str(self.home / '.codex'),
+                        XDG_CONFIG_HOME=str(self.home / '.config'),
+                        APPDATA=str(self.home / 'AppData/Roaming'))
         self.bin = self.home / 'bin'
         self.bin.mkdir()
         self.env['PATH'] = str(self.bin) + os.pathsep + os.environ['PATH']
         self.env['PLAYWRIGHT_BROWSERS_PATH'] = str(self.home / 'browsers')
         self.env['GH_CONFIG_DIR'] = str(self.home / '.config/gh')
-        for command in ('gh', 'orca', 'bun'):
+        for command in ('gh', 'orca', 'bun', 'claude', 'codex', 'agent', 'agy'):
             executable = self.bin / command
             executable.write_text('#!/bin/sh\nexit 0\n')
             executable.chmod(0o700)
@@ -84,6 +87,10 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn('__HOME__', self.config.read_text())
 
     def ready_home(self):
+        for name in ('.claude/.credentials.json', '.codex/auth.json', '.config/cursor/auth.json', '.cursor/auth.json'):
+            path = self.home / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
         self.config.write_text('\n'.join(KEYS) + '\n')
         presets = self.home / '.orca/presets.json'
         presets.parent.mkdir()
@@ -110,8 +117,8 @@ class SetupTests(unittest.TestCase):
                   for p in self.home.rglob('*')}
         result = self.run_script('setup-check.sh')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(len(result.stdout.splitlines()), 14)
-        self.assertTrue(all(line.startswith('OK ') for line in result.stdout.splitlines()))
+        self.assertEqual(len(result.stdout.splitlines()), 22)
+        self.assertTrue(all(line.startswith(('OK ', 'INFO ')) for line in result.stdout.splitlines()))
         self.assertEqual(before, {p: (p.lstat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                                   for p in self.home.rglob('*')})
 
@@ -160,6 +167,37 @@ class SetupTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('MISSING gh auth\n', result.stdout)
 
+    def test_agent_cli_and_sign_in_file_presence_never_reads_credentials(self):
+        self.ready_home()
+        for cli in ('claude', 'codex', 'agent', 'agy'):
+            with self.subTest(cli=cli):
+                result = self.run_script('setup-check.sh')
+                self.assertIn('OK ' + cli + ' CLI\n', result.stdout)
+                # Hide this CLI from PATH without exposing real machine CLIs.
+                executable = self.bin / cli
+                held = self.home / 'held-cli'
+                executable.rename(held)
+                try:
+                    env = dict(self.env, PATH=str(self.bin) + ':/usr/bin:/bin')
+                    result = subprocess.run(['/bin/bash', str(ROOT / 'script/setup-check.sh')],
+                                            env=env, text=True, capture_output=True)
+                    self.assertIn('MISSING ' + cli + ' CLI\n', result.stdout)
+                    self.assertNotEqual(result.returncode, 0)
+                finally:
+                    held.rename(executable)
+        for name in ('.claude/.credentials.json', '.codex/auth.json', '.config/cursor/auth.json', '.cursor/auth.json'):
+            path = self.home / name
+            path.write_text('SECRET_SENTINEL invalid JSON')
+            path.chmod(0)
+        result = self.run_script('setup-check.sh')
+        self.assertNotIn('SECRET_SENTINEL', result.stdout + result.stderr)
+        for cli in ('claude', 'codex', 'agent'):
+            self.assertIn('OK ' + cli + ' sign-in file\n', result.stdout)
+        self.assertIn('INFO agy sign-in file: system keyring', result.stdout)
+        (self.home / '.codex/auth.json').unlink()
+        result = self.run_script('setup-check.sh')
+        self.assertIn('MISSING codex sign-in file\n', result.stdout)
+
     def test_install_finishes_with_checker_and_propagates_status(self):
         fixture = self.home / 'fixture'
         scripts = fixture / 'script'
@@ -173,6 +211,9 @@ class SetupTests(unittest.TestCase):
                 'echo setup >> "$HOME/install-log"\n')
         (scripts / 'setup-check.sh').write_text(
             'echo check >> "$HOME/install-log"\nexit "$READINESS_STATUS"\n')
+        (scripts / 'install-agent-clis.sh').write_text('echo agent-clis >> "$HOME/install-log"\n')
+        (fixture / 'mac').mkdir()
+        (fixture / 'mac/system_setup.sh').write_text('echo node >> "$HOME/install-log"\n')
         for skip in ('1', '0'):
             for status in (0, 1):
                 with self.subTest(skip=skip, status=status):
@@ -189,6 +230,13 @@ class SetupTests(unittest.TestCase):
                     self.assertEqual(lines[-1], 'check')
                     self.assertEqual(lines.count('check'), 1)
                     self.assertEqual(lines.count('setup'), 1 if skip == '1' else 10)
+                    self.assertEqual(lines.count('agent-clis'), 0 if skip == '1' else 1)
+        result = subprocess.run(['bash', str(fixture / 'install.sh')],
+                                env=dict(self.env, OSTYPE='darwin', READINESS_STATUS='0'),
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = (self.home / 'install-log').read_text().splitlines()[-13:]
+        self.assertLess(lines.index('node'), lines.index('agent-clis'))
 
 
 if __name__ == '__main__':

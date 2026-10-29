@@ -50,6 +50,9 @@ echo 'PASS: failed local worktree creation stops dispatch'
 # The remote command must write into the execution host HOME before dispatch.
 export CURSOR_REMOTE_HOME="$tmp/remote-home"
 mkdir -p "$CURSOR_REMOTE_HOME"
+mkdir -p "$CURSOR_REMOTE_HOME/bin"
+printf '#!/bin/sh\nexit 0\n' > "$CURSOR_REMOTE_HOME/bin/agent"
+chmod +x "$CURSOR_REMOTE_HOME/bin/agent"
 cat > "$ORCA_CLI_COMMAND" <<'STUB'
 #!/usr/bin/env python3
 import json, os, subprocess, sys
@@ -71,7 +74,10 @@ elif args[:2] == ['terminal', 'create']:
     assert value('--environment') == 'fixture-environment'
     assert value('--worktree') == 'path:/srv/example.repo/work tree.v1'
     env = dict(os.environ, HOME=os.environ['CURSOR_REMOTE_HOME'])
-    if os.environ.get('CURSOR_FAIL_TRUST'):
+    if value('--command').startswith('if command -v'):
+        env['PATH'] = str(Path(os.environ['CURSOR_REMOTE_HOME'], 'bin'))
+        code = subprocess.run(value('--command'), shell=True, env=env).returncode
+    elif os.environ.get('CURSOR_FAIL_TRUST'):
         code = 1
     else:
         code = subprocess.run(value('--command'), shell=True, env=env).returncode
@@ -110,7 +116,7 @@ launch --on fixture-environment --name fixture --repo /srv/example.repo --base-b
 python3 - "$CURSOR_TEST_LOG" <<'PYTEST'
 import json, sys
 calls = [json.loads(line) for line in open(sys.argv[1])]
-assert [call[:2] for call in calls] == [['worktree', 'create'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['orchestration', 'worker-start']]
+assert [call[:2] for call in calls] == [['worktree', 'create'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['orchestration', 'worker-start']]
 assert '--base-branch' in calls[0]
 assert '/srv/example.repo/work tree.v1' in calls[1][calls[1].index('--command') + 1]
 PYTEST
@@ -150,6 +156,14 @@ for mode in timeout unknown; do
   ! grep -q 'worker-start' "$CURSOR_TEST_LOG"
   echo "PASS: $mode remote trust completion stops dispatch"
 done
+: > "$CURSOR_TEST_LOG"
+rm "$CURSOR_REMOTE_HOME/bin/agent"
+if launch --on fixture-environment --worktree-path '/srv/example.repo/work tree.v1' > "$tmp/result" 2>&1; then
+  echo 'FAIL: missing remote agent CLI was accepted' >&2; exit 1
+fi
+grep -q 'required CLI agent' "$tmp/result"
+! grep -q 'worker-start' "$CURSOR_TEST_LOG"
+echo 'PASS: missing remote agent CLI stops dispatch and names the CLI'
 printf ' \n' > "$tmp/spec"; : > "$CURSOR_TEST_LOG"
 if launch --worktree-path /tmp/fixture > "$tmp/result" 2>&1; then
   echo 'FAIL: blank spec was accepted' >&2; exit 1
@@ -157,4 +171,4 @@ fi
 grep -q 'spec file is empty' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: blank spec is refused before any Orca call'
-echo 'PASS: 11 tests'
+echo 'PASS: 12 tests'
