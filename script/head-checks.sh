@@ -43,6 +43,7 @@ finish() {
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
   [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
+  printf '\nTotal: %ss\n' "$SECONDS" >> "$log"
   [ "$status" -ne 0 ] || result=PASS
   {
     printf 'Checks: %s head=%s%s\n\n' "$result" "$sha" "${train_heads:+ train-heads=$train_heads}"
@@ -61,7 +62,7 @@ cap=int(sys.argv[1]); path=sys.argv[2]
 if len(text)>cap:
     # Bounded summary: keep the status lines and the last lines of the log; the full redacted log goes to a file.
     open(path,"w").write(text)
-    lines=text.split("\n"); keep=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Command: |Result: |Scoped tests: |Selected: )")
+    lines=text.split("\n"); keep=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Command: |Result: |Duration: |Scoped tests: |Selected: )")
     tail_from=max(len(lines)-40,0)
     out=[]; omitted=0
     for i,l in enumerate(lines):
@@ -184,20 +185,20 @@ while IFS= read -r command || [ -n "$command" ]; do
   count=$((count+1))
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
-  output=$(mktemp)
+  output=$(mktemp); started=$SECONDS
   if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" \
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     tail -20 "$output" >> "$log"
-    printf 'Result: exit 0\n' >> "$log"
+    printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
     rm -f "$output"
   else
     status=$?
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     tail -20 "$output" >> "$log"
-    printf 'Result: exit %s; remaining checks stopped\n' "$status" >> "$log"
+    printf 'Result: exit %s; remaining checks stopped\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
     rm -f "$output"
     exit 1
   fi

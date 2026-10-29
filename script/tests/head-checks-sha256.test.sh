@@ -33,5 +33,14 @@ with tempfile.TemporaryDirectory() as temp:
     digest = hashlib.sha256(b'true\n').hexdigest()
     ok = result.returncode == 0 and 'Checklist: ' + digest in result.stdout and sums.exists()
     print('ok   sha256sum digest when shasum is absent' if ok else 'FAIL sha256sum fallback rc=%s\n%s' % (result.returncode, result.stdout))
+    if not ok: sys.exit(1)
+    # A two-check checklist records a Duration line per check and a closing Total line.
+    conf.write_text('true\nsleep 1\n'); git('add', '.'); git('commit', '-qm', 'two checks'); head = git('rev-parse', 'HEAD')
+    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    import re
+    durations = re.findall(r'^Duration: (\d+)s$', result.stdout, re.M)
+    total = re.search(r'^Total: (\d+)s\n?\Z', result.stdout, re.M)
+    ok = result.returncode == 0 and len(durations) == 2 and total is not None and len(result.stdout) <= 65536
+    print('ok   per-check Duration and closing Total in the receipt' if ok else 'FAIL duration/total rc=%s\n%s' % (result.returncode, result.stdout))
     sys.exit(0 if ok else 1)
 PY
