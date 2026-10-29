@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create and trust a worktree on the execution environment before Cursor starts.
 # Usage: --run ID --spec FILE --title TEXT --model ID [--from HANDLE] [--on ENV]
-#        (--worktree-path PATH | --name NAME --repo PATH [--base-branch REF])
+#        (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment=''
@@ -23,16 +23,23 @@ brief=$(cat "$spec")
 [ -n "${brief//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || usage
-  if [ -z "$base" ] && [ -z "$environment" ]; then
-    base=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD)
+  case "$repo" in
+    id:*|path:*) repo_selector=$repo ;;
+    *) repo_selector="path:$repo" ;;
+  esac
+  # An id selector has no local directory; let Orca resolve its default base.
+  if [ -z "$base" ] && [ -z "$environment" ] && [[ "$repo_selector" == path:* ]]; then
+    base=$(git -C "${repo_selector#path:}" symbolic-ref --quiet --short refs/remotes/origin/HEAD)
   fi
-  if [ -n "$environment" ]; then
-    create_args=(--name "$name" --repo "path:$repo" --setup run --json --environment "$environment")
-    [ -z "$base" ] || create_args+=(--base-branch "$base")
-    result=$("$orca" worktree create "${create_args[@]}")
-  else
-    result=$("$orca" worktree create --name "$name" --repo "path:$repo" --base-branch "$base" --setup run --json)
-  fi
+  create_args=(--name "$name" --repo "$repo_selector")
+  [ -z "$base" ] || create_args+=(--base-branch "$base")
+  create_args+=(--setup run --json)
+  [ -z "$environment" ] || create_args+=(--environment "$environment")
+  result=$("$orca" worktree create "${create_args[@]}") || {
+    status=$?
+    printf 'orca worktree create failed (exit %s)\n%s\n' "$status" "$result" >&2
+    exit "$status"
+  }
   wt=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["worktree"]["path"])')
 fi
 case "$wt" in /*) ;; *) echo 'worktree path must be absolute' >&2; exit 2 ;; esac
