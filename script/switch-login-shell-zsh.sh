@@ -16,9 +16,10 @@ if [ -z "$zsh_path" ]; then
   exit 1
 fi
 
-for f in .zshenv .zshrc .p10k.zsh; do
+for f in .zshenv .zshrc; do
   ln -sfn "$DOTFILES_ROOT/$f" "$HOME/$f"
 done
+rm -f "$HOME/.p10k.zsh"
 
 if ! grep -qxF "$zsh_path" "$SHELLS_FILE" 2>/dev/null; then
   echo "$zsh_path" | sudo tee -a "$SHELLS_FILE" >/dev/null

@@ -12,7 +12,8 @@ check() {
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/home" "$TMP/dot"
-touch "$TMP/dot/.zshenv" "$TMP/dot/.zshrc" "$TMP/dot/.p10k.zsh"
+touch "$TMP/dot/.zshenv" "$TMP/dot/.zshrc"
+ln -s "$TMP/dot/stale" "$TMP/home/.p10k.zsh"
 
 cat >"$TMP/bin/chsh" <<'STUB'
 #!/usr/bin/env bash
@@ -36,7 +37,7 @@ out="$(run /usr/bin/fish)"
 check "chsh runs when shell is fish" 'grep -q "^chsh -s $TMP/bin/zsh$" "$TMP/log"'
 check "links .zshrc" '[ "$(readlink "$TMP/home/.zshrc")" = "$TMP/dot/.zshrc" ]'
 check "links .zshenv" '[ "$(readlink "$TMP/home/.zshenv")" = "$TMP/dot/.zshenv" ]'
-check "links .p10k.zsh" '[ "$(readlink "$TMP/home/.p10k.zsh")" = "$TMP/dot/.p10k.zsh" ]'
+check "removes stale .p10k.zsh" '[ ! -e "$TMP/home/.p10k.zsh" ] && [ ! -L "$TMP/home/.p10k.zsh" ]'
 check "checks tools from a fresh login zsh" 'grep -q "^zsh -lic command -v python3 node bash$" "$TMP/log"'
 check "prints the tool check output" 'echo "$out" | grep -q "/stub/python3"'
 

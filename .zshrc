@@ -1,9 +1,16 @@
 #export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
+export CLICOLOR=1
 
 if [ -f ~/.bash_aliases ]; then
     source ~/.bash_aliases
+fi
+
+if [[ "$OSTYPE" == darwin* ]]; then
+  alias ls='ls -lagG'
+else
+  alias ls='ls -lag --color=auto'
 fi
 
 if [ -f ~/.functions ]; then
@@ -44,26 +51,9 @@ export PATH="/Applications/_dev/Visual Studio Code.app/Contents/Resources/app/bi
 export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
 export PATH="$HOME/.antigravity/antigravity/bin:$PATH"
 
-# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
-# Initialization code that may require console input (password prompts, [y/n]
-# confirmations, etc.) must go above this block; everything else may go below.
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
-
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_CUSTOM="$ZSH/custom"
-#ZSH_THEME="$ZSH_CUSTOM/themes/powerlevel9k/powerlevel9k"
-ZSH_THEME="powerlevel10k/powerlevel10k"
-POWERLEVEL10K_LEFT_PROMPT_ELEMENTS=(context dir dir_writable vcs)
-POWERLEVEL10K_RIGHT_PROMPT_ELEMENTS=(status ram)
-
-#POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(context dir dir_writable vcs vi_mode)
-#POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(status background_jobs history ram load time)
-
-# 若當前登入的帳號為你的帳號 xxx，就不用特別顯示出來
-#DEFAULT_USER="$USER"
-#POWERLEVEL9K_MODE='nerdfont-complete'
+ZSH_THEME=""
 
 plugins=(
   git
@@ -75,8 +65,6 @@ plugins=(
 
 [ -f "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"
 
-# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
-[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
 # bun completions
 [ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
@@ -87,3 +75,8 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 [ -f "$HOME/dotfiles/.env" ] && source "$HOME/dotfiles/.env"
 
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
+
+if command -v starship >/dev/null 2>&1; then
+  eval "$(starship init zsh)"
+fi
+
