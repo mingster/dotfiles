@@ -60,18 +60,28 @@ for key,value in os.environ.items():
 text=re.sub(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|sqlserver)://[^\s]+", "[redacted database URL]", text)
 cap=int(sys.argv[1]); path=sys.argv[2]
 if len(text)>cap:
-    # Bounded summary: keep the status lines and the last lines of the log; the full redacted log goes to a file.
+    # Bounded summary: the status, Duration and closing Total lines always survive; the full redacted log goes to a file.
     open(path,"w").write(text)
-    lines=text.split("\n"); keep=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Command: |Result: |Duration: |Scoped tests: |Selected: )")
-    tail_from=max(len(lines)-40,0)
-    out=[]; omitted=0
-    for i,l in enumerate(lines):
-        if keep.match(l) or i>=tail_from:
-            if omitted: out.append("[... %d lines omitted]" % omitted); omitted=0
-            out.append(l if len(l)<=300 or l.startswith("Checks: ") else l[:300]+"[... line cut]")
-        else: omitted+=1
     footer="\nReceipt cut to fit %d characters. Full log: %s\n" % (cap,path)
-    text="\n".join(out)[:max(cap-len(footer),0)]+footer
+    lines=text.rstrip("\n").split("\n")
+    total=lines.pop() if lines and lines[-1].startswith("Total: ") else ""
+    must=re.compile(r"^(Checks: |Unchecked paths: |Checklist: |Result: |Duration: )")
+    nice=re.compile(r"^(Command: |Scoped tests: |Selected: )")
+    tail_from=max(len(lines)-40,0)
+    cut=lambda l: l if len(l)<=300 or l.startswith("Checks: ") else l[:300]+"[... line cut]"
+    def render(chosen):
+        out=[]; omitted=0
+        for i,l in enumerate(lines):
+            if i in chosen:
+                if omitted: out.append("[... %d lines omitted]" % omitted); omitted=0
+                out.append(cut(l))
+            else: omitted+=1
+        if omitted: out.append("[... %d lines omitted]" % omitted)
+        return "\n".join(out)+footer+total+"\n"
+    chosen={i for i,l in enumerate(lines) if must.match(l)}
+    for i,l in enumerate(lines):
+        if i not in chosen and (nice.match(l) or i>=tail_from) and len(render(chosen|{i}))<=cap: chosen.add(i)
+    text=render(chosen)
 sys.stdout.write(text)
 ' "$receipt_cap" "${HEAD_CHECKS_LOG_DIR:-${TMPDIR:-/tmp}}/head-checks-${sha:0:12}.log" > "$receipt"
   cat "$receipt"

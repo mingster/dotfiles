@@ -42,5 +42,15 @@ with tempfile.TemporaryDirectory() as temp:
     total = re.search(r'^Total: (\d+)s\n?\Z', result.stdout, re.M)
     ok = result.returncode == 0 and len(durations) == 2 and total is not None and len(result.stdout) <= 65536
     print('ok   per-check Duration and closing Total in the receipt' if ok else 'FAIL duration/total rc=%s\n%s' % (result.returncode, result.stdout))
+    if not ok: sys.exit(1)
+    # A capped receipt keeps every Duration line and ends with Total.
+    n = 210
+    conf.write_text(''.join('true # %s\n' % ('x' * 500) for _ in range(n))); git('add', '.'); git('commit', '-qm', 'many checks'); head = git('rev-parse', 'HEAD')
+    capenv = dict(env, HEAD_CHECKS_RECEIPT_CAP='65536', HEAD_CHECKS_LOG_DIR=str(root))
+    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=capenv, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    receipt = result.stdout[result.stdout.index('Checks: '):]
+    durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
+    ok = result.returncode == 0 and len(receipt) <= 65536 and 'Receipt cut to fit' in receipt and len(durations) == n and re.search(r'^Total: (\d+)s\n?\Z', receipt, re.M) is not None
+    print('ok   capped receipt keeps all Duration lines and closing Total' if ok else 'FAIL capped receipt rc=%s len=%d durations=%d' % (result.returncode, len(receipt), len(durations)))
     sys.exit(0 if ok else 1)
 PY
