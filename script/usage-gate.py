@@ -675,7 +675,7 @@ def family(entry):
     return None
 
 
-def pick(role, avoid, cap, ceiling, per_worker):
+def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
     chain, pinned = role_chain(role)
     rows = {}
     for entry in chain:
@@ -691,11 +691,13 @@ def pick(role, avoid, cap, ceiling, per_worker):
         room, fraction = headroom(row)
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
+        excluded_provider = entry["provider"] == avoid_provider
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
                      "headroom_fraction": fraction, "excluded_family": excluded,
-                     "eligible": eligible and not excluded}
+                     "excluded_provider": excluded_provider,
+                     "eligible": eligible and not excluded and not excluded_provider}
         candidates.append(candidate)
         if candidate["eligible"]:
             allowed.append((index, candidate))
@@ -722,7 +724,8 @@ def candidate_reason(candidate):
     fraction = candidate["headroom_fraction"]
     room = candidate["headroom"]
     detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of ceiling)"
-    note = "excluded family" if candidate["excluded_family"] else candidate["verdict"]
+    note = ("excluded provider" if candidate["excluded_provider"] else
+            "excluded family" if candidate["excluded_family"] else candidate["verdict"])
     return f"{candidate['provider']} {candidate['model']}: {detail}, {note}"
 
 
@@ -733,6 +736,7 @@ def main(argv=None):
     ap.add_argument("--model", help="Antigravity model id; omitted selects the Gemini Flash pool")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt"])
+    ap.add_argument("--avoid-provider", choices=["claude", "cursor", "codex", "antigravity"])
     ap.add_argument("--cap", type=float, default=None,
                     help="advisory daily pacing hint; never blocks")
     ap.add_argument("--ceiling", type=float, default=95.0)
@@ -748,7 +752,7 @@ def main(argv=None):
         if not a.role:
             ap.error("pick requires --role")
         try:
-            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve)
+            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"cannot read role presets: {type(exc).__name__}", file=sys.stderr)
             return 4
