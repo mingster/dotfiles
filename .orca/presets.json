@@ -177,6 +177,25 @@
         }
       ]
     },
+    "reviewer": {
+      "tier": "workhorse",
+      "description": "Cross-family PR reviewer after a coding worker finishes",
+      "chain": [
+        {
+          "provider": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "composer-2.5"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-3.8-flash"
+        }
+      ]
+    },
     "fullstack-dev-small": {
       "tier": "light",
       "description": "Fix or chore touching 3 files or fewer (owner 2026-10-09)",

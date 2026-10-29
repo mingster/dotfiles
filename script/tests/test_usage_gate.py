@@ -12,6 +12,9 @@ ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
+REVIEWER_CHAIN = [{"provider": "codex", "model": "gpt-6.1-sol", "effort": "medium"},
+                  {"provider": "cursor", "model": "composer-2.5"},
+                  {"provider": "antigravity", "model": "gemini-3.8-flash"}]
 
 
 class Antigravity(unittest.TestCase):
@@ -646,6 +649,58 @@ class Pick(unittest.TestCase):
         result = json.loads(out)
         self.assertEqual((status, result["selected"], result["blocked_until"]),
                          (3, None, FUT))
+
+    def test_reviewer_avoid_claude_picks_codex_when_allowed(self):
+        status, out, _ = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, codex=44,
+                                     extra=("--avoid-family", "claude"))
+        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-6.1-sol --effort medium"))
+
+    def test_reviewer_avoid_claude_picks_antigravity_flash_when_codex_blocked(self):
+        pools = {"gemini-flash": {"pct": 5, "resets_at": FUT, "observed_at": NOW}}
+        with tempfile.TemporaryDirectory() as t, \
+                mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            presets = {"default_chain": ["codex", "cursor", "antigravity"],
+                       "roles": {"reviewer": {"chain": REVIEWER_CHAIN, "tier": "workhorse"}}}
+            with open(t + "/presets.json", "w") as f:
+                json.dump(presets, f)
+            for provider, pct in (("claude", 95), ("codex", 96)):
+                with open(t + "/" + provider + ".json", "w") as f:
+                    json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
+                               "baseline": 40, "resets_at": FUT}, f)
+                if provider == "claude":
+                    with open(t + "/claude-rate-limits.json", "w") as f:
+                        json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT},
+                                   "_written_at": NOW}, f)
+                else:
+                    os.makedirs(t + "/sessions")
+                    with open(t + "/sessions/rollout-test.jsonl", "w") as f:
+                        json.dump({"timestamp": NOW, "payload": {"rate_limits": {"primary":
+                            {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": t + "/presets.json"}):
+                with mock.patch.object(ug, "STATE", t):
+                    status = ug.main(["pick", "--role", "reviewer", "--avoid-family", "claude"])
+        self.assertEqual(status, 0)
+        self.assertIn("--agent antigravity --model gemini-3.8-flash", out.getvalue().strip())
+
+    def test_reviewer_avoid_claude_nothing_when_all_cross_family_blocked(self):
+        status, out, err = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, codex=96,
+                                       extra=("--avoid-family", "claude"))
+        self.assertEqual((status, out), (4, ""))
+
+    def test_reviewer_preset_chain_models(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+        with open(path) as f:
+            chain = json.load(f)["roles"]["reviewer"]["chain"]
+        by_provider = {entry["provider"]: entry["model"] for entry in chain}
+        self.assertEqual(by_provider["codex"], "gpt-6.1-sol")
+        self.assertEqual(by_provider["cursor"], "composer-2.5")
+        self.assertEqual(by_provider["antigravity"], "gemini-3.8-flash")
+        self.assertNotIn("gpt-5.6-sol", by_provider.values())
+        self.assertTrue(all(not m.startswith("claude-") for m in by_provider.values()))
 
 
 class PickOrder(unittest.TestCase):
