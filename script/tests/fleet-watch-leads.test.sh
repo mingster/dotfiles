@@ -34,6 +34,37 @@ class Leads(unittest.TestCase):
             self.assertEqual(self.pass_with(state, {'term_lead2'}), [])
             self.assertEqual(self.pass_with(state, set()), [])
             self.assertEqual(len(self.pass_with(state, {'term_lead2'})), 1)
+    def test_paged_remote_inventory_and_retries_deduplicate_by_dispatch_and_resource_identity(self):
+        config = {'host_caps': {'fleet-1': 2}}
+        # Duplicated observation across pages and retry sharing worktree resource identity
+        workers = [
+            {'dispatchId': 'd1', 'dispatchStatus': 'running', 'resource': {'worktreeId': 'wt1'}, 'projection': {'host': {'id': 'fleet-1'}}},
+            {'dispatchId': 'd1', 'dispatchStatus': 'running', 'resource': {'worktreeId': 'wt1'}, 'projection': {'host': {'id': 'fleet-1'}}},
+            {'dispatchId': 'd2_retry', 'retryOf': 'd2_failed', 'taskId': 't2', 'dispatchStatus': 'running', 'resource': {'worktreeId': 'wt2'}, 'projection': {'host': {'id': 'fleet-1'}}},
+            {'dispatchId': 'd2_failed', 'taskId': 't2', 'dispatchStatus': 'failed', 'resource': {'worktreeId': 'wt2'}, 'projection': {'host': {'id': 'fleet-1'}}},
+        ]
+        receipt = watch.admit('fleet-1', config, workers)
+        self.assertFalse(receipt['admitted'])
+        self.assertEqual(receipt['occupied'], 2)
+
+    def test_missing_or_failed_remote_inventory_never_authorizes_start(self):
+        config = {'host_caps': {'fleet-1': 4}, 'runs': [{'id': 'r1', 'terminal': 't1', 'waiter_pattern': 'w'}]}
+        def failing_rpc(*args):
+            raise RuntimeError('Orca refused inventory')
+        with patch.object(watch, 'rpc', side_effect=failing_rpc):
+            receipt = watch.admit('fleet-1', config)
+            self.assertFalse(receipt['admitted'])
+            self.assertIn('failed', receipt['reason'].lower())
+
+    def test_release_unknown_never_authorizes_start(self):
+        config = {'host_caps': {'fleet-1': 4}}
+        workers = [
+            {'dispatchId': 'b1', 'dispatchStatus': 'release_unknown', 'projection': {'host': {'id': 'fleet-1'}}},
+        ]
+        receipt = watch.admit('fleet-1', config, workers)
+        self.assertFalse(receipt['admitted'])
+        self.assertIn('release_unknown', receipt['reason'])
+
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY
