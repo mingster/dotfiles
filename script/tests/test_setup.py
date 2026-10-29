@@ -87,6 +87,13 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn('__HOME__', self.config.read_text())
 
     def ready_home(self):
+        # These deliberately customized fixture settings are covered by a private manifest.
+        manifest = self.home / 'private-settings.manifest'
+        names = ('.claude/settings.json', '.codex/config.toml', '.codex/hooks.json',
+                 '.cursor/hooks.json', '.orca/presets.json')
+        manifest.write_text(''.join('settings/item-' + str(i) + ' $HOME/' + name + '\n'
+                                    for i, name in enumerate(names)))
+        self.env['AGENT_PRIVATE_BACKUP_MANIFEST'] = str(manifest)
         for name in ('.claude/.credentials.json', '.codex/auth.json', '.config/cursor/auth.json', '.cursor/auth.json'):
             path = self.home / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +124,7 @@ class SetupTests(unittest.TestCase):
                   for p in self.home.rglob('*')}
         result = self.run_script('setup-check.sh')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(len(result.stdout.splitlines()), 22)
+        self.assertEqual(len(result.stdout.splitlines()), 27)
         self.assertTrue(all(line.startswith(('OK ', 'INFO ')) for line in result.stdout.splitlines()))
         self.assertEqual(before, {p: (p.lstat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                                   for p in self.home.rglob('*')})

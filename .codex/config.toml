@@ -133,13 +133,6 @@ BROWSER_USE_CODEX_APP_VERSION = "26.930.31730"
 NODE_REPL_TRUSTED_SERVICES = '{"browser":"__HOME__/.codex/plugins/cache/openai-bundled/browser/26.930.31730/scripts/browser-service.mjs"}'
 CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 
-[mcp_servers.mnemoverse]
-command = "npx"
-args = [ "-y", "@mnemoverse/mcp-memory-server@latest" ]
-
-[mcp_servers.mnemoverse.env]
-MNEMOVERSE_API_KEY = "mk_live_0f68d3c3b197779467ea04fefabc72d0"
-MNEMOVERSE_API_URL = "https://core.mnemoverse.com/api/v1"
 
 [features]
 local_thread_store_compression = true
