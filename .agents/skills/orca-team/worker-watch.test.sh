@@ -7,9 +7,18 @@ cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 # FAKE_DIR holds workers.json, terminals.json and <handle>.txt (one screen line per line).
 case "$*" in
-  "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" ;;
+  "orchestration worker-list"*)
+    if [[ "$*" == *"--cursor page2"* ]]; then
+      cat "$FAKE_DIR/workers-page2.json"
+    else
+      cat "$FAKE_DIR/workers.json"
+    fi ;;
   "terminal list"*) cat "$FAKE_DIR/terminals.json" ;;
   "terminal read"*)
+    echo "$*" >> "$FAKE_DIR/terminal-reads.log"
+    if [[ "$*" == *"--environment down"* ]]; then
+      exit 1
+    fi
     h=$(echo "$*" | sed -E 's/.*--terminal ([^ ]+).*/\1/')
     python3 -c '
 import json, sys
@@ -186,6 +195,36 @@ if [ "$code" = 0 ] && ! echo "$out" | grep -q ctx_a && echo "$out" | grep -q 'ct
 "$here/worker-watch.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then pass=$((pass+1)); echo "ok   usage exit 2"
 else fail=$((fail+1)); echo "FAIL usage exit 2"; fi
+
+# Page two coverage
+cat > "$tmp/workers.json" <<EOF
+{"ok":true,"result":{"workers":[{"dispatchId":"ctx_p1","agentTerminalHandle":"term_p1","projection":{"outcome":"in_progress"}}],"page":{"hasMore":true,"nextCursor":"page2"}}}
+EOF
+cat > "$tmp/workers-page2.json" <<EOF
+{"ok":true,"result":{"workers":[{"dispatchId":"ctx_p2","agentTerminalHandle":"term_p2","projection":{"outcome":"in_progress"}}],"page":{"hasMore":false}}}
+EOF
+printf 'Working on page 1\n' > "$tmp/term_p1.txt"
+printf 'Working on page 2\n' > "$tmp/term_p2.txt"
+check "page two dispatches are paginated and observed" 0 'ctx_p2 term_p2 OK'
+
+# Remote-only coverage preserving endpoint/environment
+: > "$tmp/terminal-reads.log"
+cat > "$tmp/workers.json" <<EOF
+{"ok":true,"result":{"workers":[{"dispatchId":"ctx_rem","agentTerminalHandle":"term_rem","projection":{"outcome":"in_progress","host":{"kind":"remote","id":"remote-env","connected":true}}}],"page":{"hasMore":false}}}
+EOF
+printf 'Remote worker active\n' > "$tmp/term_rem.txt"
+check "remote-only dispatches read terminal with environment" 0 'ctx_rem term_rem OK'
+if grep -q -- '--environment remote-env.*--terminal term_rem' "$tmp/terminal-reads.log"; then
+  pass=$((pass+1)); echo "ok   remote terminal read preserves issuing server environment"
+else
+  fail=$((fail+1)); echo "FAIL remote terminal read did not pass issuing server environment"
+fi
+
+# Disconnected host coverage
+cat > "$tmp/workers.json" <<EOF
+{"ok":true,"result":{"workers":[{"dispatchId":"ctx_disc","agentTerminalHandle":"term_disc","projection":{"outcome":"in_progress","host":{"kind":"remote","id":"remote-down","connected":false}}}],"page":{"hasMore":false}}}
+EOF
+check "disconnected host produces unknown coverage, never healthy" 4 'ctx_disc term_disc UNKNOWN_COVERAGE'
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
