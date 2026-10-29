@@ -43,4 +43,4 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Never stop a process by name (`pkill`, `killall`; the guard denies it). Stop your own server with `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`, or a saved pid.
 - Expose secrets in logs or output. Use `.claude/bin/env-peek.py`.
 
-Browser work uses a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict; delete, never edit, a malformed Verdict of your own.
+Browser work uses a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict. Preserve prior Verdict comments; post a linked correction when replacing a prior comment.
