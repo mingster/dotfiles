@@ -422,3 +422,409 @@ WRAP_UP_CLONE_ROOT="$croot/" bash "$here/wrap-up.sh" --apply > "$tmp/output"
 [ -d "$tmp/darwin/X/com.google.Chrome.dev.code_sign_clone/code_sign_clone.x-held" ] || { echo 'held X clone removed'; exit 1; }
 rm -f "$tmp/bin/lsof"
 echo 'ok chrome clones in the sibling X dir are removed unless held open'
+# #394: a failed single delete warns, counts as kept and the run goes on. The git shim fails the calls whose arguments match
+# FAKE_GIT_FAIL (space separated globs) and, on the first call matching FAKE_GIT_LATE_ON (default: a worktree removal),
+# checks out FAKE_GIT_LATE in a new worktree (a worker starting after the preview). FAKE_INV_FAIL makes every worktree
+# list fail once a call matching FAKE_INV_ON has run. FAKE_FLIP_DIR swaps in its lsof and ps (process state changing) on
+# the first call matching FAKE_FLIP_ON after one matching FAKE_FLIP_ARM. Everything runs in a disposable clone.
+export REAL_GIT="$(command -v git)"
+mkdir -p "$tmp/gitshim"
+cat > "$tmp/gitshim/git" <<'FAKE'
+#!/usr/bin/env bash
+if [ -n "${FAKE_GIT_LATE:-}" ] && [ ! -e "$FAKE_GIT_LATE_PATH" ]; then
+  case "$*" in ${FAKE_GIT_LATE_ON:-worktree remove*}) "$REAL_GIT" worktree add -q "$FAKE_GIT_LATE_PATH" "$FAKE_GIT_LATE" ;; esac
+fi
+if [ -n "${FAKE_FLIP_DIR:-}" ] && [ ! -e "$FAKE_FLIP_DIR/flipped" ]; then
+  case "$*" in $FAKE_FLIP_ARM) : > "$FAKE_FLIP_DIR/armed" ;; esac
+  if [ -e "$FAKE_FLIP_DIR/armed" ]; then
+    case "$*" in $FAKE_FLIP_ON) cp "$FAKE_FLIP_DIR/lsof" "$FAKE_FLIP_DIR/ps" "$FAKE_FLIP_BIN/"; : > "$FAKE_FLIP_DIR/flipped" ;; esac
+  fi
+fi
+for pat in ${FAKE_GIT_FAIL:-}; do
+  case "$*" in *$pat*) echo "fatal: simulated failure for $pat" >&2; exit 1 ;; esac
+done
+if [ -n "${FAKE_INV_FAIL:-}" ]; then
+  case "$*" in ${FAKE_INV_ON:-*for-each-ref*refs/heads}) : > "$FAKE_INV_FAIL" ;; esac
+  if [ -e "$FAKE_INV_FAIL" ] && [ "${1:-}" = worktree ] && [ "${2:-}" = list ]; then echo 'fatal: simulated inventory failure' >&2; exit 1; fi
+fi
+exec "$REAL_GIT" "$@"
+FAKE
+chmod +x "$tmp/gitshim/git"
+git init -q --bare "$tmp/origin3"
+git clone -q "$tmp/origin3" "$tmp/crepo" 2>/dev/null
+git -C "$tmp/crepo" config user.email test@example.invalid
+git -C "$tmp/crepo" config user.name Test
+git -C "$tmp/crepo" checkout -qb main
+echo c > "$tmp/crepo/file"; git -C "$tmp/crepo" add file; git -C "$tmp/crepo" commit -qm initial
+git -C "$tmp/crepo" push -q -u origin main
+echo '.next' >> "$tmp/crepo/.git/info/exclude"
+for b in lb-stuck lb-ok late; do git -C "$tmp/crepo" branch "$b"; done
+for b in rok rstuck; do git -C "$tmp/crepo" push -q origin "main:refs/heads/$b"; done
+git -C "$tmp/crepo" worktree add -qb wt-stuck "$tmp/c-wt-stuck"
+git -C "$tmp/crepo" worktree add -qb wt-ok "$tmp/c-wt-ok"
+cd "$tmp/crepo"
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck branch*lb-stuck push*rstuck" \
+  FAKE_GIT_LATE=late FAKE_GIT_LATE_PATH="$tmp/c-late" \
+  bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -eq 0 ] || { echo "a failed single delete stopped the run (exit $status)"; cat "$tmp/stderr"; exit 1; }
+test -d "$tmp/c-wt-stuck"; test ! -d "$tmp/c-wt-ok"
+grep -Fq "Warning: could not remove worktree $real/c-wt-stuck" "$tmp/stderr"
+grep -Fq 'Kept worktree' "$tmp/output"
+echo 'ok a failed worktree remove warns, is kept, and the run continues'
+git show-ref --verify --quiet refs/heads/lb-stuck; if git show-ref --verify --quiet refs/heads/lb-ok; then exit 1; fi
+grep -Fq 'Warning: could not delete local lb-stuck; kept.' "$tmp/stderr"
+echo 'ok a failed local branch delete warns and the other branches still go'
+git show-ref --verify --quiet refs/heads/late
+grep -Fq 'Warning: local late is checked out in a worktree now; kept.' "$tmp/stderr"
+echo 'ok a branch checked out after the preview is kept with a warning'
+git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/rstuck
+if git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/rok; then echo 'good remote branch kept after batch failure'; exit 1; fi
+grep -Fq 'Warning: could not delete remote rstuck; kept.' "$tmp/stderr"
+echo 'ok a failed remote delete warns and the rest of the batch is deleted one by one'
+grep -Fq 'removed worktrees=1 deleted local=2 deleted remote=1 ' "$tmp/output" || { echo 'counts wrong'; cat "$tmp/output"; exit 1; }
+grep -q '^temp removed=' "$tmp/output" && grep -q '^chrome clones removed=' "$tmp/output"
+echo 'ok failures count as kept and later steps still run'
+# The fleet path (--worktrees-only) takes the same failures.
+git worktree add -q -b wt-stuck2 "$tmp/c-wt-stuck2"
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck2" bash "$here/wrap-up.sh" --worktrees-only --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -eq 0 ] || { echo "--worktrees-only stopped on a failed delete (exit $status)"; exit 1; }
+test -d "$tmp/c-wt-stuck2"
+grep -Fq "Warning: could not remove worktree $real/c-wt-stuck2" "$tmp/stderr"
+grep -q '^removed worktrees=[0-9]* deleted local=' "$tmp/output"
+echo 'ok --worktrees-only survives a failed delete'
+# #393: build caches in kept worktrees. Unmerged branches keep their worktrees. Fake lsof/ps stand in for the process checks.
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+case "${*: -1}" in *c-busy*) echo 4242 ;; esac
+FAKE
+cat > "$tmp/bin/ps" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "${FAKE_PS:-}"
+FAKE
+chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
+for n in free busy cmd cmd-other; do
+  git worktree add -q -b "u-$n" "$tmp/c-$n"
+  git -C "$tmp/c-$n" commit -q --allow-empty -m "u-$n"
+  mkdir -p "$tmp/c-$n/.next/cache" "$tmp/c-$n/web/.next" "$tmp/c-$n/.turbo"
+  echo data > "$tmp/c-$n/.next/cache/blob"; echo data > "$tmp/c-$n/web/.next/x"; echo data > "$tmp/c-$n/.turbo/t"
+done
+export FAKE_PS="node $real/c-cmd/node_modules/.bin/next dev"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+grep -Eq "^Remove build cache $real/c-free/\.next \([0-9]+ KB\)$" "$tmp/output"
+grep -Eq "^Remove build cache $real/c-free/web/\.next \([0-9]+ KB\)$" "$tmp/output"
+test -d "$tmp/c-free/.next" || { echo 'preview deleted a cache'; exit 1; }
+echo 'ok preview lists top level and one level down build caches and deletes nothing'
+grep -Fq "Kept build cache $real/c-busy/.next (held open by a running process)" "$tmp/output"
+grep -Fq "Kept build cache $real/c-cmd/.next (a process command line names it)" "$tmp/output"
+if grep -Fq "Kept build cache $real/c-cmd-other" "$tmp/output"; then echo 'process naming c-cmd also kept c-cmd-other'; exit 1; fi
+grep -Fq 'build caches removed=4 kept=4 bytes=' "$tmp/output" || { echo 'cache counts wrong'; grep 'build' "$tmp/output"; exit 1; }
+echo 'ok a worktree with a running process or a command line naming it keeps its caches'
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$tmp/c-free/.next" && test ! -d "$tmp/c-free/web/.next" && test ! -d "$tmp/c-cmd-other/.next"
+test -d "$tmp/c-busy/.next" && test -d "$tmp/c-cmd/web/.next" && test -d "$tmp/c-free/.turbo"
+echo 'ok apply removes idle caches only and leaves other directories alone'
+WRAP_UP_BUILD_CACHE_DIRS='.turbo .next' bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$tmp/c-free/.turbo" && test -d "$tmp/c-busy/.turbo"
+echo 'ok WRAP_UP_BUILD_CACHE_DIRS picks the directory names'
+bash "$here/wrap-up.sh" --worktrees-only --dry-run | grep -q '^build caches removed=' || { echo 'no cache line under --worktrees-only'; exit 1; }
+echo 'ok --worktrees-only reports build caches'
+# Review fixes for #393/#394. Each case runs in the disposable clone above.
+mkkept() { # <dir name>: a kept worktree (unmerged branch) with an idle .next
+  git worktree add -q -b "u-$1" "$tmp/$1"
+  git -C "$tmp/$1" commit -q --allow-empty -m "u-$1"
+  mkdir -p "$tmp/$1/.next"; echo data > "$tmp/$1/.next/x"
+}
+# 1. Cache removal never leaves the worktree: no ../ names, no symlinked ancestor, no symlinked cache.
+mkkept c-esc
+mkdir -p "$tmp/outside-a/cache" "$tmp/outside-b/.next" "$tmp/outside-c" "$tmp/c-esc/web/.next"
+echo keep > "$tmp/outside-a/cache/f"; echo keep > "$tmp/outside-b/.next/f"; echo keep > "$tmp/outside-c/f"
+ln -s "$tmp/outside-b" "$tmp/c-esc/link"
+rm -rf "$tmp/c-esc/.next"; ln -s "$tmp/outside-c" "$tmp/c-esc/.next"
+WRAP_UP_BUILD_CACHE_DIRS='../outside-a/cache' bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -f "$tmp/outside-a/cache/f" || { echo 'a ../ cache name deleted a directory outside the worktree'; exit 1; }
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -f "$tmp/outside-b/.next/f" || { echo 'a symlinked ancestor let the cache removal leave the worktree'; exit 1; }
+test -f "$tmp/outside-c/f" || { echo 'a symlinked .next was followed'; exit 1; }
+test ! -d "$tmp/c-esc/web/.next" || { echo 'the real cache inside the worktree was not removed'; exit 1; }
+echo 'ok cache removal refuses ../ names, symlinked ancestors and symlinked caches, and still removes real ones'
+# 2. A command line may quote or escape the worktree path.
+for n in q-dq q-sq q-esc q-sib q-sib-other; do mkkept "$n"; done
+git worktree add -q -b u-qsp "$tmp/c q-sp"; git -C "$tmp/c q-sp" commit -q --allow-empty -m qsp
+mkdir -p "$tmp/c q-sp/.next" "$tmp/c q-esc2"; echo data > "$tmp/c q-sp/.next/x"
+export FAKE_PS="node --project=\"$real/q-dq\" next dev
+node '$real/q-sq' dev
+node --root $real/q-esc/ dev
+node -r \"$real/c q-sp\" dev
+node $real/q-sib dev"
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+for n in q-dq q-sq q-esc q-sib "c q-sp"; do
+  test -d "$tmp/$n/.next" || { echo "a command line naming $n (quoted or escaped) did not protect its cache"; exit 1; }
+done
+test ! -d "$tmp/q-sib-other/.next" || { echo 'a sibling path prefix was matched'; exit 1; }
+export FAKE_PS="node --project=$real/c\\ q-sp dev"
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c q-sp/.next" || { echo 'a shell escaped path did not protect the cache'; exit 1; }
+unset FAKE_PS
+echo 'ok quoted and escaped paths in a command line protect the cache; siblings are not matched'
+# 3. A failed stale local delete counts as kept.
+old=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo x | git hash-object -w --stdin)" | git mktree)")
+git branch stale-stuck "$old"; git branch stale-ok "$old"
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="branch*stale-stuck" bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -eq 0 ] || { echo "a failed stale delete changed the exit status ($status)"; exit 1; }
+git show-ref --verify --quiet refs/heads/stale-stuck
+if git show-ref --verify --quiet refs/heads/stale-ok; then echo 'the good stale branch was not deleted'; exit 1; fi
+grep -Fq 'Warning: could not delete local stale-stuck; kept.' "$tmp/stderr"
+grep -Fq 'Kept local stale-stuck (delete failed)' "$tmp/output" || { echo 'failed stale delete not counted as kept'; exit 1; }
+grep -Fq 'stale=2 stale deleted=1' "$tmp/output" || { echo 'stale deleted count wrong'; grep 'stale' "$tmp/output"; exit 1; }
+echo 'ok a failed stale local delete counts as kept, not deleted'
+# 4. A failed checkout inventory aborts deletion for the repo, never deletes blind.
+git branch inv-b; git push -q origin inv-b
+status=0
+PATH="$tmp/gitshim:$PATH" FAKE_INV_FAIL="$tmp/inv-flag" bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
+[ "$status" -ne 0 ] || { echo 'a failed worktree inventory still exited 0'; exit 1; }
+grep -Fq 'Warning: could not list worktrees' "$tmp/stderr" || { echo 'no inventory warning'; cat "$tmp/stderr"; exit 1; }
+git show-ref --verify --quiet refs/heads/inv-b || { echo 'a branch was deleted without an inventory'; exit 1; }
+git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/inv-b || { echo 'a remote branch was deleted without an inventory'; exit 1; }
+echo 'ok a failed worktree inventory aborts with a warning and a non-zero exit, deleting nothing'
+# 5. A failing lsof or ps never lets a cache or worktree be deleted: unknown counts as in use.
+find "$tmp" -mindepth 2 -maxdepth 3 -name .next -type d -prune -exec rm -rf {} + 2>/dev/null || true
+mkkept c-lsof
+mkdir -p "$tmp/c-lsof/web"
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+exit 2
+FAKE
+cat > "$tmp/bin/ps" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "${FAKE_PS:-}"
+FAKE
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c-lsof/.next" || { echo 'a failing lsof let the cache be deleted'; cat "$tmp/output"; exit 1; }
+grep -Fq "Kept build cache $real/c-lsof/.next (lsof failed)" "$tmp/output" || { echo 'lsof failure kept the cache without a reason'; cat "$tmp/output"; exit 1; }
+grep -Fq 'build caches removed=0 kept=1 bytes=0' "$tmp/output" || { echo 'lsof failure not counted as kept=1'; grep 'build' "$tmp/output"; exit 1; }
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+echo 'lsof: WARNING: something went wrong' >&2
+FAKE
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c-lsof/.next" || { echo 'lsof error output let the cache be deleted'; exit 1; }
+echo 'ok a failing lsof (bad status or error output) keeps the cache and counts it as kept'
+# The worktree removal paths share the helper: a failing lsof keeps a merged worktree too.
+git worktree add -q -b m-lsof "$tmp/m-lsof"
+bash "$here/wrap-up.sh" --apply --worktrees-only > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/m-lsof" || { echo 'a failing lsof let --worktrees-only remove a worktree'; cat "$tmp/output"; exit 1; }
+echo 'ok a failing lsof keeps worktrees under --worktrees-only'
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+exit 1
+FAKE
+cat > "$tmp/bin/ps" <<'FAKE'
+#!/usr/bin/env bash
+echo 'ps: failure' >&2
+exit 1
+FAKE
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/c-lsof/.next" || { echo 'a failing ps let the cache be deleted'; exit 1; }
+echo 'ok a failing ps keeps the cache'
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+# 6. One table: every path that deletes because "nothing runs here" x every way lsof or ps can fail. Each must keep and
+# count the item as kept. A fresh disposable repo keeps the counts exact.
+git init -q --bare "$tmp/origin4"
+git clone -q "$tmp/origin4" "$tmp/trepo" 2>/dev/null
+cd "$tmp/trepo"
+git config user.email test@example.invalid; git config user.name Test
+git checkout -qb main; echo t > file; git add file; git commit -qm initial; git push -q -u origin main
+echo '.next' >> .git/info/exclude
+told=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo y | git hash-object -w --stdin)" | git mktree)")
+export WRAP_UP_CLONE_ROOT="$tmp/t-clones" WRAP_UP_LOOSE_ROOT="$tmp/t-loose"
+tclone="$tmp/t-clones/com.google.Chrome.code_sign_clone/code_sign_clone.t1"
+ttemp="$tmp/t-loose/12-t.log"
+tfixtures() { # recreate whatever a failing case deleted
+  git worktree prune
+  [ -d "$tmp/t-wt" ] || git worktree add -q -B t-wt "$tmp/t-wt" main
+  [ -d "$tmp/t-wto" ] || git worktree add -q -B t-wto "$tmp/t-wto" main
+  [ -d "$tmp/t-stale" ] || git worktree add -q -B t-stale "$tmp/t-stale" "$told"
+  if [ ! -d "$tmp/t-cache" ]; then
+    git worktree add -q -B t-cache "$tmp/t-cache" main; git -C "$tmp/t-cache" commit -q --allow-empty -m t-cache
+  fi
+  mkdir -p "$tmp/t-cache/.next" "$tmp/t-loose" "$tclone"; echo data > "$tmp/t-cache/.next/x"
+  [ -f "$ttemp" ] || { echo log > "$ttemp"; touch -t 202001010000 "$ttemp"; }
+}
+tfake() { # <mode>: write the failing lsof or ps; the other one answers "nothing here"
+  local lsof_body='exit 1' ps_body='echo "init"'
+  case "$1" in
+    lsof-status) lsof_body='exit 2' ;;
+    lsof-stderr) lsof_body='echo "lsof: WARNING: can not stat" >&2; exit 1' ;;
+    ps-status) ps_body='exit 1' ;;
+    ps-stderr) ps_body='echo "init"; echo "ps: warning" >&2' ;;
+  esac
+  printf '#!/usr/bin/env bash\n%s\n' "$lsof_body" > "$tmp/bin/lsof"
+  printf '#!/usr/bin/env bash\n%s\n' "$ps_body" > "$tmp/bin/ps"
+  chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
+}
+t_cases=0; t_failed=0
+tcheck() { # <mode> <path> <command...>
+  local mode=$1 what=$2; shift 2
+  t_cases=$((t_cases+1))
+  if "$@"; then echo "ok   $mode keeps $what"; else echo "FAIL $mode deleted or did not count $what"; t_failed=$((t_failed+1)); fi
+}
+has() { grep -Fq -- "$1" "$tmp/output"; }
+kept_wt() { test -d "$tmp/$1" && has "Kept worktree $real/$1 (" && has 'removed worktrees=0 '; }
+kept_stale() { test -d "$tmp/t-stale" && git show-ref --verify --quiet refs/heads/t-stale && has 'Kept stale t-stale (' && has 'stale deleted=0'; }
+kept_cache() { test -d "$tmp/t-cache/.next" && has 'build caches removed=0 kept=1 '; }
+kept_clone() { test -d "$tclone" && has 'chrome clones removed=0 kept=1'; }
+kept_temp() { test -f "$ttemp" && has 'temp removed=0 kept=1 '; }
+for mode in lsof-status lsof-stderr ps-status ps-stderr; do
+  tfixtures; tfake "$mode"
+  bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+  tcheck "$mode" 'worktree (--apply)' kept_wt t-wt
+  tcheck "$mode" 'stale branch (--apply --stale)' kept_stale
+  tcheck "$mode" 'build cache' kept_cache
+  tcheck "$mode" 'Chrome clone' kept_clone
+  tcheck "$mode" 'temp item' kept_temp
+  tfixtures
+  bash "$here/wrap-up.sh" --apply --worktrees-only > "$tmp/output" 2> "$tmp/stderr" || true
+  tcheck "$mode" 'worktree (--worktrees-only)' kept_wt t-wto
+done
+echo "process check table: $t_cases cases, $t_failed failed"
+[ "$t_failed" -eq 0 ] || exit 1
+# Control: when lsof and ps both answer cleanly, the same fixtures go.
+tfixtures; tfake clean
+bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr"
+test ! -d "$tmp/t-wt" && test ! -d "$tmp/t-stale" && test ! -d "$tmp/t-cache/.next" && test ! -d "$tclone" && test ! -f "$ttemp" \
+  || { echo 'clean lsof and ps did not let the idle fixtures go'; cat "$tmp/output"; exit 1; }
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+echo 'ok a clean lsof and ps still let idle items go'
+# 7. Review fixes: stale deletion re-reads the worktree inventory, and the empty scratch parent goes through in_use.
+r_failed=0
+rcheck() { # <what> <command...>
+  local what=$1; shift
+  if "$@"; then echo "ok   $what"; else echo "FAIL $what"; r_failed=$((r_failed+1)); fi
+}
+# a. A remote-only stale branch checked out in a new worktree after selection is kept; ps exit 1 is reported for it.
+git push -q origin "$told:refs/heads/r-stale"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"; printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/ps"
+chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_LATE=r-stale FAKE_GIT_LATE_PATH="$tmp/r-late" FAKE_GIT_LATE_ON='log -1*origin/r-stale' \
+  bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+late_kept() {
+  git --git-dir="$tmp/origin4" show-ref --verify --quiet refs/heads/r-stale && has "Kept stale r-stale (checked out in $real/r-late, ps failed)" \
+    && has 'stale deleted=0'
+}
+rcheck 'a stale remote branch checked out after selection is kept with the new worktree in_use reason' late_kept
+git worktree remove --force "$tmp/r-late" 2>/dev/null || true
+git branch -D r-stale >/dev/null 2>&1 || true
+git push -q origin "$told:refs/heads/r-stale" 2>/dev/null || true
+# b. A failed worktree inventory before stale deletion deletes no stale branch and keeps every remaining candidate.
+git branch s-inv1 "$told"; git branch s-inv2 "$told"
+printf '#!/usr/bin/env bash\necho init\n' > "$tmp/bin/ps"
+rm -f "$tmp/inv-flag4"
+PATH="$tmp/gitshim:$PATH" FAKE_INV_FAIL="$tmp/inv-flag4" FAKE_INV_ON='log -1*' \
+  bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+inv_kept() {
+  git show-ref --verify --quiet refs/heads/s-inv1 && git show-ref --verify --quiet refs/heads/s-inv2 \
+    && git --git-dir="$tmp/origin4" show-ref --verify --quiet refs/heads/r-stale \
+    && has 'Kept stale r-stale (worktree inventory unavailable)' && has 'Kept stale s-inv1 (worktree inventory unavailable)' \
+    && has 'Kept stale s-inv2 (worktree inventory unavailable)' && has 'stale deleted=0' \
+    && grep -Fq 'Warning: could not list worktrees; deleting no more stale branches.' "$tmp/stderr"
+}
+rcheck 'a failed inventory before stale deletion keeps every remaining candidate' inv_kept
+# c. An empty scratch slug parent held as a cwd, with lsof exit 2 plus error output and ps exit 1, is kept and counted.
+tparent="$tmp/t-scratch/-gone-slug-parent"
+mkdir -p "$tparent"
+(cd "$tparent" && exec sleep 120) &
+holder=$!
+printf '#!/usr/bin/env bash\necho "lsof: WARNING: can not stat" >&2\nexit 2\n' > "$tmp/bin/lsof"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/ps"
+WRAP_UP_SCRATCH_ROOT="$tmp/t-scratch" bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || true
+parent_kept() { test -d "$tparent" && kill -0 "$holder" && has "Kept temp $tparent (lsof failed)" && has 'temp removed=0 kept=1 '; }
+rcheck 'an empty scratch parent with failing lsof and ps is kept and counted' parent_kept
+kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+echo "review fix cases: 3 cases, $r_failed failed"
+[ "$r_failed" -eq 0 ] || exit 1
+# 8. Review fixes, round 5. A fresh disposable repo keeps the counts exact.
+git init -q --bare "$tmp/origin5"
+git clone -q "$tmp/origin5" "$tmp/frepo" 2>/dev/null
+cd "$tmp/frepo"
+git config user.email test@example.invalid; git config user.name Test
+git checkout -qb main; echo f > file; git add file; git commit -qm initial; git push -q -u origin main
+fold=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo z | git hash-object -w --stdin)" | git mktree)")
+export WRAP_UP_CLONE_ROOT="$tmp/f-none" WRAP_UP_LOOSE_ROOT="$tmp/f-none" WRAP_UP_SCRATCH_ROOT="$tmp/f-none"
+f_cases=0; f_failed=0
+fcheck() { # <what> <command...>
+  local what=$1; shift
+  f_cases=$((f_cases+1))
+  if "$@"; then echo "ok   $what"; else echo "FAIL $what"; f_failed=$((f_failed+1)); fi
+}
+fprobe() { # <dir> <lsof body> <ps body>
+  mkdir -p "$1"
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/lsof"; printf '#!/usr/bin/env bash\n%s\n' "$3" > "$1/ps"
+  chmod +x "$1/lsof" "$1/ps"
+}
+# a. P1: a stale worktree passes in_use at selection, then its probe turns busy or unknown before removal (the process
+# state flips at the first worktree inventory after the subject lookup). The worktree and both refs stay, counted as kept.
+for mode in lsof-status-stderr ps-status ps-stderr lsof-holder; do
+  case "$mode" in
+    lsof-status-stderr) busy_lsof='echo "lsof: WARNING: can not stat" >&2; exit 2'; busy_ps='echo init'; want='lsof failed' ;;
+    ps-status) busy_lsof='exit 1'; busy_ps='exit 1'; want='ps failed' ;;
+    ps-stderr) busy_lsof='exit 1'; busy_ps='echo init; echo "ps: warning" >&2'; want='ps failed' ;;
+    lsof-holder) busy_lsof='echo 4242'; busy_ps='echo init'; want='held open by a running process' ;;
+  esac
+  git worktree prune
+  [ -d "$tmp/f-stale" ] || git worktree add -q -B f-stale "$tmp/f-stale" "$fold"
+  git push -q -f origin "$fold:refs/heads/f-stale"
+  fprobe "$tmp/bin" 'exit 1' 'echo init'
+  rm -rf "$tmp/flip"; fprobe "$tmp/flip" "$busy_lsof" "$busy_ps"
+  PATH="$tmp/gitshim:$PATH" FAKE_FLIP_DIR="$tmp/flip" FAKE_FLIP_BIN="$tmp/bin" FAKE_FLIP_ARM='log --reverse*' FAKE_FLIP_ON='worktree list*' \
+    bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
+  stale_wt_kept() {
+    test -e "$tmp/flip/flipped" && test -d "$tmp/f-stale" && git show-ref --verify --quiet refs/heads/f-stale \
+      && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-stale \
+      && has "Kept stale f-stale ($want)" && has 'stale deleted=0'
+  }
+  fcheck "$mode turning busy after selection keeps the stale worktree and its refs" stale_wt_kept
+done
+fprobe "$tmp/bin" 'exit 1' 'echo init'
+git worktree remove --force "$tmp/f-stale" 2>/dev/null || true; git branch -D f-stale >/dev/null 2>&1 || true
+git push -q origin --delete f-stale 2>/dev/null || true
+# b. P2: a remote-only merged branch checked out during its own remote eligibility lookup keeps its remote ref.
+git push -q origin "main:refs/heads/f-late"
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_LATE=f-late FAKE_GIT_LATE_PATH="$tmp/f-late" FAKE_GIT_LATE_ON='merge-base --is-ancestor refs/remotes/origin/f-late*' \
+  bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || true
+remote_late_kept() {
+  test -d "$tmp/f-late" && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-late \
+    && has "Kept remote f-late (checked out in $real/f-late" && has 'deleted remote=0 '
+}
+fcheck 'a remote branch checked out during its eligibility lookup is kept' remote_late_kept
+git worktree remove --force "$tmp/f-late" 2>/dev/null || true; git branch -D f-late >/dev/null 2>&1 || true; git push -q origin --delete f-late 2>/dev/null || true
+# c. P2: the same during a failing batch push; the one by one fallback re-reads the inventory before each retry.
+git push -q origin "main:refs/heads/f-retry" "main:refs/heads/f-stuck"
+PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL='push*f-stuck' FAKE_GIT_LATE=f-retry FAKE_GIT_LATE_PATH="$tmp/f-retry" FAKE_GIT_LATE_ON='push origin --delete*' \
+  bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || true
+retry_kept() {
+  test -d "$tmp/f-retry" && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-retry \
+    && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-stuck \
+    && has "Kept remote f-retry (checked out in $real/f-retry" && has 'Kept remote f-stuck (delete failed)' && has 'deleted remote=0 '
+}
+fcheck 'a remote branch checked out during a failed batch push is kept by the fallback retry' retry_kept
+rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
+# 9. Lint: every destructive command in wrap-up.sh sits inside a guarded_* function; only the mktemp EXIT trap is exempt.
+lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"' EXIT" '
+  /^guarded_[a-z_]*\(\) *\{/ { inside = 1 }
+  inside { if ($0 ~ /^\}/) inside = 0; next }
+  /^[[:space:]]*#/ || $0 == allow { next }
+  /worktree remove|branch +(-[A-Za-z]*[dD]|--delete)|push .*(--delete| :)|(^|[^[:alnum:]_.-])(rm|rmdir|unlink)( |$)|find .*-delete|update-ref +-d/ { print NR ": " $0 }
+' "$here/wrap-up.sh")
+lint_clean() {
+  [ -z "$lint_hits" ] || { printf 'unguarded destructive command at wrap-up.sh:%s\n' "$lint_hits"; return 1; }
+  for g in guarded_worktree_remove guarded_local_branch_delete guarded_remote_branch_delete guarded_rm; do
+    grep -q "^$g() {" "$here/wrap-up.sh" || { echo "missing $g"; return 1; }
+  done
+}
+fcheck 'every destructive command in wrap-up.sh runs through a guarded function' lint_clean
+echo "round 5 review fix cases: $f_cases cases, $f_failed failed"
+[ "$f_failed" -eq 0 ] || exit 1
