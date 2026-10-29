@@ -71,6 +71,8 @@ if len(text)>cap:
     duration_seconds={i:int(m.group(1)) for i,l in enumerate(lines) if (m:=dur.match(l))}
     dur_idx=sorted(duration_seconds, key=lambda i:(-duration_seconds[i],i))
     failures=[i for i,l in enumerate(lines) if l.startswith("Result: ") and not l.startswith("Result: exit 0")]
+    # A failing check keeps its own Duration even when the budget is tight.
+    failure_durations=[d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None]
     metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
     results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
     nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
@@ -80,7 +82,7 @@ if len(text)>cap:
     omitted_durations="Durations omitted: %d (see full log)\n" % len(dur_idx)
     budget=cap-len(header)-1-len(closing)-len(footer)-len(omitted_line)-len(omitted_durations)
     chosen={}; kept_durations=0
-    for group in (failures,metadata,results,dur_idx,nice):
+    for group in (failures,failure_durations,metadata,results,dur_idx,nice):
         for i in group:
             if i in chosen: continue
             line=cut(lines[i])+"\n"
