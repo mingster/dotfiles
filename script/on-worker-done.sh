@@ -27,12 +27,12 @@ case "$fam" in claude|cursor|codex|antigravity) ;; *) usage ;; esac
 
 gate=${ON_WORKER_DONE_USAGE_GATE:-$HOME/dotfiles/script/usage-gate.py}
 orca=${ORCA_CLI_COMMAND:-orca}
-# usage-gate knows two families. Cursor and Codex authors run GPT models; Antigravity has no single family, so no avoid flag.
+# Keep model-family exclusions and always exclude the author's provider too.
 case "$fam" in claude) avoid="--avoid-family claude" ;; cursor|codex) avoid="--avoid-family gpt" ;; *) avoid="" ;; esac
 flags=""
 if [ -x "$gate" ] || [ -f "$gate" ]; then
   # shellcheck disable=SC2086
-  flags=$("$gate" pick --role reviewer $avoid 2>/dev/null) || flags=""
+  flags=$("$gate" pick --role reviewer $avoid --avoid-provider "$fam" 2>/dev/null) || flags=""
 fi
 if [ -z "$flags" ]; then
   echo "cross-family unavailable" >&2
