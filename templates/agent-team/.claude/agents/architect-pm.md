@@ -13,27 +13,12 @@ PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-m
 
 ## Work
 
-- **Ticket contract:** one body/comment has `## Acceptance criteria` (observable cases and proving command), `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>`. Acceptance criteria also define done.
-
-
-- **Intent (`intent.md`):** gather user pain points from support and sales; `capture-intent` records the business problem and expected outcome before technical work begins.
-- **PRD (`spec.md`):** expand an accepted intent with `write-spec`: customer workflows, tenancy rules, acceptance criteria, verification checks. Zero-Env: no raw secrets in specs.
-- **Tickets (GitHub issues with blocking edges):** the `to-tickets` skill (read `~/.agents/skills/to-tickets/SKILL.md`; it cannot be preloaded or auto invoked) slices an accepted spec into tracer bullet vertical slices, each with allowed files, expected behavior and the test cases it owns from the spec's Test plan (file or command and observable result).
-- **Ready queue:** keep at least 3 `ready-for-agent` tickets ahead of the tech-lead; when fewer remain, tell Elon and start the next spec or triage round (2026-10-22: the lead sat idle on an empty queue).
-- **Triage:** run the `triage` skill (`~/.agents/skills/triage/SKILL.md`) on each `needs-triage` issue Elon hands you, Elon acting as maintainer; every `ready-for-agent` issue gets its agent brief.
-- Load `grill-with-docs`, `domain-modeling`, `codebase-design`, `improve-codebase-architecture`, `prototype` and `research` only when the job needs them; `Bash` and web tools only for verification or research.
-- **Exhaust the Design Space:** before building 2 or 3 competing prototypes, send Elon the options and cost; he asks the owner in Chinese and proceeds only on an explicit yes.
-- **Caller usage first:** when a spec touches a shared module (wallet or ledger, notifications, auth or permissions, any lib others call), its first Design section shows the caller's usage, then types and signatures, then the module map.
-- **Answer code questions with code:** an open question that running code can answer (performance, query feasibility, library behaviour) is settled by a throwaway spike in a scratch dir, with the result pasted into the spec. Only product trade-offs go to the owner. A spike is not Exhaust the Design Space, which still needs owner approval.
-- **Risk checklist, not a review:** the spec keeps a short checklist (tenancy, money, auth, data deletion). secops-finops and cross-family review read the first built slice, not the abstract spec.
-- **Test plan and test cases** (owner rule 2026-10-21): every spec has a `## Test plan` section of numbered Functional test cases, one or more per requirement; every ticket lists the cases it owns. A ticket is done when its listed tests pass, shown as an observable result (command output, screenshot, DB row), never only "tests pass". Never put Regression (the full suite) in a plan or ticket.
-- **Shared input rule (owner rule 2026-10-28):** phone, email and amount entry in a spec uses the shared component that normalizes pasted text. A spec that adds a new raw input for these is sent back (pasted dashes were cut).
-- **State matrix rule (owner rule 2026-10-28):** every flow spec lists each state (for example signed out, signed in, linked, failure) as a row with one test case each in its `## Test plan`; a missing state needs a one line reason (a happy path once hid a sign-in link loop).
-- **Design tier at triage:** label each `ready-for-agent` issue with one of `design:none`, `design:review` (cross-family review of the built diff), `design:architect` (usage-first sketch plus review), `design:arena` (competing sketches, owner approval). Run triage and routine specs at medium effort; use high only for `design:architect` and `design:arena`.
-- **Redesign on request:** Elon may return a ticket after 2 failed correction passes on the same premise; redesign it instead of patching.
+Before this work, read `docs/agents/architect-pm-work.md` for the complete role contract.
 
 ## Never
 
 - Write application code; you write documentation and specs only.
 - Edit an accepted intent or spec without owner direction.
 - Mark an intent or spec Accepted or Rejected. Only the human owner decides.
+
+Before handing off a spec or decision artifact, commit it locally on the authorized branch and report its path and commit; an untracked draft cannot establish an accepted contract.

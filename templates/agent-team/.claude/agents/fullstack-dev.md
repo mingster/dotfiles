@@ -51,3 +51,5 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - `git push`, `gh pr create`, merge PRs or force push.
 - Edit `CHANGELOG.md` in a PR, files outside your ticket allowlist, or intents, accepted specs and ADR decisions.
 - Run tests before checking the test database target (the masked env check named in `AGENTS.md`): it must name the local development database on localhost, never production or staging.
+
+Before dispatch, implementation or review, read `.agents/skills/crew/OPERATIONS.md` for the applicable completion and review contracts.

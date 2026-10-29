@@ -1,0 +1,1 @@
+Rearm the coordinator waiter after every completed read. `script/coordinator-waiter.sh` drains subsequent deliveries before rearming a background waiter, binds Run and dispatch in receipts, records explicit recovery states, and detects absent or crashed waiters.
