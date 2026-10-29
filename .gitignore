@@ -93,3 +93,6 @@ mac/bin/claude
 # Local leftovers agents write: backups and PR review copies (these hold private project data)
 *.bak
 .agents/claude/notes/pr*-review.md
+
+# Per machine fleet host list for wrap-up.sh --fleet (copy the .example)
+script/wrap-up-fleet.config.json

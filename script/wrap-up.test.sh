@@ -329,6 +329,79 @@ grep -Fq "Warning: unexpected worker-list page shape; retaining all worktrees." 
 if grep -Fq "Remove worktree $real/rel-none" "$tmp/output"; then echo 'bad page shape freed a worktree'; exit 1; fi
 rm -f "$fake/shape"
 echo 'ok malformed worker-list page keeps all worktrees with a warning'
+# #389: --fleet runs worktree and local branch cleanup on each configured host over a transport. The transport is a fake
+# that runs the remote command on this machine; the test never opens a real ssh connection.
+export ORCA_CLI_COMMAND="$tmp/bin/orca"
+unset FAKE_TERMINALS FAKE_PRS FAKE_WORKERS
+git init -q --bare "$tmp/origin2"
+git clone -q "$tmp/origin2" "$tmp/rrepo" 2>/dev/null
+git -C "$tmp/rrepo" config user.email test@example.invalid
+git -C "$tmp/rrepo" config user.name Test
+git -C "$tmp/rrepo" checkout -qb main
+echo r > "$tmp/rrepo/file"; git -C "$tmp/rrepo" add file; git -C "$tmp/rrepo" commit -qm initial
+git -C "$tmp/rrepo" push -q -u origin main
+git -C "$tmp/rrepo" branch rdone; git -C "$tmp/rrepo" push -q origin rdone
+git -C "$tmp/rrepo" worktree add -q "$tmp/rwt" rdone
+git -C "$tmp/rrepo" worktree add -qb rdirty "$tmp/rwt-dirty"; echo x > "$tmp/rwt-dirty/untracked"
+cat > "$tmp/bin/fake-ssh" <<'FAKE'
+#!/usr/bin/env bash
+# Drops ssh options, records the host, fails for the host named down, otherwise runs the remote command here.
+while [ "${1:-}" = -o ]; do shift 2; done
+host=$1; shift
+echo "$host" >> "$FAKE_SSH_LOG"
+[ "$host" != down ] || { echo 'ssh: connect to host down: No route to host' >&2; exit 255; }
+# ssh joins its words and the remote login shell parses them.
+exec sh -c "$*"
+FAKE
+chmod +x "$tmp/bin/fake-ssh"
+export WRAP_UP_FLEET_SSH="$tmp/bin/fake-ssh" FAKE_SSH_LOG="$tmp/ssh.log" DOTFILES_DIR="$(cd "$here/.." && pwd)"
+: > "$FAKE_SSH_LOG"
+printf '{"hosts":[{"host":"down","repo_dir":"~/nowhere"},{"host":"alpha","repo_dir":"%s"}]}\n' "$tmp/rrepo" > "$tmp/fleet.json"
+export WRAP_UP_FLEET_CONFIG="$tmp/fleet.json"
+cd "$tmp/repo"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+grep -Fxq '== Fleet host alpha ==' "$tmp/output"
+grep -Fq "Remove worktree $real/rwt " "$tmp/output" || { echo 'fleet preview did not propose the remote worktree'; exit 1; }
+grep -Fq "Kept worktree $real/rwt-dirty (dirty)" "$tmp/output"
+test -d "$tmp/rwt"
+echo 'ok fleet preview runs per host and changes nothing'
+grep -Fq 'Warning: fleet host down unreachable or incomplete' "$tmp/stderr"
+grep -Fxq down "$FAKE_SSH_LOG"
+grep -Fq 'Fleet total (local plus 1 of 2 hosts reached)' "$tmp/output"
+echo 'ok unreachable host only warns and is skipped'
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr"
+test ! -d "$tmp/rwt"
+if git -C "$tmp/rrepo" show-ref --verify --quiet refs/heads/rdone; then echo 'remote host kept a merged local branch'; exit 1; fi
+test -d "$tmp/rwt-dirty"
+echo 'ok fleet apply removes the host worktree and local branch, keeps the dirty one'
+git --git-dir="$tmp/origin2" show-ref --verify --quiet refs/heads/rdone || { echo 'fleet host deleted a remote branch'; exit 1; }
+grep -Fq 'removed worktrees=1 deleted local=1 deleted remote=0' "$tmp/output"
+echo 'ok fleet host never deletes remote branches'
+grep -Fq 'Fleet total' "$tmp/output"
+if bash "$here/wrap-up.sh" --fleet --worktrees-only >/dev/null 2>&1; then echo '--fleet and --worktrees-only accepted together'; exit 1; fi
+# #389 review: a fleet host without a usable Orca CLI must keep every worktree (fail safe), and orca in ~/.orca/cli/bin
+# must be found by the remote command.
+git -C "$tmp/rrepo" branch rdone2; git -C "$tmp/rrepo" push -q origin rdone2
+git -C "$tmp/rrepo" worktree add -q "$tmp/rwt2" rdone2
+(cd "$tmp/rrepo" && ORCA_CLI_COMMAND="$tmp/does-not-exist/orca" bash "$here/wrap-up.sh" --worktrees-only --apply --repo "$tmp/rrepo") > "$tmp/output" 2> "$tmp/stderr"
+test -d "$tmp/rwt2"
+grep -Fq 'Orca unavailable' "$tmp/stderr"
+grep -Fq 'removed worktrees=0' "$tmp/output"
+echo 'ok --worktrees-only without orca keeps every worktree'
+mkdir -p "$HOME/.orca/cli/bin"; cp "$tmp/bin/orca" "$HOME/.orca/cli/bin/orca"
+mv "$tmp/bin/orca" "$tmp/bin/orca.off"
+unset ORCA_CLI_COMMAND
+printf '{"hosts":[{"host":"alpha","repo_dir":"%s"}]}\n' "$tmp/rrepo" > "$tmp/fleet.json"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+if grep -Fq 'Orca unavailable' "$tmp/stderr" "$tmp/output"; then echo 'remote PATH misses ~/.orca/cli/bin'; exit 1; fi
+test -d "$tmp/rwt2"
+rm -rf "$HOME/.orca"; mv "$tmp/bin/orca.off" "$tmp/bin/orca"
+export ORCA_CLI_COMMAND="$tmp/bin/orca"
+echo 'ok remote PATH includes ~/.orca/cli/bin'
+rm "$tmp/fleet.json"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+grep -Fq 'fleet config' "$tmp/stderr"
+echo 'ok missing fleet config warns and the local run still succeeds'
 # Chrome clones live in the per-user temp dir (T) and in its sibling X dir. Both are scanned with the same lsof rule.
 cat > "$tmp/bin/lsof" <<'FAKE'
 #!/usr/bin/env bash
