@@ -16,9 +16,16 @@ echo "$*" >> "$FAKE_DIR/orca.log"
 exit 0
 ORCA
 chmod +x "$tmp/bin/orca"
+cat > "$tmp/bin/gh" <<'GH'
+#!/usr/bin/env python3
+import json, os
+print(json.dumps({"comments": [{"body": "Checks: PASS head=" + os.environ["QA_HEAD"] + "\nCommand: docs-check\nResult: exit 0\n"}]}))
+GH
+chmod +x "$tmp/bin/gh"
 export FAKE_DIR="$tmp" ON_WORKER_DONE_USAGE_GATE="$tmp/gate" PATH="$tmp/bin:$PATH"
 : > "$tmp/orca.log"
 head=0123456789abcdef0123456789abcdef01234567
+export QA_HEAD="$head"
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
 run() { "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-family "${1:-claude}" --worktree /wt --run run_1 2>"$tmp/err"; }

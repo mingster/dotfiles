@@ -101,6 +101,28 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(args)
 
+    def test_latest_exact_head_receipt_decides_start(self):
+        prefix = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\n"
+        clean = prefix + "Tests executed: 2\nLoad errors: 0\n"
+        zero = prefix + "Tests executed: 0\nLoad errors: 0\n"
+        for receipts, allowed in (([zero, clean], True), ([clean, zero], False)):
+            with self.subTest(allowed=allowed):
+                result, args = self.dispatch("claude", receipts=receipts)
+                self.assertEqual(result.returncode == 0, allowed, result.stderr)
+                self.assertEqual(args is not None, allowed)
+
+    def test_incomplete_execution_metadata_refuses(self):
+        result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nTests executed: 2\n"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("incomplete test execution metadata", result.stderr)
+        self.assertIsNone(args)
+
+    def test_legacy_bun_receipt_without_counts_refuses(self):
+        result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\n"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("test command has no execution metadata", result.stderr)
+        self.assertIsNone(args)
+
     def assert_reviewer(self, author, expected):
         result, args = self.dispatch(author)
         self.assertEqual(result.returncode, 0, result.stderr)

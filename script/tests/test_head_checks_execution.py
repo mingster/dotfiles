@@ -67,6 +67,13 @@ class ExecutionReceipt(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Tests executed: 1\nLoad errors: 1\n", result.stdout)
 
+    def test_skipped_only_run_records_zero_executed(self):
+        (self.repo / "sample.test.ts").write_text(
+            "import {test} from 'bun:test'; test.skip('skipped',()=>{});\n")
+        result = self.run_checks(f"{self.bun} test ./sample.test.ts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Tests executed: 0\nLoad errors: 0\n", result.stdout)
+
     def test_non_test_command_has_no_execution_metadata(self):
         result = self.run_checks("printf 'documentation checked\\n'")
         self.assertEqual(result.returncode, 0, result.stderr)

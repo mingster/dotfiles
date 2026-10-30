@@ -74,6 +74,7 @@ if len(text)>cap:
     # A failing check keeps its own Duration even when the budget is tight.
     failure_duration={i:d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None}
     failure_durations=list(failure_duration.values())
+    execution=[i for i,l in enumerate(lines) if l.startswith(("Tests executed: ","Load errors: "))]
     metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
     results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
     nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
@@ -84,12 +85,12 @@ if len(text)>cap:
     budget=cap-len(header)-1-len(closing)-len(omitted_line)-len(omitted_durations)
     # A long log path (long TMPDIR) must not crowd out the failing checks: drop
     # the path from the footer when it and the failure lines cannot both fit.
-    essential=sum(len(cut(lines[i])+"\n") for i in set(failures)|set(failure_durations))
+    essential=sum(len(cut(lines[i])+"\n") for i in set(failures)|set(failure_durations)|set(execution))
     if budget-len(footer)<essential:
         footer="\nReceipt cut to fit %d characters. Full log path too long to show.\n" % cap
     budget-=len(footer)
     chosen={}; kept_durations=0
-    for group in (failures,failure_durations,metadata,results,dur_idx,nice):
+    for group in (failures,failure_durations,execution,metadata,results,dur_idx,nice):
         for i in group:
             if i in chosen: continue
             line=cut(lines[i])+"\n"
@@ -229,6 +230,21 @@ if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/nu
     done <<<"$guards"
   done < <(git -C "$worktree" diff --name-only --diff-filter=A -z "$base...$sha" --)
 fi
+# Read the complete output before tailing it. Bun assertion diagnostics also say
+# error:, so use its unhandled-error summary rather than counting all diagnostics.
+test_summary() {
+  python3 - "$1" <<'PYTEST'
+import re, sys
+text = open(sys.argv[1]).read()
+text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+if re.search(r"^bun test v", text, re.M):
+    executed = sum(int(n) for n in re.findall(r"^\s*(\d+) (?:pass|fail)\s*$", text, re.M))
+    errors = sum(int(n) for n in re.findall(r"^\s*(\d+) errors?\s*$", text, re.M))
+    # A file can abort before Bun emits the final summary.
+    errors = max(errors, len(re.findall(r"^# Unhandled error between tests$", text, re.M)))
+    print(f"Tests executed: {executed}\nLoad errors: {errors}")
+PYTEST
+}
 count=0
 while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
@@ -240,15 +256,19 @@ while IFS= read -r command || [ -n "$command" ]; do
       bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
+    summary=$(test_summary "$output")
     tail -20 "$output" >> "$log"
     printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+    [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
     rm -f "$output"
   else
     status=$?
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
+    summary=$(test_summary "$output")
     tail -20 "$output" >> "$log"
     printf 'Result: exit %s; remaining checks stopped\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
+    [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
     rm -f "$output"
     exit 1
   fi
