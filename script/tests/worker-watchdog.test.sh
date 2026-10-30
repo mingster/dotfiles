@@ -195,7 +195,7 @@ check "$([[ -e $USAGE_GATE_BANNER_FILE ]] && echo exists)" "" "banner file"
 WATCHDOG_TEST_PROVIDER=antigravity run_case banner 2
 python3 - "$USAGE_GATE_BANNER_FILE" <<'PY'
 import json,sys,time
-left=json.load(open(sys.argv[1]))['gemini']-time.time()
+left=json.load(open(sys.argv[1]))['gemini-pro']-time.time()
 assert 94*3600+28*60 < left <= 94*3600+29*60, left
 PY
 WATCHDOG_TEST_PROVIDER=antigravity run_case idle 1

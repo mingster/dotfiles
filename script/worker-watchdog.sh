@@ -93,7 +93,8 @@ import json,sys
 r=json.load(open(sys.argv[2])); assert r.get('ok',True); r=r['result']
 if sys.argv[1]=='worker':
     for w in r['workers']:
-        if w.get('terminalState') in ('active','retained') and w.get('runId'): print('run',w['runId'])
+        if (w.get('terminalState') in ('active','retained') and w.get('runId')
+            and (w.get('projection') or {}).get('outcome','in_progress') == 'in_progress'): print('run',w['runId'])
     p=r.get('page',{}); print('cursor',p.get('nextCursor') or '' if p.get('hasMore') else '')
 else:
     for x in r['runs']: print('run',x['id'])
@@ -148,6 +149,7 @@ r=json.load(open(sys.argv[1])); assert r.get('ok',True)
 r=r['result']; page=r.get('page',{})
 for w in r['workers']:
     if (w.get('terminalState') in ('active','retained') and w.get('dispatchStatus') not in ('completed','failed','cancelled','abandoned')
+        and (w.get('projection') or {}).get('outcome','in_progress') == 'in_progress'
         and w.get('projection',{}).get('liveness',{}).get('verdict') != 'exited'):
         h=w.get('agentTerminalHandle')
         if h: print('terminal',h,str((w.get('projection') or {}).get('provider') or 'none').lower())
