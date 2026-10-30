@@ -66,6 +66,8 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
                 "--pr", "42", "--head", "a" * 40, "--author-family", author,
                 "--worktree", tmp, "--run", "run_test",
             ], env=env, text=True, capture_output=True, timeout=30)
+            if result.returncode != 0:
+                self.assertFalse(list(root.glob("reviewer-brief.*")), "refused QA must not create a brief")
             return result, json.loads(log.read_text()) if log.exists() else None
 
     def test_zero_executed_refuses_start(self):
@@ -83,6 +85,23 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
         self.assertIn("a" * 40, result.stderr)
         self.assertIn("Load errors: 1", result.stderr)
         self.assertIsNone(args)
+
+    def test_failed_checks_with_executed_tests_refuse_start(self):
+        receipt = "Checks: FAIL head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 1\nTests executed: 3\nLoad errors: 0\n"
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(args)
+
+    def test_failed_non_test_check_refuses_start(self):
+        receipt = "Checks: FAIL head=" + "a" * 40 + "\nCommand: check-doc-links\nResult: exit 1\n"
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(args)
+
+    def test_failed_checks_refusal_names_head_and_status(self):
+        receipt = "Checks: FAIL head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 1\nTests executed: 3\nLoad errors: 0\n"
+        result, _ = self.dispatch("claude", receipts=[receipt])
+        self.assertIn("QA start refused head=" + "a" * 40 + ": Checks: FAIL", result.stderr)
 
     def test_docs_check_without_test_command_proceeds(self):
         result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nCommand: check-doc-links\nResult: exit 0\n"])
