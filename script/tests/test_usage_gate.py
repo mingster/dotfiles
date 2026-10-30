@@ -540,6 +540,35 @@ class Cursor(unittest.TestCase):
                 for call in command.call_args_list:
                     self.assertNotIn(token, str(call))
 
+    def test_rejected_desktop_token_falls_through_to_cli_store(self):
+        import base64, sqlite3, urllib.error, urllib.request
+        def jwt(user):
+            return "synthetic." + base64.urlsafe_b64encode(
+                ('{"sub":"auth|%s"}' % user).encode()).decode().rstrip("=") + ".signature"
+        stale, live = jwt("stale-user"), jwt("live-user")
+        payload = summary(100)
+        payload["individualUsage"]["plan"]["autoPercentUsed"] = 7.5
+        def respond(request, timeout):
+            if "stale-user" in request.get_header("Cookie"):
+                raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+            body = mock.MagicMock()
+            body.__enter__.return_value = io.StringIO(json.dumps(payload))
+            return body
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "HOME", t), \
+                mock.patch.object(ug, "CURSOR_SUMMARY", None), mock.patch.object(ug.sys, "platform", "linux"), \
+                mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(urllib.request, "urlopen", side_effect=respond) as fetch:
+            db = t + "/.config/Cursor/User/globalStorage/state.vscdb"
+            os.makedirs(os.path.dirname(db))
+            with sqlite3.connect(db) as con:
+                con.execute("create table ItemTable (key text, value text)")
+                con.execute("insert into ItemTable values (?, ?)", ("cursorAuth/accessToken", stale))
+            os.makedirs(t + "/.config/cursor", exist_ok=True)
+            with open(t + "/.config/cursor/auth.json", "w") as f:
+                json.dump({"accessToken": live}, f)
+            self.assertEqual(ug.cursor_reading(), {"pct": 7.5, "resets_at": FUT, "observed_at": NOW})
+            self.assertEqual(fetch.call_count, 2)
+
 
 class AutoCap(unittest.TestCase):
     """Default cap: what is left of the week under the ceiling, spread over the days left."""

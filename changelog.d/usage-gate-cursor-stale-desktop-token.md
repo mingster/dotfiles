@@ -1,0 +1,1 @@
+- usage-gate: a rejected (401/403) Cursor token from a stale desktop install no longer hides a valid cursor-agent CLI token; the reader tries the next credential store.
