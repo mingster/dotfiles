@@ -1,0 +1,1 @@
+Fixed the usage gate to read Cursor's Auto + Composer pool percentage and billing cycle reset, with desktop and cursor-agent credentials on macOS and Linux. Missing pool usage remains unknown; aggregate and API usage do not affect the verdict.
