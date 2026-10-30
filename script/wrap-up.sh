@@ -236,16 +236,24 @@ screenshots_only() {
 # fuser checks inodes, not directory trees: enumerate descendants as well as the
 # target so a nested cwd or open file cannot be mistaken for an idle directory.
 fuser_busy() {
-  local entry holders status
+  local entry holders status batch bytes
   if [ -d "$1" ]; then
     if ! find "$1" -print0 > "$tmp/holder-paths" 2> "$tmp/holder-err" || [ -s "$tmp/holder-err" ]; then
       busy='fuser traversal failed'; return 0
     fi
   else printf '%s\0' "$1" > "$tmp/holder-paths"
   fi
-  while IFS= read -r -d '' entry; do
+  while :; do
+    batch=(); bytes=0
+    while IFS= read -r -d '' entry; do
+      batch+=("$entry"); bytes=$((bytes + ${#entry} + 1))
+      # Bound argument count and size, including worktrees with long paths.
+      [ "${#batch[@]}" -lt 64 ] && [ "$bytes" -lt 16384 ] || break
+    done
+    [ "${#batch[@]}" -gt 0 ] || break
     status=0
-    holders=$(fuser -- "$entry" 2> "$tmp/holder-err") || status=$?
+    # psmisc fuser rejects --; these paths are absolute, so no terminator is needed.
+    holders=$(fuser "${batch[@]}" 2> "$tmp/holder-err") || status=$?
     if [ "$status" -eq 0 ] || [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
     if [ "$status" -ne 1 ] || [ -s "$tmp/holder-err" ]; then busy='fuser failed'; return 0; fi
   done < "$tmp/holder-paths"
@@ -300,6 +308,9 @@ path_busy() {
   fi
   case "$OSTYPE" in
     linux*)
+      # Scan the process inventory once, independently of the target tree size.
+      # Only an unavailable proc root permits fallback; partial scans stay busy.
+      if [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ]; then proc_busy "$1"; return $?; fi
       if command -v fuser >/dev/null 2>&1; then fuser_busy "$1"; return $?; fi
       if [ -d "$proc_root" ]; then proc_busy "$1"; return $?; fi
       ;;

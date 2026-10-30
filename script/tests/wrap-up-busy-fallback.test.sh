@@ -33,9 +33,18 @@ printf '#!/bin/bash\nexit 0\n' > "$tmp/bin/ps"
 cat > "$tmp/bin/fuser" <<'FAKE'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FAKE_FUSER_LOG"
+for entry; do
+  if [ "$entry" = -- ]; then
+    printf 'No process specification given\nUsage: fuser [options] name ...\n' >&2
+    exit 1
+  fi
+done
 case "${FAKE_FUSER_MODE:-idle}" in
   busy) for entry; do
-    case "$entry" in */finished/nested|*/code_sign_clone.idle) echo 4242; exit 0 ;; esac
+    case "$entry" in */finished/nested|*/code_sign_clone.idle) printf '%s: ' "$entry" >&2; echo 4242; exit 0 ;; esac
+  done ;;
+  late) for entry; do
+    case "$entry" in */large/599) printf '%s: ' "$entry" >&2; echo 4242; exit 0 ;; esac
   done ;;
   stderr) echo 'fuser: permission denied' >&2 ;;
   error) exit 2 ;;
@@ -67,7 +76,7 @@ run() { /bin/bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --dry-run > "$tmp
 run
 check 'fuser idle permits worktree removal preview' has "Remove worktree $tmp/finished (ancestor)"
 check 'fuser idle permits Chrome clone removal preview' has "Remove Chrome clone $clone"
-check 'fuser visits nested directories' grep -Fxq -- "-- $tmp/finished/nested" "$FAKE_FUSER_LOG"
+check 'fuser visits nested directories' grep -Fq -- "$tmp/finished/nested" "$FAKE_FUSER_LOG"
 check 'working fallback suppresses keep-all summary' bash -c '! grep -q "^lsof unavailable:" "$1"' _ "$tmp/output"
 FAKE_FUSER_MODE=busy run
 check 'fuser holder in nested cwd keeps worktree' has "Kept worktree $tmp/finished (held open by a running process)"
@@ -77,11 +86,21 @@ for mode in stderr error; do
   check "fuser $mode keeps worktree" has "Kept worktree $tmp/finished (fuser failed)"
   check "fuser $mode keeps Chrome clone" has "Kept Chrome clone $clone (fuser failed)"
 done
+# A large fallback tree must not spawn one holder process for every file.
+mkdir "$clone/large"
+for ((i=0; i<600; i++)); do : > "$clone/large/$i"; done
+: > "$FAKE_FUSER_LOG"
+run
+check 'large fallback tree remains removable' has "Remove Chrome clone $clone"
+check 'large fallback tree uses fewer than 20 fuser processes' test "$(wc -l < "$FAKE_FUSER_LOG")" -lt 20
+FAKE_FUSER_MODE=late run
+check 'holder in a later batch keeps clone' has "Kept Chrome clone $clone (held open by a running process)"
 # macOS still requires lsof even if fuser is installed.
 OSTYPE=darwin run
 check 'macOS missing lsof keeps worktree' has "Kept worktree $tmp/finished (lsof unavailable)"
-# Neither tool is present; a complete fake proc inventory is idle.
-rm "$tmp/bin/fuser"
+# A complete proc inventory takes priority even when fuser would fail.
+export FAKE_FUSER_MODE=error
+: > "$FAKE_FUSER_LOG"
 mkdir -p "$tmp/proc/123/fd" "$tmp/elsewhere"
 ln -s "$tmp/elsewhere" "$tmp/proc/123/cwd"
 ln -s / "$tmp/proc/123/root"
@@ -89,7 +108,9 @@ ln -s "$tmp/elsewhere" "$tmp/proc/123/fd/0"
 run
 check 'proc idle permits worktree removal preview' has "Remove worktree $tmp/finished (ancestor)"
 check 'proc idle permits Chrome clone removal preview' has "Remove Chrome clone $clone"
+check 'large proc tree never invokes fuser' test ! -s "$FAKE_FUSER_LOG"
 check 'proc fallback suppresses keep-all summary' bash -c '! grep -q "^lsof unavailable:" "$1"' _ "$tmp/output"
+rm -rf "$clone/large"
 # A literal filename suffix must not be confused with Linux's deleted marker.
 mkdir "$clone (deleted)"
 rm "$tmp/proc/123/fd/0"
@@ -125,6 +146,7 @@ mkdir -p "$tmp/empty-proc"
 WRAP_UP_TEST_PROC_ROOT="$tmp/empty-proc" run
 check 'empty proc inventory keeps worktree' has "Kept worktree $tmp/finished (proc inspection failed)"
 check 'empty proc inventory keeps clone' has "Kept Chrome clone $clone (proc inspection failed)"
+rm "$tmp/bin/fuser"
 WRAP_UP_TEST_PROC_ROOT="$tmp/no-proc" run
 check 'no holder tools or proc keeps worktree' has "Kept worktree $tmp/finished (lsof unavailable)"
 check 'no holder tools or proc keeps counted summary' has 'lsof unavailable: kept all worktrees=2 and Chrome clones=1'
