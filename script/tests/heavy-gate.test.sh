@@ -5,6 +5,7 @@
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import importlib.util, os, pathlib, select, signal, subprocess, sys, tempfile, time, unittest
+from unittest import mock
 
 scripts = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('heavy_gate', scripts/'heavy-gate.py')
@@ -98,6 +99,59 @@ with open(sys.argv[1], 'a', buffering=1) as f:
     def test_exit_code_and_argument_boundaries(self):
         self.finish(self.run_gate(['sh', '-c', 'test "$1" = "a b" || exit 9; exit 7', 'sh', 'a b']), 7)
         self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
+
+    def cleanup_gate(self, error, states, failing_signal, status=0, ps_error=None):
+        self.config()
+        real_run = subprocess.run
+        group = []
+
+        def killpg(pgid, sig):
+            group[:] = [pgid]
+            if sig == failing_signal:
+                raise error
+
+        def run(command, *args, **kwargs):
+            if command[0] == 'ps':
+                if ps_error:
+                    raise ps_error
+                # Include another group's live member: only this group matters.
+                output = '1 S\n' + ''.join(f'{group[0]} {state}\n' for state in states)
+                return subprocess.CompletedProcess(command, 0, output, '')
+            return real_run(command, *args, **kwargs)
+
+        args = module.argparse.Namespace(weight=1, head_checks=False,
+                                         command=['--', 'sh', '-c', f'exit {status}'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module.os, 'killpg', side_effect=killpg), \
+             mock.patch.object(module.subprocess, 'run', side_effect=run):
+            return module.gate(args)
+
+    def test_cleanup_eperm_without_live_members_preserves_child_status(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for states in ([], ['Z', 'Z+']):
+                for status in (0, 7):
+                    with self.subTest(signal=sig, states=states, status=status):
+                        self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'),
+                                                          states, sig, status), status)
+
+    def test_cleanup_eperm_with_live_member_still_fails(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sig):
+                with self.assertRaises(PermissionError):
+                    self.cleanup_gate(PermissionError(1, 'denied'), ['Z', 'S'], sig)
+
+    def test_cleanup_missing_group_preserves_child_status(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sig):
+                self.assertEqual(self.cleanup_gate(ProcessLookupError(), ['S'], sig, 7), 7)
+
+    def test_cleanup_eperm_inspection_failure_is_not_suppressed(self):
+        for error in (subprocess.CalledProcessError(1, ['ps']),
+                      subprocess.TimeoutExpired(['ps'], 3)):
+            with self.subTest(error=type(error).__name__):
+                with self.assertRaises(type(error)):
+                    self.cleanup_gate(PermissionError(1, 'denied'), [], signal.SIGTERM,
+                                      ps_error=error)
 
     def test_timeout_reports_command_and_releases_all_slots(self):
         self.config()
