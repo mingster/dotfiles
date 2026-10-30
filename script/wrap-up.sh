@@ -262,8 +262,11 @@ fuser_busy() {
 # Tests inject a disposable proc tree; production always defaults to /proc.
 proc_root=${WRAP_UP_TEST_PROC_ROOT:-/proc}
 proc_busy() {
-  local pid link dest target pids
+  local pid link dest target pids current_uid owner_uid
   busy='proc inspection failed'
+  current_uid=$(id -u 2> "$tmp/holder-err") || return 0
+  case "$current_uid" in ''|*[!0-9]*) return 0 ;; esac
+  [ ! -s "$tmp/holder-err" ] || return 0
   [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ] || return 0
   target=$(readlink -f -- "$1" 2> "$tmp/holder-err") || return 0
   [ -n "$target" ] && [ ! -s "$tmp/holder-err" ] || return 0
@@ -274,6 +277,14 @@ proc_busy() {
   [ -d "${pids[0]}" ] || return 0
   for pid in "${pids[@]}"; do
     case "${pid##*/}" in *[!0-9]*) return 0 ;; esac
+    # Other users' proc entries normally deny access; inspect only our uid.
+    # GNU and BSD stat use different flags (fixtures run on either platform).
+    if ! owner_uid=$(stat -c %u -- "$pid" 2> "$tmp/holder-err"); then
+      owner_uid=$(stat -f %u "$pid" 2> "$tmp/holder-err") || return 0
+    fi
+    case "$owner_uid" in ''|*[!0-9]*) return 0 ;; esac
+    [ ! -s "$tmp/holder-err" ] || return 0
+    [ "$owner_uid" = "$current_uid" ] || continue
     [ -d "$pid" ] && [ -r "$pid" ] && [ -x "$pid" ] \
       && [ -d "$pid/fd" ] && [ -r "$pid/fd" ] && [ -x "$pid/fd" ] || return 0
     printf '%s\0' "$pid/cwd" "$pid/root" > "$tmp/proc-links"
