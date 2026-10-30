@@ -152,7 +152,7 @@ check 'stale protected branch is not offered for deletion' not_planned 'Delete s
 # Omit lsof from a hermetic tool path, even on hosts that install it in /usr/sbin.
 mkdir -p "$tmp/no-lsof"
 for tool in /bin/* /usr/bin/*; do
-  [ "${tool##*/}" != lsof ] || continue
+  case "${tool##*/}" in lsof|fuser) continue ;; esac
   [ ! -x "$tool" ] || ln -sf "$tool" "$tmp/no-lsof/${tool##*/}"
 done
 for tool in jq gh orca; do ln -sf "$(command -v "$tool")" "$tmp/no-lsof/$tool"; done
@@ -161,7 +161,7 @@ git worktree add -q "$tmp/idle-wt" idle-wt
 export WRAP_UP_CLONE_ROOT="$tmp/clones"
 clone="$tmp/clones/com.google.Chrome.code_sign_clone/code_sign_clone.idle"
 mkdir -p "$clone"
-PATH="$tmp/no-lsof" /bin/bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
+OSTYPE=linux-gnu WRAP_UP_TEST_PROC_ROOT="$tmp/no-proc" PATH="$tmp/no-lsof" /bin/bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
 check 'missing lsof keeps eligible worktree' test -d "$tmp/idle-wt"
 check 'missing lsof keeps Chrome clone' test -d "$clone"
 check 'missing lsof emits one counted summary line' grep -Fxq 'lsof unavailable: kept all worktrees=3 and Chrome clones=1' "$tmp/output"

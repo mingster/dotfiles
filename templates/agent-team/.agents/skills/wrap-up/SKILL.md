@@ -20,6 +20,6 @@ Temp items are listed as `Remove temp <path> (<size>, <reason>)`; the last line 
 
 Chrome clones are listed in the preview as `Remove Chrome clone <path>`.
 
-Every removal that rests on "nothing runs there" (a worktree, a stale branch's worktree, a build cache, a Chrome clone, a temp item) passes one check first: lsof finds no holder and no `ps` command line names the path. When lsof or ps is missing, exits with an error status or prints any error, the item is kept, reported with the reason and counted as kept.
+Every removal that rests on "nothing runs there" (a worktree, a stale branch's worktree, a build cache, a Chrome clone, a temp item) passes one check first: lsof finds no holder and no `ps` command line names the path. On Linux without lsof, the holder check uses fuser on the target and its descendants, or, without fuser, scans `/proc` cwd, root and fd links. When no holder check is available, ps is missing, or either check fails or encounters unreadable state, the item is kept, reported with the reason and counted as kept.
 
 Completion means the cleanup counts and every retained item have been reviewed and reported to the coordinator.

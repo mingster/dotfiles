@@ -1,0 +1,1 @@
+Fix Linux wrap-up cleanup when lsof is missing by checking fuser across each target tree, then falling back to proc holder links when fuser is absent. Inspection errors continue to retain items, and macOS holder checks stay unchanged.
