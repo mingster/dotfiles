@@ -261,8 +261,24 @@ fuser_busy() {
 }
 # Tests inject a disposable proc tree; production always defaults to /proc.
 proc_root=${WRAP_UP_TEST_PROC_ROOT:-/proc}
+# Only known proc lifecycle/access errors may be ignored. Inspect every diagnostic
+# so a mixed or unrecognized error cannot turn a partial scan into idle proof.
+proc_error_skippable() {
+  local line seen=0
+  while IFS= read -r line; do
+    case "$line" in
+      *': No such file or directory') seen=1 ;;
+      *': Permission denied') [ "$1" = own-uid ] || return 1; seen=1 ;;
+      *) return 1 ;;
+    esac
+  done < "$tmp/holder-err"
+  [ "$seen" -eq 1 ]
+}
 proc_busy() {
-  local pid link dest target pids current_uid owner_uid
+  local pid link dest target pids current_uid owner_uid readlink_flags=(--)
+  # GNU/BusyBox readlink otherwise hides errno diagnostics. BSD (test hosts)
+  # lacks -v; silent failures there remain unknown and fail closed.
+  if readlink --help >/dev/null 2>&1; then readlink_flags=(-v --); fi
   busy='proc inspection failed'
   current_uid=$(id -u 2> "$tmp/holder-err") || return 0
   case "$current_uid" in ''|*[!0-9]*) return 0 ;; esac
@@ -274,25 +290,36 @@ proc_busy() {
   # making every scan fail closed on that vanished PID.
   pids=("$proc_root"/[0-9]*)
   # An empty or hidden process inventory cannot prove idleness.
-  [ -d "${pids[0]}" ] || return 0
+  [ "${pids[0]}" != "$proc_root/[0-9]*" ] || return 0
   for pid in "${pids[@]}"; do
     case "${pid##*/}" in *[!0-9]*) return 0 ;; esac
     # Other users' proc entries normally deny access; inspect only our uid.
     # GNU and BSD stat use different flags (fixtures run on either platform).
-    if ! owner_uid=$(stat -c %u -- "$pid" 2> "$tmp/holder-err"); then
-      owner_uid=$(stat -f %u "$pid" 2> "$tmp/holder-err") || return 0
+    if ! owner_uid=$(LC_ALL=C stat -c %u -- "$pid" 2> "$tmp/holder-err"); then
+      proc_error_skippable vanished && continue
+      if ! owner_uid=$(LC_ALL=C stat -f %u "$pid" 2> "$tmp/holder-err"); then
+        proc_error_skippable vanished && continue
+        return 0
+      fi
     fi
     case "$owner_uid" in ''|*[!0-9]*) return 0 ;; esac
     [ ! -s "$tmp/holder-err" ] || return 0
     [ "$owner_uid" = "$current_uid" ] || continue
-    [ -d "$pid" ] && [ -r "$pid" ] && [ -x "$pid" ] \
-      && [ -d "$pid/fd" ] && [ -r "$pid/fd" ] && [ -x "$pid/fd" ] || return 0
     printf '%s\0' "$pid/cwd" "$pid/root" > "$tmp/proc-links"
-    if ! find "$pid/fd" -mindepth 1 -maxdepth 1 -print0 >> "$tmp/proc-links" 2> "$tmp/holder-err" \
-      || [ -s "$tmp/holder-err" ]; then return 0; fi
+    # Own-uid non-dumpable system processes deny these reads; vanished pids
+    # are normal during a scan. Every other inspection failure retains items.
+    if ! LC_ALL=C find "$pid/fd" -mindepth 1 -maxdepth 1 -print0 >> "$tmp/proc-links" 2> "$tmp/holder-err" \
+      || [ -s "$tmp/holder-err" ]; then
+      proc_error_skippable own-uid && continue
+      return 0
+    fi
     while IFS= read -r -d '' link; do
-      dest=$(readlink -- "$link" 2> "$tmp/holder-err") || return 0
-      [ -n "$dest" ] && [ ! -s "$tmp/holder-err" ] || return 0
+      if ! dest=$(LC_ALL=C readlink "${readlink_flags[@]}" "$link" 2> "$tmp/holder-err") \
+        || [ -s "$tmp/holder-err" ]; then
+        proc_error_skippable own-uid && continue 2
+        return 0
+      fi
+      [ -n "$dest" ] || return 0
       # Match literal paths as well as Linux's marker for unlinked holders.
       case "$dest" in
         "$target"|"$target"/*|"$target (deleted)") busy='held open by a running process'; return 0 ;;
@@ -330,7 +357,7 @@ path_busy() {
 }
 # The one gate before anything is deleted because nothing runs there (worktrees,
 # stale branches, build caches, Chrome clones, temp items). Both the holder check
-# and ps must answer cleanly; errors and unreadable state always keep the item.
+# and ps must answer cleanly; unclassified inspection errors keep the item.
 in_use() {
   local ps_status=0 line esc
   busy=''

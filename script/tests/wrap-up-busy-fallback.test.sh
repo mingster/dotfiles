@@ -15,10 +15,19 @@ for tool in /bin/* /usr/bin/*; do
 done
 ln -sf "$(command -v jq)" "$tmp/bin/jq"
 export FAKE_REAL_STAT="$(command -v stat)"
+export FAKE_REAL_FIND="$(command -v find)"
+export FAKE_REAL_READLINK="$(command -v readlink)"
 rm "$tmp/bin/stat"
 cat > "$tmp/bin/stat" <<'FAKE'
 #!/bin/bash
 # Simulate another uid without privileged chown; support GNU and BSD stat.
+case "$*" in
+  *"$WRAP_UP_TEST_PROC_ROOT/789")
+    if [ "${FAKE_PROC_MODE:-}" = vanished ]; then
+      echo "stat: $WRAP_UP_TEST_PROC_ROOT/789: No such file or directory" >&2
+      exit 1
+    fi ;;
+esac
 case "$*" in
   *"$WRAP_UP_TEST_PROC_ROOT/456")
     case "$*" in
@@ -27,7 +36,31 @@ case "$*" in
 esac
 exec "$FAKE_REAL_STAT" "$@"
 FAKE
-chmod +x "$tmp/bin/stat"
+rm "$tmp/bin/find" "$tmp/bin/readlink"
+cat > "$tmp/bin/find" <<'FAKE'
+#!/bin/bash
+if [ "$1" = "$WRAP_UP_TEST_PROC_ROOT/789/fd" ]; then
+  case "${FAKE_PROC_MODE:-}" in
+    fd-denied) echo "find: $1: Permission denied" >&2; exit 1 ;;
+    fd-error) echo "find: $1: Input/output error" >&2; exit 1 ;;
+  esac
+fi
+exec "$FAKE_REAL_FIND" "$@"
+FAKE
+cat > "$tmp/bin/readlink" <<'FAKE'
+#!/bin/bash
+for link; do
+  case "$link" in
+    "$WRAP_UP_TEST_PROC_ROOT/789/"*)
+      case "${FAKE_PROC_MODE:-}" in
+        "${link##*/}-denied") echo "readlink: $link: Permission denied" >&2; exit 1 ;;
+        "${link##*/}-error") echo "readlink: $link: Input/output error" >&2; exit 1 ;;
+      esac ;;
+  esac
+done
+exec "$FAKE_REAL_READLINK" "$@"
+FAKE
+chmod +x "$tmp/bin/stat" "$tmp/bin/find" "$tmp/bin/readlink"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/bin/bash
 case "$*" in
@@ -124,7 +157,7 @@ check 'proc idle permits worktree removal preview' has "Remove worktree $tmp/fin
 check 'proc idle permits Chrome clone removal preview' has "Remove Chrome clone $clone"
 check 'large proc tree never invokes fuser' test ! -s "$FAKE_FUSER_LOG"
 check 'proc fallback suppresses keep-all summary' bash -c '! grep -q "^lsof unavailable:" "$1"' _ "$tmp/output"
-# System daemons must not block cleanup, but unreadable own-uid holders must.
+# System daemons and non-dumpable own-uid processes must not block cleanup.
 mkdir -p "$tmp/proc/456/fd"
 chmod 000 "$tmp/proc/456/fd"
 run
@@ -135,11 +168,17 @@ rm -rf "$tmp/proc/456"
 mkdir -p "$tmp/proc/789/fd"
 ln -s "$tmp/elsewhere" "$tmp/proc/789/cwd"
 ln -s / "$tmp/proc/789/root"
-chmod 000 "$tmp/proc/789/fd"
-run
-check 'unreadable own-uid pid keeps worktree' has "Kept worktree $tmp/finished (proc inspection failed)"
-check 'unreadable own-uid pid keeps clone' has "Kept Chrome clone $clone (proc inspection failed)"
-chmod 700 "$tmp/proc/789/fd"
+ln -s "$tmp/elsewhere" "$tmp/proc/789/fd/0"
+for mode in fd-denied cwd-denied root-denied 0-denied vanished; do
+  FAKE_PROC_MODE=$mode run
+  check "own-uid $mode pid permits worktree removal preview" has "Remove worktree $tmp/finished (ancestor)"
+  check "own-uid $mode pid permits clone removal preview" has "Remove Chrome clone $clone"
+done
+for mode in fd-error cwd-error root-error 0-error; do
+  FAKE_PROC_MODE=$mode run
+  check "own-uid $mode keeps worktree" has "Kept worktree $tmp/finished (proc inspection failed)"
+  check "own-uid $mode keeps clone" has "Kept Chrome clone $clone (proc inspection failed)"
+done
 rm -rf "$tmp/proc/789"
 rm -rf "$clone/large"
 # A literal filename suffix must not be confused with Linux's deleted marker.
@@ -167,9 +206,11 @@ rm "$tmp/proc/123/fd/0"
 ln -s "$tmp/finished-sibling" "$tmp/proc/123/fd/0"
 run
 check 'proc sibling prefix does not keep worktree' has "Remove worktree $tmp/finished (ancestor)"
-# A failed readlink must retain actual items even under --apply in the fixture.
-rm "$tmp/proc/123/cwd"
-/bin/bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
+# An unexpected readlink error must retain actual items under fixture --apply.
+mkdir -p "$tmp/proc/789/fd"
+ln -s "$tmp/elsewhere" "$tmp/proc/789/cwd"
+ln -s / "$tmp/proc/789/root"
+FAKE_PROC_MODE=cwd-error /bin/bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
 check 'unreadable proc state keeps worktree with reason' has "Kept worktree $tmp/finished (proc inspection failed)"
 check 'unreadable proc state keeps clone with reason' has "Kept Chrome clone $clone (proc inspection failed)"
 check 'error apply retains fixture worktree and clone' test -d "$tmp/finished" -a -d "$clone"
