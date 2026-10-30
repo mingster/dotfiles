@@ -169,7 +169,7 @@ def cursor_reading(path=None):
     try:
         if path:
             return cursor_parse(json.load(open(path)), time.time())
-        import base64, urllib.parse, urllib.request
+        import base64, urllib.error, urllib.parse, urllib.request
         for token in cursor_tokens():
             # Opaque desktop tokens cannot supply the dashboard user id. Try the CLI
             # store instead; never guess a user id or send an invented credential.
@@ -182,8 +182,14 @@ def cursor_reading(path=None):
             except (ValueError, KeyError, TypeError, AttributeError):
                 continue
             cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
-            with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
-                return cursor_parse(json.load(r), time.time())
+            # A stale desktop install can hold an expired token; a 401/403 moves on to the next store.
+            try:
+                with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
+                    return cursor_parse(json.load(r), time.time())
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    continue
+                raise
     except Exception:
         return None
 
