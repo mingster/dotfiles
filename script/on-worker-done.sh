@@ -159,6 +159,8 @@ if exact:
         refuse("incomplete test execution metadata")
     if re.search(r"^Command: .*\bbun (?:run )?test\b|^bun test v", body, re.M) and not tests:
         refuse("test command has no execution metadata")
+    if body.startswith("Checks: FAIL "):
+        refuse("Checks: FAIL")
 ' "$head" || exit 1
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")

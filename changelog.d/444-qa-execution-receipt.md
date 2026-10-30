@@ -1,1 +1,1 @@
-QA reviewer starts now check the exact head receipt for zero executed tests and Bun load errors. Head checks record Bun execution counts before trimming command output and preserve those counts in capped receipts.
+QA reviewer starts now check the exact head receipt for failed Checks, zero executed tests and Bun load errors. Head checks record Bun execution counts before trimming command output and preserve those counts in capped receipts.
