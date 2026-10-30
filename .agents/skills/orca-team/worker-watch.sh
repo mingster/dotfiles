@@ -21,17 +21,18 @@ while :; do
   [ -z "$cursor" ] || args+=(--cursor "$cursor")
   raw=$("$orca" "${args[@]}" 2>/dev/null) \
     || { echo "worker-watch: worker-list failed for $run" >&2; exit 2; }
-  printf '%s\n' "$raw" >> "$tmp/pages.jsonl"
   next_info=$(printf '%s' "$raw" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
+    with open(sys.argv[1], "a") as f:
+        f.write(json.dumps(d) + "\n")
     p = d.get("result", {}).get("page") or {}
     if p.get("hasMore") and p.get("nextCursor"):
         print(p["nextCursor"])
 except Exception:
-    pass
-')
+    sys.exit(3)
+' "$tmp/pages.jsonl") || { echo "worker-watch: cannot parse worker-list output" >&2; exit 2; }
   [ -n "$next_info" ] || break
   case "$seen_cursors" in *" $next_info "*) break ;; esac
   seen_cursors="$seen_cursors$next_info "
