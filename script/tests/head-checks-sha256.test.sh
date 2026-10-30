@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory() as temp:
     for n, cap, path in cases:
         log = 'Checks: FAIL head=' + head + '\n\nChecklist: fixture\n'
         log += ''.join('Command: true # ' + 'x' * 500 + '\nResult: exit 0\nDuration: 1s\n' for _ in range(n - 1))
-        log += 'Command: false\nResult: exit 1; remaining checks stopped\nDuration: 9s\nTotal: 12s\n'
+        log += 'Command: false\nResult: exit 1; remaining checks stopped\nDuration: 9s\nTests executed: 3\nLoad errors: 0\nTotal: 12s\n'
         result = subprocess.run([sys.executable, '-c', formatter, str(cap), str(path)], input=log, text=True, capture_output=True)
         receipt = result.stdout
         durations = re.findall(r'^Duration: (\d+)s$', receipt, re.M)
@@ -68,6 +68,7 @@ with tempfile.TemporaryDirectory() as temp:
               and ('Result: exit 0' not in receipt
                    or receipt.index('Result: exit 1') < receipt.index('Result: exit 0')))
         ok = (ok and len(durations) + skipped == n and '9' in durations
+              and 'Tests executed: 3\nLoad errors: 0\n' in receipt
               and (n not in (210, 1500) or len(durations) == n)
               # The failing check's Duration follows its Result directly.
               and 'Result: exit 1; remaining checks stopped\nDuration: 9s\n' in receipt)

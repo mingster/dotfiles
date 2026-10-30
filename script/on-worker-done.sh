@@ -128,6 +128,41 @@ if [ "$independence_ok" != "1" ]; then
   exit 1
 fi
 
+# All coding reviewer providers enter here. Read the latest receipt for this
+# exact head before starting a worker or producing a reviewer brief.
+comments=$(gh pr view "$pr" --repo "$repo" --json comments) || {
+  echo "QA start refused head=$head: cannot read head-checks receipts" >&2
+  exit 1
+}
+printf '%s' "$comments" | python3 -c '
+import json, re, sys
+head = sys.argv[1]
+def refuse(reason):
+    sys.exit(f"QA start refused head={head}: {reason}")
+try:
+    comments = json.load(sys.stdin)["comments"]
+except (ValueError, KeyError, TypeError):
+    refuse("cannot read head-checks receipts")
+receipts = [c["body"] for c in comments if re.match(r"^Checks: (?:PASS|FAIL) head=[0-9a-f]{40}(?:\s|$)", c.get("body", ""))]
+exact = [body for body in receipts if re.match(r"^Checks: (?:PASS|FAIL) head=" + head + r"(?:\s|$)", body)]
+if receipts and not exact:
+    refuse("head-checks run exists but this head has no receipt")
+if exact:
+    body = exact[-1]
+    if re.search(r"^Tests executed: 0$", body, re.M):
+        refuse("Tests executed: 0")
+    errors = re.findall(r"^Load errors: ([0-9]+)$", body, re.M)
+    if any(int(n) > 0 for n in errors):
+        refuse("Load errors: " + str(sum(map(int, errors))))
+    tests = re.findall(r"^Tests executed: ([0-9]+)$", body, re.M)
+    if len(tests) != len(errors):
+        refuse("incomplete test execution metadata")
+    if re.search(r"^Command: .*\bbun (?:run )?test\b|^bun test v", body, re.M) and not tests:
+        refuse("test command has no execution metadata")
+    if body.startswith("Checks: FAIL "):
+        refuse("Checks: FAIL")
+' "$head" || exit 1
+
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
 cat > "$brief" <<EOF
 Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
