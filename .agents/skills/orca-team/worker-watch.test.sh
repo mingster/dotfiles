@@ -196,16 +196,26 @@ if [ "$code" = 0 ] && ! echo "$out" | grep -q ctx_a && echo "$out" | grep -q 'ct
 if [ $? = 2 ]; then pass=$((pass+1)); echo "ok   usage exit 2"
 else fail=$((fail+1)); echo "FAIL usage exit 2"; fi
 
-# Page two coverage
-cat > "$tmp/workers.json" <<EOF
-{"ok":true,"result":{"workers":[{"dispatchId":"ctx_p1","agentTerminalHandle":"term_p1","projection":{"outcome":"in_progress"}}],"page":{"hasMore":true,"nextCursor":"page2"}}}
-EOF
-cat > "$tmp/workers-page2.json" <<EOF
-{"ok":true,"result":{"workers":[{"dispatchId":"ctx_p2","agentTerminalHandle":"term_p2","projection":{"outcome":"in_progress"}}],"page":{"hasMore":false}}}
-EOF
-printf 'Working on page 1\n' > "$tmp/term_p1.txt"
-printf 'Working on page 2\n' > "$tmp/term_p2.txt"
-check "page two dispatches are paginated and observed" 0 'ctx_p2 term_p2 OK'
+# Pretty-printed CLI responses with 101 dispatches across two pages.
+python3 - "$tmp" <<'PYFIXTURE'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+workers = [{"dispatchId": f"ctx_p{i}", "agentTerminalHandle": f"term_p{i}",
+            "projection": {"outcome": "in_progress"}} for i in range(101)]
+for name, rows, page in [("workers.json", workers[:100], {"hasMore": True, "nextCursor": "page2"}),
+                         ("workers-page2.json", workers[100:], {"hasMore": False})]:
+    (root / name).write_text(json.dumps({"ok": True, "result": {"workers": rows, "page": page}}, indent=2))
+for i in range(101):
+    (root / f"term_p{i}.txt").write_text("Working on dispatch\n")
+PYFIXTURE
+out=$("$here/worker-watch.sh" run_x 2>&1); code=$?
+if [ "$code" = 0 ] && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 101 ] &&
+   [ "$(printf '%s\n' "$out" | sort -u | wc -l | tr -d ' ')" = 101 ] &&
+   echo "$out" | grep -qx 'ctx_p0 term_p0 OK' && echo "$out" | grep -qx 'ctx_p100 term_p100 OK'; then
+  pass=$((pass+1)); echo "ok   pretty-printed pages observe all 101 dispatches exactly once"
+else
+  fail=$((fail+1)); echo "FAIL pretty-printed pages (exit $code)"; echo "$out"
+fi
 
 # Remote-only coverage preserving endpoint/environment
 : > "$tmp/terminal-reads.log"

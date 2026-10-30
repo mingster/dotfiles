@@ -24,10 +24,18 @@ elif args[:2] == ['orchestration','worker-list']:
     run=args[args.index('--run')+1] if '--run' in args else 'run_live'
     workers=[] if mode in ('empty','emptyidle') else [{'runId':run,'agentTerminalHandle':'term_worker','terminalState':'retained',
         'dispatchStatus':'dispatched','projection':{'liveness':{'verdict':'live'},'provider':os.environ.get('WATCHDOG_TEST_PROVIDER')}}]
+    if mode=='ended-dispatches':
+        workers=[{'runId':run, 'agentTerminalHandle':'term_'+outcome, 'terminalState':'retained',
+                  'dispatchStatus':'dispatched', 'projection':{'outcome':outcome, 'liveness':{'verdict':'live'}}}
+                 for outcome in ('succeeded','failed','cancelled','in_progress')]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
     else: output({'workers':workers, 'page':{'hasMore':False}})
 elif args[:2] == ['terminal','read']:
+    if mode=='ended-dispatches':
+        with open(os.environ['WATCHDOG_TEST_ACTIONS'],'a') as f: f.write(json.dumps(args)+'\n')
+        if args[args.index('--terminal')+1]!='term_coord': sys.exit(1)
+        mode='working'
     if mode=='failed-read': sys.exit(1)
     if mode in ('paginated', 'failed-list'): mode='idle'
     text={'idle':'› Ask Codex to do anything', 'working':'Working (esc to interrupt)\n› Ask Codex to do anything',
@@ -85,6 +93,11 @@ PY
 WATCHDOG_TEST_MODE=failed-read bash "$root/script/worker-watchdog.sh" --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks 1
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_test --notify term_owner --notify-run run_owner --interval 0 --checks 2
 check "$(count 'terminal send')" 1 "terminal send" # worker only; the busy coordinator is never nudged
+# Retained terminals can outlive their dispatch; only current workers get screen reads.
+run_case ended-dispatches 1
+check "$(count 'terminal read')" 2 "coordinator and in-progress worker only"
+check "$(grep -c 'read-screen-failed term_in_progress$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "current worker read failure logged"
+check "$(grep -cE 'read-screen-failed term_(succeeded|failed|cancelled)$' "$HOME/.orca/logs/worker-watchdog.log")" 0 "settled workers skipped"
 run_case paginated 3
 check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 0 "orchestration send"
 # Failed worker state is unknown, never evidence for a zero-worker escalation.
