@@ -232,19 +232,87 @@ eligible() {
 screenshots_only() {
   ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
 }
-# The one gate before anything is deleted because nothing runs there (worktrees, stale branches, build caches, Chrome
-# clones, temp items). True, with the reason in $busy, unless lsof and ps both answered cleanly and found nothing: lsof
-# with no holder, ps with no command line naming the path. A missing binary, a bad status (lsof: above 1, 1 = no open
-# files; ps: any) or any error output counts as in use.
-in_use() {
-  local holders lsof_status=0 ps_status=0 line esc
-  busy=''
-  if ! command -v lsof >/dev/null 2>&1; then busy='lsof unavailable'; return 0; fi
-  if [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || lsof_status=$?
-  else holders=$(lsof -t -- "$1" 2>"$tmp/lsof-err") || lsof_status=$?
+# Holder checks return true for busy OR unknown, with the reason in $busy.
+# fuser checks inodes, not directory trees: enumerate descendants as well as the
+# target so a nested cwd or open file cannot be mistaken for an idle directory.
+fuser_busy() {
+  local entry holders status
+  if [ -d "$1" ]; then
+    if ! find "$1" -print0 > "$tmp/holder-paths" 2> "$tmp/holder-err" || [ -s "$tmp/holder-err" ]; then
+      busy='fuser traversal failed'; return 0
+    fi
+  else printf '%s\0' "$1" > "$tmp/holder-paths"
   fi
-  if [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
-  if [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then busy='lsof failed'; return 0; fi
+  while IFS= read -r -d '' entry; do
+    status=0
+    holders=$(fuser -- "$entry" 2> "$tmp/holder-err") || status=$?
+    if [ "$status" -eq 0 ] || [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
+    if [ "$status" -ne 1 ] || [ -s "$tmp/holder-err" ]; then busy='fuser failed'; return 0; fi
+  done < "$tmp/holder-paths"
+  return 1
+}
+# Tests inject a disposable proc tree; production always defaults to /proc.
+proc_root=${WRAP_UP_TEST_PROC_ROOT:-/proc}
+proc_busy() {
+  local pid link dest target pids
+  busy='proc inspection failed'
+  [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ] || return 0
+  target=$(readlink -f -- "$1" 2> "$tmp/holder-err") || return 0
+  [ -n "$target" ] && [ ! -s "$tmp/holder-err" ] || return 0
+  # Use a shell glob: a find subprocess would list itself and then disappear,
+  # making every scan fail closed on that vanished PID.
+  pids=("$proc_root"/[0-9]*)
+  # An empty or hidden process inventory cannot prove idleness.
+  [ -d "${pids[0]}" ] || return 0
+  for pid in "${pids[@]}"; do
+    case "${pid##*/}" in *[!0-9]*) return 0 ;; esac
+    [ -d "$pid" ] && [ -r "$pid" ] && [ -x "$pid" ] \
+      && [ -d "$pid/fd" ] && [ -r "$pid/fd" ] && [ -x "$pid/fd" ] || return 0
+    printf '%s\0' "$pid/cwd" "$pid/root" > "$tmp/proc-links"
+    if ! find "$pid/fd" -mindepth 1 -maxdepth 1 -print0 >> "$tmp/proc-links" 2> "$tmp/holder-err" \
+      || [ -s "$tmp/holder-err" ]; then return 0; fi
+    while IFS= read -r -d '' link; do
+      dest=$(readlink -- "$link" 2> "$tmp/holder-err") || return 0
+      [ -n "$dest" ] && [ ! -s "$tmp/holder-err" ] || return 0
+      # Match literal paths as well as Linux's marker for unlinked holders.
+      case "$dest" in
+        "$target"|"$target"/*|"$target (deleted)") busy='held open by a running process'; return 0 ;;
+      esac
+    done < "$tmp/proc-links"
+  done
+  busy=''; return 1
+}
+linux_holder_check_available() {
+  case "$OSTYPE" in
+    linux*) command -v fuser >/dev/null 2>&1 || { [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ]; } ;;
+    *) return 1 ;;
+  esac
+}
+path_busy() {
+  local holders status=0
+  if command -v lsof >/dev/null 2>&1; then
+    if [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || status=$?
+    else holders=$(lsof -t -- "$1" 2>"$tmp/lsof-err") || status=$?
+    fi
+    if [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
+    if [ "$status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then busy='lsof failed'; return 0; fi
+    return 1
+  fi
+  case "$OSTYPE" in
+    linux*)
+      if command -v fuser >/dev/null 2>&1; then fuser_busy "$1"; return $?; fi
+      if [ -d "$proc_root" ]; then proc_busy "$1"; return $?; fi
+      ;;
+  esac
+  busy='lsof unavailable'; return 0
+}
+# The one gate before anything is deleted because nothing runs there (worktrees,
+# stale branches, build caches, Chrome clones, temp items). Both the holder check
+# and ps must answer cleanly; errors and unreadable state always keep the item.
+in_use() {
+  local ps_status=0 line esc
+  busy=''
+  if path_busy "$1"; then return 0; fi
   if ! command -v ps >/dev/null 2>&1; then busy='ps unavailable'; return 0; fi
   ps -axo command= > "$tmp/ps" 2>"$tmp/ps-err" || ps_status=$?
   if [ "$ps_status" -ne 0 ] || [ -s "$tmp/ps-err" ]; then busy='ps failed'; return 0; fi
@@ -497,7 +565,7 @@ drop_build_caches() {
 }
 drop_build_caches
 missing_lsof_summary() {
-  if ! command -v lsof >/dev/null 2>&1; then
+  if ! command -v lsof >/dev/null 2>&1 && ! linux_holder_check_available; then
     printf 'lsof unavailable: kept all worktrees=%s and Chrome clones=%s\n' "$(wc -l < "$tmp/kept-worktrees" | tr -d ' ')" "${clone_kept:-0}"
   fi
 }
