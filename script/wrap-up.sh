@@ -3,7 +3,6 @@
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 apply=0
-stale=0
 fleet=0
 worktrees_only=0
 repo=.
@@ -11,7 +10,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) apply=0 ;;
     --apply) apply=1 ;;
-    --stale) stale=1 ;;
+    --stale) : ;; # Accepted for compatibility; stale cleanup is part of every apply.
     --fleet) fleet=1 ;;
     --worktrees-only) worktrees_only=1 ;;
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
@@ -630,7 +629,7 @@ if [ -d "$loose_root" ]; then
     temp_item "$entry" 0
   done
 fi
-# Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
+# Stale: unmerged, no open PR, at least 8 h old, nothing running. Deleted with --apply.
 stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
@@ -654,13 +653,12 @@ if [ "$pr_ok" -eq 1 ]; then
     for ref in "${refs[@]}"; do
       t=$(git log -1 --format=%ct "$ref"); [ "$t" -le "$newest" ] || newest=$t
     done
-    [ $((now - newest)) -ge 86400 ] || continue
+    [ $((now - newest)) -ge 28800 ] || continue
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
-    if [ "$stale_found" -eq 0 ]; then echo 'Stale (needs a decision)'; fi
+    if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
     stale_found=$((stale_found+1))
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
     printf '  %s, %sh old, %s\n' "$name" $(( (now - newest) / 3600 )) "$subject"
-    [ "$stale" -eq 1 ] || continue
     # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
     if [ "$apply" -eq 1 ]; then
       if ! fresh_inventory 'deleting no more stale branches'; then keep "stale $name" 'worktree inventory unavailable'; continue; fi
