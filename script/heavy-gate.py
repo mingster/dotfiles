@@ -229,26 +229,36 @@ def cleanup_signals():
 @contextlib.contextmanager
 def children():
     processes = []
+
+    def stop_group(pgid, sig):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # macOS may report EPERM when only zombies remain in the group.
+            # Inspect all groups: ps selection flags differ across platforms.
+            result = subprocess.run(['ps', '-axo', 'pgid=,stat='], check=True,
+                                    capture_output=True, text=True, timeout=3)
+            for line in result.stdout.splitlines():
+                group, state = line.split()
+                if int(group) == pgid and not state.startswith('Z'):
+                    raise
+
     try:
         yield processes
     finally:
         # Keep capacity claimed until the command's process group has stopped.
         with cleanup_signals():
             for proc in processes:
-                try:
-                    os.killpg(proc.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+                stop_group(proc.pid, signal.SIGTERM)
             for proc in processes:
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     pass
                 # Also stop descendants that ignore TERM after their parent exits.
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                stop_group(proc.pid, signal.SIGKILL)
                 proc.wait()
 
 
