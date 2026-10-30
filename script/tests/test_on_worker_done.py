@@ -12,7 +12,7 @@ SCRIPT = Path(__file__).resolve().parents[1]
 
 
 class ReviewerDispatch(unittest.TestCase):
-    def dispatch(self, author, only_author_available=False):
+    def dispatch(self, author, only_author_available=False, receipts=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
@@ -49,8 +49,15 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
     json.dump(sys.argv[1:], log)
 ''')
             orca.chmod(0o755)
+            gh = root / "gh"
+            gh.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['TEST_COMMENTS'])\n")
+            gh.chmod(0o755)
+            if receipts is None:
+                receipts = ["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 2\nLoad errors: 0\n"]
             log = root / "orca.json"
-            env = {**os.environ, "ON_WORKER_DONE_USAGE_GATE": str(gate),
+            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                   "TEST_COMMENTS": json.dumps({"comments": [{"body": body} for body in receipts]}),
+                   "ON_WORKER_DONE_USAGE_GATE": str(gate),
                    "ORCA_CLI_COMMAND": str(orca), "USAGE_GATE_PRESETS": str(presets),
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
@@ -60,6 +67,39 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
                 "--worktree", tmp, "--run", "run_test",
             ], env=env, text=True, capture_output=True, timeout=30)
             return result, json.loads(log.read_text()) if log.exists() else None
+
+    def test_zero_executed_refuses_start(self):
+        receipt = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 0\nLoad errors: 0\n"
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("a" * 40, result.stderr)
+        self.assertIn("Tests executed: 0", result.stderr)
+        self.assertIsNone(args)
+
+    def test_load_errors_refuse_even_with_executed_tests(self):
+        receipt = "Checks: FAIL head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 1\nTests executed: 2\nLoad errors: 1\n"
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("a" * 40, result.stderr)
+        self.assertIn("Load errors: 1", result.stderr)
+        self.assertIsNone(args)
+
+    def test_docs_check_without_test_command_proceeds(self):
+        result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nCommand: check-doc-links\nResult: exit 0\n"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(args)
+
+    def test_receipt_for_another_head_refuses_start(self):
+        result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "b" * 40 + "\nTests executed: 2\nLoad errors: 0\n"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("a" * 40, result.stderr)
+        self.assertIn("no receipt", result.stderr)
+        self.assertIsNone(args)
+
+    def test_later_zero_command_cannot_hide_behind_clean_command(self):
+        result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nTests executed: 2\nLoad errors: 0\nTests executed: 0\nLoad errors: 0\n"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(args)
 
     def assert_reviewer(self, author, expected):
         result, args = self.dispatch(author)
