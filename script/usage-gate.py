@@ -6,7 +6,7 @@ show [--json] includes the exact source and reading age; pick --role ROLE retain
 its existing flags and ranks providers by remaining weekly/cycle headroom.
 Codex reads session rate_limits and refreshes via app-server account/rateLimits/read;
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
-endpoint; Cursor reports unknown until its Composer 2.5 allowance is verifiable;
+endpoint; Cursor reads its Auto + Composer billing-cycle pool;
 Antigravity queries local GetUserStatus, defaulting to the Gemini Flash pool.
 Missing, stale (>5 minutes), expired, invalid or future readings trigger a refresh.
 If the real source cannot supply a fresh reading, report unknown, never inferred
@@ -108,37 +108,82 @@ def claude_day_start(midnight, path=None):
 
 
 def cursor_parse(summary, now):
-    """The usage-summary totalPercentUsed is aggregate plan usage, not a verified
-    Composer 2.5 allowance. Until a model-specific source is available, it cannot
-    establish whether the only approved Cursor model has headroom.
+    """Use individualUsage.plan.autoPercentUsed and billingCycleEnd from usage-summary.
+    Cursor's dashboard describes Auto + Composer and API as separate pools;
+    Composer draws the Auto + Composer pool first, then spills into API usage.
+    Neither apiPercentUsed nor aggregate totalPercentUsed measures this pool.
+    Missing Auto + Composer usage stays unknown, never an inferred zero.
     """
-    return None
-
-
-def cursor_reading(path=None):
-    """Read-only. The access token comes from the Cursor app's own state database, is turned
-    into the dashboard session cookie in memory, and is never printed or written anywhere."""
-    path = path or CURSOR_SUMMARY
     try:
-        if path:
-            return cursor_parse(json.load(open(path)), time.time())
-        import base64, sqlite3, urllib.parse, urllib.request
-        db = (HOME + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
-              if sys.platform == "darwin" else HOME + "/.config/Cursor/User/globalStorage/state.vscdb")
+        plan = summary["individualUsage"]["plan"]
+        pct = plan["autoPercentUsed"]
+        reset = epoch(summary["billingCycleEnd"])
+        if plan.get("enabled") is False or isinstance(pct, bool) or reset is None:
+            return None
+        return fresh({"pct": pct, "resets_at": reset, "observed_at": now}, now)
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def cursor_tokens():
+    """Read desktop state and installed cursor-agent credential stores without writes.
+
+    The CLI uses macOS keychain service cursor-access-token/account cursor-user;
+    its file store uses .cursor/auth.json on macOS or XDG_CONFIG_HOME/cursor/auth.json
+    on Linux (default ~/.config), with the accessToken key. Never log these values.
+    """
+    import sqlite3
+    db = (HOME + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+          if sys.platform == "darwin" else HOME + "/.config/Cursor/User/globalStorage/state.vscdb")
+    try:
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
         try:
             row = con.execute("select value from ItemTable where key='cursorAuth/accessToken'").fetchone()
         finally:
             con.close()
-        # New app credentials can be opaque. They cannot supply the user id required
-        # for this dashboard cookie; never guess it or send an invented credential.
-        if not row or len(row[0].split(".")) != 3:
-            return None
-        token = row[0]
-        user = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==="))["sub"].split("|")[-1]
-        cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
-        with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
-            return cursor_parse(json.load(r), time.time())
+        if row:
+            yield row[0]
+    except (OSError, sqlite3.Error):
+        pass
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(["security", "find-generic-password", "-a", "cursor-user",
+                                     "-s", "cursor-access-token", "-w"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, timeout=3)
+            if result.returncode == 0:
+                yield result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    auth = (HOME + "/.cursor/auth.json" if sys.platform == "darwin" else
+            os.path.join(os.environ.get("XDG_CONFIG_HOME") or HOME + "/.config", "cursor/auth.json"))
+    try:
+        with open(auth) as f:
+            yield json.load(f).get("accessToken")
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def cursor_reading(path=None):
+    """Read-only; tokens and the dashboard cookie stay in memory, never in logs or argv."""
+    path = path or CURSOR_SUMMARY
+    try:
+        if path:
+            return cursor_parse(json.load(open(path)), time.time())
+        import base64, urllib.parse, urllib.request
+        for token in cursor_tokens():
+            # Opaque desktop tokens cannot supply the dashboard user id. Try the CLI
+            # store instead; never guess a user id or send an invented credential.
+            try:
+                if not isinstance(token, str) or len(token.split(".")) != 3:
+                    continue
+                user = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==="))["sub"].split("|")[-1]
+                if not user:
+                    continue
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+            cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
+            with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
+                return cursor_parse(json.load(r), time.time())
     except Exception:
         return None
 
@@ -606,12 +651,13 @@ def table(rows):
     head = ("provider", "verdict", "week%", "today%", "cap%", "reserve%", "running", "reading", "source", "week resets", "next start")
     out = []
     for r in rows:
+        name = "cursor auto+composer" if r["provider"] == "cursor" else r["provider"]
         if r["verdict"] == "unknown":
             note = "not gated" if r["provider"] in NOT_GATED else r.get("reason", "no reading")
-            out.append((r["provider"], "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
+            out.append((name, "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
             continue
         age = r.get("reading_age_min")
-        out.append((r["provider"], r["verdict"], f"{r['weekly_used']:g}",
+        out.append((name, r["verdict"], f"{r['weekly_used']:g}",
                     *(f"{r[k]:g}" if k in r else "?" for k in ("today_used", "cap", "reserve")),
                     "?" if r.get("running") is None else str(r["running"]),
                     "?" if age is None else f"{age}m ago", r.get("source", "unknown"), r.get("resets_local", "-"),

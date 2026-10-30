@@ -420,7 +420,25 @@ def summary(pct, ends=FUT, began=NOW - 29 * 86400, enabled=True):
 
 
 class Cursor(unittest.TestCase):
-    """Aggregate billing-cycle usage cannot prove the Composer 2.5 allowance."""
+    """Only the Auto + Composer pool establishes Composer headroom."""
+
+    def test_auto_composer_pool_controls_verdict_and_show(self):
+        for pct, expected in [(0, 0), (42.5, 0), (95, 3), (100, 3)]:
+            with self.subTest(pct=pct), tempfile.TemporaryDirectory() as t, \
+                    mock.patch.object(ug, "STATE", t), \
+                    mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.object(ug, "running_workers", return_value=0):
+                payload = summary(100 if pct < 95 else 0)
+                payload["individualUsage"]["plan"].update(autoPercentUsed=pct, apiPercentUsed=100)
+                reading = ug.cursor_parse(payload, NOW)
+                self.assertEqual(reading, {"pct": pct, "resets_at": FUT, "observed_at": NOW})
+                with mock.patch.dict(ug.READERS, {"cursor": lambda: reading}), \
+                        contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(ug.main(["check", "--provider", "cursor"]), expected)
+                    row = json.loads(out.getvalue())
+                    self.assertEqual(row["weekly_used"], pct)
+                    self.assertEqual(row["resets_at"], FUT)
+                    self.assertIn("cursor auto+composer", ug.table([row]))
 
     def check(self, pct, baseline=None, ends=NOW + 10 * 86400, running=0, cap=None):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
@@ -462,6 +480,65 @@ class Cursor(unittest.TestCase):
         self.assertIsNone(ug.cursor_parse({}, NOW))
         self.assertIsNone(ug.cursor_parse(summary(10, enabled=False), NOW))
         self.assertEqual(self.check(None)[0], 4)
+
+    def test_desktop_and_cli_credentials_read_the_same_pool_without_disclosure(self):
+        import base64, sqlite3, urllib.parse, urllib.request
+        token = "synthetic." + base64.urlsafe_b64encode(
+            b'{"sub":"auth|synthetic-user"}').decode().rstrip("=") + ".signature"
+        cases = [("darwin", "desktop"), ("linux", "desktop"),
+                 ("darwin", "keychain"), ("darwin", "file"),
+                 ("linux", "file"), ("linux", "xdg"),
+                 ("darwin", "opaque-desktop-cli"), ("linux", "broken-desktop-cli"),
+                 ("darwin", "none"), ("linux", "none")]
+        for platform, source in cases:
+            with self.subTest(platform=platform, source=source), tempfile.TemporaryDirectory() as t, \
+                    mock.patch.object(ug, "HOME", t), mock.patch.object(ug, "CURSOR_SUMMARY", None), \
+                    mock.patch.object(ug.sys, "platform", platform), \
+                    mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": t + "/config-override"} if source == "xdg" else {}, clear=True), \
+                    mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.object(ug.subprocess, "run", return_value=mock.Mock(
+                        returncode=0 if source == "keychain" else 44,
+                        stdout=token if source == "keychain" else "", stderr="")) as command, \
+                    mock.patch.object(urllib.request, "urlopen") as fetch, \
+                    contextlib.redirect_stdout(io.StringIO()) as output, \
+                    contextlib.redirect_stderr(io.StringIO()) as errors:
+                if source in ("desktop", "opaque-desktop-cli", "broken-desktop-cli"):
+                    db = t + ("/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+                              if platform == "darwin" else "/.config/Cursor/User/globalStorage/state.vscdb")
+                    os.makedirs(os.path.dirname(db))
+                    if source == "broken-desktop-cli":
+                        with open(db, "w") as f:
+                            f.write("invalid database")
+                    else:
+                        with sqlite3.connect(db) as con:
+                            con.execute("create table ItemTable (key text, value text)")
+                            con.execute("insert into ItemTable values (?, ?)",
+                                        ("cursorAuth/accessToken", "opaque" if source == "opaque-desktop-cli" else token))
+                if source in ("file", "xdg", "opaque-desktop-cli", "broken-desktop-cli"):
+                    auth = (t + "/.cursor/auth.json" if platform == "darwin" else
+                            t + ("/config-override" if source == "xdg" else "/.config") + "/cursor/auth.json")
+                    os.makedirs(os.path.dirname(auth), exist_ok=True)
+                    with open(auth, "w") as f:
+                        json.dump({"accessToken": token}, f)
+                payload = summary(100)
+                payload["individualUsage"]["plan"]["autoPercentUsed"] = 23.5
+                fetch.return_value.__enter__.return_value = io.StringIO(json.dumps(payload))
+                reading = ug.cursor_reading()
+                if source == "none":
+                    self.assertIsNone(reading)
+                    fetch.assert_not_called()
+                else:
+                    self.assertEqual(reading, {"pct": 23.5, "resets_at": FUT, "observed_at": NOW})
+                    request = fetch.call_args.args[0]
+                    self.assertEqual(request.full_url, ug.CURSOR_URL)
+                    self.assertEqual(urllib.parse.unquote(request.get_header("Cookie")),
+                                     "WorkosCursorSessionToken=synthetic-user::" + token)
+                if source == "keychain":
+                    self.assertEqual(command.call_args.args[0], ["security", "find-generic-password",
+                                     "-a", "cursor-user", "-s", "cursor-access-token", "-w"])
+                self.assertNotIn(token, output.getvalue() + errors.getvalue())
+                for call in command.call_args_list:
+                    self.assertNotIn(token, str(call))
 
 
 class AutoCap(unittest.TestCase):
@@ -770,6 +847,7 @@ class RealReadingPolicy(unittest.TestCase):
         gate = self.gate
         with mock.patch.object(gate, "HOME", self.tmp.name), \
                 mock.patch.object(gate.sys, "platform", "darwin"), \
+                mock.patch.object(gate.subprocess, "run", return_value=mock.Mock(returncode=44, stdout="")), \
                 mock.patch.object(urllib.request, "urlopen") as fetch, \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             db = self.tmp.name + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
