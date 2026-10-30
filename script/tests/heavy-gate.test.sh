@@ -4,7 +4,7 @@
 # Exercise the command boundary with isolated home directories and sensor readings.
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
-import importlib.util, os, pathlib, select, signal, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, os, pathlib, select, signal, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 scripts = pathlib.Path(sys.argv[1])
@@ -100,13 +100,19 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.finish(self.run_gate(['sh', '-c', 'test "$1" = "a b" || exit 9; exit 7', 'sh', 'a b']), 7)
         self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
 
-    def cleanup_gate(self, error, states, failing_signal, status=0, ps_error=None):
+    def cleanup_gate(self, error, states, failing_signal, status=0, ps_error=None, check_status=False):
         self.config()
         real_run = subprocess.run
         group = []
+        self.cleanup_stderr = io.StringIO()
 
         def killpg(pgid, sig):
             group[:] = [pgid]
+            self.cleanup_pgid = pgid
+            self.assertEqual(len(list((self.root/'.cache/heavy-gate').glob('slot-*'))), 1)
+            if check_status:
+                self.assertIn(f"heavy-gate: child exited with status {status}\n",
+                              self.cleanup_stderr.getvalue())
             if sig == failing_signal:
                 raise error
 
@@ -115,16 +121,21 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                 if ps_error:
                     raise ps_error
                 # Include another group's live member: only this group matters.
-                output = '1 S\n' + ''.join(f'{group[0]} {state}\n' for state in states)
+                output = '1 2 0 0 S other\n' + ''.join(
+                    f'{group[0]} {100+i} 1 501 {state} worker\n' for i, state in enumerate(states))
+                self.cleanup_rows = output.splitlines()[1:]
                 return subprocess.CompletedProcess(command, 0, output, '')
             return real_run(command, *args, **kwargs)
 
         args = module.argparse.Namespace(weight=1, head_checks=False,
                                          command=['--', 'sh', '-c', f'exit {status}'])
-        with mock.patch.dict(os.environ, self.env, clear=True), \
+        with contextlib.redirect_stderr(self.cleanup_stderr), \
+             mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(module.os, 'killpg', side_effect=killpg), \
              mock.patch.object(module.subprocess, 'run', side_effect=run):
-            return module.gate(args)
+            result = module.gate(args)
+        self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
+        return result
 
     def test_cleanup_eperm_without_live_members_preserves_child_status(self):
         for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -134,24 +145,38 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                         self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'),
                                                           states, sig, status), status)
 
-    def test_cleanup_eperm_with_live_member_still_fails(self):
+    def test_cleanup_eperm_with_live_member_preserves_status_and_reports_members(self):
         for sig in (signal.SIGTERM, signal.SIGKILL):
-            with self.subTest(signal=sig):
-                with self.assertRaises(PermissionError):
-                    self.cleanup_gate(PermissionError(1, 'denied'), ['Z', 'S'], sig)
+            for status in (0, 7):
+                with self.subTest(signal=sig, status=status):
+                    self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'),
+                                                      ['Z', 'S'], sig, status), status)
+                    diagnostic = self.cleanup_stderr.getvalue()
+                    self.assertIn(f'pgid={self.cleanup_pgid}', diagnostic)
+                    self.assertIn('denied', diagnostic)
+                    for row in self.cleanup_rows:
+                        self.assertIn(row, diagnostic)
+                    self.assertNotIn('other', diagnostic)
+
+    def test_child_status_is_logged_before_cleanup(self):
+        self.assertEqual(self.cleanup_gate(ProcessLookupError(), [], signal.SIGTERM,
+                                          7, check_status=True), 7)
 
     def test_cleanup_missing_group_preserves_child_status(self):
         for sig in (signal.SIGTERM, signal.SIGKILL):
             with self.subTest(signal=sig):
                 self.assertEqual(self.cleanup_gate(ProcessLookupError(), ['S'], sig, 7), 7)
 
-    def test_cleanup_eperm_inspection_failure_is_not_suppressed(self):
+    def test_cleanup_eperm_inspection_failure_preserves_status(self):
         for error in (subprocess.CalledProcessError(1, ['ps']),
                       subprocess.TimeoutExpired(['ps'], 3)):
             with self.subTest(error=type(error).__name__):
-                with self.assertRaises(type(error)):
-                    self.cleanup_gate(PermissionError(1, 'denied'), [], signal.SIGTERM,
-                                      ps_error=error)
+                self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'), [],
+                                                  signal.SIGTERM, ps_error=error), 0)
+                diagnostic = self.cleanup_stderr.getvalue()
+                self.assertIn(f'pgid={self.cleanup_pgid}', diagnostic)
+                self.assertIn('denied', diagnostic)
+                self.assertIn('inspection failed', diagnostic)
 
     def test_timeout_reports_command_and_releases_all_slots(self):
         self.config()
@@ -197,7 +222,7 @@ child.wait()
         self.config()
         self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
         out, err = self.finish(self.run_gate(['sh', '-c', 'echo output; echo error >&2; exit 7']), 7)
-        self.assertEqual((out, err), ('output\n', 'error\n'))
+        self.assertEqual((out, err), ('output\n', 'error\nheavy-gate: child exited with status 7\n'))
 
     def test_timeout_can_be_disabled(self):
         self.config()
@@ -315,7 +340,8 @@ child.wait()
         self.set_reading('11 90')
         out, err = self.finish(self.run_gate(['sh', '-c', 'echo ran; exit 7'], weight=2), 7)
         self.assertEqual(out, 'ran\n')
-        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertEqual(len(err.splitlines()), 2, err)
+        self.assertIn('heavy-gate: child exited with status 7\n', err)
         self.assertIn('using slots=2 load_max=12', err)
         _, err = self.finish(self.job(weight=3), 1)
         self.assertIn('weight', err)
@@ -328,7 +354,7 @@ child.wait()
         self.assertEqual(self.events(), [])
         self.set_reading('11 90')
         _, err = self.finish(p)
-        self.assertEqual(err, '')
+        self.assertEqual(err, 'heavy-gate: child exited with status 0\n')
         self.assertEqual(len(self.events()), 2)
 
     def test_missing_config_warns_and_uses_complete_fallback(self):
