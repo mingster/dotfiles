@@ -230,35 +230,45 @@ def cleanup_signals():
 def children():
     processes = []
 
-    def stop_group(pgid, sig):
+    def stop_group(proc, sig):
         try:
-            os.killpg(pgid, sig)
+            os.killpg(proc.pid, sig)
         except ProcessLookupError:
             pass
-        except PermissionError:
-            # macOS may report EPERM when only zombies remain in the group.
-            # Inspect all groups: ps selection flags differ across platforms.
-            result = subprocess.run(['ps', '-axo', 'pgid=,stat='], check=True,
-                                    capture_output=True, text=True, timeout=3)
-            for line in result.stdout.splitlines():
-                group, state = line.split()
-                if int(group) == pgid and not state.startswith('Z'):
-                    raise
+        except OSError as exc:
+            if proc.returncode is None:
+                raise
+            # A completed child's status must survive post-exit cleanup errors.
+            print(f'heavy-gate: cleanup failed pgid={proc.pid} signal={sig}: {exc}',
+                  file=sys.stderr, flush=True)
+            try:
+                # Inspect all groups: ps selection flags differ across platforms.
+                result = subprocess.run(['ps', '-axo', 'pgid=,pid=,ppid=,uid=,stat=,comm='],
+                                        check=True, capture_output=True, text=True, timeout=3)
+                print('heavy-gate: remaining members (PGID PID PPID UID STAT COMMAND):',
+                      file=sys.stderr, flush=True)
+                for line in result.stdout.splitlines():
+                    fields = line.split()
+                    if fields and fields[0] == str(proc.pid):
+                        print(line, file=sys.stderr, flush=True)
+            except (OSError, subprocess.SubprocessError) as inspection_error:
+                print(f'heavy-gate: pgid={proc.pid} inspection failed: {inspection_error}',
+                      file=sys.stderr, flush=True)
 
     try:
         yield processes
     finally:
-        # Keep capacity claimed until the command's process group has stopped.
+        # Keep capacity claimed through all process-group cleanup attempts.
         with cleanup_signals():
             for proc in processes:
-                stop_group(proc.pid, signal.SIGTERM)
+                stop_group(proc, signal.SIGTERM)
             for proc in processes:
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     pass
                 # Also stop descendants that ignore TERM after their parent exits.
-                stop_group(proc.pid, signal.SIGKILL)
+                stop_group(proc, signal.SIGKILL)
                 proc.wait()
 
 
@@ -351,6 +361,7 @@ def gate(args):
                 print(f'heavy-gate: timed out after {timeout:g}s: {command}',
                       file=sys.stderr, flush=True)
                 return 124
+            print(f'heavy-gate: child exited with status {status}', file=sys.stderr, flush=True)
         return status if status >= 0 else 128 - status
     finally:
         slots.release()
