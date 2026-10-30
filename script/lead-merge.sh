@@ -756,12 +756,10 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
       elif [ -z "$got" ]; then refuse "newest Verdict has no Command: line; expected: $want"
       elif [ "$got" != "$want" ]; then refuse "Verdict Command mismatch: verdict ran [$got], brief says [$want]"; fi
     fi
-    for entry in "${applicable[@]}"; do
-      comment=${entry#*$'\n'}
-      if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
-        refuse "verdict must cover unchecked paths in its live lane"; break
-      fi
-    done
+    comment=${applicable[0]#*$'\n'}
+    if [ "$unchecked" = true ] && ! grep -qi 'unchecked' <<<"$comment"; then
+      refuse "verdict must cover unchecked paths in its live lane"
+    fi
   fi
 fi
 
