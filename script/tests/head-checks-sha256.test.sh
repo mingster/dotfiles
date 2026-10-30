@@ -36,7 +36,8 @@ with tempfile.TemporaryDirectory() as temp:
     if not ok: sys.exit(1)
     # A two-check checklist records a Duration line per check and a closing Total line.
     conf.write_text('true\ntrue\n'); git('add', '.'); git('commit', '-qm', 'two checks'); head = git('rev-parse', 'HEAD')
-    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # The receipt is stdout; the gate may log its child status on stderr after Total.
+    result = subprocess.run(['/bin/bash', runner, '--repo', str(repo), '--ref', head], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     import re
     durations = re.findall(r'^Duration: (\d+)s$', result.stdout, re.M)
     total = re.search(r'^Total: (\d+)s\n?\Z', result.stdout, re.M)
