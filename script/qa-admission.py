@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only, expiring QA admission for an exact saved Orca workspace.
+"""Read-only QA admission from complete native worker/workspace inventories.
 
-Policy version 1 binds saved environment ID/name, native repo/project/identity,
-path/head and execution host. Both routed hosts require fresh load evidence.
-Native terminal inventory currently lacks observed model/process evidence: any
-occupied target host remains UNKNOWN, with no policy waiver or preview inference.
-A successful snapshot is NOT an atomic capacity reservation. No worker is started.
+Configured caps and fresh host loads bound admission. Optional expiring policy
+can narrow that configuration. A snapshot is not an atomic reservation.
 """
 from __future__ import annotations
 
@@ -18,10 +15,6 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-# Current owner-authorized routing bounds. Policy may narrow, never expand them.
-# Expiry belongs to the explicit operator policy, not a hardcoded calendar date.
-BOUNDS = {'blueDevil': (3, 12, 'codex', 'gpt-6.1-sol'),
-          'niteking': (2, 8, 'cursor', 'composer-2.5')}
 TOKEN = re.compile(r'[A-Za-z0-9_-]+')
 IDENTITY = re.compile(r'wt2:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+')
 
@@ -76,51 +69,27 @@ def policy_window(policy):
         refuse('policy: interval not currently authorized')
 
 
-def load_policy(args):
+def load_policy(args, config):
+    """An explicit policy may narrow configuration; ordinary calls need none."""
+    if not args.policy:
+        return None
     policy = read_json(args.policy, 'policy')
-    if type(policy.get('version')) is not int or policy['version'] != 1:
+    if policy.get('version') != 1:
         refuse('policy: version mismatch')
     policy_window(policy)
-    review = obj(policy.get('review'), 'policy review')
-    for key in ('runtime_host', 'repo', 'worktree_path', 'head', 'repo_id', 'project_id',
-                'worktree_identity', 'execution_host_id', 'saved_environment_id', 'saved_environment_name'):
-        string(review.get(key), 'policy review ' + key)
-    project = args.repo if args.repo.startswith('github:') else 'github:' + args.repo
-    if (review['repo'] != project or review['project_id'] != project or
-            review['head'] != args.head or review['worktree_path'] != args.worktree_path or
-            not re.fullmatch(r'[0-9a-f]{40}', args.head) or not args.worktree_path.startswith('/') or
-            not TOKEN.fullmatch(review['repo_id']) or
-            not TOKEN.fullmatch(review['saved_environment_id']) or
-            review['saved_environment_id'] == 'LOCAL' or
-            not IDENTITY.fullmatch(review['worktree_identity']) or
-            review['worktree_identity'].split(':')[1] != review['execution_host_id']):
-        refuse('policy: repo/project/worktree binding mismatch')
-    hosts = obj(policy.get('hosts'), 'policy hosts')
-    if set(hosts) != set(BOUNDS):
-        refuse('policy: both authorized routed hosts required')
-    caps = obj(read_json(args.fleet_config, 'fleet config').get('host_caps'), 'fleet config caps')
-    for host, (max_cap, max_load, provider, model) in BOUNDS.items():
-        route = obj(hosts[host], 'policy host')
-        cap = route.get('cap')
-        if (type(cap) is not int or not 0 < cap <= max_cap or
-                type(caps.get(host)) is not int or caps[host] != cap):
-            refuse('policy/fleet cap disagreement for ' + host)
-        ceiling = finite(route.get('load_ceiling'), 'policy load ceiling')
-        if not 0 < ceiling <= max_load:
-            refuse('policy load ceiling exceeds authorization')
-        providers = obj(route.get('providers'), 'policy providers')
-        if set(providers) != {provider}:
-            refuse('policy provider outside host authorization')
-        models = obj(providers[provider], 'policy provider').get('models')
-        if models != [model]:
-            refuse('policy provider model outside authorization')
-    host = review['runtime_host']
-    if host not in hosts or review['saved_environment_name'] != host:
-        refuse('policy saved environment runtime mismatch')
-    _, _, provider, model = BOUNDS[host]
-    if (args.verifier_provider, args.verifier_model) != (provider, model):
-        refuse('verifier provider/model not authorized on ' + host)
-    return policy, review
+    for host, route in obj(policy.get('hosts'), 'policy hosts').items():
+        route = obj(route, 'policy host')
+        if host not in config['host_caps']:
+            refuse('policy: unknown configured host')
+        cap = route.get('cap', config['host_caps'][host])
+        if type(cap) is not int or not 0 < cap <= config['host_caps'][host]:
+            refuse('policy: cap exceeds configuration')
+        maximum = config.get('host_load_ceilings', {}).get(host)
+        if 'load_ceiling' in route:
+            value = finite(route['load_ceiling'], 'policy load ceiling')
+            if value <= 0 or (maximum is not None and value > maximum):
+                refuse('policy load ceiling exceeds configuration')
+    return policy
 
 
 def run_json(command, label):
@@ -141,7 +110,7 @@ def orca_result(orca, *args):
     return obj(payload.get('result'), label)
 
 
-def saved_environment(orca, review):
+def environments(orca):
     rows = orca_result(orca, 'environment', 'list').get('environments')
     if not isinstance(rows, list):
         refuse('saved environment inventory missing')
@@ -150,13 +119,11 @@ def saved_environment(orca, review):
         row = obj(row, 'saved environment')
         name = string(row.get('name'), 'saved environment name')
         eid = string(row.get('id'), 'saved environment id')
-        if name in by_name or eid in ids:
+        if not TOKEN.fullmatch(eid) or eid.lower() == 'local' or name in by_name or eid in ids:
             refuse('ambiguous saved environment inventory')
         by_name[name] = eid
         ids.add(eid)
-    if by_name.get(review['saved_environment_name']) != review['saved_environment_id']:
-        refuse('saved environment ID/name mismatch')
-    return review['saved_environment_id']
+    return by_name
 
 
 def inventory(result, key, host):
@@ -188,52 +155,62 @@ def workspace(rows, review):
         refuse('worktree inventory: authorized native identity/project/path/head mismatch')
 
 
-def fleet_receipt(command, config, host, cap):
-    data = run_json([command, '--config', config, '--admit', host], 'fleet receipt')
-    nested = obj(data.get('receipt'), 'fleet receipt nested')
-    keys = ('host', 'admitted', 'cap', 'occupied', 'live_count', 'retained_count')
-    if (data.get('ok') is not True or data.get('admitted') is not True or
-            data.get('host') != host or nested.get('status') != 'admitted' or
-            any(nested.get(k) != data.get(k) or type(nested.get(k)) is not type(data.get(k)) for k in keys)):
-        refuse('fleet receipt: inconsistent admission')
-    for key in ('cap', 'occupied', 'live_count', 'retained_count'):
-        if type(data.get(key)) is not int or data[key] < 0:
-            refuse('fleet receipt: invalid counts')
-    if data['cap'] != cap or not data['occupied'] < cap:
-        refuse('fleet receipt: cap disagreement or full')
-    resources = data.get('resources')
-    if not isinstance(resources, list):
-        refuse('fleet receipt: missing resources')
-    # fleet-watch already deduplicates physical workers. Validate its emitted
-    # dispatch resources without counting a duplicated dispatch twice.
-    unique = {}
-    for resource in resources:
-        resource = obj(resource, 'fleet receipt resource')
-        dispatch = string(resource.get('dispatchId'), 'fleet receipt dispatch')
-        if (resource.get('host') != host or resource.get('category') not in ('live', 'retained') or
-                not isinstance(resource.get('evidence'), list) or not resource['evidence']):
-            refuse('fleet receipt: invalid resource evidence')
-        if dispatch in unique:
-            refuse('fleet receipt: duplicate resource')
-        unique[dispatch] = resource
-    live = sum(r['category'] == 'live' for r in unique.values())
-    if (len(unique) != data['occupied'] or live != data['live_count'] or
-            len(unique)-live != data['retained_count']):
-        refuse('fleet receipt: resource/count disagreement')
-    return unique
-
-
-def terminal_resources(rows, host):
-    unique = {}
-    for row in rows:
-        row = obj(row, 'terminal inventory')
-        handle = string(row.get('handle'), 'terminal inventory handle')
-        if row.get('executionHostId') != host:
-            refuse('terminal inventory: UNKNOWN execution host')
-        if handle in unique and unique[handle] != row:
-            refuse('terminal inventory: conflicting duplicate resource')
-        unique[handle] = row
-    return unique
+def worker_counts(orca, flags, host_id):
+    """Count native Dispatch resources, never generic terminals or inferred models."""
+    seen, seats, cursor = set(), {}, None
+    live = retained = 0
+    cursors = set()
+    while True:
+        paging = ['--cursor', cursor] if cursor else []
+        result = orca_result(orca, 'orchestration', 'worker-list', *flags,
+                             '--include-remote', *paging)
+        rows = result.get('workers')
+        page = obj(result.get('page'), 'worker page')
+        if (not isinstance(rows, list) or type(page.get('hasMore')) is not bool or
+                obj(result.get('scope'), 'worker scope').get('source') != 'all'):
+            refuse('worker inventory: incomplete or UNKNOWN coverage')
+        for row in rows:
+            row = obj(row, 'worker inventory row')
+            dispatch = string(row.get('dispatchId'), 'worker dispatch')
+            if dispatch in seen:
+                refuse('worker inventory: duplicate dispatch')
+            seen.add(dispatch)
+            host = string(obj(obj(row.get('projection'), 'worker projection host').get('host'),
+                              'worker host').get('id'), 'worker host id')
+            if host != host_id:
+                continue
+            status = row.get('dispatchStatus')
+            resource = obj(row.get('resource'), 'worker resource')
+            release = resource.get('releaseState')
+            if status == 'release_unknown' or release == 'release_unknown' or row.get('terminalState') == 'release_unknown':
+                refuse('worker inventory: release_unknown')
+            if status not in ('running', 'dispatched', 'pending', 'active', 'completed', 'failed', 'cancelled', 'released'):
+                refuse('worker inventory: unknown worker status')
+            if release not in ('not_requested', 'requested', 'releasing', 'failed', 'released', 'completed'):
+                refuse('worker inventory: unknown release state')
+            if release in ('released', 'completed'):
+                if status in ('running', 'dispatched', 'pending', 'active'):
+                    refuse('worker inventory: live/released disagreement')
+                continue
+            # A native terminal handle identifies a retained physical resource.
+            # Workers without terminals still occupy their own Dispatch seat.
+            seat = resource.get('terminalHandle') or dispatch
+            string(seat, 'worker resource identity')
+            category = 'live' if status in ('running', 'dispatched', 'pending', 'active') else 'retained'
+            if seat in seats:
+                if seats[seat] != category:
+                    refuse('worker inventory: conflicting resource observations')
+                continue
+            seats[seat] = category
+            live += category == 'live'
+            retained += category == 'retained'
+        if not page['hasMore']:
+            break
+        cursor = string(page.get('nextCursor'), 'worker page cursor')
+        if cursor in cursors:
+            refuse('worker inventory: repeated page cursor')
+        cursors.add(cursor)
+    return {'occupied': live + retained, 'live_count': live, 'retained_count': retained}
 
 
 def load_observations(path):
@@ -254,48 +231,128 @@ def load_observations(path):
     observations = {}
     for line in proc.stdout.splitlines():
         tokens = line.split()
-        if not tokens or tokens[0] not in BOUNDS:
+        if not tokens:
             continue
         host = tokens[0]
         match = re.search(r'\bload=([0-9]+(?:\.[0-9]+)?)\s', line)
         if host in observations or not match:
             refuse('load observations: duplicate or unreachable host')
-        observations[host] = {'load_1m': float(match[1]), 'observed_at': observed}
+        cores = re.search(r'\bcores=([0-9]+)\b', line)
+        observations[host] = {'load_1m': float(match[1]), 'observed_at': observed,
+                              'cores': int(cores[1]) if cores else None}
     return observations
 
 
-def validate_loads(observations, policy):
-    for host, route in policy['hosts'].items():
+def validate_loads(observations, config, policy):
+    for host in config['host_caps']:
         obs = obj(observations.get(host), 'load observation ' + host)
         value = finite(obs.get('load_1m'), 'load ' + host)
         age = (datetime.now(timezone.utc) - utc(obs.get('observed_at'), 'load timestamp')).total_seconds()
-        if not 0 <= age <= 60 or value >= route['load_ceiling']:
+        maximum = config.get('host_load_ceilings', {}).get(host, obs.get('cores'))
+        ceiling = finite(maximum, 'load ceiling ' + host)
+        if policy and host in policy['hosts']:
+            ceiling = min(ceiling, policy['hosts'][host].get('load_ceiling', ceiling))
+        if ceiling <= 0 or not 0 <= age <= 60 or value >= ceiling:
             refuse('load observation stale/future or at ceiling: ' + host)
 
 
-def admit(args):
-    policy, review = load_policy(args)
-    observations = load_observations(args.fleet_load)
-    validate_loads(observations, policy)
-    orca = os.environ.get('ORCA_CLI_COMMAND', 'orca')
-    environment = saved_environment(orca, review)
-    host_id = review['execution_host_id']
-    rows = inventory(orca_result(orca, 'worktree', 'list', '--environment', environment,
-                                '--repo', 'id:'+review['repo_id'], '--limit', '100'), 'worktrees', host_id)
+def discover_workspace(orca, flags, args):
+    project = args.repo if args.repo.startswith('github:') else 'github:' + args.repo
+    repos = orca_result(orca, 'repo', 'list', *flags).get('repos')
+    if not isinstance(repos, list):
+        refuse('repo inventory missing')
+    matches = [r for r in repos if obj(r, 'repo inventory').get('gitRemoteIdentity', {}).get('canonicalKey') ==
+               'github.com/' + project.removeprefix('github:')]
+    if len(matches) != 1:
+        return None
+    repo_id = string(matches[0].get('id'), 'repo id')
+    if not TOKEN.fullmatch(repo_id):
+        refuse('repo inventory: invalid id')
+    result = orca_result(orca, 'worktree', 'list', *flags, '--repo', 'id:'+repo_id, '--limit', '100')
+    scope = obj(result.get('hostScope'), 'worktree inventory host scope')
+    hosts = scope.get('hostIds')
+    if not isinstance(hosts, list) or not hosts or len(hosts) != len(set(hosts)):
+        refuse('worktree inventory: unknown hosts')
+    if result.get('truncated') is not False or scope.get('omittedHostIds') != [] or not isinstance(result.get('worktrees'), list):
+        refuse('worktree inventory: incomplete coverage')
+    rows = result['worktrees']
+    matches = [r for r in rows if obj(r, 'worktree inventory row').get('path') == args.worktree_path]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        refuse('worktree inventory: ambiguous requested path')
+    row = matches[0]
+    host = row.get('hostId')
+    # --on chooses a saved server, not its SSH execution targets.
+    if host != 'local' or host not in hosts:
+        refuse('worktree inventory: unsupported execution host')
+    key = obj(row.get('identity'), 'worktree identity').get('key')
+    if not isinstance(key, str) or not IDENTITY.fullmatch(key):
+        refuse('worktree inventory: malformed identity')
+    review = {'repo_id': repo_id, 'project_id': project, 'execution_host_id': host,
+              'worktree_path': args.worktree_path, 'head': args.head, 'worktree_identity': key}
     workspace(rows, review)
-    terminals = inventory(orca_result(orca, 'terminal', 'list', '--environment', environment), 'terminals', host_id)
-    terminal_seats = terminal_resources(terminals, host_id)
-    fleet_watch = os.environ.get('ON_WORKER_DONE_FLEET_WATCH', os.path.join(os.path.dirname(__file__), 'fleet-watch.py'))
-    host = review['runtime_host']
-    fleet_seats = fleet_receipt(fleet_watch, args.fleet_config, host, policy['hosts'][host]['cap'])
-    # Neither native terminals nor fleet resources currently expose observed
-    # model + process evidence or a supported cross-inventory seat join. Do not
-    # infer it from agentIdentity, orphaned, preview, requested flags or policy.
-    if terminal_seats or fleet_seats:
-        refuse('UNKNOWN occupied-seat model/process or inventory correlation; launch refused')
-    validate_loads(observations, policy)
-    policy_window(policy)
-    return {'environment_id': environment, 'worktree_selector': 'identity:'+review['worktree_identity'], 'host': host}
+    return review
+
+
+def admit(args):
+    if not re.fullmatch(r'[0-9a-f]{40}', args.head) or not args.worktree_path.startswith('/'):
+        refuse('worktree: exact absolute path and head required')
+    config = read_json(args.fleet_config, 'fleet config')
+    caps = obj(config.get('host_caps'), 'fleet config caps')
+    if not caps:
+        refuse('fleet config: missing host caps')
+    for host, cap in caps.items():
+        string(host, 'configured host')
+        if type(cap) is not int or cap <= 0:
+            refuse('fleet config: invalid cap for ' + host)
+    policy = load_policy(args, config)
+    observations = load_observations(args.fleet_load)
+    validate_loads(observations, config, policy)
+    orca = os.environ.get('ORCA_CLI_COMMAND', 'orca')
+    saved = environments(orca)
+    # Physical hostname comes from this OS; an explicit configuration may name
+    # the local sensor alias. No saved server or SSH host is guessed.
+    local_host = config.get('local_host', os.uname().nodename.split('.')[0])
+    candidates, reasons, receipts = [], [], []
+    for host, cap in caps.items():
+        if policy and host not in policy['hosts']:
+            continue
+        route = policy['hosts'][host] if policy else {}
+        providers = route.get('providers')
+        if providers is not None and args.verifier_model not in obj(obj(providers, 'policy providers').get(args.verifier_provider, {}), 'policy provider').get('models', []):
+            reasons.append(host+': policy excludes requested provider/model')
+            continue
+        eid = saved.get(host)
+        if eid is None and host != local_host:
+            reasons.append(host+': no native saved environment or local binding')
+            continue
+        flags = ['--environment', eid] if eid else []
+        review = discover_workspace(orca, flags, args)
+        if review is None:
+            reasons.append(host+': exact repo/worktree unavailable')
+            continue
+        if policy and policy.get('review'):
+            expected = {**review, 'repo': review['project_id'], 'runtime_host': host,
+                        'saved_environment_id': eid or 'local', 'saved_environment_name': host}
+            if any(expected.get(k) != v for k, v in obj(policy['review'], 'policy review').items()):
+                reasons.append(host+': policy worktree binding mismatch')
+                continue
+        counts = worker_counts(orca, flags, review['execution_host_id'])
+        cap = min(cap, route.get('cap', cap))
+        receipt = {'host': host, 'cap': cap, **counts}
+        receipts.append(receipt)
+        if counts['occupied'] < cap:
+            candidates.append({'environment_id': eid or 'local',
+                               'worktree_selector': 'identity:'+review['worktree_identity'],
+                               'host': host})
+    validate_loads(observations, config, policy)
+    if policy:
+        policy_window(policy)
+    if candidates:
+        return {**candidates[0], 'receipts': receipts}
+    counts = ', '.join(f"{r['host']} {r['occupied']}/{r['cap']} (live={r['live_count']}, retained={r['retained_count']})" for r in receipts)
+    refuse('no eligible host under cap: ' + counts + ('; '+ '; '.join(reasons) if reasons else ''))
 
 
 def main():

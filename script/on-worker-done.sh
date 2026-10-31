@@ -5,7 +5,7 @@
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
 #      ON_WORKER_DONE_FLEET_CONFIG / ON_WORKER_DONE_FLEET_WATCH override fleet-watch (tests).
-#      ON_WORKER_DONE_ADMISSION_POLICY operator-owned JSON (required). qa-admission.py validates workspace.
+#      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|codex|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
 repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
@@ -138,7 +138,7 @@ if [ -z "$fleet_config" ]; then
   fleet_config="$HOME/.config/fleet-watch/config.json"
 fi
 policy=${ON_WORKER_DONE_ADMISSION_POLICY:-}
-if [ -z "$policy" ] || [ ! -f "$policy" ]; then
+if [ -n "$policy" ] && [ ! -f "$policy" ]; then
   echo "QA start refused head=$head: admission policy missing or unreadable" >&2
   exit 1
 fi
@@ -187,7 +187,9 @@ PYJSON
 fi
 read -r environment_id worktree_selector <<< "$admission_fields"
 rm -f "$admission_err" "$admission_out"
-host_flags=(--on "$environment_id")
+if [ "$environment_id" != local ]; then
+  host_flags=(--on "$environment_id")
+fi
 
 # All coding reviewer providers enter here. Read the latest receipt for this
 # exact head before starting a worker or producing a reviewer brief.
