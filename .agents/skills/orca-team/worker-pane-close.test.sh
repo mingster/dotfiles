@@ -113,14 +113,22 @@ except Exception:
 explicit_ok = isinstance(doc.get("ok"), bool)
 if explicit_ok:
     payload = doc
-elif isinstance(doc.get("result"), dict):
-    payload = {"ok": True, "result": doc["result"]}
+    if os.environ.get("FAKE_APPEND_COORDINATOR", "1") != "0":
+        res = payload.get("result")
+        if isinstance(res, dict):
+            terms = res.get("terminals")
+            if isinstance(terms, list):
+                if not any(isinstance(t, dict) and t.get("handle") == "term_coordinator" for t in terms):
+                    terms.append({"handle": "term_coordinator", "worktreePath": os.getcwd(), "worktreeId": "repo1::" + os.getcwd()})
+    print(json.dumps(payload))
 else:
-    payload = {"ok": True, "result": {"terminals": doc.get("terminals", []) if isinstance(doc, dict) else []}}
-res = payload.setdefault("result", {})
-if not isinstance(res.get("terminals"), list):
-    res["terminals"] = []
-if not explicit_ok:
+    if isinstance(doc.get("result"), dict):
+        payload = {"ok": True, "result": doc["result"]}
+    else:
+        payload = {"ok": True, "result": {"terminals": doc.get("terminals", []) if isinstance(doc, dict) else []}}
+    res = payload.setdefault("result", {})
+    if not isinstance(res.get("terminals"), list):
+        res["terminals"] = []
     res.setdefault("truncated", False)
     scope = res.get("hostScope")
     if not isinstance(scope, dict):
@@ -128,11 +136,11 @@ if not explicit_ok:
     else:
         scope.setdefault("hostIds", ["local"])
         scope.setdefault("omittedHostIds", [])
-if os.environ.get("FAKE_APPEND_COORDINATOR", "1") != "0":
-    terms = res["terminals"]
-    if not any(t.get("handle") == "term_coordinator" for t in terms):
-        terms.append({"handle": "term_coordinator", "worktreePath": os.getcwd(), "worktreeId": "repo1::" + os.getcwd()})
-print(json.dumps(payload))
+    if os.environ.get("FAKE_APPEND_COORDINATOR", "1") != "0":
+        terms = res["terminals"]
+        if not any(t.get("handle") == "term_coordinator" for t in terms):
+            terms.append({"handle": "term_coordinator", "worktreePath": os.getcwd(), "worktreeId": "repo1::" + os.getcwd()})
+    print(json.dumps(payload))
 LIST
     ;;
   "terminal split"*) if [ -f "$FAKE_DIR/split.json" ]; then
@@ -538,6 +546,51 @@ echo '{"ok":true,"result":{"terminals":[],"truncated":false}}' > "$tmp/terminals
 FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dnoscope > "$tmp/dnoscope.out" 2>&1
 check "missing hostScope retains state" "$([ -e "$tmp/state/dnoscope" ]; echo $?)"
 check "missing hostScope does not print verified closed" "$(! grep -q '^closed dnoscope' "$tmp/dnoscope.out"; echo $?)"
+
+inventory_negative() {
+  local id=$1 json=$2
+  echo completed > "$tmp/status.$id"
+  echo "term_${id}" > "$tmp/state/$id"
+  printf '%s' "$json" > "$tmp/terminals.json"
+  FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" "$id" > "$tmp/${id}.out" 2>&1
+  check "inventory $id retains state" "$([ -e "$tmp/state/$id" ]; echo $?)"
+  check "inventory $id no verified closed" "$(! grep -q "^closed $id" "$tmp/${id}.out"; echo $?)"
+}
+
+scope='{"hostIds":["local"],"omittedHostIds":[]}'
+while IFS='|' read -r tid tjson; do
+  [ -n "$tid" ] || continue
+  inventory_negative "$tid" "$tjson"
+done <<CASES
+dnotrunc|{"ok":true,"result":{"terminals":[],"hostScope":$scope}}
+dtruncnull|{"ok":true,"result":{"terminals":[],"truncated":null,"hostScope":$scope}}
+dtrunc0|{"ok":true,"result":{"terminals":[],"truncated":0,"hostScope":$scope}}
+dtruncstr|{"ok":true,"result":{"terminals":[],"truncated":"false","hostScope":$scope}}
+dresmiss|{"ok":true}
+dhostmiss|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"omittedHostIds":[]}}}
+dhostnull|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":null,"omittedHostIds":[]}}}
+dhostempty|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":[],"omittedHostIds":[]}}}
+dhostnum|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":[1],"omittedHostIds":[]}}}
+dhostblank|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":[""],"omittedHostIds":[]}}}
+domitmiss|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":["local"]}}}
+domitbad|{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":"x"}}}
+dtermsbad|{"ok":true,"result":{"terminals":"x","truncated":false,"hostScope":$scope}}
+dtermempty|{"ok":true,"result":{"terminals":[{}],"truncated":false,"hostScope":$scope}}
+dtermnull|{"ok":true,"result":{"terminals":[null],"truncated":false,"hostScope":$scope}}
+dtermstr|{"ok":true,"result":{"terminals":["x"],"truncated":false,"hostScope":$scope}}
+dhandnull|{"ok":true,"result":{"terminals":[{"handle":null}],"truncated":false,"hostScope":$scope}}
+dhandempty|{"ok":true,"result":{"terminals":[{"handle":""}],"truncated":false,"hostScope":$scope}}
+dhandnum|{"ok":true,"result":{"terminals":[{"handle":1}],"truncated":false,"hostScope":$scope}}
+CASES
+
+echo completed > "$tmp/status.dpresent"
+echo term_dpresent > "$tmp/state/dpresent"
+cat > "$tmp/terminals.json" <<'JSON'
+{"ok":true,"result":{"terminals":[{"handle":"term_dpresent"}],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}
+JSON
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dpresent > "$tmp/dpresent.out" 2>&1
+check "target still listed retains state" "$([ -e "$tmp/state/dpresent" ]; echo $?)"
+check "target still listed does not print verified closed" "$(! grep -q '^closed dpresent' "$tmp/dpresent.out"; echo $?)"
 
 echo completed > "$tmp/status.dinv"
 echo term_inv > "$tmp/state/dinv"
