@@ -132,25 +132,44 @@ terminal_absent() {
   list=$(close_rpc terminal list --json 2>/dev/null) || return 1
   printf '%s' "$list" | python3 -c '
 import json,sys
+def valid_inventory(res):
+    if not isinstance(res, dict):
+        return False
+    if res.get("truncated") is not False:
+        return False
+    scope = res.get("hostScope")
+    if not isinstance(scope, dict):
+        return False
+    host_ids = scope.get("hostIds")
+    if not isinstance(host_ids, list) or not host_ids:
+        return False
+    if not all(isinstance(x, str) and x for x in host_ids):
+        return False
+    omitted = scope.get("omittedHostIds")
+    if not isinstance(omitted, list) or omitted:
+        return False
+    terms = res.get("terminals")
+    if not isinstance(terms, list):
+        return False
+    for t in terms:
+        if not isinstance(t, dict):
+            return False
+        h = t.get("handle")
+        if not isinstance(h, str) or not h:
+            return False
+    return True
 try:
     r=json.load(sys.stdin)
     if r.get("ok") is not True:
         sys.exit(1)
-    res=r.get("result") or {}
-    if res.get("truncated"):
+    res=r.get("result")
+    if not valid_inventory(res):
         sys.exit(1)
-    scope=res.get("hostScope")
-    if not isinstance(scope, dict):
-        sys.exit(1)
-    if not isinstance(scope.get("hostIds"), list):
-        sys.exit(1)
-    omitted=scope.get("omittedHostIds")
-    if not isinstance(omitted, list) or omitted:
-        sys.exit(1)
-    terms=res.get("terminals")
-    if not isinstance(terms, list):
-        sys.exit(1)
-    sys.exit(0 if all(t.get("handle") != sys.argv[1] for t in terms) else 1)
+    target=sys.argv[1]
+    for t in res["terminals"]:
+        if t["handle"]==target:
+            sys.exit(1)
+    sys.exit(0)
 except Exception:
     sys.exit(1)' "$h"
 }
