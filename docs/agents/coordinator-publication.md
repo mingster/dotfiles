@@ -23,7 +23,7 @@ The worktree must already be checked out on `--branch`. The helper never reads `
 
 ## Refusals
 
-Protected branch names (`main`, `master`, `staging`, `production`), `--force`, non-fast-forward pushes, tracked secret env files anywhere in the branch diff (for example `web/.env.local`; `.env.example` is allowed), and invalid bodies exit before any network call. Local diff inspection for environment files is fail-closed when the base ref or diff cannot be resolved.
+Protected branch names (`main`, `master`, `staging`, `production`), `--force`, non-fast-forward pushes, tracked secret env files anywhere in the branch diff (for example `web/.env.local`; `.env.example` is allowed), and invalid bodies exit before any network call. Local diff inspection for environment files is fail-closed when the base ref or diff cannot be resolved. The worktree `origin` remote must identify the same GitHub `owner/name` as `--repo` (credentials are never printed on mismatch); fixture tests may set `COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1` for file remotes.
 
 ## Retries and resume
 

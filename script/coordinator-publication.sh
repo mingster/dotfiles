@@ -9,6 +9,46 @@ set -euo pipefail
 die() { echo "coordinator-publication: refused: $*" >&2; exit 1; }
 fail() { echo "coordinator-publication: failed: $*" >&2; exit 1; }
 
+origin_slug_from_url() {
+  local u=$1
+  u=${u#*://}
+  u=${u#*@}
+  u=${u#github.com:}
+  u=${u#github.com/}
+  u=${u%.git}
+  u=${u%/}
+  [ -n "$u" ] && [[ "$u" == */* ]] || return 1
+  printf '%s' "$u"
+}
+
+assert_repo_matches_origin() {
+  [ "${COORDINATOR_PUBLICATION_FIXTURE_ORIGIN:-}" = 1 ] && return 0
+  local origin slug
+  origin=$(git -C "$worktree" remote get-url origin 2>/dev/null) || die "worktree has no origin remote"
+  case "$origin" in
+    file:*|/*) die "origin remote is not a GitHub repository (fixture seam disabled)" ;;
+  esac
+  slug=$(origin_slug_from_url "$origin") || die "cannot derive owner/name from origin remote (URL redacted)"
+  [ "$slug" = "$want_repo" ] || die "origin remote owner/name ($slug) does not match --repo $want_repo"
+}
+
+read_receipt_file() {
+  rec_repo="" rec_branch="" rec_head_sha="" rec_push_ok=0 rec_pr_url="" rec_pr_number=""
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      repo=*) eval "rec_repo=${line#repo=}" ;;
+      branch=*) eval "rec_branch=${line#branch=}" ;;
+      head_sha=*) eval "rec_head_sha=${line#head_sha=}" ;;
+      push_ok=*) eval "rec_push_ok=${line#push_ok=}" ;;
+      pr_url=*) eval "rec_pr_url=${line#pr_url=}" ;;
+      pr_number=*) eval "rec_pr_number=${line#pr_number=}" ;;
+      "") continue ;;
+      *) die "unexpected receipt content; remove $receipt before publishing" ;;
+    esac
+  done < "$receipt"
+}
+
 lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/validate-publication-body.sh"
 [ -f "$lib" ] || die "missing validate-publication-body.sh"
 
@@ -75,6 +115,8 @@ while IFS= read -r path; do
   esac
 done <<<"$env_diff"
 
+assert_repo_matches_origin
+
 git_path=$(git -C "$worktree" rev-parse --git-path coordinator-publication)
 if [[ "$git_path" != /* ]]; then
   git_path="$worktree/$git_path"
@@ -95,15 +137,7 @@ write_receipt() {
 
 push_ok=0 pr_url="" pr_number=""
 if [ -f "$receipt" ]; then
-  rec_repo="" rec_branch="" rec_head_sha="" rec_push_ok=0 rec_pr_url="" rec_pr_number=""
-  # shellcheck disable=SC1090
-  . "$receipt" 2>/dev/null || die "malformed receipt; remove $receipt before publishing"
-  rec_repo=$repo
-  rec_branch=$branch
-  rec_head_sha=$head_sha
-  rec_push_ok=${push_ok:-0}
-  rec_pr_url=${pr_url:-}
-  rec_pr_number=${pr_number:-}
+  read_receipt_file || die "malformed receipt; remove $receipt before publishing"
   repo=$want_repo
   branch=$want_branch
   head_sha=$want_head_sha

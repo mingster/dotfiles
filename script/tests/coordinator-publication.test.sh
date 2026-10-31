@@ -133,6 +133,7 @@ exec "$MF_BIN/git.real" "$@"
 EOS
 chmod +x "$MF_BIN/git" "$MF_BIN/git.real"
 export PATH="$MF_BIN:$PATH" MF_TOPLEVEL="$MF_REPO"
+export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
 
 make_feature() {
   local b=$1
@@ -282,6 +283,27 @@ after=$(find "$MF_GH_DIR" -name 'pr-*.json' 2>/dev/null | wc -l | tr -d ' ')
 [ "$after" -eq $((before + 1)) ] && ok "interrupt recovery creates exactly one PR" || bad "PR count before=$before after=$after"
 out=$(pub feat-interrupt); code=$?
 say "$code" "interrupt recovery second run is idempotent" "$out"
+
+good_body
+make_feature feat-origin
+saved_origin=$("$MF_REAL_GIT" -C "$MF_REPO" remote get-url origin)
+"$MF_REAL_GIT" -C "$MF_REPO" remote set-url origin "https://github.com/wrong/slug.git"
+unset COORDINATOR_PUBLICATION_FIXTURE_ORIGIN
+out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-origin --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
+export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
+"$MF_REAL_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when origin slug does not match --repo" "$out"
+[[ "$out" != *"@"* ]] && ok "origin mismatch message omits credential-bearing URLs" || bad "origin error leaked credentials"
+
+good_body
+make_feature feat-receipt-evil
+out=$(pub feat-receipt-evil); code=$?
+say "$code" "first publish for receipt safety" "$out"
+git_path=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse --git-path coordinator-publication)
+[[ "$git_path" != /* ]] && git_path="$MF_REPO/$git_path"
+printf 'evil=1\n' >> "$git_path/receipt.env"
+out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-receipt-evil --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses receipt with unexpected keys" "$out"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
