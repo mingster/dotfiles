@@ -81,7 +81,7 @@ cat > "$MF_BIN/gh" <<'EOS'
 #!/usr/bin/env bash
 echo "gh $*" >> "$MF_GH_LOG"
 cmd="$1 ${2:-}"; shift 2 || true
-  pr="" body="" body_file="" json="" match="" base="" jq_expr="" head_name="" t="" state="" limit=""
+  pr="" body="" body_file="" json="" match="" base="" jq_expr="" head_name="" t="" state="" limit="" gh_repo=""
   case "$cmd" in
     api*) for a in "$@"; do case "$a" in repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;; esac; done ;;
     *)
@@ -101,20 +101,29 @@ while [ $# -gt 0 ]; do
     --base) base=$2; shift ;;
     --head) head_name=$2; shift ;;
     --title) t=$2; shift ;;
-    --repo|--limit|--state) [ "$1" = "--state" ] && state=$2; shift ;;
+    --repo) gh_repo=$2; shift ;;
+    --limit|--state) [ "$1" = "--state" ] && state=$2; shift ;;
   esac
   shift
 done
+gh_repo_must_be_github_com() {
+  case "${gh_repo:-}" in
+    github.com/*) return 0 ;;
+    *) echo "fake gh: refused --repo without github.com host (GH_HOST must not redirect API)" >&2; return 1 ;;
+  esac
+}
 file="$MF_GH_DIR/pr-$pr.json"
 save() { jq "$1" "$file" > "$file.tmp" && mv "$file.tmp" "$file"; }
 case "$cmd" in
   "pr view")
+    gh_repo_must_be_github_com || exit 1
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
     if [ -n "$json" ]; then
       out=$(jq --arg f "$json" '. as $o | ($f | split(",")) | map({(.): $o[.]}) | add' "$file")
       if [ -n "$jq_expr" ]; then jq -r "$jq_expr" <<<"$out"; else printf '%s\n' "$out"; fi
     else jq -r '.body' "$file"; fi ;;
   "pr create")
+    gh_repo_must_be_github_com || exit 1
     if [ -f "$MF_DIR/create_fail_count" ]; then
       n=$(cat "$MF_DIR/create_fail_count")
       if [ "$n" -gt 0 ]; then echo "$((n-1))" > "$MF_DIR/create_fail_count"; echo "boom" >&2; exit 1; fi
@@ -142,6 +151,7 @@ case "$cmd" in
     echo "https://example.test/pull/$n" ;;
   "pr comment") [ -f "$file" ] || exit 1; [ -n "$body_file" ] && body=$(cat "$body_file"); jq --arg b "$body" '.comments += [{body:$b}]' "$file" > "$file.tmp" && mv "$file.tmp" "$file" ;;
   "pr list")
+    gh_repo_must_be_github_com || exit 1
     jq -s --arg b "${base:-}" --arg hn "${head_name:-}" --arg st "${state:-open}" \
       '[.[] | select((.state|ascii_downcase)==($st|ascii_downcase) and ($b=="" or .baseRefName==$b) and ($hn=="" or .headRefName==$hn)) | {number,url,headRefOid}]' \
       "$MF_GH_DIR"/pr-*.json 2>/dev/null || echo '[]' ;;
@@ -197,7 +207,7 @@ if [[ " $* " == *" remote get-url --push --all "* ]] && [ -f "$MF_DIR/stub_pushu
   echo "fixture git: push URL resolution failed" >&2
   exit 1
 fi
-if [[ " $* " == *" log --format="* ]] && [[ " $* " == *" --name-only "* ]] && [ -f "$MF_DIR/stub_env_log_fail" ]; then
+if [[ " $* " == *" log "* ]] && [[ " $* " == *" --name-only "* ]] && [ -f "$MF_DIR/stub_env_log_fail" ]; then
   echo "fixture git: history inspection failed" >&2
   exit 1
 fi
@@ -535,6 +545,46 @@ printf 'secret\n' > "$MF_REPO/テスト/.env"
 "$MF_TEST_GIT" -C "$MF_REPO" commit -q -m unicode-env
 out=$(pub feat-env-unicode); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-ASCII path secret env file" "$out"
+
+good_body
+: > "$MF_DIR/push.log"
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B topic-a origin/main
+echo a > "$MF_REPO/a.txt"
+"$MF_TEST_GIT" -C "$MF_REPO" add a.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m topic-a
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B topic-b origin/main
+echo b > "$MF_REPO/b.txt"
+"$MF_TEST_GIT" -C "$MF_REPO" add b.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m topic-b
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B feat-env-merge origin/main
+"$MF_TEST_GIT" -C "$MF_REPO" merge -q --no-edit topic-a
+"$MF_TEST_GIT" -C "$MF_REPO" merge --no-commit --no-ff topic-b
+mkdir -p "$MF_REPO/web"
+printf 'secret\n' > "$MF_REPO/web/.env.local"
+"$MF_TEST_GIT" -C "$MF_REPO" add web/.env.local
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'merge resolution env'
+out=$(pub feat-env-merge); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses secret env introduced only in merge resolution" "$out"
+[ ! -s "$MF_DIR/push.log" ] && ok "merge env refusal skips push" || bad "push ran after merge env refusal"
+
+good_body
+make_feature feat-gh-host-pin
+: > "$MF_GH_LOG"
+out=$(GH_HOST=enterprise.example.com pub feat-gh-host-pin); code=$?
+say "$code" "publishes with inherited GH_HOST when gh repo is host-qualified" "$out"
+grep -Fq -- '--repo github.com/example/repo' "$MF_GH_LOG" && ok "every gh call pins github.com in --repo" \
+  || bad "gh log missing host-qualified repo: $(tr '\n' ' ' < "$MF_GH_LOG")"
+
+good_body
+branch_plus='fix/issue+6676'
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B "$branch_plus" origin/main
+echo plus > "$MF_REPO/plus.txt"
+"$MF_TEST_GIT" -C "$MF_REPO" add plus.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m plus
+out=$(pub "$branch_plus"); code=$?
+say "$code" "publishes Git-valid branch name containing plus" "$out"
+grep -Fq "branch=$branch_plus" "$(receipt_path)" && ok "receipt records plus branch before transport completes" \
+  || bad "receipt missing plus branch name"
 
 good_body
 make_feature feat-push-exhaust

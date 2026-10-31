@@ -111,7 +111,10 @@ receipt_scalar_ok() {
   local field=$1 val=$2
   case "$field" in
     repo) [[ "$val" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ;;
-    branch) [[ "$val" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$val" != *'$('* ]] && [[ "$val" != *'`'* ]] ;;
+    branch)
+      [[ "$val" =~ ^[A-Za-z0-9._/@+-]+$ ]] && [[ "$val" != *'$('* ]] && [[ "$val" != *'`'* ]] \
+        && [[ "$val" != *'@{'* ]]
+      ;;
     head_sha) [[ "$val" =~ ^[0-9a-f]{40}$ ]] ;;
     push_ok) [ "$val" = 0 ] || [ "$val" = 1 ] ;;
     pr_url) [ -z "$val" ] || [[ "$val" =~ ^https://[^[:space:]]+$ ]] ;;
@@ -184,7 +187,7 @@ inspect_env_paths_in_publish_range() {
   fi
   history_tmp=$(mktemp "${TMPDIR:-/tmp}/cp-env-history.XXXXXX")
   log_ec=0
-  git -C "$worktree" log --format= --name-only -z "$range" >"$history_tmp" 2>/dev/null || log_ec=$?
+  git -C "$worktree" log --format= --name-only -z --diff-merges=combined "$range" >"$history_tmp" 2>/dev/null || log_ec=$?
   if [ "$log_ec" -ne 0 ]; then
     rm -f "$history_tmp"
     die "cannot inspect branch history for environment files"
@@ -240,8 +243,14 @@ worktree=$(cd -P "$worktree" && pwd) || die "worktree not found: $worktree"
 cur_branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD 2>/dev/null) || die "cannot read branch in $worktree"
 [ "$cur_branch" = "$branch" ] || die "worktree is on $cur_branch but --branch $branch was given (never derive from upstream)"
 
+if ! git -C "$worktree" check-ref-format --branch "refs/heads/$branch" >/dev/null 2>&1; then
+  die "branch name is not a valid Git ref ($branch)"
+fi
+receipt_scalar_ok branch "$branch" || die "branch name is not receipt-safe ($branch)"
+
 want_repo=$repo
 want_branch=$branch
+gh_qualified_repo="github.com/$want_repo"
 want_head_sha=$(git -C "$worktree" rev-parse HEAD) || die "cannot read HEAD in $worktree"
 head_sha=$want_head_sha
 
@@ -337,7 +346,7 @@ push_branch() {
 
 find_existing_pr() {
   local json line num url oid
-  json=$(gh pr list --repo "$repo" --head "$branch" --base main --state open \
+  json=$(gh pr list --repo "$gh_qualified_repo" --head "$branch" --base main --state open \
     --json number,url,headRefOid 2>/dev/null) || return 1
   [ -n "$json" ] && [ "$json" != "[]" ] || return 1
   while IFS= read -r line; do
@@ -359,7 +368,7 @@ open_pr() {
     return 0
   fi
   if [ -n "$pr_number" ] && [ -n "$pr_url" ]; then
-    if gh pr view "$pr_number" --repo "$repo" --json headRefOid,state --jq '.state + " " + .headRefOid' 2>/dev/null | grep -q "^OPEN $head_sha\$"; then
+    if gh pr view "$pr_number" --repo "$gh_qualified_repo" --json headRefOid,state --jq '.state + " " + .headRefOid' 2>/dev/null | grep -q "^OPEN $head_sha\$"; then
       echo "PUBLISHED $pr_url"
       return 0
     fi
@@ -369,11 +378,11 @@ open_pr() {
   pr_attempt=0
   while [ "$pr_attempt" -lt "$max_attempts" ]; do
     pr_attempt=$((pr_attempt + 1))
-    if out=$(gh pr create --repo "$repo" --head "$branch" --base main --title "$title" --body-file "$body_file" 2>&1); then
+    if out=$(gh pr create --repo "$gh_qualified_repo" --head "$branch" --base main --title "$title" --body-file "$body_file" 2>&1); then
       pr_url=$out
       find_existing_pr || true
       if [ -z "$pr_number" ]; then
-        pr_number=$(gh pr view "$branch" --repo "$repo" --json number --jq .number 2>/dev/null || true)
+        pr_number=$(gh pr view "$branch" --repo "$gh_qualified_repo" --json number --jq .number 2>/dev/null || true)
       fi
       if [ -z "$pr_number" ] || [ -z "$pr_url" ]; then
         fail "gh pr create succeeded but PR could not be resolved"
