@@ -57,7 +57,7 @@ Fresh measured loads: blueDevil1.25, niteking1.48, miniu0.10. Recheck before eac
 
 - More workers: reuse positively settled capacity for one bounded docs reviewer, verify actual task progress before counting it as started. Expected benefit is avoiding false starts and duplicate seats; measured gain UNKNOWN; cost one allowed Composer seat. Strong engineering review remains gated.
 - Faster tickets: remove five duplicated recovery recipes and centralize runtime transitions in native Orca authority. Expected benefit is avoiding premature retries and shared-path cleanup; runtime recovery improvement remains UNVERIFIED.
-- More merges: continue the existing three audit PRs, refresh exact-head Checks and independent QA after these changes, then use the normal guarded merge route. No extra approval or duplicate PR. Actual merge gain UNKNOWN until receipts exist.
+- More merges: continue the existing three audit PRs, refresh exact-head Checks and independent QA after these changes, then use the normal guarded merge route. Separate generated-only PRs where the merge contract requires them. Actual merge gain UNKNOWN until receipts exist.
 
 ## Verification, limits and observations
 
@@ -66,3 +66,23 @@ Initial audit: four findings (two generated sync, two role budget). Revised bran
 Unused-skill review: this rerun has no additional 30-day session corpus beyond the preceding report's incomplete candidate inventory/content sample. Direct SKILL.md reads count as possible use; no skill removal proposed from absent slash commands. No clean-usage claim.
 
 Two new sanitized coordinator observations (worker delivery accountability and stale routing recovery authority) were reviewed and marked consumed in the private observations log. Existing unreviewed observations remain unchanged. Documentation checks and role rules do not close the provider startup incident or constitute independent engineering/security acceptance.
+
+
+## Final delivery correction
+
+Independent Composer review of the preceding heads completed Standards PASS and Spec FAIL. The two findings were missing attached deterministic-check output and mixed generated skill copies with general audit documentation. Preserve that review as prior-head evidence.
+
+The product PRs now carry general audit documentation and role/routing changes only. Generated staging-review and wrap-up skills are isolated on each product's `mingster/team-sync-audit-1031` branch, with exactly those two generated files. Merge order is canonical dotfiles source first, generated-only copies using the source Verdict, then the product audit documentation; each new head still requires its own applicable Checks/review receipts. This split addresses the existing merge contract without weakening it. These branches are not deployed helper changes.
+
+Actual pre-split deterministic verification receipt (2026-10-31):
+
+```text
+DOTFILES=/Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+/Users/mtsai/dotfiles/script/team-audit.sh <riben audit worktree> <PSTV audit worktree>
+exit 0
+team-audit: clean
+sync-team-skills.sh --check: PASS for both source-derived product copies
+check-doc-links.sh: riben.life 1156 files, 0 broken; PSTV 578 files, 0 broken
+```
+
+The paths above are expanded under `/Users/mtsai/orca/workspaces/`; the product audit worktrees are `<project>/team-audit-1031-codex`. This is static verification evidence, not a current-head QA Verdict. Previous canonical Checks PASS receipts: [dotfiles #450](https://github.com/mingster/dotfiles/pull/450#issuecomment-6543188583), [riben.life #6701](https://github.com/mingster/riben.life/pull/6701#issuecomment-6543148381), [PSTV #955](https://github.com/mingster/pstv/pull/955#issuecomment-6543148883). New commits supersede those heads and require refreshed receipts. Engineering startup/trust/cleanup and required Strong security review remain separate open gates.
