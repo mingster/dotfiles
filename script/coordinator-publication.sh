@@ -28,8 +28,20 @@ remote_is_disposable_file() {
   esac
 }
 
+canonical_file_remote() {
+  local u=$1 dir base
+  case "$u" in
+    file:*) u=${u#file:} ;;
+    /*) ;;
+    *) return 1 ;;
+  esac
+  dir=$(cd -P "$(dirname "$u")" 2>/dev/null && pwd -P) || return 1
+  base=$(basename "$u")
+  printf '%s/%s' "$dir" "$base"
+}
+
 assert_repo_matches_origin() {
-  local fetch_url slug u disposable=0
+  local fetch_url slug u disposable=0 canon_fetch canon_u
   fetch_url=$(git -C "$worktree" remote get-url origin 2>/dev/null) || die "worktree has no origin remote"
   remote_is_disposable_file "$fetch_url" && disposable=1
 
@@ -44,6 +56,12 @@ assert_repo_matches_origin() {
         if [ "$disposable" != 1 ] || [ "${COORDINATOR_PUBLICATION_FIXTURE_ORIGIN:-}" != 1 ]; then
           die "origin remote is not a GitHub repository (fixture seam disabled)"
         fi
+        canon_fetch=$(canonical_file_remote "$fetch_url") \
+          || die "cannot canonicalize origin fetch URL"
+        canon_u=$(canonical_file_remote "$u") \
+          || die "cannot canonicalize origin push URL"
+        [ "$canon_u" = "$canon_fetch" ] \
+          || die "origin push URL does not match fetch URL for disposable remotes"
         ;;
       *)
         slug=$(origin_slug_from_url "$u") || die "cannot derive owner/name from origin remote (URL redacted)"

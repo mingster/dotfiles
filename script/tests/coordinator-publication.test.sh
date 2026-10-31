@@ -10,7 +10,7 @@ trap mf_teardown EXIT
 . "$here/tests/lib/asdf-pin.sh"
 
 export HOME="$MF_DIR/home"
-PUB="$here/coordinator-publication.sh"
+PUB=${PUB:-$here/coordinator-publication.sh}
 BODY="$MF_DIR/body.md"
 REPO_SLUG=example/repo
 pass=0 fail=0
@@ -150,6 +150,41 @@ mv "$MF_BIN/git" "$MF_BIN/git.real"
 cat > "$MF_BIN/git" <<'EOS'
 #!/usr/bin/env bash
 if [ -n "${MF_TOPLEVEL:-}" ] && [ "$*" = "rev-parse --show-toplevel" ]; then echo "$MF_TOPLEVEL"; exit 0; fi
+fixture_git_wt() {
+  local wt="" i=1 arg
+  while [ "$i" -le "$#" ]; do
+    arg=${!i}
+    if [ "$arg" = "-C" ]; then
+      i=$((i + 1))
+      arg=${!i}
+      wt=$arg
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  wt=${MF_REPO:-}
+}
+fixture_block_non_file_transport() {
+  local wt=$1 url
+  [ -n "$wt" ] || wt=${MF_REPO:-}
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    case "$url" in
+      file:*|/*) ;;
+      *)
+        echo "fixture git: refused non-file remote transport" >&2
+        exit 1
+        ;;
+    esac
+  done < <(
+    "$MF_BIN/git.real" -C "$wt" config --get-all remote.origin.url 2>/dev/null || true
+    "$MF_BIN/git.real" -C "$wt" config --get-all remote.origin.pushurl 2>/dev/null || true
+  )
+}
+if [[ " $* " == *" fetch "* ]] || [[ " $* " == *" push "* ]]; then
+  wt=$(fixture_git_wt "$@")
+  fixture_block_non_file_transport "$wt"
+fi
 if [[ " $* " == *" fetch "* ]]; then echo "fetch $*" >> "$MF_DIR/fetch.log"; fi
 if printf '%s\n' "$@" | grep -qx 'push' || [[ " $* " == *" push "* ]]; then
   echo "git $*" >> "$MF_DIR/push.log"
@@ -379,7 +414,9 @@ say "$code" "same command recovers after aborted receipt write" "$out"
 
 good_body
 make_feature feat-pushurl
-"$MF_REAL_GIT" -C "$MF_REPO" config --add remote.origin.pushurl "https://github.com/wrong/slug.git"
+WRONG_ORIGIN="$MF_DIR/wrong-origin.git"
+"$MF_REAL_GIT" init -q --bare -b main "$WRONG_ORIGIN"
+"$MF_REAL_GIT" -C "$MF_REPO" config --add remote.origin.pushurl "$WRONG_ORIGIN"
 : > "$MF_DIR/push.log"
 out=$(pub feat-pushurl); code=$?
 "$MF_REAL_GIT" -C "$MF_REPO" config --unset-all remote.origin.pushurl 2>/dev/null || true
