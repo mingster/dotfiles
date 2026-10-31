@@ -134,7 +134,7 @@ Single context: \`CONTEXT.md\` plus \`docs/adr/\` at the repo root. See \`docs/a
 
 ### Invoking skills
 
-Invoke a skill by name: \`/to-tickets\` in Claude Code, Cursor and Antigravity, \`\$to-tickets\` in Codex, or read \`~/.agents/skills/<name>/SKILL.md\` and follow it. Skills marked \`disable-model-invocation\` (grill-me, grill-with-docs, handoff, implement, improve-codebase-architecture, retro, to-spec, to-tickets, triage, wayfinder) run only when named: Codex and Antigravity hide them until the prompt names them, and a Claude Code agent can neither invoke them nor preload them from \`skills:\`, so a worker spec names the file to read.
+Invoke a skill by name: \`/to-tickets\` in Claude Code, Cursor and Antigravity, or read \`~/.agents/skills/<name>/SKILL.md\` and follow it. Skills marked \`disable-model-invocation\` (grill-me, grill-with-docs, handoff, implement, improve-codebase-architecture, retro, to-spec, to-tickets, triage, wayfinder) run only when named: Antigravity hides them until the prompt names them, and a Claude Code agent can neither invoke them nor preload them from \`skills:\`, so a worker spec names the file to read.
 BLOCK
     fi
   fi

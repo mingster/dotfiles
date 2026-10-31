@@ -13,7 +13,7 @@ cat > "$tmp/gate" <<'GATE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$FIXTURE_ROOT/gate.log"
 [ "${GATE_RC:-0}" = 0 ] || exit "$GATE_RC"
-echo "${GATE_OUT:---agent codex --model gpt-6.1-sol --effort medium}"
+echo "${GATE_OUT:---agent antigravity --model gemini-4-argon-high}"
 GATE
 cat > "$tmp/admission.py" <<'PY'
 import json, os, sys
@@ -82,7 +82,7 @@ check 'absent optional policy reaches validated admission' "$?"
 valid
 GATE_RC=3 refuses 'usage gate nonzero refuses'
 valid
-GATE_OUT='--agent codex --model mystery' refuses 'unknown verifier family refuses'
+GATE_OUT='--agent antigravity --model mystery' refuses 'unknown verifier family refuses'
 valid
 GATE_OUT='--agent claude --model claude-sonnet' refuses 'same family refuses'
 # Exact-head canonical receipt safeguards remain independent of admission.
@@ -116,16 +116,18 @@ check 'full brief requires 1500 second admission wait' "$(grep -q 'HEAVY_GATE_TI
 check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual-Axis)' "$brief"; echo $?)"
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
 check 'brief has exact-head Verdict template' "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
-check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=codex family=gpt' "$brief"; echo $?)"
+check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=antigravity family=gemini' "$brief"; echo $?)"
 check 'reviewer title supports pane color' "$(grep -q -- '--task-title "reviewer - PR 42"' "$tmp/out"; echo $?)"
 check 'claude author avoids claude family' "$(grep -q -- '--avoid-family claude' "$tmp/gate.log"; echo $?)"
-for author in codex cursor antigravity; do
+for author in cursor gemini antigravity; do
   valid
   GATE_OUT='--agent claude --model claude-sonnet --effort medium' run --author-family "$author" --dry-run
   check "$author author picks independent reviewer" "$?"
-  check "$author author uses non-Codex reviewer" "$(grep -q -- '--agent claude' "$tmp/out"; echo $?)"
-  if [ "$author" != antigravity ]; then
+  check "$author author uses claude reviewer" "$(grep -q -- '--agent claude' "$tmp/out"; echo $?)"
+  if [ "$author" = cursor ]; then
     check "$author author avoids gpt" "$(grep -q -- '--avoid-family gpt' "$tmp/gate.log"; echo $?)"
+  else
+    check "$author author avoids gemini" "$(grep -q -- '--avoid-family gemini' "$tmp/gate.log"; echo $?)"
   fi
 done
 for code in 3 4; do
@@ -135,9 +137,9 @@ for code in 3 4; do
 done
 for args in 'claude claude-sonnet claude claude-sonnet' \
             'antigravity claude-sonnet claude claude-sonnet' \
-            'antigravity gpt-4o codex gpt-6.1-sol' \
-            'antigravity unknown-model codex gpt-6.1-sol' \
-            'antigravity gemini-3.8-flash codex mystery-model'; do
+            'antigravity gpt-4o cursor gpt-5.6-sol-medium' \
+            'antigravity unknown-model cursor gpt-5.6-sol-medium' \
+            'antigravity gemini-3.8-flash cursor mystery-model'; do
   read -r author model verifier verifier_model <<< "$args"
   valid
   GATE_OUT="--agent $verifier --model $verifier_model" run --author-provider "$author" --author-model "$model"

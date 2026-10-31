@@ -11,19 +11,19 @@ FUT = time.time() + 3 * 86400
 class Hook(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.state, self.codex = self.tmp.name + "/state", self.tmp.name + "/codex"
+        self.state = self.tmp.name + "/state"
         self.presets = self.tmp.name + "/presets.json"
         with open(self.presets, "w") as f:
             json.dump({"roles": {"fullstack-dev": {"tier": "workhorse", "chain": [
                 {"provider": "claude", "model": "sonnet"},
-                {"provider": "codex", "model": "gpt-test"}]}}}, f)
+                {"provider": "cursor", "model": "composer-test"}]}}}, f)
         os.makedirs(self.tmp.name + "/bin")
-        for command in ("security", "codex"):
+        for command in ("security",):
             path = self.tmp.name + "/bin/" + command
             with open(path, "w") as f:
                 f.write("#!/bin/sh\nexit 1\n")
             os.chmod(path, 0o755)
-        os.makedirs(self.state); os.makedirs(self.codex + "/2026/10/06")
+        os.makedirs(self.state)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -35,12 +35,8 @@ class Hook(unittest.TestCase):
             today = datetime.now().strftime("%Y-%m-%d")
             json.dump({"date": today, "baseline": baseline, "resets_at": FUT}, open(self.state + "/claude.json", "w"))
 
-    def codex_reading(self, pct):
-        ev = {"timestamp": datetime.now(timezone.utc).isoformat(), "payload": {"rate_limits": {"primary": {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}
-        open(self.codex + "/2026/10/06/rollout-a.jsonl", "w").write(json.dumps(ev) + "\n")
-
     def run_hook(self, command, tool="Bash"):
-        env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_CODEX_SESSIONS=self.codex, USAGE_GATE_ORCA="false", USAGE_GATE_PRESETS=self.presets)
+        env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA="false", USAGE_GATE_PRESETS=self.presets)
         r = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0)
@@ -54,9 +50,9 @@ class Hook(unittest.TestCase):
         self.assertIn("no known role prefix", err)
 
     def test_blocked_at_weekly_ceiling(self):
-        self.codex_reading(100)
-        deny, _ = self.run_hook("orca orchestration worker-start --task t --worktree current --agent codex")
-        self.assertIn("blocked codex: weekly ceiling", deny)
+        self.claude(100)
+        deny, _ = self.run_hook("orca orchestration worker-start --task t --worktree current --agent claude")
+        self.assertIn("blocked claude: weekly ceiling", deny)
         self.assertIn("Resets " + time.strftime("%a %d %b %H:%M %Z", time.localtime(FUT)) + " (local time)", deny)
 
     def test_daily_cap_does_not_deny_a_start(self):
@@ -65,15 +61,15 @@ class Hook(unittest.TestCase):
         self.assertIsNone(deny)
 
     def test_agent_from_a_shell_variable_or_loop_is_gated(self):
-        self.codex_reading(100)
-        for cmd in ('A=codex; orca orchestration worker-start --task t --agent "$A"',
-                    "for a in claude codex; do orca orchestration worker-start --task t --agent ${a}; done",
-                    "(orca orchestration worker-start --task t --agent codex)"):
-            self.assertIn("blocked codex", self.run_hook(cmd)[0] or "", cmd)
+        self.claude(100)
+        for cmd in ('A=claude; orca orchestration worker-start --task t --agent "$A"',
+                    "for a in claude cursor; do orca orchestration worker-start --task t --agent ${a}; done",
+                    "(orca orchestration worker-start --task t --agent claude)"):
+            self.assertIn("blocked claude", self.run_hook(cmd)[0] or "", cmd)
 
     def test_heredoc_text_is_not_a_command(self):
-        self.codex_reading(100)
-        cmd = "git commit -F - <<'EOF'\nDocs: don't run orca orchestration worker-start --agent codex\nEOF"
+        self.claude(100)
+        cmd = "git commit -F - <<'EOF'\nDocs: don't run orca orchestration worker-start --agent claude\nEOF"
         self.assertEqual(self.run_hook(cmd), (None, ""))
 
     def test_empty_or_heredoc_spec_is_denied_before_orca(self):
@@ -86,10 +82,10 @@ class Hook(unittest.TestCase):
         self.assertIsNone(deny)
 
     def test_one_blocked_start_in_a_chain_blocks_the_command(self):
-        self.claude(11); self.codex_reading(100)
-        deny, _ = self.run_hook("orca orchestration worker-start --task a --agent claude && "
-                                "orca orchestration worker-start --task b \\\n  --agent codex")
-        self.assertIn("codex", deny); self.assertNotIn("claude", deny)
+        self.cursor(40, 38); self.claude(100)
+        deny, _ = self.run_hook("orca orchestration worker-start --task a --agent cursor && "
+                                "orca orchestration worker-start --task b \\\n  --agent claude")
+        self.assertIn("claude", deny); self.assertNotIn("cursor", deny)
 
     def test_unknown_provider_passes_with_warning(self):
         deny, err = self.run_hook("orca orchestration worker-start --task t --agent unknown")
@@ -177,18 +173,14 @@ class Hook(unittest.TestCase):
                     self.assertEqual(out, "")
                 self.assertEqual(checks, [["--model", "gemini-flash"], expected])
 
-    def test_other_providers_and_codex_launcher_do_not_forward_model(self):
-        for provider in ("claude", "codex", "cursor"):
+    def test_other_providers_do_not_forward_model(self):
+        for provider in ("claude", "cursor"):
             with self.subTest(provider=provider):
                 out, checks = self.run_stubbed_pool_hook(
                     "orca orchestration worker-start --agent " + provider + " --model gemini-flash",
                     provider=provider)
                 self.assertIn("blocked " + provider + ": weekly ceiling", out)
                 self.assertEqual(checks, [[]])
-        out, checks = self.run_stubbed_pool_hook(
-            "script/start-codex-worker.sh --model gemini-flash", provider="codex")
-        self.assertIn("blocked codex: weekly ceiling", out)
-        self.assertEqual(checks, [[]])
 
     def cursor(self, pct, baseline):
         ends = datetime.fromtimestamp(FUT, timezone.utc).isoformat()
@@ -226,48 +218,40 @@ class Hook(unittest.TestCase):
         self.assertIn("gate exit 4", err)
 
     def test_other_commands_pass_without_running_the_gate(self):
-        self.codex_reading(100)
+        self.claude(100)
         for cmd in ("git status", "orca orchestration check --terminal x --json", "grep worker-start notes.md"):
             self.assertEqual(self.run_hook(cmd), (None, ""))
-        self.assertEqual(self.run_hook("orca orchestration worker-start --agent codex", tool="Read"), (None, ""))
-        self.assertFalse(os.path.exists(self.state + "/codex.json"))
+        self.assertEqual(self.run_hook("orca orchestration worker-start --agent claude", tool="Read"), (None, ""))
+        self.assertFalse(os.path.exists(self.state + "/claude.json"))
 
     def test_start_must_use_pick_even_on_retry(self):
         self.claude(44, baseline=40)
-        self.codex_reading(41)
-        # Codex's first check has zero today spend, so it has more room.
+        # Cursor has no reliable reading, so the pick lands on claude and a cursor start is flagged.
         for retry in ("", " --retry-of dispatch_old"):
-            deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude "
+            deny, err = self.run_hook("orca orchestration worker-start --task t --agent cursor "
                                     "--task-title 'fullstack-dev - job'" + retry)
             self.assertIsNone(deny)
-            self.assertIn("pick recommends codex", err)
+            self.assertIn("pick recommends claude", err)
             self.assertIn("claude headroom", err)
-            self.assertIn("codex headroom", err)
-        self.assertEqual(self.run_hook("orca orchestration worker-start --agent codex "
+        self.assertEqual(self.run_hook("orca orchestration worker-start --agent claude "
                                       "--task-title 'fullstack-dev - job'"), (None, ""))
 
-    def test_codex_launcher_is_checked_and_unknown_role_warns(self):
+    def test_unknown_role_warns(self):
         self.claude(41, baseline=40)
-        self.codex_reading(45)
-        json.dump({"date": datetime.now().strftime("%Y-%m-%d"), "baseline": 40, "resets_at": FUT},
-                  open(self.state + "/codex.json", "w"))
-        deny, err = self.run_hook("~/dotfiles/script/start-codex-worker.sh --title 'fullstack-dev - job'")
-        self.assertIsNone(deny)
-        self.assertIn("pick recommends claude", err)
-        deny, err = self.run_hook("orca orchestration worker-start --agent codex --task-title 'mystery - job'")
+        deny, err = self.run_hook("orca orchestration worker-start --agent cursor --task-title 'mystery - job'")
         self.assertIsNone(deny)
         self.assertIn("no known role prefix", err)
 
     def test_override_allows_routing_mismatch_logs_reason_and_keeps_daily_cap(self):
         self.claude(44, baseline=40)
-        self.codex_reading(41)
-        cmd = "USAGE_GATE_OVERRIDE='provider outage' orca orchestration worker-start --agent claude " \
+        cmd = "USAGE_GATE_OVERRIDE='provider outage' orca orchestration worker-start --agent cursor " \
               "--task-title 'fullstack-dev - job'"
         self.assertIsNone(self.run_hook(cmd)[0])
         with open(self.state + "/overrides.log") as f:
             log = f.read()
         self.assertIn("provider outage", log)
         self.assertIn("fullstack-dev", log)
+        cmd = cmd.replace("--agent cursor", "--agent claude")
         self.claude(80, baseline=40)
         self.assertIsNone(self.run_hook(cmd)[0])
         self.claude(95)
@@ -275,18 +259,12 @@ class Hook(unittest.TestCase):
 
     def test_override_only_applies_to_its_command_and_not_spec_text(self):
         self.claude(44, baseline=40)
-        self.codex_reading(41)
-        start = "orca orchestration worker-start --agent claude --task-title 'fullstack-dev - job'"
+        start = "orca orchestration worker-start --agent cursor --task-title 'fullstack-dev - job'"
         for cmd in ("USAGE_GATE_OVERRIDE=outage " + start + " && " + start,
                     start + " --spec 'USAGE_GATE_OVERRIDE=outage'",
                     "echo USAGE_GATE_OVERRIDE=outage; " + start):
             self.assertIsNone(self.run_hook(cmd)[0])
-            self.assertIn("pick recommends codex", self.run_hook(cmd)[1])
-
-    def test_launcher_mentions_are_not_starts(self):
-        self.codex_reading(100)
-        for command in ("cat script/start-codex-worker.sh", "echo script/start-codex-worker.sh"):
-            self.assertEqual(self.run_hook(command), (None, ""))
+            self.assertIn("pick recommends claude", self.run_hook(cmd)[1])
 
     def test_unknown_role_override_is_also_logged(self):
         self.claude(44)

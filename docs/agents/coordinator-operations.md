@@ -2,7 +2,7 @@
 
 Start remote workers through `bash script/start-remote-worker.sh` with the same
 arguments as `orca orchestration worker-start`, including `--on <environment>`
-and `--agent claude|codex|cursor|antigravity`. The helper checks the required CLI
+and `--agent claude|cursor|antigravity`. The helper checks the required CLI
 on the execution environment's login-shell PATH in an Orca terminal before
 dispatch. A missing CLI, failed probe, or unconfirmed exit refuses dispatch and
 names the required CLI. Install missing tools on that environment with

@@ -4,7 +4,6 @@
 check --provider NAME exits 0 allowed, 3 weekly/cycle ceiling reached, 4 unknown.
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags and ranks providers by remaining weekly/cycle headroom.
-Codex reads session rate_limits and refreshes via app-server account/rateLimits/read;
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
 endpoint; Cursor reads its Auto + Composer billing-cycle pool;
 Antigravity queries local GetUserStatus, defaulting to the Gemini Flash pool.
@@ -17,12 +16,11 @@ percentage points per running worker; --ceiling defaults to 95. Cursor uses its
 provider billing cycle when verifiable; Antigravity uses separate Flash, Pro/Argon
 and Claude provider model pools.
 """
-import argparse, re, glob, json, math, os, subprocess, sys, time
+import argparse, re, json, math, os, subprocess, sys, time
 from datetime import datetime, timedelta
 
 HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
-CODEX = os.environ.get("USAGE_GATE_CODEX_SESSIONS", HOME + "/.codex/sessions")
 WEEK_MIN = 10080
 TIE_POINTS = 2.0  # headroom points within which the preset provider keeps the pick
 MAX_AGE = 5 * 60  # seconds; an older reading is no reading
@@ -33,7 +31,7 @@ CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON f
 
 
 def epoch(at):
-    """Epoch seconds from epoch seconds (claude) or an ISO timestamp (codex); None if unreadable."""
+    """Epoch seconds from epoch seconds (claude) or an ISO timestamp; None if unreadable."""
     try:
         return float(at)
     except (TypeError, ValueError):
@@ -41,53 +39,6 @@ def epoch(at):
             return datetime.fromisoformat(str(at).replace("Z", "+00:00")).timestamp()
         except ValueError:
             return None
-
-
-def codex_reading(root=None, before=None, files=8):
-    """Newest weekly reading by its own timestamp (not by file name: a long session started
-    earlier keeps writing newer events). With before, the newest one older than that epoch
-    (a session that straddles it is skipped, which can only overstate today's use)."""
-    paths = glob.glob((root or CODEX) + "/**/rollout-*.jsonl", recursive=True)
-    if before is not None:      # a file last written before then holds nothing newer than then
-        paths = [p for p in paths if os.path.getmtime(p) < before]
-    paths = sorted(paths, key=lambda p: os.path.getmtime(p), reverse=True)[:files]
-    best = None
-    for path in paths:
-        try:
-            with open(path, "rb") as f:
-                f.seek(0, 2)
-                f.seek(max(0, f.tell() - 400000))
-                lines = f.read().decode("utf-8", "ignore").splitlines()
-        except OSError:
-            continue
-        for line in reversed(lines):
-            if '"rate_limits"' not in line:
-                continue
-            try:
-                d = json.loads(line)
-                limits = d["payload"]["rate_limits"]
-                windows = [limits.get("primary") or {}, limits.get("secondary") or {}]
-            except (ValueError, KeyError, AttributeError, TypeError):
-                continue
-            t = epoch(d.get("timestamp"))
-            if t is None or (before is not None and t >= before):
-                continue
-            for p in windows:
-                if p.get("window_minutes") == WEEK_MIN and "used_percent" in p:
-                    if best is None or t > best["t"]:
-                        best = {"t": t, "pct": float(p["used_percent"]), "resets_at": p.get("resets_at"),
-                                "observed_at": d.get("timestamp")}
-                    break
-            else:
-                continue
-            break   # newest usable event of this file; older ones in it cannot beat it
-    if best:
-        best.pop("t")
-    return best
-
-
-def codex_day_start(midnight):
-    return codex_reading(before=midnight, files=5)
 
 
 def claude_reading(path=None):
@@ -335,9 +286,8 @@ def antigravity_models():
     return ids or None
 
 
-READERS = {"codex": codex_reading, "claude": claude_reading, "cursor": cursor_reading,
-           "antigravity": antigravity_reading}
-DAY_START = {"codex": codex_day_start, "claude": claude_day_start}
+READERS = {"claude": claude_reading, "cursor": cursor_reading, "antigravity": antigravity_reading}
+DAY_START = {"claude": claude_day_start}
 
 
 def fresh(reading, now):
@@ -357,61 +307,10 @@ def fresh(reading, now):
 
 def reading_source(provider, refresh=False):
     return {
-        "codex": "codex app-server account/rateLimits/read" if refresh else CODEX + "/**/rollout-*.jsonl rate_limits",
         "claude": "https://api.anthropic.com/api/oauth/usage seven_day" if refresh else STATE + "/claude-rate-limits.json seven_day",
         "cursor": CURSOR_SUMMARY or CURSOR_URL,
         "antigravity": "local Antigravity LanguageServerService/GetUserStatus quotaInfo",
     }.get(provider, "no reader for " + provider)
-
-
-def codex_refresh():
-    """Read the authenticated account without starting a model turn or changing sessions."""
-    import selectors
-    process = subprocess.Popen(["codex", "app-server"], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
-    deadline = time.monotonic() + 5
-    buffer = b""
-    def send(message):
-        process.stdin.write((json.dumps(message) + "\n").encode())
-        process.stdin.flush()
-    try:
-        send({"id": 1, "method": "initialize", "params": {
-            "clientInfo": {"name": "usage_gate", "version": "1"}}})
-        while time.monotonic() < deadline:
-            if not selector.select(max(0, deadline - time.monotonic())):
-                break
-            chunk = os.read(process.stdout.fileno(), 65536)
-            if not chunk:
-                break
-            buffer += chunk
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                message = json.loads(line)
-                if message.get("id") == 1:
-                    if "error" in message:
-                        return None
-                    send({"method": "initialized"})
-                    send({"id": 2, "method": "account/rateLimits/read"})
-                elif message.get("id") == 2:
-                    limits = message.get("result", {}).get("rateLimits", {})
-                    for window in (limits.get("primary"), limits.get("secondary")):
-                        if window and window.get("windowDurationMins") == WEEK_MIN:
-                            return {"pct": float(window["usedPercent"]),
-                                    "resets_at": window.get("resetsAt"), "observed_at": time.time()}
-                    return None
-        return None
-    finally:
-        selector.close()
-        process.terminate()
-        try:
-            process.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        process.stdin.close()
-        process.stdout.close()
 
 
 def claude_refresh():
@@ -444,8 +343,6 @@ def refresh_reading(provider):
         reading = None
     if fresh(reading, time.time()):
         return {**reading, "source": reading_source(provider)}
-    if provider == "codex":
-        return codex_refresh()
     if provider == "claude":
         return claude_refresh()
     return reading
@@ -496,7 +393,7 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
         return "unknown", {"reason": "stale or expired reading"}, state
     st = dict(state or {})
     old = st.get("resets_at")
-    # codex resets_at jitters by a few seconds between events; only a jump of an hour is a new week
+    # resets_at can jitter by a few seconds between events; only a jump of an hour is a new week
     moved = (old is None) != (resets is None) or (old is not None and abs(float(resets) - float(old)) >= 3600)
     rolled = moved or pct < st.get("baseline", 0)
     if st.get("date") != today or "baseline" not in st or rolled:
@@ -722,8 +619,10 @@ def family(entry):
     provider, model = entry["provider"], entry["model"]
     if provider == "claude" or (provider in ("antigravity", "cursor") and model.startswith("claude-")):
         return "claude"
-    if provider == "codex" or model.startswith("gpt-"):
+    if model.startswith("gpt-"):
         return "gpt"
+    if provider in ("antigravity", "cursor") and model.startswith("gemini-"):
+        return "gemini"
     return None
 
 
@@ -787,8 +686,8 @@ def main(argv=None):
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id; omitted selects the Gemini Flash pool")
     ap.add_argument("--role")
-    ap.add_argument("--avoid-family", choices=["claude", "gpt"])
-    ap.add_argument("--avoid-provider", choices=["claude", "cursor", "codex", "antigravity"])
+    ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini"])
+    ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])
     ap.add_argument("--cap", type=float, default=None,
                     help="advisory daily pacing hint; never blocks")
     ap.add_argument("--ceiling", type=float, default=95.0)

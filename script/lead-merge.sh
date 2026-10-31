@@ -373,7 +373,7 @@ live_files=$(jq -s '[.[][] | select(.status != "removed") | .filename]' <<<"$fil
 # 3. Owner only paths
 while IFS= read -r f; do
   case "$f" in
-    .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|.codex/*|*/.codex/*|*.rules)
+    .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules)
       refuse "PR touches $f, which waits for the owner through Elon" ;;
   esac
 done < <(jq -r '.[]' <<<"$files")

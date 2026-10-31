@@ -127,7 +127,6 @@ bash "$DOTFILES_ROOT/script/install-agent-clis.sh" || exit 1
 bash "$DOTFILES_ROOT/script/setup-claude-code.sh"
 bash "$DOTFILES_ROOT/script/setup-claude-desktop.sh"
 bash "$DOTFILES_ROOT/script/setup-cursor.sh"
-bash "$DOTFILES_ROOT/script/setup-codex.sh"
 bash "$DOTFILES_ROOT/script/setup-orca.sh"
 bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"

@@ -4,7 +4,7 @@
     "beforeShellExecution": [
       {
         "command": "hooks/usage-gate.sh",
-        "matcher": "worker-start|start-codex-worker\\.sh"
+        "matcher": "worker-start"
       },
       {
         "command": "hooks/ensure-changelog-before-pr.sh",

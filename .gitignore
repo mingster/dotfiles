@@ -80,7 +80,6 @@ mac/bin/claude
 # Legacy Linux ~/.local/bin and ~/bin links can point into arch/bin.
 # Ignore only vendor CLIs; tracked helper scripts remain visible.
 /arch/bin/claude
-/arch/bin/codex
 /arch/bin/agent
 /arch/bin/cursor-agent
 /arch/bin/agy

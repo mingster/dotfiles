@@ -183,10 +183,10 @@ unset FAIL_EXACT_HEADS
 
 # A refused PR is dropped and reported; the rest of the batch merges.
 : > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
-BATCH_FILE='.codex/rules'; BATCH_FILE_PR=12; export BATCH_FILE BATCH_FILE_PR
+BATCH_FILE='.claude/hooks/x.sh'; BATCH_FILE_PR=12; export BATCH_FILE BATCH_FILE_PR
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "batch drops a PR with a protected path" test "$code" -eq 0
-check "dropped protected PR is reported" reported 12 'codex'
+check "dropped protected PR is reported" reported 12 'claude/hooks'
 check "dropped protected PR does not merge" test "$(grep -c '^merge 12$' "$EVENT_LOG")" -eq 0
 check "the rest of the batch merges" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 2
 unset BATCH_FILE BATCH_FILE_PR

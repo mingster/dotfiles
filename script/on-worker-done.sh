@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Start the cross family reviewer for a coding worker_done.
-# on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|codex|antigravity
+# on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|gemini|antigravity
 #                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
 #      ON_WORKER_DONE_FLEET_CONFIG selects configured host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
-usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|codex|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
+usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
 repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,7 +29,7 @@ done
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || usage
 [[ "$author_dispatch" =~ ^[a-zA-Z0-9_-]+$ ]] || usage
 if [ -n "$fam" ]; then
-  case "$fam" in claude|cursor|codex|antigravity) ;; *) usage ;; esac
+  case "$fam" in claude|cursor|gemini|antigravity) ;; *) usage ;; esac
   [ -n "$author_provider" ] || author_provider="$fam"
 fi
 
@@ -54,15 +54,15 @@ def get_family(p, m):
         return "unknown"
     if p == "claude":
         return "claude"
-    if p in ("codex", "cursor"):
+    if p == "cursor":
         return "gpt"
-    if p == "antigravity":
+    if p in ("antigravity", "gemini"):
         return "gemini"
     return "unknown"
 
 fam = get_family(provider, model)
-avoid_fam = fam if fam in ("claude", "gpt") else "none"
-avoid_prov = provider if provider in ("claude", "cursor", "codex", "antigravity") else "none"
+avoid_fam = fam if fam in ("claude", "gpt", "gemini") else "none"
+avoid_prov = provider if provider in ("claude", "cursor", "antigravity") else "none"
 print(f"{provider or 'unknown'} {fam} {avoid_fam} {avoid_prov}")
 PY
 )
@@ -112,9 +112,9 @@ def get_family(p, m):
         return "unknown"
     if p == "claude":
         return "claude"
-    if p in ("codex", "cursor"):
+    if p == "cursor":
         return "gpt"
-    if p == "antigravity":
+    if p in ("antigravity", "gemini"):
         return "gemini"
     return "unknown"
 

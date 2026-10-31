@@ -57,7 +57,7 @@ backup_setting() {
 }
 machine() {
   local setup src user_dir rendered_settings=
-  local setups=(install-agent-clis setup-agent-skills setup-claude-code setup-codex setup-cursor setup-antigravity setup-orca setup-agent-hooks)
+  local setups=(install-agent-clis setup-agent-skills setup-claude-code setup-cursor setup-antigravity setup-orca setup-agent-hooks)
   if [ "$dry" -eq 1 ]; then
     for setup in "${setups[@]}"; do echo "[dry-run] machine: $setup.sh"; done
     echo '[dry-run] verify CLIs and report owner login needed; no settings or login files read.'
@@ -89,8 +89,6 @@ machine() {
     [ -f "$src" ] || continue
     backup_setting "$src" "$HOME/.cursor/hooks/$(basename "$src")"
   done
-  backup_setting "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
-  backup_setting "$DOTFILES/.codex/AGENTS.md" "$HOME/.codex/AGENTS.md"
   backup_setting "$DOTFILES/ide/cursor/cli-config.json" "$HOME/.cursor/cli-config.json"
   backup_setting "$DOTFILES/ide/cursor/hooks.json" "$HOME/.cursor/hooks.json"
   backup_setting "$DOTFILES/.orca/presets.json" "$HOME/.orca/presets.json"
@@ -124,7 +122,7 @@ EOF
       bash "$DOTFILES/script/$setup.sh"
     fi
   done
-  for setup in claude codex orca python3 git; do
+  for setup in claude orca python3 git; do
     if command -v "$setup" >/dev/null 2>&1; then echo "verify: $setup available";
     else echo "WARN verify: missing CLI $setup"; fi
   done
@@ -132,7 +130,7 @@ EOF
   else echo 'WARN verify: missing CLI Cursor agent'; fi
   if command -v agy >/dev/null 2>&1; then echo 'verify: Antigravity agy available';
   else echo 'WARN verify: missing CLI Antigravity agy'; fi
-  echo 'login needed: owner must verify Claude Code, Codex, Cursor agent and Antigravity sign-in in each CLI; login state was not inspected.'
+  echo 'login needed: owner must verify Claude Code, Cursor agent and Antigravity sign-in in each CLI; login state was not inspected.'
 }
 project() {
   [ ! -d "$target/.claude/agents" ] && [ ! -f "$target/.claude/model-routing.md" ] || die 'existing agent team: use reset'

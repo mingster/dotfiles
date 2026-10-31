@@ -176,7 +176,7 @@ step "Only the owner can do these"
 n=1
 owner_item() { printf '  %d. %s\n' "$n" "$1"; n=$((n + 1)); }
 owner_item "Sign in to the Apple ID, and to GitHub (gh auth login) if it was not done."
-owner_item "Sign in to each tool: claude, cursor-agent, codex, wrangler, gcloud auth login."
+owner_item "Sign in to each tool: claude, cursor-agent, agy, wrangler, gcloud auth login."
 owner_item "Unlock the encrypted secrets image and type its passphrase: script/secrets-unpack.sh <image.dmg> <target dir>"
 owner_item "Open Orca. If the host pairing did not carry over, create a new pairing code on each remote host."
 for x in ${owner_extra[@]+"${owner_extra[@]}"}; do owner_item "$x"; done

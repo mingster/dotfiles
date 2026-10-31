@@ -5,7 +5,7 @@
 # With no pin, warns when the host's bun differs from this machine's. A host that is this
 # machine (hostname -s) runs bun directly; any other host is reached with `ssh <host> bun --version`
 # (override the runner with BUN_PIN_RUN, called as: $BUN_PIN_RUN <host> bun --version).
-# Coordinators run this before an Orca worker-start; start-codex-worker.sh calls it for them.
+# Coordinators run this before an Orca worker-start.
 set -u
 run="${BUN_PIN_RUN:-ssh}"
 host_version() {   # $1 = host

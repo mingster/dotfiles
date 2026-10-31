@@ -27,7 +27,7 @@ allow() {
 	exit 0
 }
 
-[[ "$command" == *worker-start* || "$command" == *start-codex-worker.sh* ]] || allow
+[[ "$command" == *worker-start* ]] || allow
 [[ -f "$GATE_HOOK" ]] || allow
 
 verdict="$(jq -nc --arg c "$command" '{tool_name:"Bash",tool_input:{command:$c}}' | python3 "$GATE_HOOK")"
