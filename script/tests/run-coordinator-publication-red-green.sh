@@ -19,9 +19,11 @@ chmod +x "$RED_ROOT/coordinator-publication.sh"
 run_fixture() {
   local label=$1 pub=$2 log=$3 ec
   set +e
-  "$gate" --weight 1 -- env PUB="$pub" bash "$test_sh" >"$log" 2>&1
+  "$gate" --weight 1 -- env GIT_ALLOW_PROTOCOL=file COORDINATOR_PUBLICATION_HELPER="$pub" bash "$test_sh" >"$log" 2>&1
   ec=$?
   echo "=== $label (exit=$ec) ==="
+  grep -Fq "coordinator-publication-fixture-helper=$pub" "$log" \
+    || { echo "run-coordinator-publication-red-green: helper path not recorded in log" >&2; return 2; }
   { grep -E '^(passed|FAIL )' "$log" | tail -20; } || true
   { tail -3 "$log"; } || true
   return "$ec"

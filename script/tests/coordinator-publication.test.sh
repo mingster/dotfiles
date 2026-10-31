@@ -3,6 +3,7 @@
 set -u
 export GIT_ALLOW_PROTOCOL=file
 here=$(cd "$(dirname "$0")/.." && pwd)
+REQUESTED_HELPER=${COORDINATOR_PUBLICATION_HELPER:-${PUB:-}}
 # shellcheck source=lib/merge-fixture.sh
 . "$here/tests/lib/merge-fixture.sh"
 mf_setup
@@ -11,7 +12,9 @@ trap mf_teardown EXIT
 . "$here/tests/lib/asdf-pin.sh"
 
 export HOME="$MF_DIR/home"
-PUB=${PUB:-$here/coordinator-publication.sh}
+PUB=${REQUESTED_HELPER:-$here/coordinator-publication.sh}
+readonly PUB
+echo "coordinator-publication-fixture-helper=$PUB"
 BODY="$MF_DIR/body.md"
 REPO_SLUG=example/repo
 pass=0 fail=0
@@ -36,7 +39,7 @@ EOF
 receipt_path() {
   local wt=${1:-$MF_REPO}
   local git_path
-  git_path=$("$MF_REAL_GIT" -C "$wt" rev-parse --git-path coordinator-publication 2>/dev/null || true)
+  git_path=$("$MF_TEST_GIT" -C "$wt" rev-parse --git-path coordinator-publication 2>/dev/null || true)
   if [ -n "$git_path" ] && [[ "$git_path" != /* ]]; then
     git_path="$wt/$git_path"
   fi
@@ -46,7 +49,7 @@ receipt_path() {
 clear_receipt() {
   local wt=${1:-$MF_REPO}
   rm -f "$MF_DIR/fetch.log"
-  git_path=$("$MF_REAL_GIT" -C "$wt" rev-parse --git-path coordinator-publication 2>/dev/null || true)
+  git_path=$("$MF_TEST_GIT" -C "$wt" rev-parse --git-path coordinator-publication 2>/dev/null || true)
   if [ -n "$git_path" ] && [[ "$git_path" != /* ]]; then
     rm -rf "$wt/$git_path"
   elif [ -n "$git_path" ]; then
@@ -84,7 +87,7 @@ cmd="$1 ${2:-}"; shift 2 || true
     *)
       case "${1:-}" in -*|"") ;; *) pr=$1; shift ;; esac
       if [ -z "$pr" ] && [ "$cmd" = "pr view" ]; then
-        pr=$(jq -s -r --arg b "$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)" '[.[] | select(.headRefName == $b)][0].number // empty' "$MF_GH_DIR"/pr-*.json 2>/dev/null)
+        pr=$(jq -s -r --arg b "$("$MF_BIN/git.real" -C "$MF_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)" '[.[] | select(.headRefName == $b)][0].number // empty' "$MF_GH_DIR"/pr-*.json 2>/dev/null)
         [ -n "$pr" ] || { echo "no pull requests found for current branch" >&2; exit 1; }
       fi ;;
   esac
@@ -120,7 +123,7 @@ case "$cmd" in
       rm -f "$MF_DIR/create_succeed_then_abort"
       n=$(find "$MF_GH_DIR" -name 'pr-*.json' 2>/dev/null | wc -l | tr -d ' ')
       n=$((n+1))
-      h=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$head_name" 2>/dev/null || "$MF_REAL_GIT" -C "$MF_REPO" rev-parse HEAD)
+      h=$("$MF_BIN/git.real" -C "$MF_REPO" rev-parse "$head_name" 2>/dev/null || "$MF_BIN/git.real" -C "$MF_REPO" rev-parse HEAD)
       b=$(cat "$body_file" 2>/dev/null || true)
       jq -n --argjson n "$n" --arg hn "$head_name" --arg h "$h" --arg body "$b" --arg base "${base:-main}" \
         '{number:$n, state:"OPEN", baseRefName:$base, headRefName:$hn, headRefOid:$h, baseRefOid:$h, changedFiles:1, body:$body, files:[], comments:[], closingIssuesReferences:[], mergeable:"MERGEABLE", mergeCommit:null,
@@ -131,7 +134,7 @@ case "$cmd" in
     [ -n "$head_name" ] || { echo "missing --head" >&2; exit 1; }
     n=$(find "$MF_GH_DIR" -name 'pr-*.json' 2>/dev/null | wc -l | tr -d ' ')
     n=$((n+1))
-    h=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$head_name" 2>/dev/null || "$MF_REAL_GIT" -C "$MF_REPO" rev-parse HEAD)
+    h=$("$MF_BIN/git.real" -C "$MF_REPO" rev-parse "$head_name" 2>/dev/null || "$MF_BIN/git.real" -C "$MF_REPO" rev-parse HEAD)
     b=$(cat "$body_file" 2>/dev/null || true)
     jq -n --argjson n "$n" --arg hn "$head_name" --arg h "$h" --arg body "$b" --arg base "${base:-main}" \
       '{number:$n, state:"OPEN", baseRefName:$base, headRefName:$hn, headRefOid:$h, baseRefOid:$h, changedFiles:1, body:$body, files:[], comments:[], closingIssuesReferences:[], mergeable:"MERGEABLE", mergeCommit:null,
@@ -166,8 +169,16 @@ fixture_git_wt() {
   wt=${MF_REPO:-}
 }
 fixture_block_non_file_transport() {
-  local wt=$1 url
+  local wt=$1 url arg
   [ -n "$wt" ] || wt=${MF_REPO:-}
+  for arg in "$@"; do
+    case "$arg" in
+      https://*|http://*|git@*|ssh://*)
+        echo "fixture git: refused non-file remote transport in arguments" >&2
+        exit 1
+        ;;
+    esac
+  done
   while IFS= read -r url; do
     [ -n "$url" ] || continue
     case "$url" in
@@ -178,13 +189,13 @@ fixture_block_non_file_transport() {
         ;;
     esac
   done < <(
-    "$MF_BIN/git.real" -C "$wt" remote get-url origin 2>/dev/null || true
-    "$MF_BIN/git.real" -C "$wt" remote get-url --push --all origin 2>/dev/null || true
+    GIT_ALLOW_PROTOCOL=file "$MF_BIN/git.real" -C "$wt" remote get-url origin 2>/dev/null || true
+    GIT_ALLOW_PROTOCOL=file "$MF_BIN/git.real" -C "$wt" remote get-url --push --all origin 2>/dev/null || true
   )
 }
-if [[ " $* " == *" fetch "* ]] || [[ " $* " == *" push "* ]]; then
+if [[ " $* " == *" fetch "* ]] || [[ " $* " == *" push "* ]] || [[ " $* " == *" ls-remote "* ]]; then
   wt=$(fixture_git_wt "$@")
-  fixture_block_non_file_transport "$wt"
+  fixture_block_non_file_transport "$wt" "$@"
 fi
 if [[ " $* " == *" fetch "* ]]; then echo "fetch $*" >> "$MF_DIR/fetch.log"; fi
 if printf '%s\n' "$@" | grep -qx 'push' || [[ " $* " == *" push "* ]]; then
@@ -194,18 +205,19 @@ if printf '%s\n' "$@" | grep -qx 'push' || [[ " $* " == *" push "* ]]; then
     if [ "$n" -gt 0 ]; then echo "$((n-1))" > "$MF_DIR/push_fail_count"; echo "push rejected" >&2; exit 1; fi
   elif [ "${CP_PUSH_FAILS:-0}" -gt 0 ]; then echo "push rejected" >&2; exit 1; fi
 fi
-exec "$MF_BIN/git.real" "$@"
+exec env GIT_ALLOW_PROTOCOL=file "$MF_BIN/git.real" "$@"
 EOS
 chmod +x "$MF_BIN/git" "$MF_BIN/git.real"
+MF_TEST_GIT="$MF_BIN/git"
 export PATH="$MF_BIN:$PATH" MF_TOPLEVEL="$MF_REPO"
 export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
 
 make_feature() {
   local b=$1
-  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q -B "$b" origin/main
+  "$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B "$b" origin/main
   echo "$b" > "$MF_REPO/$b.txt"
-  "$MF_REAL_GIT" -C "$MF_REPO" add "$b.txt"
-  "$MF_REAL_GIT" -C "$MF_REPO" commit -q -m "$b"
+  "$MF_TEST_GIT" -C "$MF_REPO" add "$b.txt"
+  "$MF_TEST_GIT" -C "$MF_REPO" commit -q -m "$b"
 }
 
 good_body
@@ -220,8 +232,8 @@ say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses protected branch staging
 good_body
 make_feature feat-env
 echo secret > "$MF_REPO/.env.local"
-"$MF_REAL_GIT" -C "$MF_REPO" add .env.local
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m env
+"$MF_TEST_GIT" -C "$MF_REPO" add .env.local
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m env
 out=$(pub feat-env); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses tracked .env file in diff" "$out"
 
@@ -257,15 +269,15 @@ say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses --force flag" "$out"
 
 good_body
 make_feature feat-nff
-"$MF_REAL_GIT" -C "$MF_REPO" push -q origin "HEAD:refs/heads/feat-nff"
+"$MF_TEST_GIT" -C "$MF_REPO" push -q origin "HEAD:refs/heads/feat-nff"
 echo remote-only > "$MF_REPO/remote.txt"
-"$MF_REAL_GIT" -C "$MF_REPO" add remote.txt
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m remote-on-origin
-"$MF_REAL_GIT" -C "$MF_REPO" push -q origin "HEAD:refs/heads/feat-nff"
-"$MF_REAL_GIT" -C "$MF_REPO" reset -q --hard HEAD~1
+"$MF_TEST_GIT" -C "$MF_REPO" add remote.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m remote-on-origin
+"$MF_TEST_GIT" -C "$MF_REPO" push -q origin "HEAD:refs/heads/feat-nff"
+"$MF_TEST_GIT" -C "$MF_REPO" reset -q --hard HEAD~1
 echo local-only > "$MF_REPO/local.txt"
-"$MF_REAL_GIT" -C "$MF_REPO" add local.txt
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m local-diverge
+"$MF_TEST_GIT" -C "$MF_REPO" add local.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m local-diverge
 out=$(pub feat-nff); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-fast-forward without force" "$out"
 
@@ -289,8 +301,8 @@ good_body
 make_feature feat-env-nested
 mkdir -p "$MF_REPO/web"
 echo secret > "$MF_REPO/web/.env.local"
-"$MF_REAL_GIT" -C "$MF_REPO" add web/.env.local
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m nested-env
+"$MF_TEST_GIT" -C "$MF_REPO" add web/.env.local
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m nested-env
 : > "$MF_DIR/fetch.log"
 out=$(pub feat-env-nested); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses nested tracked env file in diff" "$out"
@@ -308,23 +320,23 @@ make_feature feat-receipt-mismatch
 out=$(pub feat-receipt-mismatch); code=$?
 say "$code" "first publish writes receipt" "$out"
 echo noop >> "$MF_REPO/feat-receipt-mismatch.txt"
-"$MF_REAL_GIT" -C "$MF_REPO" add feat-receipt-mismatch.txt
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m bump
+"$MF_TEST_GIT" -C "$MF_REPO" add feat-receipt-mismatch.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m bump
 out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-receipt-mismatch --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses stale receipt after new HEAD" "$out"
 
 good_body
 LINKED="$MF_DIR/linked-wt"
-"$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
-"$MF_REAL_GIT" -C "$MF_REPO" worktree add -q -B feat-wt "$LINKED" origin/main
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q main
+"$MF_TEST_GIT" -C "$MF_REPO" worktree add -q -B feat-wt "$LINKED" origin/main
 echo feat-wt > "$LINKED/feat-wt.txt"
-"$MF_REAL_GIT" -C "$LINKED" add feat-wt.txt
-"$MF_REAL_GIT" -C "$LINKED" commit -q -m feat-wt
+"$MF_TEST_GIT" -C "$LINKED" add feat-wt.txt
+"$MF_TEST_GIT" -C "$LINKED" commit -q -m feat-wt
 out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-wt --body-file "$BODY" --worktree "$LINKED" 2>&1); code=$?
 say "$code" "publishes from linked worktree" "$out"
-want=$("$MF_REAL_GIT" -C "$LINKED" rev-parse --git-path coordinator-publication)
+want=$("$MF_TEST_GIT" -C "$LINKED" rev-parse --git-path coordinator-publication)
 if [[ "$want" = /* ]] && [ -f "$want/receipt.env" ]; then ok "receipt lives at absolute git-path in linked worktree"; else bad "receipt missing at $want/receipt.env"; fi
-"$MF_REAL_GIT" -C "$MF_REPO" worktree remove -q -f "$LINKED" 2>/dev/null || rm -rf "$LINKED"
+"$MF_TEST_GIT" -C "$MF_REPO" worktree remove -q -f "$LINKED" 2>/dev/null || rm -rf "$LINKED"
 
 good_body
 make_feature feat-resume
@@ -362,12 +374,12 @@ say "$code" "interrupt recovery second run is idempotent" "$out"
 
 good_body
 make_feature feat-origin
-saved_origin=$("$MF_REAL_GIT" -C "$MF_REPO" remote get-url origin)
-"$MF_REAL_GIT" -C "$MF_REPO" remote set-url origin "https://github.com/wrong/slug.git"
+saved_origin=$("$MF_TEST_GIT" -C "$MF_REPO" remote get-url origin)
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "https://github.com/wrong/slug.git"
 unset COORDINATOR_PUBLICATION_FIXTURE_ORIGIN
 out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-origin --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
 export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
-"$MF_REAL_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when origin slug does not match --repo" "$out"
 [[ "$out" != *"@"* ]] && ok "origin mismatch message omits credential-bearing URLs" || bad "origin error leaked credentials"
 
@@ -390,7 +402,7 @@ rcpt=$(receipt_path)
 {
   printf 'repo=example/repo$(touch %q)\n' "$marker"
   printf 'branch=feat-receipt-cmd\n'
-  printf 'head_sha=%s\n' "$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse HEAD)"
+  printf 'head_sha=%s\n' "$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse HEAD)"
   printf 'push_ok=1\n'
   printf 'pr_url=\n'
   printf 'pr_number=\n'
@@ -416,32 +428,32 @@ say "$code" "same command recovers after aborted receipt write" "$out"
 good_body
 make_feature feat-pushurl
 WRONG_ORIGIN="$MF_DIR/wrong-origin.git"
-"$MF_REAL_GIT" init -q --bare -b main "$WRONG_ORIGIN"
-"$MF_REAL_GIT" -C "$MF_REPO" config --add remote.origin.pushurl "$WRONG_ORIGIN"
+"$MF_TEST_GIT" init -q --bare -b main "$WRONG_ORIGIN"
+"$MF_TEST_GIT" -C "$MF_REPO" config --add remote.origin.pushurl "$WRONG_ORIGIN"
 : > "$MF_DIR/push.log"
 out=$(pub feat-pushurl); code=$?
-"$MF_REAL_GIT" -C "$MF_REPO" config --unset-all remote.origin.pushurl 2>/dev/null || true
+"$MF_TEST_GIT" -C "$MF_REPO" config --unset-all remote.origin.pushurl 2>/dev/null || true
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses mismatched pushurl even with file origin" "$out"
 [ ! -s "$MF_DIR/push.log" ] && ok "pushurl refusal skips push" || bad "push ran on pushurl mismatch"
 
 good_body
 make_feature feat-push-rewrite
 WRONG_PUSH="$MF_DIR/wrong-push.git"
-"$MF_REAL_GIT" init -q --bare -b main "$WRONG_PUSH"
-"$MF_REAL_GIT" -C "$MF_REPO" config "url.$WRONG_PUSH.pushInsteadOf" "$MF_ORIGIN"
+"$MF_TEST_GIT" init -q --bare -b main "$WRONG_PUSH"
+"$MF_TEST_GIT" -C "$MF_REPO" config "url.$WRONG_PUSH.pushInsteadOf" "$MF_ORIGIN"
 : > "$MF_DIR/push.log"
 out=$(pub feat-push-rewrite); code=$?
-"$MF_REAL_GIT" -C "$MF_REPO" config --unset-all "url.$WRONG_PUSH.pushInsteadOf" 2>/dev/null || true
+"$MF_TEST_GIT" -C "$MF_REPO" config --unset-all "url.$WRONG_PUSH.pushInsteadOf" 2>/dev/null || true
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses Git-resolved push URL rewrite to different bare remote" "$out"
 [ ! -s "$MF_DIR/push.log" ] && ok "push rewrite refusal skips push" || bad "push ran after url.pushInsteadOf rewrite"
 
 good_body
 make_feature feat-env-history
 printf 'secret\n' > "$MF_REPO/.env"
-"$MF_REAL_GIT" -C "$MF_REPO" add .env
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m add-env
-"$MF_REAL_GIT" -C "$MF_REPO" rm -f .env
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m del-env
+"$MF_TEST_GIT" -C "$MF_REPO" add .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m add-env
+"$MF_TEST_GIT" -C "$MF_REPO" rm -f .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m del-env
 out=$(pub feat-env-history); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses add-then-delete secret env in publish range" "$out"
 
@@ -449,8 +461,8 @@ good_body
 make_feature feat-env-unicode
 mkdir -p "$MF_REPO/テスト"
 printf 'secret\n' > "$MF_REPO/テスト/.env"
-"$MF_REAL_GIT" -C "$MF_REPO" add "テスト/.env"
-"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m unicode-env
+"$MF_TEST_GIT" -C "$MF_REPO" add "テスト/.env"
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m unicode-env
 out=$(pub feat-env-unicode); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-ASCII path secret env file" "$out"
 
