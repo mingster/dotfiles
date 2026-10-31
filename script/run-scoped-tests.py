@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Select changed, adjacent and direct importer suites, then run from their root."""
+"""Select changed, adjacent, importer and configured directory guard suites.
+
+In a project's .agents/head-checks.conf command, before {files}, add repeatable
+--directory-guard DIRECTORY GUARD pairs, both literal paths relative to --root:
+--root web --runner 'bun test --isolate' --directory-guard src/admin guards/copy.test.ts
+Quote paths containing spaces. DIRECTORY matches descendants by path segment,
+including deleted paths (pass both old and new paths for renames). Duplicate
+guards run once. No mappings preserves the existing selection. Empty, absolute,
+parent-traversing or escaping paths, missing/non-unit guards and existing files
+used as directories fail with exit 2, even without changes. Deleted directories
+are allowed; '.' maps the whole root. Existing browser availability rules apply.
+"""
 import argparse
 import json
 import os
@@ -53,10 +64,37 @@ def import_targets(specifier, test, root, base, aliases):
     return targets
 
 
-def select_changed_tests(root, files, on_test_change=()):
+class DirectoryGuardError(ValueError):
+    pass
+
+
+def directory_guard_paths(root, mappings):
+    pairs = []
+    for directory, guard in mappings:
+        paths = []
+        for name in (directory, guard):
+            relative = Path(name)
+            if not name or relative.is_absolute() or '..' in relative.parts:
+                raise DirectoryGuardError(f'directory guard: expected a root-relative path: {name!r}')
+            target = (root / relative).resolve()
+            if not target.is_relative_to(root):
+                raise DirectoryGuardError(f'directory guard: path escapes --root: {name!r}')
+            paths.append(target)
+        directory_path, guard_path = paths
+        if directory_path.exists() and not directory_path.is_dir():
+            raise DirectoryGuardError(f'directory guard: not a directory: {directory!r}')
+        if not guard_path.is_file() or not is_test(guard_path):
+            raise DirectoryGuardError(f'directory guard: missing or excluded unit test: {guard!r}')
+        pairs.append((directory_path, guard_path))
+    return pairs
+
+
+def select_changed_tests(root, files, on_test_change=(), directory_guards=()):
     root = root.resolve()
+    mappings = directory_guard_paths(root, directory_guards)
     changed = [Path(name).resolve() for name in files if Path(name).resolve().is_relative_to(root)]
-    tests = set()
+    tests = {guard for directory, guard in mappings
+             if any(path != directory and path.is_relative_to(directory) for path in changed)}
     # Repo-wide contract suites scan every test file, so any added, renamed or deleted test triggers them.
     if any(is_test(path) for path in changed):
         for pattern in on_test_change:
@@ -120,8 +158,8 @@ def browser_available(root):
         return False
 
 
-def run_scoped_tests(root, runner, files, on_test_change=()):
-    tests = select_changed_tests(root, files, on_test_change)
+def run_scoped_tests(root, runner, files, on_test_change=(), directory_guards=()):
+    tests = select_changed_tests(root, files, on_test_change, directory_guards)
     browser = [path for path in tests if browser_test(path)]
     if browser and not browser_available(root):
         for path in browser:
@@ -201,12 +239,21 @@ def main():
     parser.add_argument('--components', choices=('lint', 'typecheck', 'tests'))
     parser.add_argument('--on-test-change', action='append', default=[], metavar='GLOB',
                         help='tests under --root to add whenever any changed file is a test')
+    parser.add_argument('--directory-guard', action='append', nargs=2, default=[],
+                        metavar=('DIRECTORY', 'GUARD'),
+                        help='repeatable root-relative directory and unit-test path pair; '
+                             'select GUARD for changed descendants, including deleted paths; '
+                             'invalid mappings fail with exit 2')
     parser.add_argument('files', nargs='*')
     args = parser.parse_args()
+    if args.components and args.directory_guard:
+        parser.error('--directory-guard applies to scoped tests, not --components')
     try:
         if args.components:
             return component_checks(args.root, args.components, args.files)
-        return run_scoped_tests(args.root, args.runner, args.files, args.on_test_change)
+        return run_scoped_tests(args.root, args.runner, args.files, args.on_test_change, args.directory_guard)
+    except DirectoryGuardError as error:
+        parser.error(str(error))
     except subprocess.CalledProcessError as error:
         return error.returncode
 
