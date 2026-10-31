@@ -1,0 +1,1 @@
+- Add hostname to Starship right prompt in Tokyo Night style.

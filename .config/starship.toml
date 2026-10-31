@@ -19,6 +19,8 @@ $time\
 [ ](fg:#1d2230)\
 \n$character"""
 
+right_format = """$hostname"""
+
 [directory]
 style = "fg:#e3e5e5 bg:#769ff0"
 format = "[ $path ]($style)"
@@ -79,6 +81,10 @@ disabled = false
 time_format = "%R" # Hour:Minute Format
 style = "bg:#1d2230"
 format = '[[  $time ](fg:#a0a9cb bg:#1d2230)]($style)'
+
+[hostname]
+ssh_only = false
+format = "[](fg:#1d2230)[ 󰒋 $hostname ](bg:#1d2230 fg:#769ff0)[](fg:#1d2230)"
 
 [os]
 style = "bg:#a3aed2 fg:#090c0c"
