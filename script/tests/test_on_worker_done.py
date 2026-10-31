@@ -52,12 +52,24 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
             gh = root / "gh"
             gh.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['TEST_COMMENTS'])\n")
             gh.chmod(0o755)
+            # Receipt/picker tests use a validated admission boundary double;
+            # native inventory and policy refusals live in test_qa_admission.py.
+            policy = root / "admission-policy.json"
+            policy.write_text("{}")
+            admission = root / "admission.py"
+            admission.write_text("import json\nprint(" + repr(json.dumps({
+                "environment_id": "fixture-saved-environment",
+                "worktree_selector": "identity:wt2:local:fixture-worktree",
+                "host": "niteking",
+            })) + ")\n")
             if receipts is None:
                 receipts = ["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 2\nLoad errors: 0\n"]
             log = root / "orca.json"
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                    "TEST_COMMENTS": json.dumps({"comments": [{"body": body} for body in receipts]}),
                    "ON_WORKER_DONE_USAGE_GATE": str(gate),
+                   "ON_WORKER_DONE_ADMISSION_POLICY": str(policy),
+                   "ON_WORKER_DONE_QA_ADMISSION": str(admission),
                    "ORCA_CLI_COMMAND": str(orca), "USAGE_GATE_PRESETS": str(presets),
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
