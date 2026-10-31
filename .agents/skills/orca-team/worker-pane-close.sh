@@ -145,9 +145,46 @@ if [ "${1:-}" = --release ]; then
     case "$status" in completed|failed|cancelled|released) ;;
       *) echo "worker-pane-close: refusing --release $d (status=${status:-unknown}); settle it, or use worker-stop explicitly before release" >&2; exit 1 ;;
     esac
-    close_rpc orchestration worker-release --dispatch "$d" --json || { echo "worker-pane-close: release failed for $d; retaining terminals" >&2; exit 1; }
-    mkdir -p "$state/released" && : > "$state/released/$d"
-    close_one "$d"
+    release_out=$(close_rpc orchestration worker-release --dispatch "$d" --json) || release_rc=$?
+    release_state=$(RELEASE_BODY="$release_out" RELEASE_RC="${release_rc:-0}" python3 <<'PY'
+import json, os, sys
+body = os.environ.get("RELEASE_BODY", "")
+rc = int(os.environ.get("RELEASE_RC", "0"))
+try:
+    doc = json.loads(body)
+except Exception:
+    print("malformed", rc)
+    sys.exit(0)
+if not doc.get("ok"):
+    print("error", rc)
+    sys.exit(0)
+print((doc.get("result") or {}).get("state") or "missing", rc)
+PY
+) || { echo "worker-pane-close: could not parse worker-release for $d; retaining terminals" >&2; exit 1; }
+    rel_state=${release_state%% *}
+    rel_rc=${release_state#* }
+    case "$rel_state" in
+      released|already_released)
+        mkdir -p "$state/released" && : > "$state/released/$d"
+        close_one "$d"
+        ;;
+      retained|release_pending)
+        reason=$(printf '%s' "$release_out" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("result",{}).get("reason") or "")
+except Exception: print("")' 2>/dev/null)
+        echo "worker-pane-close: $d $rel_state${reason:+ ($reason)}; retaining terminals" >&2
+        ;;
+      release_unknown|missing|malformed|error)
+        echo "worker-pane-close: release failed for $d ($rel_state); retaining terminals" >&2
+        printf '%s\n' "$release_out" >&2
+        exit 1
+        ;;
+      *)
+        echo "worker-pane-close: release failed for $d (unknown state $rel_state); retaining terminals" >&2
+        printf '%s\n' "$release_out" >&2
+        exit 1
+        ;;
+    esac
   done
   exit 0
 fi

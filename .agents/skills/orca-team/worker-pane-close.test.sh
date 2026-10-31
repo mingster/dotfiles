@@ -22,7 +22,9 @@ p,h=sys.argv[1:]; r=json.load(open(p)); r['result']['terminals']=[t for t in r['
 json.dump(r,open(p,'w'))
 REMOVE
     fi ;;
-  "orchestration worker-release --dispatch "*) echo "$*" >> "$FAKE_DIR/rpc.log"; echo '{"result":{"state":"retained"}}' ;;
+  "orchestration worker-release --dispatch "*) echo "$*" >> "$FAKE_DIR/rpc.log"; d=$4
+    if [ -f "$FAKE_DIR/release.$d.json" ]; then cat "$FAKE_DIR/release.$d.json"; exit 0; fi
+    printf '{"ok":true,"result":{"state":"released"}}\n' ;;
   "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
   "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; python3 - "$FAKE_DIR/terminals.json" <<'LIST'
@@ -300,5 +302,17 @@ echo dispatched > "$tmp/status.live-release"
 rm -f "$tmp/state/released/live-release"
 "$here/worker-pane-close.sh" --release live-release > "$tmp/live-release.out" 2>&1; rc=$?
 check "live --release refuses with actionable message and no marker" "$([ "$rc" != 0 ] && grep -q 'worker-stop explicitly' "$tmp/live-release.out" && [ ! -e "$tmp/state/released/live-release" ]; echo $?)"
+
+# #442-shaped exit-0 retained: no marker, no terminal close
+cat > "$tmp/release.ctx442.json" <<'JSON'
+{"ok":true,"result":{"dispatchId":"ctx_f3d582b77bfc","state":"retained","reason":"user_takeover","processAction":"none","archive":null}}
+JSON
+echo completed > "$tmp/status.ctx442"
+echo term_442 > "$tmp/state/ctx442"
+echo '{"result":{"terminals":[{"handle":"term_442","worktreePath":"'"$tmp"'/linked"}]}}' > "$tmp/terminals.json"
+rm -f "$tmp/closes.log"
+"$here/worker-pane-close.sh" --release ctx442 > "$tmp/retained442.out" 2>&1; rc=$?
+check "retained --release exits 0 without closing terminals" "$([ "$rc" = 0 ] && [ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/ctx442" ] && [ ! -e "$tmp/state/released/ctx442" ]; echo $?)"
+check "retained --release reports reason" "$(grep -q 'user_takeover' "$tmp/retained442.out"; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
