@@ -103,12 +103,34 @@ NATIVERM
     exit "$rc" ;;
   "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
-  "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; python3 - "$FAKE_DIR/terminals.json" <<'LIST'
-import json,sys,os
-try: r=json.load(open(sys.argv[1]))
-except Exception: r={"result":{"terminals":[]}}
-r['result']['terminals'].append({'handle':'term_coordinator','worktreePath':os.getcwd(),'worktreeId':'repo1::'+os.getcwd()})
-print(json.dumps(r))
+  "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; FAKE_DIR="$FAKE_DIR" python3 <<'LIST'
+import json, os
+path = os.path.join(os.environ["FAKE_DIR"], "terminals.json")
+try:
+    doc = json.load(open(path))
+except Exception:
+    doc = {}
+if doc.get("ok") is True:
+    payload = doc
+elif isinstance(doc.get("result"), dict):
+    payload = {"ok": True, "result": doc["result"]}
+else:
+    payload = {"ok": True, "result": {"terminals": doc.get("terminals", []) if isinstance(doc, dict) else []}}
+res = payload.setdefault("result", {})
+if not isinstance(res.get("terminals"), list):
+    res["terminals"] = []
+res.setdefault("truncated", False)
+scope = res.get("hostScope")
+if not isinstance(scope, dict):
+    res["hostScope"] = {"hostIds": ["local"], "omittedHostIds": []}
+else:
+    scope.setdefault("hostIds", ["local"])
+    scope.setdefault("omittedHostIds", [])
+if os.environ.get("FAKE_APPEND_COORDINATOR", "1") != "0":
+    terms = res["terminals"]
+    if not any(t.get("handle") == "term_coordinator" for t in terms):
+        terms.append({"handle": "term_coordinator", "worktreePath": os.getcwd(), "worktreeId": "repo1::" + os.getcwd()})
+print(json.dumps(payload))
 LIST
     ;;
   "terminal split"*) if [ -f "$FAKE_DIR/split.json" ]; then
@@ -482,5 +504,46 @@ echo term_bad > "$tmp/state/dbadok"
 rm -f "$tmp/state/released/dbadok"
 "$here/worker-pane-close.sh" --release dbadok > "$tmp/dbadok.out" 2>&1; rc=$?
 check "nonboolean ok on --release fails closed" "$([ "$rc" != 0 ] && no_generic_close; echo $?)"
+
+# Host-scope completeness: incomplete native inventory must not claim verified close.
+echo completed > "$tmp/status.dscope"
+echo term_remote_scope > "$tmp/state/dscope"
+cat > "$tmp/terminals.json" <<'JSON'
+{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":["niteking"]}}}
+JSON
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dscope > "$tmp/dscope.out" 2>&1
+check "omitted host ids retain pane state" "$([ -e "$tmp/state/dscope" ]; echo $?)"
+check "omitted host ids do not print verified closed" "$(grep -q '^closed dscope' "$tmp/dscope.out"; rc=$?; [ "$rc" != 0 ]; echo $?)"
+
+echo completed > "$tmp/status.dtrunc"
+echo term_trunc > "$tmp/state/dtrunc"
+cat > "$tmp/terminals.json" <<'JSON'
+{"ok":true,"result":{"terminals":[],"truncated":true,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}
+JSON
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dtrunc > "$tmp/dtrunc.out" 2>&1
+check "truncated terminal list retains state" "$([ -e "$tmp/state/dtrunc" ]; echo $?)"
+check "truncated list does not print verified closed" "$(! grep -q '^closed dtrunc' "$tmp/dtrunc.out"; echo $?)"
+
+echo completed > "$tmp/status.dbadlist"
+echo term_badlist > "$tmp/state/dbadlist"
+echo '{"ok":false,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}' > "$tmp/terminals.json"
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dbadlist > "$tmp/dbadlist.out" 2>&1
+check "ok false terminal list retains state" "$([ -e "$tmp/state/dbadlist" ]; echo $?)"
+
+echo completed > "$tmp/status.dnoscope"
+echo term_noscope > "$tmp/state/dnoscope"
+echo '{"ok":true,"result":{"terminals":[],"truncated":false}}' > "$tmp/terminals.json"
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dnoscope > "$tmp/dnoscope.out" 2>&1
+check "missing hostScope retains state" "$([ -e "$tmp/state/dnoscope" ]; echo $?)"
+check "missing hostScope does not print verified closed" "$(! grep -q '^closed dnoscope' "$tmp/dnoscope.out"; echo $?)"
+
+echo completed > "$tmp/status.dinv"
+echo term_inv > "$tmp/state/dinv"
+cat > "$tmp/terminals.json" <<'JSON'
+{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}
+JSON
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dinv > "$tmp/dinv.out" 2>&1
+check "complete inventory verifies absence and clears state" "$([ ! -e "$tmp/state/dinv" ]; echo $?)"
+check "complete inventory prints verified closed" "$(grep -q '^closed dinv (1)$' "$tmp/dinv.out"; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
