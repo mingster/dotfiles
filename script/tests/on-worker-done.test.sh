@@ -12,7 +12,10 @@ chmod +x "$tmp/gate"
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/orca" <<'ORCA'
 #!/usr/bin/env bash
-echo "$*" >> "$FAKE_DIR/orca.log"
+case "$*" in
+  "environment list --json") printf '%s\n' "${FAKE_ORCA_ENVS:-{\"ok\":true,\"result\":{\"environments\":[]}}}" ;;
+  *) echo "$*" >> "$FAKE_DIR/orca.log" ;;
+esac
 exit 0
 ORCA
 chmod +x "$tmp/bin/orca"
@@ -22,8 +25,9 @@ import json, os
 print(json.dumps({"comments": [{"body": "Checks: PASS head=" + os.environ["QA_HEAD"] + "\nCommand: docs-check\nResult: exit 0\n"}]}))
 GH
 chmod +x "$tmp/bin/gh"
-export FAKE_DIR="$tmp" ON_WORKER_DONE_USAGE_GATE="$tmp/gate" PATH="$tmp/bin:$PATH"
+export FAKE_DIR="$tmp" ON_WORKER_DONE_USAGE_GATE="$tmp/gate" ORCA_CLI_COMMAND="$tmp/bin/orca" PATH="$tmp/bin:$PATH"
 : > "$tmp/orca.log"
+LOCAL_HOST=$(hostname -s 2>/dev/null || echo local)
 head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 pass=0; fail=0
@@ -34,6 +38,76 @@ capture_brief() {
   run_flags "$@" >/dev/null
   ls -t "${TMPDIR:-/tmp}"/reviewer-brief.* 2>/dev/null | head -1
 }
+setup_local_fleet() {
+  printf '%s\n' "{\"host_caps\":{\"$LOCAL_HOST\":4},\"runs\":[]}" > "$tmp/fleet-local.json"
+  cat > "$tmp/fleet-watch-local" <<FW
+#!/usr/bin/env bash
+[ "\$1" = "--config" ] && shift 2
+[ "\$1" = "--admit" ] || exit 2
+[ "\$2" = "$LOCAL_HOST" ] || exit 2
+printf '%s\n' '{"admitted":true,"host":"$LOCAL_HOST","cap":4,"occupied":0,"reason":"admitted"}'
+exit 0
+FW
+  chmod +x "$tmp/fleet-watch-local"
+  export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-local.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch-local"
+  export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[]}}'
+}
+
+: > "$tmp/orca.log"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: missing fleet config refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config' "$tmp/err"; echo $?)"
+check "fail-closed: missing fleet config prints no worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
+
+ON_WORKER_DONE_FLEET_CONFIG="$tmp/does-not-exist.json" run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: nonexistent fleet config path refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config' "$tmp/err"; echo $?)"
+unset ON_WORKER_DONE_FLEET_CONFIG
+
+printf '%s\n' '{not json' > "$tmp/fleet-bad.json"
+ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-bad.json" run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: invalid fleet config refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+unset ON_WORKER_DONE_FLEET_CONFIG
+
+setup_local_fleet
+cat > "$tmp/fleet-watch-local" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+printf '%s\n' '{"admitted":true,"host":"bad","cap":2,"occupied":0}'
+exit 1
+FW
+chmod +x "$tmp/fleet-watch-local"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: admit helper nonzero refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+check "fail-closed: admit helper nonzero skips worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
+
+setup_local_fleet
+cat > "$tmp/fleet-watch-local" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+echo 'not-json'
+exit 0
+FW
+chmod +x "$tmp/fleet-watch-local"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: malformed admit receipt refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+
+setup_local_fleet
+printf '%s\n' '{"host_caps":{"remote-only":2},"runs":[]}' > "$tmp/fleet-remote.json"
+cat > "$tmp/fleet-watch-remote" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+printf '%s\n' '{"admitted":true,"host":"remote-only","cap":2,"occupied":0,"reason":"admitted"}'
+exit 0
+FW
+chmod +x "$tmp/fleet-watch-remote"
+export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-remote.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch-remote"
+export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[]}}'
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: admitted host without saved Orca environment refuses" "$([ "$rc" -ne 0 ] && grep -q 'saved Orca environment' "$tmp/err"; echo $?)"
+
+setup_local_fleet
 
 out=$(run); rc=$?
 check "gate ok: exit 0" "$rc"
@@ -124,11 +198,13 @@ esac
 FW
 chmod +x "$tmp/fleet-watch"
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"env-fleet-b","name":"fleet-b"}]}}'
 out=$(run_flags 2>"$tmp/err"); rc=$?
 check "host pick under cap: exit 0" "$rc"
-check "host pick adds --on for admitted host" "$(echo "$out" | grep -q -- '--on fleet-b'; echo $?)"
-unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH
+check "host pick maps --on to saved Orca environment id" "$(echo "$out" | grep -q -- '--on env-fleet-b'; echo $?)"
+unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH FAKE_ORCA_ENVS
 
+setup_local_fleet
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
 cat > "$tmp/fleet-watch" <<'FW'
 #!/usr/bin/env bash
