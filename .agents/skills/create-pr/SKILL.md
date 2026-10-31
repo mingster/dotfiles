@@ -25,7 +25,7 @@ Include all work belonging to the PR, including the changelog and required Recen
 
 ## Publish
 
-Only the authorized publisher performs this section. In an agent team, use the push procedure in `.claude/model-routing.md`.
+Only the authorized publisher performs this section. In an agent team, run `~/dotfiles/script/coordinator-publication.sh --repo owner/name --branch <branch> --body-file <path>` per `.claude/model-routing.md`.
 
 Prepare the title and body from the entire branch change. State the concrete outcome, link the issue or spec, and include scope, risk and validation evidence needed by the repository's review checklist. Use `Fixes #<number>` when appropriate. The owner's body rules prohibit a Test plan section, tool credit and Co-Authored-By suggestions, including on later edits.
 
