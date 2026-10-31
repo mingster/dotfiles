@@ -7,12 +7,6 @@ if [ -f ~/.bash_aliases ]; then
     source ~/.bash_aliases
 fi
 
-if [[ "$OSTYPE" == darwin* ]]; then
-  alias ls='ls -lagG'
-else
-  alias ls='ls -lag --color=auto'
-fi
-
 if [ -f ~/.functions ]; then
     source ~/.functions
 fi
@@ -64,6 +58,12 @@ plugins=(
 )
 
 [ -f "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"
+
+if [[ "$OSTYPE" == darwin* ]]; then
+  alias ls='ls -lagG'
+else
+  alias ls='ls -lag --color=auto'
+fi
 
 
 # bun completions
