@@ -52,6 +52,13 @@ elif a[:2]==['orchestration','run-list']:
   pages=data[host].get('run_pages', {})
   if cursor not in pages: print('{"ok":false}'); sys.exit(1)
   result=pages[cursor]
+elif a[:2]==['terminal','list']:
+ host=a[a.index('--environment')+1].removesuffix('-saved') if '--environment' in a else 'local'
+ if host not in data: print('{\"ok\":false}'); sys.exit(1)
+ rows=[w for p in data[host].get('workers_by_run', {}).values() for w in (p.get('workers') or [])]
+ rows+=(data[host]['workers'] or {}).get('workers') or []
+ hs=[(w.get('resource') or {}).get('terminalHandle') or w.get('agentTerminalHandle') for w in rows if not w.get('terminalClosed')]
+ result={'terminals':[{'handle':h,'connected':True} for h in hs if h]}
 elif a[:2]==['orchestration','worker-list']:
  host=a[a.index('--environment')+1].removesuffix('-saved') if '--environment' in a else 'local'
  if host not in data or '--run' not in a: print('{"ok":false}'); sys.exit(1)

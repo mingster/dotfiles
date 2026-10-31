@@ -45,6 +45,10 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -64,6 +68,10 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -130,6 +138,10 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },

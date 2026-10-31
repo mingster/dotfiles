@@ -160,7 +160,7 @@ git -C "$tmp/audit-project" remote add origin https://github.com/mingster/synthe
 # A 1-word budget guarantees a finding independently of canonical role sizes.
 out=$(ROLE_WORD_BUDGET=1 bash "$here/agent-team.sh" project "$tmp/audit-project" 2>&1); rc=$?
 { [ "$rc" = 1 ] && grep -qE '[0-9]+ words \(budget 1\)' <<< "$out" && grep -q 'Owner or architect' <<< "$out"; } && check "audit findings fail project setup while still printing owner facts" ok || { check "audit findings fail project setup while still printing owner facts" bad; echo "exit=$rc"; tail -6 <<< "$out"; }
-mkdir -p "$tmp/legacy-home" "$tmp/legacy-config"
+mkdir -p "$tmp/legacy-home/.orca" "$tmp/legacy-config"
 echo '{"legacy":true}' > "$tmp/legacy-config/settings.json"
 ln -s "$tmp/legacy-config" "$tmp/legacy-home/.claude"
 out=$(HOME="$tmp/legacy-home" DOTFILES="$tmp/machine" bash "$here/agent-team.sh" machine 2>&1); rc=$?

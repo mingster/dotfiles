@@ -47,7 +47,7 @@ class QaAdmission(unittest.TestCase):
         self.success()
 
     def test_requested_models_are_not_hardcoded_by_host(self):
-        for self.provider, self.model in [('codex', 'gpt-6.1-sol'), ('cursor', 'composer-2.5'),
+        for self.provider, self.model in [('antigravity', 'gemini-4-argon-high'), ('cursor', 'composer-2.5'),
                                           ('antigravity', 'gemini-next'), ('claude', 'claude-sonnet')]:
             with self.subTest(provider=self.provider): self.success()
 
@@ -161,6 +161,26 @@ class QaAdmission(unittest.TestCase):
         worker.update(resource=None, terminalState='retained', agentTerminalHandle='term-native')
         data = self.success()
         self.assertEqual(data['receipts'][0]['retained_count'], 1)
+
+    def test_settled_historical_workers_with_closed_terminals_do_not_count(self):
+        cases = [('unknown', None), ('completed', 'unknown'), ('completed', None),
+                 ('completed', 'retained'), ('failed', 'not_requested'), ('stopped', 'not_requested')]
+        for status, release in cases:
+            with self.subTest(status=status, release=release):
+                self.f.occupy('alpha', 2, 'completed' if status == 'unknown' else status)
+                for w in self.f.data['alpha']['workers']['workers']:
+                    w['terminalClosed'] = True
+                    w['resource'] = None if release is None else dict(w['resource'], releaseState=release)
+                    if release == 'unknown': w['terminalState'] = 'release_unknown'
+                data = self.success()
+                self.assertEqual(data['receipts'][0]['occupied'], 0)
+
+    def test_settled_worker_with_live_terminal_still_retained_or_refused(self):
+        self.f.occupy('alpha', 1, 'completed')
+        self.f.data['alpha']['workers']['workers'][0]['resource']['releaseState'] = 'retained'
+        self.assertEqual(self.success()['receipts'][0]['retained_count'], 1)
+        self.f.data['alpha']['workers']['workers'][0]['resource']['releaseState'] = 'release_unknown'
+        self.refuse('release_unknown')
 
     def test_malformed_nested_native_json_fails_without_traceback(self):
         self.f.data['alpha']['repos'][0]['gitRemoteIdentity'] = []

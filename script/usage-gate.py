@@ -594,22 +594,29 @@ def role_chain(role):
     path = os.environ.get("USAGE_GATE_PRESETS", HOME + "/.orca/presets.json")
     with open(path) as f:
         presets = json.load(f)
-    entry = presets.get("roles", {}).get(role, {})
+    roles = presets.get("roles", {})
+    if role == "reviewer" and "reviewer" not in roles:
+        role = "qa-sdet"
+    entry = roles.get(role, {})
     if "chain" in entry:
         return entry["chain"], entry.get("pin", False)
     # Unknown roles use workhorse models from this file, never hardcoded ids.
     tier = entry.get("tier", "workhorse")
-    models = dict(presets.get("tiers", {}).get(tier, {}))
+    models = {p: [m] for p, m in presets.get("tiers", {}).get(tier, {}).items()}
+    seen = set()
     for r in presets.get("roles", {}).values():
         if r.get("tier") == tier:
             for candidate in r.get("chain", []):
-                models.setdefault(candidate["provider"], candidate)
+                key = (candidate["provider"], family(candidate))
+                if key not in seen:
+                    seen.add(key)
+                    models.setdefault(candidate["provider"], []).append(candidate)
     chain = []
     for provider in presets.get("default_chain", []):
         if isinstance(provider, dict):
             chain.append(provider)
         elif provider in models:
-            chain.append({**models[provider], "provider": provider})
+            chain.extend({**m, "provider": provider} for m in models[provider])
         else:
             raise ValueError(f"no {tier} model for {provider} in presets")
     return chain, entry.get("pin", False)

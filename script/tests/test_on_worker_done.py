@@ -14,14 +14,14 @@ SCRIPT = Path(__file__).resolve().parents[1]
 
 class ReviewerDispatch(unittest.TestCase):
     def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=(), local=False,
-                 configuration='explicit'):
+                 configuration='explicit', author_model=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
             presets.write_text(json.dumps({"roles": {"reviewer": {"chain": [
                 {"provider": "cursor", "model": "gpt-test"},
                 {"provider": "claude", "model": "sonnet"},
-                {"provider": "antigravity", "model": "gemini-test"},
+                {"provider": "antigravity", "model": "gemini-4-argon-high"},
             ]}}}))
             gate = root / "gate"
             gate.write_text(f'''#!/usr/bin/env python3
@@ -69,7 +69,9 @@ sys.exit(ug.main())
                     config.write_text(json.dumps(native.config if configuration == 'default' else {}))
             result = subprocess.run([
                 "bash", str(SCRIPT / "on-worker-done.sh"), "--repo", "o/n",
-                "--pr", "42", "--head", "a" * 40, "--author-family", author,
+                "--pr", "42", "--head", "a" * 40,
+                *(["--author-provider", author, "--author-model", author_model] if author_model
+                  else ["--author-family", author]),
                 "--worktree", tmp, "--run", "run_test",
             ], env=env, text=True, capture_output=True, timeout=30)
             if result.returncode != 0:
@@ -84,7 +86,7 @@ sys.exit(ug.main())
                 self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
                 self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
                 self.assertEqual(args[args.index('--model')+1],
-                                 {'cursor': 'gemini-test', 'claude': 'gpt-test',
+                                 {'cursor': 'gemini-4-argon-high', 'claude': 'gpt-test',
                                   'antigravity': 'gpt-test', 'gemini': 'gpt-test'}[author])
 
     def test_unconfigured_installed_invocation_refuses_without_launch(self):
@@ -107,7 +109,7 @@ sys.exit(ug.main())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[args.index('--on')+1], 'beta-saved')
         self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:beta-instance')
-        self.assertEqual(args[args.index('--model')+1], 'gemini-test')
+        self.assertEqual(args[args.index('--model')+1], 'gemini-4-argon-high')
 
     def test_all_full_starts_nothing_and_reports_counts(self):
         result, args = self.dispatch('claude', full_hosts=('alpha', 'beta'))
@@ -210,6 +212,13 @@ sys.exit(ug.main())
         for author in ("claude", "gemini"):
             with self.subTest(author=author):
                 self.assert_reviewer(author, "cursor")
+
+    def test_antigravity_claude_author_with_claude_blocked_picks_gemini_on_antigravity(self):
+        result, args = self.dispatch("antigravity", only_author_available=True,
+                                     author_model="claude-sonnet-5-5-medium")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index("--agent") + 1], "antigravity")
+        self.assertEqual(args[args.index("--model") + 1], "gemini-4-argon-high")
 
     def test_only_author_available_starts_nothing(self):
         for author in ("claude", "cursor", "gemini", "antigravity"):

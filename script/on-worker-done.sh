@@ -62,7 +62,7 @@ def get_family(p, m):
 
 fam = get_family(provider, model)
 avoid_fam = fam if fam in ("claude", "gpt", "gemini") else "none"
-avoid_prov = provider if provider in ("claude", "cursor", "antigravity") else "none"
+avoid_prov = provider if provider == "claude" else "none"
 print(f"{provider or 'unknown'} {fam} {avoid_fam} {avoid_prov}")
 PY
 )
@@ -120,7 +120,7 @@ def get_family(p, m):
 
 ver_fam = get_family(ver_prov, ver_model)
 ok = "1"
-if ver_fam == "unknown" or ver_fam == author_fam or ver_prov == author_prov:
+if ver_fam == "unknown" or ver_fam == author_fam:
     ok = "0"
 print(f"{ver_prov} {ver_fam} {ok}")
 PY

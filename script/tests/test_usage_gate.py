@@ -130,6 +130,18 @@ class Antigravity(unittest.TestCase):
         self.assertEqual(result["selected"]["model"], "gemini-flash")
         self.assertEqual([c["verdict"] for c in result["candidates"]], ["blocked", "allowed"])
 
+    def test_reviewer_falls_back_to_qa_sdet_chain_with_gemini(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = t + "/presets.json"
+            with open(path, "w") as f:
+                json.dump(json.load(open(os.path.join(os.path.dirname(__file__), "../../.orca/presets.json")))
+                          | {"roles": {k: v for k, v in json.load(open(os.path.join(
+                              os.path.dirname(__file__), "../../.orca/presets.json")))["roles"].items()
+                              if k != "reviewer"}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}):
+                chain, _ = ug.role_chain("reviewer")
+        self.assertIn({"provider": "antigravity", "model": "gemini-4-argon-high"}, chain)
+
     def test_show_lists_three_pools_with_local_resets(self):
         pools = {"claude": {"pct": 50, "resets_at": FUT, "observed_at": NOW},
                  "gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW},
