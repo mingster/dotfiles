@@ -167,8 +167,35 @@ try:
     envs = json.loads(proc.stdout).get("result", {}).get("environments") or []
 except (ValueError, TypeError, AttributeError):
     refuse("invalid Orca environment list")
-by_name = {e.get("name"): e for e in envs if isinstance(e, dict) and e.get("name")}
-by_id = {e.get("id"): e for e in envs if isinstance(e, dict) and e.get("id")}
+by_name = {}
+for entry in envs:
+    if not isinstance(entry, dict):
+        refuse("invalid Orca environment entry")
+    name, eid = entry.get("name"), entry.get("id")
+    if not name or not eid:
+        refuse("incomplete Orca environment entry")
+    if name in by_name:
+        refuse("ambiguous Orca environment name %s" % name)
+    by_name[name] = entry
+
+def validate_admit_receipt(receipt, requested_host, caps):
+    if not isinstance(receipt, dict):
+        return "%s: malformed admit receipt" % requested_host
+    if receipt.get("host") != requested_host:
+        return "%s: admit host mismatch" % requested_host
+    if receipt.get("admitted") is not True:
+        return receipt.get("reason") or ("%s: not admitted" % requested_host)
+    expected_cap = caps.get(requested_host)
+    if type(expected_cap) is not int or expected_cap <= 0:
+        return "invalid cap in fleet config for %s" % requested_host
+    cap, occupied = receipt.get("cap"), receipt.get("occupied")
+    if type(cap) is not int or type(occupied) is not int:
+        return "%s: invalid cap or occupied in admit receipt" % requested_host
+    if cap != expected_cap:
+        return "%s: admit cap mismatch" % requested_host
+    if occupied < 0 or occupied >= cap:
+        return "%s: admit occupied out of range" % requested_host
+    return None
 
 picked = None
 reasons = []
@@ -188,8 +215,9 @@ for host in host_caps:
     except (ValueError, TypeError):
         reasons.append("%s: malformed admit receipt" % host)
         continue
-    if not receipt.get("admitted"):
-        reasons.append(receipt.get("reason") or ("%s: not admitted" % host))
+    err = validate_admit_receipt(receipt, host, host_caps)
+    if err:
+        reasons.append(err)
         continue
     picked = host
     break
@@ -197,12 +225,10 @@ for host in host_caps:
 if not picked:
     refuse("no host under cap (%s)" % ("; ".join(reasons) or "inventory unavailable"))
 
-if picked in by_name:
-    print(by_name[picked]["id"])
-elif picked in by_id:
-    print(picked)
-elif picked == local_host:
+if picked == local_host:
     print("LOCAL")
+elif picked in by_name:
+    print(by_name[picked]["id"])
 else:
     refuse("no saved Orca environment for host %s" % picked)
 PY
@@ -252,7 +278,7 @@ if exact:
 ' "$head" || exit 1
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
-gate_footer='Run scoped tests through ~/dotfiles/script/heavy-gate.sh and wait for gate admission before treating a failure as real.
+gate_footer='Run scoped tests through ~/dotfiles/script/heavy-gate.sh. Waiting on the gate means those checks were not executed yet; an observed failure still counts as a failure.
 Read the PR Checks receipt for this head last; pending is not PASS and never substitutes for executed tests.'
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
