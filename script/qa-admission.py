@@ -12,7 +12,6 @@ import math
 import os
 import re
 import subprocess
-import sys
 from datetime import datetime, timezone
 
 TOKEN = re.compile(r'[A-Za-z0-9_-]+')
@@ -74,7 +73,7 @@ def load_policy(args, config):
     if not args.policy:
         return None
     policy = read_json(args.policy, 'policy')
-    if policy.get('version') != 1:
+    if type(policy.get('version')) is not int or policy['version'] != 1:
         refuse('policy: version mismatch')
     policy_window(policy)
     for host, route in obj(policy.get('hosts'), 'policy hosts').items():
@@ -126,16 +125,6 @@ def environments(orca):
     return by_name
 
 
-def inventory(result, key, host):
-    label = key + ' inventory'
-    scope = obj(result.get('hostScope'), label + ' hostScope')
-    # Multiple execution hosts cannot be mapped to this saved physical host.
-    if (result.get('truncated') is not False or scope.get('hostIds') != [host] or
-            scope.get('omittedHostIds') != [] or not isinstance(result.get(key), list)):
-        refuse(label + ': incomplete or UNKNOWN host coverage')
-    return result[key]
-
-
 def workspace(rows, review):
     matches = [row for row in rows if obj(row, 'worktree inventory').get('path') == review['worktree_path']]
     if len(matches) != 1:
@@ -180,13 +169,14 @@ def worker_counts(orca, flags, host_id):
             if host != host_id:
                 continue
             status = row.get('dispatchStatus')
-            resource = obj(row.get('resource'), 'worker resource')
-            release = resource.get('releaseState')
+            raw_resource = row.get('resource')
+            resource = obj(raw_resource, 'worker resource') if raw_resource is not None else {}
+            release = resource.get('releaseState') if raw_resource is not None else row.get('terminalState')
             if status == 'release_unknown' or release == 'release_unknown' or row.get('terminalState') == 'release_unknown':
                 refuse('worker inventory: release_unknown')
             if status not in ('running', 'dispatched', 'pending', 'active', 'completed', 'failed', 'cancelled', 'released'):
                 refuse('worker inventory: unknown worker status')
-            if release not in ('not_requested', 'requested', 'releasing', 'failed', 'released', 'completed'):
+            if release not in ('not_requested', 'requested', 'releasing', 'failed', 'released', 'completed', 'retained', 'reclaimable'):
                 refuse('worker inventory: unknown release state')
             if release in ('released', 'completed'):
                 if status in ('running', 'dispatched', 'pending', 'active'):
@@ -194,26 +184,23 @@ def worker_counts(orca, flags, host_id):
                 continue
             # A native terminal handle identifies a retained physical resource.
             # Workers without terminals still occupy their own Dispatch seat.
-            seat = resource.get('terminalHandle') or dispatch
+            seat = resource.get('terminalHandle') or row.get('agentTerminalHandle') or resource.get('id') or dispatch
             string(seat, 'worker resource identity')
             category = 'live' if status in ('running', 'dispatched', 'pending', 'active') else 'retained'
-            if seat in seats:
-                if seats[seat] != category:
-                    refuse('worker inventory: conflicting resource observations')
-                continue
-            seats[seat] = category
-            live += category == 'live'
-            retained += category == 'retained'
+            if seat not in seats or category == 'live':
+                seats[seat] = category
         if not page['hasMore']:
             break
         cursor = string(page.get('nextCursor'), 'worker page cursor')
         if cursor in cursors:
             refuse('worker inventory: repeated page cursor')
         cursors.add(cursor)
-    return {'occupied': live + retained, 'live_count': live, 'retained_count': retained}
+    live = sum(category == 'live' for category in seats.values())
+    retained = len(seats) - live
+    return {'occupied': len(seats), 'live_count': live, 'retained_count': retained}
 
 
-def load_observations(path):
+def load_observations(path, hosts):
     raw = os.environ.get('QA_ADMISSION_LOAD_OBS')
     if raw is not None:
         try:
@@ -231,10 +218,10 @@ def load_observations(path):
     observations = {}
     for line in proc.stdout.splitlines():
         tokens = line.split()
-        if not tokens:
+        if not tokens or tokens[0] not in hosts:
             continue
         host = tokens[0]
-        match = re.search(r'\bload=([0-9]+(?:\.[0-9]+)?)\s', line)
+        match = re.search(r'\bload=([0-9]+(?:\.[0-9]+)?)(?:\s|$)', line)
         if host in observations or not match:
             refuse('load observations: duplicate or unreachable host')
         cores = re.search(r'\bcores=([0-9]+)\b', line)
@@ -261,8 +248,11 @@ def discover_workspace(orca, flags, args):
     repos = orca_result(orca, 'repo', 'list', *flags).get('repos')
     if not isinstance(repos, list):
         refuse('repo inventory missing')
-    matches = [r for r in repos if obj(r, 'repo inventory').get('gitRemoteIdentity', {}).get('canonicalKey') ==
-               'github.com/' + project.removeprefix('github:')]
+    matches = []
+    for row in repos:
+        remote = obj(row, 'repo inventory').get('gitRemoteIdentity')
+        if remote is not None and obj(remote, 'repo inventory remote identity').get('canonicalKey') == 'github.com/' + project.removeprefix('github:'):
+            matches.append(row)
     if len(matches) != 1:
         return None
     repo_id = string(matches[0].get('id'), 'repo id')
@@ -271,7 +261,9 @@ def discover_workspace(orca, flags, args):
     result = orca_result(orca, 'worktree', 'list', *flags, '--repo', 'id:'+repo_id, '--limit', '100')
     scope = obj(result.get('hostScope'), 'worktree inventory host scope')
     hosts = scope.get('hostIds')
-    if not isinstance(hosts, list) or not hosts or len(hosts) != len(set(hosts)):
+    if (not isinstance(hosts, list) or not hosts or
+            any(not isinstance(h, str) or not TOKEN.fullmatch(h) for h in hosts) or
+            len(hosts) != len(set(hosts))):
         refuse('worktree inventory: unknown hosts')
     if result.get('truncated') is not False or scope.get('omittedHostIds') != [] or not isinstance(result.get('worktrees'), list):
         refuse('worktree inventory: incomplete coverage')
@@ -306,8 +298,12 @@ def admit(args):
         string(host, 'configured host')
         if type(cap) is not int or cap <= 0:
             refuse('fleet config: invalid cap for ' + host)
+    ceilings = obj(config.get('host_load_ceilings', {}), 'fleet config load ceilings')
+    for host, value in ceilings.items():
+        if host not in caps or finite(value, 'load ceiling '+host) <= 0:
+            refuse('fleet config: invalid load ceiling')
     policy = load_policy(args, config)
-    observations = load_observations(args.fleet_load)
+    observations = load_observations(args.fleet_load, caps)
     validate_loads(observations, config, policy)
     orca = os.environ.get('ORCA_CLI_COMMAND', 'orca')
     saved = environments(orca)

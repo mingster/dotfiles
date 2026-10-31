@@ -13,7 +13,7 @@ SCRIPT = Path(__file__).resolve().parents[1]
 
 
 class ReviewerDispatch(unittest.TestCase):
-    def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=()):
+    def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=(), local=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
@@ -44,6 +44,10 @@ sys.exit(ug.main())
             native = NativeFixture(root, path=tmp)
             native.occupy('alpha', 1)
             for h in full_hosts: native.occupy(h, 2)
+            if local:
+                native.config['local_host'] = 'alpha'
+                native.data['environments'] = [r for r in native.data['environments'] if r['name'] != 'alpha']
+                native.data['local'] = native.data.pop('alpha')
             gh = root / "gh"
             gh.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['TEST_COMMENTS'])\n")
             gh.chmod(0o755)
@@ -85,6 +89,12 @@ sys.exit(ug.main())
         self.assertIsNone(args)
         self.assertIn('alpha 2/2', result.stderr)
         self.assertIn('beta 2/2', result.stderr)
+
+    def test_local_launch_pins_identity_without_saved_server_guess(self):
+        result, args = self.dispatch('claude', local=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('--on', args)
+        self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
 
     def test_zero_executed_refuses_start(self):
         receipt = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 0\nLoad errors: 0\n"
