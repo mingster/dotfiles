@@ -111,10 +111,14 @@ if doc.get("ok") is not True:
     print("%s\t%s\t" % (code, rc))
     sys.exit(0)
 result = doc.get("result") or {}
-rid = result.get("dispatchId") or ""
-if rid and dispatch_id and rid != dispatch_id:
-    print("id_mismatch\t%s\t" % rc)
-    sys.exit(0)
+rid = result.get("dispatchId")
+if dispatch_id:
+    if rid is None or rid == "":
+        print("missing\t%s\t" % rc)
+        sys.exit(0)
+    if rid != dispatch_id:
+        print("id_mismatch\t%s\t" % rc)
+        sys.exit(0)
 state = result.get("state") or "missing"
 action = result.get("processAction") or ""
 if state in ("released", "already_released") and rc != 0:
@@ -137,12 +141,6 @@ try:
     assert isinstance(terms,list)
     sys.exit(0 if all(t["handle"] != sys.argv[1] for t in terms) else 1)
 except Exception: sys.exit(1)' "$h"
-}
-close_handle_once() {
-  local h="$1" d="$2"
-  close_allowed "$d" "$h" || return 1
-  close_rpc terminal close --terminal "$h" >/dev/null 2>&1 || true
-  terminal_absent "$h"
 }
 native_release_for_close() {
   local d=$1 release_out="" release_rc=0 parsed rel_state rel_rc rel_action
@@ -203,12 +201,11 @@ close_one() {
   if [ "${RELEASE_PARSE_ACTION:-}" = "none" ]; then
     return 0
   fi
-  # Persist newly discovered leftovers too, so a later wake can retry after native release.
+  # Native worker-release is the only lifecycle mutation; verify disappearance without generic close.
   mkdir -p "$state"
-  printf '%s\n' "${pending[@]}" > "$f"
   handles=()
   for h in "${pending[@]}"; do
-    close_handle_once "$h" "$d" || handles+=("$h")
+    terminal_absent "$h" || handles+=("$h")
   done
   if [ "${#handles[@]}" -gt 0 ]; then
     printf '%s\n' "${handles[@]}" > "$f"

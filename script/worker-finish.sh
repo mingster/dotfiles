@@ -109,10 +109,14 @@ if doc.get("ok") is not True:
     print(code, rc)
     sys.exit(0)
 result = doc.get("result") or {}
-rid = result.get("dispatchId") or ""
-if rid and dispatch_id and rid != dispatch_id:
-    print("id_mismatch", rc)
-    sys.exit(0)
+rid = result.get("dispatchId")
+if dispatch_id:
+    if rid is None or rid == "":
+        print("missing", rc)
+        sys.exit(0)
+    if rid != dispatch_id:
+        print("id_mismatch", rc)
+        sys.exit(0)
 state = result.get("state") or "missing"
 if state in ("released", "already_released") and rc != 0:
     print("nonzero_success", rc)
@@ -163,10 +167,19 @@ if [ "$retained" -ne 0 ] || [ "$pending" -ne 0 ]; then
   exit 0
 fi
 
-if [ "$dry" != 1 ] && { [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] \
-  || git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; }; then
-  echo "worker-finish: dirty or unmerged worktree kept at $wt"
-  exit 0
+if [ "$dry" != 1 ]; then
+  wt_porcelain=""
+  if ! wt_porcelain=$(git -C "$wt" status --porcelain 2>&1); then
+    echo "worker-finish: cannot inspect worktree status; worktree kept at $wt" >&2
+    exit 0
+  fi
+  if [ -n "$wt_porcelain" ] \
+    || git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
+    || [ -n "$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null || true)" ] \
+    || [ -n "$(git -C "$wt" ls-files -u 2>/dev/null || true)" ]; then
+    echo "worker-finish: dirty or unmerged worktree kept at $wt"
+    exit 0
+  fi
 fi
 
 if [ "$dry" = 1 ]; then

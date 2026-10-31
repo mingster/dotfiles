@@ -234,5 +234,34 @@ release_fixture d19 '{"ok":true,"result":{"dispatchId":"d19","state":"released"}
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w19" --dispatch d19
 [ -f "$WORKER_FINISH_ARCHIVE_DIR/release-d19.json" ] && ok || bad "archive stores release json"
 
+# 20. missing dispatch id in release response fails closed
+newwt w20; reset
+release_fixture d20 '{"ok":true,"result":{"state":"released","processAction":"closed_agent_terminal"}}' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w20" --dispatch d20
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w20" ] && ok || bad "missing dispatch id keeps worktree"
+
+# 21. git status inspection failure keeps worktree without removal
+newwt w21; reset; default_released d21
+git -C "$tmp/w21" commit -q --allow-empty -m ensure-index 2>/dev/null || true
+if [ -f "$tmp/w21/.git/index" ]; then
+  chmod 000 "$tmp/w21/.git/index"
+  HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w21" --dispatch d21
+  chmod 644 "$tmp/w21/.git/index" 2>/dev/null || true
+  [ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w21" ] && ok || bad "status inspection failure keeps worktree"
+  grep -q "cannot inspect worktree status" "$tmp/out" "$tmp/err" && ok || bad "status inspection failure message"
+else
+  bad "status inspection failure setup missing index"
+fi
+
+# 22. unmerged index stages keep worktree after successful release
+newwt w22; reset; default_released d22
+b1=$(printf 'ours\n' | git -C "$tmp/w22" hash-object -w --stdin)
+b2=$(printf 'theirs\n' | git -C "$tmp/w22" hash-object -w --stdin)
+git -C "$tmp/w22" update-index --add --cacheinfo 2,"$b1",conflict.txt
+git -C "$tmp/w22" update-index --add --cacheinfo 3,"$b2",conflict.txt
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w22" --dispatch d22
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w22" ] && ok || bad "unmerged index keeps worktree"
+grep -q "dirty or unmerged worktree kept" "$tmp/out" "$tmp/err" && ok || bad "unmerged index reports kept"
+
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
