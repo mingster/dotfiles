@@ -29,6 +29,11 @@ export QA_HEAD="$head"
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
 run() { "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-family "${1:-claude}" --worktree /wt --run run_1 2>"$tmp/err"; }
+run_flags() { "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 --head "$head" --author-family claude --worktree /wt --run run_1 "$@" 2>"$tmp/err"; }
+capture_brief() {
+  run_flags "$@" >/dev/null
+  ls -t "${TMPDIR:-/tmp}"/reviewer-brief.* 2>/dev/null | head -1
+}
 
 out=$(run); rc=$?
 check "gate ok: exit 0" "$rc"
@@ -91,7 +96,53 @@ brief=$(ls -t "${TMPDIR:-/tmp}"/reviewer-brief.* | head -1)
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
 check "brief has the verdict line template with the head" "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
 check "brief records author and verifier families separately from provider" "$(grep -q 'Author: provider=' "$brief" && grep -q 'family=' "$brief" && grep -q 'Verifier: provider=' "$brief"; echo $?)"
+check "default brief asks for full review against spec and standards" "$(grep -q "repo's standards" "$brief" && grep -q "PR's spec" "$brief"; echo $?)"
+check "default brief runs tests through heavy-gate" "$(grep -q 'heavy-gate.sh' "$brief"; echo $?)"
+check "default brief reads Checks receipt last and treats pending as not pass" "$(grep -q 'Checks receipt' "$brief" && grep -q 'pending' "$brief"; echo $?)"
+check "default brief is not resolution-only" "$(! grep -q 'git show --remerge-diff' "$brief"; echo $?)"
 rm -f "$brief"
+
+brief=$(capture_brief --resolution)
+check "resolution brief names git show --remerge-diff" "$(grep -q 'git show --remerge-diff' "$brief"; echo $?)"
+check "resolution brief skips full spec and standards review" "$(! grep -q "Check the diff against the PR's spec and the repo's standards" "$brief"; echo $?)"
+check "resolution brief still uses heavy-gate and pending Checks rule" "$(grep -q 'heavy-gate.sh' "$brief" && grep -q 'Checks receipt' "$brief"; echo $?)"
+rm -f "$brief"
+
+cat > "$tmp/fleet-config.json" <<'JSON'
+{"host_caps":{"fleet-a":2,"fleet-b":2},"runs":[]}
+JSON
+cat > "$tmp/fleet-watch" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+host=$2
+case "$host" in
+  fleet-a) printf '%s\n' '{"admitted":false,"host":"fleet-a","cap":2,"occupied":2,"reason":"host cap exceeded: fleet-a 2/2"}'; exit 1 ;;
+  fleet-b) printf '%s\n' '{"admitted":true,"host":"fleet-b","cap":2,"occupied":1,"reason":"admitted"}'; exit 0 ;;
+  *) exit 2 ;;
+esac
+FW
+chmod +x "$tmp/fleet-watch"
+export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+out=$(run_flags 2>"$tmp/err"); rc=$?
+check "host pick under cap: exit 0" "$rc"
+check "host pick adds --on for admitted host" "$(echo "$out" | grep -q -- '--on fleet-b'; echo $?)"
+unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH
+
+export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+cat > "$tmp/fleet-watch" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+printf '%s\n' '{"admitted":false,"host":"'"$2"'","cap":2,"occupied":2,"reason":"host cap exceeded: '"$2"' 2/2"}'
+exit 1
+FW
+chmod +x "$tmp/fleet-watch"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "every host at cap: exit nonzero" "$([ "$rc" -ne 0 ]; echo $?)"
+check "every host at cap: names counts in stderr" "$(grep -q 'host cap exceeded' "$tmp/err" && grep -q '2/2' "$tmp/err"; echo $?)"
+check "every host at cap: no worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
+unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH
 
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
