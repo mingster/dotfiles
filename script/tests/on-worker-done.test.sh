@@ -2,6 +2,7 @@
 # Tests for on-worker-done.sh --dry-run with a stub usage gate. bash 3.2 compatible.
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/home"
 cat > "$tmp/gate" <<'GATE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$FAKE_DIR/gate.log"
@@ -13,7 +14,8 @@ mkdir -p "$tmp/bin"
 cat > "$tmp/bin/orca" <<'ORCA'
 #!/usr/bin/env bash
 case "$*" in
-  "environment list --json") printf '%s\n' "${FAKE_ORCA_ENVS:-{\"ok\":true,\"result\":{\"environments\":[]}}}" ;;
+  "environment list --json")
+    if [ -n "${FAKE_ORCA_ENVS:-}" ]; then printf '%s\n' "$FAKE_ORCA_ENVS"; else printf '%s\n' '{"ok":true,"result":{"environments":[]}}'; fi ;;
   *) echo "$*" >> "$FAKE_DIR/orca.log" ;;
 esac
 exit 0
@@ -54,12 +56,12 @@ FW
 }
 
 : > "$tmp/orca.log"
-run_flags >/dev/null 2>"$tmp/err"; rc=$?
-check "fail-closed: missing fleet config refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config' "$tmp/err"; echo $?)"
+( HOME="$tmp/home" unset ON_WORKER_DONE_FLEET_CONFIG; run_flags >/dev/null 2>"$tmp/err" ); rc=$?
+check "fail-closed: missing fleet config refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config missing' "$tmp/err"; echo $?)"
 check "fail-closed: missing fleet config prints no worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
 
 ON_WORKER_DONE_FLEET_CONFIG="$tmp/does-not-exist.json" run_flags >/dev/null 2>"$tmp/err"; rc=$?
-check "fail-closed: nonexistent fleet config path refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config' "$tmp/err"; echo $?)"
+check "fail-closed: nonexistent fleet config path refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config missing' "$tmp/err"; echo $?)"
 unset ON_WORKER_DONE_FLEET_CONFIG
 
 printf '%s\n' '{not json' > "$tmp/fleet-bad.json"
@@ -105,7 +107,7 @@ chmod +x "$tmp/fleet-watch-remote"
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-remote.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch-remote"
 export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[]}}'
 run_flags >/dev/null 2>"$tmp/err"; rc=$?
-check "fail-closed: admitted host without saved Orca environment refuses" "$([ "$rc" -ne 0 ] && grep -q 'saved Orca environment' "$tmp/err"; echo $?)"
+check "fail-closed: admitted host without saved Orca environment refuses" "$([ "$rc" -ne 0 ] && grep -q 'no saved Orca environment' "$tmp/err"; echo $?)"
 
 setup_local_fleet
 

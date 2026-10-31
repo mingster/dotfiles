@@ -132,38 +132,88 @@ fi
 
 host_flags=()
 fleet_config="${ON_WORKER_DONE_FLEET_CONFIG:-}"
-if [ -z "$fleet_config" ] && [ -f "$HOME/.config/fleet-watch/config.json" ]; then
+if [ -z "$fleet_config" ]; then
   fleet_config="$HOME/.config/fleet-watch/config.json"
 fi
-if [ -n "$fleet_config" ] && [ -f "$fleet_config" ]; then
-  fleet_watch=${ON_WORKER_DONE_FLEET_WATCH:-$HOME/dotfiles/script/fleet-watch.py}
-  local_host=$(hostname -s 2>/dev/null || echo local)
-  picked_host=""
-  refuse_reasons=""
-  while IFS= read -r try_host; do
-    [ -n "$try_host" ] || continue
-    receipt=$("$fleet_watch" --config "$fleet_config" --admit "$try_host" 2>/dev/null) || true
-    if printf '%s' "$receipt" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("admitted") else 1)' 2>/dev/null; then
-      picked_host=$try_host
-      break
-    fi
-    line=$(printf '%s' "$receipt" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason",""))' 2>/dev/null) || line=""
-    refuse_reasons="${refuse_reasons}${line}; "
-  done <<EOF
-$(python3 - "$fleet_config" <<'PY'
-import json, sys
-for host in json.load(open(sys.argv[1])).get("host_caps", {}):
-    print(host)
+if [ ! -f "$fleet_config" ]; then
+  echo "QA start refused head=$head: fleet config missing or unreadable: $fleet_config" >&2
+  exit 1
+fi
+fleet_watch=${ON_WORKER_DONE_FLEET_WATCH:-$HOME/dotfiles/script/fleet-watch.py}
+local_host=$(hostname -s 2>/dev/null || echo local)
+placement_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-placement.XXXXXX")
+if ! placement_on=$(python3 - "$fleet_config" "$fleet_watch" "$local_host" 2>"$placement_err" <<'PY'
+import json, os, subprocess, sys
+
+def refuse(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+config_path, fleet_watch, local_host = sys.argv[1:4]
+orca = os.environ.get("ORCA_CLI_COMMAND", "orca")
+
+try:
+    config = json.load(open(config_path))
+except (OSError, ValueError):
+    refuse("invalid fleet config")
+host_caps = config.get("host_caps")
+if not isinstance(host_caps, dict) or not host_caps:
+    refuse("host_caps missing in fleet config")
+
+proc = subprocess.run([orca, "environment", "list", "--json"], capture_output=True, text=True, timeout=15)
+if proc.returncode != 0:
+    refuse("cannot read Orca environment list")
+try:
+    envs = json.loads(proc.stdout).get("result", {}).get("environments") or []
+except (ValueError, TypeError, AttributeError):
+    refuse("invalid Orca environment list")
+by_name = {e.get("name"): e for e in envs if isinstance(e, dict) and e.get("name")}
+by_id = {e.get("id"): e for e in envs if isinstance(e, dict) and e.get("id")}
+
+picked = None
+reasons = []
+for host in host_caps:
+    admit = subprocess.run([fleet_watch, "--config", config_path, "--admit", host],
+                           capture_output=True, text=True, timeout=30)
+    if admit.returncode != 0:
+        reason = admit.stderr.strip() or admit.stdout.strip()
+        try:
+            reason = json.loads(admit.stdout).get("reason") or reason
+        except (ValueError, TypeError):
+            pass
+        reasons.append(reason or ("admit exit %d" % admit.returncode))
+        continue
+    try:
+        receipt = json.loads(admit.stdout)
+    except (ValueError, TypeError):
+        reasons.append("%s: malformed admit receipt" % host)
+        continue
+    if not receipt.get("admitted"):
+        reasons.append(receipt.get("reason") or ("%s: not admitted" % host))
+        continue
+    picked = host
+    break
+
+if not picked:
+    refuse("no host under cap (%s)" % ("; ".join(reasons) or "inventory unavailable"))
+
+if picked in by_name:
+    print(by_name[picked]["id"])
+elif picked in by_id:
+    print(picked)
+elif picked == local_host:
+    print("LOCAL")
+else:
+    refuse("no saved Orca environment for host %s" % picked)
 PY
-)
-EOF
-  if [ -z "$picked_host" ]; then
-    echo "QA start refused head=$head: no host under cap (${refuse_reasons:-inventory unavailable})" >&2
-    exit 1
-  fi
-  if [ "$picked_host" != "$local_host" ]; then
-    host_flags=(--on "$picked_host")
-  fi
+); then
+  echo "QA start refused head=$head: $(tr '\n' ' ' < "$placement_err")" >&2
+  rm -f "$placement_err"
+  exit 1
+fi
+rm -f "$placement_err"
+if [ "$placement_on" != "LOCAL" ]; then
+  host_flags=(--on "$placement_on")
 fi
 
 # All coding reviewer providers enter here. Read the latest receipt for this
