@@ -241,5 +241,32 @@ class QaAdmission(unittest.TestCase):
         self.extra['ON_WORKER_DONE_ADMISSION_POLICY'] = str(Path(self.tmp.name)/'missing')
         self.refuse('policy')
 
+    def test_workers_across_multiple_runs_share_host_cap(self):
+        self.f.add_run('alpha', 'run-other')
+        self.f.occupy('alpha', 1, run_id='run-alpha')
+        self.f.occupy('alpha', 1, run_id='run-other')
+        self.success('beta')
+
+    def test_bound_run_scope_refuses(self):
+        self.f.data['alpha']['workers_by_run']['run-alpha']['scope'] = {'source': 'bound', 'run': 'run-alpha'}
+        self.refuse('UNKNOWN coverage')
+
+    def test_run_list_pagination_counts_every_run(self):
+        self.f.data['alpha']['runs'] = {'runs': [{'id': 'run-alpha'}], 'nextCursor': 'runs-2'}
+        self.f.data['alpha']['run_pages'] = {'runs-2': {'runs': [{'id': 'run-extra'}], 'nextCursor': None}}
+        self.f.occupy('alpha', 1, run_id='run-alpha')
+        self.f.occupy('alpha', 1, run_id='run-extra')
+        self.success('beta')
+        calls = [json.loads(line) for line in (Path(self.tmp.name)/'calls').read_text().splitlines()]
+        self.assertTrue(any(a[:2] == ['orchestration', 'run-list'] and '--cursor' in a for a in calls))
+
+    def test_incomplete_run_inventory_refuses(self):
+        self.f.data['alpha']['runs']['nextCursor'] = 'missing-page'
+        self.refuse('Orca orchestration inventory')
+
+    def test_remote_inventory_unavailable_refuses(self):
+        self.f.data['alpha']['workers_by_run']['run-alpha']['scope']['remote'] = 'unavailable'
+        self.refuse('remote inventory unavailable')
+
 
 if __name__ == '__main__': unittest.main()

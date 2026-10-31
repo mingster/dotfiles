@@ -144,56 +144,100 @@ def workspace(rows, review):
         refuse('worktree inventory: authorized native identity/project/path/head mismatch')
 
 
-def worker_counts(orca, flags, host_id):
-    """Count native Dispatch resources, never generic terminals or inferred models."""
-    seen, seats, cursor = set(), {}, None
-    cursors = set()
-    while True:
-        paging = ['--cursor', cursor] if cursor else []
-        result = orca_result(orca, 'orchestration', 'worker-list', *flags,
-                             '--include-remote', *paging)
-        rows = result.get('workers')
-        page = obj(result.get('page'), 'worker page')
-        if (not isinstance(rows, list) or type(page.get('hasMore')) is not bool or
-                obj(result.get('scope'), 'worker scope').get('source') != 'all'):
-            refuse('worker inventory: incomplete or UNKNOWN coverage')
+def runtime_runs(orca, flags):
+    """Every Run in the selected runtime; worker-list without --run is caller-bound."""
+    runs, cursors, cursor = [], set(), None
+    for _ in range(50):
+        paging = ['--limit', '100']
+        if cursor is not None:
+            paging.extend(['--cursor', cursor])
+        result = orca_result(orca, 'orchestration', 'run-list', *flags, *paging)
+        rows = result.get('runs')
+        if not isinstance(rows, list):
+            refuse('run inventory missing')
         for row in rows:
-            row = obj(row, 'worker inventory row')
-            dispatch = string(row.get('dispatchId'), 'worker dispatch')
-            if dispatch in seen:
-                refuse('worker inventory: duplicate dispatch')
-            seen.add(dispatch)
-            host = string(obj(obj(row.get('projection'), 'worker projection host').get('host'),
-                              'worker host').get('id'), 'worker host id')
-            if host != host_id:
-                continue
-            status = row.get('dispatchStatus')
-            raw_resource = row.get('resource')
-            resource = obj(raw_resource, 'worker resource') if raw_resource is not None else {}
-            release = resource.get('releaseState') if raw_resource is not None else row.get('terminalState')
-            if status == 'release_unknown' or release == 'release_unknown' or row.get('terminalState') == 'release_unknown':
-                refuse('worker inventory: release_unknown')
-            if status not in ('running', 'dispatched', 'pending', 'active', 'completed', 'failed', 'cancelled', 'released'):
-                refuse('worker inventory: unknown worker status')
-            if release not in ('not_requested', 'requested', 'releasing', 'failed', 'released', 'completed', 'retained', 'reclaimable'):
-                refuse('worker inventory: unknown release state')
-            if release in ('released', 'completed'):
-                if status in ('running', 'dispatched', 'pending', 'active'):
-                    refuse('worker inventory: live/released disagreement')
-                continue
-            # A native terminal handle identifies a retained physical resource.
-            # Workers without terminals still occupy their own Dispatch seat.
-            seat = resource.get('terminalHandle') or row.get('agentTerminalHandle') or resource.get('id') or dispatch
-            string(seat, 'worker resource identity')
-            category = 'live' if status in ('running', 'dispatched', 'pending', 'active') else 'retained'
-            if seat not in seats or category == 'live':
-                seats[seat] = category
-        if not page['hasMore']:
-            break
-        cursor = string(page.get('nextCursor'), 'worker page cursor')
+            row = obj(row, 'run inventory row')
+            run_id = string(row.get('id'), 'run id')
+            if not TOKEN.fullmatch(run_id):
+                refuse('run inventory: invalid id')
+            if run_id in runs:
+                refuse('run inventory: duplicate run')
+            runs.append(run_id)
+        next_cursor = result.get('nextCursor')
+        if next_cursor is None or next_cursor == '':
+            return runs
+        cursor = string(next_cursor, 'run inventory cursor')
         if cursor in cursors:
-            refuse('worker inventory: repeated page cursor')
+            refuse('run inventory: repeated page cursor')
         cursors.add(cursor)
+    refuse('run inventory: too many pages')
+
+
+def validate_worker_scope(scope, run_id):
+    scope = obj(scope, 'worker scope')
+    source = scope.get('source')
+    if source == 'bound' or source not in ('flag',) or scope.get('run') != run_id:
+        refuse('worker inventory: incomplete or UNKNOWN coverage')
+    remote = scope.get('remote')
+    if remote in ('unavailable', 'incomplete', 'unknown'):
+        refuse('worker inventory: remote inventory unavailable')
+
+
+def count_worker_row(seen, seats, row, host_id):
+    row = obj(row, 'worker inventory row')
+    dispatch = string(row.get('dispatchId'), 'worker dispatch')
+    if dispatch in seen:
+        refuse('worker inventory: duplicate dispatch')
+    seen.add(dispatch)
+    host = string(obj(obj(row.get('projection'), 'worker projection host').get('host'),
+                      'worker host').get('id'), 'worker host id')
+    if host != host_id:
+        return
+    status = row.get('dispatchStatus')
+    raw_resource = row.get('resource')
+    resource = obj(raw_resource, 'worker resource') if raw_resource is not None else {}
+    release = resource.get('releaseState') if raw_resource is not None else row.get('terminalState')
+    if status == 'release_unknown' or release == 'release_unknown' or row.get('terminalState') == 'release_unknown':
+        refuse('worker inventory: release_unknown')
+    if status not in ('running', 'dispatched', 'pending', 'active', 'completed', 'failed', 'cancelled', 'released'):
+        refuse('worker inventory: unknown worker status')
+    if release not in ('not_requested', 'requested', 'releasing', 'failed', 'released', 'completed', 'retained', 'reclaimable'):
+        refuse('worker inventory: unknown release state')
+    if release in ('released', 'completed'):
+        if status in ('running', 'dispatched', 'pending', 'active'):
+            refuse('worker inventory: live/released disagreement')
+        return
+    seat = resource.get('terminalHandle') or row.get('agentTerminalHandle') or resource.get('id') or dispatch
+    string(seat, 'worker resource identity')
+    category = 'live' if status in ('running', 'dispatched', 'pending', 'active') else 'retained'
+    if seat not in seats or category == 'live':
+        seats[seat] = category
+
+
+def worker_counts(orca, flags, host_id):
+    """Count native Dispatch resources across every Run, never bound-run scope."""
+    seen, seats = set(), {}
+    for run_id in runtime_runs(orca, flags):
+        cursor, cursors = None, set()
+        while True:
+            paging = ['--limit', '100']
+            if cursor is not None:
+                paging.extend(['--cursor', cursor])
+            result = orca_result(orca, 'orchestration', 'worker-list', *flags,
+                                 '--run', run_id, '--include-remote', *paging)
+            rows = result.get('workers')
+            page = obj(result.get('page'), 'worker page')
+            if not isinstance(rows, list) or type(page.get('hasMore')) is not bool:
+                refuse('worker inventory: incomplete or UNKNOWN coverage')
+            validate_worker_scope(result.get('scope'), run_id)
+            for row in rows:
+                count_worker_row(seen, seats, row, host_id)
+            if not page['hasMore']:
+                break
+            cursor = string(page.get('nextCursor'), 'worker page cursor')
+            if cursor in cursors:
+                refuse('worker inventory: repeated page cursor')
+            cursors.add(cursor)
     live = sum(category == 'live' for category in seats.values())
     retained = len(seats) - live
     return {'occupied': len(seats), 'live_count': live, 'retained_count': retained}
