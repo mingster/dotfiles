@@ -111,5 +111,47 @@ run --dry-run
 brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
 check 'default brief retains spec standards and pending rule' "$(grep -q "repo's standards" "$brief" && grep -q 'pending is not PASS' "$brief"; echo $?)"
 check 'full brief requires 1500 second admission wait' "$(grep -q 'HEAVY_GATE_TIMEOUT_SECONDS=1500' "$brief" && grep -q 'wait for admission' "$brief"; echo $?)"
+# Retain the original author-family, argument and Verdict contract coverage.
+check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual-Axis)' "$brief"; echo $?)"
+re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
+check 'brief has exact-head Verdict template' "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
+check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=codex family=gpt' "$brief"; echo $?)"
+check 'reviewer title supports pane color' "$(grep -q -- '--task-title "reviewer - PR 42"' "$tmp/out"; echo $?)"
+check 'claude author avoids claude family' "$(grep -q -- '--avoid-family claude' "$tmp/gate.log"; echo $?)"
+for author in codex cursor antigravity; do
+  valid
+  GATE_OUT='--agent claude --model claude-sonnet --effort medium' run --author-family "$author" --dry-run
+  check "$author author picks independent reviewer" "$?"
+  check "$author author uses non-Codex reviewer" "$(grep -q -- '--agent claude' "$tmp/out"; echo $?)"
+  if [ "$author" != antigravity ]; then
+    check "$author author avoids gpt" "$(grep -q -- '--avoid-family gpt' "$tmp/gate.log"; echo $?)"
+  fi
+done
+for code in 3 4; do
+  valid
+  GATE_RC=$code refuses "usage gate exit $code never launches"
+  check "usage gate exit $code explains independence unavailable" "$(grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+done
+for args in 'claude claude-sonnet claude claude-sonnet' \
+            'antigravity claude-sonnet claude claude-sonnet' \
+            'antigravity gpt-4o codex gpt-6.1-sol' \
+            'antigravity unknown-model codex gpt-6.1-sol' \
+            'antigravity gemini-3.8-flash codex mystery-model'; do
+  read -r author model verifier verifier_model <<< "$args"
+  valid
+  GATE_OUT="--agent $verifier --model $verifier_model" run --author-provider "$author" --author-model "$model"
+  rc=$?
+  check "same or unknown family refuses: $args" "$([ "$rc" -ne 0 ] && [ ! -e "$tmp/launch.json" ] && grep -q 'cross-family unavailable' "$tmp/err"; echo $?)"
+done
+for args in '--pr x' '--author-family gpt' '--head invalid'; do
+  valid
+  # Intentional splitting supplies the invalid option and value as two arguments.
+  # shellcheck disable=SC2086
+  run $args
+  rc=$?
+  check "invalid CLI refuses: $args" "$([ "$rc" -ne 0 ] && [ ! -e "$tmp/launch.json" ]; echo $?)"
+done
+"$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 > "$tmp/out" 2> "$tmp/err"
+check 'missing required CLI arguments refuse' "$([ $? -ne 0 ]; echo $?)"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

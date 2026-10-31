@@ -1,3 +1,5 @@
 QA launch admission now binds an expiring UTC operator policy to the exact saved server ID/name and native repository, project, workspace identity, path and head. It requires complete worktree and terminal host coverage, strict fleet receipts, matching authorized caps and fresh finite load observations for both routed hosts. The caller consumes validated saved IDs and native identities without a local/path fallback.
 
 Occupied seats remain UNKNOWN and refuse launch: supported native terminal inventory exposes no observed model/process evidence or reliable join to fleet dispatch resources. Empty-host fixtures prove only the vacant snapshot path; admission is not an atomic capacity reservation. No installed files are synchronized by this change.
+
+QA briefs support resolution-only review with `git show --remerge-diff`, require `HEAVY_GATE_TIMEOUT_SECONDS=1500` and waiting for heavy-gate admission, and read exact-head Checks last. Canonical receipt validation remains shared across reviewer providers.

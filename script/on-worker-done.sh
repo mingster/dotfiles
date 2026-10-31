@@ -225,7 +225,7 @@ if exact:
 ' "$head" || exit 1
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
-gate_footer='Run scoped tests through ~/dotfiles/script/heavy-gate.sh. Waiting on the gate means those checks were not executed yet; an observed failure still counts as a failure.
+gate_footer='Run scoped tests through HEAVY_GATE_TIMEOUT_SECONDS=1500 ~/dotfiles/script/heavy-gate.sh and wait for admission. Waiting on the gate means those checks were not executed yet; an observed failure still counts as a failure.
 Read the PR Checks receipt for this head last; pending is not PASS and never substitutes for executed tests.'
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
