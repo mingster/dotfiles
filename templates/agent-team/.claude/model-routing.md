@@ -4,11 +4,11 @@ Tiers, Orca worker flags, worker launch and supervision, fallback, and the commi
 
 Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for tech-lead, fullstack-dev, qa-sdet and release-manager work. Provider policy lives in this file; the adapter never overrides it, and its usage, effort, token, strike, independent-review and publication gates still apply.
 
-Owner rule (2026-10-23, replaces the 2026-10-22 removal): Codex is the default for implementation tickets, up to 3 Codex lanes at once (`--agent codex --model gpt-6.1-sol --effort medium`). Codex is not in `~/.orca/presets.json` fallback chains: start Codex workers by hand with `~/dotfiles/script/start-codex-worker.sh`. Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity. Codex workers run without the Claude hooks and the `settings.json` deny list; their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules`.
+Owner rule (2026-10-23, replaces the 2026-10-22 removal): Codex is the default for implementation tickets, up to 3 Codex lanes at once (`--agent codex --model gpt-6.1-sol --effort medium`). Codex implementation workers start by hand with `~/dotfiles/script/start-codex-worker.sh`; the Elon and tech-lead Codex preset exception is defined below. Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity. Codex workers run without the Claude hooks and the `settings.json` deny list; their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules`.
 
 ## Coordinator effort (owner 2026-10-31)
 
-Elon and Teddy / tech-lead use Codex `gpt-6.1-sol --effort high`. Ordinary implementation workers remain `gpt-6.1-sol --effort medium`; do not raise all workers automatically. A specific difficult worker may be raised by an explicit Elon / human assignment decision within the existing provider, host and usage caps. This replaces earlier medium-only restrictions for these two coordinator roles and does not create an extra review gate or authorize a different model/provider. Verify the effective model and effort of a running session; writing defaults alone is not proof that an existing session switched.
+Claude remains the default provider for Elon and Teddy / tech-lead. Their Codex preset is `openai.gpt-6-astra`, reasoning Medium (`--agent codex --model gpt-6-astra --effort medium`; Orca uses the unqualified model ID). This owner approval applies to these two coordinator roles. Ordinary implementation workers remain `gpt-6.1-sol --effort medium`; provider, host and usage caps still apply. Verify the effective model and effort of a running session separately from saved presets.
 
 ## Tiers
 
