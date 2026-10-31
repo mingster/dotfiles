@@ -77,7 +77,8 @@ done
 valid
 ADMISSION_RC=1 refuses 'admission nonzero refuses even with valid stdout'
 valid
-ON_WORKER_DONE_ADMISSION_POLICY="$tmp/missing" refuses 'missing policy refuses'
+ON_WORKER_DONE_ADMISSION_POLICY='' run
+check 'absent optional policy reaches validated admission' "$?"
 valid
 GATE_RC=3 refuses 'usage gate nonzero refuses'
 valid

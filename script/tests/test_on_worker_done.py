@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from qa_admission_fixture import NativeFixture
 
 
 SCRIPT = Path(__file__).resolve().parents[1]
@@ -40,37 +41,18 @@ ug.antigravity_models = lambda: None
 sys.exit(ug.main())
 ''')
             gate.chmod(0o755)
-            orca = root / "orca"
-            orca.write_text('''#!/usr/bin/env python3
-import json
-import os
-import sys
-with open(os.environ["TEST_ORCA_LOG"], "w") as log:
-    json.dump(sys.argv[1:], log)
-''')
-            orca.chmod(0o755)
+            native = NativeFixture(root, path=tmp)
+            native.occupy('alpha', 1)
             gh = root / "gh"
             gh.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['TEST_COMMENTS'])\n")
             gh.chmod(0o755)
-            # Receipt/picker tests use a validated admission boundary double;
-            # native inventory and policy refusals live in test_qa_admission.py.
-            policy = root / "admission-policy.json"
-            policy.write_text("{}")
-            admission = root / "admission.py"
-            admission.write_text("import json\nprint(" + repr(json.dumps({
-                "environment_id": "fixture-saved-environment",
-                "worktree_selector": "identity:wt2:local:fixture-worktree",
-                "host": "niteking",
-            })) + ")\n")
             if receipts is None:
                 receipts = ["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 2\nLoad errors: 0\n"]
-            log = root / "orca.json"
-            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+            log = root / "launch.json"
+            env = {**native.env(), "PATH": str(root) + os.pathsep + os.environ["PATH"],
                    "TEST_COMMENTS": json.dumps({"comments": [{"body": body} for body in receipts]}),
                    "ON_WORKER_DONE_USAGE_GATE": str(gate),
-                   "ON_WORKER_DONE_ADMISSION_POLICY": str(policy),
-                   "ON_WORKER_DONE_QA_ADMISSION": str(admission),
-                   "ORCA_CLI_COMMAND": str(orca), "USAGE_GATE_PRESETS": str(presets),
+                   "USAGE_GATE_PRESETS": str(presets),
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
             result = subprocess.run([
@@ -81,6 +63,13 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
             if result.returncode != 0:
                 self.assertFalse(list(root.glob("reviewer-brief.*")), "refused QA must not create a brief")
             return result, json.loads(log.read_text()) if log.exists() else None
+
+    def test_real_admission_pins_native_launch_argv(self):
+        result, args = self.dispatch('claude')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
+        self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
+        self.assertEqual(args[args.index('--model')+1], 'gpt-test')
 
     def test_zero_executed_refuses_start(self):
         receipt = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 0\nLoad errors: 0\n"
