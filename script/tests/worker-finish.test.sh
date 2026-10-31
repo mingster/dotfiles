@@ -156,7 +156,7 @@ HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "
 jq '.state = "MERGED"' "$MF_GH_DIR/pr-6.json" > "$MF_GH_DIR/pr-6.json.tmp" && mv "$MF_GH_DIR/pr-6.json.tmp" "$MF_GH_DIR/pr-6.json"
 reset; default_released d6
 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w6" --dispatch d6
-[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "merged PR exits 0"
+[ "$(cat "$tmp/rc")" = 0 ] && [ ! -d "$tmp/w6" ] && ok || bad "merged PR removes worktree when head proven"
 grep -q "skipping head-checks, its PR is already merged" "$tmp/out" && ok || bad "merged PR prints one skip line"
 [ ! -s "$HEAD_CHECKS_LOG" ] && ok || bad "merged PR does not run checks"
 
@@ -276,12 +276,26 @@ HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "
 [ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w22" ] && ok || bad "unmerged index keeps worktree"
 grep -q "dirty or unmerged worktree kept" "$tmp/out" "$tmp/err" && ok || bad "unmerged index reports kept"
 
-# 23. clean unique commit not in main is kept after release (not MERGE_HEAD)
+# 23. clean unique commits (not MERGE_HEAD / index conflict) kept after release
 newwt w23; reset; default_released d23
+[ -z "$(git -C "$tmp/w23" status --porcelain 2>/dev/null)" ] && ok || bad "unique-commit fixture starts clean"
+! git -C "$tmp/w23" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && ok || bad "unique-commit fixture has no MERGE_HEAD"
+[ "$(git -C "$tmp/w23" rev-list --count origin/main..HEAD 2>/dev/null)" -gt 0 ] && ok || bad "unique-commit fixture has commits not in main"
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w23" --dispatch d23
-[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w23" ] && ok || bad "clean unique commit keeps worktree"
-grep -q "HEAD not proven in merged main" "$tmp/out" "$tmp/err" && ok || bad "clean unique commit reports ancestry block"
-! grep -q "removed worktree" "$tmp/out" && ok || bad "clean unique commit must not be removed"
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w23" ] && ok || bad "clean unique commits keep worktree"
+grep -q "HEAD not proven in merged main" "$tmp/out" "$tmp/err" && ok || bad "clean unique commits report ancestry block"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "clean unique commits must not be removed"
+
+# 24. broken origin fetch fails closed before worktree removal
+newwt w24; reset; default_released d24
+push_wt_head_to_main "$tmp/w24"
+orig_url=$(git -C "$tmp/w24" remote get-url origin)
+git -C "$tmp/w24" remote set-url origin /nonexistent/orca-452-fetch-test
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w24" --dispatch d24
+git -C "$tmp/w24" remote set-url origin "$orig_url"
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w24" ] && ok || bad "fetch failure keeps worktree"
+grep -q "cannot verify main ancestry" "$tmp/out" "$tmp/err" && ok || bad "fetch failure reports ancestry query failure"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "fetch failure must not remove worktree"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

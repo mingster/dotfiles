@@ -24,25 +24,57 @@ archive_dir=${WORKER_FINISH_ARCHIVE_DIR:-}
 if [ -n "$archive_dir" ]; then mkdir -p "$archive_dir"; fi
 
 merged() {
-  git -C "$wt" fetch -q origin main 2>/dev/null || true
+  git -C "$wt" fetch -q origin main 2>/dev/null || return 1
   if git -C "$wt" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then echo "HEAD is already in origin/main"; return 0; fi
   [ "$(cd "$wt" && gh pr view --json state -q .state 2>/dev/null)" = MERGED ] && echo "its PR is already merged"
 }
 
 head_proven_in_merged_main() {
+  local head="" unique="" mb_rc=0 pr_state="" pr_head=""
   if ! git -C "$wt" fetch -q origin main 2>&1; then
     echo "worker-finish: cannot verify main ancestry; worktree kept at $wt" >&2
     return 1
   fi
-  if git -C "$wt" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+  if ! git -C "$wt" rev-parse --verify origin/main >/dev/null 2>&1; then
+    echo "worker-finish: cannot verify origin/main; worktree kept at $wt" >&2
+    return 1
+  fi
+  if ! head=$(git -C "$wt" rev-parse HEAD 2>&1); then
+    echo "worker-finish: cannot verify HEAD; worktree kept at $wt" >&2
+    return 1
+  fi
+  if git -C "$wt" merge-base --is-ancestor "$head" origin/main 2>/dev/null; then
     return 0
   fi
-  local pr_state="" pr_head="" head=""
-  pr_state=$(cd "$wt" && gh pr view --json state -q .state 2>/dev/null) || pr_state=""
-  pr_head=$(cd "$wt" && gh pr view --json headRefOid -q .headRefOid 2>/dev/null) || pr_head=""
-  head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || head=""
-  if [ "$pr_state" = MERGED ] && [ -n "$pr_head" ] && [ "$pr_head" = "$head" ]; then
-    return 0
+  mb_rc=$?
+  if [ "$mb_rc" -gt 1 ]; then
+    echo "worker-finish: cannot verify main ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if ! unique=$(git -C "$wt" rev-list --count origin/main.."$head" 2>&1); then
+    echo "worker-finish: cannot verify commit ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if [ "$unique" -eq 0 ]; then
+    echo "worker-finish: cannot verify main ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if pr_state=$(cd "$wt" && gh pr view --json state -q .state 2>&1); then
+    if ! pr_head=$(cd "$wt" && gh pr view --json headRefOid -q .headRefOid 2>&1); then
+      echo "worker-finish: cannot verify PR head; worktree kept at $wt" >&2
+      return 1
+    fi
+    if [ "$pr_state" = MERGED ] && [ -n "$pr_head" ] && [ "$pr_head" = "$head" ]; then
+      return 0
+    fi
+  else
+    case "$pr_state" in
+      *"no pull requests"*|*"no such PR"*) ;;
+      *)
+        echo "worker-finish: cannot verify PR merge state; worktree kept at $wt" >&2
+        return 1
+        ;;
+    esac
   fi
   echo "worker-finish: HEAD not proven in merged main; worktree kept at $wt" >&2
   return 1
