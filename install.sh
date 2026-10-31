@@ -53,6 +53,8 @@ ln -sfn "$DOTFILES_ROOT/.vim" "$HOME/.vim"
 ln -sfn "$DOTFILES_ROOT/.zshenv" "$HOME/.zshenv"
 ln -sfn "$DOTFILES_ROOT/.zshrc" "$HOME/.zshrc"
 rm -f "$HOME/.p10k.zsh"
+mkdir -p "$HOME/.config"
+ln -sfn "$DOTFILES_ROOT/.config/starship.toml" "$HOME/.config/starship.toml"
 
 git config --global core.excludesfile "$DOTFILES_ROOT/.gitignore_global"
 git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
