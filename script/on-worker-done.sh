@@ -4,7 +4,7 @@
 #                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
-#      ON_WORKER_DONE_FLEET_CONFIG / ON_WORKER_DONE_FLEET_WATCH override fleet-watch (tests).
+#      ON_WORKER_DONE_FLEET_CONFIG selects configured host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|codex|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }

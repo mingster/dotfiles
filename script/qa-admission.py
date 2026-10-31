@@ -147,7 +147,6 @@ def workspace(rows, review):
 def worker_counts(orca, flags, host_id):
     """Count native Dispatch resources, never generic terminals or inferred models."""
     seen, seats, cursor = set(), {}, None
-    live = retained = 0
     cursors = set()
     while True:
         paging = ['--cursor', cursor] if cursor else []
@@ -253,7 +252,9 @@ def discover_workspace(orca, flags, args):
         remote = obj(row, 'repo inventory').get('gitRemoteIdentity')
         if remote is not None and obj(remote, 'repo inventory remote identity').get('canonicalKey') == 'github.com/' + project.removeprefix('github:'):
             matches.append(row)
-    if len(matches) != 1:
+    if len(matches) > 1:
+        refuse('repo inventory: ambiguous canonical repository')
+    if not matches:
         return None
     repo_id = string(matches[0].get('id'), 'repo id')
     if not TOKEN.fullmatch(repo_id):
@@ -279,7 +280,8 @@ def discover_workspace(orca, flags, args):
     if host != 'local' or host not in hosts:
         refuse('worktree inventory: unsupported execution host')
     key = obj(row.get('identity'), 'worktree identity').get('key')
-    if not isinstance(key, str) or not IDENTITY.fullmatch(key):
+    if (not isinstance(key, str) or not IDENTITY.fullmatch(key) or
+            key.split(':')[1] != host):
         refuse('worktree inventory: malformed identity')
     review = {'repo_id': repo_id, 'project_id': project, 'execution_host_id': host,
               'worktree_path': args.worktree_path, 'head': args.head, 'worktree_identity': key}
