@@ -13,7 +13,8 @@ SCRIPT = Path(__file__).resolve().parents[1]
 
 
 class ReviewerDispatch(unittest.TestCase):
-    def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=(), local=False):
+    def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=(), local=False,
+                 configuration='explicit'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
@@ -60,6 +61,13 @@ sys.exit(ug.main())
                    "USAGE_GATE_PRESETS": str(presets),
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
+            if configuration != 'explicit':
+                env['HOME'] = tmp
+                env.pop('ON_WORKER_DONE_FLEET_CONFIG', None)
+                if configuration != 'missing':
+                    config = root / '.config/fleet-watch/config.json'
+                    config.parent.mkdir(parents=True)
+                    config.write_text(json.dumps(native.config if configuration == 'default' else {}))
             result = subprocess.run([
                 "bash", str(SCRIPT / "on-worker-done.sh"), "--repo", "o/n",
                 "--pr", "42", "--head", "a" * 40, "--author-family", author,
@@ -68,6 +76,25 @@ sys.exit(ug.main())
             if result.returncode != 0:
                 self.assertFalse(list(root.glob("reviewer-brief.*")), "refused QA must not create a brief")
             return result, json.loads(log.read_text()) if log.exists() else None
+
+    def test_default_installed_configuration_path_preserves_ordinary_launches(self):
+        for author in ('claude', 'cursor', 'antigravity', 'codex'):
+            with self.subTest(author=author):
+                result, args = self.dispatch(author, configuration='default')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
+                self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
+                self.assertEqual(args[args.index('--model')+1],
+                                 {'codex': 'composer-test', 'cursor': 'gemini-test',
+                                  'claude': 'gpt-test', 'antigravity': 'gpt-test'}[author])
+
+    def test_unconfigured_installed_invocation_refuses_without_launch(self):
+        for configuration in ('missing', 'unknown'):
+            with self.subTest(configuration=configuration):
+                result, args = self.dispatch('claude', configuration=configuration)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('fleet config', result.stderr)
+                self.assertIsNone(args)
 
     def test_real_admission_pins_native_launch_argv(self):
         result, args = self.dispatch('claude')
