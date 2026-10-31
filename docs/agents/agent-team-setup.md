@@ -12,16 +12,14 @@ script/agent-team.sh reset /path/to/project --apply
 script/agent-team.sh all /path/to/project
 ```
 
-Machine setup configures Claude Code, Codex, Cursor, Antigravity, Orca and shared
+Machine setup configures Claude Code, Cursor, Antigravity, Orca and shared
 skill links. Verification reports missing commands and owner login steps without
 reading credential files. Missing owner prerequisites are warnings; a failed setup
 script is an error. Use `--dry-run` to preview machine setup without running it.
 
 Missing provider CLIs are installed once using `install_claude.sh`, the official
-Cursor and Antigravity installers, and `npm install -g @openai/codex`. If npm is
-missing, install Node.js and retry. Installer references:
+Cursor and Antigravity installers. Installer references:
 [Claude Code](https://code.claude.com/docs/en/setup),
-[Codex](https://help.openai.com/en/articles/11096431),
 [Cursor](https://cursor.com/docs/cli/installation) and
 [Antigravity](https://antigravity.google/docs/cli/install/).
 Existing differing configuration files are moved to `<file>.bak.<date>` before
@@ -59,21 +57,12 @@ changes the dotfiles checkout. No command commits or pushes the target project.
 
 ## Letting the Tech Lead merge
 
-`~/.codex/rules/default.rules` forbids `gh pr merge` for every Codex worker. The Tech Lead
-(a Codex session) merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`.
+The Tech Lead merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`.
 The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
 open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
-only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `.codex`, `*.rules`,
+only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
 and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
 `ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the tech-lead check.
-
-The owner allows the script once by appending the rendered template (the sed command replaces the home placeholder) to the live rules, then checks the result:
-
-```bash
-sed "s|__HOME__|$HOME|g" ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
-```
-
-Agents never edit `~/.codex` themselves. The forbidden `gh pr merge` rule stays in place.
 
 ## Optional worker watchdog (macOS)
 

@@ -8,12 +8,11 @@ preferences only. Existing machine settings are never imported into this repo.
 
 Paths below are relative to HOME on both macOS and Linux unless indicated.
 `support` means `Library/Application Support` on macOS and
-`${XDG_CONFIG_HOME:-$HOME/.config}` on Linux. Codex respects `CODEX_HOME`.
+`${XDG_CONFIG_HOME:-$HOME/.config}` on Linux.
 
 | Live settings | Public source and standard restore | Private coverage required for |
 | --- | --- | --- |
 | `.claude/CLAUDE.md`, `settings.json`, `keybindings.json` | `.agents/claude/`; `setup-claude-code.sh` copies instructions and links settings/keybindings | Copies that differ from the template, `settings.local.json`, other `settings*.json`, `.mcp.json` |
-| `.codex/config.toml`, `AGENTS.md` | `.codex/`; `setup-codex.sh` renders HOME on first initialization, reconciles managed keys, links instructions | Custom config tables, other `config*.toml`, runtime `hooks.json` |
 | `.cursor/cli-config.json`, `hooks.json` | `ide/cursor/`; `setup-cursor.sh` copies CLI config and installs hooks | Customized copies, other `cli-config*.json`, `mcp.json` |
 | `.gemini/settings.json`, `antigravity-cli/settings.json` | `.gemini/`; `setup-antigravity.sh` copies/merges settings when the IDE is installed | Custom settings, `settings.local.json`, `GEMINI.md` |
 | `.gemini/config/AGENTS.md`, `skills.json`, `hooks.json` | `setup-antigravity.sh` generates instructions/skills paths and merges hooks | Generated machine paths and runtime hooks; private restore or regeneration |
@@ -46,8 +45,6 @@ settings/claude-local.json $HOME/.claude/settings.local.json
 settings/claude.json $HOME/.claude/settings.json
 settings/claude-instructions.md $HOME/.claude/CLAUDE.md
 settings/claude-keybindings.json $HOME/.claude/keybindings.json
-settings/codex.toml $HOME/.codex/config.toml
-settings/codex-hooks.json $HOME/.codex/hooks.json
 settings/cursor-cli.json $HOME/.cursor/cli-config.json
 settings/cursor-mcp.json $HOME/.cursor/mcp.json
 settings/cursor-hooks.json $HOME/.cursor/hooks.json

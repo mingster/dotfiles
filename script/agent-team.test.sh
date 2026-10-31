@@ -71,23 +71,23 @@ git -C "$tmp/linked" add .
 git -C "$tmp/linked" -c user.name=Test -c user.email=test@example.invalid commit -qm symlink
 out=$(bash "$here/agent-team.sh" reset "$tmp/linked" --apply 2>&1); rc=$?
 { [ "$rc" != 0 ] && [ -z "$(ls -A "$tmp/outside")" ]; } && check "reset refuses symlinked managed destinations before writing" ok || check "reset refuses symlinked managed destinations before writing" bad
-mkdir -p "$tmp/machine/script" "$tmp/machine-home/.codex" "$tmp/machine/.codex"
-echo old > "$tmp/machine-home/.codex/config.toml"
-echo template > "$tmp/machine/.codex/config.toml"
-for setup in install-agent-clis setup-agent-skills setup-claude-code setup-codex setup-cursor setup-antigravity setup-orca setup-agent-hooks; do
+mkdir -p "$tmp/machine/script" "$tmp/machine-home/.orca" "$tmp/machine/.orca"
+echo old > "$tmp/machine-home/.orca/presets.json"
+echo template > "$tmp/machine/.orca/presets.json"
+for setup in install-agent-clis setup-agent-skills setup-claude-code setup-cursor setup-antigravity setup-orca setup-agent-hooks; do
   cat > "$tmp/machine/script/$setup.sh" <<'SH'
 #!/usr/bin/env bash
 echo "$(basename "$0")" >> "$TEST_SETUP_LOG"
-if [ "$(basename "$0")" = setup-codex.sh ]; then
-  cp "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+if [ "$(basename "$0")" = setup-orca.sh ]; then
+  cp "$DOTFILES/.orca/presets.json" "$HOME/.orca/presets.json"
 fi
 SH
 done
 export TEST_SETUP_LOG="$tmp/setup-log"
 out=$(HOME="$tmp/machine-home" DOTFILES="$tmp/machine" bash "$here/agent-team.sh" machine 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(cat "$tmp/machine-home/.codex/config.toml")" = template ] &&
-  grep -q old "$tmp/machine-home/.codex/config.toml".bak.* &&
-  [ "$(wc -l < "$TEST_SETUP_LOG" | tr -d ' ')" = 8 ] &&
+{ [ "$rc" = 0 ] && [ "$(cat "$tmp/machine-home/.orca/presets.json")" = template ] &&
+  grep -q old "$tmp/machine-home/.orca/presets.json".bak.* &&
+  [ "$(wc -l < "$TEST_SETUP_LOG" | tr -d ' ')" = 7 ] &&
   echo "$out" | grep -q 'login needed'; } && check "machine composes installers and setup, backs up settings, reports owner login" ok || { check "machine composes installers and setup, backs up settings, reports owner login" bad; echo "$out" | tail -5; }
 mkdir -p "$tmp/install-bin" "$tmp/install-home"
 cat > "$tmp/install-bin/curl" <<'SH'
@@ -96,18 +96,12 @@ echo "$*" >> "$TEST_INSTALL_LOG"
 case "$*" in *claude.ai*) tool=claude ;; *cursor.com*) tool=agent ;; *antigravity.google*) tool=agy ;; *) exit 1 ;; esac
 printf 'printf "#!/bin/sh\\nexit 0\\n" > "$TEST_BIN/%s"; chmod +x "$TEST_BIN/%s"\n' "$tool" "$tool"
 SH
-cat > "$tmp/install-bin/npm" <<'SH'
-#!/usr/bin/env bash
-echo "$*" >> "$TEST_INSTALL_LOG"
-printf '#!/bin/sh\nexit 0\n' > "$TEST_BIN/codex"
-chmod +x "$TEST_BIN/codex"
-SH
 chmod +x "$tmp/install-bin/"*
 export TEST_BIN="$tmp/install-bin" TEST_INSTALL_LOG="$tmp/install-log"
 out=$(HOME="$tmp/install-home" PATH="$TEST_BIN:/usr/bin:/bin" bash "$here/install-agent-clis.sh" 2>&1); rc=$?
 out2=$(HOME="$tmp/install-home" PATH="$TEST_BIN:/usr/bin:/bin" bash "$here/install-agent-clis.sh" 2>&1); rc2=$?
-{ [ "$rc$rc2" = 00 ] && [ "$(wc -l < "$TEST_INSTALL_LOG" 2>/dev/null | tr -d ' ')" = 4 ] &&
-  [ -x "$TEST_BIN/claude" ] && [ -x "$TEST_BIN/codex" ] && [ -x "$TEST_BIN/agent" ] && [ -x "$TEST_BIN/agy" ]; } && check "missing provider CLIs install once through stubbed official installers" ok || { check "missing provider CLIs install once through stubbed official installers" bad; echo "$out"; echo "$out2"; }
+{ [ "$rc$rc2" = 00 ] && [ "$(wc -l < "$TEST_INSTALL_LOG" 2>/dev/null | tr -d ' ')" = 3 ] &&
+  [ -x "$TEST_BIN/claude" ] && [ -x "$TEST_BIN/agent" ] && [ -x "$TEST_BIN/agy" ]; } && check "missing provider CLIs install once through stubbed official installers" ok || { check "missing provider CLIs install once through stubbed official installers" bad; echo "$out"; echo "$out2"; }
 mkdir -p "$tmp/hook-home/.claude"
 printf '{"custom":true,"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"true"}]}]}}\n' > "$tmp/hook-home/.claude/settings.json"
 out=$(HOME="$tmp/hook-home" bash "$here/setup-agent-hooks.sh" 2>&1); rc=$?
@@ -166,7 +160,7 @@ git -C "$tmp/audit-project" remote add origin https://github.com/mingster/synthe
 # A 1-word budget guarantees a finding independently of canonical role sizes.
 out=$(ROLE_WORD_BUDGET=1 bash "$here/agent-team.sh" project "$tmp/audit-project" 2>&1); rc=$?
 { [ "$rc" = 1 ] && grep -qE '[0-9]+ words \(budget 1\)' <<< "$out" && grep -q 'Owner or architect' <<< "$out"; } && check "audit findings fail project setup while still printing owner facts" ok || { check "audit findings fail project setup while still printing owner facts" bad; echo "exit=$rc"; tail -6 <<< "$out"; }
-mkdir -p "$tmp/legacy-home/.codex" "$tmp/legacy-config"
+mkdir -p "$tmp/legacy-home/.orca" "$tmp/legacy-config"
 echo '{"legacy":true}' > "$tmp/legacy-config/settings.json"
 ln -s "$tmp/legacy-config" "$tmp/legacy-home/.claude"
 out=$(HOME="$tmp/legacy-home" DOTFILES="$tmp/machine" bash "$here/agent-team.sh" machine 2>&1); rc=$?

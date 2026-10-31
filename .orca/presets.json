@@ -24,9 +24,8 @@
           "model": "claude-opus-5-5-high"
         },
         {
-          "provider": "codex",
-          "model": "gpt-6-astra",
-          "effort": "medium"
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -46,6 +45,10 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -65,6 +68,10 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -73,10 +80,6 @@
       "description": "Fullstack developer implementing features test-first",
       "chain": [
         {
-          "provider": "cursor",
-          "model": "gpt-5.6-sol-medium"
-        },
-        {
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
@@ -84,8 +87,17 @@
         {
           "provider": "antigravity",
           "model": "claude-sonnet-5-5-medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "gpt-5.6-sol-medium"
         }
-      ]
+      ],
+      "pin": true
     },
     "tech-lead": {
       "tier": "workhorse",
@@ -105,9 +117,8 @@
           "model": "claude-sonnet-5-5-medium"
         },
         {
-          "provider": "codex",
-          "model": "gpt-6-astra",
-          "effort": "medium"
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -127,6 +138,10 @@
         {
           "provider": "antigravity",
           "model": "claude-opus-5-5-high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -192,17 +207,17 @@
       "description": "Cross-family PR reviewer after a coding worker finishes",
       "chain": [
         {
-          "provider": "codex",
-          "model": "gpt-6.1-sol",
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
+        },
+        {
+          "provider": "claude",
+          "model": "sonnet",
           "effort": "medium"
         },
         {
           "provider": "cursor",
-          "model": "composer-2.5"
-        },
-        {
-          "provider": "antigravity",
-          "model": "gemini-3.8-flash"
+          "model": "gpt-5.6-sol-medium"
         }
       ]
     },
@@ -211,12 +226,12 @@
       "description": "Fix or chore touching 3 files or fewer (owner 2026-10-09)",
       "chain": [
         {
-          "provider": "claude",
-          "model": "haiku"
+          "provider": "cursor",
+          "model": "composer-2.5"
         },
         {
-          "provider": "cursor",
-          "model": "gemini-3.8-flash-low"
+          "provider": "claude",
+          "model": "haiku"
         },
         {
           "provider": "antigravity",
@@ -231,7 +246,7 @@
         "model": "haiku"
       },
       "cursor": {
-        "model": "gemini-3.8-flash-low"
+        "model": "composer-2.5"
       },
       "antigravity": {
         "model": "gemini-3.8-flash-low"

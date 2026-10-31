@@ -1,4 +1,4 @@
-# Running the team outside Claude Code (Cursor, Antigravity, Codex)
+# Running the team outside Claude Code (Cursor, Antigravity)
 
 Loaded by Elon only when running outside Orca orchestration, in a tool that cannot spawn a named teammate and message it. Under Orca orchestration every provider's worker gets the same preamble, `ask` and `worker_done`, so this relay mode is not needed. Split out of `.claude/agents/tech-lead.md` so Claude Code tech-lead sessions do not carry it.
 
@@ -8,7 +8,6 @@ The roles, task list, hotfix loop and gates are the same; only the mechanics cha
 - **Roles.** Cursor loads `.claude/agents/` as subagents: run each task through the subagent of the same name, and independent tasks in parallel. Antigravity has no subagents: take one task at a time, read `.claude/agents/<role>.md` first, follow it, and say which role you are acting as. The owner may instead open one Antigravity agent per role with "act as `.claude/agents/<role>.md`".
 - **Messaging.** There is no mailbox, so you relay. A role puts each message it would have sent in its final report, addressed to its recipient; you deliver it by starting that role's task with the artifact it names. Preserve tiered routing: routine specialists to tech-lead, tech-lead and Sales-Marketing to CEO, independent SecOps oversight to CEO, technical findings to tech-lead. Relay critical escalation directly to CEO and the human owner (the one exception to reporting through Elon); never treat CEO advice as approval.
 - **Tools.** Cursor ignores the `tools:` line, so a read only role is held only by its Never section. Check that its result wrote nothing it should not have.
-- **Codex.** It reads `AGENTS.md` only, not `.claude/agents/`. Start each worker in its own Orca worktree, tell it to read `.claude/agents/<role>.md` first, and pass the model per `.claude/model-routing.md`. There is no mailbox, so relay messages as for Cursor.
 - **Strike rule.** The strike hook runs only in Claude Code. In these tools the strike rule in `AGENTS.md` is the only guard, so keep it there.
 - **Moving a task between providers.** Use the `orchestration` skill for a supervised retry, with the usage gate and provider policy in `.claude/model-routing.md`. Use the `orca-cli` skill for an unsupervised handoff.
 - **Front door.** The agent team runs only when called: in every tool run `/elon` (or `/crew`, `/teddy`) first, then delegate as described here. A plain session is not the team. Teammates report to Elon only.
@@ -23,7 +22,6 @@ Elon is the session, so every report already comes to Elon. Outside Orca orchest
 | Tool | Project skills | User skills |
 | --- | --- | --- |
 | Claude Code | `.claude/skills/` (symlinks into `.agents/skills/`) | `~/.claude/skills` (dotfiles `.agents/skills`) |
-| Codex | `.agents/skills/` | `~/.agents/skills` (dotfiles) |
 | Cursor | `.cursor/skills/` (symlinks into `.agents/skills/`) | `~/.claude/skills` (dotfiles; Cursor reads it, so dotfiles makes no `~/.cursor/skills`) |
 | Antigravity | `.agents/skills/` | `~/.gemini/config/skills.json` points at dotfiles `.agents/skills` |
 

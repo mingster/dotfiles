@@ -3,9 +3,9 @@
 # Flags Orca workers stopped by a provider limit or network error (STOPPED), at an
 # empty input prompt without busy markers (IDLE), waiting on a dialog (BLOCKED_DIALOG) or a
 # tool approval prompt (BLOCKED_APPROVAL)
-# near full context (LOW_CONTEXT), a long Codex worktree (LONG_SESSION, calls summed over every session of the worktree) or a gpt-6-astra worker (ASTRA_MODEL).
+# or near full context (LOW_CONTEXT).
 # Heartbeats and a live terminal do not prove progress, so read the screen.
-# Exit 0 all OK, 4 any STOPPED, IDLE, BLOCKED_DIALOG, LOW_CONTEXT, LONG_SESSION or ASTRA_MODEL, 2 usage or orca error.
+# Exit 0 all OK, 4 any STOPPED, IDLE, BLOCKED_DIALOG or LOW_CONTEXT, 2 usage or orca error.
 set -u
 
 [ $# -eq 1 ] && [ -n "$1" ] || { echo "usage: worker-watch.sh <run_id>" >&2; exit 2; }
@@ -76,8 +76,6 @@ PY
 ) || { echo "worker-watch: cannot parse worker-list output" >&2; exit 2; }
 
 status=0
-codex_root="${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
-terminal_list=$("$orca" terminal list --json 2>/dev/null || true)
 while IFS=$'\t' read -r dispatch handle env disc; do
   [ -n "$dispatch" ] || continue
   if [ "$disc" = "1" ]; then
@@ -141,42 +139,6 @@ print("OK")
   fi
   echo "$dispatch $handle $verdict"
   case "$verdict" in OK) ;; *) status=4 ;; esac
-  wt=$(printf '%s' "$terminal_list" | python3 -c 'import json,sys; d=json.load(sys.stdin); h=sys.argv[1]; print(next((t.get("worktreePath", "") for t in d["result"]["terminals"] if t.get("handle")==h), ""))' "$handle" 2>/dev/null || true)
-  if [ -n "$wt" ] && [ -d "$codex_root" ]; then
-    # Count calls over every Codex session of this worktree: a restart must not reset the count (2026-10-22: 10 restarts, 620 calls, no flag).
-    read -r calls astra <<< "$(python3 - "$codex_root" "$wt" <<'PY'
-import glob, json, os, subprocess, sys
-root, worktree = sys.argv[1:]
-calls, astra = 0, 0
-for path in glob.glob(os.path.join(root, '**', '*.jsonl'), recursive=True) + glob.glob(os.path.join(root, '**', '*.jsonl.zst'), recursive=True):
-    try:
-        if path.endswith('.zst'):
-            lines = subprocess.run(['zstdcat', '--', path], capture_output=True, text=True, timeout=8).stdout.splitlines()
-        else:
-            with open(path, errors='replace') as f: lines = f.read().splitlines()
-        meta = json.loads(lines[0])
-        if meta.get('type') != 'session_meta' or meta.get('payload', {}).get('cwd') != worktree:
-            continue
-        for l in lines:
-            e = json.loads(l)
-            if e.get('type') == 'event_msg' and e.get('payload', {}).get('type') == 'token_count':
-                calls += 1
-            elif e.get('type') == 'turn_context' and str(e.get('payload', {}).get('model', '')).startswith('gpt-6-astra'):
-                astra = 1
-    except Exception:
-        continue
-print(calls, astra)
-PY
-)"
-    if [ "${astra:-0}" = 1 ]; then
-      echo "$dispatch $handle ASTRA_MODEL needs the owner's yes for this use; end dispatch unless OWNER_ASTRA_YES was recorded"
-      status=4
-    fi
-    if [ "${calls:-0}" -ge 120 ] 2>/dev/null; then
-      if [ "$calls" -ge 200 ]; then echo "$dispatch $handle LONG_SESSION $calls calls; end dispatch"; else echo "$dispatch $handle LONG_SESSION $calls calls"; fi
-      status=4
-    fi
-  fi
 done <<< "$rows"
 
 exit $status

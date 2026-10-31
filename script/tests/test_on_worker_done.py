@@ -14,15 +14,14 @@ SCRIPT = Path(__file__).resolve().parents[1]
 
 class ReviewerDispatch(unittest.TestCase):
     def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=(), local=False,
-                 configuration='explicit'):
+                 configuration='explicit', author_model=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
             presets.write_text(json.dumps({"roles": {"reviewer": {"chain": [
-                {"provider": "codex", "model": "gpt-test"},
-                {"provider": "cursor", "model": "composer-test"},
-                {"provider": "antigravity", "model": "gemini-test"},
+                {"provider": "cursor", "model": "gpt-test"},
                 {"provider": "claude", "model": "sonnet"},
+                {"provider": "antigravity", "model": "gemini-4-argon-high"},
             ]}}}))
             gate = root / "gate"
             gate.write_text(f'''#!/usr/bin/env python3
@@ -35,7 +34,7 @@ spec.loader.exec_module(ug)
 def usage(provider, *args, **kwargs):
     author = os.environ["TEST_AUTHOR"]
     blocked = os.environ["TEST_ONLY_AUTHOR"] == "1" and provider != author
-    room = 90 if provider == author else {{"codex": 60, "cursor": 50, "antigravity": 40, "claude": 30}}[provider]
+    room = 90 if provider == author else {{"cursor": 60, "antigravity": 50, "claude": 30}}[provider]
     return {{"verdict": "blocked" if blocked else "allowed", "weekly_used": 100 if blocked else 95 - room, "ceiling": 95}}
 ug.run = usage
 ug.antigravity_models = lambda: None
@@ -70,7 +69,9 @@ sys.exit(ug.main())
                     config.write_text(json.dumps(native.config if configuration == 'default' else {}))
             result = subprocess.run([
                 "bash", str(SCRIPT / "on-worker-done.sh"), "--repo", "o/n",
-                "--pr", "42", "--head", "a" * 40, "--author-family", author,
+                "--pr", "42", "--head", "a" * 40,
+                *(["--author-provider", author, "--author-model", author_model] if author_model
+                  else ["--author-family", author]),
                 "--worktree", tmp, "--run", "run_test",
             ], env=env, text=True, capture_output=True, timeout=30)
             if result.returncode != 0:
@@ -78,15 +79,15 @@ sys.exit(ug.main())
             return result, json.loads(log.read_text()) if log.exists() else None
 
     def test_default_installed_configuration_path_preserves_ordinary_launches(self):
-        for author in ('claude', 'cursor', 'antigravity', 'codex'):
+        for author in ('claude', 'cursor', 'antigravity', 'gemini'):
             with self.subTest(author=author):
                 result, args = self.dispatch(author, configuration='default')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
                 self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
                 self.assertEqual(args[args.index('--model')+1],
-                                 {'codex': 'composer-test', 'cursor': 'gemini-test',
-                                  'claude': 'gpt-test', 'antigravity': 'gpt-test'}[author])
+                                 {'cursor': 'gemini-4-argon-high', 'claude': 'gpt-test',
+                                  'antigravity': 'gpt-test', 'gemini': 'gpt-test'}[author])
 
     def test_unconfigured_installed_invocation_refuses_without_launch(self):
         for configuration in ('missing', 'unknown'):
@@ -104,11 +105,11 @@ sys.exit(ug.main())
         self.assertEqual(args[args.index('--model')+1], 'gpt-test')
 
     def test_full_host_fallback_pins_actual_native_argv(self):
-        result, args = self.dispatch('codex', full_hosts=('alpha',))
+        result, args = self.dispatch('cursor', full_hosts=('alpha',))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[args.index('--on')+1], 'beta-saved')
         self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:beta-instance')
-        self.assertEqual(args[args.index('--model')+1], 'composer-test')
+        self.assertEqual(args[args.index('--model')+1], 'gemini-4-argon-high')
 
     def test_all_full_starts_nothing_and_reports_counts(self):
         result, args = self.dispatch('claude', full_hosts=('alpha', 'beta'))
@@ -201,19 +202,26 @@ sys.exit(ug.main())
         self.assertEqual(args[:2], ["orchestration", "worker-start"])
         self.assertEqual(args[args.index("--agent") + 1], expected)
 
-    def test_antigravity_author_dispatches_codex_reviewer(self):
-        self.assert_reviewer("antigravity", "codex")
+    def test_antigravity_author_dispatches_cursor_reviewer(self):
+        self.assert_reviewer("antigravity", "cursor")
 
     def test_cursor_author_dispatches_antigravity_reviewer(self):
         self.assert_reviewer("cursor", "antigravity")
 
-    def test_claude_and_codex_authors_dispatch_other_providers(self):
-        for author, expected in (("claude", "codex"), ("codex", "cursor")):
+    def test_claude_and_gemini_authors_dispatch_other_providers(self):
+        for author in ("claude", "gemini"):
             with self.subTest(author=author):
-                self.assert_reviewer(author, expected)
+                self.assert_reviewer(author, "cursor")
+
+    def test_antigravity_claude_author_with_claude_blocked_picks_gemini_on_antigravity(self):
+        result, args = self.dispatch("antigravity", only_author_available=True,
+                                     author_model="claude-sonnet-5-5-medium")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index("--agent") + 1], "antigravity")
+        self.assertEqual(args[args.index("--model") + 1], "gemini-4-argon-high")
 
     def test_only_author_available_starts_nothing(self):
-        for author in ("claude", "cursor", "codex", "antigravity"):
+        for author in ("claude", "cursor", "gemini", "antigravity"):
             with self.subTest(author=author):
                 result, args = self.dispatch(author, only_author_available=True)
                 self.assertNotEqual(result.returncode, 0)

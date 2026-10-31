@@ -59,11 +59,11 @@ via .claude/agents/*.md" data-shape="rectangle">
   <rect x="299.34399999999994" y="84" width="179.03499999999997" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
   <text x="388.8614999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="388.8614999999999" dy="-12.350000000000001">Anthropic Claude Code</tspan><tspan x="388.8614999999999" dy="16.900000000000002">(see model-routing.md)</tspan><tspan x="388.8614999999999" dy="16.900000000000002">via .claude/agents/*.md</tspan></text>
 </g>
-<g class="node" data-id="Codex" data-label="OpenAI / Cursor Codex
+<g class="node" data-id="Cursor" data-label="Cursor
 (see model-routing.md)
 via .agents/skills/ &amp; rules" data-shape="rectangle">
   <rect x="506.3789999999999" y="84" width="231.64599999999996" height="70.7" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="622.2019999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="622.2019999999999" dy="-12.350000000000001">OpenAI / Cursor Codex</tspan><tspan x="622.2019999999999" dy="16.900000000000002">(see model-routing.md)</tspan><tspan x="622.2019999999999" dy="16.900000000000002">via .agents/skills/ &amp; rules</tspan></text>
+  <text x="622.2019999999999" y="119.35" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="622.2019999999999" dy="-12.350000000000001">Cursor</tspan><tspan x="622.2019999999999" dy="16.900000000000002">(see model-routing.md)</tspan><tspan x="622.2019999999999" dy="16.900000000000002">via .agents/skills/ &amp; rules</tspan></text>
 </g>
 <g class="node" data-id="Antigravity" data-label="Google Antigravity
 (see model-routing.md)

@@ -3,11 +3,10 @@
 
 Wired from each agent team's .claude/settings.json. For every
 `orca orchestration worker-start ... --agent <id>` in the command it runs
-`usage-gate.py check --provider <id>` (claude, codex, cursor and antigravity) and denies the
+`usage-gate.py check --provider <id>` (claude, cursor and antigravity) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
 Antigravity gates on the named --model pool, or the approved Gemini Flash pool without a model.
-Known roles from the task title receive advisory `pick --role` recommendations. The Codex launcher
-is checked the same way. A command scoped USAGE_GATE_OVERRIDE reason bypasses
+Known roles from the task title receive advisory `pick --role` recommendations. A command scoped USAGE_GATE_OVERRIDE reason bypasses
 routing enforcement and is logged, but never bypasses the weekly ceiling gate.
 
 Passes with a warning on stderr: an agent the gate cannot read
@@ -19,7 +18,7 @@ import json, os, re, shlex, subprocess, sys
 from datetime import datetime, timezone
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
-GATED = {"claude", "codex", "cursor", "antigravity"}
+GATED = {"claude", "cursor", "antigravity"}
 PUNCT = set(";&|\n()<>")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
 VAR = re.compile(r"^\$\{?(\w+)\}?$")
@@ -47,8 +46,7 @@ def starts(cmd):
             env[toks[i + 1]] = words[:next((n for n, w in enumerate(words) if stop(w) or w == "do"), len(words))]
     out = []
     for i, t in enumerate(toks):
-        launcher = os.path.basename(t) == "start-codex-worker.sh"
-        if not launcher and (t != "worker-start" or i == 0 or toks[i - 1] != "orchestration"):
+        if t != "worker-start" or i == 0 or toks[i - 1] != "orchestration":
             continue
         end = next((j for j in range(i + 1, len(toks)) if stop(toks[j])), len(toks))
         flags = toks[i + 1:end]
@@ -59,8 +57,8 @@ def starts(cmd):
                 if word.startswith(name + "="):
                     return word.split("=", 1)[1]
             return None
-        agent = "codex" if launcher else option("--agent")
-        title = option("--title" if launcher else "--task-title") or ""
+        agent = option("--agent")
+        title = option("--task-title") or ""
         role_match = re.match(r"^([a-z][a-z0-9-]*)\s+-\s+\S", title)
         role = role_match.group(1) if role_match else None
         # Overrides are environment prefixes of this simple command only. A spec,
@@ -71,10 +69,6 @@ def starts(cmd):
         prefix = toks[begin:i]
         while prefix and prefix[0] in ("do", "then", "env"):
             prefix = prefix[1:]
-        if launcher:
-            words = [word for word in prefix if not re.match(r"^\w+=", word)]
-            if any(os.path.basename(word) not in ("bash", "sh", "exec", "command") for word in words):
-                continue
         override = None
         for word in prefix:
             if not re.match(r"^\w+=", word):
@@ -150,7 +144,7 @@ def main():
     if data.get("tool_name") != "Bash":
         return
     cmd = (data.get("tool_input") or {}).get("command") or ""
-    if "worker-start" not in cmd and "start-codex-worker.sh" not in cmd:
+    if "worker-start" not in cmd:
         return
     blocked = []
     commands = starts(cmd)

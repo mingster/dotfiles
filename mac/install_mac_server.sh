@@ -208,18 +208,6 @@ if ! command -v claude >/dev/null 2>&1; then
   fi
 fi
 
-if ! command -v codex >/dev/null 2>&1; then
-  if [ "$dry" -eq 1 ]; then
-    echo "would run: npm install -g @openai/codex"
-  else
-    if command -v npm >/dev/null 2>&1; then
-      run npm install -g @openai/codex
-    else
-      echo "WARN: npm not found on PATH, skipping codex install." >&2
-    fi
-  fi
-fi
-
 if ! command -v agent >/dev/null 2>&1 && ! command -v cursor-agent >/dev/null 2>&1; then
   if [ "$dry" -eq 1 ]; then
     echo "would run: install Cursor agent CLI via https://cursor.com/install"

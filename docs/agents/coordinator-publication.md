@@ -19,7 +19,7 @@ The worktree must already be checked out on `--branch`. The helper never reads `
 
 - `Closes #N` on its own line when closing an issue (at most one issue per line).
 - `## Verification` with exactly three bullets (command or path and observed outcome).
-- No `## Test plan` heading and no tool credit (`Generated with Claude Code`, `Generated with Cursor`, `Generated with Codex`, `Co-Authored-By:`).
+- No `## Test plan` heading and no tool credit (`Generated with Claude Code`, `Generated with Cursor`, `Co-Authored-By:`).
 
 ## Existing pull requests
 

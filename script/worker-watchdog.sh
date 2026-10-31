@@ -249,7 +249,7 @@ if re.search(r"(?:you(?:'ve| have)? (?:hit|reached|exceeded).*?(?:usage|rate|quo
 elif re.search(r'\bWorking\b|esc to interrupt',s,re.I): print('working')
 # A background shell, monitor or job still running: the agent waits on it, so its prompt is not idle.
 elif re.search(r'\b\d+ (?:background )?(?:shells?|monitors?)\b|\bstill running\b',s,re.I): print('waiting')
-elif 'Ask Codex to do anything' in s or re.search(r'^\s*[❯>]\s*$',s,re.M): print('idle')
+elif re.search(r'^\s*[❯>]\s*$',s,re.M): print('idle')
 else: print('unknown')
 PY
     ); then observation=unknown; fi

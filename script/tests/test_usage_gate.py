@@ -12,7 +12,7 @@ ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
-REVIEWER_CHAIN = [{"provider": "codex", "model": "gpt-6.1-sol", "effort": "medium"},
+REVIEWER_CHAIN = [{"provider": "other", "model": "gpt-6.1-sol", "effort": "medium"},
                   {"provider": "cursor", "model": "composer-2.5"},
                   {"provider": "antigravity", "model": "gemini-3.8-flash"}]
 
@@ -130,6 +130,18 @@ class Antigravity(unittest.TestCase):
         self.assertEqual(result["selected"]["model"], "gemini-flash")
         self.assertEqual([c["verdict"] for c in result["candidates"]], ["blocked", "allowed"])
 
+    def test_reviewer_falls_back_to_qa_sdet_chain_with_gemini(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = t + "/presets.json"
+            with open(path, "w") as f:
+                json.dump(json.load(open(os.path.join(os.path.dirname(__file__), "../../.orca/presets.json")))
+                          | {"roles": {k: v for k, v in json.load(open(os.path.join(
+                              os.path.dirname(__file__), "../../.orca/presets.json")))["roles"].items()
+                              if k != "reviewer"}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}):
+                chain, _ = ug.role_chain("reviewer")
+        self.assertIn({"provider": "antigravity", "model": "gemini-4-argon-high"}, chain)
+
     def test_show_lists_three_pools_with_local_resets(self):
         pools = {"claude": {"pct": 50, "resets_at": FUT, "observed_at": NOW},
                  "gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW},
@@ -204,7 +216,7 @@ class Fresh(unittest.TestCase):
         self.assertIsNone(ug.fresh(old, NOW))
 
     def test_recent_reading_is_kept_whatever_its_timestamp_format(self):
-        for at in (NOW - 60, "2001-09-09T01:45:40.000Z"):  # epoch seconds (claude) or ISO (codex)
+        for at in (NOW - 60, "2001-09-09T01:45:40.000Z"):  # epoch seconds (claude) or ISO
             self.assertEqual(ug.fresh({"pct": 5.0, "observed_at": at}, NOW)["pct"], 5.0, at)
 
     def test_reading_from_the_far_future_is_no_reading(self):
@@ -237,31 +249,6 @@ class StaleReading(unittest.TestCase):
 
 
 class Readers(unittest.TestCase):
-    def test_codex_reads_latest_weekly_percent(self):
-        with tempfile.TemporaryDirectory() as t:
-            os.makedirs(t + "/2026/10/05")
-            ev = lambda p, w: json.dumps({"timestamp": "2026-10-05T01:00:00Z", "payload": {"type": "token_count",
-                "rate_limits": {"primary": {"used_percent": p, "window_minutes": w, "resets_at": 5}}}})
-            open(t + "/2026/10/05/rollout-a.jsonl", "w").write(ev(10, 10080) + "\n" + ev(33, 10080) + "\n" + ev(99, 300) + "\n")
-            self.assertEqual(ug.codex_reading(t)["pct"], 33.0)
-
-    def codex(self, *limits):
-        with tempfile.TemporaryDirectory() as t:
-            os.makedirs(t + "/2026/10/05")
-            lines = [json.dumps({"timestamp": "2026-10-05T01:00:00Z", "payload": {"type": "token_count", "rate_limits": r}}) for r in limits]
-            open(t + "/2026/10/05/rollout-a.jsonl", "w").write("\n".join(lines) + "\n")
-            return ug.codex_reading(t)
-
-    def test_codex_skips_events_with_null_primary(self):
-        week = {"used_percent": 20, "window_minutes": 10080, "resets_at": 5}
-        r = self.codex({"primary": week}, {"primary": None, "secondary": None}, None)
-        self.assertEqual(r["pct"], 20.0)
-
-    def test_codex_reads_weekly_window_under_secondary(self):
-        r = self.codex({"primary": {"used_percent": 70, "window_minutes": 300, "resets_at": 1},
-                        "secondary": {"used_percent": 41, "window_minutes": 10080, "resets_at": 9}})
-        self.assertEqual((r["pct"], r["resets_at"]), (41.0, 9))
-
     def test_claude_reads_seven_day(self):
         with tempfile.TemporaryDirectory() as t:
             p = t + "/c.json"
@@ -310,10 +297,10 @@ class Reserve(unittest.TestCase):
         self.assertEqual((r["verdict"], r["reserve"], r["running"]), ("allowed", 0.0, None))
 
     def test_running_workers_counts_active_terminals_of_one_provider(self):
-        rows = [{"projection": {"provider": {"id": p}}} for p in ("claude", "codex", "claude")]
+        rows = [{"projection": {"provider": {"id": p}}} for p in ("claude", "cursor", "claude")]
         out = mock.Mock(stdout=json.dumps({"result": {"workers": rows}}))
         with mock.patch.object(ug.subprocess, "run", return_value=out):
-            self.assertEqual((ug.running_workers("claude"), ug.running_workers("codex")), (2, 1))
+            self.assertEqual((ug.running_workers("claude"), ug.running_workers("cursor")), (2, 1))
         with mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError):
             self.assertIsNone(ug.running_workers("claude"))
 
@@ -329,16 +316,16 @@ class DayStart(unittest.TestCase):
         self.assertEqual((v, d["today_used"], st["baseline"]), ("allowed", 15.0, 45))
 
     def test_week_reset_since_the_day_start_counts_from_zero(self):
-        v, d, _ = self.go(D(13, FUT + 604800), D(80, FUT))   # codex reset at noon: week = today
+        v, d, _ = self.go(D(13, FUT + 604800), D(80, FUT))   # weekly reset at noon: week = today
         self.assertEqual((v, d["today_used"]), ("allowed", 13.0))
 
     def test_a_week_that_began_today_started_from_zero(self):
         mid = NOW - 3600
         began_today = {"pct": 13.0, "resets_at": mid + 3600 + 604800 - 1800}      # reset - 7 days = 30 min after midnight
-        self.assertEqual(ug.start_of_day(began_today, "codex", mid), {"pct": 0.0, "resets_at": began_today["resets_at"]})
+        self.assertEqual(ug.start_of_day(began_today, "claude", mid), {"pct": 0.0, "resets_at": began_today["resets_at"]})
         older = {"pct": 13.0, "resets_at": mid + 604800 - 1}                       # began 1 s before midnight
-        with mock.patch.dict(ug.DAY_START, {"codex": lambda m: "from logs"}):
-            self.assertEqual(ug.start_of_day(older, "codex", mid), "from logs")
+        with mock.patch.dict(ug.DAY_START, {"claude": lambda m: "from logs"}):
+            self.assertEqual(ug.start_of_day(older, "claude", mid), "from logs")
         self.assertIsNone(ug.start_of_day(older, "antigravity", mid))
 
     def test_no_day_start_falls_back_to_the_first_check(self):
@@ -356,33 +343,7 @@ class DayStart(unittest.TestCase):
         self.assertLessEqual(mid - NOW, 86400 + 3600)
 
 
-class NewestReading(unittest.TestCase):
-    def write(self, root, name, events, mtime):
-        os.makedirs(root + "/2026/10/05", exist_ok=True)
-        p = f"{root}/2026/10/05/{name}"
-        lines = [json.dumps({"timestamp": ts, "payload": {"rate_limits": {"primary":
-                 {"used_percent": pct, "window_minutes": 10080, "resets_at": 5}}}}) for ts, pct in events]
-        open(p, "w").write("\n".join(lines) + "\n")
-        os.utime(p, (mtime, mtime))
-
-    def test_newest_event_wins_even_from_an_earlier_named_file(self):
-        with tempfile.TemporaryDirectory() as t:
-            # started later (name sorts last) but went quiet; the earlier session kept writing
-            self.write(t, "rollout-2026-10-05T22.jsonl", [("2026-10-05T14:00:00Z", 12)], 100)
-            self.write(t, "rollout-2026-10-05T18.jsonl", [("2026-10-05T14:50:00Z", 13)], 200)
-            self.assertEqual(ug.codex_reading(t)["pct"], 13.0)
-
-    def test_day_start_is_the_last_event_before_midnight(self):
-        with tempfile.TemporaryDirectory() as t:
-            self.write(t, "rollout-a.jsonl", [("2026-10-05T10:00:00Z", 20), ("2026-10-05T15:00:00Z", 26)],
-                       ug.epoch("2026-10-05T15:00:00Z"))
-            self.write(t, "rollout-b.jsonl", [("2026-10-05T17:00:00Z", 31)], ug.epoch("2026-10-05T17:00:00Z"))
-            mid = ug.epoch("2026-10-05T16:00:00Z")
-            with mock.patch.object(ug, "CODEX", t):
-                self.assertEqual(ug.codex_day_start(mid)["pct"], 26.0)
-                self.assertIsNone(ug.codex_day_start(ug.epoch("2026-10-05T09:00:00Z")))
-                self.assertEqual(ug.codex_reading()["pct"], 31.0)
-
+class DayStartReading(unittest.TestCase):
     def test_claude_day_start_must_be_from_today(self):
         with tempfile.TemporaryDirectory() as t:
             p = t + "/d.json"
@@ -394,23 +355,22 @@ class NewestReading(unittest.TestCase):
 class Show(unittest.TestCase):
     def test_show_lists_every_provider_in_one_table(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW},
-                                             "codex": lambda: None}), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW}}), \
                 mock.patch.object(ug, "running_workers", return_value=0), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
         text = out.getvalue()
-        for name in ("claude", "codex", "cursor", "antigravity/claude", "antigravity/gemini-flash", "antigravity/gemini-pro", "no fresh"):
+        for name in ("claude", "cursor", "antigravity/claude", "antigravity/gemini-flash", "antigravity/gemini-pro", "no fresh"):
             self.assertIn(name, text)
         self.assertEqual(len([l for l in text.splitlines() if l.startswith("claude")]), 1)
 
     def test_show_json_is_a_list(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.dict(ug.READERS, {"claude": lambda: None, "codex": lambda: None}), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: None}), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show", "--json"])
-        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity/claude", "antigravity/gemini-flash", "antigravity/gemini-pro", "claude", "codex", "cursor"])
+        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity/claude", "antigravity/gemini-flash", "antigravity/gemini-pro", "claude", "cursor"])
 
 
 def summary(pct, ends=FUT, began=NOW - 29 * 86400, enabled=True):
@@ -614,114 +574,90 @@ class AutoCap(unittest.TestCase):
             self.assertEqual(ug.run("claude", 12, 95)["cap"], 12)
 
 
-class IdleCodex(unittest.TestCase):
-    def test_old_unreset_reading_without_activity_today_is_zero_spend(self):
-        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t + "/state"), \
-                mock.patch.object(ug, "CODEX", t + "/sessions"), \
-                mock.patch.object(ug, "running_workers", return_value=1):
-            os.makedirs(t + "/sessions")
-            p = t + "/sessions/rollout-old.jsonl"
-            old = ug.local_midnight(NOW) - 10
-            with open(p, "w") as f:
-                f.write(json.dumps({"timestamp": old, "payload": {"rate_limits": {"primary":
-                    {"used_percent": 39, "window_minutes": 10080, "resets_at": FUT}}}}))
-            os.utime(p, (old, old))
-            r = ug.run("codex", 12, 95, now=NOW)
-            self.assertEqual(r["verdict"], "unknown")
-            # Activity without a new rate reading must preserve unknown, including non-rollout files.
-            with open(t + "/sessions/other.jsonl", "w") as f:
-                f.write("{}")
-            os.utime(t + "/sessions/other.jsonl", (NOW, NOW))
-            self.assertEqual(ug.run("codex", 12, 95, now=NOW)["verdict"], "unknown")
-
+class IdleReading(unittest.TestCase):
     def test_idle_reading_still_blocks_with_running_reserve_and_expired_week_stays_unknown(self):
         old = ug.local_midnight(NOW) - 10
         reading = {"pct": 94.0, "resets_at": FUT, "observed_at": old}
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.object(ug, "CODEX", t + "/sessions"), \
-                mock.patch.dict(ug.READERS, {"codex": lambda: reading, "claude": lambda: reading}), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
                 mock.patch.object(ug, "running_workers", return_value=1):
-            r = ug.run("codex", 12, 95, now=NOW)
-            self.assertEqual(r["verdict"], "unknown")
             self.assertEqual(ug.run("claude", 12, 95, now=NOW)["verdict"], "unknown")
             reading["resets_at"] = NOW - 1
-            self.assertEqual(ug.run("codex", 12, 95, now=NOW)["verdict"], "unknown")
+            self.assertEqual(ug.run("claude", 12, 95, now=NOW)["verdict"], "unknown")
 
 
 
 class Pick(unittest.TestCase):
-    def invoke(self, chain=None, role="fullstack-dev", claude=44, codex=41, extra=(), pin=False,
-               running=0, default=False, cap=12, codex_baseline=40):
+    def invoke(self, chain=None, role="fullstack-dev", claude=44, other=41, extra=(), pin=False,
+               running=0, default=False, cap=12, other_baseline=40):
+        readings = {}   # "other" stands in for a second gated provider with a readable weekly percent
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.object(ug, "CODEX", t + "/sessions"), \
+                mock.patch.dict(ug.READERS, {"other": lambda: readings.get("other")}), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 mock.patch.object(ug, "running_workers", return_value=running), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
             chain = chain or [{"provider": "claude", "model": "sonnet", "effort": "medium"},
-                              {"provider": "codex", "model": "gpt-test", "effort": "low"},
+                              {"provider": "other", "model": "gpt-test", "effort": "low"},
                               {"provider": "cursor", "model": "claude-test"},
                               {"provider": "antigravity", "model": "gemini-test"}]
-            presets = {"default_chain": ["codex", "claude", "cursor", "antigravity"],
+            presets = {"default_chain": ["other", "claude", "cursor", "antigravity"],
                        "roles": {"fullstack-dev" if default else role:
                                  {"chain": chain, "tier": "workhorse", "pin": pin}}}
             with open(t + "/presets.json", "w") as f:
                 json.dump(presets, f)
-            for provider, pct in (("claude", claude), ("codex", codex)):
+            for provider, pct in (("claude", claude), ("other", other)):
                 if pct is None:
                     continue
                 with open(t + "/" + provider + ".json", "w") as f:
                     json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
-                               "baseline": codex_baseline if provider == "codex" else 40, "resets_at": FUT}, f)
+                               "baseline": other_baseline if provider == "other" else 40, "resets_at": FUT}, f)
                 if provider == "claude":
                     with open(t + "/claude-rate-limits.json", "w") as f:
                         json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT},
                                    "_written_at": NOW}, f)
                 else:
-                    os.makedirs(t + "/sessions")
-                    with open(t + "/sessions/rollout-test.jsonl", "w") as f:
-                        json.dump({"timestamp": NOW, "payload": {"rate_limits": {"primary":
-                            {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}, f)
+                    readings["other"] = {"pct": pct, "resets_at": FUT, "observed_at": NOW}
             with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": t + "/presets.json"}):
                 status = ug.main(["pick", "--role", role, *(["--cap", str(cap)] if cap is not None else []), *extra])
             return status, out.getvalue(), err.getvalue()
 
     def test_picks_largest_fraction_and_prints_flags_and_reasons(self):
         status, out, err = self.invoke()
-        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-test --effort low"))
-        for provider in ("claude", "codex", "cursor", "antigravity"):
+        self.assertEqual((status, out.strip()), (0, "--agent other --model gpt-test --effort low"))
+        for provider in ("claude", "other", "cursor", "antigravity"):
             self.assertIn(provider, err)
 
     def test_ranks_by_fraction_of_auto_cap_rather_than_absolute_room(self):
-        status, out, _ = self.invoke(claude=44, codex=81, codex_baseline=80, cap=None, extra=("--json",))
+        status, out, _ = self.invoke(claude=44, other=81, other_baseline=80, cap=None, extra=("--json",))
         result = json.loads(out)
-        claude, codex = result["candidates"][:2]
-        self.assertGreater(claude["headroom"], codex["headroom"])
+        claude, other = result["candidates"][:2]
+        self.assertGreater(claude["headroom"], other["headroom"])
         self.assertEqual((status, result["selected"]["provider"]), (0, "claude"))
 
     def test_near_tie_keeps_the_preset_provider_whichever_reads_higher(self):
         # Readings 1 point apart in either direction must not flip the pick (issue 107).
-        for claude, codex in ((44, 44), (45, 44), (44, 45), (46, 44)):
-            with self.subTest(claude=claude, codex=codex):
-                self.assertIn("--agent claude", self.invoke(claude=claude, codex=codex, cap=None)[1])
+        for claude, other in ((44, 44), (45, 44), (44, 45), (46, 44)):
+            with self.subTest(claude=claude, other=other):
+                self.assertIn("--agent claude", self.invoke(claude=claude, other=other, cap=None)[1])
 
     def test_clearly_lower_preset_switches_and_blocked_preset_switches(self):
-        self.assertIn("--agent codex", self.invoke(claude=60, codex=44, cap=None)[1])
-        self.assertIn("--agent codex", self.invoke(claude=95, codex=44, cap=None)[1])
+        self.assertIn("--agent other", self.invoke(claude=60, other=44, cap=None)[1])
+        self.assertIn("--agent other", self.invoke(claude=95, other=44, cap=None)[1])
 
     def test_ties_keep_chain_order_and_reserve_can_block_all_gated_providers(self):
-        self.assertIn("--agent claude", self.invoke(codex=44)[1])
-        self.assertEqual(self.invoke(claude=94, codex=94, running=1)[0], 4)   # cursor has no reading, which proves nothing
+        self.assertIn("--agent claude", self.invoke(other=44)[1])
+        self.assertEqual(self.invoke(claude=94, other=94, running=1)[0], 4)   # cursor has no reading, which proves nothing
 
     def test_pinned_roles_keep_first_allowed_entry(self):
         for role, pin in (("elon", False), ("release-manager", False), ("custom", True)):
             with self.subTest(role):
                 self.assertIn("--agent claude", self.invoke(role=role, pin=pin)[1])
-                self.assertIn("--agent codex", self.invoke(role=role, pin=pin, claude=95)[1])
+                self.assertIn("--agent other", self.invoke(role=role, pin=pin, claude=95)[1])
 
     def test_review_excludes_family_even_for_pinned_roles(self):
         self.assertIn("--agent claude", self.invoke(extra=("--avoid-family", "gpt"))[1])
-        self.assertIn("--agent codex", self.invoke(role="elon", extra=("--avoid-family", "claude"))[1])
+        self.assertIn("--agent other", self.invoke(role="elon", extra=("--avoid-family", "claude"))[1])
         # Claude models on both ungated providers are also excluded.
         chain = [{"provider": "claude", "model": "opus"},
                  {"provider": "cursor", "model": "claude-opus"},
@@ -733,47 +669,47 @@ class Pick(unittest.TestCase):
         self.assertEqual(self.invoke(chain=chain, extra=("--avoid-family", "gpt"))[0], 4)
 
     def test_ungated_is_only_a_last_resort_and_unknown_does_not_prove_blocked(self):
-        self.assertIn("--agent codex", self.invoke(claude=95)[1])
-        self.assertEqual(self.invoke(claude=95, codex=95)[0], 4)   # cursor has no reading, so antigravity is not a fallback yet
-        self.assertEqual(self.invoke(claude=None, codex=95)[0], 4)
+        self.assertIn("--agent other", self.invoke(claude=95)[1])
+        self.assertEqual(self.invoke(claude=95, other=95)[0], 4)   # cursor has no reading, so antigravity is not a fallback yet
+        self.assertEqual(self.invoke(claude=None, other=95)[0], 4)
         self.assertEqual(self.invoke(extra=("--avoid-family", "gpt"), claude=None)[0], 4)
 
     def test_unknown_role_uses_default_chain_and_models_from_file(self):
         status, out, _ = self.invoke(role="unlisted", default=True, claude=41)
-        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-test --effort low"))
+        self.assertEqual((status, out.strip()), (0, "--agent other --model gpt-test --effort low"))
 
     def test_json_includes_selection_headroom_and_every_candidate(self):
         status, out, _ = self.invoke(extra=("--json",), running=2)
         result = json.loads(out)
         self.assertEqual((status, result["selected"]["provider"], result["selected"]["headroom"]),
-                         (0, "codex", 52))
+                         (0, "other", 52))
         self.assertEqual(len(result["candidates"]), 4)
 
     def test_no_allowed_entry_reports_earliest_reset_and_exit_three_in_json(self):
-        chain = [{"provider": "claude", "model": "opus"}, {"provider": "codex", "model": "gpt-test"}]
-        status, out, _ = self.invoke(chain=chain, claude=96, codex=95, extra=("--json",))
+        chain = [{"provider": "claude", "model": "opus"}, {"provider": "other", "model": "gpt-test"}]
+        status, out, _ = self.invoke(chain=chain, claude=96, other=95, extra=("--json",))
         result = json.loads(out)
         self.assertEqual((status, result["selected"], result["blocked_until"]),
                          (3, None, FUT))
 
-    def test_reviewer_avoid_claude_picks_codex_when_allowed(self):
-        status, out, _ = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, codex=44,
+    def test_reviewer_avoid_claude_picks_other_when_allowed(self):
+        status, out, _ = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, other=44,
                                      extra=("--avoid-family", "claude"))
-        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-6.1-sol --effort medium"))
+        self.assertEqual((status, out.strip()), (0, "--agent other --model gpt-6.1-sol --effort medium"))
 
-    def test_reviewer_avoid_claude_picks_antigravity_flash_when_codex_blocked(self):
+    def test_reviewer_avoid_claude_picks_antigravity_flash_when_other_blocked(self):
         pools = {"gemini-flash": {"pct": 5, "resets_at": FUT, "observed_at": NOW}}
         with tempfile.TemporaryDirectory() as t, \
-                mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.dict(ug.READERS, {"antigravity": lambda: pools, "other": lambda: {"pct": 96, "resets_at": FUT, "observed_at": NOW}}), \
                 mock.patch.object(ug, "running_workers", return_value=0), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()):
-            presets = {"default_chain": ["codex", "cursor", "antigravity"],
+            presets = {"default_chain": ["other", "cursor", "antigravity"],
                        "roles": {"reviewer": {"chain": REVIEWER_CHAIN, "tier": "workhorse"}}}
             with open(t + "/presets.json", "w") as f:
                 json.dump(presets, f)
-            for provider, pct in (("claude", 95), ("codex", 96)):
+            for provider, pct in (("claude", 95), ("other", 96)):
                 with open(t + "/" + provider + ".json", "w") as f:
                     json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
                                "baseline": 40, "resets_at": FUT}, f)
@@ -781,11 +717,6 @@ class Pick(unittest.TestCase):
                     with open(t + "/claude-rate-limits.json", "w") as f:
                         json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT},
                                    "_written_at": NOW}, f)
-                else:
-                    os.makedirs(t + "/sessions")
-                    with open(t + "/sessions/rollout-test.jsonl", "w") as f:
-                        json.dump({"timestamp": NOW, "payload": {"rate_limits": {"primary":
-                            {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}, f)
             with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": t + "/presets.json"}):
                 with mock.patch.object(ug, "STATE", t):
                     status = ug.main(["pick", "--role", "reviewer", "--avoid-family", "claude"])
@@ -793,7 +724,7 @@ class Pick(unittest.TestCase):
         self.assertIn("--agent antigravity --model gemini-3.8-flash", out.getvalue().strip())
 
     def test_reviewer_avoid_claude_nothing_when_all_cross_family_blocked(self):
-        status, out, err = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, codex=96,
+        status, out, err = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, other=96,
                                        extra=("--avoid-family", "claude"))
         self.assertEqual((status, out), (4, ""))
 
@@ -801,65 +732,33 @@ class Pick(unittest.TestCase):
         path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
         with open(path) as f:
             chain = json.load(f)["roles"]["reviewer"]["chain"]
-        by_provider = {entry["provider"]: entry["model"] for entry in chain}
-        self.assertEqual(by_provider["codex"], "gpt-6.1-sol")
-        self.assertEqual(by_provider["cursor"], "composer-2.5")
-        self.assertEqual(by_provider["antigravity"], "gemini-3.8-flash")
-        self.assertNotIn("gpt-5.6-sol", by_provider.values())
-        self.assertTrue(all(not m.startswith("claude-") for m in by_provider.values()))
+        self.assertEqual([(e["provider"], e["model"]) for e in chain],
+                         [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet"),
+                          ("cursor", "gpt-5.6-sol-medium")])
+        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "gpt"})
 
 
 class PickOrder(unittest.TestCase):
     def test_show_orders_by_fraction_with_unknown_providers_last(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW},
-                                             "codex": lambda: None}), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW}}), \
                 mock.patch.object(ug, "running_workers", return_value=0), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 67.4%, codex refresh returned no fresh valid usage reading, cursor no reliable Composer 2.5 allowance reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
+                         "pick order now: claude 67.4%, cursor no reliable Composer 2.5 allowance reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.dict(ug.READERS, {"claude": lambda: reading, "codex": lambda: None}), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 mock.patch.object(ug, "running_workers", return_value=0), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
         self.assertIn("unknown", out.getvalue())
         self.assertNotIn("blocked", out.getvalue())
-
-
-class CodexWorkerBase(unittest.TestCase):
-    def test_new_worktree_uses_origin_head_and_preserves_explicit_override(self):
-        import subprocess
-        script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "start-codex-worker.sh"))
-        with tempfile.TemporaryDirectory() as t:
-            subprocess.run(["git", "init", "-q", t], check=True)
-            subprocess.run(["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"],
-                           cwd=t, check=True)
-            stub = t + "/orca"
-            with open(stub, "w") as f:
-                f.write("#!/bin/sh\n")
-                f.write('if [ "$1 $2" = "worktree create" ]; then\n')
-                f.write('  printf "%s\\n" "$@" > "$TEST_BASE_LOG"\n')
-                f.write("  echo '{\"result\":{\"worktree\":{\"path\":\"/tmp/unused\"}}}'\n")
-                f.write("else exit 1; fi\n")
-            os.chmod(stub, 0o755)
-            env = {**os.environ, "ORCA_CLI_COMMAND": stub, "TEST_BASE_LOG": t + "/args",
-                   "ORCA_TERMINAL_HANDLE": "term_test"}
-            with open(t + "/spec", "w") as f:
-                f.write("Check the base branch using the stub CLI.")
-            args = ["bash", script, "--run", "unused", "--spec", t + "/spec", "--title", "unused",
-                    "--name", "unused", "--repo", t]
-            for override, expected in (([], "origin/master"), (["--base-branch", "origin/release"], "origin/release")):
-                subprocess.run(args + override, env=env, capture_output=True)
-                with open(t + "/args") as f:
-                    flags = f.read().splitlines()
-                self.assertEqual(flags[flags.index("--base-branch") + 1], expected)
 
 
 class RealReadingPolicy(unittest.TestCase):
@@ -900,13 +799,13 @@ class RealReadingPolicy(unittest.TestCase):
         gate = self.gate
         old = {"pct": 99, "resets_at": NOW - 1, "observed_at": NOW - 600}
         new = {"pct": 3, "resets_at": FUT, "observed_at": NOW}
-        with mock.patch.dict(gate.READERS, {"codex": lambda: old}), \
+        with mock.patch.dict(gate.READERS, {"claude": lambda: old}), \
                 mock.patch.object(gate, "refresh_reading", return_value=new) as refresh, \
                 mock.patch.object(gate, "running_workers", return_value=0):
-            result = gate.run("codex", 1, 95, now=NOW)
-        refresh.assert_called_once_with("codex")
+            result = gate.run("claude", 1, 95, now=NOW)
+        refresh.assert_called_once_with("claude")
         self.assertEqual((result["verdict"], result["weekly_used"]), ("allowed", 3))
-        self.assertEqual(result["source"], "codex app-server account/rateLimits/read")
+        self.assertEqual(result["source"], "https://api.anthropic.com/api/oauth/usage seven_day")
 
     def test_failed_refresh_is_unknown_with_exact_source_age_and_no_invented_number(self):
         gate = self.gate
@@ -943,39 +842,19 @@ class RealReadingPolicy(unittest.TestCase):
 
     def test_broken_local_reader_refreshes_instead_of_crashing(self):
         gate = self.gate
-        with mock.patch.dict(gate.READERS, {"codex": mock.Mock(side_effect=ValueError("bad local data"))}), \
-                mock.patch.object(gate, "codex_refresh", return_value={"pct": 20, "observed_at": NOW}), \
+        with mock.patch.dict(gate.READERS, {"claude": mock.Mock(side_effect=ValueError("bad local data"))}), \
+                mock.patch.object(gate, "claude_refresh", return_value={"pct": 20, "observed_at": NOW}), \
                 mock.patch.object(gate, "running_workers", return_value=0):
-            self.assertEqual(gate.run("codex", None, 95, now=NOW)["verdict"], "allowed")
+            self.assertEqual(gate.run("claude", None, 95, now=NOW)["verdict"], "allowed")
 
     def test_refresh_age_uses_the_clock_after_provider_response(self):
         gate = self.gate
-        with mock.patch.dict(gate.READERS, {"codex": lambda: None}), \
+        with mock.patch.dict(gate.READERS, {"claude": lambda: None}), \
                 mock.patch.object(gate, "refresh_reading", return_value={"pct": 20, "observed_at": NOW + 10}), \
                 mock.patch.object(gate.time, "time", side_effect=[NOW, NOW, NOW + 10]), \
                 mock.patch.object(gate, "running_workers", return_value=0):
-            result = gate.run("codex", None, 95)
+            result = gate.run("claude", None, 95)
         self.assertEqual((result["verdict"], result["reading_age_min"]), ("allowed", 0))
-
-    def test_codex_refresh_reads_real_account_rpc_without_a_model_turn(self):
-        gate = self.gate
-        path = self.tmp.name + '/codex'
-        with open(path, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-import json,sys
-for line in sys.stdin:
-    d=json.loads(line)
-    if d['method']=='initialize': print(json.dumps({'id':1,'result':{}}),flush=True)
-    elif d['method']=='account/rateLimits/read':
-        print(json.dumps({'id':2,'result':{'rateLimits':{'secondary':{
-            'usedPercent':41,'windowDurationMins':10080,'resetsAt':2000000000}}}}),flush=True)
-    elif d['method']!='initialized': sys.exit(1)
-''')
-        os.chmod(path, 0o755)
-        with mock.patch.dict(os.environ, {'PATH':self.tmp.name + ':' + os.environ['PATH']}):
-            reading = gate.codex_refresh()
-        self.assertEqual((reading['pct'], reading['resets_at']), (41, 2000000000))
-        self.assertIsNotNone(gate.fresh(reading, gate.time.time()))
 
     def test_claude_refresh_uses_own_usage_response(self):
         import urllib.request
@@ -994,10 +873,10 @@ for line in sys.stdin:
         gate = self.gate
         pages = [mock.Mock(stdout=json.dumps({'result':{'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}}})),
                  mock.Mock(stdout=json.dumps({'result':{'workers':[
-                     {'terminalState':'retained','dispatchStatus':'dispatched','projection':{'provider':{'id':'codex'},'liveness':{'verdict':'live'}}},
-                     {'terminalState':'retained','dispatchStatus':'completed','projection':{'provider':{'id':'codex'}}}], 'page':{'hasMore':False}}}))]
+                     {'terminalState':'retained','dispatchStatus':'dispatched','projection':{'provider':{'id':'cursor'},'liveness':{'verdict':'live'}}},
+                     {'terminalState':'retained','dispatchStatus':'completed','projection':{'provider':{'id':'cursor'}}}], 'page':{'hasMore':False}}}))]
         with mock.patch.object(gate.subprocess, 'run', side_effect=pages) as query:
-            self.assertEqual(gate.running_workers('codex'), 1)
+            self.assertEqual(gate.running_workers('cursor'), 1)
         self.assertIn('page2', query.call_args.args[0])
 
 

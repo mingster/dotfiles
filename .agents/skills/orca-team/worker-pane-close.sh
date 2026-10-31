@@ -5,8 +5,8 @@
 #        worker-pane-close.sh                       sweep recorded panes and discover ended workers in the caller's Run
 # The sweep closes a settled dispatch only once its linked worktree is gone: a dispatch settles at its first
 # worker_done, and the worker may still be on a correction pass in that worktree. Explicit ids skip that check,
-# and so does a dispatch marked by --release ($state/released/<id>): Orca retains external terminals (Codex
-# workers) on release, so the marker is what lets a later sweep finish a close that did not complete.
+# and so does a dispatch marked by --release ($state/released/<id>): Orca retains external terminals
+# on release, so the marker is what lets a later sweep finish a close that did not complete.
 # Closes the pane worker-panes.sh recorded, then every terminal of that worker still in `orca terminal list`:
 # the handles worker-show reports (agent and setup terminals) and any terminal whose worktreePath matches
 # the linked git worktree the worker created or reused. A dispatch that is still running keeps its terminals,

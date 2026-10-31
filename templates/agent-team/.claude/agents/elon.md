@@ -28,7 +28,7 @@ Before dispatching, handling a completion or handing off, read `docs/agents/elon
 ## Worker delivery accountability
 
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the lane cap in `.claude/model-routing.md` (Codex at most 3). When the lead's queue waits over 30 minutes, merge through `lead-merge.sh` yourself.
+- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the lane cap in `.claude/model-routing.md` (at most 3 implementation lanes). When the lead's queue waits over 30 minutes, merge through `lead-merge.sh` yourself.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
 - Routing, quota and launch: `.claude/model-routing.md` and `~/.orca/presets.json`.
 - Arm the inbox waiter with a 10 minute timeout and run `docs/agents/coordinator-operations.md`, Wake loop, on every wake.

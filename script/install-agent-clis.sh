@@ -55,13 +55,6 @@ sys.exit(status)
 PY
 fi
 bash "$DOTFILES/script/install_claude.sh"
-if ! command -v codex >/dev/null 2>&1; then
-  if command -v npm >/dev/null 2>&1; then
-    npm install -g @openai/codex
-  else
-    echo 'WARN install-agent-clis: install Node.js/npm, then npm install -g @openai/codex' >&2
-  fi
-fi
 if ! command -v agent >/dev/null 2>&1 && ! command -v cursor-agent >/dev/null 2>&1; then
   curl -fsSL https://cursor.com/install | bash
 fi

@@ -116,14 +116,13 @@ Template and examples: `docs/agents/persistent-memory-protocol.md`.
 
 ## 7. Providers in Orca ADE
 
-Every provider is driven the same way, `orca orchestration worker-start --agent <provider> --model <id> --effort <level>`, and every worker sends `worker_done` to Elon. Model names and flags live only in each project's `.claude/model-routing.md`. Fallback order: **Claude, Codex, Cursor, Antigravity**. A provider is unavailable on quota exhaustion, a long rate limit, an auth error or an outage: rerun the task on the next one, never downgrade silently, finish a task where it landed and start the next on the preferred provider.
+Every provider is driven the same way, `orca orchestration worker-start --agent <provider> --model <id> --effort <level>`, and every worker sends `worker_done` to Elon. Model names and flags live only in each project's `.claude/model-routing.md`. Fallback order: **Claude, Cursor, Antigravity**. A provider is unavailable on quota exhaustion, a long rate limit, an auth error or an outage: rerun the task on the next one, never downgrade silently, finish a task where it landed and start the next on the preferred provider.
 
 | Provider | Role loading | Notes |
 | :--- | :--- | :--- |
 | **Claude** | Role files in `.claude/agents/*.md` | Default for most roles. `model:` and `effort:` apply only under `claude --agent <role>`. |
-| **Codex** | The spec says read `.claude/agents/<role>.md` first | No Claude hooks, so the strike rule in `AGENTS.md` is the guard. |
-| **Cursor** | Same as Codex, plus `.cursor/rules/` | Effort is in the model id. New worktrees need workspace trust. |
-| **Antigravity** | Same as Codex, plus project `AGENTS.md` and `.agents/skills/` | Effort is in the model id. |
+| **Cursor** | The spec says read `.claude/agents/<role>.md` first, plus `.cursor/rules/` | Effort is in the model id. New worktrees need workspace trust. |
+| **Antigravity** | The spec says read `.claude/agents/<role>.md` first, plus project `AGENTS.md` and `.agents/skills/` | Effort is in the model id. |
 
 Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role boundaries on every provider. Skills come in three tiers. General skills (`orchestration`, `to-tickets`, `create-pr`, `tdd` and the rest) come only from dotfiles through `~/.claude/skills` and `~/.agents/skills`. Team skills (`elon`, `ceo`, `crew`, `teddy`, `deploy`, `team-audit`) are committed generated copies in each project's `.agents/skills/`, written by `~/dotfiles/script/sync-team-skills.sh`, reading product facts from `docs/agents/team-facts.md` and `docs/agents/deploy-facts.md`. Project only skills stay in the project. Details: `docs/agents/skills-inventory.md`.
 

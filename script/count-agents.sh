@@ -15,9 +15,7 @@ process_args "$@" | awk '
   {
     executable = $1
     sub(/^.*\//, "", executable)
-    if (executable == "codex" && $2 != "app-server") {
-      count++
-    } else if ($1 ~ /\/\.local\/bin\/cursor-agent$/) {
+    if ($1 ~ /\/\.local\/bin\/cursor-agent$/) {
       # The IDE helper path contains spaces and is not the executable token.
       count++
     }

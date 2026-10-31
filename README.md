@@ -1,6 +1,6 @@
 # Ming's Dotfiles and AI Agent Organization
 
-Welcome to Ming's dotfiles. This repository serves two purposes. First, it automates machine setup across macOS, Arch Linux, and Debian, configuring shells, tools, and developer environments. Second, it equips modern AI coding assistants (Claude Code, Codex, Cursor, and Antigravity) with a shared library of engineering skills and an autonomous agent team ready to adopt into any software project.
+Welcome to Ming's dotfiles. This repository serves two purposes. First, it automates machine setup across macOS, Arch Linux, and Debian, configuring shells, tools, and developer environments. Second, it equips modern AI coding assistants (Claude Code, Cursor, and Antigravity) with a shared library of engineering skills and an autonomous agent team ready to adopt into any software project.
 
 ## 1. Overview for Newcomers
 
@@ -11,7 +11,7 @@ If you are new to this repository, here is what it provides and how the pieces c
 This repository contains everything needed to turn a fresh operating system installation into a fully configured developer workstation, paired with an AI engineering organization.
 
 * **Unified system configuration:** Installs core developer tooling, the Zsh shell, Git configuration, and application preferences across macOS, Arch Linux, and Debian.
-* **Universal AI skills:** Supplies over 30 reusable engineering skills (slash commands) shared uniformly across Claude Code, Codex, Cursor, and Antigravity.
+* **Universal AI skills:** Supplies over 30 reusable engineering skills (slash commands) shared uniformly across Claude Code, Cursor, and Antigravity.
 * **Autonomous AI agent team:** Packages a drop in virtual software company led by a single executive front door (Elon), backed by a Product Architect, a Tech Lead, and specialist execution workers.
 
 ### Core philosophy
@@ -27,7 +27,7 @@ flowchart LR
     repo[".agents/skills in dotfiles"] --> install["install.sh"]
     install --> agents["~/.agents/skills"]
     install --> claude["~/.claude/skills"]
-    agents --> codex[Codex]
+    agents --> agy[Antigravity]
     claude --> cc[Claude Code]
     claude --> cursor[Cursor]
     install --> gem["Antigravity skills.json"]
@@ -87,15 +87,9 @@ After adoption, open the project and fill in two documentation files:
 * `docs/agents/team-facts.md`: Specific project context, team roster, repository urls, and tech stack details.
 * `docs/agents/deploy-facts.md`: Deployment targets, environment urls, and automated smoke test commands.
 
-#### Authorize Tech Lead merges (one time setup)
+#### Tech Lead merges
 
-Codex workers are blocked from executing `gh pr merge` directly. The Tech Lead merges exclusively through the verified `script/lead-merge.sh` utility. Allow this command once by appending the rules template to your local Codex rules:
-
-```bash
-sed "s|__HOME__|$HOME|g" ~/dotfiles/templates/codex/lead-merge.rules >> ~/.codex/rules/default.rules
-```
-
-Agents never modify `~/.codex` themselves, guaranteeing that unverified merges remain blocked.
+The Tech Lead merges exclusively through the verified `script/lead-merge.sh` utility.
 
 ## 3. The Agent Team Organization
 
@@ -224,7 +218,7 @@ For smaller tasks, you can bypass early stages, but Stage 6 (Review) is never sk
 
 ## 5. Day to Day Operations
 
-Slash commands work in Claude Code, Cursor, and Antigravity. In OpenAI Codex, invoke skills by prefixing with a dollar sign (for example, `$elon`).
+Slash commands work in Claude Code, Cursor, and Antigravity.
 
 ### Common commands
 
@@ -290,7 +284,7 @@ A short tour of the parts that keep the agent team safe and tidy, for a reader w
 
 ### AI usage gate
 
-[`script/usage-gate.py`](script/usage-gate.py) decides whether a provider may take another worker. It reads real usage from each provider (Codex, Claude, Cursor and Antigravity each have their own source), never a guess. A reading older than 5 minutes is refreshed. If no fresh reading can be had, the answer is "unknown", and unknown does not block a start.
+[`script/usage-gate.py`](script/usage-gate.py) decides whether a provider may take another worker. It reads real usage from each provider (Claude, Cursor and Antigravity each have their own source), never a guess. A reading older than 5 minutes is refreshed. If no fresh reading can be had, the answer is "unknown", and unknown does not block a start.
 
 * **Weekly limit:** a provider is blocked once it reaches the weekly ceiling (95% by default). Each running worker also holds back 1 percentage point of headroom.
 * **Daily pacing:** a daily cap is only a hint. Past it, the worker is still allowed, with a note to prefer a lighter model.

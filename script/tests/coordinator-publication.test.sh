@@ -323,12 +323,6 @@ out=$(pub feat-credit-cursor); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses Generated with Cursor in body file" "$out"
 
 good_body
-printf '\nGenerated with Codex' >> "$BODY"
-make_feature feat-credit-codex
-out=$(pub feat-credit-codex); code=$?
-say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses Generated with Codex in body file" "$out"
-
-good_body
 printf '\nWe use Cursor in the shop workflow; not an attribution footer.' >> "$BODY"
 make_feature feat-cursor-discuss
 out=$(pub feat-cursor-discuss); code=$?

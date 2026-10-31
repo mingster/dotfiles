@@ -45,7 +45,7 @@ Other project files tell the team how this repo works:
 
 Adoption creates `team.md`, `team-facts.md` and `deploy-facts.md` if missing. Create the tracker, label and domain files separately with `~/dotfiles/script/init-agent-project.sh --labels <dir>` before using the ticket and review skills. Configure `docs/agents/daily-run.md` in the project before asking for a daily run. Decisions belong in `docs/adr/`.
 
-Use slash commands below in Claude Code, Cursor and Antigravity; in Codex use `$skill-name` with the same arguments. A worker prompt can instead name the skill's `SKILL.md` path and ask it to follow the file.
+Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt can instead name the skill's `SKILL.md` path and ask it to follow the file.
 
 | Stage | What happens | Skill or command | Example prompt |
 | --- | --- | --- | --- |
@@ -65,7 +65,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity; in Codex use `$
 
 ## Skills
 
-Reusable skills live in `.agents/skills/<name>/` and are visible to Claude Code, Codex, Cursor and Antigravity through individual links in `~/.agents/skills` and `~/.claude/skills` (also read by Cursor), and the Antigravity `skills.json`. A project skill with the same name as a central one silently wins, so keep the two sets apart:
+Reusable skills live in `.agents/skills/<name>/` and are visible to Claude Code, Cursor and Antigravity through individual links in `~/.agents/skills` and `~/.claude/skills` (also read by Cursor), and the Antigravity `skills.json`. A project skill with the same name as a central one silently wins, so keep the two sets apart:
 
 | Kind | Lives in |
 | --- | --- |

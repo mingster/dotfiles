@@ -13,7 +13,7 @@ Read this before adding, moving, or growing an agent instruction file.
 | `<subdir>/AGENTS.md` | Symlink to `../AGENTS.md` |
 | `docs/agents/*.md` | Everything that only matters in one area. Loaded on demand. |
 
-`AGENTS.md` is canonical because Codex, Cursor, Copilot, Gemini CLI, Zed and others read it.
+`AGENTS.md` is canonical because Cursor, Copilot, Gemini CLI, Zed and others read it.
 `CLAUDE.md` exists because Claude Code reads `CLAUDE.md` and **not** `AGENTS.md`, so without the
 pointer file Claude sees nothing.
 
@@ -33,7 +33,7 @@ things actually reduce what a session pays for:
 2. Moving content to `.claude/rules/<topic>.md` with `paths:` frontmatter (Claude only, loads
    automatically when a matching file is touched)
 
-Default to option 1 so Cursor and Codex keep seeing it. Reach for option 2 only when a rule is
+Default to option 1 so Cursor keeps seeing it. Reach for option 2 only when a rule is
 being ignored and the automatic trigger is worth losing cross tool visibility.
 
 ## What belongs where
@@ -69,7 +69,7 @@ Never edit `~/.claude/CLAUDE.md` directly.
 
 ## One docs root
 
-All human and agent docs live under `docs/` at the repo root, so every tool (Claude Code, Codex,
+All human and agent docs live under `docs/` at the repo root, so every tool (Claude Code,
 Cursor, Antigravity, Gemini) finds them in one place. Component docs go in `docs/<component>/`,
 ADRs in `docs/adr/` (a component series in `docs/adr/<component>/`, numbers kept), intents in
 `docs/intent/`. Never add a `doc/` or `docs/` folder inside a component or an ops folder.

@@ -38,11 +38,11 @@ elif args[:2] == ['terminal','read']:
         mode='working'
     if mode=='failed-read': sys.exit(1)
     if mode in ('paginated', 'failed-list'): mode='idle'
-    text={'idle':'› Ask Codex to do anything', 'working':'Working (esc to interrupt)\n› Ask Codex to do anything',
+    text={'idle':'❯ ', 'working':'Working (esc to interrupt)\n❯ ',
           'stopped':"You've hit your usage limit", 'capacity':'No capacity available',
           'rate':'Rate limit reached', 'quota':'Quota exhausted', 'claude':'❯ ', 'empty':'Working (esc to interrupt)',
-          'bgshell':'› Ask Codex to do anything\n  ⏵⏵ bypass permissions on · 1 shell', 'monitor':'❯ \n  · 1 monitor still running',
-          'unavailable':'› Ask Codex to do anything', 'emptyidle':'› Ask Codex to do anything',
+          'bgshell':'❯ \n  ⏵⏵ bypass permissions on · 1 shell', 'monitor':'❯ \n  · 1 monitor still running',
+          'unavailable':'❯ ', 'emptyidle':'❯ ',
           'banner':'Gemini 3 Pro\nModel quota reached for Gemini. Resets in 94h29m\n› '}[mode]
     output({'terminal':{'tail':text.splitlines(),'source':'screen-unavailable' if mode=='unavailable' else 'screen'}})
 elif args[:2] == ['orchestration','task-list']:
@@ -190,7 +190,7 @@ grep -q '3 consecutive watchdog sends failed' "$HOME/.orca/state/worker-watchdog
 unset WATCHDOG_TEST_PER_RUN WATCHDOG_TEST_RUNS WATCHDOG_TEST_INBOX
 # An Antigravity quota banner blocks its pool until reset; other providers are never fed to the parser.
 export USAGE_GATE_BANNER_FILE="$tmp/banner.json"
-WATCHDOG_TEST_PROVIDER=codex run_case banner 2
+WATCHDOG_TEST_PROVIDER=claude run_case banner 2
 check "$([[ -e $USAGE_GATE_BANNER_FILE ]] && echo exists)" "" "banner file"
 WATCHDOG_TEST_PROVIDER=antigravity run_case banner 2
 python3 - "$USAGE_GATE_BANNER_FILE" <<'PY'
@@ -199,7 +199,7 @@ left=json.load(open(sys.argv[1]))['gemini-pro']-time.time()
 assert 94*3600+28*60 < left <= 94*3600+29*60, left
 PY
 WATCHDOG_TEST_PROVIDER=antigravity run_case idle 1
-if grep -Eq 'Ask Codex|usage limit|❯' "$HOME/.orca/logs/worker-watchdog.log"; then exit 1; fi
+if grep -Eq 'usage limit|❯' "$HOME/.orca/logs/worker-watchdog.log"; then exit 1; fi
 # Without timeout or gtimeout (stock macOS) a hanging command must still be cut off.
 nt="$tmp/no-timeout"; mkdir -p "$nt"
 for f in /bin/* /usr/bin/* "$(command -v python3)" "$(command -v bash)"; do

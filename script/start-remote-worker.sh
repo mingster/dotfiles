@@ -24,7 +24,7 @@ done
   echo 'start-remote-worker: need --on <environment> --agent <agent>' >&2; exit 2;
 }
 case "$agent" in
-  claude|codex) cli=$agent; probe="command -v $agent >/dev/null 2>&1" ;;
+  claude) cli=$agent; probe="command -v $agent >/dev/null 2>&1" ;;
   cursor) cli='agent (or cursor-agent)'; probe='command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1' ;;
   antigravity) cli=agy; probe='command -v agy >/dev/null 2>&1' ;;
   *) echo "start-remote-worker: unsupported agent: $agent" >&2; exit 2 ;;

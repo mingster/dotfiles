@@ -39,12 +39,7 @@ esac
 echo "$tool" >> "$HOME/vendor-log"
 printf 'printf "#!/bin/sh\\\\nexit 0\\\\n" > "$HOME/.local/bin/%s"\nchmod +x "$HOME/.local/bin/%s"\nprintf "\\\\n# vendor PATH\\\\n" >> "$HOME/.zshrc"\nprintf "# vendor PATH\\\\n" >> "$HOME/.profile"\nexit "${VENDOR_EXIT:-0}"\n' "$tool" "$tool"
 ''')
-        (self.bin / 'npm').write_text('''#!/bin/bash
-echo codex >> "$HOME/vendor-log"
-printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/codex"
-chmod +x "$HOME/.local/bin/codex"
-''')
-        for name in ('curl', 'npm'):
+        for name in ('curl',):
             (self.bin / name).chmod(0o700)
         self.env = dict(os.environ, HOME=str(self.home), DOTFILES=str(self.repo),
                         ASDF_DATA_DIR=str(self.home / '.asdf'), ZDOTDIR=str(self.home),
@@ -74,8 +69,8 @@ chmod +x "$HOME/.local/bin/codex"
             result = self.install()
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.home / 'vendor-log').read_text().splitlines(),
-                         ['claude', 'codex', 'agent', 'agy'])
-        for cli in ('claude', 'codex', 'agent', 'cursor-agent', 'agy'):
+                         ['claude', 'agent', 'agy'])
+        for cli in ('claude', 'agent', 'cursor-agent', 'agy'):
             result = subprocess.run(['git', '-C', str(self.repo), 'check-ignore', 'arch/bin/' + cli],
                                     capture_output=True)
             self.assertEqual(result.returncode, 0, cli)

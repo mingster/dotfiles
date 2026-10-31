@@ -183,7 +183,7 @@ def validate_worker_scope(scope, run_id):
         refuse('worker inventory: remote inventory unavailable')
 
 
-def count_worker_row(seen, seats, row, host_id):
+def count_worker_row(seen, seats, row, host_id, live_terminals=frozenset()):
     row = obj(row, 'worker inventory row')
     dispatch = string(row.get('dispatchId'), 'worker dispatch')
     if dispatch in seen:
@@ -196,10 +196,14 @@ def count_worker_row(seen, seats, row, host_id):
     status = row.get('dispatchStatus')
     raw_resource = row.get('resource')
     resource = obj(raw_resource, 'worker resource') if raw_resource is not None else {}
+    if status in ('completed', 'failed', 'cancelled', 'released', 'stopped'):
+        term_handle = resource.get('terminalHandle') or row.get('agentTerminalHandle')
+        if not term_handle or term_handle not in live_terminals:
+            return  # settled historical worker whose terminal is already gone
     release = resource.get('releaseState') if raw_resource is not None else row.get('terminalState')
     if status == 'release_unknown' or release == 'release_unknown' or row.get('terminalState') == 'release_unknown':
         refuse('worker inventory: release_unknown')
-    if status not in ('running', 'dispatched', 'pending', 'active', 'completed', 'failed', 'cancelled', 'released'):
+    if status not in ('running', 'dispatched', 'pending', 'active', 'completed', 'failed', 'cancelled', 'released', 'stopped'):
         refuse('worker inventory: unknown worker status')
     if release not in ('not_requested', 'requested', 'releasing', 'failed', 'released', 'completed', 'retained', 'reclaimable'):
         refuse('worker inventory: unknown release state')
@@ -217,6 +221,11 @@ def count_worker_row(seen, seats, row, host_id):
 def worker_counts(orca, flags, host_id):
     """Count native Dispatch resources across every Run, never bound-run scope."""
     seen, seats = set(), {}
+    terminals = orca_result(orca, 'terminal', 'list', *flags).get('terminals')
+    if not isinstance(terminals, list):
+        refuse('worker inventory: terminal list incomplete')
+    live_terminals = {t.get('handle') for t in terminals if isinstance(t, dict)
+                      and t.get('connected') is not False and t.get('orphaned') is not True}
     for run_id in runtime_runs(orca, flags):
         cursor, cursors = None, set()
         while True:
@@ -231,7 +240,7 @@ def worker_counts(orca, flags, host_id):
                 refuse('worker inventory: incomplete or UNKNOWN coverage')
             validate_worker_scope(result.get('scope'), run_id)
             for row in rows:
-                count_worker_row(seen, seats, row, host_id)
+                count_worker_row(seen, seats, row, host_id, live_terminals)
             if not page['hasMore']:
                 break
             cursor = string(page.get('nextCursor'), 'worker page cursor')

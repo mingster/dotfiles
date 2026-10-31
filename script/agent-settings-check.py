@@ -10,13 +10,11 @@ import sys
 home = Path.home()
 root = Path(os.environ.get('DOTFILES', home / 'dotfiles'))
 xdg = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
-codex = Path(os.environ.get('CODEX_HOME', home / '.codex'))
 platform = os.environ.get('OSTYPE', sys.platform)
 support = home / 'Library/Application Support' if platform.startswith('darwin') else xdg
 # destination directory, explicitly inventoried names, tracked source directory
 inventory = [
     (home / '.claude', ['CLAUDE.md', 'keybindings.json', 'settings*.json', '.mcp.json'], '.agents/claude'),
-    (codex, ['AGENTS.md', 'config*.toml', 'hooks.json'], '.codex'),
     (home / '.cursor', ['cli-config*.json', 'mcp.json', 'hooks.json'], 'ide/cursor'),
     (home / '.gemini', ['GEMINI.md', 'settings*.json'], '.gemini'),
     (home / '.gemini/antigravity-cli', ['settings*.json'], '.gemini/antigravity-cli'),
