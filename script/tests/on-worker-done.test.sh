@@ -104,10 +104,12 @@ run --resolution --dry-run
 check 'resolution dry run succeeds' "$?"
 brief=$(ls "$tmp/briefs"/reviewer-brief.* | tail -1)
 check 'resolution retains narrow diff and gate instructions' "$(grep -q 'git show --remerge-diff' "$brief" && grep -q 'heavy-gate.sh' "$brief"; echo $?)"
+check 'resolution brief requires 1500 second admission wait' "$(grep -q 'HEAVY_GATE_TIMEOUT_SECONDS=1500' "$brief" && grep -q 'wait for admission' "$brief"; echo $?)"
 valid
 rm -f "$tmp/briefs"/reviewer-brief.*
 run --dry-run
 brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
 check 'default brief retains spec standards and pending rule' "$(grep -q "repo's standards" "$brief" && grep -q 'pending is not PASS' "$brief"; echo $?)"
+check 'full brief requires 1500 second admission wait' "$(grep -q 'HEAVY_GATE_TIMEOUT_SECONDS=1500' "$brief" && grep -q 'wait for admission' "$brief"; echo $?)"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
