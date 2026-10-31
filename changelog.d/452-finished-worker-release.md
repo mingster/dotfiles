@@ -1,0 +1,1 @@
+- `worker-finish.sh` inspects native `worker-release --json` receipts (including exit-0 retained/pending), archives responses when `WORKER_FINISH_ARCHIVE_DIR` is set, refuses unsettled dispatches and legacy pane-close sweeps, and removes worktrees only after `released` or `already_released`. Temporary builder substitution: Cursor Composer 2.5 on niteking for fullstack-dev (#452).
