@@ -2,7 +2,7 @@
 # Sequential isolated RED (420ce69 helper tree) then GREEN (worktree helper); every run through heavy-gate.
 set -euo pipefail
 
-OLD_SHA=420ce69cdf61cc06f2160006f349c0e686edeae6
+OLD_SHA=${1:-${COORDINATOR_PUBLICATION_OLD_SHA:-420ce69cdf61cc06f2160006f349c0e686edeae6}}
 here=$(cd "$(dirname "$0")/.." && pwd)
 repo_root=$(cd "$here/.." && pwd)
 gate=${HEAVY_GATE:-$HOME/dotfiles/script/heavy-gate.sh}

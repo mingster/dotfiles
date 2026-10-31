@@ -193,6 +193,14 @@ fixture_block_non_file_transport() {
     GIT_ALLOW_PROTOCOL=file "$MF_BIN/git.real" -C "$wt" remote get-url --push --all origin 2>/dev/null || true
   )
 }
+if [[ " $* " == *" remote get-url --push --all "* ]] && [ -f "$MF_DIR/stub_pushurl_resolve_fail" ]; then
+  echo "fixture git: push URL resolution failed" >&2
+  exit 1
+fi
+if [[ " $* " == *" log --format="* ]] && [[ " $* " == *" --name-only "* ]] && [ -f "$MF_DIR/stub_env_log_fail" ]; then
+  echo "fixture git: history inspection failed" >&2
+  exit 1
+fi
 if [[ " $* " == *" fetch "* ]] || [[ " $* " == *" push "* ]] || [[ " $* " == *" ls-remote "* ]]; then
   wt=$(fixture_git_wt "$@")
   fixture_block_non_file_transport "$wt" "$@"
@@ -382,6 +390,68 @@ export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
 "$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when origin slug does not match --repo" "$out"
 [[ "$out" != *"@"* ]] && ok "origin mismatch message omits credential-bearing URLs" || bad "origin error leaked credentials"
+
+good_body
+make_feature feat-wrong-host
+saved_origin=$("$MF_TEST_GIT" -C "$MF_REPO" remote get-url origin)
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "https://example/repo.git"
+unset COORDINATOR_PUBLICATION_FIXTURE_ORIGIN
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-wrong-host --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
+export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-github host with matching slug path" "$out"
+[[ "$out" == *"URL redacted"* ]] && ok "wrong-host refusal redacts origin URL" || bad "wrong-host error leaked origin URL"
+[ ! -s "$MF_DIR/fetch.log" ] && ok "wrong-host refusal skips fetch" || bad "fetch ran on wrong-host origin"
+[ ! -s "$MF_DIR/push.log" ] && ok "wrong-host refusal skips push" || bad "push ran on wrong-host origin"
+[ ! -s "$MF_GH_LOG" ] && ok "wrong-host refusal skips gh" || bad "gh ran on wrong-host origin"
+
+good_body
+make_feature feat-wrong-host-at
+saved_origin=$("$MF_TEST_GIT" -C "$MF_REPO" remote get-url origin)
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "https://evil.invalid/x@github.com/example/repo.git"
+unset COORDINATOR_PUBLICATION_FIXTURE_ORIGIN
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-wrong-host-at --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
+export COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses path-at wrong host before transport" "$out"
+[[ "$out" == *"URL redacted"* ]] && ok "path-at wrong-host refusal redacts origin URL" || bad "path-at wrong-host error leaked origin URL"
+[ ! -s "$MF_DIR/fetch.log" ] && ok "path-at wrong-host refusal skips fetch" || bad "fetch ran on path-at wrong-host origin"
+[ ! -s "$MF_DIR/push.log" ] && ok "path-at wrong-host refusal skips push" || bad "push ran on path-at wrong-host origin"
+[ ! -s "$MF_GH_LOG" ] && ok "path-at wrong-host refusal skips gh" || bad "gh ran on path-at wrong-host origin"
+
+good_body
+make_feature feat-pushurl-resolve-fail
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+touch "$MF_DIR/stub_pushurl_resolve_fail"
+out=$(pub feat-pushurl-resolve-fail); code=$?
+rm -f "$MF_DIR/stub_pushurl_resolve_fail"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when effective push URLs cannot be resolved" "$out"
+[[ "$out" == *"cannot resolve effective origin push URLs"* ]] && ok "push URL resolution error surfaces in parent" || bad "missing push URL resolution refusal"
+[ ! -s "$MF_DIR/fetch.log" ] && ok "push URL resolution failure skips fetch" || bad "fetch ran after push URL resolution failure"
+[ ! -s "$MF_DIR/push.log" ] && ok "push URL resolution failure skips push" || bad "push ran after push URL resolution failure"
+[ ! -s "$MF_GH_LOG" ] && ok "push URL resolution failure skips gh" || bad "gh ran after push URL resolution failure"
+
+good_body
+make_feature feat-env-log-fail
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+touch "$MF_DIR/stub_env_log_fail"
+out=$(pub feat-env-log-fail); code=$?
+rm -f "$MF_DIR/stub_env_log_fail"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when publish-range history inspection fails" "$out"
+[[ "$out" == *"cannot inspect branch history for environment files"* ]] && ok "history inspection error surfaces in parent" || bad "missing history inspection refusal"
+[ ! -s "$MF_DIR/fetch.log" ] && ok "history inspection failure skips fetch" || bad "fetch ran after history inspection failure"
+[ ! -s "$MF_DIR/push.log" ] && ok "history inspection failure skips push" || bad "push ran after history inspection failure"
+[ ! -s "$MF_GH_LOG" ] && ok "history inspection failure skips gh" || bad "gh ran after history inspection failure"
 
 good_body
 make_feature feat-receipt-evil

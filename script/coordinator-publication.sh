@@ -10,15 +10,44 @@ die() { echo "coordinator-publication: refused: $*" >&2; exit 1; }
 fail() { echo "coordinator-publication: failed: $*" >&2; exit 1; }
 
 origin_slug_from_url() {
-  local u=$1
-  u=${u#*://}
-  u=${u#*@}
-  u=${u#github.com:}
-  u=${u#github.com/}
-  u=${u%.git}
-  u=${u%/}
-  [ -n "$u" ] && [[ "$u" == */* ]] || return 1
-  printf '%s' "$u"
+  local u=$1 host slug
+  case "$u" in
+    git@github.com:*)
+      slug=${u#git@github.com:}
+      slug=${slug%.git}
+      slug=${slug%/}
+      ;;
+    ssh://*)
+      u=${u#ssh://}
+      u=${u#git@}
+      case "$u" in
+        github.com/*) slug=${u#github.com/} ;;
+        github.com:*) slug=${u#github.com:} ;;
+        *) return 1 ;;
+      esac
+      slug=${slug%.git}
+      slug=${slug%/}
+      ;;
+    http://*|https://*)
+      u=${u#*://}
+      authority=${u%%/*}
+      path=${u#*/}
+      case "$authority" in
+        *@*) authority=${authority#*@} ;;
+      esac
+      host=${authority%%:*}
+      [ "$host" = github.com ] || return 1
+      [ -n "$path" ] || return 1
+      slug=$path
+      slug=${slug%.git}
+      slug=${slug%/}
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  [ -n "$slug" ] && [[ "$slug" == */* ]] || return 1
+  printf '%s' "$slug"
 }
 
 remote_is_disposable_file() {
@@ -60,17 +89,22 @@ validate_resolved_remote_url() {
 }
 
 assert_repo_matches_origin() {
-  local fetch_url disposable=0 u
+  local fetch_url disposable=0 u push_urls_tmp push_ec
   fetch_url=$(git -C "$worktree" remote get-url origin 2>/dev/null) || die "worktree has no origin remote"
   remote_is_disposable_file "$fetch_url" && disposable=1
   validate_resolved_remote_url "$fetch_url" "$fetch_url" "$disposable"
+  push_urls_tmp=$(mktemp "${TMPDIR:-/tmp}/cp-push-urls.XXXXXX")
+  push_ec=0
+  git -C "$worktree" remote get-url --push --all origin >"$push_urls_tmp" 2>/dev/null || push_ec=$?
+  if [ "$push_ec" -ne 0 ] || [ ! -s "$push_urls_tmp" ]; then
+    rm -f "$push_urls_tmp"
+    die "cannot resolve effective origin push URLs"
+  fi
   while IFS= read -r u; do
     [ -n "$u" ] || continue
     validate_resolved_remote_url "$u" "$fetch_url" "$disposable"
-  done < <(
-    git -C "$worktree" remote get-url --push --all origin 2>/dev/null \
-      || die "cannot resolve effective origin push URLs"
-  )
+  done < "$push_urls_tmp"
+  rm -f "$push_urls_tmp"
 }
 
 receipt_scalar_ok() {
@@ -144,9 +178,16 @@ read_receipt_file() {
 }
 
 inspect_env_paths_in_publish_range() {
-  local range=$1 path base
+  local range=$1 path base history_tmp log_ec
   if ! git -C "$worktree" rev-parse "$range" >/dev/null 2>&1; then
     die "cannot inspect branch commits for environment files"
+  fi
+  history_tmp=$(mktemp "${TMPDIR:-/tmp}/cp-env-history.XXXXXX")
+  log_ec=0
+  git -C "$worktree" log --format= --name-only -z "$range" >"$history_tmp" 2>/dev/null || log_ec=$?
+  if [ "$log_ec" -ne 0 ]; then
+    rm -f "$history_tmp"
+    die "cannot inspect branch history for environment files"
   fi
   while IFS= read -r -d '' path || [ -n "${path:-}" ]; do
     [ -n "$path" ] || continue
@@ -160,10 +201,8 @@ inspect_env_paths_in_publish_range() {
         die "tracked environment file in branch diff: $path"
         ;;
     esac
-  done < <(
-    git -C "$worktree" log --format= --name-only -z "$range" 2>/dev/null \
-      || die "cannot inspect branch history for environment files"
-  )
+  done < "$history_tmp"
+  rm -f "$history_tmp"
 }
 
 lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/validate-publication-body.sh"
