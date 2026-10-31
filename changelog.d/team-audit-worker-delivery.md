@@ -1,0 +1,1 @@
+Elon now verifies actual worker task progress and owns recovery through checked delivery. Team routing preserves unknown process states and defers lifecycle transitions to native Orca evidence, replacing premature retry and shared-path cleanup instructions.
