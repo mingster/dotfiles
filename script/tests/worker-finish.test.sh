@@ -75,6 +75,13 @@ default_released() {
   release_fixture "$1" "{\"ok\":true,\"result\":{\"dispatchId\":\"$1\",\"state\":\"released\"}}" 0
 }
 
+push_wt_head_to_main() {
+  local b
+  b=$(git -C "$1" rev-parse --abbrev-ref HEAD)
+  git -C "$1" push -q origin "${b}:main"
+  G fetch -q origin
+}
+
 # A worktree with one commit that is not in origin/main, so head-checks apply.
 newwt() { G worktree add -q "$tmp/$1" -b "$1" origin/main; git -C "$tmp/$1" commit -q --allow-empty -m "work $1"; }
 run() { (cd "$MF_REPO" && mf_run_limited 20 "$@") >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
@@ -90,8 +97,9 @@ grep -q "worker-finish: head-checks failed, refusing worker_done" "$tmp/err" && 
 [ "$(released_log d1)" = 0 ] && ok || bad "failing checks leave dispatch untouched"
 grep -q -- "--repo .*w1 --ref HEAD --base origin/main" "$HEAD_CHECKS_LOG" && ok || bad "checks called with repo, ref, base"
 
-# 2. passing checks proceed when release reports released
+# 2. passing checks proceed when release reports released and HEAD is in main
 reset; default_released d1
+push_wt_head_to_main "$tmp/w1"
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w1" --dispatch d1
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "passing checks exit 0"
 [ ! -d "$tmp/w1" ] && ok || bad "passing checks remove worktree"
@@ -107,6 +115,7 @@ HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "
 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w2" --skip-head-checks ""
 [ "$(cat "$tmp/rc")" = 2 ] && ok || bad "skip with empty reason exits 2"
 reset; default_released d2
+push_wt_head_to_main "$tmp/w2"
 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w2" --skip-head-checks "docs only" --dispatch d2
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "skip with reason exits 0"
 grep -q "docs only" "$tmp/out" "$tmp/err" && ok || bad "skip prints the reason"
@@ -160,6 +169,7 @@ HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "
 
 # 8. inventory dispatch id is released; worktree removed on released receipt
 newwt w8; reset; mf_orca_add_worker run1 d8 dispatched "$tmp/w8"; default_released d8
+push_wt_head_to_main "$tmp/w8"
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w8"
 [ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d8)" = 1 ] && [ ! -d "$tmp/w8" ] && ok || bad "inventory dispatch released and worktree removed"
 
@@ -173,9 +183,10 @@ grep -q "worktree kept" "$tmp/out" "$tmp/err" && ok || bad "retained reports wor
 ! grep -q "removed worktree" "$tmp/out" && ok || bad "retained must not claim removal"
 [ -f "$WORKER_FINISH_ARCHIVE_DIR/release-ctx_f3d582b77bfc.json" ] && ok || bad "retained archives release json"
 
-# 10. already_released is idempotent and allows worktree removal
+# 10. already_released is idempotent and allows worktree removal when HEAD is in main
 newwt w10; reset
 release_fixture d10 '{"ok":true,"result":{"dispatchId":"d10","state":"already_released"}}' 0
+push_wt_head_to_main "$tmp/w10"
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w10" --dispatch d10
 [ "$(cat "$tmp/rc")" = 0 ] && [ ! -d "$tmp/w10" ] && ok || bad "already_released removes worktree"
 
@@ -231,6 +242,7 @@ grep -q "dirty or unmerged worktree kept" "$tmp/out" "$tmp/err" && ok || bad "di
 # 19. archive writes release receipt when archive dir set
 newwt w19; reset
 release_fixture d19 '{"ok":true,"result":{"dispatchId":"d19","state":"released"}}' 0
+push_wt_head_to_main "$tmp/w19"
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w19" --dispatch d19
 [ -f "$WORKER_FINISH_ARCHIVE_DIR/release-d19.json" ] && ok || bad "archive stores release json"
 
@@ -243,10 +255,11 @@ HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "
 # 21. git status inspection failure keeps worktree without removal
 newwt w21; reset; default_released d21
 git -C "$tmp/w21" commit -q --allow-empty -m ensure-index 2>/dev/null || true
-if [ -f "$tmp/w21/.git/index" ]; then
-  chmod 000 "$tmp/w21/.git/index"
+idx=$(git -C "$tmp/w21" rev-parse --git-path index)
+if [ -f "$idx" ]; then
+  chmod 000 "$idx"
   HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w21" --dispatch d21
-  chmod 644 "$tmp/w21/.git/index" 2>/dev/null || true
+  chmod 644 "$idx" 2>/dev/null || true
   [ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w21" ] && ok || bad "status inspection failure keeps worktree"
   grep -q "cannot inspect worktree status" "$tmp/out" "$tmp/err" && ok || bad "status inspection failure message"
 else
@@ -262,6 +275,13 @@ git -C "$tmp/w22" update-index --add --cacheinfo 3,"$b2",conflict.txt
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w22" --dispatch d22
 [ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w22" ] && ok || bad "unmerged index keeps worktree"
 grep -q "dirty or unmerged worktree kept" "$tmp/out" "$tmp/err" && ok || bad "unmerged index reports kept"
+
+# 23. clean unique commit not in main is kept after release (not MERGE_HEAD)
+newwt w23; reset; default_released d23
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w23" --dispatch d23
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w23" ] && ok || bad "clean unique commit keeps worktree"
+grep -q "HEAD not proven in merged main" "$tmp/out" "$tmp/err" && ok || bad "clean unique commit reports ancestry block"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "clean unique commit must not be removed"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
