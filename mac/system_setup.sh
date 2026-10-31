@@ -253,7 +253,17 @@ echo ""
 echo -e "\033[1;35m zsh \033[0m"
 echo ""
 
-brew list starship >/dev/null 2>&1 || brew install starship
+if [ "$(uname -m)" = "x86_64" ]; then
+  if ! command -v starship >/dev/null 2>&1; then
+    STARSHIP_VERSION=$(curl -fsSL https://api.github.com/repos/starship/starship/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    curl -fsSL "https://github.com/starship/starship/releases/download/v${STARSHIP_VERSION}/starship-x86_64-apple-darwin.tar.gz" -o /tmp/starship.tar.gz
+    tar -xzf /tmp/starship.tar.gz -C /usr/local/bin starship
+    chmod +x /usr/local/bin/starship
+    rm -f /tmp/starship.tar.gz
+  fi
+else
+  brew list starship >/dev/null 2>&1 || brew install starship
+fi
 
 # Oh My Zsh (unattended install if not already present)
 if [ ! -d "$HOME/.oh-my-zsh" ]; then
