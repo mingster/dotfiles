@@ -358,6 +358,68 @@ make_feature feat-closes-noncanonical
 out=$(pub feat-closes-noncanonical); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-canonical closes casing" "$out"
 
+good_body
+printf '\nCloses https://github.com/example/repo/issues/1' >> "$BODY"
+make_feature feat-closes-url
+out=$(pub feat-closes-url); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses URL-form Closes directive" "$out"
+
+good_body
+printf '\nCloses: #1' >> "$BODY"
+make_feature feat-closes-colon
+out=$(pub feat-closes-colon); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses colon-form Closes directive" "$out"
+
+good_body
+printf '\nCloses https://github.com/example/repo/issues/1, closes https://github.com/example/repo/issues/2' >> "$BODY"
+make_feature feat-closes-url-mixed
+out=$(pub feat-closes-url-mixed); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses mixed URL-form closes directives" "$out"
+
+good_body
+printf '\nCloses #1\nCloses https://github.com/example/repo/issues/2' >> "$BODY"
+make_feature feat-closes-canonical-plus-url
+out=$(pub feat-closes-canonical-plus-url); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses canonical Closes line plus URL-form line" "$out"
+
+good_body
+make_feature feat-existing-url-closes-body
+bad_body=$'Closes https://github.com/example/repo/issues/99\n\n## Verification\n- one\n- two\n- three\n'
+prn=$(seed_open_pr feat-existing-url-closes-body "$bad_body")
+: > "$MF_GH_LOG"
+: > "$MF_DIR/push.log"
+out=$(pub feat-existing-url-closes-body); code=$?
+say "$code" "reconciles existing PR with URL-form closes remote body" "$out"
+grep -Fq 'gh pr edit' "$MF_GH_LOG" && ok "URL-form remote body triggers gh pr edit" || bad "missing pr edit for URL remote body: $(tr '\n' ' ' < "$MF_GH_LOG")"
+[ "$(jq -r '.body' "$MF_GH_DIR/pr-$prn.json")" = "$(cat "$BODY")" ] && ok "URL-form remote body reconciled to authorized file" || bad "URL remote body not reconciled"
+
+good_body
+make_feature feat-resume-url-closes-remote
+bad_body=$'Closes: https://github.com/example/repo/issues/88\n\n## Verification\n- one\n- two\n- three\n'
+prn=$(seed_open_pr feat-resume-url-closes-remote "$bad_body")
+head_sha=$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse HEAD)
+rec=$(receipt_path)
+mkdir -p "$(dirname "$rec")"
+cat > "$rec" <<EOF
+repo=$REPO_SLUG
+branch=feat-resume-url-closes-remote
+head_sha=$head_sha
+push_ok=1
+pr_url=https://example.test/pull/$prn
+pr_number=$prn
+EOF
+: > "$MF_GH_LOG"
+out=$(pub --keep-receipt feat-resume-url-closes-remote); code=$?
+say "$code" "receipt resume reconciles colon URL closes remote body" "$out"
+grep -Fq 'gh pr edit' "$MF_GH_LOG" && ok "receipt resume reconciles colon URL closes body" || bad "resume missing pr edit for colon URL body: $(tr '\n' ' ' < "$MF_GH_LOG")"
+[ "$(jq -r '.body' "$MF_GH_DIR/pr-$prn.json")" = "$(cat "$BODY")" ] && ok "receipt resume applies body after colon URL remote" || bad "receipt resume colon URL body not reconciled"
+
+good_body
+printf '\nThe workflow closes the loop once verification finishes; see https://github.com/example/repo/issues/1.' >> "$BODY"
+make_feature feat-closes-prose-discuss
+out=$(pub feat-closes-prose-discuss); code=$?
+say "$code" "allows ordinary closes discussion without a closing directive" "$out"
+
 out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-x --body-file "$BODY" --worktree "$MF_REPO" --force 2>&1); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses --force flag" "$out"
 

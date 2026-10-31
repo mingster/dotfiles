@@ -40,7 +40,9 @@ bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {insid
 
 closes_directive_count() {
   local matches
-  matches=$(grep -oiE '(^|[^[:alnum:]_])closes[[:space:]]+(#[0-9]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+)' <<<"$1" 2>/dev/null || true)
+  matches=$(
+    grep -oiE '(^|[^[:alnum:]_])closes[[:space:]]*:[[:space:]]*|(^|[^[:alnum:]_])closes[[:space:]]+(#[0-9]+|https?://|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+)' <<<"$1" 2>/dev/null || true
+  )
   if [ -z "$matches" ]; then
     printf '0'
   else
