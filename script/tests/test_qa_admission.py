@@ -224,6 +224,19 @@ class QaAdmission(unittest.TestCase):
         self.assertEqual(data['receipts'][0]['occupied'], 1)
         self.assertEqual(data['receipts'][0]['live_count'], 1)
 
+    def test_identity_key_cannot_target_another_execution_host(self):
+        for h in ('alpha', 'beta'):
+            self.f.data[h]['worktrees']['worktrees'][0]['identity']['key'] = 'wt2:other:'+h+'-instance'
+        self.refuse('worktree')
+
+    def test_ambiguous_repo_inventory_is_unknown(self):
+        self.f.data['alpha']['repos'].append(copy.deepcopy(self.f.data['alpha']['repos'][0]))
+        self.refuse('repo inventory')
+
+    def test_malformed_worktree_host_scope_refuses_without_traceback(self):
+        self.f.data['alpha']['worktrees']['hostScope']['hostIds'] = [{}]
+        self.refuse('inventory')
+
     def test_missing_or_expired_explicit_policy_refuses(self):
         self.extra['ON_WORKER_DONE_ADMISSION_POLICY'] = str(Path(self.tmp.name)/'missing')
         self.refuse('policy')
