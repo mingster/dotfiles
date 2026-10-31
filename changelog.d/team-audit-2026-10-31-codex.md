@@ -1,0 +1,1 @@
+- Correct team audit lifecycle, ledger and copy-approval contradictions; sync canonical review/cleanup guidance and record role, capacity and metrics evidence with explicit outstanding gates.

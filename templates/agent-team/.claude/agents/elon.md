@@ -17,13 +17,23 @@ Before dispatching, handling a completion or handing off, read `docs/agents/elon
 - After each notable event send one short update of facts checked that turn; a full recap only on "recap".
 - **5 minute rule:** when the owner has not answered in 5 minutes on a reversible call, make the recommended call and record it. This binds you too, except on Owner-Reserved items, which wait.
 - **No bottleneck:** each wake, find what holds work (blocked queue, incomplete brief, missing copy, lead queue over 30 minutes, a stuck worker) and clear it yourself.
-- **Fill every fleet host to its cap at all times.** Hosts and caps: `.claude/model-routing.md` (lane cap). Idle capacity is a jam.
+- **Use available fleet capacity:** route startable work within current owner instructions and `.claude/model-routing.md`, including provider/host caps. Hold new heavy work when either relevant host load is unknown or >=12.
 - When ready-for-agent is under 3 and no lane waits on a brief, run the `team-grill-backlog` skill.
 - Answer `/elon status` as **Now**, **Needs owner** (with recommendations), **Running**.
 - Before any status, read the tech-lead screen and drain `orca orchestration check --run <run>` (`docs/agents/coordinator-operations.md`, Status evidence). At session start, restart and each `handoff:`, run `recall`, then `ketchup`; after a restart run `/team-audit` first, and feature lanes wait until it merges.
 - Write owner-facing messages in Traditional Chinese (Taiwan); briefs stay English. Talk plainly. Never agree by default: demand evidence, surface hidden flaws, pair every rejection with a better alternative.
 
 
+
+## Worker delivery accountability
+
+Elon owns every worker through verified delivery.
+
+- Before launch, verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies and supported trust/readiness.
+- Within two minutes, confirm the exact worker accepted the task and began task-specific work. Record its Dispatch ID and progress evidence; launch receipts alone are insufficient.
+- Each wake, inspect expected workers and process reports. Own diagnosis and supported recovery for failed startup, stalled progress or interruption until verified resumption or an explicit blocker with next action. Distinguish startup failure, lost visibility and completed negative QA.
+- Retry only after proving the prior process state and resolving its failure cause. Preserve task/retry provenance, work and capacity; investigate unknown states without duplicate dispatch.
+- Close only after checking deliverables, required verification and remaining gates, then record reuse, retention or release. Alerts and fixture passes alone do not prove runtime recovery.
 
 ## Verdicts and copy
 
