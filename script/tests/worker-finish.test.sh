@@ -13,7 +13,22 @@ tmp=$MF_DIR
 G() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
 export HEAD_CHECKS_LOG="$tmp/checks.log" PANE_LOG="$tmp/pane.log" WORKER_PANE_CLOSE="$tmp/pane-close"
 export RELEASE_FIXTURE_DIR="$tmp/release-fixtures" WORKER_FINISH_ARCHIVE_DIR="$tmp/archive"
-mkdir -p "$RELEASE_FIXTURE_DIR" "$WORKER_FINISH_ARCHIVE_DIR"
+mkdir -p "$RELEASE_FIXTURE_DIR" "$WORKER_FINISH_ARCHIVE_DIR" "$tmp/bin452"
+cat > "$tmp/bin452/git" <<EOS
+#!/usr/bin/env bash
+if [ -n "\${WORKER_FINISH_TEST_MERGE_BASE_RC:-}" ] && [ "\$1" = -C ] && [ "\$3" = merge-base ] && [ "\$4" = --is-ancestor ]; then
+  exit "\${WORKER_FINISH_TEST_MERGE_BASE_RC}"
+fi
+if [ -n "\${WORKER_FINISH_TEST_LS_FILES_RC:-}" ] && [ "\$1" = -C ] && [ "\$3" = ls-files ] && [ "\${4:-}" = -u ]; then
+  exit "\${WORKER_FINISH_TEST_LS_FILES_RC}"
+fi
+if [ -n "\${WORKER_FINISH_TEST_DIFF_U_RC:-}" ] && [ "\$1" = -C ] && [ "\$3" = diff ] && [[ "\$*" = *"--diff-filter=U"* ]]; then
+  exit "\${WORKER_FINISH_TEST_DIFF_U_RC}"
+fi
+exec "$MF_BIN/git" "\$@"
+EOS
+chmod +x "$tmp/bin452/git"
+export PATH="$tmp/bin452:$PATH"
 
 cat > "$tmp/checks-pass" <<'EOS'
 #!/usr/bin/env bash
@@ -296,6 +311,17 @@ git -C "$tmp/w24" remote set-url origin "$orig_url"
 [ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w24" ] && ok || bad "fetch failure keeps worktree"
 grep -q "cannot verify main ancestry" "$tmp/out" "$tmp/err" && ok || bad "fetch failure reports ancestry query failure"
 ! grep -q "removed worktree" "$tmp/out" && ok || bad "fetch failure must not remove worktree"
+
+# 25. merge-base query error must not fall through to merged-PR worktree removal
+mf_pr_add 25 w25
+G worktree add -q "$tmp/w25" w25
+reset; default_released d25
+jq '.state = "MERGED"' "$MF_GH_DIR/pr-25.json" > "$MF_GH_DIR/pr-25.json.tmp" && mv "$MF_GH_DIR/pr-25.json.tmp" "$MF_GH_DIR/pr-25.json"
+WORKER_FINISH_TEST_MERGE_BASE_RC=128 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w25" --dispatch d25
+unset WORKER_FINISH_TEST_MERGE_BASE_RC
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w25" ] && ok || bad "merge-base query error keeps worktree"
+grep -q "cannot verify main ancestry" "$tmp/out" "$tmp/err" && ok || bad "merge-base query error reports unknown ancestry"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "merge-base query error must not remove worktree"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
