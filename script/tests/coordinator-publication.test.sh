@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Disposable git remotes and stub gh for coordinator-publication.sh (issue #6676).
 set -u
+export GIT_ALLOW_PROTOCOL=file
 here=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/merge-fixture.sh
 . "$here/tests/lib/merge-fixture.sh"
@@ -177,8 +178,8 @@ fixture_block_non_file_transport() {
         ;;
     esac
   done < <(
-    "$MF_BIN/git.real" -C "$wt" config --get-all remote.origin.url 2>/dev/null || true
-    "$MF_BIN/git.real" -C "$wt" config --get-all remote.origin.pushurl 2>/dev/null || true
+    "$MF_BIN/git.real" -C "$wt" remote get-url origin 2>/dev/null || true
+    "$MF_BIN/git.real" -C "$wt" remote get-url --push --all origin 2>/dev/null || true
   )
 }
 if [[ " $* " == *" fetch "* ]] || [[ " $* " == *" push "* ]]; then
@@ -422,6 +423,17 @@ out=$(pub feat-pushurl); code=$?
 "$MF_REAL_GIT" -C "$MF_REPO" config --unset-all remote.origin.pushurl 2>/dev/null || true
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses mismatched pushurl even with file origin" "$out"
 [ ! -s "$MF_DIR/push.log" ] && ok "pushurl refusal skips push" || bad "push ran on pushurl mismatch"
+
+good_body
+make_feature feat-push-rewrite
+WRONG_PUSH="$MF_DIR/wrong-push.git"
+"$MF_REAL_GIT" init -q --bare -b main "$WRONG_PUSH"
+"$MF_REAL_GIT" -C "$MF_REPO" config "url.$WRONG_PUSH.pushInsteadOf" "$MF_ORIGIN"
+: > "$MF_DIR/push.log"
+out=$(pub feat-push-rewrite); code=$?
+"$MF_REAL_GIT" -C "$MF_REPO" config --unset-all "url.$WRONG_PUSH.pushInsteadOf" 2>/dev/null || true
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses Git-resolved push URL rewrite to different bare remote" "$out"
+[ ! -s "$MF_DIR/push.log" ] && ok "push rewrite refusal skips push" || bad "push ran after url.pushInsteadOf rewrite"
 
 good_body
 make_feature feat-env-history

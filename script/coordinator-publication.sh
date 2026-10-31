@@ -40,35 +40,37 @@ canonical_file_remote() {
   printf '%s/%s' "$dir" "$base"
 }
 
+validate_resolved_remote_url() {
+  local u=$1 fetch_url=$2 disposable=$3 slug canon_fetch canon_u
+  case "$u" in
+    file:*|/*)
+      if [ "$disposable" != 1 ] || [ "${COORDINATOR_PUBLICATION_FIXTURE_ORIGIN:-}" != 1 ]; then
+        die "origin remote is not a GitHub repository (fixture seam disabled)"
+      fi
+      canon_fetch=$(canonical_file_remote "$fetch_url") || die "cannot canonicalize origin fetch URL"
+      canon_u=$(canonical_file_remote "$u") || die "cannot canonicalize origin remote URL"
+      [ "$canon_u" = "$canon_fetch" ] \
+        || die "origin push URL does not match fetch URL for disposable remotes"
+      ;;
+    *)
+      slug=$(origin_slug_from_url "$u") || die "cannot derive owner/name from origin remote (URL redacted)"
+      [ "$slug" = "$want_repo" ] || die "origin remote owner/name ($slug) does not match --repo $want_repo"
+      ;;
+  esac
+}
+
 assert_repo_matches_origin() {
-  local fetch_url slug u disposable=0 canon_fetch canon_u
+  local fetch_url disposable=0 u
   fetch_url=$(git -C "$worktree" remote get-url origin 2>/dev/null) || die "worktree has no origin remote"
   remote_is_disposable_file "$fetch_url" && disposable=1
-
-  local -a urls=("$fetch_url")
+  validate_resolved_remote_url "$fetch_url" "$fetch_url" "$disposable"
   while IFS= read -r u; do
-    [ -n "$u" ] && urls+=("$u")
-  done < <(git -C "$worktree" config --get-all remote.origin.pushurl 2>/dev/null || true)
-
-  for u in "${urls[@]}"; do
-    case "$u" in
-      file:*|/*)
-        if [ "$disposable" != 1 ] || [ "${COORDINATOR_PUBLICATION_FIXTURE_ORIGIN:-}" != 1 ]; then
-          die "origin remote is not a GitHub repository (fixture seam disabled)"
-        fi
-        canon_fetch=$(canonical_file_remote "$fetch_url") \
-          || die "cannot canonicalize origin fetch URL"
-        canon_u=$(canonical_file_remote "$u") \
-          || die "cannot canonicalize origin push URL"
-        [ "$canon_u" = "$canon_fetch" ] \
-          || die "origin push URL does not match fetch URL for disposable remotes"
-        ;;
-      *)
-        slug=$(origin_slug_from_url "$u") || die "cannot derive owner/name from origin remote (URL redacted)"
-        [ "$slug" = "$want_repo" ] || die "origin remote owner/name ($slug) does not match --repo $want_repo"
-        ;;
-    esac
-  done
+    [ -n "$u" ] || continue
+    validate_resolved_remote_url "$u" "$fetch_url" "$disposable"
+  done < <(
+    git -C "$worktree" remote get-url --push --all origin 2>/dev/null \
+      || die "cannot resolve effective origin push URLs"
+  )
 }
 
 receipt_scalar_ok() {

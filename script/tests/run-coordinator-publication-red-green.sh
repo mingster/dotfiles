@@ -31,10 +31,16 @@ red_log="$RED_ROOT/red.log"
 green_log="$RED_ROOT/green.log"
 
 set +e
-run_fixture "RED old=$OLD_SHA" "$RED_ROOT/coordinator-publication.sh" "$red_log"
-red_ec=$?
-run_fixture "GREEN worktree" "$green_pub" "$green_log"
-green_ec=$?
+if run_fixture "RED old=$OLD_SHA" "$RED_ROOT/coordinator-publication.sh" "$red_log"; then
+  red_ec=0
+else
+  red_ec=$?
+fi
+if run_fixture "GREEN worktree" "$green_pub" "$green_log"; then
+  green_ec=0
+else
+  green_ec=$?
+fi
 set -e
 
 set +e
