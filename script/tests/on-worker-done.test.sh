@@ -95,6 +95,30 @@ run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "fail-closed: malformed admit receipt refuses" "$([ "$rc" -ne 0 ]; echo $?)"
 
 setup_local_fleet
+cat > "$tmp/fleet-watch-local" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+printf '%s\n' '["admitted"]'
+exit 0
+FW
+chmod +x "$tmp/fleet-watch-local"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: non-object admit receipt refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+
+setup_local_fleet
+cat > "$tmp/fleet-watch-local" <<FW
+#!/usr/bin/env bash
+[ "\$1" = "--config" ] && shift 2
+[ "\$1" = "--admit" ] || exit 2
+printf '%s\n' '{"admitted":true,"host":"$LOCAL_HOST","cap":99,"occupied":0}'
+exit 0
+FW
+chmod +x "$tmp/fleet-watch-local"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: admit cap mismatch refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+
+setup_local_fleet
 printf '%s\n' '{"host_caps":{"remote-only":2},"runs":[]}' > "$tmp/fleet-remote.json"
 cat > "$tmp/fleet-watch-remote" <<'FW'
 #!/usr/bin/env bash
@@ -110,7 +134,32 @@ run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "fail-closed: admitted host without saved Orca environment refuses" "$([ "$rc" -ne 0 ] && grep -q 'no saved Orca environment' "$tmp/err"; echo $?)"
 
 setup_local_fleet
+cat > "$tmp/fleet-watch-local" <<'FW'
+#!/usr/bin/env bash
+[ "$1" = "--config" ] && shift 2
+[ "$1" = "--admit" ] || exit 2
+printf '%s\n' '{"admitted":"false","host":"wrong-host","cap":0,"occupied":99}'
+exit 0
+FW
+chmod +x "$tmp/fleet-watch-local"
+: > "$tmp/orca.log"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: string admitted false with exit 0 refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+check "fail-closed: string admitted false skips worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
 
+setup_local_fleet
+cat > "$tmp/fleet-watch-local" <<FW
+#!/usr/bin/env bash
+[ "\$1" = "--config" ] && shift 2
+[ "\$1" = "--admit" ] || exit 2
+printf '%s\n' '{"admitted":true,"host":"wrong-host","cap":4,"occupied":0}'
+exit 0
+FW
+chmod +x "$tmp/fleet-watch-local"
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: admit host mismatch refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+
+setup_local_fleet
 out=$(run); rc=$?
 check "gate ok: exit 0" "$rc"
 check "gate ok: cross-family agent flags" "$(echo "$out" | grep -q -- '--agent codex'; echo $?)"
@@ -174,6 +223,7 @@ check "brief has the verdict line template with the head" "$(grep -E "$re" "$bri
 check "brief records author and verifier families separately from provider" "$(grep -q 'Author: provider=' "$brief" && grep -q 'family=' "$brief" && grep -q 'Verifier: provider=' "$brief"; echo $?)"
 check "default brief asks for full review against spec and standards" "$(grep -q "repo's standards" "$brief" && grep -q "PR's spec" "$brief"; echo $?)"
 check "default brief runs tests through heavy-gate" "$(grep -q 'heavy-gate.sh' "$brief"; echo $?)"
+check "default brief says gate wait means not executed" "$(grep -q 'not executed yet' "$brief"; echo $?)"
 check "default brief reads Checks receipt last and treats pending as not pass" "$(grep -q 'Checks receipt' "$brief" && grep -q 'pending' "$brief"; echo $?)"
 check "default brief is not resolution-only" "$(! grep -q 'git show --remerge-diff' "$brief"; echo $?)"
 rm -f "$brief"
@@ -205,6 +255,20 @@ out=$(run_flags 2>"$tmp/err"); rc=$?
 check "host pick under cap: exit 0" "$rc"
 check "host pick maps --on to saved Orca environment id" "$(echo "$out" | grep -q -- '--on env-fleet-b'; echo $?)"
 unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH FAKE_ORCA_ENVS
+
+setup_local_fleet
+export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"env-dup","name":"fleet-b"},{"id":"env-dup2","name":"fleet-b"}]}}'
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: duplicate Orca environment names refuse" "$([ "$rc" -ne 0 ]; echo $?)"
+unset FAKE_ORCA_ENVS
+
+setup_local_fleet
+export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"fleet-b","name":"other-name"}]}}'
+run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: malformed Orca environment list mapping refuses" "$([ "$rc" -ne 0 ]; echo $?)"
+unset FAKE_ORCA_ENVS
 
 setup_local_fleet
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
