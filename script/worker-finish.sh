@@ -94,20 +94,29 @@ for id in ${dispatches[@]+"${dispatches[@]}"}; do
   fi
   release_body=$("$orca" orchestration worker-release --dispatch "$id" --json 2>&1) || release_rc=$?
   if [ -n "$archive_dir" ]; then printf '%s\n' "$release_body" > "$archive_dir/release-$id.json"; fi
-  parsed=$(RELEASE_BODY="$release_body" RELEASE_RC="${release_rc:-0}" python3 <<'PY'
+  parsed=$(RELEASE_BODY="$release_body" RELEASE_RC="${release_rc:-0}" DISPATCH_ID="$id" python3 <<'PY'
 import json, os, sys
 body = os.environ.get("RELEASE_BODY", "")
 rc = int(os.environ.get("RELEASE_RC", "0"))
+dispatch_id = os.environ.get("DISPATCH_ID", "")
 try:
     doc = json.loads(body)
 except Exception:
     print("malformed", rc)
     sys.exit(0)
-if not doc.get("ok"):
+if doc.get("ok") is not True:
     code = (doc.get("error") or {}).get("code") or "error"
     print(code, rc)
     sys.exit(0)
-state = (doc.get("result") or {}).get("state") or "missing"
+result = doc.get("result") or {}
+rid = result.get("dispatchId") or ""
+if rid and dispatch_id and rid != dispatch_id:
+    print("id_mismatch", rc)
+    sys.exit(0)
+state = result.get("state") or "missing"
+if state in ("released", "already_released") and rc != 0:
+    print("nonzero_success", rc)
+    sys.exit(0)
 print(state, rc)
 PY
 ) || {
@@ -127,7 +136,7 @@ PY
       echo "worker-finish: $id retained${reason:+ ($reason)}; worktree kept" >&2
       ;;
     release_pending) pending=$((pending + 1)); echo "worker-finish: $id release_pending; worktree kept" >&2 ;;
-    release_unknown|missing|malformed|error|dispatch_not_found)
+    release_unknown|missing|malformed|error|dispatch_not_found|id_mismatch|nonzero_success)
       unknown=$((unknown + 1))
       fail=1
       echo "worker-finish: worker-release for $id failed ($state, exit $prc)" >&2
@@ -151,6 +160,12 @@ fi
 
 if [ "$retained" -ne 0 ] || [ "$pending" -ne 0 ]; then
   echo "worker-finish: worktree kept at $wt"
+  exit 0
+fi
+
+if [ "$dry" != 1 ] && { [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] \
+  || git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; }; then
+  echo "worker-finish: dirty or unmerged worktree kept at $wt"
   exit 0
 fi
 

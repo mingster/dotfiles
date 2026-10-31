@@ -171,7 +171,7 @@ HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "
 [ -d "$tmp/w442" ] && ok || bad "retained keeps worktree"
 grep -q "worktree kept" "$tmp/out" "$tmp/err" && ok || bad "retained reports worktree kept"
 ! grep -q "removed worktree" "$tmp/out" && ok || bad "retained must not claim removal"
-[ -f "$WORKER_FINISH_ARCHIVE_DIR/release-ctx_f3d582b77bfc.json" ] || true
+[ -f "$WORKER_FINISH_ARCHIVE_DIR/release-ctx_f3d582b77bfc.json" ] && ok || bad "retained archives release json"
 
 # 10. already_released is idempotent and allows worktree removal
 newwt w10; reset
@@ -201,6 +201,38 @@ HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "
 newwt w14; reset; default_released d14
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w14" --dispatch d14 --task-id task_wrong
 [ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w14" ] && ok || bad "task id mismatch refuses"
+
+# 15. released-shaped JSON with nonzero CLI exit fails closed
+newwt w15; reset
+release_fixture d15 '{"ok":true,"result":{"dispatchId":"d15","state":"released"}}' 1
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w15" --dispatch d15
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w15" ] && ok || bad "nonzero exit with released state keeps worktree"
+
+# 16. wrong dispatch id in release response fails closed
+newwt w16; reset
+release_fixture d16 '{"ok":true,"result":{"dispatchId":"d_other","state":"released"}}' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w16" --dispatch d16
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w16" ] && ok || bad "wrong dispatch id in release keeps worktree"
+
+# 17. ok:false with exit 0 fails closed
+newwt w17; reset
+release_fixture d17 '{"ok":false,"error":{"code":"dispatch_not_found"}}' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w17" --dispatch d17
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w17" ] && ok || bad "ok false release keeps worktree"
+
+# 18. dirty worktree survives successful released receipt
+newwt w18; reset; default_released d18
+echo dirty > "$tmp/w18/DONT_REMOVE"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w18" --dispatch d18
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w18" ] && ok || bad "dirty worktree kept after release"
+grep -q "dirty or unmerged worktree kept" "$tmp/out" "$tmp/err" && ok || bad "dirty worktree reports kept"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "dirty worktree must not be removed"
+
+# 19. archive writes release receipt when archive dir set
+newwt w19; reset
+release_fixture d19 '{"ok":true,"result":{"dispatchId":"d19","state":"released"}}' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w19" --dispatch d19
+[ -f "$WORKER_FINISH_ARCHIVE_DIR/release-d19.json" ] && ok || bad "archive stores release json"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

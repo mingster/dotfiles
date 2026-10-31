@@ -23,8 +23,8 @@ json.dump(r,open(p,'w'))
 REMOVE
     fi ;;
   "orchestration worker-release --dispatch "*) echo "$*" >> "$FAKE_DIR/rpc.log"; d=$4
-    if [ -f "$FAKE_DIR/release.$d.json" ]; then cat "$FAKE_DIR/release.$d.json"; exit 0; fi
-    printf '{"ok":true,"result":{"state":"released"}}\n' ;;
+    if [ -f "$FAKE_DIR/release.$d.json" ]; then cat "$FAKE_DIR/release.$d.json"; exit "${FAKE_RELEASE_EXIT:-0}"; fi
+    printf '{"ok":true,"result":{"state":"released","dispatchId":"'"$d"'","processAction":"closed_agent_terminal"}}\n' ;;
   "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
   "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; python3 - "$FAKE_DIR/terminals.json" <<'LIST'
@@ -249,8 +249,8 @@ echo completed > "$tmp/status.retry"; echo term_retry > "$tmp/state/retry"
 echo '{"result":{"terminals":[{"handle":"term_retry"}]}}' > "$tmp/terminals.json"
 : > "$tmp/sleeps.log"
 FAKE_FAILS=1 FAKE_LINGERS=4 "$here/worker-pane-close.sh" retry >/dev/null
-check "retry verifies disappearance before deleting record" "$([ "$(closes)" = 5 ] && [ ! -e "$tmp/state/retry" ]; echo $?)"
-check "retry backs off through 5 15 30 60 seconds" "$([ "$(tr '\n' ' ' < "$tmp/sleeps.log")" = '5 15 30 60 ' ]; echo $?)"
+check "one close attempt retains record when terminal lingers" "$([ "$(closes)" = 1 ] && [ -e "$tmp/state/retry" ]; echo $?)"
+check "no retry backoff sleep after single-shot close" "$([ ! -s "$tmp/sleeps.log" ]; echo $?)"
 # If authority changes while retrying, stop closing and retain the handle.
 rm -f "$tmp/closes.log"
 echo completed > "$tmp/status.reactivate"; echo term_retry > "$tmp/state/reactivate"
@@ -305,7 +305,7 @@ check "live --release refuses with actionable message and no marker" "$([ "$rc" 
 
 # #442-shaped exit-0 retained: no marker, no terminal close
 cat > "$tmp/release.ctx442.json" <<'JSON'
-{"ok":true,"result":{"dispatchId":"ctx_f3d582b77bfc","state":"retained","reason":"user_takeover","processAction":"none","archive":null}}
+{"ok":true,"result":{"dispatchId":"ctx442","state":"retained","reason":"user_takeover","processAction":"none","archive":null}}
 JSON
 echo completed > "$tmp/status.ctx442"
 echo term_442 > "$tmp/state/ctx442"
@@ -314,5 +314,42 @@ rm -f "$tmp/closes.log"
 "$here/worker-pane-close.sh" --release ctx442 > "$tmp/retained442.out" 2>&1; rc=$?
 check "retained --release exits 0 without closing terminals" "$([ "$rc" = 0 ] && [ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/ctx442" ] && [ ! -e "$tmp/state/released/ctx442" ]; echo $?)"
 check "retained --release reports reason" "$(grep -q 'user_takeover' "$tmp/retained442.out"; echo $?)"
+
+# Stale released marker must not authorize terminal close when native release is retained
+stale_state="$tmp/state_stale"; stale_fake="$tmp/fake_stale"
+mkdir -p "$stale_state/released" "$stale_fake"
+: > "$stale_state/released/dstale"
+echo term_stale > "$stale_state/dstale"
+cat > "$stale_fake/release.dstale.json" <<'JSON'
+{"ok":true,"result":{"dispatchId":"dstale","state":"retained","reason":"user_takeover","processAction":"none","archive":null}}
+JSON
+echo completed > "$stale_fake/status.dstale"
+echo '{"result":{"terminals":[{"handle":"term_stale","worktreePath":"'"$tmp"'/linked"}]}}' > "$stale_fake/terminals.json"
+cp "$tmp/orca" "$stale_fake/orca"
+rm -f "$stale_fake/closes.log"
+ORCA_PANE_STATE_DIR="$stale_state" FAKE_DIR="$stale_fake" ORCA_CLI_COMMAND="$stale_fake/orca" \
+  "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "stale marker plus retained native release does not close terminals" "$([ ! -s "$stale_fake/closes.log" ] && [ -e "$stale_state/dstale" ]; echo $?)"
+
+# --release with released JSON but nonzero CLI exit: no marker, no close
+cat > "$tmp/release.dnz.json" <<'JSON'
+{"ok":true,"result":{"dispatchId":"dnz","state":"released","processAction":"closed_agent_terminal","archive":"captured"}}
+JSON
+echo completed > "$tmp/status.dnz"
+echo term_nz > "$tmp/state/dnz"
+echo '{"result":{"terminals":[{"handle":"term_nz"}]}}' > "$tmp/terminals.json"
+rm -f "$tmp/closes.log" "$tmp/state/released/dnz"
+FAKE_RELEASE_EXIT=1 "$here/worker-pane-close.sh" --release dnz > "$tmp/dnz.out" 2>&1; rc=$?
+check "nonzero release exit refuses marker and close" "$([ "$rc" != 0 ] && [ ! -s "$tmp/closes.log" ] && [ ! -e "$tmp/state/released/dnz" ]; echo $?)"
+
+# Wrong dispatch id in release response on --release
+cat > "$tmp/release.dwrong.json" <<'JSON'
+{"ok":true,"result":{"dispatchId":"d_other","state":"released","processAction":"closed_agent_terminal"}}
+JSON
+echo completed > "$tmp/status.dwrong"
+echo term_wrong > "$tmp/state/dwrong"
+rm -f "$tmp/closes.log" "$tmp/state/released/dwrong"
+"$here/worker-pane-close.sh" --release dwrong > "$tmp/dwrong.out" 2>&1; rc=$?
+check "wrong dispatch id on --release refuses close" "$([ "$rc" != 0 ] && [ ! -s "$tmp/closes.log" ] && [ ! -e "$tmp/state/released/dwrong" ]; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
