@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Tests for worker-finish.sh: head-checks gate before anything is released, closed or removed.
-# The pane close helper is only called with dispatch ids (spec #286, T33, invariant 18).
+# Tests for worker-finish.sh: head-checks gate, native worker-release receipts, worktree retention.
 here=$(cd "$(dirname "$0")" && pwd)
 pass=0 fail=0
 ok() { pass=$((pass + 1)); }
@@ -12,7 +11,10 @@ mf_setup
 trap mf_teardown EXIT
 tmp=$MF_DIR
 G() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
-export ORCA_CLI_COMMAND="$MF_BIN/orca" HEAD_CHECKS_LOG="$tmp/checks.log" PANE_LOG="$tmp/pane.log" WORKER_PANE_CLOSE="$tmp/pane-close"
+export HEAD_CHECKS_LOG="$tmp/checks.log" PANE_LOG="$tmp/pane.log" WORKER_PANE_CLOSE="$tmp/pane-close"
+export RELEASE_FIXTURE_DIR="$tmp/release-fixtures" WORKER_FINISH_ARCHIVE_DIR="$tmp/archive"
+mkdir -p "$RELEASE_FIXTURE_DIR" "$WORKER_FINISH_ARCHIVE_DIR"
+
 cat > "$tmp/checks-pass" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$HEAD_CHECKS_LOG"; echo "head-checks: PASS"; exit 0
@@ -28,11 +30,56 @@ echo "pane-close $*" >> "$PANE_LOG"
 EOS
 chmod +x "$tmp/checks-pass" "$tmp/checks-fail" "$tmp/pane-close"
 
+# Wrap the merge-fixture fake orca with JSON worker-show/release fixtures.
+cat > "$tmp/orca-wrap" <<'EOS'
+#!/usr/bin/env bash
+echo "orca $*" >> "$MF_ORCA_LOG"
+args=("$@")
+[ "${args[0]}" = orca ] && args=("${args[@]:1}")
+case "${args[0]} ${args[1]:-}" in
+  "orchestration worker-show")
+    id=""; i=2; while [ "$i" -lt "${#args[@]}" ]; do
+      [ "${args[$i]}" = --dispatch ] && id=${args[$((i+1))]}
+      i=$((i + 1))
+    done
+    f="$WORKER_SHOW_FIXTURE_DIR/show-$id.json"
+    if [ -f "$f" ]; then cat "$f"; exit 0; fi
+    printf '{"ok":true,"result":{"dispatch":{"status":"completed","taskId":"task_expected"}}}\n'
+    ;;
+  "orchestration worker-release")
+    id=""; i=2; while [ "$i" -lt "${#args[@]}" ]; do
+      [ "${args[$i]}" = --dispatch ] && id=${args[$((i+1))]}
+      i=$((i + 1))
+    done
+    f="$RELEASE_FIXTURE_DIR/$id.json"
+    if [ -f "$f" ]; then
+      jq -r '.body' "$f"
+      exit "$(jq -r '.cliExit // 0' "$f")"
+    fi
+    exec "$MF_BIN/orca" "$@"
+    ;;
+  *) exec "$MF_BIN/orca" "${args[@]}" ;;
+esac
+EOS
+chmod +x "$tmp/orca-wrap"
+export WORKER_SHOW_FIXTURE_DIR="$tmp/show-fixtures"
+mkdir -p "$WORKER_SHOW_FIXTURE_DIR"
+export ORCA_CLI_COMMAND="$tmp/orca-wrap"
+
+release_fixture() {
+  local id=$1 body=$2 cli_exit=${3:-0}
+  jq -n --arg body "$body" --argjson cliExit "$cli_exit" '{body:$body, cliExit:$cliExit}' > "$RELEASE_FIXTURE_DIR/$id.json"
+}
+
+default_released() {
+  release_fixture "$1" "{\"ok\":true,\"result\":{\"dispatchId\":\"$1\",\"state\":\"released\"}}" 0
+}
+
 # A worktree with one commit that is not in origin/main, so head-checks apply.
 newwt() { G worktree add -q "$tmp/$1" -b "$1" origin/main; git -C "$tmp/$1" commit -q --allow-empty -m "work $1"; }
 run() { (cd "$MF_REPO" && mf_run_limited 20 "$@") >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
-reset() { : > "$MF_ORCA_LOG"; : > "$HEAD_CHECKS_LOG"; : > "$PANE_LOG"; }
-released() { grep -c "worker-release --dispatch $1" "$MF_ORCA_LOG"; }
+reset() { : > "$MF_ORCA_LOG"; : > "$HEAD_CHECKS_LOG"; : > "$PANE_LOG"; rm -f "$RELEASE_FIXTURE_DIR"/*.json "$WORKER_SHOW_FIXTURE_DIR"/*.json; }
+released_log() { grep -c "worker-release --dispatch $1" "$MF_ORCA_LOG"; }
 
 # 1. failing checks refuse, touch nothing
 newwt w1; reset; mf_orca_add_worker run1 d1 dispatched "$tmp/w1"
@@ -40,16 +87,17 @@ HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "
 [ "$(cat "$tmp/rc")" = 1 ] && ok || bad "failing checks exit 1"
 grep -q "worker-finish: head-checks failed, refusing worker_done" "$tmp/err" && ok || bad "failing checks message"
 [ -d "$tmp/w1" ] && ok || bad "failing checks keep worktree"
-[ "$(released d1)" = 0 ] && ok || bad "failing checks leave dispatch untouched"
+[ "$(released_log d1)" = 0 ] && ok || bad "failing checks leave dispatch untouched"
 grep -q -- "--repo .*w1 --ref HEAD --base origin/main" "$HEAD_CHECKS_LOG" && ok || bad "checks called with repo, ref, base"
 
-# 2. passing checks proceed
-reset
+# 2. passing checks proceed when release reports released
+reset; default_released d1
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w1" --dispatch d1
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "passing checks exit 0"
 [ ! -d "$tmp/w1" ] && ok || bad "passing checks remove worktree"
-[ "$(released d1)" = 1 ] && ok || bad "passing checks release dispatch"
-grep -qx "pane-close d1" "$PANE_LOG" && ok || bad "explicit dispatch id reaches the pane close helper"
+[ "$(released_log d1)" = 1 ] && ok || bad "passing checks release dispatch"
+grep -q "removed worktree" "$tmp/out" && ok || bad "success prints removed worktree"
+! grep -q "pane-close" "$PANE_LOG" && ok || bad "legacy pane close helper not invoked"
 
 # 3. skip flag needs a reason, prints it, skips the checks
 newwt w2; reset
@@ -58,10 +106,12 @@ HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "
 [ -d "$tmp/w2" ] && ok || bad "skip without reason keeps worktree"
 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w2" --skip-head-checks ""
 [ "$(cat "$tmp/rc")" = 2 ] && ok || bad "skip with empty reason exits 2"
-HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w2" --skip-head-checks "docs only"
+reset; default_released d2
+HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w2" --skip-head-checks "docs only" --dispatch d2
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "skip with reason exits 0"
 grep -q "docs only" "$tmp/out" "$tmp/err" && ok || bad "skip prints the reason"
 [ ! -s "$HEAD_CHECKS_LOG" ] && ok || bad "skip does not run checks"
+[ ! -d "$tmp/w2" ] && ok || bad "skip with release removes worktree"
 
 # 4. DRY_RUN prints, runs nothing
 newwt w3; reset
@@ -76,13 +126,13 @@ HEAD_CHECKS="$tmp/does-not-exist" run bash "$here/../worker-finish.sh" --worktre
 [ "$(cat "$tmp/rc")" = 1 ] && ok || bad "missing checks exit 1"
 grep -q "worker-finish: head-checks failed, refusing worker_done" "$tmp/err" && ok || bad "missing checks message"
 [ -d "$tmp/w4" ] && ok || bad "missing checks keep worktree"
-[ "$(released d4)" = 0 ] && ok || bad "missing checks leave dispatch untouched"
+[ "$(released_log d4)" = 0 ] && ok || bad "missing checks leave dispatch untouched"
 
-# 6. post-merge: a head already in origin/main, or a merged PR, skips the checks without blocking
+# 6. post-merge: a head already in origin/main skips checks and removes after release
 G worktree add -q "$tmp/w5" -b w5 origin/main
 git -C "$tmp/w5" commit -q --allow-empty -m work
 git -C "$tmp/w5" push -q origin w5:main
-reset
+reset; default_released d5
 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w5" --dispatch d5
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "merged head exits 0"
 grep -q "skipping head-checks, HEAD is already in origin/main" "$tmp/out" && ok || bad "merged head prints one skip line"
@@ -95,22 +145,62 @@ HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "
 [ "$(cat "$tmp/rc")" = 1 ] && ok || bad "unmerged head with open PR still runs failing checks"
 [ -s "$HEAD_CHECKS_LOG" ] && [ -d "$tmp/w6" ] && ok || bad "unmerged head runs checks and keeps worktree"
 jq '.state = "MERGED"' "$MF_GH_DIR/pr-6.json" > "$MF_GH_DIR/pr-6.json.tmp" && mv "$MF_GH_DIR/pr-6.json.tmp" "$MF_GH_DIR/pr-6.json"
-reset
+reset; default_released d6
 HEAD_CHECKS="$tmp/checks-fail" run bash "$here/../worker-finish.sh" --worktree "$tmp/w6" --dispatch d6
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "merged PR exits 0"
 grep -q "skipping head-checks, its PR is already merged" "$tmp/out" && ok || bad "merged PR prints one skip line"
 [ ! -s "$HEAD_CHECKS_LOG" ] && ok || bad "merged PR does not run checks"
 
-# 7. T33: no dispatch ids means no pane close call (the helper without arguments sweeps and loops), and the run still ends
+# 7. no dispatch ids refuses cleanup (no pane sweep, no worktree removal)
 newwt w7; reset
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w7"
-[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "no dispatch ids: finishes (rc $(cat "$tmp/rc"))"
+[ "$(cat "$tmp/rc")" = 1 ] && ok || bad "no dispatch ids exit 1"
+[ -d "$tmp/w7" ] && ok || bad "no dispatch ids keep worktree"
 [ ! -s "$PANE_LOG" ] && ok || bad "no dispatch ids: pane close helper not called"
-[ ! -d "$tmp/w7" ] && ok || bad "no dispatch ids: worktree removed"
-# ids found from the Orca inventory are passed on
-newwt w8; reset; mf_orca_add_worker run1 d8 dispatched "$tmp/w8"
+
+# 8. inventory dispatch id is released; worktree removed on released receipt
+newwt w8; reset; mf_orca_add_worker run1 d8 dispatched "$tmp/w8"; default_released d8
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w8"
-grep -qx "pane-close d8" "$PANE_LOG" && [ "$(released d8)" = 1 ] && ok || bad "inventory dispatch id released and passed to the helper"
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d8)" = 1 ] && [ ! -d "$tmp/w8" ] && ok || bad "inventory dispatch released and worktree removed"
+
+# 9. #442-shaped exit-0 retained keeps worktree and does not claim removal
+newwt w442; reset
+release_fixture ctx_f3d582b77bfc '{"ok":true,"result":{"dispatchId":"ctx_f3d582b77bfc","state":"retained","reason":"user_takeover","processAction":"none","archive":null}}' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w442" --dispatch ctx_f3d582b77bfc
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "retained release exit 0"
+[ -d "$tmp/w442" ] && ok || bad "retained keeps worktree"
+grep -q "worktree kept" "$tmp/out" "$tmp/err" && ok || bad "retained reports worktree kept"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "retained must not claim removal"
+[ -f "$WORKER_FINISH_ARCHIVE_DIR/release-ctx_f3d582b77bfc.json" ] || true
+
+# 10. already_released is idempotent and allows worktree removal
+newwt w10; reset
+release_fixture d10 '{"ok":true,"result":{"dispatchId":"d10","state":"already_released"}}' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w10" --dispatch d10
+[ "$(cat "$tmp/rc")" = 0 ] && [ ! -d "$tmp/w10" ] && ok || bad "already_released removes worktree"
+
+# 11. malformed release response fails closed
+newwt w11; reset
+release_fixture d11 'not-json' 0
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w11" --dispatch d11
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w11" ] && ok || bad "malformed release keeps worktree and exits 1"
+
+# 12. release_unknown fails closed
+newwt w12; reset
+release_fixture d12 '{"ok":true,"result":{"dispatchId":"d12","state":"release_unknown"}}' 1
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w12" --dispatch d12
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w12" ] && ok || bad "release_unknown keeps worktree"
+
+# 13. unsettled dispatch refuses before release
+newwt w13; reset; default_released d13
+printf '{"ok":true,"result":{"dispatch":{"status":"dispatched"}}}\n' > "$WORKER_SHOW_FIXTURE_DIR/show-d13.json"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w13" --dispatch d13
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w13" ] && [ "$(released_log d13)" = 0 ] && ok || bad "unsettled dispatch refuses release"
+
+# 14. task id mismatch refuses
+newwt w14; reset; default_released d14
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w14" --dispatch d14 --task-id task_wrong
+[ "$(cat "$tmp/rc")" = 1 ] && [ -d "$tmp/w14" ] && ok || bad "task id mismatch refuses"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
