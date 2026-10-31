@@ -134,13 +134,25 @@ terminal_absent() {
 import json,sys
 try:
     r=json.load(sys.stdin)
-    if r.get("ok") is False: sys.exit(1)
-    r=r["result"]
-    if r.get("truncated"): sys.exit(1)
-    terms=r["terminals"]
-    assert isinstance(terms,list)
-    sys.exit(0 if all(t["handle"] != sys.argv[1] for t in terms) else 1)
-except Exception: sys.exit(1)' "$h"
+    if r.get("ok") is not True:
+        sys.exit(1)
+    res=r.get("result") or {}
+    if res.get("truncated"):
+        sys.exit(1)
+    scope=res.get("hostScope")
+    if not isinstance(scope, dict):
+        sys.exit(1)
+    if not isinstance(scope.get("hostIds"), list):
+        sys.exit(1)
+    omitted=scope.get("omittedHostIds")
+    if not isinstance(omitted, list) or omitted:
+        sys.exit(1)
+    terms=res.get("terminals")
+    if not isinstance(terms, list):
+        sys.exit(1)
+    sys.exit(0 if all(t.get("handle") != sys.argv[1] for t in terms) else 1)
+except Exception:
+    sys.exit(1)' "$h"
 }
 native_release_for_close() {
   local d=$1 release_out="" release_rc=0 parsed rel_state rel_rc rel_action

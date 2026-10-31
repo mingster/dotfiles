@@ -110,7 +110,8 @@ try:
     doc = json.load(open(path))
 except Exception:
     doc = {}
-if doc.get("ok") is True:
+explicit_ok = isinstance(doc.get("ok"), bool)
+if explicit_ok:
     payload = doc
 elif isinstance(doc.get("result"), dict):
     payload = {"ok": True, "result": doc["result"]}
@@ -119,13 +120,14 @@ else:
 res = payload.setdefault("result", {})
 if not isinstance(res.get("terminals"), list):
     res["terminals"] = []
-res.setdefault("truncated", False)
-scope = res.get("hostScope")
-if not isinstance(scope, dict):
-    res["hostScope"] = {"hostIds": ["local"], "omittedHostIds": []}
-else:
-    scope.setdefault("hostIds", ["local"])
-    scope.setdefault("omittedHostIds", [])
+if not explicit_ok:
+    res.setdefault("truncated", False)
+    scope = res.get("hostScope")
+    if not isinstance(scope, dict):
+        res["hostScope"] = {"hostIds": ["local"], "omittedHostIds": []}
+    else:
+        scope.setdefault("hostIds", ["local"])
+        scope.setdefault("omittedHostIds", [])
 if os.environ.get("FAKE_APPEND_COORDINATOR", "1") != "0":
     terms = res["terminals"]
     if not any(t.get("handle") == "term_coordinator" for t in terms):
