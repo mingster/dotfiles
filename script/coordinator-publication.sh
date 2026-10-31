@@ -180,6 +180,17 @@ read_receipt_file() {
   fi
 }
 
+fetch_verified_destination_main() {
+  local fetch_ec=0
+  git -C "$worktree" fetch -q origin main 2>/dev/null || fetch_ec=$?
+  if [ "$fetch_ec" -ne 0 ]; then
+    git -C "$worktree" fetch -q origin 2>/dev/null || die "cannot fetch destination main for environment file inspection"
+  fi
+  git -C "$worktree" rev-parse --verify origin/main >/dev/null 2>&1 \
+    || die "cannot verify destination main after fetch"
+  printf '%s' 'origin/main'
+}
+
 inspect_env_paths_in_publish_range() {
   local range=$1 path base history_tmp log_ec
   if ! git -C "$worktree" rev-parse "$range" >/dev/null 2>&1; then
@@ -254,18 +265,11 @@ gh_qualified_repo="github.com/$want_repo"
 want_head_sha=$(git -C "$worktree" rev-parse HEAD) || die "cannot read HEAD in $worktree"
 head_sha=$want_head_sha
 
-base_ref=origin/main
-if ! git -C "$worktree" rev-parse "$base_ref" >/dev/null 2>&1; then
-  base_ref=main
-fi
-if ! git -C "$worktree" rev-parse "$base_ref" >/dev/null 2>&1; then
-  die "cannot resolve base ref for environment file inspection"
-fi
-
-publish_range="${base_ref}..HEAD"
-inspect_env_paths_in_publish_range "$publish_range"
-
 assert_repo_matches_origin
+
+destination_main=$(fetch_verified_destination_main)
+publish_range="${destination_main}..HEAD"
+inspect_env_paths_in_publish_range "$publish_range"
 
 git_path=$(git -C "$worktree" rev-parse --git-path coordinator-publication)
 if [[ "$git_path" != /* ]]; then
@@ -283,6 +287,9 @@ write_receipt() {
     printf 'repo=%s\n' "$want_repo"
     printf 'branch=%s\n' "$want_branch"
     printf 'head_sha=%s\n' "$want_head_sha"
+    receipt_scalar_ok push_ok "${push_ok:-0}" || die "internal receipt push_ok"
+    receipt_scalar_ok pr_url "${pr_url:-}" || die "internal receipt pr_url"
+    receipt_scalar_ok pr_number "${pr_number:-}" || die "internal receipt pr_number"
     printf 'push_ok=%s\n' "${push_ok:-0}"
     printf 'pr_url=%s\n' "${pr_url:-}"
     printf 'pr_number=%s\n' "${pr_number:-}"
@@ -306,10 +313,27 @@ fi
 attempt=0
 max_attempts=3
 
+resolve_pr_from_github() {
+  local json num url oid
+  pr_url="" pr_number=""
+  if find_existing_pr; then
+    return 0
+  fi
+  json=$(gh pr view "$branch" --repo "$gh_qualified_repo" --json number,url,headRefOid,state 2>/dev/null) || return 1
+  num=$(jq -r '.number // empty' <<<"$json")
+  url=$(jq -r '.url // empty' <<<"$json")
+  oid=$(jq -r '.headRefOid // empty' <<<"$json")
+  state=$(jq -r '.state // empty' <<<"$json")
+  [ "$state" = "OPEN" ] && [ "$oid" = "$head_sha" ] || return 1
+  receipt_scalar_ok pr_number "$num" || return 1
+  receipt_scalar_ok pr_url "$url" || return 1
+  pr_number=$num
+  pr_url=$url
+  return 0
+}
+
 push_branch() {
-  git -C "$worktree" fetch -q origin main 2>/dev/null || git -C "$worktree" fetch -q origin 2>/dev/null || true
-  base_ref=origin/main
-  git -C "$worktree" rev-parse "$base_ref" >/dev/null 2>&1 || base_ref=main
+  destination_main=$(fetch_verified_destination_main)
 
   local remote_sha
   git -C "$worktree" fetch -q origin "$branch" 2>/dev/null || true
@@ -354,6 +378,8 @@ find_existing_pr() {
     url=$(jq -r '.url // empty' <<<"$line")
     oid=$(jq -r '.headRefOid // empty' <<<"$line")
     [ -n "$num" ] && [ "$oid" = "$head_sha" ] || continue
+    receipt_scalar_ok pr_number "$num" || continue
+    receipt_scalar_ok pr_url "$url" || continue
     pr_number=$num
     pr_url=$url
     return 0
@@ -378,13 +404,8 @@ open_pr() {
   pr_attempt=0
   while [ "$pr_attempt" -lt "$max_attempts" ]; do
     pr_attempt=$((pr_attempt + 1))
-    if out=$(gh pr create --repo "$gh_qualified_repo" --head "$branch" --base main --title "$title" --body-file "$body_file" 2>&1); then
-      pr_url=$out
-      find_existing_pr || true
-      if [ -z "$pr_number" ]; then
-        pr_number=$(gh pr view "$branch" --repo "$gh_qualified_repo" --json number --jq .number 2>/dev/null || true)
-      fi
-      if [ -z "$pr_number" ] || [ -z "$pr_url" ]; then
+    if gh pr create --repo "$gh_qualified_repo" --head "$branch" --base main --title "$title" --body-file "$body_file" >/dev/null 2>&1; then
+      if ! resolve_pr_from_github; then
         fail "gh pr create succeeded but PR could not be resolved"
       fi
       write_receipt
@@ -392,6 +413,7 @@ open_pr() {
       return 0
     fi
     if find_existing_pr; then
+      receipt_scalar_ok pr_url "$pr_url" || fail "gh pr create left malformed PR URL in listing"
       write_receipt
       echo "PUBLISHED $pr_url"
       return 0

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Sequential isolated RED (420ce69 helper tree) then GREEN (worktree helper); every run through heavy-gate.
+# Sequential isolated RED (pinned pre-review helper tree) then GREEN (worktree helper); every run through heavy-gate.
 set -euo pipefail
 
-OLD_SHA=${1:-${COORDINATOR_PUBLICATION_OLD_SHA:-420ce69cdf61cc06f2160006f349c0e686edeae6}}
+OLD_SHA=${1:-${COORDINATOR_PUBLICATION_OLD_SHA:-3b19586c1e07706039db63b6c1e4cd75bd0abb78}}
 here=$(cd "$(dirname "$0")/.." && pwd)
 repo_root=$(cd "$here/.." && pwd)
 gate=${HEAVY_GATE:-$HOME/dotfiles/script/heavy-gate.sh}
@@ -12,7 +12,7 @@ green_pub="$here/coordinator-publication.sh"
 RED_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cp-red.XXXXXX")
 trap 'rm -rf "$RED_ROOT"' EXIT
 mkdir -p "$RED_ROOT/lib"
-cp "$here/lib/validate-publication-body.sh" "$RED_ROOT/lib/"
+git -C "$repo_root" show "${OLD_SHA}:script/lib/validate-publication-body.sh" > "$RED_ROOT/lib/validate-publication-body.sh"
 git -C "$repo_root" show "${OLD_SHA}:script/coordinator-publication.sh" > "$RED_ROOT/coordinator-publication.sh"
 chmod +x "$RED_ROOT/coordinator-publication.sh"
 

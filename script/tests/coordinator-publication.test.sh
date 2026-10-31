@@ -117,6 +117,11 @@ save() { jq "$1" "$file" > "$file.tmp" && mv "$file.tmp" "$file"; }
 case "$cmd" in
   "pr view")
     gh_repo_must_be_github_com || exit 1
+    if [ -n "$pr" ] && [ ! -f "$file" ]; then
+      pr=$(jq -s -r --arg b "$pr" '[.[] | select(.headRefName == $b)][0].number // empty' "$MF_GH_DIR"/pr-*.json 2>/dev/null)
+      [ -n "$pr" ] || { echo "no such PR $pr" >&2; exit 1; }
+      file="$MF_GH_DIR/pr-$pr.json"
+    fi
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
     if [ -n "$json" ]; then
       out=$(jq --arg f "$json" '. as $o | ($f | split(",")) | map({(.): $o[.]}) | add' "$file")
@@ -152,6 +157,10 @@ case "$cmd" in
   "pr comment") [ -f "$file" ] || exit 1; [ -n "$body_file" ] && body=$(cat "$body_file"); jq --arg b "$body" '.comments += [{body:$b}]' "$file" > "$file.tmp" && mv "$file.tmp" "$file" ;;
   "pr list")
     gh_repo_must_be_github_com || exit 1
+    if [ -f "$MF_DIR/stub_pr_list_fail" ]; then
+      echo "fake gh: pr list failed (fixture)" >&2
+      exit 1
+    fi
     jq -s --arg b "${base:-}" --arg hn "${head_name:-}" --arg st "${state:-open}" \
       '[.[] | select((.state|ascii_downcase)==($st|ascii_downcase) and ($b=="" or .baseRefName==$b) and ($hn=="" or .headRefName==$hn)) | {number,url,headRefOid}]' \
       "$MF_GH_DIR"/pr-*.json 2>/dev/null || echo '[]' ;;
@@ -203,6 +212,10 @@ fixture_block_non_file_transport() {
     GIT_ALLOW_PROTOCOL=file "$MF_BIN/git.real" -C "$wt" remote get-url --push --all origin 2>/dev/null || true
   )
 }
+if [[ " $* " == *" fetch "* ]] && [ -f "$MF_DIR/stub_fetch_fail" ]; then
+  echo "fixture git: fetch failed" >&2
+  exit 1
+fi
 if [[ " $* " == *" remote get-url --push --all "* ]] && [ -f "$MF_DIR/stub_pushurl_resolve_fail" ]; then
   echo "fixture git: push URL resolution failed" >&2
   exit 1
@@ -282,6 +295,24 @@ make_feature feat-closes
 out=$(pub feat-closes); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses multiple Closes on one line" "$out"
 
+good_body
+printf '\ncloses #1, closes #2' >> "$BODY"
+make_feature feat-closes-lower
+out=$(pub feat-closes-lower); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses lowercase comma-separated closes directives" "$out"
+
+good_body
+printf '\nCloses example/repo#1, Closes example/repo#2' >> "$BODY"
+make_feature feat-closes-qualified
+out=$(pub feat-closes-qualified); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses qualified Closes on one line" "$out"
+
+good_body
+printf '\ncloses #1' >> "$BODY"
+make_feature feat-closes-noncanonical
+out=$(pub feat-closes-noncanonical); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-canonical closes casing" "$out"
+
 out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-x --body-file "$BODY" --worktree "$MF_REPO" --force 2>&1); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses --force flag" "$out"
 
@@ -322,9 +353,11 @@ echo secret > "$MF_REPO/web/.env.local"
 "$MF_TEST_GIT" -C "$MF_REPO" add web/.env.local
 "$MF_TEST_GIT" -C "$MF_REPO" commit -q -m nested-env
 : > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
 out=$(pub feat-env-nested); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses nested tracked env file in diff" "$out"
-if [ ! -s "$MF_DIR/fetch.log" ]; then ok "nested env refusal skips network fetch"; else bad "fetch ran before nested env refusal: $(cat "$MF_DIR/fetch.log")"; fi
+if grep -q 'fetch ' "$MF_DIR/fetch.log" 2>/dev/null; then ok "nested env refusal runs read-only fetch before history scan"; else bad "fetch missing before nested env refusal: $(cat "$MF_DIR/fetch.log")"; fi
+if [ ! -s "$MF_DIR/push.log" ]; then ok "nested env refusal skips push"; else bad "push ran on nested env refusal"; fi
 
 good_body
 make_feature feat-no-net
@@ -459,9 +492,41 @@ out=$(pub feat-env-log-fail); code=$?
 rm -f "$MF_DIR/stub_env_log_fail"
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when publish-range history inspection fails" "$out"
 [[ "$out" == *"cannot inspect branch history for environment files"* ]] && ok "history inspection error surfaces in parent" || bad "missing history inspection refusal"
-[ ! -s "$MF_DIR/fetch.log" ] && ok "history inspection failure skips fetch" || bad "fetch ran after history inspection failure"
+grep -q 'fetch ' "$MF_DIR/fetch.log" 2>/dev/null && ok "history inspection failure follows destination fetch" || bad "fetch missing before history inspection failure"
 [ ! -s "$MF_DIR/push.log" ] && ok "history inspection failure skips push" || bad "push ran after history inspection failure"
 [ ! -s "$MF_GH_LOG" ] && ok "history inspection failure skips gh" || bad "gh ran after history inspection failure"
+
+good_body
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q main
+printf 'secret\n' > "$MF_REPO/.env"
+"$MF_TEST_GIT" -C "$MF_REPO" add .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'unpublished env on main'
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B feat-unpub-main-env main
+echo regular > "$MF_REPO/regular.txt"
+"$MF_TEST_GIT" -C "$MF_REPO" add regular.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'feature on unpublished main'
+"$MF_TEST_GIT" -C "$MF_REPO" update-ref -d refs/remotes/origin/main 2>/dev/null || true
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+out=$(pub feat-unpub-main-env); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses env on unpublished local main ancestry" "$out"
+[[ "$out" == *"tracked environment file"* ]] && ok "unpublished main env surfaces in outgoing scan" || bad "missing env refusal for unpublished main: $out"
+[ ! -s "$MF_DIR/push.log" ] && ok "unpublished main env refusal skips push" || bad "push ran: $(cat "$MF_DIR/push.log")"
+[ ! -s "$MF_GH_LOG" ] && ok "unpublished main env refusal skips gh" || bad "gh ran on unpublished main env"
+"$MF_TEST_GIT" -C "$MF_REPO" fetch -q origin main
+
+good_body
+touch "$MF_DIR/stub_fetch_fail"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+make_feature feat-fetch-fail
+out=$(pub feat-fetch-fail); code=$?
+rm -f "$MF_DIR/stub_fetch_fail"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when destination fetch fails" "$out"
+[[ "$out" == *"cannot fetch destination main"* ]] && ok "fetch failure message surfaces" || bad "missing fetch failure refusal: $out"
+[ ! -s "$MF_DIR/push.log" ] && ok "fetch failure skips push" || bad "push after fetch failure"
+[ ! -s "$MF_GH_LOG" ] && ok "fetch failure skips gh" || bad "gh after fetch failure"
 
 good_body
 make_feature feat-receipt-evil
@@ -566,6 +631,40 @@ printf 'secret\n' > "$MF_REPO/web/.env.local"
 out=$(pub feat-env-merge); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses secret env introduced only in merge resolution" "$out"
 [ ! -s "$MF_DIR/push.log" ] && ok "merge env refusal skips push" || bad "push ran after merge env refusal"
+
+good_body
+: > "$MF_DIR/push.log"
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B topic-a-add origin/main
+printf 'secret\n' > "$MF_REPO/.env"
+"$MF_TEST_GIT" -C "$MF_REPO" add .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'add env on topic-a'
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B feat-env-2merge origin/main
+"$MF_TEST_GIT" -C "$MF_REPO" merge -q --no-ff topic-a-add -m 'merge add env'
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B topic-b-del HEAD
+"$MF_TEST_GIT" -C "$MF_REPO" rm -f .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'delete env on topic-b'
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q feat-env-2merge
+"$MF_TEST_GIT" -C "$MF_REPO" merge -q --no-ff topic-b-del -m 'merge delete env'
+out=$(pub feat-env-2merge); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses env add across separate merges even when final tree clean" "$out"
+[ ! -s "$MF_DIR/push.log" ] && ok "two-merge env history refusal skips push" || bad "push after two-merge env refusal"
+
+good_body
+make_feature feat-receipt-partial-api
+touch "$MF_DIR/stub_pr_list_fail"
+: > "$MF_GH_LOG"
+out=$(pub feat-receipt-partial-api); code=$?
+rm -f "$MF_DIR/stub_pr_list_fail"
+say "$code" "writes valid receipt when pr list fails after create" "$out"
+grep -Fq 'pr_url=https://example.test/pull/' "$(receipt_path)" && ok "partial API failure receipt has https pr_url" || bad "receipt missing valid pr_url"
+grep -Eq '^pr_number=[0-9]+$' "$(receipt_path)" && ok "partial API failure receipt has pr_number" || bad "receipt missing pr_number"
+touch "$MF_DIR/stub_pr_list_fail"
+: > "$MF_GH_LOG"
+out=$(pub --keep-receipt feat-receipt-partial-api); code=$?
+rm -f "$MF_DIR/stub_pr_list_fail"
+say "$code" "resumes after partial API failure without duplicate PR" "$out"
+pr_count=$(jq -s '[.[] | select(.headRefName=="feat-receipt-partial-api")] | length' "$MF_GH_DIR"/pr-*.json 2>/dev/null || echo 0)
+[ "$pr_count" -eq 1 ] && ok "partial API recovery leaves exactly one PR" || bad "expected one PR, found $pr_count"
 
 good_body
 make_feature feat-gh-host-pin

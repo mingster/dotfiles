@@ -38,12 +38,22 @@ fi
 bullet_count=$(awk '/^## verification$/ {inside=1; next} inside && /^#+ / {inside=0} inside && /^[[:space:]]*[-*+] / {n++} END {print n+0}' <<<"$normalized_body")
 [ "$bullet_count" -eq 3 ] || refuse "Verification needs exactly three run and outcome bullets (found $bullet_count)"
 
+closes_directive_count() {
+  local matches
+  matches=$(grep -oiE '(^|[^[:alnum:]_])closes[[:space:]]+(#[0-9]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+)' <<<"$1" 2>/dev/null || true)
+  if [ -z "$matches" ]; then
+    printf '0'
+  else
+    printf '%s\n' "$matches" | wc -l | tr -d ' '
+  fi
+}
+
 while IFS= read -r line; do
   [ -z "$line" ] && continue
-  if grep -qE '(^|[^#])Closes[[:space:]]+#([0-9]+)[[:space:]]+#([0-9]+)' <<<"$line"; then
-    refuse "each Closes line must reference at most one issue"
-  fi
-  if grep -qE 'Closes[[:space:]]+#' <<<"$line" && ! grep -qE '^Closes[[:space:]]+#[0-9]+[[:space:]]*$' <<<"$line"; then
+  n=$(closes_directive_count "$line")
+  [ "$n" -eq 0 ] && continue
+  [ "$n" -eq 1 ] || refuse "each Closes line must reference at most one issue"
+  if ! grep -qE '^Closes #[0-9]+$' <<<"$line"; then
     refuse "Closes lines must be exactly one issue per line (Closes #N)"
   fi
 done <<<"$body"
