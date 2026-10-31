@@ -74,15 +74,18 @@ Independent Composer review of the preceding heads completed Standards PASS and 
 
 The product PRs now carry general audit documentation and role/routing changes only. Generated staging-review and wrap-up skills are isolated on each product's `mingster/team-sync-audit-1031` branch, with exactly those two generated files. Merge order is canonical dotfiles source first, generated-only copies using the source Verdict, then the product audit documentation; each new head still requires its own applicable Checks/review receipts. This split addresses the existing merge contract without weakening it. These branches are not deployed helper changes.
 
-Actual pre-split deterministic verification receipt (2026-10-31):
+The prior summarized verification block was insufficient as an attached raw receipt. The [raw command transcript](2026-10-31-codex-verification.txt) now records the exact checkout heads, expanded commands, working directories, environment override, complete stdout/stderr and exit codes for deterministic audit, generated-copy sync and both product document-link checks. It was captured before this report-only correction; the recorded heads identify its scope. Product audit branches intentionally contain no generated skill changes, so the sync proof targets the generated-only branches. The previous 1156-file riben link count belonged to an earlier tree; use the raw receipt for the recorded current tree and canonical Checks for each subsequently published head. No historical receipt is promoted to new-head QA.
 
-```text
-DOTFILES=/Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
-/Users/mtsai/dotfiles/script/team-audit.sh <riben audit worktree> <PSTV audit worktree>
-exit 0
-team-audit: clean
-sync-team-skills.sh --check: PASS for both source-derived product copies
-check-doc-links.sh: riben.life 1156 files, 0 broken; PSTV 578 files, 0 broken
-```
+The second independent review is preserved as prior-head evidence: all five Standards PASS; audit PRs Spec FAIL for incomplete inventory and summarized verification; generated-only PRs Spec PASS. Canonical Checks were still pending for dotfiles at that review cutoff. These documentation corrections require refreshed head-specific Checks and a new independent review before merge. Engineering startup/trust/cleanup and required Strong security review remain separate open gates.
 
-The paths above are expanded under `/Users/mtsai/orca/workspaces/`; the product audit worktrees are `<project>/team-audit-1031-codex`. This is static verification evidence, not a current-head QA Verdict. Previous canonical Checks PASS receipts: [dotfiles #450](https://github.com/mingster/dotfiles/pull/450#issuecomment-6543188583), [riben.life #6701](https://github.com/mingster/riben.life/pull/6701#issuecomment-6543148381), [PSTV #955](https://github.com/mingster/pstv/pull/955#issuecomment-6543148883). New commits supersede those heads and require refreshed receipts. Engineering startup/trust/cleanup and required Strong security review remain separate open gates.
+### Delivery inventory supplement
+
+Cutoff: 2026-10-31T12:29:45.319803+00:00 (UTC). This supplements the earlier judgement/metrics interval; it does not extend its role, inbox or outcome claims. A fresh GitHub open-PR query (limit 500 per project, all results below) is represented in the adjacent TSV. Split companions and subsequent engineering publication are included.
+
+| Project | Open PRs at delivery cutoff |
+| --- | --- |
+| dotfiles | [#451](https://github.com/mingster/dotfiles/pull/451), [#450](https://github.com/mingster/dotfiles/pull/450), [#399](https://github.com/mingster/dotfiles/pull/399) |
+| riben.life | [#6702](https://github.com/mingster/riben.life/pull/6702), [#6701](https://github.com/mingster/riben.life/pull/6701), [#6700](https://github.com/mingster/riben.life/pull/6700), [#6699](https://github.com/mingster/riben.life/pull/6699), [#6213](https://github.com/mingster/riben.life/pull/6213) |
+| pstv | [#956](https://github.com/mingster/pstv/pull/956), [#955](https://github.com/mingster/pstv/pull/955), [#903](https://github.com/mingster/pstv/pull/903) |
+
+The original 39 rows remain historical evidence. Added rows are marked with this delivery snapshot in the coverage column; work-start timestamps, merge medians and post-merge incident joins remain UNKNOWN. New PR publication is not a merge or delivery-throughput gain.

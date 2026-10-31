@@ -1,0 +1,46 @@
+Raw deterministic verification transcript
+Captured UTC: 2026-10-31T12:29:45.319803+00:00
+Scope: canonical source plus generated-only product branches; general audit branches receive the generated PRs before integration.
+
+Checkout /Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex: 546714e51231d629dd99fae4020d228c2ffba15f
+Checkout /Users/mtsai/orca/workspaces/riben.life/team-audit-1031-codex: 8c29884ab004bf605e68cba6a4ce2d0dbe5a9f61
+Checkout /Users/mtsai/orca/workspaces/pstv/team-audit-1031-codex: 2d36905567350aa3996915b1735315fecb242880
+Checkout /Users/mtsai/orca/workspaces/riben.life/team-sync-audit-1031: 9583ecca46c438430718fa6b4ca5a4b1dd57b4e8
+Checkout /Users/mtsai/orca/workspaces/pstv/team-sync-audit-1031: 25ca2be2a9db89f1ab4c4b78b81c0be186790fc1
+
+CWD: /Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+ENV: DOTFILES=/Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+$ /Users/mtsai/dotfiles/script/team-audit.sh /Users/mtsai/orca/workspaces/riben.life/team-sync-audit-1031 /Users/mtsai/orca/workspaces/pstv/team-sync-audit-1031
+STDOUT:
+team-audit: clean
+STDERR:
+
+EXIT: 0
+
+CWD: /Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+ENV: DOTFILES=/Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+$ /Users/mtsai/dotfiles/script/sync-team-skills.sh --check /Users/mtsai/orca/workspaces/riben.life/team-sync-audit-1031 /Users/mtsai/orca/workspaces/pstv/team-sync-audit-1031
+STDOUT:
+sync-team-skills: /Users/mtsai/orca/workspaces/riben.life/team-sync-audit-1031: OK (benchmark-checklist bro ceo correct crew deploy elon grill-backlog ketchup poteto-mode principle-attack-the-premise principle-boundary-discipline principle-build-the-lever principle-encode-lessons-in-structure principle-exhaust-the-design-space principle-explain-the-number principle-fix-root-causes principle-foundational-thinking principle-guard-the-context-window principle-laziness-protocol principle-make-operations-idempotent principle-migrate-callers-then-delete-legacy-apis principle-minimize-reader-load principle-model-the-domain principle-never-block-on-the-human principle-outcome-oriented-execution principle-prove-it-works principle-redesign-from-first-principles principle-separate-before-serializing-shared-state principle-sequence-verifiable-units principle-subtract-before-you-add principle-test-behavior-not-implementation principle-type-system-discipline recall show-me-your-work staging-review team-audit team-grill-backlog teddy unslop wrap-up)
+sync-team-skills: /Users/mtsai/orca/workspaces/pstv/team-sync-audit-1031: OK (benchmark-checklist bro ceo correct crew deploy elon grill-backlog ketchup poteto-mode principle-attack-the-premise principle-boundary-discipline principle-build-the-lever principle-encode-lessons-in-structure principle-exhaust-the-design-space principle-explain-the-number principle-fix-root-causes principle-foundational-thinking principle-guard-the-context-window principle-laziness-protocol principle-make-operations-idempotent principle-migrate-callers-then-delete-legacy-apis principle-minimize-reader-load principle-model-the-domain principle-never-block-on-the-human principle-outcome-oriented-execution principle-prove-it-works principle-redesign-from-first-principles principle-separate-before-serializing-shared-state principle-sequence-verifiable-units principle-subtract-before-you-add principle-test-behavior-not-implementation principle-type-system-discipline recall show-me-your-work staging-review team-audit team-grill-backlog teddy unslop wrap-up)
+STDERR:
+
+EXIT: 0
+
+CWD: /Users/mtsai/orca/workspaces/riben.life/team-audit-1031-codex
+ENV: DOTFILES=/Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+$ bash bin/check-doc-links.sh
+STDOUT:
+check-doc-links: 1158 files, 0 broken
+STDERR:
+
+EXIT: 0
+
+CWD: /Users/mtsai/orca/workspaces/pstv/team-audit-1031-codex
+ENV: DOTFILES=/Users/mtsai/orca/workspaces/dotfiles/team-audit-1031-codex
+$ bash bin/check-doc-links.sh
+STDOUT:
+0 broken link(s) in 579 file(s)
+STDERR:
+
+EXIT: 0
