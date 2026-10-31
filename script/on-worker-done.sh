@@ -159,17 +159,35 @@ if ! python3 "$qa_admission" --policy "$policy" --fleet-config "$fleet_config" -
   rm -f "$admission_err" "$admission_out"
   exit 1
 fi
-read -r environment_id worktree_selector < <(python3 - "$admission_out" <<'PY'
-import json, sys
-o = json.load(open(sys.argv[1]))
-print(o["environment_id"], o["worktree_selector"])
-PY
-)
-rm -f "$admission_err" "$admission_out"
-if [ "$environment_id" != "LOCAL" ] && [ -n "$environment_id" ]; then
-  host_flags=(--on "$environment_id")
+# Capture the parser exit explicitly: process substitution would hide failure.
+if ! admission_fields=$(python3 - "$admission_out" <<'PYJSON'
+import json, re, sys
+try:
+    with open(sys.argv[1]) as stream:
+        result = json.load(stream)
+    if not isinstance(result, dict):
+        raise ValueError("object required")
+    environment = result["environment_id"]
+    selector = result["worktree_selector"]
+    host = result["host"]
+    if not isinstance(environment, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", environment) or environment == "LOCAL":
+        raise ValueError("saved ID required")
+    if not isinstance(selector, str) or not re.fullmatch(r"identity:wt2:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", selector):
+        raise ValueError("native identity required")
+    if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", host):
+        raise ValueError("host required")
+except (ValueError, KeyError, TypeError):
+    sys.exit("invalid validated admission result")
+print(environment, selector)
+PYJSON
+); then
+  echo "QA start refused head=$head: invalid validated admission result" >&2
+  rm -f "$admission_err" "$admission_out"
+  exit 1
 fi
-[ -n "$worktree_selector" ] || { echo "QA start refused head=$head: missing worktree selector" >&2; exit 1; }
+read -r environment_id worktree_selector <<< "$admission_fields"
+rm -f "$admission_err" "$admission_out"
+host_flags=(--on "$environment_id")
 
 # All coding reviewer providers enter here. Read the latest receipt for this
 # exact head before starting a worker or producing a reviewer brief.
