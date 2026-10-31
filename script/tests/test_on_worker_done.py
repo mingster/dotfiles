@@ -6,13 +6,15 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from qa_admission_fixture import NativeFixture
 
 
 SCRIPT = Path(__file__).resolve().parents[1]
 
 
 class ReviewerDispatch(unittest.TestCase):
-    def dispatch(self, author, only_author_available=False, receipts=None):
+    def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=(), local=False,
+                 configuration='explicit'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
@@ -40,27 +42,32 @@ ug.antigravity_models = lambda: None
 sys.exit(ug.main())
 ''')
             gate.chmod(0o755)
-            orca = root / "orca"
-            orca.write_text('''#!/usr/bin/env python3
-import json
-import os
-import sys
-with open(os.environ["TEST_ORCA_LOG"], "w") as log:
-    json.dump(sys.argv[1:], log)
-''')
-            orca.chmod(0o755)
+            native = NativeFixture(root, path=tmp)
+            native.occupy('alpha', 1)
+            for h in full_hosts: native.occupy(h, 2)
+            if local:
+                native.config['local_host'] = 'alpha'
+                native.data['environments'] = [r for r in native.data['environments'] if r['name'] != 'alpha']
+                native.data['local'] = native.data.pop('alpha')
             gh = root / "gh"
             gh.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['TEST_COMMENTS'])\n")
             gh.chmod(0o755)
             if receipts is None:
                 receipts = ["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 2\nLoad errors: 0\n"]
-            log = root / "orca.json"
-            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+            log = root / "launch.json"
+            env = {**native.env(), "PATH": str(root) + os.pathsep + os.environ["PATH"],
                    "TEST_COMMENTS": json.dumps({"comments": [{"body": body} for body in receipts]}),
                    "ON_WORKER_DONE_USAGE_GATE": str(gate),
-                   "ORCA_CLI_COMMAND": str(orca), "USAGE_GATE_PRESETS": str(presets),
+                   "USAGE_GATE_PRESETS": str(presets),
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
+            if configuration != 'explicit':
+                env['HOME'] = tmp
+                env.pop('ON_WORKER_DONE_FLEET_CONFIG', None)
+                if configuration != 'missing':
+                    config = root / '.config/fleet-watch/config.json'
+                    config.parent.mkdir(parents=True)
+                    config.write_text(json.dumps(native.config if configuration == 'default' else {}))
             result = subprocess.run([
                 "bash", str(SCRIPT / "on-worker-done.sh"), "--repo", "o/n",
                 "--pr", "42", "--head", "a" * 40, "--author-family", author,
@@ -69,6 +76,52 @@ with open(os.environ["TEST_ORCA_LOG"], "w") as log:
             if result.returncode != 0:
                 self.assertFalse(list(root.glob("reviewer-brief.*")), "refused QA must not create a brief")
             return result, json.loads(log.read_text()) if log.exists() else None
+
+    def test_default_installed_configuration_path_preserves_ordinary_launches(self):
+        for author in ('claude', 'cursor', 'antigravity', 'codex'):
+            with self.subTest(author=author):
+                result, args = self.dispatch(author, configuration='default')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
+                self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
+                self.assertEqual(args[args.index('--model')+1],
+                                 {'codex': 'composer-test', 'cursor': 'gemini-test',
+                                  'claude': 'gpt-test', 'antigravity': 'gpt-test'}[author])
+
+    def test_unconfigured_installed_invocation_refuses_without_launch(self):
+        for configuration in ('missing', 'unknown'):
+            with self.subTest(configuration=configuration):
+                result, args = self.dispatch('claude', configuration=configuration)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('fleet config', result.stderr)
+                self.assertIsNone(args)
+
+    def test_real_admission_pins_native_launch_argv(self):
+        result, args = self.dispatch('claude')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
+        self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
+        self.assertEqual(args[args.index('--model')+1], 'gpt-test')
+
+    def test_full_host_fallback_pins_actual_native_argv(self):
+        result, args = self.dispatch('codex', full_hosts=('alpha',))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index('--on')+1], 'beta-saved')
+        self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:beta-instance')
+        self.assertEqual(args[args.index('--model')+1], 'composer-test')
+
+    def test_all_full_starts_nothing_and_reports_counts(self):
+        result, args = self.dispatch('claude', full_hosts=('alpha', 'beta'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(args)
+        self.assertIn('alpha 2/2', result.stderr)
+        self.assertIn('beta 2/2', result.stderr)
+
+    def test_local_launch_pins_identity_without_saved_server_guess(self):
+        result, args = self.dispatch('claude', local=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('--on', args)
+        self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
 
     def test_zero_executed_refuses_start(self):
         receipt = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 0\nLoad errors: 0\n"
