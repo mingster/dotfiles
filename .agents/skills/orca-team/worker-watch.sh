@@ -11,32 +11,88 @@ set -u
 [ $# -eq 1 ] && [ -n "$1" ] || { echo "usage: worker-watch.sh <run_id>" >&2; exit 2; }
 run="$1"
 
-list=$(orca orchestration worker-list --run "$run" --json 2>/dev/null) \
-  || { echo "worker-watch: worker-list failed for $run" >&2; exit 2; }
+orca=${ORCA_CLI_COMMAND:-orca}
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-# One line per unsettled dispatch: <dispatch_id> <terminal_handle>
-rows=$(printf '%s' "$list" | python3 -c '
+cursor=""
+seen_cursors=" "
+while :; do
+  args=(orchestration worker-list --run "$run" --include-remote --limit 100 --json)
+  [ -z "$cursor" ] || args+=(--cursor "$cursor")
+  raw=$("$orca" "${args[@]}" 2>/dev/null) \
+    || { echo "worker-watch: worker-list failed for $run" >&2; exit 2; }
+  next_info=$(printf '%s' "$raw" | python3 -c '
 import json, sys
 try:
-    workers = json.load(sys.stdin)["result"]["workers"]
+    d = json.load(sys.stdin)
+    with open(sys.argv[1], "a") as f:
+        f.write(json.dumps(d) + "\n")
+    p = d.get("result", {}).get("page") or {}
+    if p.get("hasMore") and p.get("nextCursor"):
+        print(p["nextCursor"])
 except Exception:
     sys.exit(3)
+' "$tmp/pages.jsonl") || { echo "worker-watch: cannot parse worker-list output" >&2; exit 2; }
+  [ -n "$next_info" ] || break
+  case "$seen_cursors" in *" $next_info "*) break ;; esac
+  seen_cursors="$seen_cursors$next_info "
+  cursor="$next_info"
+done
+
+# One line per unsettled dispatch: <dispatch_id>\t<terminal_handle>\t<environment>\t<disconnected>
+rows=$(python3 - "$tmp/pages.jsonl" <<'PY'
+import json, sys
+workers = []
+try:
+    with open(sys.argv[1]) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            data = json.loads(line)
+            workers.extend(data.get("result", {}).get("workers") or [])
+except Exception:
+    sys.exit(3)
+
 for w in workers:
     p = w.get("projection") or {}
-    handle = w.get("agentTerminalHandle")
-    if p.get("outcome", "in_progress") != "in_progress" or not handle:
+    status = w.get("dispatchStatus") or (p.get("stage") or {}).get("dispatch")
+    handle = w.get("agentTerminalHandle") or ((w.get("resource") or {}).get("terminalHandle"))
+    if p.get("outcome", "in_progress") != "in_progress" or status in ("completed", "failed", "cancelled", "released") or not handle:
         continue
-    print(w["dispatchId"], handle)
-') || { echo "worker-watch: cannot parse worker-list output" >&2; exit 2; }
+    host = p.get("host") or {}
+    disc = "0"
+    if host.get("connected") is False or w.get("connected") is False or p.get("connected") is False or (w.get("resource") or {}).get("connected") is False:
+        disc = "1"
+    if host.get("status") == "disconnected" or (p.get("liveness") or {}).get("verdict") == "disconnected":
+        disc = "1"
+    env = ""
+    if host.get("kind") == "remote" or (host.get("id") and host.get("id") != "local") or w.get("environment") or p.get("environment"):
+        env = (w.get("environment") or p.get("environment") or host.get("environment") or host.get("endpoint") or host.get("id") or (w.get("resource") or {}).get("environment") or "")
+        if env == "local":
+            env = ""
+    print(f"{w['dispatchId']}\t{handle}\t{env}\t{disc}")
+PY
+) || { echo "worker-watch: cannot parse worker-list output" >&2; exit 2; }
 
 status=0
 codex_root="${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
-terminal_list=$(orca terminal list --json 2>/dev/null || true)
-while read -r dispatch handle; do
+terminal_list=$("$orca" terminal list --json 2>/dev/null || true)
+while IFS=$'\t' read -r dispatch handle env disc; do
   [ -n "$dispatch" ] || continue
-  raw=$(orca terminal read --terminal "$handle" --screen --json 2>/dev/null) \
-    || { echo "worker-watch: cannot read terminal $handle" >&2; exit 2; }
-  verdict=$(printf '%s' "$raw" | python3 -c '
+  if [ "$disc" = "1" ]; then
+    verdict="UNKNOWN_COVERAGE"
+  else
+    eargs=()
+    [ -z "$env" ] || eargs=(--environment "$env")
+    if ! raw=$("$orca" terminal read ${eargs[@]+"${eargs[@]}"} --terminal "$handle" --screen --json 2>/dev/null); then
+      if [ -n "$env" ]; then
+        verdict="UNKNOWN_COVERAGE"
+      else
+        echo "worker-watch: cannot read terminal $handle" >&2; exit 2
+      fi
+    else
+      verdict=$(printf '%s' "$raw" | python3 -c '
 import json, re, sys
 try:
     tail = json.load(sys.stdin)["result"]["terminal"]["tail"]
@@ -81,6 +137,8 @@ if recent and re.fullmatch(r"\s*[>›❯]\s*", recent[-1]) and not any(
     print("IDLE", recent[-1].strip()); sys.exit(0)
 print("OK")
 ') || { echo "worker-watch: cannot read terminal $handle" >&2; exit 2; }
+    fi
+  fi
   echo "$dispatch $handle $verdict"
   case "$verdict" in OK) ;; *) status=4 ;; esac
   wt=$(printf '%s' "$terminal_list" | python3 -c 'import json,sys; d=json.load(sys.stdin); h=sys.argv[1]; print(next((t.get("worktreePath", "") for t in d["result"]["terminals"] if t.get("handle")==h), ""))' "$handle" 2>/dev/null || true)

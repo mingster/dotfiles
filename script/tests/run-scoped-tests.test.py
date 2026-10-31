@@ -69,6 +69,109 @@ class ScopedTests(unittest.TestCase):
         self.assertIn('Scoped tests: 0', result.stdout)
         self.assertFalse((self.repo / 'web/selected.json').exists())
 
+    def test_directory_guard_selects_scanner_without_imports_or_changed_tests(self):
+        self.write('web/src/admin/new.tsx', 'export const view = "Hello";')
+        self.write('web/guards/copy.test.ts', '// scans admin sources without imports')
+        result = self.run_helper('--directory-guard', 'src/admin', 'guards/copy.test.ts',
+                                 'web/src/admin/new.tsx')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.repo / 'web/selected.json').read_text()),
+                         ['./guards/copy.test.ts'])
+
+    def test_unmapped_directory_keeps_exact_selection(self):
+        self.write('web/src/admin/new.tsx', 'export const view = 1;')
+        self.write('web/guards/copy.test.ts', '// scans admin')
+        result = self.run_helper('web/src/admin/new.tsx')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Scoped tests: 0', result.stdout)
+        self.assertFalse((self.repo / 'web/selected.json').exists())
+
+    def test_directory_guard_respects_segments_and_component_root(self):
+        self.write('web/guards/copy.test.ts', '')
+        result = self.run_helper('--directory-guard', 'src/admin', 'guards/copy.test.ts',
+                                 'web/src/administrator/new.tsx', 'other/src/admin/new.tsx')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Scoped tests: 0', result.stdout)
+        self.assertFalse((self.repo / 'web/selected.json').exists())
+
+    def test_directory_guards_support_spaces_and_deduplicate_overlaps(self):
+        self.write('web/guards/copy guard.test.ts', '')
+        self.write('web/src/admin area/new.tsx', '')
+        result = self.run_helper('--directory-guard', 'src', 'guards/copy guard.test.ts',
+                                 '--directory-guard', 'src/admin area', 'guards/copy guard.test.ts',
+                                 '--directory-guard', 'src/admin area', 'guards/copy guard.test.ts',
+                                 'web/src/admin area/new.tsx')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.repo / 'web/selected.json').read_text()),
+                         ['./guards/copy guard.test.ts'])
+
+    def test_deleted_and_renamed_paths_trigger_each_affected_directory(self):
+        self.write('web/guards/old.test.ts', '')
+        self.write('web/guards/new.test.ts', '')
+        self.write('web/src/new/moved.ts', '')
+        result = self.run_helper('--directory-guard', 'src/deleted', 'guards/old.test.ts',
+                                 '--directory-guard', 'src/new', 'guards/new.test.ts',
+                                 'web/src/deleted/gone.ts', 'web/src/new/moved.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.repo / 'web/selected.json').read_text()),
+                         ['./guards/new.test.ts', './guards/old.test.ts'])
+
+    def test_invalid_directory_guard_fails_before_runner_even_without_changes(self):
+        self.write('web/guards/copy.test.ts', '')
+        self.write('outside.test.ts', '')
+        self.write('web/guards/plain.ts', '')
+        (self.repo / 'web/escape').symlink_to(self.repo, target_is_directory=True)
+        cases = [('', 'guards/copy.test.ts'), ('../outside', 'guards/copy.test.ts'),
+                 (str(self.repo / 'web/src'), 'guards/copy.test.ts'),
+                 ('escape/src', 'guards/copy.test.ts'), ('src', '../outside.test.ts'),
+                 ('src', str(self.repo / 'outside.test.ts')), ('src', ''),
+                 ('src', 'escape/outside.test.ts'), ('src', 'guards/missing.test.ts'),
+                 ('src', 'guards/plain.ts')]
+        for directory, guard in cases:
+            with self.subTest(directory=directory, guard=guard):
+                result = self.run_helper('--directory-guard', directory, guard)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('directory guard:', result.stderr)
+                self.assertFalse((self.repo / 'web/selected.json').exists())
+
+    def test_directory_guard_rejects_e2e_and_database_specs(self):
+        for guard in ['e2e/copy.spec.ts', 'guards/copy.db.spec.ts']:
+            with self.subTest(guard=guard):
+                self.write('web/' + guard, '')
+                result = self.run_helper('--directory-guard', 'src/admin', guard,
+                                         'web/src/admin/new.ts')
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('directory guard:', result.stderr)
+                self.assertFalse((self.repo / 'web/selected.json').exists())
+
+    def test_directory_guard_preserves_existing_selection_and_test_change_option(self):
+        self.write('web/guards/copy.test.ts', '')
+        self.write('web/guards/contracts.test.ts', '')
+        result = self.run_helper('--directory-guard', 'src/lib', 'guards/copy.test.ts',
+                                 '--on-test-change', 'guards/contracts.test.ts',
+                                 'web/src/lib/send.server.ts', 'web/src/lib/send.server.test.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads((self.repo / 'web/selected.json').read_text())
+        self.assertEqual(selected, ['./guards/contracts.test.ts', './guards/copy.test.ts',
+                                   './src/app/api/__tests__/route.test.ts',
+                                   './src/db/__tests__/no-update-many-claims-contract.test.ts',
+                                   './src/lib/__tests__/local.test.ts', './src/lib/send.server.test.ts',
+                                   './src/notification/__tests__/notification-service.test.ts'])
+
+    def test_directory_guard_browser_suite_stays_unchecked_without_browser(self):
+        self.write('web/guards/browser.test.ts', 'import {test} from "@playwright/test";')
+        # A disposable PATH stub proves the existing unavailable-browser path without launching one.
+        self.write('tools/bun', '#!/bin/sh\nexit 1\n')
+        (self.repo / 'tools/bun').chmod(0o755)
+        from unittest import mock
+        with mock.patch.dict(os.environ, PATH=str(self.repo / 'tools') + os.pathsep + os.environ['PATH']):
+            result = self.run_helper('--directory-guard', 'src/admin', 'guards/browser.test.ts',
+                                     'web/src/admin/new.ts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('UNCHECKED: guards/browser.test.ts', result.stdout)
+        self.assertIn('Scoped tests: 0', result.stdout)
+        self.assertFalse((self.repo / 'web/selected.json').exists())
+
     def test_renamed_test_selects_configured_contract_tests(self):
         # A rename reaches the selector as the new path; the old path no longer exists.
         self.write('web/src/__tests__/mocks-contract.test.ts', '')

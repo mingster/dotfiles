@@ -10,6 +10,11 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
+case "$*" in
+  'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
+  'api repos/{owner}/{repo}/pages') echo '{"source":null}'; exit 0 ;;
+  'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]'; exit 0 ;;
+esac
 echo '[]'
 FAKE
 cat > "$tmp/bin/orca" <<'FAKE'
@@ -69,10 +74,10 @@ chmod +x "$tmp/badbin/lsof"
 PATH="$tmp/badbin:$PATH" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
 check 'failing lsof keeps clone' test -d "$chrome/code_sign_clone.broken"
 check 'failing lsof reports reason' has "Kept Chrome clone $chrome/code_sign_clone.broken (lsof failed)"
-# A missing lsof must keep everything, never delete blindly.
+# On macOS a missing lsof must keep everything.
 mkdir -p "$chrome/code_sign_clone.unknown"
 mv "$tmp/bin/lsof" "$tmp/lsof.off"
-PATH="/usr/bin:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
+OSTYPE=darwin PATH="/usr/bin:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
 check 'no lsof keeps clones' test -d "$chrome/code_sign_clone.unknown"
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

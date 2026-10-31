@@ -1,0 +1,1 @@
+Add an agent settings backup inventory and read-only coverage audit against tracked templates and an external private manifest, restore default Claude keybindings, and remove an unused MCP server from the public Codex template and global instructions. Reject literal credentials in tracked agent settings.

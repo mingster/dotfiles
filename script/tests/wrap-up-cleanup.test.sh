@@ -12,6 +12,11 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
+case "$*" in
+  'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
+  'api repos/{owner}/{repo}/pages') echo '{"source":null}'; exit 0 ;;
+  'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]'; exit 0 ;;
+esac
 test "$*" = 'pr list --state all --limit 1000 --json headRefName,headRefOid,state' || exit 1
 printf '%s\n' "$FAKE_PRS"
 FAKE
@@ -84,18 +89,19 @@ check 'squash-merged branch with no PR deleted local and remote' gone squashed
 check 'its clean worktree removed' test ! -d "$tmp/wt-squashed"
 check 'screenshot-only detached worktree at merged head removed' test ! -d "$tmp/wt-shot-merged"
 check 'open PR branch kept' kept open-pr
-check 'unmerged old branch kept by --apply' kept stale-old
-check 'stale section printed' grep -Fxq 'Stale (needs a decision)' "$tmp/out1"
+check 'unmerged old branch deleted by --apply' gone stale-old
+check 'stale section printed' grep -Fxq 'Stale (eligible for cleanup)' "$tmp/out1"
 check 'stale line has branch, age and subject' grep -Eq '^  stale-old, [0-9]+h old, work on stale-old$' "$tmp/out1"
 check 'open PR branch not listed as stale' bash -c "! grep -q 'open-pr, ' '$tmp/out1'"
 check 'fresh unmerged branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/fresh && ! grep -q 'fresh, ' '$tmp/out1'"
 check 'dirty worktree branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/stale-dirty && test -d '$tmp/wt-stale-dirty' && ! grep -q 'stale-dirty, ' '$tmp/out1'"
 check 'stale branch with screenshot-only worktree listed' grep -Eq '^  stale-shot, ' "$tmp/out1"
 
+check 'apply deletes stale branch with screenshot-only worktree' gone stale-shot
+check 'apply removed that worktree' test ! -d "$tmp/wt-stale-shot"
+branch legacy-old legacy.txt "$old"
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply --stale > "$tmp/out2" 2>&1
-check '--stale deletes stale branch local and remote' gone stale-old
-check '--stale deletes stale branch with screenshot-only worktree' gone stale-shot
-check '--stale removed that worktree' test ! -d "$tmp/wt-stale-shot"
+check 'legacy --stale flag still accepts apply and deletes stale branch' gone legacy-old
 check '--stale keeps open PR branch' kept open-pr
 check '--stale keeps fresh branch' kept fresh
 check '--stale keeps dirty worktree branch' kept stale-dirty

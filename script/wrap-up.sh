@@ -3,7 +3,6 @@
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 apply=0
-stale=0
 fleet=0
 worktrees_only=0
 repo=.
@@ -11,7 +10,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) apply=0 ;;
     --apply) apply=1 ;;
-    --stale) stale=1 ;;
+    --stale) : ;; # Accepted for compatibility; stale cleanup is part of every apply.
     --fleet) fleet=1 ;;
     --worktrees-only) worktrees_only=1 ;;
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
@@ -30,12 +29,9 @@ repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-if [ "$apply" -eq 1 ]; then
-  git fetch --prune origin
-else
-  echo 'Dry run: fetch preview only; eligibility uses existing origin/main.'
-  git fetch --dry-run --prune origin
-fi
+# Preview also refreshes tracking refs; only apply changes branches or worktrees.
+git fetch --prune origin
+git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin > "$tmp/remote-planned"
 git rev-parse --verify origin/main >/dev/null
 # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
 pr_ok=1
@@ -55,8 +51,8 @@ orca=${ORCA_CLI_COMMAND:-orca}
 # dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
 # no agent on a path where every dispatch is settled (shells, worker-pane.sh panes). Kept: our own, a live dispatch's, one
 # running an agent, a lead- worktree's, and a terminal on a path with no dispatch (reported as unknown owner).
-# worker-list is newest first; only the newest WRAP_UP_WORKER_PAGES pages of 100 are read (older dispatches never match,
-# so their paths count as unknown owner and stay). Handles belong to the host that issued them, so each host is handled alone.
+# Dispatches come from the coordinator, including its remote workers. Reuse that inventory
+# for every environment; a remote Orca need not own the dispatch of a terminal it hosts.
 term_closed=0; term_kept=0
 : > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
@@ -65,25 +61,33 @@ close_terminal() {
   else "$orca" terminal close "$@" >/dev/null 2>&1
   fi
 }
+terminal_dispatches() {
+  local wargs cursor=''
+  : > "$tmp/h-workers"
+  : > "$tmp/h-cursors"
+  while :; do
+    wargs=(--include-remote --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
+    if ! "$orca" orchestration worker-list "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
+      || ! jq -e '.ok != false and (.result.workers | type == "array")
+        and (.result.page.hasMore | type == "boolean")' "$tmp/h-page" >/dev/null 2>&1; then
+      echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; return 1
+    fi
+    cat "$tmp/h-page" >> "$tmp/h-workers"
+    jq -e '.result.page.hasMore' "$tmp/h-page" >/dev/null || break
+    if ! cursor=$(jq -er '.result.page.nextCursor | select(type == "string" and length > 0)' "$tmp/h-page") \
+      || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
+      echo 'Warning: coordinator dispatch pagination incomplete; closing no terminals.' >&2; return 1
+    fi
+    printf '%s\n' "$cursor" >> "$tmp/h-cursors"
+  done
+}
 close_finished_terminals() {
-  local env=$1 label=${1:-local} eargs=() wargs cursor='' handle reason action pages=0
+  local env=$1 label=${1:-local} eargs=() handle reason action
   [ -z "$env" ] || eargs=(--environment "$env")
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
   fi
-  : > "$tmp/h-workers"
-  while :; do
-    wargs=(--limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
-    if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
-      echo "Warning: dispatch discovery failed on $label; closing nothing there." >&2; return 0
-    fi
-    cat "$tmp/h-page" >> "$tmp/h-workers"
-    cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/h-page")
-    pages=$((pages+1))
-    [ -n "$cursor" ] && [ "$pages" -lt "${WRAP_UP_WORKER_PAGES:-2}" ] || break
-  done
   jq -r -s --slurpfile terms "$tmp/h-terminals" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
     def settled: .dispatchStatus as $s | ["completed","failed","cancelled","released"] | index($s);
     def path: (.projection.workspace.id // "") | split("::")[1] // "";
@@ -112,7 +116,7 @@ close_finished_terminals() {
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
-if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1; then
+if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && terminal_dispatches; then
   close_finished_terminals ''
   if "$orca" environment list --json > "$tmp/envs" 2>/dev/null && jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
     while IFS= read -r env_id; do
@@ -177,8 +181,42 @@ while IFS= read -r active_path; do
   fi
 done < "$tmp/active" > "$tmp/active-normalized"
 mv "$tmp/active-normalized" "$tmp/active"
+# Missing or malformed safety metadata never authorizes a branch deletion.
+protection_ok=1
+: > "$tmp/protected"
+default_branch=''
+if gh repo view --json defaultBranchRef > "$tmp/default" 2>/dev/null; then
+  default_branch=$(jq -er '.defaultBranchRef.name | select(type == "string" and length > 0)' "$tmp/default" 2>/dev/null) || default_branch=''
+fi
+if [ -z "$default_branch" ]; then
+  default_branch=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || default_branch=''
+  default_branch=${default_branch#refs/remotes/origin/}
+fi
+[ -n "$default_branch" ] || protection_ok=0
+pages_branch=''
+if gh api 'repos/{owner}/{repo}/pages' > "$tmp/pages" 2> "$tmp/pages-err"; then
+  if jq -e 'type == "object" and (.source == null or (.source.branch | type == "string" and length > 0))' "$tmp/pages" >/dev/null 2>&1; then
+    pages_branch=$(jq -r '.source.branch // empty' "$tmp/pages")
+  else protection_ok=0
+  fi
+elif ! grep -Eq 'HTTP 404|HTTP/[^ ]+ 404' "$tmp/pages-err"; then
+  protection_ok=0
+fi
+if gh api --paginate 'repos/{owner}/{repo}/branches?protected=true&per_page=100' > "$tmp/protection-pages" 2>/dev/null \
+  && jq -es 'length > 0 and all(.[]; type == "array" and all(.[]; .name | type == "string" and length > 0))' "$tmp/protection-pages" >/dev/null 2>&1; then
+  jq -rs '.[][] | .name' "$tmp/protection-pages" > "$tmp/protected"
+else protection_ok=0
+fi
 protected() {
+  protected_reason=protected
+  [ -n "$1" ] || return 1
+  if [ "$1" = "$default_branch" ]; then protected_reason='default branch'; return 0; fi
+  if [ "$1" = gh-pages ] || { [ -n "$pages_branch" ] && [ "$1" = "$pages_branch" ]; }; then
+    protected_reason='GitHub Pages branch'; return 0
+  fi
   case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD|lead-queue|*/lead-queue) return 0 ;; esac
+  grep -Fxq -- "$1" "$tmp/protected" && return 0
+  if [ "$protection_ok" -eq 0 ]; then protected_reason='branch protection lookup unavailable'; return 0; fi
   return 1
 }
 eligible() {
@@ -194,19 +232,136 @@ eligible() {
 screenshots_only() {
   ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
 }
-# The one gate before anything is deleted because nothing runs there (worktrees, stale branches, build caches, Chrome
-# clones, temp items). True, with the reason in $busy, unless lsof and ps both answered cleanly and found nothing: lsof
-# with no holder, ps with no command line naming the path. A missing binary, a bad status (lsof: above 1, 1 = no open
-# files; ps: any) or any error output counts as in use.
-in_use() {
-  local holders lsof_status=0 ps_status=0 line esc
-  busy=''
-  if ! command -v lsof >/dev/null 2>&1; then busy='lsof unavailable'; return 0; fi
-  if [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || lsof_status=$?
-  else holders=$(lsof -t -- "$1" 2>"$tmp/lsof-err") || lsof_status=$?
+# Holder checks return true for busy OR unknown, with the reason in $busy.
+# fuser checks inodes, not directory trees: enumerate descendants as well as the
+# target so a nested cwd or open file cannot be mistaken for an idle directory.
+fuser_busy() {
+  local entry holders status batch bytes
+  if [ -d "$1" ]; then
+    if ! find "$1" -print0 > "$tmp/holder-paths" 2> "$tmp/holder-err" || [ -s "$tmp/holder-err" ]; then
+      busy='fuser traversal failed'; return 0
+    fi
+  else printf '%s\0' "$1" > "$tmp/holder-paths"
   fi
-  if [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
-  if [ "$lsof_status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then busy='lsof failed'; return 0; fi
+  while :; do
+    batch=(); bytes=0
+    while IFS= read -r -d '' entry; do
+      batch+=("$entry"); bytes=$((bytes + ${#entry} + 1))
+      # Bound argument count and size, including worktrees with long paths.
+      [ "${#batch[@]}" -lt 64 ] && [ "$bytes" -lt 16384 ] || break
+    done
+    [ "${#batch[@]}" -gt 0 ] || break
+    status=0
+    # psmisc fuser rejects --; these paths are absolute, so no terminator is needed.
+    holders=$(fuser "${batch[@]}" 2> "$tmp/holder-err") || status=$?
+    if [ "$status" -eq 0 ] || [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
+    if [ "$status" -ne 1 ] || [ -s "$tmp/holder-err" ]; then busy='fuser failed'; return 0; fi
+  done < "$tmp/holder-paths"
+  return 1
+}
+# Tests inject a disposable proc tree; production always defaults to /proc.
+proc_root=${WRAP_UP_TEST_PROC_ROOT:-/proc}
+# Only known proc lifecycle/access errors may be ignored. Inspect every diagnostic
+# so a mixed or unrecognized error cannot turn a partial scan into idle proof.
+proc_error_skippable() {
+  local line seen=0
+  while IFS= read -r line; do
+    case "$line" in
+      *': No such file or directory') seen=1 ;;
+      *': Permission denied') [ "$1" = own-uid ] || return 1; seen=1 ;;
+      *) return 1 ;;
+    esac
+  done < "$tmp/holder-err"
+  [ "$seen" -eq 1 ]
+}
+proc_busy() {
+  local pid link dest target pids current_uid owner_uid readlink_flags=(--)
+  # GNU/BusyBox readlink otherwise hides errno diagnostics. BSD (test hosts)
+  # lacks -v; silent failures there remain unknown and fail closed.
+  if readlink --help >/dev/null 2>&1; then readlink_flags=(-v --); fi
+  busy='proc inspection failed'
+  current_uid=$(id -u 2> "$tmp/holder-err") || return 0
+  case "$current_uid" in ''|*[!0-9]*) return 0 ;; esac
+  [ ! -s "$tmp/holder-err" ] || return 0
+  [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ] || return 0
+  target=$(readlink -f -- "$1" 2> "$tmp/holder-err") || return 0
+  [ -n "$target" ] && [ ! -s "$tmp/holder-err" ] || return 0
+  # Use a shell glob: a find subprocess would list itself and then disappear,
+  # making every scan fail closed on that vanished PID.
+  pids=("$proc_root"/[0-9]*)
+  # An empty or hidden process inventory cannot prove idleness.
+  [ "${pids[0]}" != "$proc_root/[0-9]*" ] || return 0
+  for pid in "${pids[@]}"; do
+    case "${pid##*/}" in *[!0-9]*) return 0 ;; esac
+    # Other users' proc entries normally deny access; inspect only our uid.
+    # GNU and BSD stat use different flags (fixtures run on either platform).
+    if ! owner_uid=$(LC_ALL=C stat -c %u -- "$pid" 2> "$tmp/holder-err"); then
+      proc_error_skippable vanished && continue
+      if ! owner_uid=$(LC_ALL=C stat -f %u "$pid" 2> "$tmp/holder-err"); then
+        proc_error_skippable vanished && continue
+        return 0
+      fi
+    fi
+    case "$owner_uid" in ''|*[!0-9]*) return 0 ;; esac
+    [ ! -s "$tmp/holder-err" ] || return 0
+    [ "$owner_uid" = "$current_uid" ] || continue
+    printf '%s\0' "$pid/cwd" "$pid/root" > "$tmp/proc-links"
+    # Own-uid non-dumpable system processes deny these reads; vanished pids
+    # are normal during a scan. Every other inspection failure retains items.
+    if ! LC_ALL=C find "$pid/fd" -mindepth 1 -maxdepth 1 -print0 >> "$tmp/proc-links" 2> "$tmp/holder-err" \
+      || [ -s "$tmp/holder-err" ]; then
+      proc_error_skippable own-uid && continue
+      return 0
+    fi
+    while IFS= read -r -d '' link; do
+      if ! dest=$(LC_ALL=C readlink "${readlink_flags[@]}" "$link" 2> "$tmp/holder-err") \
+        || [ -s "$tmp/holder-err" ]; then
+        proc_error_skippable own-uid && continue 2
+        return 0
+      fi
+      [ -n "$dest" ] || return 0
+      # Match literal paths as well as Linux's marker for unlinked holders.
+      case "$dest" in
+        "$target"|"$target"/*|"$target (deleted)") busy='held open by a running process'; return 0 ;;
+      esac
+    done < "$tmp/proc-links"
+  done
+  busy=''; return 1
+}
+linux_holder_check_available() {
+  case "$OSTYPE" in
+    linux*) command -v fuser >/dev/null 2>&1 || { [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ]; } ;;
+    *) return 1 ;;
+  esac
+}
+path_busy() {
+  local holders status=0
+  if command -v lsof >/dev/null 2>&1; then
+    if [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || status=$?
+    else holders=$(lsof -t -- "$1" 2>"$tmp/lsof-err") || status=$?
+    fi
+    if [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi
+    if [ "$status" -gt 1 ] || [ -s "$tmp/lsof-err" ]; then busy='lsof failed'; return 0; fi
+    return 1
+  fi
+  case "$OSTYPE" in
+    linux*)
+      # Scan the process inventory once, independently of the target tree size.
+      # Only an unavailable proc root permits fallback; partial scans stay busy.
+      if [ -d "$proc_root" ] && [ -r "$proc_root" ] && [ -x "$proc_root" ]; then proc_busy "$1"; return $?; fi
+      if command -v fuser >/dev/null 2>&1; then fuser_busy "$1"; return $?; fi
+      if [ -d "$proc_root" ]; then proc_busy "$1"; return $?; fi
+      ;;
+  esac
+  busy='lsof unavailable'; return 0
+}
+# The one gate before anything is deleted because nothing runs there (worktrees,
+# stale branches, build caches, Chrome clones, temp items). Both the holder check
+# and ps must answer cleanly; unclassified inspection errors keep the item.
+in_use() {
+  local ps_status=0 line esc
+  busy=''
+  if path_busy "$1"; then return 0; fi
   if ! command -v ps >/dev/null 2>&1; then busy='ps unavailable'; return 0; fi
   ps -axo command= > "$tmp/ps" 2>"$tmp/ps-err" || ps_status=$?
   if [ "$ps_status" -ne 0 ] || [ -s "$tmp/ps-err" ]; then busy='ps failed'; return 0; fi
@@ -267,29 +422,44 @@ guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason
   echo "Warning: could not delete $2; kept." >&2; guard_keep "$1" "$2" 'delete failed'; return 1
 }
 guarded_remote_branch_delete() { # <name...>: sets remote_gone to how many went; kept ones count in kept
-  local name status=0 live=()
+  local name status=0 live=() leases=()
   remote_gone=0
   remote_live "$@" || status=1
   [ ${#live[@]} -gt 0 ] || return "$status"
-  if git push origin --delete "${live[@]}"; then remote_gone=${#live[@]}; return "$status"; fi
+  if git push origin --delete "${live[@]}" "${leases[@]}" --atomic; then remote_gone=${#live[@]}; return "$status"; fi
   # One bad ref fails the whole push; retry one by one, each behind a fresh inventory, so only the failing ones are kept.
   for name in "${live[@]}"; do
     remote_live "$name" || { status=1; continue; }
-    if git push origin --delete "$name"; then remote_gone=$((remote_gone+1)); continue; fi
+    if git push origin --delete "$name" "${leases[@]}"; then remote_gone=$((remote_gone+1)); continue; fi
     echo "Warning: could not delete remote $name; kept." >&2
     guard_keep kept "remote $name" 'delete failed'; status=1
   done
   return "$status"
 }
-remote_live() { # <name...>: sets live (the caller's) to the names no worktree has checked out in one fresh inventory
-  local name status=0
+remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets caller's push leases
+  local name status=0 expected actual
   live=()
+  leases=()
   if ! fresh_inventory; then
     for name in "$@"; do guard_keep kept "remote $name" 'worktree inventory unavailable'; done
     return 2
   fi
   for name in "$@"; do
-    if branch_free kept "remote $name" "$name"; then live+=("$name"); else status=1; fi
+    if ! branch_free kept "remote $name" "$name"; then status=1; continue; fi
+    expected=$(awk -v r="refs/remotes/origin/$name" '$1 == r { print $2 }' "$tmp/remote-planned")
+    if ! git ls-remote --heads origin "refs/heads/$name" > "$tmp/remote-now"; then
+      guard_keep kept "remote $name" 'live remote lookup failed'; status=1; continue
+    fi
+    actual=$(awk -v r="refs/heads/$name" '$2 == r { print $1 }' "$tmp/remote-now")
+    if [ -z "$actual" ]; then
+      guard_keep kept "remote $name" 'vanished from remote'; status=1; continue
+    fi
+    if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+      guard_keep kept "remote $name" 'remote SHA changed since fetch'; status=1; continue
+    fi
+    live+=("$name")
+    # Keep the check atomic if a writer races the ls-remote response.
+    leases+=("--force-with-lease=refs/heads/$name:$expected")
   done
   return "$status"
 }
@@ -334,7 +504,7 @@ process_worktree() {
   local why='' force=''
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
-  elif protected "$branch"; then why='protected'
+  elif protected "$branch"; then why=$protected_reason
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
@@ -382,8 +552,10 @@ while IFS= read -r -d '' field; do
 done < "$tmp/worktrees"
 [ "$apply" -eq 0 ] || git worktree prune
 while IFS= read -r branch; do
-  if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
-    keep "local $branch" 'protected or checked out in kept worktree'
+  if protected "$branch"; then
+    keep "local $branch" "$protected_reason"
+  elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
+    keep "local $branch" 'checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch"; then
     printf 'Delete local %s (%s)\n' "$branch" "$reason"
     if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" "$reason"; then
@@ -441,12 +613,18 @@ drop_build_caches() {
   done < "$tmp/kept-worktrees"
 }
 drop_build_caches
+missing_lsof_summary() {
+  if ! command -v lsof >/dev/null 2>&1 && ! linux_holder_check_available; then
+    printf 'lsof unavailable: kept all worktrees=%s and Chrome clones=%s\n' "$(wc -l < "$tmp/kept-worktrees" | tr -d ' ')" "${clone_kept:-0}"
+  fi
+}
 # A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once, and a
 # checkout there is never fast forwarded.
 if [ "$worktrees_only" -eq 1 ]; then
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
   printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
+  missing_lsof_summary
   exit "$inventory_failed"
 fi
 batch=()
@@ -460,8 +638,10 @@ flush_remote() {
 }
 while IFS= read -r ref; do
   branch=${ref#refs/remotes/origin/}
-  if protected "$branch" || grep -Fxq -- "$branch" "$tmp/kept-branches"; then
-    keep "remote $branch" 'protected or checked out in kept worktree'
+  if protected "$branch"; then
+    keep "remote $branch" "$protected_reason"
+  elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
+    keep "remote $branch" 'checked out in kept worktree'
   elif eligible "$ref" "$branch"; then
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
     batch+=("$branch")
@@ -566,7 +746,7 @@ if [ -d "$loose_root" ]; then
     temp_item "$entry" 0
   done
 fi
-# Stale: unmerged, no open PR, older than 24 h, nothing running. Listed; deleted only with --stale.
+# Stale: unmerged, no open PR, at least 8 h old, nothing running. Deleted with --apply.
 stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
@@ -590,13 +770,12 @@ if [ "$pr_ok" -eq 1 ]; then
     for ref in "${refs[@]}"; do
       t=$(git log -1 --format=%ct "$ref"); [ "$t" -le "$newest" ] || newest=$t
     done
-    [ $((now - newest)) -ge 86400 ] || continue
+    [ $((now - newest)) -ge 28800 ] || continue
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
-    if [ "$stale_found" -eq 0 ]; then echo 'Stale (needs a decision)'; fi
+    if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
     stale_found=$((stale_found+1))
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
     printf '  %s, %sh old, %s\n' "$name" $(( (now - newest) / 3600 )) "$subject"
-    [ "$stale" -eq 1 ] || continue
     # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
     if [ "$apply" -eq 1 ]; then
       if ! fresh_inventory 'deleting no more stale branches'; then keep "stale $name" 'worktree inventory unavailable'; continue; fi
@@ -640,6 +819,7 @@ printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
+missing_lsof_summary
 # --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only).
 # Config: {"hosts": [{"host": "<ssh host>", "repo_dir": "<checkout on that host>"}]}; see wrap-up-fleet.config.example.json.
 # An unreachable or failing host only warns. The script and arguments travel as base64 so a login shell's own output

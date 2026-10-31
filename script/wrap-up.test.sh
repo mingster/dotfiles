@@ -11,6 +11,11 @@ mkdir -p "$HOME" "$tmp/bin"
 export PATH="$tmp/bin:$PATH"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
+case "$*" in
+  'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
+  'api repos/{owner}/{repo}/pages') echo '{"source":null}'; exit 0 ;;
+  'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]'; exit 0 ;;
+esac
 printf '%s\n' "${FAKE_PRS:-[]}"
 FAKE
 cat > "$tmp/bin/orca" <<'FAKE'
@@ -205,7 +210,12 @@ case "$*" in
     echo "$env $h" >> "$FAKE_DIR/closed.log"
     jq -c --arg h "$h" 'map(select(.handle != $h))' "$FAKE_DIR/$env.terminals" > "$FAKE_DIR/$env.tmp" && mv "$FAKE_DIR/$env.tmp" "$FAKE_DIR/$env.terminals" ;;
   *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
-  *worker-list*) printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false}}}\n' "$(cat "$FAKE_DIR/$env.workers")" ;;
+  *worker-list*)
+    if [[ "$*" == *--include-remote* ]]; then
+      jq -s '{ok:true,result:{workers:add,page:{hasMore:false}}}' "$FAKE_DIR/"*.workers
+    else
+      printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false}}}\n' "$(cat "$FAKE_DIR/$env.workers")"
+    fi ;;
 esac
 FAKE
 chmod +x "$tmp/bin/orca-envs"
@@ -236,7 +246,7 @@ grep -q 'terminals closed=5 kept=5' "$tmp/output"
 echo 'ok apply closes settled and exited terminals; own, live and unknown-running kept'
 # Real orca output differs from the cases above: a released dispatch has no agentTerminalHandle, its leftover terminals
 # still report connected and writable with no agent identity, and a pane from worker-pane.sh is just such a terminal.
-# So terminals are linked to dispatches by worktree path. worker-list is newest first and read for 2 pages only.
+# So terminals are linked to dispatches by worktree path. Every worker-list page must be read.
 rm -rf "$fake"; mkdir -p "$fake"
 cat > "$tmp/bin/orca-real" <<'FAKE'
 #!/usr/bin/env bash
@@ -266,13 +276,13 @@ echo "[$(rw p-mix dispatched b),$(rw lead-x completed a)]" > "$fake/workers2"
 echo "[$(rw p-late completed a)]" > "$fake/workers3"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 sort "$fake/closed.log" > "$tmp/closed"
-printf '%s\n' t-pane t-shell | cmp - "$tmp/closed"
-for kept in t-own t-agent t-mixed t-none t-lead t-late; do
+printf '%s\n' t-late t-pane t-shell | cmp - "$tmp/closed"
+for kept in t-own t-agent t-mixed t-none t-lead; do
   grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
 done
 grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
 grep -Fq 'Kept terminal t-none (local, unknown owner, still running)' "$tmp/output"
-grep -q 'terminals closed=2 kept=6' "$tmp/output"
+grep -q 'terminals closed=3 kept=5' "$tmp/output"
 grep -q -- '--limit 100' "$fake/list.log"
 echo 'ok released dispatch without a handle: terminals linked by path; panes close; live, agent, lead and unknown paths kept'
 # #386: a dry run left every worktree with a leftover terminal on a released dispatch as "active or unknown", because
@@ -390,12 +400,22 @@ grep -Fq 'removed worktrees=0' "$tmp/output"
 echo 'ok --worktrees-only without orca keeps every worktree'
 mkdir -p "$HOME/.orca/cli/bin"; cp "$tmp/bin/orca" "$HOME/.orca/cli/bin/orca"
 mv "$tmp/bin/orca" "$tmp/bin/orca.off"
+# Keep lookup isolated when the installed CLI is also on the caller's PATH.
+# The fake transport must add the fixture CLI directory before this shim allows it.
+cat > "$tmp/bin/orca" <<'FAKE'
+#!/usr/bin/env bash
+case ":$PATH:" in
+  *":$HOME/.orca/cli/bin:"*) exec "$HOME/.orca/cli/bin/orca" "$@" ;;
+  *) exit 1 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca"
 unset ORCA_CLI_COMMAND
 printf '{"hosts":[{"host":"alpha","repo_dir":"%s"}]}\n' "$tmp/rrepo" > "$tmp/fleet.json"
 bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
 if grep -Fq 'Orca unavailable' "$tmp/stderr" "$tmp/output"; then echo 'remote PATH misses ~/.orca/cli/bin'; exit 1; fi
 test -d "$tmp/rwt2"
-rm -rf "$HOME/.orca"; mv "$tmp/bin/orca.off" "$tmp/bin/orca"
+rm -rf "$HOME/.orca"; mv -f "$tmp/bin/orca.off" "$tmp/bin/orca"
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
 echo 'ok remote PATH includes ~/.orca/cli/bin'
 rm "$tmp/fleet.json"

@@ -4,7 +4,8 @@
 # Exercise the command boundary with isolated home directories and sensor readings.
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
-import importlib.util, os, pathlib, select, signal, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, os, pathlib, select, signal, subprocess, sys, tempfile, time, unittest
+from unittest import mock
 
 scripts = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('heavy_gate', scripts/'heavy-gate.py')
@@ -99,6 +100,240 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.finish(self.run_gate(['sh', '-c', 'test "$1" = "a b" || exit 9; exit 7', 'sh', 'a b']), 7)
         self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
 
+    def cleanup_gate(self, error, states, failing_signal, status=0, ps_error=None, check_status=False, live_child=False):
+        self.config(1)
+        real_run = subprocess.run
+        real_popen = subprocess.Popen
+        group = []
+        self.cleanup_stderr = io.StringIO()
+
+        def killpg(pgid, sig):
+            group[:] = [pgid]
+            self.cleanup_pgid = pgid
+            self.assertEqual(len(list((self.root/'.cache/heavy-gate').glob('slot-*'))), 1)
+            if check_status:
+                self.assertIn(f"heavy-gate: child exited with status {status}\n",
+                              self.cleanup_stderr.getvalue())
+            if sig == failing_signal:
+                raise error
+
+        def run(command, *args, **kwargs):
+            if command[0] == 'ps':
+                if ps_error:
+                    raise ps_error
+                # Include another group's live member: only this group matters.
+                output = '1 2 0 0 S other\n' + ''.join(
+                    f'{group[0]} {100+i} 1 501 {state} worker\n' for i, state in enumerate(states))
+                self.cleanup_rows = output.splitlines()[1:]
+                return subprocess.CompletedProcess(command, 0, output, '')
+            return real_run(command, *args, **kwargs)
+
+        args = module.argparse.Namespace(weight=1, head_checks=False,
+                                         command=['--', 'sh', '-c', f'exit {status}'])
+        with contextlib.redirect_stderr(self.cleanup_stderr), \
+             mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module.os, 'killpg', side_effect=killpg), \
+             mock.patch.object(module.subprocess, 'run', side_effect=run):
+            if live_child:
+                # No host process is launched: this is the still-running child seam.
+                proc = mock.Mock(pid=987654, returncode=None)
+                proc.wait.side_effect = subprocess.TimeoutExpired(['fixture-child'], 1200)
+                with mock.patch.object(module.subprocess, 'Popen', side_effect=lambda command, *a, **kw:
+                        proc if command == args.command[1:] else real_popen(command, *a, **kw)):
+                    with self.assertRaises(PermissionError):
+                        module.gate(args)
+                result = None
+            else:
+                result = module.gate(args)
+            held = not isinstance(error, ProcessLookupError) and (ps_error or any(
+                not state.startswith('Z') for state in states))
+            original_pgid = self.cleanup_pgid
+            original_rows = getattr(self, 'cleanup_rows', [])
+            paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
+            print(f'cleanup child_exit={status} gate_exit={result} held={len(paths)} '
+                  f'signal={failing_signal} states={states} inspection_error={ps_error!r}', flush=True)
+            self.assertEqual(len(paths), int(bool(held)))
+            if held:
+                # A quarantined token cannot authorize a nested command, even while
+                # its original gate PID is still alive in this in-process fixture.
+                self.env['HEAVY_GATE_TOKEN'] = (paths[0]/'token').read_text()
+                with mock.patch.dict(os.environ, self.env, clear=True):
+                    self.assertFalse(module.holds_slot())
+                dead = subprocess.Popen(['true'])
+                dead.wait()
+                (paths[0]/'pid').write_text(str(dead.pid))
+                marker = self.root/f'unexpected-admission-{original_pgid}-{failing_signal}'
+                self.assertFalse(marker.exists(), 'each cleanup case starts with a fresh marker')
+                claimant = module.argparse.Namespace(weight=1, head_checks=False,
+                    command=['--', 'touch', str(marker)])
+                # Interrupt at the first wait, with no test sleeps or retries.
+                with mock.patch.object(module.time, 'sleep', side_effect=module.Interrupted(signal.SIGTERM)):
+                    with self.assertRaises(module.Interrupted):
+                        module.gate(claimant)
+                self.assertFalse(marker.exists())
+                self.assertTrue(paths[0].exists())
+                # Unknown inspection holds; positive empty/zombie proof reclaims.
+                ps_error = None
+                states[:] = ['Z', 'Z+']
+                self.assertEqual(module.gate(claimant), 0)
+                self.assertTrue(marker.exists())
+                self.assertFalse(paths[0].exists())
+                self.env.pop('HEAVY_GATE_TOKEN')
+            self.cleanup_pgid = original_pgid
+            self.cleanup_rows = original_rows
+        return result
+
+    def test_cleanup_eperm_without_live_members_preserves_child_status(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for states in ([], ['Z', 'Z+']):
+                for status in (0, 7):
+                    with self.subTest(signal=sig, states=states, status=status):
+                        self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'),
+                                                          states, sig, status), status)
+
+    def test_cleanup_eperm_with_live_member_preserves_status_and_reports_members(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for status in (0, 7):
+                with self.subTest(signal=sig, status=status):
+                    self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'),
+                                                      ['Z', 'S'], sig, status), status)
+                    diagnostic = self.cleanup_stderr.getvalue()
+                    self.assertIn(f'pgid={self.cleanup_pgid}', diagnostic)
+                    self.assertIn('denied', diagnostic)
+                    for row in self.cleanup_rows:
+                        self.assertIn(row, diagnostic)
+                    self.assertNotIn('other', diagnostic)
+
+    def test_live_child_cleanup_error_reraises(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sig):
+                self.cleanup_gate(PermissionError(1, 'denied'), ['S'], sig, live_child=True)
+
+    def test_group_publication_failure_holds_after_owner_exit(self):
+        self.config(1)
+        real_write = pathlib.Path.write_text
+        def write(path, text, *args, **kwargs):
+            if path.name == 'groups':
+                raise OSError('fixture ledger publication failed')
+            return real_write(path, text, *args, **kwargs)
+        args = module.argparse.Namespace(weight=1, head_checks=False,
+                                         command=['--', 'sh', '-c', 'exit 7'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(pathlib.Path, 'write_text', new=write):
+            self.assertEqual(module.gate(args), 7)
+        paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
+        self.assertEqual(len(paths), 1)
+        with mock.patch.dict(os.environ, dict(self.env,
+                             HEAVY_GATE_TOKEN=(paths[0]/'token').read_text()), clear=True):
+            self.assertFalse(module.holds_slot())
+        dead = subprocess.Popen(['true'])
+        dead.wait()
+        (paths[0]/'pid').write_text(str(dead.pid))
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            claimant = module.Slots(1)
+            self.assertFalse(claimant.claim(1))
+            self.assertTrue(paths[0].exists())
+
+    def test_marker_publication_failure_rejects_nested_token(self):
+        self.config(1)
+        real_touch = pathlib.Path.touch
+        failures = []
+        def touch(path, *args, **kwargs):
+            if path.name in ('quarantine', 'groups-ready'):
+                failures.append(path.name)
+                raise OSError('fixture marker publication failed')
+            return real_touch(path, *args, **kwargs)
+        args = module.argparse.Namespace(weight=1, head_checks=False,
+                                         command=['--', 'sh', '-c', 'exit 7'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(pathlib.Path, 'touch', new=touch):
+            self.assertEqual(module.gate(args), 7)
+        self.assertTrue(failures)
+        paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
+        self.assertEqual(len(paths), 1)
+        with mock.patch.dict(os.environ, dict(self.env,
+                             HEAVY_GATE_TOKEN=(paths[0]/'token').read_text()), clear=True):
+            self.assertFalse(module.holds_slot())
+
+    def test_live_and_legacy_owner_tokens_remain_authorized(self):
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            slots = module.Slots(2)
+            self.assertTrue(slots.claim(1))
+            os.environ['HEAVY_GATE_TOKEN'] = slots.token
+            self.assertTrue(module.holds_slot())
+            legacy = slots.root/'slot-2'
+            legacy.mkdir()
+            (legacy/'pid').write_text(str(os.getpid()))
+            (legacy/'token').write_text('legacy')
+            os.environ['HEAVY_GATE_TOKEN'] = 'legacy'
+            self.assertTrue(module.holds_slot())
+
+    def test_authorization_revocation_failure_surfaces_without_signalling(self):
+        self.config(1)
+        real_rename = pathlib.Path.rename
+        def rename(path, target):
+            if path.name == 'running':
+                raise PermissionError('fixture authorization revocation failed')
+            return real_rename(path, target)
+        args = module.argparse.Namespace(weight=1, head_checks=False,
+                                         command=['--', 'sh', '-c', 'exit 7'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(pathlib.Path, 'rename', new=rename), \
+             mock.patch.object(module.os, 'killpg') as killpg:
+            with self.assertRaises(PermissionError):
+                module.gate(args)
+            killpg.assert_not_called()
+            paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
+            self.assertEqual(len(paths), 1)
+            dead = subprocess.Popen(['true'])
+            dead.wait()
+            (paths[0]/'pid').write_text(str(dead.pid))
+            self.assertFalse(module.Slots(1).claim(1))
+
+    def test_later_cleanup_cannot_forget_failed_publication(self):
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            slots = module.Slots(1)
+            self.assertTrue(slots.claim(1))
+            # Model successful authorization revocation before ledger publication.
+            (slots.owned[0]/'running').rename(slots.owned[0]/'quarantine')
+            first = mock.Mock(pid=987651)
+            later = mock.Mock(pid=987652)
+            real_write = pathlib.Path.write_text
+            def write(path, text, *args, **kwargs):
+                if path.name == 'groups':
+                    raise OSError('fixture first publication failed')
+                return real_write(path, text, *args, **kwargs)
+            with mock.patch.object(pathlib.Path, 'write_text', new=write):
+                with self.assertRaises(OSError):
+                    slots.record_groups([first])
+            slots.record_groups([later])
+            # The later group is gone; the earlier survivor must still hold capacity.
+            def members(pgid):
+                return [('S', 'fixture survivor')] if pgid == first.pid else []
+            with mock.patch.object(module, 'group_members', side_effect=members):
+                slots.release()
+                self.assertEqual(len(list(slots.root.glob('slot-*'))), 1)
+
+    def test_child_status_is_logged_before_cleanup(self):
+        self.assertEqual(self.cleanup_gate(ProcessLookupError(), [], signal.SIGTERM,
+                                          7, check_status=True), 7)
+
+    def test_cleanup_missing_group_preserves_child_status(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sig):
+                self.assertEqual(self.cleanup_gate(ProcessLookupError(), ['S'], sig, 7), 7)
+
+    def test_cleanup_eperm_inspection_failure_preserves_status(self):
+        for error in (subprocess.CalledProcessError(1, ['ps']),
+                      subprocess.TimeoutExpired(['ps'], 3)):
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual(self.cleanup_gate(PermissionError(1, 'denied'), [],
+                                                  signal.SIGTERM, ps_error=error), 0)
+                diagnostic = self.cleanup_stderr.getvalue()
+                self.assertIn(f'pgid={self.cleanup_pgid}', diagnostic)
+                self.assertIn('denied', diagnostic)
+                self.assertIn('inspection failed', diagnostic)
+
     def test_timeout_reports_command_and_releases_all_slots(self):
         self.config()
         self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
@@ -143,7 +378,7 @@ child.wait()
         self.config()
         self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '2'
         out, err = self.finish(self.run_gate(['sh', '-c', 'echo output; echo error >&2; exit 7']), 7)
-        self.assertEqual((out, err), ('output\n', 'error\n'))
+        self.assertEqual((out, err), ('output\n', 'error\nheavy-gate: child exited with status 7\n'))
 
     def test_timeout_can_be_disabled(self):
         self.config()
@@ -261,7 +496,8 @@ child.wait()
         self.set_reading('11 90')
         out, err = self.finish(self.run_gate(['sh', '-c', 'echo ran; exit 7'], weight=2), 7)
         self.assertEqual(out, 'ran\n')
-        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertEqual(len(err.splitlines()), 2, err)
+        self.assertIn('heavy-gate: child exited with status 7\n', err)
         self.assertIn('using slots=2 load_max=12', err)
         _, err = self.finish(self.job(weight=3), 1)
         self.assertIn('weight', err)
@@ -274,7 +510,7 @@ child.wait()
         self.assertEqual(self.events(), [])
         self.set_reading('11 90')
         _, err = self.finish(p)
-        self.assertEqual(err, '')
+        self.assertEqual(err, 'heavy-gate: child exited with status 0\n')
         self.assertEqual(len(self.events()), 2)
 
     def test_missing_config_warns_and_uses_complete_fallback(self):

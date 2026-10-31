@@ -44,7 +44,7 @@ When every findings file is in, start both roles on the same input:
 Role: <role>. Peer grill on the round <round> staging findings, no code.
 Input: every findings-*.md in <round folder>.
 1. Challenge the other role's findings: real (recheck on staging with your own browser session (`agent-browser --session <round>-<role>-grill` on every call) if unsure), right severity, smallest fix, duplicate of an open issue. Write grill-<role>.md in the folder; answer the other role's challenges once.
-2. Group the agreed findings into tickets, one per independent fix on disjoint files so many workers run at once. Each ticket: title, page, severity, acceptance criteria, the proving test (unit or e2e spec path), files likely touched. Wording tickets carry the exact strings for every locale, native, never a direct translation.
+2. Group the agreed findings into tickets, one per independent fix on disjoint files so many workers run at once. Each ticket: title, page, severity, acceptance criteria, the proving test (unit or e2e spec path), files likely touched. Wording-only findings do not get one ticket each: put them in at most one ticket per audience (customer, store staff, platform operator), split again past about 30 strings, so each audience has one string table to approve and one QA pass and the locale files see no merge conflicts. Broken and layout findings stay one ticket per fix. Wording tickets carry the exact strings for every locale, native, never a direct translation.
 3. File your side's tickets (search first; the issue budget and triage label docs apply), ready-for-agent when fully specified. A product, scope or copy call goes to Elon with `orca orchestration ask` (A recommended, B); record "Elon decision (owner to review)" on the issue. Only Owner-Reserved items become ready-for-human.
 On a non-Owner-Reserved ask timeout, proceed with recommended A and label the ticket "Elon decision pending"; send the unresolved decision to Elon. Owner-Reserved work remains blocked.
 Never change priorities of existing issues, never close issues, never read secrets. No heartbeats. Finish within 40 minutes.
@@ -55,7 +55,7 @@ Elon answers each ask within minutes and decides every disagreement. Legal text 
 
 ## 3. Build
 
-Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 first, grouped by shared files. Builders and reviewers come from different model families. Each PR with new or changed strings sends Elon a `key | <locales>` table; Elon approves or edits it on the PR before merge. Two or more passing PRs merge as one batch.
+Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 first, grouped by shared files. Builders and reviewers come from different model families. Use the exact strings already accepted in the spec and ticket; missing or changed copy returns to architect-pm for a spec amendment under the project Handoffs contract. Merge reviewed PRs under the existing eager-merge and fix-batch rules.
 
 ## 4. Close the round
 

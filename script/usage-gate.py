@@ -6,14 +6,16 @@ show [--json] includes the exact source and reading age; pick --role ROLE retain
 its existing flags and ranks providers by remaining weekly/cycle headroom.
 Codex reads session rate_limits and refreshes via app-server account/rateLimits/read;
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
-endpoint; Cursor fetches usage-summary; Antigravity queries local GetUserStatus.
+endpoint; Cursor reads its Auto + Composer billing-cycle pool;
+Antigravity queries local GetUserStatus, defaulting to the Gemini Flash pool.
 Missing, stale (>5 minutes), expired, invalid or future readings trigger a refresh.
 If the real source cannot supply a fresh reading, report unknown, never inferred
 zero usage or a stale ceiling verdict. Unknown does not block worker starts.
 Daily caps and owner cap overrides remain pacing hints only: at the hint, allow
 with note "pacing: prefer a lighter model". --reserve (default 1) holds weekly
 percentage points per running worker; --ceiling defaults to 95. Cursor uses its
-provider billing cycle and Antigravity its provider model pools.
+provider billing cycle when verifiable; Antigravity uses separate Flash, Pro/Argon
+and Claude provider model pools.
 """
 import argparse, re, glob, json, math, os, subprocess, sys, time
 from datetime import datetime, timedelta
@@ -106,41 +108,88 @@ def claude_day_start(midnight, path=None):
 
 
 def cursor_parse(summary, now):
-    """Map Cursor's billing cycle onto the weekly formula. Cursor has no weekly window: it
-    bills one cycle (about a month) with a plan allowance. So pct is the plan's
-    totalPercentUsed (the dashboard's "used N% of included total usage"), resets_at is
-    billingCycleEnd, and began_at is billingCycleStart. The cap is then what is left of the
-    cycle under the ceiling at the start of today divided by the days left until the cycle
-    ends, exactly as for a week. On-demand spend is not part of the plan percentage."""
+    """Use individualUsage.plan.autoPercentUsed and billingCycleEnd from usage-summary.
+    Cursor's dashboard describes Auto + Composer and API as separate pools;
+    Composer draws the Auto + Composer pool first, then spills into API usage.
+    Neither apiPercentUsed nor aggregate totalPercentUsed measures this pool.
+    Missing Auto + Composer usage stays unknown, never an inferred zero.
+    """
     try:
         plan = summary["individualUsage"]["plan"]
-        ends = epoch(summary["billingCycleEnd"])
-        began = epoch(summary["billingCycleStart"])
-        if not plan.get("enabled", True) or ends is None:
+        pct = plan["autoPercentUsed"]
+        reset = epoch(summary["billingCycleEnd"])
+        if plan.get("enabled") is False or isinstance(pct, bool) or reset is None:
             return None
-        return {"pct": float(plan["totalPercentUsed"]), "resets_at": ends, "began_at": began,
-                "observed_at": now}
-    except (KeyError, TypeError, ValueError, AttributeError):
+        return fresh({"pct": pct, "resets_at": reset, "observed_at": now}, now)
+    except (KeyError, TypeError, AttributeError):
         return None
 
 
+def cursor_tokens():
+    """Read desktop state and installed cursor-agent credential stores without writes.
+
+    The CLI uses macOS keychain service cursor-access-token/account cursor-user;
+    its file store uses .cursor/auth.json on macOS or XDG_CONFIG_HOME/cursor/auth.json
+    on Linux (default ~/.config), with the accessToken key. Never log these values.
+    """
+    import sqlite3
+    db = (HOME + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+          if sys.platform == "darwin" else HOME + "/.config/Cursor/User/globalStorage/state.vscdb")
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        try:
+            row = con.execute("select value from ItemTable where key='cursorAuth/accessToken'").fetchone()
+        finally:
+            con.close()
+        if row:
+            yield row[0]
+    except (OSError, sqlite3.Error):
+        pass
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(["security", "find-generic-password", "-a", "cursor-user",
+                                     "-s", "cursor-access-token", "-w"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, timeout=3)
+            if result.returncode == 0:
+                yield result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    auth = (HOME + "/.cursor/auth.json" if sys.platform == "darwin" else
+            os.path.join(os.environ.get("XDG_CONFIG_HOME") or HOME + "/.config", "cursor/auth.json"))
+    try:
+        with open(auth) as f:
+            yield json.load(f).get("accessToken")
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def cursor_reading(path=None):
-    """Read-only. The access token comes from the Cursor app's own state database, is turned
-    into the dashboard session cookie in memory, and is never printed or written anywhere."""
+    """Read-only; tokens and the dashboard cookie stay in memory, never in logs or argv."""
     path = path or CURSOR_SUMMARY
     try:
         if path:
             return cursor_parse(json.load(open(path)), time.time())
-        import base64, sqlite3, urllib.parse, urllib.request
-        db = (HOME + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
-              if sys.platform == "darwin" else HOME + "/.config/Cursor/User/globalStorage/state.vscdb")
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
-        token = con.execute("select value from ItemTable where key='cursorAuth/accessToken'").fetchone()[0]
-        con.close()
-        user = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==="))["sub"].split("|")[-1]
-        cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
-        with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
-            return cursor_parse(json.load(r), time.time())
+        import base64, urllib.error, urllib.parse, urllib.request
+        for token in cursor_tokens():
+            # Opaque desktop tokens cannot supply the dashboard user id. Try the CLI
+            # store instead; never guess a user id or send an invented credential.
+            try:
+                if not isinstance(token, str) or len(token.split(".")) != 3:
+                    continue
+                user = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==="))["sub"].split("|")[-1]
+                if not user:
+                    continue
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+            cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
+            # A stale desktop install can hold an expired token; a 401/403 moves on to the next store.
+            try:
+                with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
+                    return cursor_parse(json.load(r), time.time())
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    continue
+                raise
     except Exception:
         return None
 
@@ -187,10 +236,14 @@ def antigravity_fetch():
 
 
 def antigravity_pool(model):
+    model = model.lower().replace(" ", "-")
     if model.startswith(("claude-", "gpt-oss")):
         return "claude"
     if model.startswith("gemini-"):
-        return "gemini"
+        if "flash" in model.split("-"):
+            return "gemini-flash"
+        if set(model.split("-")) & {"argon", "pro"}:
+            return "gemini-pro"
     return None
 
 
@@ -211,8 +264,7 @@ def antigravity_pools(fetch=None):
         pools = {}
         for config in configs:
             label = config.get("label", "")
-            pool = "claude" if label.startswith(("Claude", "GPT-OSS")) else (
-                "gemini" if label.startswith("Gemini") else None)
+            pool = antigravity_pool(label)
             if pool is None:
                 continue
             quota = config["quotaInfo"]
@@ -242,7 +294,8 @@ def parse_quota_banner(text, now):
         return None
     days, hours, minutes = (int(g or 0) for g in match.groups())
     window = text[max(0, match.start() - 300):match.end()].lower()
-    pool = "claude" if re.search(r"claude|gpt-oss", window) else ("gemini" if "gemini" in window else None)
+    named = re.search(r"\b(?:claude|gpt-oss|gemini)[\w.-]*(?:\s+(?:[\d.]+|flash|argon|pro))*", window)
+    pool = antigravity_pool(named.group()) if named else None
     if pool is None:
         return None
     return pool, now + days * 86400 + hours * 3600 + minutes * 60
@@ -267,7 +320,7 @@ def read_banners(now, path=None):
     try:
         with open(path or BANNER_FILE) as f:
             data = json.load(f)
-        return {pool: float(t) for pool, t in data.items() if pool in ("claude", "gemini") and float(t) > now}
+        return {pool: float(t) for pool, t in data.items() if pool in ("claude", "gemini-flash", "gemini-pro") and float(t) > now}
     except (OSError, ValueError, TypeError, AttributeError):
         return {}
 
@@ -504,9 +557,8 @@ def blocked_until(detail, now):
 
 
 def antigravity_result(pools, ceiling, now, model=None, pool=None, reserve=0.0, running=None):
-    selected = pool or (antigravity_pool(model) if model else None)
-    reading = pools.get(selected) if selected else (max(pools.values(), key=lambda r: r["pct"])
-                                                   if pools and not model else None)
+    selected = pool or antigravity_pool(model or "gemini-3.8-flash")
+    reading = pools.get(selected) if selected else None
     result = {"provider": "antigravity" + ("/" + pool if pool else ""),
               "verdict": "unknown", "reason": "no reading", "policy": "ceiling only",
               "source": reading_source("antigravity"), "reading_age_min": None}
@@ -588,7 +640,8 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
         detail["last_reading_source"] = reading_source(provider)
     detail["reading_age_min"] = round((now - t) / 60, 1) if t is not None else None
     if not reading:
-        detail["reason"] = failure
+        detail["reason"] = ("no reliable Composer 2.5 allowance reading; read the Cursor dashboard"
+                            if provider == "cursor" else failure)
     if reading:
         t = epoch(reading.get("observed_at"))
         detail["reading_age_min"] = round((now - t) / 60) if t is not None else None
@@ -604,12 +657,13 @@ def table(rows):
     head = ("provider", "verdict", "week%", "today%", "cap%", "reserve%", "running", "reading", "source", "week resets", "next start")
     out = []
     for r in rows:
+        name = "cursor auto+composer" if r["provider"] == "cursor" else r["provider"]
         if r["verdict"] == "unknown":
             note = "not gated" if r["provider"] in NOT_GATED else r.get("reason", "no reading")
-            out.append((r["provider"], "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
+            out.append((name, "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
             continue
         age = r.get("reading_age_min")
-        out.append((r["provider"], r["verdict"], f"{r['weekly_used']:g}",
+        out.append((name, r["verdict"], f"{r['weekly_used']:g}",
                     *(f"{r[k]:g}" if k in r else "?" for k in ("today_used", "cap", "reserve")),
                     "?" if r.get("running") is None else str(r["running"]),
                     "?" if age is None else f"{age}m ago", r.get("source", "unknown"), r.get("resets_local", "-"),
@@ -673,7 +727,7 @@ def family(entry):
     return None
 
 
-def pick(role, avoid, cap, ceiling, per_worker):
+def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
     chain, pinned = role_chain(role)
     rows = {}
     for entry in chain:
@@ -689,11 +743,13 @@ def pick(role, avoid, cap, ceiling, per_worker):
         room, fraction = headroom(row)
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
+        excluded_provider = entry["provider"] == avoid_provider
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
                      "headroom_fraction": fraction, "excluded_family": excluded,
-                     "eligible": eligible and not excluded}
+                     "excluded_provider": excluded_provider,
+                     "eligible": eligible and not excluded and not excluded_provider}
         candidates.append(candidate)
         if candidate["eligible"]:
             allowed.append((index, candidate))
@@ -720,7 +776,8 @@ def candidate_reason(candidate):
     fraction = candidate["headroom_fraction"]
     room = candidate["headroom"]
     detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of ceiling)"
-    note = "excluded family" if candidate["excluded_family"] else candidate["verdict"]
+    note = ("excluded provider" if candidate["excluded_provider"] else
+            "excluded family" if candidate["excluded_family"] else candidate["verdict"])
     return f"{candidate['provider']} {candidate['model']}: {detail}, {note}"
 
 
@@ -728,9 +785,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["check", "show", "pick", "banner"])
     ap.add_argument("--provider")
-    ap.add_argument("--model", help="Antigravity model id; omitted selects the worst pool")
+    ap.add_argument("--model", help="Antigravity model id; omitted selects the Gemini Flash pool")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt"])
+    ap.add_argument("--avoid-provider", choices=["claude", "cursor", "codex", "antigravity"])
     ap.add_argument("--cap", type=float, default=None,
                     help="advisory daily pacing hint; never blocks")
     ap.add_argument("--ceiling", type=float, default=95.0)
@@ -746,7 +804,7 @@ def main(argv=None):
         if not a.role:
             ap.error("pick requires --role")
         try:
-            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve)
+            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"cannot read role presets: {type(exc).__name__}", file=sys.stderr)
             return 4
@@ -773,7 +831,7 @@ def main(argv=None):
             running = running_workers(name) if pools else None
             out.extend(antigravity_result(pools, a.ceiling, time.time(), pool=pool,
                                          reserve=a.reserve * (running or 0), running=running)
-                       for pool in ("claude", "gemini"))
+                       for pool in ("claude", "gemini-flash", "gemini-pro"))
         else:
             out.append(run(name, a.cap, a.ceiling, per_worker=a.reserve, model=a.model))
     if a.cmd == "show" and not a.json:

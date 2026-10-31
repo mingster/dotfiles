@@ -323,6 +323,13 @@ setup; body=$'   ##  Verification  \n- Ran script: passed.'; check "indented Ver
 setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'; check "unchecked needs live verdict coverage" 1 'unchecked'
 setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: jellyfin/Thing.cs'; comments+=$'\nRan unchecked Jellyfin paths live: passed.'; check "unchecked live coverage allows merge" 0 '^MERGED' 1
 
+setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: script/foo.sh'
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" '[{body:$checks},{body:$verdict},{body:($verdict+"\nRan unchecked paths live: passed.")}]')
+check "newest PASS covering unchecked paths allows merge despite older PASS" 0 '^MERGED' 1
+setup; checks=$'Checks: PASS head='"$SHA"$'\nUnchecked paths: script/foo.sh'
+COMMENTS_JSON=$(jq -n --arg checks "$checks" --arg verdict "$comments" '[{body:$checks},{body:($verdict+"\nRan unchecked paths live: passed.")},{body:$verdict}]')
+check "newest PASS missing unchecked coverage refuses despite older PASS" 1 'unchecked'
+
 copy_setup() {
   setup
   export REAL_PATCH_REPO="${ucd:-$tmp}/copy-repo"

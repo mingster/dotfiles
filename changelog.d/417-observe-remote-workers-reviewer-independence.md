@@ -1,0 +1,1 @@
+Paginate Run local and remote dispatches, preserve endpoint and environment and read each terminal at its issuing server. Disconnected hosts produce unknown coverage and are never healthy. Record author and verifier selected model families separately from provider, block shared families across providers and reject unknown model families.

@@ -298,6 +298,11 @@ A short tour of the parts that keep the agent team safe and tidy, for a reader w
 
 ### Resource guardrails
 
+Agent settings backup and restore coverage is documented in
+[`docs/agents/agent-settings-backup.md`](docs/agents/agent-settings-backup.md).
+Run `bash script/setup-check.sh --agent-settings-only` to find settings missing
+from public templates or the external private backup manifest.
+
 Heavy jobs (type checks, test suites, browser runs) share one machine budget so parallel workers do not freeze it.
 
 * [`script/heavy-gate.sh`](script/heavy-gate.sh) and [`script/heavy-gate.py`](script/heavy-gate.py) hand out heavy job slots. A job waits while the load is above the limit or free memory is under 20%. A job started with `HEAVY_GATE_CLASS=long` (a full regression run or long build) leaves one slot free for short scoped test jobs.

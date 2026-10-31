@@ -9,7 +9,7 @@ the hardware model. Overrides are for synthetic tests, never real calibration.
 Gated commands have a 1200-second (20-minute) wall clock limit, excluding slot
 wait time. HEAVY_GATE_TIMEOUT_SECONDS overrides it; 0 or "none" disables it.
 Timeouts terminate the process group, force-kill after a 3-second grace, release
-slots, and exit 124.
+slots only after proving no live group members, and exit 124.
 HEAVY_GATE_CLASS=long marks a long job (full regression, build). A long job is
 admitted only while the slots in use, itself included, stay at or under slots
 minus 1, so one slot stays free for short scoped jobs. Its weight is capped at
@@ -18,6 +18,22 @@ A short job (HEAVY_GATE_CLASS=short, or unmarked with weight 1) skips the load
 sensor when only long jobs hold slots, so it can take the reserved slot while a
 long job keeps the machine hot. The free-memory floor always applies, and long
 jobs always wait on the load sensor.
+New slots carry an unknown group ledger initialized before atomic publication.
+Running authorization is created before work and renamed to quarantine before
+cleanup publishes groups or signals; failed revocation surfaces without signalling
+and holds capacity. Publication failure cannot restore revoked authorization.
+Live or unverifiable groups keep
+the full claim occupied after exit; a completed child's status (0 or nonzero) is
+preserved, while a still-running child's signalling error still raises. Nested
+tokens cannot use quarantined or dead owners. Dead-owner reclaim only inspects,
+never signals: complete inspection proving empty/zombie-only groups releases slots.
+Unknown, malformed or unpublished ledgers hold capacity, including after failed
+publication or abrupt gate death; these unknown holds require operator inspection.
+Reused PGIDs during reclaim may prolong a hold but never authorize killing there.
+Inherited cleanup still signals saved child PGIDs without generation identity proof;
+nested groups outliving their parent are not independently tracked by this ledger.
+Legacy slots without ledgers retain live-owner nesting and dead-PID reclaim.
+Timeout and admission limits are unchanged.
 """
 import argparse
 import contextlib
@@ -149,6 +165,34 @@ def alive(pid):
         return True
 
 
+def group_members(pgid):
+    """A complete, successful snapshot; malformed output is not absence."""
+    result = subprocess.run(['ps', '-axo', 'pgid=,pid=,ppid=,uid=,stat=,comm='],
+                            check=True, capture_output=True, text=True, timeout=3)
+    members = []
+    for line in result.stdout.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6 or not all(field.isdecimal() for field in fields[:4]):
+            raise ValueError('malformed process inspection')
+        if int(fields[0]) == pgid:
+            members.append((fields[4], line))
+    return members
+
+
+def groups_empty(path):
+    try:
+        # A ready marker is published only after the entire ledger is written.
+        if (path / 'running').exists() or not (path / 'groups-ready').is_file():
+            return False
+        groups = json.loads((path / 'groups').read_text())
+        if not isinstance(groups, list) or any(type(pgid) is not int or pgid <= 0 for pgid in groups):
+            return False
+        return all(not any(not state.startswith('Z') for state, _ in group_members(pgid))
+                   for pgid in groups)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 class Slots:
     def __init__(self, count):
         self.count = count
@@ -156,6 +200,7 @@ class Slots:
         self.root.mkdir(parents=True, exist_ok=True)
         self.token = uuid.uuid4().hex
         self.owned = []
+        self.groups = set()
 
     @contextlib.contextmanager
     def allocation(self):
@@ -172,6 +217,8 @@ class Slots:
             except (FileNotFoundError, ValueError):
                 pid = 0
             if not alive(pid):
+                if (path / 'groups').exists() and not groups_empty(path):
+                    continue
                 shutil.rmtree(path)
 
     def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False):
@@ -188,21 +235,46 @@ class Slots:
             available = [self.root / f'slot-{i}' for i in range(1, self.count + 1)
                          if not (self.root / f'slot-{i}').exists()]
             for path in available[:weight]:
-                path.mkdir()
-                self.owned.append(path)
-                (path / 'pid').write_text(str(os.getpid()))
-                (path / 'token').write_text(self.token)
-                if exclusive:
-                    (path / 'exclusive').touch()
-                if long_job:
-                    (path / 'long').touch()
+                # Initialize the durable unknown barrier while still invisible to
+                # reclaim. A failed initialization can never look like a legacy slot.
+                staging = self.root / f'.claim-{self.token}-{path.name}'
+                staging.mkdir()
+                try:
+                    (staging / 'groups').touch()
+                    (staging / 'running').touch()
+                    (staging / 'pid').write_text(str(os.getpid()))
+                    (staging / 'token').write_text(self.token)
+                    if exclusive:
+                        (staging / 'exclusive').touch()
+                    if long_job:
+                        (staging / 'long').touch()
+                    staging.rename(path)
+                    self.owned.append(path)
+                finally:
+                    if staging.exists():
+                        shutil.rmtree(staging)
             return True
+
+    def record_groups(self, processes, absent=()):
+        """Publish cleanup ownership; failure leaves the pre-existing unknown hold."""
+        with self.allocation():
+            # Retain earlier contexts even if their disk publication failed.
+            self.groups.update(proc.pid for proc in processes)
+            self.groups.difference_update(absent)
+            for path in self.owned:
+                if (path / 'groups-ready').exists():
+                    self.groups.update(json.loads((path / 'groups').read_text()))
+                self.groups.difference_update(absent)
+                (path / 'groups-ready').unlink(missing_ok=True)
+                (path / 'groups').write_text(json.dumps(sorted(self.groups)))
+                (path / 'groups-ready').touch()
 
     def release(self):
         with cleanup_signals(), self.allocation():
             for path in self.owned:
                 if path.exists() and (not (path / 'token').exists() or (path / 'token').read_text() == self.token):
-                    shutil.rmtree(path)
+                    if groups_empty(path):
+                        shutil.rmtree(path)
             self.owned.clear()
 
 
@@ -227,28 +299,61 @@ def cleanup_signals():
 
 
 @contextlib.contextmanager
-def children():
+def children(slots):
     processes = []
+    for path in slots.owned:
+        (path / 'running').touch()
+        (path / 'quarantine').unlink(missing_ok=True)
+
+    def stop_group(proc, sig):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            publish(absent=(proc.pid,))
+        except OSError as exc:
+            if proc.returncode is None:
+                raise
+            # A completed child's status must survive post-exit cleanup errors.
+            print(f'heavy-gate: cleanup failed pgid={proc.pid} signal={sig}: {exc}',
+                  file=sys.stderr, flush=True)
+            try:
+                members = group_members(proc.pid)
+                print('heavy-gate: remaining members (PGID PID PPID UID STAT COMMAND):',
+                      file=sys.stderr, flush=True)
+                for _, line in members:
+                    print(line, file=sys.stderr, flush=True)
+            except (OSError, ValueError, subprocess.SubprocessError) as inspection_error:
+                print(f'heavy-gate: pgid={proc.pid} inspection failed: {inspection_error}',
+                      file=sys.stderr, flush=True)
+
+    def publish(absent=()):
+        if not slots.owned:
+            return
+        try:
+            slots.record_groups(processes, absent)
+        except (OSError, ValueError) as exc:
+            print(f'heavy-gate: group publication failed; capacity held: {exc}',
+                  file=sys.stderr, flush=True)
+
     try:
         yield processes
     finally:
-        # Keep capacity claimed until the command's process group has stopped.
+        # Keep capacity claimed through all process-group cleanup attempts.
         with cleanup_signals():
+            # Atomic revocation uses existing state, not a fallible marker write.
+            # If it fails, surface the error before signalling; running holds reclaim.
+            for path in slots.owned:
+                (path / 'running').rename(path / 'quarantine')
+            publish()
             for proc in processes:
-                try:
-                    os.killpg(proc.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+                stop_group(proc, signal.SIGTERM)
             for proc in processes:
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     pass
                 # Also stop descendants that ignore TERM after their parent exits.
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                stop_group(proc, signal.SIGKILL)
                 proc.wait()
 
 
@@ -277,7 +382,11 @@ def holds_slot():
     root = Path.home() / '.cache/heavy-gate'
     for path in root.glob('slot-*'):
         try:
-            if (path / 'token').read_text() == token and alive(int((path / 'pid').read_text())):
+            if ((path / 'token').read_text() == token
+                    and (not (path / 'groups').exists()
+                         or ((path / 'running').is_file()
+                             and not (path / 'quarantine').exists()))
+                    and alive(int((path / 'pid').read_text()))):
                 return True
         except (OSError, ValueError):
             continue
@@ -326,7 +435,7 @@ def gate(args):
                 print(f'heavy-gate: {reason}', file=sys.stderr, flush=True)
                 last_notice = now
             time.sleep(poll_interval())
-        with children() as processes:
+        with children(slots) as processes:
             env = dict(os.environ)
             if not nested:
                 env['HEAVY_GATE_TOKEN'] = slots.token
@@ -341,6 +450,7 @@ def gate(args):
                 print(f'heavy-gate: timed out after {timeout:g}s: {command}',
                       file=sys.stderr, flush=True)
                 return 124
+            print(f'heavy-gate: child exited with status {status}', file=sys.stderr, flush=True)
         return status if status >= 0 else 128 - status
     finally:
         slots.release()
@@ -381,7 +491,7 @@ def probe(args):
         if not slots.claim(settings['slots'], exclusive=True):
             raise ValueError('calibration refused: heavy jobs are running')
         start = time.monotonic()
-        with children() as processes:
+        with children(slots) as processes:
             proc = subprocess.Popen(['bash', '-c', args.calibrate], start_new_session=True)
             processes.append(proc)
             if proc.wait() != 0:
@@ -392,7 +502,7 @@ def probe(args):
             peak_load, free = sample()
             peak_memory = 100 - free
             start = time.monotonic()
-            with children() as processes:
+            with children(slots) as processes:
                 for _ in range(copies):
                     processes.append(subprocess.Popen(['bash', '-c', args.calibrate], start_new_session=True))
                 while True:

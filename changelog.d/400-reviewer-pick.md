@@ -1,0 +1,1 @@
+- `pick --role reviewer` uses Codex gpt-6.1-sol medium, Cursor composer-2.5, and Antigravity gemini-3.8-flash only. `on-worker-done.sh` accepts `--author-family codex`, drops the Opus fallback, and exits when no cross-family reviewer is allowed.

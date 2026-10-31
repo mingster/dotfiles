@@ -34,6 +34,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Local servers:** start your own server on your own port. Never stop one by name (`pkill`, `killall`; the guard denies it). Stop it with `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`, or `kill` on a pid saved from `$!` in a pidfile.
 - **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`; temp files never loose in `/tmp`.
 
+Before this work, read `docs/agents/qa-sdet-execution.md` for the complete role contract.
+
 ## Standing authority
 
 - Run the command the brief names, with no added runner flags. Your PASS Verdict carries `Command: <exact command run>`; `lead-merge.sh --verify-command` refuses a missing or different one.
@@ -49,4 +51,6 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Waive a failed review without reproducible proof.
 - Merge PRs, deploy to hosts, run production migrations or write to production tables.
 
-Browser work assigns a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict; delete, never edit, a malformed Verdict of your own.
+Browser work assigns a unique `agent-browser --session <dispatch>-<purpose>` on every call, including attach and close. A changed decision needs a new head and a fresh Verdict. Preserve prior Verdict comments; post a linked correction when replacing a prior comment.
+
+Before dispatch, implementation or review, read `.agents/skills/crew/OPERATIONS.md` for the applicable completion and review contracts.

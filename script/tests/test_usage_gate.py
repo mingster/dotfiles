@@ -12,6 +12,9 @@ ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
+REVIEWER_CHAIN = [{"provider": "codex", "model": "gpt-6.1-sol", "effort": "medium"},
+                  {"provider": "cursor", "model": "composer-2.5"},
+                  {"provider": "antigravity", "model": "gemini-3.8-flash"}]
 
 
 class Antigravity(unittest.TestCase):
@@ -19,6 +22,29 @@ class Antigravity(unittest.TestCase):
         patcher = mock.patch.object(ug, "running_workers", return_value=0)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_flash_uses_its_own_live_quota_instead_of_exhausted_argon(self):
+        # Redacted GetUserStatus projection: zero remaining is omitted by protobuf.
+        payload = {"userStatus": {"cascadeModelConfigData": {"clientModelConfigs": [
+            {"label": "Gemini 4 Argon (Medium)",
+             "quotaInfo": {"resetTime": "2026-11-02T07:12:32Z"}},
+            {"label": "Gemini 3.8 Flash (High)",
+             "quotaInfo": {"remainingFraction": 0.9889657,
+                           "resetTime": "2026-10-29T19:29:49Z"}},
+            {"label": "Claude Sonnet 5.5 (High)",
+             "quotaInfo": {"remainingFraction": 1,
+                           "resetTime": "2026-10-29T19:59:15Z"}}]}}}
+        with mock.patch.dict(ug.READERS, {"antigravity": lambda: ug.antigravity_reading(fetch=lambda: payload)}), \
+                mock.patch.object(ug.time, "time", return_value=ug.epoch("2026-10-29T12:00:00Z")):
+            for model, status, used, reset in [
+                ("gemini-3.8-flash", 0, 1.10343, "2026-10-29T19:29:49Z"),
+                ("gemini-4-argon-low", 3, 100, "2026-11-02T07:12:32Z"),
+                ("gemini-3.1-pro-high", 3, 100, "2026-11-02T07:12:32Z"),
+                ("claude-sonnet-5-5-high", 0, 0, "2026-10-29T19:59:15Z")]:
+                with self.subTest(model=model), contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(ug.main(["check", "--provider", "antigravity", "--model", model]), status)
+                    row = json.loads(out.getvalue())
+                    self.assertEqual((row["weekly_used"], row["resets_at"]), (used, ug.epoch(reset)))
 
     def test_reads_model_pools_with_shared_quota(self):
         payload = {"userStatus": {"cascadeModelConfigData": {"clientModelConfigs": [
@@ -28,9 +54,9 @@ class Antigravity(unittest.TestCase):
                                      ("Gemini Flash", .98), ("Other", 0)]
         ]}}}
         readings = ug.antigravity_reading(fetch=lambda: payload)
-        self.assertEqual(set(readings), {"claude", "gemini"})
+        self.assertEqual(set(readings), {"claude", "gemini-flash"})
         self.assertEqual(readings["claude"]["pct"], 50)
-        self.assertAlmostEqual(readings["gemini"]["pct"], 2)
+        self.assertAlmostEqual(readings["gemini-flash"]["pct"], 2)
         self.assertEqual(readings["claude"]["resets_at"], ug.epoch("2026-10-20T01:49:00Z"))
 
     def test_exhausted_pool_omits_remaining_fraction(self):
@@ -40,22 +66,31 @@ class Antigravity(unittest.TestCase):
                                                     "resetTime": "2026-10-22T08:26:09Z"}}]}}}
         readings = ug.antigravity_reading(fetch=lambda: payload)
         self.assertEqual(readings["claude"]["pct"], 100)
-        self.assertEqual(readings["gemini"]["pct"], 0)
+        self.assertEqual(readings["gemini-flash"]["pct"], 0)
+
+    def test_default_check_uses_flash_even_when_pro_is_exhausted(self):
+        pools = {"gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW},
+                 "gemini-pro": {"pct": 100, "resets_at": FUT, "observed_at": NOW}}
+        with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            self.assertEqual(ug.main(["check", "--provider", "antigravity"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["weekly_used"], 2)
 
     def test_check_selects_model_pool_and_blocks_at_ceiling(self):
         pools = {"claude": {"pct": 95, "resets_at": FUT, "observed_at": NOW},
-                 "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+                 "gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
         with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
                 mock.patch.object(ug.time, "time", return_value=NOW):
             for model, status in [("claude-sonnet", 3), ("gpt-oss-120b", 3),
-                                  ("gemini-flash", 0), (None, 3), ("unknown", 4)]:
+                                  ("gemini-flash", 0), (None, 0), ("unknown", 4)]:
                 with self.subTest(model=model), contextlib.redirect_stdout(io.StringIO()) as out:
                     args = ["check", "--provider", "antigravity"]
                     self.assertEqual(ug.main(args + (["--model", model] if model else [])), status)
                     detail = json.loads(out.getvalue())
                     self.assertNotIn("today_used", detail)
             pools["claude"]["pct"] = 94.99
-            self.assertEqual(ug.run("antigravity", None, 95, now=NOW)["verdict"], "allowed")
+            self.assertEqual(ug.run("antigravity", None, 95, now=NOW, model="claude-sonnet")["verdict"], "allowed")
 
     def test_missing_server_timeout_and_bad_payload_have_no_reading(self):
         with mock.patch.object(ug.subprocess, "run", return_value=mock.Mock(stdout="")):
@@ -81,7 +116,7 @@ class Antigravity(unittest.TestCase):
 
     def test_picker_uses_candidate_model_pool(self):
         pools = {"claude": {"pct": 95, "resets_at": FUT, "observed_at": NOW},
-                 "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+                 "gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
         chain = [{"provider": "antigravity", "model": model}
                  for model in ("claude-sonnet", "gemini-flash")]
         with tempfile.TemporaryDirectory() as t, \
@@ -95,15 +130,16 @@ class Antigravity(unittest.TestCase):
         self.assertEqual(result["selected"]["model"], "gemini-flash")
         self.assertEqual([c["verdict"] for c in result["candidates"]], ["blocked", "allowed"])
 
-    def test_show_lists_both_pools_with_local_resets(self):
+    def test_show_lists_three_pools_with_local_resets(self):
         pools = {"claude": {"pct": 50, "resets_at": FUT, "observed_at": NOW},
-                 "gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+                 "gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW},
+                 "gemini-pro": {"pct": 100, "resets_at": FUT, "observed_at": NOW}}
         with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
                 mock.patch.object(ug, "running_workers", return_value=0), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show", "--provider", "antigravity"]), 0)
-        for pool, pct in (("claude", "50"), ("gemini", "2")):
+        for pool, pct in (("claude", "50"), ("gemini-flash", "2"), ("gemini-pro", "100")):
             lines = [line for line in out.getvalue().splitlines() if line.startswith("antigravity/" + pool)]
             self.assertEqual(len(lines), 1)
             self.assertIn(pct, lines[0])
@@ -365,7 +401,7 @@ class Show(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
         text = out.getvalue()
-        for name in ("claude", "codex", "cursor", "antigravity/claude", "antigravity/gemini", "no fresh"):
+        for name in ("claude", "codex", "cursor", "antigravity/claude", "antigravity/gemini-flash", "antigravity/gemini-pro", "no fresh"):
             self.assertIn(name, text)
         self.assertEqual(len([l for l in text.splitlines() if l.startswith("claude")]), 1)
 
@@ -374,7 +410,7 @@ class Show(unittest.TestCase):
                 mock.patch.dict(ug.READERS, {"claude": lambda: None, "codex": lambda: None}), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show", "--json"])
-        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity/claude", "antigravity/gemini", "claude", "codex", "cursor"])
+        self.assertEqual(sorted(r["provider"] for r in json.loads(out.getvalue())), ["antigravity/claude", "antigravity/gemini-flash", "antigravity/gemini-pro", "claude", "codex", "cursor"])
 
 
 def summary(pct, ends=FUT, began=NOW - 29 * 86400, enabled=True):
@@ -384,7 +420,25 @@ def summary(pct, ends=FUT, began=NOW - 29 * 86400, enabled=True):
 
 
 class Cursor(unittest.TestCase):
-    """Cursor bills one monthly cycle: totalPercentUsed stands in for the week, the cycle end for its reset."""
+    """Only the Auto + Composer pool establishes Composer headroom."""
+
+    def test_auto_composer_pool_controls_verdict_and_show(self):
+        for pct, expected in [(0, 0), (42.5, 0), (95, 3), (100, 3)]:
+            with self.subTest(pct=pct), tempfile.TemporaryDirectory() as t, \
+                    mock.patch.object(ug, "STATE", t), \
+                    mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.object(ug, "running_workers", return_value=0):
+                payload = summary(100 if pct < 95 else 0)
+                payload["individualUsage"]["plan"].update(autoPercentUsed=pct, apiPercentUsed=100)
+                reading = ug.cursor_parse(payload, NOW)
+                self.assertEqual(reading, {"pct": pct, "resets_at": FUT, "observed_at": NOW})
+                with mock.patch.dict(ug.READERS, {"cursor": lambda: reading}), \
+                        contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(ug.main(["check", "--provider", "cursor"]), expected)
+                    row = json.loads(out.getvalue())
+                    self.assertEqual(row["weekly_used"], pct)
+                    self.assertEqual(row["resets_at"], FUT)
+                    self.assertIn("cursor auto+composer", ug.table([row]))
 
     def check(self, pct, baseline=None, ends=NOW + 10 * 86400, running=0, cap=None):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
@@ -408,37 +462,112 @@ class Cursor(unittest.TestCase):
                 os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
             return status, json.loads(out.getvalue())
 
-    def test_parse_maps_the_cycle_onto_the_week(self):
-        r = ug.cursor_parse(summary(42.5), NOW)
-        self.assertEqual((r["pct"], r["resets_at"], r["observed_at"]), (42.5, FUT, NOW))
-        self.assertEqual(r["began_at"], NOW - 29 * 86400)
+    def test_composer_allowance_cannot_be_inferred_from_aggregate_plan_usage(self):
+        status, row = self.check(100, baseline=100)
+        self.assertEqual((status, row["verdict"]), (4, "unknown"))
+        self.assertIn("Composer 2.5", row["reason"])
+        self.assertNotIn("weekly_used", row)
 
-    def test_parse_without_a_plan_is_no_reading(self):
+    def test_aggregate_plan_usage_never_supplies_composer_usage(self):
+        for pct, baseline, running in [(0, 0, 0), (53, 48, 0), (100, 100, 3)]:
+            with self.subTest(pct=pct):
+                status, row = self.check(pct, baseline=baseline, running=running)
+                self.assertEqual((status, row["verdict"]), (4, "unknown"))
+                self.assertNotIn("weekly_used", row)
+                self.assertIn("read the Cursor dashboard", row["reason"])
+
+    def test_missing_plan_and_source_have_no_composer_reading(self):
         self.assertIsNone(ug.cursor_parse({}, NOW))
         self.assertIsNone(ug.cursor_parse(summary(10, enabled=False), NOW))
+        self.assertEqual(self.check(None)[0], 4)
 
-    def test_allowed_under_the_daily_share(self):
-        status, d = self.check(50, baseline=48)       # cap = (95-48) over the days left to the cycle end, spent 2
-        self.assertEqual((status, d["cap"], d["today_used"]), (0, ug.auto_cap(48, NOW + 10 * 86400, NOW, 95), 2.0))
+    def test_desktop_and_cli_credentials_read_the_same_pool_without_disclosure(self):
+        import base64, sqlite3, urllib.parse, urllib.request
+        token = "synthetic." + base64.urlsafe_b64encode(
+            b'{"sub":"auth|synthetic-user"}').decode().rstrip("=") + ".signature"
+        cases = [("darwin", "desktop"), ("linux", "desktop"),
+                 ("darwin", "keychain"), ("darwin", "file"),
+                 ("linux", "file"), ("linux", "xdg"),
+                 ("darwin", "opaque-desktop-cli"), ("linux", "broken-desktop-cli"),
+                 ("darwin", "none"), ("linux", "none")]
+        for platform, source in cases:
+            with self.subTest(platform=platform, source=source), tempfile.TemporaryDirectory() as t, \
+                    mock.patch.object(ug, "HOME", t), mock.patch.object(ug, "CURSOR_SUMMARY", None), \
+                    mock.patch.object(ug.sys, "platform", platform), \
+                    mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": t + "/config-override"} if source == "xdg" else {}, clear=True), \
+                    mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.object(ug.subprocess, "run", return_value=mock.Mock(
+                        returncode=0 if source == "keychain" else 44,
+                        stdout=token if source == "keychain" else "", stderr="")) as command, \
+                    mock.patch.object(urllib.request, "urlopen") as fetch, \
+                    contextlib.redirect_stdout(io.StringIO()) as output, \
+                    contextlib.redirect_stderr(io.StringIO()) as errors:
+                if source in ("desktop", "opaque-desktop-cli", "broken-desktop-cli"):
+                    db = t + ("/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+                              if platform == "darwin" else "/.config/Cursor/User/globalStorage/state.vscdb")
+                    os.makedirs(os.path.dirname(db))
+                    if source == "broken-desktop-cli":
+                        with open(db, "w") as f:
+                            f.write("invalid database")
+                    else:
+                        with sqlite3.connect(db) as con:
+                            con.execute("create table ItemTable (key text, value text)")
+                            con.execute("insert into ItemTable values (?, ?)",
+                                        ("cursorAuth/accessToken", "opaque" if source == "opaque-desktop-cli" else token))
+                if source in ("file", "xdg", "opaque-desktop-cli", "broken-desktop-cli"):
+                    auth = (t + "/.cursor/auth.json" if platform == "darwin" else
+                            t + ("/config-override" if source == "xdg" else "/.config") + "/cursor/auth.json")
+                    os.makedirs(os.path.dirname(auth), exist_ok=True)
+                    with open(auth, "w") as f:
+                        json.dump({"accessToken": token}, f)
+                payload = summary(100)
+                payload["individualUsage"]["plan"]["autoPercentUsed"] = 23.5
+                fetch.return_value.__enter__.return_value = io.StringIO(json.dumps(payload))
+                reading = ug.cursor_reading()
+                if source == "none":
+                    self.assertIsNone(reading)
+                    fetch.assert_not_called()
+                else:
+                    self.assertEqual(reading, {"pct": 23.5, "resets_at": FUT, "observed_at": NOW})
+                    request = fetch.call_args.args[0]
+                    self.assertEqual(request.full_url, ug.CURSOR_URL)
+                    self.assertEqual(urllib.parse.unquote(request.get_header("Cookie")),
+                                     "WorkosCursorSessionToken=synthetic-user::" + token)
+                if source == "keychain":
+                    self.assertEqual(command.call_args.args[0], ["security", "find-generic-password",
+                                     "-a", "cursor-user", "-s", "cursor-access-token", "-w"])
+                self.assertNotIn(token, output.getvalue() + errors.getvalue())
+                for call in command.call_args_list:
+                    self.assertNotIn(token, str(call))
 
-    def test_capped_when_today_used_the_daily_share(self):
-        status, d = self.check(53, baseline=48)
-        self.assertEqual((status, d["note"]), (0, "pacing: prefer a lighter model"))
-
-    def test_cycle_exhausted_blocks_until_the_cycle_ends(self):
-        status, d = self.check(100, baseline=100)
-        self.assertEqual((status, d["reason"], d["blocked_until"]), (3, "weekly ceiling", NOW + 10 * 86400))
-
-    def test_running_cursor_workers_reserve_room(self):
-        self.assertEqual(self.check(50, baseline=48, running=3)[0], 0)
-
-    def test_no_reading_is_exit_4(self):
-        status, d = self.check(None)
-        self.assertEqual((status, d["verdict"]), (4, "unknown"))
-
-    def test_a_cycle_that_began_today_started_from_zero(self):
-        r = ug.cursor_parse(summary(3, began=NOW), NOW)
-        self.assertEqual(ug.start_of_day(r, "cursor", NOW - 3600)["pct"], 0.0)
+    def test_rejected_desktop_token_falls_through_to_cli_store(self):
+        import base64, sqlite3, urllib.error, urllib.request
+        def jwt(user):
+            return "synthetic." + base64.urlsafe_b64encode(
+                ('{"sub":"auth|%s"}' % user).encode()).decode().rstrip("=") + ".signature"
+        stale, live = jwt("stale-user"), jwt("live-user")
+        payload = summary(100)
+        payload["individualUsage"]["plan"]["autoPercentUsed"] = 7.5
+        def respond(request, timeout):
+            if "stale-user" in request.get_header("Cookie"):
+                raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+            body = mock.MagicMock()
+            body.__enter__.return_value = io.StringIO(json.dumps(payload))
+            return body
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "HOME", t), \
+                mock.patch.object(ug, "CURSOR_SUMMARY", None), mock.patch.object(ug.sys, "platform", "linux"), \
+                mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(urllib.request, "urlopen", side_effect=respond) as fetch:
+            db = t + "/.config/Cursor/User/globalStorage/state.vscdb"
+            os.makedirs(os.path.dirname(db))
+            with sqlite3.connect(db) as con:
+                con.execute("create table ItemTable (key text, value text)")
+                con.execute("insert into ItemTable values (?, ?)", ("cursorAuth/accessToken", stale))
+            os.makedirs(t + "/.config/cursor", exist_ok=True)
+            with open(t + "/.config/cursor/auth.json", "w") as f:
+                json.dump({"accessToken": live}, f)
+            self.assertEqual(ug.cursor_reading(), {"pct": 7.5, "resets_at": FUT, "observed_at": NOW})
+            self.assertEqual(fetch.call_count, 2)
 
 
 class AutoCap(unittest.TestCase):
@@ -627,6 +756,58 @@ class Pick(unittest.TestCase):
         self.assertEqual((status, result["selected"], result["blocked_until"]),
                          (3, None, FUT))
 
+    def test_reviewer_avoid_claude_picks_codex_when_allowed(self):
+        status, out, _ = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, codex=44,
+                                     extra=("--avoid-family", "claude"))
+        self.assertEqual((status, out.strip()), (0, "--agent codex --model gpt-6.1-sol --effort medium"))
+
+    def test_reviewer_avoid_claude_picks_antigravity_flash_when_codex_blocked(self):
+        pools = {"gemini-flash": {"pct": 5, "resets_at": FUT, "observed_at": NOW}}
+        with tempfile.TemporaryDirectory() as t, \
+                mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
+                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            presets = {"default_chain": ["codex", "cursor", "antigravity"],
+                       "roles": {"reviewer": {"chain": REVIEWER_CHAIN, "tier": "workhorse"}}}
+            with open(t + "/presets.json", "w") as f:
+                json.dump(presets, f)
+            for provider, pct in (("claude", 95), ("codex", 96)):
+                with open(t + "/" + provider + ".json", "w") as f:
+                    json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
+                               "baseline": 40, "resets_at": FUT}, f)
+                if provider == "claude":
+                    with open(t + "/claude-rate-limits.json", "w") as f:
+                        json.dump({"seven_day": {"used_percentage": pct, "resets_at": FUT},
+                                   "_written_at": NOW}, f)
+                else:
+                    os.makedirs(t + "/sessions")
+                    with open(t + "/sessions/rollout-test.jsonl", "w") as f:
+                        json.dump({"timestamp": NOW, "payload": {"rate_limits": {"primary":
+                            {"used_percent": pct, "window_minutes": 10080, "resets_at": FUT}}}}, f)
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": t + "/presets.json"}):
+                with mock.patch.object(ug, "STATE", t):
+                    status = ug.main(["pick", "--role", "reviewer", "--avoid-family", "claude"])
+        self.assertEqual(status, 0)
+        self.assertIn("--agent antigravity --model gemini-3.8-flash", out.getvalue().strip())
+
+    def test_reviewer_avoid_claude_nothing_when_all_cross_family_blocked(self):
+        status, out, err = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, codex=96,
+                                       extra=("--avoid-family", "claude"))
+        self.assertEqual((status, out), (4, ""))
+
+    def test_reviewer_preset_chain_models(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+        with open(path) as f:
+            chain = json.load(f)["roles"]["reviewer"]["chain"]
+        by_provider = {entry["provider"]: entry["model"] for entry in chain}
+        self.assertEqual(by_provider["codex"], "gpt-6.1-sol")
+        self.assertEqual(by_provider["cursor"], "composer-2.5")
+        self.assertEqual(by_provider["antigravity"], "gemini-3.8-flash")
+        self.assertNotIn("gpt-5.6-sol", by_provider.values())
+        self.assertTrue(all(not m.startswith("claude-") for m in by_provider.values()))
+
 
 class PickOrder(unittest.TestCase):
     def test_show_orders_by_fraction_with_unknown_providers_last(self):
@@ -638,7 +819,7 @@ class PickOrder(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 67.4%, codex refresh returned no fresh valid usage reading, cursor refresh returned no fresh valid usage reading, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini GetUserStatus returned no fresh valid pool quota")
+                         "pick order now: claude 67.4%, codex refresh returned no fresh valid usage reading, cursor no reliable Composer 2.5 allowance reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
@@ -670,7 +851,9 @@ class CodexWorkerBase(unittest.TestCase):
             os.chmod(stub, 0o755)
             env = {**os.environ, "ORCA_CLI_COMMAND": stub, "TEST_BASE_LOG": t + "/args",
                    "ORCA_TERMINAL_HANDLE": "term_test"}
-            args = ["bash", script, "--run", "unused", "--spec", "unused", "--title", "unused",
+            with open(t + "/spec", "w") as f:
+                f.write("Check the base branch using the stub CLI.")
+            args = ["bash", script, "--run", "unused", "--spec", t + "/spec", "--title", "unused",
                     "--name", "unused", "--repo", t]
             for override, expected in (([], "origin/master"), (["--base-branch", "origin/release"], "origin/release")):
                 subprocess.run(args + override, env=env, capture_output=True)
@@ -687,6 +870,31 @@ class RealReadingPolicy(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.gate.STATE = self.tmp.name
+
+    def test_cursor_opaque_app_token_reports_dashboard_without_inventing_usage(self):
+        import sqlite3, urllib.request
+        gate = self.gate
+        with mock.patch.object(gate, "HOME", self.tmp.name), \
+                mock.patch.object(gate.sys, "platform", "darwin"), \
+                mock.patch.object(gate.subprocess, "run", return_value=mock.Mock(returncode=44, stdout="")), \
+                mock.patch.object(urllib.request, "urlopen") as fetch, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            db = self.tmp.name + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+            os.makedirs(os.path.dirname(db))
+            con = sqlite3.connect(db)
+            con.execute("create table ItemTable (key text, value text)")
+            # Redacted real credential shape: opaque string, not a JWT with a sub.
+            con.execute("insert into ItemTable values (?, ?)",
+                        ("cursorAuth/accessToken", "redacted-opaque-token"))
+            con.commit()
+            con.close()
+            self.assertEqual(gate.main(["check", "--provider", "cursor", "--model", "composer-2.5"]), 4)
+            row = json.loads(out.getvalue())
+            self.assertEqual(row["verdict"], "unknown")
+            self.assertIn("read the Cursor dashboard", row["reason"])
+            self.assertNotIn("weekly_used", row)
+            self.assertNotIn("redacted-opaque-token", out.getvalue())
+            fetch.assert_not_called()
 
     def test_stale_ceiling_refresh_can_allow_and_never_infers_zero_after_reset(self):
         gate = self.gate
@@ -800,10 +1008,29 @@ if __name__ == "__main__":
 class Banner(unittest.TestCase):
     TEXT = "Individual quota reached for claude-sonnet-5-5-high. Resets in 94h29m"
 
+    def test_flash_banner_does_not_exhaust_pro_and_legacy_gemini_is_ignored(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = t + "/banner.json"
+            with open(path, "w") as f:
+                json.dump({"gemini": FUT}, f)  # old ambiguous pool
+            self.assertEqual(ug.record_quota_banner(
+                "gemini-3.8-flash quota reached. Resets in 2h", NOW, path), "gemini-flash")
+            with mock.patch.object(ug, "BANNER_FILE", path), \
+                    mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.object(ug, "antigravity_pools", return_value={
+                        "gemini-pro": {"pct": 20, "resets_at": FUT, "observed_at": NOW}}):
+                pools = ug.antigravity_reading()
+                self.assertEqual(set(pools), {"gemini-flash", "gemini-pro"})
+                self.assertEqual(ug.antigravity_result(pools, 95, NOW,
+                    model="gemini-4-argon-low")["verdict"], "allowed")
+                self.assertEqual(ug.antigravity_result(pools, 95, NOW,
+                    model="gemini-3.8-flash")["verdict"], "blocked")
+
     def test_parses_pool_and_reset(self):
         self.assertEqual(ug.parse_quota_banner(self.TEXT, NOW), ("claude", NOW + 94 * 3600 + 29 * 60))
-        self.assertEqual(ug.parse_quota_banner("gemini-4 quota reached, resets in 2h", NOW),
-                         ("gemini", NOW + 7200))
+        self.assertEqual(ug.parse_quota_banner("gemini-4-argon-low quota reached, resets in 2h", NOW),
+                         ("gemini-pro", NOW + 7200))
+        self.assertIsNone(ug.parse_quota_banner("gemini-4 quota reached, resets in 2h", NOW))
         self.assertIsNone(ug.parse_quota_banner("all good", NOW))
         self.assertIsNone(ug.parse_quota_banner("quota reached. Resets in 5h", NOW))  # no pool named
 
@@ -827,7 +1054,7 @@ class Banner(unittest.TestCase):
                 self.assertIsNone(ug.antigravity_reading())
 
     def test_unlisted_model_id_is_not_eligible(self):
-        pools = {"gemini": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
+        pools = {"gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW}}
         chain = [{"provider": "antigravity", "model": "gemini-3.1-pro-high"}]
         with tempfile.TemporaryDirectory() as t, \
                 mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
