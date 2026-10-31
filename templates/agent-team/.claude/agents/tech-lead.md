@@ -34,6 +34,12 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Docs-only copy goes to Elon (`docs/agents/team.md`, Orchestration rule 3). You own engineering push, PR and merge (`model-routing.md`). Merge only with `~/dotfiles/script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Merge main in, never rebase, force push or `--admin`.
 - `lead-merge.sh` refuses a PR touching a protected path (hooks, settings, `bin/owner-approve.sh`): send it to Elon; merge after the owner reads the diff.
 - **Before every merge** apply `docs/agents/engineering-integration.md`, Merge rules: review tier and Verdict carry, one writer per branch, review notes, spec rules.
+- **QA in parallel (owner 2026-10-29):**
+  - When a builder reports `worker_done` (the relay forwards it to you with branch, sha and payload path), push at once, then release the committer with the release script.
+  - Start the QA reviewer yourself right after the push, with the QA start script, `~/dotfiles/script/on-worker-done.sh` (it picks a model family other than the author's, a host under its cap, and the brief template: full review for a new PR, resolution only for a main merge). The coordinator does not forward or start QA. Run head-checks in parallel; neither waits for the other.
+  - The QA Verdict is the review Verdict. On a builder PR that gets a QA Verdict, post no second Verdict; push, run head-checks and merge. Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs.
+  - A conflict-resolving main merge on a PR that already has a PASS gets QA on the resolution only (`git show --remerge-diff`), not a full re-review.
+  - Merge needs both a QA PASS and a Checks PASS at the same head.
 - Confirm `MERGED` before reporting.
 
 ## Deploying

@@ -27,7 +27,16 @@ Before dispatching, handling a completion or handing off, read `docs/agents/elon
 
 ## Worker delivery accountability
 
-Elon owns every worker through verified delivery.
+- Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
+- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the lane cap in `.claude/model-routing.md` (Codex at most 3). When the lead's queue waits over 30 minutes, merge through `lead-merge.sh` yourself.
+- Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
+- Routing, quota and launch: `.claude/model-routing.md` and `~/.orca/presets.json`.
+- Arm the inbox waiter with a 10 minute timeout and run `docs/agents/coordinator-operations.md`, Wake loop, on every wake.
+- A worker asking to touch a file outside its scope gets an answer at once: decide and comment "Elon decision <date>" on the issue.
+- **Monitor, route or delegate only when needed (owner 2026-10-29):** routine handoffs are automatic, not your job. A builder's `worker_done` goes to the owning lead by the relay script; the lead pushes, starts QA with the QA start script (`on-worker-done.sh`), runs head-checks, merges, and releases the committer after the push with the release script. Watch counts and caps only. Step in for: a decision outside the lead's authority, a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
+- **QA in parallel (owner 2026-10-29):** the lead starts QA, never you. The QA Verdict is the review Verdict, and Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs. Merge needs a QA PASS and a Checks PASS at the same head; a conflict-resolving main merge on a PASS PR gets QA on the resolution only (`git show --remerge-diff`).
+- A defect spotted in review becomes its own issue, never part of the PR under review.
+- Log each owner approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
 
 - Before launch, verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies and supported trust/readiness.
 - Within two minutes, confirm the exact worker accepted the task and began task-specific work. Record its Dispatch ID and progress evidence; launch receipts alone are insufficient.
