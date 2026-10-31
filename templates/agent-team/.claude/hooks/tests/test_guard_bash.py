@@ -123,6 +123,162 @@ class PatternKills(GuardTest):
             self.assertAllowed(cmd)
 
 
+class LiteralDataHeavyGuard(GuardTest):
+    """Literal heavy-looking text in data must not trip the gate (#443)."""
+
+    HEAVY = "heavy-gate"
+
+    def test_single_quoted_python_write_text_plain(self):
+        self.assertAllowed(
+            "python3 -c 'from pathlib import Path; Path(\"x\").write_text(\"bun test x\")'"
+        )
+
+    def test_single_quoted_python_write_text_literal_backticks(self):
+        self.assertAllowed(
+            "python3 -c 'from pathlib import Path; Path(\"x\").write_text(\"`bun test x`\")'"
+        )
+
+    def test_single_quoted_python_write_text_literal_dollar_expansion(self):
+        self.assertAllowed(
+            "python3 -c 'from pathlib import Path; Path(\"x\").write_text(\"$(bun test x)\")'"
+        )
+
+    def test_standalone_quoted_cat_report_heredoc(self):
+        self.assertAllowed(
+            "cat > /tmp/report.md <<'EOF'\n"
+            "bun test x\n"
+            "`bun test y`\n"
+            "$(bun test z)\n"
+            "EOF"
+        )
+
+    def test_standalone_double_quoted_heredoc_delimiter(self):
+        self.assertAllowed(
+            "cat > /tmp/report.md <<\"EOF\"\n"
+            "bun test x\n"
+            "EOF"
+        )
+
+    def test_tab_stripped_heredoc_delimiter(self):
+        self.assertAllowed(
+            "cat > /tmp/report.md <<-'EOF'\n"
+            "\tbun test x\n"
+            "\tEOF"
+        )
+
+    def test_escaped_dollar_in_double_quotes_is_data(self):
+        self.assertAllowed(r'echo "\$(bun test x)"')
+
+    def test_grep_with_literal_bun_test_allowed(self):
+        self.assertAllowed("grep 'bun test x' README.md")
+
+    def test_active_double_quoted_substitution_denied(self):
+        self.assertDenied('echo "$(bun test x)"', self.HEAVY)
+
+    def test_active_backticks_denied(self):
+        self.assertDenied("echo `bun test x`", self.HEAVY)
+
+    def test_mixed_quoted_and_active_substitution_denied(self):
+        self.assertDenied(r'echo "a"$(bun test x)"b"', self.HEAVY)
+
+    def test_multiple_active_substitutions_denied(self):
+        self.assertDenied("echo $(bun test x) $(bun test y)", self.HEAVY)
+
+    def test_nested_active_substitutions_denied(self):
+        self.assertDenied("echo $(echo $(bun test x))", self.HEAVY)
+
+    def test_nested_backticks_inside_active_substitution_denied(self):
+        self.assertDenied("echo $(echo `bun test x`)", self.HEAVY)
+
+    def test_command_after_report_terminator_denied(self):
+        self.assertDenied(
+            "cat > /tmp/r.md <<'EOF'\n"
+            "literal line\n"
+            "EOF\n"
+            "bun test x",
+            self.HEAVY,
+        )
+
+    def test_missing_terminator_conservative_denied(self):
+        self.assertDenied(
+            "cat > /tmp/r.md <<'EOF'\n"
+            "line\n"
+            "bun test x",
+            self.HEAVY,
+        )
+
+    def test_piped_cat_to_bash_conservative_denied(self):
+        self.assertDenied(
+            "cat <<'EOF' | bash\n"
+            "bun test x\n"
+            "EOF",
+            self.HEAVY,
+        )
+
+    def test_unquoted_heredoc_expansion_conservative_denied(self):
+        self.assertDenied(
+            "cat > /tmp/r.md <<EOF\n"
+            "bun test x\n"
+            "EOF",
+            self.HEAVY,
+        )
+
+    def test_bash_c_with_quoted_heredoc_literal_allowed(self):
+        self.assertAllowed("bash -c \"cat <<'EOF'\\nbun test x\\nEOF\"")
+
+
+class ShellScriptBoundary(GuardTest):
+    """Command strings are JSON data only; the hook never executes them."""
+
+    def test_outer_double_quoted_multiline_report_does_not_hide_expansion(self):
+        self.assertDenied("bash -c \"\ncat > /tmp/r.md <<'EOF'\n$(bun test x)\nEOF\n\"", "heavy-gate")
+
+    def test_outer_double_quoted_report_backticks_denied(self):
+        self.assertDenied("bash -c \"\ncat > /tmp/r.md <<'EOF'\n`bun test x`\nEOF\n\"", "heavy-gate")
+
+    def test_report_header_inside_substitution_does_not_hide_heavy_job(self):
+        self.assertDenied("echo $(\ncat > /tmp/r.md <<'EOF'\nbun test x\nEOF\n)", "heavy-gate")
+
+    def test_report_header_after_line_continuation_is_not_standalone(self):
+        self.assertDenied("echo \\\ncat > /tmp/r.md <<'EOF'\n$(bun test x)\nEOF", "heavy-gate")
+
+    def test_leading_blank_lines_keep_standalone_report_literal(self):
+        self.assertAllowed("\n  \ncat > /tmp/r.md <<'EOF'\n$(bun test x)\nEOF")
+
+    def test_consecutive_leading_reports_keep_literal_bodies(self):
+        self.assertAllowed("cat > /tmp/a.md <<'ONE'\n$(bun test x)\nONE\ncat > /tmp/b.md <<'TWO'\n`bun test x`\nTWO")
+
+    def test_report_after_other_command_is_conservatively_checked(self):
+        self.assertDenied("echo ready\ncat > /tmp/r.md <<'EOF'\n$(bun test x)\nEOF", "heavy-gate")
+
+    def test_single_quoted_shell_script_active_dollar_denied(self):
+        self.assertDenied("bash -c 'echo \"$(bun test x)\"'", "heavy-gate")
+
+    def test_backticks_in_script_denied(self):
+        self.assertDenied("sh -c 'echo `bun test x`'", "heavy-gate")
+
+    def test_nested_shell_script_denied(self):
+        self.assertDenied('bash -c \'sh -c \'"\'"\'echo "$(bun test x)"\'"\'"\'\'', "heavy-gate")
+
+    def test_literal_dollar_script_data_allowed(self):
+        self.assertAllowed('bash -c \'printf \'"\'"\'%s\'"\'"\' \'"\'"\'$(bun test x)\'"\'"\'\'')
+
+    def test_literal_backtick_script_data_allowed(self):
+        self.assertAllowed('bash -c \'printf \'"\'"\'%s\'"\'"\' \'"\'"\'`bun test x`\'"\'"\'\'')
+
+    def test_escaped_dollar_script_data_allowed(self):
+        self.assertAllowed('bash -c \'echo "\\$(bun test x)"\'')
+
+    def test_literal_and_active_script_fragments_denied(self):
+        self.assertDenied('bash -c \'printf \'"\'"\'%s\'"\'"\' \'"\'"\'$(bun test x)\'"\'"\'; echo $(bun test y)\'', "heavy-gate")
+
+    def test_real_newline_shell_fed_heredoc_conservative_denied(self):
+        self.assertDenied('bash -c \'cat > /tmp/r.md <<\'"\'"\'EOF\'"\'"\'\nbun test x\nEOF\'', "heavy-gate")
+
+    def test_deeply_nested_shell_script_cannot_skip_guard(self):
+        self.assertDenied('sh -c \'sh -c \'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'echo "$(bun test x)"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'\'')
+
+
 class SingleTestFile(GuardTest):
     """A bun test run on exactly one *.test.ts(x) file skips the gate; anything wider stays gated."""
 

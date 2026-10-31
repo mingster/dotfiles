@@ -193,7 +193,7 @@ def check_pattern_kill(segment, base, args):
 
 def check_segment(segment, depth=0):
     if depth > 3:
-        return
+        deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
     prog, args = program_and_args(words(segment))
     if not prog:
         return
@@ -250,8 +250,10 @@ def check_segment(segment, depth=0):
         if "-c" in args:
             idx = args.index("-c")
             if idx + 1 < len(args):
-                for seg in segments(args[idx + 1]):
-                    check_segment(seg, depth + 1)
+                script = args[idx + 1]
+                for text in [script, *substitutions(script)]:
+                    for seg in segments(text):
+                        check_segment(seg, depth + 1)
         else:
             script = next((a for a in args if not a.startswith("-")), None)
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
@@ -312,20 +314,88 @@ def check_background_wait(command):
 
 
 def substitutions(command):
-    """The text inside $( ... ) and backticks, so a read hidden in one is checked like any command."""
-    out = re.findall(r"`([^`]*)`", command)
-    depth, start = 0, None
-    for i, c in enumerate(command):
-        if command.startswith("$(", i):
-            if depth == 0:
-                start = i + 2
-            depth += 1
-        elif c == ")" and depth:
-            depth -= 1
-            if depth == 0:
-                out.append(command[start:i])
+    """Inspect active expansions; single-quoted and escaped text is data."""
+    out, quote, i = [], None, 0
+    while i < len(command):
+        c = command[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif c == "\\" and i + 1 < len(command):
+            i += 1
+        elif c == "'" and quote is None:
+            quote = "'"
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "`":
+            end = i + 1
+            while end < len(command):
+                if command[end] == "\\" and end + 1 < len(command):
+                    end += 2
+                    continue
+                if command[end] == "`":
+                    break
+                end += 1
+            body = command[i + 1:end]
+            out.append(body)
+            out.extend(substitutions(body))
+            i = end
+        elif command.startswith("$(", i):
+            # Retain the existing conservative parenthesis scan for active
+            # substitutions; do not relax nested/ambiguous shell syntax here.
+            depth, start, end = 1, i + 2, i + 2
+            while end < len(command) and depth:
+                if command.startswith("$(", end):
+                    depth += 1
+                    end += 2
+                    continue
+                if command[end] == ")":
+                    depth -= 1
+                end += 1
+            body = command[start:end - 1] if not depth else command[start:]
+            out.append(body)
+            out.extend(substitutions(body))
+            i = end - 1
+        i += 1
     return out
 
+
+REPORT_HEREDOC = re.compile(
+    r"^\s*cat\s+>\s*[A-Za-z0-9_./-]+\s+<<(-?)\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2\s*$"
+)
+
+
+def report_command_text(command):
+    """Remove literal data only for a standalone quoted cat-to-file heredoc.
+
+    Only a leading report (or consecutive leading reports) has a proven
+    standalone header. Once other command text appears, retain everything:
+    a later matching line may belong to a multiline quote or substitution.
+    Keep headers and following commands, so executable text is checked.
+    """
+    lines = command.splitlines(keepends=True)
+    out, i = [], 0
+    while i < len(lines):
+        match = REPORT_HEREDOC.fullmatch(lines[i].rstrip("\r\n"))
+        out.append(lines[i])
+        i += 1
+        if not match:
+            if lines[i - 1].strip():
+                out.extend(lines[i:])
+                break
+            continue
+        end = i
+        while end < len(lines):
+            delimiter = lines[end].rstrip("\r\n")
+            if match[1]:
+                delimiter = delimiter.lstrip("\t")
+            if delimiter == match[3]:
+                break
+            end += 1
+        if end < len(lines):
+            out.append("\n")
+            i = end + 1
+    return "".join(out)
 
 def main():
     try:
@@ -337,6 +407,7 @@ def main():
     command = (data.get("tool_input") or {}).get("command") or ""
     check_background_wait(command)
     try:
+        command = report_command_text(command)
         for text in [command, *substitutions(command)]:
             for seg in segments(text):
                 check_segment(seg)
