@@ -43,10 +43,11 @@ head_proven_in_merged_main() {
     echo "worker-finish: cannot verify HEAD; worktree kept at $wt" >&2
     return 1
   fi
-  if git -C "$wt" merge-base --is-ancestor "$head" origin/main 2>/dev/null; then
+  git -C "$wt" merge-base --is-ancestor "$head" origin/main 2>/dev/null
+  mb_rc=$?
+  if [ "$mb_rc" -eq 0 ]; then
     return 0
   fi
-  mb_rc=$?
   if [ "$mb_rc" -gt 1 ]; then
     echo "worker-finish: cannot verify main ancestry; worktree kept at $wt" >&2
     return 1
@@ -220,14 +221,23 @@ fi
 
 if [ "$dry" != 1 ]; then
   wt_porcelain=""
+  unmerged_diff="" unmerged_index=""
   if ! wt_porcelain=$(git -C "$wt" status --porcelain 2>&1); then
     echo "worker-finish: cannot inspect worktree status; worktree kept at $wt" >&2
     exit 0
   fi
+  if ! unmerged_diff=$(git -C "$wt" diff --name-only --diff-filter=U 2>&1); then
+    echo "worker-finish: cannot inspect unmerged diff; worktree kept at $wt" >&2
+    exit 0
+  fi
+  if ! unmerged_index=$(git -C "$wt" ls-files -u 2>&1); then
+    echo "worker-finish: cannot inspect unmerged index; worktree kept at $wt" >&2
+    exit 0
+  fi
   if [ -n "$wt_porcelain" ] \
     || git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
-    || [ -n "$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null || true)" ] \
-    || [ -n "$(git -C "$wt" ls-files -u 2>/dev/null || true)" ]; then
+    || [ -n "$unmerged_diff" ] \
+    || [ -n "$unmerged_index" ]; then
     echo "worker-finish: dirty or unmerged worktree kept at $wt"
     exit 0
   fi

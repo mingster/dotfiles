@@ -323,5 +323,23 @@ unset WORKER_FINISH_TEST_MERGE_BASE_RC
 grep -q "cannot verify main ancestry" "$tmp/out" "$tmp/err" && ok || bad "merge-base query error reports unknown ancestry"
 ! grep -q "removed worktree" "$tmp/out" && ok || bad "merge-base query error must not remove worktree"
 
+# 26. ls-files -u query failure retains clean worktree eligible for removal
+newwt w26; reset; default_released d26
+push_wt_head_to_main "$tmp/w26"
+WORKER_FINISH_TEST_LS_FILES_RC=128 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w26" --dispatch d26
+unset WORKER_FINISH_TEST_LS_FILES_RC
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w26" ] && ok || bad "ls-files query error keeps worktree"
+grep -q "cannot inspect unmerged index" "$tmp/out" "$tmp/err" && ok || bad "ls-files query error message"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "ls-files query error must not remove worktree"
+
+# 27. diff --diff-filter=U query failure retains clean pushed worktree
+newwt w27; reset; default_released d27
+push_wt_head_to_main "$tmp/w27"
+WORKER_FINISH_TEST_DIFF_U_RC=128 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w27" --dispatch d27
+unset WORKER_FINISH_TEST_DIFF_U_RC
+[ "$(cat "$tmp/rc")" = 0 ] && [ -d "$tmp/w27" ] && ok || bad "unmerged diff query error keeps worktree"
+grep -q "cannot inspect unmerged diff" "$tmp/out" "$tmp/err" && ok || bad "unmerged diff query error message"
+! grep -q "removed worktree" "$tmp/out" && ok || bad "unmerged diff query error must not remove worktree"
+
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
