@@ -14,13 +14,17 @@
 | release-manager | `release-manager.md` | Deploy | Release evidence, deployment and rollback plans |
 | sales-marketing | `sales-marketing.md` | Plan input, Growth | Positioning, acquisition plans, growth experiments and metrics |
 
+## Human approval for role changes (owner 2026-10-31)
+
+Every change to a role definition requires human review and explicit approval of the concrete diff before it takes effect or is committed, merged, published, synced or used to launch a worker. This includes `.claude/agents/`, role definitions in other provider directories, and canonical role templates. Agents may prepare an isolated proposed patch for review; preserve the approved version in active use until approval. Elon cannot approve on the human owner's behalf. A general task request, silence, QA PASS or Checks PASS is not approval of an unseen role diff. Record the approval and reviewed revision with the change; any subsequent role edit needs renewed approval. Existing unapproved role edits remain proposals.
+
 ## Orchestration and reporting
 
 1. **Task tree:** Elon builds tasks from the accepted spec. Use the project's configured workflow and add specialist slices only when the work requires them.
 2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when the Tech Lead judges a full crew unnecessary.
 3. **Reports:** Engineering work goes Elon, then the Tech Lead, then the SDLC cycle (owner rule 2026-10-20): Elon hands each engineering issue to the tech-lead; the tech-lead dispatches fullstack-dev and qa-sdet (triage, implement or tdd, code-review), and they report to the tech-lead, who publishes and merges reviewed branches and reports results to Elon. PM and sales report to Elon end to end: Elon dispatches architect-pm and sales-marketing, accepts their output and merges their PRs. Docs-only PRs (specs, tickets, marketing copy) take the mechanical lane: merge on checks through Elon, never through the tech-lead. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go) and reports directly to Elon; a failed gate is its job to diagnose and report. The tech-lead only merges code. Every other role reports to Elon. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
 4. **Monitor and close workers:** follow Delivery contract for the child ledger, inbox classification, read-only liveness and closure; use the official Orca guide and model-routing for lifecycle transitions.
-5. **Merge and queue:** the responsible coordinator merges passing branches under `.claude/model-routing.md` and reports to Elon. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
+5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. Otherwise the responsible coordinator merges passing branches under `.claude/model-routing.md` and reports to Elon. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
 
 Usage gate by coordinator host: `usage-gate-hook.py` gates every worker start from Claude Code (`.claude/settings.json`), Cursor (`~/.cursor/hooks.json`) and Antigravity (`~/.gemini/config/hooks.json`). The Cursor and Antigravity entries come from `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`; a coordinator that starts workers from either IDE first confirms its entry is installed, and otherwise runs in Claude Code.
 
@@ -118,3 +122,7 @@ Project specific gates and deployment stages are documented in `deploy-facts.md`
 ## Coordinator procedures
 
 Before status or process review, Elon reads [Coordinator operations](coordinator-operations.md). Before judging engineering reviews or tests, the tech-lead reads [Engineering integration](engineering-integration.md). Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
+
+## Extra Strong review (owner 2026-10-31)
+
+Owner rule 2026-10-31: extra Strong / Claude Opus cross review is required only for issues involving money transactions (including payments, wallet movements and ledger postings), or when Elon or the human owner explicitly requests it for that issue. Record an explicit request and its reason on the issue or PR. Auth, schema, tenant isolation, gate scripts, diff size, uncertainty and a model fallback do not automatically require this extra review. Ordinary independent QA and exact-head Checks remain required; when both pass, the lead proceeds without waiting for an extra Strong review outside those two cases.

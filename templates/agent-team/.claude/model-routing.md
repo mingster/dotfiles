@@ -6,6 +6,10 @@ Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for
 
 Owner rule (2026-10-23, replaces the 2026-10-22 removal): Codex is the default for implementation tickets, up to 3 Codex lanes at once (`--agent codex --model gpt-6.1-sol --effort medium`). Codex is not in `~/.orca/presets.json` fallback chains: start Codex workers by hand with `~/dotfiles/script/start-codex-worker.sh`. Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity. Codex workers run without the Claude hooks and the `settings.json` deny list; their hard stops are the `forbidden` rules in `~/.codex/rules/default.rules`.
 
+## Coordinator effort (owner 2026-10-31)
+
+Elon and Teddy / tech-lead use Codex `gpt-6.1-sol --effort high`. Ordinary implementation workers remain `gpt-6.1-sol --effort medium`; do not raise all workers automatically. A specific difficult worker may be raised by an explicit Elon / human assignment decision within the existing provider, host and usage caps. This replaces earlier medium-only restrictions for these two coordinator roles and does not create an extra review gate or authorize a different model/provider. Verify the effective model and effort of a running session; writing defaults alone is not proof that an existing session switched.
+
 ## Tiers
 
 | Tier | Use it for | Roles |
@@ -25,10 +29,10 @@ Fallback begins at the provider after the role's default.
 | Role | Default provider | Flags |
 | --- | --- | --- |
 | fullstack-dev | Codex, then Cursor GPT, then Claude | `--agent codex --model gpt-6.1-sol --effort medium` (owner rule above); past 3 Codex lanes or when Codex is out, the `fullstack-dev` preset chain: Cursor `gpt-5.6-sol-medium`, then Claude `sonnet` medium, then Antigravity `claude-sonnet-5-5-medium`. Never Gemini for implementation. |
-| qa-sdet | Claude / Cursor | the Strong row: `--agent claude --model opus --effort high` (or Cursor `claude-opus-5-5-high`) |
+| qa-sdet | Independent family on an available provider | Use a permitted model family different from the author, respecting provider and host caps. Opus is not mandatory for ordinary QA; extra Strong review follows the owner rule below. |
 | every other role | Claude | the Claude column for the role's tier |
 
-Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. When fullstack-dev ran on Codex or Cursor GPT, qa-sdet audits on Claude Opus. When fullstack-dev ran on Claude, qa-sdet audits on a non Claude model (`--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high`). Owner 2026-10-27: Claude Opus cross review only for payments, wallet or ledger, auth, schema, tenant isolation, gate scripts and large cross-area diffs; everything else gets lead review only. Role fallback chains: `~/.orca/presets.json`.
+Different family review: qa-sdet never uses the model family fullstack-dev used on the same PR. Select an available permitted independent family; a Codex or Cursor GPT author does not by itself require Claude Opus. Owner rule 2026-10-31: extra Strong / Claude Opus cross review is required only for issues involving money transactions (including payments, wallet movements and ledger postings), or when Elon or the human owner explicitly requests it for that issue. Record an explicit request and its reason on the issue or PR. Auth, schema, tenant isolation, gate scripts, diff size, uncertainty and a model fallback do not automatically require this extra review. Ordinary independent QA and exact-head Checks remain required; when both pass, the lead proceeds without waiting for an extra Strong review outside those two cases. Role fallback chains: `~/.orca/presets.json`.
 
 ## Worker flags by provider
 
@@ -123,7 +127,7 @@ Order: Claude, Cursor, Antigravity. Every worker gets its provider, model and ef
 
 1. **Unavailable** means quota exhausted, a rate limit that will outlast the task, an auth error, or an outage. Retry a single transient error once and stay put.
 2. **Switch** by rerunning the Task on the next provider: `orca orchestration worker-start --task <task_id> --worktree <same worktree> --agent <next provider> --model <id> --effort <level> --json`. Release the failed worker only once it is proven stopped. For an unsupervised transfer you start yourself, use the `orca-cli` handoff.
-3. **Never downgrade silently.** If no provider can run a Strong assignment, use the strongest available, say so in the report, and have the independent reviewer (secops-finops for money or auth, otherwise qa-sdet) run at Strong before merge.
+3. **Never downgrade silently.** Report any model fallback. A fallback does not add a mandatory Strong reviewer. Extra Strong review before merge follows the owner rule above: money transactions or an explicit Elon / human request only.
 4. **Hooks run only in Claude Code.** Elsewhere the strike rule in `AGENTS.md` is the only guard: follow it as written.
 5. **Finish the task where it landed.** The next task starts on the preferred provider again.
 6. **Record the runner** (provider and model) in the PR description.
