@@ -12,7 +12,7 @@ refuse() { echo "coordinator-publication: refused: $*" >&2; exit 1; }
 body=$(cat "$1")
 [ -n "$body" ] || refuse "empty PR body"
 
-if grep -qiE 'generated with claude code|co-authored-by:' <<<"$body"; then
+if grep -qiE 'generated with (claude code|cursor|codex)|co-authored-by:' <<<"$body"; then
   refuse "tool credit is forbidden in the PR body"
 fi
 

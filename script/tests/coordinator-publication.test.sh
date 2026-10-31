@@ -155,6 +155,13 @@ case "$cmd" in
         url:("https://example.test/pull/" + ($n|tostring))}' > "$MF_GH_DIR/pr-$n.json"
     echo "https://example.test/pull/$n" ;;
   "pr comment") [ -f "$file" ] || exit 1; [ -n "$body_file" ] && body=$(cat "$body_file"); jq --arg b "$body" '.comments += [{body:$b}]' "$file" > "$file.tmp" && mv "$file.tmp" "$file" ;;
+  "pr edit")
+    gh_repo_must_be_github_com || exit 1
+    [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
+    if [ -n "$body_file" ]; then
+      b=$(cat "$body_file" 2>/dev/null || true)
+      jq --arg b "$b" '.body = $b' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+    fi ;;
   "pr list")
     gh_repo_must_be_github_com || exit 1
     if [ -f "$MF_DIR/stub_pr_list_fail" ]; then
@@ -259,6 +266,18 @@ make_feature() {
   "$MF_TEST_GIT" -C "$MF_REPO" commit -q -m "$b"
 }
 
+seed_open_pr() {
+  local branch=$1 body=$2 n h
+  n=$(find "$MF_GH_DIR" -name 'pr-*.json' 2>/dev/null | wc -l | tr -d ' ')
+  n=$((n + 1))
+  h=$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse HEAD)
+  "$MF_TEST_GIT" -C "$MF_REPO" push -q origin "HEAD:refs/heads/$branch" 2>/dev/null || true
+  jq -n --argjson n "$n" --arg hn "$branch" --arg h "$h" --arg body "$body" \
+    '{number:$n, state:"OPEN", baseRefName:"main", headRefName:$hn, headRefOid:$h, baseRefOid:$h, changedFiles:1, body:$body, files:[], comments:[], closingIssuesReferences:[], mergeable:"MERGEABLE", mergeCommit:null,
+      url:("https://example.test/pull/" + ($n|tostring))}' > "$MF_GH_DIR/pr-$n.json"
+  printf '%s' "$n"
+}
+
 good_body
 make_feature feat-main
 out=$(pub main); code=$?
@@ -296,6 +315,24 @@ printf '\nGenerated with Claude Code' >> "$BODY"
 make_feature feat-credit
 out=$(pub feat-credit); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses tool credit" "$out"
+
+good_body
+printf '\nGenerated with Cursor' >> "$BODY"
+make_feature feat-credit-cursor
+out=$(pub feat-credit-cursor); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses Generated with Cursor in body file" "$out"
+
+good_body
+printf '\nGenerated with Codex' >> "$BODY"
+make_feature feat-credit-codex
+out=$(pub feat-credit-codex); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses Generated with Codex in body file" "$out"
+
+good_body
+printf '\nWe use Cursor in the shop workflow; not an attribution footer.' >> "$BODY"
+make_feature feat-cursor-discuss
+out=$(pub feat-cursor-discuss); code=$?
+say "$code" "allows ordinary Cursor discussion without attribution footer" "$out"
 
 good_body
 printf '\nCloses #1 Closes #2' >> "$BODY"
@@ -346,6 +383,19 @@ say "$code" "publishes feature branch" "$out"
 grep -q 'PUBLISHED https://example.test/pull/' <<<"$out" && ok "returns PUBLISHED url" || bad "missing PUBLISHED: $out"
 push_lines=$(grep -c ' push ' "$MF_DIR/push.log" 2>/dev/null || echo 0)
 [ "$push_lines" -ge 1 ] && ok "records git push in push.log" || bad "no push log (lines=$push_lines)"
+
+good_body
+make_feature feat-existing-bad-body
+bad_body=$'## Test plan\n- skip\n\n## Verification\n- one\n- two'
+prn=$(seed_open_pr feat-existing-bad-body "$bad_body")
+: > "$MF_GH_LOG"
+: > "$MF_DIR/push.log"
+out=$(pub feat-existing-bad-body); code=$?
+say "$code" "reconciles existing PR with invalid remote body" "$out"
+grep -Fq 'gh pr edit' "$MF_GH_LOG" && ok "existing invalid body triggers gh pr edit" || bad "missing pr edit for reconcile: $(tr '\n' ' ' < "$MF_GH_LOG")"
+grep -Fq 'gh pr create' "$MF_GH_LOG" && bad "reconcile path should not create a duplicate PR" || ok "reconcile path skips pr create"
+remote_body=$(jq -r '.body' "$MF_GH_DIR/pr-$prn.json")
+[ "$remote_body" = "$(cat "$BODY")" ] && ok "reconcile applies authorized body file" || bad "remote body not reconciled"
 
 good_body
 make_feature feat-retry
@@ -419,6 +469,28 @@ pr_count=$(jq -s '[.[] | select(.headRefName=="feat-resume")] | length' "$MF_GH_
 [ -f "$(receipt_path)" ] && ok "resume preserves receipt file" || bad "receipt missing after resume"
 out=$(pub --keep-receipt feat-resume); code=$?
 say "$code" "second run is idempotent" "$out"
+
+good_body
+make_feature feat-resume-bad-remote
+bad_body=$'## Verification\n- only\n- two bullets'
+prn=$(seed_open_pr feat-resume-bad-remote "$bad_body")
+head_sha=$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse HEAD)
+rec=$(receipt_path)
+mkdir -p "$(dirname "$rec")"
+cat > "$rec" <<EOF
+repo=$REPO_SLUG
+branch=feat-resume-bad-remote
+head_sha=$head_sha
+push_ok=1
+pr_url=https://example.test/pull/$prn
+pr_number=$prn
+EOF
+: > "$MF_GH_LOG"
+out=$(pub --keep-receipt feat-resume-bad-remote); code=$?
+say "$code" "receipt resume reconciles invalid remote PR body" "$out"
+grep -Fq 'gh pr edit' "$MF_GH_LOG" && ok "receipt resume triggers body reconcile" || bad "resume missing pr edit: $(tr '\n' ' ' < "$MF_GH_LOG")"
+grep -Fq 'gh pr create' "$MF_GH_LOG" && bad "receipt resume should not create PR" || ok "receipt resume skips pr create"
+[ "$(jq -r '.body' "$MF_GH_DIR/pr-$prn.json")" = "$(cat "$BODY")" ] && ok "receipt resume applies authorized body" || bad "receipt resume body not reconciled"
 
 good_body
 make_feature feat-interrupt

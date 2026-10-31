@@ -387,15 +387,44 @@ find_existing_pr() {
   return 1
 }
 
+ensure_pr_body_for_publication() {
+  local num=$1 remote_tmp
+  [ -n "$num" ] || fail "internal: missing PR number for body enforcement"
+  remote_tmp=$(mktemp "${TMPDIR:-/tmp}/cp-pr-body.XXXXXX")
+  if ! gh pr view "$num" --repo "$gh_qualified_repo" --json body --jq '.body' >"$remote_tmp" 2>/dev/null; then
+    rm -f "$remote_tmp"
+    fail "cannot read PR body for #$num"
+  fi
+  if bash "$lib" "$remote_tmp" 2>/dev/null; then
+    rm -f "$remote_tmp"
+    return 0
+  fi
+  rm -f "$remote_tmp"
+  if ! gh pr edit "$num" --repo "$gh_qualified_repo" --body-file "$body_file" >/dev/null 2>&1; then
+    fail "existing PR #$num body does not match publication contract and reconcile failed"
+  fi
+  remote_tmp=$(mktemp "${TMPDIR:-/tmp}/cp-pr-body.XXXXXX")
+  gh pr view "$num" --repo "$gh_qualified_repo" --json body --jq '.body' >"$remote_tmp" 2>/dev/null \
+    || { rm -f "$remote_tmp"; fail "cannot re-read PR body after reconcile"; }
+  bash "$lib" "$remote_tmp" 2>/dev/null \
+    || { rm -f "$remote_tmp"; fail "PR body still invalid after reconcile"; }
+  rm -f "$remote_tmp"
+}
+
+complete_publication() {
+  ensure_pr_body_for_publication "$pr_number"
+  write_receipt
+  echo "PUBLISHED $pr_url"
+}
+
 open_pr() {
   if find_existing_pr; then
-    write_receipt
-    echo "PUBLISHED $pr_url"
+    complete_publication
     return 0
   fi
   if [ -n "$pr_number" ] && [ -n "$pr_url" ]; then
     if gh pr view "$pr_number" --repo "$gh_qualified_repo" --json headRefOid,state --jq '.state + " " + .headRefOid' 2>/dev/null | grep -q "^OPEN $head_sha\$"; then
-      echo "PUBLISHED $pr_url"
+      complete_publication
       return 0
     fi
   fi
@@ -408,14 +437,12 @@ open_pr() {
       if ! resolve_pr_from_github; then
         fail "gh pr create succeeded but PR could not be resolved"
       fi
-      write_receipt
-      echo "PUBLISHED $pr_url"
+      complete_publication
       return 0
     fi
     if find_existing_pr; then
       receipt_scalar_ok pr_url "$pr_url" || fail "gh pr create left malformed PR URL in listing"
-      write_receipt
-      echo "PUBLISHED $pr_url"
+      complete_publication
       return 0
     fi
     sleep 1
