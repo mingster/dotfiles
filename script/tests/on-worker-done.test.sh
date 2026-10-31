@@ -11,14 +11,24 @@ echo "${GATE_OUT:---agent codex --model gpt-6.1-sol --effort medium}"
 GATE
 chmod +x "$tmp/gate"
 mkdir -p "$tmp/bin"
-cat > "$tmp/bin/orca" <<'ORCA'
-#!/usr/bin/env bash
-case "$*" in
-  "environment list --json")
-    if [ -n "${FAKE_ORCA_ENVS:-}" ]; then printf '%s\n' "$FAKE_ORCA_ENVS"; else printf '%s\n' '{"ok":true,"result":{"environments":[]}}'; fi ;;
-  *) echo "$*" >> "$FAKE_DIR/orca.log" ;;
-esac
-exit 0
+cat > "$tmp/bin/orca" <<ORCA
+#!/usr/bin/env python3
+import json, os, sys
+head = os.environ.get("QA_HEAD", "")
+payload = json.dumps({"ok": True, "result": {"worktrees": [{
+  "path": "/wt", "head": head,
+  "identity": {"key": "wt2:local:fixture-id"}
+}], "page": {}}})
+env_payload = os.environ.get("FAKE_ORCA_ENVS") or '{"ok":true,"result":{"environments":[]}}'
+if sys.argv[1:4] == ["environment", "list", "--json"]:
+    print(env_payload)
+elif len(sys.argv) >= 4 and sys.argv[1] == "worktree" and sys.argv[2] == "list":
+    print(payload)
+else:
+    print(json.dumps({"ok": False, "error": sys.argv}), file=sys.stderr)
+    sys.exit(1)
+with open(os.environ["FAKE_DIR"] + "/orca.log", "a") as _log:
+    _log.write(" ".join(sys.argv[1:]) + "\n")
 ORCA
 chmod +x "$tmp/bin/orca"
 cat > "$tmp/bin/gh" <<'GH'
@@ -42,6 +52,9 @@ capture_brief() {
 }
 setup_local_fleet() {
   printf '%s\n' "{\"host_caps\":{\"$LOCAL_HOST\":4},\"runs\":[]}" > "$tmp/fleet-local.json"
+  cat > "$tmp/policy.json" <<POL
+{"version":1,"issued_at":"2026-10-31T10:00:00Z","expires_at":"2026-11-01T18:00:00Z","review":{"runtime_host":"$LOCAL_HOST","repo":"github:o/n","worktree_path":"/wt","head":"$head"},"hosts":{"$LOCAL_HOST":{"cap":4,"load_ceiling":8.0,"providers":{"codex":{"models":["gpt-6.1-sol"]}}}}}
+POL
   cat > "$tmp/fleet-watch-local" <<FW
 #!/usr/bin/env bash
 [ "\$1" = "--config" ] && shift 2
@@ -52,22 +65,24 @@ exit 0
 FW
   chmod +x "$tmp/fleet-watch-local"
   export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-local.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch-local"
-  export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[]}}'
+  export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy.json" QA_ADMISSION_SELF_LOAD='{"load_1m":1.0}'
+  export QA_ADMISSION_LOCAL_HOST="$LOCAL_HOST" FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[]}}'
 }
 
 : > "$tmp/orca.log"
-( HOME="$tmp/home" unset ON_WORKER_DONE_FLEET_CONFIG; run_flags >/dev/null 2>"$tmp/err" ); rc=$?
-check "fail-closed: missing fleet config refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config missing' "$tmp/err"; echo $?)"
-check "fail-closed: missing fleet config prints no worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
+( HOME="$tmp/home" unset ON_WORKER_DONE_ADMISSION_POLICY; run_flags >/dev/null 2>"$tmp/err" ); rc=$?
+check "fail-closed: missing admission policy refuses" "$([ "$rc" -ne 0 ] && grep -q 'admission policy missing' "$tmp/err"; echo $?)"
+check "fail-closed: missing admission policy prints no worker-start" "$(! grep -q worker-start "$tmp/orca.log"; echo $?)"
 
-ON_WORKER_DONE_FLEET_CONFIG="$tmp/does-not-exist.json" run_flags >/dev/null 2>"$tmp/err"; rc=$?
-check "fail-closed: nonexistent fleet config path refuses" "$([ "$rc" -ne 0 ] && grep -q 'fleet config missing' "$tmp/err"; echo $?)"
-unset ON_WORKER_DONE_FLEET_CONFIG
+setup_local_fleet
+ON_WORKER_DONE_ADMISSION_POLICY="$tmp/does-not-exist.json" run_flags >/dev/null 2>"$tmp/err"; rc=$?
+check "fail-closed: nonexistent admission policy path refuses" "$([ "$rc" -ne 0 ] && grep -q 'admission policy missing' "$tmp/err"; echo $?)"
+unset ON_WORKER_DONE_ADMISSION_POLICY
 
+setup_local_fleet
 printf '%s\n' '{not json' > "$tmp/fleet-bad.json"
 ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-bad.json" run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "fail-closed: invalid fleet config refuses" "$([ "$rc" -ne 0 ]; echo $?)"
-unset ON_WORKER_DONE_FLEET_CONFIG
 
 setup_local_fleet
 cat > "$tmp/fleet-watch-local" <<'FW'
@@ -120,6 +135,9 @@ check "fail-closed: admit cap mismatch refuses" "$([ "$rc" -ne 0 ]; echo $?)"
 
 setup_local_fleet
 printf '%s\n' '{"host_caps":{"remote-only":2},"runs":[]}' > "$tmp/fleet-remote.json"
+cat > "$tmp/policy-remote.json" <<POL
+{"version":1,"issued_at":"2026-10-31T10:00:00Z","expires_at":"2026-11-01T18:00:00Z","review":{"runtime_host":"remote-only","repo":"github:o/n","worktree_path":"/wt","head":"$head","saved_environment_name":"remote-only"},"hosts":{"remote-only":{"cap":2,"load_ceiling":8.0,"providers":{"codex":{"models":["gpt-6.1-sol"]}}}}}
+POL
 cat > "$tmp/fleet-watch-remote" <<'FW'
 #!/usr/bin/env bash
 [ "$1" = "--config" ] && shift 2
@@ -129,9 +147,10 @@ exit 0
 FW
 chmod +x "$tmp/fleet-watch-remote"
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-remote.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch-remote"
+export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy-remote.json" QA_ADMISSION_SELF_LOAD='{"load_1m":1.0}'
 export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[]}}'
 run_flags >/dev/null 2>"$tmp/err"; rc=$?
-check "fail-closed: admitted host without saved Orca environment refuses" "$([ "$rc" -ne 0 ] && grep -q 'no saved Orca environment' "$tmp/err"; echo $?)"
+check "fail-closed: admitted host without saved Orca environment refuses" "$([ "$rc" -ne 0 ] && grep -q 'saved Orca environment' "$tmp/err"; echo $?)"
 
 setup_local_fleet
 cat > "$tmp/fleet-watch-local" <<'FW'
@@ -160,6 +179,7 @@ run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "fail-closed: admit host mismatch refuses" "$([ "$rc" -ne 0 ]; echo $?)"
 
 setup_local_fleet
+: > "$tmp/err"
 out=$(run); rc=$?
 check "gate ok: exit 0" "$rc"
 check "gate ok: cross-family agent flags" "$(echo "$out" | grep -q -- '--agent codex'; echo $?)"
@@ -237,6 +257,10 @@ rm -f "$brief"
 cat > "$tmp/fleet-config.json" <<'JSON'
 {"host_caps":{"fleet-a":2,"fleet-b":2},"runs":[]}
 JSON
+cat > "$tmp/policy-fleetb.json" <<POL
+{"version":1,"issued_at":"2026-10-31T10:00:00Z","expires_at":"2026-11-01T18:00:00Z","review":{"runtime_host":"fleet-b","repo":"github:o/n","worktree_path":"/wt","head":"HEAD_PLACEHOLDER","saved_environment_name":"fleet-b"},"hosts":{"fleet-b":{"cap":2,"load_ceiling":8.0,"providers":{"codex":{"models":["gpt-6.1-sol"]}}},"fleet-a":{"cap":2,"load_ceiling":8.0,"providers":{"codex":{"models":["gpt-6.1-sol"]}}}}}
+POL
+sed "s/HEAD_PLACEHOLDER/$head/" "$tmp/policy-fleetb.json" > "$tmp/policy-fleetb.json.tmp" && mv "$tmp/policy-fleetb.json.tmp" "$tmp/policy-fleetb.json"
 cat > "$tmp/fleet-watch" <<'FW'
 #!/usr/bin/env bash
 [ "$1" = "--config" ] && shift 2
@@ -250,14 +274,17 @@ esac
 FW
 chmod +x "$tmp/fleet-watch"
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy-fleetb.json" QA_ADMISSION_LOAD_OBS='{"fleet-b":{"load_1m":1.0}}'
 export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"env-fleet-b","name":"fleet-b"}]}}'
 out=$(run_flags 2>"$tmp/err"); rc=$?
 check "host pick under cap: exit 0" "$rc"
 check "host pick maps --on to saved Orca environment id" "$(echo "$out" | grep -q -- '--on env-fleet-b'; echo $?)"
-unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH FAKE_ORCA_ENVS
+check "host pick uses native worktree identity selector" "$(echo "$out" | grep -q -- '--worktree identity:wt2:local:fixture-id'; echo $?)"
+unset ON_WORKER_DONE_FLEET_CONFIG ON_WORKER_DONE_FLEET_WATCH ON_WORKER_DONE_ADMISSION_POLICY FAKE_ORCA_ENVS
 
 setup_local_fleet
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy-fleetb.json" QA_ADMISSION_LOAD_OBS='{"fleet-b":{"load_1m":1.0}}'
 export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"env-dup","name":"fleet-b"},{"id":"env-dup2","name":"fleet-b"}]}}'
 run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "fail-closed: duplicate Orca environment names refuse" "$([ "$rc" -ne 0 ]; echo $?)"
@@ -265,13 +292,15 @@ unset FAKE_ORCA_ENVS
 
 setup_local_fleet
 export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy-fleetb.json" QA_ADMISSION_LOAD_OBS='{"fleet-b":{"load_1m":1.0}}'
 export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"fleet-b","name":"other-name"}]}}'
 run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "fail-closed: malformed Orca environment list mapping refuses" "$([ "$rc" -ne 0 ]; echo $?)"
 unset FAKE_ORCA_ENVS
 
 setup_local_fleet
-export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json" ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export ON_WORKER_DONE_FLEET_CONFIG="$tmp/fleet-config.json"
+export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy-fleetb.json" QA_ADMISSION_LOAD_OBS='{"fleet-b":{"load_1m":1.0}}'
 cat > "$tmp/fleet-watch" <<'FW'
 #!/usr/bin/env bash
 [ "$1" = "--config" ] && shift 2
@@ -280,6 +309,8 @@ printf '%s\n' '{"admitted":false,"host":"'"$2"'","cap":2,"occupied":2,"reason":"
 exit 1
 FW
 chmod +x "$tmp/fleet-watch"
+export ON_WORKER_DONE_FLEET_WATCH="$tmp/fleet-watch"
+export FAKE_ORCA_ENVS='{"ok":true,"result":{"environments":[{"id":"env-fleet-b","name":"fleet-b"}]}}'
 run_flags >/dev/null 2>"$tmp/err"; rc=$?
 check "every host at cap: exit nonzero" "$([ "$rc" -ne 0 ]; echo $?)"
 check "every host at cap: names counts in stderr" "$(grep -q 'host cap exceeded' "$tmp/err" && grep -q '2/2' "$tmp/err"; echo $?)"

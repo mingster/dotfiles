@@ -4,7 +4,8 @@
 #                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
-#      ON_WORKER_DONE_FLEET_CONFIG / ON_WORKER_DONE_FLEET_WATCH override host-cap admission (tests).
+#      ON_WORKER_DONE_FLEET_CONFIG / ON_WORKER_DONE_FLEET_WATCH override fleet-watch (tests).
+#      ON_WORKER_DONE_ADMISSION_POLICY operator-owned JSON (required). qa-admission.py validates workspace.
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|codex|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
 repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
@@ -131,116 +132,44 @@ if [ "$independence_ok" != "1" ]; then
 fi
 
 host_flags=()
+worktree_selector=""
 fleet_config="${ON_WORKER_DONE_FLEET_CONFIG:-}"
 if [ -z "$fleet_config" ]; then
   fleet_config="$HOME/.config/fleet-watch/config.json"
 fi
-if [ ! -f "$fleet_config" ]; then
-  echo "QA start refused head=$head: fleet config missing or unreadable: $fleet_config" >&2
+policy=${ON_WORKER_DONE_ADMISSION_POLICY:-}
+if [ -z "$policy" ] || [ ! -f "$policy" ]; then
+  echo "QA start refused head=$head: admission policy missing or unreadable" >&2
   exit 1
 fi
-fleet_watch=${ON_WORKER_DONE_FLEET_WATCH:-$HOME/dotfiles/script/fleet-watch.py}
-local_host=$(hostname -s 2>/dev/null || echo local)
-placement_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-placement.XXXXXX")
-if ! placement_on=$(python3 - "$fleet_config" "$fleet_watch" "$local_host" 2>"$placement_err" <<'PY'
-import json, os, subprocess, sys
-
-def refuse(msg):
-    print(msg, file=sys.stderr)
-    sys.exit(1)
-
-config_path, fleet_watch, local_host = sys.argv[1:4]
-orca = os.environ.get("ORCA_CLI_COMMAND", "orca")
-
-try:
-    config = json.load(open(config_path))
-except (OSError, ValueError):
-    refuse("invalid fleet config")
-host_caps = config.get("host_caps")
-if not isinstance(host_caps, dict) or not host_caps:
-    refuse("host_caps missing in fleet config")
-
-proc = subprocess.run([orca, "environment", "list", "--json"], capture_output=True, text=True, timeout=15)
-if proc.returncode != 0:
-    refuse("cannot read Orca environment list")
-try:
-    envs = json.loads(proc.stdout).get("result", {}).get("environments") or []
-except (ValueError, TypeError, AttributeError):
-    refuse("invalid Orca environment list")
-by_name = {}
-for entry in envs:
-    if not isinstance(entry, dict):
-        refuse("invalid Orca environment entry")
-    name, eid = entry.get("name"), entry.get("id")
-    if not name or not eid:
-        refuse("incomplete Orca environment entry")
-    if name in by_name:
-        refuse("ambiguous Orca environment name %s" % name)
-    by_name[name] = entry
-
-def validate_admit_receipt(receipt, requested_host, caps):
-    if not isinstance(receipt, dict):
-        return "%s: malformed admit receipt" % requested_host
-    if receipt.get("host") != requested_host:
-        return "%s: admit host mismatch" % requested_host
-    if receipt.get("admitted") is not True:
-        return receipt.get("reason") or ("%s: not admitted" % requested_host)
-    expected_cap = caps.get(requested_host)
-    if type(expected_cap) is not int or expected_cap <= 0:
-        return "invalid cap in fleet config for %s" % requested_host
-    cap, occupied = receipt.get("cap"), receipt.get("occupied")
-    if type(cap) is not int or type(occupied) is not int:
-        return "%s: invalid cap or occupied in admit receipt" % requested_host
-    if cap != expected_cap:
-        return "%s: admit cap mismatch" % requested_host
-    if occupied < 0 or occupied >= cap:
-        return "%s: admit occupied out of range" % requested_host
-    return None
-
-picked = None
-reasons = []
-for host in host_caps:
-    admit = subprocess.run([fleet_watch, "--config", config_path, "--admit", host],
-                           capture_output=True, text=True, timeout=30)
-    if admit.returncode != 0:
-        reason = admit.stderr.strip() or admit.stdout.strip()
-        try:
-            reason = json.loads(admit.stdout).get("reason") or reason
-        except (ValueError, TypeError):
-            pass
-        reasons.append(reason or ("admit exit %d" % admit.returncode))
-        continue
-    try:
-        receipt = json.loads(admit.stdout)
-    except (ValueError, TypeError):
-        reasons.append("%s: malformed admit receipt" % host)
-        continue
-    err = validate_admit_receipt(receipt, host, host_caps)
-    if err:
-        reasons.append(err)
-        continue
-    picked = host
-    break
-
-if not picked:
-    refuse("no host under cap (%s)" % ("; ".join(reasons) or "inventory unavailable"))
-
-if picked == local_host:
-    print("LOCAL")
-elif picked in by_name:
-    print(by_name[picked]["id"])
-else:
-    refuse("no saved Orca environment for host %s" % picked)
+_here=$(cd "$(dirname "$0")" && pwd)
+qa_admission=${ON_WORKER_DONE_QA_ADMISSION:-$_here/qa-admission.py}
+ver_model=$(python3 - "$flags" <<'PY'
+import sys
+tokens = sys.argv[1].split()
+print(tokens[tokens.index("--model") + 1] if "--model" in tokens else "")
 PY
-); then
-  echo "QA start refused head=$head: $(tr '\n' ' ' < "$placement_err")" >&2
-  rm -f "$placement_err"
+)
+admission_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-admission.err.XXXXXX")
+admission_out=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-admission.out.XXXXXX")
+if ! python3 "$qa_admission" --policy "$policy" --fleet-config "$fleet_config" --repo "$repo" \
+    --head "$head" --worktree-path "$wt" --verifier-provider "$verifier_provider" \
+    --verifier-model "$ver_model" 2>"$admission_err" >"$admission_out"; then
+  echo "QA start refused head=$head: $(tr '\n' ' ' < "$admission_err")" >&2
+  rm -f "$admission_err" "$admission_out"
   exit 1
 fi
-rm -f "$placement_err"
-if [ "$placement_on" != "LOCAL" ]; then
-  host_flags=(--on "$placement_on")
+read -r environment_id worktree_selector < <(python3 - "$admission_out" <<'PY'
+import json, sys
+o = json.load(open(sys.argv[1]))
+print(o["environment_id"], o["worktree_selector"])
+PY
+)
+rm -f "$admission_err" "$admission_out"
+if [ "$environment_id" != "LOCAL" ] && [ -n "$environment_id" ]; then
+  host_flags=(--on "$environment_id")
 fi
+[ -n "$worktree_selector" ] || { echo "QA start refused head=$head: missing worktree selector" >&2; exit 1; }
 
 # All coding reviewer providers enter here. Read the latest receipt for this
 # exact head before starting a worker or producing a reviewer brief.
@@ -306,8 +235,8 @@ Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not 
 EOF
 fi
 
-cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree path:$wt --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
+cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree $worktree_selector --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
 echo "$cmd"
 [ "$dry" = 1 ] && exit 0
 # shellcheck disable=SC2086
-exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "path:$wt" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json
+exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json
