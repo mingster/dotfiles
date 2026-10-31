@@ -21,32 +21,129 @@ origin_slug_from_url() {
   printf '%s' "$u"
 }
 
-assert_repo_matches_origin() {
-  [ "${COORDINATOR_PUBLICATION_FIXTURE_ORIGIN:-}" = 1 ] && return 0
-  local origin slug
-  origin=$(git -C "$worktree" remote get-url origin 2>/dev/null) || die "worktree has no origin remote"
-  case "$origin" in
-    file:*|/*) die "origin remote is not a GitHub repository (fixture seam disabled)" ;;
+remote_is_disposable_file() {
+  case "$1" in
+    file:*|/*) return 0 ;;
+    *) return 1 ;;
   esac
-  slug=$(origin_slug_from_url "$origin") || die "cannot derive owner/name from origin remote (URL redacted)"
-  [ "$slug" = "$want_repo" ] || die "origin remote owner/name ($slug) does not match --repo $want_repo"
+}
+
+assert_repo_matches_origin() {
+  local fetch_url slug u disposable=0
+  fetch_url=$(git -C "$worktree" remote get-url origin 2>/dev/null) || die "worktree has no origin remote"
+  remote_is_disposable_file "$fetch_url" && disposable=1
+
+  local -a urls=("$fetch_url")
+  while IFS= read -r u; do
+    [ -n "$u" ] && urls+=("$u")
+  done < <(git -C "$worktree" config --get-all remote.origin.pushurl 2>/dev/null || true)
+
+  for u in "${urls[@]}"; do
+    case "$u" in
+      file:*|/*)
+        if [ "$disposable" != 1 ] || [ "${COORDINATOR_PUBLICATION_FIXTURE_ORIGIN:-}" != 1 ]; then
+          die "origin remote is not a GitHub repository (fixture seam disabled)"
+        fi
+        ;;
+      *)
+        slug=$(origin_slug_from_url "$u") || die "cannot derive owner/name from origin remote (URL redacted)"
+        [ "$slug" = "$want_repo" ] || die "origin remote owner/name ($slug) does not match --repo $want_repo"
+        ;;
+    esac
+  done
+}
+
+receipt_scalar_ok() {
+  local field=$1 val=$2
+  case "$field" in
+    repo) [[ "$val" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ;;
+    branch) [[ "$val" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$val" != *'$('* ]] && [[ "$val" != *'`'* ]] ;;
+    head_sha) [[ "$val" =~ ^[0-9a-f]{40}$ ]] ;;
+    push_ok) [ "$val" = 0 ] || [ "$val" = 1 ] ;;
+    pr_url) [ -z "$val" ] || [[ "$val" =~ ^https://[^[:space:]]+$ ]] ;;
+    pr_number) [ -z "$val" ] || [[ "$val" =~ ^[0-9]+$ ]] ;;
+    *) return 1 ;;
+  esac
 }
 
 read_receipt_file() {
-  rec_repo="" rec_branch="" rec_head_sha="" rec_push_ok=0 rec_pr_url="" rec_pr_number=""
-  local line
+  rec_repo="" rec_branch="" rec_head_sha="" rec_push_ok="" rec_pr_url="" rec_pr_number=""
+  local line key val seen_repo=0 seen_branch=0 seen_head=0 seen_push=0 seen_purl=0 seen_pnum=0
+  [ -f "$receipt" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
     case "$line" in
-      repo=*) eval "rec_repo=${line#repo=}" ;;
-      branch=*) eval "rec_branch=${line#branch=}" ;;
-      head_sha=*) eval "rec_head_sha=${line#head_sha=}" ;;
-      push_ok=*) eval "rec_push_ok=${line#push_ok=}" ;;
-      pr_url=*) eval "rec_pr_url=${line#pr_url=}" ;;
-      pr_number=*) eval "rec_pr_number=${line#pr_number=}" ;;
-      "") continue ;;
+      repo=*)
+        [ "$seen_repo" = 0 ] || die "duplicate receipt field repo"
+        seen_repo=1
+        val=${line#repo=}
+        receipt_scalar_ok repo "$val" || die "malformed receipt field repo"
+        rec_repo=$val
+        ;;
+      branch=*)
+        [ "$seen_branch" = 0 ] || die "duplicate receipt field branch"
+        seen_branch=1
+        val=${line#branch=}
+        receipt_scalar_ok branch "$val" || die "malformed receipt field branch"
+        rec_branch=$val
+        ;;
+      head_sha=*)
+        [ "$seen_head" = 0 ] || die "duplicate receipt field head_sha"
+        seen_head=1
+        val=${line#head_sha=}
+        receipt_scalar_ok head_sha "$val" || die "malformed receipt field head_sha"
+        rec_head_sha=$val
+        ;;
+      push_ok=*)
+        [ "$seen_push" = 0 ] || die "duplicate receipt field push_ok"
+        seen_push=1
+        val=${line#push_ok=}
+        receipt_scalar_ok push_ok "$val" || die "malformed receipt field push_ok"
+        rec_push_ok=$val
+        ;;
+      pr_url=*)
+        [ "$seen_purl" = 0 ] || die "duplicate receipt field pr_url"
+        seen_purl=1
+        val=${line#pr_url=}
+        receipt_scalar_ok pr_url "$val" || die "malformed receipt field pr_url"
+        rec_pr_url=$val
+        ;;
+      pr_number=*)
+        [ "$seen_pnum" = 0 ] || die "duplicate receipt field pr_number"
+        seen_pnum=1
+        val=${line#pr_number=}
+        receipt_scalar_ok pr_number "$val" || die "malformed receipt field pr_number"
+        rec_pr_number=$val
+        ;;
       *) die "unexpected receipt content; remove $receipt before publishing" ;;
     esac
   done < "$receipt"
+  if [ "$seen_repo$seen_branch$seen_head$seen_push$seen_purl$seen_pnum" != 111111 ]; then
+    die "incomplete receipt; remove $receipt before publishing"
+  fi
+}
+
+inspect_env_paths_in_publish_range() {
+  local range=$1 path base
+  if ! git -C "$worktree" rev-parse "$range" >/dev/null 2>&1; then
+    die "cannot inspect branch commits for environment files"
+  fi
+  while IFS= read -r -d '' path || [ -n "${path:-}" ]; do
+    [ -n "$path" ] || continue
+    base=${path##*/}
+    case "$base" in
+      .env|.env.*)
+        case "$base" in
+          .env.example|.env.sample|.env.template|.env.dist) continue ;;
+          .env.*.example) continue ;;
+        esac
+        die "tracked environment file in branch diff: $path"
+        ;;
+    esac
+  done < <(
+    git -C "$worktree" log --format= --name-only -z "$range" 2>/dev/null \
+      || die "cannot inspect branch history for environment files"
+  )
 }
 
 lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/validate-publication-body.sh"
@@ -97,23 +194,8 @@ if ! git -C "$worktree" rev-parse "$base_ref" >/dev/null 2>&1; then
   die "cannot resolve base ref for environment file inspection"
 fi
 
-env_diff=$(git -C "$worktree" diff --name-only "$base_ref...HEAD" 2>/dev/null) \
-  || env_diff=$(git -C "$worktree" diff --name-only "$base_ref" HEAD 2>/dev/null) \
-  || die "cannot inspect branch diff for environment files"
-
-while IFS= read -r path; do
-  [ -n "$path" ] || continue
-  base=${path##*/}
-  case "$base" in
-    .env|.env.*)
-      case "$base" in
-        .env.example|.env.sample|.env.template|.env.dist) continue ;;
-        .env.*.example) continue ;;
-      esac
-      die "tracked environment file in branch diff: $path"
-      ;;
-  esac
-done <<<"$env_diff"
+publish_range="${base_ref}..HEAD"
+inspect_env_paths_in_publish_range "$publish_range"
 
 assert_repo_matches_origin
 
@@ -125,22 +207,27 @@ receipt_dir="$git_path"
 mkdir -p "$receipt_dir"
 receipt="$receipt_dir/receipt.env"
 write_receipt() {
+  local tmp="$receipt_dir/receipt.env.tmp.$$"
+  receipt_scalar_ok repo "$want_repo" || die "internal receipt repo"
+  receipt_scalar_ok branch "$want_branch" || die "internal receipt branch"
+  receipt_scalar_ok head_sha "$want_head_sha" || die "internal receipt head_sha"
   {
-    printf 'repo=%q\n' "$want_repo"
-    printf 'branch=%q\n' "$want_branch"
-    printf 'head_sha=%q\n' "$want_head_sha"
-    printf 'push_ok=%q\n' "${push_ok:-0}"
-    printf 'pr_url=%q\n' "${pr_url:-}"
-    printf 'pr_number=%q\n' "${pr_number:-}"
-  } > "$receipt"
+    printf 'repo=%s\n' "$want_repo"
+    printf 'branch=%s\n' "$want_branch"
+    printf 'head_sha=%s\n' "$want_head_sha"
+    printf 'push_ok=%s\n' "${push_ok:-0}"
+    printf 'pr_url=%s\n' "${pr_url:-}"
+    printf 'pr_number=%s\n' "${pr_number:-}"
+  } > "$tmp"
+  if [ "${COORDINATOR_PUBLICATION_TEST_STOP_BEFORE_MV:-}" = 1 ]; then
+    die "test stop before receipt rename"
+  fi
+  mv "$tmp" "$receipt"
 }
 
 push_ok=0 pr_url="" pr_number=""
 if [ -f "$receipt" ]; then
-  read_receipt_file || die "malformed receipt; remove $receipt before publishing"
-  repo=$want_repo
-  branch=$want_branch
-  head_sha=$want_head_sha
+  read_receipt_file
   [ "$rec_repo" = "$want_repo" ] && [ "$rec_branch" = "$want_branch" ] && [ "$rec_head_sha" = "$want_head_sha" ] \
     || die "receipt head mismatch; remove $receipt before publishing a new head"
   push_ok=$rec_push_ok
@@ -176,6 +263,7 @@ push_branch() {
     && ! git -C "$worktree" merge-base --is-ancestor "$remote_sha" "$head_sha" 2>/dev/null; then
     die "non-fast-forward push required; force push is forbidden"
   fi
+  attempt=0
   while [ "$attempt" -lt "$max_attempts" ]; do
     attempt=$((attempt + 1))
     if git -C "$worktree" push -q origin "HEAD:refs/heads/$branch" 2>&1; then
@@ -219,6 +307,7 @@ open_pr() {
   fi
   local pr_attempt=0 t
   [ -n "$title" ] || title="$branch"
+  pr_attempt=0
   while [ "$pr_attempt" -lt "$max_attempts" ]; do
     pr_attempt=$((pr_attempt + 1))
     if out=$(gh pr create --repo "$repo" --head "$branch" --base main --title "$title" --body-file "$body_file" 2>&1); then

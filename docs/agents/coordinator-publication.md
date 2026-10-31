@@ -23,11 +23,11 @@ The worktree must already be checked out on `--branch`. The helper never reads `
 
 ## Refusals
 
-Protected branch names (`main`, `master`, `staging`, `production`), `--force`, non-fast-forward pushes, tracked secret env files anywhere in the branch diff (for example `web/.env.local`; `.env.example` is allowed), and invalid bodies exit before any network call. Local diff inspection for environment files is fail-closed when the base ref or diff cannot be resolved. The worktree `origin` remote must identify the same GitHub `owner/name` as `--repo` (credentials are never printed on mismatch); fixture tests may set `COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1` for file remotes.
+Protected branch names (`main`, `master`, `staging`, `production`), `--force`, non-fast-forward pushes, and invalid bodies exit before any network call. Secret env files (`.env` and `.env.*` except documented templates such as `.env.example`) are refused when any path touching them appears anywhere in the commits being published (`base..HEAD`), including add-then-delete history and non-ASCII path segments; inspection uses raw NUL-delimited paths from `git log --name-only -z` and does not read file contents. Inspection is fail-closed when the base ref or history cannot be resolved. The worktree `origin` fetch URL and every configured `remote.origin.pushurl` must identify the same GitHub `owner/name` as `--repo` when the URL is GitHub-shaped (credentials are never printed on mismatch). `COORDINATOR_PUBLICATION_FIXTURE_ORIGIN=1` applies only to disposable `file:` or absolute-path remotes in fixture tests, not to mismatched GitHub URLs.
 
 ## Retries and resume
 
-Push and `gh pr create` each retry at most three times. A receipt under the worktree git directory records a successful push so a later run can open the PR without pushing again. A completed run prints `PUBLISHED <url>`.
+Push and `gh pr create` each retry at most three times. A receipt under the worktree git directory records progress with a fixed six-field schema (no shell evaluation on read); writes use a temp file and rename inside the git directory so interruption leaves the last complete receipt. A completed run prints `PUBLISHED <url>`.
 
 ## Fixture tests
 

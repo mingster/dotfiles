@@ -32,15 +32,44 @@ Review: required (publication helper)
 EOF
 }
 
-pub() {
-  rm -rf "$MF_REPO/.git/coordinator-publication" "$MF_DIR/fetch.log"
-  git_path=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse --git-path coordinator-publication 2>/dev/null || true)
+receipt_path() {
+  local wt=${1:-$MF_REPO}
+  local git_path
+  git_path=$("$MF_REAL_GIT" -C "$wt" rev-parse --git-path coordinator-publication 2>/dev/null || true)
   if [ -n "$git_path" ] && [[ "$git_path" != /* ]]; then
-    rm -rf "$MF_REPO/$git_path"
+    git_path="$wt/$git_path"
+  fi
+  printf '%s/receipt.env' "$git_path"
+}
+
+clear_receipt() {
+  local wt=${1:-$MF_REPO}
+  rm -f "$MF_DIR/fetch.log"
+  git_path=$("$MF_REAL_GIT" -C "$wt" rev-parse --git-path coordinator-publication 2>/dev/null || true)
+  if [ -n "$git_path" ] && [[ "$git_path" != /* ]]; then
+    rm -rf "$wt/$git_path"
   elif [ -n "$git_path" ]; then
     rm -rf "$git_path"
   fi
-  bash "$PUB" --repo "$REPO_SLUG" --branch "$1" --body-file "$BODY" --worktree "$MF_REPO" "${@:2}" 2>&1
+}
+
+pub() {
+  local keep=0 wt="$MF_REPO"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep-receipt) keep=1; shift ;;
+      --worktree) wt="$2"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  local branch=$1; shift || true
+  [ -n "$branch" ] || { echo "pub: missing branch" >&2; return 2; }
+  if [ "$keep" = 0 ]; then
+    clear_receipt "$wt"
+  else
+    rm -f "$MF_DIR/fetch.log"
+  fi
+  bash "$PUB" --repo "$REPO_SLUG" --branch "$branch" --body-file "$BODY" --worktree "$wt" "$@" 2>&1
 }
 
 # Replace gh with pr create support.
@@ -121,7 +150,7 @@ mv "$MF_BIN/git" "$MF_BIN/git.real"
 cat > "$MF_BIN/git" <<'EOS'
 #!/usr/bin/env bash
 if [ -n "${MF_TOPLEVEL:-}" ] && [ "$*" = "rev-parse --show-toplevel" ]; then echo "$MF_TOPLEVEL"; exit 0; fi
-if [ "${1:-}" = "fetch" ]; then echo "fetch $*" >> "$MF_DIR/fetch.log"; fi
+if [[ " $* " == *" fetch "* ]]; then echo "fetch $*" >> "$MF_DIR/fetch.log"; fi
 if printf '%s\n' "$@" | grep -qx 'push' || [[ " $* " == *" push "* ]]; then
   echo "git $*" >> "$MF_DIR/push.log"
   if [ -f "$MF_DIR/push_fail_count" ]; then
@@ -210,7 +239,8 @@ make_feature feat-ok
 out=$(pub feat-ok); code=$?
 say "$code" "publishes feature branch" "$out"
 grep -q 'PUBLISHED https://example.test/pull/' <<<"$out" && ok "returns PUBLISHED url" || bad "missing PUBLISHED: $out"
-if grep -q ' push ' "$MF_DIR/push.log"; then ok "records git push"; elif grep -q 'PUBLISHED' <<<"$out"; then ok "records git push"; else bad "no push log"; fi
+push_lines=$(grep -c ' push ' "$MF_DIR/push.log" 2>/dev/null || echo 0)
+[ "$push_lines" -ge 1 ] && ok "records git push in push.log" || bad "no push log (lines=$push_lines)"
 
 good_body
 make_feature feat-retry
@@ -262,15 +292,25 @@ if [[ "$want" = /* ]] && [ -f "$want/receipt.env" ]; then ok "receipt lives at a
 
 good_body
 make_feature feat-resume
+: > "$MF_GH_LOG"
 echo 3 > "$MF_DIR/create_fail_count"
 out=$(pub feat-resume); code=$?
+create_first=$(grep -c 'gh pr create' "$MF_GH_LOG" 2>/dev/null || echo 0)
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "PR create fails after 3 attempts when push succeeded" "$out"
+[ "$create_first" -eq 3 ] && ok "PR create exhaustion uses exactly 3 attempts" || bad "expected 3 pr create calls, got $create_first"
 rm -f "$MF_DIR/create_fail_count"
-out=$(pub feat-resume); code=$?
+: > "$MF_DIR/push.log"
+out=$(pub --keep-receipt feat-resume); code=$?
 say "$code" "resume skips push and opens PR" "$out"
+if grep -q ' push ' "$MF_DIR/push.log" 2>/dev/null; then
+  bad "resume pushed unexpectedly ($(cat "$MF_DIR/push.log"))"
+else
+  ok "resume records no new push"
+fi
 pr_count=$(jq -s '[.[] | select(.headRefName=="feat-resume")] | length' "$MF_GH_DIR"/pr-*.json 2>/dev/null || echo 0)
 [ "$pr_count" -eq 1 ] && ok "resume leaves exactly one PR" || bad "expected one PR for feat-resume, found $pr_count"
-out=$(pub feat-resume); code=$?
+[ -f "$(receipt_path)" ] && ok "resume preserves receipt file" || bad "receipt missing after resume"
+out=$(pub --keep-receipt feat-resume); code=$?
 say "$code" "second run is idempotent" "$out"
 
 good_body
@@ -281,7 +321,7 @@ out=$(pub feat-interrupt); code=$?
 say "$code" "recovers when PR exists after create transport failure" "$out"
 after=$(find "$MF_GH_DIR" -name 'pr-*.json' 2>/dev/null | wc -l | tr -d ' ')
 [ "$after" -eq $((before + 1)) ] && ok "interrupt recovery creates exactly one PR" || bad "PR count before=$before after=$after"
-out=$(pub feat-interrupt); code=$?
+out=$(pub --keep-receipt feat-interrupt); code=$?
 say "$code" "interrupt recovery second run is idempotent" "$out"
 
 good_body
@@ -299,11 +339,81 @@ good_body
 make_feature feat-receipt-evil
 out=$(pub feat-receipt-evil); code=$?
 say "$code" "first publish for receipt safety" "$out"
-git_path=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse --git-path coordinator-publication)
-[[ "$git_path" != /* ]] && git_path="$MF_REPO/$git_path"
-printf 'evil=1\n' >> "$git_path/receipt.env"
+rcpt=$(receipt_path)
+printf 'evil=1\n' >> "$rcpt"
 out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-receipt-evil --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses receipt with unexpected keys" "$out"
+
+good_body
+make_feature feat-receipt-cmd
+out=$(pub feat-receipt-cmd); code=$?
+say "$code" "first publish before receipt command substitution probe" "$out"
+marker="$MF_DIR/receipt-exec-marker"
+rm -f "$marker"
+rcpt=$(receipt_path)
+{
+  printf 'repo=example/repo$(touch %q)\n' "$marker"
+  printf 'branch=feat-receipt-cmd\n'
+  printf 'head_sha=%s\n' "$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse HEAD)"
+  printf 'push_ok=1\n'
+  printf 'pr_url=\n'
+  printf 'pr_number=\n'
+} > "$rcpt"
+out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-receipt-cmd --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses receipt with shell metacharacters in repo" "$out"
+[ ! -e "$marker" ] && ok "recognized-key command substitution marker absent" || bad "receipt parsing executed shell: $marker"
+
+good_body
+make_feature feat-receipt-atomic
+out=$(pub feat-receipt-atomic); code=$?
+say "$code" "first publish before atomic receipt probe" "$out"
+rcpt=$(receipt_path)
+cp "$rcpt" "$MF_DIR/receipt.snap"
+export COORDINATOR_PUBLICATION_TEST_STOP_BEFORE_MV=1
+out=$(bash "$PUB" --repo "$REPO_SLUG" --branch feat-receipt-atomic --body-file "$BODY" --worktree "$MF_REPO" 2>&1); code=$?
+unset COORDINATOR_PUBLICATION_TEST_STOP_BEFORE_MV
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "test stop before receipt rename refuses" "$out"
+cmp -s "$rcpt" "$MF_DIR/receipt.snap" && ok "interrupted receipt write preserves last complete receipt" || bad "receipt changed after aborted write"
+out=$(pub --keep-receipt feat-receipt-atomic); code=$?
+say "$code" "same command recovers after aborted receipt write" "$out"
+
+good_body
+make_feature feat-pushurl
+"$MF_REAL_GIT" -C "$MF_REPO" config --add remote.origin.pushurl "https://github.com/wrong/slug.git"
+: > "$MF_DIR/push.log"
+out=$(pub feat-pushurl); code=$?
+"$MF_REAL_GIT" -C "$MF_REPO" config --unset-all remote.origin.pushurl 2>/dev/null || true
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses mismatched pushurl even with file origin" "$out"
+[ ! -s "$MF_DIR/push.log" ] && ok "pushurl refusal skips push" || bad "push ran on pushurl mismatch"
+
+good_body
+make_feature feat-env-history
+printf 'secret\n' > "$MF_REPO/.env"
+"$MF_REAL_GIT" -C "$MF_REPO" add .env
+"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m add-env
+"$MF_REAL_GIT" -C "$MF_REPO" rm -f .env
+"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m del-env
+out=$(pub feat-env-history); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses add-then-delete secret env in publish range" "$out"
+
+good_body
+make_feature feat-env-unicode
+mkdir -p "$MF_REPO/テスト"
+printf 'secret\n' > "$MF_REPO/テスト/.env"
+"$MF_REAL_GIT" -C "$MF_REPO" add "テスト/.env"
+"$MF_REAL_GIT" -C "$MF_REPO" commit -q -m unicode-env
+out=$(pub feat-env-unicode); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses non-ASCII path secret env file" "$out"
+
+good_body
+make_feature feat-push-exhaust
+echo 3 > "$MF_DIR/push_fail_count"
+: > "$MF_DIR/push.log"
+out=$(pub feat-push-exhaust); code=$?
+push_try=$(grep -c ' push ' "$MF_DIR/push.log" 2>/dev/null || echo 0)
+rm -f "$MF_DIR/push_fail_count"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "push fails after bounded attempts" "$out"
+[ "$push_try" -eq 3 ] && ok "push exhaustion uses exactly 3 attempts" || bad "expected 3 push attempts, got $push_try"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
