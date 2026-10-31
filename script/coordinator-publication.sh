@@ -181,14 +181,14 @@ read_receipt_file() {
 }
 
 fetch_verified_destination_main() {
-  local fetch_ec=0
-  git -C "$worktree" fetch -q origin main 2>/dev/null || fetch_ec=$?
+  local fetch_ec=0 fetched_sha
+  git -C "$worktree" fetch -q --no-tags --refmap= origin refs/heads/main 2>/dev/null || fetch_ec=$?
   if [ "$fetch_ec" -ne 0 ]; then
-    git -C "$worktree" fetch -q origin 2>/dev/null || die "cannot fetch destination main for environment file inspection"
+    die "cannot fetch destination main for environment file inspection"
   fi
-  git -C "$worktree" rev-parse --verify origin/main >/dev/null 2>&1 \
-    || die "cannot verify destination main after fetch"
-  printf '%s' 'origin/main'
+  fetched_sha=$(git -C "$worktree" rev-parse --verify FETCH_HEAD 2>/dev/null) \
+    || die "cannot verify fetched destination main"
+  printf '%s' "$fetched_sha"
 }
 
 inspect_env_paths_in_publish_range() {
@@ -267,8 +267,8 @@ head_sha=$want_head_sha
 
 assert_repo_matches_origin
 
-destination_main=$(fetch_verified_destination_main)
-publish_range="${destination_main}..HEAD"
+destination_main_sha=$(fetch_verified_destination_main)
+publish_range="${destination_main_sha}..HEAD"
 inspect_env_paths_in_publish_range "$publish_range"
 
 git_path=$(git -C "$worktree" rev-parse --git-path coordinator-publication)
@@ -333,7 +333,7 @@ resolve_pr_from_github() {
 }
 
 push_branch() {
-  destination_main=$(fetch_verified_destination_main)
+  fetch_verified_destination_main >/dev/null
 
   local remote_sha
   git -C "$worktree" fetch -q origin "$branch" 2>/dev/null || true

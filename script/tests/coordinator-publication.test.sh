@@ -216,6 +216,14 @@ if [[ " $* " == *" fetch "* ]] && [ -f "$MF_DIR/stub_fetch_fail" ]; then
   echo "fixture git: fetch failed" >&2
   exit 1
 fi
+if [[ " $* " == *" fetch "* ]] && [ -f "$MF_DIR/stub_fetch_main_fail" ]; then
+  case " $* " in
+    *" refs/heads/main"*|*" origin main"*|*" origin refs/heads/main"*)
+      echo "fixture git: destination main fetch failed" >&2
+      exit 1
+      ;;
+  esac
+fi
 if [[ " $* " == *" remote get-url --push --all "* ]] && [ -f "$MF_DIR/stub_pushurl_resolve_fail" ]; then
   echo "fixture git: push URL resolution failed" >&2
   exit 1
@@ -694,6 +702,67 @@ push_try=$(grep -c ' push ' "$MF_DIR/push.log" 2>/dev/null || echo 0)
 rm -f "$MF_DIR/push_fail_count"
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "push fails after bounded attempts" "$out"
 [ "$push_try" -eq 3 ] && ok "push exhaustion uses exactly 3 attempts" || bad "expected 3 push attempts, got $push_try"
+
+good_body
+# Stale local origin/main ahead of fetched destination main: env history must use FETCH_HEAD, not tracking ref.
+dest_main_sha=$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse refs/remotes/origin/main)
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q main
+"$MF_TEST_GIT" -C "$MF_REPO" reset --hard "$dest_main_sha"
+base_sha=$dest_main_sha
+printf 'secret\n' > "$MF_REPO/.env"
+"$MF_TEST_GIT" -C "$MF_REPO" add .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'env on unpublished main'
+"$MF_TEST_GIT" -C "$MF_REPO" rm -q .env
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'remove env locally'
+stale_main_sha=$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse HEAD)
+"$MF_TEST_GIT" -C "$MF_REPO" checkout -q -B feat-stale-tracking-main "$stale_main_sha"
+echo stale > "$MF_REPO/stale.txt"
+"$MF_TEST_GIT" -C "$MF_REPO" add stale.txt
+"$MF_TEST_GIT" -C "$MF_REPO" commit -q -m 'feature on stale main tip'
+"$MF_TEST_GIT" -C "$MF_REPO" update-ref refs/remotes/origin/main "$stale_main_sha"
+"$MF_TEST_GIT" -C "$MF_REPO" update-ref refs/heads/main "$base_sha"
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+out=$(pub feat-stale-tracking-main); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses env history when local origin/main is stale vs fetched main" "$out"
+[[ "$out" == *"tracked environment file"* ]] && ok "stale tracking ref does not shrink publish range" \
+  || bad "missing env refusal for stale origin/main tracking ref: $out"
+grep -Eq 'fetch .*refs/heads/main' "$MF_DIR/fetch.log" 2>/dev/null \
+  && ok "destination main fetch uses explicit ref without generic fallback" \
+  || bad "missing explicit destination main fetch: $(tr '\n' ' ' < "$MF_DIR/fetch.log")"
+[ ! -s "$MF_DIR/push.log" ] && ok "stale tracking env refusal skips push" || bad "push after stale tracking env refusal"
+[ ! -s "$MF_GH_LOG" ] && ok "stale tracking env refusal skips gh" || bad "gh after stale tracking env refusal"
+
+good_body
+# Destination remote has master only: must fail closed on missing main before push/gh (no generic fetch fallback).
+MASTER_ONLY="$MF_DIR/master-only.git"
+"$MF_TEST_GIT" init -q --bare -b master "$MASTER_ONLY"
+"$MF_TEST_GIT" -C "$MF_REPO" push -q "$MASTER_ONLY" "$base_sha:refs/heads/master"
+make_feature feat-dest-no-main
+saved_origin=$("$MF_TEST_GIT" -C "$MF_REPO" remote get-url origin)
+stale_tip=$("$MF_TEST_GIT" -C "$MF_REPO" rev-parse refs/remotes/origin/main)
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "$MASTER_ONLY"
+"$MF_TEST_GIT" -C "$MF_REPO" update-ref refs/remotes/origin/main "$stale_tip"
+: > "$MF_DIR/fetch.log"
+: > "$MF_DIR/push.log"
+: > "$MF_GH_LOG"
+out=$(pub feat-dest-no-main); code=$?
+"$MF_TEST_GIT" -C "$MF_REPO" remote set-url origin "$saved_origin"
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses when destination has no main branch" "$out"
+[[ "$out" == *"cannot fetch destination main"* ]] && ok "missing destination main surfaces" \
+  || bad "missing no-main refusal: $out"
+grep -Eq 'fetch .*refs/heads/main' "$MF_DIR/fetch.log" 2>/dev/null \
+  && ok "no-main case still uses explicit main fetch only" \
+  || bad "unexpected fetch log for no-main: $(tr '\n' ' ' < "$MF_DIR/fetch.log")"
+if grep -Eq 'fetch .*refs/heads/main' "$MF_DIR/fetch.log" 2>/dev/null \
+  && ! grep -Eq 'fetch -q origin$|fetch origin$' "$MF_DIR/fetch.log" 2>/dev/null; then
+  ok "no-main refusal avoids generic origin fetch fallback"
+else
+  bad "generic origin fetch ran on no-main destination"
+fi
+[ ! -s "$MF_DIR/push.log" ] && ok "no-main refusal skips push" || bad "push after no-main refusal"
+[ ! -s "$MF_GH_LOG" ] && ok "no-main refusal skips gh" || bad "gh after no-main refusal"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
