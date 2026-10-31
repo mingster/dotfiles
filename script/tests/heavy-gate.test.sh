@@ -144,7 +144,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
              mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(module.subprocess, 'Popen', side_effect=popen), \
              mock.patch.object(module.os, 'waitid', return_value=None), \
-             mock.patch.object(module.os, 'killpg', side_effect=killpg), \
+             mock.patch.object(module.os, 'killpg', side_effect=killpg) as signals, \
              mock.patch.object(module.subprocess, 'run', side_effect=run):
             if live_child:
                 # No host process is launched: this is the still-running child seam.
@@ -153,6 +153,10 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                 result = None
             else:
                 result = module.gate(args)
+                signals.assert_not_called()
+                if check_status:
+                    self.assertIn(f'heavy-gate: child exited with status {status}\n',
+                                  self.cleanup_stderr.getvalue())
             held = not isinstance(error, ProcessLookupError) and (ps_error or any(
                 not state.startswith('Z') for state in states))
             original_pgid = self.cleanup_pgid
@@ -219,9 +223,11 @@ with open(sys.argv[1], 'a', buffering=1) as f:
 
     def test_reaped_or_unknown_generation_never_signals_recorded_group(self):
         self.config(1)
-        for reaped, inspection in ((True, None), (False, ChildProcessError()),
-                                    (False, PermissionError('unknown child'))):
-            with self.subTest(reaped=reaped, inspection=inspection):
+        for reaped, inspection, snapshot_error in (
+                (True, None, None), (False, ChildProcessError(), None),
+                (False, PermissionError('unknown child'), None),
+                (False, None, subprocess.TimeoutExpired(['ps'], 3))):
+            with self.subTest(reaped=reaped, inspection=inspection, snapshot_error=snapshot_error):
                 shutil.rmtree(self.root/'.cache/heavy-gate', ignore_errors=True)
                 proc = mock.Mock(pid=987654, returncode=7 if reaped else None)
                 proc.wait.return_value = 7
@@ -230,6 +236,8 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                 real_popen, real_run = subprocess.Popen, subprocess.run
                 def run(command, *a, **kw):
                     if command[0] == 'ps':
+                        if snapshot_error:
+                            raise snapshot_error
                         return subprocess.CompletedProcess(command, 0,
                             '987654 987654 1 501 S reused-worker\n', '')
                     return real_run(command, *a, **kw)
@@ -345,6 +353,13 @@ with open(sys.argv[1], 'a', buffering=1) as f:
             self.assertEqual(len(paths), 1)
             os.environ['HEAVY_GATE_TOKEN'] = (paths[0]/'token').read_text()
             self.assertFalse(module.holds_slot(), 'failed rename must not leave old token authorized')
+            marker = self.root/'stale-token-command'
+            claimant = module.argparse.Namespace(weight=1, head_checks=False,
+                                                 command=['--', 'touch', str(marker)])
+            with mock.patch.object(module.time, 'sleep', side_effect=module.Interrupted(signal.SIGTERM)):
+                with self.assertRaises(module.Interrupted):
+                    module.gate(claimant)
+            self.assertFalse(marker.exists(), 'stale token must not admit a command')
             dead = subprocess.Popen(['true'])
             dead.wait()
             (paths[0]/'pid').write_text(str(dead.pid))
@@ -896,6 +911,8 @@ if os.environ.get('HEAVY_GATE_TEST_FILTER'):
     names = os.environ['HEAVY_GATE_TEST_FILTER'].split(',')
     suite = unittest.TestSuite(test for group in suite for test in group
                                if any(name in test.id() for name in names))
+    if not suite.countTestCases():
+        raise ValueError('test filter matched no cases')
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 print(f'passed {result.testsRun-len(result.failures)-len(result.errors)}, failed {len(result.failures)+len(result.errors)}')
 sys.exit(not result.wasSuccessful())
