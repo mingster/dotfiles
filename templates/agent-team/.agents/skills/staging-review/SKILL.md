@@ -55,7 +55,7 @@ Elon answers each ask within minutes and decides every disagreement. Legal text 
 
 ## 3. Build
 
-Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 first, grouped by shared files. Builders and reviewers come from different model families. Each PR with new or changed strings sends Elon a `key | <locales>` table; Elon approves or edits it on the PR before merge. Two or more passing PRs merge as one batch.
+Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 first, grouped by shared files. Builders and reviewers come from different model families. Use the exact strings already accepted in the spec and ticket; missing or changed copy returns to architect-pm for a spec amendment under the project Handoffs contract. Merge reviewed PRs under the existing eager-merge and fix-batch rules.
 
 ## 4. Close the round
 
