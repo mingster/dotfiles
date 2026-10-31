@@ -20,10 +20,12 @@ class QaAdmission(unittest.TestCase):
         self.extra = {}
 
     def run_cli(self):
+        env = {**self.f.env(), **self.extra}
+        env = {k: v for k, v in env.items() if v is not None}
         return subprocess.run(['python3', str(QA), '--repo', REPO, '--head', HEAD,
                                '--worktree-path', PATH, '--verifier-provider', self.provider,
                                '--verifier-model', self.model],
-                              env={**self.f.env(), **self.extra}, text=True, capture_output=True, timeout=15)
+                              env=env, text=True, capture_output=True, timeout=15)
 
     def success(self, host='alpha'):
         p = self.run_cli()
@@ -146,6 +148,81 @@ class QaAdmission(unittest.TestCase):
                                 'hosts': {'alpha': {'cap': 3}}}))
         self.extra['ON_WORKER_DONE_ADMISSION_POLICY'] = str(p)
         self.refuse('cap')
+
+    def test_native_retained_release_state_counts(self):
+        self.f.occupy('alpha', 1)
+        self.f.data['alpha']['workers']['workers'][0]['resource']['releaseState'] = 'retained'
+        data = self.success()
+        self.assertEqual(data['receipts'][0]['occupied'], 1)
+
+    def test_native_legacy_retained_dispatch_needs_no_model_proof(self):
+        self.f.occupy('alpha', 1, 'completed')
+        worker = self.f.data['alpha']['workers']['workers'][0]
+        worker.update(resource=None, terminalState='retained', agentTerminalHandle='term-native')
+        data = self.success()
+        self.assertEqual(data['receipts'][0]['retained_count'], 1)
+
+    def test_malformed_nested_native_json_fails_without_traceback(self):
+        self.f.data['alpha']['repos'][0]['gitRemoteIdentity'] = []
+        self.refuse('inventory')
+
+    def test_native_pagination_counts_later_page(self):
+        self.f.occupy('alpha', 1)
+        first = self.f.data['alpha']['workers']
+        second = copy.deepcopy(first)
+        second['workers'][0]['dispatchId'] = 'ctx-second'
+        second['workers'][0]['resource']['terminalHandle'] = 'term-second'
+        first['page'] = {'hasMore': True, 'nextCursor': 'next'}
+        self.f.data['alpha']['next_page'] = second
+        self.success('beta')
+        calls = [json.loads(line) for line in (Path(self.tmp.name)/'calls').read_text().splitlines()]
+        self.assertTrue(any('--cursor' in call and 'next' in call for call in calls))
+
+    def test_repeated_or_missing_page_cursor_refuses(self):
+        page = self.f.data['alpha']['workers']['page']
+        page.update(hasMore=True, nextCursor='same')
+        self.f.data['alpha']['next_page'] = self.f.data['alpha']['workers']
+        self.refuse('cursor')
+        page.pop('nextCursor')
+        self.refuse('cursor')
+
+    def test_local_native_identity_does_not_invent_saved_server(self):
+        self.f.config['local_host'] = 'alpha'
+        self.f.data['environments'] = [r for r in self.f.data['environments'] if r['name'] != 'alpha']
+        self.f.data['local'] = self.f.data.pop('alpha')
+        p = self.run_cli()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        data = json.loads(p.stdout)
+        self.assertEqual(data['environment_id'], 'local')
+        self.assertEqual(data['worktree_selector'], 'identity:wt2:local:alpha-instance')
+
+    def test_optional_policy_validity_and_model_narrowing(self):
+        p = Path(self.tmp.name)/'policy.json'
+        policy = {'version': 1, 'issued_at': '2000-01-01T00:00:00Z',
+                  'expires_at': '2099-01-01T00:00:00Z',
+                  'hosts': {'alpha': {'providers': {'claude': {'models': ['sonnet']}}}}}
+        self.extra['ON_WORKER_DONE_ADMISSION_POLICY'] = str(p)
+        p.write_text(json.dumps(policy))
+        self.success()
+        self.model = 'other'; self.refuse('provider/model')
+        self.model = 'sonnet'
+        policy['expires_at'] = '2001-01-01T00:00:00Z'; p.write_text(json.dumps(policy))
+        self.refuse('policy')
+
+    def test_unconfigured_sensor_failure_does_not_block_configured_hosts(self):
+        sensor = Path(self.tmp.name)/'load.sh'
+        sensor.write_text("echo 'alpha cores=8 load=1 1 1'\necho 'beta cores=8 load=1 1 1'\necho 'unused unreachable'\n")
+        self.extra.update(QA_ADMISSION_LOAD_OBS=None, QA_ADMISSION_FLEET_LOAD=str(sensor))
+        self.success()
+
+    def test_native_resource_reuse_counts_one_live_seat(self):
+        self.f.occupy('alpha', 1)
+        rows = self.f.data['alpha']['workers']['workers']
+        old = copy.deepcopy(rows[0]); old.update(dispatchId='ctx-old', dispatchStatus='completed')
+        rows.append(old)
+        data = self.success()
+        self.assertEqual(data['receipts'][0]['occupied'], 1)
+        self.assertEqual(data['receipts'][0]['live_count'], 1)
 
     def test_missing_or_expired_explicit_policy_refuses(self):
         self.extra['ON_WORKER_DONE_ADMISSION_POLICY'] = str(Path(self.tmp.name)/'missing')

@@ -43,6 +43,7 @@ else:
  if host not in data: print('{"ok":false}'); sys.exit(1)
  key={('repo','list'):'repos',('worktree','list'):'worktrees',('orchestration','worker-list'):'workers'}[tuple(a[:2])]
  result=data[host][key]
+ if key=='workers' and '--cursor' in a: result=data[host]['next_page']
  if key=='repos': result={'repos':result}
 print(json.dumps({'ok':True,'result':result}))
 ''')

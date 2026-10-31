@@ -13,7 +13,7 @@ SCRIPT = Path(__file__).resolve().parents[1]
 
 
 class ReviewerDispatch(unittest.TestCase):
-    def dispatch(self, author, only_author_available=False, receipts=None):
+    def dispatch(self, author, only_author_available=False, receipts=None, full_hosts=()):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             presets = root / "presets.json"
@@ -43,6 +43,7 @@ sys.exit(ug.main())
             gate.chmod(0o755)
             native = NativeFixture(root, path=tmp)
             native.occupy('alpha', 1)
+            for h in full_hosts: native.occupy(h, 2)
             gh = root / "gh"
             gh.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['TEST_COMMENTS'])\n")
             gh.chmod(0o755)
@@ -70,6 +71,20 @@ sys.exit(ug.main())
         self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
         self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
         self.assertEqual(args[args.index('--model')+1], 'gpt-test')
+
+    def test_full_host_fallback_pins_actual_native_argv(self):
+        result, args = self.dispatch('codex', full_hosts=('alpha',))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[args.index('--on')+1], 'beta-saved')
+        self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:beta-instance')
+        self.assertEqual(args[args.index('--model')+1], 'composer-test')
+
+    def test_all_full_starts_nothing_and_reports_counts(self):
+        result, args = self.dispatch('claude', full_hosts=('alpha', 'beta'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(args)
+        self.assertIn('alpha 2/2', result.stderr)
+        self.assertIn('beta 2/2', result.stderr)
 
     def test_zero_executed_refuses_start(self):
         receipt = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 0\nLoad errors: 0\n"
