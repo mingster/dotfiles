@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Start the cross family reviewer for a coding worker_done.
 # on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|codex|antigravity
-#                   --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]
+#                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
-# Env: ON_WORKER_DONE_USAGE_GATE overrides the usage-gate.py path (tests).
+# Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
+#      ON_WORKER_DONE_FLEET_CONFIG / ON_WORKER_DONE_FLEET_WATCH override host-cap admission (tests).
 set -u
-usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|codex|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--dry-run]" >&2; exit 2; }
-repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0
+usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|codex|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
+repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
+    --resolution) resolution=1; shift ;;
     --repo|--pr|--head|--author-family|--author-provider|--author-model|--worktree|--run|--author-dispatch)
       [ $# -ge 2 ] || usage
       case "$1" in
@@ -128,6 +130,42 @@ if [ "$independence_ok" != "1" ]; then
   exit 1
 fi
 
+host_flags=()
+fleet_config="${ON_WORKER_DONE_FLEET_CONFIG:-}"
+if [ -z "$fleet_config" ] && [ -f "$HOME/.config/fleet-watch/config.json" ]; then
+  fleet_config="$HOME/.config/fleet-watch/config.json"
+fi
+if [ -n "$fleet_config" ] && [ -f "$fleet_config" ]; then
+  fleet_watch=${ON_WORKER_DONE_FLEET_WATCH:-$HOME/dotfiles/script/fleet-watch.py}
+  local_host=$(hostname -s 2>/dev/null || echo local)
+  picked_host=""
+  refuse_reasons=""
+  while IFS= read -r try_host; do
+    [ -n "$try_host" ] || continue
+    receipt=$("$fleet_watch" --config "$fleet_config" --admit "$try_host" 2>/dev/null) || true
+    if printf '%s' "$receipt" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("admitted") else 1)' 2>/dev/null; then
+      picked_host=$try_host
+      break
+    fi
+    line=$(printf '%s' "$receipt" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason",""))' 2>/dev/null) || line=""
+    refuse_reasons="${refuse_reasons}${line}; "
+  done <<EOF
+$(python3 - "$fleet_config" <<'PY'
+import json, sys
+for host in json.load(open(sys.argv[1])).get("host_caps", {}):
+    print(host)
+PY
+)
+EOF
+  if [ -z "$picked_host" ]; then
+    echo "QA start refused head=$head: no host under cap (${refuse_reasons:-inventory unavailable})" >&2
+    exit 1
+  fi
+  if [ "$picked_host" != "$local_host" ]; then
+    host_flags=(--on "$picked_host")
+  fi
+fi
+
 # All coding reviewer providers enter here. Read the latest receipt for this
 # exact head before starting a worker or producing a reviewer brief.
 comments=$(gh pr view "$pr" --repo "$repo" --json comments) || {
@@ -164,19 +202,36 @@ if exact:
 ' "$head" || exit 1
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
-cat > "$brief" <<EOF
-Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
+gate_footer='Run scoped tests through ~/dotfiles/script/heavy-gate.sh and wait for gate admission before treating a failure as real.
+Read the PR Checks receipt for this head last; pending is not PASS and never substitutes for executed tests.'
+if [ "$resolution" = 1 ]; then
+  cat > "$brief" <<EOF
+Review the conflict-resolution merge for PR #$pr in $repo at head $head. You did not write this merge resolution.
 Author: provider=$author_provider family=$author_family
 Verifier: provider=$verifier_provider family=$verifier_family
-Check the diff against the PR's spec and the repo's standards. Run the tests.
+Inspect only the resolution with git show --remerge-diff. Do not run a full Dual-Axis standards review of the entire PR again.
 Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
+$gate_footer
 Post exactly one PR comment whose first line is:
 Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$author_dispatch
 Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
 EOF
+else
+  cat > "$brief" <<EOF
+Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
+Author: provider=$author_provider family=$author_family
+Verifier: provider=$verifier_provider family=$verifier_family
+Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Run the tests.
+Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
+$gate_footer
+Post exactly one PR comment whose first line is:
+Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$author_dispatch
+Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
+EOF
+fi
 
-cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree path:$wt --task-title \"reviewer - PR $pr\" $flags --json"
+cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree path:$wt --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
 echo "$cmd"
 [ "$dry" = 1 ] && exit 0
 # shellcheck disable=SC2086
-exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "path:$wt" --task-title "reviewer - PR $pr" $flags --json
+exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "path:$wt" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json

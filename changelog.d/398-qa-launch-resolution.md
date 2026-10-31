@@ -1,0 +1,1 @@
+- `on-worker-done.sh` adds `--resolution` for remerge-diff-only QA briefs, default heavy-gate and pending-Checks instructions on every brief, and host-cap admission via `fleet-watch.py --admit` before starting a cross-family reviewer.
