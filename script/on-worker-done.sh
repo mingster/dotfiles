@@ -208,27 +208,30 @@ except (ValueError, KeyError, TypeError):
     refuse("cannot read head-checks receipts")
 receipts = [c["body"] for c in comments if re.match(r"^Checks: (?:PASS|FAIL) head=[0-9a-f]{40}(?:\s|$)", c.get("body", ""))]
 exact = [body for body in receipts if re.match(r"^Checks: (?:PASS|FAIL) head=" + head + r"(?:\s|$)", body)]
-if receipts and not exact:
-    refuse("head-checks run exists but this head has no receipt")
-if exact:
-    body = exact[-1]
-    if re.search(r"^Tests executed: 0$", body, re.M):
-        refuse("Tests executed: 0")
-    errors = re.findall(r"^Load errors: ([0-9]+)$", body, re.M)
-    if any(int(n) > 0 for n in errors):
-        refuse("Load errors: " + str(sum(map(int, errors))))
-    tests = re.findall(r"^Tests executed: ([0-9]+)$", body, re.M)
-    if len(tests) != len(errors):
-        refuse("incomplete test execution metadata")
-    if re.search(r"^Command: .*\bbun (?:run )?test\b|^bun test v", body, re.M) and not tests:
-        refuse("test command has no execution metadata")
-    if body.startswith("Checks: FAIL "):
-        refuse("Checks: FAIL")
+if not exact:
+    if receipts:
+        refuse("head-checks run exists but this head has no receipt")
+    refuse("no Checks: PASS receipt for this head")
+body = exact[-1]
+if body.startswith("Checks: FAIL "):
+    print("needs-author")
+    refuse("Checks: FAIL (needs-author)")
+if not body.startswith("Checks: PASS "):
+    refuse("no Checks: PASS receipt for this head")
+if re.search(r"^Tests executed: 0$", body, re.M):
+    refuse("Tests executed: 0")
+errors = re.findall(r"^Load errors: ([0-9]+)$", body, re.M)
+if any(int(n) > 0 for n in errors):
+    refuse("Load errors: " + str(sum(map(int, errors))))
+tests = re.findall(r"^Tests executed: ([0-9]+)$", body, re.M)
+if len(tests) != len(errors):
+    refuse("incomplete test execution metadata")
+if re.search(r"^Command: .*\bbun (?:run )?test\b|^bun test v", body, re.M) and not tests:
+    refuse("test command has no execution metadata")
 ' "$head" || exit 1
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
-gate_footer='Run scoped tests through HEAVY_GATE_TIMEOUT_SECONDS=1500 ~/dotfiles/script/heavy-gate.sh and wait for admission. Waiting on the gate means those checks were not executed yet; an observed failure still counts as a failure.
-Read the PR Checks receipt for this head last; pending is not PASS and never substitutes for executed tests.'
+gate_footer='Read the exact-head Checks receipt on this PR (comment body starting with Checks: PASS or Checks: FAIL head='"$head"'). Never rerun bun test, tsc, lint, or the regression suite; cite that receipt for automated check outcomes.'
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
 Review the conflict-resolution merge for PR #$pr in $repo at head $head. You did not write this merge resolution.
@@ -246,7 +249,7 @@ else
 Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
 Author: provider=$author_provider family=$author_family
 Verifier: provider=$verifier_provider family=$verifier_family
-Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Run the tests.
+Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Prove load-bearing behaviour live; do not rerun bun test, tsc, lint, or regression.
 Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
 $gate_footer
 Post exactly one PR comment whose first line is:

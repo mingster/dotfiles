@@ -2,6 +2,7 @@
 name: team-audit
 description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Produce structural fixes, report delivery and post-merge metrics, and tune throughput (more workers, faster tickets, more merged PRs).
 ---
+<!-- Generated from dotfiles templates/agent-team/.agents/skills/team-audit by script/sync-team-skills.sh, do not edit. Edit the dotfiles source and re-run the sync. source-sha256: 9ec5103fa3a07a78823024d02b591017113af976642f72cf84bcaaa5977fb63c -->
 
 # Team audit
 
@@ -39,7 +40,7 @@ Every audit also removes at least one rule, check, hook or brief step, and repor
 
 ## 4. Metrics since the last audit
 
-Record the previous audit date and current cutoff, with source references and coverage. Report ticket-start-to-merge time from the first recorded work start to confirmed merge, per ticket and as a median with sample count; list unmerged tickets separately. Report post-merge problems as counts of reopens and hotfixes, linked to the affected merged tickets, and distinguish overlapping incidents. Missing audit dates, timestamps or sources mean unknown, never zero.
+Record the previous audit date and current cutoff, with source references and coverage. Run `bun bin/team-audit-metrics.ts` (dry run) for the four faster-delivery metrics: median PR created to merged, median created to PASS Verdict, first-pass Checks FAIL rate, and full regression minutes. Report ticket-start-to-merge time from the first recorded work start to confirmed merge, per ticket and as a median with sample count; list unmerged tickets separately. Report post-merge problems as counts of reopens and hotfixes, linked to the affected merged tickets, and distinguish overlapping incidents. Missing audit dates, timestamps or sources mean unknown, never zero.
 
 Report tech-lead escalations to Elon since the last audit: count the tech-lead's Orca `escalation` messages (`orca orchestration inbox --json`, filtered by the tech-lead's handles) by the tag that starts the subject (`rule-covered`, `owner-decision`, `hard-stop`, `cross-project`). Every `rule-covered` escalation is a failure of the tech-lead's standing authority: name it and fix the rule or the brief so the tech-lead decides it next time. An untagged subject counts as unknown.
 

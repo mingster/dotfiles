@@ -18,7 +18,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 ## Execution
 - `df -h /` before installs or builds; stop if low. Never move dependencies or worktrees to temp.
-- **Verifier contract:** on exact head, read code and final `head-checks.sh` Checks receipt (red stops; pending if none). Prove load-bearing behaviour live (phone viewport UI, real API, real script/job) and audit full diff vs spec. Docs PRs: doc link check only.
+- **Verifier contract:** on exact head, read code and final `head-checks.sh` Checks receipt (red stops; pending if none). qa-sdet never runs `bun test`, tsc, lint or the regression suite; prove load-bearing behaviour live (phone viewport UI, real API, real script/job) and audit full diff vs spec. Docs PRs: doc link check only. See [faster delivery spec](../../docs/intent/2026-11-01-faster-delivery-loop/spec.md) requirement 11.
 - First line: `Verdict: PASS|PASS+NOTES|FAIL head=<sha> verifier=<dispatch> author=<dispatch>`, then runs and observations for tech-lead PR comment. Distinct dispatch IDs. Cover every Unchecked Checks path; mention gaps in Verdict. Blocked/partial verification is FAIL, never PASS; rerun failed env step once.
 - **QA in parallel (owner 2026-10-29, 2026-10-31):** the lead starts you on the pushed head via `on-worker-done.sh`. Your Verdict is the review Verdict. Rules: `docs/agents/team.md`, QA in parallel (heavy-gate `HEAVY_GATE_TIMEOUT_SECONDS=1500`, tests-never-ran is not a Verdict, same-head Checks PASS, resolution-only review of a main merge).
 - Auth, tenancy, rate limits, money: independent secops-finops lane; both PASS. Model: `.claude/model-routing.md`. No live access blocks the lane.

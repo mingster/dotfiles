@@ -100,18 +100,21 @@ PY
   refuses "canonical receipt refuses: $body"
 done
 valid
+printf '{"comments":[{"body":"Checks: FAIL head=%s"}]}\n' "$head" > "$tmp/checks.json"
+run
+check 'Checks FAIL prints needs-author' "$(grep -q '^needs-author$' "$tmp/out"; echo $?)"
+check 'Checks FAIL refusal names status' "$(grep -q 'Checks: FAIL' "$tmp/err"; echo $?)"
+valid
 rm -f "$tmp/briefs"/reviewer-brief.*
 run --resolution --dry-run
 check 'resolution dry run succeeds' "$?"
 brief=$(ls "$tmp/briefs"/reviewer-brief.* | tail -1)
-check 'resolution retains narrow diff and gate instructions' "$(grep -q 'git show --remerge-diff' "$brief" && grep -q 'heavy-gate.sh' "$brief"; echo $?)"
-check 'resolution brief requires 1500 second admission wait' "$(grep -q 'HEAVY_GATE_TIMEOUT_SECONDS=1500' "$brief" && grep -q 'wait for admission' "$brief"; echo $?)"
+check 'resolution retains narrow diff and receipt instructions' "$(grep -q 'git show --remerge-diff' "$brief" && grep -q 'Never rerun bun test' "$brief"; echo $?)"
 valid
 rm -f "$tmp/briefs"/reviewer-brief.*
 run --dry-run
 brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
-check 'default brief retains spec standards and pending rule' "$(grep -q "repo's standards" "$brief" && grep -q 'pending is not PASS' "$brief"; echo $?)"
-check 'full brief requires 1500 second admission wait' "$(grep -q 'HEAVY_GATE_TIMEOUT_SECONDS=1500' "$brief" && grep -q 'wait for admission' "$brief"; echo $?)"
+check 'default brief retains spec standards and receipt rule' "$(grep -q "repo's standards" "$brief" && grep -q 'Never rerun bun test' "$brief"; echo $?)"
 # Retain the original author-family, argument and Verdict contract coverage.
 check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual-Axis)' "$brief"; echo $?)"
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'

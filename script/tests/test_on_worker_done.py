@@ -137,7 +137,7 @@ sys.exit(ug.main())
         result, args = self.dispatch("claude", receipts=[receipt])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("a" * 40, result.stderr)
-        self.assertIn("Load errors: 1", result.stderr)
+        self.assertIn("Checks: FAIL", result.stderr)
         self.assertIsNone(args)
 
     def test_failed_checks_with_executed_tests_refuse_start(self):
