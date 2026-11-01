@@ -26,6 +26,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Worker delivery accountability
 
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
+- **Pre-build grill (owner 2026-11-02):** before build: UI changes grill with sales-marketing and Elon; code changes with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon. Record findings on the issue or spec first.
 - Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within lane cap (at most 3 implementation lanes). Lead queue over 30 minutes: merge via `lead-merge.sh` yourself.
 - Before dispatching an issue, grep current main behaviour; record a premise check. Security gate briefs state the threat model and consider deleting a rule first.
 - Routing, quota, launch: `.claude/model-routing.md`, `~/.orca/presets.json`.
