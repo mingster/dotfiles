@@ -122,7 +122,7 @@ brew list --cask iina     >/dev/null 2>&1 || brew install --cask --appdir="/Appl
 
 # replace obsoleted youtube-dl with yt-dlp
 # yt-dlp_macos is a universal binary (arm64 + x86_64); download directly instead of brew
-if ! command -v yt-dlp >/dev/null 2>&1; then
+if ! command -v yt-dlp >/dev/null 2>&1 || ! file "$(command -v yt-dlp)" | grep -q "Mach-O"; then
   curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o /usr/local/bin/yt-dlp
   chmod +x /usr/local/bin/yt-dlp
 fi
