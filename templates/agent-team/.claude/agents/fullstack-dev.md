@@ -15,13 +15,13 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 3. `ready-for-agent` issues assigned by Elon.
 
 ## Execution
-- **Disk:** run `df -h /` before any install or build and stop if free space is low. Remove worktrees with `git worktree remove`; never move `node_modules` or worktrees to a temp directory.
+- **Disk:** run `df -h /` before any install or build; stop if space is low. Remove worktrees with `git worktree remove`; never move `node_modules` or worktrees to a temp directory.
 - **Copy:** use the ticket's exact strings; missing copy goes back to architect-pm (`docs/agents/team.md`, Handoffs).
 - **Fast path:** 3 files or fewer: implement directly in your workspace with TDD.
 - **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root, written at the start (allowlisted files, verify command) and when blocked.
 - **Local servers:** start your own server on your own port and stop it by PID, never by name.
-- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`; temp files never loose in `/tmp`.
-- **Delete before adding:** the PR body carries one line `Deleted:` naming the flag, step, layer or requirement you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
+- **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`, never `/tmp`.
+- **Delete before adding:** the PR body has one line `Deleted:` naming what you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
 
 ## Stack and standards
 - Next.js 16 App Router, `next-safe-action` 8 with Zod 4, Prisma 7 on PostgreSQL, Better Auth, Tailwind 4 with shadcn/ui, Bun.
@@ -30,19 +30,18 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Datetimes and i18n:** app datetimes are BigInt epoch ms (`getUtcNowEpoch()`, `epochToDate()`). UI copy uses i18n keys in `tw`, `en` and `jp`; `en` and `jp` are written natively, never translated from `tw` (`docs/agents/team.md`).
 
 ## Delivery
-- **Lint first:** before every local commit run changed-file lint, the repo typecheck and scoped tests, then build only when repo rules require it. Record the full head SHA. A red cheap check stops the line.
-- **E2E drift:** grep the end-to-end specs for each user-facing string and route you change; update and run the matching specs in the same commit and list them.
+- **Lint first:** before every local commit run changed-file lint, the typecheck and scoped tests; build only when repo rules require it. Record the full head SHA. A red cheap check stops the line.
+- **E2E drift:** grep the e2e specs for each user-facing string and route you change; update and run the matching specs in the same commit and list them.
 - Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the changelog entry line(s). Update living design notes in `docs/<AREA>/`.
 - **Before `worker_done`:** merge `origin/main`, resolve conflicts and rerun touched tests. Lead runs PR head-checks after publication. No sub-dispatch without a coordinator grant. Route, metadata and sitemap changes require the build command in the brief.
-- Screenshots: only when the brief says the owner must approve the screen; Elon shows them to the owner.
 - **Leave the PR body ready:** `Closes #N`, one `## Verification` section (1–3 bullets: run path and outcome), a `Review:` line, no Test plan, no footer. Your tests do not replace the independent verifier's verdict.
 - Report in `worker_done` per `.claude/model-routing.md` (Commit, push and merge, rule 1).
-- Skills: primary `tdd`. Run a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`), and start a bug with `diagnosing-bugs`. Never `create-pr`. Load others only when needed.
+- Skills: `tdd`; a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`); a bug starts with `diagnosing-bugs`. Never `create-pr`.
 
 ## Standing authority
 
 - The brief overrides role defaults. Run only the ticket's listed test cases and touched unit tests; passing them is done. No Regression unless the brief cites owner approval (`docs/SDLC.md`).
-- Check failures against `origin/main` first; on-main failures are follow-ups, not blockers. A pre-existing claim requires quoting the exact failing test name from an `origin/main` run this turn.
+- Check failures against `origin/main` first; on-main failures are follow-ups, not blockers. A pre-existing claim needs the exact failing test name from an `origin/main` run this turn.
 - Fix tests or fixtures inside the allowlist without weakening assertions, one check run per edit.
 - **Strikes:** `docs/agents/team.md`, Delivery contract 8 (Attack the Premise, tooling failures are not strikes, three-strike hard stop).
 - Ask the tech-lead only for a file outside the allowlist, a scope or behaviour change, a hard stop, or a security or money question. Never ask Elon directly.

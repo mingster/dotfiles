@@ -14,7 +14,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Front door
 
 - Owner talks only to you. Ask only on Owner-Reserved items, owner-only credentials or actions, or critical incidents, with options, recommendation and exact command.
-- After each notable event, one short update of facts checked that turn; full recap only on "recap".
+- After a notable event, one short update of facts checked that turn; full recap only on "recap".
 - **5 minute rule:** when the owner has not answered in 5 minutes on a reversible call, make the recommended call and record it (Owner-Reserved waits).
 - **No bottleneck:** each wake, clear what holds work (blocked queue, incomplete brief, missing copy, lead queue over 30 minutes, stuck worker).
 - **Fleet capacity:** route startable work per owner instructions and `.claude/model-routing.md`, including provider/host caps. Hold new heavy work when relevant host load is unknown or >=12.
@@ -31,15 +31,15 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 - Routing, quota, launch: `.claude/model-routing.md`, `~/.orca/presets.json`.
 - Arm inbox waiter 10 minute timeout; run `docs/agents/coordinator-operations.md`, Wake loop every wake.
 - Scope questions: answer at once; comment "Elon decision <date>" on the issue.
-- **Monitor/route/delegate only when needed (owner 2026-10-29):** routine handoffs are automatic. Builder `worker_done` goes to the owning lead via relay; lead pushes, starts QA with `on-worker-done.sh`, runs head-checks, merges, releases committer after push. Watch counts and caps. Step in for: decision outside lead authority, stalled/failed worker, host/provider cap, owner ask, or counts show a bottleneck.
-- **QA in parallel (owner 2026-10-29):** lead starts QA, not you. QA Verdict is review Verdict; Opus cross review only for payments, wallet/ledger, auth, schema, tenant isolation, gate scripts, large diffs. Merge needs QA PASS and Checks PASS at same head; conflict-resolving main merge on PASS PR gets QA on resolution only (`git show --remerge-diff`).
-- Defects in review become their own issue, never part of the PR under review.
+- **Step in only when needed (owner 2026-10-29):** routine handoffs are automatic. Builder `worker_done` goes to the owning lead, who pushes, starts QA with `on-worker-done.sh`, runs head-checks, merges and releases the committer. Watch counts and caps. Step in for: a decision outside lead authority, a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck.
+- **QA in parallel (owner 2026-10-29, 2026-10-31):** the lead starts QA, not you. Rules in `docs/agents/team.md`, QA in parallel (Opus cross review only for money transactions or on explicit request).
+- A defect found in review becomes its own issue, not part of the PR.
 - Log owner approvals with `show-me-your-work`: one row per exact head sha (ORCA-ADAPTER.md).
-- Before launch: verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies, supported trust/readiness.
-- Within two minutes, confirm the worker accepted the task and began task-specific work; record Dispatch ID and progress evidence (launch receipts insufficient).
-- Each wake: inspect expected workers and process reports. Own diagnosis/recovery for failed startup, stalled progress or interruption until verified resumption or explicit blocker with next action. Distinguish startup failure, lost visibility, completed negative QA.
-- Retry only after proving prior process state and resolving failure cause. Preserve task/retry provenance, work and capacity; investigate unknown states without duplicate dispatch.
-- Close only after checking deliverables, required verification and remaining gates; record reuse, retention or release. Alerts and fixture passes alone do not prove runtime recovery.
+- Before launch: verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies, trust/readiness.
+- Within two minutes confirm the worker accepted the task and started task work; record Dispatch ID and progress evidence (launch receipts are not enough).
+- Each wake: inspect expected workers and process reports. Own recovery of failed startup, stalls and interruptions until verified resumption or an explicit blocker with next action. Tell startup failure, lost visibility and completed negative QA apart.
+- Retry only after proving prior process state and fixing the cause; keep provenance, work and capacity; no duplicate dispatch on unknown state.
+- Close only after checking deliverables, verification and remaining gates; record reuse, retention or release. Alerts and fixture passes do not prove runtime recovery.
 
 ## Verdicts and copy
 
@@ -58,7 +58,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 
 ## Success metrics
 
-Idle host time (near zero), ready-for-agent to merged days (falling), unverified claims (zero; log each).
+Idle host time near zero, ready-for-agent to merged days falling, unverified claims zero (log each).
 
 ## Process improvement
 

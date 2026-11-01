@@ -17,15 +17,15 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Smoke checks:** after deploy, smoke live host (`agent-browser`: sign in, storefront, checkout); report `Smoke passed|failed: <stage> <sha>` to release-manager and Elon.
 
 ## Execution
-- `df -h /` before installs/builds; stop on low disk. Never move dependencies/worktrees to temp.
+- `df -h /` before installs or builds; stop if low. Never move dependencies or worktrees to temp.
 - **Verifier contract:** on exact head, read code and final `head-checks.sh` Checks receipt (red stops; pending if none). Prove load-bearing behaviour live (phone viewport UI, real API, real script/job) and audit full diff vs spec. Docs PRs: doc link check only.
 - First line: `Verdict: PASS|PASS+NOTES|FAIL head=<sha> verifier=<dispatch> author=<dispatch>`, then runs and observations for tech-lead PR comment. Distinct dispatch IDs. Cover every Unchecked Checks path; mention gaps in Verdict. Blocked/partial verification is FAIL, never PASS; rerun failed env step once.
-- **QA in parallel (owner 2026-10-29):** lead starts you on pushed head via `on-worker-done.sh` (cross-family model); head-checks parallel; neither waits. Your Verdict is the review Verdict. Opus cross review only for payments, wallet/ledger, auth, schema, tenant isolation, gate scripts, large diffs. Tests via heavy-gate `HEAVY_GATE_TIMEOUT_SECONDS=1500`; wait for admission. Tests-never-ran is not a Verdict: wait or cite Checks PASS at exact head. Merge needs QA PASS and Checks PASS same head. Main-merge conflict on PASS PR: resolution only (`git show --remerge-diff`).
+- **QA in parallel (owner 2026-10-29, 2026-10-31):** the lead starts you on the pushed head via `on-worker-done.sh`. Your Verdict is the review Verdict. Rules: `docs/agents/team.md`, QA in parallel (heavy-gate `HEAVY_GATE_TIMEOUT_SECONDS=1500`, tests-never-ran is not a Verdict, same-head Checks PASS, resolution-only review of a main merge).
 - Auth, tenancy, rate limits, money: independent secops-finops lane; both PASS. Model: `.claude/model-routing.md`. No live access blocks the lane.
 - New head needs fresh checks except clean main merge (`lead-merge.sh`, `verdict_carry`); authored/conflict edits need new verdict. Gate loosening needs Elon countersign on current head.
 - Skills: `tdd`, `code-review`; `diagnosing-bugs`, `agent-browser` only for repro/E2E/smoke.
-- **Local servers:** own port; never stop by name (`pkill`, `killall`). Stop via `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)` or saved pid.
-- **Paths:** quote bracketed paths; no escapes, `..`, or out-of-worktree paths; scratch in `<worktree>/.scratch/`; no loose `/tmp`.
+- **Local servers:** own port; never stop by name (`pkill`, `killall`); use `kill $(lsof -ti tcp:<port> -sTCP:LISTEN)` or a saved pid.
+- **Paths:** quote bracketed paths; no escapes, `..` or out-of-worktree paths; scratch in `<worktree>/.scratch/`, never `/tmp`.
 
 Read `docs/agents/qa-sdet-execution.md` for the full contract.
 
@@ -36,7 +36,6 @@ Read `docs/agents/qa-sdet-execution.md` for the full contract.
 - Fix allowlisted tests/fixtures without weakening assertions; one check run per edit.
 - **Strikes:** `docs/agents/team.md`, Delivery contract 8.
 - Ask tech-lead only for allowlist escapes, scope/behaviour change, hard stop, security or money. Never Elon.
-- At most 15 files per pass; use the brief slice.
 
 ## Never
 - Edit app code outside `__tests__/`, `web/e2e/`.
