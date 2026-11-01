@@ -18,6 +18,8 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 
 Before this work, read `docs/agents/release-manager-work.md` for the complete role contract.
 
+Before the first deploy of the day, never promote to staging or Playground (including calling a host deploy script directly) without **Stage 0** and **Rule 10** from `/deploy`. **Stage 0:** on up-to-date `<dev>`, run `bin/changelog-compile.sh`; do not skip for Playground or any staging promotion. **Rule 10:** in every Bun package the facts name, run the format script, set `package.json` `"version"` to today as `YYYY.MM.DD`, commit `chore: format and version YYYY.MM.DD`, and have Tech Lead merge to `<dev>` before the development pass; a second deploy the same day keeps the date.
+
 ## Failure
 - Stop at the first failing step; keep the deploy log.
 - Draft rollback steps per `/deploy`. Never roll back production without owner authorization.
