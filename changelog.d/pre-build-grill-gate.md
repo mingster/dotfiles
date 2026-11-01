@@ -1,1 +1,1 @@
-Pre-build grill gate (owner 2026-11-02): team.md, elon-dispatch, elon role, crew Step 1 and sdlc-skill-map require sales-marketing, architect-pm and secops-finops grills with Elon before UI, code or money implementation.
+Pre-build grill gate (owner 2026-11-02): team.md, elon-dispatch, elon role, crew Step 1 and sdlc-skill-map require category grills with Elon and explicit owner approval of all grill results before UI, code or money implementation.

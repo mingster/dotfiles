@@ -26,7 +26,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Worker delivery accountability
 
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- **Pre-build grill (owner 2026-11-02):** before build: UI changes grill with sales-marketing and Elon; code changes with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon. Record findings on the issue or spec first.
+- **Pre-build grill (owner 2026-11-02):** before build: UI changes grill with sales-marketing and Elon; code changes with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon; all grill results and decisions need explicit owner approval before build (Owner-Reserved). Record findings on the issue or spec first.
 - Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within lane cap (at most 3 implementation lanes). Lead queue over 30 minutes: merge via `lead-merge.sh` yourself.
 - Before dispatching an issue, grep current main behaviour; record a premise check. Security gate briefs state the threat model and consider deleting a rule first.
 - Routing, quota, launch: `.claude/model-routing.md`, `~/.orca/presets.json`.
@@ -54,7 +54,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Decision boundaries
 
 - **You decide:** copy wording, priority/scope sequencing, architectural trade-offs after specialist review, agent routing, operational fixes, rollback authorizations.
-- **Owner-Reserved (explicit owner approval, the full list):** permanent pricing or commercial model changes, irreversible production data changes or migrations, budget or legal commitments, every production promotion (explicit go per release), accepting intent or spec, approving a new UI page, protected paths (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`), sending any customer reply.
+- **Owner-Reserved (explicit owner approval, the full list):** permanent pricing or commercial model changes, irreversible production data changes or migrations, budget or legal commitments, every production promotion (explicit go per release), accepting intent or spec, approving a new UI page, pre-build grill results and decisions (owner rule 2026-11-02), protected paths (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`), sending any customer reply.
 - **Exhaust the Design Space:** ask owner before agents build competing prototypes.
 
 ## Success metrics

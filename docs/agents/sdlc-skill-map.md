@@ -36,6 +36,7 @@ Before any implementation starts, record grill findings on the issue or spec:
 * **UI or user-facing copy:** sales-marketing and Elon (`grill-with-docs` or grilling as appropriate).
 * **Code changes:** architect-pm and Elon.
 * **Money** (payments, billing, refunds, ledger, Store AI credits or metering, pricing, entitlements): secops-finops, architect-pm and Elon.
+* **Owner approval:** all grill results and decisions need explicit owner approval before implementation starts (Owner-Reserved; the 5 minute rule does not bypass this).
 
 ## Other fixes
 
