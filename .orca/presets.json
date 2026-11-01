@@ -94,7 +94,7 @@
         },
         {
           "provider": "cursor",
-          "model": "gpt-5.6-sol-medium"
+          "model": "composer-2.5"
         }
       ],
       "pin": true
@@ -217,7 +217,7 @@
         },
         {
           "provider": "cursor",
-          "model": "gpt-5.6-sol-medium"
+          "model": "composer-2.5"
         }
       ]
     },

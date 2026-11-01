@@ -63,6 +63,7 @@ def cursor_parse(summary, now):
     Cursor's dashboard describes Auto + Composer and API as separate pools;
     Composer draws the Auto + Composer pool first, then spills into API usage.
     Neither apiPercentUsed nor aggregate totalPercentUsed measures this pool.
+    Cursor preset chains should prefer composer-2.5 (auto+composer pool), not gpt-* API-pool models.
     Missing Auto + Composer usage stays unknown, never an inferred zero.
     """
     try:
