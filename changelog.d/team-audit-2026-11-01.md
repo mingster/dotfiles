@@ -1,0 +1,1 @@
+Team audit 2026-11-01: condense elon, qa-sdet, and tech-lead role files; align Cursor presets with composer pool; harden QA admission tests; deploy skill Playground gates; benchmark-checklist and bro skills synced.

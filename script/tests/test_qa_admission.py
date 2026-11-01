@@ -2,6 +2,7 @@
 """Real admission against canned native inventories, never a success double."""
 import copy
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -287,6 +288,29 @@ class QaAdmission(unittest.TestCase):
     def test_remote_inventory_unavailable_refuses(self):
         self.f.data['alpha']['workers_by_run']['run-alpha']['scope']['remote'] = 'unavailable'
         self.refuse('remote inventory unavailable')
+
+    def test_multi_run_settled_retained_and_closed_terminals_admit(self):
+        """PR #459: historical runs with retained external terminals and closed unknown rows."""
+        self.f.add_run('alpha', 'run-historical')
+        self.f.occupy('alpha', 1, run_id='run-alpha', status='completed')
+        w = self.f.data['alpha']['workers_by_run']['run-alpha']['workers'][0]
+        w['resource'] = {'releaseState': 'retained', 'terminalHandle': 'term-retained-ext'}
+        w['terminalClosed'] = False
+        self.f.occupy('alpha', 1, run_id='run-historical', status='completed')
+        for w in self.f.data['alpha']['workers_by_run']['run-historical']['workers']:
+            w.update(terminalClosed=True, resource=None, terminalState='unknown')
+        data = self.success('alpha')
+        self.assertEqual(data['receipts'][0]['retained_count'], 1)
+
+    def test_live_orca_runtime_smoke_readonly(self):
+        orca = shutil.which('orca')
+        if not orca:
+            self.skipTest('orca CLI not installed')
+        proc = subprocess.run([orca, 'orchestration', 'run-list', '--limit', '1', '--json'],
+                              text=True, capture_output=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload.get('ok'), proc.stdout)
 
 
 if __name__ == '__main__': unittest.main()
