@@ -28,7 +28,7 @@ Fallback begins at the provider after the role's default.
 
 | Role | Default provider | Flags |
 | --- | --- | --- |
-| fullstack-dev | Claude, then Antigravity Claude, then Antigravity Argon, then Cursor GPT | `--agent claude --model sonnet --effort medium` (owner rule above, up to 3 lanes); then `--agent antigravity --model claude-sonnet-5-5-medium`, then `--agent antigravity --model gemini-4-argon-medium` (small ticket trial: before merge, audit the file list and the i18n keys), then Cursor `gpt-5.6-sol-medium`. The `fullstack-dev` preset chain in `~/.orca/presets.json` is the source. |
+| fullstack-dev | Claude, then Antigravity Argon, then Cursor GPT | `--agent claude --model sonnet --effort medium` (owner rule above, up to 3 lanes); then `--agent antigravity --model gemini-4-argon-medium` (small ticket trial: before merge, audit the file list and the i18n keys), then Cursor `gpt-5.6-sol-medium`. The `fullstack-dev` preset chain in `~/.orca/presets.json` is the source. |
 | qa-sdet | Independent family on an available provider | Use a permitted model family different from the author, respecting provider and host caps. Opus is not mandatory for ordinary QA; extra Strong review follows the owner rule below. |
 | every other role | Claude | the Claude column for the role's tier |
 
@@ -42,16 +42,28 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 
 | Tier | Claude | Cursor | Antigravity |
 | --- | --- | --- | --- |
-| Strong | `--agent claude --model opus --effort high` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model claude-opus-5-5-high` |
-| Workhorse | `--agent claude --model sonnet --effort medium` | `--agent cursor --model claude-sonnet-5-5-medium` | `--agent antigravity --model claude-sonnet-5-5-medium` |
-| Light | `--agent claude --model haiku` | `--agent cursor --model composer-2.5` | `--agent antigravity --model gemini-3.8-flash-low` |
+| Strong | `--agent claude --model opus --effort high` | `--agent cursor --model claude-opus-5-5-high` | `--agent antigravity --model gemini-4-argon-high` |
+| Workhorse | `--agent claude --model sonnet --effort medium` | `--agent cursor --model claude-sonnet-5-5-medium` | `--agent antigravity --model gemini-4-argon-medium` |
+| Light | `--agent claude --model haiku` | `--agent cursor --model composer-2.5` | `--agent antigravity --model gemini-3.8-flash` |
 
-Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemini-3.8-flash-low`.
+Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemini-3.8-flash`.
 
 - Cursor and Antigravity put the effort in the model id: pass no `--effort`.
 - Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent cursor --model gpt-5.6-sol-high` or `--agent antigravity --model gemini-4-argon-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17). Cursor reviewers never run tests or heavy-gate jobs (Elon 2026-10-26): they review code only, and the lead runs the tests.
 - Cursor quota runs out per model family (2026-10-07: Gemini exhausted until 10/25, Opus spend limit hit earlier). A Cursor usage limit is a provider stop: fall back, never retry the same Cursor model.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt and report the effective model.
+
+## Argon builds, Claude debugs (owner 2026-11-01)
+
+- Gemini 4 Argon (`--agent antigravity --model gemini-4-argon-high` or `-medium`) takes broad, multi step Worktree jobs: high throughput work, multimodal input (video, images, large documents), and wide generation of base code and unit tests.
+- Claude (Opus 5.5 for hard cases, Sonnet 5.5 otherwise) takes fine terminal debugging. When Argon has pushed code but the project stalls at `bun run build` or a CLI deploy step with hard environment or type errors, hand that same worktree to a Claude worker to fix it.
+- Handoff: Argon commits and reports the failing command and its output; the Claude worker starts in the same worktree, fixes only what blocks the build or deploy, and does not rewrite Argon's feature code.
+- Proven combo (owner 2026-11-01, 24 hour run): Elon on `--agent antigravity --model gemini-4-argon-medium` with Cursor `composer-2.5` workers for small, mechanical or bounded tickets (three files or fewer, no `"use server"`, auth, payment or schema change). Elon may run this way when Claude quota is tight; Teddy stays on Claude. Escalate a ticket to Claude when it fails twice or touches the excluded areas.
+- The Cursor "Trust this workspace" stall is handled under Elon or Teddy supervision: read the screen after each Cursor start and accept the prompt.
+- Debug handoff preset: `fullstack-dev-debug` (Claude `sonnet` high, then `opus` high, then Cursor `claude-sonnet-5-5-medium`).
+- Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon or Cursor GPT). If none is available, report gate blocked.
+- Cursor also serves Claude models (`claude-opus-5-5-high`, `claude-sonnet-5-5-medium`). That is a quota fallback when Claude is out, not an independent family: it does not satisfy a different-family review of a Claude author.
+- Argon workers still get the file list and i18n key audit before merge (see below).
 
 ## Saving quota (owner 2026-10-09)
 
