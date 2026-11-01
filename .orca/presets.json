@@ -21,10 +21,6 @@
         },
         {
           "provider": "antigravity",
-          "model": "claude-opus-5-5-high"
-        },
-        {
-          "provider": "antigravity",
           "model": "gemini-4-argon-high"
         }
       ]
@@ -40,10 +36,6 @@
         },
         {
           "provider": "cursor",
-          "model": "claude-opus-5-5-high"
-        },
-        {
-          "provider": "antigravity",
           "model": "claude-opus-5-5-high"
         },
         {
@@ -67,10 +59,6 @@
         },
         {
           "provider": "antigravity",
-          "model": "claude-opus-5-5-high"
-        },
-        {
-          "provider": "antigravity",
           "model": "gemini-4-argon-high"
         }
       ]
@@ -86,10 +74,6 @@
         },
         {
           "provider": "antigravity",
-          "model": "claude-sonnet-5-5-medium"
-        },
-        {
-          "provider": "antigravity",
           "model": "gemini-4-argon-medium"
         },
         {
@@ -100,25 +84,21 @@
       "pin": true
     },
     "tech-lead": {
-      "tier": "workhorse",
+      "tier": "strong",
       "description": "Engineering lead integrating branches, eager merging, and hygiene",
       "chain": [
         {
           "provider": "claude",
-          "model": "sonnet",
+          "model": "opus",
           "effort": "medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-medium"
         },
         {
           "provider": "cursor",
           "model": "claude-sonnet-5-5-medium"
-        },
-        {
-          "provider": "antigravity",
-          "model": "claude-sonnet-5-5-medium"
-        },
-        {
-          "provider": "antigravity",
-          "model": "gemini-4-argon-high"
         }
       ]
     },
@@ -133,10 +113,6 @@
         },
         {
           "provider": "cursor",
-          "model": "claude-opus-5-5-high"
-        },
-        {
-          "provider": "antigravity",
           "model": "claude-opus-5-5-high"
         },
         {
@@ -160,7 +136,7 @@
         },
         {
           "provider": "antigravity",
-          "model": "claude-sonnet-5-5-medium"
+          "model": "gemini-4-argon-medium"
         }
       ]
     },
@@ -179,7 +155,7 @@
         },
         {
           "provider": "antigravity",
-          "model": "claude-sonnet-5-5-medium"
+          "model": "gemini-4-argon-medium"
         }
       ]
     },
@@ -198,13 +174,13 @@
         },
         {
           "provider": "antigravity",
-          "model": "claude-sonnet-5-5-medium"
+          "model": "gemini-4-argon-medium"
         }
       ]
     },
     "reviewer": {
       "tier": "workhorse",
-      "description": "Cross-family PR reviewer after a coding worker finishes",
+      "description": "Cross-family PR reviewer after a coding worker finishes. Pick the first entry whose family differs from the author (usage-gate --avoid-family); if none, report gate blocked.",
       "chain": [
         {
           "provider": "antigravity",
@@ -214,10 +190,6 @@
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
-        },
-        {
-          "provider": "cursor",
-          "model": "composer-2.5"
         }
       ]
     },
@@ -235,7 +207,27 @@
         },
         {
           "provider": "antigravity",
-          "model": "gemini-3.8-flash-low"
+          "model": "gemini-3.8-flash"
+        }
+      ]
+    },
+    "fullstack-dev-debug": {
+      "tier": "workhorse",
+      "description": "Takes over an Argon worktree stalled on bun run build or a CLI deploy step with hard environment or type errors (owner 2026-11-01)",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high"
+        },
+        {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        {
+          "provider": "cursor",
+          "model": "claude-sonnet-5-5-medium"
         }
       ]
     }
@@ -249,7 +241,7 @@
         "model": "composer-2.5"
       },
       "antigravity": {
-        "model": "gemini-3.8-flash-low"
+        "model": "gemini-3.8-flash"
       }
     }
   }
