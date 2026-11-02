@@ -36,6 +36,12 @@ Configure `script/fleet-watch.py` from dotfiles with this run, coordinator termi
 
 The inbox waiter script and its output file live in `~/.local/state/agent-team/` (`elon-wait.sh`, `elon-waiter.json`), never in `/tmp`, where wrap-up cleans agent temp files. Briefs tell workers to write temp files only inside their scratch dir or worktree.
 
+## Owner asks
+
+- Permission, not hands: once the owner is signed in (Chrome Dev 9223, Keychain, `fileServer/secrets/`), Elon, RM or QA finish the step (agent-browser, `orca computer`, scripts). Never hand the owner a command an agent can run.
+- A message that needs nothing from the owner is not sent.
+- Ledger: append each owner ask and each answer to `~/.claude/state/elon-owner-asks.md` the turn it arrives (ask, issue, state, next gate). An ask is closed only when it is on production or the owner drops it.
+
 ## Wake loop
 
 Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
@@ -43,6 +49,7 @@ Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 - `usage-gate.py show`, `worker-list` on the tech-lead run, the ready-for-agent count, the open PR count per project, and a read of the tech-lead and release-manager screens.
 - `worker-watch.sh` on your run; LONG_SESSION means act at once (tech-lead: order `handoff:`). Keep `worker-watchdog.sh` running on the tech-lead run.
 - Fewer workers than the gate allows while startable tickets exist is a bottleneck: order the tech-lead to fill the lanes that turn.
+- Owner ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its owner in the ask's ledger row this wake.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending owner asks as one numbered batch before he leaves; one answer holds at most one ticket.
 - A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.
 
