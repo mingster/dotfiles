@@ -89,7 +89,7 @@ close_finished_terminals() {
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
   fi
   jq -r -s --slurpfile terms "$tmp/h-terminals" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
-    def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released"] | index($s)) or .stage == "released" or .liveness == "exited";
+    def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
     | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "") as $p
@@ -145,7 +145,7 @@ if command -v "$orca" >/dev/null 2>&1; then
       while IFS=$'\t' read -r dispatch status; do
         [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
-          jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released"] | index($s)) or .stage == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
+          jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
         elif [ "$status" = pending ]; then
           # Never started: no worker and no worktree, so worker-show has nothing to return.
           echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
@@ -153,12 +153,12 @@ if command -v "$orca" >/dev/null 2>&1; then
           echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2
           echo '*' >> "$tmp/active"
         fi
-      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released"] | index($s)) or .stage == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // ""] | @tsv' "$tmp/workers")
+      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // ""] | @tsv' "$tmp/workers")
       cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/workers")
       [ -n "$cursor" ] || break
     done
     # Discard terminals positively owned only by settled dispatches. Unknown owners stay safe.
-    jq -s '[.[].result.workers[] | .agentTerminalHandle //= (.terminal | strings)] | group_by(.agentTerminalHandle) | map(select(all(.[]; ((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released"] | index($s)) or .stage == "released" or .liveness == "exited")) | .[0].agentTerminalHandle) | map(select(. != null))' "$tmp/worker-pages" > "$tmp/ended-handles"
+    jq -s '[.[].result.workers[] | .agentTerminalHandle //= (.terminal | strings)] | group_by(.agentTerminalHandle) | map(select(all(.[]; ((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited")) | .[0].agentTerminalHandle) | map(select(. != null))' "$tmp/worker-pages" > "$tmp/ended-handles"
     # A preview leaves the terminals it plans to close open; apply has closed them, so count them as gone in both.
     jq -R . "$tmp/closing" | jq -s . > "$tmp/closing-handles"
     jq -r --slurpfile ended "$tmp/ended-handles" --slurpfile closing "$tmp/closing-handles" '.result.terminals[] | select(.handle as $h | ($ended[0] | index($h) | not) and ($closing[0] | index($h) | not)) | .cwd // .worktreePath // empty' "$tmp/terminals" >> "$tmp/active"

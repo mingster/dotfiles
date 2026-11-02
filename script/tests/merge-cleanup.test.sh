@@ -171,5 +171,16 @@ clean_run
 gone flat-done flat-done && ok || bad "flat released row: worktree removed"
 kept flat-live flat-live && ok || bad "flat live row: worktree kept"
 
+# Live worker-list rows record release as terminalState "released" (no stage); stopped workers too.
+termdispatch() { n=$((n + 1)); _mf_orca_append workers.json workers "$(jq -n --arg d "d$n" --arg w "$(path "$1")" --arg s "$2" --arg t "$3" --arg l "$4" \
+  '{runId:"run1", dispatchId:$d, state:$s, liveness:$l, terminalState:$t, workspace:("repo::" + $w), host:"local"}')"; }
+wt live-rel live-rel; termdispatch live-rel succeeded released exited
+wt live-stop live-stop; termdispatch live-stop stopped released exited
+wt live-ret live-ret commit; termdispatch live-ret failed retained unverifiable
+clean_run
+gone live-rel live-rel && ok || bad "terminalState released row: worktree removed"
+gone live-stop live-stop && ok || bad "stopped+released row: worktree removed"
+kept live-ret live-ret && ok || bad "retained row: worktree kept"
+
 echo "merge-cleanup tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

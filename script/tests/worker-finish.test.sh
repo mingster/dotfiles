@@ -359,6 +359,18 @@ printf '{"ok":true,"result":{"dispatchId":"d32","state":"succeeded","liveness":"
 push_wt_head_to_main "$tmp/w32"
 HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w32"
 [ "$(released_log d32)" = 1 ] && ok || bad "flat worker-list row discovers the dispatch"
+# 33. a stopped worker whose terminal is released (live worker-show shape) is final
+newwt w33; reset; default_released d33
+printf '{"ok":true,"result":{"dispatchId":"d33","taskId":"task_s","state":"stopped","stage":"process_stopped","liveness":"unverifiable","terminalState":"released","workspace":"repo::%s"}}\n' "$tmp/w33" > "$WORKER_SHOW_FIXTURE_DIR/show-d33.json"
+push_wt_head_to_main "$tmp/w33"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w33" --dispatch d33
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d33)" = 1 ] && ok || bad "stopped show releases"
+# 34. terminalState released alone (state still ready, unverifiable) is final
+newwt w34; reset; default_released d34
+printf '{"ok":true,"result":{"dispatchId":"d34","state":"ready","liveness":"unverifiable","terminalState":"released"}}\n' > "$WORKER_SHOW_FIXTURE_DIR/show-d34.json"
+push_wt_head_to_main "$tmp/w34"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w34" --dispatch d34
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d34)" = 1 ] && ok || bad "terminalState released show is final"
 
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

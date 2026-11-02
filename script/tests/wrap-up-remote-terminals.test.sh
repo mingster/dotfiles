@@ -149,3 +149,17 @@ for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' '
   expect "Kept terminal ${pair%|*} (env-a, ${pair#*|})"
 done
 echo 'ok flat worker-list rows classify remote terminals like the old shape'
+# Live rows: stopped state and terminalState released (no stage) are settled.
+{
+  flat '' /fixture/settled stopped unverifiable
+  flat t-handle /fixture/other ready unverifiable | jq '.terminalState = "released"'
+  flat '' /fixture/live succeeded exited
+  flat '' /fixture/live ready live
+  flat t-own /fixture/own succeeded exited
+  flat '' /fixture/lead-work failed exited
+  flat '' /fixture/agent ready unverifiable | jq '.stage = "released"'
+} | jq -s '{ok:true,result:{workers:.,page:{hasMore:false}}}' > "$tmp/page1"
+run --dry-run
+expect 'Close terminal t-path (env-a, settled dispatch on this path)'
+expect 'Close terminal t-handle (env-a, settled dispatch)'
+echo 'ok stopped and terminalState released rows are settled'

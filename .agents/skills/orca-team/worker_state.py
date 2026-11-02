@@ -6,7 +6,7 @@ dispatch.status / dispatch.assigneeHandle / worker.*, and list rows carried disp
 The flat fields are read first; the old ones are the fallback.
 """
 
-FINAL_STATES = ("succeeded", "completed", "failed", "cancelled", "released")
+FINAL_STATES = ("succeeded", "completed", "failed", "cancelled", "released", "stopped")
 
 
 def _dict(v):
@@ -24,7 +24,14 @@ def is_final(r):
     r = _dict(r)
     states = (r.get("state"), r.get("dispatchStatus"), _dict(r.get("dispatch")).get("status"))
     return (any(s in FINAL_STATES for s in states)
-            or r.get("stage") == "released" or r.get("liveness") == "exited")
+            or r.get("stage") == "released" or r.get("terminalState") == "released"
+            or r.get("liveness") == "exited")
+
+
+def is_nested(r):
+    """True for the old nested list row, which has dispatchStatus or projection (flat rows have neither)."""
+    r = _dict(r)
+    return "dispatchStatus" in r or "projection" in r
 
 
 def terminal(r):

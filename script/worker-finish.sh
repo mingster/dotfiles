@@ -131,10 +131,10 @@ for id in ${dispatches[@]+"${dispatches[@]}"}; do
   if [ -n "$archive_dir" ]; then printf '%s\n' "$show" > "$archive_dir/show-$id.json"; fi
   # Current Orca prints result.state/stage/liveness; older Orca nested the status under result.dispatch.
   status=$(printf '%s' "$show" | jq -r '.result | if (.state | type) == "string" then .state else (.dispatch.status // empty) end' 2>/dev/null) || status=""
-  final=$(printf '%s' "$show" | jq -r '.result | if .stage == "released" or .liveness == "exited" then "final" else empty end' 2>/dev/null) || final=""
+  final=$(printf '%s' "$show" | jq -r '.result | if .stage == "released" or .terminalState == "released" or .liveness == "exited" then "final" else empty end' 2>/dev/null) || final=""
   [ -z "$final" ] || status="${status:-released}:final"
   case "$status" in
-    succeeded|completed|failed|cancelled|released|*:final) status=${status%:final} ;;
+    succeeded|completed|failed|cancelled|released|stopped|*:final) status=${status%:final} ;;
     *)
       echo "worker-finish: refusing release for $id (dispatch status=${status:-unknown})" >&2
       exit 1
