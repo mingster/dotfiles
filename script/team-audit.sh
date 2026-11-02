@@ -26,6 +26,10 @@
 #             fields missing from the text with the most. Opt out with the label "team-audit: allow" or a
 #             line containing "team-audit: allow" in the body or a comment. A gh or network failure
 #             prints "WARN ready-brief" and is not a finding.
+#   receipt   every non-merge commit touching role files (templates/agent-team/.claude/agents/ in
+#             DOTFILES, .claude/agents/ in each project) carries an "Owner-approved:" trailer (owner
+#             rule 2026-11-02). Commits are checked from ROLE_RECEIPT_SINCE (pass the last audit date);
+#             commits before 2026-11-03 are grandfathered, so the date is never earlier.
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles).
 set -uo pipefail
@@ -36,7 +40,7 @@ LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
 
-case "${1:-}" in -h|--help) sed -n '2,30p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,34p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
@@ -169,6 +173,23 @@ else
     done
   done
 fi
+
+# receipt: commits touching role files carry the Owner-approved: trailer.
+RECEIPT_GRANDFATHER=2026-11-03
+RECEIPT_SINCE="${ROLE_RECEIPT_SINCE:-$RECEIPT_GRANDFATHER}"
+[[ "$RECEIPT_SINCE" < "$RECEIPT_GRANDFATHER" ]] && RECEIPT_SINCE="$RECEIPT_GRANDFATHER"
+receipt_check() { # <repo root> <role path inside it>
+  local top rows sha receipt subject
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 0
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$1" && pwd -P)" ] || return 0
+  rows=$(git -C "$1" log --no-merges --since="$RECEIPT_SINCE 00:00" \
+    --format='%h%x1f%(trailers:key=Owner-approved,valueonly,separator=%x2C)%x1f%s' -- "$2" 2>/dev/null)
+  while IFS=$'\x1f' read -r sha receipt subject; do
+    [ -n "$sha" ] && [ -z "$receipt" ] && finding receipt "$1: $sha touches $2 without an Owner-approved: trailer ($subject)"
+  done <<< "$rows"
+}
+receipt_check "$DOTFILES" templates/agent-team/.claude/agents
+for proj in "${PROJECTS[@]}"; do [ -d "$proj" ] && receipt_check "$proj" .claude/agents; done
 
 # ready-brief: open ready-for-agent issues must carry the AGENT-BRIEF fields in one text.
 BRIEF_PY='

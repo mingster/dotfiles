@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Turn budget for Orca workers in the agent team.
 
-Applies only when the session runs inside an Orca worktree (~/orca/workspaces/),
-so Elon's and the owner's sessions are never capped. Counts assistant turns in
+Applies only to an Orca worker: the session runs inside an Orca worktree
+(~/orca/workspaces/) and its first message is the worker brief carrying a Dispatch
+id (`--dispatch-id ctx_`). Orca puts that id in no environment variable, so Elon's
+and the owner's sessions, which start without a brief, are never capped. Counts assistant turns in
 the transcript (state kept in ~/.claude/state, outside every repo).
 
 PostToolUse: past WARN turns, tells the worker to finish the slice and report.
@@ -15,6 +17,14 @@ import json, os, re, sys
 WARN, STOP = 120, 200
 WORKSPACES = os.path.realpath(os.path.expanduser("~/orca/workspaces"))
 STATE_DIR = os.path.expanduser("~/.claude/state/worker-budget")
+
+
+def is_worker(transcript):
+    with open(transcript, "rb") as f:
+        for raw in f:
+            if (b'"type": "user"' in raw or b'"type":"user"' in raw) and b'"isMeta":true' not in raw:
+                return b"dispatched worker" in raw and b"--dispatch-id ctx_" in raw
+    return False
 
 
 def turns(transcript, session):
@@ -46,6 +56,8 @@ def main():
     # The Tech Lead runs in a lead-* worktree (the name lead-merge.sh checks); it is never capped.
     parts = cwd[len(WORKSPACES) + 1:].split(os.sep)
     if len(parts) > 1 and parts[1].startswith("lead-"):
+        return
+    if not is_worker(data["transcript_path"]):
         return
     n = turns(data["transcript_path"], str(data.get("session_id", "unknown")))
     event = data.get("hook_event_name")

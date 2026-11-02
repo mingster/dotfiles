@@ -10,6 +10,9 @@ import sys
 import tempfile
 import unittest
 
+# The start of the brief Orca gives a dispatched worker; a coordinator session has none.
+PREAMBLE = ("You are working inside Orca, a multi-agent IDE. You are a dispatched worker.\n"
+            "orca orchestration send --type worker_done --task-id task_1 --dispatch-id ctx_abc123")
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "worker-budget.py")
 
 
@@ -18,8 +21,10 @@ class WorkerBudgetTest(unittest.TestCase):
         self.home = tempfile.mkdtemp(prefix="budget-home-")
         self.transcript = os.path.join(self.home, "transcript.jsonl")
 
-    def run_hook(self, worktree, turns, event):
+    def run_hook(self, worktree, turns, event, worker=True):
         with open(self.transcript, "w") as f:
+            first = (PREAMBLE if worker else "/elon status")
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": first}}) + "\n")
             for i in range(turns):
                 f.write(json.dumps({"type": "assistant", "message": {"id": f"msg_{i}"}}) + "\n")
         cwd = os.path.join(self.home, "orca", "workspaces", "proj", worktree)
@@ -44,6 +49,12 @@ class WorkerBudgetTest(unittest.TestCase):
 
     def test_lead_never_denied(self):
         self.assertIsNone(self.run_hook("lead-x", 250, "PreToolUse"))
+
+    def test_coordinator_session_never_warned(self):
+        self.assertIsNone(self.run_hook("elon-x", 150, "PostToolUse", worker=False))
+
+    def test_coordinator_session_never_denied(self):
+        self.assertIsNone(self.run_hook("elon-x", 250, "PreToolUse", worker=False))
 
 
 if __name__ == "__main__":

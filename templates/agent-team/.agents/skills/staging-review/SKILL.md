@@ -28,7 +28,7 @@ Staging only: <staging URL>, never production. Browser: your own agent-browser, 
 Page list: build it from the route files under your area so no page is skipped.
 For each page: loads with no error and no console error; every button, form, filter, tab and dialog does what it says (create, edit, delete only your own test rows, named "QA-<round>"); empty, error and long text states; wording in every locale reads native (switch locale on each page); layout at each device size; links and back navigation; anything a first-time user would not understand.
 Output: <round folder>/findings-<area>.md, one line per finding: URL | P0-P3 | broken, wording, layout, missing, confusing | what you saw | proposed fix. Screenshots <area>-<n>.png beside it. Search open issues first and cite the number instead of a duplicate. Do not file issues.
-Rules: no code, no commits, no heartbeats, never touch production, never press maintenance or destructive platform controls, never change other stores or platform settings, never message real customers, sandbox payments and test cards only. Close your browser at the end. Finish within 60 minutes; if the area is larger, cover the P0 paths first and list the pages not reached.
+Rules: no code, no commits, never touch production, never press maintenance or destructive platform controls, never change other stores or platform settings, never message real customers, sandbox payments and test cards only. Close your browser at the end. Finish within 60 minutes; if the area is larger, cover the P0 paths first and list the pages not reached.
 worker_done: counts per severity, top 10 findings, pages not reached, the findings file path.
 ```
 
@@ -47,7 +47,7 @@ Input: every findings-*.md in <round folder>.
 2. Group the agreed findings into tickets, one per independent fix on disjoint files so many workers run at once. Each ticket: title, page, severity, acceptance criteria, the proving test (unit or e2e spec path), files likely touched. Wording-only findings do not get one ticket each: put them in at most one ticket per audience (customer, store staff, platform operator), split again past about 30 strings, so each audience has one string table to approve and one QA pass and the locale files see no merge conflicts. Broken and layout findings stay one ticket per fix. Wording tickets carry the exact strings for every locale, native, never a direct translation.
 3. File your side's tickets (search first; the issue budget and triage label docs apply), ready-for-agent when fully specified. A product, scope or copy call goes to Elon with `orca orchestration ask` (A recommended, B); record "Elon decision (owner to review)" on the issue. Only Owner-Reserved items become ready-for-human.
 On a non-Owner-Reserved ask timeout, proceed with recommended A and label the ticket "Elon decision pending"; send the unresolved decision to Elon. Owner-Reserved work remains blocked.
-Never change priorities of existing issues, never close issues, never read secrets. No heartbeats. Finish within 40 minutes.
+Never change priorities of existing issues, never close issues, never read secrets. Finish within 40 minutes.
 worker_done: issues filed (number, severity, label), open disagreements as a numbered A/B list, Owner-Reserved questions (expect none).
 ```
 

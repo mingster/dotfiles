@@ -167,5 +167,22 @@ out=$(HOME="$tmp/legacy-home" DOTFILES="$tmp/machine" bash "$here/agent-team.sh"
 { [ "$rc" = 0 ] && [ ! -L "$tmp/legacy-home/.claude" ] &&
   [ "$(cat "$tmp/legacy-config/settings.json")" = '{"legacy":true}' ] &&
   [ -L "$(find "$tmp/legacy-home" -maxdepth 1 -name '.claude.bak.*' | head -1)" ]; } && check "machine backs up legacy Claude directory links without changing their source" ok || check "machine backs up legacy Claude directory links without changing their source" bad
+# team-audit receipt: role-file commits from 2026-11-03 carry Owner-approved:; earlier ones are grandfathered.
+rc_repo="$tmp/receipt"; git init -q "$rc_repo"; mkdir -p "$rc_repo/.claude/agents"
+rc_commit() { # <date> <file> <message...>
+  echo "$1 $2" >> "$rc_repo/$2"; git -C "$rc_repo" add -A
+  GIT_AUTHOR_DATE="$1T12:00:00" GIT_COMMITTER_DATE="$1T12:00:00" \
+    git -C "$rc_repo" -c user.name=Test -c user.email=test@example.invalid commit -q "${@:3}"
+}
+rc_commit 2026-11-01 .claude/agents/old.md -m "old role edit"
+rc_commit 2026-11-04 .claude/agents/bare.md -m "unapproved role edit"
+rc_commit 2026-11-04 .claude/agents/ok.md -m "approved role edit" -m "Owner-approved: Owner 2026-11-04 (test)"
+rc_commit 2026-11-04 notes.md -m "non-role edit"
+out=$(bash "$here/team-audit.sh" "$rc_repo" 2>&1 | grep '^FINDING receipt')
+{ [ "$(echo "$out" | grep -c .)" = 1 ] && echo "$out" | grep -q 'unapproved role edit'; } &&
+  check "team-audit flags role commits without an Owner-approved trailer from 2026-11-03" ok ||
+  { check "team-audit flags role commits without an Owner-approved trailer from 2026-11-03" bad; echo "$out"; }
+out=$(ROLE_RECEIPT_SINCE=2026-11-05 bash "$here/team-audit.sh" "$rc_repo" 2>&1 | grep -c '^FINDING receipt')
+[ "$out" = 0 ] && check "team-audit receipt starts at ROLE_RECEIPT_SINCE" ok || check "team-audit receipt starts at ROLE_RECEIPT_SINCE" bad
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]
