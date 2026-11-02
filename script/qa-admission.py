@@ -405,6 +405,7 @@ def admit(args):
             candidates.append({'environment_id': eid or 'local',
                                'worktree_selector': 'identity:'+review['worktree_identity'],
                                'host': host})
+    observations = load_observations(args.fleet_load, caps)
     validate_loads(observations, config, policy)
     if policy:
         policy_window(policy)
