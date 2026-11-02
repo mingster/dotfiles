@@ -9,7 +9,7 @@
 
 ## Dispatch
 
-- **Pre-build grill gate (owner 2026-11-02):** before dispatching a builder, run the matching grill and record findings on the issue or spec. UI or user-facing copy: sales-marketing and Elon. Code changes: architect-pm and Elon. Money (payments, billing, refunds, ledger, Store AI credits or metering, pricing, entitlements): secops-finops, architect-pm and Elon. All grill results and decisions need explicit owner approval before build (Owner-Reserved; the 5 minute rule does not bypass this).
+- **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `docs/agents/team.md` must be met: grill findings recorded on the issue or spec and the owner's explicit approval of them.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the lane cap in `.claude/model-routing.md` (at most 3 implementation lanes). When the lead's queue waits over 30 minutes, merge through `lead-merge.sh` yourself.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
