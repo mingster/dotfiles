@@ -66,6 +66,9 @@ elif a[:2]==['orchestration','worker-list']:
  by_run=data[host].get('workers_by_run', {})
  result=by_run.get(run, data[host]['workers'])
  if '--cursor' in a: result=data[host].get('next_page', result)
+ if '--full' not in a:
+  # Orca 1.4.246: --json alone prints a concise view without page, projection or resource.
+  result={'workers':[{'dispatchId':w.get('dispatchId'),'host':'local','state':'running'} for w in (result.get('workers') or [])],'scope':result.get('scope')}
 else:
  host=a[a.index('--environment')+1].removesuffix('-saved') if '--environment' in a else 'local'
  if host not in data: print('{"ok":false}'); sys.exit(1)

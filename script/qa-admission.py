@@ -236,7 +236,7 @@ def worker_counts(orca, flags, host_id):
             if cursor is not None:
                 paging.extend(['--cursor', cursor])
             result = orca_result(orca, 'orchestration', 'worker-list', *flags,
-                                 '--run', run_id, '--include-remote', *paging)
+                                 '--run', run_id, '--include-remote', '--full', *paging)
             rows = result.get('workers')
             if 'page' not in result and isinstance(rows, list):
                 # Orca 1.4.246 omits page. Only a short page proves it is the last one.
