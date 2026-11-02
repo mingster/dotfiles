@@ -195,5 +195,16 @@ cat > "$tmp/workers.json" <<EOF
 EOF
 check "disconnected host produces unknown coverage, never healthy" 4 'ctx_disc term_disc UNKNOWN_COVERAGE'
 
+# Current Orca worker-list rows: state/liveness/terminal, no dispatchStatus, agentTerminalHandle or projection.
+cat > "$tmp/workers.json" <<EOF
+{"ok":true,"result":{"workers":[{"dispatchId":"ctx_flat","state":"ready","liveness":"live","terminal":"term_flat","workspace":"repo1::$tmp/x","host":"local"},
+ {"dispatchId":"ctx_done","state":"succeeded","liveness":"exited","terminal":"term_done","host":"local"}]}}
+EOF
+printf 'Working on spec\n' > "$tmp/term_flat.txt"; printf '> \n' > "$tmp/term_done.txt"
+check "flat rows: live worker is watched" 0 'ctx_flat term_flat OK'
+out=$(cd "$tmp" && timeout 60 "$here/worker-watch.sh" run_x 2>&1)
+if ! printf '%s' "$out" | grep -q ctx_done; then pass=$((pass+1)); echo "ok   flat rows: succeeded worker is skipped"
+else fail=$((fail+1)); echo "FAIL flat rows: succeeded worker is skipped"; echo "$out"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -46,6 +46,14 @@ if result.get("state") not in ("released", "already_released"):
     sys.exit(0)
 if os.environ.get("FAKE_SKIP_NATIVE_RM") == "1":
     sys.exit(0)
+if os.environ.get("FAKE_REAL_RELEASE") == "1":
+    show = json.load(open(os.path.join(os.environ["FAKE_DIR"], "show." + dispatch)))
+    agent = show["result"].get("terminal")
+    p = os.path.join(os.environ["FAKE_DIR"], "terminals.json")
+    doc = json.load(open(p))
+    doc["result"]["terminals"] = [t for t in doc["result"]["terminals"] if t.get("handle") != agent]
+    json.dump(doc, open(p, "w"))
+    sys.exit(0)
 fake = os.environ["FAKE_DIR"]
 show_path = os.path.join(fake, "show." + dispatch)
 try:
@@ -378,15 +386,15 @@ rm -f "$tmp/closes.log"
 echo completed > "$tmp/status.retry"; echo term_retry > "$tmp/state/retry"
 echo '{"result":{"terminals":[{"handle":"term_retry"}]}}' > "$tmp/terminals.json"
 : > "$tmp/sleeps.log"
-FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" retry >/dev/null
-check "native verify retains record when terminal lingers" "$([ -e "$tmp/state/retry" ] && no_generic_close; echo $?)"
+FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" retry >/dev/null
+check "verify retains record when terminal lingers after close" "$([ -e "$tmp/state/retry" ] && [ "$(cat "$tmp/closes.log")" = term_retry ]; echo $?)"
 check "no retry backoff sleep after native-only verify" "$([ ! -s "$tmp/sleeps.log" ]; echo $?)"
 # If authority changes while retrying, stop closing and retain the handle.
 rm -f "$tmp/closes.log"
 echo completed > "$tmp/status.reactivate"; echo term_retry > "$tmp/state/reactivate"
 echo '{"result":{"terminals":[{"handle":"term_retry"}]}}' > "$tmp/terminals.json"
-FAKE_REACTIVATE=reactivate FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" reactivate >/dev/null
-check "dispatch becoming running stops native cleanup" "$([ -e "$tmp/state/reactivate" ] && no_generic_close; echo $?)"
+FAKE_REACTIVATE=reactivate FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" reactivate >/dev/null
+check "dispatch becoming running stops cleanup" "$([ -e "$tmp/state/reactivate" ] && [ "$(closes)" = 1 ]; echo $?)"
 rm "$tmp/state/reactivate"
 # No recorded pane: discover ended workers from the current Run, with pagination.
 cat > "$tmp/workers.json" <<JSON
@@ -414,9 +422,9 @@ rm "$tmp/workers.json"
 # Budget expiry retains the record for a later wake sweep.
 echo completed > "$tmp/status.stuck"; echo term_stuck > "$tmp/state/stuck"
 echo '{"result":{"terminals":[{"handle":"term_stuck"}]}}' > "$tmp/terminals.json"
-FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" stuck >/dev/null
-check "unverified native close retains record" "$([ -e "$tmp/state/stuck" ] && no_generic_close; echo $?)"
-FAKE_LIST_FAILS=1 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" stuck >/dev/null
+FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" stuck >/dev/null
+check "unverified close retains record" "$([ -e "$tmp/state/stuck" ]; echo $?)"
+FAKE_LIST_FAILS=1 FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" stuck >/dev/null
 check "failed list cannot prove disappearance" "$([ -e "$tmp/state/stuck" ]; echo $?)"
 rm "$tmp/state/stuck"
 echo term_unknown > "$tmp/state/unknown"
@@ -430,8 +438,8 @@ rm -f "$tmp/closes.log"
 check "explicit cleanup cannot close its coordinator even with a stale record" "$([ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/coordinator" ]; echo $?)"
 echo term_e > "$tmp/state/d5"; echo released > "$tmp/status.d5"
 echo '{"result":{"terminals":[{"handle":"term_e"}]}}' > "$tmp/terminals.json"
-FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" d5 >/dev/null; rc=$?
-check "terminal still listed after native release keeps state without error" "$([ "$rc" = 0 ] && [ -e "$tmp/state/d5" ] && no_generic_close; echo $?)"
+FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" d5 >/dev/null; rc=$?
+check "terminal still listed after release and close keeps state without error" "$([ "$rc" = 0 ] && [ -e "$tmp/state/d5" ]; echo $?)"
 
 echo dispatched > "$tmp/status.live-release"
 rm -f "$tmp/state/released/live-release"
@@ -588,7 +596,7 @@ echo term_dpresent > "$tmp/state/dpresent"
 cat > "$tmp/terminals.json" <<'JSON'
 {"ok":true,"result":{"terminals":[{"handle":"term_dpresent"}],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}
 JSON
-FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dpresent > "$tmp/dpresent.out" 2>&1
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" dpresent > "$tmp/dpresent.out" 2>&1
 check "target still listed retains state" "$([ -e "$tmp/state/dpresent" ]; echo $?)"
 check "target still listed does not print verified closed" "$(! grep -q '^closed dpresent' "$tmp/dpresent.out"; echo $?)"
 
@@ -600,5 +608,77 @@ JSON
 FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dinv > "$tmp/dinv.out" 2>&1
 check "complete inventory verifies absence and clears state" "$([ ! -e "$tmp/state/dinv" ]; echo $?)"
 check "complete inventory prints verified closed" "$(grep -q '^closed dinv (1)$' "$tmp/dinv.out"; echo $?)"
+
+
+# Current Orca: flat worker-show (state/stage/liveness/terminal/workspace) and worker-list rows without dispatchStatus.
+# Release closes only the agent terminal, so the coordinator's split pane and the worker's Setup terminal are ours to close.
+flat_show() { # $1 dispatch $2 state $3 stage $4 liveness $5 agent terminal $6 worktree path
+  printf '{"ok":true,"result":{"dispatchId":"%s","taskId":"t1","runId":"r1","state":"%s","stage":"%s","liveness":"%s","terminal":"%s","workspace":"repo1::%s"}}' "$@" > "$tmp/show.$1"
+}
+flat_terms() { # the worker's agent and Setup terminals in its worktree, its pane, and the caller's own terminal there too
+  cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_fagent","worktreePath":"$tmp/linked"},{"handle":"term_fsetup","title":"Setup","worktreePath":"$tmp/linked"},
+ {"handle":"term_fpane","tabId":"t1","worktreePath":"$tmp/main"},{"handle":"term_coordinator","worktreePath":"$tmp/linked"},
+ {"handle":"term_fowner","worktreePath":"$tmp/main"}]}}
+JSON
+}
+listed() { ! term_absent "$1"; }
+rm -f "$tmp/closes.log" "$tmp/workers.json" "$tmp/state/released/dflat"
+flat_show dflat succeeded released exited term_fagent "$tmp/linked"; flat_terms; echo term_fpane > "$tmp/state/dflat"
+FAKE_REAL_RELEASE=1 "$here/worker-pane-close.sh" dflat > "$tmp/dflat.out" 2>&1
+check "flat succeeded: native release runs" "$(grep -q 'worker-release --dispatch dflat' "$tmp/rpc.log"; echo $?)"
+check "flat succeeded: coordinator split pane closed" "$(term_absent term_fpane && grep -qx term_fpane "$tmp/closes.log"; echo $?)"
+check "flat succeeded: leftover Setup terminal closed" "$(term_absent term_fsetup && grep -qx term_fsetup "$tmp/closes.log"; echo $?)"
+check "flat succeeded: agent terminal left to native release" "$(term_absent term_fagent && ! grep -qx term_fagent "$tmp/closes.log"; echo $?)"
+check "flat succeeded: own terminal never closed" "$(listed term_coordinator && ! grep -qx term_coordinator "$tmp/closes.log"; echo $?)"
+check "flat succeeded: owner terminal outside the worktree kept" "$(listed term_fowner; echo $?)"
+check "flat succeeded: record dropped after verified close" "$([ ! -e "$tmp/state/dflat" ] && grep -q '^closed dflat' "$tmp/dflat.out"; echo $?)"
+
+for row in "ready input_accepted live" "ready released_pending live"; do
+  set -- $row; rm -f "$tmp/closes.log" "$tmp/rpc.log"
+  flat_show dflive "$1" "$2" "$3" term_fagent "$tmp/linked"; flat_terms; echo term_fpane > "$tmp/state/dflive"
+  FAKE_REAL_RELEASE=1 "$here/worker-pane-close.sh" dflive >/dev/null 2>&1
+  check "flat $1/$2/$3: nothing released or closed" "$([ ! -s "$tmp/closes.log" ] && ! grep -q dflive "$tmp/rpc.log" 2>/dev/null && [ -e "$tmp/state/dflive" ]; echo $?)"
+done
+rm -f "$tmp/state/dflive"
+
+rm -f "$tmp/closes.log" "$tmp/state/released/dfrel"
+flat_show dfrel succeeded released exited term_fagent "$tmp/linked"; flat_terms; echo term_fpane > "$tmp/state/dfrel"
+FAKE_REAL_RELEASE=1 "$here/worker-pane-close.sh" --release dfrel > "$tmp/dfrel.out" 2>&1; rc=$?
+check "flat --release of a succeeded worker is accepted" "$([ "$rc" = 0 ] && ! grep -q refusing "$tmp/dfrel.out"; echo $?)"
+check "flat --release closes pane and Setup terminal" "$(term_absent term_fpane && term_absent term_fsetup && listed term_coordinator; echo $?)"
+
+# Released with processAction none: Orca kept every terminal; the leftovers are still closed.
+rm -f "$tmp/closes.log"
+printf '{"ok":true,"result":{"dispatchId":"dfnone","state":"released","processAction":"none"}}' > "$tmp/release.dfnone.json"
+flat_show dfnone succeeded released exited term_fagent "$tmp/linked"; flat_terms; echo term_fpane > "$tmp/state/dfnone"
+"$here/worker-pane-close.sh" --release dfnone >/dev/null 2>&1
+check "released with processAction none still closes pane and Setup" "$(term_absent term_fpane && term_absent term_fsetup && listed term_fagent && listed term_coordinator; echo $?)"
+
+# worker-list rows without dispatchStatus: a live row keeps a shared terminal, a final one does not.
+rm -f "$tmp/closes.log"
+flat_show dfshare failed released exited term_fshared "$tmp/gone"
+echo term_fshared > "$tmp/state/dfshare"
+echo '{"result":{"terminals":[{"handle":"term_fshared"}]}}' > "$tmp/terminals.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"dfshare","state":"failed","liveness":"exited","terminal":"term_fshared"},{"dispatchId":"dfretry","state":"ready","liveness":"live","terminal":"term_fshared","workspace":"repo1::'"$tmp"'/linked"}]}}' > "$tmp/workers.json"
+FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dfshare >/dev/null 2>&1
+check "flat list: terminal of a live retry is kept" "$([ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/dfshare" ]; echo $?)"
+rm -f "$tmp/state/dfshare"
+
+# Wake sweep discovers a finished worker from flat worker-list rows (state, workspace, no dispatchStatus).
+rm -f "$tmp/closes.log"; for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+flat_show dfsweep succeeded released exited term_fsweep "$tmp/gone"
+cat > "$tmp/terminals.json" <<JSON
+{"result":{"terminals":[{"handle":"term_fsweep"},{"handle":"term_fother","worktreePath":"/other"}]}}
+JSON
+cat > "$tmp/workers.json" <<JSON
+{"ok":true,"result":{"workers":[{"dispatchId":"dfsweep","taskId":"t1","state":"succeeded","liveness":"exited","terminal":"term_fsweep","workspace":"repo1::$tmp/gone","host":"local"},
+ {"dispatchId":"dfother","state":"succeeded","liveness":"exited","terminal":"term_fother","workspace":"repo2::/other"}],"scope":{"run":"r1","source":"flag"}}}
+JSON
+flat_show dfother succeeded released exited term_fother /other
+FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "flat sweep: release of a discovered finished worker" "$(grep -q 'worker-release --dispatch dfsweep' "$tmp/rpc.log"; echo $?)"
+check "flat sweep: other project's worker untouched" "$(! grep -q 'worker-release --dispatch dfother' "$tmp/rpc.log" && listed term_fother; echo $?)"
+rm -f "$tmp/workers.json"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

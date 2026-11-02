@@ -341,5 +341,36 @@ unset WORKER_FINISH_TEST_DIFF_U_RC
 grep -q "cannot inspect unmerged diff" "$tmp/out" "$tmp/err" && ok || bad "unmerged diff query error message"
 ! grep -q "removed worktree" "$tmp/out" && ok || bad "unmerged diff query error must not remove worktree"
 
+# 30. current Orca prints a flat worker-show (state/stage/liveness/taskId at the top of result)
+newwt w30; reset; default_released d30
+printf '{"ok":true,"result":{"dispatchId":"d30","taskId":"task_flat","state":"succeeded","stage":"input_accepted","liveness":"exited","terminal":"term_30","workspace":"repo::%s"}}\n' "$tmp/w30" > "$WORKER_SHOW_FIXTURE_DIR/show-d30.json"
+push_wt_head_to_main "$tmp/w30"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w30" --dispatch d30 --task-id task_flat
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d30)" = 1 ] && [ ! -d "$tmp/w30" ] && ok || bad "flat succeeded show releases and removes worktree"
+# 31. flat show of a live worker refuses
+newwt w31; reset; default_released d31
+printf '{"ok":true,"result":{"dispatchId":"d31","state":"ready","stage":"input_accepted","liveness":"live"}}\n' > "$WORKER_SHOW_FIXTURE_DIR/show-d31.json"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w31" --dispatch d31
+[ "$(cat "$tmp/rc")" = 1 ] && [ "$(released_log d31)" = 0 ] && grep -q "status=ready" "$tmp/err" && ok || bad "flat live show refuses release"
+# 32. flat worker-list rows (workspace, no dispatchStatus or worktreeId) find the dispatch
+newwt w32; reset; default_released d32
+_mf_orca_append workers.json workers "$(jq -n --arg w "$tmp/w32" '{runId:"run1", dispatchId:"d32", state:"succeeded", liveness:"exited", workspace:("repo::" + $w)}')"
+printf '{"ok":true,"result":{"dispatchId":"d32","state":"succeeded","liveness":"exited"}}\n' > "$WORKER_SHOW_FIXTURE_DIR/show-d32.json"
+push_wt_head_to_main "$tmp/w32"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w32"
+[ "$(released_log d32)" = 1 ] && ok || bad "flat worker-list row discovers the dispatch"
+# 33. a stopped worker whose terminal is released (live worker-show shape) is final
+newwt w33; reset; default_released d33
+printf '{"ok":true,"result":{"dispatchId":"d33","taskId":"task_s","state":"stopped","stage":"process_stopped","liveness":"unverifiable","terminalState":"released","workspace":"repo::%s"}}\n' "$tmp/w33" > "$WORKER_SHOW_FIXTURE_DIR/show-d33.json"
+push_wt_head_to_main "$tmp/w33"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w33" --dispatch d33
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d33)" = 1 ] && ok || bad "stopped show releases"
+# 34. terminalState released alone (state still ready, unverifiable) is final
+newwt w34; reset; default_released d34
+printf '{"ok":true,"result":{"dispatchId":"d34","state":"ready","liveness":"unverifiable","terminalState":"released"}}\n' > "$WORKER_SHOW_FIXTURE_DIR/show-d34.json"
+push_wt_head_to_main "$tmp/w34"
+HEAD_CHECKS="$tmp/checks-pass" run bash "$here/../worker-finish.sh" --worktree "$tmp/w34" --dispatch d34
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(released_log d34)" = 1 ] && ok || bad "terminalState released show is final"
+
 echo "worker-finish tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -8,9 +8,12 @@ ids=(); [ $# -gt 0 ] && ids=("$@")
 if [ ${#ids[@]} -eq 0 ]; then
   while IFS= read -r x; do ids+=("$x"); done < <("$orca" orchestration worker-list --run "$run" --limit 100 --json 2>/dev/null | python3 -c '
 import sys,json
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
 r=json.load(sys.stdin)["result"]
 for w in r.get("workers", []):
-  if w.get("dispatchStatus") in ("dispatched", "running", "pending"): print(w["dispatchId"])')
+  if "dispatchStatus" in w: active = w["dispatchStatus"] in ("dispatched", "running", "pending")
+  else: active = bool(w.get("state")) and not ws.is_final(w)
+  if active: print(w["dispatchId"])' "$here")
 fi
 state="${ORCA_PANE_STATE_DIR:-$HOME/.cache/orca-worker-panes}"; mkdir -p "$state"
 # Layout: coordinator on the left, one right column of worker panes. The first pane splits the coordinator

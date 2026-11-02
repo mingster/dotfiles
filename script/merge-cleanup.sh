@@ -74,7 +74,7 @@ fi
 inventory="" inventory_ok=0
 if command -v "$orca" >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 \
   && raw=$(bounded "$orca" orchestration worker-list --json 2>/dev/null) \
-  && inventory=$(jq -r '.result.workers[]? | [(.dispatchStatus // "-"), ((.worktreeId // "") | split("::")[1] // "-"), ((.agentTerminalHandle // "") | if . == "" then "-" else . end), (.dispatchId // "-")] | @tsv' <<<"$raw" 2>/dev/null); then
+  && inventory=$(jq -r '.result.workers[]? | [(.dispatchStatus // (if .stage == "released" or .terminalState == "released" then "released" else .state end) // "-"), ((.worktreeId // .workspace // "") | split("::")[1] // "-"), ((.agentTerminalHandle // (.terminal | strings) // "") | if . == "" then "-" else . end), (.dispatchId // "-")] | @tsv' <<<"$raw" 2>/dev/null); then
   inventory_ok=1
 fi
 # Sets owner_state (none, unreleased or released) and released_ids for a worktree path.

@@ -28,11 +28,20 @@ elif args[:2] == ['orchestration','worker-list']:
         workers=[{'runId':run, 'agentTerminalHandle':'term_'+outcome, 'terminalState':'retained',
                   'dispatchStatus':'dispatched', 'projection':{'outcome':outcome, 'liveness':{'verdict':'live'}}}
                  for outcome in ('succeeded','failed','cancelled','in_progress')]
+    if mode=='flat-dispatches':
+        workers=[{'runId':run, 'terminal':'term_flat_'+n, 'state':st, 'stage':sg, 'liveness':lv}
+                 for n, st, sg, lv in (('done','succeeded','input_accepted','exited'), ('failed','failed','input_accepted','live'),
+                                       ('released','ready','released','unverifiable'), ('live','ready','input_accepted','live'))]
+    if mode=='live-flat-dispatches':
+        workers=[{'runId':run, 'terminal':'term_lf_'+n, 'state':st, 'liveness':lv, 'terminalState':ts}
+                 for n, st, lv, ts in (('retained','succeeded','exited','retained'), ('failed','failed','unverifiable','retained'),
+                                       ('released','succeeded','exited','released'), ('stopped','stopped','exited','released'),
+                                       ('live','ready','live','active'), ('liveret','ready','live','retained'))]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
     else: output({'workers':workers, 'page':{'hasMore':False}})
 elif args[:2] == ['terminal','read']:
-    if mode=='ended-dispatches':
+    if mode in ('ended-dispatches','flat-dispatches','live-flat-dispatches'):
         with open(os.environ['WATCHDOG_TEST_ACTIONS'],'a') as f: f.write(json.dumps(args)+'\n')
         if args[args.index('--terminal')+1]!='term_coord': sys.exit(1)
         mode='working'
@@ -98,6 +107,15 @@ run_case ended-dispatches 1
 check "$(count 'terminal read')" 2 "coordinator and in-progress worker only"
 check "$(grep -c 'read-screen-failed term_in_progress$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "current worker read failure logged"
 check "$(grep -cE 'read-screen-failed term_(succeeded|failed|cancelled)$' "$HOME/.orca/logs/worker-watchdog.log")" 0 "settled workers skipped"
+# Current Orca worker-list rows are flat (state/stage/liveness/terminal, no terminalState or dispatchStatus).
+run_case flat-dispatches 1
+check "$(count 'terminal read')" 2 "flat rows: coordinator and live worker only"
+check "$(grep -c 'read-screen-failed term_flat_live$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "flat live worker read"
+# Live flat rows carry terminalState but no dispatchStatus or projection: settled ones must be skipped.
+run_case live-flat-dispatches 1
+check "$(count 'terminal read')" 3 "live flat rows: coordinator and two live workers only"
+check "$(grep -cE 'read-screen-failed term_lf_(retained|failed|released|stopped)$' "$HOME/.orca/logs/worker-watchdog.log")" 0 "live flat settled rows skipped"
+check "$(grep -cE 'read-screen-failed term_lf_(live|liveret)$' "$HOME/.orca/logs/worker-watchdog.log")" 2 "live flat live rows read"
 run_case paginated 3
 check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 0 "orchestration send"
 # Failed worker state is unknown, never evidence for a zero-worker escalation.

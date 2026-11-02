@@ -6,7 +6,8 @@
 # next to this script; unknown roles get 240 (grey). An explicit color argument overrides it.
 # Orca has no option to start a worker as a split pane (each worker owns its worktree),
 # so this mirrors the worker's screen into a pane of the coordinator's tab.
-# When the dispatch ends (completed, failed, cancelled, released) the pane prints the final status, waits
+# When the dispatch ends (state succeeded, completed, failed, cancelled or released, stage released, or
+# liveness exited; see worker_state.py) the pane prints the final status, waits
 # ORCA_PANE_CLOSE_DELAY seconds (default 10) and closes itself with verified retries for up to 30 minutes (needs ORCA_TERMINAL_HANDLE, set by Orca).
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -17,9 +18,10 @@ close_allowed() {
   info=$(close_rpc orchestration worker-show --dispatch "$1" --json 2>/dev/null) || return 1
   printf '%s' "$info" | python3 -c '
 import json,sys
-try: s=json.load(sys.stdin)["result"]["dispatch"]["status"]
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+try: r=json.load(sys.stdin)["result"]
 except Exception: sys.exit(1)
-sys.exit(0 if s in ("completed","failed","cancelled","released") else 1)'
+sys.exit(0 if ws.is_final(r) else 1)' "$here"
 }
 role_color() { # title -> 256-color number
   local role; role=$(printf '%s' "$1" | sed 's/ - .*//' | tr 'A-Z' 'a-z' | tr -d '[:space:]')
@@ -29,13 +31,15 @@ if [ "$1" = "--role-color" ]; then role_color "${2:-}"; exit; fi
 d="$1"; arg_c="${2:-}"; orca="${ORCA_CLI_COMMAND:-orca}"
 while :; do
   info=$("$orca" orchestration worker-show --dispatch "$d" --json 2>/dev/null)
-  read -r term status title < <(printf '%s' "$info" | python3 -c '
+  read -r term status final title < <(printf '%s' "$info" | python3 -c '
 import sys,json
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
 try: r=json.load(sys.stdin)["result"]
-except Exception: print("- unknown -"); sys.exit()
-d=r.get("dispatch",{}); w=r.get("worker",{})
-t=d.get("assigneeHandle") or w.get("terminalHandle") or "-"
-print(t, d.get("status","?"), (d.get("taskTitle") or w.get("title") or d.get("id","")).replace("\n"," "))')
+except Exception: print("- unknown 0 -"); sys.exit()
+d=r.get("dispatch") or {}; w=r.get("worker") or {}
+t=ws.terminal(r) or w.get("terminalHandle") or "-"
+title=d.get("taskTitle") or w.get("title") or r.get("taskTitle") or r.get("title") or d.get("id") or r.get("dispatchId") or ""
+print(t, ws.status(r) or "?", 1 if ws.is_final(r) else 0, title.replace("\n"," "))' "$here")
   c="${arg_c:-$(role_color "$title")}"
   rows=$(tput lines 2>/dev/null || echo 30); cols=$(tput cols 2>/dev/null || echo 80)
   body=""
@@ -46,7 +50,7 @@ except Exception: tail=[]
 print("\n".join(l for l in tail if l.strip()))' | tail -n $((rows-2)) | cut -c1-"$cols")
   printf '\033[H\033[2J\033[1;37;48;5;%sm %-*s\033[0m\n' "$c" $((cols-1)) "$title [$status]"
   printf '%s\n' "$body"
-  case "$status" in completed|failed|cancelled|released)
+  case "$final" in 1)
     printf '\033[1;38;5;%sm-- %s --\033[0m\n' "$c" "$status"
     # Close this pane too. A split that timed out (screen saver) leaves a pane whose handle nobody recorded,
     # so worker-pane-close.sh cannot find it. Orca sets ORCA_TERMINAL_HANDLE in every terminal.

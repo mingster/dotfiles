@@ -105,4 +105,16 @@ rm "$tmp/split_fail_after.json"
 "$here/worker-panes.sh" run_x term_base d11 >/dev/null 2>&1
 check "pane recorded after a timeout becomes the next split target" "$(grep -q -- '--terminal late_1 --direction horizontal.*worker-pane.sh d11 --json' "$tmp/splits.log"; echo $?)"
 
+# Current Orca worker-list rows carry state/liveness/terminal and no dispatchStatus.
+reset; terms term_base
+cat > "$tmp/workers.json" <<'JSON'
+{"ok":true,"result":{"workers":[
+ {"dispatchId":"f1","state":"ready","liveness":"live","terminal":"term_f1","workspace":"repo1::/x/a"},
+ {"dispatchId":"f2","state":"succeeded","liveness":"exited","terminal":"term_f2"},
+ {"dispatchId":"f3","state":"failed","liveness":"unverifiable"},
+ {"dispatchId":"f4","state":"ready","stage":"released","liveness":"live"}]}}
+JSON
+"$here/worker-panes.sh" run_x term_base >/dev/null 2>&1
+check "flat rows: only the live worker gets a pane" "$([ "$(wc -l < "$tmp/splits.log" | tr -d ' ')" = 1 ] && grep -q 'worker-pane.sh f1 --json' "$tmp/splits.log"; echo $?)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

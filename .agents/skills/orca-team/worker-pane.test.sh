@@ -5,7 +5,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cat > "$tmp/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
-  "orchestration worker-show"*) printf '{"result":{"dispatch":{"assigneeHandle":"-","status":"%s","taskTitle":"%s"}}}' "${FAKE_STATUS:-completed}" "$FAKE_TITLE" ;;
+  "orchestration worker-show"*) [ -n "${FAKE_SHOW:-}" ] && { printf '%s' "$FAKE_SHOW"; exit 0; }; printf '{"result":{"dispatch":{"assigneeHandle":"-","status":"%s","taskTitle":"%s"}}}' "${FAKE_STATUS:-completed}" "$FAKE_TITLE" ;;
   "terminal close"*) echo "$*" >> "$FAKE_LOG"
     n=$(wc -l < "$FAKE_LOG")
     [ "$n" -le "${FAKE_FAILS:-0}" ] && exit 1
@@ -41,6 +41,17 @@ for st in completed failed cancelled released; do
   : > "$FAKE_LOG"; FAKE_STATUS=$st FAKE_TITLE='lead - x' ORCA_TERMINAL_HANDLE=term_abc "$here/worker-pane.sh" d1 >/dev/null 2>&1
   check "$st dispatch closes own pane with its handle" "$([ "$(cat "$FAKE_LOG")" = "terminal close --terminal term_abc" ]; echo $?)"
 done
+# Current Orca prints a flat worker-show: result.state/stage/liveness/terminal/workspace, no dispatch or worker object.
+flat() { printf '{"ok":true,"result":{"dispatchId":"d1","taskId":"t1","runId":"r1","state":"%s","stage":"%s","liveness":"%s","terminal":"term_w","workspace":"repo1::/x/wt"}}' "$1" "$2" "$3"; }
+for row in "succeeded released exited" "failed released exited" "cancelled input_accepted live" "ready released live" "ready input_accepted exited"; do
+  set -- $row
+  : > "$FAKE_LOG"; FAKE_SHOW="$(flat "$1" "$2" "$3")" FAKE_TITLE='lead - x' ORCA_TERMINAL_HANDLE=term_abc timeout 10 "$here/worker-pane.sh" d1 > "$tmp/flat.out" 2>&1
+  check "flat show $1/$2/$3 closes own pane" "$([ "$(cat "$FAKE_LOG")" = "terminal close --terminal term_abc" ]; echo $?)"
+done
+check "flat show prints the final state, not [?]" "$(grep -q '\[ready\]' "$tmp/flat.out" && ! grep -q '\[?\]' "$tmp/flat.out"; echo $?)"
+: > "$FAKE_LOG"
+( FAKE_SHOW="$(flat ready input_accepted live)" FAKE_TITLE='lead - x' ORCA_TERMINAL_HANDLE=term_abc timeout 7 "$here/worker-pane.sh" d1 >/dev/null 2>&1 ); rc=$?
+check "flat show of a live ready worker keeps the pane open" "$([ $rc = 124 ] && [ ! -s "$FAKE_LOG" ]; echo $?)"
 : > "$FAKE_LOG"; FAKE_STATUS=completed FAKE_TITLE='lead - x' ORCA_TERMINAL_HANDLE= "$here/worker-pane.sh" d1 >/dev/null 2>&1
 check "empty ORCA_TERMINAL_HANDLE: no close" "$([ ! -s "$FAKE_LOG" ]; echo $?)"
 : > "$FAKE_LOG"; env -u ORCA_TERMINAL_HANDLE FAKE_STATUS=completed FAKE_TITLE='lead - x' "$here/worker-pane.sh" d1 >/dev/null 2>&1

@@ -127,3 +127,39 @@ run --apply
 test ! -e "$tmp/closed"
 grep -Fq 'closing no terminals' "$tmp/errors"
 echo 'ok CLI failure on a later page closes no terminals'
+# Current Orca worker-list rows are flat: state/stage/liveness, terminal handle and workspace, no dispatchStatus.
+rm -f "$tmp/fail-page"
+flat() { # handle path state liveness
+  jq -n --arg h "$1" --arg p "$2" --arg s "$3" --arg l "$4" \
+    '{state:$s,liveness:$l,workspace:("repo::"+$p)} + (if $h == "" then {} else {terminal:$h} end)'
+}
+{
+  flat '' /fixture/settled succeeded exited
+  flat t-handle /fixture/other succeeded exited
+  flat '' /fixture/live succeeded exited
+  flat '' /fixture/live ready live
+  flat t-own /fixture/own succeeded exited
+  flat '' /fixture/lead-work failed exited
+  flat '' /fixture/agent ready unverifiable | jq '.stage = "released"'
+} | jq -s '{ok:true,result:{workers:.,page:{hasMore:false}}}' > "$tmp/page1"
+run --dry-run
+expect 'Close terminal t-path (env-a, settled dispatch on this path)'
+expect 'Close terminal t-handle (env-a, settled dispatch)'
+for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-agent|agent running' 't-unknown|unknown owner, still running'; do
+  expect "Kept terminal ${pair%|*} (env-a, ${pair#*|})"
+done
+echo 'ok flat worker-list rows classify remote terminals like the old shape'
+# Live rows: stopped state and terminalState released (no stage) are settled.
+{
+  flat '' /fixture/settled stopped unverifiable
+  flat t-handle /fixture/other ready unverifiable | jq '.terminalState = "released"'
+  flat '' /fixture/live succeeded exited
+  flat '' /fixture/live ready live
+  flat t-own /fixture/own succeeded exited
+  flat '' /fixture/lead-work failed exited
+  flat '' /fixture/agent ready unverifiable | jq '.stage = "released"'
+} | jq -s '{ok:true,result:{workers:.,page:{hasMore:false}}}' > "$tmp/page1"
+run --dry-run
+expect 'Close terminal t-path (env-a, settled dispatch on this path)'
+expect 'Close terminal t-handle (env-a, settled dispatch)'
+echo 'ok stopped and terminalState released rows are settled'

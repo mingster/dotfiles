@@ -100,7 +100,7 @@ if [ ${#dispatches[@]} -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && command 
   while IFS=$'\t' read -r id path; do
     [ -n "$id" ] && [ "$(real "$path")" = "$wt" ] && dispatches+=("$id")
   done < <("$orca" orchestration worker-list --json 2>/dev/null \
-    | jq -r '.result.workers[]? | select(.dispatchStatus != "released") | [.dispatchId, ((.worktreeId // "") | split("::")[1] // "")] | @tsv' 2>/dev/null || true)
+    | jq -r '.result.workers[]? | select((.dispatchStatus // .state) != "released" and .stage != "released") | [.dispatchId, ((.workspace // .worktreeId // "") | split("::")[1] // "")] | @tsv' 2>/dev/null || true)
 fi
 
 if ! command -v "$orca" >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
@@ -129,16 +129,19 @@ for id in ${dispatches[@]+"${dispatches[@]}"}; do
     exit 1
   }
   if [ -n "$archive_dir" ]; then printf '%s\n' "$show" > "$archive_dir/show-$id.json"; fi
-  status=$(printf '%s' "$show" | jq -r '.result.dispatch.status // empty' 2>/dev/null) || status=""
+  # Current Orca prints result.state/stage/liveness; older Orca nested the status under result.dispatch.
+  status=$(printf '%s' "$show" | jq -r '.result | if (.state | type) == "string" then .state else (.dispatch.status // empty) end' 2>/dev/null) || status=""
+  final=$(printf '%s' "$show" | jq -r '.result | if .stage == "released" or .terminalState == "released" or .liveness == "exited" then "final" else empty end' 2>/dev/null) || final=""
+  [ -z "$final" ] || status="${status:-released}:final"
   case "$status" in
-    completed|failed|cancelled|released) ;;
+    succeeded|completed|failed|cancelled|released|stopped|*:final) status=${status%:final} ;;
     *)
       echo "worker-finish: refusing release for $id (dispatch status=${status:-unknown})" >&2
       exit 1
       ;;
   esac
   if [ -n "$expect_task" ]; then
-    got=$(printf '%s' "$show" | jq -r '.result.dispatch.taskId // .result.task.id // empty' 2>/dev/null) || got=""
+    got=$(printf '%s' "$show" | jq -r '.result.taskId // .result.dispatch.taskId // .result.task.id // empty' 2>/dev/null) || got=""
     [ "$got" = "$expect_task" ] || {
       echo "worker-finish: task id mismatch for $id (expected $expect_task, got ${got:-<empty>})" >&2
       exit 1
