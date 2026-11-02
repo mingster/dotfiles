@@ -40,8 +40,9 @@ except Exception:
 done
 
 # One line per unsettled dispatch: <dispatch_id>\t<terminal_handle>\t<environment>\t<disconnected>
-rows=$(python3 - "$tmp/pages.jsonl" <<'PY'
-import json, sys
+rows=$(WATCH_HERE="$(cd "$(dirname "$0")" && pwd)" python3 - "$tmp/pages.jsonl" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.environ["WATCH_HERE"]); import worker_state as ws
 workers = []
 try:
     with open(sys.argv[1]) as f:
@@ -57,8 +58,8 @@ except Exception:
 for w in workers:
     p = w.get("projection") or {}
     status = w.get("dispatchStatus") or (p.get("stage") or {}).get("dispatch")
-    handle = w.get("agentTerminalHandle") or ((w.get("resource") or {}).get("terminalHandle"))
-    if p.get("outcome", "in_progress") != "in_progress" or status in ("completed", "failed", "cancelled", "released") or not handle:
+    handle = ws.terminal(w)
+    if p.get("outcome", "in_progress") != "in_progress" or status in ("completed", "failed", "cancelled", "released") or ws.is_final(w) or not handle:
         continue
     host = p.get("host") or {}
     disc = "0"
