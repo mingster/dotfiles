@@ -8,14 +8,14 @@ Owner rule (2026-11-01, replaces the 2026-10-23 rule): implementation tickets ru
 
 ## Coordinator effort (owner 2026-11-03)
 
-Claude is the first choice for Elon and Teddy / tech-lead (Opus at medium effort). Their last fallback is Antigravity `gemini-4-argon-medium` (`--agent antigravity --model gemini-4-argon-medium`). Provider, host and usage caps still apply. Verify the effective model and effort of a running session separately from saved presets.
+Antigravity `gemini-4-argon-medium` (`--agent antigravity --model gemini-4-argon-medium`) is the default for Elon and Teddy / tech-lead; Claude (`--agent claude --model opus --effort medium`) is the fallback. Provider, host and usage caps still apply. Verify the effective model and effort of a running session separately from saved presets.
 
 ## Tiers
 
 | Tier | Use it for | Roles |
 | --- | --- | --- |
-| Strong reasoning | Ambiguous decisions, specs, security, financial and PR review | elon (Opus at medium effort), architect-pm, secops-finops, qa-sdet |
-| Workhorse | Implementation, coordination, QA, release, support, drafts | tech-lead, fullstack-dev, release-manager, sales-marketing, support-csm |
+| Strong reasoning | Ambiguous decisions, specs, security, financial and PR review | elon (`gemini-4-argon-medium` default; Claude Opus medium fallback), architect-pm, secops-finops, qa-sdet, tech-lead (`gemini-4-argon-medium` default; Claude Opus medium fallback) |
+| Workhorse | Implementation, coordination, QA, release, support, drafts | fullstack-dev, release-manager, sales-marketing, support-csm |
 | Light | Clerical subtasks: formatting, extraction, changelog fragment lines | none by default, chosen per task |
 
 A session is plain Claude Code until the owner calls the agent team with `/elon`, `/ceo`, `/crew`, `/teddy` or the `team` launcher; Elon then follows `elon.md`.
@@ -28,6 +28,7 @@ Fallback begins at the provider after the role's default.
 
 | Role | Default provider | Flags |
 | --- | --- | --- |
+| elon, tech-lead | Antigravity Argon, then Claude, then Cursor | `--agent antigravity --model gemini-4-argon-medium` by default; fallback `--agent claude --model opus --effort medium`, then Cursor (`~/.orca/presets.json`). |
 | fullstack-dev | Claude, then Antigravity Argon, then Cursor GPT | `--agent claude --model sonnet --effort medium` (owner rule above, up to 3 lanes); then `--agent antigravity --model gemini-4-argon-medium` (small ticket trial: before merge, audit the file list and the i18n keys), then Cursor `gpt-5.6-sol-medium`. The `fullstack-dev` preset chain in `~/.orca/presets.json` is the source. |
 | qa-sdet | Independent family on an available provider | Use a permitted model family different from the author, respecting provider and host caps. Opus is not mandatory for ordinary QA; extra Strong review follows the owner rule below. |
 | every other role | Claude | the Claude column for the role's tier |
