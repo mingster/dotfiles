@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Real admission against canned native inventories, never a success double."""
 import copy
+import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 from qa_admission_fixture import NativeFixture, HEAD, PATH, REPO
 
 QA = Path(__file__).resolve().parents[1]/'qa-admission.py'
@@ -141,6 +146,34 @@ class QaAdmission(unittest.TestCase):
         for stamp in ('2000-01-01T00:00:00Z', '2099-01-01T00:00:00Z', 'bad'):
             self.f.loads['alpha']['observed_at'] = stamp
             self.refuse('load')
+
+    def test_slow_inventory_still_admits_with_fresh_second_load_reading(self):
+        spec = importlib.util.spec_from_file_location('qa_admission_mod', QA)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        clock = [datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)]
+
+        class FakeDT(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock[0]
+        sensor = Path(self.tmp.name)/'fleet-load.sh'
+        sensor.write_text('echo "alpha load=1.4 cores=8"\necho "beta load=1.4 cores=8"\n')
+        real_counts = mod.worker_counts
+
+        def slow_counts(*a, **k):
+            clock[0] += timedelta(seconds=65)
+            return real_counts(*a, **k)
+        args = SimpleNamespace(repo=REPO, head=HEAD, worktree_path=PATH,
+                               verifier_provider='claude', verifier_model='sonnet',
+                               policy='', fleet_config=str(self.f.root/'config.json'),
+                               fleet_load=str(sensor))
+        env = {k: v for k, v in self.f.env().items() if k != 'QA_ADMISSION_LOAD_OBS'}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(mod, 'datetime', FakeDT), \
+                mock.patch.object(mod, 'worker_counts', slow_counts):
+            result = mod.admit(args)
+        self.assertEqual(result['host'], 'alpha')
 
     def test_optional_policy_cannot_expand_configuration(self):
         p = Path(self.tmp.name)/'policy.json'
