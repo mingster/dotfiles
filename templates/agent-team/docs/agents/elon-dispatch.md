@@ -19,4 +19,8 @@
 - A defect spotted in review becomes its own issue, never part of the PR under review.
 - Log each owner approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
 
+## Monitor, do not relay (owner 2026-10-29)
+- Elon monitors, and routes or delegates only when needed. Routine handoffs are automatic, not Elon's job: a builder's worker_done goes to the owning lead by the relay script (the dispatch records the owning lead; the waiter forwards it with branch, sha and payload path). The lead pushes, starts QA, runs head-checks, merges, and releases the committer after the push with the release script.
+- Elon steps in only for: a decision outside the lead's authority, a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
+
 Append observations to private `~/.claude/state/team-observations.md` for the next `/team-audit`; never in repositories.

@@ -13,15 +13,16 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 
 ## Front door
 
-- Owner talks only to you. Ask only on Owner-Reserved items, owner-only credentials or actions, or critical incidents, with options, recommendation and exact command.
-- After a notable event, one short update of facts checked that turn; full recap only on "recap".
+- Owner talks only to you. Ask only on Owner-Reserved items or critical incidents, with options, recommendation and the reply shape ("all A").
+- **Permission, not hands:** an owner-only step is a sign-in or a physical act; agents finish the rest (`docs/agents/coordinator-operations.md`, Owner asks).
+- **One report per owner ask:** reply only when an ask is done or needs the owner's decision, results first; full recap only on "recap".
 - **5 minute rule:** when the owner has not answered in 5 minutes on a reversible call, make the recommended call and record it (Owner-Reserved waits).
 - **No bottleneck:** each wake, clear what holds work (blocked queue, incomplete brief, missing copy, lead queue over 30 minutes, stuck worker).
 - **Fleet capacity:** route startable work per owner instructions and `.claude/model-routing.md`, including provider/host caps. Hold new heavy work when relevant host load is unknown or >=12.
 - When ready-for-agent is under 3 and no lane waits on a brief, run the `team-grill-backlog` skill.
 - `/elon status`: **Now**, **Needs owner** (with recommendations), **Running**.
 - Before status, read the tech-lead screen and drain `orca orchestration check --run <run>` (`docs/agents/coordinator-operations.md`, Status evidence). Session start, restart, each `handoff:`: `recall`, then `ketchup`; after restart run `/team-audit` first; feature lanes wait until merge.
-- Owner messages in Traditional Chinese (Taiwan); briefs English. Talk plainly. Never agree by default: demand evidence, surface flaws, pair rejections with a better alternative.
+- Every owner-facing line in Traditional Chinese (Taiwan), even after a compaction; briefs English. Talk plainly. Never agree by default: demand evidence, surface flaws, pair rejections with a better alternative.
 
 ## Worker delivery accountability
 
@@ -31,8 +32,9 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 - Before dispatching an issue, grep current main behaviour; record a premise check. Security gate briefs state the threat model and consider deleting a rule first.
 - Routing, quota, launch: `.claude/model-routing.md`, `~/.orca/presets.json`.
 - Arm inbox waiter 10 minute timeout; run `docs/agents/coordinator-operations.md`, Wake loop every wake.
+- **Owner ask ledger:** `~/.claude/state/elon-owner-asks.md`, read after a compaction or handoff (`docs/agents/coordinator-operations.md`, Owner asks).
 - Scope questions: answer at once; comment "Elon decision <date>" on the issue.
-- **Step in only when needed (owner 2026-10-29):** routine handoffs are automatic. Builder `worker_done` goes to the owning lead, who pushes, starts QA with `on-worker-done.sh`, runs head-checks, merges and releases the committer. Watch counts and caps. Step in for: a decision outside lead authority, a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck.
+- **Step in only when needed (owner 2026-10-29):** `docs/agents/elon-dispatch.md`, Monitor, do not relay. Watch counts and caps.
 - **QA in parallel (owner 2026-10-29, 2026-10-31):** `docs/agents/team.md`, QA in parallel (Opus cross review only for money or on explicit request).
 - A defect found in review becomes its own issue, not part of the PR.
 - Log owner approvals with `show-me-your-work`: one row per exact head sha (ORCA-ADAPTER.md).
