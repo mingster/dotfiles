@@ -102,6 +102,10 @@ run_case ended-dispatches 1
 check "$(count 'terminal read')" 2 "coordinator and in-progress worker only"
 check "$(grep -c 'read-screen-failed term_in_progress$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "current worker read failure logged"
 check "$(grep -cE 'read-screen-failed term_(succeeded|failed|cancelled)$' "$HOME/.orca/logs/worker-watchdog.log")" 0 "settled workers skipped"
+# Current Orca worker-list rows are flat (state/stage/liveness/terminal, no terminalState or dispatchStatus).
+run_case flat-dispatches 1
+check "$(count 'terminal read')" 2 "flat rows: coordinator and live worker only"
+check "$(grep -c 'read-screen-failed term_flat_live$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "flat live worker read"
 run_case paginated 3
 check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 0 "orchestration send"
 # Failed worker state is unknown, never evidence for a zero-worker escalation.
@@ -223,10 +227,6 @@ for _ in $(seq 1 100); do kill -0 "$hang_pid" 2> /dev/null || break; sleep 0.1; 
 if kill -0 "$hang_pid" 2> /dev/null; then kill "$hang_pid"; echo 'watchdog hung without timeout binary' >&2; exit 1; fi
 wait "$hang_pid"
 grep -q 'read-run-failed run_test' "$HOME/.orca/logs/worker-watchdog.log"
-# Current Orca worker-list rows are flat (state/stage/liveness/terminal, no terminalState or dispatchStatus).
-run_case flat-dispatches 1
-check "$(count 'terminal read')" 2 "flat rows: coordinator and live worker only"
-check "$(grep -c 'read-screen-failed term_flat_live$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "flat live worker read"
 echo "worker-watchdog: $pass passed, $fail failed"
 [[ $fail == 0 ]] || exit 1
 echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, background shell or monitor, armed --wait waiter, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary, all-runs discovery, unread reports, alerts.log fallback)'

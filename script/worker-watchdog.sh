@@ -148,10 +148,15 @@ import json,sys
 r=json.load(open(sys.argv[1])); assert r.get('ok',True)
 r=r['result']; page=r.get('page',{})
 for w in r['workers']:
-    if (w.get('terminalState') in ('active','retained') and w.get('dispatchStatus') not in ('completed','failed','cancelled','abandoned')
-        and (w.get('projection') or {}).get('outcome','in_progress') == 'in_progress'
-        and w.get('projection',{}).get('liveness',{}).get('verdict') != 'exited'):
-        h=w.get('agentTerminalHandle')
+    if 'terminalState' in w or 'dispatchStatus' in w:
+        current = (w.get('terminalState') in ('active','retained') and w.get('dispatchStatus') not in ('completed','failed','cancelled','abandoned')
+            and (w.get('projection') or {}).get('outcome','in_progress') == 'in_progress'
+            and w.get('projection',{}).get('liveness',{}).get('verdict') != 'exited')
+    else:  # current Orca: flat state/stage/liveness/terminal
+        current = (w.get('state') not in ('succeeded','completed','failed','cancelled','released','abandoned')
+            and w.get('stage') != 'released' and w.get('liveness') != 'exited')
+    if current:
+        h=w.get('agentTerminalHandle') or (w.get('terminal') if isinstance(w.get('terminal'), str) else None)
         if h: print('terminal',h,str((w.get('projection') or {}).get('provider') or 'none').lower())
 if page.get('hasMore'):
     assert page.get('nextCursor')
