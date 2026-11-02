@@ -218,6 +218,9 @@ def count_worker_row(seen, seats, row, host_id, live_terminals=frozenset()):
         seats[seat] = category
 
 
+WORKER_PAGE_LIMIT = 100
+
+
 def worker_counts(orca, flags, host_id):
     """Count native Dispatch resources across every Run, never bound-run scope."""
     seen, seats = set(), {}
@@ -229,12 +232,17 @@ def worker_counts(orca, flags, host_id):
     for run_id in runtime_runs(orca, flags):
         cursor, cursors = None, set()
         while True:
-            paging = ['--limit', '100']
+            paging = ['--limit', str(WORKER_PAGE_LIMIT)]
             if cursor is not None:
                 paging.extend(['--cursor', cursor])
             result = orca_result(orca, 'orchestration', 'worker-list', *flags,
                                  '--run', run_id, '--include-remote', *paging)
             rows = result.get('workers')
+            if 'page' not in result and isinstance(rows, list):
+                # Orca 1.4.246 omits page. Only a short page proves it is the last one.
+                if len(rows) >= WORKER_PAGE_LIMIT:
+                    refuse('worker inventory: no page field on a full page, coverage UNKNOWN')
+                result = dict(result, page={'hasMore': False})
             page = obj(result.get('page'), 'worker page')
             if not isinstance(rows, list) or type(page.get('hasMore')) is not bool:
                 refuse('worker inventory: incomplete or UNKNOWN coverage')

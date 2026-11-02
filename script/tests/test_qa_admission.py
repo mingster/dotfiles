@@ -199,6 +199,24 @@ class QaAdmission(unittest.TestCase):
         calls = [json.loads(line) for line in (Path(self.tmp.name)/'calls').read_text().splitlines()]
         self.assertTrue(any('--cursor' in call and 'next' in call for call in calls))
 
+    def test_absent_page_under_limit_is_last_page(self):
+        # Orca 1.4.246 worker-list returns only workers and scope.
+        self.f.data['alpha']['workers'].pop('page')
+        self.success()
+
+    def test_absent_page_at_limit_refuses(self):
+        # A full page with no page field may hide more workers: coverage unknown.
+        for count, admitted in [(99, True), (100, False)]:
+            with self.subTest(count=count):
+                self.f.occupy('alpha', count, 'completed')
+                for w in self.f.data['alpha']['workers']['workers']:
+                    w['terminalClosed'] = True
+                self.f.data['alpha']['workers'].pop('page')
+                if admitted:
+                    self.success()
+                else:
+                    self.refuse('worker inventory')
+
     def test_repeated_or_missing_page_cursor_refuses(self):
         page = self.f.data['alpha']['workers']['page']
         page.update(hasMore=True, nextCursor='same')
