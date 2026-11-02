@@ -2,7 +2,6 @@
 name: team-audit
 description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Produce structural fixes, report delivery and post-merge metrics, and tune throughput (more workers, faster tickets, more merged PRs).
 ---
-<!-- Generated from dotfiles templates/agent-team/.agents/skills/team-audit by script/sync-team-skills.sh, do not edit. Edit the dotfiles source and re-run the sync. source-sha256: 9ec5103fa3a07a78823024d02b591017113af976642f72cf84bcaaa5977fb63c -->
 
 # Team audit
 

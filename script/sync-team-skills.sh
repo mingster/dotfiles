@@ -78,6 +78,11 @@ NAMES=()
 for d in "$SRC"/*/; do
   [ -f "$d/SKILL.md" ] || continue
   name="$(basename "$d")"
+  # A stamp in the source means a generated project copy was pasted back; the sync would stamp it twice.
+  if grep -q 'Generated from dotfiles' "$d/SKILL.md"; then
+    echo "sync-team-skills: $SRC_REL/$name/SKILL.md carries a generated stamp; delete that line from the source" >&2
+    exit 2
+  fi
   NAMES+=("$name")
   render "$name" "$TMP/$name"
 done

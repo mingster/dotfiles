@@ -15,7 +15,7 @@ Bugs, chores and small tasks touching 3 files or fewer use `tdd` directly, with 
 
 ## Step 1. Scope and plan
 
-Before implementation starts, satisfy the pre-build grill gate (owner rule 2026-11-02): UI or user-facing copy with sales-marketing and Elon; code changes with architect-pm and Elon; money (payments, billing, refunds, ledger, credits, pricing or entitlements) with secops-finops, architect-pm and Elon; all grill results and decisions need explicit owner approval (Owner-Reserved). Record grill findings on the issue or spec.
+Before implementation starts, meet the pre-build grill gate in `docs/agents/team.md` (owner rule 2026-11-02): grill findings recorded on the issue or spec, and the owner's explicit approval of them.
 
 Elon aligns the objective with Sales-Marketing and assigns architect-pm to use the `to-tickets` skill for ticket contracts and dependencies. Read `~/.agents/skills/to-tickets/SKILL.md` and follow it. The Tech Lead reviews the resulting plan for integration risks. Existing accepted tickets need no second breakdown. Each ticket lists its test cases from the spec's Test plan (owner rule 2026-10-21).
 

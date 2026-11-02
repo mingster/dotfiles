@@ -152,4 +152,13 @@ out="$(sync "$D" "$D")"; rc=$?
 [ "$rc" -ne 0 ] && [ ! -e "$D/.agents/skills/alpha" ] \
   && pass "refuses dotfiles as target" || bad "refuses dotfiles as target (rc $rc): $out"
 
+# 19. refuses a source skill that carries a generated stamp (a project copy pasted back into dotfiles)
+D="$(new_dotfiles)"; P="$(new_project)"
+sed -i.bak '4a\
+<!-- Generated from dotfiles templates/agent-team/.agents/skills/alpha by script/sync-team-skills.sh, do not edit. -->' "$D/templates/agent-team/.agents/skills/alpha/SKILL.md"
+rm -f "$D/templates/agent-team/.agents/skills/alpha/SKILL.md.bak"
+out="$(sync "$D" "$P")"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$P/.agents/skills/alpha" ] && echo "$out" | grep -q 'alpha/SKILL.md' \
+  && pass "refuses stamped source" || bad "refuses stamped source (rc $rc): $out"
+
 exit "$fail"
