@@ -11,7 +11,8 @@
 # the handles worker-show reports (agent and setup terminals) and any terminal whose worktreePath matches
 # the linked git worktree the worker created or reused. A dispatch that is still running keeps its terminals,
 # and so does a terminal that a dispatch not yet in a final state also uses (a retry reuses the failed dispatch's terminal). Missing or already-closed
-# terminals are not errors. State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
+# terminals are not errors. Release closes at most the agent terminal; after a confirmed release the remaining
+# handles are closed here (never the agent terminal or the caller's own $ORCA_TERMINAL_HANDLE). State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
 # one handle per line, retained until verified gone. Failed or lingering closes retry for up to 30 minutes.
 set -u
 orca="${ORCA_CLI_COMMAND:-orca}"
@@ -20,11 +21,13 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/worker-pane-retry.sh"
 state="${ORCA_PANE_STATE_DIR:-$HOME/.cache/orca-worker-panes}"
 close_deadline=$((SECONDS+${ORCA_PANE_CLOSE_TIMEOUT:-1800}))
-dispatch_status() { # worker-show json on stdin -> status
+dispatch_final() { # worker-show json on stdin -> rc 0 only when the dispatch has positively ended; prints its status
   python3 -c '
 import sys,json
-try: print(json.load(sys.stdin)["result"]["dispatch"]["status"])
-except Exception: print("")'
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+try: r=json.load(sys.stdin)["result"]
+except Exception: print(""); sys.exit(1)
+print(ws.status(r)); sys.exit(0 if ws.is_final(r) else 1)' "$here"
 }
 leftovers() { # $1 worker-show json, $2 terminal list json -> handles still listed that belong to the worker
   SHOW="$1" LIST="$2" python3 -c '
@@ -34,7 +37,7 @@ except Exception: r={}
 try: terms=json.loads(os.environ["LIST"])["result"]["terminals"]
 except Exception: terms=[]
 w=r.get("worker") or {}; d=r.get("dispatch") or {}
-own=[w.get("agentTerminalHandle"), d.get("assigneeHandle")]
+own=[w.get("agentTerminalHandle"), d.get("assigneeHandle"), r.get("terminal") if isinstance(r.get("terminal"),str) else None]
 path=""
 for e in w.get("effects") or []:
   if e.get("kind")=="terminal" and e.get("action")=="created": own.append(e.get("id"))
@@ -42,6 +45,8 @@ for e in w.get("effects") or []:
     path=(e.get("id") or "").split("::",1)[-1]
 if not path:
   path=(w.get("worktreeId") or "").split("::",1)[-1]
+if not path and isinstance(r.get("workspace"),str):
+  path=r["workspace"].split("::",1)[-1]
 if not path:
   option=(w.get("startOptions") or {}).get("worktree") or ""
   if option.startswith("path:"): path=option[len("path:"):]
@@ -50,19 +55,20 @@ if not path or not os.path.isfile(os.path.join(path,".git")): path=""
 seen=set()
 for t in terms:
   h=t.get("handle")
-  if not h or h in seen: continue
+  if not h or h in seen or h==os.environ.get("ORCA_TERMINAL_HANDLE"): continue
   if h in own or (path and t.get("worktreePath")==path):
     seen.add(h); print(h)'
 }
 worktree_gone() { # $1 worker-show json -> rc 0 only when the dispatch names a worktree path that no longer exists
   SHOW="$1" python3 -c '
 import os,sys,json
-try: w=json.loads(os.environ["SHOW"])["result"].get("worker") or {}
+try: r=json.loads(os.environ["SHOW"])["result"]; w=r.get("worker") or {}
 except Exception: sys.exit(1)
 path=""
 for e in w.get("effects") or []:
   if e.get("kind")=="worktree": path=(e.get("id") or "").split("::",1)[-1]
 if not path: path=(w.get("worktreeId") or "").split("::",1)[-1]
+if not path and isinstance(r.get("workspace"),str): path=r["workspace"].split("::",1)[-1]
 if not path:
   option=(w.get("startOptions") or {}).get("worktree") or ""
   if option.startswith("path:"): path=option[len("path:"):]
@@ -75,13 +81,14 @@ busy_handles() { # $1 dispatch to ignore -> terminal handles used by any other d
     workers=$(close_rpc orchestration worker-list ${args[@]+"${args[@]}"} --json 2>/dev/null) || return 1
     page=$(printf '%s' "$workers" | python3 -c '
 import json,sys
+sys.path.insert(0, sys.argv[2]); import worker_state as ws
 r=json.load(sys.stdin)["result"]
 for w in r["workers"]:
-    if w.get("dispatchId")==sys.argv[1] or w.get("dispatchStatus") in ("completed","failed","cancelled","released"): continue
-    for h in (w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
+    if w.get("dispatchId")==sys.argv[1] or ws.is_final(w): continue
+    for h in (ws.terminal(w), w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
         if h: print(h)
 p=r.get("page") or {}
-if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])' "$1") || return 1
+if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])' "$1" "$here") || return 1
     printf '%s\n' "$page" | sed '/^CURSOR=/d'
     next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
     [ -n "$next" ] && [ "$next" != "$cursor" ] || return 0
@@ -90,10 +97,9 @@ if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])' "
 }
 close_allowed() {
   [ "${2:-}" != "${ORCA_TERMINAL_HANDLE:-}" ] || return 1
-  local show status
+  local show
   show=$(close_rpc orchestration worker-show --dispatch "$1" --json 2>/dev/null) || return 1
-  status=$(printf '%s' "$show" | dispatch_status)
-  case "$status" in completed|failed|cancelled|released) return 0;; *) return 1;; esac
+  printf '%s' "$show" | dispatch_final >/dev/null
 }
 parse_release_strict() {
   RELEASE_BODY="$1" RELEASE_RC="${2:-0}" DISPATCH_ID="$3" python3 <<'PY'
@@ -183,7 +189,6 @@ native_release_for_close() {
   rel_action=${parsed#*$'\t'}
   RELEASE_PARSE_STATE=$rel_state
   RELEASE_PARSE_RC=$rel_rc
-  RELEASE_PARSE_ACTION=$rel_action
   RELEASE_PARSE_BODY=$release_out
   case "$rel_state" in
     released|already_released) return 0 ;;
@@ -192,11 +197,10 @@ native_release_for_close() {
   esac
 }
 close_one() {
-  local d="$1" f="$state/$1" show status list h
+  local d="$1" f="$state/$1" show list h agent
   local handles=() pending=()
   show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || return 0
-  status=$(printf '%s' "$show" | dispatch_status)
-  case "$status" in completed|failed|cancelled|released) ;; *) return 0;; esac
+  printf '%s' "$show" | dispatch_final >/dev/null || return 0
   [ "${2:-}" != sweep ] || [ -e "$state/released/$d" ] || worktree_gone "$show" || return 0
   [ -f "$f" ] && while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < "$f"
   list=$(close_rpc terminal list --json 2>/dev/null)
@@ -229,14 +233,23 @@ close_one() {
       return 0
       ;;
   esac
-  if [ "${RELEASE_PARSE_ACTION:-}" = "none" ]; then
-    return 0
-  fi
-  # Native worker-release is the only lifecycle mutation; verify disappearance without generic close.
+  # Release closes at most the agent terminal. The coordinator's split pane and the worker's Setup or shell
+  # terminals in its own worktree stay open, so close those exact handles. The agent terminal is left to Orca,
+  # and close_allowed rechecks that the dispatch ended and the handle is not the caller's own terminal.
+  agent=$(printf '%s' "$show" | python3 -c '
+import json,sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+try: print(ws.terminal(json.load(sys.stdin)["result"]))
+except Exception: print("")' "$here")
   mkdir -p "$state"
   handles=()
   for h in "${pending[@]}"; do
-    terminal_absent "$h" || handles+=("$h")
+    terminal_absent "$h" && continue
+    if [ "$h" != "$agent" ] && close_allowed "$d" "$h"; then
+      close_rpc terminal close --terminal "$h" >/dev/null 2>&1 || :
+      terminal_absent "$h" && continue
+    fi
+    handles+=("$h")
   done
   if [ "${#handles[@]}" -gt 0 ]; then
     printf '%s\n' "${handles[@]}" > "$f"
@@ -251,8 +264,8 @@ if [ "${1:-}" = --release ]; then
   [ "$#" -gt 0 ] || { echo "worker-pane-close: --release requires a dispatch id" >&2; exit 2; }
   for d in "$@"; do
     show=$(close_rpc orchestration worker-show --dispatch "$d" --json) || exit 1
-    status=$(printf '%s' "$show" | dispatch_status)
-    case "$status" in completed|failed|cancelled|released) ;;
+    status=$(printf '%s' "$show" | dispatch_final) && final=1 || final=0
+    case "$final" in 1) ;;
       *) echo "worker-pane-close: refusing --release $d (status=${status:-unknown}); settle it, or use worker-stop explicitly before release" >&2; exit 1 ;;
     esac
     release_out=$(close_rpc orchestration worker-release --dispatch "$d" --json) || release_rc=$?
@@ -267,11 +280,8 @@ if [ "${1:-}" = --release ]; then
     case "$rel_state" in
       released|already_released)
         mkdir -p "$state/released" && : > "$state/released/$d"
-        if [ "$rel_action" = "none" ]; then
-          echo "worker-pane-close: $d $rel_state; native retained external terminals" >&2
-        else
-          close_one "$d"
-        fi
+        [ "$rel_action" != "none" ] || echo "worker-pane-close: $d $rel_state; native retained external terminals, closing leftovers" >&2
+        close_one "$d"
         ;;
       retained|release_pending)
         reason=$(printf '%s' "$release_out" | python3 -c 'import json,sys
@@ -316,18 +326,16 @@ while [ -n "$project" ]; do
   workers=$(close_rpc orchestration worker-list ${args[@]+"${args[@]}"} --json 2>/dev/null) || break
   page=$(printf '%s' "$workers" | python3 -c '
 import json,sys
+sys.path.insert(0, sys.argv[2]); import worker_state as ws
 try:
     r=json.load(sys.stdin)["result"]
     for w in r["workers"]:
-        resource=w.get("resource") or {}
-        workspace=(w.get("projection") or {}).get("workspace") or {}
-        wid=resource.get("worktreeId") or workspace.get("id") or ""
-        if (wid.startswith(sys.argv[1]+"::") and w.get("dispatchId")
-            and w.get("dispatchStatus") in ("completed","failed","cancelled","released")):
+        wid=ws.workspace_id(w)
+        if wid.startswith(sys.argv[1]+"::") and w.get("dispatchId") and ws.is_final(w):
             print(w["dispatchId"])
     p=r.get("page") or {}
     if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])
-except Exception: pass' "$project")
+except Exception: pass' "$project" "$here")
   dispatches="$dispatches
 $(printf '%s\n' "$page" | sed '/^CURSOR=/d')"
   next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')

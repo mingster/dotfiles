@@ -386,15 +386,15 @@ rm -f "$tmp/closes.log"
 echo completed > "$tmp/status.retry"; echo term_retry > "$tmp/state/retry"
 echo '{"result":{"terminals":[{"handle":"term_retry"}]}}' > "$tmp/terminals.json"
 : > "$tmp/sleeps.log"
-FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" retry >/dev/null
-check "native verify retains record when terminal lingers" "$([ -e "$tmp/state/retry" ] && no_generic_close; echo $?)"
+FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" retry >/dev/null
+check "verify retains record when terminal lingers after close" "$([ -e "$tmp/state/retry" ] && [ "$(cat "$tmp/closes.log")" = term_retry ]; echo $?)"
 check "no retry backoff sleep after native-only verify" "$([ ! -s "$tmp/sleeps.log" ]; echo $?)"
 # If authority changes while retrying, stop closing and retain the handle.
 rm -f "$tmp/closes.log"
 echo completed > "$tmp/status.reactivate"; echo term_retry > "$tmp/state/reactivate"
 echo '{"result":{"terminals":[{"handle":"term_retry"}]}}' > "$tmp/terminals.json"
-FAKE_REACTIVATE=reactivate FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" reactivate >/dev/null
-check "dispatch becoming running stops native cleanup" "$([ -e "$tmp/state/reactivate" ] && no_generic_close; echo $?)"
+FAKE_REACTIVATE=reactivate FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" reactivate >/dev/null
+check "dispatch becoming running stops cleanup" "$([ -e "$tmp/state/reactivate" ] && [ "$(closes)" = 1 ]; echo $?)"
 rm "$tmp/state/reactivate"
 # No recorded pane: discover ended workers from the current Run, with pagination.
 cat > "$tmp/workers.json" <<JSON
@@ -422,9 +422,9 @@ rm "$tmp/workers.json"
 # Budget expiry retains the record for a later wake sweep.
 echo completed > "$tmp/status.stuck"; echo term_stuck > "$tmp/state/stuck"
 echo '{"result":{"terminals":[{"handle":"term_stuck"}]}}' > "$tmp/terminals.json"
-FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" stuck >/dev/null
-check "unverified native close retains record" "$([ -e "$tmp/state/stuck" ] && no_generic_close; echo $?)"
-FAKE_LIST_FAILS=1 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" stuck >/dev/null
+FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" stuck >/dev/null
+check "unverified close retains record" "$([ -e "$tmp/state/stuck" ]; echo $?)"
+FAKE_LIST_FAILS=1 FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" stuck >/dev/null
 check "failed list cannot prove disappearance" "$([ -e "$tmp/state/stuck" ]; echo $?)"
 rm "$tmp/state/stuck"
 echo term_unknown > "$tmp/state/unknown"
@@ -438,8 +438,8 @@ rm -f "$tmp/closes.log"
 check "explicit cleanup cannot close its coordinator even with a stale record" "$([ ! -s "$tmp/closes.log" ] && [ -e "$tmp/state/coordinator" ]; echo $?)"
 echo term_e > "$tmp/state/d5"; echo released > "$tmp/status.d5"
 echo '{"result":{"terminals":[{"handle":"term_e"}]}}' > "$tmp/terminals.json"
-FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" d5 >/dev/null; rc=$?
-check "terminal still listed after native release keeps state without error" "$([ "$rc" = 0 ] && [ -e "$tmp/state/d5" ] && no_generic_close; echo $?)"
+FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" d5 >/dev/null; rc=$?
+check "terminal still listed after release and close keeps state without error" "$([ "$rc" = 0 ] && [ -e "$tmp/state/d5" ]; echo $?)"
 
 echo dispatched > "$tmp/status.live-release"
 rm -f "$tmp/state/released/live-release"
@@ -596,7 +596,7 @@ echo term_dpresent > "$tmp/state/dpresent"
 cat > "$tmp/terminals.json" <<'JSON'
 {"ok":true,"result":{"terminals":[{"handle":"term_dpresent"}],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}
 JSON
-FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" dpresent > "$tmp/dpresent.out" 2>&1
+FAKE_APPEND_COORDINATOR=0 FAKE_SKIP_NATIVE_RM=1 FAKE_LINGERS=99 "$here/worker-pane-close.sh" dpresent > "$tmp/dpresent.out" 2>&1
 check "target still listed retains state" "$([ -e "$tmp/state/dpresent" ]; echo $?)"
 check "target still listed does not print verified closed" "$(! grep -q '^closed dpresent' "$tmp/dpresent.out"; echo $?)"
 
