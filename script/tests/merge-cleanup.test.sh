@@ -162,5 +162,14 @@ has_local main && has_remote main && says 'protected: kept main' && ok || bad "m
 # Cleanup never releases a dispatch.
 ! grep -q worker-release "$MF_ORCA_LOG" && ok || bad "T8 no worker-release call in the whole run"
 
+# Current Orca worker-list rows are flat: state/stage/liveness and workspace, no dispatchStatus or worktreeId.
+flatdispatch() { n=$((n + 1)); _mf_orca_append workers.json workers "$(jq -n --arg d "d$n" --arg w "$(path "$1")" --arg s "$2" --arg g "$3" --arg l "$4" \
+  '{runId:"run1", dispatchId:$d, state:$s, stage:$g, liveness:$l, workspace:("repo::" + $w)}')"; }
+wt flat-done flat-done; flatdispatch flat-done succeeded released exited
+wt flat-live flat-live commit; flatdispatch flat-live ready input_accepted live
+clean_run
+gone flat-done flat-done && ok || bad "flat released row: worktree removed"
+kept flat-live flat-live && ok || bad "flat live row: worktree kept"
+
 echo "merge-cleanup tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
