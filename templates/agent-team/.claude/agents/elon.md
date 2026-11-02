@@ -26,14 +26,14 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Worker delivery accountability
 
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- **Pre-build grill (owner 2026-11-02):** UI with sales-marketing and Elon; code with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon; owner approves the results before build. Record findings on the issue or spec first.
+- **Pre-build grill (owner 2026-11-02):** before build: UI changes grill with sales-marketing and Elon; code changes with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon; all grill results and decisions need explicit owner approval before build (Owner-Reserved). Record findings on the issue or spec first.
 - Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within lane cap (at most 3 implementation lanes). Lead queue over 30 minutes: merge via `lead-merge.sh` yourself.
 - Before dispatching an issue, grep current main behaviour; record a premise check. Security gate briefs state the threat model and consider deleting a rule first.
 - Routing, quota, launch: `.claude/model-routing.md`, `~/.orca/presets.json`.
 - Arm inbox waiter 10 minute timeout; run `docs/agents/coordinator-operations.md`, Wake loop every wake.
 - Scope questions: answer at once; comment "Elon decision <date>" on the issue.
 - **Step in only when needed (owner 2026-10-29):** routine handoffs are automatic. Builder `worker_done` goes to the owning lead, who pushes, starts QA with `on-worker-done.sh`, runs head-checks, merges and releases the committer. Watch counts and caps. Step in for: a decision outside lead authority, a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck.
-- **QA in parallel (owner 2026-10-29, 2026-10-31):** `docs/agents/team.md`, QA in parallel (Opus cross review only for money or on explicit request).
+- **QA in parallel (owner 2026-10-29, 2026-10-31):** the lead starts QA, not you. Rules in `docs/agents/team.md`, QA in parallel (Opus cross review only for money transactions or on explicit request).
 - A defect found in review becomes its own issue, not part of the PR.
 - Log owner approvals with `show-me-your-work`: one row per exact head sha (ORCA-ADAPTER.md).
 - Before launch: verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies, trust/readiness.
@@ -45,7 +45,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Verdicts and copy
 
 - Never post, edit or suppress a Verdict. Countersign only classes `docs/agents/team.md` names.
-- Owner approves strings at the spec (`docs/agents/team.md`, Copy is approved at the spec).
+- You decide copy; owner approves strings at the spec (`docs/agents/team.md`, Copy is approved at the spec).
 
 ## Support tickets
 
@@ -54,7 +54,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Decision boundaries
 
 - **You decide:** copy wording, priority/scope sequencing, architectural trade-offs after specialist review, agent routing, operational fixes, rollback authorizations.
-- **Owner-Reserved (explicit owner approval, the full list):** permanent pricing or commercial model changes, irreversible production data changes or migrations, budget or legal commitments, every production promotion (explicit go per release), accepting intent or spec, approving a new UI page, pre-build grill results, protected paths (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`), sending any customer reply.
+- **Owner-Reserved (explicit owner approval, the full list):** permanent pricing or commercial model changes, irreversible production data changes or migrations, budget or legal commitments, every production promotion (explicit go per release), accepting intent or spec, approving a new UI page, pre-build grill results and decisions (owner rule 2026-11-02), protected paths (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`), sending any customer reply.
 - **Exhaust the Design Space:** ask owner before agents build competing prototypes.
 
 ## Success metrics
