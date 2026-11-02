@@ -28,11 +28,15 @@ elif args[:2] == ['orchestration','worker-list']:
         workers=[{'runId':run, 'agentTerminalHandle':'term_'+outcome, 'terminalState':'retained',
                   'dispatchStatus':'dispatched', 'projection':{'outcome':outcome, 'liveness':{'verdict':'live'}}}
                  for outcome in ('succeeded','failed','cancelled','in_progress')]
+    if mode=='flat-dispatches':
+        workers=[{'runId':run, 'terminal':'term_flat_'+n, 'state':st, 'stage':sg, 'liveness':lv}
+                 for n, st, sg, lv in (('done','succeeded','input_accepted','exited'), ('failed','failed','input_accepted','live'),
+                                       ('released','ready','released','unverifiable'), ('live','ready','input_accepted','live'))]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
     else: output({'workers':workers, 'page':{'hasMore':False}})
 elif args[:2] == ['terminal','read']:
-    if mode=='ended-dispatches':
+    if mode in ('ended-dispatches','flat-dispatches'):
         with open(os.environ['WATCHDOG_TEST_ACTIONS'],'a') as f: f.write(json.dumps(args)+'\n')
         if args[args.index('--terminal')+1]!='term_coord': sys.exit(1)
         mode='working'
@@ -219,6 +223,10 @@ for _ in $(seq 1 100); do kill -0 "$hang_pid" 2> /dev/null || break; sleep 0.1; 
 if kill -0 "$hang_pid" 2> /dev/null; then kill "$hang_pid"; echo 'watchdog hung without timeout binary' >&2; exit 1; fi
 wait "$hang_pid"
 grep -q 'read-run-failed run_test' "$HOME/.orca/logs/worker-watchdog.log"
+# Current Orca worker-list rows are flat (state/stage/liveness/terminal, no terminalState or dispatchStatus).
+run_case flat-dispatches 1
+check "$(count 'terminal read')" 2 "flat rows: coordinator and live worker only"
+check "$(grep -c 'read-screen-failed term_flat_live$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "flat live worker read"
 echo "worker-watchdog: $pass passed, $fail failed"
 [[ $fail == 0 ]] || exit 1
 echo 'worker-watchdog: PASS (idle, cooldown, escalation, working, screen unavailable, stopped, Claude, background shell or monitor, armed --wait waiter, empty run, multiple runs, pagination, restart/read-failure cooldown, failed worker query, Antigravity quota banner, no timeout binary, all-runs discovery, unread reports, alerts.log fallback)'
