@@ -1,0 +1,1 @@
+- Set `gemini-4-argon-medium` as the default model for `elon` and `tech-lead` (Teddy), enable `statusline.sh` in Antigravity CLI settings, and count `agy` sessions in `count-agents.sh`.

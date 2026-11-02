@@ -14,8 +14,8 @@
     ]
   },
   "statusLine": {
-    "type": "",
-    "command": "",
+    "type": "command",
+    "command": "~/.claude/statusline.sh",
     "enabled": true
   },
   "toolPermission": "always-proceed",

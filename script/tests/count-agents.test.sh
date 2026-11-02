@@ -24,6 +24,7 @@ PS
 assert_count 'busy process fixture' 2 "$fixture"
 assert_count 'empty input' 0 ''
 assert_count 'Claude CLI' 1 'claude --dangerously-skip-permissions'
+assert_count 'Antigravity CLI' 1 'agy --dangerously-skip-permissions --model gemini-4-argon-medium'
 assert_count 'Cursor CLI' 1 '/Users/u/.local/bin/cursor-agent --use-system-ca'
 assert_count 'Cursor IDE helper' 0 '/Users/u/Library/Application Support/Cursor/User/globalStorage/anysphere.cursor-agent-worker/agent-cli/.local/bin/cursor-agent'
 assert_count 'other executables and embedded command text' 0 $'grep -c claude\n/bin/sh -c claude --no-daemon\n/usr/bin/cursor-agent\nclaude-helper --dangerously-skip-permissions'

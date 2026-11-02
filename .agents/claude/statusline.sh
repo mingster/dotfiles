@@ -19,13 +19,16 @@ if [ -n "$rl" ]; then
 fi
 
 # Extract current directory
-cwd=$(echo "$input" | jq -r '.workspace.current_dir')
+cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty' 2>/dev/null)
+[ -n "$cwd" ] || cwd="$PWD"
 
 # Extract model name
-model=$(echo "$input" | jq -r '.model.display_name // empty')
+model=$(echo "$input" | jq -r '.model.display_name // .model // empty' 2>/dev/null)
+[ -n "$model" ] || model="Argon"
 
 # Extract context percentage
-ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
+[ -n "$ctx_pct" ] || ctx_pct=0
 
 # Directory, with $HOME shortened to ~ (like the shell prompt)
 dir="${cwd/#$HOME/~}"

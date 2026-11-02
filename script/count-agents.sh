@@ -11,11 +11,13 @@ process_args() {
 }
 
 process_args "$@" | awk '
-  $1 == "claude" && NF > 1 { count++; next }
+  ($1 == "claude" || $1 == "agy") && NF > 1 { count++; next }
   {
     executable = $1
     sub(/^.*\//, "", executable)
-    if ($1 ~ /\/\.local\/bin\/cursor-agent$/) {
+    if (executable == "agy" && NF > 1) {
+      count++
+    } else if ($1 ~ /\/\.local\/bin\/cursor-agent$/) {
       # The IDE helper path contains spaces and is not the executable token.
       count++
     }
