@@ -1,0 +1,1 @@
+- Remove Oh My Zsh and its plugins from the shell setup. Starship is the only prompt tool, and compinit now runs on every host.
