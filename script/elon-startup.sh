@@ -23,8 +23,9 @@ for t in git jq bun node gh python3; do command -v $t >/dev/null || echo "missin
 for d in "$@"; do
   d=${d/#\~/$HOME}; [ -d "$d" ] || { echo "missing repo $d"; continue; }
   tv=$(find "$d" -maxdepth 2 -name .tool-versions -not -path "*/node_modules/*" 2>/dev/null | head -1)
+  [ -n "$tv" ] || continue
   want=$([ -n "$tv" ] && awk "\$1==\"nodejs\"{print \$2}" "$tv")
-  have=$(cd "$d" && node --version 2>/dev/null | tr -d v)
+  have=$(cd "$(dirname "$tv")" && node --version 2>/dev/null | tr -d v)
   [ -z "$want" ] || [ "$want" = "$have" ] || echo "node $d wants $want, runs ${have:-none}"
   [ -d "$d/web/node_modules" ] || [ ! -d "$d/web" ] || echo "no node_modules in $d/web (run bun install)"
 done
