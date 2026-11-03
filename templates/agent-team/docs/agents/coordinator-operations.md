@@ -46,6 +46,8 @@ The inbox waiter script and its output file live in `~/.local/state/agent-team/`
 
 Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 
+- After every `worker-start`, run `~/.claude/skills/orca-team/worker-start-check.sh <dispatch>`: exit 1 (failed or not accepted in 2 minutes) means restart once from the same brief and tell the lead. A silent start failure (`agent_not_in_foreground`) once sat unnoticed until the lead asked. Do not open worker panes.
+- `~/dotfiles/script/fleet-pull.sh` on every wake: a host whose dotfiles or main checkout lags breaks the fleet scripts (a lagging `wrap-up.sh` failed on jq). Report skipped dirty checkouts.
 - `usage-gate.py show`, `worker-list` on the tech-lead run, the ready-for-agent count, the open PR count per project, and a read of the tech-lead and release-manager screens.
 - `worker-watch.sh` on your run; LONG_SESSION means act at once (tech-lead: order `handoff:`). Keep `worker-watchdog.sh` running on the tech-lead run.
 - Fewer workers than the gate allows while startable tickets exist is a bottleneck: order the tech-lead to fill the lanes that turn.
