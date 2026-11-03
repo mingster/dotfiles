@@ -103,3 +103,4 @@ mac/bin/claude
 # Per machine fleet host list for wrap-up.sh --fleet (copy the .example)
 script/wrap-up-fleet.config.json
 script/fleet-pull.config.json
+script/secrets-sync.config.json

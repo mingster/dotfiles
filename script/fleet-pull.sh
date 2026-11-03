@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fast-forward the main checkout of each configured repo on this host and every fleet host.
 # Config (untracked, see fleet-pull.config.example.json): {"hosts": ["ssh-host"], "repos": ["~/path"]}
+# At the end it runs secrets-sync.sh, which pushes the secrets folder to the same hosts.
 # Skips a repo that is dirty or not on main. Never merges, resets or stashes.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -23,3 +24,6 @@ for h in $(jq -r '.hosts[]' "$cfg"); do
   echo "$h"
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "${repos[@]}" <<<"$remote" 2>&1 || echo "warn unreachable $h"
 done
+
+# Then push the secrets folder to the same hosts (skipped without script/secrets-sync.config.json).
+[ -x "$here/secrets-sync.sh" ] && "$here/secrets-sync.sh"
