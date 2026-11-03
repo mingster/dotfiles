@@ -27,7 +27,15 @@ bash "$DOTFILES/script/link-cursor-hooks.sh"
 
 # CLI configuration (~/.cursor/cli-config.json) with full permissions
 if [ -f "$DOTFILES/ide/cursor/cli-config.json" ]; then
-  cp -f "$DOTFILES/ide/cursor/cli-config.json" "$HOME/.cursor/cli-config.json"
+  # Keep authInfo: a plain copy erased the cursor-agent login on every run.
+  cfg="$HOME/.cursor/cli-config.json"
+  tmp="$(mktemp)"
+  if [ -f "$cfg" ] && jq -e 'has("authInfo")' "$cfg" >/dev/null 2>&1; then
+    jq -s '.[0] + {authInfo: .[1].authInfo}' "$DOTFILES/ide/cursor/cli-config.json" "$cfg" > "$tmp"
+  else
+    cp "$DOTFILES/ide/cursor/cli-config.json" "$tmp"
+  fi
+  mv -f "$tmp" "$cfg"
 fi
 
 echo "setup-cursor: done"
