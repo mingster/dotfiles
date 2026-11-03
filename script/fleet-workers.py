@@ -62,7 +62,9 @@ def workers(host=None, *env):
 
 
 local = socket.gethostname().split(".")[0]
-names = {e["id"]: e["name"] for e in orca("environment", "list").get("environments", [])}
+# The IP has no known ssh host key, so use the ssh alias for both the label and the ssh call.
+ALIASES = {"192.168.2.88": "blueDevil"}
+names = {e["id"]: ALIASES.get(e["name"], e["name"]) for e in orca("environment", "list").get("environments", [])}
 counts = {local: workers()}
 counts.update({name: workers(name, "--environment", eid) for eid, name in names.items()})
 
