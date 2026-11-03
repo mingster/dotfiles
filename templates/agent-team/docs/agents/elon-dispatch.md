@@ -24,11 +24,3 @@
 - Elon steps in only for: a decision outside the lead's authority, a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
 
 Append observations to private `~/.claude/state/team-observations.md` for the next `/team-audit`; never in repositories.
-
-## Fleet dispatch (owner 2026-11-03)
-
-- Elon starts every builder and every worker on a remote host. A lead owns ticket order, briefs and merges; Elon owns where, when and on which provider a worker runs. Leads cannot use `--on`.
-- A lead requests with `--type status`, subject `dispatch-request: <role> <job>`, body: brief path in `~/.claude/state/briefs/`, role, work kind (build, QA, secops, browser, DB), ticket, lead handle. Elon starts it within one wake, or within 2 minutes when the lane is idle.
-- Elon places the worker: `~/.claude/state/fleet-load.sh`, then niteking first for code, test and review (load under 8), blueDevil for browser, secrets or the main checkout (load under 12), miniu for dev DB and Playwright through `remote-heavy.sh`. Provider by `usage-gate.py pick`. Details and caps: `.claude/model-routing.md`, Starting a worker.
-- After the start: open the pane, confirm acceptance within 2 minutes, then reply to the lead with the dispatch id and host through `~/dotfiles/script/orca-reply.sh`. The completed `worker_done` still relays to the owning lead.
-- Elon does not wait for requests: each wake, a free lane plus a startable ticket (accepted spec, grill approved) means Elon asks the lead for the brief or starts the one it has. Lane counts come from `fleet-load.sh`, never from dispatch notes.
