@@ -4,7 +4,7 @@ Tiers, Orca worker flags, worker launch and supervision, fallback, and the commi
 
 Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for tech-lead, fullstack-dev, qa-sdet and release-manager work. Provider policy lives in this file; the adapter never overrides it, and its usage, effort, token, strike, independent-review and publication gates still apply.
 
-Owner rule (2026-11-01, replaces the 2026-10-23 rule): implementation tickets run on Claude first (`--agent claude --model sonnet --effort medium`), then Antigravity, up to 3 implementation lanes at once. Host caps count every worker; 3 implementation lanes is the fleet wide limit, so extra ready batches queue. Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity per the table below. Antigravity and Cursor workers run without the Claude hooks and the `settings.json` deny list; the strike rule in `AGENTS.md` is their guard.
+Owner rule (2026-11-01, replaces the 2026-10-23 rule): implementation tickets run on Claude first (`--agent claude --model sonnet --effort medium`), then Antigravity, no fleet wide lane limit (owner 2026-11-04). Host caps count every worker and alone decide how many run at once; extra ready batches queue. Every other role, the tech-lead and reviewers included, starts on Claude, Cursor or Antigravity per the table below. Antigravity and Cursor workers run without the Claude hooks and the `settings.json` deny list; the strike rule in `AGENTS.md` is their guard.
 
 ## Coordinator effort (owner 2026-11-03)
 
