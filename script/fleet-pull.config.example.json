@@ -1,0 +1,4 @@
+{
+  "hosts": ["ssh-host-name"],
+  "repos": ["~/path/to/checkout"]
+}
