@@ -135,6 +135,9 @@ formulae=(
   jq
   tmux
   asdf
+  starship
+  zsh-completions
+  libpq
 )
 for pkg in "${formulae[@]}"; do
   if [ "$dry" -eq 1 ]; then
@@ -143,6 +146,26 @@ for pkg in "${formulae[@]}"; do
     brew list "$pkg" >/dev/null 2>&1 || run brew install "$pkg"
   fi
 done
+
+# libpq is keg-only: link it so psql and createdb (head-checks, db tests) are on PATH.
+if [ "$dry" -eq 1 ]; then
+  echo "would run: brew link --force libpq (if psql is missing)"
+elif ! command -v psql >/dev/null 2>&1; then
+  run brew link --force libpq
+fi
+
+# zsh compinit refuses group-writable completion dirs ("insecure directories"), and the
+# prompt then eats the first command a non-interactive agent types. Drop group write.
+if [ "$dry" -eq 1 ]; then
+  echo "would run: chmod g-w on insecure zsh completion directories"
+else
+  insecure="$(zsh -fc 'autoload -Uz compaudit; compaudit' 2>/dev/null || true)"
+  if [ -n "$insecure" ]; then
+    while IFS= read -r d; do
+      [ -n "$d" ] && run chmod g-w "$d"
+    done <<<"$insecure"
+  fi
+fi
 
 if [ "$skip_casks" -eq 0 ]; then
   step "Homebrew casks (Orca, Cursor, Antigravity, Chrome Dev)"
@@ -188,6 +211,17 @@ else
     run asdf reshim python 2>/dev/null || true
     run asdf reshim nodejs 2>/dev/null || true
   fi
+fi
+
+# Product repos pin their own node. Install the pin where a checkout exists, so
+# elon-startup.sh and bun do not find a missing version later.
+if [ "$dry" -eq 1 ]; then
+  echo "would run: asdf install in each repo with a .tool-versions (riben.life/web, pstv)"
+elif command -v asdf >/dev/null 2>&1; then
+  for tv in "$HOME/projects/riben.life/web/.tool-versions" "$HOME/pstv/.tool-versions"; do
+    [ -f "$tv" ] || continue
+    (cd "$(dirname "$tv")" && run asdf install) || echo "WARN: asdf install failed for $tv" >&2
+  done
 fi
 
 step "Agent provider CLIs and developer tools"
@@ -236,6 +270,13 @@ fi
 if [ "$skip_tuneups" -eq 0 ]; then
   step "Mac tune-ups (system defaults and server performance)"
 
+  # Ask for the password once, if a terminal is attached. Without it every root tune-up
+  # below is skipped (sudo fails silently with stderr hidden) and the host sleeps or
+  # drops off the fleet.
+  if [ "$dry" -eq 0 ] && [ "$(id -u)" -ne 0 ] && [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+    sudo -v || echo "note: no sudo; root tune-ups will be skipped"
+  fi
+
   # Server performance mode attempt (requires Recovery Mode on Apple Silicon when SIP is enabled)
   if [ "$dry" -eq 1 ]; then
     echo "would run: sudo nvram boot-args=\"serverperfmode=1 ...\" (safe attempt)"
@@ -261,6 +302,11 @@ if [ "$skip_tuneups" -eq 0 ]; then
     run_sudo systemsetup -setharddisksleep Never 2>/dev/null || true
     run_sudo systemsetup -setrestartpowerfailure on 2>/dev/null || true
     run_sudo systemsetup -setrestartfreeze on 2>/dev/null || true
+  fi
+
+  # Remote Login (ssh): the fleet reaches every host over ssh (fleet-pull, remote-heavy, Orca).
+  if command -v systemsetup >/dev/null 2>&1; then
+    run_sudo systemsetup -setremotelogin on
   fi
 
   # Network order: prioritize wired Ethernet over Wi-Fi
@@ -333,3 +379,15 @@ fi
 
 echo ""
 echo "mac/install_mac_server.sh completed successfully."
+if [ "$dry" -eq 0 ]; then
+  cat <<'NOTE'
+
+Still by hand (sign-ins cannot be scripted):
+  gh auth login
+  claude            (sign in once)
+  cursor-agent login
+  agy               (sign in once)
+If root tune-ups were skipped above, rerun this script from a terminal so sudo can ask for the password.
+Then check the host: script/elon-startup.sh --no-pull
+NOTE
+fi
