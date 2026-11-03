@@ -26,6 +26,8 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 
 ## Worker delivery accountability
 
+- **Hard rules, no exceptions:** the inbox waiter starts only with `run_in_background` (a shell `&` waiter never wakes Elon); stop a process with `kill <pid>` on a pid read from `ps`, never `pkill` or `xargs kill`; write ssh hosts literally.
+
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - **Pre-build grill (owner 2026-11-02):** UI with sales-marketing and Elon; code with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon; owner approves the results before build. Record findings on the issue or spec first.
 - Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within lane cap (at most 3 implementation lanes). Lead queue over 30 minutes: merge via `lead-merge.sh` yourself.
