@@ -1,0 +1,1 @@
+- Agent team template: full speed is 18 workers across the fleet (host caps in model-routing.md); the fleet wide limit of 3 implementation lanes is gone.

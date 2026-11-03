@@ -11,7 +11,7 @@
 
 - **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the lane cap in `.claude/model-routing.md` (at most 3 implementation lanes). When the lead's queue waits over 30 minutes, merge through `lead-merge.sh` yourself.
+- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md` (18 workers at full speed). When the lead's queue waits over 30 minutes, merge through `lead-merge.sh` yourself.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
 - Routing, quota and launch: `.claude/model-routing.md` and `~/.orca/presets.json`.
 - Arm the inbox waiter with a 10 minute timeout and run `docs/agents/coordinator-operations.md`, Wake loop, on every wake.
