@@ -35,7 +35,7 @@ Team additions to its task contract:
 - Name the ticket's test cases as the verify command: those plus touched unit tests, never the full suite (Regression).
 - State rules 1 and 2 of "Commit, push and merge" in `.claude/model-routing.md`: workers commit on their own branches and worktrees, never push, open PRs or merge PRs; reviewers report locally to Elon.
 - Apply the usage gate before every launch and use the role's provider, model and effort from `.claude/model-routing.md`. Cap each independent wave at 3 workers. Use child worktrees and the placement flags in team facts.
-- Use the `orca-team` skill for colored panes and worker watch helpers. Keep runtime lifecycle authority with `orchestration`; project routing supplies team policy, not permission to bypass Orca's recovery rules.
+- Use the `orca-team` skill for the worker watch and start check helpers (no worker panes, owner 2026-11-03). Keep runtime lifecycle authority with `orchestration`; project routing supplies team policy, not permission to bypass Orca's recovery rules.
 
 ## Step 3. Worker evidence
 

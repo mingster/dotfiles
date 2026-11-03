@@ -311,10 +311,12 @@ The team's role files and skills live once in [`templates/agent-team/`](template
 ### Worker lifecycle
 
 * **Start:** the coordinator dispatches a worker with `orca orchestration worker-start`. The worker gets its own worktree.
-* **Panes and titles:** [`orca-team`](.agents/skills/orca-team/SKILL.md) shows each worker in a pane whose title bar color comes from the role in the task title, using [`role-colors.tsv`](.agents/skills/orca-team/role-colors.tsv).
+* **Titles, no panes:** coordinators no longer open worker panes (owner rule 2026-11-03). [`orca-team`](.agents/skills/orca-team/SKILL.md) keeps the worker watch, start check and release helpers, and the role colors in [`role-colors.tsv`](.agents/skills/orca-team/role-colors.tsv).
 * **Watching:** [`script/worker-watchdog.sh`](script/worker-watchdog.sh) nudges an idle worker and escalates to the owning coordinator if it stays idle or a report goes unread. It never stops or retries a worker.
 * **Finish:** [`script/worker-finish.sh`](script/worker-finish.sh) runs the head checks, then releases the dispatch, closes the pane and removes the worktree.
 * **Wrap up:** [`script/wrap-up.sh`](script/wrap-up.sh) previews and prunes finished branches and worktrees (add `--apply` to execute).
+* **Start check:** [`worker-start-check.sh`](.agents/skills/orca-team/worker-start-check.sh) takes a dispatch id and exits 1 when the start failed or was not accepted in 2 minutes. The coordinator runs it after every `worker-start`.
+* **Fleet pull:** [`script/fleet-pull.sh`](script/fleet-pull.sh) fast-forwards the main checkouts of the configured repos on this host and every fleet host (config in the untracked `script/fleet-pull.config.json`, see the example). It skips dirty checkouts and never merges, resets or stashes. The coordinator runs it on every wake.
 
 ### Team audit
 
