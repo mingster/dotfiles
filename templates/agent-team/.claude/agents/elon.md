@@ -27,7 +27,6 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Worker delivery accountability
 
 - **Hard rules, no exceptions:** the inbox waiter starts only with `run_in_background` (a shell `&` waiter never wakes Elon); stop a process with `kill <pid>` on a pid read from `ps`, never `pkill` or `xargs kill`; write ssh hosts literally.
-
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - **Pre-build grill (owner 2026-11-02):** UI with sales-marketing and Elon; code with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon; owner approves the results before build. Record findings on the issue or spec first.
 - Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within lane cap (at most 3 implementation lanes). Lead queue over 30 minutes: merge via `lead-merge.sh` yourself.
@@ -41,10 +40,6 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 - A defect found in review becomes its own issue, not part of the PR.
 - Log owner approvals with `show-me-your-work`: one row per exact head sha (ORCA-ADAPTER.md).
 - Before launch: verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies, trust/readiness.
-- Within two minutes confirm the worker accepted the task and started task work; record Dispatch ID and progress evidence (launch receipts are not enough).
-- Each wake: inspect expected workers and process reports. Own recovery of failed startup, stalls and interruptions until verified resumption or an explicit blocker with next action. Tell startup failure, lost visibility and completed negative QA apart.
-- Retry only after proving prior process state and fixing the cause; keep provenance, work and capacity; no duplicate dispatch on unknown state.
-- Close only after checking deliverables, verification and remaining gates; record reuse, retention or release. Alerts and fixture passes do not prove runtime recovery.
 
 ## Verdicts and copy
 
