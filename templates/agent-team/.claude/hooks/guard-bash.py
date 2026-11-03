@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 # Scripts only the deploy wrapper may run (none by default; list the project's raw deploy scripts here).
@@ -191,6 +192,116 @@ def check_pattern_kill(segment, base, args):
         deny(f"xargs kill takes its pids from a pipe the guard cannot see. {KILL_FORMS}")
 
 
+# Team gates (#6936): role file commits, the grill gate on dispatch, an owning lead on remote workers.
+# These stop accidents, not a determined agent: an agent can type the trailer or the comment itself,
+# so the owner reads the diff of the files these gates guard.
+PROTECTED_PATHS = (".claude/agents/", "docs/agents/", ".claude/model-routing.md")
+OWNER_TRAILER = re.compile(r"Owner-approved:\s*\S", re.I)
+GRILL_APPROVAL = re.compile(r"(?is)(?=.*grill)(?=.*(owner.{0,60}approv|approv.{0,60}owner))")
+GRILL_EXEMPT_LABELS = ("hotfix", "mechanical")
+REMOTE_FLAGS = ("--on", "--environment", "--pairing-code")
+GATE_CWD = None
+RAW_COMMAND = ""
+
+
+def gate_run(cmd, cwd):
+    try:
+        out = subprocess.run(cmd, cwd=cwd or GATE_CWD, capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def is_protected(path):
+    return any(path.startswith(p) if p.endswith("/") else path == p for p in PROTECTED_PATHS)
+
+
+def option_value(args, name):
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def git_verb(args):
+    i = 0
+    while i < len(args):
+        if args[i] in ("-C", "-c"):
+            i += 2
+        elif args[i].startswith("-"):
+            i += 1
+        else:
+            return args[i], args[i + 1:]
+    return None, []
+
+
+def deny_role_files(files, how):
+    deny(f"{how} touches {', '.join(sorted(files))}, which only the owner approves. Add an "
+         "`Owner-approved: <name> <date>` trailer to the commit message once the owner has said yes "
+         "(never before), or take those files out of the change.")
+
+
+def check_role_file_gate(base, args):
+    if base == "git":
+        verb, rest = git_verb(args)
+        if verb == "commit":
+            files = set((gate_run(["git", "diff", "--cached", "--name-only"], None) or "").split())
+            if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
+                files |= set((gate_run(["git", "diff", "--name-only"], None) or "").split())
+            files = {f for f in files if is_protected(f)}
+            if files and not OWNER_TRAILER.search(RAW_COMMAND):
+                deny_role_files(files, "This commit")
+            return
+        if verb != "push":
+            return
+    elif not (base == "gh" and args[:2] == ["pr", "create"]):
+        return
+    # Push or PR create: every commit not yet on origin/main that touches a protected path needs the trailer.
+    shas = (gate_run(["git", "rev-list", "origin/main..HEAD"], None) or "").split()
+    for sha in shas:
+        files = {f for f in (gate_run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha], None) or "").split()
+                 if is_protected(f)}
+        message = gate_run(["git", "show", "-s", "--format=%B", sha], None) or ""
+        if files and not OWNER_TRAILER.search(message):
+            deny_role_files(files, f"Commit {sha[:9]}")
+
+
+def check_worker_start(args):
+    spec = RAW_COMMAND
+    if any(option_value(args, f) is not None or f in args for f in REMOTE_FLAGS) and not option_value(args, "--from"):
+        deny("This worker starts on another host with no owning lead recorded, so its worker_done would reach nobody. "
+             "Add `--from <your terminal handle>` (the lead who receives worker_done) and start it again.")
+    if "fullstack-dev" not in spec:
+        return
+    selector = option_value(args, "--worktree") or ""
+    found = re.match(r"issue:(\d+)$", selector) or re.search(r"(?:riben\.life#|issues/|#)(\d{3,6})\b", spec)
+    if not found:
+        deny("This build worker names no issue number, so the owner's approval of the grill results cannot be "
+             "checked. Name the issue (`riben.life#<n>`) in the spec, or use `--worktree issue:<n>`.")
+    number = found.group(1)
+    raw = gate_run(["gh", "issue", "view", number, "--json", "labels,body,comments"], None)
+    try:
+        issue = json.loads(raw)
+    except Exception:
+        return  # gh is down or the issue is unreadable: the gate cannot judge, so it lets the command through
+    labels = " ".join(l.get("name", "") for l in issue.get("labels") or []).lower()
+    texts = [issue.get("body") or ""] + [c.get("body") or "" for c in issue.get("comments") or []]
+    if any(x in labels for x in GRILL_EXEMPT_LABELS) or any("elon take over" in t.lower() for t in texts[1:]):
+        return
+    if not any(GRILL_APPROVAL.search(t) for t in texts[1:]):
+        deny(f"Missing: a comment on #{number} naming the owner's approval of the grill results "
+             "(docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
+             "then dispatch. Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
+
+
+def check_team_gates(base, args):
+    check_role_file_gate(base, args)
+    if base == "orca" and args[:2] == ["orchestration", "worker-start"]:
+        check_worker_start(args)
+
+
 def check_segment(segment, depth=0):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
@@ -199,6 +310,7 @@ def check_segment(segment, depth=0):
         return
     base = os.path.basename(prog)
     check_pattern_kill(segment, base, args)
+    check_team_gates(base, args)
 
     # 4. Heavy jobs must acquire the shared machine budget.
     try:
@@ -405,6 +517,8 @@ def main():
     if data.get("tool_name") != "Bash":
         return
     command = (data.get("tool_input") or {}).get("command") or ""
+    global GATE_CWD, RAW_COMMAND
+    GATE_CWD, RAW_COMMAND = data.get("cwd") or os.getcwd(), command
     check_background_wait(command)
     try:
         command = report_command_text(command)
