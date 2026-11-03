@@ -20,10 +20,10 @@ fi
 
 if type brew &>/dev/null; then
   FPATH=$(brew --prefix)/share/zsh-completions:$FPATH
-
-  autoload -Uz compinit
-  compinit
 fi
+
+autoload -Uz compinit
+compinit
 
 ARCH=$(uname -m)
 if [[ "$ARCH" == "arm64" && -x /opt/homebrew/bin/brew ]]; then
@@ -44,20 +44,6 @@ export PATH="$HOME/dotfiles/bin:$PATH"
 export PATH="/Applications/_dev/Visual Studio Code.app/Contents/Resources/app/bin:$PATH"
 export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
 export PATH="$HOME/.antigravity/antigravity/bin:$PATH"
-
-export ZSH="$HOME/.oh-my-zsh"
-ZSH_CUSTOM="$ZSH/custom"
-ZSH_THEME=""
-
-plugins=(
-  git
-  macos
-  rake
-  iterm2
-  zsh-autosuggestions
-)
-
-[ -f "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"
 
 if [[ "$OSTYPE" == darwin* ]]; then
   alias ls='ls -lagG'

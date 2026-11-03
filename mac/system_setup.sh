@@ -265,19 +265,6 @@ else
   brew list starship >/dev/null 2>&1 || brew install starship
 fi
 
-# Oh My Zsh (unattended install if not already present)
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-  RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-fi
-
-# Plugins
-if [ -d "$HOME/.oh-my-zsh" ]; then
-  rm -rf "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
-  if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
-    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
-  fi
-fi
-
 # Set default shell to zsh (covers hosts whose login shell was set to fish or bash by hand)
 case "$SHELL" in
   */zsh) ;;
