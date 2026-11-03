@@ -54,6 +54,7 @@ Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 - Owner ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its owner in the ask's ledger row this wake.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending owner asks as one numbered batch before he leaves; one answer holds at most one ticket.
 - A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.
+- **Sweep finished workers (owner 2026-11-04).** A worker is finished when its PR is merged, when it has sent `worker_done` for a settled task, or when it has run over 8 hours. Each wake, list the agent processes on every fleet host (`ps`, and `lsof` for the working folder) and match them to dispatches and merged PRs. For each finished one, in the same wake: `worker-release` the dispatch, `kill <pid>` read from `ps` (never `pkill`), and remove its worktree when nothing is uncommitted and nothing is unmerged. A process with no dispatch and no PR that is under 8 hours is not finished: report it and ask the owner. Closing a worker right after its report is already required by `.claude/model-routing.md`, Starting a worker, step 5. This bullet is the check that it happened. Finished workers left running count against the host caps and inflate Orca's active worker count.
 
 ## Production job order
 
