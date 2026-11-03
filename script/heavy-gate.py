@@ -174,7 +174,8 @@ def group_members(pgid):
     members = []
     for line in result.stdout.splitlines():
         fields = line.split(maxsplit=5)
-        if len(fields) != 6 or not all(field.isdecimal() for field in fields[:4]):
+        # macOS reports uid -2 for some system daemons (nobody), so uid may be signed.
+        if len(fields) != 6 or not all(field.lstrip('-').isdecimal() for field in fields[:4]):
             raise ValueError('malformed process inspection')
         if int(fields[0]) == pgid:
             members.append((fields[4], line))
