@@ -733,34 +733,32 @@ class Pick(unittest.TestCase):
         with open(path) as f:
             chain = json.load(f)["roles"]["reviewer"]["chain"]
         self.assertEqual([(e["provider"], e["model"]) for e in chain],
-                         [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet"),
-                          ("cursor", "gpt-5.6-sol-high")])
-        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "gpt"})
+                         [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet")])
+        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude"})
+
+    def test_no_preset_lists_a_cursor_model_other_than_composer(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+        with open(path) as f:
+            roles = json.load(f)["roles"]
+        bad = [(r, e["model"]) for r, v in roles.items() for e in v.get("chain", [])
+               if e["provider"] == "cursor" and e["model"] != "composer-2.5"]
+        self.assertEqual(bad, [])
 
 
-class CursorApiPool(unittest.TestCase):
-    """A cursor gpt-* entry draws on the API pool the gate cannot read, so its headroom proves nothing."""
-    CHAIN = [{"provider": "antigravity", "model": "gemini-4-argon-high"},
-             {"provider": "claude", "model": "sonnet", "effort": "medium"},
-             {"provider": "cursor", "model": "gpt-5.6-sol-high"}]
+class CursorComposerOnly(unittest.TestCase):
+    """Owner 2026-11-04: Cursor runs only composer-2.5, so pick never selects another Cursor model."""
+    CHAIN = [{"provider": "cursor", "model": "gpt-5.6-sol-high"},
+             {"provider": "cursor", "model": "claude-sonnet-5-5-medium"},
+             {"provider": "cursor", "model": "composer-2.5"}]
 
-    def pick(self, avoid, blocked=()):
+    def test_pick_skips_other_cursor_models(self):
         def row(provider, *_, **__):
-            used = {"antigravity": 78, "claude": 17, "cursor": 16}[provider]
-            return {"verdict": "blocked" if provider in blocked else "allowed", "ceiling": 95, "weekly_used": used}
+            return {"verdict": "allowed", "ceiling": 95, "weekly_used": 10}
         with mock.patch.object(ug, "role_chain", return_value=(self.CHAIN, False)), \
                 mock.patch.object(ug, "run", side_effect=row), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
-            return ug.pick("reviewer", avoid, None, 95, 0)["selected"]
-
-    def test_loses_to_argon_with_less_headroom(self):
-        self.assertEqual(self.pick("claude")["provider"], "antigravity")
-
-    def test_loses_to_sonnet_for_an_argon_author(self):
-        self.assertEqual(self.pick("gemini")["provider"], "claude")
-
-    def test_used_when_nothing_else_is_eligible(self):
-        self.assertEqual(self.pick("claude", blocked=("antigravity",))["model"], "gpt-5.6-sol-high")
+            sel = ug.pick("fullstack-dev", None, None, 95, 0)["selected"]
+        self.assertEqual(sel["model"], "composer-2.5")
 
 
 class PickOrder(unittest.TestCase):

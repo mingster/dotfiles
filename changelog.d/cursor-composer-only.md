@@ -1,0 +1,1 @@
+Cursor runs only composer-2.5 (owner 2026-11-04). The reviewer, elon, tech-lead, fullstack-dev and other presets drop Cursor Claude and GPT entries, `usage-gate.py pick` skips any other Cursor model, and the routing template no longer names a Cursor reviewer fallback.
