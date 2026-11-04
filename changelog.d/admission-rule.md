@@ -1,0 +1,1 @@
+Agent team template: add the host admission rule (start a worker when load per core is under 0.7 and free memory is at least 4 GB; host caps are the ceiling) to the Fleet dispatch section of elon-dispatch.md.
