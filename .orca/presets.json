@@ -190,6 +190,10 @@
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "gpt-5.6-sol-high"
         }
       ]
     },

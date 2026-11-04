@@ -1,1 +1,2 @@
 Team audit 2026-11-04: mini6 is the first host for workers and coordinators, the wake loop watches reviewers on every run, and lead-merge runtime and reviewer chain rules are written down.
+Owner answers applied: leads start no worker on any fleet host, regression runs on miniu (riben.life), Cursor gpt-5.6-sol-high joins the reviewer chain last, Elon gets a standing grill approval for tickets with no money, auth, schema change or new UI page, and the grill hook reads the real worker brief.

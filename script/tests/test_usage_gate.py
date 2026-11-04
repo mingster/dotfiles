@@ -734,8 +734,8 @@ class Pick(unittest.TestCase):
             chain = json.load(f)["roles"]["reviewer"]["chain"]
         self.assertEqual([(e["provider"], e["model"]) for e in chain],
                          [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet"),
-                          ("cursor", "composer-2.5")])
-        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", None})
+                          ("cursor", "gpt-5.6-sol-high")])
+        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "gpt"})
 
 
 class PickOrder(unittest.TestCase):
