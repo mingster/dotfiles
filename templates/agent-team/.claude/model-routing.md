@@ -62,7 +62,7 @@ Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemin
 - Proven combo (owner 2026-11-01, 24 hour run): Elon on `--agent antigravity --model gemini-4-argon-medium` with Cursor `composer-2.5` workers for small, mechanical or bounded tickets (three files or fewer, no `"use server"`, auth, payment or schema change). Elon may run this way when Claude quota is tight; Teddy stays on Claude. Escalate a ticket to Claude when it fails twice or touches the excluded areas.
 - The Cursor "Trust this workspace" stall is handled under Elon or Teddy supervision: read the screen after each Cursor start and accept the prompt.
 - Debug handoff preset: `fullstack-dev-debug` (Claude `sonnet` high, then `opus` high, then Cursor `claude-sonnet-5-5-medium`).
-- Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon or Cursor GPT). If none is available, report gate blocked.
+- Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon or Cursor GPT). Argon is the Gemini family, so it counts as cross family for a Claude author. Cursor `gpt-5.6-sol-high` is not in the `reviewer` preset chain, so `on-worker-done.sh` never picks it: start it by hand. Cursor has a monthly limit (resets 2026-11-25); once it is hit, use Argon. If none is available, report gate blocked.
 - Cursor also serves Claude models (`claude-opus-5-5-high`, `claude-sonnet-5-5-medium`). That is a quota fallback when Claude is out, not an independent family: it does not satisfy a different-family review of a Claude author.
 - Argon workers still get the file list and i18n key audit before merge (see below).
 
@@ -106,6 +106,7 @@ Host ssh work routes to a Claude worker.
 - `usage-gate.py show` lists every provider with its reading source, age and reset time. The gate checks at `worker-start` and never stops a running worker. Never raise the 95% ceiling without Mingster.
 - The `usage-gate-hook.py` PreToolUse hook denies only a start blocked by the real usage ceiling, and warns on unknown readings. Provider routing recommendations are advisory; `USAGE_GATE_OVERRIDE='<reason>'` records a deliberate routing choice and never bypasses the usage ceiling. Daily cap overrides remain pacing hints and are unnecessary to dispatch with weekly headroom.
 - Read each provider's startup notice and record each unavailable provider's reset time in the status report.
+- Write a brief in its own Bash call, then dispatch in the next one. `guard-bash.py` reads the whole command, so a brief and a `worker-start` in one call can be denied on the wrong issue number, and the denial means the brief is never written.
 - Host routing: browser tests and browser walks start only on a host that has the browser installed. Pass `--on <host>` to `orca orchestration worker-start` yourself, and report lane counts from the fleet load output, never from dispatch notes.
 - Bun drift: when the worker runs on another host, run `~/dotfiles/script/bun-pin-check.sh <host> <repo>` first. It prints one warning if the host's bun is older than the repo's pin (never blocks). A mass of init-time `ReferenceError` failures on one host is usually an old bun, not a regression.
 
