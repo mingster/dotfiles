@@ -738,6 +738,31 @@ class Pick(unittest.TestCase):
         self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "gpt"})
 
 
+class CursorApiPool(unittest.TestCase):
+    """A cursor gpt-* entry draws on the API pool the gate cannot read, so its headroom proves nothing."""
+    CHAIN = [{"provider": "antigravity", "model": "gemini-4-argon-high"},
+             {"provider": "claude", "model": "sonnet", "effort": "medium"},
+             {"provider": "cursor", "model": "gpt-5.6-sol-high"}]
+
+    def pick(self, avoid, blocked=()):
+        def row(provider, *_, **__):
+            used = {"antigravity": 78, "claude": 17, "cursor": 16}[provider]
+            return {"verdict": "blocked" if provider in blocked else "allowed", "ceiling": 95, "weekly_used": used}
+        with mock.patch.object(ug, "role_chain", return_value=(self.CHAIN, False)), \
+                mock.patch.object(ug, "run", side_effect=row), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            return ug.pick("reviewer", avoid, None, 95, 0)["selected"]
+
+    def test_loses_to_argon_with_less_headroom(self):
+        self.assertEqual(self.pick("claude")["provider"], "antigravity")
+
+    def test_loses_to_sonnet_for_an_argon_author(self):
+        self.assertEqual(self.pick("gemini")["provider"], "claude")
+
+    def test_used_when_nothing_else_is_eligible(self):
+        self.assertEqual(self.pick("claude", blocked=("antigravity",))["model"], "gpt-5.6-sol-high")
+
+
 class PickOrder(unittest.TestCase):
     def test_show_orders_by_fraction_with_unknown_providers_last(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
