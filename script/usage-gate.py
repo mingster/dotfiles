@@ -660,6 +660,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         candidates.append(candidate)
         if candidate["eligible"]:
             allowed.append((index, candidate))
+    # A cursor gpt-* entry draws on the API pool, which its headroom does not measure: last resort only.
+    allowed = [a for a in allowed if not (a[1]["provider"] == "cursor" and a[1]["model"].startswith("gpt-"))] or allowed
     chosen = None
     if allowed:
         if (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:

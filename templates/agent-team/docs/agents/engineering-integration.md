@@ -17,7 +17,7 @@ Read before judging engineering reviews or tests. Docs-only PRs follow Elon's me
 
 ## Verifier brief (tech-lead)
 
-- Name the exact test command (`lead-merge.sh --verify-command`). Before merge confirm the Verdict's verifier and author dispatch IDs with `orca orchestration worker-show`. Delete, never edit, your own malformed Verdict that a fresh one supersedes, and note it in the PR body.
+- Name the exact test command (`lead-merge.sh --verify-command`). Before merge confirm the Verdict's verifier and author dispatch IDs with `orca orchestration worker-show`. Run `lead-merge.sh` on the Orca runtime that holds those dispatches: it reads only its own runtime, so a dispatch from another one is refused as unknown. Delete, never edit, your own malformed Verdict that a fresh one supersedes, and note it in the PR body.
 - Briefs use literal placeholders such as `<issue>`, never global replacement of one letter. Verify the scope names its own issue and dependency PRs are MERGED before dispatch (a queued dependency uses no lane). Browser briefs include a unique session on every call.
 
 ## Merge rules (tech-lead)
