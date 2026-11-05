@@ -405,6 +405,92 @@ def pr_notices(config, state, now, fetch=fetch_prs):
     return notices
 
 
+def ssh_reachable(name):
+    """True when a quick ssh to the coordinator succeeds."""
+    command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', name, 'true']
+    try:
+        return subprocess.run(command, capture_output=True, timeout=10).returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def run_alert(command, text):
+    """Run the private alert command with the text as its last argument."""
+    if not command:
+        return True
+    try:
+        return subprocess.run(list(command) + [text], capture_output=True, timeout=30).returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def this_host():
+    return subprocess.run(['hostname', '-s'], capture_output=True, text=True, timeout=5).stdout.strip()
+
+
+def coordinator_name(state_dir):
+    """The name on the first `coordinator <name>` line, or None."""
+    try:
+        lines = (Path(state_dir) / 'coordinator.conf').read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == 'coordinator':
+            return parts[1]
+    return None
+
+
+def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_alert, host=None):
+    """Alert only: tell the owner a coordinator is offline. Runs on a backup host."""
+    watch = config.get('coordinator_watch')
+    if not watch:
+        return []
+    name = coordinator_name(watch['state_dir'])
+    if not name or name.lower() == (host or this_host()).lower():
+        state.pop('coordinator_watch', None)
+        return []
+    command = watch.get('alert_command') or []
+    timer = state.get('coordinator_watch')
+    if timer and timer.get('host') != name:
+        timer = None
+    if reachable(name):
+        state.pop('coordinator_watch', None)
+        if timer and timer['alerted']:
+            text = 'coordinator %s back' % name
+            alert(command, text)
+            return [text]
+        return []
+    timer = state['coordinator_watch'] = timer or {'host': name, 'since': now, 'alerted': False}
+    if timer['alerted'] or now - timer['since'] < watch.get('offline_minutes', 10) * 60:
+        return []
+    text = 'coordinator %s offline for %d minutes; failover is manual, ask the owner' % (name, (now - timer['since']) // 60)
+    if not alert(command, text):
+        return []
+    timer['alerted'] = True
+    return [text]
+
+
+def save_state(path, state):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(state))
+    temporary.replace(path)
+
+
+def coordinator_stage(config, state, state_path):
+    """First step of a pass. Saves state at once, and ends a pass on a host without Orca."""
+    notices = coordinator_notices(config, state, time.time())
+    if not config.get('coordinator_watch'):
+        return notices, False
+    save_state(state_path, state)
+    if config.get('runs'):
+        return notices, False
+    if notices:
+        print('fleet-watch: ' + '; '.join(notices))
+    return notices, True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -422,6 +508,9 @@ def main():
         parser.error('--state is required when --admit is not specified')
 
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    coordinator, done = coordinator_stage(config, state, args.state)
+    if done:
+        return 0
     inbox = rpc('orchestration', 'inbox', '--limit', '5000')
     workers = fetch_workers(config)
     # pgrep observes the dedicated waiter process; no process is stopped here.
@@ -435,6 +524,7 @@ def main():
             leads[lead['terminal']] = False
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
+    notices += coordinator
     if notices:
         line = 'fleet-watch: ' + '; '.join(notices)
         for run in config['runs']:
