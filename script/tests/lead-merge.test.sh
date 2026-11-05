@@ -247,6 +247,15 @@ setup; body=$'## Verification\n- Ran the script: passed.\n## Test plan'; check "
 setup; checks=""; check "missing exact head checks refused" 1 'Checks'
 setup; checks="Checks: FAIL head=$SHA"; check "failed checks refused" 1 'Checks'
 setup; checks="Checks: PASS head=$OLD"; check "stale checks refused" 1 'Checks'
+M1=1111111111111111111111111111111111111111
+setup; checks="Checks: PASS head=$SHA main=$M1"; check "557 PASS with main= at the head merges" 0 '^MERGED' 1
+setup; checks="Checks: PASS head=$SHA main=$M1"$'\nUnchecked paths: script/foo.sh'; check "557 suffixed receipt still reads Unchecked paths" 1 'unchecked'
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg m "$M1" '[{body:("Checks: PASS head="+$sha)},{body:("Checks: FAIL head="+$sha+" main="+$m)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "557 newer FAIL with main= outvotes an older PASS" 1 'Checks: FAIL'
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg m "$M1" '[{body:("Checks: FAIL head="+$sha+" main="+$m)},{body:("Checks: PASS head="+$sha+" main="+$m)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "557 newer PASS with main= outvotes an older FAIL" 0 '^MERGED' 1
+setup; checks="Checks: PASS head=$SHA whatever"; check "557 text after the sha is refused" 1 'Checks'
+setup; checks="Checks: PASS head=$SHA main=$M1 whatever"; check "557 text after main= is refused" 1 'Checks'
+setup; checks="Checks: PASS head=$SHA main=$M1 main=$M1"; check "557 repeated main= is refused" 1 'Checks'
+setup; checks="Checks: PASS head=$OLD main=$M1"; check "557 suffixed PASS at another head is refused" 1 'Checks'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_same author=ctx_same"; check "author cannot verify" 1 'verdict'
 setup; PR_DIFF=$'+test.skip("case", () => {})'; check "test skip needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+// @ts-expect-error intentional'; check "suppression needs countersign" 1 'Countersign'

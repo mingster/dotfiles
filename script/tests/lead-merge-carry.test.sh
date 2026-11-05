@@ -94,7 +94,7 @@ git checkout -q pr
 echo 'PASS: 11 verdict carry cases'
 
 # Checks carry: a "Checks: PASS head=<V>" comment counts for head H when verdict_carry V H holds.
-eval "$(sed -n '/^checks_carry() {/,/^}$/p' "$here/lead-merge.sh")"
+eval "$(sed -n '/^RECEIPT_JQ=/,/^$/p;/^checks_carry() {/,/^}$/p' "$here/lead-merge.sh")"
 main_fetched=true
 cc() { # name expect(0|1) V H
   local rc=0 info
@@ -136,5 +136,11 @@ ccm "FAIL at a head between V and H blocks the carry" 1 "$HK2" "Checks: PASS hea
 ccm "PASS carries over two clean merges of main" 0 "$HK2" "Checks: PASS head=$VK"
 ccm "FAIL at V blocks the carry" 1 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$VK"
 ccm "FAIL on an unrelated head does not block" 0 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$V"
-echo 'PASS: 9 checks carry cases'
+M1=1111111111111111111111111111111111111111
+ccm "557 PASS with main= carries" 0 "$HK" "Checks: PASS head=$VK main=$M1"
+ccm "557 FAIL with main= at the current head blocks the carry" 1 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$HK main=$M1"
+ccm "557 FAIL with main= at V blocks the carry" 1 "$HK" "Checks: PASS head=$VK main=$M1" "Checks: FAIL head=$VK main=$M1"
+ccm "557 PASS with text after the sha does not carry" 1 "$HK" "Checks: PASS head=$VK whatever"
+ccm "557 FAIL with text after the sha is not a receipt" 0 "$HK" "Checks: PASS head=$VK" "Checks: FAIL head=$HK whatever"
+echo 'PASS: 14 checks carry cases'
 

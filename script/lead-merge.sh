@@ -456,16 +456,20 @@ verdict_carry() { # <verdict head> <current head>
     [ "$replay" = "$(git rev-parse "$c^{tree}")" ] || { carry_why="check b: merge ${c:0:12} differs from a clean replay"; return 1; }
   done
 }
+# One reader for the head-checks receipt header: "Checks: PASS|FAIL head=<sha>", then an optional
+# " main=<sha>" and an optional " train-heads=<list>". Anything else on the line is not a receipt.
+# main= is read but never compared: the carry rule and the merge of main already cover a moved main.
+# `receipt` takes a comment body and gives {kind, head, train} from its first line, or null.
+RECEIPT_JQ='def receipt: split("\n")[0] | (capture("^Checks: (?<kind>PASS|FAIL) head=(?<head>[0-9a-f]{40})(?: main=[0-9a-f]{40})?(?: train-heads=(?<train>[0-9a-f]{40}(?:,[0-9a-f]{40})*))?$")? // null);
+'
+
 # The same rule for the Checks comment: a "Checks: PASS head=<V>" comment counts for head H when
 # verdict_carry V H holds. Prints the newest such comment body; fails closed.
 checks_carry() { # <pr json with .comments> <current head>; the caller has fetched main
   local info="$1" h="$2" row body v x fails
-  fails=$(jq -r '.comments[].body | split("\n")[0] | capture("^Checks: FAIL head=(?<x>[0-9a-f]{40})$").x' <<<"$info" 2>/dev/null || true)
-  while IFS= read -r row; do
+  fails=$(jq -r "$RECEIPT_JQ"'.comments[].body | receipt | select(. != null and .kind == "FAIL" and .train == null) | .head' <<<"$info" 2>/dev/null || true)
+  while read -r v row; do
     body=$(printf '%s' "$row" | base64 -d)
-    v=${body%%$'\n'*}
-    [[ "$v" =~ ^Checks:\ PASS\ head=([0-9a-f]{40})$ ]] || continue
-    v=${BASH_REMATCH[1]}
     [ "$v" != "$h" ] || continue
     # A Checks FAIL on V or on any later head of this chain outvotes the PASS.
     for x in $fails; do
@@ -475,10 +479,10 @@ checks_carry() { # <pr json with .comments> <current head>; the caller has fetch
     done
     if verdict_carry "$v" "$h"; then printf '%s\n' "$body"; return 0; fi
     echo "lead-merge: Checks not carried from ${v:0:12}: $carry_why" >&2
-  done < <(jq -r '[.comments[].body] | reverse | .[] | @base64' <<<"$info" 2>/dev/null | head -50)
+  done < <(jq -r "$RECEIPT_JQ"'[.comments[].body] | reverse | .[] | receipt as $r | select($r != null and $r.kind == "PASS" and $r.train == null) | $r.head + " " + @base64' <<<"$info" 2>/dev/null | head -50)
   return 1
 }
-train_check=""
+train_head="" train_heads=""
 if [ "$batch_requested" = true ]; then
   [[ "${LEAD_MERGE_TRAIN_HEAD:-}" =~ ^[0-9a-f]{40}$ ]] || die "invalid batch train head"
   [[ "${LEAD_MERGE_TRAIN_HEADS:-}" =~ ^[0-9a-f]{40}(,[0-9a-f]{40})*$ ]] || die "invalid batch train PR heads"
@@ -486,16 +490,19 @@ if [ "$batch_requested" = true ]; then
   git cat-file -e "$LEAD_MERGE_TRAIN_HEAD^{commit}" 2>/dev/null \
     && git merge-base --is-ancestor "$head" "$LEAD_MERGE_TRAIN_HEAD" \
     || die "batch train commit does not contain PR $pr head"
-  train_check="Checks: PASS head=$LEAD_MERGE_TRAIN_HEAD train-heads=$LEAD_MERGE_TRAIN_HEADS"
+  train_head=$LEAD_MERGE_TRAIN_HEAD train_heads=$LEAD_MERGE_TRAIN_HEADS
 fi
 check_body="" checks=""
 # Batch preflight applies the single path rule below; the reason names the fix instead of the train.
 no_checks_reason="missing current-head or containing-train Checks: PASS"
 if [ "$preflight_only" = 1 ]; then no_checks_reason="no Checks: PASS at the current head; run head-checks before the train"; main_fetched=true; fi
-check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
+# The newest receipt at the head decides: a train receipt counts only for this train head and PR list.
+receipt_row=$(jq -c --arg head "$head" --arg th "$train_head" --arg ts "$train_heads" "$RECEIPT_JQ"'[.comments[].body | receipt as $r | select($r != null and (($r.train == null and $r.head == $head) or ($th != "" and $r.train == $ts and $r.head == $th))) | {kind: $r.kind, body: .}] | last // {kind: "", body: ""}' <<<"$info")
+check_body=$(jq -r .body <<<"$receipt_row")
 checks=${check_body%%$'\n'*}
-if [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; then :
-elif [ "$checks" = "Checks: FAIL head=$head" ]; then
+receipt_kind=$(jq -r .kind <<<"$receipt_row")
+if [ "$receipt_kind" = PASS ]; then :
+elif [ "$receipt_kind" = FAIL ]; then
   # Never carry past a run that happened.
   if [ "$preflight_only" = 1 ]; then refuse "$no_checks_reason"; else refuse "Checks: FAIL at the current head"; fi
 elif [ "$batch_requested" = true ]; then
@@ -846,7 +853,7 @@ trunk_check() {
     fi
   done < <(jq -r '.[]' <<<"$files")
 }
-if [ -z "$train_check" ] && [ "$preflight_only" != 1 ]; then
+if [ -z "$train_head" ] && [ "$preflight_only" != 1 ]; then
   git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
   trunk_check
 fi
@@ -858,7 +865,7 @@ if [ "$preflight_only" = 1 ]; then echo "lead-merge: preflight passed for PR $pr
 
 # Fetch immediately before merge; any shared changed path needs a new exact-head run.
 git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
-if [ -n "$train_check" ]; then
+if [ -n "$train_head" ]; then
   [[ "${LEAD_MERGE_EXPECTED_MAIN_TREE:-}" =~ ^[0-9a-f]{40}$ ]] || die "batch item has no valid expected main tree"
   current_main_tree=$(git rev-parse --verify 'origin/main^{tree}') || die "cannot read current main tree"
   [ "$current_main_tree" = "$LEAD_MERGE_EXPECTED_MAIN_TREE" ] \
