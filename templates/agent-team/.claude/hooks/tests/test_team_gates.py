@@ -255,8 +255,8 @@ class CursorWorkerScript(Gate):
         self.issue["comments"] = [{"body": "Owner approved the grill results."}]
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
 
-    def test_unreadable_brief_does_not_skip_the_check(self):
-        self.assertDenied(f"echo fullstack-dev #7114; {self.SCRIPT} --spec missing.md", "#7114")
+    def test_unreadable_brief_is_denied(self):
+        self.assertDenied(f"{self.SCRIPT} --spec missing.md", "could not be read")
 
     def test_brief_without_a_build_role_passes(self):
         self.write_brief("You are qa-sdet. Review #7114.\n")

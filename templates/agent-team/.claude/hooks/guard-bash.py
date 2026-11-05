@@ -290,6 +290,9 @@ def check_worker_start(args, script=False):
     if script:
         path = option_value(args, "--spec")
         brief = brief_text(path) if path else None
+        if path and brief is None:
+            deny(f"The brief `{path}` could not be read, so the grill check cannot tell which role it names. "
+                 "Fix the path (or write the brief first) and start the worker again.")
         spec = "\n".join([" ".join(args), brief]) if brief is not None else RAW_COMMAND
     else:
         spec = RAW_COMMAND
