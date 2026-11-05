@@ -422,6 +422,34 @@ class Cursor(unittest.TestCase):
                 os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
             return status, json.loads(out.getvalue())
 
+    def test_non_composer_model_never_allowed_from_auto_composer_pool(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=0):
+            path = t + "/summary.json"
+            payload = summary(100)
+            payload["individualUsage"]["plan"].update(autoPercentUsed=10, apiPercentUsed=100)
+            json.dump(payload, open(path, "w"))
+            os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
+            ug.CURSOR_SUMMARY = path
+            try:
+                for args in (["check", "--provider", "cursor"],
+                             ["check", "--provider", "cursor", "--model", "composer-2.5"]):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        self.assertEqual(ug.main(args), 0)
+                        row = json.loads(out.getvalue())
+                        self.assertEqual(row["verdict"], "allowed")
+                        self.assertEqual(row["weekly_used"], 10)
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    status = ug.main(["check", "--provider", "cursor", "--model", "gpt-5.6-sol-high"])
+                    row = json.loads(out.getvalue())
+                self.assertNotEqual((status, row["verdict"]), (0, "allowed"))
+                self.assertNotIn("weekly_used", row)
+                self.assertIn("read the Cursor dashboard", row["reason"])
+            finally:
+                ug.CURSOR_SUMMARY = NO_CURSOR
+                os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
+
     def test_composer_allowance_cannot_be_inferred_from_aggregate_plan_usage(self):
         status, row = self.check(100, baseline=100)
         self.assertEqual((status, row["verdict"]), (4, "unknown"))
