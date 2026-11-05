@@ -681,4 +681,37 @@ check "flat sweep: release of a discovered finished worker" "$(grep -q 'worker-r
 check "flat sweep: other project's worker untouched" "$(! grep -q 'worker-release --dispatch dfother' "$tmp/rpc.log" && listed term_fother; echo $?)"
 rm -f "$tmp/workers.json"
 
+# #515: a worker on another host. Its worktree path does not exist on this machine, so the Setup terminal and the
+# plain Terminal 1 left on that host must still close, matched by worktree id. Protected: the caller's own terminal,
+# the lead, a running worker's terminal, and anything on the repo's main branch.
+rm -f "$tmp/closes.log" "$tmp/rpc.log" "$tmp/workers.json" "$tmp/state/released/dremote"
+for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+rwt=/remote/host/orca/workspaces/repo1/wt-remote
+flat_show dremote succeeded released exited term_ragent "$rwt"
+cat > "$tmp/terminals.json" <<JSON
+{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local","host2"],"omittedHostIds":[]},"terminals":[
+ {"handle":"term_ragent","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rsetup","title":"Setup","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rplain","title":"Terminal 1","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_coordinator","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rlead","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rrunning","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rmain","worktreeId":"repo1::/remote/host/repo1","worktreePath":"/remote/host/repo1","branch":"refs/heads/main","executionHostId":"host2"}]}}
+JSON
+flat_show drunning ready input_accepted live term_rrunning "$rwt"
+flat_show dlead ready input_accepted live term_rlead "$rwt"
+cat > "$tmp/workers.json" <<JSON
+{"ok":true,"result":{"workers":[
+ {"dispatchId":"drunning","state":"ready","liveness":"live","terminal":"term_rrunning","workspace":"repo1::$rwt"},
+ {"dispatchId":"dlead","state":"ready","liveness":"live","terminal":"term_rlead","workspace":"repo1::$rwt"}]}}
+JSON
+"$here/worker-pane-close.sh" dremote >/dev/null 2>&1
+check "remote: Setup terminal on another host closes" "$(term_absent term_rsetup; echo $?)"
+check "remote: plain Terminal 1 on another host closes" "$(term_absent term_rplain; echo $?)"
+check "remote: caller's own terminal kept" "$(listed term_coordinator && ! grep -qx term_coordinator "$tmp/closes.log"; echo $?)"
+check "remote: lead terminal kept" "$(listed term_rlead; echo $?)"
+check "remote: running worker terminal kept" "$(listed term_rrunning; echo $?)"
+check "remote: main branch terminal kept" "$(listed term_rmain; echo $?)"
+rm -f "$tmp/workers.json"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
