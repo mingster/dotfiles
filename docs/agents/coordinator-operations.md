@@ -39,3 +39,15 @@ The helper creates the worktree through `orca worktree create --environment`, th
 Python 3 must be available locally and remotely. If the trust command fails or its exit cannot be confirmed within 60 seconds, dispatch stops and the terminal remains available for inspection. The helper closes the trust terminal after a confirmed successful exit.
 
 For an existing remote worktree, replace the creation flags with `--worktree-path <absolute-remote-path>`. If the base branch is omitted during remote creation, Orca uses the remote repository default branch. Without `--on`, local creation, trust and dispatch follow the existing behavior.
+
+## Coordinator check
+
+`script/elon-startup.sh` opens with `== 0 coordinator`, before the pull. It only reports and never blocks or changes anything. It fetches the private state repo (`${AGENT_STATE_DIR:-$HOME/agent-state}`, 10 second limit), reads `coordinator` from `origin/main:coordinator.conf`, and runs three checks:
+
+1. This host is the coordinator (`hostname -s`, compared without case).
+2. The local state repo is not behind `origin/main`.
+3. `.sync-ok` in the state repo is under 30 minutes old (three sync periods). A missing file counts as stale.
+
+Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missing state repo, a missing `coordinator` line and a failed fetch also print `NO DISPATCH`. When all pass it prints `ok coordinator <name>, state fresh`.
+
+`NO DISPATCH` means start no worker and ask the owner. Failover is never automatic: only the owner changes the coordinator.
