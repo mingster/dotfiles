@@ -31,7 +31,8 @@ Unknown, malformed or unpublished ledgers hold capacity, including after failed
 publication or abrupt gate death; these unknown holds require operator inspection.
 Reused PGIDs during reclaim may prolong a hold but never authorize killing there.
 Signals require a positively inspected live group and an unreaped direct-child
-leader, verified with waitid(WNOWAIT) before each signal. Reaped or unverifiable
+leader, verified with waitid(WNOWAIT) before each signal when available, else ps
+of that pid (ppid ours, pgid equals pid, not zombie). Reaped or unverifiable
 leaders never authorize signals. Nested gates share the tracked ancestor group;
 their survivors keep capacity. Legacy slots without kernel authority cannot nest,
 but retain dead-PID reclaim.
@@ -180,6 +181,30 @@ def group_members(pgid):
         if int(fields[0]) == pgid:
             members.append((fields[4], line))
     return members
+
+
+def verify_unreaped_leader(proc):
+    if proc.returncode is not None:
+        raise ChildProcessError('child already reaped; generation unknown')
+    waitid = getattr(os, 'waitid', None)
+    if waitid is not None:
+        waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        return
+    result = subprocess.run(['ps', '-p', str(proc.pid), '-o', 'pgid=,pid=,ppid=,stat='],
+                            capture_output=True, text=True, timeout=3)
+    result.check_returncode()
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError('malformed process inspection')
+    fields = lines[0].split()
+    if len(fields) != 4 or not all(field.lstrip('-').isdecimal() for field in fields[:3]):
+        raise ValueError('malformed process inspection')
+    pgid, pid, ppid = map(int, fields[:3])
+    stat = fields[3]
+    if pid != proc.pid or pgid != proc.pid or ppid != os.getpid():
+        raise ChildProcessError('leader generation unknown')
+    if stat.startswith('Z'):
+        raise ChildProcessError('leader already reaped; generation unknown')
 
 
 def groups_empty(path):
@@ -334,9 +359,7 @@ def children(slots, nested=False):
             # An unreaped direct child reserves its PID, even if it exits between
             # this check and killpg. Never reap it until the final signal is sent.
             # A saved/reaped PID or an inspection error provides no such authority.
-            if proc.returncode is not None:
-                raise ChildProcessError('child already reaped; generation unknown')
-            os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            verify_unreaped_leader(proc)
         except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as exc:
             print(f'heavy-gate: signal withheld pgid={proc.pid}; inspection failed or generation unknown; capacity held: {exc}',
                   file=sys.stderr, flush=True)
