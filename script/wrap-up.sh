@@ -49,10 +49,12 @@ orca=${ORCA_CLI_COMMAND:-orca}
 # Close finished terminals on the local host and every listed environment, before the worktree check reads the inventory.
 # A released dispatch has no agentTerminalHandle and its leftover terminals still look connected, so a terminal is linked to
 # dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
-# no agent on a path where every dispatch is settled (shells, worker-pane.sh panes). Kept: our own, a live dispatch's, one
-# running an agent, a lead- worktree's, and a terminal on a path with no dispatch (reported as unknown owner).
-# Dispatches come from the coordinator, including its remote workers. Reuse that inventory
-# for every environment; a remote Orca need not own the dispatch of a terminal it hosts.
+# any other on a path where every dispatch is settled (shells, worker-pane.sh panes, an agent idle at its prompt). Kept: our own,
+# a Run coordinator's, a live dispatch's, a lead- worktree's, one with output in the last 10 minutes (a correction pass runs on a
+# settled dispatch), and a terminal on a path with no dispatch (reported as unknown owner).
+# worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
+# every Run on this Orca and on every environment, and one inventory serves all of them; if any of it is unread, nothing closes.
+# Each Orca is read directly, so no --include-remote: with it one unreachable host makes a whole Run answer ok:false.
 term_closed=0; term_kept=0
 : > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
@@ -61,25 +63,64 @@ close_terminal() {
   else "$orca" terminal close "$@" >/dev/null 2>&1
   fi
 }
-terminal_dispatches() {
-  local wargs cursor=''
-  : > "$tmp/h-workers"
+# Prints the next page cursor, or nothing on the last page. Fails when a page cannot prove it is the last one.
+# Current Orca has top level nextCursor, absent on the last page; older Orca has page.hasMore; 1.4.246 has neither.
+next_page_cursor() {
+  jq -r 'def cursor: if type == "string" and length > 0 then . else error("bad cursor") end;
+    .result | if has("page") then
+      if .page.hasMore == true then .page.nextCursor | cursor
+      elif .page.hasMore == false then ""
+      else error("bad page") end
+    elif .nextCursor != null then .nextCursor | cursor
+    elif (.workers | length) < 100 then ""
+    else error("full page without a cursor") end' "$1" 2>/dev/null
+}
+read_dispatches() {
+  local eargs=() wargs run run_cursor='' cursor
+  [ -z "$1" ] || eargs=(--environment "$1")
+  : > "$tmp/h-runs"
   : > "$tmp/h-cursors"
   while :; do
-    wargs=(--include-remote --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
-    if ! "$orca" orchestration worker-list "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.workers | type == "array")
-        and (.result.page.hasMore | type == "boolean")' "$tmp/h-page" >/dev/null 2>&1; then
-      echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; return 1
+    wargs=(); [ -z "$run_cursor" ] || wargs=(--cursor "$run_cursor")
+    if ! "$orca" orchestration run-list ${eargs[@]+"${eargs[@]}"} ${wargs[@]+"${wargs[@]}"} --full --json > "$tmp/h-page" 2>/dev/null \
+      || ! jq -e '.ok != false and (.result.runs | type == "array")' "$tmp/h-page" >/dev/null 2>&1 \
+      || ! run_cursor=$(next_page_cursor "$tmp/h-page") || grep -Fxq -- "$run_cursor" "$tmp/h-cursors"; then
+      echo "Warning: Run list incomplete on ${1:-local}; closing no terminals." >&2; return 1
     fi
-    cat "$tmp/h-page" >> "$tmp/h-workers"
-    jq -e '.result.page.hasMore' "$tmp/h-page" >/dev/null || break
-    if ! cursor=$(jq -er '.result.page.nextCursor | select(type == "string" and length > 0)' "$tmp/h-page") \
-      || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
-      echo 'Warning: coordinator dispatch pagination incomplete; closing no terminals.' >&2; return 1
-    fi
-    printf '%s\n' "$cursor" >> "$tmp/h-cursors"
+    jq -r '.result.runs[].id' "$tmp/h-page" >> "$tmp/h-runs"
+    jq -r '.result.runs[].coordinator_handle // empty' "$tmp/h-page" >> "$tmp/h-coordinators"
+    [ -n "$run_cursor" ] || break
+    printf '%s\n' "$run_cursor" >> "$tmp/h-cursors"
   done
+  while IFS= read -r run <&3; do
+    cursor=''
+    : > "$tmp/h-cursors"
+    while :; do
+      wargs=(--run "$run" --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
+      if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
+        || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
+        echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; return 1
+      fi
+      cat "$tmp/h-page" >> "$tmp/h-workers"
+      if ! cursor=$(next_page_cursor "$tmp/h-page") || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
+        echo 'Warning: coordinator dispatch pagination incomplete; closing no terminals.' >&2; return 1
+      fi
+      [ -n "$cursor" ] || break
+      printf '%s\n' "$cursor" >> "$tmp/h-cursors"
+    done
+  done 3< "$tmp/h-runs"
+}
+terminal_dispatches() {
+  local env_id
+  : > "$tmp/h-workers"
+  : > "$tmp/h-coordinators"
+  if ! "$orca" environment list --json > "$tmp/envs" 2>/dev/null || ! jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
+    echo 'Warning: Orca environment list unavailable; closing no terminals.' >&2; return 1
+  fi
+  read_dispatches '' || return 1
+  while IFS= read -r env_id <&3; do
+    [ -z "$env_id" ] || read_dispatches "$env_id" || return 1
+  done 3< <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
 }
 close_finished_terminals() {
   local env=$1 label=${1:-local} eargs=() handle reason action
@@ -88,7 +129,7 @@ close_finished_terminals() {
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
   fi
-  jq -r -s --slurpfile terms "$tmp/h-terminals" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
     def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
@@ -97,11 +138,12 @@ close_finished_terminals() {
     | ([$w[] | select($p != "" and path == $p)]) as $onpath
     | (.connected == false or .writable == false) as $exited
     | if $h == $own then [$h, "own terminal", "keep"]
+      elif $coordinators | split("\n") | index($h) then [$h, "coordinator", "keep"]
       elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
       elif ($p | split("/") | last | startswith("lead-")) then [$h, "lead worktree", "keep"]
+      elif ($exited | not) and (.lastOutputAt > now * 1000 - 600000 or (.agentIdentity != null and .lastOutputAt == null)) then [$h, "recent output", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
-      elif ($onpath | length) > 0 and .agentIdentity != null then [$h, "agent running", "keep"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
       elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
       else [$h, "unknown owner, still running", "keep"] end
@@ -118,18 +160,15 @@ close_finished_terminals() {
 }
 if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && terminal_dispatches; then
   close_finished_terminals ''
-  if "$orca" environment list --json > "$tmp/envs" 2>/dev/null && jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
-    while IFS= read -r env_id; do
-      [ -z "$env_id" ] || close_finished_terminals "$env_id"
-    done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
-  else
-    echo 'Warning: Orca environment list unavailable; closed local terminals only.' >&2
-  fi
+  while IFS= read -r env_id; do
+    [ -z "$env_id" ] || close_finished_terminals "$env_id"
+  done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
 fi
 if command -v "$orca" >/dev/null 2>&1; then
   if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
     # Unknown ownership is retained too: a live terminal can belong to another Run.
     : > "$tmp/worker-pages"
+    : > "$tmp/w-cursors"
     cursor=''
     while :; do
       args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
@@ -154,8 +193,12 @@ if command -v "$orca" >/dev/null 2>&1; then
           echo '*' >> "$tmp/active"
         fi
       done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // ""] | @tsv' "$tmp/workers")
-      cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/workers")
+      if ! cursor=$(next_page_cursor "$tmp/workers") || grep -Fxq -- "$cursor" "$tmp/w-cursors"; then
+        echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2
+        echo '*' >> "$tmp/active"; break
+      fi
       [ -n "$cursor" ] || break
+      printf '%s\n' "$cursor" >> "$tmp/w-cursors"
     done
     # Discard terminals positively owned only by settled dispatches. Unknown owners stay safe.
     jq -s '[.[].result.workers[] | .agentTerminalHandle //= (.terminal | strings)] | group_by(.agentTerminalHandle) | map(select(all(.[]; ((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited")) | .[0].agentTerminalHandle) | map(select(. != null))' "$tmp/worker-pages" > "$tmp/ended-handles"
