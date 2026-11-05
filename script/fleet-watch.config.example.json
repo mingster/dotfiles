@@ -1,1 +1,14 @@
-{"runs": [], "host_caps": {}, "leads": [], "pr_watch": {"repos": ["mingster/riben.life", "mingster/dotfiles"], "stuck_minutes": 30}, "coordinator_watch": {"state_dir": "/path/to/private/state", "offline_minutes": 10, "alert_command": ["/path/to/private/notify"]}}
+{
+  "runs": [],
+  "host_caps": {},
+  "leads": [],
+  "pr_watch": {
+    "repos": ["mingster/dotfiles", "mingster/project-a"],
+    "stuck_minutes": 30
+  },
+  "coordinator_watch": {
+    "state_dir": "/path/to/private/state",
+    "offline_minutes": 10,
+    "alert_command": ["/path/to/private/notify"]
+  }
+}

@@ -103,5 +103,9 @@ check "full-osx-defaults triggers mac/osx.sh" "grep -q 'mac/osx.sh' <<< \"\$full
 keep_spotlight_out="$(bash "$script" --dry-run --keep-spotlight)"
 check "keep-spotlight flag skips mdutil off" "! grep -q 'mdutil -i off -a' <<< \"\$keep_spotlight_out\""
 
+empty_asdf_out="$(bash "$script" --dry-run --skip-casks --skip-agent-config --skip-tuneups 2>&1)"
+check "empty asdf repo list warns" "grep -q 'MAC_SERVER_ASDF_TOOL_VERSIONS unset or empty' <<< \"\$empty_asdf_out\""
+check "empty asdf repo list dry-run skips per-repo asdf" "! grep -q 'asdf install in each repo' <<< \"\$empty_asdf_out\""
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
