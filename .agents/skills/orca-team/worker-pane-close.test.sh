@@ -109,6 +109,11 @@ json.dump(terms_doc, open(term_path, "w"))
 NATIVERM
     fi
     exit "$rc" ;;
+  "orchestration run-list"*) [ "${FAKE_RUNLIST_FAILS:-0}" = 0 ] || exit 1
+    case "$*" in
+      *"--cursor next"*) cat "$FAKE_DIR/runs-next.json" ;;
+      *) cat "$FAKE_DIR/runs.json" 2>/dev/null || echo '{"ok":true,"result":{"runs":[{"id":"run_caller","coordinator_handle":"term_coordinator"}]}}' ;;
+    esac ;;
   "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
   "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; FAKE_DIR="$FAKE_DIR" python3 <<'LIST'
@@ -398,7 +403,7 @@ check "dispatch becoming running stops cleanup" "$([ -e "$tmp/state/reactivate" 
 rm "$tmp/state/reactivate"
 # No recorded pane: discover ended workers from the current Run, with pagination.
 cat > "$tmp/workers.json" <<JSON
-{"result":{"workers":[{"dispatchId":"d7","resource":{"worktreeId":"repo1::$tmp/linked"}}],"page":{"hasMore":true,"nextCursor":"next"}}}
+{"result":{"workers":[{"dispatchId":"d7","resource":{"worktreeId":"repo1::$tmp/live7"}}],"page":{"hasMore":true,"nextCursor":"next"}}}
 JSON
 cat > "$tmp/workers-next.json" <<JSON
 {"result":{"workers":[{"dispatchId":"d6","dispatchStatus":"released","resource":{"worktreeId":"repo1::$tmp/linked"}},{"dispatchId":"other","dispatchStatus":"completed","resource":{"worktreeId":"repo2::/other"}}],"page":{"hasMore":false}}}
@@ -680,5 +685,88 @@ FAKE_SKIP_NATIVE_RM=1 "$here/worker-pane-close.sh" >/dev/null 2>&1
 check "flat sweep: release of a discovered finished worker" "$(grep -q 'worker-release --dispatch dfsweep' "$tmp/rpc.log"; echo $?)"
 check "flat sweep: other project's worker untouched" "$(! grep -q 'worker-release --dispatch dfother' "$tmp/rpc.log" && listed term_fother; echo $?)"
 rm -f "$tmp/workers.json"
+
+# #515: a worker on another host. Its worktree path does not exist on this machine, so the Setup terminal and the
+# plain Terminal 1 left on that host must still close, matched by worktree id. Protected: the caller's own terminal,
+# the lead, a running worker's terminal, and anything on the repo's main branch.
+rm -f "$tmp/closes.log" "$tmp/rpc.log" "$tmp/workers.json" "$tmp/state/released/dremote"
+for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+rwt=/remote/host/orca/workspaces/repo1/wt-remote
+flat_show dremote succeeded released exited term_ragent "$rwt"
+cat > "$tmp/terminals.json" <<JSON
+{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local","host2"],"omittedHostIds":[]},"terminals":[
+ {"handle":"term_ragent","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rsetup","title":"Setup","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rplain","title":"Terminal 1","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_coordinator","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rlead","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rrunning","worktreeId":"repo1::$rwt","worktreePath":"$rwt","branch":"refs/heads/mingster/wt-remote","executionHostId":"host2"},
+ {"handle":"term_rmain","worktreeId":"repo1::/remote/host/repo1","worktreePath":"/remote/host/repo1","branch":"refs/heads/main","executionHostId":"host2"}]}}
+JSON
+flat_show drunning ready input_accepted live term_rrunning "$rwt"
+flat_show dlead ready input_accepted live term_rlead "$rwt"
+cat > "$tmp/workers.json" <<JSON
+{"ok":true,"result":{"workers":[
+ {"dispatchId":"drunning","state":"ready","liveness":"live","terminal":"term_rrunning","workspace":"repo1::/remote/host/orca/workspaces/repo1/wt-live"},
+ {"dispatchId":"dlead","state":"ready","liveness":"live","terminal":"term_rlead","workspace":"repo1::/remote/host/orca/workspaces/repo1/wt-live"}]}}
+JSON
+"$here/worker-pane-close.sh" dremote >/dev/null 2>&1
+check "remote: Setup terminal on another host closes" "$(term_absent term_rsetup; echo $?)"
+check "remote: plain Terminal 1 on another host closes" "$(term_absent term_rplain; echo $?)"
+check "remote: caller's own terminal kept" "$(listed term_coordinator && ! grep -qx term_coordinator "$tmp/closes.log"; echo $?)"
+check "remote: lead terminal kept" "$(listed term_rlead; echo $?)"
+check "remote: running worker terminal kept" "$(listed term_rrunning; echo $?)"
+check "remote: main branch terminal kept" "$(listed term_rmain; echo $?)"
+rm -f "$tmp/workers.json"
+
+# #515 correction: protect by identity. Every Run's coordinator stays open whichever Run owns it, a lead with no live
+# dispatch included; another Run's settled leftovers still close; an unreadable Run list closes nothing.
+rm -f "$tmp/closes.log" "$tmp/rpc.log" "$tmp/workers.json" "$tmp/runs.json" "$tmp/runs-next.json" "$tmp/state/released/dother"
+for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+owt=/remote/host/orca/workspaces/repo1/wt-other
+flat_show dother succeeded released exited term_oagent "$owt"
+reset_other() {
+  cat > "$tmp/terminals.json" <<JSON
+{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local","host2"],"omittedHostIds":[]},"terminals":[
+ {"handle":"term_oagent","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"},
+ {"handle":"term_osetup","title":"Setup","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"},
+ {"handle":"term_olead","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"},
+ {"handle":"term_ocoord2","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"}]}}
+JSON
+}
+cat > "$tmp/runs.json" <<'JSON'
+{"ok":true,"result":{"runs":[{"id":"run_a","coordinator_handle":"term_coordinator"},{"id":"run_b","coordinator_handle":"term_olead"}],"nextCursor":"next"}}
+JSON
+cat > "$tmp/runs-next.json" <<'JSON'
+{"ok":true,"result":{"runs":[{"id":"run_c","coordinator_handle":"term_ocoord2"}]}}
+JSON
+reset_other
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "runs: lead with no live dispatch stays open" "$(listed term_olead; echo $?)"
+check "runs: another Run's coordinator (second page) stays open" "$(listed term_ocoord2; echo $?)"
+check "runs: another Run's settled leftovers close" "$(term_absent term_osetup; echo $?)"
+rm -f "$tmp/closes.log"; reset_other
+FAKE_RUNLIST_FAILS=1 "$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "runs: failed run-list closes nothing" "$(no_generic_close; echo $?)"
+rm -f "$tmp/closes.log"; reset_other
+flat_show dlive ready input_accepted live term_olive "$owt"
+printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dlive","state":"ready","liveness":"live","terminal":"term_olive","workspace":"repo1::'"$owt"'"}]}}' > "$tmp/workers.json"
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "runs: a live dispatch in the same worktree keeps its shells" "$(listed term_osetup; echo $?)"
+rm -f "$tmp/workers.json" "$tmp/runs.json" "$tmp/runs-next.json"
+
+# Unpushed commits: a local worktree ahead of its upstream keeps its shell terminals.
+rm -f "$tmp/closes.log"; for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+gr="$tmp/gitfix"; mkdir -p "$gr"
+( cd "$gr" && git init -q --bare up.git && git clone -q up.git wt 2>/dev/null && cd wt && git config user.email t@t && git config user.name t \
+  && git commit -q --allow-empty -m a && git push -q origin HEAD 2>/dev/null && git commit -q --allow-empty -m unpushed )
+( cd "$gr/wt" && git worktree add -q ../wt2 -b feat 2>/dev/null; git -C ../wt2 push -q -u origin feat 2>/dev/null; git -C ../wt2 commit -q --allow-empty -m local )
+flat_show dunp succeeded released exited term_uagent "$gr/wt2"
+cat > "$tmp/terminals.json" <<JSON
+{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]},"terminals":[
+ {"handle":"term_uagent","worktreePath":"$gr/wt2"},{"handle":"term_ushell","worktreePath":"$gr/wt2"}]}}
+JSON
+FAKE_REAL_RELEASE=1 "$here/worker-pane-close.sh" dunp >/dev/null 2>&1
+check "unpushed: shell terminal in a worktree with unpushed commits kept" "$(listed term_ushell; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

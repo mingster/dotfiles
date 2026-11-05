@@ -409,6 +409,123 @@ def pr_notices(config, state, now, fetch=fetch_prs):
     return notices
 
 
+def ssh_reachable(name):
+    """True when a quick ssh to the coordinator succeeds."""
+    command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', name, 'true']
+    try:
+        return subprocess.run(command, capture_output=True, timeout=10).returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def run_alert(command, text):
+    """Run the private alert command with the text as its last argument."""
+    if not command:
+        return True
+    try:
+        return subprocess.run(list(command) + [text], capture_output=True, timeout=30).returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def this_host():
+    return subprocess.run(['hostname', '-s'], capture_output=True, text=True, timeout=5).stdout.strip()
+
+
+def parse_coordinator_name(text):
+    """The name on the first `coordinator <name>` line, or None."""
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == 'coordinator':
+            return parts[1]
+    return None
+
+
+_REMOTE_READ_FAILED = object()
+
+
+def coordinator_name_local(state_dir):
+    try:
+        text = (Path(state_dir) / 'coordinator.conf').read_text()
+    except OSError:
+        return None
+    return parse_coordinator_name(text)
+
+
+def read_coordinator_name_from_remote(state_dir):
+    try:
+        fetch = subprocess.run(['git', '-C', str(state_dir), 'fetch', '-q', 'origin'],
+                               capture_output=True, timeout=10)
+        if fetch.returncode != 0:
+            return _REMOTE_READ_FAILED
+        show = subprocess.run(['git', '-C', str(state_dir), 'show', 'origin/main:coordinator.conf'],
+                              capture_output=True, text=True, timeout=10)
+        if show.returncode != 0:
+            return _REMOTE_READ_FAILED
+        return parse_coordinator_name(show.stdout)
+    except (subprocess.SubprocessError, OSError):
+        return _REMOTE_READ_FAILED
+
+
+def coordinator_name_from_state_dir(state_dir):
+    """Prefer origin/main coordinator.conf; fall back to the local file only on git failure."""
+    remote = read_coordinator_name_from_remote(state_dir)
+    if remote is _REMOTE_READ_FAILED:
+        return coordinator_name_local(state_dir)
+    return remote
+
+
+def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_alert, host=None,
+                        name_reader=coordinator_name_from_state_dir):
+    """Alert only: tell the owner a coordinator is offline. Runs on a backup host."""
+    watch = config.get('coordinator_watch')
+    if not watch:
+        return []
+    name = name_reader(watch['state_dir'])
+    if not name or name.lower() == (host or this_host()).lower():
+        state.pop('coordinator_watch', None)
+        return []
+    command = watch.get('alert_command') or []
+    timer = state.get('coordinator_watch')
+    if timer and timer.get('host') != name:
+        timer = None
+    if reachable(name):
+        state.pop('coordinator_watch', None)
+        if timer and timer['alerted']:
+            text = 'coordinator %s back' % name
+            alert(command, text)
+            return [text]
+        return []
+    timer = state['coordinator_watch'] = timer or {'host': name, 'since': now, 'alerted': False}
+    if timer['alerted'] or now - timer['since'] < watch.get('offline_minutes', 10) * 60:
+        return []
+    text = 'coordinator %s offline for %d minutes; failover is manual, ask the owner' % (name, (now - timer['since']) // 60)
+    if not alert(command, text):
+        return [text]
+    timer['alerted'] = True
+    return [text]
+
+
+def save_state(path, state):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(state))
+    temporary.replace(path)
+
+
+def coordinator_stage(config, state, state_path):
+    """First step of a pass. Saves state at once, and ends a pass on a host without Orca."""
+    notices = coordinator_notices(config, state, time.time())
+    if not config.get('coordinator_watch'):
+        return notices, False
+    save_state(state_path, state)
+    if config.get('runs'):
+        return notices, False
+    if notices:
+        print('fleet-watch: ' + '; '.join(notices))
+    return notices, True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -426,6 +543,9 @@ def main():
         parser.error('--state is required when --admit is not specified')
 
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    coordinator, done = coordinator_stage(config, state, args.state)
+    if done:
+        return 0
     inbox = rpc('orchestration', 'inbox', '--limit', '5000')
     workers = fetch_workers(config)
     # pgrep observes the dedicated waiter process; no process is stopped here.
@@ -439,6 +559,7 @@ def main():
             leads[lead['terminal']] = False
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
+    notices += coordinator
     if notices:
         line = 'fleet-watch: ' + '; '.join(notices)
         for run in config['runs']:
