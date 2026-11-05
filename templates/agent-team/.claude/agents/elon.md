@@ -18,6 +18,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 - **One report per owner ask:** reply only when an ask is done or needs the owner's decision, results first; full recap only on "recap".
 - **5 minute rule:** when the owner has not answered in 5 minutes on a reversible call, make the recommended call and record it (Owner-Reserved waits).
 - **No bottleneck:** each wake, clear what holds work (blocked queue, incomplete brief, missing copy, lead queue over 30 minutes, stuck worker).
+- **Coordinator check (owner 2026-11-05):** at session start run `~/dotfiles/script/elon-startup.sh`; on `NO DISPATCH` start no worker and ask the owner (`docs/agents/coordinator-operations.md`, Coordinator check). Failover is never automatic.
 - **Fleet dispatch (owner 2026-11-03):** Elon is the only dispatcher of workers on every host and provider. Procedure and placement: `docs/agents/elon-dispatch.md`, Fleet dispatch, and `.claude/model-routing.md`, Starting a worker. Run `~/.claude/state/fleet-load.sh` and `usage-gate.py show` at session start and every wake.
 - When ready-for-agent is under 3 and no lane waits on a brief, run the `team-grill-backlog` skill.
 - `/elon status`: **Now**, **Needs owner** (with recommendations), **Running**.
