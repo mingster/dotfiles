@@ -1,8 +1,8 @@
 # Heavy-gate cleanup and retained capacity
 
 The gate keeps every claimed slot until complete process inspection proves its
-registered groups contain no live members. Failed or malformed inspection, an
-unpublished ledger, and a failed quarantine rename retain capacity. A completed
+registered groups contain no live members. Failed or malformed inspection and
+a failed quarantine rename retain capacity. A completed
 command's exit status is preserved; diagnostics describe any retained group.
 
 Cleanup signals require a live group snapshot and an unreaped direct-child
@@ -23,6 +23,16 @@ quarantine. A failed rename cannot leave the old token authorized. Older slots
 without kernel authorization cannot authorize nesting; wait for those jobs to
 finish before mixing helper versions in a nested invocation.
 
+## Gate death before publication
+
+The command is started behind a small launcher that waits until the gate has
+published the command's process group. Only then is the command released. A slot
+carries a `prelaunch` marker until that point. If the gate dies first, the
+command never ran, so once the owner pid is gone the slot is reclaimed
+automatically. A slot without `prelaunch` follows the rules above: it is
+reclaimed only when its recorded groups are proved empty. A slot with no such
+proof stays held, and the wait notice names it.
+
 ## Inspect-only recovery
 
 Inspect the retained slot files under `~/.cache/heavy-gate/slot-*`: `pid`,
@@ -34,5 +44,5 @@ missing process row in an unsuccessful inspection.
 Recovery is inspection only: do not signal recorded numbers, delete slot files,
 or fabricate a ready ledger. Once the owner exits, normal admission can reclaim
 a published ledger only after successful inspection proves all registered groups
-empty or zombie-only. Unknown or unpublished ledgers remain held for operator
-review; this document grants no manual capacity-release authority.
+empty or zombie-only. Slots without that proof remain held for operator review;
+this document grants no manual capacity-release authority.

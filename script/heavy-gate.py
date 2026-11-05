@@ -27,8 +27,12 @@ the full claim occupied after exit; a completed child's status (0 or nonzero) is
 preserved, while a still-running child's signalling error still raises. Nested
 tokens cannot use quarantined or dead owners. Dead-owner reclaim only inspects,
 never signals: complete inspection proving empty/zombie-only groups releases slots.
-Unknown, malformed or unpublished ledgers hold capacity, including after failed
-publication or abrupt gate death; these unknown holds require operator inspection.
+The command is released only after its group is published, so a gate that dies
+before publication never ran it: its slot (marked prelaunch) is reclaimed once
+the owner is gone. After release, a dead owner is reclaimed only when inspection
+proves every recorded group empty or zombie-only. Any other hold (live group,
+malformed ledger, interrupted cleanup) keeps capacity, is named in the wait
+notice, and requires operator inspection. There is no manual release.
 Reused PGIDs during reclaim may prolong a hold but never authorize killing there.
 Signals require a positively inspected live group and an unreaped direct-child
 leader, verified with waitid(WNOWAIT) before each signal when available, else ps
@@ -230,6 +234,7 @@ class Slots:
         self.owned = []
         self.groups = set()
         self.authorizations = []
+        self.stuck = []
 
     @contextlib.contextmanager
     def allocation(self):
@@ -238,6 +243,7 @@ class Slots:
             yield
 
     def reclaim(self):
+        self.stuck = []
         for path in self.root.glob('slot-*'):
             if not path.is_dir():
                 continue
@@ -246,7 +252,11 @@ class Slots:
             except (FileNotFoundError, ValueError):
                 pid = 0
             if not alive(pid):
-                if (path / 'groups').exists() and not groups_empty(path):
+                # prelaunch: the workload is released only after its group is
+                # published, so a dead owner here never ran anything.
+                if (not (path / 'prelaunch').exists() and (path / 'groups').exists()
+                        and not groups_empty(path)):
+                    self.stuck.append(path.name)
                     continue
                 shutil.rmtree(path)
 
@@ -271,6 +281,7 @@ class Slots:
                 try:
                     (staging / 'groups').touch()
                     (staging / 'running').touch()
+                    (staging / 'prelaunch').touch()
                     authorization = (staging / 'authorization').open('a')
                     fcntl.flock(authorization, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self.authorizations.append(authorization)
@@ -300,6 +311,11 @@ class Slots:
                 (path / 'groups-ready').unlink(missing_ok=True)
                 (path / 'groups').write_text(json.dumps(sorted(self.groups)))
                 (path / 'groups-ready').touch()
+
+    def launched(self):
+        with self.allocation():
+            for path in self.owned:
+                (path / 'prelaunch').unlink(missing_ok=True)
 
     def revoke(self):
         # Kernel-held authority disappears even if all subsequent filesystem
@@ -413,6 +429,53 @@ def children(slots, nested=False):
                           file=sys.stderr, flush=True)
 
 
+# Holds the workload until the gate has published its process group. If the gate
+# dies first the pipe closes and this exits without running anything.
+LAUNCHER = '''import os, sys
+fd = int(sys.argv[1])
+go = os.read(fd, 1)
+os.close(fd)
+if go != b"1":
+    os._exit(125)
+try:
+    os.execvp(sys.argv[2], sys.argv[2:])
+except OSError as exc:
+    sys.stderr.write("heavy-gate: cannot run %s: %s\\n" % (sys.argv[2], exc))
+    os._exit(127)
+'''
+
+
+def spawn(slots, processes, argv, **kwargs):
+    """Start argv in its own group, released only after the group is recorded."""
+    read, write = os.pipe()
+    try:
+        proc = subprocess.Popen([sys.executable, '-I', '-S', '-c', LAUNCHER, str(read), *argv],
+                                start_new_session=True, pass_fds=(read,), **kwargs)
+    except BaseException:
+        os.close(write)
+        raise
+    finally:
+        os.close(read)
+    processes.append(proc)
+    try:
+        slots.record_groups(processes)
+        slots.launched()
+        try:
+            os.write(write, b'1')
+        except BrokenPipeError:
+            pass  # launcher already gone: the command never ran; wait() reports it
+    except BaseException:
+        # Unpublished, so the command must not run: closing the pipe stops the
+        # launcher, which is reaped here and never needs a cleanup signal.
+        os.close(write)
+        processes.remove(proc)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=3)
+        raise
+    os.close(write)
+    return proc
+
+
 def poll_interval():
     value = float(os.environ.get('HEAVY_GATE_POLL_SECONDS', '1'))
     if not math.isfinite(value) or value <= 0:
@@ -490,6 +553,9 @@ def gate(args):
                     break
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
+                if slots.stuck:
+                    reason += ('; held with the owner gone and no proof its processes exited: '
+                               + ', '.join(slots.stuck))
             now = time.monotonic()
             if now - last_notice >= 60:
                 print(f'heavy-gate: {reason}', file=sys.stderr, flush=True)
@@ -501,8 +567,11 @@ def gate(args):
                 env['HEAVY_GATE_TOKEN'] = slots.token
             if args.head_checks:
                 env['HEAD_CHECKS_SLOTS'] = str(count)
-            proc = subprocess.Popen(args.command[1:], start_new_session=not nested, env=env)
-            processes.append(proc)
+            if nested:
+                proc = subprocess.Popen(args.command[1:], env=env)
+                processes.append(proc)
+            else:
+                proc = spawn(slots, processes, args.command[1:], env=env)
             try:
                 status = proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -552,8 +621,7 @@ def probe(args):
             raise ValueError('calibration refused: heavy jobs are running')
         start = time.monotonic()
         with children(slots) as processes:
-            proc = subprocess.Popen(['bash', '-c', args.calibrate], start_new_session=True)
-            processes.append(proc)
+            proc = spawn(slots, processes, ['bash', '-c', args.calibrate])
             if proc.wait() != 0:
                 raise ValueError('calibration command failed; existing configuration retained')
         print(f'warmup wall_seconds={time.monotonic() - start}', flush=True)
@@ -564,7 +632,7 @@ def probe(args):
             start = time.monotonic()
             with children(slots) as processes:
                 for _ in range(copies):
-                    processes.append(subprocess.Popen(['bash', '-c', args.calibrate], start_new_session=True))
+                    spawn(slots, processes, ['bash', '-c', args.calibrate])
                 while True:
                     load, free = sample()
                     peak_load = max(peak_load, load)

@@ -1,0 +1,1 @@
+A gate that dies before it publishes its process group no longer holds its slot forever. The command now starts only after its group is recorded, so a dead owner with no published group is reclaimed automatically. A slot that cannot be proved empty stays held and is named in the wait notice.
