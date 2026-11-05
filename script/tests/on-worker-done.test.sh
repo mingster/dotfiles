@@ -128,7 +128,7 @@ for author in cursor gemini antigravity; do
   check "$author author picks independent reviewer" "$?"
   check "$author author uses claude reviewer" "$(grep -q -- '--agent claude' "$tmp/out"; echo $?)"
   if [ "$author" = cursor ]; then
-    check "$author author avoids gpt" "$(grep -q -- '--avoid-family gpt' "$tmp/gate.log"; echo $?)"
+    check "$author author avoids composer" "$(grep -q -- '--avoid-family composer' "$tmp/gate.log"; echo $?)"
   else
     check "$author author avoids gemini" "$(grep -q -- '--avoid-family gemini' "$tmp/gate.log"; echo $?)"
   fi

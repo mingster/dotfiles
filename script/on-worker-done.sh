@@ -55,13 +55,13 @@ def get_family(p, m):
     if p == "claude":
         return "claude"
     if p == "cursor":
-        return "gpt"
+        return "composer"
     if p in ("antigravity", "gemini"):
         return "gemini"
     return "unknown"
 
 fam = get_family(provider, model)
-avoid_fam = fam if fam in ("claude", "gpt", "gemini") else "none"
+avoid_fam = fam if fam in ("claude", "gpt", "gemini", "composer") else "none"
 avoid_prov = provider if provider == "claude" else "none"
 print(f"{provider or 'unknown'} {fam} {avoid_fam} {avoid_prov}")
 PY
@@ -113,7 +113,7 @@ def get_family(p, m):
     if p == "claude":
         return "claude"
     if p == "cursor":
-        return "gpt"
+        return "composer"
     if p in ("antigravity", "gemini"):
         return "gemini"
     return "unknown"
