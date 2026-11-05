@@ -1,0 +1,1 @@
+Wrap up reads the current worker list paging again, so finished terminals close instead of every run stopping at dispatch discovery. The worktree check now reads every page too, and any page that cannot prove it is the last one still closes nothing.

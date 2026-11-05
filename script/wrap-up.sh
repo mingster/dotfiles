@@ -61,6 +61,18 @@ close_terminal() {
   else "$orca" terminal close "$@" >/dev/null 2>&1
   fi
 }
+# Prints the next page cursor, or nothing on the last page. Fails when a page cannot prove it is the last one.
+# Current Orca has top level nextCursor, absent on the last page; older Orca has page.hasMore; 1.4.246 has neither.
+worker_next_cursor() {
+  jq -r 'def cursor: if type == "string" and length > 0 then . else error("bad cursor") end;
+    .result | if has("page") then
+      if .page.hasMore == true then .page.nextCursor | cursor
+      elif .page.hasMore == false then ""
+      else error("bad page") end
+    elif .nextCursor != null then .nextCursor | cursor
+    elif (.workers | length) < 100 then ""
+    else error("full page without a cursor") end' "$1" 2>/dev/null
+}
 terminal_dispatches() {
   local wargs cursor=''
   : > "$tmp/h-workers"
@@ -68,16 +80,14 @@ terminal_dispatches() {
   while :; do
     wargs=(--include-remote --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
     if ! "$orca" orchestration worker-list "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.workers | type == "array")
-        and (.result.page.hasMore | type == "boolean")' "$tmp/h-page" >/dev/null 2>&1; then
+      || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
       echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; return 1
     fi
     cat "$tmp/h-page" >> "$tmp/h-workers"
-    jq -e '.result.page.hasMore' "$tmp/h-page" >/dev/null || break
-    if ! cursor=$(jq -er '.result.page.nextCursor | select(type == "string" and length > 0)' "$tmp/h-page") \
-      || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
+    if ! cursor=$(worker_next_cursor "$tmp/h-page") || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
       echo 'Warning: coordinator dispatch pagination incomplete; closing no terminals.' >&2; return 1
     fi
+    [ -n "$cursor" ] || break
     printf '%s\n' "$cursor" >> "$tmp/h-cursors"
   done
 }
@@ -154,7 +164,10 @@ if command -v "$orca" >/dev/null 2>&1; then
           echo '*' >> "$tmp/active"
         fi
       done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // ""] | @tsv' "$tmp/workers")
-      cursor=$(jq -r 'if .result.page.hasMore then .result.page.nextCursor // empty else empty end' "$tmp/workers")
+      if ! cursor=$(worker_next_cursor "$tmp/workers"); then
+        echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2
+        echo '*' >> "$tmp/active"; break
+      fi
       [ -n "$cursor" ] || break
     done
     # Discard terminals positively owned only by settled dispatches. Unknown owners stay safe.

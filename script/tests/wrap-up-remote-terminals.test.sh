@@ -30,7 +30,11 @@ case "$*" in
   'orchestration worker-list '*)
     if [[ "$*" == *'--cursor c2'* ]] && [ -e "$FAKE_DIR/fail-page" ]; then exit 1; fi
     if [[ "$*" != *--include-remote* ]]; then
-      echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'
+      case "$*" in
+        *'--cursor l2'*) echo '{"ok":true,"result":{"workers":[],"scope":{},"warnings":[]}}' ;;
+        *) if [ -e "$FAKE_DIR/local-page" ]; then cat "$FAKE_DIR/local-page"
+           else echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'; fi ;;
+      esac
     else
       case "$*" in
         *'--cursor c2'*) cat "$FAKE_DIR/page2" ;;
@@ -163,3 +167,41 @@ run --dry-run
 expect 'Close terminal t-path (env-a, settled dispatch on this path)'
 expect 'Close terminal t-handle (env-a, settled dispatch)'
 echo 'ok stopped and terminalState released rows are settled'
+# #536: current Orca has no page object. nextCursor is top level and absent on the last page.
+current() { jq -s --argjson rest "$1" '{ok:true,result:({workers:.,scope:{run:"run-1",source:"flag"},warnings:[]} + $rest)}'; }
+{
+  flat '' /fixture/settled succeeded exited
+  flat t-handle /fixture/other succeeded exited
+} | current '{"nextCursor":"c2","warnings":["Showing 2 of 3 Dispatches, newest first; more are on later pages."]}' > "$tmp/page1"
+current '{"nextCursor":"c3"}' < /dev/null > "$tmp/page2"
+flat '' /fixture/settled ready live | current '{}' > "$tmp/page3"
+rm -f "$tmp/closed"
+run --dry-run
+expect 'Kept terminal t-path (env-a, live dispatch)'
+expect 'Close terminal t-handle (env-a, settled dispatch)'
+test ! -e "$tmp/closed"
+run --apply
+echo t-handle | cmp - "$tmp/closed"
+echo 'ok current worker-list shape: nextCursor is followed to the last page before closing'
+rm "$tmp/closed"
+current '{"nextCursor":7}' < /dev/null > "$tmp/bad-number"
+current '{"nextCursor":""}' < /dev/null > "$tmp/bad-empty"
+current '{"nextCursor":"c2"}' < /dev/null > "$tmp/bad-repeat"
+jq -n '{state:"succeeded",liveness:"exited"} | range(100) as $n | .' | current '{}' > "$tmp/bad-full"
+for bad in number empty repeat full; do
+  cp "$tmp/bad-$bad" "$tmp/page2"
+  run --apply
+  test ! -e "$tmp/closed" || { echo "FAIL $bad page authorized closure"; exit 1; }
+  grep -Fq 'closing no terminals' "$tmp/errors"
+done
+echo 'ok bad, repeated or unproven last page in the current shape closes no terminals'
+current '{}' < /dev/null > "$tmp/page2"
+current '{"nextCursor":"l2"}' < /dev/null > "$tmp/local-page"
+rm -f "$tmp/calls"
+run --dry-run
+grep -Fxq 'orchestration worker-list --cursor l2 --json' "$tmp/calls"
+echo 'ok worktree check follows nextCursor too'
+cp "$tmp/bad-full" "$tmp/local-page"
+run --dry-run
+grep -Fq 'worker-list paging incomplete; retaining all worktrees' "$tmp/errors"
+echo 'ok worktree check keeps everything when a full page proves no end'
