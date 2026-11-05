@@ -761,8 +761,22 @@ class Pick(unittest.TestCase):
         with open(path) as f:
             chain = json.load(f)["roles"]["reviewer"]["chain"]
         self.assertEqual([(e["provider"], e["model"]) for e in chain],
-                         [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet")])
-        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude"})
+                         [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet"),
+                          ("cursor", "composer-2.5")])
+        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "composer"})
+
+    def test_claude_authored_pr_reviewer_pick_offers_cursor_composer(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+        def fake_run(provider, *a, **k):
+            verdict = "allowed" if provider == "cursor" else "blocked"
+            return {"provider": provider, "verdict": verdict, "ceiling": 95, "weekly_used": 10}
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            result = ug.pick("reviewer", "claude", None, 95, 1, avoid_provider="claude")
+        self.assertEqual((result["selected"]["provider"], result["selected"]["model"]),
+                         ("cursor", "composer-2.5"))
+        self.assertTrue(all(ug.family(c) != "claude" for c in [result["selected"]]))
 
     def test_cursor_composer_is_its_own_family(self):
         self.assertEqual(ug.family({"provider": "cursor", "model": "composer-2.5"}), "composer")
