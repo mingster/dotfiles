@@ -54,11 +54,14 @@ orca=${ORCA_CLI_COMMAND:-orca}
 # dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
 # any other on a path where every dispatch is settled (shells, worker-pane.sh panes, an agent idle at its prompt). Kept: our own,
 # a Run coordinator's, a live dispatch's, a lead- worktree's, one with output in the last 10 minutes (a correction pass runs on a
-# settled dispatch), and a terminal on a path with no dispatch (reported as unknown owner).
+# settled dispatch), a running agent, one outside a worktree, and the main checkout's. A local terminal with no dispatch and
+# no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only); on another environment
+# it stays kept as unknown owner.
 # worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
 # every Run on this Orca and on every environment, and one inventory serves all of them; if any of it is unread, nothing closes.
 # Each Orca is read directly, so no --include-remote: with it one unreachable host makes a whole Run answer ok:false.
 term_closed=0; term_kept=0
+main_path=$(git worktree list --porcelain | sed -n '1s/^worktree //p'); main_path=$(cd "$main_path" 2>/dev/null && pwd -P || printf '%s' "$main_path")
 : > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
 close_terminal() {
@@ -132,7 +135,7 @@ close_finished_terminals() {
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
   fi
-  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg main "$main_path" --arg local "${env:-}" '
     def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
@@ -149,7 +152,11 @@ close_finished_terminals() {
       elif $exited then [$h, "exited", "close"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
       elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
-      else [$h, "unknown owner, still running", "keep"] end
+      elif $local != "" then [$h, "unknown owner, still running", "keep"]
+      elif $p == "" then [$h, "not in a worktree", "keep"]
+      elif $p == $main then [$h, "main checkout", "keep"]
+      elif .agentIdentity != null then [$h, "running agent", "keep"]
+      else [$h, "no dispatch, no agent", "close"] end
     | @tsv' "$tmp/h-workers" > "$tmp/h-plan"
   while IFS=$'\t' read -r handle reason action; do
     if [ "$action" = keep ]; then terminal_kept "$handle" "$label" "$reason"; continue; fi
@@ -161,7 +168,7 @@ close_finished_terminals() {
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
-if [ "$worktrees_only" -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && terminal_dispatches; then
+if command -v "$orca" >/dev/null 2>&1 && terminal_dispatches; then
   close_finished_terminals ''
   while IFS= read -r env_id; do
     [ -z "$env_id" ] || close_finished_terminals "$env_id"

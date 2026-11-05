@@ -260,19 +260,20 @@ echo "[$(w e2-gone released),$(w e2-live dispatched)]" > "$fake/env-b.workers"
 bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
 test ! -e "$fake/closed.log"
 for want in 'Close terminal t-done (local, settled dispatch)' 'Close terminal t-exited (local, exited)' \
-  'Close terminal e1-done (env-a, settled dispatch)' 'Close terminal e1-exited (env-a, exited)' 'Close terminal e2-gone (env-b, settled dispatch)'; do
+  'Close terminal e1-done (env-a, settled dispatch)' 'Close terminal e1-exited (env-a, exited)' 'Close terminal e2-gone (env-b, settled dispatch)' \
+  'Close terminal t-unknown (local, no dispatch, no agent)'; do
   grep -Fxq "$want" "$tmp/output" || { echo "missing: $want"; exit 1; }
 done
-grep -q 'terminals closed=5 kept=' "$tmp/output"
+grep -q 'terminals closed=6 kept=' "$tmp/output"
 echo 'ok dry run lists finished terminals on two environments and closes nothing'
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 sort "$fake/closed.log" > "$tmp/closed"
-printf '%s\n' 'env-a e1-done' 'env-a e1-exited' 'env-b e2-gone' 'local t-done' 'local t-exited' | cmp - "$tmp/closed"
-for kept in t-own t-live t-unknown e1-unknown e2-live; do
+printf '%s\n' 'env-a e1-done' 'env-a e1-exited' 'env-b e2-gone' 'local t-done' 'local t-exited' 'local t-unknown' | cmp - "$tmp/closed"
+for kept in t-own t-live e1-unknown e2-live; do
   grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
 done
-grep -q 'terminals closed=5 kept=5' "$tmp/output"
-echo 'ok apply closes settled and exited terminals; own, live and unknown-running kept'
+grep -q 'terminals closed=6 kept=4' "$tmp/output"
+echo 'ok apply closes settled, exited and unowned local terminals; own and live kept; unknown owner on another environment kept'
 # Real orca output differs from the cases above: a released dispatch has no agentTerminalHandle, its leftover terminals
 # still report connected and writable with no agent identity, and a pane from worker-pane.sh is just such a terminal.
 # So terminals are linked to dispatches by worktree path. Every worker-list page must be read.
@@ -306,13 +307,13 @@ echo "[$(rw p-mix dispatched b),$(rw lead-x completed a)]" > "$fake/workers2"
 echo "[$(rw p-late completed a)]" > "$fake/workers3"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 sort "$fake/closed.log" > "$tmp/closed"
-printf '%s\n' t-agent t-late t-pane t-shell | cmp - "$tmp/closed"
-for kept in t-own t-mixed t-none t-lead; do
+printf '%s\n' t-agent t-late t-none t-pane t-shell | cmp - "$tmp/closed"
+for kept in t-own t-mixed t-lead; do
   grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
 done
 grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
-grep -Fq 'Kept terminal t-none (local, unknown owner, still running)' "$tmp/output"
-grep -q 'terminals closed=4 kept=4' "$tmp/output"
+grep -Fq 'Close terminal t-none (local, no dispatch, no agent)' "$tmp/output"
+grep -q 'terminals closed=5 kept=3' "$tmp/output"
 grep -q -- '--limit 100' "$fake/list.log"
 echo 'ok released dispatch without a handle: terminals linked by path; panes and idle agents close; live, lead and unknown paths kept'
 # #386: a dry run left every worktree with a leftover terminal on a released dispatch as "active or unknown", because
@@ -346,7 +347,7 @@ bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
 grep -Fq "Remove worktree $real/rel-shell" "$tmp/output" || { echo 'released dispatch with a closable leftover terminal still kept in preview'; exit 1; }
 grep -Fq "Remove worktree $real/rel-none" "$tmp/output" || { echo 'released dispatch with no terminal kept'; exit 1; }
 grep -Fq "Remove worktree $real/live-term" "$tmp/output"
-grep -Fq "Kept worktree $real/unk-term (active or unknown Orca terminal)" "$tmp/output"
+grep -Fq "Remove worktree $real/unk-term" "$tmp/output"
 grep -Fq "Kept worktree $real/live-disp (active or unknown Orca terminal)" "$tmp/output"
 echo 'ok preview frees a worktree whose only terminal is a finished one, idle agent included; unknown owner and live dispatch kept'
 # A pending dispatch has no worker and no worktree, so a failed worker-show on it must not keep every worktree.

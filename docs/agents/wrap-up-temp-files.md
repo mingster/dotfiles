@@ -61,3 +61,9 @@ and Chrome clones kept because process activity could not be checked.
 
 Run `bash script/tests/wrap-up-branch-safety.test.sh` for branch protection,
 fetch/prune and deletion races, and the missing-`lsof` summary.
+
+## Terminals and worktrees
+
+A fleet host (`--worktrees-only`) closes the terminals of its own Orca, by the same rules as the coordinator. Before this, it closed none, so every old terminal looked like an owner and kept its worktree.
+
+A local terminal with no dispatch and no running agent is closed, and its worktree is then removed if it is clean and merged. Kept, with the reason printed: a running agent, an unsettled dispatch, a `lead-` worktree, uncommitted work, the main checkout, the caller's own terminal, output in the last 10 minutes, and anything the holder check cannot clear. Test: `script/tests/wrap-up-unknown-owner.test.sh`.
