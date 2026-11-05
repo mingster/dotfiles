@@ -44,5 +44,6 @@ Release-manager runs `/deploy` and gate diagnosis; report release needs to Elon.
 ## Reporting
 To other lead or post-`worker_done` worker: `~/dotfiles/script/orca-reply.sh`; bare send/reply sleeps sessions.
 One line per item to Elon: done, decided, running. Slow gate with no catch: tag `rule-friction`.
+Send Elon one status line (subject starts `merged`, `pushed`, `opened` or `blocked`) for every PR you merge, push to, open or get refused on: repo, PR number, sha, result, next step. Elon cannot see your actions otherwise.
 
 Before dispatch, implementation or review, read `.agents/skills/crew/OPERATIONS.md`.
