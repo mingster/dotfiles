@@ -95,40 +95,80 @@ run_coordinators() { # -> every Run's coordinator handle (the caller, leads, oth
     runs=$(close_rpc orchestration run-list --full ${args[@]+"${args[@]}"} --json 2>/dev/null) || return 1
     page=$(printf '%s' "$runs" | python3 -c '
 import json,sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
 doc=json.load(sys.stdin)
 if doc.get("ok") is False: sys.exit(1)
 r=doc["result"]
 for run in r["runs"]:
     if run.get("coordinator_handle"): print(run["coordinator_handle"])
-if r.get("nextCursor"): print("CURSOR="+r["nextCursor"])') || return 1
+c=ws.next_cursor(r)
+if c: print("CURSOR="+c)' "$here") || return 1
     printf '%s\n' "$page" | sed '/^CURSOR=/d'
     next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
-    [ -n "$next" ] && [ "$next" != "$cursor" ] || return 0
+    [ -n "$next" ] || return 0
+    [ "$next" != "$cursor" ] || return 1
     cursor="$next"
   done
 }
-busy_handles() { # $1 dispatch to ignore -> terminal handles and "wt:<path>" worktrees used by any other dispatch not in a final state; rc 1 if the list cannot be read
-  local cursor="" args workers page next
+run_ids() { # -> every Run id; rc 1 if the Run list cannot be read or a cursor repeats
+  local cursor="" args runs page next
   while :; do
     args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
-    workers=$(close_rpc orchestration worker-list ${args[@]+"${args[@]}"} --json 2>/dev/null) || return 1
-    page=$(printf '%s' "$workers" | python3 -c '
+    runs=$(close_rpc orchestration run-list --full ${args[@]+"${args[@]}"} --json 2>/dev/null) || return 1
+    page=$(printf '%s' "$runs" | python3 -c '
 import json,sys
-sys.path.insert(0, sys.argv[2]); import worker_state as ws
-r=json.load(sys.stdin)["result"]
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+doc=json.load(sys.stdin)
+if doc.get("ok") is False: sys.exit(1)
+r=doc["result"]
+for run in r["runs"]:
+    if run.get("id"): print(run["id"])
+c=ws.next_cursor(r)
+if c: print("CURSOR="+c)' "$here") || return 1
+    printf '%s\n' "$page" | sed '/^CURSOR=/d'
+    next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
+    [ -n "$next" ] || return 0
+    [ "$next" != "$cursor" ] || return 1
+    cursor="$next"
+  done
+}
+# worker-list without --run shows only the caller's Run, so read every Run. $1 is a python snippet run on each page
+# with r (the result), ws and sys.argv[2..] in scope; it prints lines. rc 1 if any Run or page cannot be read.
+each_worker_page() {
+  local snippet=$1 run cursor args workers page next ids
+  shift
+  ids=$(run_ids) || return 1
+  while IFS= read -r run; do
+    [ -n "$run" ] || continue
+    cursor=""
+    while :; do
+      args=(--run "$run"); [ -z "$cursor" ] || args+=(--cursor "$cursor")
+      workers=$(close_rpc orchestration worker-list "${args[@]}" --json 2>/dev/null) || return 1
+      page=$(printf '%s' "$workers" | python3 -c '
+import json,sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+doc=json.load(sys.stdin)
+if doc.get("ok") is False: sys.exit(1)
+r=doc["result"]
+'"$snippet"'
+c=ws.next_cursor(r)
+if c: print("CURSOR="+c)' "$here" "$@") || return 1
+      printf '%s\n' "$page" | sed '/^CURSOR=/d'
+      next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
+      [ -n "$next" ] || break
+      [ "$next" != "$cursor" ] || return 1
+      cursor="$next"
+    done
+  done <<< "$ids"
+}
+busy_handles() { # $1 dispatch to ignore -> terminal handles and "wt:<path>" worktrees used by any other dispatch not in a final state, in every Run; rc 1 if a list cannot be read
+  each_worker_page '
 for w in r["workers"]:
-    if w.get("dispatchId")==sys.argv[1] or ws.is_final(w): continue
+    if w.get("dispatchId")==sys.argv[2] or ws.is_final(w): continue
     for h in (ws.terminal(w), w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
         if h: print(h)
     wid=ws.workspace_id(w)
-    if wid: print("wt:"+wid.split("::",1)[-1])
-p=r.get("page") or {}
-if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])' "$1" "$here") || return 1
-    printf '%s\n' "$page" | sed '/^CURSOR=/d'
-    next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
-    [ -n "$next" ] && [ "$next" != "$cursor" ] || return 0
-    cursor="$next"
-  done
+    if wid: print("wt:"+wid.split("::",1)[-1])' "$1"
 }
 close_allowed() {
   [ "${2:-}" != "${ORCA_TERMINAL_HANDLE:-}" ] || return 1
@@ -359,29 +399,15 @@ try:
          if t.get("worktreePath")==sys.argv[1] and "::" in t.get("worktreeId","")}
     if len(ids)==1: print(ids.pop())
 except Exception: pass' "$project_root")
-# Enumerate pages so an ended dispatch without a pane record is covered on wake.
+# Enumerate every Run's pages so an ended dispatch without a pane record is covered on wake.
 dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done)
-cursor=""
-while [ -n "$project" ]; do
-  args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
-  workers=$(close_rpc orchestration worker-list ${args[@]+"${args[@]}"} --json 2>/dev/null) || break
-  page=$(printf '%s' "$workers" | python3 -c '
-import json,sys
-sys.path.insert(0, sys.argv[2]); import worker_state as ws
-try:
-    r=json.load(sys.stdin)["result"]
-    for w in r["workers"]:
-        wid=ws.workspace_id(w)
-        if wid.startswith(sys.argv[1]+"::") and w.get("dispatchId") and ws.is_final(w):
-            print(w["dispatchId"])
-    p=r.get("page") or {}
-    if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])
-except Exception: pass' "$project" "$here")
+if [ -n "$project" ] && found=$(each_worker_page '
+for w in r["workers"]:
+    wid=ws.workspace_id(w)
+    if wid.startswith(sys.argv[2]+"::") and w.get("dispatchId") and ws.is_final(w):
+        print(w["dispatchId"])' "$project"); then
   dispatches="$dispatches
-$(printf '%s\n' "$page" | sed '/^CURSOR=/d')"
-  next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
-  [ -n "$next" ] && [ "$next" != "$cursor" ] || break
-  cursor="$next"
-done
+$found"
+fi
 while IFS= read -r d; do [ -z "$d" ] || close_one "$d" sweep; done < <(printf '%s\n' "$dispatches" | sort -u)
 exit 0

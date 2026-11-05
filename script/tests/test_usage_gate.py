@@ -298,8 +298,10 @@ class Reserve(unittest.TestCase):
 
     def test_running_workers_counts_active_terminals_of_one_provider(self):
         rows = [{"projection": {"provider": {"id": p}}} for p in ("claude", "cursor", "claude")]
-        out = mock.Mock(stdout=json.dumps({"result": {"workers": rows}}))
-        with mock.patch.object(ug.subprocess, "run", return_value=out):
+        def out(args, **kwargs):
+            result = {"runs": [{"id": "run_a"}]} if "run-list" in args else {"workers": rows}
+            return mock.Mock(stdout=json.dumps({"result": result}))
+        with mock.patch.object(ug.subprocess, "run", side_effect=out):
             self.assertEqual((ug.running_workers("claude"), ug.running_workers("cursor")), (2, 1))
         with mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError):
             self.assertIsNone(ug.running_workers("claude"))
@@ -923,15 +925,71 @@ class RealReadingPolicy(unittest.TestCase):
         self.assertEqual(reading['pct'], 42)
         self.assertEqual(fetch.call_args.args[0].full_url, 'https://api.anthropic.com/api/oauth/usage')
 
+    def orca_stub(self, runs, workers, run_pages=None):
+        """subprocess.run stand-in. workers maps a Run id (or None for no --run) to {cursor or None: result}."""
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            cursor = args[args.index('--cursor') + 1] if '--cursor' in args else None
+            if 'run-list' in args:
+                result = (run_pages or {None: runs})[cursor]
+            else:
+                result = workers[args[args.index('--run') + 1] if '--run' in args else None][cursor]
+            return mock.Mock(stdout=json.dumps({'ok': True, 'result': result}))
+        return run, calls
+
+    LIVE = {'terminalState': 'retained', 'dispatchStatus': 'dispatched',
+            'projection': {'provider': {'id': 'cursor'}, 'liveness': {'verdict': 'live'}}}
+    DONE = {'terminalState': 'retained', 'dispatchStatus': 'completed', 'projection': {'provider': {'id': 'cursor'}}}
+
     def test_running_reserve_includes_retained_live_workers_on_later_pages(self):
         gate = self.gate
-        pages = [mock.Mock(stdout=json.dumps({'result':{'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}}})),
-                 mock.Mock(stdout=json.dumps({'result':{'workers':[
-                     {'terminalState':'retained','dispatchStatus':'dispatched','projection':{'provider':{'id':'cursor'},'liveness':{'verdict':'live'}}},
-                     {'terminalState':'retained','dispatchStatus':'completed','projection':{'provider':{'id':'cursor'}}}], 'page':{'hasMore':False}}}))]
-        with mock.patch.object(gate.subprocess, 'run', side_effect=pages) as query:
+        run, calls = self.orca_stub({'runs': [{'id': 'run_a'}]}, {'run_a': {
+            None: {'workers': [], 'page': {'hasMore': True, 'nextCursor': 'page2'}},
+            'page2': {'workers': [self.LIVE, self.DONE], 'page': {'hasMore': False}}}})
+        with mock.patch.object(gate.subprocess, 'run', side_effect=run):
             self.assertEqual(gate.running_workers('cursor'), 1)
-        self.assertIn('page2', query.call_args.args[0])
+        self.assertTrue(any('page2' in c for c in calls))
+
+    def test_running_reserve_follows_top_level_next_cursor(self):
+        gate = self.gate
+        run, _ = self.orca_stub({'runs': [{'id': 'run_a'}]}, {'run_a': {
+            None: {'workers': [], 'scope': {'source': 'flag'}, 'nextCursor': 'page2', 'warnings': []},
+            'page2': {'workers': [self.LIVE, self.DONE], 'scope': {'source': 'flag'}, 'warnings': []}}})
+        with mock.patch.object(gate.subprocess, 'run', side_effect=run):
+            self.assertEqual(gate.running_workers('cursor'), 1)
+
+    def test_running_reserve_counts_workers_of_every_run(self):
+        gate = self.gate
+        run, _ = self.orca_stub(
+            {'runs': [{'id': 'run_a'}], 'nextCursor': 'runs2'}, {
+                None: {None: {'workers': [], 'warnings': []}},  # the caller's Run alone sees nothing
+                'run_a': {None: {'workers': [self.LIVE], 'warnings': []}},
+                'run_b': {None: {'workers': [self.LIVE, self.LIVE], 'warnings': []}}},
+            run_pages={None: {'runs': [{'id': 'run_a'}], 'nextCursor': 'runs2'},
+                       'runs2': {'runs': [{'id': 'run_b'}]}})
+        with mock.patch.object(gate.subprocess, 'run', side_effect=run):
+            self.assertEqual(gate.running_workers('cursor'), 3)
+
+    def test_running_reserve_is_unknown_on_a_partial_read(self):
+        gate = self.gate
+        repeat = {'workers': [self.LIVE], 'nextCursor': 'same', 'warnings': []}
+        run, _ = self.orca_stub({'runs': [{'id': 'run_a'}]}, {'run_a': {None: repeat, 'same': repeat}})
+        with mock.patch.object(gate.subprocess, 'run', side_effect=run):
+            self.assertIsNone(gate.running_workers('cursor'))
+        run, _ = self.orca_stub({'runs': [{'id': 'run_a'}]}, {'run_a': {
+            None: {'workers': [self.LIVE], 'page': {'hasMore': True}}}})
+        with mock.patch.object(gate.subprocess, 'run', side_effect=run):
+            self.assertIsNone(gate.running_workers('cursor'))
+        run, _ = self.orca_stub({'runs': [{'id': 'run_a'}], 'nextCursor': 'runs2'}, {'run_a': {None: {'workers': []}}},
+                                run_pages={None: {'runs': [{'id': 'run_a'}], 'nextCursor': 'runs2'}, 'runs2': {'runs': []}})
+        run_ok = run
+        def fail_second_page(args, **kwargs):
+            if '--cursor' in args and 'run-list' in args:
+                raise RuntimeError('run-list failed')
+            return run_ok(args, **kwargs)
+        with mock.patch.object(gate.subprocess, 'run', side_effect=fail_second_page):
+            self.assertIsNone(gate.running_workers('cursor'))
 
 
 if __name__ == "__main__":

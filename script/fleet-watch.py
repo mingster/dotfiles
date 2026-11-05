@@ -180,24 +180,43 @@ def classify_worker(worker):
     return False, info, False
 
 
+def list_pages(*command):
+    """Yield every page of an orca list command. A page that cannot prove it is the last, or a repeated cursor, raises.
+
+    Current Orca puts nextCursor at the top level and omits it on the last page. Older Orca nested it under page
+    with hasMore.
+    """
+    cursor, seen = None, set()
+    while True:
+        result = rpc(*command, *(['--cursor', cursor] if cursor else []))
+        yield result
+        if 'page' in result:
+            if result['page']['hasMore'] not in (True, False):
+                raise ValueError('bad page')
+            cursor = result['page'].get('nextCursor') if result['page']['hasMore'] else None
+            if cursor is None and result['page']['hasMore']:
+                raise ValueError('bad cursor')
+        else:
+            cursor = result.get('nextCursor')
+        if cursor is None:
+            return
+        if not isinstance(cursor, str) or not cursor or cursor in seen:
+            raise ValueError('bad cursor')
+        seen.add(cursor)
+
+
 def fetch_workers(config):
-    """Retrieve and deduplicate workers across runs and pagination."""
+    """Retrieve and deduplicate workers across runs and pagination.
+
+    worker-list without --run shows only the caller's Run, so without configured runs read every Run.
+    """
+    run_ids = [run['id'] for run in config.get('runs', [])]
+    if not run_ids:
+        run_ids = [run['id'] for page in list_pages('orchestration', 'run-list') for run in page['runs']]
     workers = []
-    runs = config.get('runs', [])
-    if not runs:
-        result = rpc('orchestration', 'worker-list', '--include-remote')
-        workers.extend(result.get('workers', []))
-    else:
-        for run in runs:
-            cursor = None
-            while True:
-                flags = ['--cursor', cursor] if cursor else []
-                result = rpc('orchestration', 'worker-list', '--run', run['id'], '--include-remote', *flags)
-                workers.extend(result.get('workers', []))
-                page = result.get('page') or {}
-                if not page.get('hasMore'):
-                    break
-                cursor = page['nextCursor']
+    for run_id in run_ids:
+        for result in list_pages('orchestration', 'worker-list', '--run', run_id, '--include-remote'):
+            workers.extend(result.get('workers', []))
     return deduplicate_workers(workers)
 
 

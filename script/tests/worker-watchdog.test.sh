@@ -37,8 +37,16 @@ elif args[:2] == ['orchestration','worker-list']:
                  for n, st, lv, ts in (('retained','succeeded','exited','retained'), ('failed','failed','unverifiable','retained'),
                                        ('released','succeeded','exited','released'), ('stopped','stopped','exited','released'),
                                        ('live','ready','live','active'), ('liveret','ready','live','retained'))]
+    if run in os.environ.get('WATCHDOG_TEST_NO_WORKERS','').split(): workers=[]
+    if os.environ.get('WATCHDOG_TEST_OTHER'):  # only the caller's Run without --run, and it has no worker
+        workers=[] if '--run' not in args else [{'runId':run,'agentTerminalHandle':'term_w_'+run,'terminalState':'retained',
+            'dispatchStatus':'dispatched','projection':{'liveness':{'verdict':'live'}}}]
     if mode=='paginated' and '--cursor' not in args:
         output({'workers':[], 'page':{'hasMore':True,'nextCursor':'page2'}})
+    elif mode in ('cursor-top','cursor-repeat') and '--cursor' not in args:
+        output({'workers':[], 'scope':{'source':'flag'}, 'nextCursor':'page2', 'warnings':[]})
+    elif mode=='cursor-repeat': output({'workers':workers, 'scope':{'source':'flag'}, 'nextCursor':'page2', 'warnings':[]})
+    elif mode=='cursor-top': output({'workers':workers, 'scope':{'source':'flag'}, 'warnings':[]})
     else: output({'workers':workers, 'page':{'hasMore':False}})
 elif args[:2] == ['terminal','read']:
     if mode in ('ended-dispatches','flat-dispatches','live-flat-dispatches'):
@@ -46,7 +54,7 @@ elif args[:2] == ['terminal','read']:
         if args[args.index('--terminal')+1]!='term_coord': sys.exit(1)
         mode='working'
     if mode=='failed-read': sys.exit(1)
-    if mode in ('paginated', 'failed-list'): mode='idle'
+    if mode in ('paginated', 'failed-list', 'cursor-top', 'cursor-repeat'): mode='idle'
     text={'idle':'❯ ', 'working':'Working (esc to interrupt)\n❯ ',
           'stopped':"You've hit your usage limit", 'capacity':'No capacity available',
           'rate':'Rate limit reached', 'quota':'Quota exhausted', 'claude':'❯ ', 'empty':'Working (esc to interrupt)',
@@ -118,6 +126,12 @@ check "$(grep -cE 'read-screen-failed term_lf_(retained|failed|released|stopped)
 check "$(grep -cE 'read-screen-failed term_lf_(live|liveret)$' "$HOME/.orca/logs/worker-watchdog.log")" 2 "live flat live rows read"
 run_case paginated 3
 check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 0 "orchestration send"
+# Current Orca worker-list: top level nextCursor, no page object. The live worker is on page two.
+run_case cursor-top 3
+check "$(count 'terminal send')" 1 "terminal send"; check "$(count 'orchestration send')" 0 "orchestration send"
+# A cursor that repeats is a partial read, never evidence for a zero-worker escalation.
+run_case cursor-repeat 3
+check "$(count 'orchestration send')" 0 "orchestration send"
 # Failed worker state is unknown, never evidence for a zero-worker escalation.
 run_case failed-list 3
 check "$(count 'orchestration send')" 0 "orchestration send"
@@ -165,7 +179,7 @@ rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --run run_a --run run_b --notify term_owner --notify-run run_owner --interval 0 --checks 2
 check "$(count 'terminal send')" 1 "terminal send"
 # --all-runs: only runs with a live worker are watched, and each escalates to its own coordinator.
-export WATCHDOG_TEST_PER_RUN=1 WATCHDOG_TEST_RUNS='run_live run_dead'
+export WATCHDOG_TEST_PER_RUN=1 WATCHDOG_TEST_RUNS='run_live run_dead' WATCHDOG_TEST_NO_WORKERS=run_dead
 rm -rf "$HOME/.orca"; : > "$tmp/actions"
 WATCHDOG_TEST_MODE=idle bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 8
 python3 - "$tmp/actions" <<'PY'
@@ -175,6 +189,10 @@ sends=[r for r in rows if r[:2]==['orchestration','send']]
 assert len(sends)==1 and all(x[x.index('--to')+1]=='coord_run_live' and x[x.index('--run')+1]=='run_live' for x in sends), rows
 assert not any('run_dead' in ' '.join(r) for r in rows), rows
 PY
+# --all-runs: a live worker in a Run other than the caller's still makes that Run watched.
+rm -rf "$HOME/.orca"; : > "$tmp/actions"
+WATCHDOG_TEST_OTHER=1 WATCHDOG_TEST_RUNS='run_live run_other' WATCHDOG_TEST_MODE=failed-read bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
+check "$(grep -c 'read-screen-failed term_w_run_other$' "$HOME/.orca/logs/worker-watchdog.log")" 1 "other Run's live worker read"
 # Unread reports: one escalation per message, only when old, unread and of a report type.
 now_old=2020-01-01T00:00:00Z; now_new=$(date -u +%FT%TZ)
 python3 - "$tmp/inbox.json" "$now_old" "$now_new" <<'PY'
@@ -205,7 +223,7 @@ json.dump([{'id':'msg_%d'%i,'run_id':'run_live','type':'worker_done','read':0,'c
 PY
 WATCHDOG_TEST_SEND_FAIL=1 WATCHDOG_TEST_MODE=working bash "$root/script/worker-watchdog.sh" --all-runs --interval 0 --checks 1
 grep -q '3 consecutive watchdog sends failed' "$HOME/.orca/state/worker-watchdog/alerts.log"
-unset WATCHDOG_TEST_PER_RUN WATCHDOG_TEST_RUNS WATCHDOG_TEST_INBOX
+unset WATCHDOG_TEST_NO_WORKERS WATCHDOG_TEST_PER_RUN WATCHDOG_TEST_RUNS WATCHDOG_TEST_INBOX
 # An Antigravity quota banner blocks its pool until reset; other providers are never fed to the parser.
 export USAGE_GATE_BANNER_FILE="$tmp/banner.json"
 WATCHDOG_TEST_PROVIDER=claude run_case banner 2

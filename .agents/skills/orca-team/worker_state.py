@@ -55,3 +55,26 @@ def workspace_id(r):
     return (_dict(r.get("resource")).get("worktreeId") or r.get("worktreeId")
             or _dict(_dict(r.get("projection")).get("workspace")).get("id")
             or _dict(r.get("worker")).get("worktreeId") or "")
+
+
+def next_cursor(result):
+    """Cursor of the next list page, "" on the last page. Raises ValueError when a page cannot prove it is the last.
+
+    Current Orca puts nextCursor at the top level and omits it on the last page. Older Orca nested it under page
+    with a hasMore flag.
+    """
+    def cursor(v):
+        if not isinstance(v, str) or not v:
+            raise ValueError("bad cursor")
+        return v
+    result = _dict(result)
+    if "page" in result:
+        page = _dict(result["page"])
+        if page.get("hasMore") is True:
+            return cursor(page.get("nextCursor"))
+        if page.get("hasMore") is False:
+            return ""
+        raise ValueError("bad page")
+    if result.get("nextCursor") is not None:
+        return cursor(result["nextCursor"])
+    return ""
