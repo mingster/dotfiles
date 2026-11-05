@@ -75,8 +75,24 @@ case "$(basename "$top")" in lead-*) ;; *) die "only the lead worktree (lead-*) 
 
 # One merge run per repo. Children of a batch inherit LEAD_MERGE_LOCK_HELD and never take the lock themselves.
 lock_dir="" lock_owned=false
-lock_release() {
-  if [ "$lock_owned" = true ] && [ "$(cat "$lock_dir/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$lock_dir"; fi
+# One line per run that held the lock, appended to lead-merge.log in the git common dir on release:
+# start, end, hold seconds, PR numbers, head-checks runs, outcome. A handover through exec keeps the start
+# time and PR list in the lock dir and the environment, so the run that ends the hold writes the line.
+log_prs=${LEAD_MERGE_LOG_PRS:-}
+lock_release() { # [exit status of the run]
+  local rc=${1:-0} began now outcome runs=0
+  if [ "$lock_owned" = true ] && [ "$(cat "$lock_dir/pid" 2>/dev/null)" = "$$" ]; then
+    began=$(cat "$lock_dir/started" 2>/dev/null || true); now=$(date +%s)
+    if [[ "$began" =~ ^[0-9]+$ ]]; then
+      case "$rc" in 0) outcome=ok ;; 130|143) outcome=killed ;; *) outcome=refused ;; esac
+      [ ! -f "$lock_dir/head_checks_runs" ] || runs=$(grep -c . "$lock_dir/head_checks_runs" || true)
+      [ -n "$log_prs" ] || log_prs=$(IFS=,; echo "${batch_prs[*]:-$pr}")
+      printf 'start=%s end=%s hold_seconds=%s prs=%s head_checks_runs=%s outcome=%s\n' \
+        "$(date -u -r "$began" +%FT%TZ 2>/dev/null || date -u -d "@$began" +%FT%TZ)" "$(date -u +%FT%TZ)" "$((now-began))" \
+        "$log_prs" "$runs" "$outcome" >> "$(dirname "$lock_dir")/lead-merge.log" 2>/dev/null || true
+    fi
+    rm -rf "$lock_dir"
+  fi
   lock_owned=false
 }
 lock_acquire() {
@@ -87,7 +103,7 @@ lock_acquire() {
   lock_dir="$common/lead-merge.lock"
   wait=${LEAD_MERGE_LOCK_WAIT_SECONDS:-1200}
   [[ "$wait" =~ ^[0-9]+$ ]] || die "LEAD_MERGE_LOCK_WAIT_SECONDS must be a number"
-  trap 'lock_release' EXIT
+  trap 'lock_release $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   while ! mkdir "$lock_dir" 2>/dev/null; do
@@ -139,7 +155,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
 
   # One inventory read for the whole run, and only if a PR needs a Verdict: the first child that does
   # fills this file, later children read it.
-  dispatches_file=$(mktemp); trap 'rm -f "$dispatches_file"; lock_release' EXIT
+  dispatches_file=$(mktemp); trap 'rc=$?; rm -f "$dispatches_file"; lock_release "$rc"' EXIT
   export LEAD_MERGE_DISPATCHES_FILE=$dispatches_file LEAD_MERGE_BATCH_CHILD=1
 
   for batch_pr in "${batch_prs[@]}"; do
@@ -190,6 +206,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     rm -f "$dispatches_file"; unset LEAD_MERGE_DISPATCHES_FILE LEAD_MERGE_BATCH_CHILD
     # exec keeps this pid, so the single run takes the lock over without a gap.
     unset LEAD_MERGE_LOCK_HELD
+    export LEAD_MERGE_LOG_PRS=$(IFS=,; echo "${batch_prs[*]}")
     exec bash "$script" --repo "$repo" --pr "${composed_prs[0]}" --head "${composed_heads[0]}"
   fi
 
@@ -211,6 +228,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     exit 0
   fi
 
+  count_head_checks() { [ -z "$lock_dir" ] || echo run >> "$lock_dir/head_checks_runs"; }
   declare -a pass_train pass_heads
   failures=0
   # Post a train receipt as a comment, after proving it fits.
@@ -233,6 +251,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     group_heads=""
     for i in "${ids[@]}"; do group_heads+="${group_heads:+,}${composed_heads[$i]}"; done
     receipt_file=$(mktemp)
+    count_head_checks
     if "$head_checks" --repo "$top" --ref "$group_train" --base "$batch_base" --train-heads "$group_heads" >"$receipt_file"; then
       for i in "${ids[@]}"; do
         post_receipt "${composed_prs[$i]}" "$receipt_file" train
@@ -277,6 +296,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     survivor_heads=""
     for i in "${survivor_indexes[@]}"; do survivor_heads+="${survivor_heads:+,}${composed_heads[$i]}"; done
     survivor_receipt=$(mktemp)
+    count_head_checks
     if "$head_checks" --repo "$top" --ref "$survivor_train" --base "$batch_base" --train-heads "$survivor_heads" >"$survivor_receipt"; then
       for i in "${survivor_indexes[@]}"; do
         post_receipt "${composed_prs[$i]}" "$survivor_receipt" survivor
@@ -619,7 +639,7 @@ if [ -n "$verdict_from" ]; then
     fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
-  sync_dir=$(mktemp -d); trap 'rm -rf "$sync_dir"; lock_release' EXIT
+  sync_dir=$(mktemp -d); trap 'rc=$?; rm -rf "$sync_dir"; lock_release "$rc"' EXIT
   git archive "$head" .agents .claude .cursor 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
   DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/sync-team-skills.sh" --check "$sync_dir" >&2 \
     || die "sync-team-skills.sh --check fails at head $head"

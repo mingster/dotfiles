@@ -603,7 +603,48 @@ EOS
 }
 
 
-fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1; (fx_gate) 2>&1 )
+# #499: every run that held the lock appends one line to lead-merge.log in the git common dir on release.
+fx_log() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"; cd "$MF_REPO" || return 1
+  export LEAD_MERGE_CLEANUP=true
+  local ok=$'## Verification\n- Passed.' out code n log line bp
+  log="$MF_REPO/.git/lead-merge.log"
+  mf_barrier_make hc
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+if [ -n "${FX_BLOCK:-}" ]; then : > "$MF_DIR/barrier-hc.waiting"; read -r _ < "$MF_DIR/barrier-hc"; fi
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks"
+  for n in 61 62 63 64 65 66; do mf_pr_add "$n" "l$n" "$ok" "docs/l$n.md"; done; fx_checks_pass 61 62 63 64 66
+
+  out=$(bash "$here/lead-merge.sh" --repo o/r --batch 61 62 63 2>&1); code=$?
+  line=$(tail -1 "$log" 2>/dev/null)
+  [ "$(grep -c . "$log" 2>/dev/null)" -eq 1 ] && echo "ok   #499 a batch run appends one log line" || echo "FAIL #499 log lines: $(cat "$log" 2>&1): $out"
+  grep -Eq '^start=[0-9T:Z-]+ end=[0-9T:Z-]+ hold_seconds=[0-9]+ prs=61,62,63 head_checks_runs=1 outcome=ok$' <<<"$line" && echo "ok   #499 the line holds start, end, hold seconds, PRs, run count and outcome" || echo "FAIL #499 line: $line"
+
+  out=$(bash "$here/lead-merge.sh" --repo o/r --pr 65 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-65.json")" 2>&1); code=$?
+  line=$(tail -1 "$log")
+  [ "$(grep -c . "$log")" -eq 2 ] && grep -Eq 'prs=65 head_checks_runs=0 outcome=refused$' <<<"$line" && echo "ok   #499 a refused run still writes a line" || echo "FAIL #499 refused line: $line"
+
+  FX_BLOCK=1 bash "$here/lead-merge.sh" --repo o/r --batch 64 66 > "$MF_DIR/kill.out" 2>&1 &
+  bp=$!
+  mf_barrier_wait_until_blocked hc 20 || echo "FAIL #499 run never reached head-checks"
+  pkill -TERM -P "$bp"; kill -TERM "$bp"
+  wait "$bp" 2>/dev/null
+  line=$(tail -1 "$log")
+  [ "$(grep -c . "$log")" -eq 3 ] && grep -Eq 'prs=64,66 head_checks_runs=1 outcome=killed$' <<<"$line" && echo "ok   #499 a killed run still writes a line" || echo "FAIL #499 killed line: $line"
+  [ ! -e "$MF_REPO/.git/lead-merge.lock" ] && echo "ok   #499 the lock is gone after the log line" || echo "FAIL #499 lock left"
+}
+
+fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1; (fx_gate) 2>&1; (fx_log) 2>&1 )
 printf '%s\n' "$fx_out"
 pass=$((pass+$(grep -c '^ok ' <<<"$fx_out"))); fail=$((fail+$(grep -c '^FAIL' <<<"$fx_out")))
 echo "passed $pass, failed $fail"
