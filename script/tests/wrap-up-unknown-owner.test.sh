@@ -53,7 +53,7 @@ now_ms=$(( $(date +%s) * 1000 ))
 t() { # <handle> <worktree dir or path> <agentIdentity json> <lastOutputAt>
   printf '{"handle":"%s","title":"x","worktreePath":"%s","connected":true,"writable":true,"agentIdentity":%s,"lastOutputAt":%s}' "$1" "$2" "${3:-null}" "${4:-1}"
 }
-echo "[$(t t-own "$tmp/w-own"),$(t t-shell "$tmp/w-shell"),$(t t-agent "$tmp/w-agent" '"claude"'),$(t t-live "$tmp/w-live"),$(t t-dirty "$tmp/w-dirty"),$(t t-recent "$tmp/w-recent" null "$now_ms"),$(t t-lead "$tmp/lead-x"),$(t t-main "$tmp/repo")]" > "$FAKE_DIR/terminals"
+echo "[$(t t-own "$tmp/w-own"),$(t t-shell "$tmp/w-shell"),$(t t-agent "$tmp/w-agent" '"agent"'),$(t t-live "$tmp/w-live"),$(t t-dirty "$tmp/w-dirty"),$(t t-recent "$tmp/w-recent" null "$now_ms"),$(t t-lead "$tmp/lead-x"),$(t t-main "$tmp/repo")]" > "$FAKE_DIR/terminals"
 printf '[{"agentTerminalHandle":"t-live","dispatchId":"d-live","dispatchStatus":"dispatched","projection":{"workspace":{"id":"r::%s"}}}]\n' "$tmp/w-live" > "$FAKE_DIR/workers"
 export FAKE_LIVE_CWD="$tmp/w-live"
 
