@@ -34,14 +34,23 @@ class Gate(unittest.TestCase):
         os.makedirs(self.bin)
         self.issue = {"labels": [], "body": "", "comments": []}
         self.gh_fails = False
+        self.gh_log = os.path.join(self.home, "gh.log")
+
+    def gh_calls(self):
+        try:
+            with open(self.gh_log) as f:
+                return f.read().splitlines()
+        except FileNotFoundError:
+            return []
 
     def fake_gh(self):
         path = os.path.join(self.bin, "gh")
+        record = f'echo "$@" >> {self.gh_log}\n'
         with open(path, "w") as f:
             if self.gh_fails:
-                f.write("#!/bin/sh\nexit 1\n")
+                f.write("#!/bin/sh\n" + record + "exit 1\n")
             else:
-                f.write("#!/bin/sh\ncat <<'JSON'\n" + json.dumps(self.issue) + "\nJSON\n")
+                f.write("#!/bin/sh\n" + record + "cat <<'JSON'\n" + json.dumps(self.issue) + "\nJSON\n")
         os.chmod(path, 0o755)
 
     def bash(self, command, cwd=None):
@@ -139,7 +148,7 @@ class RoleFileGate(Gate):
 
 
 class GrillGate(Gate):
-    BUILD = 'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket: mingster/riben.life#6936"'
+    BUILD = 'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket: mingster/project-a#6936"'
 
     def test_build_worker_without_approval_denied(self):
         self.issue["comments"] = [{"body": "grill notes from architect-pm"}]
@@ -183,6 +192,80 @@ class GrillGate(Gate):
     def test_gh_failure_lets_the_command_through(self):
         self.gh_fails = True
         self.assertAllowed(self.BUILD)
+
+
+class GrillGateRepo(Gate):
+    """A spec naming dotfiles#<n> reads that issue in the dotfiles repo, not the project's own."""
+    def setUp(self):
+        super().setUp()
+        previous = os.environ.get("DOTFILES_REPO")
+        os.environ["DOTFILES_REPO"] = "acme/dotfiles"
+        self.addCleanup(lambda: os.environ.pop("DOTFILES_REPO", None) if previous is None
+                        else os.environ.__setitem__("DOTFILES_REPO", previous))
+
+    def spec(self, ref):
+        return f'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket {ref}"'
+
+    def reset_log(self):
+        if os.path.exists(self.gh_log):
+            os.remove(self.gh_log)
+
+    def test_dotfiles_issue_is_read_in_the_dotfiles_repo(self):
+        for ref in ("dotfiles#522", "acme/dotfiles#522"):
+            self.reset_log()
+            self.issue["comments"] = [{"body": "Owner approved the grill results."}]
+            self.assertAllowed(self.spec(ref))
+            calls = self.gh_calls()
+            self.assertEqual(len(calls), 1, calls)
+            self.assertIn("issue view 522", calls[0])
+            self.assertIn("-R acme/dotfiles", calls[0])
+
+    def test_dotfiles_issue_without_approval_denied_naming_the_repo(self):
+        self.assertDenied(self.spec("dotfiles#522"), "acme/dotfiles#522")
+
+    def test_bare_issue_number_has_no_repo_flag(self):
+        for ref in ("#7114", "project#7114", "acme/project#7114"):
+            self.reset_log()
+            self.assertDenied(self.spec(ref), "#7114")
+            calls = self.gh_calls()
+            self.assertEqual(len(calls), 1, calls)
+            self.assertIn("issue view 7114", calls[0])
+            self.assertNotIn("-R", calls[0])
+
+    def test_worktree_selector_stays_on_this_repo(self):
+        cmd = 'orca orchestration worker-start --agent claude --worktree issue:4242 --spec "You are fullstack-dev. See dotfiles#522"'
+        self.assertDenied(cmd, "#4242")
+        self.assertNotIn("-R", self.gh_calls()[0])
+
+
+class CursorWorkerScript(Gate):
+    """start-cursor-worker.sh takes the same grill check; its --spec is a brief file."""
+    SCRIPT = "~/dotfiles/script/start-cursor-worker.sh --run r1 --title t --model composer-2.5 --from term_abc --name n --repo id:x"
+
+    def write_brief(self, text):
+        with open(os.path.join(self.home, "brief.md"), "w") as f:
+            f.write(text)
+
+    def test_build_brief_without_approval_denied(self):
+        self.write_brief("You are fullstack-dev. Ticket #7114\n")
+        self.assertDenied(f"{self.SCRIPT} --spec brief.md", "#7114")
+
+    def test_build_brief_with_approval_allowed(self):
+        self.write_brief("You are fullstack-dev. Ticket #7114\n")
+        self.issue["comments"] = [{"body": "Owner approved the grill results."}]
+        self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
+
+    def test_unreadable_brief_is_denied(self):
+        self.assertDenied(f"{self.SCRIPT} --spec missing.md", "could not be read")
+
+    def test_brief_without_a_build_role_passes(self):
+        self.write_brief("You are qa-sdet. Review #7114.\n")
+        self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
+
+    def test_remote_run_is_not_denied_for_a_missing_lead(self):
+        # The script reads the lead from ORCA_TERMINAL_HANDLE when --from is absent.
+        self.write_brief("You are qa-sdet. Review #7114.\n")
+        self.assertAllowed(f"{self.SCRIPT.replace('--from term_abc', '')} --spec brief.md --on remote-host")
 
 
 class OwningLead(Gate):
