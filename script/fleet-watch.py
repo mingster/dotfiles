@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import time
 
 
@@ -513,6 +514,34 @@ def save_state(path, state):
     temporary.replace(path)
 
 
+SEND_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, OSError, ValueError, KeyError)
+NOTICE_PASS_LIMIT = 20
+
+
+def deliver_notices(config, state, new_lines, rpc_call=rpc):
+    """Send each line to every run terminal that has not got it. A line is dropped once delivered or after 20 passes."""
+    delivery = state.setdefault('notice_delivery', {})
+    terminals = [run['terminal'] for run in config['runs']]
+    failed = set()
+    for line in dict.fromkeys(list(new_lines) + list(delivery)):
+        entry = delivery.setdefault(line, {'sent': [], 'passes': 0})
+        for term in terminals:
+            if term in entry['sent'] or term in failed:
+                continue
+            try:
+                rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
+                entry['sent'].append(term)
+            except SEND_ERRORS as error:
+                failed.add(term)
+                print('fleet-watch: terminal send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
+        entry['passes'] += 1
+        missing = [term for term in terminals if term not in entry['sent']]
+        if missing and entry['passes'] >= NOTICE_PASS_LIMIT:
+            print('fleet-watch: giving up notice %r after %d passes, missing %s' % (line, entry['passes'], ', '.join(missing)), file=sys.stderr)
+        if not missing or entry['passes'] >= NOTICE_PASS_LIMIT:
+            del delivery[line]
+
+
 def coordinator_stage(config, state, state_path):
     """First step of a pass. Saves state at once, and ends a pass on a host without Orca."""
     notices = coordinator_notices(config, state, time.time())
@@ -560,16 +589,13 @@ def main():
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
     notices += coordinator
+    lines = []
     if notices:
-        line = 'fleet-watch: ' + '; '.join(notices)
-        for run in config['runs']:
-            rpc('terminal', 'send', '--terminal', run['terminal'], '--text', line, '--enter')
-        print(line)
-    # Persist only after successful wake delivery, so failures retry next pass.
-    args.state.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.state.with_suffix('.tmp')
-    temporary.write_text(json.dumps(state))
-    temporary.replace(args.state)
+        lines.append('fleet-watch: ' + '; '.join(notices))
+    deliver_notices(config, state, lines, rpc)
+    if notices:
+        print(lines[0])
+    save_state(args.state, state)
     return 0
 
 
