@@ -428,25 +428,51 @@ def this_host():
     return subprocess.run(['hostname', '-s'], capture_output=True, text=True, timeout=5).stdout.strip()
 
 
-def coordinator_name(state_dir):
+def parse_coordinator_name(text):
     """The name on the first `coordinator <name>` line, or None."""
-    try:
-        lines = (Path(state_dir) / 'coordinator.conf').read_text().splitlines()
-    except OSError:
-        return None
-    for line in lines:
+    for line in text.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[0] == 'coordinator':
             return parts[1]
     return None
 
 
-def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_alert, host=None):
+def coordinator_name_local(state_dir):
+    try:
+        text = (Path(state_dir) / 'coordinator.conf').read_text()
+    except OSError:
+        return None
+    return parse_coordinator_name(text)
+
+
+def read_coordinator_name_from_remote(state_dir):
+    try:
+        subprocess.run(['git', '-C', str(state_dir), 'fetch', '-q', 'origin'],
+                       capture_output=True, timeout=10)
+        show = subprocess.run(['git', '-C', str(state_dir), 'show', 'origin/main:coordinator.conf'],
+                              capture_output=True, text=True, timeout=10)
+        if show.returncode != 0:
+            return None
+        return parse_coordinator_name(show.stdout)
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
+def coordinator_name_from_state_dir(state_dir):
+    """Prefer origin/main coordinator.conf; fall back to the local file on any git failure."""
+    remote = read_coordinator_name_from_remote(state_dir)
+    if remote is not None:
+        return remote
+    return coordinator_name_local(state_dir)
+
+
+def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_alert, host=None,
+                        name_reader=coordinator_name_from_state_dir):
     """Alert only: tell the owner a coordinator is offline. Runs on a backup host."""
     watch = config.get('coordinator_watch')
     if not watch:
         return []
-    name = coordinator_name(watch['state_dir'])
+    name = name_reader(watch['state_dir'])
     if not name or name.lower() == (host or this_host()).lower():
         state.pop('coordinator_watch', None)
         return []
@@ -466,7 +492,7 @@ def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_a
         return []
     text = 'coordinator %s offline for %d minutes; failover is manual, ask the owner' % (name, (now - timer['since']) // 60)
     if not alert(command, text):
-        return []
+        return [text]
     timer['alerted'] = True
     return [text]
 

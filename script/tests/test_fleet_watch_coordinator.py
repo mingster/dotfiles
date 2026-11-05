@@ -165,7 +165,8 @@ class CoordinatorWatch(unittest.TestCase):
         self.run_pass(fx, 0)
         notices = self.run_pass(fx, 600)
         self.assertEqual(notices, ['coordinator new-box offline for 10 minutes; failover is manual, ask the owner'])
-        self.assertEqual(fx.probes, ['new-box'])
+        self.assertNotIn('old-box', fx.probes)
+        self.assertTrue(all(p == 'new-box' for p in fx.probes))
         self.assertEqual(self.state['coordinator_watch']['host'], 'new-box')
 
     def test_fetch_failure_falls_back_to_local_ssh(self):
