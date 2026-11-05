@@ -170,11 +170,22 @@ class CoordinatorWatch(unittest.TestCase):
         self.assertEqual(self.state['coordinator_watch']['host'], 'new-box')
 
     def test_fetch_failure_falls_back_to_local_ssh(self):
-        self.write_conf('coordinator main-box\n')
+        state_dir = self.init_state_git('coordinator main-box\n', 'coordinator remote-box\n')
+        subprocess.run(['git', '-C', str(state_dir), 'fetch', '-q', 'origin'], check=True, capture_output=True)
+        subprocess.run(
+            ['git', '-C', str(state_dir), 'remote', 'set-url', 'origin', '/nonexistent/fleet-watch-fetch-test'],
+            check=True, capture_output=True,
+        )
         fx = Fixture(up=True)
         self.run_pass(fx, 0)
         self.assertEqual(fx.probes, ['main-box'])
         self.assertNotIn('coordinator_watch', self.state)
+
+    def test_remote_without_coordinator_line_ignores_stale_local(self):
+        self.init_state_git('coordinator stale-box\n', '# no coordinator here\n')
+        fx = Fixture(up=False)
+        self.assertEqual(self.run_pass(fx, 0), [])
+        self.assertEqual(fx.probes, [])
 
 
 class NoOrca(unittest.TestCase):
