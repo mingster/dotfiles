@@ -13,6 +13,48 @@ repos=$(jq -r '.repos[]' "$cfg" | tr '\n' ' ')
 problems=0
 flag() { echo "PROBLEM $*"; problems=$((problems + 1)); }
 
+# Runs a command with a time limit (macOS has no timeout). Usage: run_limited <seconds> cmd...
+run_limited() {
+  local secs=$1 pid watcher rc; shift
+  "$@" >/dev/null 2>&1 & pid=$!
+  ( sleep "$secs"; kill "$pid" 2>/dev/null ) & watcher=$!
+  wait "$pid" 2>/dev/null; rc=$?
+  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+  return "$rc"
+}
+
+# May this host dispatch? Reports only. Every failure is a flag plus a NO DISPATCH line.
+echo "== 0 coordinator"
+state=${AGENT_STATE_DIR:-$HOME/agent-state}
+nodispatch() { flag "$1"; echo "NO DISPATCH: $1"; blocked=1; }
+blocked=0
+if ! git -C "$state" rev-parse --git-dir >/dev/null 2>&1; then
+  nodispatch "no state repo at $state"
+else
+  conf=$(cat "$state/coordinator.conf" 2>/dev/null || true)
+  if GIT_TERMINAL_PROMPT=0 run_limited 10 git -C "$state" fetch -q origin main; then
+    conf=$(git -C "$state" show origin/main:coordinator.conf 2>/dev/null || true)
+    behind=$(git -C "$state" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+    [ "$behind" = 0 ] || nodispatch "state repo is behind origin/main by $behind commit(s)"
+  else
+    nodispatch "fetch of the state repo failed, using the local coordinator.conf"
+  fi
+  want=$(printf '%s\n' "$conf" | awk '$1=="coordinator"{print $2; exit}' | tr '[:upper:]' '[:lower:]')
+  me=$(hostname -s | tr '[:upper:]' '[:lower:]')
+  if [ -z "$want" ]; then
+    nodispatch "no coordinator line in coordinator.conf"
+  elif [ "$want" != "$me" ]; then
+    nodispatch "this host is $me, coordinator is $want"
+  fi
+  if [ ! -f "$state/.sync-ok" ]; then
+    nodispatch "no .sync-ok, the last sync is unknown"
+  else
+    mtime=$(stat -f %m "$state/.sync-ok" 2>/dev/null || stat -c %Y "$state/.sync-ok")
+    [ $(( $(date +%s) - mtime )) -lt 1800 ] || nodispatch ".sync-ok is older than 30 minutes"
+  fi
+  [ "$blocked" = 1 ] || echo "ok coordinator $want, state fresh"
+fi
+
 echo "== 1 pull latest"
 if [ "${1:-}" != --no-pull ]; then "$here/fleet-pull.sh" 2>&1 | tail -20; fi
 
