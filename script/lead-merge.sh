@@ -741,7 +741,12 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" 
         # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
         # or a configured coordinator id.
         if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id" "$verifier_id"; then
-          bad_verdict "verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"; newest_seen=true; continue
+          # A bad author never counts and never stops the scan, so a valid Verdict at the same head can carry the merge.
+          # A FAIL is the exception: it still blocks, because dropping it would let a bad author hide a failure.
+          if [ "$verdict" != FAIL ]; then
+            ignored_notes+=("ignored Verdict $ref: verdict author $author_id is not a known dispatch or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)")
+            continue
+          fi
         fi
         if [ "$flagged" = true ] && [ "$verdict" != FAIL ]; then
           edited=$((edited+1))

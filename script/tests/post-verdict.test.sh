@@ -77,5 +77,22 @@ h=$(new_pr 45)
 out=$(verdict 45 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --print); code=$?
 [ "$code" -eq 0 ] && [ "$(head -1 <<<"$out")" = "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author" ] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-45.json")" = 0 ] && ok "--print shows the body and posts nothing" || bad "--print: $out"
 
+# T544: --author must be a dispatch id (ctx_...), unknown, or a configured coordinator id
+h=$(new_pr 47); before=$(jq '.comments|length' "$MF_GH_DIR/pr-47.json")
+out=$(verdict 47 --result PASS --head "$h" --verifier ctx_verify --author term_59f754da-570d-4e18-a384-083e793d930c); code=$?
+[ "$code" -ne 0 ] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-47.json")" = "$before" ] && ok "T544: a terminal id author is refused, nothing posted" || bad "T544 terminal id: $out"
+out=$(verdict 47 --result PASS --head "$h" --verifier ctx_verify --author ctx_author); code=$?
+say "$code" "T544: a dispatch id author is accepted" "$out"
+h=$(new_pr 48)
+out=$(verdict 48 --result PASS --head "$h" --verifier ctx_verify --author unknown); code=$?
+say "$code" "T544: author=unknown is accepted" "$out"
+cfg="$MF_DIR/pvcfg"; mkdir -p "$cfg"; cp "$here/post-verdict.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cfg/"
+h=$(new_pr 49)
+out=$(bash "$cfg/post-verdict.sh" --repo example/repo --pr 49 --result PASS --head "$h" --verifier ctx_verify --author term_coord 2>&1); code=$?
+[ "$code" -ne 0 ] && ok "T544: a coordinator id is refused when none is configured" || bad "T544 unconfigured coordinator: $out"
+printf '{"coordinator_ids":["term_coord"]}\n' > "$cfg/lead-merge.local.json"
+out=$(bash "$cfg/post-verdict.sh" --repo example/repo --pr 49 --result PASS --head "$h" --verifier ctx_verify --author term_coord 2>&1); code=$?
+say "$code" "T544: a configured coordinator id is accepted" "$out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -1,0 +1,1 @@
+post-verdict.sh refuses an author that is not a dispatch id, unknown or a configured coordinator id, and lead-merge.sh ignores a PASS Verdict with a bad author (a FAIL still blocks) so a valid Verdict at the same head can carry the merge.
