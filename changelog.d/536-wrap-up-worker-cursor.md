@@ -1,1 +1,1 @@
-Wrap up reads the current worker list paging again, so finished terminals close instead of every run stopping at dispatch discovery. The worktree check now reads every page too, and any page that cannot prove it is the last one still closes nothing.
+Wrap up reads the current worker list paging again and reads every Run on every Orca before closing anything, so a live worker of another Run is never closed. It now also closes a terminal where an agent sits idle after its worker finished, keeps coordinators, and closes nothing if any Run or page cannot be read.

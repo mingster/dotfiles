@@ -26,10 +26,20 @@ case "$*" in
   'terminal list --json') echo '{"ok":true,"result":{"terminals":[]}}' ;;
   'terminal list --environment env-a --json') cat "$FAKE_DIR/terminals" ;;
   'terminal close --environment env-a --terminal '*) echo "${*: -1}" >> "$FAKE_DIR/closed" ;;
-  'orchestration worker-list --environment '*) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
+  'orchestration run-list --environment '*)
+    if [ -e "$FAKE_DIR/env-run-fail" ]; then exit 1; fi
+    echo '{"ok":true,"result":{"runs":[{"id":"run-env"}]}}' ;;
+  'orchestration run-list --cursor r2 '*) echo '{"ok":true,"result":{"runs":[{"id":"run-two"}]}}' ;;
+  'orchestration run-list '*)
+    if [ -e "$FAKE_DIR/run-fail" ]; then exit 1; fi
+    if [ -e "$FAKE_DIR/two-runs" ]; then echo '{"ok":true,"result":{"runs":[{"id":"run-one"}],"nextCursor":"r2"}}'
+    else echo '{"ok":true,"result":{"runs":[{"id":"run-one","coordinator_handle":"t-coord"}]}}'; fi ;;
+  'orchestration worker-list --environment '*)
+    if [ -e "$FAKE_DIR/env-page" ]; then cat "$FAKE_DIR/env-page"
+    else echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'; fi ;;
   'orchestration worker-list '*)
     if [[ "$*" == *'--cursor c2'* ]] && [ -e "$FAKE_DIR/fail-page" ]; then exit 1; fi
-    if [[ "$*" != *--include-remote* ]]; then
+    if [[ "$*" != *--run* ]]; then
       case "$*" in
         *'--cursor l2'*) echo '{"ok":true,"result":{"workers":[],"scope":{},"warnings":[]}}' ;;
         *) if [ -e "$FAKE_DIR/local-page" ]; then cat "$FAKE_DIR/local-page"
@@ -37,6 +47,7 @@ case "$*" in
       esac
     else
       case "$*" in
+        *'--run run-two'*) cat "$FAKE_DIR/run-two-page" ;;
         *'--cursor c2'*) cat "$FAKE_DIR/page2" ;;
         *'--cursor c3'*) cat "$FAKE_DIR/page3" ;;
         *) cat "$FAKE_DIR/page1" ;;
@@ -83,15 +94,16 @@ expect() { grep -Fxq "$1" "$tmp/output" || { echo "FAIL missing: $1"; cat "$tmp/
 run --dry-run
 expect 'Close terminal t-path (env-a, settled dispatch on this path)'
 expect 'Close terminal t-handle (env-a, settled dispatch)'
-for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-agent|agent running' 't-unknown|unknown owner, still running'; do
+expect 'Close terminal t-agent (env-a, settled dispatch on this path)'
+for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-unknown|unknown owner, still running'; do
   expect "Kept terminal ${pair%|*} (env-a, ${pair#*|})"
 done
 test ! -e "$tmp/closed"
 echo 'ok coordinator dispatches classify remote handles and paths while preserving keep rules'
 run --apply
-printf '%s\n' t-handle t-path > "$tmp/expected"
+printf '%s\n' t-agent t-handle t-path > "$tmp/expected"
 sort "$tmp/closed" | cmp - "$tmp/expected"
-echo 'ok apply closes only the two eligible remote terminals through their environment'
+echo 'ok apply closes only the eligible remote terminals through their environment'
 # Newest-first pages: the live owner is older than a settled attempt on the same path.
 cp "$tmp/page1" "$tmp/original"
 jq '.result.page={hasMore:true,nextCursor:"c2"}' "$tmp/original" > "$tmp/page1"
@@ -107,7 +119,7 @@ expect 'Close terminal t-unknown (env-a, settled dispatch on this path)'
 test ! -e "$tmp/closed"
 echo 'ok every page is read before planning: third-page live owner wins and settled path closes'
 run --apply
-printf '%s\n' t-handle t-unknown > "$tmp/expected"
+printf '%s\n' t-agent t-handle t-unknown > "$tmp/expected"
 sort "$tmp/closed" | cmp - "$tmp/expected"
 rm "$tmp/closed"
 echo 'ok apply uses all pages and keeps the older live owner'
@@ -149,7 +161,8 @@ flat() { # handle path state liveness
 run --dry-run
 expect 'Close terminal t-path (env-a, settled dispatch on this path)'
 expect 'Close terminal t-handle (env-a, settled dispatch)'
-for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-agent|agent running' 't-unknown|unknown owner, still running'; do
+expect 'Close terminal t-agent (env-a, settled dispatch on this path)'
+for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-unknown|unknown owner, still running'; do
   expect "Kept terminal ${pair%|*} (env-a, ${pair#*|})"
 done
 echo 'ok flat worker-list rows classify remote terminals like the old shape'
@@ -205,3 +218,33 @@ cp "$tmp/bad-full" "$tmp/local-page"
 run --dry-run
 grep -Fq 'worker-list paging incomplete; retaining all worktrees' "$tmp/errors"
 echo 'ok worktree check keeps everything when a full page proves no end'
+# A bound caller sees only its own Run: wrap-up must read every Run, here and on each environment, before closing.
+rm -f "$tmp/local-page"
+flat t-handle /fixture/other succeeded exited | current '{}' > "$tmp/page1"
+flat '' /fixture/handle ready live | current '{}' > "$tmp/run-two-page"
+touch "$tmp/two-runs"
+run --dry-run
+expect 'Kept terminal t-handle (env-a, live dispatch)'
+rm "$tmp/two-runs"
+echo 'ok live dispatch in a second Run keeps the terminal'
+cp "$tmp/run-two-page" "$tmp/env-page"
+run --dry-run
+expect 'Kept terminal t-handle (env-a, live dispatch)'
+rm "$tmp/env-page"
+echo 'ok live dispatch in a Run on an environment keeps the terminal'
+for unread in run-fail env-run-fail; do
+  touch "$tmp/$unread"
+  rm -f "$tmp/closed"
+  run --apply
+  test ! -e "$tmp/closed" || { echo "FAIL $unread authorized closure"; exit 1; }
+  grep -Fq 'closing no terminals' "$tmp/errors"
+  rm "$tmp/$unread"
+done
+echo 'ok an unread Run list on any Orca closes no terminals'
+# A coordinator's terminal stays even on a path where every dispatch is settled.
+jq '.result.terminals += [{handle:"t-coord",worktreePath:"/fixture/handle",connected:true,writable:true,agentIdentity:"agent"}]' "$tmp/terminals" > "$tmp/terminals.new"
+mv "$tmp/terminals.new" "$tmp/terminals"
+flat '' /fixture/handle succeeded exited | current '{}' > "$tmp/page1"
+run --dry-run
+expect 'Kept terminal t-coord (env-a, coordinator)'
+echo 'ok coordinator terminal kept'

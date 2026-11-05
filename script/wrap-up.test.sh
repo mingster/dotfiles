@@ -23,6 +23,8 @@ cat > "$tmp/bin/orca" <<'FAKE'
 case "$*" in
   'terminal list --json') printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
   'orchestration worker-show'*) printf '%s\n' "$FAKE_SHOW" ;;
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *) printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false}}}\n' "${FAKE_WORKERS:-[]}" ;;
 esac
 FAKE
@@ -210,8 +212,9 @@ case "$*" in
     echo "$env $h" >> "$FAKE_DIR/closed.log"
     jq -c --arg h "$h" 'map(select(.handle != $h))' "$FAKE_DIR/$env.terminals" > "$FAKE_DIR/$env.tmp" && mv "$FAKE_DIR/$env.tmp" "$FAKE_DIR/$env.terminals" ;;
   *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *worker-list*)
-    if [[ "$*" == *--include-remote* ]]; then
+    if [[ "$*" == *--run* ]]; then
       jq -s '{ok:true,result:{workers:add,page:{hasMore:false}}}' "$FAKE_DIR/"*.workers
     else
       printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false}}}\n' "$(cat "$FAKE_DIR/$env.workers")"
@@ -258,6 +261,7 @@ case "$*" in
   *'terminal close'*)
     for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && echo "${args[$((i+1))]}" >> "$FAKE_DIR/closed.log"; done ;;
   *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *worker-list*)
     echo "$*" >> "$FAKE_DIR/list.log"
     case "$cursor" in
@@ -276,15 +280,15 @@ echo "[$(rw p-mix dispatched b),$(rw lead-x completed a)]" > "$fake/workers2"
 echo "[$(rw p-late completed a)]" > "$fake/workers3"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 sort "$fake/closed.log" > "$tmp/closed"
-printf '%s\n' t-late t-pane t-shell | cmp - "$tmp/closed"
-for kept in t-own t-agent t-mixed t-none t-lead; do
+printf '%s\n' t-agent t-late t-pane t-shell | cmp - "$tmp/closed"
+for kept in t-own t-mixed t-none t-lead; do
   grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
 done
 grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
 grep -Fq 'Kept terminal t-none (local, unknown owner, still running)' "$tmp/output"
-grep -q 'terminals closed=3 kept=5' "$tmp/output"
+grep -q 'terminals closed=4 kept=4' "$tmp/output"
 grep -q -- '--limit 100' "$fake/list.log"
-echo 'ok released dispatch without a handle: terminals linked by path; panes close; live, agent, lead and unknown paths kept'
+echo 'ok released dispatch without a handle: terminals linked by path; panes and idle agents close; live, lead and unknown paths kept'
 # #386: a dry run left every worktree with a leftover terminal on a released dispatch as "active or unknown", because
 # the terminal it plans to close was still open when the worktree check ran. Apply closes it first, so the preview must agree.
 for n in rel-shell rel-none live-term unk-term; do git worktree add -q --detach "$tmp/$n" main; done
@@ -303,6 +307,7 @@ case "$*" in
   *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/terminals")" ;;
   *'terminal close'*) ;;
   *worker-show*) case "$*" in *d-pend*|*d-bad*) exit 1 ;; *d-live-disp*) printf '{"ok":true,"result":{"dispatch":{"status":"dispatched"},"terminal":{"cwd":"%s"}}}\n' "$FAKE_LIVE_CWD" ;; *) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;; esac ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *worker-list*)
     case "$cursor" in '') page=1; more=false ;; esac
     [ ! -e "$FAKE_DIR/shape" ] || { cat "$FAKE_DIR/shape"; exit 0; }
@@ -314,10 +319,10 @@ export FAKE_LIVE_CWD="$tmp/live-disp"
 bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
 grep -Fq "Remove worktree $real/rel-shell" "$tmp/output" || { echo 'released dispatch with a closable leftover terminal still kept in preview'; exit 1; }
 grep -Fq "Remove worktree $real/rel-none" "$tmp/output" || { echo 'released dispatch with no terminal kept'; exit 1; }
-grep -Fq "Kept worktree $real/live-term (active or unknown Orca terminal)" "$tmp/output"
+grep -Fq "Remove worktree $real/live-term" "$tmp/output"
 grep -Fq "Kept worktree $real/unk-term (active or unknown Orca terminal)" "$tmp/output"
 grep -Fq "Kept worktree $real/live-disp (active or unknown Orca terminal)" "$tmp/output"
-echo 'ok preview frees a worktree whose only terminal is a finished one; agent, unknown owner and live dispatch kept'
+echo 'ok preview frees a worktree whose only terminal is a finished one, idle agent included; unknown owner and live dispatch kept'
 # A pending dispatch has no worker and no worktree, so a failed worker-show on it must not keep every worktree.
 rw3() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s","dispatchStatus":"%s","projection":{"workspace":null}}' "$1" "$2"; }
 echo "[$(rw2 rel-shell released),$(rw2 rel-none released),$(rw2 live-term released),$(rw2 live-disp dispatched),$(rw3 pend-1 pending)]" > "$fake/workers1"
