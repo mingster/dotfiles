@@ -854,6 +854,12 @@ fi
 if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && [ -z "$(git -C "$main_checkout" status --porcelain --untracked-files=all)" ]; then
   echo 'Fast forward main checkout'
   [ "$apply" -eq 0 ] || git -C "$main_checkout" pull --ff-only origin main
+  # The merged preset reaches Orca only through setup-orca.sh; prefer the copy from the freshly updated checkout.
+  if [ -f "$main_checkout/.orca/presets.json" ]; then
+    setup_orca="$main_checkout/script/setup-orca.sh"; [ -f "$setup_orca" ] || setup_orca="$here/setup-orca.sh"
+    echo 'Install merged Orca preset'
+    [ "$apply" -eq 0 ] || DOTFILES="$main_checkout" bash "$setup_orca"
+  fi
 else keep 'main update' 'checkout is not on main or is dirty'
 fi
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi

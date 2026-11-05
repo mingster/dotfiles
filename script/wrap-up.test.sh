@@ -141,6 +141,32 @@ rm dirty-main
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test "$(git rev-parse HEAD)" = "$(git --git-dir="$tmp/origin" rev-parse main)"
 echo 'ok clean main fast forwards'
+# Issue 548: the step that updates main also installs the merged preset.
+mkdir -p "$tmp/updater/.orca"
+echo '{"v":1}' > "$tmp/updater/.orca/presets.json"
+git -C "$tmp/updater" add .orca/presets.json
+git -C "$tmp/updater" commit -qm preset
+git -C "$tmp/updater" push -q origin main
+echo dirty-main > dirty-main
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -e "$HOME/.orca/presets.json"
+grep -q 'Kept main update' "$tmp/output"
+echo 'ok dirty main checkout is reported and no preset installed'
+rm dirty-main
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
+test ! -e "$HOME/.orca/presets.json"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+cmp "$HOME/.orca/presets.json" .orca/presets.json
+if ls "$HOME/.orca" | grep -q 'presets.json.bak'; then echo 'unexpected backup on first install'; exit 1; fi
+echo 'ok clean main update installs the merged preset'
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+if ls "$HOME/.orca" | grep -q 'presets.json.bak'; then echo 'unexpected backup on rerun'; exit 1; fi
+echo 'ok rerun leaves an identical preset alone'
+echo '{"local":true}' > "$HOME/.orca/presets.json"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+cmp "$HOME/.orca/presets.json" .orca/presets.json
+grep -lq '"local":true' "$HOME"/.orca/presets.json.bak*
+echo 'ok a differing preset is backed up before it is replaced'
 git worktree add -qb lq-merged "$tmp/lead-queue"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test -d "$tmp/lead-queue"

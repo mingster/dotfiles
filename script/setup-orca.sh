@@ -6,9 +6,20 @@ DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 
 mkdir -p "$HOME/.orca"
 
-if [ -f "$DOTFILES/.orca/presets.json" ]; then
-  cp -f "$DOTFILES/.orca/presets.json" "$HOME/.orca/presets.json"
-  echo "setup-orca: installed presets.json to $HOME/.orca/presets.json"
+src="$DOTFILES/.orca/presets.json"
+dest="$HOME/.orca/presets.json"
+if [ -f "$src" ]; then
+  if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
+    echo "setup-orca: presets.json already current"
+  else
+    if [ -f "$dest" ]; then
+      backup="$dest.bak-$(date +%Y%m%d%H%M%S)"
+      cp -p "$dest" "$backup"
+      echo "setup-orca: backed up existing presets.json to $backup"
+    fi
+    cp -f "$src" "$dest"
+    echo "setup-orca: installed presets.json to $dest"
+  fi
 fi
 
 echo "setup-orca: done"
