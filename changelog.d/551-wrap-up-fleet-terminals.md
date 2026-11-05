@@ -1,0 +1,1 @@
+Fleet wrap-up now closes the terminals of each host's own Orca, and a terminal with no dispatch and no running agent is closed so its worktree can be removed. Running agents, unsettled dispatches, `lead-` worktrees, uncommitted work and the main checkout are still kept, with the reason printed.
