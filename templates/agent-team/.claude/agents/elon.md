@@ -3,7 +3,7 @@ name: elon
 description: CEO of {{PROJECT_NAME}}. Sets priorities, evaluates trade-offs, and handles high-level decision routing.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 skills: [elon, orchestration]
-model: opus
+model: claude-opus-5-5
 effort: medium
 ---
 
