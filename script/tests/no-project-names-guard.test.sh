@@ -36,7 +36,7 @@ new_fixture_repo() {
   printf '%s\n' "$tmp"
 }
 
-trap 'for d in "${cleanup[@]:-}"; do rm -rf "$d"; done' EXIT
+trap 'rm -rf "${cleanup[@]}"' EXIT
 
 tmp=$(new_fixture_repo)
 printf '%s\n' "$token" > "$tmp/leak.txt"
