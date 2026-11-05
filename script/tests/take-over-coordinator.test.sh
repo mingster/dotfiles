@@ -71,6 +71,8 @@ EOF
   git -C "$sa" remote add origin "$W/origin.git"
   git -C "$sa" add -A && git -C "$sa" commit -q --no-verify -m seed && git -C "$sa" push -q origin main
   cp "$sa/zshenv.local" "$W/home-coordinator-a/.zshenv.local"
+  FAKE_HOST=coordinator-a HOME="$W/home-coordinator-a" FAKE_DIR="$W/fake" PATH="$W/bin:$PATH" AGENT_STATE_SKIP_LAUNCHCTL=1 \
+    bash "$sa/sync.sh" push >"$W/seed.out" 2>&1 || cat "$W/seed.out"
 }
 clone_for() { # host
   git clone -q -b main "$W/origin.git" "$W/home-$1/agent-state"
@@ -154,7 +156,7 @@ tk backup-a --dry-run; check test "$rc" -eq 0 -a "$(ohead)" = "$before" -a -z "$
 # 6. earlier backup reachable
 world; clone_for backup-b; before=$(ohead); tk backup-b --yes
 DESC="an earlier backup that answers ssh blocks the takeover"; check test "$rc" -eq 1 -a "$(ohead)" = "$before"
-DESC="the warning names the earlier backup and --skip-order"; check out_has 'backup-a' && out_has -- '--skip-order'
+DESC="the warning names the earlier backup and --skip-order"; check ok 'out_has backup-a && out_has -- --skip-order'
 tk backup-b --yes --skip-order
 DESC="--skip-order lets it continue"; check test "$rc" -eq 0 -a "$(ocoord)" = backup-b
 world; clone_for backup-b; touch "$W/fake/down-backup-a"; tk backup-b --yes
