@@ -158,6 +158,10 @@
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "composer-2.5"
         }
       ]
     },
