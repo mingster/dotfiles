@@ -5,6 +5,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 apply=0
 fleet=0
 worktrees_only=0
+main_update=0
 repo=.
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -13,6 +14,7 @@ while [ $# -gt 0 ]; do
     --stale) : ;; # Accepted for compatibility; stale cleanup is part of every apply.
     --fleet) fleet=1 ;;
     --worktrees-only) worktrees_only=1 ;;
+    --main-update) main_update=1 ;; # With --worktrees-only: also update main and install the preset (used per fleet host).
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
     -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>]'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -20,6 +22,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ "$fleet" -eq 0 ] || [ "$worktrees_only" -eq 0 ] || { echo 'wrap-up: --fleet and --worktrees-only exclude each other' >&2; exit 2; }
+[ "$main_update" -eq 0 ] || [ "$worktrees_only" -eq 1 ] || { echo 'wrap-up: --main-update needs --worktrees-only' >&2; exit 2; }
 # A fake orca CLI means a test: never let --apply reach the real temp roots from there.
 if [ "$apply" -eq 1 ] && [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_SCRATCH_ROOT+x}" ] || [ -z "${WRAP_UP_LOOSE_ROOT+x}" ]; }; then
   echo 'wrap-up: ORCA_CLI_COMMAND is set (test mode); set WRAP_UP_SCRATCH_ROOT and WRAP_UP_LOOSE_ROOT before --apply' >&2; exit 2
@@ -661,9 +664,23 @@ missing_lsof_summary() {
     printf 'lsof unavailable: kept all worktrees=%s and Chrome clones=%s\n' "$(wc -l < "$tmp/kept-worktrees" | tr -d ' ')" "${clone_kept:-0}"
   fi
 }
-# A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once, and a
-# checkout there is never fast forwarded.
+update_main() {
+  if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && [ -z "$(git -C "$main_checkout" status --porcelain --untracked-files=all)" ]; then
+    echo 'Fast forward main checkout'
+    [ "$apply" -eq 0 ] || git -C "$main_checkout" pull --ff-only origin main
+    # The merged preset reaches Orca only through setup-orca.sh; prefer the copy from the freshly updated checkout.
+    if [ -f "$main_checkout/.orca/presets.json" ]; then
+      setup_orca="$main_checkout/script/setup-orca.sh"; [ -f "$setup_orca" ] || setup_orca="$here/setup-orca.sh"
+      echo 'Install merged Orca preset'
+      [ "$apply" -eq 0 ] || DOTFILES="$main_checkout" bash "$setup_orca"
+    fi
+  else keep 'main update' 'checkout is not on main or is dirty'
+  fi
+}
+# A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once. With
+# --main-update it also fast forwards a clean main checkout and installs the merged preset.
 if [ "$worktrees_only" -eq 1 ]; then
+  [ "$main_update" -eq 0 ] || update_main
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
   printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
@@ -851,11 +868,7 @@ if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
   [ "$apply" -eq 0 ] || bash "$pane_script"
 fi
-if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && [ -z "$(git -C "$main_checkout" status --porcelain --untracked-files=all)" ]; then
-  echo 'Fast forward main checkout'
-  [ "$apply" -eq 0 ] || git -C "$main_checkout" pull --ff-only origin main
-else keep 'main update' 'checkout is not on main or is dirty'
-fi
+update_main
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
@@ -863,7 +876,8 @@ printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kep
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
 missing_lsof_summary
-# --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only).
+# --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only), then
+# fast forward that host's clean main checkout and install the merged preset; a dirty or off main checkout is reported.
 # Config: {"hosts": [{"host": "<ssh host>", "repo_dir": "<checkout on that host>"}]}; see wrap-up-fleet.config.example.json.
 # An unreachable or failing host only warns. The script and arguments travel as base64 so a login shell's own output
 # never reaches the parse; the remote output is framed between tagged markers.
@@ -882,7 +896,7 @@ root=${DOTFILES_DIR:-$HOME/dotfiles}
 printf '%s\n' "@@begin-$tag@@"
 status=0
 # shellcheck disable=SC2086 # flags is a fixed word list built by the caller
-bash "$root/script/wrap-up.sh" --worktrees-only $flags --repo "$repo" 2>&1 || status=$?
+bash "$root/script/wrap-up.sh" --worktrees-only --main-update $flags --repo "$repo" 2>&1 || status=$?
 printf '\n%s\n' "@@end-$tag-$status@@"
 REMOTE
   b64() { printf '%s' "$1" | base64 | tr -d '\n'; }

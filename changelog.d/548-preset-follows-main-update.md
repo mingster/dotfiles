@@ -1,0 +1,1 @@
+wrap-up.sh now installs the merged Orca preset right after it fast forwards the main checkout, on the coordinator and on every --fleet host. A dirty checkout or one not on main is reported and left alone. setup-orca.sh skips an identical preset and backs up a differing one before replacing it.
