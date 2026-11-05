@@ -651,6 +651,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
         excluded_provider = entry["provider"] == avoid_provider
+        if entry["provider"] == "cursor" and entry["model"] != "composer-2.5":
+            eligible, row = False, {**row, "verdict": "cursor runs only composer-2.5"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
@@ -660,8 +662,6 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         candidates.append(candidate)
         if candidate["eligible"]:
             allowed.append((index, candidate))
-    # A cursor gpt-* entry draws on the API pool, which its headroom does not measure: last resort only.
-    allowed = [a for a in allowed if not (a[1]["provider"] == "cursor" and a[1]["model"].startswith("gpt-"))] or allowed
     chosen = None
     if allowed:
         if (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
