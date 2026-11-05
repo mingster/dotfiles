@@ -72,6 +72,7 @@ base64 -d > "$bundle"
 git -C "$repo_dir" fetch -q origin main 2>/dev/null || true
 git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha" \
   || { echo "remote-heavy: the remote checkout lacks the base commit of the bundle (its origin/main is behind this one); update origin/main there and retry" >&2; exit 1; }
+# Keep the PATH part the same as in head-checks.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
 [ ! -d "$HOME/dotfiles-main" ] || export DOTFILES_DIR="$HOME/dotfiles-main"
 [ ! -d /usr/bin/core_perl ] || export PATH="$PATH:/usr/bin/core_perl"

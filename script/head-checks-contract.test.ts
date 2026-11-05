@@ -117,11 +117,12 @@ function runHeadChecks(
 	head: string,
 	comments: string,
 	base = fix.base,
+	path = `/usr/bin:${fix.binpath}:${process.env.PATH ?? ""}`,
 ) {
 	const env = {
 		...process.env,
 		HOME: fix.home,
-		PATH: `/usr/bin:${fix.binpath}:${process.env.PATH ?? ""}`,
+		PATH: path,
 		GH_BASE: fix.base,
 		GH_HEAD: head,
 		COMMENTS: comments,
@@ -294,6 +295,34 @@ test(
 			expect(run.receipt).toMatch(/Trial merge conflict.*lib\.txt/s);
 			expect(run.receipt).not.toContain("Checks: PASS");
 			expect(snapshot(fix.repo)).toBe(before);
+		} finally {
+			rmSync(fix.root, { recursive: true, force: true });
+		}
+	},
+	60_000,
+);
+
+test(
+	"head-checks finds bunx from the bun install dir on a bare non-login PATH",
+	() => {
+		const fix = fixture();
+		const comments = join(fix.root, "comments");
+		try {
+			const bunBin = join(fix.home, ".bun/bin");
+			mkdirSync(bunBin, { recursive: true });
+			writeFileSync(join(bunBin, "bunx"), "#!/bin/sh\n");
+			Bun.spawnSync(["chmod", "+x", join(bunBin, "bunx")]);
+			writeFileSync(
+				join(fix.repo, ".agents/head-checks.conf"),
+				"command -v bunx\n",
+			);
+			git(fix.repo, "add", ".");
+			git(fix.repo, "commit", "-qm", "bunx check");
+			const head = git(fix.repo, "rev-parse", "HEAD");
+			const bare = `/usr/bin:/bin:/usr/local/bin:${fix.binpath}`;
+			const run = runHeadChecks(fix, head, comments, fix.base, bare);
+			expect(run.code).toBe(0);
+			expect(run.receipt).toContain(join(bunBin, "bunx"));
 		} finally {
 			rmSync(fix.root, { recursive: true, force: true });
 		}
