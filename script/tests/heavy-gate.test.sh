@@ -143,7 +143,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         with contextlib.redirect_stderr(self.cleanup_stderr), \
              mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(module.subprocess, 'Popen', side_effect=popen), \
-             mock.patch.object(module.os, 'waitid', return_value=None), \
+             mock.patch.object(module.os, 'waitid', return_value=None, create=True), \
              mock.patch.object(module.os, 'killpg', side_effect=killpg) as signals, \
              mock.patch.object(module.subprocess, 'run', side_effect=run):
             if live_child:
@@ -245,7 +245,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                      mock.patch.object(module.subprocess, 'Popen', side_effect=lambda command, *a, **kw:
                          proc if command == ['fixture'] else real_popen(command, *a, **kw)), \
                      mock.patch.object(module.subprocess, 'run', side_effect=run), \
-                     mock.patch.object(module.os, 'waitid', side_effect=inspection), \
+                     mock.patch.object(module.os, 'waitid', side_effect=inspection, create=True), \
                      mock.patch.object(module.os, 'killpg') as killpg:
                     self.assertEqual(module.gate(args), 7)
                     killpg.assert_not_called()
@@ -268,11 +268,43 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                  proc if command == ['fixture'] else real_popen(command, *a, **kw)), \
              mock.patch.object(module.subprocess, 'run', side_effect=run), \
              mock.patch.object(module.time, 'monotonic', side_effect=itertools.count(step=4)), \
-             mock.patch.object(module.os, 'waitid', side_effect=[None, ChildProcessError('generation lost')]), \
+             mock.patch.object(module.os, 'waitid', side_effect=[None, ChildProcessError('generation lost')], create=True), \
              mock.patch.object(module.os, 'killpg') as killpg:
             self.assertEqual(module.gate(args), 7)
             killpg.assert_called_once_with(987654, signal.SIGTERM)
             self.assertTrue(list((self.root/'.cache/heavy-gate').glob('slot-*')))
+
+    def test_missing_waitid_still_delivers_term_to_live_group(self):
+        self.config(1)
+        proc = mock.Mock(pid=987654, returncode=None)
+        proc.wait.return_value = 7
+        args = module.argparse.Namespace(weight=1, head_checks=False, command=['--', 'fixture'])
+        real_popen, real_run = subprocess.Popen, subprocess.run
+        gate_pgid = os.getpid()
+        term_sent = []
+
+        def killpg(pgid, sig):
+            term_sent.append(sig)
+
+        def run(command, *a, **kw):
+            if command[0] == 'ps':
+                state = 'Z' if term_sent else 'S'
+                if len(command) > 1 and command[1] == '-p':
+                    return subprocess.CompletedProcess(
+                        command, 0, f'987654 987654 {gate_pgid} {state}\n', '')
+                return subprocess.CompletedProcess(
+                    command, 0, f'987654 987654 {gate_pgid} 501 {state} fixture-worker\n', '')
+            return real_run(command, *a, **kw)
+
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module.subprocess, 'Popen', side_effect=lambda command, *a, **kw:
+                 proc if command == ['fixture'] else real_popen(command, *a, **kw)), \
+             mock.patch.object(module.subprocess, 'run', side_effect=run), \
+             mock.patch.object(module.os, 'waitid', None, create=True), \
+             mock.patch.object(module.os, 'killpg', side_effect=killpg) as killpg_mock:
+            self.assertEqual(module.gate(args), 7)
+            killpg_mock.assert_any_call(987654, signal.SIGTERM)
+            self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
 
     def test_group_publication_failure_holds_after_owner_exit(self):
         self.config(1)
