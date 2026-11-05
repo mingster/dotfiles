@@ -709,6 +709,47 @@ child.wait()
             self.finish(p)
         self.assert_overlap({'heavy': 2, 'light': 1, 'second': 2}, 2)
 
+    def test_waiting_weight_two_job_gets_a_turn_within_bound(self):
+        self.config(2)
+        self.env['HEAVY_GATE_MAX_WAIT_SECONDS'] = '0.4'
+        weights = {'big': 2}
+        first = self.job('l0', 1.0)
+        self.wait_for(lambda: self.started('l0'))
+        big = self.job('big', 0.1, weight=2)
+        lights = [first]
+        for i in range(1, 7):
+            weights[f'l{i}'] = 1
+            lights.append(self.job(f'l{i}', 0.5))
+            time.sleep(0.2)
+        weights['l0'] = 1
+        for p in (big, *lights):
+            self.finish(p)
+        starts = {e.split()[2]: float(e.split()[0]) for e in self.events() if e.split()[1] == 'start'}
+        # Without the bound the light jobs hold a slot until the last one ends.
+        self.assertLess(starts['big'], starts['l6'], self.events())
+        self.assertLess(starts['big'] - starts['l0'], 0.4 + 1.0 + 0.5, self.events())
+        self.assert_overlap(weights, 2)
+
+    def test_weight_one_jobs_run_while_waiter_is_under_bound(self):
+        self.config(2)
+        self.env['HEAVY_GATE_MAX_WAIT_SECONDS'] = '60'
+        first = self.job('l0', 1.2)
+        self.wait_for(lambda: self.started('l0'))
+        big = self.job('big', 0.1, weight=2)
+        time.sleep(0.3)
+        self.finish(self.job('l1', 0.1))
+        self.assertFalse(self.started('big'), self.events())
+        for p in (first, big):
+            self.finish(p)
+        self.assertTrue(self.started('big'))
+        self.assert_overlap({'l0': 1, 'l1': 1, 'big': 2}, 2)
+
+    def test_bad_max_wait_is_refused(self):
+        self.config(2)
+        self.env['HEAVY_GATE_MAX_WAIT_SECONDS'] = 'soon'
+        _, err = self.finish(self.job(), 1)
+        self.assertIn('HEAVY_GATE_MAX_WAIT_SECONDS', err)
+
     def test_weight_above_capacity_refuses(self):
         self.config(1)
         _, err = self.finish(self.job(weight=2), 1)

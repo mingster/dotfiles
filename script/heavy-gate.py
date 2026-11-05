@@ -41,6 +41,11 @@ leaders never authorize signals. Nested gates share the tracked ancestor group;
 their survivors keep capacity. Legacy slots without kernel authority cannot nest,
 but retain dead-PID reclaim.
 Timeout and admission limits are unchanged.
+A job that cannot get its slots publishes a waiter record. Once a waiter of weight
+W has waited HEAVY_GATE_MAX_WAIT_SECONDS (default 300), jobs lighter than W stop
+taking slots until it has run, so a weight 2 job cannot be starved by a stream of
+weight 1 jobs. Until then lighter jobs run as usual. Only waits for slots count,
+never waits on the load or memory sensors. Waiter records of dead owners are ignored.
 """
 import argparse
 import contextlib
@@ -235,6 +240,36 @@ class Slots:
         self.groups = set()
         self.authorizations = []
         self.stuck = []
+        self.waiting = self.root / 'waiting'
+        self.bound = max_wait()
+
+    def wait_record(self, weight):
+        """Publish (once) that this job is blocked on slots; keeps its first time."""
+        record = self.waiting / self.token
+        if not record.exists():
+            self.waiting.mkdir(exist_ok=True)
+            temporary = self.waiting / f'.{self.token}.tmp'
+            temporary.write_text(json.dumps({'pid': os.getpid(), 'weight': weight,
+                                             'since': time.time()}))
+            temporary.replace(record)
+
+    def stop_waiting(self):
+        (self.waiting / self.token).unlink(missing_ok=True)
+
+    def starved_heavier(self, weight):
+        """True when a live, bounded-out waiter needs more slots than this job."""
+        for record in self.waiting.glob('*'):
+            if record.name.startswith('.') or record.name == self.token:
+                continue
+            try:
+                info = json.loads(record.read_text())
+                if not alive(info['pid']):
+                    record.unlink(missing_ok=True)
+                elif info['weight'] > weight and time.time() - info['since'] >= self.bound:
+                    return True
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return False
 
     @contextlib.contextmanager
     def allocation(self):
@@ -263,6 +298,8 @@ class Slots:
     def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False):
         with self.allocation():
             self.reclaim()
+            if self.starved_heavier(weight):
+                return False
             occupied = list(self.root.glob('slot-*'))
             if any((p / 'exclusive').exists() for p in occupied) or (exclusive and occupied):
                 return False
@@ -516,6 +553,16 @@ def holds_slot():
     return False
 
 
+def max_wait():
+    try:
+        value = float(os.environ.get('HEAVY_GATE_MAX_WAIT_SECONDS', '300'))
+    except ValueError:
+        value = -1
+    if not math.isfinite(value) or value < 0:
+        raise ValueError('HEAVY_GATE_MAX_WAIT_SECONDS must be nonnegative and finite')
+    return value
+
+
 def job_class():
     value = os.environ.get('HEAVY_GATE_CLASS', '')
     if value not in ('', 'short', 'long'):
@@ -551,11 +598,14 @@ def gate(args):
             if not reason:
                 if slots.claim(weight, reserve=int(long_job), long_job=long_job):
                     break
+                slots.wait_record(weight)
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
                 if slots.stuck:
                     reason += ('; held with the owner gone and no proof its processes exited: '
                                + ', '.join(slots.stuck))
+            if reason.startswith(('free memory', 'load ')):
+                slots.stop_waiting()
             now = time.monotonic()
             if now - last_notice >= 60:
                 print(f'heavy-gate: {reason}', file=sys.stderr, flush=True)
@@ -582,6 +632,7 @@ def gate(args):
             print(f'heavy-gate: child exited with status {status}', file=sys.stderr, flush=True)
         return status if status >= 0 else 128 - status
     finally:
+        slots.stop_waiting()
         slots.release()
 
 

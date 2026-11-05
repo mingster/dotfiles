@@ -46,3 +46,17 @@ or fabricate a ready ledger. Once the owner exits, normal admission can reclaim
 a published ledger only after successful inspection proves all registered groups
 empty or zombie-only. Slots without that proof remain held for operator review;
 this document grants no manual capacity-release authority.
+
+## Fair turns for larger jobs
+
+A job that cannot get its slots publishes a waiter record under
+`~/.cache/heavy-gate/waiting/`. Once a waiter has waited
+`HEAVY_GATE_MAX_WAIT_SECONDS` (default 300), jobs that need fewer slots than it
+stop taking slots until it has run. Without this, a steady stream of weight 1
+jobs could keep a weight 2 job waiting forever, because the two slots it needs
+are never free at the same moment.
+
+Before that bound passes, lighter jobs run as usual. Only waits for slots count,
+not waits on the load or free memory checks. Records of dead owners are ignored.
+The slot limit is never exceeded, since every claim still goes through the same
+atomic check.
