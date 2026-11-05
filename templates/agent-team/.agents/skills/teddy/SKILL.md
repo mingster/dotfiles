@@ -1,7 +1,7 @@
 ---
 name: teddy
 description: Tech Lead entry. /teddy status reports the status of tech work, and /teddy <request> hands an engineering request to the Tech Lead. The daily run is /elon daily run.
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 effort: medium
 ---
 

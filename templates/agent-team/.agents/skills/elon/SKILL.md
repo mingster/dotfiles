@@ -1,7 +1,7 @@
 ---
 name: elon
 description: Talk with Elon, the CEO of this project's agent team. Handles high-level strategy, trade-offs, prioritizing objectives, and dispatching to BA, Sales, or Tech Lead. Use with /elon, /elon <objective>, or /ceo.
-model: opus
+model: claude-opus-5-5
 effort: medium
 ---
 
