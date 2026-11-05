@@ -11,7 +11,7 @@ if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
 fi
 unset HEAD_CHECKS_GATE_HELD
 repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
-override="" changed="" explicit_base=""
+override="" changed="" explicit_base="" main_sha=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,7 +46,7 @@ finish() {
   printf '\nTotal: %ss\n' "$SECONDS" >> "$log"
   [ "$status" -ne 0 ] || result=PASS
   {
-    printf 'Checks: %s head=%s%s\n\n' "$result" "$sha" "${train_heads:+ train-heads=$train_heads}"
+    printf 'Checks: %s head=%s%s%s\n\n' "$result" "$sha" "${main_sha:+ main=$main_sha}" "${train_heads:+ train-heads=$train_heads}"
     if [ -n "$changed" ]; then
       unchecked_paths=$(sed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
       [ -z "$unchecked_paths" ] || printf 'Unchecked paths: %s\n\n' "$unchecked_paths"
@@ -155,6 +155,12 @@ if [ -n "$train_heads" ]; then
       || usage "train head does not contain $commit"
   done
 fi
+# The trial merge target: the explicit --base, else the current origin/main tip.
+if [ -z "$explicit_base" ]; then
+  git -C "$repo" fetch -q origin main >> "$log" 2>&1 || true
+  base=$(git -C "$repo" rev-parse --verify -q "origin/main^{commit}" || printf '%s' "$base")
+fi
+main_sha="$base"
 base=$(git -C "$repo" merge-base "$base" "$sha") || usage "cannot resolve PR merge base"
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
@@ -204,6 +210,16 @@ else
   git -C "$repo" worktree prune
   git -C "$repo" worktree add --detach "$worktree" "$sha" >> "$log" 2>&1
 fi
+# Test the head as it will land: merge main into the check worktree only, never the caller's checkout.
+if ! merge_out=$(git -C "$worktree" -c user.name=head-checks -c user.email=head-checks@localhost.invalid \
+    merge --no-edit "$main_sha" 2>&1); then
+  conflicts=$(git -C "$worktree" diff --name-only --diff-filter=U | paste -sd ',' - | sed 's/,/, /g')
+  git -C "$worktree" merge --abort >> "$log" 2>&1 || git -C "$worktree" reset -q --hard "$sha" >> "$log" 2>&1 || true
+  printf 'Trial merge conflict: head %s does not merge with main %s (conflicts: %s). Rebase the PR on main.\n' "$sha" "$main_sha" "${conflicts:-unknown}" >> "$log"
+  printf '%s\n' "$merge_out" >> "$log"
+  exit 1
+fi
+printf 'Trial merge: head %s with main %s\n' "$sha" "$main_sha" >> "$log"
 config="${override:-$worktree/.agents/head-checks.conf}"
 [ -f "$config" ] || usage "missing .agents/head-checks.conf"
 if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
