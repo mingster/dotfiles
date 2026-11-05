@@ -63,6 +63,7 @@ Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemin
 - The Cursor "Trust this workspace" stall is handled under Elon or Teddy supervision: read the screen after each Cursor start and accept the prompt.
 - Debug handoff preset: `fullstack-dev-debug` (Claude `sonnet` high, then `opus` high).
 - Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon). Argon is the Gemini family, so it counts as cross family for a Claude author. Cursor is never a reviewer: it runs only `composer-2.5` (owner 2026-11-04), so there is no Cursor GPT fallback. If none is available, report gate blocked.
+- Reviewer exception (owner 2026-11-05): Claude authored PRs go to Cursor `composer-2.5` until the Cursor limit resets on 2026-11-25. Composer authored PRs still go to a Claude reviewer. A Grok Verdict does not count for merge.
 - Cursor runs only `composer-2.5` (owner 2026-11-04). Never pass another Cursor model (`claude-*`, `gpt-*`, `gemini-*`); `usage-gate.py pick` skips them and `~/.orca/presets.json` lists none.
 - Argon workers still get the file list and i18n key audit before merge (see below).
 
