@@ -4,7 +4,7 @@ Status: documentation corrections checked locally; revised-head canonical Checks
 
 ## Window and sources
 
-Previous completed audit merges remain dotfiles #418, riben.life #6448 and PSTV #950 on October 29, as recorded in [the preceding report](2026-10-31-codex.md). Its last judgement cutoff was October 31 11:38Z; this incremental review ends at 12:01:21Z. All times are UTC. The earlier audit PRs are still open, so this is an incremental rerun, not a claim that the previous audit merged.
+Previous completed audit merges remain dotfiles #418, project-a #6448 and project-b #950 on October 29, as recorded in [the preceding report](2026-10-31-codex.md). Its last judgement cutoff was October 31 11:38Z; this incremental review ends at 12:01:21Z. All times are UTC. The earlier audit PRs are still open, so this is an incremental rerun, not a claim that the previous audit merged.
 
 Reviewed changed Elon roles, affected model-routing recovery paragraphs, new owner corrections, native worker-show receipts and Teddy status reports. Fresh inbox coverage: latest 1,000 messages, October 30 23:57:18Z through October 31 12:00:25Z; complete only for the incremental interval and available recipients. Older lead handles and earlier missing messages remain coverage gaps. GitHub API snapshots and native terminal inventories were collected in this run. Raw private observations/transcripts remain outside Git.
 
@@ -13,7 +13,7 @@ Reviewed changed Elon roles, affected model-routing recovery paragraphs, new own
 | Finding | Evidence and authority | Correction |
 | --- | --- | --- |
 | Launch counted without ensuring task work; retry before readiness; prohibited host/provider combination. | Native ctx_4039ad2f8dfe: requested Codex on niteking, `dispatch_input` failure `agent_not_in_foreground`; terminal reported no configured Node version. Native ctx_b4afd9c95f68 and ctx_060e474c083f: `agent_readiness`, `agent-trust-workspace`. Owner holds Elon accountable for delivery. | Shared Elon role now requires preflight, within-two-minute task-specific progress proof, ongoing recovery ownership, provenance-preserving retries and checked delivery/disposition. Current temporary owner routing overrides static defaults. |
-| Root Elon additions exceed the 800-word role budget. | Initial deterministic audit: riben.life 856 words, PSTV 853. | Condensed the accountability contract in the audit branches; both roles fit the existing budget. No budget raised. |
+| Root Elon additions exceed the 800-word role budget. | Initial deterministic audit: project-a 856 words, project-b 853. | Condensed the accountability contract in the audit branches; both roles fit the existing budget. No budget raised. |
 | Model-routing Start 3 treats `outcome_unknown` as failed and prescribes stop/abandon/retry from screen symptoms. | Conflicts with installed Orca orchestration Authority and safety floor / Canonical supervised loop: unverifiable is absence, never exit authority. | Removed the embedded stop/abandon recipe; require receipt stage, residual resources, native liveness and supported recovery before retry. |
 | Model-routing Start 6 closes terminals sharing a worktree and then prunes after task failure. Watching 3, 5 and 7 repeat unsafe transitions. | Installed Orca Outcome requires accepted settlement for release and positive process-state evidence for recovery; owner requires preserving current/unknown resources and unmerged work. | Replaced five duplicated recovery/cleanup paragraphs with native-authority pointers and explicit preservation of shared/live/unknown resources. No real cleanup, lifecycle bypass or helper installation performed. |
 | Role demands filling hosts using stale hard-coded caps. | Current owner limits and fresh host/provider admission have higher authority. | Removed fixed blueDevil5/niteking4/miniu2 and unconditional-fill instruction; current limits govern, heavy work holds on relevant load unknown or >=12. |
@@ -23,7 +23,7 @@ Canonical changes live in dotfiles template; matching policy paragraphs and acco
 
 ## Every role: outcome and next action
 
-Rows cover the shared role in all three repositories. Runtime evidence is riben.life/dotfiles; PSTV-specific role execution remains an explicit gap.
+Rows cover the shared role in all three repositories. Runtime evidence is project-a/dotfiles; project-b-specific role execution remains an explicit gap.
 
 | Role | Incremental decision/outcome | Structural result or evidence gap |
 | --- | --- | --- |
@@ -44,8 +44,8 @@ Fresh GitHub snapshots show zero merged PRs in the incremental interval in all t
 | Project | Incremental merges | Open PRs | Ready-for-agent | Unique ready-for-human / owner-action / blocked union |
 | --- | ---: | --- | ---: | ---: |
 | dotfiles | 0 | #450, #399 | 0 | 0 |
-| riben.life | 0 | #6701, #6700, #6699, #6213 | 8 | 26 |
-| PSTV | 0 | #955, #903 | 16 | 25 |
+| project-a | 0 | #6701, #6700, #6699, #6213 | 8 | 26 |
+| project-b | 0 | #955, #903 | 16 | 25 |
 
 Ticket-first-work-to-merge per ticket and median remain UNKNOWN (verified samples n=0); PR creation is not a work-start timestamp. Unmerged tickets/PRs are listed separately in the TSV. Post-merge reopens/hotfixes linked to original merged tickets remain UNKNOWN: issue-event timelines and incident joins were not collected. Zero incremental merges does not establish zero post-merge incidents. Engineering commits without PRs are additional unmerged work.
 
@@ -74,7 +74,7 @@ Independent Composer review of the preceding heads completed Standards PASS and 
 
 The product PRs now carry general audit documentation and role/routing changes only. Generated staging-review and wrap-up skills are isolated on each product's `mingster/team-sync-audit-1031` branch, with exactly those two generated files. Merge order is canonical dotfiles source first, generated-only copies using the source Verdict, then the product audit documentation; each new head still requires its own applicable Checks/review receipts. This split addresses the existing merge contract without weakening it. These branches are not deployed helper changes.
 
-The prior summarized verification block was insufficient as an attached raw receipt. The [raw command transcript](2026-10-31-codex-verification.txt) now records the exact checkout heads, expanded commands, working directories, environment override, complete stdout/stderr and exit codes for deterministic audit, generated-copy sync and both product document-link checks. It was captured before this report-only correction; the recorded heads identify its scope. Product audit branches intentionally contain no generated skill changes, so the sync proof targets the generated-only branches. The previous 1156-file riben link count belonged to an earlier tree; use the raw receipt for the recorded current tree and canonical Checks for each subsequently published head. No historical receipt is promoted to new-head QA.
+The prior summarized verification block was insufficient as an attached raw receipt. The [raw command transcript](2026-10-31-codex-verification.txt) now records the exact checkout heads, expanded commands, working directories, environment override, complete stdout/stderr and exit codes for deterministic audit, generated-copy sync and both product document-link checks. It was captured before this report-only correction; the recorded heads identify its scope. Product audit branches intentionally contain no generated skill changes, so the sync proof targets the generated-only branches. The previous 1156-file project-a link count belonged to an earlier tree; use the raw receipt for the recorded current tree and canonical Checks for each subsequently published head. No historical receipt is promoted to new-head QA.
 
 The second independent review is preserved as prior-head evidence: all five Standards PASS; audit PRs Spec FAIL for incomplete inventory and summarized verification; generated-only PRs Spec PASS. Canonical Checks were still pending for dotfiles at that review cutoff. These documentation corrections require refreshed head-specific Checks and a new independent review before merge. Engineering startup/trust/cleanup and required Strong security review remain separate open gates.
 
@@ -85,7 +85,7 @@ Cutoff: 2026-10-31T12:29:45.319803+00:00 (UTC). This supplements the earlier jud
 | Project | Open PRs at delivery cutoff |
 | --- | --- |
 | dotfiles | [#451](https://github.com/mingster/dotfiles/pull/451), [#450](https://github.com/mingster/dotfiles/pull/450), [#399](https://github.com/mingster/dotfiles/pull/399) |
-| riben.life | [#6702](https://github.com/mingster/riben.life/pull/6702), [#6701](https://github.com/mingster/riben.life/pull/6701), [#6700](https://github.com/mingster/riben.life/pull/6700), [#6699](https://github.com/mingster/riben.life/pull/6699), [#6213](https://github.com/mingster/riben.life/pull/6213) |
-| pstv | [#956](https://github.com/mingster/pstv/pull/956), [#955](https://github.com/mingster/pstv/pull/955), [#903](https://github.com/mingster/pstv/pull/903) |
+| project-a | [#6702](https://github.com/mingster/project-a/pull/6702), [#6701](https://github.com/mingster/project-a/pull/6701), [#6700](https://github.com/mingster/project-a/pull/6700), [#6699](https://github.com/mingster/project-a/pull/6699), [#6213](https://github.com/mingster/project-a/pull/6213) |
+| project-b | [#956](https://github.com/mingster/project-b/pull/956), [#955](https://github.com/mingster/project-b/pull/955), [#903](https://github.com/mingster/project-b/pull/903) |
 
 The original 39 rows remain historical evidence. Added rows are marked with this delivery snapshot in the coverage column; work-start timestamps, merge medians and post-merge incident joins remain UNKNOWN. New PR publication is not a merge or delivery-throughput gain.

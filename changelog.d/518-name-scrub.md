@@ -1,0 +1,1 @@
+Finish scrubbing private project names from dated audit artifacts, changelog fragments, fleet-watch example config, mac server install paths, and the Arch Postgres pull script via untracked local overlays (#518).
