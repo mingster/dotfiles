@@ -23,6 +23,7 @@ SSH
 chmod +x "$work/bin/orca" "$work/bin/ssh"
 
 printf '#!/usr/bin/env bash\necho "$FAKE_LOCAL_COUNT"\n' > "$work/count.sh"
+cp "$root/script/fleet-workers.py" "$work/fleet-workers.py"
 
 terms() {
   local out='{"result":{"terminals":[' sep=''
@@ -35,7 +36,7 @@ terms() {
 
 run() {
   PATH="$work/bin:$PATH" COUNT_AGENTS="$work/count.sh" FAKE_ENVS="$work/envs.json" \
-    FAKE_TERMS="$work/terms.json" python3 "$root/script/fleet-workers.py"
+    FAKE_TERMS="$work/terms.json" python3 "$work/fleet-workers.py"
 }
 
 assert_line() {
@@ -64,5 +65,10 @@ terms > "$work/terms.json"
 FAKE_SSH_FAIL=1 assert_line 'unreachable host' '5 | host-a: ?'
 FAKE_SSH_OUT='Welcome\n3 updates\n7\n' assert_line 'login banner number before the count' '5 | host-a: 7'
 FAKE_SSH_OUT='7\n' assert_line 'bare count' '5 | host-a: 7'
+
+printf '%s' '{"result":{"environments":[{"id":"e1","name":"203.0.113.9"}]}}' > "$work/envs.json"
+FAKE_SSH_OUT='7\n' assert_line 'address without an overlay' '5 | 203.0.113.9: 7'
+printf '%s' '{"203.0.113.9":"host-b"}' > "$work/fleet-workers.local.json"
+FAKE_SSH_OUT='7\n' assert_line 'local overlay names the address' '5 | host-b: 7'
 
 printf 'PASS: %s tests\n' "$tests"

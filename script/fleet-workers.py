@@ -62,8 +62,13 @@ def workers(host=None, *env):
 
 
 local = socket.gethostname().split(".")[0]
-# The IP has no known ssh host key, so use the ssh alias for both the label and the ssh call.
-ALIASES = {"192.168.2.88": "blueDevil"}
+# An IP has no known ssh host key, so use the ssh alias for both the label and the ssh call.
+# The address to alias map is private: fleet-workers.local.json beside this script, gitignored.
+overlay = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fleet-workers.local.json")
+ALIASES = {}
+if os.path.exists(overlay):
+    with open(overlay) as f:
+        ALIASES = json.load(f)
 names = {e["id"]: ALIASES.get(e["name"], e["name"]) for e in orca("environment", "list").get("environments", [])}
 counts = {local: workers()}
 counts.update({name: workers(name, "--environment", eid) for eid, name in names.items()})
