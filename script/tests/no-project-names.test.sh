@@ -32,16 +32,16 @@ if [ -z "$pattern" ]; then
 fi
 
 set +e
-hits=$(git grep -IiE "$pattern" -- . ':!templates/agent-team/.claude/hooks/' 2>&1)
+hits=$(git grep -lIiE "$pattern" -- . ':!templates/agent-team/.claude/hooks/' 2>/dev/null)
 grep_ec=$?
 set -e
 if [ "$grep_ec" -gt 1 ]; then
   echo "FAIL: invalid project-names pattern ($pattern_file)"
-  echo "$hits" | head -5
   exit 1
 fi
 if [ "$grep_ec" -eq 0 ] && [ -n "$hits" ]; then
-  echo "FAIL: project names found in tracked files:"; echo "$hits" | cut -c1-160 | head -30
+  # File names only: head-checks posts failed output to a public PR comment.
+  echo "FAIL: project names found in tracked files:"; echo "$hits" | head -30
   exit 1
 fi
 echo "ok: no project names in tracked text files"
