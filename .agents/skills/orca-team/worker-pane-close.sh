@@ -7,6 +7,8 @@
 # worker_done, and the worker may still be on a correction pass in that worktree. Explicit ids skip that check,
 # and so does a dispatch marked by --release ($state/released/<id>): Orca retains external terminals
 # on release, so the marker is what lets a later sweep finish a close that did not complete.
+# Protected by identity, whichever Run owns them: every Run's coordinator_handle (run-list), the caller, and any terminal or
+# worktree a live dispatch uses. If run-list or worker-list cannot be read, nothing closes.
 # Closes the pane worker-panes.sh recorded, then every terminal of that worker still in `orca terminal list`:
 # the handles worker-show reports (agent and setup terminals) and any terminal whose worktreePath matches
 # the linked git worktree the worker created or reused. A dispatch that is still running keeps its terminals,
