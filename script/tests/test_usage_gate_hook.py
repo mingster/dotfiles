@@ -101,15 +101,21 @@ class Hook(unittest.TestCase):
 
         def gate(argv, **kwargs):
             self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
-            allowed = argv[5:] in ([], ["--model", "gemini-flash"]) if provider == "antigravity" else False
-            if unavailable_model and argv[5:] == ["--model", unavailable_model]:
+            extra = argv[5:]
+            allowed = extra in ([], ["--model", "gemini-flash"]) if provider == "antigravity" else extra == []
+            if unavailable_model and extra == ["--model", unavailable_model]:
                 return mock.Mock(returncode=4, stdout=json.dumps({"reason": "no pool reading"}))
-            if unavailable_model and not argv[5:]:
+            if unavailable_model and not extra:
                 allowed = False
-            if argv[5:] == ["--model", "unknown-model"]:
+            if extra == ["--model", "unknown-model"]:
                 return mock.Mock(returncode=4, stdout=json.dumps({"reason": "unknown model"}))
-            if argv[5:] == ["--model", "--x"]:
+            if extra == ["--model", "--x"]:
                 return mock.Mock(returncode=2, stdout="")
+            if provider == "cursor" and extra == ["--model", "gpt-5.6-sol-high"]:
+                return mock.Mock(returncode=4, stdout=json.dumps({
+                    "reason": "auto+composer allowance does not measure Cursor model gpt-5.6-sol-high; "
+                              "read the Cursor dashboard",
+                    "source": "summary"}))
             return mock.Mock(returncode=0 if allowed else 3, stdout=json.dumps({
                 "weekly_used": 0 if allowed else 100, "ceiling": 95}))
 
@@ -173,14 +179,18 @@ class Hook(unittest.TestCase):
                     self.assertEqual(out, "")
                 self.assertEqual(checks, [["--model", "gemini-flash"], expected])
 
-    def test_other_providers_do_not_forward_model(self):
-        for provider in ("claude", "cursor"):
-            with self.subTest(provider=provider):
-                out, checks = self.run_stubbed_pool_hook(
-                    "orca orchestration worker-start --agent " + provider + " --model gemini-flash",
-                    provider=provider)
-                self.assertIn("blocked " + provider + ": weekly ceiling", out)
-                self.assertEqual(checks, [[]])
+    def test_claude_does_not_forward_model(self):
+        out, checks = self.run_stubbed_pool_hook(
+            "orca orchestration worker-start --agent claude --model gemini-flash",
+            provider="claude")
+        self.assertEqual(out, "")
+        self.assertEqual(checks, [[]])
+
+    def test_cursor_forwards_model_to_gate_check(self):
+        _, checks = self.run_stubbed_pool_hook(
+            "orca orchestration worker-start --agent cursor --model gpt-5.6-sol-high",
+            provider="cursor")
+        self.assertEqual(checks, [["--model", "gpt-5.6-sol-high"]])
 
     def cursor(self, pct, baseline):
         ends = datetime.fromtimestamp(FUT, timezone.utc).isoformat()
@@ -191,6 +201,39 @@ class Hook(unittest.TestCase):
                   open(self.state + "/cursor.json", "w"))
         os.environ["USAGE_GATE_CURSOR_SUMMARY"] = self.state + "/summary.json"
         self.addCleanup(os.environ.pop, "USAGE_GATE_CURSOR_SUMMARY", None)
+
+    def composer_pool(self, auto_pct, baseline):
+        ends = datetime.fromtimestamp(FUT, timezone.utc).isoformat()
+        json.dump({"billingCycleStart": "2026-09-25T00:00:00+00:00", "billingCycleEnd": ends,
+                   "individualUsage": {"plan": {"enabled": True, "totalPercentUsed": auto_pct,
+                                                "autoPercentUsed": auto_pct, "apiPercentUsed": 100}}},
+                  open(self.state + "/summary.json", "w"))
+        json.dump({"date": datetime.now().strftime("%Y-%m-%d"), "baseline": baseline, "resets_at": FUT},
+                  open(self.state + "/cursor.json", "w"))
+        os.environ["USAGE_GATE_CURSOR_SUMMARY"] = self.state + "/summary.json"
+        self.addCleanup(os.environ.pop, "USAGE_GATE_CURSOR_SUMMARY", None)
+
+    def test_cursor_non_composer_model_warns_when_composer_pool_has_headroom(self):
+        cmd = ("orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high "
+               "--task-title 'qa-sdet - review'")
+        self.composer_pool(16, 14)
+        deny, err = self.run_hook(cmd)
+        self.assertIsNone(deny)
+        self.assertIn("no usage reading for cursor", err)
+
+    def test_cursor_non_composer_model_with_unreadable_summary_warns(self):
+        cmd = "orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high"
+        self.cursor(10, 8)
+        deny, err = self.run_hook(cmd)
+        self.assertIsNone(deny)
+        self.assertIn("no usage reading for cursor", err)
+
+    def test_cursor_non_composer_model_blocked_at_exhausted_composer_pool(self):
+        cmd = "orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high"
+        self.composer_pool(95, 90)
+        deny, err = self.run_hook(cmd)
+        self.assertIn("blocked cursor", deny or "")
+        self.assertNotIn("no usage reading for cursor", err)
 
     def test_cursor_aggregate_usage_warns_without_blocking_composer(self):
         cmd = "orca orchestration worker-start --task t --agent cursor"
