@@ -1,0 +1,1 @@
+- The `reviewer` chain in `.orca/presets.json` now ends with Cursor `composer-2.5`, so `usage-gate.py pick --role reviewer` offers a reviewer for a Claude authored PR when Cursor is usable, and `on-worker-done.sh` no longer reports none available. The author family is still never offered.
