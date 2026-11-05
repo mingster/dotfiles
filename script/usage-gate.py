@@ -629,6 +629,8 @@ def family(entry):
         return "claude"
     if model.startswith("gpt-"):
         return "gpt"
+    if provider == "cursor" and model.startswith("composer"):
+        return "composer"
     if provider in ("antigravity", "cursor") and model.startswith("gemini-"):
         return "gemini"
     return None
@@ -696,7 +698,7 @@ def main(argv=None):
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id; omitted selects the Gemini Flash pool")
     ap.add_argument("--role")
-    ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini"])
+    ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])
     ap.add_argument("--cap", type=float, default=None,
                     help="advisory daily pacing hint; never blocks")

@@ -19,7 +19,7 @@ class ReviewerDispatch(unittest.TestCase):
             root = Path(tmp)
             presets = root / "presets.json"
             presets.write_text(json.dumps({"roles": {"reviewer": {"chain": [
-                {"provider": "cursor", "model": "gpt-test"},
+                {"provider": "cursor", "model": "composer-2.5"},
                 {"provider": "claude", "model": "sonnet"},
                 {"provider": "antigravity", "model": "gemini-4-argon-high"},
             ]}}}))
@@ -86,8 +86,8 @@ sys.exit(ug.main())
                 self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
                 self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
                 self.assertEqual(args[args.index('--model')+1],
-                                 {'cursor': 'gemini-4-argon-high', 'claude': 'gpt-test',
-                                  'antigravity': 'gpt-test', 'gemini': 'gpt-test'}[author])
+                                 {'cursor': 'gemini-4-argon-high', 'claude': 'composer-2.5',
+                                  'antigravity': 'composer-2.5', 'gemini': 'composer-2.5'}[author])
 
     def test_unconfigured_installed_invocation_refuses_without_launch(self):
         for configuration in ('missing', 'unknown'):
@@ -102,7 +102,7 @@ sys.exit(ug.main())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
         self.assertEqual(args[args.index('--worktree')+1], 'identity:wt2:local:alpha-instance')
-        self.assertEqual(args[args.index('--model')+1], 'gpt-test')
+        self.assertEqual(args[args.index('--model')+1], 'composer-2.5')
 
     def test_full_host_fallback_pins_actual_native_argv(self):
         result, args = self.dispatch('cursor', full_hosts=('alpha',))
