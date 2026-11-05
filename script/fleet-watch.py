@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import time
 
 
@@ -513,6 +514,26 @@ def save_state(path, state):
     temporary.replace(path)
 
 
+def deliver_notice_line(config, state, line, rpc_call=rpc):
+    """Send one notice line to each run terminal, retrying only those that missed it."""
+    delivery = state.setdefault('notice_delivery', {})
+    entry = delivery.setdefault(line, {})
+    for run in config['runs']:
+        term = run['terminal']
+        if entry.get(term):
+            continue
+        try:
+            rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
+            entry[term] = True
+        except subprocess.CalledProcessError as error:
+            stderr = (error.stderr or '').strip()
+            print('fleet-watch: terminal send failed for %s: %s' % (term, stderr or error), file=sys.stderr)
+        except RuntimeError as error:
+            print('fleet-watch: terminal send failed for %s: %s' % (term, error), file=sys.stderr)
+    if entry and all(entry.get(run['terminal']) for run in config['runs']):
+        delivery.pop(line, None)
+
+
 def coordinator_stage(config, state, state_path):
     """First step of a pass. Saves state at once, and ends a pass on a host without Orca."""
     notices = coordinator_notices(config, state, time.time())
@@ -560,16 +581,18 @@ def main():
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
     notices += coordinator
+    lines = []
     if notices:
-        line = 'fleet-watch: ' + '; '.join(notices)
-        for run in config['runs']:
-            rpc('terminal', 'send', '--terminal', run['terminal'], '--text', line, '--enter')
-        print(line)
-    # Persist only after successful wake delivery, so failures retry next pass.
-    args.state.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.state.with_suffix('.tmp')
-    temporary.write_text(json.dumps(state))
-    temporary.replace(args.state)
+        lines.append('fleet-watch: ' + '; '.join(notices))
+    pending = state.get('notice_delivery') or {}
+    for line in pending:
+        if line not in lines:
+            lines.append(line)
+    for line in lines:
+        deliver_notice_line(config, state, line, rpc)
+    if notices:
+        print(lines[0])
+    save_state(args.state, state)
     return 0
 
 
