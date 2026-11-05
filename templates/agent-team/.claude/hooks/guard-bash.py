@@ -268,20 +268,50 @@ def check_role_file_gate(base, args):
             deny_role_files(files, f"Commit {sha[:9]}")
 
 
-def check_worker_start(args):
-    spec = RAW_COMMAND
-    if any(option_value(args, f) is not None or f in args for f in REMOTE_FLAGS) and not option_value(args, "--from"):
-        deny("This worker starts on another host with no owning lead recorded, so its worker_done would reach nobody. "
-             "Add `--from <your terminal handle>` (the lead who receives worker_done) and start it again.")
+# `dotfiles#<n>` names an issue in the dotfiles repo. Set DOTFILES_REPO to `<owner>/dotfiles` for this project.
+DOTFILES_REPO = os.environ.get("DOTFILES_REPO") or "OWNER/dotfiles"
+DOTFILES_ISSUE = re.compile(r"(?:[\w.-]+/)?dotfiles#(\d{3,6})\b")
+
+
+def brief_text(path):
+    """A brief file's text, or None when it cannot be read."""
+    full = os.path.join(GATE_CWD or "", os.path.expanduser(os.path.expandvars(path)))
+    try:
+        if os.path.isfile(full):  # a FIFO or device could hang the read
+            with open(full, errors="replace") as f:
+                return f.read(65536)
+    except OSError:
+        pass
+    return None
+
+
+def check_worker_start(args, script=False):
+    """script: start-cursor-worker.sh, whose --spec is a brief file and which demands --from itself."""
+    if script:
+        path = option_value(args, "--spec")
+        brief = brief_text(path) if path else None
+        spec = "\n".join([" ".join(args), brief]) if brief is not None else RAW_COMMAND
+    else:
+        spec = RAW_COMMAND
+        if any(option_value(args, f) is not None or f in args for f in REMOTE_FLAGS) and not option_value(args, "--from"):
+            deny("This worker starts on another host with no owning lead recorded, so its worker_done would reach nobody. "
+                 "Add `--from <your terminal handle>` (the lead who receives worker_done) and start it again.")
     if "fullstack-dev" not in spec:
         return
     selector = option_value(args, "--worktree") or ""
-    found = re.match(r"issue:(\d+)$", selector) or re.search(r"(?:riben\.life#|issues/|#)(\d{3,6})\b", spec)
+    repo_args, repo_name = [], ""
+    found = re.match(r"issue:(\d+)$", selector)
+    if not found:
+        found = DOTFILES_ISSUE.search(spec)
+        if found:
+            repo_args, repo_name = ["-R", DOTFILES_REPO], DOTFILES_REPO
+        else:
+            found = re.search(r"(?:riben\.life#|issues/|#)(\d{3,6})\b", spec)
     if not found:
         deny("This build worker names no issue number, so the owner's approval of the grill results cannot be "
              "checked. Name the issue (`riben.life#<n>`) in the spec, or use `--worktree issue:<n>`.")
     number = found.group(1)
-    raw = gate_run(["gh", "issue", "view", number, "--json", "labels,body,comments"], None)
+    raw = gate_run(["gh", "issue", "view", number, *repo_args, "--json", "labels,body,comments"], None)
     try:
         issue = json.loads(raw)
     except Exception:
@@ -291,7 +321,7 @@ def check_worker_start(args):
     if any(x in labels for x in GRILL_EXEMPT_LABELS) or any("elon take over" in t.lower() for t in texts[1:]):
         return
     if not any(GRILL_APPROVAL.search(t) for t in texts[1:]):
-        deny(f"Missing: a comment on #{number} naming the owner's approval of the grill results "
+        deny(f"Missing: a comment on {repo_name}#{number} naming the owner's approval of the grill results "
              "(docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
              "then dispatch. Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
 
@@ -300,6 +330,8 @@ def check_team_gates(base, args):
     check_role_file_gate(base, args)
     if base == "orca" and args[:2] == ["orchestration", "worker-start"]:
         check_worker_start(args)
+    elif base == "start-cursor-worker.sh":
+        check_worker_start(args, script=True)
 
 
 def check_segment(segment, depth=0):
