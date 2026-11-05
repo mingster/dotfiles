@@ -6,6 +6,7 @@ Wired from each agent team's .claude/settings.json. For every
 `usage-gate.py check --provider <id>` (claude, cursor and antigravity) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
 Antigravity gates on the named --model pool, or the approved Gemini Flash pool without a model.
+Cursor forwards --model so non-Composer models reach the gate's unknown path (ADR 0001).
 Known roles from the task title receive advisory `pick --role` recommendations. A command scoped USAGE_GATE_OVERRIDE reason bypasses
 routing enforcement and is logged, but never bypasses the weekly ceiling gate.
 
@@ -159,7 +160,7 @@ def main():
             if denial:
                 blocked.append(denial)
     checks = dict.fromkeys((start["provider"], start.get("model")
-                            if start["provider"] == "antigravity" else None) for start in commands)
+                            if start["provider"] in ("antigravity", "cursor") else None) for start in commands)
     for provider, model in checks:
         if provider not in GATED:
             print(f"usage-gate-hook: no usage reading for agent {provider or '(none given)'}; "

@@ -63,3 +63,47 @@ Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 Release-manager reads this before moving the production branch.
 
 Only inside a matching owner approval, before moving the production branch, run the project's SQL apply script (dry run first, then apply) and secret script from the list above. When the deploy scripts check one time data steps before the schema push and print a line per pending step with its apply command, run those lines; never skip them. Before promote, when the facts name a schema rehearsal script (a schema only dump of production, then the data steps and the schema push on a throwaway database at the exact sha), its pass at that sha is required.
+
+## Taking over the coordinator
+
+Do this only when the owner says so. Failover is never automatic and nothing schedules it. Roles live in the private agent-state repo, in `coordinator.conf`: one `coordinator <name>` line and ordered `backup <name>` lines, where each name is what `hostname -s` prints on that host.
+
+On the host that is taking over, run:
+
+```sh
+bash script/take-over-coordinator.sh --yes            # --dry-run to look first
+```
+
+It prints its plan and refuses without `--yes`. In order, it:
+
+1. fetches and fast-forwards the agent-state checkout (`~/agent-state`, or `--state-dir`). It stops if there are unpushed commits or uncommitted changes, and lists them.
+2. checks this host is a `backup` line. If an earlier backup answers ssh it stops and names that host; run the command there, or pass `--skip-order` to continue anyway.
+3. sets `coordinator <this host>` in `coordinator.conf`, commits only that file and pushes. A rejected push is retried once after a fresh fetch. The old coordinator takes this host's place in the backup list, so it can hand back later.
+4. stops the old host's sync over ssh (6 second timeout). It reports `old host sync stopped` or `old host unreachable, fenced by coordinator.conf`. Unreachable is a pass, because step 3 already holds it.
+5. restores live state with `sync.sh pull`, keeping this host's own `~/.zshenv.local`.
+6. installs and loads only the sync LaunchAgent, then touches `.sync-ok`.
+7. runs one `sync.sh push` and prints the result.
+
+Any failure stops at that step and prints the state and the next command. Running it again is safe. On a host that is already the coordinator it only repeats the restore, the LaunchAgent and the push.
+
+Left for the owner afterwards: pair Orca on the new host and start the coordinator agent there.
+
+### When the old host comes back
+
+Every `sync.sh push` first fetches origin and reads the `coordinator` line. If this host is not named, it refuses with `coordinator refused: this host is not <name>`, writes `.sync-refused`, alerts the fleet terminals and exits 1, before copying, committing or pushing anything. A failed fetch refuses too. The old host's live files stay as they were and origin is unchanged. The owner decides what to keep from them.
+
+### Handing back
+
+Run the same command on the other host: `bash script/take-over-coordinator.sh --yes`. The current coordinator is stopped and fenced the same way, and the host handing back becomes a backup again.
+
+## Coordinator check
+
+`script/elon-startup.sh` opens with `== 0 coordinator`, before the pull. It only reports and never blocks or changes anything. It fetches the private state repo (`${AGENT_STATE_DIR:-$HOME/agent-state}`, 10 second limit), reads `coordinator` from `origin/main:coordinator.conf`, and runs three checks:
+
+1. This host is the coordinator (`hostname -s`, compared without case).
+2. The local state repo is not behind `origin/main`.
+3. `.sync-ok` in the state repo is under 30 minutes old (three sync periods). A missing file counts as stale.
+
+Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missing state repo, a missing `coordinator` line and a failed fetch also print `NO DISPATCH`. When all pass it prints `ok coordinator <name>, state fresh`.
+
+`NO DISPATCH` means start no worker and ask the owner. Failover is never automatic: only the owner changes the coordinator.
