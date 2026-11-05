@@ -10,6 +10,8 @@ if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
     env HEAD_CHECKS_GATE_HELD=1 bash "$0" "$@"
 fi
 unset HEAD_CHECKS_GATE_HELD
+# A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
+export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
 override="" changed="" explicit_base="" main_sha=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
