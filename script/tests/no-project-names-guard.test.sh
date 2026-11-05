@@ -52,6 +52,8 @@ ec=$?
 set -e
 check "pattern hit fails guard" "$ec" 1
 check "pattern hit mentions FAIL" "$(echo "$out" | grep -c '^FAIL:')" 1
+check "pattern hit names the file" "$(echo "$out" | grep -c '^leak.txt$')" 1
+check "pattern hit hides the matched text" "$(echo "$out" | grep -c "$token")" 0
 
 tmp2=$(new_fixture_repo)
 cleanup+=("$tmp2")
@@ -108,13 +110,14 @@ printf 'plain public text only\n' > "$tmp5/leak.txt"
   git add leak.txt
   git commit -qm init
 )
-printf '(\n' > "$tmp5/pattern.bad"
+printf 'xyzzybroken(\n' > "$tmp5/pattern.bad"
 set +e
 out=$(run_guard "$tmp5" "$tmp5/pattern.bad" 2>&1)
 ec=$?
 set -e
 check "invalid pattern fails guard" "$ec" 1
 check "invalid pattern does not print ok" "$(echo "$out" | grep -c '^ok:')" 0
+check "invalid pattern hides the pattern text" "$(echo "$out" | grep -c xyzzybroken)" 0
 
 tmp6=$(new_fixture_repo)
 cleanup+=("$tmp6")
