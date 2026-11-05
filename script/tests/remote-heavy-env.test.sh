@@ -41,6 +41,14 @@ class Env(unittest.TestCase):
         # The directory is host specific, so pin the line itself.
         text = (scripts/'remote-heavy.sh').read_text()
         self.assertIn('[ ! -d /usr/bin/core_perl ] || export PATH="$PATH:/usr/bin/core_perl"', text)
+    def test_homebrew_bin_is_appended_to_path_when_present(self):
+        if not pathlib.Path('/opt/homebrew/bin').is_dir(): self.skipTest('no homebrew on this host')
+        result = self.run_heavy(['sh', '-c', 'printf %s "$PATH"'])
+        self.assertTrue(result.stdout.endswith(':/opt/homebrew/bin'), result.stdout)
+    def test_homebrew_export_line_exists(self):
+        # The directory is host specific, so pin the line itself.
+        text = (scripts/'remote-heavy.sh').read_text()
+        self.assertIn('[ ! -d /opt/homebrew/bin ] || export PATH="$PATH:/opt/homebrew/bin"', text)
     def test_no_gate_flag_uses_dotfiles_dir_gate(self):
         main = self.home/'dotfiles-main'; (main/'script').mkdir(parents=True)
         g = main/'script/heavy-gate.sh'; g.write_text('#!/bin/sh\nprintf "%s\\n" "$0" > "$GATE_OUT"\nshift 3\nexec "$@"\n'); g.chmod(0o755)

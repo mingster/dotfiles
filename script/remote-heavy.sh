@@ -75,6 +75,7 @@ git -C "$repo_dir" fetch -q "$bundle" "+HEAD:refs/heavy/$sha" \
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH" LANG="${LANG:-en_US.UTF-8}"
 [ ! -d "$HOME/dotfiles-main" ] || export DOTFILES_DIR="$HOME/dotfiles-main"
 [ ! -d /usr/bin/core_perl ] || export PATH="$PATH:/usr/bin/core_perl"
+[ ! -d /opt/homebrew/bin ] || export PATH="$PATH:/opt/homebrew/bin"
 gate="${gate//\$\{DOTFILES_DIR:-\$HOME\/dotfiles\}/${DOTFILES_DIR:-$HOME/dotfiles}}"
 gate="${gate/#\$HOME/$HOME}"
 # A new lane's directory is created once as a worktree of the remote checkout.
