@@ -144,6 +144,7 @@ else
   base=$(git -C "$repo" rev-parse --verify "${explicit_base:-origin/main}^{commit}")
 fi
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$base" =~ ^[0-9a-f]{40}$ ]] || usage "invalid head or base SHA"
+pr_base="$base"
 for commit in "$sha" "$base"; do
   git -C "$repo" cat-file -e "$commit^{commit}" 2>/dev/null || git -C "$repo" fetch origin "$commit" >> "$log" 2>&1
  done
@@ -155,13 +156,14 @@ if [ -n "$train_heads" ]; then
       || usage "train head does not contain $commit"
   done
 fi
-# The trial merge target: the explicit --base, else the current origin/main tip.
-if [ -z "$explicit_base" ]; then
-  git -C "$repo" fetch -q origin main >> "$log" 2>&1 || true
-  base=$(git -C "$repo" rev-parse --verify -q "origin/main^{commit}" || printf '%s' "$base")
-fi
-main_sha="$base"
+# The PR merge base always comes from the PR base. The trial merge target is the explicit --base,
+# else the current origin/main tip when the remote has one, else the PR base.
 base=$(git -C "$repo" merge-base "$base" "$sha") || usage "cannot resolve PR merge base"
+main_sha="$pr_base"
+if [ -z "$explicit_base" ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+  git -C "$repo" fetch -q origin main >> "$log" 2>&1 || true
+  main_sha=$(git -C "$repo" rev-parse --verify -q "origin/main^{commit}" || printf '%s' "$pr_base")
+fi
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"

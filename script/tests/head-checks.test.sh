@@ -53,7 +53,7 @@ else: sys.exit(1)
     (default/'check-path.py').write_text('print("default dotfiles helper")\n')
     run('checklist defaults to home dotfiles',helper,0)
     # The fetched PR base can be ahead of stale origin/main and diverge from HEAD.
-    fresh=git('commit-tree',git('rev-parse',base+'^{tree}'),'-p',env['GH_HEAD'],'-m','fresh PR base')
+    fresh=git('commit-tree',git('rev-parse',env['GH_HEAD']+'^{tree}'),'-p',env['GH_HEAD'],'-m','fresh PR base')
     env['GH_BASE']=fresh
     expected=env['GH_HEAD']
     run('checklist receives actual PR merge base', 'test "$HEAD_CHECK_BASE" = "'+expected+'"',0)
@@ -72,7 +72,7 @@ else: sys.exit(1)
     run('ref checks do not post',line('ref'),0,False)
     train_heads=base+','+env['GH_HEAD']
     train=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf),'--train-heads',train_heads],env=env,text=True,capture_output=True)
-    if train.returncode==0 and 'Checks: PASS head='+env['GH_HEAD']+' train-heads='+train_heads in train.stdout:
+    if train.returncode==0 and 'Checks: PASS head='+env['GH_HEAD']+' main='+base+' train-heads='+train_heads in train.stdout:
         passed+=1; print('ok   train receipt names train and every PR head')
     else: failed+=1; print('FAIL train receipt',train.stdout,train.stderr)
     (repo/'path with space.txt').write_text('quoted path\n')
