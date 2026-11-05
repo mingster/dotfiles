@@ -46,8 +46,9 @@ class CoordinatorWatch(unittest.TestCase):
     def write_conf(self, text):
         (Path(self.dir.name) / 'coordinator.conf').write_text(text)
 
-    def run_pass(self, fx, now, host='backup-box'):
-        return fw.coordinator_notices(self.config, self.state, now, fx.reachable, fx.alert, host)
+    def run_pass(self, fx, now, host='backup-box', name_reader=None):
+        reader = name_reader if name_reader is not None else fw.coordinator_name_from_state_dir
+        return fw.coordinator_notices(self.config, self.state, now, fx.reachable, fx.alert, host, reader)
 
     def test_reachable_does_nothing(self):
         fx = Fixture(up=True)
@@ -112,7 +113,7 @@ class CoordinatorWatch(unittest.TestCase):
     def test_failed_alert_retries(self):
         fx = Fixture(up=False, alert_ok=False)
         self.run_pass(fx, 0)
-        self.assertEqual(self.run_pass(fx, 600), [])
+        self.assertEqual(self.run_pass(fx, 600), [TEXT % 10])
         self.assertFalse(self.state['coordinator_watch']['alerted'])
         fx.alert_ok = True
         self.assertEqual(self.run_pass(fx, 660), [TEXT % 11])
@@ -132,6 +133,47 @@ class CoordinatorWatch(unittest.TestCase):
         self.assertEqual(self.run_pass(fx, 0), [])
         self.assertEqual(self.state, {})
         self.assertEqual(fx.probes, [])
+
+    def git_env(self):
+        return {
+            **os.environ,
+            'GIT_AUTHOR_NAME': 't',
+            'GIT_AUTHOR_EMAIL': 't@example.com',
+            'GIT_COMMITTER_NAME': 't',
+            'GIT_COMMITTER_EMAIL': 't@example.com',
+        }
+
+    def init_state_git(self, local_conf, remote_conf):
+        root = Path(self.dir.name)
+        bare = root / 'origin.git'
+        subprocess.run(['git', 'init', '--bare', str(bare)], check=True, capture_output=True)
+        publish = root / 'publish'
+        subprocess.run(['git', 'clone', str(bare), str(publish)], check=True, capture_output=True)
+        (publish / 'coordinator.conf').write_text(remote_conf)
+        subprocess.run(['git', '-C', str(publish), 'add', 'coordinator.conf'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(publish), 'commit', '-m', 'remote'], check=True, capture_output=True, env=self.git_env())
+        subprocess.run(['git', '-C', str(publish), 'push', 'origin', 'HEAD:main'], check=True, capture_output=True)
+        state_dir = root / 'state'
+        subprocess.run(['git', 'clone', str(bare), str(state_dir)], check=True, capture_output=True)
+        (state_dir / 'coordinator.conf').write_text(local_conf)
+        self.config['coordinator_watch']['state_dir'] = str(state_dir)
+        return state_dir
+
+    def test_stale_local_follows_remote_coordinator(self):
+        self.init_state_git('coordinator old-box\n', 'coordinator new-box\n')
+        fx = Fixture(up=False)
+        self.run_pass(fx, 0)
+        notices = self.run_pass(fx, 600)
+        self.assertEqual(notices, ['coordinator new-box offline for 10 minutes; failover is manual, ask the owner'])
+        self.assertEqual(fx.probes, ['new-box'])
+        self.assertEqual(self.state['coordinator_watch']['host'], 'new-box')
+
+    def test_fetch_failure_falls_back_to_local_ssh(self):
+        self.write_conf('coordinator main-box\n')
+        fx = Fixture(up=True)
+        self.run_pass(fx, 0)
+        self.assertEqual(fx.probes, ['main-box'])
+        self.assertNotIn('coordinator_watch', self.state)
 
 
 class NoOrca(unittest.TestCase):
