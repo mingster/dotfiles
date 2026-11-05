@@ -148,7 +148,7 @@ class RoleFileGate(Gate):
 
 
 class GrillGate(Gate):
-    BUILD = 'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket: mingster/riben.life#6936"'
+    BUILD = 'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket: mingster/project-a#6936"'
 
     def test_build_worker_without_approval_denied(self):
         self.issue["comments"] = [{"body": "grill notes from architect-pm"}]

@@ -309,10 +309,10 @@ def check_worker_start(args, script=False):
         if found:
             repo_args, repo_name = ["-R", DOTFILES_REPO], DOTFILES_REPO
         else:
-            found = re.search(r"(?:riben\.life#|issues/|#)(\d{3,6})\b", spec)
+            found = re.search(r"(?:issues/|#)(\d{3,6})\b", spec)
     if not found:
         deny("This build worker names no issue number, so the owner's approval of the grill results cannot be "
-             "checked. Name the issue (`riben.life#<n>`) in the spec, or use `--worktree issue:<n>`.")
+             "checked. Name the issue (`#<n>`) in the spec, or use `--worktree issue:<n>`.")
     number = found.group(1)
     raw = gate_run(["gh", "issue", "view", number, *repo_args, "--json", "labels,body,comments"], None)
     try:
