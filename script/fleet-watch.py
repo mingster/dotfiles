@@ -348,11 +348,15 @@ def fetch_prs(repo):
 
 
 def failing(pr):
-    """The latest Checks receipt at this head decides; otherwise any failed status check."""
+    """The latest Checks receipt at this head decides, unless a status check failed after it; otherwise any failed status check."""
     for comment in reversed(pr['comments']):
         first = comment['body'].split('\n')[0]
         if first.startswith('Checks: ') and 'head=' + pr['headRefOid'] in first:
-            return first.startswith('Checks: FAIL')
+            if first.startswith('Checks: FAIL'):
+                return True
+            receipt = comment.get('createdAt') or ''
+            return any(check.get('conclusion') == 'FAILURE' and (check.get('completedAt') or '') > receipt
+                       for check in pr['statusCheckRollup'])
     return any(check.get('conclusion') == 'FAILURE' for check in pr['statusCheckRollup'])
 
 
