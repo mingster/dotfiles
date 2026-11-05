@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One bounded watchdog pass; schedule every minute outside the coordinator.
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
-host_caps {host: count} and leads [{name, terminal}] whose panes must stay alive;
+host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive and
+pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices;
 --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. No lifecycle mutations.
 """
@@ -335,6 +336,75 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
     return notices
 
 
+def fetch_prs(repo):
+    """Recent PRs in one gh call, or None when gh fails."""
+    fields = 'number,state,headRefOid,comments,statusCheckRollup,mergeCommit'
+    command = ['gh', 'pr', 'list', '--repo', repo, '--state', 'all', '--limit', '50', '--json', fields]
+    try:
+        output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def failing(pr):
+    """The latest Checks receipt at this head decides; otherwise any failed status check."""
+    for comment in reversed(pr['comments']):
+        first = comment['body'].split('\n')[0]
+        if first.startswith('Checks: ') and 'head=' + pr['headRefOid'] in first:
+            return first.startswith('Checks: FAIL')
+    return any(check.get('conclusion') == 'FAILURE' for check in pr['statusCheckRollup'])
+
+
+def pr_events(repo, old, prs, now, stuck_seconds):
+    """Compare PR data with the last pass. The first pass records and reports nothing."""
+    baseline = old is None
+    old = old or {}
+    merged = list(old.get('merged', []))
+    verdicts = list(old.get('verdicts', []))
+    stuck = {}
+    events = []
+    for pr in prs:
+        number = pr['number']
+        for comment in pr['comments']:
+            first = comment['body'].split('\n')[0]
+            if first.startswith('Verdict:') and comment['id'] not in verdicts:
+                verdicts.append(comment['id'])
+                if not baseline:
+                    events.append('%s #%d %s' % (repo, number, first))
+        if pr['state'] == 'MERGED' and number not in merged:
+            merged.append(number)
+            if not baseline:
+                events.append('merged %s #%d %s' % (repo, number, (pr.get('mergeCommit') or {}).get('oid')))
+        if pr['state'] != 'OPEN' or not failing(pr):
+            continue
+        timer = old.get('stuck', {}).get(str(number), {})
+        if timer.get('head') != pr['headRefOid']:
+            timer = {'head': pr['headRefOid'], 'since': now, 'alerted': False}
+        timer = dict(timer)
+        if now - timer['since'] >= stuck_seconds and not timer['alerted']:
+            timer['alerted'] = True
+            events.append('stuck %s #%d head %s failing for %d minutes' % (repo, number, pr['headRefOid'], (now - timer['since']) // 60))
+        stuck[str(number)] = timer
+    return events, {'merged': merged, 'verdicts': verdicts, 'stuck': stuck}
+
+
+def pr_notices(config, state, now, fetch=fetch_prs):
+    """A repo whose fetch failed keeps its state, so its events arrive on a later pass."""
+    watch = config.get('pr_watch')
+    if not watch:
+        return []
+    notices = []
+    seen = state.setdefault('pr_watch', {})
+    for repo in watch['repos']:
+        prs = fetch(repo)
+        if prs is None:
+            continue
+        events, seen[repo] = pr_events(repo, seen.get(repo), prs, now, watch.get('stuck_minutes', 30) * 60)
+        notices.extend(events)
+    return notices
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -364,6 +434,7 @@ def main():
         except (subprocess.CalledProcessError, RuntimeError):
             leads[lead['terminal']] = False
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
+    notices += pr_notices(config, state, time.time())
     if notices:
         line = 'fleet-watch: ' + '; '.join(notices)
         for run in config['runs']:
