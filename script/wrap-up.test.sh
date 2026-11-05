@@ -419,6 +419,31 @@ git --git-dir="$tmp/origin2" show-ref --verify --quiet refs/heads/rdone || { ech
 grep -Fq 'removed worktrees=1 deleted local=1 deleted remote=0' "$tmp/output"
 echo 'ok fleet host never deletes remote branches'
 grep -Fq 'Fleet total' "$tmp/output"
+# Issue 548: each fleet host also fast forwards its clean main checkout and installs the merged preset; a dirty one is kept.
+git clone -q --branch main "$tmp/origin2" "$tmp/rupdater" 2>/dev/null
+git -C "$tmp/rupdater" config user.email test@example.invalid
+git -C "$tmp/rupdater" config user.name Test
+mkdir -p "$tmp/rupdater/.orca"; echo '{"fleet":1}' > "$tmp/rupdater/.orca/presets.json"
+git -C "$tmp/rupdater" add .orca/presets.json; git -C "$tmp/rupdater" commit -qm preset; git -C "$tmp/rupdater" push -q origin main
+rbefore=$(git -C "$tmp/rrepo" rev-parse HEAD)
+echo dirty > "$tmp/rrepo/dirty-main"
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr"
+test "$(git -C "$tmp/rrepo" rev-parse HEAD)" = "$rbefore"
+# The coordinator run installs its own preset first; the fleet preset must not follow it.
+if grep -Fq fleet "$HOME/.orca/presets.json"; then echo 'dirty fleet host installed the preset'; exit 1; fi
+awk '/^== Fleet host alpha ==/ { on = 1 } on' "$tmp/output" | grep -Fq 'Kept main update'
+echo 'ok fleet host with a dirty main checkout is reported and unchanged'
+rm "$tmp/rrepo/dirty-main"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+test "$(git -C "$tmp/rrepo" rev-parse HEAD)" = "$rbefore"
+if grep -Fq fleet "$HOME/.orca/presets.json"; then echo 'dry run installed the fleet preset'; exit 1; fi
+awk '/^== Fleet host alpha ==/ { on = 1 } on' "$tmp/output" | grep -Fq 'Fast forward main checkout'
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr"
+test "$(git -C "$tmp/rrepo" rev-parse HEAD)" = "$(git --git-dir="$tmp/origin2" rev-parse main)"
+cmp "$HOME/.orca/presets.json" "$tmp/rrepo/.orca/presets.json"
+grep -Fq fleet "$HOME/.orca/presets.json"
+echo 'ok fleet host fast forwards main and installs the merged preset'
+if bash "$here/wrap-up.sh" --main-update >/dev/null 2>&1; then echo '--main-update accepted without --worktrees-only'; exit 1; fi
 if bash "$here/wrap-up.sh" --fleet --worktrees-only >/dev/null 2>&1; then echo '--fleet and --worktrees-only accepted together'; exit 1; fi
 # #389 review: a fleet host without a usable Orca CLI must keep every worktree (fail safe), and orca in ~/.orca/cli/bin
 # must be found by the remote command.
