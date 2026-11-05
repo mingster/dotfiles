@@ -736,6 +736,9 @@ class Pick(unittest.TestCase):
                          [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet")])
         self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude"})
 
+    def test_cursor_composer_is_its_own_family(self):
+        self.assertEqual(ug.family({"provider": "cursor", "model": "composer-2.5"}), "composer")
+
     def test_no_preset_lists_a_cursor_model_other_than_composer(self):
         path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
         with open(path) as f:
