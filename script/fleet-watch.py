@@ -517,10 +517,12 @@ def save_state(path, state):
 def deliver_notice_line(config, state, line, rpc_call=rpc):
     """Send one notice line to each run terminal, retrying only those that missed it."""
     delivery = state.setdefault('notice_delivery', {})
+    abandoned = state.setdefault('notice_send_abandoned', [])
     entry = delivery.setdefault(line, {})
+    failed_terms = set()
     for run in config['runs']:
         term = run['terminal']
-        if entry.get(term):
+        if entry.get(term) or term in abandoned:
             continue
         try:
             rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
@@ -528,10 +530,36 @@ def deliver_notice_line(config, state, line, rpc_call=rpc):
         except subprocess.CalledProcessError as error:
             stderr = (error.stderr or '').strip()
             print('fleet-watch: terminal send failed for %s: %s' % (term, stderr or error), file=sys.stderr)
+            failed_terms.add(term)
+        except subprocess.TimeoutExpired as error:
+            print('fleet-watch: terminal send failed for %s: %s' % (term, error), file=sys.stderr)
+            failed_terms.add(term)
         except RuntimeError as error:
             print('fleet-watch: terminal send failed for %s: %s' % (term, error), file=sys.stderr)
-    if entry and all(entry.get(run['terminal']) for run in config['runs']):
+            failed_terms.add(term)
+        except (OSError, ValueError) as error:
+            print('fleet-watch: terminal send failed for %s: %s' % (term, error), file=sys.stderr)
+            failed_terms.add(term)
+
+    def terminal_done(term):
+        return entry.get(term) or term in abandoned
+
+    if entry and all(terminal_done(run['terminal']) for run in config['runs']):
         delivery.pop(line, None)
+    return failed_terms
+
+
+def record_notice_send_failures(state, failed_terms):
+    """After one pass, count failed terminals; abandon chronic failures."""
+    if not failed_terms:
+        return
+    passes = state.setdefault('notice_send_fail_passes', {})
+    abandoned = state.setdefault('notice_send_abandoned', [])
+    for term in failed_terms:
+        passes[term] = passes.get(term, 0) + 1
+        if passes[term] >= 20 and term not in abandoned:
+            abandoned.append(term)
+            print('fleet-watch: giving up notice delivery to %s after 20 failed passes' % term, file=sys.stderr)
 
 
 def coordinator_stage(config, state, state_path):
@@ -588,8 +616,10 @@ def main():
     for line in pending:
         if line not in lines:
             lines.append(line)
+    failed_terms = set()
     for line in lines:
-        deliver_notice_line(config, state, line, rpc)
+        failed_terms |= deliver_notice_line(config, state, line, rpc)
+    record_notice_send_failures(state, failed_terms)
     if notices:
         print(lines[0])
     save_state(args.state, state)

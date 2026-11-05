@@ -56,6 +56,59 @@ class Resend(unittest.TestCase):
             sends = self.run_pass(state, [failed('x')], set())
             self.assertEqual(sends, [])
 
+    def test_timeout_does_not_skip_other_terminals(self):
+        config = {'runs': [
+            {'id': 'r1', 'terminal': 'term_first', 'waiter_pattern': 'w1'},
+            {'id': 'r2', 'terminal': 'term_second', 'waiter_pattern': 'w2'},
+        ]}
+        state = {}
+        sends = []
+        def rpc(*args):
+            if args[:2] == ('terminal', 'send'):
+                term = args[args.index('--terminal') + 1]
+                if term == 'term_first':
+                    raise subprocess.TimeoutExpired(cmd='orca', timeout=15)
+                sends.append(term)
+            return {}
+        with patch.object(watch, 'rpc', side_effect=rpc):
+            watch.deliver_notice_line(config, state, 'notice line', rpc)
+        self.assertEqual(sends, ['term_second'])
+        self.assertIn('notice line', state.get('notice_delivery', {}))
+
+    def test_oserror_valueerror_count_as_failed_send(self):
+        config = {'runs': [{'id': 'r1', 'terminal': 'term_a', 'waiter_pattern': 'w1'}]}
+        for exc in (OSError('broken pipe'), ValueError('bad json')):
+            with self.subTest(exc=type(exc).__name__):
+                state = {}
+                def rpc(*args):
+                    raise exc
+                with patch.object(watch, 'rpc', side_effect=rpc):
+                    watch.deliver_notice_line(config, state, 'line', rpc)
+                self.assertIn('line', state.get('notice_delivery', {}))
+
+    def test_abandon_terminal_after_twenty_failed_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = pathlib.Path(directory)/'state.json'
+            pending_line = 'fleet-watch: pending notice'
+            state.write_text(json.dumps({
+                'failed': ['a'],
+                'notice_delivery': {pending_line: {'term_first': True}},
+            }))
+            workers = [failed('a')]
+            fail = {'term_second'}
+            for _ in range(20):
+                self.run_pass(state, workers, fail)
+            loaded = json.loads(state.read_text())
+            self.assertIn('term_second', loaded.get('notice_send_abandoned', []))
+            sends = self.run_pass(state, workers, fail)
+            self.assertEqual(sends, [])
+            workers = workers + [failed('c')]
+            self.run_pass(state, workers, fail)
+            loaded = json.loads(state.read_text())
+            delivery = loaded.get('notice_delivery', {})
+            self.assertNotIn(pending_line, delivery)
+            self.assertLessEqual(len(delivery), 1)
+
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY
