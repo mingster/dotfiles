@@ -50,7 +50,8 @@ orca=${ORCA_CLI_COMMAND:-orca}
 # A released dispatch has no agentTerminalHandle and its leftover terminals still look connected, so a terminal is linked to
 # dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
 # any other on a path where every dispatch is settled (shells, worker-pane.sh panes, an agent idle at its prompt). Kept: our own,
-# a Run coordinator's, a live dispatch's, a lead- worktree's, and a terminal on a path with no dispatch (reported as unknown owner).
+# a Run coordinator's, a live dispatch's, a lead- worktree's, one with output in the last 10 minutes (a correction pass runs on a
+# settled dispatch), and a terminal on a path with no dispatch (reported as unknown owner).
 # worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
 # every Run on this Orca and on every environment, and one inventory serves all of them; if any of it is unread, nothing closes.
 # Each Orca is read directly, so no --include-remote: with it one unreachable host makes a whole Run answer ok:false.
@@ -140,6 +141,7 @@ close_finished_terminals() {
       elif $coordinators | split("\n") | index($h) then [$h, "coordinator", "keep"]
       elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
       elif ($p | split("/") | last | startswith("lead-")) then [$h, "lead worktree", "keep"]
+      elif ($exited | not) and (.lastOutputAt > now * 1000 - 600000 or (.agentIdentity != null and .lastOutputAt == null)) then [$h, "recent output", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
@@ -166,6 +168,7 @@ if command -v "$orca" >/dev/null 2>&1; then
   if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
     # Unknown ownership is retained too: a live terminal can belong to another Run.
     : > "$tmp/worker-pages"
+    : > "$tmp/w-cursors"
     cursor=''
     while :; do
       args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
@@ -190,11 +193,12 @@ if command -v "$orca" >/dev/null 2>&1; then
           echo '*' >> "$tmp/active"
         fi
       done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // ""] | @tsv' "$tmp/workers")
-      if ! cursor=$(next_page_cursor "$tmp/workers"); then
+      if ! cursor=$(next_page_cursor "$tmp/workers") || grep -Fxq -- "$cursor" "$tmp/w-cursors"; then
         echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2
         echo '*' >> "$tmp/active"; break
       fi
       [ -n "$cursor" ] || break
+      printf '%s\n' "$cursor" >> "$tmp/w-cursors"
     done
     # Discard terminals positively owned only by settled dispatches. Unknown owners stay safe.
     jq -s '[.[].result.workers[] | .agentTerminalHandle //= (.terminal | strings)] | group_by(.agentTerminalHandle) | map(select(all(.[]; ((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited")) | .[0].agentTerminalHandle) | map(select(. != null))' "$tmp/worker-pages" > "$tmp/ended-handles"

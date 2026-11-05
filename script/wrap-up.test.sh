@@ -272,7 +272,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/orca-real"
 export ORCA_CLI_COMMAND="$tmp/bin/orca-real"
-rt() { printf '{"handle":"%s","title":"%s","worktreePath":"/nowhere/%s","connected":true,"writable":true,"agentIdentity":%s}' "$1" "$3" "$2" "${4:-null}"; }
+rt() { printf '{"handle":"%s","title":"%s","worktreePath":"/nowhere/%s","connected":true,"writable":true,"agentIdentity":%s,"lastOutputAt":1}' "$1" "$3" "$2" "${4:-null}"; }
 rw() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s-%s","dispatchStatus":"%s","projection":{"workspace":{"id":"repo-1::/nowhere/%s"}}}' "$1" "$3" "$2" "$1"; }
 echo "[$(rt t-own p-own x),$(rt t-shell p-rel '~/p-rel'),$(rt t-pane p-rel 'worker-pane.sh d-p-rel-a'),$(rt t-agent p-rel claude '"claude"'),$(rt t-mixed p-mix '~/p-mix'),$(rt t-none p-none '~/p-none'),$(rt t-lead lead-x '~/lead-x'),$(rt t-late p-late '~/p-late')]" > "$fake/terminals"
 echo "[$(rw p-own released a),$(rw p-rel released a),$(rw p-rel failed b),$(rw p-mix released a)]" > "$fake/workers1"
@@ -294,7 +294,7 @@ echo 'ok released dispatch without a handle: terminals linked by path; panes and
 for n in rel-shell rel-none live-term unk-term; do git worktree add -q --detach "$tmp/$n" main; done
 git worktree add -q --detach "$tmp/live-disp" main
 rm -rf "$fake"; mkdir -p "$fake"
-echo "[{\"handle\":\"t-own\",\"title\":\"x\",\"worktreePath\":\"$tmp/own\",\"connected\":true,\"writable\":true,\"agentIdentity\":null},{\"handle\":\"t-rel\",\"title\":\"~/rel\",\"worktreePath\":\"$tmp/rel-shell\",\"connected\":true,\"writable\":true,\"agentIdentity\":null},{\"handle\":\"t-live\",\"title\":\"~/l\",\"worktreePath\":\"$tmp/live-term\",\"connected\":true,\"writable\":true,\"agentIdentity\":\"claude\"},{\"handle\":\"t-unk\",\"title\":\"~/u\",\"worktreePath\":\"$tmp/unk-term\",\"connected\":true,\"writable\":true,\"agentIdentity\":null}]" > "$fake/terminals"
+echo "[{\"handle\":\"t-own\",\"title\":\"x\",\"worktreePath\":\"$tmp/own\",\"connected\":true,\"writable\":true,\"agentIdentity\":null},{\"handle\":\"t-rel\",\"title\":\"~/rel\",\"worktreePath\":\"$tmp/rel-shell\",\"connected\":true,\"writable\":true,\"agentIdentity\":null},{\"handle\":\"t-live\",\"title\":\"~/l\",\"worktreePath\":\"$tmp/live-term\",\"connected\":true,\"writable\":true,\"agentIdentity\":\"claude\",\"lastOutputAt\":1},{\"handle\":\"t-unk\",\"title\":\"~/u\",\"worktreePath\":\"$tmp/unk-term\",\"connected\":true,\"writable\":true,\"agentIdentity\":null}]" > "$fake/terminals"
 rw2() { printf '{"agentTerminalHandle":null,"dispatchId":"d-%s","dispatchStatus":"%s","projection":{"workspace":{"id":"repo-1::%s/%s"}}}' "$1" "$2" "$tmp" "$1"; }
 echo "[$(rw2 rel-shell released),$(rw2 rel-none released),$(rw2 live-term released),$(rw2 live-disp dispatched)]" > "$fake/workers1"
 echo '[]' > "$fake/workers2"; echo '[]' > "$fake/workers3"

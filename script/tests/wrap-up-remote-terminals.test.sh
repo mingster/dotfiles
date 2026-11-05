@@ -65,7 +65,7 @@ git -C "$tmp/repo" remote add origin "$tmp/origin"
 git -C "$tmp/repo" push -qu origin main
 term() {
   jq -n --arg h "$1" --arg p "$2" --argjson agent "${3:-null}" \
-    '{handle:$h,worktreePath:$p,connected:true,writable:true,agentIdentity:$agent}'
+    '{handle:$h,worktreePath:$p,connected:true,writable:true,agentIdentity:$agent,lastOutputAt:1}'
 }
 worker() {
   jq -n --arg h "$1" --arg p "$2" --arg s "$3" \
@@ -248,3 +248,14 @@ flat '' /fixture/handle succeeded exited | current '{}' > "$tmp/page1"
 run --dry-run
 expect 'Kept terminal t-coord (env-a, coordinator)'
 echo 'ok coordinator terminal kept'
+# A correction pass runs on a settled dispatch: recent output, or an agent with no output time, keeps the terminal.
+jq --argjson t "$(($(date +%s) * 1000))" '.result.terminals += [
+  {handle:"t-busy",worktreePath:"/fixture/handle",connected:true,writable:true,agentIdentity:"agent",lastOutputAt:$t},
+  {handle:"t-untimed",worktreePath:"/fixture/handle",connected:true,writable:true,agentIdentity:"agent"},
+  {handle:"t-gone",worktreePath:"/fixture/handle",connected:false,writable:false,agentIdentity:"agent",lastOutputAt:$t}]' "$tmp/terminals" > "$tmp/terminals.new"
+mv "$tmp/terminals.new" "$tmp/terminals"
+run --dry-run
+expect 'Kept terminal t-busy (env-a, recent output)'
+expect 'Kept terminal t-untimed (env-a, recent output)'
+expect 'Close terminal t-gone (env-a, exited)'
+echo 'ok a working agent on a settled path stays'
