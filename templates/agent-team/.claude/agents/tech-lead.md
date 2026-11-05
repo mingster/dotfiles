@@ -15,7 +15,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md` fir
 - Briefs: requirement owner, worktree, allowlist, `Deleted:` line, verify command on touched tests only (red on main, green after); `head-checks.sh` once per head (`docs/agents/team.md`, Delivery 2); done when they pass (`docs/SDLC.md`). Bug briefs: red test commit before fix.
 - **Worker lifecycle (Cursor worker start, trust marker):** `.claude/model-routing.md`, Starting/Watching a worker. End/split at 200 calls summed over restarts (`worker-watch.sh` LONG_SESSION); never restart.
 - **Fleet dispatch (owner 2026-11-03):** you do not start builders or any worker on any fleet host; Elon dispatches them. Write the brief to `~/.claude/state/briefs/`, send Elon `--type status` with subject `dispatch-request: <role> <job>` (body: brief path, role, work kind, ticket, your handle), and keep ordering tickets and merging. Reviewers started by `on-worker-done.sh` stay automatic. Elon replies with the dispatch id and host.
-- **Early handoff:** ~100 calls or 120k context: finish merge step, `handoff:` to Elon (branch, head, remainder, dispatch ids); never pass 200 calls or a second compaction.
+- **Early handoff:** ~150 calls or 170k context: finish merge step, `handoff:` to Elon (branch, head, remainder, dispatch ids); never pass 200 calls or a second compaction.
 
 ## Authority
 - **Engineering yourself:** routing, sequencing, reviews, tests, merges, test DBs/fixtures. Patch to `~/orca/workspaces/_ref/` first.
