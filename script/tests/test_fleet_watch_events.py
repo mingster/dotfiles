@@ -72,6 +72,20 @@ class PrEvents(unittest.TestCase):
         _, state = self.diff(None, prs, 0)
         self.assertEqual(self.diff(state, prs, 600)[0], [])
 
+    def test_status_check_failing_after_a_pass_receipt_counts(self):
+        receipt = {'id': 'k1', 'body': 'Checks: PASS head=' + HEAD, 'createdAt': '2026-11-05T10:00:00Z'}
+        late = {'conclusion': 'FAILURE', 'completedAt': '2026-11-05T10:05:00Z'}
+        prs = [pr(comments=[receipt], checks=[late])]
+        _, state = self.diff(None, prs, 0)
+        self.assertEqual(len(self.diff(state, prs, 600)[0]), 1)
+
+    def test_status_check_failing_before_a_pass_receipt_does_not_count(self):
+        receipt = {'id': 'k1', 'body': 'Checks: PASS head=' + HEAD, 'createdAt': '2026-11-05T10:00:00Z'}
+        early = {'conclusion': 'FAILURE', 'completedAt': '2026-11-05T09:55:00Z'}
+        prs = [pr(comments=[receipt], checks=[early])]
+        _, state = self.diff(None, prs, 0)
+        self.assertEqual(self.diff(state, prs, 600)[0], [])
+
     def test_checks_fail_on_an_old_head_does_not_count(self):
         prs = [pr(comments=[comment('k1', 'Checks: FAIL head=' + OTHER)])]
         _, state = self.diff(None, prs, 0)
