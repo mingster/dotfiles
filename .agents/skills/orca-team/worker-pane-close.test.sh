@@ -109,6 +109,11 @@ json.dump(terms_doc, open(term_path, "w"))
 NATIVERM
     fi
     exit "$rc" ;;
+  "orchestration run-list"*) [ "${FAKE_RUNLIST_FAILS:-0}" = 0 ] || exit 1
+    case "$*" in
+      *"--cursor next"*) cat "$FAKE_DIR/runs-next.json" ;;
+      *) cat "$FAKE_DIR/runs.json" 2>/dev/null || echo '{"ok":true,"result":{"runs":[{"id":"run_caller","coordinator_handle":"term_coordinator"}]}}' ;;
+    esac ;;
   "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
   "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
   "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; FAKE_DIR="$FAKE_DIR" python3 <<'LIST'
@@ -713,6 +718,42 @@ check "remote: lead terminal kept" "$(listed term_rlead; echo $?)"
 check "remote: running worker terminal kept" "$(listed term_rrunning; echo $?)"
 check "remote: main branch terminal kept" "$(listed term_rmain; echo $?)"
 rm -f "$tmp/workers.json"
+
+# #515 correction: protect by identity. Every Run's coordinator stays open whichever Run owns it, a lead with no live
+# dispatch included; another Run's settled leftovers still close; an unreadable Run list closes nothing.
+rm -f "$tmp/closes.log" "$tmp/rpc.log" "$tmp/workers.json" "$tmp/runs.json" "$tmp/runs-next.json" "$tmp/state/released/dother"
+for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+owt=/remote/host/orca/workspaces/repo1/wt-other
+flat_show dother succeeded released exited term_oagent "$owt"
+reset_other() {
+  cat > "$tmp/terminals.json" <<JSON
+{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local","host2"],"omittedHostIds":[]},"terminals":[
+ {"handle":"term_oagent","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"},
+ {"handle":"term_osetup","title":"Setup","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"},
+ {"handle":"term_olead","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"},
+ {"handle":"term_ocoord2","worktreeId":"repo1::$owt","worktreePath":"$owt","branch":"refs/heads/mingster/wt-other","executionHostId":"host2"}]}}
+JSON
+}
+cat > "$tmp/runs.json" <<'JSON'
+{"ok":true,"result":{"runs":[{"id":"run_a","coordinator_handle":"term_coordinator"},{"id":"run_b","coordinator_handle":"term_olead"}],"nextCursor":"next"}}
+JSON
+cat > "$tmp/runs-next.json" <<'JSON'
+{"ok":true,"result":{"runs":[{"id":"run_c","coordinator_handle":"term_ocoord2"}]}}
+JSON
+reset_other
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "runs: lead with no live dispatch stays open" "$(listed term_olead; echo $?)"
+check "runs: another Run's coordinator (second page) stays open" "$(listed term_ocoord2; echo $?)"
+check "runs: another Run's settled leftovers close" "$(term_absent term_osetup; echo $?)"
+rm -f "$tmp/closes.log"; reset_other
+FAKE_RUNLIST_FAILS=1 "$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "runs: failed run-list closes nothing" "$(no_generic_close; echo $?)"
+rm -f "$tmp/closes.log"; reset_other
+flat_show dlive ready input_accepted live term_olive "$owt"
+printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dlive","state":"ready","liveness":"live","terminal":"term_olive","workspace":"repo1::'"$owt"'"}]}}' > "$tmp/workers.json"
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "runs: a live dispatch in the same worktree keeps its shells" "$(listed term_osetup; echo $?)"
+rm -f "$tmp/workers.json" "$tmp/runs.json" "$tmp/runs-next.json"
 
 # Unpushed commits: a local worktree ahead of its upstream keeps its shell terminals.
 rm -f "$tmp/closes.log"; for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
