@@ -116,6 +116,7 @@ function runHeadChecks(
 	fix: ReturnType<typeof fixture>,
 	head: string,
 	comments: string,
+	base = fix.base,
 ) {
 	const env = {
 		...process.env,
@@ -133,7 +134,7 @@ function runHeadChecks(
 		HEAD_CHECKS_LOG_DIR: join(fix.root, "logs"),
 	};
 	const result = Bun.spawnSync(
-		["bash", headChecks, "--repo", fix.repo, "--ref", head, "--base", fix.base],
+		["bash", headChecks, "--repo", fix.repo, "--ref", head, "--base", base],
 		{ env, stdout: "pipe", stderr: "pipe" },
 	);
 	const stdout = result.stdout.toString();
@@ -189,4 +190,113 @@ test(
 	}
 },
 120_000,
+);
+
+// Fixture for the trial merge: the check passes only while lib.txt is v1.
+function mergeFixture() {
+	const fix = fixture();
+	writeFileSync(join(fix.repo, "lib.txt"), "v1\n");
+	writeFileSync(
+		join(fix.repo, "check.sh"),
+		'[ "$(cat lib.txt)" = v1 ] || { echo "lib.txt is not v1"; exit 1; }\n',
+	);
+	writeFileSync(join(fix.repo, ".agents/head-checks.conf"), "bash check.sh\n");
+	git(fix.repo, "add", ".");
+	git(fix.repo, "commit", "-qm", "merge fixture base");
+	const base = git(fix.repo, "rev-parse", "HEAD");
+	git(fix.repo, "update-ref", "refs/remotes/origin/main", base);
+	return { ...fix, base };
+}
+
+function branchFrom(fix: { repo: string }, base: string, name: string, file: string, text: string) {
+	git(fix.repo, "checkout", "-q", "-b", name, base);
+	writeFileSync(join(fix.repo, file), text);
+	git(fix.repo, "add", file);
+	git(fix.repo, "commit", "-qm", name);
+	return git(fix.repo, "rev-parse", "HEAD");
+}
+
+function snapshot(repo: string) {
+	return [
+		git(repo, "rev-parse", "HEAD"),
+		git(repo, "symbolic-ref", "-q", "HEAD"),
+		git(repo, "status", "--porcelain"),
+		git(repo, "for-each-ref"),
+	].join("\n");
+}
+
+test(
+	"head-checks tests the trial merge with main, so main can break the PR test",
+	() => {
+		const fix = mergeFixture();
+		const comments = join(fix.root, "comments");
+		try {
+			const head = branchFrom(fix, fix.base, "pr", "pr.txt", "pr\n");
+			const main = branchFrom(fix, fix.base, "mainline", "lib.txt", "v2\n");
+			git(fix.repo, "checkout", "-q", "pr");
+			const before = snapshot(fix.repo);
+
+			// Bare head passes the same check.
+			const bare = join(fix.root, "bare");
+			git(fix.repo, "worktree", "add", "-q", "--detach", bare, head);
+			expect(
+				Bun.spawnSync(["bash", "check.sh"], { cwd: bare }).exitCode,
+			).toBe(0);
+
+			const run = runHeadChecks(fix, head, comments, main);
+			expect(run.code).not.toBe(0);
+			expect(run.receipt).toContain("Checks: FAIL");
+			expect(run.receipt).toContain(head);
+			expect(run.receipt).toContain(main);
+			git(fix.repo, "worktree", "remove", "--force", bare);
+			expect(snapshot(fix.repo)).toBe(before);
+		} finally {
+			rmSync(fix.root, { recursive: true, force: true });
+		}
+	},
+	60_000,
+);
+
+test(
+	"head-checks passes a clean trial merge and reports both shas",
+	() => {
+		const fix = mergeFixture();
+		const comments = join(fix.root, "comments");
+		try {
+			const head = branchFrom(fix, fix.base, "pr", "pr.txt", "pr\n");
+			const main = branchFrom(fix, fix.base, "mainline", "other.txt", "x\n");
+			git(fix.repo, "checkout", "-q", "pr");
+			const before = snapshot(fix.repo);
+			const run = runHeadChecks(fix, head, comments, main);
+			expect(run.code).toBe(0);
+			expect(run.receipt).toContain(`Checks: PASS head=${head} main=${main}`);
+			expect(snapshot(fix.repo)).toBe(before);
+		} finally {
+			rmSync(fix.root, { recursive: true, force: true });
+		}
+	},
+	60_000,
+);
+
+test(
+	"head-checks stops with a clear message when main conflicts with the PR",
+	() => {
+		const fix = mergeFixture();
+		const comments = join(fix.root, "comments");
+		try {
+			const head = branchFrom(fix, fix.base, "pr", "lib.txt", "v1\npr\n");
+			const main = branchFrom(fix, fix.base, "mainline", "lib.txt", "v1\nmain\n");
+			git(fix.repo, "checkout", "-q", "pr");
+			const before = snapshot(fix.repo);
+			const run = runHeadChecks(fix, head, comments, main);
+			expect(run.code).not.toBe(0);
+			expect(run.receipt).toContain("Checks: FAIL");
+			expect(run.receipt).toMatch(/Trial merge conflict.*lib\.txt/s);
+			expect(run.receipt).not.toContain("Checks: PASS");
+			expect(snapshot(fix.repo)).toBe(before);
+		} finally {
+			rmSync(fix.root, { recursive: true, force: true });
+		}
+	},
+	60_000,
 );
