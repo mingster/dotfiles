@@ -31,7 +31,7 @@ print(ws.status(r)); sys.exit(0 if ws.is_final(r) else 1)' "$here"
 }
 leftovers() { # $1 worker-show json, $2 terminal list json -> handles still listed that belong to the worker
   SHOW="$1" LIST="$2" python3 -c '
-import os,json
+import os,json,subprocess
 try: r=json.loads(os.environ["SHOW"])["result"]
 except Exception: r={}
 try: terms=json.loads(os.environ["LIST"])["result"]["terminals"]
@@ -51,11 +51,21 @@ if not path:
   option=(w.get("startOptions") or {}).get("worktree") or ""
   if option.startswith("path:"): path=option[len("path:"):]
 # Main checkouts have a .git directory and may host owner or coordinator sessions.
-if not path or not os.path.isfile(os.path.join(path,".git")): path=""
+# A path that does not exist here belongs to another host: it cannot be inspected, so match its terminals by
+# worktree path and id, and skip any on the repo main branch.
+remote=bool(path) and not os.path.exists(path)
+if path and not remote and not os.path.isfile(os.path.join(path,".git")): path=""
+# Unpushed commits stay safe: a local worktree ahead of its upstream keeps its shell terminals.
+if path and not remote:
+  try:
+    ahead=subprocess.run(["git","-C",path,"rev-list","--count","@{upstream}..HEAD"],capture_output=True,text=True)
+    if ahead.returncode==0 and int(ahead.stdout.strip() or 0)>0: path=""
+  except Exception: pass
 seen=set()
 for t in terms:
   h=t.get("handle")
   if not h or h in seen or h==os.environ.get("ORCA_TERMINAL_HANDLE"): continue
+  if remote and t.get("branch") in ("refs/heads/main","refs/heads/master"): continue
   if h in own or (path and t.get("worktreePath")==path):
     seen.add(h); print(h)'
 }

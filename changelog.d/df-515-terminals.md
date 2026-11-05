@@ -1,0 +1,1 @@
+- orca-team: `worker-pane-close.sh` now closes the Setup terminal and plain shells a finished worker leaves on another host, matching them by worktree path since that path does not exist on the coordinator's machine. Terminals on the repo main branch, the caller's own terminal and running workers' terminals stay open, and a local worktree with unpushed commits keeps its shells.

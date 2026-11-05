@@ -714,4 +714,18 @@ check "remote: running worker terminal kept" "$(listed term_rrunning; echo $?)"
 check "remote: main branch terminal kept" "$(listed term_rmain; echo $?)"
 rm -f "$tmp/workers.json"
 
+# Unpushed commits: a local worktree ahead of its upstream keeps its shell terminals.
+rm -f "$tmp/closes.log"; for f in "$tmp"/state/*; do [ ! -f "$f" ] || rm -f "$f"; done
+gr="$tmp/gitfix"; mkdir -p "$gr"
+( cd "$gr" && git init -q --bare up.git && git clone -q up.git wt 2>/dev/null && cd wt && git config user.email t@t && git config user.name t \
+  && git commit -q --allow-empty -m a && git push -q origin HEAD 2>/dev/null && git commit -q --allow-empty -m unpushed )
+( cd "$gr/wt" && git worktree add -q ../wt2 -b feat 2>/dev/null; git -C ../wt2 push -q -u origin feat 2>/dev/null; git -C ../wt2 commit -q --allow-empty -m local )
+flat_show dunp succeeded released exited term_uagent "$gr/wt2"
+cat > "$tmp/terminals.json" <<JSON
+{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]},"terminals":[
+ {"handle":"term_uagent","worktreePath":"$gr/wt2"},{"handle":"term_ushell","worktreePath":"$gr/wt2"}]}}
+JSON
+FAKE_REAL_RELEASE=1 "$here/worker-pane-close.sh" dunp >/dev/null 2>&1
+check "unpushed: shell terminal in a worktree with unpushed commits kept" "$(listed term_ushell; echo $?)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
