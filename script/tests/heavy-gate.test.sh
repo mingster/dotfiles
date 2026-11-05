@@ -4,7 +4,7 @@
 # Exercise the command boundary with isolated home directories and sensor readings.
 set -euo pipefail
 python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
-import contextlib, importlib.util, io, os, pathlib, select, shutil, signal, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, json, os, pathlib, select, shutil, signal, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 scripts = pathlib.Path(sys.argv[1])
@@ -131,9 +131,9 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         args = module.argparse.Namespace(weight=1, head_checks=False,
                                          command=['--', 'sh', '-c', f'exit {status}'])
         def popen(command, *a, **kw):
-            proc = (mock.Mock(pid=987654, returncode=None) if live_child and command == args.command[1:]
+            proc = (mock.Mock(pid=987654, returncode=None) if live_child and command[len(command) - len(args.command[1:]):] == args.command[1:]
                     else real_popen(command, *a, **kw))
-            if command == args.command[1:]:
+            if command[len(command) - len(args.command[1:]):] == args.command[1:]:
                 group[:] = [proc.pid]
                 self.cleanup_pgid = proc.pid
                 if live_child:
@@ -243,7 +243,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                     return real_run(command, *a, **kw)
                 with mock.patch.dict(os.environ, self.env, clear=True), \
                      mock.patch.object(module.subprocess, 'Popen', side_effect=lambda command, *a, **kw:
-                         proc if command == ['fixture'] else real_popen(command, *a, **kw)), \
+                         proc if command[-1:] == ['fixture'] else real_popen(command, *a, **kw)), \
                      mock.patch.object(module.subprocess, 'run', side_effect=run), \
                      mock.patch.object(module.os, 'waitid', side_effect=inspection, create=True), \
                      mock.patch.object(module.os, 'killpg') as killpg:
@@ -265,7 +265,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         import itertools
         with mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(module.subprocess, 'Popen', side_effect=lambda command, *a, **kw:
-                 proc if command == ['fixture'] else real_popen(command, *a, **kw)), \
+                 proc if command[-1:] == ['fixture'] else real_popen(command, *a, **kw)), \
              mock.patch.object(module.subprocess, 'run', side_effect=run), \
              mock.patch.object(module.time, 'monotonic', side_effect=itertools.count(step=4)), \
              mock.patch.object(module.os, 'waitid', side_effect=[None, ChildProcessError('generation lost')], create=True), \
@@ -298,7 +298,7 @@ with open(sys.argv[1], 'a', buffering=1) as f:
 
         with mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(module.subprocess, 'Popen', side_effect=lambda command, *a, **kw:
-                 proc if command == ['fixture'] else real_popen(command, *a, **kw)), \
+                 proc if command[-1:] == ['fixture'] else real_popen(command, *a, **kw)), \
              mock.patch.object(module.subprocess, 'run', side_effect=run), \
              mock.patch.object(module.os, 'waitid', None, create=True), \
              mock.patch.object(module.os, 'killpg', side_effect=killpg) as killpg_mock:
@@ -306,18 +306,22 @@ with open(sys.argv[1], 'a', buffering=1) as f:
             killpg_mock.assert_any_call(987654, signal.SIGTERM)
             self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
 
-    def test_group_publication_failure_holds_after_owner_exit(self):
+    def test_group_publication_failure_never_runs_command(self):
         self.config(1)
         real_write = pathlib.Path.write_text
+        ran = self.root/'ran'
         def write(path, text, *args, **kwargs):
             if path.name == 'groups':
                 raise OSError('fixture ledger publication failed')
             return real_write(path, text, *args, **kwargs)
         args = module.argparse.Namespace(weight=1, head_checks=False,
-                                         command=['--', 'sh', '-c', 'exit 7'])
+                                         command=['--', 'touch', str(ran)])
         with mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(pathlib.Path, 'write_text', new=write):
-            self.assertEqual(module.gate(args), 7)
+            with self.assertRaises(OSError):
+                module.gate(args)
+        time.sleep(0.5)
+        self.assertFalse(ran.exists())
         paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
         self.assertEqual(len(paths), 1)
         with mock.patch.dict(os.environ, dict(self.env,
@@ -327,9 +331,50 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         dead.wait()
         (paths[0]/'pid').write_text(str(dead.pid))
         with mock.patch.dict(os.environ, self.env, clear=True):
+            self.assertTrue(module.Slots(1).claim(1))
+
+    def test_gate_killed_before_publication_is_reclaimed(self):
+        self.config(1)
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            dying = module.Slots(1)
+            self.assertTrue(dying.claim(1))
+            slot = dying.owned[0]
+            self.assertTrue((slot/'prelaunch').exists())
+            self.assertFalse((slot/'groups-ready').exists())
+            dead = subprocess.Popen(['true']); dead.wait()
+            (slot/'pid').write_text(str(dead.pid))
+            self.assertTrue(module.Slots(1).claim(1))
+
+    def test_dead_owner_with_live_group_is_not_reclaimed(self):
+        self.config(1)
+        group = subprocess.Popen(['sleep', '30'], start_new_session=True)
+        self.addCleanup(lambda: (group.kill(), group.wait()))
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            dying = module.Slots(1)
+            self.assertTrue(dying.claim(1))
+            slot = dying.owned[0]
+            dying.record_groups([group])
+            dying.launched()
+            dead = subprocess.Popen(['true']); dead.wait()
+            (slot/'pid').write_text(str(dead.pid))
             claimant = module.Slots(1)
             self.assertFalse(claimant.claim(1))
-            self.assertTrue(paths[0].exists())
+            self.assertEqual(claimant.stuck, [slot.name])
+            self.assertTrue(slot.exists())
+
+    def test_killed_gate_with_live_command_stays_held(self):
+        self.config(1)
+        self.run_gate(['sleep', '30'])
+        slot = self.root/'.cache/heavy-gate/slot-1'
+        self.wait_for(lambda: (slot/'groups-ready').exists() and not (slot/'prelaunch').exists())
+        pgid = json.loads((slot/'groups').read_text())[0]
+        self.addCleanup(lambda: os.killpg(pgid, signal.SIGKILL))
+        owner = int((slot/'pid').read_text())
+        os.kill(owner, signal.SIGKILL)
+        self.processes[-1].wait()
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            self.assertFalse(module.Slots(1).claim(1))
+        self.assertTrue(slot.exists())
 
     def test_marker_publication_failure_rejects_nested_token(self):
         self.config(1)
@@ -344,7 +389,8 @@ with open(sys.argv[1], 'a', buffering=1) as f:
                                          command=['--', 'sh', '-c', 'exit 7'])
         with mock.patch.dict(os.environ, self.env, clear=True), \
              mock.patch.object(pathlib.Path, 'touch', new=touch):
-            self.assertEqual(module.gate(args), 7)
+            with self.assertRaises(OSError):
+                module.gate(args)
         self.assertTrue(failures)
         paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
         self.assertEqual(len(paths), 1)
