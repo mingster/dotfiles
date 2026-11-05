@@ -469,24 +469,25 @@ if [ "$batch_requested" = true ]; then
   train_check="Checks: PASS head=$LEAD_MERGE_TRAIN_HEAD train-heads=$LEAD_MERGE_TRAIN_HEADS"
 fi
 check_body="" checks=""
-# A preflight-only run (batch) has no Checks yet: the train receipt is the proof, and it is verified after head-checks.
-if [ "$preflight_only" != 1 ]; then
-  check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
-  checks=${check_body%%$'\n'*}
-  if [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; then :
-  elif [ "$checks" = "Checks: FAIL head=$head" ]; then
-    # Never carry past a run that happened.
-    refuse "Checks: FAIL at the current head"
-  elif [ "$batch_requested" = true ]; then
-    # Never carry in a batch (the train Checks is the proof there).
-    refuse "missing current-head or containing-train Checks: PASS"
-  else
-    [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Checks"; main_fetched=true; }
-    if check_body=$(checks_carry "$info" "$head"); then
-      checks="Checks: PASS head=$head"
-      echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"
-    else refuse "missing current-head or containing-train Checks: PASS"; fi
-  fi
+# Batch preflight applies the single path rule below; the reason names the fix instead of the train.
+no_checks_reason="missing current-head or containing-train Checks: PASS"
+if [ "$preflight_only" = 1 ]; then no_checks_reason="no Checks: PASS at the current head; run head-checks before the train"; main_fetched=true; fi
+check_body=$(jq -r --arg head "$head" --arg train "$train_check" '[.comments[].body | select((split("\n")[0]) == ("Checks: PASS head="+$head) or (split("\n")[0]) == ("Checks: FAIL head="+$head) or ($train != "" and (split("\n")[0]) == $train))] | last // ""' <<<"$info")
+checks=${check_body%%$'\n'*}
+if [ "$checks" = "Checks: PASS head=$head" ] || { [ -n "$train_check" ] && [ "$checks" = "$train_check" ]; }; then :
+elif [ "$checks" = "Checks: FAIL head=$head" ]; then
+  # Never carry past a run that happened.
+  if [ "$preflight_only" = 1 ]; then refuse "$no_checks_reason"; else refuse "Checks: FAIL at the current head"; fi
+elif [ "$batch_requested" = true ]; then
+  # Never carry in a batch (the train Checks is the proof there).
+  refuse "$no_checks_reason"
+else
+  # A batch preflight child skips the fetch: the batch parent fetched main for the whole run.
+  [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Checks"; main_fetched=true; }
+  if check_body=$(checks_carry "$info" "$head"); then
+    checks="Checks: PASS head=$head"
+    echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"
+  else refuse "$no_checks_reason"; fi
 fi
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
