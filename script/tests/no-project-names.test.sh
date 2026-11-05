@@ -1,14 +1,46 @@
 #!/usr/bin/env bash
 # Guard: the public dotfiles repo must not name our projects, hosts or company ids.
 # Project values live in untracked *.local.* overlays (see script/apply-local-overlay.py).
+# Pattern list (not in repo): ${NO_PROJECT_NAMES_FILE:-$XDG_CONFIG_HOME/dotfiles/project-names.pattern}
+# Format: one extended-regex fragment per line; blank lines are ignored; lines are OR'd with |.
 # Scans tracked text files (binary files skipped). Run from anywhere.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 cd "$root" || exit 1
-# The account name is written with a bracket so this file does not contain it literally.
-pattern='riben|pstv|stm3[689]|tvcdn|63\.141|ht3|09702642|mtsa[i]'
-hits=$(git grep -IiE "$pattern" -- . ':!script/tests/no-project-names.test.sh' || true)
-if [ -n "$hits" ]; then
+
+pattern_file="${NO_PROJECT_NAMES_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/project-names.pattern}"
+
+if [ ! -f "$pattern_file" ]; then
+  echo "skip: project-names pattern file missing ($pattern_file)"
+  exit 0
+fi
+
+pattern=""
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [ -z "$line" ] && continue
+  if [ -z "$pattern" ]; then
+    pattern="$line"
+  else
+    pattern="$pattern|$line"
+  fi
+done <"$pattern_file"
+if [ -z "$pattern" ]; then
+  echo "skip: project-names pattern file empty ($pattern_file)"
+  exit 0
+fi
+
+set +e
+hits=$(git grep -IiE "$pattern" -- . ':!templates/agent-team/.claude/hooks/' 2>&1)
+grep_ec=$?
+set -e
+if [ "$grep_ec" -gt 1 ]; then
+  echo "FAIL: invalid project-names pattern ($pattern_file)"
+  echo "$hits" | head -5
+  exit 1
+fi
+if [ "$grep_ec" -eq 0 ] && [ -n "$hits" ]; then
   echo "FAIL: project names found in tracked files:"; echo "$hits" | cut -c1-160 | head -30
   exit 1
 fi

@@ -8,6 +8,12 @@
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+MAC_SERVER_LOCAL="${MAC_SERVER_LOCAL:-$DOTFILES/mac/install_mac_server.local.conf}"
+if [ -f "$MAC_SERVER_LOCAL" ]; then
+  # shellcheck source=/dev/null
+  . "$MAC_SERVER_LOCAL"
+fi
+# Optional bash array MAC_SERVER_ASDF_TOOL_VERSIONS: paths to .tool-versions (set in local conf).
 
 dry=0
 skip_casks=0
@@ -215,14 +221,24 @@ fi
 
 # Product repos pin their own node. Install the pin where a checkout exists, so
 # elon-startup.sh and bun do not find a missing version later.
+_asdf_repo_count=0
+if [ -n "${MAC_SERVER_ASDF_TOOL_VERSIONS+set}" ]; then
+  _asdf_repo_count=${#MAC_SERVER_ASDF_TOOL_VERSIONS[@]}
+fi
+if [ "$_asdf_repo_count" -eq 0 ]; then
+  echo "WARN: MAC_SERVER_ASDF_TOOL_VERSIONS unset or empty; no per-repo asdf install (set MAC_SERVER_ASDF_TOOL_VERSIONS in $MAC_SERVER_LOCAL)" >&2
+fi
 if [ "$dry" -eq 1 ]; then
-  echo "would run: asdf install in each repo with a .tool-versions (riben.life/web, pstv)"
-elif command -v asdf >/dev/null 2>&1; then
-  for tv in "$HOME/projects/riben.life/web/.tool-versions" "$HOME/pstv/.tool-versions"; do
+  if [ "$_asdf_repo_count" -gt 0 ]; then
+    echo "would run: asdf install in each repo with a .tool-versions ($MAC_SERVER_LOCAL)"
+  fi
+elif command -v asdf >/dev/null 2>&1 && [ "$_asdf_repo_count" -gt 0 ]; then
+  for tv in "${MAC_SERVER_ASDF_TOOL_VERSIONS[@]}"; do
     [ -f "$tv" ] || continue
     (cd "$(dirname "$tv")" && run asdf install) || echo "WARN: asdf install failed for $tv" >&2
   done
 fi
+unset _asdf_repo_count
 
 step "Agent provider CLIs and developer tools"
 if ! command -v bun >/dev/null 2>&1; then
