@@ -125,6 +125,7 @@ chmod +x "$tmp/bin/"*
 export LEAD_MERGE_HEAD_CHECKS="$tmp/bin/head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
 
 pass=0 fail=0
+put_pass() { local i; for i in 0 1 2; do printf 'Checks: PASS head=%s\n' "${heads[$i]}" > "$COMMENT_DIR/$((11+i))"; done; } # entry gate: every batch PR needs Checks
 reported() { grep -A3 "dropped PR #$1" <<<"$out" | grep -q "$2"; } # PR number, text in its refusal list
 check() {
   name=$1; shift
@@ -132,7 +133,7 @@ check() {
 }
 
 : > "$EVENT_LOG"
-rm -f "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+rm -f "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 out=$(DRY_RUN=1 bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "dry run succeeds" test "$code" -eq 0
 check "dry run prints one head-checks run" test "$(grep -c 'head-checks' <<<"$out")" -eq 1
@@ -147,7 +148,7 @@ check "batch of one merges as a single PR" grep -qx 'merge 11' "$EVENT_LOG"
 check "batch of one builds no train" test "$(grep -c '^head-checks' "$EVENT_LOG")" -eq 0
 check "batch of one prints no batch summary" test "$(grep -c 'batch complete' <<<"$out")" -eq 0
 
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 FAIL_HEAD=${heads[1]}; export FAIL_HEAD
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "red train still merges passing PRs" test "$code" -eq 0
@@ -159,7 +160,7 @@ check "red train prints the failing test line" grep -q '(fail) widget keeps its 
 check "red train prints the full log path" grep -q 'Full log: /logs/head-checks-' <<<"$out"
 
 # T33: cleanup runs once, after the last merge, and a failing cleanup never fails the batch.
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD; put_pass
 CLEANUP_EXIT=1; export CLEANUP_EXIT
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 unset CLEANUP_EXIT
@@ -172,7 +173,7 @@ check "the one cleanup names all three merged heads" test "$(grep '^cleanup ' "$
 check "every MERGED prints before the cleanup line" test "$(grep -n '^MERGED' <<<"$out" | tail -1 | cut -d: -f1)" -lt "$(grep -n '^cleanup: starting' <<<"$out" | cut -d: -f1)"
 check "a failing cleanup is reported" grep -q 'cleanup: incomplete' <<<"$out"
 
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; unset FAIL_HEAD; put_pass
 FAIL_EXACT_HEADS=$(IFS=,; echo "${heads[*]}"); export FAIL_EXACT_HEADS
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "interaction-red train returns cleanly" test "$code" -eq 0
@@ -182,7 +183,7 @@ check "interaction-red train prints why it failed" grep -q '(fail) widget keeps 
 unset FAIL_EXACT_HEADS
 
 # A refused PR is dropped and reported; the rest of the batch merges.
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 BATCH_FILE='.claude/hooks/x.sh'; BATCH_FILE_PR=12; export BATCH_FILE BATCH_FILE_PR
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "batch drops a PR with a protected path" test "$code" -eq 0
@@ -191,7 +192,7 @@ check "dropped protected PR does not merge" test "$(grep -c '^merge 12$' "$EVENT
 check "the rest of the batch merges" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 2
 unset BATCH_FILE BATCH_FILE_PR
 
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 BATCH_DIFF=$'+test.skip("case", () => {})\n'; BATCH_DIFF_PR=12; export BATCH_DIFF BATCH_DIFF_PR
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "batch drops an uncountersigned PR" test "$code" -eq 0
@@ -201,7 +202,7 @@ check "the rest of the batch merges past an uncountersigned PR" test "$(grep -c 
 unset BATCH_DIFF BATCH_DIFF_PR
 
 # Main changing to an untested tree after the first merge stops the batch before PR 12.
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 export DRIFT_AFTER_PR=11
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "main drift stops the batch" test "$code" -eq 1
@@ -231,7 +232,7 @@ check "plain PR reports overlapping trunk drift" grep -q 'trunk changed docs/cha
 unset TRUNK_FILES
 
 # GitHub can transiently report UNKNOWN after the previous batch item merges.
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 export UNKNOWN_PR=12 UNKNOWN_READS=2
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "UNKNOWN mergeability is retried" test "$code" -eq 0
@@ -239,7 +240,7 @@ check "UNKNOWN retry waits briefly" test "$(grep -c '^sleep ' "$EVENT_LOG")" -eq
 check "batch merges after UNKNOWN clears" test "$(grep -c '^merge ' "$EVENT_LOG")" -eq 3
 unset UNKNOWN_PR UNKNOWN_READS
 
-: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"
+: > "$EVENT_LOG"; rm -f "$COMMENT_DIR"/* "$MERGED_DIR"/* "$MAIN_TREE_FILE" "$UNKNOWN_COUNT_FILE"; put_pass
 export UNKNOWN_PR=11 UNKNOWN_READS=9
 out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
 check "persistent UNKNOWN drops only that PR" test "$code" -eq 0
@@ -258,6 +259,14 @@ cleanup_line=$(grep -n '^cleanup ' "$EVENT_LOG" | cut -d: -f1)
 check "retarget happens before cleanup" test -n "$retarget_line" -a "$retarget_line" -lt "$cleanup_line"
 
 # Cases on the shared fixture: real git, stateful fake gh and orca.
+# fx_checks_pass <pr>...: the entry gate needs a Checks PASS at the head of every PR that should enter a train.
+fx_checks_pass() {
+  local n h
+  for n in "$@"; do
+    h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+    jq --arg b "Checks: PASS head=$h" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  done
+}
 fx_suite() {
   # shellcheck source=lib/merge-fixture.sh
   . "$here/tests/lib/merge-fixture.sh"
@@ -285,6 +294,7 @@ EOS
 
   # T2: a PR that preflight refuses never takes part in a head-checks train.
   mf_pr_add 11 f11 "$ok" docs/a11.md; mf_pr_add 12 f12 $'Verification:\n- Passed.' docs/a12.md; mf_pr_add 13 f13 "$ok" docs/a13.md
+  fx_checks_pass 11 12 13
   h12=$(jq -r .headRefOid "$MF_GH_DIR/pr-12.json")
   out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
   [ "$code" -eq 0 ] && echo "ok   T2 batch with a refused PR still exits 0" || echo "FAIL T2 exit $code: $out"
@@ -298,12 +308,12 @@ EOS
   # T27: a PR the gate drops after train checks takes every later train-mate with it, so main only
   # ever receives a prefix of the train that head-checks tested.
   local n states
-  for n in 14 15 16; do mf_pr_add "$n" "f$n" "$ok" "docs/a$n.md"; done
+  for n in 14 15 16; do mf_pr_add "$n" "f$n" "$ok" "docs/a$n.md"; done; fx_checks_pass 14 15 16
   out=$(FX_BREAK_PR=14 bash "$here/lead-merge.sh" --repo example/repo --batch 14 15 16 2>&1); code=$?
   states=$(for n in 14 15 16; do jq -r .state "$MF_GH_DIR/pr-$n.json"; done | tr '\n' ' ')
   [ "$states" = "OPEN OPEN OPEN " ] && echo "ok   T27 nothing merges after the first train PR is dropped" || echo "FAIL T27 states $states: $out"
   grep -q 'PR #15: .*untested without PR #14' <<<"$out" && echo "ok   T27 later train-mates are reported" || echo "FAIL T27 report: $out"
-  for n in 17 18 19; do mf_pr_add "$n" "f$n" "$ok" "docs/a$n.md"; done
+  for n in 17 18 19; do mf_pr_add "$n" "f$n" "$ok" "docs/a$n.md"; done; fx_checks_pass 17 18 19
   out=$(FX_BREAK_PR=19 bash "$here/lead-merge.sh" --repo example/repo --batch 17 18 19 2>&1)
   states=$(for n in 17 18 19; do jq -r .state "$MF_GH_DIR/pr-$n.json"; done | tr '\n' ' ')
   [ "$states" = "MERGED MERGED OPEN " ] && echo "ok   T27 the tested prefix before the dropped PR merges" || echo "FAIL T27 prefix states $states: $out"
@@ -337,7 +347,7 @@ EOS
   export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/real-head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
   cd "$MF_REPO" || return 1
   local n prs=() out code merged=0 body=$'## Verification\n- Passed.'
-  for n in $(seq 21 33); do mf_pr_add "$n" "r$n" "$body" "docs/r$n.md"; prs+=("$n"); done
+  for n in $(seq 21 33); do mf_pr_add "$n" "r$n" "$body" "docs/r$n.md"; prs+=("$n"); done; fx_checks_pass "${prs[@]}"
   out=$(bash "$here/lead-merge.sh" --repo example/repo --dry-run --batch "${prs[@]}" 2>&1)
   grep -n 'receipt' <<<"$out" | head -1 | grep -q 'receipt .*65536' && echo "ok   T24 dry run prints the receipt size" || echo "FAIL T24 dry run receipt line: $out"
   [ "$(grep -n 'receipt' <<<"$out" | head -1 | cut -d: -f1)" -lt "$(grep -n 'head-checks' <<<"$out" | head -1 | cut -d: -f1)" ] && echo "ok   T24 receipt size comes before the head-checks line" || echo "FAIL T24 order"
@@ -345,9 +355,9 @@ EOS
   [ "$code" -eq 0 ] && echo "ok   T24 13 PR batch with a large log exits 0" || echo "FAIL T24 exit $code: $(tail -5 <<<"$out")"
   for n in "${prs[@]}"; do [ "$(jq -r .state "$MF_GH_DIR/pr-$n.json")" != MERGED ] || merged=$((merged+1)); done
   [ "$merged" -eq 13 ] && echo "ok   T24 every PR merges" || echo "FAIL T24 merged $merged of 13: $(grep -B3 "gate dropped PR #21" <<<"$out" | head -12)"
-  local size; size=$(jq -r '.comments[0].body | length' "$MF_GH_DIR/pr-21.json" 2>/dev/null || echo 0)
+  local size; size=$(jq -r '.comments[-1].body | length' "$MF_GH_DIR/pr-21.json" 2>/dev/null || echo 0)
   [ "$size" -gt 0 ] && [ "$size" -le 65536 ] && echo "ok   T24 receipt is posted under the limit ($size)" || echo "FAIL T24 receipt size $size"
-  jq -r '.comments[0].body' "$MF_GH_DIR/pr-21.json" | grep -q "Full log: $HEAD_CHECKS_LOG_DIR/" && echo "ok   T24 receipt names the full log" || echo "FAIL T24 no log name"
+  jq -r '.comments[-1].body' "$MF_GH_DIR/pr-21.json" | grep -q "Full log: $HEAD_CHECKS_LOG_DIR/" && echo "ok   T24 receipt names the full log" || echo "FAIL T24 no log name"
 }
 
 # T13 and T34: one merge run per repo, and a batch that finds main moved merges nothing.
@@ -374,7 +384,7 @@ printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
 EOS
   chmod +x "$MF_BIN/fake-head-checks"
   export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks"
-  for n in 11 12 13 14; do mf_pr_add "$n" "k$n" "$ok" "docs/k$n.md"; done
+  for n in 11 12 13 14 15; do mf_pr_add "$n" "k$n" "$ok" "docs/k$n.md"; done; fx_checks_pass 11 12 13 14  # PR 15 has no Checks: it stays a preflight refusal
 
   # T13: a batch blocked in head-checks holds the lock; a single merge waits, then refuses naming the holder.
   FX_BLOCK=1 mf_run_limited 60 bash "$here/lead-merge.sh" --repo o/r --batch 11 12 > "$MF_DIR/batch.out" 2>&1 &
@@ -400,7 +410,7 @@ EOS
 
   # T13: a lock dir whose pid is gone is taken over, and released again on a refusal exit.
   dead=$(bash -c 'echo $$'); mkdir "$lock"; echo "$dead" > "$lock/pid"; date +%s > "$lock/started"
-  out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1)
+  out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 15 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-15.json")" 2>&1)
   grep -qi 'stale' <<<"$out" && echo "ok   T13 dead pid lock is taken over" || echo "FAIL T13 no takeover: $out"
   grep -q 'missing current-head' <<<"$out" && echo "ok   T13 run past the lock reaches preflight" || echo "FAIL T13 did not reach preflight: $out"
   [ ! -e "$lock" ] && echo "ok   T13 lock is released on a refusal exit" || echo "FAIL T13 lock left after refusal"
@@ -433,7 +443,7 @@ EOS
   mf_orca_add_run run_a; mf_orca_add_worker run_a ctx_verify completed /w/v; mf_orca_add_worker run_a ctx_author completed /w/a
   cd "$MF_REPO" || return 1
   local ok=$'## Verification\n- Passed.' n h out code f
-  for n in 51 52 53; do mf_pr_add "$n" "v$n" "$ok" "script/v$n.sh"; done
+  for n in 51 52 53; do mf_pr_add "$n" "v$n" "$ok" "script/v$n.sh"; done; fx_checks_pass 51 52 53
   for n in 51 52 53; do
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
     f="$MF_GH_DIR/pr-$n.json"
@@ -471,7 +481,7 @@ EOS
   cd "$MF_REPO" || return 1
   local ok=$'## Verification\n- Passed.' n h out code runs merged=0
   for n in 41 42 43; do
-    mf_pr_add "$n" "v$n" "$ok" "src/v$n.sh"
+    mf_pr_add "$n" "v$n" "$ok" "src/v$n.sh"; fx_checks_pass "$n"
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
     jq --arg b "Verdict: PASS head=$h verifier=ctx_verify author=unknown" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' \
       "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
@@ -520,7 +530,121 @@ EOS
 }
 
 
-fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1 )
+# #497: a PR enters a train only with Checks PASS at its head, or carried across a clean merge of main.
+fx_gate() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"
+  export FX_HC_LOG="$MF_DIR/hc.log" EVENT_LOG="$MF_DIR/events"; : > "$EVENT_LOG"; : > "$FX_HC_LOG"
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+echo "head-checks $heads" >> "$FX_HC_LOG"
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks" LEAD_MERGE_CLEANUP=true
+  cd "$MF_REPO" || return 1
+  local ok=$'## Verification\n- Passed.' reason='no Checks: PASS at the current head; run head-checks before the train' out code h h0 w
+  # comment <pr> <body>
+  gate_comment() { jq --arg b "$2" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' "$MF_GH_DIR/pr-$1.json" > "$MF_GH_DIR/pr-$1.tmp" && mv "$MF_GH_DIR/pr-$1.tmp" "$MF_GH_DIR/pr-$1.json"; }
+  gate_pass() { gate_comment "$1" "Checks: PASS head=$(jq -r .headRefOid "$MF_GH_DIR/pr-$1.json")"; }
+  gate_state() { jq -r .state "$MF_GH_DIR/pr-$1.json"; }
+  # gate_advance <pr> [merge]: add a commit to the PR branch (or merge origin/main into it) and move the PR head.
+  gate_advance() {
+    local b; b=$(jq -r .headRefName "$MF_GH_DIR/pr-$1.json")
+    "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$b"
+    if [ "${2:-}" = merge ]; then "$MF_REAL_GIT" -C "$MF_REPO" merge -q --no-ff -m "merge main" origin/main
+    else echo more > "$MF_REPO/more-$1.txt"; "$MF_REAL_GIT" -C "$MF_REPO" add . && "$MF_REAL_GIT" -C "$MF_REPO" commit -q -m more; fi
+    "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$b"
+    h=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$b")
+    "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
+    jq --arg h "$h" '.headRefOid = $h' "$MF_GH_DIR/pr-$1.json" > "$MF_GH_DIR/pr-$1.tmp" && mv "$MF_GH_DIR/pr-$1.tmp" "$MF_GH_DIR/pr-$1.json"
+  }
+
+  # Criterion 1: no Checks comment on PR 12.
+  for n in 11 12 13; do mf_pr_add "$n" "g$n" "$ok" "docs/g$n.md"; done
+  gate_pass 11; gate_pass 13
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-12.json")
+  out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 11 12 13 2>&1); code=$?
+  [ "$code" -eq 0 ] && echo "ok   R3 batch with an unchecked PR exits 0" || echo "FAIL R3 exit $code: $out"
+  grep -A3 'dropped PR #12' <<<"$out" | grep -qF "$reason" && echo "ok   R3 unchecked PR is dropped with the reason" || echo "FAIL R3 report: $out"
+  ! grep -q "$h" "$FX_HC_LOG" && echo "ok   R3 head-checks never saw the unchecked head" || echo "FAIL R3 train held the unchecked head"
+  [ "$(grep -c . "$FX_HC_LOG")" -eq 1 ] && echo "ok   R3 one head-checks run" || echo "FAIL R3 run count $(grep -c . "$FX_HC_LOG")"
+  [ "$(gate_state 11)$(gate_state 13)$(gate_state 12)" = MERGEDMERGEDOPEN ] && echo "ok   R3 the checked PRs merge, PR 12 stays open" || echo "FAIL R3 states"
+
+  # Criterion 2: a FAIL at the head after an older PASS.
+  : > "$FX_HC_LOG"
+  for n in 21 22 23; do mf_pr_add "$n" "g$n" "$ok" "docs/g$n.md"; done
+  gate_pass 21; gate_pass 23; gate_pass 22; gate_advance 22
+  gate_comment 22 "Checks: FAIL head=$(jq -r .headRefOid "$MF_GH_DIR/pr-22.json")"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-22.json")
+  out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 21 22 23 2>&1); code=$?
+  grep -A3 'dropped PR #22' <<<"$out" | grep -qF "$reason" && echo "ok   R3 a Checks FAIL at the head is dropped" || echo "FAIL R3 fail report: $out"
+  ! grep -q "$h" "$FX_HC_LOG" && echo "ok   R3 head-checks never saw the failed head" || echo "FAIL R3 train held the failed head"
+  [ "$(gate_state 21)$(gate_state 23)$(gate_state 22)" = MERGEDMERGEDOPEN ] && echo "ok   R3 the rest merge after a FAIL drop" || echo "FAIL R3 fail states"
+
+  # Criterion 3: a PASS on an older head and only a clean merge of main since.
+  : > "$FX_HC_LOG"
+  mf_pr_add 32 g32 "$ok" docs/g32.md; gate_pass 32; h0=$(jq -r .headRefOid "$MF_GH_DIR/pr-32.json")
+  w=$(mktemp -d); "$MF_REAL_GIT" clone -q "$MF_ORIGIN" "$w"; echo up > "$w/up.txt"; "$MF_REAL_GIT" -C "$w" add up.txt
+  "$MF_REAL_GIT" -C "$w" commit -q -m up; "$MF_REAL_GIT" -C "$w" push -q origin HEAD:main; rm -rf "$w"
+  "$MF_REAL_GIT" -C "$MF_REPO" fetch -q origin; "$MF_REAL_GIT" -C "$MF_REPO" merge -q --ff-only origin/main
+  gate_advance 32 merge
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-32.json")
+  mf_pr_add 31 g31 "$ok" docs/g31.md; mf_pr_add 33 g33 "$ok" docs/g33.md; gate_pass 31; gate_pass 33
+  out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 31 32 33 2>&1); code=$?
+  [ "$h" != "$h0" ] && grep -q "$h" <<<"$(cat "$FX_HC_LOG" "$MF_GH_DIR/pr-32.json")" && echo "ok   R3 a PASS carried across a merge of main enters the train" || echo "FAIL R3 carry: $out"
+  [ "$(gate_state 31)$(gate_state 32)$(gate_state 33)" = MERGEDMERGEDMERGED ] && echo "ok   R3 carried PR merges with the others in one run" || echo "FAIL R3 carry states: $out"
+  [ "$(grep -c . "$FX_HC_LOG")" -eq 1 ] && echo "ok   R3 carry batch is one head-checks run" || echo "FAIL R3 carry run count"
+}
+
+
+# #499: every run that held the lock appends one line to lead-merge.log in the git common dir on release.
+fx_log() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"; cd "$MF_REPO" || return 1
+  export LEAD_MERGE_CLEANUP=true
+  local ok=$'## Verification\n- Passed.' out code n log line bp
+  log="$MF_REPO/.git/lead-merge.log"
+  mf_barrier_make hc
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+if [ -n "${FX_BLOCK:-}" ]; then : > "$MF_DIR/barrier-hc.waiting"; read -r _ < "$MF_DIR/barrier-hc"; fi
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks"
+  for n in 61 62 63 64 65 66; do mf_pr_add "$n" "l$n" "$ok" "docs/l$n.md"; done; fx_checks_pass 61 62 63 64 66
+
+  out=$(bash "$here/lead-merge.sh" --repo o/r --batch 61 62 63 2>&1); code=$?
+  line=$(tail -1 "$log" 2>/dev/null)
+  [ "$(grep -c . "$log" 2>/dev/null)" -eq 1 ] && echo "ok   #499 a batch run appends one log line" || echo "FAIL #499 log lines: $(cat "$log" 2>&1): $out"
+  grep -Eq '^start=[0-9T:Z-]+ end=[0-9T:Z-]+ hold_seconds=[0-9]+ prs=61,62,63 head_checks_runs=1 outcome=ok$' <<<"$line" && echo "ok   #499 the line holds start, end, hold seconds, PRs, run count and outcome" || echo "FAIL #499 line: $line"
+
+  out=$(bash "$here/lead-merge.sh" --repo o/r --pr 65 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-65.json")" 2>&1); code=$?
+  line=$(tail -1 "$log")
+  [ "$(grep -c . "$log")" -eq 2 ] && grep -Eq 'prs=65 head_checks_runs=0 outcome=refused$' <<<"$line" && echo "ok   #499 a refused run still writes a line" || echo "FAIL #499 refused line: $line"
+
+  FX_BLOCK=1 bash "$here/lead-merge.sh" --repo o/r --batch 64 66 > "$MF_DIR/kill.out" 2>&1 &
+  bp=$!
+  mf_barrier_wait_until_blocked hc 20 || echo "FAIL #499 run never reached head-checks"
+  pkill -TERM -P "$bp"; kill -TERM "$bp"
+  wait "$bp" 2>/dev/null
+  line=$(tail -1 "$log")
+  [ "$(grep -c . "$log")" -eq 3 ] && grep -Eq 'prs=64,66 head_checks_runs=1 outcome=killed$' <<<"$line" && echo "ok   #499 a killed run still writes a line" || echo "FAIL #499 killed line: $line"
+  [ ! -e "$MF_REPO/.git/lead-merge.lock" ] && echo "ok   #499 the lock is gone after the log line" || echo "FAIL #499 lock left"
+}
+
+fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1; (fx_gate) 2>&1; (fx_log) 2>&1 )
 printf '%s\n' "$fx_out"
 pass=$((pass+$(grep -c '^ok ' <<<"$fx_out"))); fail=$((fail+$(grep -c '^FAIL' <<<"$fx_out")))
 echo "passed $pass, failed $fail"
