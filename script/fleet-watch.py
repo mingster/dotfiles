@@ -437,6 +437,9 @@ def parse_coordinator_name(text):
     return None
 
 
+_REMOTE_READ_FAILED = object()
+
+
 def coordinator_name_local(state_dir):
     try:
         text = (Path(state_dir) / 'coordinator.conf').read_text()
@@ -447,23 +450,25 @@ def coordinator_name_local(state_dir):
 
 def read_coordinator_name_from_remote(state_dir):
     try:
-        subprocess.run(['git', '-C', str(state_dir), 'fetch', '-q', 'origin'],
-                       capture_output=True, timeout=10)
+        fetch = subprocess.run(['git', '-C', str(state_dir), 'fetch', '-q', 'origin'],
+                               capture_output=True, timeout=10)
+        if fetch.returncode != 0:
+            return _REMOTE_READ_FAILED
         show = subprocess.run(['git', '-C', str(state_dir), 'show', 'origin/main:coordinator.conf'],
                               capture_output=True, text=True, timeout=10)
         if show.returncode != 0:
-            return None
+            return _REMOTE_READ_FAILED
         return parse_coordinator_name(show.stdout)
     except (subprocess.SubprocessError, OSError):
-        return None
+        return _REMOTE_READ_FAILED
 
 
 def coordinator_name_from_state_dir(state_dir):
-    """Prefer origin/main coordinator.conf; fall back to the local file on any git failure."""
+    """Prefer origin/main coordinator.conf; fall back to the local file only on git failure."""
     remote = read_coordinator_name_from_remote(state_dir)
-    if remote is not None:
-        return remote
-    return coordinator_name_local(state_dir)
+    if remote is _REMOTE_READ_FAILED:
+        return coordinator_name_local(state_dir)
+    return remote
 
 
 def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_alert, host=None,
