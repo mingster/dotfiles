@@ -28,6 +28,7 @@ ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
+CURSOR_COMPOSER_MODEL = "composer-2.5"
 
 
 def epoch(at):
@@ -548,7 +549,13 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
         if verdict == "blocked":
             until = blocked_until(detail, now)
             detail["blocked_until"], detail["blocked_until_local"] = until, local(until)
-    return {"provider": provider, "verdict": verdict, **detail}
+    result = {"provider": provider, "verdict": verdict, **detail}
+    if provider == "cursor" and model and model != CURSOR_COMPOSER_MODEL and result["verdict"] == "allowed":
+        result = {"provider": "cursor", "verdict": "unknown",
+                  "reason": ("auto+composer allowance does not measure Cursor model "
+                             + model + "; read the Cursor dashboard"),
+                  "source": result.get("source"), "reading_age_min": result.get("reading_age_min")}
+    return result
 
 
 def table(rows):
@@ -653,7 +660,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
         excluded_provider = entry["provider"] == avoid_provider
-        if entry["provider"] == "cursor" and entry["model"] != "composer-2.5":
+        if entry["provider"] == "cursor" and entry["model"] != CURSOR_COMPOSER_MODEL:
             eligible, row = False, {**row, "verdict": "cursor runs only composer-2.5"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
@@ -696,7 +703,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["check", "show", "pick", "banner"])
     ap.add_argument("--provider")
-    ap.add_argument("--model", help="Antigravity model id; omitted selects the Gemini Flash pool")
+    ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for composer-2.5 allowance")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])
