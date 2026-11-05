@@ -169,8 +169,15 @@ def alive(pid):
 
 def group_members(pgid):
     """A complete, successful snapshot; malformed output is not absence."""
-    result = subprocess.run(['ps', '-axo', 'pgid=,pid=,ppid=,uid=,stat=,comm='],
-                            check=True, capture_output=True, text=True, timeout=3)
+    if sys.platform == 'darwin':
+        command = ['ps', '-g', str(pgid), '-o', 'pgid=,pid=,ppid=,uid=,stat=,comm=']
+    else:
+        command = ['ps', '--pgid', str(pgid), '-o', 'pgid=,pid=,ppid=,uid=,stat=,comm=']
+    result = subprocess.run(command, capture_output=True, text=True, timeout=3)
+    if result.returncode != 0 and not result.stdout.strip():
+        return []
+    if result.returncode != 0:
+        result.check_returncode()
     members = []
     for line in result.stdout.splitlines():
         fields = line.split(maxsplit=5)
