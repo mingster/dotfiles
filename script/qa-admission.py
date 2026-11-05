@@ -238,20 +238,27 @@ def worker_counts(orca, flags, host_id):
             result = orca_result(orca, 'orchestration', 'worker-list', *flags,
                                  '--run', run_id, '--include-remote', '--full', *paging)
             rows = result.get('workers')
-            if 'page' not in result and isinstance(rows, list):
-                # Orca 1.4.246 omits page. Only a short page proves it is the last one.
-                if len(rows) >= WORKER_PAGE_LIMIT:
-                    refuse('worker inventory: no page field on a full page, coverage UNKNOWN')
-                result = dict(result, page={'hasMore': False})
-            page = obj(result.get('page'), 'worker page')
-            if not isinstance(rows, list) or type(page.get('hasMore')) is not bool:
+            if not isinstance(rows, list):
                 refuse('worker inventory: incomplete or UNKNOWN coverage')
+            if 'page' in result:
+                page = obj(result.get('page'), 'worker page')
+                if type(page.get('hasMore')) is not bool:
+                    refuse('worker inventory: incomplete or UNKNOWN coverage')
+                more, next_cursor = page['hasMore'], page.get('nextCursor')
+            elif result.get('nextCursor') not in (None, ''):
+                # Current Orca: nextCursor beside workers and scope, absent on the last page.
+                more, next_cursor = True, result['nextCursor']
+            elif len(rows) >= WORKER_PAGE_LIMIT:
+                # Orca 1.4.246 has neither. Only a short page proves it is the last one.
+                refuse('worker inventory: no page field on a full page, coverage UNKNOWN')
+            else:
+                more, next_cursor = False, None
             validate_worker_scope(result.get('scope'), run_id)
             for row in rows:
                 count_worker_row(seen, seats, row, host_id, live_terminals)
-            if not page['hasMore']:
+            if not more:
                 break
-            cursor = string(page.get('nextCursor'), 'worker page cursor')
+            cursor = string(next_cursor, 'worker page cursor')
             if cursor in cursors:
                 refuse('worker inventory: repeated page cursor')
             cursors.add(cursor)

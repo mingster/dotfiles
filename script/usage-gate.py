@@ -414,28 +414,57 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
     return "allowed", detail, st
 
 
+def orca_pages(*command):
+    """Yield the result of every page of an orca list command, following nextCursor.
+
+    Current Orca puts nextCursor at the top level and omits it on the last page; older Orca nested it under page
+    with hasMore. A page that cannot prove it is the last, or a repeated cursor, raises.
+    """
+    cursor, seen = None, set()
+    while True:
+        args = [ORCA, "orchestration", *command, "--limit", "100", "--json"]
+        if cursor:
+            args += ["--cursor", cursor]
+        response = subprocess.run(args, capture_output=True, text=True, timeout=5)
+        receipt = json.loads(response.stdout)
+        if receipt.get("ok") is False:
+            raise RuntimeError("orca refused the list")
+        result = receipt["result"]
+        yield result
+        if "page" in result:
+            if result["page"]["hasMore"] is not True:
+                if result["page"]["hasMore"] is not False:
+                    raise ValueError("bad page")
+                return
+            cursor = result["page"]["nextCursor"]
+        elif result.get("nextCursor") is not None:
+            cursor = result["nextCursor"]
+        else:
+            return
+        if not isinstance(cursor, str) or not cursor or cursor in seen:
+            raise ValueError("bad cursor")
+        seen.add(cursor)
+
+
 def running_workers(provider):
-    """Live running Dispatches, including retained/reused terminals, across every page."""
+    """Live running Dispatches, including retained/reused terminals, in every Run and on every page.
+
+    worker-list without --run shows only the caller's Run. None when any Run or page cannot be read.
+    """
     try:
-        count, cursor = 0, None
-        while True:
-            args = [ORCA, "orchestration", "worker-list", "--limit", "100", "--json"]
-            if cursor:
-                args += ["--cursor", cursor]
-            response = subprocess.run(args, capture_output=True, text=True, timeout=5)
-            result = json.loads(response.stdout)["result"]
-            for worker in result["workers"]:
-                projection = worker.get("projection") or {}
-                # Older hosts may omit terminalState; their provider projection remains usable.
-                if (worker.get("terminalState") not in ("released", "reclaimable")
-                        and worker.get("dispatchStatus") not in ("completed", "failed", "cancelled", "abandoned")
-                        and (projection.get("liveness") or {}).get("verdict") != "exited"
-                        and (projection.get("provider") or {}).get("id") == provider):
-                    count += 1
-            page = result.get("page") or {}
-            if not page.get("hasMore"):
-                return count
-            cursor = page["nextCursor"]
+        run_ids = [run["id"] for page in orca_pages("run-list") for run in page["runs"]]
+        count = 0
+        for run_id in run_ids:
+            for result in orca_pages("worker-list", "--run", run_id):
+                for worker in result["workers"]:
+                    projection = worker.get("projection") or {}
+                    # Older hosts may omit terminalState; their provider projection remains usable.
+                    if (worker.get("terminalState") not in ("released", "reclaimable")
+                            and worker.get("dispatchStatus") not in ("completed", "failed", "cancelled", "abandoned")
+                            and (projection.get("liveness") or {}).get("verdict") != "exited"
+                            and (projection.get("provider") or {}).get("id") == provider):
+                        count += 1
+        return count
     except Exception:
         return None
 

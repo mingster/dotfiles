@@ -114,8 +114,12 @@ NATIVERM
       *"--cursor next"*) cat "$FAKE_DIR/runs-next.json" ;;
       *) cat "$FAKE_DIR/runs.json" 2>/dev/null || echo '{"ok":true,"result":{"runs":[{"id":"run_caller","coordinator_handle":"term_coordinator"}]}}' ;;
     esac ;;
-  "orchestration worker-list --cursor next"*) cat "$FAKE_DIR/workers-next.json" ;;
-  "orchestration worker-list"*) cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}' ;;
+  "orchestration worker-list"*)
+    wl_run=$(printf '%s' "$*" | sed -n 's/.*--run \([^ ]*\).*/\1/p'); wl_sfx=""
+    case "$*" in *"--cursor next"*) wl_sfx="-next" ;; esac
+    if [ -n "$wl_run" ] && [ -f "$FAKE_DIR/workers-$wl_run$wl_sfx.json" ]; then cat "$FAKE_DIR/workers-$wl_run$wl_sfx.json"
+    elif [ -n "$wl_sfx" ]; then cat "$FAKE_DIR/workers-next.json"
+    else cat "$FAKE_DIR/workers.json" 2>/dev/null || echo '{"result":{"workers":[],"page":{"hasMore":false}}}'; fi ;;
   "terminal list"*) [ "${FAKE_LIST_FAILS:-0}" = 0 ] || exit 1; FAKE_DIR="$FAKE_DIR" python3 <<'LIST'
 import json, os
 path = os.path.join(os.environ["FAKE_DIR"], "terminals.json")
@@ -753,6 +757,24 @@ flat_show dlive ready input_accepted live term_olive "$owt"
 printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dlive","state":"ready","liveness":"live","terminal":"term_olive","workspace":"repo1::'"$owt"'"}]}}' > "$tmp/workers.json"
 "$here/worker-pane-close.sh" dother >/dev/null 2>&1
 check "runs: a live dispatch in the same worktree keeps its shells" "$(listed term_osetup; echo $?)"
+# Current Orca worker-list: top level nextCursor, no page object, and only the caller's Run without --run.
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"warnings":[]}}' > "$tmp/workers.json"
+rm -f "$tmp/closes.log"; reset_other
+flat_show dlive ready input_accepted live term_olive "$owt"
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"warnings":[]}}' > "$tmp/workers-run_a.json"
+printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dlive","state":"ready","liveness":"live","terminal":"term_olive","workspace":"repo1::'"$owt"'"}],"scope":{"source":"flag"},"warnings":[]}}' > "$tmp/workers-run_c.json"
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "worker-list: a live dispatch in another Run keeps its shells" "$(listed term_osetup; echo $?)"
+rm -f "$tmp/workers-run_c.json" "$tmp/closes.log"; reset_other
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"nextCursor":"next","warnings":[]}}' > "$tmp/workers-run_a.json"
+printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dlive","state":"ready","liveness":"live","terminal":"term_olive","workspace":"repo1::'"$owt"'"}],"scope":{"source":"flag"},"warnings":[]}}' > "$tmp/workers-run_a-next.json"
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "worker-list: a live dispatch on page two (nextCursor) keeps its shells" "$(listed term_osetup; echo $?)"
+rm -f "$tmp/closes.log"; reset_other
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"nextCursor":"next","warnings":[]}}' > "$tmp/workers-run_a-next.json"
+"$here/worker-pane-close.sh" dother >/dev/null 2>&1
+check "worker-list: a repeated cursor closes nothing" "$(no_generic_close; echo $?)"
+rm -f "$tmp/workers-run_a.json" "$tmp/workers-run_a-next.json" "$tmp/workers-run_c.json"
 rm -f "$tmp/workers.json" "$tmp/runs.json" "$tmp/runs-next.json"
 
 # Unpushed commits: a local worktree ahead of its upstream keeps its shell terminals.

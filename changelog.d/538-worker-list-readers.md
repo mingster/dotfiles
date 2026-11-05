@@ -1,0 +1,1 @@
+The fleet watch, QA admission, usage gate, worker watchdog and `orca-team` pane scripts follow `nextCursor` in `worker-list` and still accept the older `page` object. Readers that decide a worker is gone or act on a terminal read every Run and fail closed on a partial read. The wrap-up skill says an agent with no output time is kept.

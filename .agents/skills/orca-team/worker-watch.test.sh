@@ -176,6 +176,33 @@ else
   fail=$((fail+1)); echo "FAIL pretty-printed pages (exit $code)"; echo "$out"
 fi
 
+# Current Orca worker-list: top level nextCursor, no page object.
+python3 - "$tmp" <<'PYFIXTURE'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+workers = [{"dispatchId": f"ctx_p{i}", "agentTerminalHandle": f"term_p{i}",
+            "projection": {"outcome": "in_progress"}} for i in range(101)]
+(root / "workers.json").write_text(json.dumps({"ok": True, "result": {"workers": workers[:100], "scope": {"source": "flag"}, "nextCursor": "page2", "warnings": []}}))
+(root / "workers-page2.json").write_text(json.dumps({"ok": True, "result": {"workers": workers[100:], "scope": {"source": "flag"}, "warnings": []}}))
+PYFIXTURE
+out=$("$here/worker-watch.sh" run_x 2>&1); code=$?
+if [ "$code" = 0 ] && echo "$out" | grep -qx 'ctx_p100 term_p100 OK'; then
+  pass=$((pass+1)); echo "ok   nextCursor pages observe the dispatch on page two"
+else
+  fail=$((fail+1)); echo "FAIL nextCursor pages (exit $code)"; echo "$out"
+fi
+# A cursor that repeats is a partial read: fail instead of judging the first page alone.
+python3 - "$tmp" <<'PYFIXTURE'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+doc = json.loads((root / "workers-page2.json").read_text())
+doc["result"]["nextCursor"] = "page2"
+(root / "workers-page2.json").write_text(json.dumps(doc))
+PYFIXTURE
+"$here/worker-watch.sh" run_x >/dev/null 2>&1; code=$?
+if [ "$code" = 2 ]; then pass=$((pass+1)); echo "ok   repeated cursor exits 2"
+else fail=$((fail+1)); echo "FAIL repeated cursor exits $code"; fi
+
 # Remote-only coverage preserving endpoint/environment
 : > "$tmp/terminal-reads.log"
 cat > "$tmp/workers.json" <<EOF

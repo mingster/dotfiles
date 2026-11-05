@@ -232,6 +232,36 @@ class QaAdmission(unittest.TestCase):
         calls = [json.loads(line) for line in (Path(self.tmp.name)/'calls').read_text().splitlines()]
         self.assertTrue(any('--cursor' in call and 'next' in call for call in calls))
 
+    def test_top_level_next_cursor_counts_later_page(self):
+        # Current Orca: nextCursor beside workers and scope, no page object, absent on the last page.
+        self.f.occupy('alpha', 1)
+        first = self.f.data['alpha']['workers']
+        second = copy.deepcopy(first)
+        second['workers'][0]['dispatchId'] = 'ctx-second'
+        second['workers'][0]['resource']['terminalHandle'] = 'term-second'
+        for page in (first, second):
+            page.pop('page')
+        first['nextCursor'] = 'next'
+        self.f.data['alpha']['next_page'] = second
+        self.success('beta')
+
+    def test_top_level_next_cursor_on_a_full_page_is_followed(self):
+        self.f.occupy('alpha', 100, 'completed')
+        first = self.f.data['alpha']['workers']
+        for w in first['workers']:
+            w['terminalClosed'] = True
+        first.pop('page')
+        first['nextCursor'] = 'next'
+        self.f.data['alpha']['next_page'] = {'workers': [], 'scope': first['scope']}
+        self.success()
+
+    def test_repeated_top_level_next_cursor_refuses(self):
+        first = self.f.data['alpha']['workers']
+        first.pop('page')
+        first['nextCursor'] = 'same'
+        self.f.data['alpha']['next_page'] = first
+        self.refuse('cursor')
+
     def test_absent_page_under_limit_is_last_page(self):
         # Orca 1.4.246 worker-list returns only workers and scope.
         self.f.data['alpha']['workers'].pop('page')

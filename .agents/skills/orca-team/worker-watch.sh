@@ -21,20 +21,20 @@ while :; do
   [ -z "$cursor" ] || args+=(--cursor "$cursor")
   raw=$("$orca" "${args[@]}" 2>/dev/null) \
     || { echo "worker-watch: worker-list failed for $run" >&2; exit 2; }
-  next_info=$(printf '%s' "$raw" | python3 -c '
-import json, sys
+  next_info=$(printf '%s' "$raw" | WATCH_HERE="$(cd "$(dirname "$0")" && pwd)" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["WATCH_HERE"]); import worker_state as ws
 try:
     d = json.load(sys.stdin)
+    cursor = ws.next_cursor(d.get("result"))
     with open(sys.argv[1], "a") as f:
         f.write(json.dumps(d) + "\n")
-    p = d.get("result", {}).get("page") or {}
-    if p.get("hasMore") and p.get("nextCursor"):
-        print(p["nextCursor"])
+    print(cursor)
 except Exception:
     sys.exit(3)
 ' "$tmp/pages.jsonl") || { echo "worker-watch: cannot parse worker-list output" >&2; exit 2; }
   [ -n "$next_info" ] || break
-  case "$seen_cursors" in *" $next_info "*) break ;; esac
+  case "$seen_cursors" in *" $next_info "*) echo "worker-watch: worker-list cursor repeated for $run" >&2; exit 2 ;; esac
   seen_cursors="$seen_cursors$next_info "
   cursor="$next_info"
 done

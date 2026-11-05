@@ -81,30 +81,52 @@ escalate() {
   [[ "$fails" != 3 ]] || alert_fallback "3 consecutive watchdog sends failed; coordinators are not reachable"
   return 1
 }
-# Page through run-list or worker-list, printing the run ids that qualify.
+# Page through run-list or one Run's worker-list. Current Orca puts nextCursor at the top level and omits it on the
+# last page; older Orca nested it under page with hasMore. A page that cannot prove it is the last, or a cursor that
+# repeats, fails the read.
 list_runs() {
-  local kind=$1 cursor='' n=0
+  local kind=$1 run=${2:-} cursor='' seen=' ' n=0
   while [[ $n -lt 20 ]]; do
     args=(orchestration "$kind-list" --limit 100 --json)
+    [[ -z "$run" ]] || args+=(--run "$run")
     [[ -z "$cursor" ]] || args+=(--cursor "$cursor")
     bounded "$orca_cli" "${args[@]}" > "$tmp/page" 2>/dev/null || return 1
     python3 - "$kind" "$tmp/page" > "$tmp/pageout" 2>/dev/null <<'PY' || return 1
 import json,sys
 r=json.load(open(sys.argv[2])); assert r.get('ok',True); r=r['result']
+def cursor(v):
+    assert isinstance(v,str) and v
+    return v
+if 'page' in r:
+    assert r['page'].get('hasMore') in (True,False)
+    c=cursor(r['page'].get('nextCursor')) if r['page']['hasMore'] else ''
+else:
+    c=cursor(r['nextCursor']) if r.get('nextCursor') is not None else ''
 if sys.argv[1]=='worker':
     for w in r['workers']:
-        if (w.get('terminalState') in ('active','retained') and w.get('runId')
-            and (w.get('projection') or {}).get('outcome','in_progress') == 'in_progress'): print('run',w['runId'])
-    p=r.get('page',{}); print('cursor',p.get('nextCursor') or '' if p.get('hasMore') else '')
+        if (w.get('terminalState') in ('active','retained')
+            and (w.get('projection') or {}).get('outcome','in_progress') == 'in_progress'): print('run live')
 else:
     for x in r['runs']: print('run',x['id'])
-    print('cursor',r.get('nextCursor') or '')
+print('cursor',c)
 PY
     sed -n 's/^run //p' "$tmp/pageout"
     cursor=$(sed -n 's/^cursor //p' "$tmp/pageout")
     [[ -n "$cursor" ]] || return 0
+    [[ "$seen" != *" $cursor "* ]] || return 1
+    seen="$seen$cursor "
     n=$((n + 1))
   done
+  return 1
+}
+# worker-list without --run shows only the caller's Run, so ask each known Run whether it has a live worker.
+list_active_runs() {
+  local id
+  while read -r id; do
+    [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+    list_runs worker "$id" > "$tmp/run-workers" || return 1
+    ! grep -q '^live$' "$tmp/run-workers" || echo "$id"
+  done < "$tmp/known-runs"
 }
 # A coordinator blocked in `orchestration check --run RUN --wait` is waiting, not idle.
 waiter_armed() {
@@ -117,7 +139,7 @@ while :; do
   : > "$tmp/terminals"; : > "$tmp/busy-coord"
   if [[ "$all" == 1 ]]; then
     runs=()
-    if list_runs worker | sort -u > "$tmp/active-runs" && list_runs run | sort -u > "$tmp/known-runs"; then
+    if list_runs run | sort -u > "$tmp/known-runs" && list_active_runs | sort -u > "$tmp/active-runs"; then
       while read -r id; do
         [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]] && runs+=("$id")
       done < <(comm -12 "$tmp/active-runs" "$tmp/known-runs")
@@ -136,7 +158,7 @@ if h:
     print(h, sys.argv[2]); open(sys.argv[3],'w').write(h)
 PY
     then log_action "parse-run-failed $run"; continue; fi
-    live=0 cursor='' complete=1
+    live=0 cursor='' seen=' ' complete=1
     while :; do
       args=(orchestration worker-list --run "$run" --limit 100 --json)
       [[ -z "$cursor" ]] || args+=(--cursor "$cursor")
@@ -146,7 +168,13 @@ PY
       if ! python3 - "$tmp/workers" > "$tmp/parsed" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1])); assert r.get('ok',True)
-r=r['result']; page=r.get('page',{})
+r=r['result']
+if 'page' in r:
+    assert r['page'].get('hasMore') in (True,False)
+    c=r['page'].get('nextCursor') if r['page']['hasMore'] else ''
+else:
+    c=r['nextCursor'] if r.get('nextCursor') is not None else ''
+assert isinstance(c,str)
 for w in r['workers']:
     if 'dispatchStatus' in w or 'projection' in w:
         current = (w.get('terminalState') in ('active','retained') and w.get('dispatchStatus') not in ('completed','failed','cancelled','abandoned')
@@ -158,9 +186,7 @@ for w in r['workers']:
     if current:
         h=w.get('agentTerminalHandle') or (w.get('terminal') if isinstance(w.get('terminal'), str) else None)
         if h: print('terminal',h,str((w.get('projection') or {}).get('provider') or 'none').lower())
-if page.get('hasMore'):
-    assert page.get('nextCursor')
-    print('cursor',page['nextCursor'])
+if c: print('cursor',c)
 PY
       then complete=0; log_action "parse-workers-failed $run"; break; fi
       cursor=''
@@ -171,6 +197,8 @@ PY
         else cursor=$value; fi
       done < "$tmp/parsed"
       [[ -n "$cursor" ]] || break
+      if [[ "$seen" == *" $cursor "* ]]; then complete=0; log_action "repeated-cursor $run"; break; fi
+      seen="$seen$cursor "
     done
     # A coordinator waits on its workers in the background, so its prompt looks idle; do not nudge it.
     [[ "$live" -lt 1 ]] || { cat "$tmp/coord-$run"; echo; } >> "$tmp/busy-coord" 2>/dev/null || true
