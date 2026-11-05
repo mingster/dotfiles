@@ -403,7 +403,7 @@ check "dispatch becoming running stops cleanup" "$([ -e "$tmp/state/reactivate" 
 rm "$tmp/state/reactivate"
 # No recorded pane: discover ended workers from the current Run, with pagination.
 cat > "$tmp/workers.json" <<JSON
-{"result":{"workers":[{"dispatchId":"d7","resource":{"worktreeId":"repo1::$tmp/linked"}}],"page":{"hasMore":true,"nextCursor":"next"}}}
+{"result":{"workers":[{"dispatchId":"d7","resource":{"worktreeId":"repo1::$tmp/live7"}}],"page":{"hasMore":true,"nextCursor":"next"}}}
 JSON
 cat > "$tmp/workers-next.json" <<JSON
 {"result":{"workers":[{"dispatchId":"d6","dispatchStatus":"released","resource":{"worktreeId":"repo1::$tmp/linked"}},{"dispatchId":"other","dispatchStatus":"completed","resource":{"worktreeId":"repo2::/other"}}],"page":{"hasMore":false}}}
@@ -707,8 +707,8 @@ flat_show drunning ready input_accepted live term_rrunning "$rwt"
 flat_show dlead ready input_accepted live term_rlead "$rwt"
 cat > "$tmp/workers.json" <<JSON
 {"ok":true,"result":{"workers":[
- {"dispatchId":"drunning","state":"ready","liveness":"live","terminal":"term_rrunning","workspace":"repo1::$rwt"},
- {"dispatchId":"dlead","state":"ready","liveness":"live","terminal":"term_rlead","workspace":"repo1::$rwt"}]}}
+ {"dispatchId":"drunning","state":"ready","liveness":"live","terminal":"term_rrunning","workspace":"repo1::/remote/host/orca/workspaces/repo1/wt-live"},
+ {"dispatchId":"dlead","state":"ready","liveness":"live","terminal":"term_rlead","workspace":"repo1::/remote/host/orca/workspaces/repo1/wt-live"}]}}
 JSON
 "$here/worker-pane-close.sh" dremote >/dev/null 2>&1
 check "remote: Setup terminal on another host closes" "$(term_absent term_rsetup; echo $?)"

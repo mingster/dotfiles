@@ -29,8 +29,8 @@ try: r=json.load(sys.stdin)["result"]
 except Exception: print(""); sys.exit(1)
 print(ws.status(r)); sys.exit(0 if ws.is_final(r) else 1)' "$here"
 }
-leftovers() { # $1 worker-show json, $2 terminal list json -> handles still listed that belong to the worker
-  SHOW="$1" LIST="$2" python3 -c '
+leftovers() { # $1 worker-show json, $2 terminal list json, $3 protected handles and "wt:<path>" lines -> handles still listed that belong to the worker
+  SHOW="$1" LIST="$2" PROTECT="${3:-}" python3 -c '
 import os,json,subprocess
 try: r=json.loads(os.environ["SHOW"])["result"]
 except Exception: r={}
@@ -61,10 +61,12 @@ if path and not remote:
     ahead=subprocess.run(["git","-C",path,"rev-list","--count","@{upstream}..HEAD"],capture_output=True,text=True)
     if ahead.returncode==0 and int(ahead.stdout.strip() or 0)>0: path=""
   except Exception: pass
+protect=set(os.environ.get("PROTECT","").split("\n"))
 seen=set()
 for t in terms:
   h=t.get("handle")
   if not h or h in seen or h==os.environ.get("ORCA_TERMINAL_HANDLE"): continue
+  if h in protect or "wt:"+str(t.get("worktreePath")) in protect: continue
   if remote and t.get("branch") in ("refs/heads/main","refs/heads/master"): continue
   if h in own or (path and t.get("worktreePath")==path):
     seen.add(h); print(h)'
@@ -84,7 +86,26 @@ if not path:
   if option.startswith("path:"): path=option[len("path:"):]
 sys.exit(0 if path and not os.path.exists(path) else 1)'
 }
-busy_handles() { # $1 dispatch to ignore -> terminal handles used by any other dispatch not in a final state; rc 1 if the list cannot be read
+run_coordinators() { # -> every Run's coordinator handle (the caller, leads, other Runs); rc 1 if the Run list cannot be read
+  local cursor="" args runs page next
+  while :; do
+    args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
+    runs=$(close_rpc orchestration run-list --full ${args[@]+"${args[@]}"} --json 2>/dev/null) || return 1
+    page=$(printf '%s' "$runs" | python3 -c '
+import json,sys
+doc=json.load(sys.stdin)
+if doc.get("ok") is False: sys.exit(1)
+r=doc["result"]
+for run in r["runs"]:
+    if run.get("coordinator_handle"): print(run["coordinator_handle"])
+if r.get("nextCursor"): print("CURSOR="+r["nextCursor"])') || return 1
+    printf '%s\n' "$page" | sed '/^CURSOR=/d'
+    next=$(printf '%s\n' "$page" | sed -n 's/^CURSOR=//p')
+    [ -n "$next" ] && [ "$next" != "$cursor" ] || return 0
+    cursor="$next"
+  done
+}
+busy_handles() { # $1 dispatch to ignore -> terminal handles and "wt:<path>" worktrees used by any other dispatch not in a final state; rc 1 if the list cannot be read
   local cursor="" args workers page next
   while :; do
     args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
@@ -97,6 +118,8 @@ for w in r["workers"]:
     if w.get("dispatchId")==sys.argv[1] or ws.is_final(w): continue
     for h in (ws.terminal(w), w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
         if h: print(h)
+    wid=ws.workspace_id(w)
+    if wid: print("wt:"+wid.split("::",1)[-1])
 p=r.get("page") or {}
 if p.get("hasMore") and p.get("nextCursor"): print("CURSOR="+p["nextCursor"])' "$1" "$here") || return 1
     printf '%s\n' "$page" | sed '/^CURSOR=/d'
@@ -213,8 +236,15 @@ close_one() {
   printf '%s' "$show" | dispatch_final >/dev/null || return 0
   [ "${2:-}" != sweep ] || [ -e "$state/released/$d" ] || worktree_gone "$show" || return 0
   [ -f "$f" ] && while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < "$f"
+  # Protect by identity, whichever Run owns the terminal: every Run's coordinator and anything a live dispatch uses.
+  # If either list cannot be read, close nothing.
+  local coords busy prot
+  coords=$(run_coordinators) || return 0
+  busy=$(busy_handles "$d") || return 0
+  prot="$coords
+$busy"
   list=$(close_rpc terminal list --json 2>/dev/null)
-  while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < <(leftovers "$show" "$list")
+  while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < <(leftovers "$show" "$list" "$prot")
   local done_=" "
   for h in ${handles[@]+"${handles[@]}"}; do
     case "$done_" in *" $h "*) continue;; esac
@@ -222,10 +252,9 @@ close_one() {
   done
   # A retry may reuse this dispatch's terminal: leave any handle a live dispatch also uses.
   if [ "${#pending[@]}" -gt 0 ]; then
-    local busy kept=()
-    busy=$(busy_handles "$d") || return 0
+    local kept=()
     for h in "${pending[@]}"; do
-      case $'\n'"$busy"$'\n' in *$'\n'"$h"$'\n'*) ;; *) kept+=("$h");; esac
+      case $'\n'"$prot"$'\n' in *$'\n'"$h"$'\n'*) ;; *) kept+=("$h");; esac
     done
     [ "${#kept[@]}" -gt 0 ] || return 0
     pending=(${kept[@]+"${kept[@]}"})
