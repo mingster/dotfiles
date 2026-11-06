@@ -419,7 +419,7 @@ grep -q 'fullstack-dev' <(startline) && bad "no start was made" || ok
 reset
 req --repo owner/other --host host-local > /dev/null
 drain
-args_are "local start arguments" '["orchestration","worker-start","--task-title","fullstack-dev - #574","--spec","role: fullstack-dev, issue dotfiles#574\n","--worktree","new-top-level","--name","fullstack-dev-574","--repo","path:'"$tmp"'/proj2","--base-branch","origin/main","--setup","run","--agent","claude","--model","opus","--effort","high","--run","run_1","--from","term_coord","--json"]'
+args_are "local start arguments" '["orchestration","worker-start","--task-title","fullstack-dev - #574","--spec","role: fullstack-dev, issue dotfiles#574\n","--worktree","new-child","--name","fullstack-dev-574","--repo","path:'"$tmp"'/proj2","--base-branch","origin/main","--setup","run","--agent","claude","--model","opus","--effort","high","--run","run_1","--from","term_coord","--json"]'
 grep -q '"cwd": "'"$tmp"'/proj2"' "$GUARD_LOG" && ok || bad "guard ran in the request's project: $(cat "$GUARD_LOG")"
 reset
 req --host host-local > /dev/null
@@ -515,6 +515,71 @@ reset
 mkdir -p "$FLEET_START_DIR/seats"
 echo '[]' > "$FLEET_START_DIR/0000000000001-eeeeee.started"; echo '{"started_at":"x","requested_at":null}' > "$FLEET_START_DIR/0000000000002-eeeeee.started"
 bash "$script" delay > "$tmp/out" 2>&1; [ "$?" = 0 ] && grep -q "count=0" "$tmp/out" && ok || bad "delay skips damaged started files: $(cat "$tmp/out")"
+
+# 22. local starts are new-child (the worktree shows under the coordinator's), remote starts stay new-top-level
+reset
+req --host host-local > /dev/null
+drain
+case "$(startline)" in *"--worktree new-child --name fullstack-dev-574 "*) ok ;; *) bad "local start is new-child: $(startline)" ;; esac
+case "$(startline)" in *"--no-parent"*) bad "local start has no --no-parent" ;; *) ok ;; esac
+reset
+req --host host-r > /dev/null
+drain
+case "$(startline)" in *"--worktree new-top-level --name fullstack-dev-574 "*"--on host-r"*) ok ;; *) bad "remote start stays new-top-level: $(startline)" ;; esac
+
+# 23. an Antigravity pick on a remote host is refused with a reason and kept queued; locally it starts
+export FAKE_AG_PICK='{"selected":{"provider":"antigravity","model":"gemini-3","effort":null},"candidates":[]}'
+reset
+FAKE_PICK="$FAKE_AG_PICK" req --host host-r > /dev/null
+FAKE_PICK="$FAKE_AG_PICK" drain
+refused "antigravity on a remote host" "antigravity"
+grep -qi "local" "$FLEET_START_DIR"/*.refused && ok || bad "the reason says antigravity needs the local host: $(cat "$FLEET_START_DIR"/*.refused 2>/dev/null)"
+! grep -q "worker-start\|worktree create" "$ORCA_LOG" && ok || bad "nothing was created for the refused antigravity start"
+FAKE_PICK="$FAKE_CURSOR_PICK" drain
+[ "$(starts)" = 1 ] && [ "$(queued)" = 1 ] && ok || bad "the kept request starts on the next drain when the pick changes: starts=$(starts)"
+reset
+FAKE_PICK="$FAKE_AG_PICK" req --host host-local > /dev/null
+FAKE_PICK="$FAKE_AG_PICK" drain
+[ "$(starts)" = 1 ] && case "$(startline)" in *"--agent antigravity"*) ok ;; *) bad "local antigravity start: $(startline)" ;; esac || bad "local antigravity starts: $(cat "$tmp/err")"
+
+# 24. tickets under 100 are refused at request time (the grill gate reads 3 to 6 digits); other tickets pass
+reset
+for t in 5 57 99 099; do
+  req --ticket "$t" > /dev/null 2>&1; rc=$?
+  [ "$rc" = 2 ] && [ "$(queued)" = 0 ] && ok || bad "ticket $t is refused at request, rc=$rc queued=$(queued)"
+done
+req --ticket 57 2>&1 | grep -q "100" && ok || bad "the refusal says why"
+for t in 100 574 abc; do
+  reset
+  req --ticket "$t" > /dev/null 2>&1; [ "$?" = 0 ] && [ "$(queued)" = 1 ] && ok || bad "ticket $t is accepted"
+done
+
+# 25. the real guard on a Cursor start: refused without the issue, same as a non-Cursor start
+reset
+echo "no role word here, issue unknown" > "$tmp/brief3.md"
+FAKE_PICK="$FAKE_CURSOR_PICK" bash "$script" request --role fullstack-dev --brief "$tmp/brief3.md" --ticket abc --kind builder --from term_lead --repo owner/real --branch b1 --host host-local > /dev/null
+FAKE_PICK="$FAKE_CURSOR_PICK" HOME="$tmp/home" drain
+refused "real guard on a local cursor start" "issue"
+grep -q "start-cursor-worker" "$FLEET_START_DIR"/*.refused && bad "the reason comes from the guard, not the script name" || ok
+reset
+FAKE_PICK="$FAKE_CURSOR_PICK" bash "$script" request --role fullstack-dev --brief "$tmp/brief3.md" --ticket abc --kind builder --from term_lead --repo owner/real --branch b1 --host host-r > /dev/null 2>&1
+FAKE_PICK="$FAKE_CURSOR_PICK" HOME="$tmp/home" drain
+[ "$(starts)" = 0 ] && ! grep -q "worktree create\|terminal create" "$ORCA_LOG" && ok || bad "real guard on a remote cursor start: nothing created: $(cat "$ORCA_LOG")"
+
+# 26. a reviewer on Cursor: avoids the author family, remote checkout, trust terminal, reviewer owner record
+reset
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 --pr 13 --author-family claude > /dev/null
+FAKE_PICK="$FAKE_CURSOR_PICK" HOME="$tmp/home" drain
+grep -q "^pick --role qa --avoid-family claude" "$GATE_LOG" && ok || bad "cursor reviewer pick avoids the author family: $(cat "$GATE_LOG")"
+[ "$(starts)" = 1 ] && ok || bad "one cursor reviewer start: $(cat "$tmp/err")"
+args_are "cursor reviewer start arguments" '["orchestration","worker-start","--run","run_1","--spec","role: fullstack-dev, issue dotfiles#574","--agent","cursor","--model","composer-2.5","--on","host-r","--worktree","path:'"$tmp"'/wt/new","--task-title","qa - #574","--from","term_coord","--json"]'
+grep -q "^worktree create --name qa-574 --repo path:/remote/repo --base-branch origin/main .*--environment host-r" "$ORCA_LOG" && ok || bad "cursor reviewer worktree from the remote checkout: $(grep '^worktree' "$ORCA_LOG")"
+grep -q "terminal create --environment host-r --worktree path:$tmp/wt/new" "$ORCA_LOG" && ok || bad "cursor reviewer trust terminal on the remote host"
+[ "$(cat "$WORKER_DONE_OWNER_DIR/ctx_new1" 2>/dev/null)" = "term_lead
+kind=reviewer
+repo=owner/repo
+pr=12
+pr=13" ] && ok || bad "cursor reviewer owner record: $(cat "$WORKER_DONE_OWNER_DIR/ctx_new1" 2>/dev/null)"
 
 echo "fleet-start: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -12,9 +12,12 @@
 # a timeout or a missing gate leaves the request queued with its reason), the project's guard-bash.py on the start command
 # as PreToolUse JSON (the grill gate; the command carries the role in its task title), then a "starting" marker, then the start,
 # then the owner record, then a reply to the lead. The start is orca worker-start (script/start-remote-worker.sh for a remote host)
-# or, when the pick is cursor, script/start-cursor-worker.sh (it writes Cursor's trust marker). Either way: a new top-level
-# worktree of the request's repo (the config's checkout path, remote_projects for a remote host), --base-branch origin/main,
+# or, when the pick is cursor, script/start-cursor-worker.sh (it writes Cursor's trust marker). Either way: a new worktree
+# of the request's repo (the config's checkout path, remote_projects for a remote host; new-child for a local start so it shows
+# under the coordinator's, new-top-level for a remote one), --base-branch origin/main,
 # --setup run, --run and --from set to the coordinator. A reviewer's pick avoids the author's family (usage-gate --avoid-family).
+# An antigravity pick on a remote host is refused (antigravity workers start on the local host only) and kept for the next drain.
+# A numeric ticket under 100 is refused at request time (the grill gate reads issue numbers of 3 to 6 digits).
 # A refused request stays queued, its reason in <id>.refused (fleet-watch puts it in the digest). A request file that fails the
 # same checks `request` makes (or is not JSON, or is half written) is set aside as <id>.bad with <id>.bad.why, shown in the digest,
 # and never stops the requests behind it. A marker without a result (crash, failed start) is an unknown state: it is never
@@ -172,6 +175,8 @@ def request():
         die('cannot read the brief: %s' % error)
     if not brief.strip():
         die('the brief is empty')
+    if re.fullmatch(r'\d+', got['ticket']) and int(got['ticket']) < 100:
+        die('refusing, ticket %s is under 100: the grill gate reads issue numbers of 3 to 6 digits' % got['ticket'])
     at = now()
     ident = '%013d-%s' % (int(at * 1000), secrets.token_hex(3))
     record = {'id': ident, 'role': got['role'], 'brief': brief, 'ticket': got['ticket'], 'kind': got['kind'],
@@ -412,12 +417,14 @@ def try_start(config, req, dry):
     if picked[0] != 'ok':
         return picked
     _, provider, model, effort = picked
+    if remote and provider == 'antigravity':
+        return ('refused', 'the usage gate picked antigravity, which only starts on the local host, and %s is remote; the request stays queued for the next drain' % host)
     if provider == 'cursor' and not model:
         return ('refused', 'usage gate picked cursor without a model, the cursor start needs one')
     ticket = req['ticket']
     title = '%s - %s' % (req['role'], '#' + ticket if re.fullmatch(r'\d+', ticket) else ticket)
     name = re.sub(r'[^A-Za-z0-9_-]+', '-', '%s-%s' % (req['role'], ticket)).strip('-')
-    creation = ['--worktree', 'new-top-level', '--name', name, '--repo', 'path:' + repo_path, '--base-branch', 'origin/main', '--setup', 'run']
+    creation = ['--worktree', 'new-top-level' if remote else 'new-child', '--name', name, '--repo', 'path:' + repo_path, '--base-branch', 'origin/main', '--setup', 'run']
     brief_file = None
     try:
         if provider == 'cursor':
