@@ -85,8 +85,9 @@ class WorkerStallHelpers(unittest.TestCase):
             return 0
 
         with patch.object(fw.subprocess, 'run', side_effect=fake_run):
-            n = fw.resolve_pr_number_for_worker(w, 'o/r', act, branch_hint='feature-x')
+            n, status = fw.resolve_pr_number_for_worker(w, 'o/r', act, branch_hint='feature-x')
         self.assertEqual(n, 7)
+        self.assertEqual(status, 'ok')
         self.assertTrue(any('feature-x' in c for c in gh_cmd))
 
 
@@ -423,6 +424,134 @@ class WorkerStallPass(unittest.TestCase):
         stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops), 1)
         self.assertEqual(stops[0][3], 'd_after_ttl')
+
+    def test_gh_pr_list_fails_then_succeeds_labels_once_second_pass(self):
+        """Lookup failure does not open an issue or set labeled; next pass labels the PR."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+        run_seq = []
+
+        def fake_run(cmd, **kwargs):
+            run_seq.append(cmd)
+            if len(run_seq) == 1:
+                raise subprocess.CalledProcessError(1, cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout='[{"number": 88}]')
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        w = base_worker(
+            dispatchId='d_gh',
+            githubPullRequestNumber=None,
+            headRefName='feature-retry',
+        )
+        term_times = {'term_fix': OLD_MS}
+        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
+        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
+        issues1 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        edits1 = [c for c in gh_calls if len(c) >= 4 and c[:4] == ['gh', 'pr', 'edit', '88']]
+        self.assertIn('stall_pr_lookup_failed=d_gh', bits1)
+        self.assertEqual(issues1, [])
+        self.assertEqual(edits1, [])
+        self.assertFalse(state['worker_stall']['task_fix'].get('labeled'))
+
+        gh_calls.clear()
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 5, [w], term_times, rpc, act=fake_act)
+        issues2 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        edits2 = [c for c in gh_calls if len(c) >= 4 and c[:4] == ['gh', 'pr', 'edit', '88']]
+        self.assertEqual(issues2, [])
+        self.assertEqual(len(edits2), 1)
+        self.assertIn('needs-elon', edits2[0])
+        self.assertTrue(state['worker_stall']['task_fix'].get('labeled'))
+
+    def test_gh_pr_list_timeout_then_empty_opens_fallback_once(self):
+        """Timeout is lookup failure (no issue); empty list is no_pr -> one fallback issue next pass."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+        run_seq = []
+
+        def fake_run(cmd, **kwargs):
+            run_seq.append(cmd)
+            if len(run_seq) == 1:
+                raise subprocess.TimeoutExpired(cmd, kwargs.get('timeout', 30))
+            return subprocess.CompletedProcess(cmd, 0, stdout='[]')
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        w = base_worker(
+            dispatchId='d_to',
+            githubPullRequestNumber=None,
+            headRefName='gone-branch',
+        )
+        term_times = {'term_fix': OLD_MS}
+        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
+        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
+        issues1 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        self.assertIn('stall_pr_lookup_failed=d_to', bits1)
+        self.assertEqual(issues1, [])
+        self.assertFalse(state['worker_stall']['task_fix'].get('labeled'))
+
+        gh_calls.clear()
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 5, [w], term_times, rpc, act=fake_act)
+        issues2 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        self.assertEqual(len(issues2), 1)
+        self.assertTrue(state['worker_stall']['task_fix'].get('labeled'))
+        self.assertIn('stall_no_pr=d_to', bits2)
+
+    def test_lookup_fails_every_pass_no_label_no_issue(self):
+        """Repeated gh failures never set labeled, never open issues, and do not crash."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+
+        def fake_run(cmd, **kwargs):
+            raise subprocess.CalledProcessError(1, cmd)
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        w = base_worker(
+            dispatchId='d_bad',
+            githubPullRequestNumber=None,
+            headRefName='any',
+        )
+        term_times = {'term_fix': OLD_MS}
+        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
+        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
+            _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 100, [w], term_times, rpc, act=fake_act)
+        self.assertIn('stall_pr_lookup_failed=d_bad', bits1)
+        self.assertIn('stall_pr_lookup_failed=d_bad', bits2)
+        self.assertEqual(gh_calls, [])
+        st = state['worker_stall'].get('task_fix')
+        self.assertIsInstance(st, dict)
+        self.assertTrue(st.get('restarted'))
+        self.assertFalse(st.get('labeled'))
 
 
 class MainStallInventory(unittest.TestCase):

@@ -769,22 +769,39 @@ def worker_model_id(w):
 
 
 def resolve_pr_number_for_worker(w, label_repo, act, branch_hint=''):
-    """PR number from the row, or gh pr list --head from the branch."""
+    """PR number from the row, or gh pr list --head from the branch.
+
+    Returns (pr_number_or_None, status):
+    - ``ok`` — a PR number was found (from the row or from gh).
+    - ``lookup_failed`` — gh could not be run or its output was not reliable (retry next pass).
+    - ``no_pr`` — lookup succeeded but there is no matching PR for that head (fallback issue).
+    """
     n = worker_pr_number(w)
     if n:
-        return n
+        return (n, 'ok')
     branch = worker_branch_name(w) or branch_hint
     if not branch or not label_repo:
-        return None
+        return (None, 'no_pr')
     command = ['gh', 'pr', 'list', '--repo', label_repo, '--head', branch, '--state', 'all', '--limit', '1', '--json', 'number']
     try:
         out = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+    except (subprocess.SubprocessError, OSError):
+        return (None, 'lookup_failed')
+    try:
         data = json.loads(out.stdout)
-        if isinstance(data, list) and data and isinstance(data[0].get('number'), int):
-            return data[0]['number']
-    except (subprocess.SubprocessError, OSError, ValueError, TypeError, KeyError):
-        pass
-    return None
+    except (ValueError, TypeError):
+        return (None, 'lookup_failed')
+    if not isinstance(data, list):
+        return (None, 'lookup_failed')
+    if not data:
+        return (None, 'no_pr')
+    first = data[0]
+    if not isinstance(first, dict):
+        return (None, 'lookup_failed')
+    num = first.get('number')
+    if isinstance(num, int) and num > 0:
+        return (num, 'ok')
+    return (None, 'no_pr')
 
 
 def worker_terminal_handle(w):
@@ -1018,7 +1035,10 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if now - st.get('restart_at', 0) < cooldown:
             continue
 
-        pr_num = resolve_pr_number_for_worker(w, label_repo, act, branch_hint=branches.get(term, ''))
+        pr_num, pr_status = resolve_pr_number_for_worker(w, label_repo, act, branch_hint=branches.get(term, ''))
+        if pr_status == 'lookup_failed':
+            log_bits.append('stall_pr_lookup_failed=%s' % did)
+            continue
         if pr_num:
             code = act(['gh', 'pr', 'edit', str(pr_num), '--repo', label_repo, '--add-label', label_name])
             if code == 0:
