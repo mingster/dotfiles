@@ -414,8 +414,10 @@ def pr_events(repo, old, prs, now, stuck_seconds):
     return events, {'merged': merged, 'verdicts': verdicts, 'stuck': stuck}
 
 
-def pr_notices(config, state, now, fetch=fetch_prs):
+def pr_notices(config, state, now, fetch=None):
     """A repo whose fetch failed keeps its state, so its events arrive on a later pass."""
+    if fetch is None:
+        fetch = fetch_prs
     watch = config.get('pr_watch')
     if not watch:
         return []
@@ -432,14 +434,14 @@ def pr_notices(config, state, now, fetch=fetch_prs):
 
 RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
-AGENT_STATE_BACKUP_STALE_TITLE = 'agent-state backup has not pushed for 30 minutes'
+AGENT_STATE_BACKUP_STALE_TITLE = 'Backup stamp has not pushed for 30 minutes'
 
 
 def open_issue_titles(repo, run=subprocess.run):
     """Return titles of open issues in repo, or None when gh list fails."""
     try:
         proc = run(
-            ['gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--json', 'title', '--limit', '500'],
+            ['gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--json', 'title', '--limit', '5000'],
             capture_output=True,
             text=True,
             timeout=30,
@@ -470,8 +472,10 @@ def run_gh(command):
         return 1
 
 
-def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=None):
+def workflow_notices(config, state, now, fetch=None, act=None):
     """Rerun a failed workflow once, then open one issue. A repo whose fetch failed keeps its state."""
+    if fetch is None:
+        fetch = fetch_failed_runs
     if act is None:
         act = run_gh
     watch = config.get('pr_watch') or {}
@@ -527,7 +531,9 @@ def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=None, li
     if state.get('backup_issue'):
         return []
     titles = list_open(backup['issue_repo'])
-    if titles is not None and AGENT_STATE_BACKUP_STALE_TITLE in titles:
+    if titles is None:
+        return []
+    if AGENT_STATE_BACKUP_STALE_TITLE in titles:
         state['backup_issue'] = True
         return []
     title = AGENT_STATE_BACKUP_STALE_TITLE
@@ -654,9 +660,19 @@ def save_state(path, state):
 
 
 SEND_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, OSError, ValueError, KeyError)
-# inbox / worker-list inventory only; keep backup and other checks running when Orca is down
-ORCA_INVENTORY_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError)
+# inbox / worker-list / lead reads / pgrep; keep backup and other checks running when Orca is down
+ORCA_INVENTORY_ERRORS = (
+    subprocess.CalledProcessError,
+    subprocess.TimeoutExpired,
+    RuntimeError,
+    OSError,
+    ValueError,
+    KeyError,
+    json.JSONDecodeError,
+    TypeError,
+)
 NOTICE_PASS_LIMIT = 20
+ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
 
 
 def deliver_notices(config, state, new_lines, rpc_call=rpc):
@@ -718,22 +734,22 @@ def main():
         return 0
     inbox_messages = []
     workers = []
-    orca_inventory_ok = True
+    alive = {}
+    leads = {}
+    orca_inventory_ok = False
     try:
         inbox = rpc('orchestration', 'inbox', '--limit', '5000')
-        inbox_messages = inbox.get('messages', [])
-    except ORCA_INVENTORY_ERRORS as error:
-        orca_inventory_ok = False
-        print('fleet-watch: Orca inbox unavailable: %s' % (repr(error),), file=sys.stderr)
-    if orca_inventory_ok:
-        try:
-            workers = fetch_workers(config)
-        except ORCA_INVENTORY_ERRORS as error:
-            orca_inventory_ok = False
-            print('fleet-watch: Orca worker list unavailable: %s' % (repr(error),), file=sys.stderr)
-    if orca_inventory_ok:
+        msgs = inbox.get('messages') if isinstance(inbox, dict) else None
+        if msgs is None or not isinstance(msgs, list):
+            raise ValueError('malformed Orca inbox reply')
+        inbox_messages = msgs
+        workers = fetch_workers(config)
         # pgrep observes the dedicated waiter process; no process is stopped here.
-        alive = {run['id']: subprocess.run(['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5).returncode == 0 for run in config['runs']}
+        alive = {}
+        for run in config['runs']:
+            alive[run['id']] = subprocess.run(
+                ['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5
+            ).returncode == 0
         leads = {}
         for lead in config.get('leads', []):
             try:
@@ -741,9 +757,17 @@ def main():
                 leads[lead['terminal']] = True
             except (subprocess.CalledProcessError, RuntimeError):
                 leads[lead['terminal']] = False
+        orca_inventory_ok = True
+    except ORCA_INVENTORY_ERRORS as error:
+        print('fleet-watch: Orca inventory unavailable: %s' % (repr(error),), file=sys.stderr)
+    notices = []
+    if orca_inventory_ok:
+        state.pop('orca_inventory_skip_latched', None)
         notices = alerts(config, state, time.time(), inbox_messages, workers, alive, leads)
     else:
-        notices = ['Orca could not be read; skipping worker inbox alerts this run']
+        if not state.get('orca_inventory_skip_latched'):
+            notices.append(ORCA_SKIP_NOTICE)
+            state['orca_inventory_skip_latched'] = True
     notices += pr_notices(config, state, time.time())
     notices += usage_notices(config)
     notices += workflow_notices(config, state, time.time())

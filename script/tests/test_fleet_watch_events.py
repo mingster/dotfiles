@@ -238,7 +238,7 @@ class BackupNotices(unittest.TestCase):
 
     def test_stale_backup_opens_one_issue(self):
         state = {}
-        self.assertIn('backup', self.notices(state, 31 * 60)[0])
+        self.assertIn('stamp', self.notices(state, 31 * 60)[0])
         self.assertEqual(self.notices(state, 36 * 60), [])
         self.assertEqual([command[1:3] for command in self.commands], [['issue', 'create']])
 
@@ -254,6 +254,19 @@ class BackupNotices(unittest.TestCase):
         self.open_titles = [fw.AGENT_STATE_BACKUP_STALE_TITLE]
         self.assertEqual(self.notices(state, 31 * 60), [])
         self.assertEqual(self.commands, [])
+
+    def test_gh_issue_list_failure_skips_create_and_sets_no_flag(self):
+        state = {}
+
+        def list_open_returns_none(repo):
+            return None
+
+        n = fw.backup_notices(
+            self.CONFIG, state, self.NOW,
+            stamp_time=lambda path: self.NOW - 31 * 60, act=self.act, list_open=list_open_returns_none)
+        self.assertEqual(n, [])
+        self.assertEqual(self.commands, [])
+        self.assertNotIn('backup_issue', state)
 
     def test_failed_backup_issue_is_reported_and_retried(self):
         state = {}
