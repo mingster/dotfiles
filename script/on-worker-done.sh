@@ -253,7 +253,7 @@ else
 Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
 Author: provider=$author_provider family=$author_family
 Verifier: provider=$verifier_provider family=$verifier_family
-Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Prove load-bearing behaviour live; do not rerun bun test, tsc, lint, or regression.
+Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Prove load-bearing behaviour live and run the ticket's Playwright Proving command on a host with a database; no run means no PASS. Do not rerun bun test, tsc, lint, or regression.
 Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
 $gate_footer
 Post exactly one PR comment whose first line is:
