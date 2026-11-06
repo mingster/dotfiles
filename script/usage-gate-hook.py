@@ -34,7 +34,8 @@ def starts(cmd):
         lex.whitespace, lex.commenters, lex.whitespace_split = " \t\r", "", True
         toks = list(lex)
     except ValueError:
-        return [{"provider": m.group(1), "role": None, "override": None}
+        remote = bool(re.search(r"worker-start\b.*?\s--on[=\s]", cmd, re.S))
+        return [{"provider": m.group(1), "role": None, "override": None, "remote": remote}
                 for m in re.finditer(r"worker-start\b.*?--agent[=\s]+['\"]?([\w.-]+)", cmd, re.S)]
     stop = lambda t: (t and set(t) <= PUNCT) or t == "worker-start"
     env = {}
@@ -84,7 +85,8 @@ def starts(cmd):
             and not models[0].startswith("-") else None
         spec = option("--spec")
         out += [{"provider": provider.lower() if provider else None, "role": role,
-                 "override": override, "model": model, "spec": spec} for provider in providers]
+                 "override": override, "model": model, "spec": spec,
+                 "remote": option("--on") is not None} for provider in providers]
     return out
 
 
@@ -161,6 +163,12 @@ def main():
            for c in commands):
         blocked.append("Refused an empty --spec (or a heredoc inside $( ), which can expand empty): "
                        "write the brief to a file and pass --spec \"$(cat <file>)\".")
+    # The start tool refreshes the target host; a direct remote start would skip that.
+    if any(c.get("remote") for c in commands):
+        blocked.append("Refused a direct remote worker-start: use script/start-remote-worker.sh "
+                       "with the same arguments.")
+    # Repair the preset link first, so the role check below never reads a stale copy.
+    subprocess.run([sys.executable, GATE, "link"], capture_output=True, timeout=25)
     for start in commands:
         if start["provider"] in GATED:
             denial = routing(start)
