@@ -135,5 +135,18 @@ class FetchPrs(unittest.TestCase):
             fw.subprocess.run = real
 
 
+class UsageNotices(unittest.TestCase):
+    def test_no_hosts_configured_runs_nothing(self):
+        self.assertEqual(fw.usage_notices({}, run=None), [])
+
+    def test_publishes_to_each_host_and_reports_failure(self):
+        calls = []
+        def run(command, **kw):
+            calls.append(command)
+            return type('R', (), {'returncode': 4})()
+        self.assertEqual(fw.usage_notices({'usage_hosts': ['a', 'b']}, run=run), ['usage reading not published: exit 4'])
+        self.assertEqual(calls[0][-5:], ['publish', '--host', 'a', '--host', 'b'])
+
+
 if __name__ == '__main__':
     unittest.main()

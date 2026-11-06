@@ -16,14 +16,14 @@ percentage points per running worker; --ceiling defaults to 95. Cursor uses its
 provider billing cycle when verifiable; Antigravity uses separate Flash, Pro/Argon
 and Claude provider model pools.
 """
-import argparse, re, json, math, os, subprocess, sys, time
+import argparse, re, json, math, os, subprocess, sys, tempfile, time
 from datetime import datetime, timedelta
 
 HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
 WEEK_MIN = 10080
 TIE_POINTS = 2.0  # headroom points within which the preset provider keeps the pick
-MAX_AGE = 5 * 60  # seconds; an older reading is no reading
+MAX_AGE = 15 * 60  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
@@ -315,9 +315,7 @@ def reading_source(provider, refresh=False):
     }.get(provider, "no reader for " + provider)
 
 
-def claude_refresh():
-    """Use Claude's own OAuth credentials in memory; never log tokens or response bodies."""
-    import urllib.request
+def claude_credentials():
     path = HOME + "/.claude/.credentials.json"
     credentials = None
     if os.path.isfile(path):
@@ -328,6 +326,13 @@ def claude_refresh():
         result = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
                                 capture_output=True, text=True, timeout=2, check=True)
         credentials = json.loads(result.stdout)
+    return credentials
+
+
+def claude_refresh():
+    """Use Claude's own OAuth credentials in memory; never log tokens or response bodies."""
+    import urllib.request
+    credentials = claude_credentials()
     if credentials is None:
         return None
     token = credentials["claudeAiOauth"]["accessToken"]
@@ -350,6 +355,39 @@ def refresh_reading(provider):
     if provider == "claude":
         return claude_refresh()
     return reading
+
+
+def renew_claude_token():
+    """The token renews only when Claude runs, so one minimal prompt keeps an idle host readable."""
+    expires_at = (claude_credentials() or {}).get("claudeAiOauth", {}).get("expiresAt")
+    if expires_at and expires_at / 1000 - time.time() < 3600:
+        subprocess.run(["claude", "-p", "ok", "--model", "haiku"], capture_output=True, timeout=120)
+
+
+def publish(hosts):
+    """Copy the Claude reading, numbers only, to hosts that cannot read it themselves."""
+    try:
+        renew_claude_token()
+        reading = fresh(refresh_reading("claude"), time.time())
+    except Exception as error:
+        print(f"publish: no reading: {type(error).__name__}", file=sys.stderr)
+        return 4
+    if not reading:
+        print("publish: no fresh reading", file=sys.stderr)
+        return 4
+    body = {"_written_at": int(reading["observed_at"]),
+            "seven_day": {"used_percentage": reading["pct"], "resets_at": reading["resets_at"]}}
+    code = 0
+    with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+        json.dump(body, f)
+        f.flush()
+        for host in hosts:
+            if subprocess.run(["scp", "-q", "-o", "ConnectTimeout=10", f.name,
+                               host + ":.claude/state/usage-gate/claude-rate-limits.json"],
+                              capture_output=True, timeout=30).returncode:
+                print(f"publish: copy to {host} failed", file=sys.stderr)
+                code = 1
+    return code
 
 
 def day_baseline(day_start, pct, resets):
@@ -732,7 +770,8 @@ def candidate_reason(candidate):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["check", "show", "pick", "banner"])
+    ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish"])
+    ap.add_argument("--host", action="append", default=[])
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for composer-2.5 allowance")
     ap.add_argument("--role")
@@ -745,6 +784,8 @@ def main(argv=None):
                     help="weekly percent held back per worker already running on the provider")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "publish":
+        return publish(a.host)
     if a.cmd == "banner":
         pool = record_quota_banner(sys.stdin.read())
         print(pool or "no quota banner found")

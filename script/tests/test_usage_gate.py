@@ -879,12 +879,12 @@ class RealReadingPolicy(unittest.TestCase):
 
     def test_failed_refresh_is_unknown_with_exact_source_age_and_no_invented_number(self):
         gate = self.gate
-        old = {"pct": 99, "resets_at": FUT, "observed_at": NOW - 600}
+        old = {"pct": 99, "resets_at": FUT, "observed_at": NOW - 1200}
         with mock.patch.dict(gate.READERS, {"claude": lambda: old}), \
                 mock.patch.object(gate, "refresh_reading", side_effect=TimeoutError("secret response")):
             result = gate.run("claude", None, 95, now=NOW)
         self.assertEqual(result["verdict"], "unknown")
-        self.assertEqual(result["reading_age_min"], 10)
+        self.assertEqual(result["reading_age_min"], 20)
         self.assertIn("api.anthropic.com/api/oauth/usage", result["source"])
         self.assertIn("TimeoutError", result["reason"])
         self.assertNotIn("weekly_used", result)
@@ -1019,6 +1019,56 @@ class RealReadingPolicy(unittest.TestCase):
             return run_ok(args, **kwargs)
         with mock.patch.object(gate.subprocess, 'run', side_effect=fail_second_page):
             self.assertIsNone(gate.running_workers('cursor'))
+
+
+class Publish(unittest.TestCase):
+    def setUp(self):
+        self.reading = {"pct": 42.0, "resets_at": FUT, "observed_at": NOW}
+        self.sent = []
+
+    def publish(self, reading, hours_left=5, scp_code=0):
+        def scp(cmd, **kw):
+            self.sent.append((cmd[-1], open(cmd[-2]).read()))
+            return mock.Mock(returncode=scp_code)
+        token = {"claudeAiOauth": {"accessToken": "secret", "expiresAt": (NOW + hours_left * 3600) * 1000}}
+        self.run = mock.Mock(side_effect=scp)
+        with mock.patch.object(ug, "refresh_reading", return_value=reading), \
+                mock.patch.object(ug, "claude_credentials", return_value=token), \
+                mock.patch.object(ug.subprocess, "run", self.run), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return ug.publish(["runner-a", "runner-b"])
+
+    def test_sends_numbers_only_to_every_host(self):
+        self.assertEqual(self.publish(self.reading), 0)
+        self.assertEqual([to for to, _ in self.sent], ["runner-%s:.claude/state/usage-gate/claude-rate-limits.json" % h for h in "ab"])
+        body = json.loads(self.sent[0][1])
+        self.assertEqual(body, {"_written_at": NOW, "seven_day": {"used_percentage": 42.0, "resets_at": FUT}})
+        self.assertNotIn("secret", self.sent[0][1])
+
+    def test_copied_file_reads_as_fresh_on_the_runner(self):
+        self.publish(self.reading)
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+            f.write(self.sent[0][1]); f.flush()
+            self.assertEqual(ug.fresh(ug.claude_reading(f.name), NOW + ug.MAX_AGE - 1)["pct"], 42.0)
+
+    def test_no_fresh_reading_sends_nothing(self):
+        self.assertEqual(self.publish(None), 4)
+        self.assertEqual(self.sent, [])
+
+    def test_failed_copy_is_reported(self):
+        self.assertEqual(self.publish(self.reading, scp_code=1), 1)
+
+    def test_renews_a_token_with_under_an_hour_left(self):
+        self.publish(self.reading, hours_left=0.5)
+        self.assertEqual(self.run.call_args_list[0].args[0][:2], ["claude", "-p"])
+
+    def test_leaves_a_healthy_token_alone(self):
+        self.publish(self.reading)
+        self.assertEqual(self.run.call_args_list[0].args[0][0], "scp")
+
+    def test_reading_stays_usable_for_15_minutes(self):
+        self.assertEqual(ug.MAX_AGE, 15 * 60)
 
 
 if __name__ == "__main__":
