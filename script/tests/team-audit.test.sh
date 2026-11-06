@@ -6,9 +6,10 @@ D="$tmp/dotfiles" P="$tmp/proj"
 
 setup() { # a clean dotfiles tree and a project synced from it
   rm -rf "$D" "$P"
-  mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
+  mkdir -p "$D/script" "$D/docs/specs" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
            "$D/.agents/skills/orca-team" "$P/.claude/agents" "$P/docs/agents"
   cp "$here/sync-team-skills.sh" "$D/script/"
+  cp "$here/../docs/specs/000-team-script-index.md" "$D/docs/specs/"
   printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nThe Tech Lead pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
   printf -- '---\nname: orca-team\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orca-team/SKILL.md"
   for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv; do
@@ -161,6 +162,9 @@ unset GH_FAIL; export GH_ISSUES="[]"
 
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'
+
+setup; touch "$D/script/planted-unlisted-team-script.sh"
+check "unlisted script under script/ is a finding" 1 'FINDING script-list: planted-unlisted-team-script.sh'
 
 setup
 out=$(DOTFILES="$D" "$here/team-audit.sh" --bogus 2>&1); code=$?

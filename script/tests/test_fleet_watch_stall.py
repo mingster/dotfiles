@@ -37,6 +37,22 @@ def base_worker(**kw):
 
 
 class WorkerStallHelpers(unittest.TestCase):
+    def test_fleet_watch_log_path_env_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / 'fw.log'
+            with patch.dict(os.environ, {'FLEET_WATCH_LOG_PATH': str(p), 'HOME': directory}):
+                self.assertEqual(fw.fleet_watch_log_path(), p)
+
+    def test_fleet_watch_log_path_default_ignores_empty_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / 'h'
+            home.mkdir()
+            with patch.dict(os.environ, {'HOME': str(home), 'FLEET_WATCH_LOG_PATH': '   '}):
+                self.assertEqual(
+                    fw.fleet_watch_log_path(),
+                    home / '.orca' / 'logs' / 'fleet-watch.log',
+                )
+
     def test_normalize_zero_is_unknown(self):
         self.assertIsNone(fw._normalize_terminal_time_ms(0))
 
@@ -579,8 +595,7 @@ class MainStallInventory(unittest.TestCase):
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
-                    patch.dict(os.environ, {'HOME': str(directory)}), \
+                    patch.dict(os.environ, {'HOME': str(directory), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -617,8 +632,7 @@ class MainStallInventory(unittest.TestCase):
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
-                    patch.dict(os.environ, {'HOME': str(directory)}), \
+                    patch.dict(os.environ, {'HOME': str(directory), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -649,6 +663,11 @@ class MainTerminalListFailure(unittest.TestCase):
             }))
             state.write_text('{}')
             log_path = Path(directory) / 'log'
+            home_root = Path(directory) / 'home'
+            home_root.mkdir()
+            default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
+            default_log.parent.mkdir(parents=True)
+            default_log.write_text('untouched\n')
             with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw, 'fetch_workers', return_value=[]), \
@@ -656,14 +675,55 @@ class MainTerminalListFailure(unittest.TestCase):
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
-                    patch.dict(os.environ, {'HOME': str(directory)}), \
+                    patch.dict(os.environ, {'HOME': str(home_root), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
                 text = log_path.read_text()
                 self.assertIn('terminal_list_failed', text)
                 self.assertIn('pass ok', text)
+                self.assertEqual(default_log.read_text(), 'untouched\n')
+
+    def test_main_pass_writes_to_log_env_and_leaves_default_path_untouched(self):
+        """A full pass appends only to FLEET_WATCH_LOG_PATH, not the default under HOME."""
+
+        def rpc(*args):
+            if args[1] == 'inbox':
+                return {'messages': []}
+            if args[1] == 'worker-list':
+                return {'workers': [], 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'):
+                raise RuntimeError('list failed')
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({
+                'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+                'worker_stall': {'label_repo': 'o/r'},
+            }))
+            state.write_text('{}')
+            log_path = Path(directory) / 'override.log'
+            home_root = Path(directory) / 'home'
+            home_root.mkdir()
+            default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
+            default_log.parent.mkdir(parents=True)
+            default_log.write_text('seed\n')
+            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw, 'fetch_workers', return_value=[]), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.dict(os.environ, {'HOME': str(home_root), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                code = fw.main()
+                self.assertEqual(code, 0)
+            self.assertTrue(log_path.is_file())
+            self.assertIn('pass ok', log_path.read_text())
+            self.assertEqual(default_log.read_text(), 'seed\n')
 
 
 if __name__ == '__main__':

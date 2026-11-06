@@ -1,0 +1,1 @@
+Fleet-watch tests set `FLEET_WATCH_LOG_PATH` so passes append a temp log instead of the default Orca log path. `script/team-audit.sh` gains a `script-list` check against `docs/specs/000-team-script-index.md` with exemptions for the two overlay scripts.

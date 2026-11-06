@@ -602,6 +602,10 @@ def run_gh(command):
 
 
 def fleet_watch_log_path():
+    """Return log path; set FLEET_WATCH_LOG_PATH to override the default under HOME."""
+    override = (os.environ.get('FLEET_WATCH_LOG_PATH') or '').strip()
+    if override:
+        return Path(override)
     return Path.home() / '.orca' / 'logs' / 'fleet-watch.log'
 
 

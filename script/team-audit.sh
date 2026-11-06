@@ -30,6 +30,9 @@
 #             DOTFILES, .claude/agents/ in each project) carries an "Owner-approved:" trailer (owner
 #             rule 2026-11-02). Commits are checked from ROLE_RECEIPT_SINCE (pass the last audit date);
 #             commits before 2026-11-03 are grandfathered, so the date is never earlier.
+#   script-list  every top-level file under script/ appears as script/<name> in AGENTS.md, README.md,
+#             .github/copilot-instructions.md, or docs/specs/*.md (tool list). Exempt apply-ide-overlay.py
+#             and apply-local-overlay.py.
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles).
 set -uo pipefail
@@ -40,7 +43,7 @@ LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
 
-case "${1:-}" in -h|--help) sed -n '2,34p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,37p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
@@ -141,6 +144,24 @@ fi
 
 for h in $HELPERS; do
   [ -f "$DOTFILES/.agents/skills/orca-team/$h" ] || finding helpers "missing $DOTFILES/.agents/skills/orca-team/$h"
+done
+
+# script-list: team scripts are named in the index docs or specs (same literals as script/<basename>).
+SCRIPT_INDEX=""
+for _doc in "$DOTFILES/AGENTS.md" "$DOTFILES/README.md" "$DOTFILES/.github/copilot-instructions.md"; do
+  [ -f "$_doc" ] && SCRIPT_INDEX="${SCRIPT_INDEX}$(cat "$_doc")"$'\n'
+done
+if [ -d "$DOTFILES/docs/specs" ]; then
+  for _spec in "$DOTFILES/docs/specs"/*.md; do
+    [ -f "$_spec" ] || continue
+    SCRIPT_INDEX="${SCRIPT_INDEX}$(cat "$_spec")"$'\n'
+  done
+fi
+for _sf in "$DOTFILES/script"/*; do
+  [ -f "$_sf" ] || continue
+  _base=$(basename "$_sf")
+  case "$_base" in apply-ide-overlay.py|apply-local-overlay.py) continue ;; esac
+  case $SCRIPT_INDEX in *"script/${_base}"*) ;; *) finding script-list "${_base} not named in AGENTS.md, README.md, .github/copilot-instructions.md, or docs/specs" ;; esac
 done
 
 MP_STATE="$DOTFILES/.agents/skills/.mattpocock-upstream"
