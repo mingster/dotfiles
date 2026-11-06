@@ -55,8 +55,31 @@ for entry in young:7 stale:9 open-pr:9 live:9; do
   GIT_AUTHOR_DATE="$timestamp" GIT_COMMITTER_DATE="$timestamp" git commit -qm "$name work"
   git push -qu origin "$name"
 done
+# Local only work: never pushed, and pushed then extended locally. Both 9h old, so both pass every other stale test.
+for name in localonly ahead countfail; do
+  git checkout -qb "$name" main
+  echo "$name" > "$name.txt"; git add "$name.txt"
+  timestamp="$((now - 9 * 3600)) +0000"
+  GIT_AUTHOR_DATE="$timestamp" GIT_COMMITTER_DATE="$timestamp" git commit -qm "$name work"
+  [ "$name" = localonly ] || git push -qu origin "$name"
+  if [ "$name" = ahead ]; then
+    echo more >> ahead.txt
+    GIT_AUTHOR_DATE="$timestamp" GIT_COMMITTER_DATE="$timestamp" git commit -qam 'ahead local only'
+  fi
+done
 git checkout -q main
 git worktree add -q "$LIVE_WORKTREE" live
+# A worktree on a local only branch: the worktree must stay with the branch.
+git branch -q wtlocal localonly
+git worktree add -q "$tmp/wtlocal-wt" wtlocal
+real_git=$(command -v git)
+mkdir -p "$tmp/gitshim"
+cat > "$tmp/gitshim/git" <<SHIM
+#!/usr/bin/env bash
+case "\$*" in *'rev-list --count refs/heads/countfail'*) exit 1 ;; esac
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$tmp/gitshim/git"
 passed=0; failed=0
 check() {
   local description=$1; shift
@@ -67,7 +90,7 @@ has_local() { git show-ref --verify --quiet "refs/heads/$1"; }
 has_remote() { git --git-dir="$tmp/origin" show-ref --verify --quiet "refs/heads/$1"; }
 no_local() { ! has_local "$1"; }
 no_remote() { ! has_remote "$1"; }
-bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
+PATH="$tmp/gitshim:$PATH" bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
 check '9h branch deleted locally by apply without stale flag' no_local stale
 check '9h branch deleted remotely by apply without stale flag' no_remote stale
 for name in young open-pr live; do
@@ -75,5 +98,17 @@ for name in young open-pr live; do
   check "$name branch kept remotely" has_remote "$name"
 done
 check 'live worktree kept' test -d "$LIVE_WORKTREE"
+check 'local only 9h branch survives apply' has_local localonly
+check 'local branch ahead of its remote survives apply' has_local ahead
+check 'ahead branch keeps its remote too' has_remote ahead
+check 'branch whose unpushed count cannot be read survives' has_local countfail
+check 'keeps worktree of a local only branch' test -d "$tmp/wtlocal-wt"
+check 'unpushed branch is kept with a reason' grep -Eq '^Kept stale localonly .*unpushed' "$tmp/output"
+check 'unreadable count is kept with a reason' grep -Eq '^Kept stale countfail .*unpushed' "$tmp/output"
+check 'unpushed branch is not offered for deletion' bash -c '! grep -Fq "Delete stale localonly" "$1"' _ "$tmp/output"
+# Count readable again: the fully pushed branch goes.
+bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
+check 'fully pushed branch is deleted once the count reads' no_local countfail
+check 'local only branch still survives' has_local localonly
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

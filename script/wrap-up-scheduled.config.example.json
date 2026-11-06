@@ -1,0 +1,6 @@
+{
+  "repos": [
+    {"path": "~/path/to/checkout", "fleet_config": "~/path/to/wrap-up-fleet.config.json"},
+    {"path": "~/path/to/other-checkout"}
+  ]
+}
