@@ -319,5 +319,129 @@ class Hook(unittest.TestCase):
             self.assertIn("manual recovery", f.read())
 
 
+class LeadContext(unittest.TestCase):
+    """Context limit for a session identified as a lead by its worktree basename (lead-*)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dirs = {}
+        for name, rel in (("lead", "lead-one"), ("build", "build-one"), ("nested", "lead-parent/build-one")):
+            path = os.path.join(self.tmp.name, rel)
+            os.makedirs(path)
+            subprocess.run(["git", "init", "-q", path], check=True)
+            self.dirs[name] = path
+        self.plain = os.path.join(self.tmp.name, "not-a-repo")
+        os.makedirs(self.plain)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def transcript(self, tokens, name="t.jsonl", extra=""):
+        path = os.path.join(self.tmp.name, name)
+        usage = lambda n: {"type": "assistant", "message": {"usage": {
+            "input_tokens": 3, "cache_read_input_tokens": n - 3 - 10, "cache_creation_input_tokens": 10, "output_tokens": 99}}}
+        with open(path, "w") as f:
+            f.write(json.dumps(usage(900000)) + "\n")  # an older, larger entry: the latest wins, never a sum
+            f.write(json.dumps(usage(tokens)) + "\n" + extra)
+        return path
+
+    def run_hook(self, command, tokens=None, where="lead", transcript=None):
+        path = transcript or (self.transcript(tokens) if tokens is not None else None)
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.dirs.get(where, self.plain)}
+        if path:
+            payload["transcript_path"] = path
+        env = dict(os.environ, HOME=self.tmp.name, USAGE_GATE_STATE=self.tmp.name + "/state", USAGE_GATE_ORCA="false")
+        r = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else {}
+        return out.get("permissionDecisionReason"), out.get("additionalContext"), r.stderr
+
+    def test_lead_under_warn_line_passes_silently(self):
+        deny, note, err = self.run_hook("git status", 149999)
+        self.assertEqual((deny, note, err), (None, None, ""))
+
+    def test_lead_at_150k_is_warned_not_denied(self):
+        deny, note, _ = self.run_hook("git status", 150000)
+        self.assertIsNone(deny)
+        self.assertIn("150k", note)
+        self.assertIn("lead-handoff.sh", note)
+
+    def test_lead_at_171k_plain_command_denied_with_handoff_command(self):
+        deny, _, _ = self.run_hook("git status", 171000)
+        self.assertIn("script/lead-handoff.sh --branch", deny)
+        self.assertIn("--dispatch-ids", deny)
+
+    def test_lead_at_171k_allow_list(self):
+        for command in ("script/lead-handoff.sh --branch b --head h --remainder r --dispatch-ids i",
+                        "~/dotfiles/script/lead-merge.sh --repo o/r --pr 3 --head abc",
+                        "bash script/lead-merge.sh --repo o/r --pr 3 --head abc",
+                        "orca orchestration check --json",
+                        "orca terminal read --terminal t 2>&1 >/dev/null",
+                        "LEAD_X=1 orca orchestration send --body 'a; git push'"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNone(deny)
+
+    def test_lead_at_171k_compound_hiding_a_denied_command(self):
+        for command in ("orca orchestration check && git push", "orca x; rm -rf y", "orca x | sh", "orca x & git push",
+                        "script/lead-merge.sh --pr 1\ngit push", "orca $(git push)", "orca `git push`",
+                        "orca x > out; cat y", "(git push)", "git push || orca x", "orca x\n cat <<EOF\nhi\nEOF\ngit push"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNotNone(deny)
+
+    def test_heredoc_body_is_text_for_an_allowed_command(self):
+        deny, _, _ = self.run_hook("orca orchestration send --body \"$(cat <<'EOF'\nline; git push\nEOF\n)\"", 171000)
+        self.assertIsNone(deny)
+
+    def test_non_leads_at_171k_pass(self):
+        for where in ("build", "nested", "plain"):
+            with self.subTest(where=where):
+                deny, note, _ = self.run_hook("git status", 171000, where=where)
+                self.assertEqual((deny, note), (None, None))
+
+    def test_missing_cwd_is_not_a_lead(self):
+        path = self.transcript(171000)
+        r = subprocess.run([sys.executable, HOOK], input=json.dumps(
+            {"tool_name": "Bash", "tool_input": {"command": "git status"}, "transcript_path": path}),
+            capture_output=True, text=True, env=dict(os.environ, HOME=self.tmp.name))
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_missing_transcript_warns_only(self):
+        deny, _, err = self.run_hook("git status", transcript=self.tmp.name + "/none.jsonl")
+        self.assertIsNone(deny)
+        self.assertIn("context size unreadable", err)
+        deny, _, err = self.run_hook("git status")
+        self.assertIsNone(deny)
+        self.assertIn("context size unreadable", err)
+
+    def test_malformed_transcript_warns_only(self):
+        path = os.path.join(self.tmp.name, "bad.jsonl")
+        open(path, "w").write("not json\n{\"message\": {\"usage\": \n\x00\x01 garbage")
+        deny, _, err = self.run_hook("git status", transcript=path)
+        self.assertIsNone(deny)
+        self.assertIn("context size unreadable", err)
+
+    def test_truncated_last_line_uses_the_last_complete_entry(self):
+        path = self.transcript(171000, extra='{"type":"assistant","message":{"usage":{"input_to')
+        deny, _, _ = self.run_hook("git status", transcript=path)
+        self.assertIsNotNone(deny)
+
+    def test_reads_only_the_end_of_a_large_transcript(self):
+        path = self.transcript(171000, name="big.jsonl", extra=json.dumps({"type": "user", "pad": "x" * 3000000}) + "\n")
+        start = time.time()
+        deny, _, _ = self.run_hook("git status", transcript=path)
+        self.assertIsNotNone(deny)
+        self.assertLess(time.time() - start, 2)
+
+    def test_worker_start_gate_still_runs_for_a_lead_under_the_limit(self):
+        deny, note, _ = self.run_hook("orca orchestration worker-start --spec '' --agent claude", 100000)
+        self.assertIn("empty --spec", deny)
+
+    def test_lead_over_limit_worker_start_is_allowed_by_context_gate(self):
+        deny, _, _ = self.run_hook("orca orchestration worker-start --spec x --agent unknownagent", 171000)
+        self.assertIsNone(deny)
+
+
 if __name__ == "__main__":
     unittest.main()
