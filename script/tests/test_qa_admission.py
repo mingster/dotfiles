@@ -220,6 +220,51 @@ class QaAdmission(unittest.TestCase):
         self.f.data['alpha']['repos'][0]['gitRemoteIdentity'] = []
         self.refuse('inventory')
 
+    def limited_worktree_orca(self, total):
+        """Fake orca whose worktree list honours --limit and reports totalCount, no cursor."""
+        for host in ('alpha', 'beta'):
+            reply = self.f.data[host]['worktrees']
+            target = reply['worktrees'][0]
+            reply['worktrees'] = [target] + [
+                dict(target, id='filler-%d' % i, path='/filler/%d' % i) for i in range(total - 1)]
+            reply['totalCount'] = total
+        base = self.f.root/'orca-base'
+        self.f.root.joinpath('orca').rename(base)
+        self.f.write_executable('orca', '''import json,os,subprocess,sys
+a=sys.argv[1:]
+if a[:2]!=['worktree','list']: sys.exit(subprocess.call([%r]+a))
+root=os.environ['NATIVE_FIXTURE_ROOT']; data=json.load(open(root+'/native.json'))
+host=a[a.index('--environment')+1].removesuffix('-saved') if '--environment' in a else 'local'
+reply=dict(data[host]['worktrees']); limit=int(a[a.index('--limit')+1])
+with open(root+'/limits','a') as f: f.write(str(limit)+'\\n')
+reply['truncated']=len(reply['worktrees'])>limit or reply.pop('stillTruncated',False); reply['worktrees']=reply['worktrees'][:limit]
+print(json.dumps({'ok':True,'result':reply}))
+''' % str(base))
+
+    def test_worktree_inventory_over_one_page_is_read_in_full(self):
+        self.limited_worktree_orca(180)
+        self.success()
+        limits = (Path(self.tmp.name)/'limits').read_text().split()
+        self.assertEqual(limits[0], '100')
+        self.assertIn('180', limits)
+
+    def test_worktree_inventory_still_truncated_after_reread_refuses(self):
+        self.limited_worktree_orca(180)
+        for host in ('alpha', 'beta'):
+            self.f.data[host]['worktrees']['stillTruncated'] = True
+        self.refuse('worktree inventory: incomplete coverage')
+        limits = (Path(self.tmp.name)/'limits').read_text().split()
+        self.assertIn('100', limits)
+        self.assertIn('180', limits)
+
+    def test_worktree_inventory_total_above_cap_is_not_reread(self):
+        self.limited_worktree_orca(180)
+        for host in ('alpha', 'beta'):
+            self.f.data[host]['worktrees']['totalCount'] = 10**6
+        self.refuse('worktree inventory: incomplete coverage')
+        limits = (Path(self.tmp.name)/'limits').read_text().split()
+        self.assertEqual(set(limits), {'100'})
+
     def test_native_pagination_counts_later_page(self):
         self.f.occupy('alpha', 1)
         first = self.f.data['alpha']['workers']
