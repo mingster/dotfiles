@@ -22,5 +22,5 @@ for f in "$ROLE" "$SKILL"; do
   has "$f" "$b: host SHA, HTTP, mobile evidence" 'HTTP and mobile evidence'
 done
 has "$SKILL" "deploy skill: release brief rules section" '## Release brief rules'
-has "$SKILL" "deploy skill: brief tells Elon and TL to copy rules" 'Elon and the Tech Lead copy these into every release dispatch brief'
+has "$SKILL" "deploy skill: brief tells Elon and TL to copy rules" 'Elon copies these into every release dispatch brief'
 echo "$n checks"; exit $fail
