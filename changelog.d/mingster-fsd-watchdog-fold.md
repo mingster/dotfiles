@@ -1,0 +1,1 @@
+- Fold worker stall and agent-state backup logging into `fleet-watch.py`; remove `worker-watchdog.sh`, its plist and test.

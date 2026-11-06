@@ -6,6 +6,15 @@
     "repos": ["mingster/dotfiles", "mingster/project-a"],
     "stuck_minutes": 30
   },
+  "worker_stall": {
+    "label_repo": "owner/name",
+    "needs_elon_label": "needs-elon",
+    "label_cooldown_seconds": 120
+  },
+  "backup": {
+    "stamp": "/path/to/private/agent-state/.last-push-stamp",
+    "issue_repo": "owner/name"
+  },
   "coordinator_watch": {
     "state_dir": "/path/to/private/state",
     "offline_minutes": 10,

@@ -15,6 +15,7 @@ class Baseline(unittest.TestCase):
             calls.append(args)
             if args[1] == 'inbox': return {'messages': []}
             if args[1] == 'worker-list': return {'workers': workers, 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'): return {'terminals': []}
             return {}
         config = state.parent/'config.json'
         config.write_text(json.dumps({'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}]}))
