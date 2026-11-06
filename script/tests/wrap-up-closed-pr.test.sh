@@ -76,6 +76,7 @@ check 'apply deletes the origin branch of the clean closed PR branch' bash -c '!
 # The child gets ORCA_CLI_COMMAND back so this round cannot reach the real browsers or temp folders of the host running it.
 # Its commits are all on another origin ref: a branch that is the last copy of its commits stays on origin.
 git branch closed-round origin/closed-wt; git push -q origin closed-round
+mkdir -p "$tmp/repo/.agents"; : > "$tmp/repo/.agents/head-checks.conf"
 printf '#!/usr/bin/env bash\nORCA_CLI_COMMAND=%q exec bash %q "$@"\n' "$tmp/bin/orca" "$root/script/wrap-up.sh" > "$tmp/child"
 ROUND_REPO="$tmp/repo" WRAP_UP_SCHEDULED_WRAP_UP="$tmp/child" WRAP_UP_SCHEDULED_LOG="$tmp/round.log" WRAP_UP_EXTRA_BIN= \
   WRAP_UP_ORCA_APP_BIN="$tmp/no-app" WRAP_UP_SCHEDULED_LOAD_CMD='echo 0.1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4' \
