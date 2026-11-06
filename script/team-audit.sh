@@ -34,7 +34,9 @@
 #             every top-level file under script/ is named in the concatenation of those readable files, as either
 #             script/<basename> or the bare basename as a whole token (not a substring such as foo.sh.bak for foo.sh).
 #             A path that is missing or not a readable regular file is a finding. When unset or empty, the check is skipped (one NOTE).
-#             Exempt apply-ide-overlay.py and apply-local-overlay.py. Skips *.test.sh and test_* (not tools).
+#             Exempt apply-ide-overlay.py and apply-local-overlay.py. Skips *.test.sh and test_* (not tools), install_*, install-*,
+#             uninstall_*, setup-*, link-*, *.json, and *.test.ts (machine setup and config, not team tools). heavy-gate.sh and
+#             worker-startup.sh are still checked when unlisted.
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles), TEAM_AUDIT_TOOL_LISTS.
 set -uo pipefail
@@ -169,6 +171,7 @@ else
     _base=$(basename "$_sf")
     case "$_base" in apply-ide-overlay.py|apply-local-overlay.py) continue ;; esac
     case "$_base" in *.test.sh|test_*) continue ;; esac
+    case "$_base" in install_*|install-*|uninstall_*|setup-*|link-*|*.json|*.test.ts) continue ;; esac
     if ! printf '%s' "$SCRIPT_INDEX" | python3 -c '
 import re, sys
 base = sys.argv[1]

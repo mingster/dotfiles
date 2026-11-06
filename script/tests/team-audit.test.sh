@@ -162,6 +162,26 @@ unset GH_FAIL; export GH_ISSUES="[]"
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'
 
+setup; mkdir -p "$P/docs/intent/skip-non-team"; printf 'script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/skip-non-team/spec.md"; echo intent > "$P/docs/intent/skip-non-team/intent.md"
+touch "$D/script/list-covered.sh"
+touch "$D/script/install_mac.sh" "$D/script/install-vscode.sh" "$D/script/uninstall_old.sh"
+touch "$D/script/setup-node.sh" "$D/script/link-cursor-user.sh" "$D/script/tsconfig.json" "$D/script/smoke.test.ts"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/skip-non-team/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   script-list skips install/setup/link/json and *.test.ts names"
+else fail=$((fail+1)); echo "FAIL script-list skips non-team script names (exit $code)"; echo "$out"; fi
+
+setup; mkdir -p "$P/docs/intent/heavy"; printf 'script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/heavy/spec.md"; echo intent > "$P/docs/intent/heavy/intent.md"
+touch "$D/script/list-covered.sh"; touch "$D/script/heavy-gate.sh"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/heavy/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: heavy-gate.sh'; then pass=$((pass+1)); echo "ok   heavy-gate.sh is still a script-list finding when unlisted"
+else fail=$((fail+1)); echo "FAIL heavy-gate.sh unlisted (exit $code)"; echo "$out"; fi
+
+setup; mkdir -p "$P/docs/intent/wsu"; printf 'script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/wsu/spec.md"; echo intent > "$P/docs/intent/wsu/intent.md"
+touch "$D/script/list-covered.sh"; touch "$D/script/worker-startup.sh"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/wsu/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: worker-startup.sh'; then pass=$((pass+1)); echo "ok   worker-startup.sh is still a script-list finding when unlisted"
+else fail=$((fail+1)); echo "FAIL worker-startup.sh unlisted (exit $code)"; echo "$out"; fi
+
 setup; mkdir -p "$P/docs/intent/x"; printf 'script/list-covered.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/x/spec.md"; echo intent > "$P/docs/intent/x/intent.md"
 touch "$D/script/list-covered.sh"; touch "$D/script/planted-unlisted-team-script.sh"
 out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/x/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
