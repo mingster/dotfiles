@@ -23,7 +23,7 @@
 - Elon monitors and steps in only when needed. A builder's worker_done comes to Elon, who pushes, starts QA, reads Checks on the PR, merges, and releases the committer after the push with the release script.
 - Elon steps in only for: a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
 
-Append observations to private `~/.claude/state/team-observations.md` for the next `/team-audit`; never in repositories.
+Append to private `~/.claude/state/team-observations.md` only what would change a rule; never in repositories.
 
 ## Fleet dispatch (owner 2026-11-03)
 
