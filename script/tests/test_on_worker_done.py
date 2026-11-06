@@ -162,12 +162,18 @@ sys.exit(ug.main())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNotNone(args)
 
-    def test_receipt_for_another_head_refuses_start(self):
+    def test_receipt_for_another_head_starts_qa_with_checks_pending(self):
         result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "b" * 40 + "\nTests executed: 2\nLoad errors: 0\n"])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("a" * 40, result.stderr)
-        self.assertIn("no receipt", result.stderr)
-        self.assertIsNone(args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(args)
+        brief = args[args.index("--spec") + 1]
+        self.assertIn("Checks are pending: no Checks receipt exists for head " + "a" * 40, brief)
+
+    def test_no_receipt_at_all_starts_qa_with_checks_pending(self):
+        result, args = self.dispatch("claude", receipts=[])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(args)
+        self.assertIn("Checks are pending", args[args.index("--spec") + 1])
 
     def test_later_zero_command_cannot_hide_behind_clean_command(self):
         result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nTests executed: 2\nLoad errors: 0\nTests executed: 0\nLoad errors: 0\n"])
