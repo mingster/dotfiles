@@ -699,6 +699,28 @@ child.wait()
         self.finish(browser)
         self.assert_overlap({'checks': 1, 'browser': 1}, 1)
 
+    def test_browser_run_waits_for_a_checks_run_started_the_way_head_checks_starts_it(self):
+        # head-checks.sh execs the gate as: heavy-gate.py gate --head-checks --memory-mb 9216 -- ...
+        # on-worker-done starts that script detached, so a browser run beside it has only this gate to wait on.
+        self.assertIn('gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}"',
+                      (scripts/'head-checks.sh').read_text())
+        self.host_memory(15360)
+        code = ("import os,sys,time\nopen(sys.argv[1],'a').write('checks-start\\n')\n"
+                "while not os.path.exists(sys.argv[2]): time.sleep(0.02)\n")
+        started, release = self.root/'checks-started', self.root/'checks-release'
+        checks = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), '--head-checks', '--memory-mb', '9216', '--',
+                                   sys.executable, '-c', code, str(started), str(release)],
+                                  env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.processes.append(checks)
+        self.wait_for(started.exists)
+        browser = self.job('browser', 0.1, wrap=self.PLAYWRIGHT_SHAPES['bunx'])
+        time.sleep(0.5)
+        self.assertFalse(self.started('browser'), 'browser run started beside a head-checks run')
+        release.write_text('go')
+        self.finish(checks)
+        self.finish(browser)
+        self.assertTrue(self.started('browser'))
+
     def test_memory_record_is_in_the_slot_and_released_with_it(self):
         self.host_memory(3000)
         self.config(2)

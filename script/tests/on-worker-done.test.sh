@@ -266,5 +266,110 @@ check 'dry run runs the cheap checks too' "$rc"
 valid; cheap_conf 'exit 1'
 cheap_run --dry-run; rc=$?
 check 'dry run refuses on a failed check' "$([ "$rc" -ne 0 ]; echo $?)"
+# Checks start: once the cheap checks pass, head-checks.sh starts detached beside QA, once per repo, PR and head.
+cat > "$tmp/hc" <<'HC'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FIXTURE_ROOT/hc.log"
+echo "hc ran"
+if [ "${HC_HOLD:-0}" = 1 ]; then while [ ! -e "$FIXTURE_ROOT/hc-release" ]; do sleep 0.05; done; fi
+exit "${HC_RC:-0}"
+HC
+chmod +x "$tmp/hc"
+export ON_WORKER_DONE_HEAD_CHECKS="$tmp/hc" ON_WORKER_DONE_CHECKS_DIR="$tmp/markers" ON_WORKER_DONE_CHECKS_LOG_DIR="$tmp/hclogs"
+hc_valid() {
+  valid; cheap_conf 'true'
+  printf '{"headRefOid":"%s","comments":%s}\n' "${HC_REMOTE_HEAD:-$cheap_head}" "${1:-[]}" > "$tmp/checks.json"
+  rm -rf "$tmp/hc.log" "$tmp/markers" "$tmp/hclogs" "$tmp/hc-release"
+}
+hc_lines() { [ -f "$tmp/hc.log" ] && wc -l < "$tmp/hc.log" | tr -d ' ' || echo 0; }
+hc_wait() { for _ in $(seq 1 100); do [ "$(hc_lines)" -ge "$1" ] && return 0; sleep 0.05; done; return 1; }
+hc_settle() { sleep 0.5; }
+until_cleared() { for _ in $(seq 1 100); do [ "$(hc_marker_count)" = 0 ] && return 0; sleep 0.05; done; return 1; }
+until_logged() { for _ in $(seq 1 50); do grep -qs "$1" "$tmp"/hclogs/* && return 0; sleep 0.05; done; return 1; }
+hc_marker_count() { ls "$tmp/markers" 2>/dev/null | wc -l | tr -d ' '; }
+
+hc_valid
+cheap_run; rc=$?
+check 'ready: reviewer still starts' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+check 'ready: Checks start' "$(hc_wait 1; echo $?)"
+check 'Checks start names the worktree and the PR' "$([ "$(cat "$tmp/hc.log")" = "--repo $cheap --pr 42" ]; echo $?)"
+check 'lead is told Checks started, with the log path' "$(grep -q "^Checks started head=$cheap_head pr=42 log=$tmp/hclogs/" "$tmp/out"; echo $?)"
+check 'detached output lands in the logged file' "$(until_logged 'hc ran'; echo $?)"
+cheap_run; rc=$?
+hc_settle
+check 'repeat call starts no second run' "$([ "$rc" = 0 ] && [ "$(hc_lines)" = 1 ]; echo $?)"
+check 'repeat call tells the lead why' "$(grep -q "^Checks not started head=$cheap_head: already started" "$tmp/out"; echo $?)"
+
+hc_valid
+race() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$cheap_head" --author-family claude --worktree "$cheap" --run run_fixture > "$tmp/race.$1" 2>&1; }
+race 1 & race 2 & race 3 & race 4 &
+wait
+hc_wait 1; hc_settle
+check 'four racing calls start exactly one run' "$([ "$(hc_lines)" = 1 ] && [ "$(hc_marker_count)" = 1 ]; echo $?)"
+check 'only one racing call reports the Checks start' "$([ "$(cat "$tmp"/race.* | grep -c '^Checks started')" = 1 ]; echo $?)"
+
+hc_valid; cheap_conf 'exit 1'
+cheap_run
+hc_settle
+check 'cheap check failure starts no Checks' "$([ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
+hc_valid; cheap_conf 'exit 1'
+cheap_run --resolution
+hc_settle
+check 'cheap check failure on a resolution starts no Checks' "$([ "$(hc_lines)" = 0 ]; echo $?)"
+
+hc_valid "[{\"body\":\"Checks: PASS head=$cheap_head\\nCommand: docs-check\\n\"}]"
+cheap_run
+hc_settle
+check 'existing PASS comment for the head starts nothing' "$([ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
+check 'existing comment is named to the lead' "$(grep -q "^Checks not started head=$cheap_head: a Checks comment already exists" "$tmp/out"; echo $?)"
+hc_valid "[{\"body\":\"Checks: FAIL head=$cheap_head\"}]"
+cheap_run
+hc_settle
+check 'existing FAIL comment for the head starts nothing' "$([ "$(hc_lines)" = 0 ]; echo $?)"
+hc_valid '[{"body":"Checks: PASS head=ffffffffffffffffffffffffffffffffffffffff\nCommand: docs-check\n"}]'
+cheap_run
+check 'a comment for another head does not block the start' "$(hc_wait 1; echo $?)"
+
+HC_REMOTE_HEAD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee hc_valid
+cheap_run; rc=$?
+hc_settle
+check 'PR head moved: no Checks, reviewer path untouched' "$([ "$rc" = 0 ] && [ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
+check 'PR head moved is named to the lead' "$(grep -q "^Checks not started head=$cheap_head: the PR head moved" "$tmp/out"; echo $?)"
+hc_valid; rm -f "$cheap/.agents/pre-qa-checks.conf"
+run --worktree "$cheap" --head dddddddddddddddddddddddddddddddddddddddd
+hc_settle
+check 'worktree moved, no cheap config: no Checks' "$([ "$(hc_lines)" = 0 ] && grep -q "^Checks not started head=dddd.*worktree" "$tmp/out"; echo $?)"
+
+hc_valid
+HC_RC=3 cheap_run
+check 'failing run is attempted' "$(hc_wait 1; echo $?)"
+check 'a failed start clears the marker' "$(until_cleared; echo $?)"
+cheap_run
+check 'retry after a failed start runs again' "$(hc_wait 2; echo $?)"
+hc_valid
+ON_WORKER_DONE_HEAD_CHECKS="$tmp/missing-head-checks" cheap_run
+check 'a start that cannot spawn clears the marker' "$(until_cleared; echo $?)"
+
+hc_valid
+cheap_run --dry-run; rc=$?
+hc_settle
+check 'dry run starts no Checks and takes no marker' "$([ "$rc" = 0 ] && [ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
+check 'dry run prints the Checks command' "$(grep -q "^Checks would start: .*--repo $cheap --pr 42" "$tmp/out"; echo $?)"
+cheap_run
+check 'a real run after a dry run still starts' "$(hc_wait 1; echo $?)"
+
+hc_valid
+cheap_run --resolution
+check 'a resolution run starts Checks the same way' "$(hc_wait 1; echo $?)"
+
+hc_valid
+GATE_RC=3 cheap_run; rc=$?
+check 'reviewer unavailable: Checks still start' "$([ "$rc" -ne 0 ] && hc_wait 1; echo $?)"
+
+hc_valid
+HC_HOLD=1 cheap_run; rc=$?
+check 'a running Checks does not delay the reviewer start' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ] && [ ! -e "$tmp/hc-release" ]; echo $?)"
+check 'and the run is still going when on-worker-done returns' "$(hc_wait 1 && pgrep -f "$tmp/hc" >/dev/null; echo $?)"
+touch "$tmp/hc-release"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -7,7 +7,10 @@
 # kind=reviewer, repo=, pr=) so worker-done-relay.sh sweep can release the seat on proof. No dispatch id in the output: no record.
 # Before any gate or reviewer: if <worktree>/.agents/pre-qa-checks.conf exists, its commands run at the exact head (one per
 # line, each limited to ON_WORKER_DONE_CHECK_TIMEOUT seconds, default 120). A failure, timeout or moved head starts no reviewer.
-# Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
+# Then, still before any gate or reviewer, head-checks.sh --repo <worktree> --pr N starts detached (output in a log, once per repo,
+# PR and head via a marker; none if the worktree or PR head moved or a Checks comment for the head exists). The reviewer never waits on it.
+# Env: ON_WORKER_DONE_HEAD_CHECKS, ON_WORKER_DONE_CHECKS_DIR, ON_WORKER_DONE_CHECKS_LOG_DIR override head-checks.sh, markers, logs (tests).
+#      ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
 #      ON_WORKER_DONE_FLEET_CONFIG selects the fleet-config.json with host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
@@ -68,6 +71,67 @@ for line in open(conf):
         sys.exit(f"QA start refused head={head}: cheap check failed ({why}): {cmd}\n{tail}")
 PY
 fi
+
+# Checks start: the cheap checks have passed (or none are configured), so head-checks.sh --pr N starts detached beside QA.
+# One start per repo, PR and head: mkdir takes the marker atomically; a run that fails clears it so a retry can start.
+# Nothing starts when the worktree or the PR head moved, or a Checks comment for this head already exists.
+_here=$(cd "$(dirname "$0")" && pwd)
+checks_note() { printf 'Checks not started head=%s: %s\n' "$head" "$1"; }
+start_checks() {
+  local now info state hc slug dir marker log
+  now=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || now=""
+  [ "$now" = "$head" ] || { checks_note "the worktree is at ${now:-an unreadable head}"; return 0; }
+  info=$(gh pr view "$pr" --repo "$repo" --json headRefOid,comments 2>/dev/null) || { checks_note "cannot read the PR"; return 0; }
+  state=$(printf '%s' "$info" | python3 -c '
+import json, re, sys
+head = sys.argv[1]
+try:
+    pr = json.load(sys.stdin)
+    if pr["headRefOid"] != head:
+        print("moved")
+    elif any(re.match(r"^Checks: (?:PASS|FAIL) head=" + head + r"(?:\s|$)", c.get("body", "")) for c in pr["comments"]):
+        print("posted")
+    else:
+        print("go")
+except (ValueError, KeyError, TypeError, AttributeError):
+    print("unreadable")
+' "$head")
+  case "$state" in
+    moved) checks_note "the PR head moved"; return 0 ;;
+    posted) checks_note "a Checks comment already exists for this head"; return 0 ;;
+    go) ;;
+    *) checks_note "cannot read the PR"; return 0 ;;
+  esac
+  hc=${ON_WORKER_DONE_HEAD_CHECKS:-$_here/head-checks.sh}
+  slug=$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')
+  dir=${ON_WORKER_DONE_CHECKS_DIR:-$HOME/.claude/state/checks-started}
+  marker="$dir/$slug-$pr-$head"
+  log="${ON_WORKER_DONE_CHECKS_LOG_DIR:-${TMPDIR:-/tmp}}/on-worker-done-checks-$slug-$pr-${head:0:12}.log"
+  if [ "$dry" = 1 ]; then
+    if [ -e "$marker" ]; then checks_note "already started"; else printf 'Checks would start: bash %q --repo %q --pr %s (log %s)\n' "$hc" "$wt" "$pr" "$log"; fi
+    return 0
+  fi
+  mkdir -p "$dir" "$(dirname "$log")" 2>/dev/null || { checks_note "cannot write the start marker or log"; return 0; }
+  mkdir "$marker" 2>/dev/null || { checks_note "already started"; return 0; }
+  if python3 -c '
+import subprocess, sys
+
+marker, log, hc, wt, pr = sys.argv[1:]
+wrap = "m=$1; shift; \"$@\"; rc=$?; [ \"$rc\" = 0 ] || rmdir \"$m\"; exit \"$rc\""
+try:
+    with open(log, "ab") as out:
+        subprocess.Popen(["bash", "-c", wrap, "_", marker, "bash", hc, "--repo", wt, "--pr", pr],
+                         stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+except OSError as err:
+    sys.exit(str(err))
+' "$marker" "$log" "$hc" "$wt" "$pr"; then
+    printf 'Checks started head=%s pr=%s log=%s\n' "$head" "$pr" "$log"
+  else
+    rmdir "$marker" 2>/dev/null
+    checks_note "the start failed"
+  fi
+}
+start_checks
 
 gate=${ON_WORKER_DONE_USAGE_GATE:-$HOME/dotfiles/script/usage-gate.py}
 orca=${ORCA_CLI_COMMAND:-orca}
@@ -178,7 +242,6 @@ if [ -n "$policy" ] && [ ! -f "$policy" ]; then
   echo "QA start refused head=$head: admission policy missing or unreadable" >&2
   exit 1
 fi
-_here=$(cd "$(dirname "$0")" && pwd)
 qa_admission=${ON_WORKER_DONE_QA_ADMISSION:-$_here/qa-admission.py}
 ver_model=$(python3 - "$flags" <<'PY'
 import sys
