@@ -22,6 +22,7 @@ FAKE
 # FAKE_OLD_EXITED adds an old dispatch whose worker exited; FAKE_ORCA_BAD breaks the inventory.
 # FAKE_NEVER_SETTLED adds the real never-settled row (state start_unknown, liveness unverifiable, no terminal, no workspace)
 # whose worker-show fails with dispatch_not_found; FAKE_NEVER_TERM gives that row a terminal; FAKE_NEVER_ERR makes the failure another error.
+# FAKE_GONE_HOST adds a running dispatch on a host this one is no longer paired with.
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
@@ -34,7 +35,10 @@ case "$*" in
     [ -z "${FAKE_OLD_PENDING:-}" ] || w="${w:+$w,}"'{"dispatchId":"d2","dispatchStatus":"pending"}'
     [ -z "${FAKE_OLD_EXITED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d3","dispatchStatus":"running"}'
     [ -z "${FAKE_NEVER_SETTLED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d4","state":"start_unknown","liveness":"unverifiable"'"${FAKE_NEVER_TERM:+,\"terminal\":\"term_z\"}"'}'
+    [ -z "${FAKE_GONE_HOST:-}" ] || w="${w:+$w,}"'{"dispatchId":"d5","dispatchStatus":"running"}'
     printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
+  'orchestration worker-show --dispatch d5 --json')
+    echo '{"ok":false,"error":{"code":"invalid_argument","message":"Unknown environment: e842b011"}}'; exit 1 ;;
   'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"dispatchId":"d1","state":"running","liveness":"running","terminal":"term_x","workspace":"wt-id::%s"}}\n' "$FAKE_ACTIVE_CWD" ;;
   'orchestration worker-show --dispatch d2 --json') exit 1 ;;
   'orchestration worker-show --dispatch d4 --json')
@@ -216,6 +220,14 @@ export FAKE_NEVER_SETTLED=1
 run --apply
 check 'a start_unknown row with no terminal or workspace, not found by worker-show, does not hold the old browser' has 'Close browser 493 (stale throwaway browser profile)'
 check 'that row is skipped with a warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped.' "$tmp/output"
+# A dispatch on a host this one no longer pairs with keeps its work on that host, so it holds nothing here.
+reset
+proc 494 1 $OLD "$DEV --user-data-dir=/tmp/gone-host"; cwd 494 /Users/someone/work
+export FAKE_GONE_HOST=1
+run --apply
+check 'a dispatch on an unpaired host does not hold the old browser' has 'Close browser 494 (stale throwaway browser profile)'
+check 'that dispatch is skipped with a warning' grep -Fq 'worker-show failed for dispatch d5 on an unpaired host; skipped.' "$tmp/output"
+unset FAKE_GONE_HOST
 # Anything else about such a row is unclear, so everything stays.
 reset
 proc 494 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-term"; cwd 494 /Users/someone/work

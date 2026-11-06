@@ -1,0 +1,1 @@
+- `wrap-up.sh` no longer keeps every worktree because of a dispatch on a host this one no longer pairs with.
