@@ -1,7 +1,654 @@
 #!/usr/bin/env bash
 # Preview finished work cleanup; --apply performs the proposed changes.
+# Other modes: --scheduled (one round on this host), --branch (after a merge), --finish-worker (a settled worker).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Runs a command for at most $1 seconds in its own process group, stdin closed; exit 124 on timeout. Stock macOS has no
+# timeout command. Perl needs no version manager, and killing the group means a hung child cannot hold a pipe open.
+# TERM goes first and is passed down, so a nested call stops its own group; KILL follows after 3 seconds.
+run_limited() {
+  local t=$1; shift
+  perl -e 'use POSIX ":sys_wait_h"; my $t = shift; my $pid = fork(); die "fork: $!" unless defined $pid;
+    if (!$pid) { setpgrp(0, 0); open(STDIN, "<", "/dev/null"); exec(@ARGV) or exit 127; }
+    sub stop { kill("TERM", -$pid);
+      for (1 .. 30) { waitpid($pid, WNOHANG); last unless kill(0, -$pid); select(undef, undef, undef, 0.1); }
+      kill("KILL", -$pid); waitpid($pid, 0); exit $_[0]; }
+    $SIG{ALRM} = sub { stop(124) }; $SIG{TERM} = sub { stop(143) };
+    alarm($t); waitpid($pid, 0); my $s = $?;
+    exit($s & 127 ? 128 + ($s & 127) : $s >> 8);' "$t" "$@"
+}
+run() { if [ "$dry" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
+real() { if [ -d "$1" ]; then (cd -P "$1" && pwd); else printf '%s\n' "$1"; fi; }
+
+# Orca worker-list rows may name the worktree in .workspace or only in .projection.workspace.id (both "id::path").
+jq_worker_row_path_expr() { printf '%s' '((.workspace // .projection.workspace.id // "") | split("::")[1] // "")'; }
+jq_worker_row_path_finish_expr() { printf '%s' '((.workspace // .worktreeId // .projection.workspace.id // "") | split("::")[1] // "")'; }
+
+# --scheduled: one round on this host. Lock, orca lookup, Orca check, load check, then --apply on every git repo Orca lists.
+# A manual run does not take this lock; the guards below recheck before every delete. Always exits 0: a skip is normal, and a
+# failure goes to the log and, on two failed rounds in a row, to one GitHub issue. A schedule gives a bare environment, so
+# nothing here depends on the login shell. ORCA_CLI_COMMAND stays unset: --apply refuses it as test mode.
+round_log() { printf '%s wrap-up-scheduled [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$$" "$*$round_note" >> "$log_file"; }
+rotate_log() { if [ -f "$1" ] && [ "$(wc -c < "$1" | tr -d ' ')" -gt 5242880 ]; then mv -f "$1" "$1.1"; fi; } # one copy past 5 MB
+guarded_round_rm() { # <rf|f> <path>: only this round's own files, inside the state directory
+  case "$2" in "$round_state"/*) ;; *) return 1 ;; esac
+  if [ "$1" = rf ]; then rm -rf "$2"; else rm -f "$2"; fi
+}
+# Lock, one per host: a file holding the owner's pid, linked into place so it never exists without it. A holder counts
+# only when its pid is alive and still runs a scheduled round. A lock with no readable pid counts as live until it is old
+# enough to be stale (an older version made a directory). A takeover goes through a guard file, so two runs that both
+# judge a lock stale leave one owner.
+lock_pid() { cat "$lock" 2>/dev/null || cat "$lock/pid" 2>/dev/null; }
+lock_is_stale() {
+  local pid; pid=$(lock_pid)
+  case "$pid" in
+    ''|*[!0-9]*) [ -n "$(find "$lock" -maxdepth 0 -mmin +"$stale_minutes" 2>/dev/null)" ]; return ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 0
+  ! ps -p "$pid" -o command= 2>/dev/null | grep -F wrap-up.sh | grep -Fq -- --scheduled
+}
+# Link a private file holding this pid to $1; fails when $1 exists (ln would drop the file inside a directory, so check first).
+link_pid() {
+  local mine="$1.$$"
+  [ ! -e "$1" ] && echo "$$" > "$mine" && ln "$mine" "$1" 2>/dev/null; local rc=$?
+  guarded_round_rm f "$mine"; return "$rc"
+}
+take_round_lock() {
+  link_pid "$lock" && return 0
+  if ! lock_is_stale; then round_log "skip: already running (pid $(lock_pid))"; return 1; fi
+  local guard="$lock.takeover" got
+  if ! link_pid "$guard"; then
+    # A guard whose taker died is cleared once it is old; this round still skips.
+    [ -z "$(find "$guard" -maxdepth 0 -mmin +"$stale_minutes" 2>/dev/null)" ] || guarded_round_rm f "$guard"
+    round_log 'skip: another run is taking over the lock'; return 1
+  fi
+  if lock_is_stale; then
+    round_note=' (stale lock taken over)'
+    guarded_round_rm rf "$lock"
+  fi
+  link_pid "$lock"; got=$?
+  guarded_round_rm f "$guard"
+  [ "$got" -eq 0 ] || { round_log 'skip: lost the lock race'; return 1; }
+}
+release_round_lock() { if [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then guarded_round_rm f "$lock"; fi; }
+# The directory of the orca to use. On one host ~/.orca/cli/bin holds a stale remote CLI that cannot reach the app, so it comes last.
+find_orca_dir() {
+  local stale="$HOME/.orca/cli/bin" dir list
+  list="${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}:$PATH:$HOME/.local/bin:$extra_bin"
+  local IFS=:
+  for dir in $list; do
+    if [ "$dir" != "$stale" ] && [ -x "$dir/orca" ]; then printf '%s\n' "$dir"; return 0; fi
+  done
+  [ -x "$stale/orca" ] && printf '%s\n' "$stale"
+}
+read_load() {
+  if [ -n "${WRAP_UP_SCHEDULED_LOAD_CMD:-}" ]; then eval "$WRAP_UP_SCHEDULED_LOAD_CMD" 2>/dev/null
+  elif [ -r /proc/loadavg ]; then cut -d' ' -f1 /proc/loadavg
+  else sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'; fi
+}
+read_cores() {
+  if [ -n "${WRAP_UP_SCHEDULED_CORES_CMD:-}" ]; then eval "$WRAP_UP_SCHEDULED_CORES_CMD" 2>/dev/null
+  else getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null; fi
+}
+# Failure line, then the streak. The second failed round in a row opens one issue; an open issue with the same title stops a duplicate.
+round_failed() {
+  local n title repo open tilde='~'
+  round_log "round failed: $1"
+  n=$(cat "$streak" 2>/dev/null); case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  n=$((n+1)); echo "$n" > "$streak"
+  [ "$n" -ge 2 ] || return 0
+  repo=${WRAP_UP_ISSUE_REPO:-} # set by the schedule, never defaulted: this repo is public and the title names the host
+  if [ -z "$repo" ]; then round_log 'issue: WRAP_UP_ISSUE_REPO is not set; no issue opened'; return 0; fi
+  title="wrap-up: scheduled rounds failing on $(hostname -s 2>/dev/null)"
+  if ! open=$(run_limited "$call_timeout" gh issue list --repo "$repo" --state open --search "$title in:title" --limit 100 --json title 2>/dev/null) \
+    || ! open=$(printf '%s' "$open" | jq -r --arg t "$title" '[.[] | select(.title == $t)] | length' 2>/dev/null); then
+    round_log 'issue: cannot read open issues; retried next failed round'; return 0
+  fi
+  [ "$open" -eq 0 ] || return 0
+  if [ "$(run_limited "$call_timeout" gh repo view "$repo" --json isPrivate --jq .isPrivate 2>/dev/null)" != true ]; then
+    round_log "issue: $repo is not private or unreadable; no issue opened"; return 0
+  fi
+  run_limited "$call_timeout" gh issue create --repo "$repo" --title "$title" \
+    --body "Scheduled wrap-up failed $n rounds in a row. Latest: ${1//"$HOME"/$tilde}" >/dev/null 2>&1 \
+    || round_log 'issue: could not open the issue; retried next failed round'
+}
+scheduled_round() {
+  set +e
+  unset ORCA_CLI_COMMAND WRAP_UP_FLEET_CONFIG
+  local started=$SECONDS round_limit=${WRAP_UP_SCHEDULED_ROUND_LIMIT:-240} wrap_up=${WRAP_UP_SCHEDULED_WRAP_UP:-$here/wrap-up.sh}
+  local detail_file orca_dir status_json load cores list_json repo_path left code count=0 fails="" seconds
+  call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
+  round_state=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
+  log_file=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
+  detail_file="${log_file%.log}-detail.log"
+  extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
+  lock="$round_state/wrap-up-scheduled.lock"
+  streak="$round_state/wrap-up-scheduled.failures"
+  stale_minutes=${WRAP_UP_SCHEDULED_LOCK_STALE_MINUTES:-10}
+  round_note=""
+  mkdir -p "$(dirname "$log_file")" "$round_state"
+  rotate_log "$log_file"; rotate_log "$detail_file"
+  take_round_lock || exit 0
+  trap release_round_lock EXIT
+
+  orca_dir=$(find_orca_dir)
+  export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin:/usr/sbin:/sbin"
+  if [ -z "$orca_dir" ]; then round_failed 'no orca CLI on this host'; exit 0; fi
+
+  # Orca must answer and report ready.
+  if ! status_json=$(run_limited "$call_timeout" orca status --json 2>/dev/null) \
+    || [ "$(printf '%s' "$status_json" | jq -r '.result.runtime.state // ""' 2>/dev/null)" != ready ]; then
+    round_log 'skip: Orca not ready'; exit 0
+  fi
+
+  # 1 minute load against the cores: skip at 0.7 per core or more.
+  load=$(read_load); cores=$(read_cores)
+  if ! awk -v l="${load:-}" 'BEGIN { exit (l ~ /^[0-9]+([.][0-9]+)?$/) ? 0 : 1 }'; then round_failed 'load unreadable'; exit 0; fi
+  case "$cores" in ''|0*|*[!0-9]*) round_failed 'cores unreadable'; exit 0 ;; esac
+  if awk -v l="$load" -v c="$cores" 'BEGIN { exit (l / c >= 0.7) ? 0 : 1 }'; then
+    round_log "skip: load $load at or above 0.7 per core ($cores cores)"; exit 0
+  fi
+
+  if ! list_json=$(run_limited "$call_timeout" orca repo list --json 2>/dev/null) \
+    || ! printf '%s' "$list_json" | jq -e '.result.repos | type == "array"' >/dev/null 2>&1; then
+    round_failed 'cannot read orca repo list'; exit 0
+  fi
+
+  # Per repo, within what is left of the round. A running wrap-up is told its time and is stopped only if it hangs past that.
+  # Orca also lists repos the team does not run; those have no head checks and stay untouched.
+  while IFS= read -r repo_path; do
+    [ -n "$repo_path" ] || continue
+    [ -f "$repo_path/.agents/head-checks.conf" ] || continue
+    left=$((round_limit-(SECONDS-started)))
+    if [ "$left" -le 0 ]; then fails="${fails:+$fails; }repo $repo_path not started"; continue; fi
+    printf '%s repo %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
+    # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
+    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$left run_limited "$((left+${WRAP_UP_SCHEDULED_KILL_GRACE:-30}))" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
+    code=$?
+    count=$((count+1))
+    [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
+  done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
+
+  seconds=$((SECONDS-started))
+  [ "$seconds" -lt "$round_limit" ] || fails="${fails:+$fails; }round took ${seconds}s, limit ${round_limit}s"
+  if [ -n "$fails" ]; then round_failed "$fails"; exit 0; fi
+  guarded_round_rm f "$streak"
+  round_log "round ok: repos=$count seconds=$seconds"
+  exit 0
+}
+
+# --branch: cleanup after lead-merge.sh reads MERGED. Run from a checkout of the repo.
+# Usage: wrap-up.sh --branch <pr head> [--head-sha <merged sha>] [--branch ...]    DRY_RUN=1 only prints.
+# Acts by ownership, never by branch name:
+# 1. Each merged PR head branch (remote and local). Kept when it has commits outside origin/main,
+#    unless its tip is the merged sha.
+# 2. Every worktree whose Orca dispatches are all released, whose terminals have all ended (the
+#    released workers' panes are closed first), that is clean, and whose commits are all in origin/main.
+#    Its branch goes with it.
+# A worktree is also kept when it is the current one, named lead-* or rm-*, or when removing it fails.
+# A branch is kept when any worktree still has it checked out. Never touches main, master, staging,
+# production, the current branch or origin/ refs. Never releases a dispatch. Unsaved changes are kept and listed.
+# Every external call (git fetch and push, orca, the pane close helper) is bounded by
+# WRAP_UP_CALL_TIMEOUT (default 60); a call that times out is reported as kept.
+# --issue and --pr are accepted and ignored: the caller no longer needs numbers here.
+limited() { run_limited "$call_timeout" "$@"; }
+# True for main/master/staging/production/HEAD and the current branch, as a bare name, refs/heads/<name>,
+# any origin/ ref, or any name whose last path component is one of those (feature/main).
+is_protected() {
+  local n=${1#refs/heads/} last
+  case "$n" in origin/*|refs/*) return 0 ;; esac
+  last=${n##*/}
+  for n in "$n" "$last"; do
+    case "$n" in main|master|staging|production|HEAD) return 0 ;; esac
+    [ -z "$current" ] || [ "$n" != "$current" ] || return 0
+  done
+  return 1
+}
+keep_protected() { is_protected "$1" || return 1; echo "protected: kept $1"; }
+# Sets owner_state (none, unreleased or released) and released_ids for a worktree path, by worker_state.can_remove.
+owner_of() {
+  local verdict
+  released_ids=()
+  verdict=$(ROWS="$rows_json" python3 -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+ok, reason, ids = ws.can_remove(json.loads(os.environ["ROWS"]), os.path.realpath(sys.argv[2]), os.path.realpath)
+print("released" if ok else ("none" if "owns" in reason else "unreleased"), *ids)' "$worker_state_dir" "$1") || { owner_state=unreleased; return; }
+  owner_state=${verdict%% *}
+  [ "$verdict" = "$owner_state" ] || read -r -a released_ids <<<"${verdict#* }"
+}
+wt_of() { git worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{p=substr($0,10)} $0=="branch " b {print p; exit}'; }
+# True when the commit $1 is in origin/main, or equals the merged sha $2.
+settled() {
+  git merge-base --is-ancestor "$1" origin/main 2>/dev/null && return 0
+  [ -n "${2:-}" ] && [ "$(git rev-parse --verify -q "$1^{commit}")" = "$2" ]
+}
+guarded_merged_worktree_remove() { # <path> <label>: after free_worktree's checks
+  local rc=0
+  limited git worktree remove -- "$1" >/dev/null 2>&1 || rc=$?
+  if [ $rc != 0 ]; then echo "Kept worktree $1 ($2, removal failed)"; return 1; fi
+  git worktree prune
+}
+guarded_merged_local_delete() { run git branch -D -- "$1" >/dev/null; } # <branch>: after drop_branch's checks
+guarded_merged_remote_delete() { # <branch>: after drop_branch's checks
+  local rc=0
+  if [ "$dry" = 1 ]; then echo "[dry-run] git push -q origin --delete $1"; return 0; fi
+  limited git push -q origin --delete "$1" >/dev/null 2>&1 || rc=$?
+  if [ $rc = 124 ]; then echo "Kept remote $1 (delete timed out)"; elif [ $rc != 0 ]; then echo "wrap-up: remote delete of $1 failed" >&2; fi
+}
+# Removes the worktree at $1 when it is owned, released, idle, clean and merged. $2 is its label, $3 the merged sha.
+# Returns non-zero, after printing why, when it stays.
+free_worktree() {
+  local wt=$1 label=$2 sha=${3:-} rc
+  wt=$(real "$wt")
+  if [ "$wt" = "$top" ]; then echo "Kept worktree $wt (current)"; return 1; fi
+  case "${wt##*/}" in
+    lead-*) echo "protected: kept worktree $wt (lead worktree)"; return 1 ;;
+    rm-*) echo "protected: kept worktree $wt (rm-* worktree)"; return 1 ;;
+  esac
+  if [ $inventory_ok = 0 ]; then echo "Kept worktree $wt ($label, Orca inventory unavailable)"; return 1; fi
+  owner_of "$wt"
+  case "$owner_state" in
+    none) echo "Kept worktree $wt ($label, no Orca dispatch owns it)"; return 1 ;;
+    unreleased) echo "Kept worktree $wt ($label, its dispatch is not released)"; return 1 ;;
+  esac
+  if ! settled "$(git -C "$wt" rev-parse HEAD)" "$sha"; then
+    echo "Kept worktree $wt ($label has commits not in origin/main)"; return 1
+  fi
+  # Checked before panes close, so a kept worktree keeps the scrollback that explains it.
+  if [ -n "$(git -C "$wt" status --porcelain --untracked-files=all)" ]; then
+    echo "Kept worktree $wt (dirty, $label has unsaved changes)"; return 1
+  fi
+  if [ -f "$pane_close" ]; then
+    if [ "$dry" = 1 ]; then echo "[dry-run] close panes of ${released_ids[*]}"
+    else
+      rc=0; limited bash "$pane_close" "${released_ids[@]}" >/dev/null 2>&1 || rc=$?
+      if [ $rc = 124 ]; then echo "Kept worktree $wt ($label, closing its panes timed out)"; return 1; fi
+    fi
+  fi
+  rc=0; limited python3 "$here/worktree-idle.py" "$wt" >/dev/null 2>&1 || rc=$?
+  if [ $rc != 0 ]; then
+    if [ $rc = 124 ]; then echo "Kept worktree $wt ($label, terminal check timed out)"
+    else echo "protected: kept worktree $wt (live terminal or unknown inventory)"; fi
+    return 1
+  fi
+  echo "Remove worktree $wt"
+  if [ "$dry" != 1 ]; then guarded_merged_worktree_remove "$wt" "$label" || return 1; fi
+}
+
+# Removes one branch, its worktree first. $2 is the merged sha when this is a merged PR head.
+drop_branch() {
+  local b=$1 sha=${2:-} wt tip
+  keep_protected "$b" && return 0
+  if git show-ref --verify --quiet "refs/heads/$b"; then tip=refs/heads/$b
+  elif git show-ref --verify --quiet "refs/remotes/origin/$b"; then tip=refs/remotes/origin/$b
+  else return 0; fi
+  wt=$(wt_of "$b")
+  if [ -n "$wt" ]; then
+    free_worktree "$wt" "branch $b" "$sha" || { echo "Kept $b (checked out)"; return 0; }
+    if [ "$dry" != 1 ] && [ -n "$(wt_of "$b")" ]; then echo "Kept $b (still checked out)"; return 0; fi
+  fi
+  if ! settled "$tip" "$sha"; then echo "Kept $b (commits not in origin/main)"; return 0; fi
+  if git show-ref --verify --quiet "refs/heads/$b"; then
+    echo "Delete local $b"; guarded_merged_local_delete "$b"
+  fi
+  if git show-ref --verify --quiet "refs/remotes/origin/$b" && ! settled "refs/remotes/origin/$b" "$sha"; then
+    echo "Kept remote $b (commits not in origin/main)"
+  elif git show-ref --verify --quiet "refs/remotes/origin/$b"; then
+    echo "Delete remote $b"
+    guarded_merged_remote_delete "$b"
+  fi
+}
+after_merge() {
+  dry=${DRY_RUN:-0}
+  orca=${ORCA_CLI_COMMAND:-orca}
+  pane_close=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
+  call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
+  branches=() shas=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --branch) branches+=("${2:-}"); shas+=(""); shift 2 ;;
+      --head-sha)
+        [ ${#branches[@]} -gt 0 ] || { echo "wrap-up: --head-sha needs a --branch before it" >&2; exit 2; }
+        shas[${#shas[@]}-1]=${2:-}; shift 2 ;;
+      --issue|--pr) case "${2:-}" in ''|*[!0-9]*) echo "wrap-up: $1 must be a number" >&2; exit 2 ;; esac; shift 2 ;;
+      *) echo "wrap-up: unknown argument $1" >&2; exit 2 ;;
+    esac
+  done
+  [ ${#branches[@]} -gt 0 ] || { echo "usage: wrap-up.sh --branch <name> [--head-sha <sha>] [--branch ...]" >&2; exit 2; }
+
+  top=$(cd -P "$(git rev-parse --show-toplevel)" && pwd)
+  current=$(git symbolic-ref --quiet --short HEAD || true)
+
+  if [ "$dry" = 1 ]; then
+    echo "[dry-run] no fetch; using already-fetched refs"
+  else
+    limited git fetch -q origin >/dev/null 2>&1 || echo "wrap-up: fetch failed or timed out; using existing refs" >&2
+  fi
+
+  # Orca inventory, read once: every worker row of every Run and page. worker-list without --run sees only the
+  # caller's Run, so read run-list first; a Run or page that cannot be read leaves the inventory unavailable.
+  # worker_state.can_remove decides per worktree.
+  worker_state_dir=${WORKER_STATE_DIR:-$here/../.agents/skills/orca-team}
+  page_size=${WRAP_UP_PAGE_SIZE:-100}
+  rows_json="" inventory_ok=0
+  read_rows='
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+orca, size = sys.argv[2], sys.argv[3]
+def pages(args):
+    cursor, seen = "", set()
+    while True:
+        cmd = [orca, "orchestration", *args, "--limit", size, "--json"] + (["--cursor", cursor] if cursor else [])
+        r = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout)["result"]
+        yield r
+        cursor = ws.next_cursor(r)
+        if not cursor: return
+        if cursor in seen: raise ValueError("cursor repeated")
+        seen.add(cursor)
+rows = []
+for run in [x["id"] for r in pages(["run-list"]) for x in r["runs"]]:
+    for r in pages(["worker-list", "--run", run]): rows += r["workers"]
+json.dump(rows, sys.stdout)'
+  if command -v "$orca" >/dev/null 2>&1 && [ -f "$worker_state_dir/worker_state.py" ] \
+    && rows_json=$(limited python3 -c "$read_rows" "$worker_state_dir" "$orca" "$page_size" 2>/dev/null) && [ -n "$rows_json" ]; then
+    inventory_ok=1
+  fi
+
+  handled=" "
+  for i in "${!branches[@]}"; do
+    handled="$handled${branches[$i]} "
+    drop_branch "${branches[$i]}" "${shas[$i]}"
+  done
+
+  # Worktrees the dispatch inventory proves finished, on whatever branch they are.
+  while IFS=$'\t' read -r wt b; do
+    [ -n "$wt" ] || continue
+    [ "$(real "$wt")" != "$top" ] || continue
+    case "$handled" in *" $b "*) [ -z "$b" ] || continue ;; esac
+    if [ -n "$b" ]; then drop_branch "$b"; else free_worktree "$wt" "detached head" || true; fi
+  done < <(git worktree list --porcelain | awk '/^worktree /{if(p!="")print p "\t" b; p=substr($0,10); b=""} /^branch refs\/heads\//{b=substr($0,19)} END{if(p!="")print p "\t" b}')
+}
+
+# --finish-worker: finish path for a settled worker. Verify head (when required), native worker-release, optional worktree removal.
+# Usage: wrap-up.sh --finish-worker --worktree <path> [--dispatch <id>]... [--task-id <id>] [--skip-head-checks "<reason>"]
+#   DRY_RUN=1 only prints. Head-checks run first unless skipped or the head is already merged.
+# Worktree removal runs only after every dispatch receives released or already_released from worker-release.
+merged() {
+  git -C "$wt" fetch -q origin main 2>/dev/null || return 1
+  if git -C "$wt" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then echo "HEAD is already in origin/main"; return 0; fi
+  [ "$(cd "$wt" && gh pr view --json state -q .state 2>/dev/null)" = MERGED ] && echo "its PR is already merged"
+}
+
+head_proven_in_merged_main() {
+  local head="" unique="" mb_rc=0 pr_state="" pr_head=""
+  if ! git -C "$wt" fetch -q origin main 2>&1; then
+    echo "wrap-up: cannot verify main ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if ! git -C "$wt" rev-parse --verify origin/main >/dev/null 2>&1; then
+    echo "wrap-up: cannot verify origin/main; worktree kept at $wt" >&2
+    return 1
+  fi
+  if ! head=$(git -C "$wt" rev-parse HEAD 2>&1); then
+    echo "wrap-up: cannot verify HEAD; worktree kept at $wt" >&2
+    return 1
+  fi
+  git -C "$wt" merge-base --is-ancestor "$head" origin/main 2>/dev/null
+  mb_rc=$?
+  if [ "$mb_rc" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$mb_rc" -gt 1 ]; then
+    echo "wrap-up: cannot verify main ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if ! unique=$(git -C "$wt" rev-list --count origin/main.."$head" 2>&1); then
+    echo "wrap-up: cannot verify commit ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if [ "$unique" -eq 0 ]; then
+    echo "wrap-up: cannot verify main ancestry; worktree kept at $wt" >&2
+    return 1
+  fi
+  if pr_state=$(cd "$wt" && gh pr view --json state -q .state 2>&1); then
+    if ! pr_head=$(cd "$wt" && gh pr view --json headRefOid -q .headRefOid 2>&1); then
+      echo "wrap-up: cannot verify PR head; worktree kept at $wt" >&2
+      return 1
+    fi
+    if [ "$pr_state" = MERGED ] && [ -n "$pr_head" ] && [ "$pr_head" = "$head" ]; then
+      return 0
+    fi
+  else
+    case "$pr_state" in
+      *"no pull requests"*|*"no such PR"*) ;;
+      *)
+        echo "wrap-up: cannot verify PR merge state; worktree kept at $wt" >&2
+        return 1
+        ;;
+    esac
+  fi
+  echo "wrap-up: HEAD not proven in merged main; worktree kept at $wt" >&2
+  return 1
+}
+
+guarded_finish_remove() { # <path>: after every check in finish_worker
+  if [ "$dry" = 1 ]; then
+    echo "[dry-run] git worktree remove -- $1"
+    echo "[dry-run] git worktree prune"
+    return 0
+  fi
+  if ! git worktree remove -- "$1"; then
+    echo "wrap-up: worktree remove failed; kept $1" >&2
+    exit 1
+  fi
+  git worktree prune
+}
+
+finish_worker() {
+  dry=${DRY_RUN:-0}
+  orca=${ORCA_CLI_COMMAND:-orca}
+  wt="" dispatches=() skip="" skip_set=0 expect_task=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --worktree) wt=${2:-}; shift 2 ;;
+      --dispatch) dispatches+=("${2:-}"); shift 2 ;;
+      --task-id) expect_task=${2:-}; shift 2 ;;
+      --skip-head-checks) skip_set=1; skip=${2:-}; [ $# -ge 2 ] && shift; shift ;;
+      *) echo "wrap-up: unknown argument $1" >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$wt" ] || { echo "usage: wrap-up.sh --finish-worker --worktree <path> [--dispatch <id>]... [--task-id <id>]" >&2; exit 2; }
+  wt=$(real "$wt")
+  archive_dir=${WRAP_UP_ARCHIVE_DIR:-}
+  if [ -n "$archive_dir" ]; then mkdir -p "$archive_dir"; fi
+
+  if [ "$skip_set" = 1 ]; then
+    [ -n "$skip" ] || { echo "wrap-up: --skip-head-checks needs a reason" >&2; exit 2; }
+    echo "wrap-up: skipping head-checks: $skip"
+  else
+    checks=${HEAD_CHECKS:-$HOME/dotfiles/script/head-checks.sh}
+    if why=$(merged); then
+      echo "wrap-up: skipping head-checks, $why"
+    elif [ "$dry" = 1 ]; then
+      echo "[dry-run] $checks --repo $wt --ref HEAD --base origin/main"
+    elif ! "$checks" --repo "$wt" --ref HEAD --base origin/main; then
+      echo "wrap-up: head-checks failed, refusing worker_done" >&2
+      exit 1
+    fi
+  fi
+
+  if [ ${#dispatches[@]} -eq 0 ] && command -v "$orca" >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    while IFS=$'\t' read -r id path; do
+      [ -n "$id" ] && [ "$(real "$path")" = "$wt" ] && dispatches+=("$id")
+    done < <("$orca" orchestration worker-list --json 2>/dev/null \
+      | jq -r '.result.workers[]? | select((.dispatchStatus // .state) != "released" and .stage != "released") | [.dispatchId, ('"$(jq_worker_row_path_finish_expr)"')] | @tsv' 2>/dev/null || true)
+  fi
+
+  if ! command -v "$orca" >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    echo "wrap-up: orca and jq are required for worker-release" >&2
+    exit 1
+  fi
+
+  if [ ${#dispatches[@]} -eq 0 ]; then
+    echo "wrap-up: no dispatch id for $wt; refusing release and worktree removal" >&2
+    exit 1
+  fi
+
+  closed=0 already=0 retained=0 pending=0 unknown=0
+  fail=0
+  release_body="" release_rc=0
+
+  for id in ${dispatches[@]+"${dispatches[@]}"}; do
+    if [ "$dry" = 1 ]; then
+      echo "[dry-run] $orca orchestration worker-show --dispatch $id --json"
+      echo "[dry-run] $orca orchestration worker-release --dispatch $id --json"
+      closed=$((closed + 1))
+      continue
+    fi
+    show=$("$orca" orchestration worker-show --dispatch "$id" --json 2>&1) || {
+      echo "wrap-up: worker-show failed for $id; refusing cleanup" >&2
+      exit 1
+    }
+    if [ -n "$archive_dir" ]; then printf '%s\n' "$show" > "$archive_dir/show-$id.json"; fi
+    # Current Orca prints result.state/stage/liveness; older Orca nested the status under result.dispatch.
+    status=$(printf '%s' "$show" | jq -r '.result | if (.state | type) == "string" then .state else (.dispatch.status // empty) end' 2>/dev/null) || status=""
+    final=$(printf '%s' "$show" | jq -r '.result | if .stage == "released" or .terminalState == "released" or .liveness == "exited" then "final" else empty end' 2>/dev/null) || final=""
+    [ -z "$final" ] || status="${status:-released}:final"
+    case "$status" in
+      succeeded|completed|failed|cancelled|released|stopped|*:final) status=${status%:final} ;;
+      *)
+        echo "wrap-up: refusing release for $id (dispatch status=${status:-unknown})" >&2
+        exit 1
+        ;;
+    esac
+    if [ -n "$expect_task" ]; then
+      got=$(printf '%s' "$show" | jq -r '.result.taskId // .result.dispatch.taskId // .result.task.id // empty' 2>/dev/null) || got=""
+      [ "$got" = "$expect_task" ] || {
+        echo "wrap-up: task id mismatch for $id (expected $expect_task, got ${got:-<empty>})" >&2
+        exit 1
+      }
+    fi
+    release_body=$("$orca" orchestration worker-release --dispatch "$id" --json 2>&1) || release_rc=$?
+    if [ -n "$archive_dir" ]; then printf '%s\n' "$release_body" > "$archive_dir/release-$id.json"; fi
+    parsed=$(RELEASE_BODY="$release_body" RELEASE_RC="${release_rc:-0}" DISPATCH_ID="$id" python3 <<'PY'
+import json, os, sys
+body = os.environ.get("RELEASE_BODY", "")
+rc = int(os.environ.get("RELEASE_RC", "0"))
+dispatch_id = os.environ.get("DISPATCH_ID", "")
+try:
+    doc = json.loads(body)
+except Exception:
+    print("malformed", rc)
+    sys.exit(0)
+if doc.get("ok") is not True:
+    code = (doc.get("error") or {}).get("code") or "error"
+    print(code, rc)
+    sys.exit(0)
+result = doc.get("result") or {}
+rid = result.get("dispatchId")
+if dispatch_id:
+    if rid is None or rid == "":
+        print("missing", rc)
+        sys.exit(0)
+    if rid != dispatch_id:
+        print("id_mismatch", rc)
+        sys.exit(0)
+state = result.get("state") or "missing"
+if state in ("released", "already_released") and rc != 0:
+    print("nonzero_success", rc)
+    sys.exit(0)
+print(state, rc)
+PY
+  ) || {
+      echo "wrap-up: could not parse worker-release response for $id" >&2
+      fail=1
+      unknown=$((unknown + 1))
+      continue
+    }
+    state=${parsed%% *}
+    prc=${parsed#* }
+    case "$state" in
+      released) closed=$((closed + 1)) ;;
+      already_released) already=$((already + 1)) ;;
+      retained)
+        retained=$((retained + 1))
+        reason=$(printf '%s' "$release_body" | jq -r '.result.reason // empty' 2>/dev/null || true)
+        echo "wrap-up: $id retained${reason:+ ($reason)}; worktree kept" >&2
+        ;;
+      release_pending) pending=$((pending + 1)); echo "wrap-up: $id release_pending; worktree kept" >&2 ;;
+      release_unknown|missing|malformed|error|dispatch_not_found|id_mismatch|nonzero_success)
+        unknown=$((unknown + 1))
+        fail=1
+        echo "wrap-up: worker-release for $id failed ($state, exit $prc)" >&2
+        printf '%s\n' "$release_body" >&2
+        ;;
+      *)
+        unknown=$((unknown + 1))
+        fail=1
+        echo "wrap-up: worker-release for $id returned unknown state $state" >&2
+        printf '%s\n' "$release_body" >&2
+        ;;
+    esac
+  done
+
+  echo "wrap-up: closed=$closed already_released=$already retained=$retained pending=$pending unknown=$unknown"
+
+  if [ "$fail" -ne 0 ]; then
+    echo "wrap-up: refusing worktree removal after failed or unknown release" >&2
+    exit 1
+  fi
+
+  if [ "$retained" -ne 0 ] || [ "$pending" -ne 0 ]; then
+    echo "wrap-up: worktree kept at $wt"
+    exit 0
+  fi
+
+  if [ "$dry" != 1 ]; then
+    wt_porcelain=""
+    unmerged_diff="" unmerged_index=""
+    if ! wt_porcelain=$(git -C "$wt" status --porcelain 2>&1); then
+      echo "wrap-up: cannot inspect worktree status; worktree kept at $wt" >&2
+      exit 0
+    fi
+    if ! unmerged_diff=$(git -C "$wt" diff --name-only --diff-filter=U 2>&1); then
+      echo "wrap-up: cannot inspect unmerged diff; worktree kept at $wt" >&2
+      exit 0
+    fi
+    if ! unmerged_index=$(git -C "$wt" ls-files -u 2>&1); then
+      echo "wrap-up: cannot inspect unmerged index; worktree kept at $wt" >&2
+      exit 0
+    fi
+    if [ -n "$wt_porcelain" ] \
+      || git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
+      || [ -n "$unmerged_diff" ] \
+      || [ -n "$unmerged_index" ]; then
+      echo "wrap-up: dirty or unmerged worktree kept at $wt"
+      exit 0
+    fi
+  fi
+
+  if [ "$dry" = 1 ]; then
+    guarded_finish_remove "$wt"
+    exit 0
+  fi
+
+  if ! head_proven_in_merged_main; then
+    exit 0
+  fi
+
+  if [ -d "$wt" ]; then
+    guarded_finish_remove "$wt"
+    echo "wrap-up: removed worktree $wt"
+  fi
+}
+
+# Each mode ends the script, so what follows is the default: preview or apply a repo's finished work.
+case "${1:-}" in
+  --scheduled) scheduled_round ;;
+  --finish-worker) shift; finish_worker "$@"; exit 0 ;;
+  --branch|--head-sha|--issue|--pr) after_merge "$@"; exit 0 ;;
+esac
 apply=0
 fleet=0
 worktrees_only=0
@@ -16,7 +663,7 @@ while [ $# -gt 0 ]; do
     --worktrees-only) worktrees_only=1 ;;
     --main-update) main_update=1 ;; # With --worktrees-only: also update main and install the preset (used per fleet host).
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
-    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>]'; exit 0 ;;
+    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -50,7 +697,7 @@ finish() { # prints every failed item with its reason; exit 1 when there is any
 fail_item() { printf '%s\t%s\n' "$1" "$2" >> "$tmp/failures"; }
 # Every call to git on the network, gh and orca goes through bounded: at most WRAP_UP_CALL_TIMEOUT seconds each (default 60),
 # and none starts once WRAP_UP_TOTAL_TIMEOUT seconds (default 900) have passed. Runs the call in its own process group and
-# kills the group (perl, which needs no version manager), so a hung child cannot hold a pipe open. Exit 124 means timed out or skipped; either is recorded.
+# kills the group. Exit 124 means timed out or skipped; either is recorded.
 call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
 total_timeout=${WRAP_UP_TOTAL_TIMEOUT:-900}
 deadline=$((SECONDS+total_timeout))
@@ -61,11 +708,7 @@ bounded() {
     return 124
   fi
   t=$call_timeout; [ "$left" -ge "$t" ] || t=$left
-  perl -e 'my $t = shift; my $pid = fork(); die "fork: $!" unless defined $pid;
-    if (!$pid) { setpgrp(0, 0); open(STDIN, "<", "/dev/null"); exec(@ARGV) or exit 127; }
-    $SIG{ALRM} = sub { kill("KILL", -$pid); waitpid($pid, 0); exit 124; };
-    alarm($t); waitpid($pid, 0); my $s = $?;
-    exit($s & 127 ? 128 + ($s & 127) : $s >> 8);' "$t" "$@" || rc=$?
+  run_limited "$t" "$@" || rc=$?
   if [ "$rc" -eq 124 ]; then fail_item "${1##*/} ${2:-} ${3:-}" "timed out after ${t}s"; fi
   return "$rc"
 }
@@ -176,7 +819,7 @@ close_finished_terminals() {
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; fail_item "terminals on $label" 'inventory incomplete; none closed'; return 0
   fi
-  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg main "$main_path" --arg local "${env:-}" '
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg main "$main_path" --arg local "${env:-}" '
     def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
@@ -197,6 +840,7 @@ close_finished_terminals() {
       elif $p == "" then [$h, "not in a worktree", "keep"]
       elif $p == $main then [$h, "main checkout", "keep"]
       elif .agentIdentity != null then [$h, "running agent", "keep"]
+      elif $scheduled != "" then [$h, "no dispatch, no agent, scheduled round leaves it", "keep"]
       else [$h, "no dispatch, no agent", "close"] end
     | @tsv' "$tmp/h-workers" > "$tmp/h-plan"
   while IFS=$'\t' read -r handle reason action; do
@@ -234,26 +878,28 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         echo '*' >> "$tmp/active"; break
       fi
       cat "$tmp/workers" >> "$tmp/worker-pages"
-      while IFS=$'\t' read -r dispatch status owned; do
+      while IFS=$'\t' read -r dispatch status owned row_path; do
         [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
           # Any dispatch still live on this host may hold a temp browser; its output names no run, so do not guess from words.
           [ -z "$(jq -c 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not)' "$tmp/show")" ] || dispatch_run=1
-          jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
+          jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // .projection.workspace.id // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
         elif [ "$status" = pending ]; then
           # Never started: no worker and no worktree, so worker-show has nothing to return.
           echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
         elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
           echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
-        elif jq -e '.error.message | startswith("Unknown environment")' "$tmp/show" >/dev/null 2>&1; then
+        elif jq -e '.error.message | startswith("Unknown environment") or startswith("Remote Dispatch")' "$tmp/show" >/dev/null 2>&1; then
           # Ran on a host this one no longer pairs with: its worktree and browser live there, that host's wrap-up owns them.
+          # A path its row names may still be here, so that one stays.
+          [ -z "$row_path" ] || echo "$row_path" >> "$tmp/active"
           echo "Warning: worker-show failed for dispatch $dispatch on an unpaired host; skipped." >&2
         else
           echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2; fail_item "dispatch $dispatch" 'worker-show failed; all worktrees kept'
           echo '*' >> "$tmp/active"
         fi
-      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // "", (if (.terminal // "") != "" or (.workspace // "") != "" then "owned" else "free" end)] | @tsv' "$tmp/workers")
+      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | . as $row | ($row | '"$(jq_worker_row_path_expr)"') as $p | [$row.dispatchId // empty, $row.dispatchStatus // $row.state // "", (if ($row.terminal // "") != "" or ($p | length > 0) then "owned" else "free" end), $p] | @tsv' "$tmp/workers")
       if ! cursor=$(next_page_cursor "$tmp/workers") || grep -Fxq -- "$cursor" "$tmp/w-cursors"; then
         echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2; fail_item 'worktrees' 'worker-list paging incomplete; all kept'
         echo '*' >> "$tmp/active"; break

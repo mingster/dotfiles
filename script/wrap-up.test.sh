@@ -168,6 +168,7 @@ echo 'ok clean main update installs the merged preset'
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 if ls "$HOME/.orca" | grep -q 'presets.json.bak'; then echo 'unexpected backup on rerun'; exit 1; fi
 echo 'ok rerun leaves an identical preset alone'
+rm -f "$HOME/.orca/presets.json" # the install is a symlink; writing through it would change the source too
 echo '{"local":true}' > "$HOME/.orca/presets.json"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 cmp "$HOME/.orca/presets.json" .orca/presets.json
@@ -320,6 +321,9 @@ done
 grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
 grep -Fq 'Close terminal t-none (local, no dispatch, no agent)' "$tmp/output"
 grep -q 'terminals closed=5 kept=3' "$tmp/output"
+WRAP_UP_SCHEDULED_CHILD=1 bash "$here/wrap-up.sh" --dry-run > "$tmp/output-child"
+grep -Fq 'Kept terminal t-none' "$tmp/output-child"
+echo 'ok a scheduled round keeps a shell nobody owns'
 grep -q -- '--limit 100' "$fake/list.log"
 echo 'ok released dispatch without a handle: terminals linked by path; panes and idle agents close; live, lead and unknown paths kept'
 # #386: a dry run left every worktree with a leftover terminal on a released dispatch as "active or unknown", because

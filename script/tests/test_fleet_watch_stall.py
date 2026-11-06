@@ -91,14 +91,36 @@ class WorkerStallHelpers(unittest.TestCase):
 
 
 class WorkerStallPass(unittest.TestCase):
-    def test_live_verdict_still_restarts_on_terminal_stall(self):
-        """Stall is lastOutputAt age; long tool use can look live while the TUI is quiet."""
+    def test_live_verdict_skips_restart_despite_quiet_terminal(self):
+        """liveness.verdict live means the agent is active; do not stop/restart for stale lastOutputAt."""
         calls = []
         w = base_worker(projection={
             'host': {'id': 'local'},
             'provider': {'id': 'claude', 'model': None},
             'outcome': 'in_progress',
             'liveness': {'verdict': 'live'},
+        })
+        term_times = {'term_fix': OLD_MS}
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        state = {}
+        notices, bits = fw.worker_stall_pass(
+            {'worker_stall': {'label_repo': 'o/r'}}, state, T0, [w], term_times, rpc)
+        self.assertEqual(notices, [])
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        self.assertNotIn('stall_restart=', ' '.join(bits))
+
+    def test_idle_verdict_restarts_on_terminal_stall(self):
+        """Non-live liveness and old lastOutputAt still trigger one stop/restart."""
+        calls = []
+        w = base_worker(projection={
+            'host': {'id': 'local'},
+            'provider': {'id': 'claude', 'model': None},
+            'outcome': 'in_progress',
+            'liveness': {'verdict': 'idle'},
         })
         term_times = {'term_fix': OLD_MS}
 

@@ -14,7 +14,7 @@ case "$*" in
   'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}' ;;
   'api repos/{owner}/{repo}/pages') echo '{"source":null}' ;;
   'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]' ;;
-  'pr list '*) echo '[{"headRefName":"closed-extra","state":"CLOSED"},{"headRefName":"closed-clean","state":"CLOSED"},{"headRefName":"closed-wt","state":"CLOSED"}]' ;;
+  'pr list '*) echo '[{"headRefName":"closed-extra","state":"CLOSED"},{"headRefName":"closed-clean","state":"CLOSED"},{"headRefName":"closed-wt","state":"CLOSED"},{"headRefName":"closed-round","state":"CLOSED"}]' ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -22,6 +22,8 @@ cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
   'terminal list --json') echo '{"ok":true,"result":{"terminals":[]}}' ;;
+  'status --json') echo '{"ok":true,"result":{"runtime":{"state":"ready"}}}' ;;
+  'repo list --json') jq -n --arg p "$ROUND_REPO" '{ok:true,result:{repos:[{path:$p,kind:"git"}]}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -69,6 +71,22 @@ check 'apply keeps the worktree whose branch has an unpushed commit' test -d "$t
 check 'apply keeps that worktree branch' has_local closed-wt
 check 'apply keeps the origin branch while its local branch is kept' git -C "$tmp/origin" show-ref --verify --quiet refs/heads/closed-extra
 check 'apply deletes the origin branch of the clean closed PR branch' bash -c '! git -C "$1" show-ref --verify --quiet refs/heads/closed-clean' _ "$tmp/origin"
+
+# Test 5: one scheduled round keeps and lists the worktree with unpushed commits and removes a closed PR branch.
+# The child gets ORCA_CLI_COMMAND back so this round cannot reach the real browsers or temp folders of the host running it.
+# Its commits are all on another origin ref: a branch that is the last copy of its commits stays on origin.
+git branch closed-round origin/closed-wt; git push -q origin closed-round
+mkdir -p "$tmp/repo/.agents"; : > "$tmp/repo/.agents/head-checks.conf"
+printf '#!/usr/bin/env bash\nORCA_CLI_COMMAND=%q exec bash %q "$@"\n' "$tmp/bin/orca" "$root/script/wrap-up.sh" > "$tmp/child"
+ROUND_REPO="$tmp/repo" WRAP_UP_SCHEDULED_WRAP_UP="$tmp/child" WRAP_UP_SCHEDULED_LOG="$tmp/round.log" WRAP_UP_EXTRA_BIN= \
+  WRAP_UP_ORCA_APP_BIN="$tmp/no-app" WRAP_UP_SCHEDULED_LOAD_CMD='echo 0.1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4' \
+  bash "$root/script/wrap-up.sh" --scheduled > "$tmp/output" 2>&1
+check 'a scheduled round reports ok' grep -Fq 'round ok: repos=1' "$tmp/round.log"
+check 'the round keeps the worktree with unpushed commits' test -d "$tmp/wt-closed"
+check 'the round keeps its branch' has_local closed-wt
+check 'the round lists it with the reason' grep -Eq "Kept .*(closed-wt|wt-closed).*\\(" "$tmp/round-detail.log"
+check 'the round removes the closed PR branch' no_local closed-round
+check 'the round removes it from origin' bash -c '! git -C "$1" show-ref --verify --quiet refs/heads/closed-round' _ "$tmp/origin"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

@@ -66,28 +66,39 @@ and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HA
 
 ## Scheduled wrap-up (macOS)
 
-`script/wrap-up-scheduled.sh` runs one wrap-up round every two hours. A round takes a lock (one per
-host, under `~/.local/state/agent-team/`), checks that `orca status --json` reports ready, checks that
-the 1 minute load is under this host's ceiling in `~/.claude/state/fleet-config.json`, then runs
-`wrap-up.sh --apply` for each repo in `script/wrap-up-scheduled.config.json`. Any skip is logged and
-exits 0. A manual wrap-up run does not take the lock; wrap-up's own guards recheck before each delete.
+`script/wrap-up.sh --scheduled` runs one wrap-up round on this host. A round takes a lock (one per host,
+under `~/.local/state/agent-team/`), finds the orca CLI, checks that `orca status --json` reports ready,
+skips when the 1 minute load divided by the cores is 0.7 or more, then runs `wrap-up.sh --apply` for each
+git repo in `orca repo list`. There is no config file. A manual wrap-up run does not take the lock;
+wrap-up's own guards recheck before each delete.
+
+The schedule shell is bare, so the round looks for orca itself: the Orca app first, then `PATH`,
+`~/.local/bin`, Homebrew, and `~/.orca/cli/bin` last, because that copy can be a stale remote CLI.
+
+Each round writes one line to `~/.orca/logs/wrap-up-scheduled.log`: `round ok`, `skip:` or `round failed:`.
+Per repo output goes to `wrap-up-scheduled-detail.log` beside it. No CLI, an unreadable repo list or load,
+a repo that fails, and a round over 4 minutes all count as failed. Repos not reached in time are not started.
+Each log keeps one rotated copy (`.1`) once it passes 5 MB.
+
+Two failed rounds in a row open one GitHub issue on the repo in `WRAP_UP_ISSUE_REPO`, titled
+`wrap-up: scheduled rounds failing on <host>`, with home paths masked. While an issue with that title
+is open, no second one is opened. With the variable unset, or a repo that is not private, the round
+logs that and opens nothing, so host names stay out of public repos. A repo run hung past its budget
+plus 30 seconds is stopped with its inner calls and counts as failed. A scheduled round leaves a shell
+no dispatch owns alone; a manual run still closes it after 10 minutes without output.
 
 Install on a host:
 
-1. Copy `script/wrap-up-scheduled.config.example.json` to `script/wrap-up-scheduled.config.json` and
-   list the repos. Give a repo a `fleet_config` only when it should also clean the fleet hosts (each
-   fleet config carries one `repo_dir` per host). A repo without one runs without `--fleet`.
-2. Copy `templates/launchd/life.example.wrap-up.plist` to
-   `~/Library/LaunchAgents/life.example.wrap-up.plist` and replace `__HOME__` with an absolute home path.
-   Do not add `ORCA_CLI_COMMAND`: wrap-up refuses `--apply` when it is set.
-3. Load it: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
+1. Copy `templates/launchd/life.example.wrap-up.plist` to
+   `~/Library/LaunchAgents/life.example.wrap-up.plist` and replace `__HOME__` with an absolute home path and `__ISSUE_REPO__` with a private `owner/repo`.
+   Do not add `ORCA_CLI_COMMAND`: the round clears it, because wrap-up refuses `--apply` when it is set.
+2. Load it: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
 
 Unload it: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
 
-Proof: `launchctl print gui/$(id -u)/life.example.wrap-up` shows the job with `run interval = 7200 seconds`.
+Proof: `launchctl print gui/$(id -u)/life.example.wrap-up` shows the job with `run interval = 600 seconds`.
 To see a round without waiting, run `launchctl kickstart gui/$(id -u)/life.example.wrap-up`, then read
-`~/.orca/logs/wrap-up-scheduled.log` for a `round finished` line. The log keeps one rotated copy
-(`.1`) once it passes 5 MB.
+`~/.orca/logs/wrap-up-scheduled.log` for a `round ok` line.
 
 ## Interpreters (asdf)
 
