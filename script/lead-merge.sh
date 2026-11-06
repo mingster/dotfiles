@@ -14,6 +14,10 @@
 # A Verdict and the Checks: PASS comment also carry across a clean merge of main (see verdict_carry).
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
+# Remote head checks (off unless a host is set): LEAD_MERGE_REMOTE_HOST, LEAD_MERGE_REMOTE_REPO_DIR and
+#   LEAD_MERGE_REMOTE_DIR, or head_checks_remote {host, repo_dir, dir} in the untracked lead-merge.local.json,
+#   run the real head-checks.sh on that host through remote-heavy.sh, for the batch train and for a single PR
+#   with no Checks at its head. The receipt must name the commit that was sent; anything else fails closed.
 set -euo pipefail
 
 # Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
@@ -139,6 +143,45 @@ lock_acquire() {
 lock_acquire
 export LEAD_MERGE_LOCK_HELD=1
 
+# Remote head checks. The host comes from the environment or the untracked local overlay, never a tracked file.
+remote_host="" remote_repo_dir="" remote_dir="" remote_loaded=false
+remote_load() {
+  [ "$remote_loaded" = false ] || return 0
+  local dir cfg
+  dir=$(cd "$(dirname "$0")" && pwd)
+  cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
+    || die "cannot read local head_checks_remote config"
+  remote_host=${LEAD_MERGE_REMOTE_HOST:-$(jq -r '.head_checks_remote.host // ""' <<<"$cfg")}
+  remote_repo_dir=${LEAD_MERGE_REMOTE_REPO_DIR:-$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")}
+  remote_dir=${LEAD_MERGE_REMOTE_DIR:-$(jq -r '.head_checks_remote.dir // ""' <<<"$cfg")}
+  if [ -n "$remote_host" ]; then
+    [ -n "$remote_repo_dir" ] && [ -n "$remote_dir" ] || die "remote head checks need a host, repo_dir and dir (LEAD_MERGE_REMOTE_* or head_checks_remote in lead-merge.local.json)"
+  fi
+  remote_loaded=true
+}
+remote_enabled() { remote_load; [ -n "$remote_host" ]; }
+# remote_head_checks <ref> <base> <train-heads or empty>: ship <ref> to the host, run head-checks.sh there, print the receipt.
+# Returns 0 for a green receipt, 1 for a red one. Dies on a failed ship, ssh or run, or a receipt for another commit.
+remote_head_checks() {
+  local ref=$1 base=$2 heads=$3 wt out status first expect
+  remote_load
+  wt=$(mktemp -d) || die "cannot create a scratch directory for the remote head checks"
+  git worktree add -q --detach "$wt" "$ref" >&2 || { rm -rf "$wt"; die "remote head-checks: cannot check out $ref to ship it"; }
+  out=$(cd "$wt" && bash "$(dirname "${BASH_SOURCE[0]}")/remote-heavy.sh" --host "$remote_host" --repo-dir "$remote_repo_dir" --dir "$remote_dir" -- \
+    bash -c 'exec "${DOTFILES_DIR:-$HOME/dotfiles}/script/head-checks.sh" --repo "$PWD" --ref "$1" --base "$2" ${3:+--train-heads "$3"}' _ "$ref" "$base" "$heads") && status=0 || status=$?
+  git worktree remove --force "$wt" >&2 2>/dev/null || rm -rf "$wt"
+  first=${out%%$'\n'*}
+  expect="Checks: (PASS|FAIL) head=$ref( main=[0-9a-f]{40})?"
+  if [ -n "$heads" ]; then expect+=" train-heads=$heads"; fi
+  [[ "$first" =~ ^${expect}$ ]] || die "remote head-checks on the named host gave no receipt for the commit sent ($ref); the receipt, if any, differs or the ship, ssh or run failed (exit $status)"
+  printf '%s\n' "$out"
+  case "$status:${BASH_REMATCH[1]}" in
+    0:PASS) return 0 ;;
+    [1-9]*:FAIL) return 1 ;;
+    *) die "remote head-checks receipt says ${BASH_REMATCH[1]} but the run exited $status" ;;
+  esac
+}
+
 if [ "${#batch_prs[@]}" -gt 0 ]; then
   script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
   head_checks=${LEAD_MERGE_HEAD_CHECKS:-$(dirname "$script")/head-checks.sh}
@@ -229,6 +272,11 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
   fi
 
   count_head_checks() { [ -z "$lock_dir" ] || echo run >> "$lock_dir/head_checks_runs"; }
+  # The train check: the named host when one is set, else the local head-checks (LEAD_MERGE_HEAD_CHECKS is a test override).
+  run_train_checks() { # <train> <train-heads> <receipt file>
+    if remote_enabled; then remote_head_checks "$1" "$batch_base" "$2" >"$3"
+    else "$head_checks" --repo "$top" --ref "$1" --base "$batch_base" --train-heads "$2" >"$3"; fi
+  }
   declare -a pass_train pass_heads
   failures=0
   # Post a train receipt as a comment, after proving it fits.
@@ -252,7 +300,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     for i in "${ids[@]}"; do group_heads+="${group_heads:+,}${composed_heads[$i]}"; done
     receipt_file=$(mktemp)
     count_head_checks
-    if "$head_checks" --repo "$top" --ref "$group_train" --base "$batch_base" --train-heads "$group_heads" >"$receipt_file"; then
+    if run_train_checks "$group_train" "$group_heads" "$receipt_file"; then
       for i in "${ids[@]}"; do
         post_receipt "${composed_prs[$i]}" "$receipt_file" train
         pass_train[i]=$group_train; pass_heads[i]=$group_heads
@@ -297,7 +345,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     for i in "${survivor_indexes[@]}"; do survivor_heads+="${survivor_heads:+,}${composed_heads[$i]}"; done
     survivor_receipt=$(mktemp)
     count_head_checks
-    if "$head_checks" --repo "$top" --ref "$survivor_train" --base "$batch_base" --train-heads "$survivor_heads" >"$survivor_receipt"; then
+    if run_train_checks "$survivor_train" "$survivor_heads" "$survivor_receipt"; then
       for i in "${survivor_indexes[@]}"; do
         post_receipt "${composed_prs[$i]}" "$survivor_receipt" survivor
         pass_train[i]=$survivor_train; pass_heads[i]=$survivor_heads
@@ -514,6 +562,19 @@ else
   if check_body=$(checks_carry "$info" "$head"); then
     checks="Checks: PASS head=$head"
     echo "lead-merge: Checks carried to ${head:0:12} (merge of main only, clean replay)"
+  elif [ "$preflight_only" != 1 ] && [ "${DRY_RUN:-0}" != 1 ] && remote_enabled; then
+    # No usable Checks at the head: run the real head-checks on the named host and post its receipt.
+    single_receipt=$(mktemp)
+    if remote_head_checks "$head" "$(field .baseRefOid)" "" >"$single_receipt"; then
+      gh pr comment "$pr" --repo "$repo" --body-file "$single_receipt" >/dev/null || die "cannot attach Checks to PR $pr"
+      check_body=$(cat "$single_receipt"); checks=${check_body%%$'\n'*}
+    else
+      echo "lead-merge: remote checks failed; failing step:" >&2
+      awk '/^Command: /{n=0} {buf[n++]=$0} /^Result: exit [1-9]/{s=n>16?n-16:0; for(i=s;i<n;i++) print "  " buf[i]; done=1; exit}
+           END{if(!done) for(i=(n>16?n-16:0);i<n;i++) print "  " buf[i]}' "$single_receipt" >&2
+      refuse "Checks: FAIL at the current head"
+    fi
+    rm -f "$single_receipt"
   else refuse "$no_checks_reason"; fi
 fi
 unchecked=false
