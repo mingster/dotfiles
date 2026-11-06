@@ -11,10 +11,15 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+unset -f python3 2>/dev/null || true
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export WORKER_STARTUP_STATE="$tmp/state"
 mkdir -p "$WORKER_STARTUP_STATE"
+# Log paths for the $bin/python3 stub (usage-gate detection in --run); must exist before the stub runs.
+export PYTHON3_GATE_LOG="$tmp/gate.invoked" PYTHON3_RUN_ORDER_LOG="$tmp/run-order.log"
+: >"$PYTHON3_GATE_LOG"
+: >"$PYTHON3_RUN_ORDER_LOG"
 
 # --- red: missing jq / missing config ---
 set +e
@@ -33,6 +38,29 @@ cat >"$bin/jq" <<EOS
 exec "$jq_bin" "\$@"
 EOS
 chmod +x "$bin/jq"
+python3_real=$(command -v python3)
+if [ -x /usr/bin/python3 ]; then
+  python3_real=/usr/bin/python3
+fi
+cat >"$bin/python3" <<EOS
+#!/usr/bin/env bash
+exec "$python3_real" "\$@"
+EOS
+chmod +x "$bin/python3"
+# Worker-startup uses \$PYTHON3 only for usage-gate (see script); log those invocations for ordering tests.
+cat >"$bin/py3-gate" <<EOS
+#!/usr/bin/env bash
+set -e
+# usage-gate.py is always invoked as: <interpreter> <script> check ...
+if [ "\${2:-}" = check ]; then
+  printf 'usage-gate check %s\n' "\${*:3}" >>"$tmp/gate.invoked"
+  printf 'gate-before-worker-start\n' >>"$tmp/run-order.log"
+  exit 0
+fi
+exec "$python3_real" "\$@"
+EOS
+chmod +x "$bin/py3-gate"
+export PYTHON3="$bin/py3-gate"
 
 make_repo() { # <workdir> <bare.git> — local main with origin bare, push
   git init -q --bare "$2"
@@ -72,6 +100,9 @@ PATH="$bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet.json" bash "$script" --host-chec
 ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "clean repo host-check exits 0 ($ec) $(cat "$tmp/h1.err")"
+clean_head=$(git -C "$clean" rev-parse HEAD)
+origin_head=$(git -C "$clean" rev-parse origin/main)
+[ "$clean_head" = "$origin_head" ] && ok || bad "fast-forward: HEAD $clean_head != origin/main $origin_head"
 
 # Dirty repo: must not fail the whole host-check (skip line); treat as ok for exit
 dirty="$tmp/dirty"
@@ -126,7 +157,7 @@ if [ "$1" = list ] && [ "$2" = nodejs ]; then
   echo ' * 1.0.0'
   exit 0
 fi
-if [ "$1" = install ] || [ "$1" = local ]; then
+if [ "$1" = install ] || [ "$1" = local ] || [ "$1" = set ]; then
   exit 0
 fi
 exit 99
@@ -137,8 +168,59 @@ PATH="$bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet3.json" bash "$script" --host-che
 ec=$?
 set -e
 [ "$ec" -ne 0 ] && ok || bad "node pin mismatch should exit non-zero"
+grep -q 'after pin fix' "$tmp/h4.err" && ok || bad "node pin mismatch should reach version recheck (after pin fix)"
 
-# Fix node stub so pin matches
+# Second mismatch: asdf ok but node still wrong after fix attempt
+cat >"$bin/node" <<'EOS'
+#!/bin/sh
+echo v1.0.0
+EOS
+cat >"$bin/asdf" <<'EOS'
+#!/usr/bin/env bash
+set -e
+if [ "$1" = list ] && [ "$2" = nodejs ]; then
+  echo ' * 9.9.9'
+  exit 0
+fi
+if [ "$1" = install ] || [ "$1" = local ] || [ "$1" = set ]; then
+  exit 0
+fi
+exit 99
+EOS
+chmod +x "$bin/asdf" "$bin/node"
+set +e
+PATH="$bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet3.json" bash "$script" --host-check 2>"$tmp/h4b.err"
+ec=$?
+set -e
+[ "$ec" -ne 0 ] && ok || bad "node recheck failure should exit non-zero"
+grep -q 'after pin fix' "$tmp/h4b.err" && ok || bad "recheck failure should mention after pin fix"
+
+# Node matches pin: no asdf on PATH should still succeed
+nodeok="$tmp/nodeok"
+nodeok_bare="$tmp/nodeok.git"
+make_repo "$nodeok" "$nodeok_bare"
+printf 'nodejs 9.9.9\n' >"$nodeok/.tool-versions"
+git -C "$nodeok" add .tool-versions
+git -C "$nodeok" commit -qm tv
+git -C "$nodeok" push -q
+cat >"$tmp/fleet-nodeok.json" <<EOF
+{"hosts":[],"repos":["$nodeok"]}
+EOF
+mini_bin="$tmp/mini-bin"
+mkdir -p "$mini_bin"
+ln -sf "$jq_bin" "$mini_bin/jq"
+cat >"$mini_bin/node" <<'EOS'
+#!/bin/sh
+echo v9.9.9
+EOS
+chmod +x "$mini_bin/node"
+set +e
+PATH="$mini_bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet-nodeok.json" bash "$script" --host-check 2>"$tmp/h4c.err"
+ec=$?
+set -e
+[ "$ec" = 0 ] && ok || bad "node matches pin without asdf should exit 0 ($ec)"
+
+# Fix node stub so pin matches (with asdf on PATH for later bun tests)
 cat >"$bin/node" <<'EOS'
 #!/bin/sh
 echo v9.9.9
@@ -150,7 +232,7 @@ if [ "$1" = list ] && [ "$2" = nodejs ]; then
   echo ' * 9.9.9'
   exit 0
 fi
-if [ "$1" = install ] || [ "$1" = local ]; then
+if [ "$1" = install ] || [ "$1" = local ] || [ "$1" = set ]; then
   exit 0
 fi
 exit 99
@@ -177,7 +259,7 @@ EOF
 cat >"$bin/bun" <<'EOS'
 #!/usr/bin/env bash
 if [ "$1" = --version ] || [ "$1" = -v ]; then echo 1.0.0; exit 0; fi
-echo install "$@" >>"${BUN_LOG:?}"
+echo "install $(pwd) $*" >>"${BUN_LOG:?}"
 exit 0
 EOS
 chmod +x "$bin/bun"
@@ -209,13 +291,63 @@ lines2=$(wc -l <"$BUN_LOG" | tr -d ' ')
 [ "$lines1" = "$lines2" ] && ok || bad "bun install skipped when lock unchanged ($lines1 vs $lines2)"
 unset BUN_LOG
 
+# Root + web lockfiles: separate state per lock; install only in dirs whose lock changed
+dual="$tmp/dual"
+dual_bare="$tmp/dual.git"
+make_repo "$dual" "$dual_bare"
+mkdir -p "$dual/web"
+printf '{"packageManager":"bun@1.0.0"}\n' >"$dual/package.json"
+printf '{"packageManager":"bun@1.0.0"}\n' >"$dual/web/package.json"
+printf 'lock-root\n' >"$dual/bun.lock"
+printf 'lock-web\n' >"$dual/web/bun.lock"
+git -C "$dual" add package.json web/package.json bun.lock web/bun.lock
+git -C "$dual" commit -qm dual
+git -C "$dual" push -q
+cat >"$tmp/fleet-dual.json" <<EOF
+{"hosts":[],"repos":["$dual"]}
+EOF
+export BUN_LOG="$tmp/bun-dual.log"
+: >"$BUN_LOG"
+set +e
+PATH="$bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet-dual.json" HOME="$tmp/home-bun" bash "$script" --host-check 2>"$tmp/h7.err"
+ec=$?
+set -e
+[ "$ec" = 0 ] && ok || bad "dual-lock host-check exits 0"
+dual_lines1=$(wc -l <"$BUN_LOG" | tr -d ' ')
+[ "$dual_lines1" = 2 ] && ok || bad "dual lock first run: want 2 bun install lines ($dual_lines1)"
+set +e
+PATH="$bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet-dual.json" HOME="$tmp/home-bun" bash "$script" --host-check 2>>"$tmp/h7.err"
+ec=$?
+set -e
+[ "$ec" = 0 ] && ok || bad "dual lock second run exits 0"
+dual_lines2=$(wc -l <"$BUN_LOG" | tr -d ' ')
+[ "$dual_lines1" = "$dual_lines2" ] && ok || bad "dual lock unchanged skips install"
+printf '\n' >>"$dual/web/bun.lock"
+git -C "$dual" add web/bun.lock
+git -C "$dual" commit -qm web-lock
+git -C "$dual" push -q
+set +e
+PATH="$bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet-dual.json" HOME="$tmp/home-bun" bash "$script" --host-check 2>>"$tmp/h7.err"
+ec=$?
+set -e
+[ "$ec" = 0 ] && ok || bad "dual lock web-only change exits 0"
+dual_lines3=$(wc -l <"$BUN_LOG" | tr -d ' ')
+[ "$dual_lines3" -eq $((dual_lines2 + 1)) ] && ok || bad "web lock change should add one install ($dual_lines2 -> $dual_lines3)"
+last_install=$(tail -1 "$BUN_LOG")
+grep -q "$dual/web" <<<"$last_install" && ok || bad "last bun install should run in web ($last_install)"
+unset BUN_LOG
+
 # --- orca stub + --run: records worker-start; delegates start-cursor-worker path ---
-cat >"$tmp/gate.py" <<'EOS'
-import sys
-sys.exit(0)
-EOS
-export USAGE_GATE_CLI="$tmp/gate.py"
+gate_invoked="$PYTHON3_GATE_LOG"
+run_order_log="$PYTHON3_RUN_ORDER_LOG"
+: >"$gate_invoked"
+: >"$run_order_log"
 orca_stub="$tmp/orca"
+# Minimal PATH for --run (PYTHON3 is explicit via \$PYTHON3 -> py3-gate).
+run_path="$bin:/usr/bin:/bin"
+# Isolate bun from the real home: otherwise ~/.bun/bin can satisfy an extreme pin and skip the failing curl.
+badbun_home="$tmp/home-badbun-run"
+mkdir -p "$badbun_home"
 wt_proof="$root/wt-proof"
 cat >"$orca_stub" <<EOS
 #!/usr/bin/env bash
@@ -224,6 +356,7 @@ WT_PROOF="$wt_proof"
 set -e
 log="\${ORCA_STUB_LOG:-/dev/null}"
 printf '%s\n' "\$0 \$*" >>"\$log"
+printf 'orca-after-gate\n' >>"$run_order_log"
 case " \$* " in
   *" worktree create "*)
     printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"\$WT_PROOF\"}}}"
@@ -243,14 +376,54 @@ printf 'Do the task.\n' >"$spec_file"
 
 # Non-cursor: after host-check, worktree create + worker-start
 set +e
-PATH="$bin:$PATH" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca.log" \
-  FLEET_PULL_CONFIG="$tmp/fleet.json" \
-  bash "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON3="$PYTHON3" \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run.err"
 ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "run claude exits 0 ($ec) $(cat "$tmp/run.err")"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
+grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
+grep 'gate-before-worker-start' "$run_order_log" | head -1 >"$tmp/order.a"
+grep 'orca-after-gate' "$run_order_log" | head -1 >"$tmp/order.b"
+[ -s "$tmp/order.a" ] && [ -s "$tmp/order.b" ] && ok || bad "gate and orca order markers present"
+if ! awk '/gate-before-worker-start/{b=NR} /orca-after-gate/{o=NR} END{exit !(b>0 && o>0 && b<o)}' "$run_order_log"; then
+  bad "usage gate must run before orca worker-start path"
+else
+  ok
+fi
+
+# --run with unfixable bun pin: host-check fails, no worker-start
+badbun="$tmp/badbun"
+badbun_bare="$tmp/badbun.git"
+make_repo "$badbun" "$badbun_bare"
+printf '{"packageManager":"bun@9.9.9"}\n' >"$badbun/package.json"
+git -C "$badbun" add package.json
+git -C "$badbun" commit -qm pin
+git -C "$badbun" push -q
+cat >"$tmp/fleet-badbun.json" <<EOF
+{"hosts":[],"repos":["$badbun"]}
+EOF
+cat >"$bin/curl" <<'EOS'
+#!/bin/sh
+exit 1
+EOS
+chmod +x "$bin/curl"
+: >"$tmp/orca-bad.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  HOME="$badbun_home" PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-bad.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet-badbun.json" PYTHON3="$PYTHON3" CURL="$bin/curl" \
+  bash --noprofile --norc "$script" --run run_bad --spec "$spec_file" --title bad --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n1 --repo "path:$badbun" 2>"$tmp/run-bad.err"
+ec_bad=$?
+set -e
+[ "$ec_bad" -ne 0 ] && ok || bad "unfixable bun pin --run should exit non-zero"
+grep -q 'orchestration worker-start' "$tmp/orca-bad.log" && bad "orca should not worker-start when bun pin fails" || ok
 
 # Cursor: copy script next to stub start-cursor-worker so exec hits the stub
 helper_dir="$tmp/helpers"
@@ -264,9 +437,11 @@ exit 0
 EOS
 chmod +x "$helper_dir/start-cursor-worker.sh"
 set +e
-PATH="$helper_dir:$bin:$PATH" ORCA_CLI_COMMAND="$orca_stub" \
-  FLEET_PULL_CONFIG="$tmp/fleet.json" \
-  bash "$helper_dir/worker-startup.sh" --run run_y --spec "$spec_file" --title cjob --agent cursor --model composer-2.5 \
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON3="$PYTHON3" \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_y --spec "$spec_file" --title cjob --agent cursor --model composer-2.5 \
   --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor.err"
 ec=$?
 set -e

@@ -9,6 +9,7 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 orca=${ORCA_CLI_COMMAND:-orca}
+py3_gate=${PYTHON3:-python3}
 cfg=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
 state_dir=${WORKER_STARTUP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/worker-startup}
 mkdir -p "$state_dir"
@@ -34,12 +35,12 @@ ensure_node_matches_pin() { # <repo_dir>
   [ -n "$tv" ] || return 0
   want=$(nodejs_pin_from_tool_versions "$tv")
   [ -n "$want" ] || return 0
-  if ! command -v asdf >/dev/null 2>&1; then
-    die "asdf not on PATH; cannot align node with pin $want in $tv"
-  fi
   have=$(cd "$(dirname "$tv")" && node --version 2>/dev/null | tr -d v || true)
   have=${have:-}
   [ "$want" = "$have" ] && return 0
+  if ! command -v asdf >/dev/null 2>&1; then
+    die "asdf not on PATH; cannot align node with pin $want in $tv"
+  fi
   if ! asdf list nodejs 2>/dev/null | tr -d ' *' | grep -qx "$want"; then
     asdf install nodejs "$want" >/dev/null || die "asdf install nodejs $want failed"
   fi
@@ -80,7 +81,17 @@ ensure_bun_matches_pin() { # <repo_dir>
   if [[ "$pin" != *.* ]]; then
     die "unusable bun pin format: $pin"
   fi
-  curl -fsSL https://bun.sh/install | bash -s "$tag" >/dev/null || die "bun install $tag failed"
+  script_tmp=$(mktemp) || die "mktemp failed"
+  curl_cmd=${CURL:-curl}
+  "$curl_cmd" -fsSL https://bun.sh/install -o "$script_tmp" || {
+    rm -f "$script_tmp"
+    die "bun install fetch failed"
+  }
+  bash -s "$tag" <"$script_tmp" >/dev/null || {
+    rm -f "$script_tmp"
+    die "bun install $tag failed"
+  }
+  rm -f "$script_tmp"
   have=$(bun --version 2>/dev/null | tr -d '[:space:]v' || true)
   [ "$have" = "$pin" ] || die "bun still $have after install, want $pin"
 }
@@ -106,23 +117,21 @@ lock_sha256() { # <file>
 
 bun_install_if_lock_changed() { # <repo_dir>
   [ -d "$1" ] || return 0
-  local lock path slug h new pkgdir
-  lock=
-  while IFS= read -r path; do lock=$path; break; done < <(lockfile_paths "$1")
-  [ -n "$lock" ] || return 0
   export PATH="$HOME/.bun/bin:$PATH"
-  slug=$(state_slug "$lock")
-  h=$(lock_sha256 "$lock")
-  new="$state_dir/bun-lock-${slug}.sha256"
-  if [ -f "$new" ] && [ "$(cat "$new")" = "$h" ]; then
-    return 0
-  fi
-  last=
-  for pkgdir in "$1" "$1/web"; do
-    [ -f "$pkgdir/package.json" ] || continue
+  local path slug h new pkgdir
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    slug=$(state_slug "$path")
+    h=$(lock_sha256 "$path")
+    new="$state_dir/bun-lock-${slug}.sha256"
+    if [ -f "$new" ] && [ "$(cat "$new")" = "$h" ]; then
+      continue
+    fi
+    pkgdir=$(dirname "$path")
+    [ -f "$pkgdir/package.json" ] || die "missing package.json for lockfile $path"
     (cd "$pkgdir" && bun install) || die "bun install failed in $pkgdir"
-  done
-  printf '%s' "$h" >"$new"
+    printf '%s' "$h" >"$new"
+  done < <(lockfile_paths "$1")
 }
 
 # --- host check: fast-forward main on configured repos (this host only) ---
@@ -212,7 +221,7 @@ run_mode() {
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${repo:+--repo "$repo"} ${base:+--base-branch "$base"}
   fi
 
-  python3 "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
+  "$py3_gate" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
     || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
 
   if [ -z "$wt" ]; then
