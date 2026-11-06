@@ -644,7 +644,122 @@ EOS
   [ ! -e "$MF_REPO/.git/lead-merge.lock" ] && echo "ok   #499 the lock is gone after the log line" || echo "FAIL #499 lock left"
 }
 
-fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1; (fx_gate) 2>&1; (fx_log) 2>&1 )
+
+# #564: a configured host runs the real head-checks through remote-heavy.sh and ssh. The ssh here is a fake remote:
+# it logs what was sent and answers with a framed receipt chosen by FX_REMOTE.
+fx_remote() {
+  . "$here/tests/lib/merge-fixture.sh"
+  PATH=${PATH#"$tmp/bin:"}
+  mf_setup; trap mf_teardown EXIT
+  export HOME="$MF_DIR/home" ORCA_CLI_COMMAND="$MF_BIN/orca" MF_TOPLEVEL="$MF_DIR/home/orca/workspaces/proj/lead-x"
+  mkdir -p "$MF_TOPLEVEL"
+  export FX_HC_LOG="$MF_DIR/hc.log" FX_SSH_LOG="$MF_DIR/ssh.log" EVENT_LOG="$MF_DIR/events"; : > "$EVENT_LOG"
+  cat > "$MF_BIN/fake-head-checks" <<'EOS'
+#!/usr/bin/env bash
+echo "local head-checks ran" >> "$FX_HC_LOG"
+ref="" heads="" prev=""
+for a in "$@"; do [ "$prev" = --ref ] && ref=$a; [ "$prev" = --train-heads ] && heads=$a; prev=$a; done
+printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
+EOS
+  cat > "$MF_BIN/ssh" <<'EOS'
+#!/usr/bin/env bash
+# Stand in for remote-heavy.sh's ssh call: host, bash, -c, <script>, remote-heavy, then eight base64 words.
+host=$1; shift 5
+b() { printf '%s' "$1" | base64 -d; }
+sha=$(b "$2"); cmd=$(b "$6"); tag=$(b "$8")
+cat > /dev/null
+eval "set -- $cmd"   # bash -c <script> _ <ref> <base> <train-heads>
+ref=$5 heads=${7:-}
+echo "ssh host=$host sent=$sha ref=$ref heads=$heads" >> "$FX_SSH_LOG"
+case "${FX_REMOTE:-pass}" in
+  sshfail) echo "ssh: connect to host failed" >&2; exit 255 ;;
+  noreceipt) printf '@@begin-%s@@\n@@end-%s-0@@\n' "$tag" "$tag"; exit 0 ;;
+esac
+kind=PASS status=0; reported=$ref reported_heads=$heads
+if [ -n "${FX_FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FX_FAIL_HEAD,"* || "$ref" = "$FX_FAIL_HEAD" ]]; then kind=FAIL status=1; fi
+[ "${FX_REMOTE:-}" != wrongsha ] || reported=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+[ "${FX_REMOTE:-}" != wrongheads ] || reported_heads=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+printf '@@begin-%s@@\n' "$tag"
+printf 'Checks: %s head=%s%s\n\n' "$kind" "$reported" "${reported_heads:+ train-heads=$reported_heads}"
+[ "$kind" = PASS ] || printf 'Command: bun run test\n(fail) remote widget\nResult: exit 1; remaining checks stopped\n'
+printf '\n@@end-%s-%s@@\n' "$tag" "$status"
+EOS
+  chmod +x "$MF_BIN/fake-head-checks" "$MF_BIN/ssh"
+  export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks" LEAD_MERGE_CLEANUP=true
+  cd "$MF_REPO" || return 1
+  local ok=$'## Verification\n- Passed.' out code n h states ref
+  for n in 71 72 73 74 75 76 77 78; do mf_pr_add "$n" "q$n" "$ok" "docs/q$n.md"; done
+  fx_checks_pass 71 72 73 74 75 76 77 78
+  local on='LEAD_MERGE_REMOTE_HOST=chk-host LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/work'
+  state() { for n in "$@"; do jq -r .state "$MF_GH_DIR/pr-$n.json"; done | tr '\n' ' '; }
+  comments() { jq -r '[.comments[].body | select(startswith("Checks: ") and contains("train-heads="))] | length' "$MF_GH_DIR/pr-$1.json"; }
+
+  # Setting off: the local head-checks runs and ssh is never called.
+  : > "$FX_HC_LOG"; : > "$FX_SSH_LOG"
+  out=$(bash "$here/lead-merge.sh" --repo example/repo --batch 71 72 2>&1); code=$?
+  [ "$code" -eq 0 ] && [ "$(grep -c . "$FX_HC_LOG")" -eq 1 ] && [ ! -s "$FX_SSH_LOG" ] && [ "$(state 71 72)" = "MERGED MERGED " ] \
+    && echo "ok   #564 setting off keeps the local run and never calls ssh" || echo "FAIL #564 off: exit $code: $out"
+
+  # Setting on, green: one remote run for the batch, the receipt on every PR, the local override unused.
+  mf_pr_add 73 q73 "$ok" docs/q73.md; mf_pr_add 74 q74 "$ok" docs/q74.md; mf_pr_add 75 q75 "$ok" docs/q75.md; fx_checks_pass 73 74 75
+  : > "$FX_HC_LOG"; : > "$FX_SSH_LOG"
+  out=$(env $on bash "$here/lead-merge.sh" --repo example/repo --batch 73 74 75 2>&1); code=$?
+  [ "$code" -eq 0 ] && [ "$(grep -c . "$FX_SSH_LOG")" -eq 1 ] && [ ! -s "$FX_HC_LOG" ] \
+    && echo "ok   #564 batch runs one head check on the named host, not locally" || echo "FAIL #564 on: exit $code ssh=$(cat "$FX_SSH_LOG") local=$(cat "$FX_HC_LOG"): $out"
+  grep -q 'host=chk-host sent=\([0-9a-f]\{40\}\) ref=\1 ' "$FX_SSH_LOG" && echo "ok   #564 the exact train commit is what ships" || echo "FAIL #564 sent: $(cat "$FX_SSH_LOG")"
+  [ "$(comments 73)$(comments 74)$(comments 75)" = 111 ] && [ "$(state 73 74 75)" = "MERGED MERGED MERGED " ] \
+    && echo "ok   #564 the receipt is posted on each PR and the group merges" || echo "FAIL #564 comments/states: $(state 73 74 75)"
+
+  # Wrong commit or wrong train list in the receipt: refused, nothing posted, nothing merged.
+  for mode in wrongsha wrongheads; do
+    mf_pr_add 76 q76 "$ok" docs/q76.md; mf_pr_add 77 q77 "$ok" docs/q77.md; fx_checks_pass 76 77
+    out=$(env $on FX_REMOTE=$mode bash "$here/lead-merge.sh" --repo example/repo --batch 76 77 2>&1); code=$?
+    [ "$code" -ne 0 ] && [ "$(state 76 77)" = "OPEN OPEN " ] && [ "$(comments 76)$(comments 77)" = 00 ] && grep -qi 'receipt.*differs\|different commit\|does not match' <<<"$out" \
+      && echo "ok   #564 $mode receipt is refused" || echo "FAIL #564 $mode: exit $code states $(state 76 77): $out"
+  done
+  # ssh failure and an empty remote answer fail closed with a plain error.
+  for mode in sshfail noreceipt; do
+    out=$(env $on FX_REMOTE=$mode bash "$here/lead-merge.sh" --repo example/repo --batch 76 77 2>&1); code=$?
+    [ "$code" -ne 0 ] && [ "$(state 76 77)" = "OPEN OPEN " ] && [ "$(comments 76)$(comments 77)" = 00 ] && grep -qi 'remote head-checks' <<<"$out" \
+      && echo "ok   #564 $mode fails closed" || echo "FAIL #564 $mode: exit $code: $out"
+  done
+  # A red train still bisects and prints the failing step; the green PR merges.
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-77.json")
+  : > "$FX_SSH_LOG"
+  out=$(env $on FX_FAIL_HEAD="$h" bash "$here/lead-merge.sh" --repo example/repo --batch 76 77 2>&1); code=$?
+  [ "$(state 76 77)" = "MERGED OPEN " ] && [ "$(grep -c . "$FX_SSH_LOG")" -ge 3 ] && grep -q 'Result: exit 1' <<<"$out" && grep -q 'batch failing PR #77' <<<"$out" \
+    && echo "ok   #564 a red remote train bisects and prints the failing step" || echo "FAIL #564 red: exit $code states $(state 76 77) ssh=$(grep -c . "$FX_SSH_LOG"): $out"
+
+  # Single path: no receipt at the head, setting on. Green posts the receipt and merges.
+  : > "$FX_SSH_LOG"
+  out=$(env $on bash "$here/lead-merge.sh" --repo example/repo --pr 78 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-78.json")" 2>&1); code=$?
+  [ "$code" -eq 0 ] && [ "$(state 78)" = "MERGED " ] && [ "$(grep -c . "$FX_SSH_LOG")" -eq 0 ] \
+    && echo "ok   #564 single path with a receipt at the head runs nothing remote" || echo "FAIL #564 single with receipt: $out"
+  for n in 81 82 83; do mf_pr_add "$n" "q$n" "$ok" "docs/q$n.md"; done
+  : > "$FX_SSH_LOG"
+  out=$(env $on bash "$here/lead-merge.sh" --repo example/repo --pr 81 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-81.json")" 2>&1); code=$?
+  [ "$code" -eq 0 ] && [ "$(state 81)" = "MERGED " ] && [ "$(grep -c . "$FX_SSH_LOG")" -eq 1 ] && jq -e '.comments | map(.body) | any(startswith("Checks: PASS head="))' "$MF_GH_DIR/pr-81.json" >/dev/null \
+    && echo "ok   #564 single path runs the head check on the host, posts the receipt and merges" || echo "FAIL #564 single green: exit $code: $out"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-82.json")
+  out=$(env $on FX_FAIL_HEAD="$h" bash "$here/lead-merge.sh" --repo example/repo --pr 82 --head "$h" 2>&1); code=$?
+  [ "$code" -ne 0 ] && [ "$(state 82)" = "OPEN " ] && grep -q 'Result: exit 1' <<<"$out" \
+    && echo "ok   #564 single path red prints the failing step and does not merge" || echo "FAIL #564 single red: exit $code: $out"
+  out=$(env $on FX_REMOTE=wrongsha bash "$here/lead-merge.sh" --repo example/repo --pr 83 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-83.json")" 2>&1); code=$?
+  [ "$code" -ne 0 ] && [ "$(state 83)" = "OPEN " ] && echo "ok   #564 single path refuses a receipt for another commit" || echo "FAIL #564 single wrongsha: $out"
+  out=$(env $on FX_REMOTE=sshfail bash "$here/lead-merge.sh" --repo example/repo --pr 83 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-83.json")" 2>&1); code=$?
+  [ "$code" -ne 0 ] && [ "$(state 83)" = "OPEN " ] && echo "ok   #564 single path fails closed on ssh failure" || echo "FAIL #564 single sshfail: $out"
+
+  # The host comes from the untracked local overlay, and the committed example names none.
+  [ "$(jq -r '.head_checks_remote.host // ""' "$here/lead-merge.config.example.json")" = "" ] && echo "ok   #564 the committed config names no host" || echo "FAIL #564 committed host"
+  cp -R "$here" "$MF_DIR/script-copy"
+  printf '{"head_checks_remote":{"host":"overlay-host","repo_dir":"/srv/repo","dir":"/srv/work"}}\n' > "$MF_DIR/script-copy/lead-merge.local.json"
+  mf_pr_add 84 q84 "$ok" docs/q84.md; mf_pr_add 85 q85 "$ok" docs/q85.md; fx_checks_pass 84 85
+  : > "$FX_SSH_LOG"
+  out=$(bash "$MF_DIR/script-copy/lead-merge.sh" --repo example/repo --batch 84 85 2>&1); code=$?
+  [ "$code" -eq 0 ] && grep -q 'host=overlay-host' "$FX_SSH_LOG" && echo "ok   #564 the host comes from lead-merge.local.json" || echo "FAIL #564 overlay: exit $code: $out"
+}
+
+fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1; (fx_gate) 2>&1; (fx_log) 2>&1; (fx_remote) 2>&1 )
 printf '%s\n' "$fx_out"
 pass=$((pass+$(grep -c '^ok ' <<<"$fx_out"))); fail=$((fail+$(grep -c '^FAIL' <<<"$fx_out")))
 echo "passed $pass, failed $fail"
