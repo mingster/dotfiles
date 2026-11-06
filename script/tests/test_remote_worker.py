@@ -82,6 +82,20 @@ else: sys.exit(99)
         self.assertEqual([a[:2] for a in calls], [['terminal', 'create'], ['terminal', 'wait'],
                                                 ['terminal', 'close'], ['orchestration', 'worker-start']])
 
+    def test_target_host_updates_dotfiles_and_links_the_preset_before_dispatch(self):
+        (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'agy').chmod(0o700)
+        (self.bin / 'git').write_text('#!/bin/sh\necho "$@" >> "$HOME/git-calls"\nexit 0\n')
+        (self.bin / 'git').chmod(0o700)
+        setup = self.home / 'dotfiles/script/setup-orca.sh'
+        setup.parent.mkdir(parents=True)
+        setup.write_text(': > "$HOME/preset-linked"\n')
+        (self.bin / 'bash').symlink_to('/bin/bash')
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('pull', (self.home / 'git-calls').read_text())
+        self.assertTrue((self.home / 'preset-linked').exists())
+
     def test_uncertain_completion_never_dispatches(self):
         (self.bin / 'agy').touch(mode=0o700)
         for mode in ('unknown', 'timeout'):
