@@ -1,27 +1,35 @@
 #!/usr/bin/env bash
 # Start the cross family reviewer for a coding worker_done.
 # on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|gemini|antigravity
-#                   --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--dry-run]
+#                   --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--restart-reviewer] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Writes the reviewer's owner record ($WORKER_DONE_OWNER_DIR/<its dispatch id>: the lead handle from --owner, then
 # kind=reviewer, repo=, pr=) so worker-done-relay.sh sweep can release the seat on proof. No dispatch id in the output: no record.
 # Before any gate or reviewer: if <worktree>/.agents/pre-qa-checks.conf exists, its commands run at the exact head (one per
-# line, each limited to ON_WORKER_DONE_CHECK_TIMEOUT seconds, default 120). A failure, timeout or moved head starts no reviewer.
-# A repeat call for the same repo, PR, head and kind (review or --resolution) starts no second reviewer (marker in ON_WORKER_DONE_REVIEWER_DIR).
-# Checks also start only if the head is unchanged and the worktree clean after the cheap checks.
+# line, each limited to ON_WORKER_DONE_CHECK_TIMEOUT seconds, default 120). A failure, timeout, or a worktree not at --head
+# before the checks starts no reviewer. A head that moves or a worktree that turns dirty during the checks stops only Checks: the
+# reviewer still starts, and a dirty worktree adds a line to its brief to review only `git show <head>`.
+# A repeat call for the same repo, PR, head and kind (review or --resolution) starts no second reviewer (marker in ON_WORKER_DONE_REVIEWER_DIR,
+# holding the dispatch id once the start succeeded). The repeat prints that id, or says none was recorded, and names --restart-reviewer,
+# which clears that marker and starts one more.
 # Then, still before any gate or reviewer, head-checks.sh --repo <worktree> --pr N starts detached (output in a log, once per repo,
-# PR and head via a marker; none if the worktree or PR head moved or a Checks comment for the head exists). The reviewer never waits on it.
-# Env: ON_WORKER_DONE_HEAD_CHECKS, ON_WORKER_DONE_CHECKS_DIR, ON_WORKER_DONE_CHECKS_LOG_DIR override head-checks.sh, markers, logs (tests).
+# PR and head via a marker holding the wrapper's pid; none if the worktree or PR head moved or a Checks comment for the head exists).
+# A repeat finds a dead pid, clears the marker and starts again. The reviewer never waits on it.
+# When that run ends with no Checks receipt for the head on the PR, it sends one message to $ORCA_TERMINAL_HANDLE (as set in the
+# calling shell) through orca-reply.sh, with the exit code and log path. No handle: the log only, and the start says so.
+# Env: ON_WORKER_DONE_HEAD_CHECKS, ON_WORKER_DONE_CHECKS_DIR, ON_WORKER_DONE_CHECKS_LOG_DIR, ON_WORKER_DONE_REPLY override
+#      head-checks.sh, markers, logs, orca-reply.sh (tests).
 #      ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
 #      ON_WORKER_DONE_FLEET_CONFIG selects the fleet-config.json with host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
-usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--dry-run]" >&2; exit 2; }
-owner="" repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
+usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--restart-reviewer] [--dry-run]" >&2; exit 2; }
+owner="" repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0 restart=0 dirty=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
     --resolution) resolution=1; shift ;;
+    --restart-reviewer) restart=1; shift ;;
     --repo|--pr|--head|--author-family|--author-provider|--author-model|--worktree|--run|--author-dispatch|--owner)
       [ $# -ge 2 ] || usage
       case "$1" in
@@ -75,15 +83,27 @@ PY
 fi
 
 # Checks start: the cheap checks have passed (or none are configured), so head-checks.sh --pr N starts detached beside QA.
-# One start per repo, PR and head: mkdir takes the marker atomically; a run that fails clears it so a retry can start.
+# One start per repo, PR and head: mkdir takes the marker atomically; the wrapper writes its pid into it. A run that fails clears
+# it so a retry can start; a marker whose pid is dead (run ended, crash, reboot) is cleared by the next call, which starts again.
 # Nothing starts when the worktree or the PR head moved, or a Checks comment for this head already exists.
 _here=$(cd "$(dirname "$0")" && pwd)
 checks_note() { printf 'Checks not started head=%s: %s\n' "$head" "$1"; }
+# True while the marker's recorded wrapper runs. The pid must show the marker path in its command line, so a pid reused after a
+# reboot by an unrelated process does not count. A marker with no pid yet gets a second to receive one.
+checks_alive() {
+  local pid="" i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    pid=$(cat "$1/pid" 2>/dev/null) && [ -n "$pid" ] && break
+    sleep 0.1
+  done
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o command= 2>/dev/null | grep -qF -- "$1"
+}
 start_checks() {
-  local now info state hc slug dir marker log
+  local now info state hc slug dir marker log reply
   now=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || now=""
-  [ "$now" = "$head" ] || { checks_note "the worktree is at ${now:-an unreadable head}"; return 0; }
-  [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || { checks_note "the worktree is dirty"; return 0; }
+  [ -n "$now" ] || { checks_note "cannot read the worktree on this host (it may be on another host, or removed)"; return 0; }
+  [ "$now" = "$head" ] || { checks_note "the worktree is at $now"; return 0; }
+  [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || { dirty=1; checks_note "the worktree is dirty"; return 0; }
   info=$(gh pr view "$pr" --repo "$repo" --json headRefOid,comments 2>/dev/null) || { checks_note "cannot read the PR"; return 0; }
   state=$(printf '%s' "$info" | python3 -c '
 import json, re, sys
@@ -111,26 +131,45 @@ except (ValueError, KeyError, TypeError, AttributeError):
   marker="$dir/$slug-$pr-$head"
   log="${ON_WORKER_DONE_CHECKS_LOG_DIR:-${TMPDIR:-/tmp}}/on-worker-done-checks-$slug-$pr-${head:0:12}.log"
   if [ "$dry" = 1 ]; then
-    if [ -e "$marker" ]; then checks_note "already started"; else printf 'Checks would start: bash %q --repo %q --pr %s (log %s)\n' "$hc" "$wt" "$pr" "$log"; fi
+    if [ -d "$marker" ] && checks_alive "$marker"; then checks_note "already started"; else printf 'Checks would start: bash %q --repo %q --pr %s (log %s)\n' "$hc" "$wt" "$pr" "$log"; fi
     return 0
   fi
   mkdir -p "$dir" "$(dirname "$log")" 2>/dev/null || { checks_note "cannot write the start marker or log"; return 0; }
-  mkdir "$marker" 2>/dev/null || { checks_note "already started"; return 0; }
+  reply=${ON_WORKER_DONE_REPLY:-$_here/orca-reply.sh}
+  if ! mkdir "$marker" 2>/dev/null; then
+    if checks_alive "$marker"; then checks_note "already started"; return 0; fi
+    rm -rf "$marker"
+    mkdir "$marker" 2>/dev/null || { checks_note "already started"; return 0; }
+  fi
   if python3 -c '
 import subprocess, sys
 
-marker, log, hc, wt, pr = sys.argv[1:]
-wrap = "m=$1; shift; \"$@\"; rc=$?; [ \"$rc\" = 0 ] || rmdir \"$m\"; exit \"$rc\""
+marker, log, hc, wt, pr, repo, head, reply, handle = sys.argv[1:]
+# Runs detached: records its pid, runs head-checks, clears the marker on failure, and when no Checks receipt for the head is on
+# the PR afterwards, logs that and sends one message to the handle (stdout and stderr go to the log).
+wrap = r"""m=$1 hc=$2 wt=$3 pr=$4 repo=$5 head=$6 reply=$7 handle=${8-} log=$9
+printf "%s\n" "$$" > "$m/pid"
+bash "$hc" --repo "$wt" --pr "$pr"; rc=$?
+[ "$rc" = 0 ] || rm -rf "$m"
+if ! gh pr view "$pr" --repo "$repo" --json comments 2>/dev/null | grep -Eq "\"body\": ?\"Checks: (PASS|FAIL) head=$head"; then
+  echo "Checks ended with no receipt head=$head pr=$pr exit $rc"
+  if [ -n "$handle" ]; then
+    bash "$reply" --to "$handle" --subject "Checks ended with no receipt head=${head:0:12} pr=$pr" \
+      --body "head-checks for $repo PR $pr at head $head ended with exit $rc and no Checks receipt for that head is on the PR (or the PR could not be read). Log: $log" || echo "could not message $handle"
+  fi
+fi
+exit $rc"""
 try:
     with open(log, "ab") as out:
-        subprocess.Popen(["bash", "-c", wrap, "_", marker, "bash", hc, "--repo", wt, "--pr", pr],
+        subprocess.Popen(["bash", "-c", wrap, "_", marker, hc, wt, pr, repo, head, reply, handle, log],
                          stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
 except OSError as err:
     sys.exit(str(err))
-' "$marker" "$log" "$hc" "$wt" "$pr"; then
+' "$marker" "$log" "$hc" "$wt" "$pr" "$repo" "$head" "$reply" "${ORCA_TERMINAL_HANDLE:-}"; then
     printf 'Checks started head=%s pr=%s log=%s\n' "$head" "$pr" "$log"
+    [ -n "${ORCA_TERMINAL_HANDLE:-}" ] || printf 'Checks end notice: ORCA_TERMINAL_HANDLE is not set, so a run that ends with no receipt is written to the log only (%s)\n' "$log"
   else
-    rmdir "$marker" 2>/dev/null
+    rm -rf "$marker"
     checks_note "the start failed"
   fi
 }
@@ -338,6 +377,9 @@ gate_footer='Look for the Checks receipt for exactly this head on this PR (a com
 if [ "$checks_state" = pending ]; then
   gate_footer="Checks are pending: no Checks receipt exists for head $head yet. That is not a failure. Review the code anyway and say in your verdict that Checks were pending. $gate_footer"
 fi
+if [ "$dirty" = 1 ]; then
+  gate_footer="The worktree has uncommitted files. Review only what git show $head prints, not the working tree. $gate_footer"
+fi
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
 Review the conflict-resolution merge for PR #$pr in $repo at head $head. You did not write this merge resolution.
@@ -370,8 +412,10 @@ cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --wor
 rdir=${ON_WORKER_DONE_REVIEWER_DIR:-$HOME/.claude/state/reviewer-started}
 rmarker="$rdir/$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')-$pr-$head-$([ "$resolution" = 1 ] && echo resolution || echo review)"
 mkdir -p "$rdir" || { echo "on-worker-done: cannot write the reviewer start marker" >&2; exit 1; }
+[ "$restart" != 1 ] || rm -rf "$rmarker"
 if ! mkdir "$rmarker" 2>/dev/null; then
-  printf 'Reviewer not started head=%s: already started\n' "$head"
+  if [ -s "$rmarker/dispatch" ]; then seen="dispatch $(cat "$rmarker/dispatch")"; else seen="no dispatch id was recorded"; fi
+  printf 'Reviewer not started head=%s: already started (%s). Pass --restart-reviewer to start another.\n' "$head" "$seen"
   exit 0
 fi
 echo "$cmd"
@@ -379,7 +423,7 @@ echo "$cmd"
 started=$($orca orchestration worker-start --run "$run" --spec "$(cat $brief)" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json)
 rc=$?
 printf '%s\n' "$started"
-[ "$rc" = 0 ] || { rmdir "$rmarker" 2>/dev/null; exit "$rc"; }
+[ "$rc" = 0 ] || { rm -rf "$rmarker"; exit "$rc"; }
 reviewer_dispatch=$(printf '%s' "$started" | python3 -c '
 import json, re, sys
 def find(node):
@@ -399,6 +443,7 @@ except ValueError:
 print(found if found and re.fullmatch(r"[A-Za-z0-9_-]+", found) else "")
 ')
 if [ -n "$reviewer_dispatch" ]; then
+  printf '%s\n' "$reviewer_dispatch" > "$rmarker/dispatch" 2>/dev/null || true
   owners=${WORKER_DONE_OWNER_DIR:-$HOME/.claude/state/dispatch-owners}
   { mkdir -p "$owners" && printf '%s\nkind=reviewer\nrepo=%s\npr=%s\n' "$owner" "$repo" "$pr" > "$owners/$reviewer_dispatch"; } \
     || echo "on-worker-done: could not write the owner record for $reviewer_dispatch" >&2

@@ -54,6 +54,10 @@ them. The one exception: an undeclared job whose command runs playwright (a
 browser plus its dev server) declares 8192 MiB by default, whether it is called
 directly, through bunx or npx, or inside bash -c. A declared value wins. The
 free-memory floor and every other check are unchanged.
+One more rule, whatever the host memory: a job with the playwright default and a
+head-checks job (--head-checks) never hold slots together. Each writes a kind file
+in its first slot; admission refuses either kind while a slot of the other is held.
+Slots written before this rule carry no kind file and are not recognised.
 A job that cannot get its slots publishes a waiter record. Once a waiter of weight
 W has waited HEAVY_GATE_MAX_WAIT_SECONDS (default 300), jobs lighter than W stop
 taking slots until it has run, so a weight 2 job cannot be starved by a stream of
@@ -318,7 +322,7 @@ class Slots:
         return total
 
     def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False,
-              memory=0, host_memory=0):
+              memory=0, host_memory=0, kind=''):
         with self.allocation():
             self.reclaim()
             if self.starved_heavier(weight):
@@ -330,6 +334,10 @@ class Slots:
                 return False
             # Count even slots above a lowered configuration or a caller override.
             if len(occupied) + weight > self.count - reserve:
+                return False
+            # A browser run and a head-checks run never share the machine, whatever its memory.
+            if kind and any((p / 'kind').read_text() == EXCLUDES[kind]
+                            for p in occupied if (p / 'kind').is_file()):
                 return False
             # Declared memory counts like a slot; an oversize job can only run alone.
             if memory:
@@ -358,6 +366,8 @@ class Slots:
                         (staging / 'long').touch()
                     if memory and index == 0:
                         (staging / 'memory').write_text(str(memory))
+                    if kind and index == 0:
+                        (staging / 'kind').write_text(kind)
                     staging.rename(path)
                     self.owned.append(path)
                 finally:
@@ -601,6 +611,17 @@ def job_class():
 
 
 PLAYWRIGHT_DEFAULT_MIB = 8192
+EXCLUDES = {'browser': 'head-checks', 'head-checks': 'browser'}
+
+
+def job_kind(args):
+    """'head-checks' for a head-checks job, 'browser' for an undeclared playwright job, else ''."""
+    if args.head_checks:
+        return 'head-checks'
+    flag = getattr(args, 'memory_mb', None)
+    declared = flag if flag is not None else os.environ.get('HEAVY_GATE_MEMORY_MB', '')
+    command = ' '.join(getattr(args, 'command', None) or [])
+    return 'browser' if declared == '' and re.search(r'playwright', command) else ''
 
 
 def declared_memory(args):
@@ -623,6 +644,7 @@ def declared_memory(args):
 def gate(args):
     timeout = command_timeout()
     memory = declared_memory(args)
+    kind = job_kind(args)
     host_memory = hardware()[2] // (1024 * 1024) if memory else 0
     if memory > host_memory > 0:
         print(f'heavy-gate: declared memory {memory} MiB exceeds host memory {host_memory} MiB; '
@@ -652,13 +674,15 @@ def gate(args):
                 break
             if not reason:
                 if slots.claim(weight, reserve=int(long_job), long_job=long_job,
-                               memory=memory, host_memory=host_memory):
+                               memory=memory, host_memory=host_memory, kind=kind):
                     break
                 slots.wait_record(weight)
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
                 if memory:
                     reason += f' and {memory} MiB of {host_memory} MiB declared memory'
+                if kind:
+                    reason += f' (no {EXCLUDES[kind]} job may hold a slot beside a {kind} job)'
                 if slots.stuck:
                     reason += ('; held with the owner gone and no proof its processes exited: '
                                + ', '.join(slots.stuck))

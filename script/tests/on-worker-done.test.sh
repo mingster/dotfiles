@@ -39,7 +39,9 @@ if os.environ.get('GH_RC','0')!='0': sys.exit(int(os.environ['GH_RC']))
 print((Path(os.environ['FIXTURE_ROOT'])/'checks.json').read_text())
 PY
 chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
-export ON_WORKER_DONE_REVIEWER_DIR="$tmp/rmarkers"
+export ON_WORKER_DONE_REVIEWER_DIR="$tmp/rmarkers" ON_WORKER_DONE_CHECKS_DIR="$tmp/markers" ON_WORKER_DONE_CHECKS_LOG_DIR="$tmp/hclogs"
+export WORKER_DONE_OWNER_DIR="$tmp/owners-default"
+unset ORCA_TERMINAL_HANDLE
 head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 valid() {
@@ -222,7 +224,7 @@ valid; rm -rf "$tmp/owners"
 FAKE_START_RC=3 FAKE_START_OUT='{"ok":false,"result":{"dispatch":{"dispatchId":"ctx_rev4"}}}' run --owner term_lead_Z
 rc=$?
 check 'a failed start keeps its exit code and writes no record' "$([ "$rc" = 3 ] && [ ! -e "$tmp/owners/ctx_rev4" ]; echo $?)"
-unset WORKER_DONE_OWNER_DIR
+export WORKER_DONE_OWNER_DIR="$tmp/owners-default"
 # Cheap checks (.agents/pre-qa-checks.conf) run at the exact head, in its worktree, before any reviewer starts.
 cheap="$tmp/cheap"; mkdir -p "$cheap/.agents"
 git -C "$cheap" init -q && git -C "$cheap" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
@@ -273,25 +275,35 @@ cat > "$tmp/hc" <<'HC'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FIXTURE_ROOT/hc.log"
 echo "hc ran"
+if [ "${HC_POST:-0}" = 1 ]; then
+  printf '{"headRefOid":"%s","comments":[{"body":"Checks: FAIL head=%s"}]}\n' "$HC_POST_HEAD" "$HC_POST_HEAD" > "$FIXTURE_ROOT/checks.json"
+fi
 if [ "${HC_HOLD:-0}" = 1 ]; then while [ ! -e "$FIXTURE_ROOT/hc-release" ]; do sleep 0.05; done; fi
 exit "${HC_RC:-0}"
 HC
 chmod +x "$tmp/hc"
-export ON_WORKER_DONE_HEAD_CHECKS="$tmp/hc" ON_WORKER_DONE_CHECKS_DIR="$tmp/markers" ON_WORKER_DONE_CHECKS_LOG_DIR="$tmp/hclogs"
+cat > "$tmp/reply" <<'RP'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FIXTURE_ROOT/reply.log"
+RP
+chmod +x "$tmp/reply"
+export ON_WORKER_DONE_HEAD_CHECKS="$tmp/hc" ON_WORKER_DONE_REPLY="$tmp/reply"
 hc_valid() {
-  valid; cheap_conf 'true'
+  valid; cheap_conf 'true'; export HC_POST_HEAD="$cheap_head"
   printf '{"headRefOid":"%s","comments":%s}\n' "${HC_REMOTE_HEAD:-$cheap_head}" "${1:-[]}" > "$tmp/checks.json"
-  rm -rf "$tmp/hc.log" "$tmp/markers" "$tmp/hclogs" "$tmp/hc-release"
+  rm -rf "$tmp/hc.log" "$tmp/markers" "$tmp/hclogs" "$tmp/hc-release" "$tmp/reply.log"
 }
 hc_lines() { [ -f "$tmp/hc.log" ] && wc -l < "$tmp/hc.log" | tr -d ' ' || echo 0; }
 hc_wait() { for _ in $(seq 1 100); do [ "$(hc_lines)" -ge "$1" ] && return 0; sleep 0.05; done; return 1; }
 hc_settle() { sleep 0.5; }
 until_cleared() { for _ in $(seq 1 100); do [ "$(hc_marker_count)" = 0 ] && return 0; sleep 0.05; done; return 1; }
 until_logged() { for _ in $(seq 1 50); do grep -qs "$1" "$tmp"/hclogs/* && return 0; sleep 0.05; done; return 1; }
+reply_lines() { [ -f "$tmp/reply.log" ] && wc -l < "$tmp/reply.log" | tr -d ' ' || echo 0; }
+reply_wait() { for _ in $(seq 1 100); do [ "$(reply_lines)" -ge "$1" ] && return 0; sleep 0.05; done; return 1; }
 hc_marker_count() { ls "$tmp/markers" 2>/dev/null | wc -l | tr -d ' '; }
 
 hc_valid
-cheap_run; rc=$?
+HC_HOLD=1 cheap_run; rc=$?
 check 'ready: reviewer still starts' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
 check 'ready: Checks start' "$(hc_wait 1; echo $?)"
 check 'Checks start names the worktree and the PR' "$([ "$(cat "$tmp/hc.log")" = "--repo $cheap --pr 42" ]; echo $?)"
@@ -301,14 +313,17 @@ cheap_run; rc=$?
 hc_settle
 check 'repeat call starts no second run' "$([ "$rc" = 0 ] && [ "$(hc_lines)" = 1 ]; echo $?)"
 check 'repeat call tells the lead why' "$(grep -q "^Checks not started head=$cheap_head: already started" "$tmp/out"; echo $?)"
+touch "$tmp/hc-release"
 
 hc_valid
+export HC_HOLD=1
 race() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$cheap_head" --author-family claude --worktree "$cheap" --run run_fixture > "$tmp/race.$1" 2>&1; }
 race 1 & race 2 & race 3 & race 4 &
 wait
 hc_wait 1; hc_settle
 check 'four racing calls start exactly one run' "$([ "$(hc_lines)" = 1 ] && [ "$(hc_marker_count)" = 1 ]; echo $?)"
 check 'only one racing call reports the Checks start' "$([ "$(cat "$tmp"/race.* | grep -c '^Checks started')" = 1 ]; echo $?)"
+touch "$tmp/hc-release"; unset HC_HOLD
 
 hc_valid; cheap_conf 'exit 1'
 cheap_run
@@ -349,8 +364,17 @@ check 'a failed start clears the marker' "$(until_cleared; echo $?)"
 cheap_run
 check 'retry after a failed start runs again' "$(hc_wait 2; echo $?)"
 hc_valid
+mkdir -p "$tmp/hclogs" "$tmp/hclogs/on-worker-done-checks-mingster_dotfiles-42-${cheap_head:0:12}.log"
+cheap_run
+check 'a start that cannot open its log clears the marker' "$(until_cleared; echo $?)"
+check 'and the lead is told the start failed' "$(grep -q "^Checks not started head=$cheap_head: the start failed" "$tmp/out"; echo $?)"
+check 'and nothing ran' "$([ "$(hc_lines)" = 0 ]; echo $?)"
+hc_valid
 ON_WORKER_DONE_HEAD_CHECKS="$tmp/missing-head-checks" cheap_run
-check 'a start that cannot spawn clears the marker' "$(until_cleared; echo $?)"
+check 'a head-checks script that is missing clears the marker' "$(until_cleared; echo $?)"
+hc_valid
+run --worktree "$tmp/not-on-this-host" --head "$cheap_head"
+check 'a worktree not readable here: the Checks note gives the reason' "$(grep -q "^Checks not started head=$cheap_head: .*cannot read the worktree on this host" "$tmp/out"; echo $?)"
 
 hc_valid
 cheap_run --dry-run; rc=$?
@@ -374,6 +398,65 @@ check 'a running Checks does not delay the reviewer start' "$([ "$rc" = 0 ] && [
 check 'and the run is still going when on-worker-done returns' "$(hc_wait 1 && pgrep -f "$tmp/hc" >/dev/null; echo $?)"
 touch "$tmp/hc-release"
 
+# The Checks marker holds the wrapper's pid: a live one is "already started", a dead one is cleared and started again.
+cmarker() { echo "$tmp/markers/mingster_dotfiles-42-$cheap_head"; }
+dead_pid() { sleep 0 & local p=$!; wait "$p"; echo "$p"; }
+hc_valid
+HC_HOLD=1 cheap_run
+hc_wait 1
+check 'the marker stores the wrapper pid, which is alive' "$(kill -0 "$(cat "$(cmarker)/pid")" 2>/dev/null; echo $?)"
+cheap_run
+hc_settle
+check 'a live pid: already started, no second run' "$([ "$(hc_lines)" = 1 ] && grep -q "^Checks not started head=$cheap_head: already started" "$tmp/out"; echo $?)"
+touch "$tmp/hc-release"
+hc_valid; mkdir -p "$(cmarker)"; dead_pid > "$(cmarker)/pid"
+cheap_run
+check 'a dead pid: the marker is cleared and Checks start again' "$(hc_wait 1 && grep -q "^Checks started head=$cheap_head" "$tmp/out"; echo $?)"
+hc_valid; mkdir -p "$(cmarker)"; dead_pid > "$(cmarker)/pid"
+cheap_run --dry-run
+check 'dry run over a dead pid says it would start, and takes nothing' "$(grep -q '^Checks would start' "$tmp/out" && [ "$(hc_lines)" = 0 ]; echo $?)"
+# Reboot during a run: the old pid is gone, or now belongs to some unrelated process.
+hc_valid; mkdir -p "$(cmarker)"
+sleep 30 & unrelated=$!
+echo "$unrelated" > "$(cmarker)/pid"
+cheap_run
+check 'reboot, pid reused by an unrelated process: Checks start again' "$(hc_wait 1; echo $?)"
+kill "$unrelated" 2>/dev/null; wait "$unrelated" 2>/dev/null
+hc_valid; mkdir -p "$(cmarker)"
+cheap_run
+check 'crash before the pid was written: the marker is stale, Checks start again' "$(hc_wait 1; echo $?)"
+
+# The detached run tells the lead when it ends with no receipt on the PR: one message, with the exit code and the log path.
+hc_valid
+ORCA_TERMINAL_HANDLE=term_lead_Z HC_RC=3 cheap_run
+check 'a run that exits nonzero with no receipt tells the lead' "$(reply_wait 1; echo $?)"
+sleep 0.3
+check 'exactly once' "$([ "$(reply_lines)" = 1 ]; echo $?)"
+check 'to the handle of the calling shell' "$(grep -q -- '--to term_lead_Z' "$tmp/reply.log"; echo $?)"
+check 'with the exit code and the log path' "$(grep -q 'exit 3' "$tmp/reply.log" && grep -q "$tmp/hclogs/on-worker-done-checks-" "$tmp/reply.log"; echo $?)"
+check 'and the head' "$(grep -q "${cheap_head:0:12}" "$tmp/reply.log"; echo $?)"
+hc_valid
+ORCA_TERMINAL_HANDLE=term_lead_Z HC_RC=3 HC_POST=1 cheap_run
+hc_wait 1; hc_settle
+check 'a run that posted its receipt sends nothing, even on exit 3' "$([ "$(reply_lines)" = 0 ]; echo $?)"
+hc_valid
+ORCA_TERMINAL_HANDLE=term_lead_Z HC_RC=0 cheap_run
+check 'a run that exits 0 but left no receipt tells the lead' "$(reply_wait 1; echo $?)"
+hc_valid
+ORCA_TERMINAL_HANDLE=term_lead_Z HC_RC=0 HC_POST=1 cheap_run
+hc_wait 1; hc_settle
+check 'exit 0 with the receipt posted sends nothing' "$([ "$(reply_lines)" = 0 ]; echo $?)"
+hc_valid
+HC_RC=3 cheap_run
+check 'no handle: the start says the end goes to the log only' "$(grep -q '^Checks end notice: ORCA_TERMINAL_HANDLE is not set' "$tmp/out"; echo $?)"
+hc_wait 1; hc_settle
+check 'no handle: nothing is sent' "$([ "$(reply_lines)" = 0 ]; echo $?)"
+check 'no handle: the log says the run ended without a receipt' "$(until_logged 'ended with no receipt'; echo $?)"
+hc_valid
+ORCA_TERMINAL_HANDLE=term_lead_Z cheap_run
+check 'with a handle the start prints no such notice' "$(! grep -q 'Checks end notice' "$tmp/out"; echo $?)"
+hc_wait 1; hc_settle
+
 # After the cheap checks finish, the head is compared again and the worktree must be clean before Checks start.
 hc_valid; cheap_conf 'git -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved-by-a-check'
 cheap_run; rc=$?
@@ -382,11 +465,14 @@ check 'a check that moves the head: no Checks' "$([ "$(hc_lines)" = 0 ] && [ "$(
 check 'moved head is named to the lead' "$(grep -q "^Checks not started head=$cheap_head: the worktree is at" "$tmp/out"; echo $?)"
 cheap_head=$(git -C "$cheap" rev-parse HEAD)
 hc_valid; cheap_conf 'echo junk > "$FIXTURE_ROOT/../dirty-probe" 2>/dev/null; echo junk > untracked-by-a-check'
+rm -f "$tmp/briefs"/reviewer-brief.*
 cheap_run; rc=$?
 hc_settle
 check 'a check that leaves an untracked file: no Checks' "$([ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
 check 'dirty worktree is named to the lead' "$(grep -q "^Checks not started head=$cheap_head: the worktree is dirty" "$tmp/out"; echo $?)"
 check 'a dirty worktree does not stop the reviewer' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
+check 'a dirty worktree: the brief says uncommitted files exist and to review only git show <head>' "$(grep -q 'uncommitted files' "$brief" && grep -q "git show $cheap_head" "$brief"; echo $?)"
 rm -f "$cheap/untracked-by-a-check"
 hc_valid; cheap_conf 'true'
 printf 'x\n' > "$cheap/tracked"; git -C "$cheap" add tracked; git -C "$cheap" -c user.name=t -c user.email=t@t commit -q -m tracked
@@ -395,10 +481,15 @@ printf 'y\n' > "$cheap/tracked"
 cheap_run
 hc_settle
 check 'an edited tracked file: no Checks' "$([ "$(hc_lines)" = 0 ]; echo $?)"
+brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
+check 'an edited tracked file: the brief carries the same line' "$(grep -q 'uncommitted files' "$brief"; echo $?)"
 git -C "$cheap" checkout -q -- tracked
 hc_valid
+rm -f "$tmp/briefs"/reviewer-brief.*
 cheap_run
 check 'a clean worktree starts Checks' "$(hc_wait 1; echo $?)"
+brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
+check 'a clean worktree: the brief has no uncommitted-files line' "$(! grep -q 'uncommitted files' "$brief"; echo $?)"
 
 # A repeat worker_done for the same head starts no second reviewer.
 valid; cheap_conf 'true'; hc_valid
@@ -409,11 +500,38 @@ cheap_run; rc=$?
 check 'repeat call for the same head starts no second reviewer' "$([ "$rc" = 0 ] && [ ! -e "$tmp/launch.json" ]; echo $?)"
 check 'repeat call tells the lead why' "$(grep -q "^Reviewer not started head=$cheap_head: already started" "$tmp/out"; echo $?)"
 check 'repeat call writes no second command' "$(! grep -q 'worker-start' "$tmp/out"; echo $?)"
+check 'with no dispatch id recorded the repeat says so and names the flag' "$(grep -q 'no dispatch id was recorded' "$tmp/out" && grep -q -- '--restart-reviewer' "$tmp/out"; echo $?)"
+rmarker() { echo "$tmp/rmarkers/mingster_dotfiles-42-$cheap_head-${1:-review}"; }
+valid; cheap_conf 'true'; hc_valid
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_first"}}}' cheap_run
+check 'the marker stores the dispatch id after the start' "$([ "$(cat "$(rmarker)/dispatch" 2>/dev/null)" = ctx_first ]; echo $?)"
+rm -f "$tmp/launch.json"
+cheap_run; rc=$?
+check 'a repeat starts none and prints the recorded dispatch id' "$([ "$rc" = 0 ] && [ ! -e "$tmp/launch.json" ] && grep -q 'already started (dispatch ctx_first)' "$tmp/out" && grep -q -- '--restart-reviewer' "$tmp/out"; echo $?)"
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_second"}}}' cheap_run --restart-reviewer --dry-run
+check 'a dry run with the flag clears nothing and starts nothing' "$([ ! -e "$tmp/launch.json" ] && [ "$(cat "$(rmarker)/dispatch")" = ctx_first ]; echo $?)"
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_second"}}}' cheap_run --restart-reviewer; rc=$?
+check '--restart-reviewer starts one more reviewer' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+check 'and the marker now holds the new dispatch id' "$([ "$(cat "$(rmarker)/dispatch")" = ctx_second ]; echo $?)"
+rm -f "$tmp/launch.json"
+cheap_run
+check 'a plain repeat after a restart starts none' "$([ ! -e "$tmp/launch.json" ]; echo $?)"
+# A crash after the marker was taken and before the id was written leaves a marker with no id.
+valid; rm -rf "$tmp/rmarkers"; mkdir -p "$(rmarker)"
+cheap_run; rc=$?
+check 'crash before the id was written: a repeat starts none and says none was recorded' "$([ "$rc" = 0 ] && [ ! -e "$tmp/launch.json" ] && grep -q 'no dispatch id was recorded' "$tmp/out"; echo $?)"
+cheap_run --restart-reviewer; rc=$?
+check 'and --restart-reviewer can restart it' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+# The flag clears only the kind being started.
+valid; rm -rf "$tmp/rmarkers"; mkdir -p "$(rmarker resolution)"
+cheap_run --restart-reviewer
+check 'the flag leaves the other kind of marker alone' "$([ -d "$(rmarker resolution)" ]; echo $?)"
+valid
 rm -f "$tmp/launch.json"
 cheap_run --resolution; rc=$?
 check 'a resolution review of the same head is its own start' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
 valid; cheap_run --dry-run; cheap_run --dry-run; rc=$?
-check 'dry runs take no reviewer marker' "$([ "$rc" = 0 ] && [ ! -e "$tmp/rmarkers" ] || [ -z "$(ls "$tmp/rmarkers")" ]; echo $?)"
+check 'dry runs take no reviewer marker' "$([ "$rc" = 0 ] && { [ ! -e "$tmp/rmarkers" ] || [ -z "$(ls "$tmp/rmarkers")" ]; }; echo $?)"
 valid
 FAKE_START_RC=3 cheap_run; rc=$?
 check 'a failed reviewer start fails' "$([ "$rc" = 3 ]; echo $?)"

@@ -59,7 +59,12 @@ sys.exit(ug.main())
                    "ON_WORKER_DONE_USAGE_GATE": str(gate),
                    "USAGE_GATE_PRESETS": str(presets),
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
-                   "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
+                   "TEST_ORCA_LOG": str(log), "TMPDIR": tmp,
+                   # Fresh per test: never read or write ~/.claude/state.
+                   "ON_WORKER_DONE_REVIEWER_DIR": str(root / "reviewer-markers"),
+                   "ON_WORKER_DONE_CHECKS_DIR": str(root / "checks-markers"),
+                   "ON_WORKER_DONE_CHECKS_LOG_DIR": str(root / "checks-logs"),
+                   "WORKER_DONE_OWNER_DIR": str(root / "owners")}
             if configuration != 'explicit':
                 env['HOME'] = tmp
                 env.pop('ON_WORKER_DONE_FLEET_CONFIG', None)

@@ -699,27 +699,66 @@ child.wait()
         self.finish(browser)
         self.assert_overlap({'checks': 1, 'browser': 1}, 1)
 
-    def test_browser_run_waits_for_a_checks_run_started_the_way_head_checks_starts_it(self):
-        # head-checks.sh execs the gate as: heavy-gate.py gate --head-checks --memory-mb 9216 -- ...
-        # on-worker-done starts that script detached, so a browser run beside it has only this gate to wait on.
-        self.assertIn('gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}"',
-                      (scripts/'head-checks.sh').read_text())
-        self.host_memory(15360)
+    def head_checks_job(self, started, release):
+        """A Checks run started the way head-checks.sh starts it: gate --head-checks --memory-mb 9216."""
         code = ("import os,sys,time\nopen(sys.argv[1],'a').write('checks-start\\n')\n"
                 "while not os.path.exists(sys.argv[2]): time.sleep(0.02)\n")
-        started, release = self.root/'checks-started', self.root/'checks-release'
         checks = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), '--head-checks', '--memory-mb', '9216', '--',
                                    sys.executable, '-c', code, str(started), str(release)],
                                   env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.processes.append(checks)
+        return checks
+
+    # 15360: the memory sum alone keeps them apart. 17408: 9216 + 8192 fits exactly. 32768: fits twice over.
+    HOST_SIZES = (15360, 17408, 32768)
+
+    def test_head_checks_is_started_by_the_gate_flags_these_tests_use(self):
+        self.assertIn('gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}"',
+                      (scripts/'head-checks.sh').read_text())
+
+    def test_browser_run_waits_for_a_checks_run_on_any_host_size(self):
+        for mib in self.HOST_SIZES:
+            with self.subTest(host_mib=mib):
+                self.host_memory(mib)
+                started, release = self.root/f'checks-started-{mib}', self.root/f'checks-release-{mib}'
+                checks = self.head_checks_job(started, release)
+                self.wait_for(started.exists)
+                label = f'browser{mib}'
+                browser = self.job(label, 0.1, wrap=self.PLAYWRIGHT_SHAPES['bunx'])
+                time.sleep(0.5)
+                self.assertFalse(self.started(label), f'browser run started beside a head-checks run at {mib} MiB')
+                release.write_text('go')
+                self.finish(checks)
+                self.finish(browser)
+                self.assertTrue(self.started(label))
+
+    def test_checks_run_waits_for_a_browser_run_on_any_host_size(self):
+        for mib in self.HOST_SIZES:
+            with self.subTest(host_mib=mib):
+                self.host_memory(mib)
+                label = f'browser{mib}'
+                browser = self.job(label, hold=True, wrap=self.PLAYWRIGHT_SHAPES['bunx'])
+                self.wait_for(lambda: self.started(label))
+                started, release = self.root/f'checks-started-{mib}', self.root/f'checks-release-{mib}'
+                release.write_text('go')
+                checks = self.head_checks_job(started, release)
+                time.sleep(0.5)
+                self.assertFalse(started.exists(), f'head-checks run started beside a browser run at {mib} MiB')
+                self.release(label)
+                self.finish(browser)
+                self.finish(checks)
+                self.assertTrue(started.exists())
+
+    def test_browser_that_declares_memory_or_other_jobs_are_not_held_by_the_rule(self):
+        # The rule is about the playwright default and head-checks only: a plain job still runs beside Checks.
+        self.host_memory(32768)
+        started, release = self.root/'checks-started-plain', self.root/'checks-release-plain'
+        checks = self.head_checks_job(started, release)
         self.wait_for(started.exists)
-        browser = self.job('browser', 0.1, wrap=self.PLAYWRIGHT_SHAPES['bunx'])
-        time.sleep(0.5)
-        self.assertFalse(self.started('browser'), 'browser run started beside a head-checks run')
+        self.finish(self.job('plain', 0.1))
+        self.assertTrue(self.started('plain'))
         release.write_text('go')
         self.finish(checks)
-        self.finish(browser)
-        self.assertTrue(self.started('browser'))
 
     def test_memory_record_is_in_the_slot_and_released_with_it(self):
         self.host_memory(3000)
