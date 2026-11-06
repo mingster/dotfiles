@@ -29,7 +29,7 @@ import sys,json
 sys.path.insert(0, sys.argv[1]); import worker_state as ws
 try: r=json.load(sys.stdin)["result"]
 except Exception: print(""); sys.exit(1)
-print(ws.status(r)); sys.exit(0 if ws.is_final(r) else 1)' "$here"
+print(ws.status(r)); sys.exit(0 if ws.can_close(r) else 1)' "$here"
 }
 leftovers() { # $1 worker-show json, $2 terminal list json, $3 protected handles and "wt:<path>" lines -> handles still listed that belong to the worker
   SHOW="$1" LIST="$2" PROTECT="${3:-}" python3 -c '
@@ -346,7 +346,7 @@ except Exception: print("")' "$here")
     handles+=("$h")
   done
   if [ "${#handles[@]}" -gt 0 ]; then
-    printf '%s\n' "${handles[@]}" > "$f"
+    printf '%s\n' "${handles[@]}" > "$state/.$d.$$" && mv -f "$state/.$d.$$" "$f"
   else
     rm -f "$f" "$state/released/$d"
     echo "closed $d (${#pending[@]})"
@@ -456,8 +456,15 @@ if ok:
   # A dispatch that is still running keeps its record (its pane may not be listed yet). An ended or unknown one does not.
   while IFS= read -r d; do
     [ -n "$d" ] || continue
-    if show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null); then
-      printf '%s' "$show" | dispatch_final >/dev/null || continue
+    # Drop only on a real answer: the dispatch ended, or Orca says it does not exist. A failed or unreadable
+    # worker-show proves nothing, so the record stays.
+    show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || :
+    if ! printf '%s' "$show" | dispatch_final >/dev/null; then
+      printf '%s' "$show" | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(1)
+sys.exit(0 if d.get("ok") is False and (d.get("error") or {}).get("code")=="dispatch_not_found" else 1)' || continue
     fi
     rm -f "$state/$d" "$state/released/$d"
   done <<< "$gone"

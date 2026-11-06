@@ -11,6 +11,7 @@ mf_setup
 trap mf_teardown EXIT
 G() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
 export MERGE_CLEANUP_CALL_TIMEOUT_SECONDS=5
+mf_orca_add_run run1
 cleanup="$here/../merge-cleanup.sh"
 cd "$MF_REPO" || exit 1
 
@@ -181,6 +182,18 @@ clean_run
 gone live-rel live-rel && ok || bad "terminalState released row: worktree removed"
 gone live-stop live-stop && ok || bad "stopped+released row: worktree removed"
 kept live-ret live-ret && ok || bad "retained row: worktree kept"
+
+# #600: worker-list without --run sees only the caller's Run and one page. A live dispatch in another Run, on page 2,
+# still protects the worktree it shares with a released one.
+mf_orca_add_run run2
+export MF_ORCA_CALLER_RUN=run1 MERGE_CLEANUP_PAGE_SIZE=2
+wt shared shared; dispatch shared released
+for filler in 1 2 3; do wt "pad$filler" "pad$filler"; dispatch "pad$filler" released; done
+mf_orca_add_worker run2 "d-other-run" running "$(path shared)" ""
+clean_run
+kept shared shared && ok || bad "T600 live dispatch on page 2 in another Run protects the worktree"
+says "not released" && ok || bad "T600 says why"
+unset MF_ORCA_CALLER_RUN MERGE_CLEANUP_PAGE_SIZE
 
 echo "merge-cleanup tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]

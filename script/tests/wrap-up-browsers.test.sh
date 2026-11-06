@@ -17,15 +17,29 @@ case "$*" in
 esac
 echo '[]'
 FAKE
-# Fake orca. FAKE_ACTIVE_CWD adds one running dispatch whose terminal sits in that path; FAKE_ORCA_BAD breaks the inventory.
+# Fake orca, with the real worker-show shape (ids, state, liveness, workspace; no task text, no terminal object).
+# FAKE_ACTIVE_CWD adds one running dispatch in that path; FAKE_OLD_PENDING adds a never started dispatch (worker-show fails);
+# FAKE_OLD_EXITED adds an old dispatch whose worker exited; FAKE_ORCA_BAD breaks the inventory.
+# FAKE_NEVER_SETTLED adds the real never-settled row (state start_unknown, liveness unverifiable, no terminal, no workspace)
+# whose worker-show fails with dispatch_not_found; FAKE_NEVER_TERM gives that row a terminal; FAKE_NEVER_ERR makes the failure another error.
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
-  'terminal list --json') [ -z "${FAKE_ORCA_BAD:-}" ] || exit 1; echo '{"ok":true,"result":{"terminals":[]}}' ;;
+  'terminal list --json') [ -z "${FAKE_ORCA_BAD:-}" ] || exit 1
+    if [ -n "${FAKE_TERM_CWD:-}" ]; then printf '{"ok":true,"result":{"terminals":[{"handle":"term_open","cwd":"%s"}]}}\n' "$FAKE_TERM_CWD"
+    else echo '{"ok":true,"result":{"terminals":[]}}'; fi ;;
   'orchestration worker-list --json')
-    if [ -n "${FAKE_ACTIVE_CWD:-}" ]; then echo '{"ok":true,"result":{"workers":[{"dispatchId":"d1","dispatchStatus":"running"}],"page":{"hasMore":false}}}'
-    else echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'; fi ;;
-  'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"state":"running","terminal":{"cwd":"%s"}}}\n' "$FAKE_ACTIVE_CWD" ;;
+    w=''
+    [ -z "${FAKE_ACTIVE_CWD:-}" ] || w='{"dispatchId":"d1","dispatchStatus":"running"}'
+    [ -z "${FAKE_OLD_PENDING:-}" ] || w="${w:+$w,}"'{"dispatchId":"d2","dispatchStatus":"pending"}'
+    [ -z "${FAKE_OLD_EXITED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d3","dispatchStatus":"running"}'
+    [ -z "${FAKE_NEVER_SETTLED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d4","state":"start_unknown","liveness":"unverifiable"'"${FAKE_NEVER_TERM:+,\"terminal\":\"term_z\"}"'}'
+    printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
+  'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"dispatchId":"d1","state":"running","liveness":"running","terminal":"term_x","workspace":"wt-id::%s"}}\n' "$FAKE_ACTIVE_CWD" ;;
+  'orchestration worker-show --dispatch d2 --json') exit 1 ;;
+  'orchestration worker-show --dispatch d4 --json')
+    printf '{"ok":false,"error":{"code":"%s","message":"Worker Dispatch d4 was not found."}}\n' "${FAKE_NEVER_ERR:-dispatch_not_found}"; exit 1 ;;
+  'orchestration worker-show --dispatch d3 --json') echo '{"ok":true,"result":{"dispatchId":"d3","state":"running","liveness":"exited","terminal":"term_y","workspace":"wt-id::/gone"}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -71,8 +85,8 @@ T=$'\t'
 # proc <pid> <ppid> <age seconds> <command...>: one process table line; the start is derived from the pid.
 proc() { local pid=$1 ppid=$2 age=$3; shift 3; printf '%s\t%s\t%s\tstart-%s\t%s\n' "$pid" "$ppid" "$age" "$pid" "$*" >> "$FAKE_PS"; }
 cwd() { printf '%s\n' "$2" > "$FAKE_CWDS/$1"; }
-reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_ORCA_BAD; }
-run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1); }
+reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD FAKE_NEVER_SETTLED FAKE_NEVER_TERM FAKE_NEVER_ERR; }
+run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1) || true; }
 DEV='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
 STABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 CHROMIUM='/Users/someone/Library/Caches/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium'
@@ -126,7 +140,7 @@ proc 304 1 $OLD "$DEV --user-data-dir=/tmp/unreadable"
 proc 305 1 $OLD "$DEV --user-data-dir=/tmp/busy-cwd"; cwd 305 "$tmp/busy/sub"
 proc 306 1 $OLD "$DEV --user-data-dir=$tmp/busy/profile"; cwd 306 /Users/someone/work
 mkdir -p "$tmp/busy/sub" "$tmp/busy/profile"
-export FAKE_ACTIVE_CWD="$tmp/busy"
+export FAKE_TERM_CWD="$tmp/busy"
 run --apply
 check 'younger than 2 hours is kept' has 'Kept browser 301 (younger than 2 hours)'
 check 'a live parent that is not pid 1 keeps it' has 'Kept browser 302 (parent still running)'
@@ -136,6 +150,85 @@ check 'working directory in an active path is kept' has 'Kept browser 305 (insid
 check 'profile in an active path is kept' has 'Kept browser 306 (inside an active dispatch path)'
 check 'only the orphan was stopped' test "$(cat "$FAKE_KILLS")" = 303
 check 'count line with kept' has 'browsers closed=1 kept=5'
+
+# A running head-checks, QA or gated run shows a temp-profile browser in use, whatever its parent pid.
+reset
+proc 450 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 450 /Users/someone/work
+proc 451 1 $OLD "/opt/agent-browser/bin/agent-browser daemon"; cwd 451 /Users/someone/work
+proc 452 900 100 "bash /repo/script/head-checks.sh"
+run --apply
+check 'old browser with parent pid 1 stays during a head-checks run' has 'Kept browser 450 (a head-checks, QA or gated run is active)'
+check 'old daemon with parent pid 1 stays during a head-checks run' has 'Kept browser 451 (a head-checks, QA or gated run is active)'
+check 'a run in progress stops nothing' nokill
+for runcmd in 'python3 /repo/script/qa-admission.py admit' 'python3 /repo/script/heavy-gate.py gate -- npm test'; do
+  reset
+  proc 460 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 460 /Users/someone/work
+  proc 461 900 100 "$runcmd"
+  run --apply
+  check "a running '${runcmd%% *}' $(printf '%s' "$runcmd" | awk '{print $2}') keeps the browser" has 'Kept browser 460 (a head-checks, QA or gated run is active)'
+done
+reset
+proc 470 1 $OLD "$DEV --user-data-dir=/tmp/idle"; cwd 470 /Users/someone/work
+proc 471 900 100 "bash /repo/script/wrap-up.sh --apply"
+run --apply
+check 'with no such run, the old browser with parent pid 1 still closes' has 'Close browser 470 (stale throwaway browser profile)'
+
+# The run check reads the command, not a substring: "wrap-up" in a path or argument does not hide a run.
+for runcmd in 'bash /work/wrap-up-fix/script/head-checks.sh --pr 1' 'python3 /repo/script/heavy-gate.py gate -- bash script/tests/wrap-up-browsers.test.sh' '/usr/bin/env python3 -I /repo/script/qa-admission.py admit wrap-up'; do
+  reset
+  proc 480 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 480 /Users/someone/work
+  proc 481 900 100 "$runcmd"
+  run --apply
+  check "a run with wrap-up in its arguments keeps the browser: ${runcmd:0:48}" has 'Kept browser 480 (a head-checks, QA or gated run is active)'
+done
+
+# macOS shows /usr/bin/python3 as ".../Python.app/Contents/MacOS/Python", and a checkout path may hold a space.
+for runcmd in '/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/heavy-gate.py gate -- bun run e2e' '/opt/homebrew/Cellar/python@3.12/3.12.1/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/qa-admission.py admit x' 'bash /x/My Work/script/head-checks.sh --pr 1' 'python3 /x/My Work/script/heavy-gate.py gate -- bun run e2e'; do
+  reset
+  proc 485 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 485 /Users/someone/work
+  proc 486 900 100 "$runcmd"
+  run --apply
+  check "a gated run keeps the browser: ${runcmd: -40}" has 'Kept browser 485 (a head-checks, QA or gated run is active)'
+done
+
+# Any live dispatch holds the temp browsers, whatever its worktree is called. Real worker-show output has no task text.
+for wt in fix-123 build-571b docs-only; do
+  reset
+  mkdir -p "$tmp/$wt"
+  proc 490 1 $OLD "$DEV --user-data-dir=/tmp/dispatch-run"; cwd 490 /Users/someone/work
+  proc 491 1 $OLD "/opt/agent-browser/bin/agent-browser daemon"; cwd 491 /Users/someone/work
+  export FAKE_ACTIVE_CWD="$tmp/$wt"
+  run --apply
+  check "a live dispatch in $wt keeps the old browser" has 'Kept browser 490 (a head-checks, QA or gated run is active)'
+  check "a live dispatch in $wt keeps the old daemon" has 'Kept browser 491 (a head-checks, QA or gated run is active)'
+  check "a live dispatch in $wt stops nothing" nokill
+done
+# Old dispatches that never settled in Orca's records but hold nothing: never started, or the worker exited.
+reset
+proc 492 1 $OLD "$DEV --user-data-dir=/tmp/old-dispatches"; cwd 492 /Users/someone/work
+export FAKE_OLD_PENDING=1 FAKE_OLD_EXITED=1
+run --apply
+check 'a never started dispatch and an exited worker do not hold the old browser' has 'Close browser 492 (stale throwaway browser profile)'
+# The real never-settled row (Orca keeps no time for it, and worker-show cannot find it) owns nothing, so it holds nothing.
+reset
+proc 493 1 $OLD "$DEV --user-data-dir=/tmp/never-settled"; cwd 493 /Users/someone/work
+export FAKE_NEVER_SETTLED=1
+run --apply
+check 'a start_unknown row with no terminal or workspace, not found by worker-show, does not hold the old browser' has 'Close browser 493 (stale throwaway browser profile)'
+check 'that row is skipped with a warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped.' "$tmp/output"
+# Anything else about such a row is unclear, so everything stays.
+reset
+proc 494 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-term"; cwd 494 /Users/someone/work
+export FAKE_NEVER_SETTLED=1 FAKE_NEVER_TERM=1
+run --apply
+check 'a start_unknown row with a terminal keeps everything' has 'Kept browser 494 (no complete dispatch inventory)'
+check 'a start_unknown row with a terminal stops nothing' nokill
+reset
+proc 495 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-err"; cwd 495 /Users/someone/work
+export FAKE_NEVER_SETTLED=1 FAKE_NEVER_ERR=internal_error
+run --apply
+check 'a start_unknown row whose worker-show fails another way keeps everything' has 'Kept browser 495 (no complete dispatch inventory)'
+check 'a start_unknown row with another failure stops nothing' nokill
 
 # Active holds "*", inventory broken, inventory never read: keep everything.
 reset
@@ -155,19 +248,42 @@ check 'no inventory on apply stops nothing' nokill
 # agent-browser daemons.
 reset
 proc 500 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 500 /Users/someone/work
-proc 510 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 510 /Users/someone/work
-proc 511 510 $OLD "$DEV --user-data-dir=/Users/someone/.cursor/chrome-dev-agent-profile --remote-debugging-port=9223"; cwd 511 /Users/someone/work
 proc 520 1 $OLD "node /opt/agent-browser/dist/daemon.js"; cwd 520 /Users/someone/work
 proc 521 520 $OLD "$DEV --user-data-dir=/tmp/daemon-owned"; cwd 521 /Users/someone/work
 proc 530 1 600 "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 530 /Users/someone/work
 run --apply
-check 'orphan daemon with no browser child is closed' has 'Close browser 500 (stale agent-browser daemon)'
-check 'daemon driving a browser outside temp is kept' has 'Kept browser 510 (drives a browser outside temp)'
-check 'the shared browser itself is not a candidate' lacks 'browser 511'
+check 'orphan daemon with no browser anywhere is closed' has 'Close browser 500 (stale agent-browser daemon)'
 check 'daemon with a throwaway child is closed' has 'Close browser 520 (stale agent-browser daemon)'
 check 'its child waits a round, its parent is still running' has 'Kept browser 521 (parent still running)'
 check 'young daemon is kept' has 'Kept browser 530 (younger than 2 hours)'
 check 'stopped: 500 and 520 only' test "$(sort "$FAKE_KILLS" | tr '\n' ' ')" = '500 520 '
+
+# A daemon may be connected over CDP to a browser it did not start, outside temp. It has no child to show for it.
+reset
+proc 510 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 510 /Users/someone/work
+proc 511 510 $OLD "$DEV --user-data-dir=/Users/someone/.cursor/chrome-dev-agent-profile --remote-debugging-port=9223"; cwd 511 /Users/someone/work
+proc 512 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 512 /Users/someone/work
+proc 513 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon --cdp 9223"; cwd 513 /Users/someone/work
+run --apply
+check 'daemon with a browser child outside temp is kept' has 'Kept browser 510 (drives a browser outside temp)'
+check 'the shared browser itself is not a candidate' lacks 'browser 511'
+check 'daemon with no child, while a browser outside temp offers a debugging port, is kept' has 'Kept browser 512 (drives a browser outside temp)'
+check 'daemon started with --cdp is kept' has 'Kept browser 513 (drives a browser outside temp)'
+check 'nothing was stopped' nokill
+
+# A live daemon has no arguments, and the browser it drives may be stable Chrome with a debugging port.
+reset
+proc 540 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64"; cwd 540 /Users/someone/work
+proc 541 1 $OLD "$STABLE --user-data-dir=/Users/someone/chrome-profile --remote-debugging-port=9222"; cwd 541 /Users/someone/work
+run --apply
+check 'daemon with no arguments, while stable Chrome outside temp offers a debugging port, is kept' has 'Kept browser 540 (drives a browser outside temp)'
+check 'stable Chrome itself is not a candidate' lacks 'browser 541'
+check 'stable Chrome case stops nothing' nokill
+reset
+proc 550 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64"; cwd 550 /Users/someone/work
+proc 551 550 $OLD "$STABLE --user-data-dir=/Users/someone/chrome-profile"; cwd 551 /Users/someone/work
+run --apply
+check 'daemon whose child is stable Chrome outside temp is kept' has 'Kept browser 550 (drives a browser outside temp)'
 
 # Reused pid, failed stop.
 reset

@@ -18,23 +18,44 @@ mkdir -p "$(dirname "$log_file")" "$state_dir"
 if [ -f "$log_file" ] && [ "$(wc -c < "$log_file" | tr -d ' ')" -gt 5242880 ]; then mv -f "$log_file" "$log_file.1"; fi
 log() { printf '%s wrap-up-scheduled [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$$" "$*" >> "$log_file"; }
 
-# Lock, one per host. A holder counts only when its pid is alive and still runs this script.
-holder_alive() {
-  local pid
-  pid=$(cat "$lock/pid" 2>/dev/null) || return 1
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null || return 1
-  ps -p "$pid" -o command= 2>/dev/null | grep -Fq wrap-up-scheduled
+# Lock, one per host: a file holding the owner's pid, linked into place so it never exists without it. A holder counts
+# only when its pid is alive and still runs this script. A lock with no readable pid counts as live until it is old
+# enough to be stale (an older version made a directory). A takeover goes through a guard file, so two runs that both
+# judge a lock stale leave one owner.
+stale_minutes=${WRAP_UP_SCHEDULED_LOCK_STALE_MINUTES:-10}
+lock_pid() { cat "$lock" 2>/dev/null || cat "$lock/pid" 2>/dev/null; }
+lock_is_stale() {
+  local pid; pid=$(lock_pid)
+  case "$pid" in
+    ''|*[!0-9]*) [ -n "$(find "$lock" -maxdepth 0 -mmin +"$stale_minutes" 2>/dev/null)" ]; return ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 0
+  ! ps -p "$pid" -o command= 2>/dev/null | grep -Fq wrap-up-scheduled
+}
+# Link a private file holding this pid to $1; fails when $1 exists (ln would drop the file inside a directory, so check first).
+link_pid() {
+  local mine="$1.$$"
+  [ ! -e "$1" ] && echo "$$" > "$mine" && ln "$mine" "$1" 2>/dev/null; local rc=$?
+  rm -f "$mine"; return "$rc"
 }
 log 'round start'
-if ! mkdir "$lock" 2>/dev/null; then
-  if holder_alive; then log "skip: already running (pid $(cat "$lock/pid"))"; exit 0; fi
-  log 'stale lock, taking over'
-  rm -rf "$lock"
-  mkdir "$lock" 2>/dev/null || { log 'skip: lost the lock race'; exit 0; }
+if ! link_pid "$lock"; then
+  if ! lock_is_stale; then log "skip: already running (pid $(lock_pid))"; exit 0; fi
+  guard="$lock.takeover"
+  if ! link_pid "$guard"; then
+    # A guard whose taker died is cleared once it is old; this round still skips.
+    [ -z "$(find "$guard" -maxdepth 0 -mmin +"$stale_minutes" 2>/dev/null)" ] || rm -f "$guard"
+    log 'skip: another run is taking over the lock'; exit 0
+  fi
+  if lock_is_stale; then
+    log 'stale lock, taking over'
+    rm -rf "$lock"
+  fi
+  link_pid "$lock"; got=$?
+  rm -f "$guard"
+  [ "$got" -eq 0 ] || { log 'skip: lost the lock race'; exit 0; }
 fi
-echo "$$" > "$lock/pid"
-release() { if [ "$(cat "$lock/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$lock"; fi; }
+release() { if [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then rm -f "$lock"; fi; }
 trap release EXIT
 
 # Orca must answer and report ready.

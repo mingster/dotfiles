@@ -89,7 +89,7 @@ worker() {
   worker '' /fixture/lead-work completed
   worker '' /fixture/agent released
 } | jq -s '{ok:true,result:{workers:.,page:{hasMore:false}}}' > "$tmp/page1"
-run() { bash "$root/script/wrap-up.sh" --repo "$tmp/repo" "$@" > "$tmp/output" 2> "$tmp/errors"; }
+run() { bash "$root/script/wrap-up.sh" --repo "$tmp/repo" "$@" > "$tmp/output" 2> "$tmp/errors" || true; }
 expect() { grep -Fxq "$1" "$tmp/output" || { echo "FAIL missing: $1"; cat "$tmp/output"; exit 1; }; }
 run --dry-run
 expect 'Close terminal t-path (env-a, settled dispatch on this path)'

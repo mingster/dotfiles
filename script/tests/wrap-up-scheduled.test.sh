@@ -90,6 +90,59 @@ round
 check 'live pid of another program does not hold the lock' test "$(ncalls)" -eq 2
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 
+# A lock with no pid (a legacy directory, or an empty file) counts as live until it is old enough to be stale.
+lockpath="$tmp/state/wrap-up-scheduled.lock"
+reset
+mkdir -p "$lockpath"
+round; status=$?
+check 'pid-less lock directory is treated as live' test "$status" -eq 0 -a "$(ncalls)" -eq 0
+check 'pid-less lock directory logs the skip' has 'already running' "$log"
+check 'pid-less lock directory is left alone' test -d "$lockpath"
+reset
+: > "$lockpath"
+round
+check 'pid-less lock file is treated as live' test "$(ncalls)" -eq 0
+check 'pid-less lock file is left alone' test -e "$lockpath"
+touch -t 202001010000 "$lockpath"
+round
+check 'an old pid-less lock file is taken over' test "$(ncalls)" -eq 2
+check 'old pid-less takeover logged' has 'stale lock' "$log"
+reset
+mkdir -p "$lockpath"; touch -t 202001010000 "$lockpath"
+round
+check 'an old pid-less lock directory is taken over' test "$(ncalls)" -eq 2
+
+# The lock never shows without its pid: a round that is held mid-run exposes a lock holding that round's pid.
+reset
+rm -f "$tmp/block.started" "$tmp/block.release"
+FAKE_BLOCK="$tmp/block" round & holder=$!
+waitfor "$tmp/block.started"
+check 'the live lock holds a pid' test -s "$lockpath"
+: > "$tmp/block.release"
+wait "$holder"
+rm -f "$tmp/block.started" "$tmp/block.release"
+
+# Two rounds that both judge the lock stale leave exactly one owner.
+race_ok=1
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  reset
+  rm -f "$tmp/block.started" "$tmp/block.release"
+  ( exit 0 ) & dead=$!; wait "$dead"
+  echo "$dead" > "$lockpath"
+  FAKE_BLOCK="$tmp/block" round & r1=$!
+  FAKE_BLOCK="$tmp/block" round & r2=$!
+  FAKE_BLOCK="$tmp/block" round & r3=$!
+  FAKE_BLOCK="$tmp/block" round & r4=$!
+  waitfor "$tmp/block.started"
+  j=0; while ! [ "$(grep -c 'skip' "$log" 2>/dev/null)" -ge 3 ] 2>/dev/null && [ "$j" -lt 200000 ]; do j=$((j+1)); done
+  n=$(ncalls)
+  : > "$tmp/block.release"
+  wait "$r1" "$r2" "$r3" "$r4"
+  [ "$n" -eq 1 ] && [ "$(ncalls)" -eq 2 ] || race_ok=0
+done
+check 'two racing takeovers of a stale lock leave one owner' test "$race_ok" -eq 1
+check 'lock released after the race' test ! -e "$lockpath"
+
 reset
 FAKE_ORCA=fail round; status=$?
 check 'orca unavailable exits 0' test "$status" -eq 0

@@ -857,8 +857,14 @@ echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omitt
 echo t_gone > "$F2/state/null"; echo t_gone > "$F2/state/unknown1"; echo t_alive > "$F2/state/unknown2"
 printf 't_gone\nt_alive\n' > "$F2/state/partial"
 echo t_gone > "$F2/state/running1"; echo '{"result":{"state":"running"}}' > "$F2/show.running1"
+echo '{"ok":false,"error":{"code":"dispatch_not_found"}}' > "$F2/show.unknown1"
+echo t_gone > "$F2/state/showfail"; echo t_gone > "$F2/state/showjunk"; echo 'not json' > "$F2/show.showjunk"
+echo t_gone > "$F2/state/othererr"; echo '{"ok":false,"error":{"code":"runtime_unavailable"}}' > "$F2/show.othererr"
 ( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
-check "sweep: file of an unknown dispatch with every handle gone is removed" "$([ ! -e "$F2/state/null" ] && [ ! -e "$F2/state/unknown1" ]; echo $?)"
+check "sweep: file of a dispatch Orca says does not exist, every handle gone, is removed" "$([ ! -e "$F2/state/unknown1" ]; echo $?)"
+check "sweep: a failed worker-show keeps the record" "$([ -e "$F2/state/showfail" ]; echo $?)"
+check "sweep: an unreadable worker-show answer keeps the record" "$([ -e "$F2/state/showjunk" ]; echo $?)"
+check "sweep: any other error answer keeps the record" "$([ -e "$F2/state/othererr" ]; echo $?)"
 check "sweep: file of a running dispatch keeps its record even with every handle gone" "$([ -e "$F2/state/running1" ]; echo $?)"
 check "sweep: file with a handle still listed stays" "$([ -e "$F2/state/unknown2" ] && [ -e "$F2/state/partial" ]; echo $?)"
 # An unreadable terminal list proves nothing: no file is removed.
@@ -866,5 +872,35 @@ echo t_gone > "$F2/state/again"; echo 'not json' > "$F2/terminals.json"
 ( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
 check "sweep: unreadable terminal list removes nothing" "$([ -e "$F2/state/again" ]; echo $?)"
 unset F2
+
+# #597: records of workers that are long gone send no release; an already released worker is never released again.
+F2="$tmp/dead"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+python3 - "$F2" <<'GEN'
+import json,sys
+d=sys.argv[1]; ws=[]; terms=[]
+for j in range(30):
+    n=f"dead{j}"; ws.append({"dispatchId":n,"state":"released","stage":"released","workspace":"repo1::/nonexistent/gone"})
+    json.dump({"result":{"state":"released","stage":"released","workspace":"repo1::/nonexistent/gone","terminal":f"t_{n}"}},open(f"{d}/show.{n}","w"))
+    open(f"{d}/state/{n}","w").write(f"t_{n}\n")
+json.dump({"ok":True,"result":{"workers":ws}},open(d+"/workers-run0.json","w"))
+json.dump({"ok":True,"result":{"truncated":False,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":terms}},open(d+"/terminals.json","w"))
+GEN
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "#597 many released records: 0 worker-release calls" "$([ "$(grep -c worker-release "$F2/calls.log")" = 0 ]; echo $?)"
+check "#597 their records are pruned" "$([ -z "$(ls "$F2/state")" ]; echo $?)"
+# A host that does not answer keeps its records.
+F2="$tmp/dead-host"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"dh","state":"released","stage":"released","workspace":"repo1::/nonexistent/gone"}]}}' > "$F2/workers-run0.json"
+echo '{"result":{"state":"released","stage":"released","workspace":"repo1::/nonexistent/gone"}}' > "$F2/show.dh"
+echo t_remote > "$F2/state/dh"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":["other-host"]},"terminals":[]}}' > "$F2/terminals.json"
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "#597 a host that does not answer keeps its records" "$([ -e "$F2/state/dh" ]; echo $?)"
+unset F2
+
+# The pane file is replaced through a temp file and rename, so a reader never sees it empty or half written.
+check "pane file is written through a temp file and rename" "$(grep -q 'mv -f' "$here/worker-pane-close.sh" && ! grep -q '> "$f"$' "$here/worker-pane-close.sh"; echo $?)"
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

@@ -286,7 +286,7 @@ case "$*" in
   'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
   *'terminal list'*) printf '{"ok":true,"result":{"terminals":%s}}\n' "$(cat "$FAKE_DIR/terminals")" ;;
   *'terminal close'*)
-    for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && echo "${args[$((i+1))]}" >> "$FAKE_DIR/closed.log"; done ;;
+    for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && echo "${args[$((i+1))]}" >> "$FAKE_DIR/closed.log"; done; true ;;
   *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"completed"}}}\n' ;;
   *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *worker-list*)
@@ -360,13 +360,13 @@ grep -Fq "Kept worktree $real/live-disp (active or unknown Orca terminal)" "$tmp
 echo 'ok pending dispatch with failed worker-show is skipped with a warning'
 # Any other worker-show failure still keeps everything, now with a warning.
 echo "[$(rw2 rel-none released),$(rw3 bad-1 dispatched)]" > "$fake/workers1"
-bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr" || true
 grep -Fq "Warning: worker-show failed for d-bad-1; retaining all worktrees." "$tmp/stderr"
 if grep -Fq "Remove worktree $real/rel-none" "$tmp/output"; then echo 'failed worker-show on a dispatched dispatch freed a worktree'; exit 1; fi
 echo 'ok other worker-show failures keep all worktrees with a warning'
 # A worker-list page of the wrong shape keeps everything and says so.
 echo '{"ok":true,"result":{"workers":"x"}}' > "$fake/shape"
-bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --dry-run > "$tmp/output" 2> "$tmp/stderr" || true
 grep -Fq "Warning: unexpected worker-list page shape; retaining all worktrees." "$tmp/stderr"
 if grep -Fq "Remove worktree $real/rel-none" "$tmp/output"; then echo 'bad page shape freed a worktree'; exit 1; fi
 rm -f "$fake/shape"
@@ -401,7 +401,7 @@ export WRAP_UP_FLEET_SSH="$tmp/bin/fake-ssh" FAKE_SSH_LOG="$tmp/ssh.log" DOTFILE
 printf '{"hosts":[{"host":"down","repo_dir":"~/nowhere"},{"host":"alpha","repo_dir":"%s"}]}\n' "$tmp/rrepo" > "$tmp/fleet.json"
 export WRAP_UP_FLEET_CONFIG="$tmp/fleet.json"
 cd "$tmp/repo"
-bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 grep -Fxq '== Fleet host alpha ==' "$tmp/output"
 grep -Fq "Remove worktree $real/rwt " "$tmp/output" || { echo 'fleet preview did not propose the remote worktree'; exit 1; }
 grep -Fq "Kept worktree $real/rwt-dirty (dirty)" "$tmp/output"
@@ -411,7 +411,7 @@ grep -Fq 'Warning: fleet host down unreachable or incomplete' "$tmp/stderr"
 grep -Fxq down "$FAKE_SSH_LOG"
 grep -Fq 'Fleet total (local plus 1 of 2 hosts reached)' "$tmp/output"
 echo 'ok unreachable host only warns and is skipped'
-bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 test ! -d "$tmp/rwt"
 if git -C "$tmp/rrepo" show-ref --verify --quiet refs/heads/rdone; then echo 'remote host kept a merged local branch'; exit 1; fi
 test -d "$tmp/rwt-dirty"
@@ -428,18 +428,18 @@ mkdir -p "$tmp/rupdater/.orca"; echo '{"fleet":1}' > "$tmp/rupdater/.orca/preset
 git -C "$tmp/rupdater" add .orca/presets.json; git -C "$tmp/rupdater" commit -qm preset; git -C "$tmp/rupdater" push -q origin main
 rbefore=$(git -C "$tmp/rrepo" rev-parse HEAD)
 echo dirty > "$tmp/rrepo/dirty-main"
-bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 test "$(git -C "$tmp/rrepo" rev-parse HEAD)" = "$rbefore"
 # The coordinator run installs its own preset first; the fleet preset must not follow it.
 if grep -Fq fleet "$HOME/.orca/presets.json"; then echo 'dirty fleet host installed the preset'; exit 1; fi
 awk '/^== Fleet host alpha ==/ { on = 1 } on' "$tmp/output" | grep -Fq 'Kept main update'
 echo 'ok fleet host with a dirty main checkout is reported and unchanged'
 rm "$tmp/rrepo/dirty-main"
-bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 test "$(git -C "$tmp/rrepo" rev-parse HEAD)" = "$rbefore"
 if grep -Fq fleet "$HOME/.orca/presets.json"; then echo 'dry run installed the fleet preset'; exit 1; fi
 awk '/^== Fleet host alpha ==/ { on = 1 } on' "$tmp/output" | grep -Fq 'Fast forward main checkout'
-bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 test "$(git -C "$tmp/rrepo" rev-parse HEAD)" = "$(git --git-dir="$tmp/origin2" rev-parse main)"
 cmp "$HOME/.orca/presets.json" "$tmp/rrepo/.orca/presets.json"
 grep -Fq fleet "$HOME/.orca/presets.json"
@@ -469,7 +469,7 @@ FAKE
 chmod +x "$tmp/bin/orca"
 unset ORCA_CLI_COMMAND
 printf '{"hosts":[{"host":"alpha","repo_dir":"%s"}]}\n' "$tmp/rrepo" > "$tmp/fleet.json"
-bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr"
+bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 if grep -Fq 'Orca unavailable' "$tmp/stderr" "$tmp/output"; then echo 'remote PATH misses ~/.orca/cli/bin'; exit 1; fi
 test -d "$tmp/rwt2"
 rm -rf "$HOME/.orca"; mv -f "$tmp/bin/orca.off" "$tmp/bin/orca"
@@ -544,7 +544,8 @@ status=0
 PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck branch*lb-stuck push*rstuck" \
   FAKE_GIT_LATE=late FAKE_GIT_LATE_PATH="$tmp/c-late" \
   bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
-[ "$status" -eq 0 ] || { echo "a failed single delete stopped the run (exit $status)"; cat "$tmp/stderr"; exit 1; }
+[ "$status" -ne 0 ] || { echo "recorded failures must exit non-zero"; exit 1; }
+grep -Eq "^Failures" "$tmp/output" || { echo "failures not listed"; cat "$tmp/output"; exit 1; }
 test -d "$tmp/c-wt-stuck"; test ! -d "$tmp/c-wt-ok"
 grep -Fq "Warning: could not remove worktree $real/c-wt-stuck" "$tmp/stderr"
 grep -Fq 'Kept worktree' "$tmp/output"
@@ -566,7 +567,7 @@ echo 'ok failures count as kept and later steps still run'
 git worktree add -q -b wt-stuck2 "$tmp/c-wt-stuck2"
 status=0
 PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck2" bash "$here/wrap-up.sh" --worktrees-only --apply > "$tmp/output" 2> "$tmp/stderr" || status=$?
-[ "$status" -eq 0 ] || { echo "--worktrees-only stopped on a failed delete (exit $status)"; exit 1; }
+[ "$status" -ne 0 ] || { echo "--worktrees-only must exit non-zero on a failed delete"; exit 1; }
 test -d "$tmp/c-wt-stuck2"
 grep -Fq "Warning: could not remove worktree $real/c-wt-stuck2" "$tmp/stderr"
 grep -q '^removed worktrees=[0-9]* deleted local=' "$tmp/output"
@@ -650,7 +651,7 @@ old=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:0
 git branch stale-stuck "$old"; git branch stale-ok "$old"; git push -q origin stale-stuck stale-ok # pushed: a local only branch is now kept
 status=0
 PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="branch*stale-stuck" bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || status=$?
-[ "$status" -eq 0 ] || { echo "a failed stale delete changed the exit status ($status)"; exit 1; }
+[ "$status" -ne 0 ] || { echo "a failed stale delete must exit non-zero"; exit 1; }
 git show-ref --verify --quiet refs/heads/stale-stuck
 if git show-ref --verify --quiet refs/heads/stale-ok; then echo 'the good stale branch was not deleted'; exit 1; fi
 grep -Fq 'Warning: could not delete local stale-stuck; kept.' "$tmp/stderr"
@@ -783,16 +784,16 @@ rcheck() { # <what> <command...>
   if "$@"; then echo "ok   $what"; else echo "FAIL $what"; r_failed=$((r_failed+1)); fi
 }
 # a. A remote-only stale branch checked out in a new worktree after selection is kept; ps exit 1 is reported for it.
-git push -q origin "$told:refs/heads/r-stale"
+git push -q origin "$told:refs/heads/r-stale"; git tag r-stale-copy "$told" # a second copy, so r-stale is not the last copy
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"; printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/ps"
 chmod +x "$tmp/bin/lsof" "$tmp/bin/ps"
 PATH="$tmp/gitshim:$PATH" FAKE_GIT_LATE=r-stale FAKE_GIT_LATE_PATH="$tmp/r-late" FAKE_GIT_LATE_ON='log -1*origin/r-stale' \
   bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
 late_kept() {
   git --git-dir="$tmp/origin4" show-ref --verify --quiet refs/heads/r-stale && has "Kept stale r-stale (checked out in $real/r-late, ps failed)" \
-    && has 'stale deleted=0'
+    && ! grep -Fq 'Delete stale r-stale' "$tmp/output"
 }
-rcheck 'a stale remote branch checked out after selection is kept with the new worktree in_use reason' late_kept
+rcheck "a stale remote branch checked out after selection is kept with the new worktree in_use reason" late_kept
 git worktree remove --force "$tmp/r-late" 2>/dev/null || true
 git branch -D r-stale >/dev/null 2>&1 || true
 git push -q origin "$told:refs/heads/r-stale" 2>/dev/null || true

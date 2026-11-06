@@ -99,6 +99,8 @@ has_local() { git show-ref --verify --quiet "refs/heads/$1"; }
 has_remote() { git ls-remote --exit-code --heads origin "$1" >/dev/null; }
 gone() { ! has_local "$1" && ! has_remote "$1"; }
 kept() { has_local "$1" && has_remote "$1"; }
+# Unmerged work: the pushed local copy goes, the origin copy is the last one and stays.
+local_gone_origin_kept() { ! has_local "$1" && has_remote "$1"; }
 
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/out1" 2>&1
 check 'squash-merged branch with no PR deleted local and remote' gone squashed
@@ -111,7 +113,7 @@ check 'worktree with modified continual-learning.json alone removed' test ! -d "
 check 'worktree with modified continual-learning.json and an image removed' test ! -d "$tmp/wt-cl-mod-image"
 check 'untracked continual-learning.json plus another file stays dirty' test -d "$tmp/wt-cl-untracked-other"
 check 'modified continual-learning.json plus another file stays dirty' test -d "$tmp/wt-cl-mod-other"
-check 'unmerged old branch deleted by --apply' gone stale-old
+check 'unmerged old branch: local copy deleted by --apply, origin copy kept as the last copy' local_gone_origin_kept stale-old
 check 'stale section printed' grep -Fxq 'Stale (eligible for cleanup)' "$tmp/out1"
 check 'stale line has branch, age and subject' grep -Eq '^  stale-old, [0-9]+h old, work on stale-old$' "$tmp/out1"
 check 'open PR branch not listed as stale' bash -c "! grep -q 'open-pr, ' '$tmp/out1'"
@@ -119,11 +121,11 @@ check 'fresh unmerged branch kept and not stale' bash -c "git show-ref --verify 
 check 'dirty worktree branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/stale-dirty && test -d '$tmp/wt-stale-dirty' && ! grep -q 'stale-dirty, ' '$tmp/out1'"
 check 'stale branch with screenshot-only worktree listed' grep -Eq '^  stale-shot, ' "$tmp/out1"
 
-check 'apply deletes stale branch with screenshot-only worktree' gone stale-shot
+check 'apply deletes the local stale branch with screenshot-only worktree, keeps its origin copy' local_gone_origin_kept stale-shot
 check 'apply removed that worktree' test ! -d "$tmp/wt-stale-shot"
 branch legacy-old legacy.txt "$old"
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply --stale > "$tmp/out2" 2>&1
-check 'legacy --stale flag still accepts apply and deletes stale branch' gone legacy-old
+check 'legacy --stale flag still accepts apply and deletes the stale local branch, keeping the origin copy' local_gone_origin_kept legacy-old
 check '--stale keeps open PR branch' kept open-pr
 check '--stale keeps fresh branch' kept fresh
 check '--stale keeps dirty worktree branch' kept stale-dirty
