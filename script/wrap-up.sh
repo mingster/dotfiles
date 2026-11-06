@@ -246,6 +246,9 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
           echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
+        elif jq -e '.error.message | startswith("Unknown environment")' "$tmp/show" >/dev/null 2>&1; then
+          # Ran on a host this one no longer pairs with: its worktree and browser live there, that host's wrap-up owns them.
+          echo "Warning: worker-show failed for dispatch $dispatch on an unpaired host; skipped." >&2
         else
           echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2; fail_item "dispatch $dispatch" 'worker-show failed; all worktrees kept'
           echo '*' >> "$tmp/active"
