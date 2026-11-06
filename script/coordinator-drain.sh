@@ -5,6 +5,7 @@
 #   - "Worker stopped without reporting" for a lead terminal (from the fleet-watch config). Leads hold their dispatch open
 #     by design. Each one is counted per lead (a line with the lead's handle appended to COORDINATOR_DRAIN_STATE), and
 #     fleet-watch reports the counts in its digest. A worker's stop always passes.
+# With --wait, a batch where every message was dropped is not returned (the waiter would wake for nothing): it checks again.
 # The check marks what it returns as read, so dropped messages are gone from the inbox. Dropped ones are counted on stderr.
 # Env: FLEET_WATCH_CONFIG (the config fleet-watch runs with, the one that has the leads key; the default
 #      ~/.config/fleet-watch/config.json usually has none, and then every check says so on stderr),
@@ -14,6 +15,10 @@ orca=${ORCA_CLI_COMMAND:-orca}
 args=("$@")
 case " $* " in *" --json "*) ;; *) args+=(--json) ;; esac
 
+DRAIN_WAIT=0
+case " $* " in *" --wait "*) DRAIN_WAIT=1 ;; esac
+export DRAIN_WAIT
+while :; do
 # shellcheck disable=SC2086
 $orca orchestration check "${args[@]}" | python3 -c '
 import json, os, sys
@@ -54,7 +59,9 @@ for message in messages:
     else:
         kept.append(message)
 box["messages"] = kept
-print(json.dumps(data))
+everything_dropped = bool(messages) and not kept
+if not (everything_dropped and os.environ.get("DRAIN_WAIT") == "1"):
+    print(json.dumps(data))
 if dropped_leads:
     try:
         os.makedirs(os.path.dirname(state_path), exist_ok=True)
@@ -64,5 +71,11 @@ if dropped_leads:
         print("coordinator-drain: cannot save %s: %s" % (state_path, error), file=sys.stderr)
 if lead_stops:
     print("coordinator-drain: dropped %d (lead stops %d)" % (lead_stops, lead_stops), file=sys.stderr)
+if everything_dropped and os.environ.get("DRAIN_WAIT") == "1":
+    sys.exit(75)
 '
-exit "${PIPESTATUS[0]}"
+status=("${PIPESTATUS[@]}")
+[ "${status[0]}" = 0 ] && [ "${status[1]}" = 75 ] || break
+done
+[ "${status[0]}" != 0 ] && exit "${status[0]}"
+exit 0
