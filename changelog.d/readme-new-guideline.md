@@ -1,0 +1,1 @@
+- README now states the team guideline only: goal, principles, targets, lifecycle, roles, owner decisions, review and tools.
