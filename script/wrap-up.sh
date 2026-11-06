@@ -470,9 +470,19 @@ guarded_worktree_remove() { # <counter> <label> <path> [--force]
   git worktree remove ${4:+"$4"} -- "$3" && return 0
   echo "Warning: could not remove $2; kept." >&2; guard_keep "$1" "$2" 'remove failed'; return 1
 }
+# A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
+# whatever made it eligible, and an unreadable count keeps it too.
+local_unpushed() { # name; succeeds when the local branch has a commit on no origin ref or the count is unreadable
+  local n
+  git show-ref --verify --quiet "refs/heads/$1" || return 1
+  n=$(git rev-list --count "refs/heads/$1" --not --remotes=origin 2>/dev/null) || return 0
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -gt 0 ]
+}
 guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason]
   fresh_inventory || { guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
   branch_free "$1" "$2" "$3" || return
+  if local_unpushed "$3"; then guard_keep "$1" "$2" 'unpushed commits (or count unreadable)'; return 1; fi
   if [ "${4:-}" = ancestor ]; then
     # -d checks HEAD/upstream, so give it the authoritative merge target.
     git -c "branch.$3.remote=origin" -c "branch.$3.merge=refs/heads/main" branch -d -- "$3" && return 0
@@ -616,6 +626,8 @@ while IFS= read -r branch; do
     keep "local $branch" "$protected_reason"
   elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "local $branch" 'checked out in kept worktree'
+  elif eligible "refs/heads/$branch" "$branch" && local_unpushed "$branch"; then
+    keep "local $branch" 'unpushed commits (or count unreadable)'
   elif eligible "refs/heads/$branch" "$branch"; then
     printf 'Delete local %s (%s)\n' "$branch" "$reason"
     if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" "$reason"; then
@@ -750,6 +762,15 @@ sweep_browsers() {
   local pid ppid age started cmd kind profile cwdir child cppid cmdl now_line n_started n_cmd outside
   [ "$browser_sweep" -eq 1 ] || return 0
   if ! ps_do list > "$tmp/procs" 2>/dev/null; then echo 'Warning: process list unavailable; closing no browsers.' >&2; return 0; fi
+  # Signs that a browser is in use: a running head-checks, QA or heavy-gate run, and a browser outside temp that
+  # offers a debugging port (a daemon may be attached to it with nothing to show for it in the process table).
+  run_active=''; cdp_outside=''
+  while IFS=$'\t' read -r _ _ _ _ cmd; do
+    case "$cmd" in *wrap-up*) continue ;; *head-checks*|*qa-admission*|*heavy-gate*) run_active=1 ;; esac
+    if is_main_browser "$cmd"; then
+      case "$cmd" in *--remote-debugging-port*) profile=$(browser_profile "$cmd") && is_temp_path "$profile" || cdp_outside=1 ;; esac
+    fi
+  done < "$tmp/procs"
   while IFS=$'\t' read -r pid ppid age started cmd; do
     [ -n "$pid" ] || continue
     kind=''; profile=''
@@ -762,6 +783,8 @@ sweep_browsers() {
     if [ "$inventory_read" -eq 0 ] || grep -Fxq '*' "$tmp/active"; then browser_keep "$pid" 'no complete dispatch inventory'; continue; fi
     case "$age" in ''|*[!0-9]*) browser_keep "$pid" 'age unknown'; continue ;; esac
     if [ "$age" -lt 7200 ]; then browser_keep "$pid" 'younger than 2 hours'; continue; fi
+    # Parent pid 1 proves nothing: a macOS app launched through LaunchServices has it too.
+    if [ -n "$run_active" ]; then browser_keep "$pid" 'a head-checks, QA or gated run is active'; continue; fi
     if [ "$ppid" != 1 ] && [ "$ppid" != 0 ] && awk -F'\t' -v p="$ppid" '$1 == p { f = 1 } END { exit !f }' "$tmp/procs"; then browser_keep "$pid" 'parent still running'; continue; fi
     if ! cwdir=$(ps_do cwd "$pid" 2>/dev/null) || [ -z "$cwdir" ]; then browser_keep "$pid" 'working directory unreadable'; continue; fi
     if in_active_path "$cwdir" || in_active_path "$profile"; then browser_keep "$pid" 'inside an active dispatch path'; continue; fi
@@ -772,6 +795,8 @@ sweep_browsers() {
         profile=$(browser_profile "$cmdl") || continue
         is_temp_path "$profile" || outside=1
       done < "$tmp/procs"
+      case "$cmd" in *--cdp*) outside=1 ;; esac
+      [ -z "$cdp_outside" ] || outside=1
       if [ -n "$outside" ]; then browser_keep "$pid" 'drives a browser outside temp'; continue; fi
     fi
     if [ "$apply" -eq 1 ]; then
@@ -919,13 +944,6 @@ fi
 # Stale: unmerged, no open PR, at least 8 h old, nothing running. Deleted with --apply.
 # A local branch with a commit on no origin ref holds work that exists only on this host: it is never deleted, and an
 # unreadable count keeps it too. Checked again right before the delete.
-local_unpushed() { # name; succeeds when the local branch is absent or has nothing unpushed
-  local n
-  git show-ref --verify --quiet "refs/heads/$1" || return 1
-  n=$(git rev-list --count "refs/heads/$1" --not --remotes=origin 2>/dev/null) || return 0
-  case "$n" in ''|*[!0-9]*) return 0 ;; esac
-  [ "$n" -gt 0 ]
-}
 stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)

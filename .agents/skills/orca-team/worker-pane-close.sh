@@ -346,7 +346,7 @@ except Exception: print("")' "$here")
     handles+=("$h")
   done
   if [ "${#handles[@]}" -gt 0 ]; then
-    printf '%s\n' "${handles[@]}" > "$f"
+    printf '%s\n' "${handles[@]}" > "$state/.$d.$$" && mv -f "$state/.$d.$$" "$f"
   else
     rm -f "$f" "$state/released/$d"
     echo "closed $d (${#pending[@]})"
@@ -456,8 +456,15 @@ if ok:
   # A dispatch that is still running keeps its record (its pane may not be listed yet). An ended or unknown one does not.
   while IFS= read -r d; do
     [ -n "$d" ] || continue
-    if show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null); then
-      printf '%s' "$show" | dispatch_final >/dev/null || continue
+    # Drop only on a real answer: the dispatch ended, or Orca says it does not exist. A failed or unreadable
+    # worker-show proves nothing, so the record stays.
+    show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || :
+    if ! printf '%s' "$show" | dispatch_final >/dev/null; then
+      printf '%s' "$show" | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(1)
+sys.exit(0 if d.get("ok") is False and (d.get("error") or {}).get("code")=="dispatch_not_found" else 1)' || continue
     fi
     rm -f "$state/$d" "$state/released/$d"
   done <<< "$gone"

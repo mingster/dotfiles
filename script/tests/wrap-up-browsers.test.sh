@@ -137,6 +137,28 @@ check 'profile in an active path is kept' has 'Kept browser 306 (inside an activ
 check 'only the orphan was stopped' test "$(cat "$FAKE_KILLS")" = 303
 check 'count line with kept' has 'browsers closed=1 kept=5'
 
+# A running head-checks, QA or gated run shows a temp-profile browser in use, whatever its parent pid.
+reset
+proc 450 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 450 /Users/someone/work
+proc 451 1 $OLD "/opt/agent-browser/bin/agent-browser daemon"; cwd 451 /Users/someone/work
+proc 452 900 100 "bash /repo/script/head-checks.sh"
+run --apply
+check 'old browser with parent pid 1 stays during a head-checks run' has 'Kept browser 450 (a head-checks, QA or gated run is active)'
+check 'old daemon with parent pid 1 stays during a head-checks run' has 'Kept browser 451 (a head-checks, QA or gated run is active)'
+check 'a run in progress stops nothing' nokill
+for runcmd in 'python3 /repo/script/qa-admission.py admit' 'python3 /repo/script/heavy-gate.py gate -- npm test'; do
+  reset
+  proc 460 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 460 /Users/someone/work
+  proc 461 900 100 "$runcmd"
+  run --apply
+  check "a running '${runcmd%% *}' $(printf '%s' "$runcmd" | awk '{print $2}') keeps the browser" has 'Kept browser 460 (a head-checks, QA or gated run is active)'
+done
+reset
+proc 470 1 $OLD "$DEV --user-data-dir=/tmp/idle"; cwd 470 /Users/someone/work
+proc 471 900 100 "bash /repo/script/wrap-up.sh --apply"
+run --apply
+check 'with no such run, the old browser with parent pid 1 still closes' has 'Close browser 470 (stale throwaway browser profile)'
+
 # Active holds "*", inventory broken, inventory never read: keep everything.
 reset
 proc 401 1 $OLD "$DEV --user-data-dir=/tmp/a"; cwd 401 /Users/someone/work
@@ -155,19 +177,28 @@ check 'no inventory on apply stops nothing' nokill
 # agent-browser daemons.
 reset
 proc 500 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 500 /Users/someone/work
-proc 510 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 510 /Users/someone/work
-proc 511 510 $OLD "$DEV --user-data-dir=/Users/someone/.cursor/chrome-dev-agent-profile --remote-debugging-port=9223"; cwd 511 /Users/someone/work
 proc 520 1 $OLD "node /opt/agent-browser/dist/daemon.js"; cwd 520 /Users/someone/work
 proc 521 520 $OLD "$DEV --user-data-dir=/tmp/daemon-owned"; cwd 521 /Users/someone/work
 proc 530 1 600 "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 530 /Users/someone/work
 run --apply
-check 'orphan daemon with no browser child is closed' has 'Close browser 500 (stale agent-browser daemon)'
-check 'daemon driving a browser outside temp is kept' has 'Kept browser 510 (drives a browser outside temp)'
-check 'the shared browser itself is not a candidate' lacks 'browser 511'
+check 'orphan daemon with no browser anywhere is closed' has 'Close browser 500 (stale agent-browser daemon)'
 check 'daemon with a throwaway child is closed' has 'Close browser 520 (stale agent-browser daemon)'
 check 'its child waits a round, its parent is still running' has 'Kept browser 521 (parent still running)'
 check 'young daemon is kept' has 'Kept browser 530 (younger than 2 hours)'
 check 'stopped: 500 and 520 only' test "$(sort "$FAKE_KILLS" | tr '\n' ' ')" = '500 520 '
+
+# A daemon may be connected over CDP to a browser it did not start, outside temp. It has no child to show for it.
+reset
+proc 510 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 510 /Users/someone/work
+proc 511 510 $OLD "$DEV --user-data-dir=/Users/someone/.cursor/chrome-dev-agent-profile --remote-debugging-port=9223"; cwd 511 /Users/someone/work
+proc 512 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon"; cwd 512 /Users/someone/work
+proc 513 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64 daemon --cdp 9223"; cwd 513 /Users/someone/work
+run --apply
+check 'daemon with a browser child outside temp is kept' has 'Kept browser 510 (drives a browser outside temp)'
+check 'the shared browser itself is not a candidate' lacks 'browser 511'
+check 'daemon with no child, while a browser outside temp offers a debugging port, is kept' has 'Kept browser 512 (drives a browser outside temp)'
+check 'daemon started with --cdp is kept' has 'Kept browser 513 (drives a browser outside temp)'
+check 'nothing was stopped' nokill
 
 # Reused pid, failed stop.
 reset
