@@ -47,9 +47,13 @@ the job's first slot, so it is counted across processes and released with the
 slot, including when the owner dies and the slot is reclaimed. A job is admitted
 only while the declared memory of the jobs holding slots, itself included, stays
 within the host total. A job that declares more than the host total cannot ever
-fit, so it runs alone: it waits until no job holds declared memory, then starts,
-and says so on stderr. Jobs that declare nothing count for nothing and never wait
-on memory. The free-memory floor and every other check are unchanged.
+fit, so it runs alone among jobs that declare memory: it waits until no declared
+job holds memory, then starts, and says so on stderr. Jobs that declare nothing
+count for nothing and never wait on memory, so an oversize job can still overlap
+them. The one exception: an undeclared job whose command runs playwright (a
+browser plus its dev server) declares 8192 MiB by default, whether it is called
+directly, through bunx or npx, or inside bash -c. A declared value wins. The
+free-memory floor and every other check are unchanged.
 A job that cannot get its slots publishes a waiter record. Once a waiter of weight
 W has waited HEAVY_GATE_MAX_WAIT_SECONDS (default 300), jobs lighter than W stop
 taking slots until it has run, so a weight 2 job cannot be starved by a stream of
@@ -68,6 +72,7 @@ import platform
 from pathlib import Path
 import re
 import shutil
+import re
 import shlex
 import signal
 import subprocess
@@ -595,12 +600,17 @@ def job_class():
     return value
 
 
+PLAYWRIGHT_DEFAULT_MIB = 8192
+
+
 def declared_memory(args):
-    """MiB the job declares, 0 for none. The flag wins over the environment."""
+    """MiB the job declares. The flag wins over the environment. A job that
+    declares nothing and runs playwright gets a default; any other gets 0."""
     flag = getattr(args, 'memory_mb', None)
     value = flag if flag is not None else os.environ.get('HEAVY_GATE_MEMORY_MB', '')
     if value == '':
-        return 0
+        command = ' '.join(getattr(args, 'command', None) or [])
+        return PLAYWRIGHT_DEFAULT_MIB if re.search(r'playwright', command) else 0
     try:
         memory = int(value)
     except ValueError:
@@ -616,7 +626,7 @@ def gate(args):
     host_memory = hardware()[2] // (1024 * 1024) if memory else 0
     if memory > host_memory > 0:
         print(f'heavy-gate: declared memory {memory} MiB exceeds host memory {host_memory} MiB; '
-              'it will run alone', file=sys.stderr, flush=True)
+              'it will run alone among jobs that declare memory', file=sys.stderr, flush=True)
     settings = config()
     count = settings['slots']
     if args.head_checks and os.environ.get('HEAD_CHECKS_SLOTS'):
