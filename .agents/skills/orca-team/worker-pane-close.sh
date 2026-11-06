@@ -272,7 +272,7 @@ native_release_for_close() {
   esac
 }
 close_one() {
-  local d="$1" f="$state/$1" show list h agent
+  local d="$1" f="$state/$1" show list h agent fresh
   local handles=() pending=()
   show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || return 0
   printf '%s' "$show" | dispatch_final >/dev/null || return 0
@@ -281,11 +281,19 @@ close_one() {
   # Protect by identity, whichever Run owns the terminal: every Run's coordinator and anything a live dispatch uses.
   # If either list cannot be read, close nothing.
   local coords busy prot
-  coords=$(run_coordinators) || return 0
-  busy=$(busy_handles "$d") || return 0
+  if [ "${2:-}" = sweep ]; then
+    # The sweep read the Run list, every Run's workers and the terminal list once; an unread list closes nothing.
+    [ "$sweep_ok" -eq 1 ] || return 0
+    coords=$sweep_coords
+    busy=$(printf '%s\n' "$sweep_busy" | awk -F'\t' -v d="$d" '$1 != d { print $2 }')
+    list=$sweep_list
+  else
+    coords=$(run_coordinators) || return 0
+    busy=$(busy_handles "$d") || return 0
+    list=$(close_rpc terminal list --json 2>/dev/null)
+  fi
   prot="$coords
 $busy"
-  list=$(close_rpc terminal list --json 2>/dev/null)
   while IFS= read -r h; do [ -n "$h" ] && handles+=("$h"); done < <(leftovers "$show" "$list" "$prot")
   local done_=" "
   for h in ${handles[@]+"${handles[@]}"}; do
@@ -327,6 +335,11 @@ except Exception: print("")' "$here")
   for h in "${pending[@]}"; do
     terminal_absent "$h" && continue
     if [ "$h" != "$agent" ] && close_allowed "$d" "$h"; then
+      # The sweep's lists are minutes old by now: reread who is live, only for a terminal about to be closed.
+      if [ "${2:-}" = sweep ]; then
+        fresh=$(busy_handles "$d") || { handles+=("$h"); continue; }
+        case $'\n'"$fresh"$'\n' in *$'\n'"$h"$'\n'*) handles+=("$h"); continue ;; esac
+      fi
       close_rpc terminal close --terminal "$h" >/dev/null 2>&1 || :
       terminal_absent "$h" && continue
     fi
@@ -408,6 +421,47 @@ for w in r["workers"]:
         print(w["dispatchId"])' "$project"); then
   dispatches="$dispatches
 $found"
+fi
+# Read each list once for the whole sweep, not once per dispatch. Any list that cannot be read closes nothing.
+sweep_ok=1; sweep_coords=''; sweep_busy=''; sweep_list=''
+sweep_coords=$(run_coordinators) || sweep_ok=0
+sweep_busy=$(each_worker_page '
+for w in r["workers"]:
+    if ws.is_final(w): continue
+    d=w.get("dispatchId") or ""
+    for h in (ws.terminal(w), w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
+        if h: print(d+"\t"+h)
+    wid=ws.workspace_id(w)
+    if wid: print(d+"\twt:"+wid.split("::",1)[-1])') || sweep_ok=0
+sweep_list=$(close_rpc terminal list --json 2>/dev/null) || sweep_list=''
+# A pane file whose handles are all gone has nothing left to close once its dispatch ended or is unknown. Needs a complete
+# terminal inventory: an unreadable or partial list proves nothing and removes nothing.
+if [ -n "$sweep_list" ]; then
+  gone=$(STATE="$state" LIST="$sweep_list" python3 -c '
+import json,os
+try:
+    r=json.loads(os.environ["LIST"])
+    res=r["result"]
+    ok=(r.get("ok") is not False and res.get("truncated") is False and isinstance(res.get("terminals"),list)
+        and isinstance(res.get("hostScope"),dict) and res["hostScope"].get("hostIds") and not res["hostScope"].get("omittedHostIds"))
+    live={t["handle"] for t in res["terminals"] if isinstance(t,dict) and t.get("handle")}
+except Exception: ok=False
+if ok:
+    st=os.environ["STATE"]
+    for n in sorted(os.listdir(st)):
+        p=os.path.join(st,n)
+        if not os.path.isfile(p) or "\n" in n: continue
+        hs=[l.strip() for l in open(p) if l.strip()]
+        if not any(h in live for h in hs): print(n)' 2>/dev/null) || gone=''
+  # A dispatch that is still running keeps its record (its pane may not be listed yet). An ended or unknown one does not.
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    if show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null); then
+      printf '%s' "$show" | dispatch_final >/dev/null || continue
+    fi
+    rm -f "$state/$d" "$state/released/$d"
+  done <<< "$gone"
+  dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "${found:-}")
 fi
 while IFS= read -r d; do [ -z "$d" ] || close_one "$d" sweep; done < <(printf '%s\n' "$dispatches" | sort -u)
 exit 0

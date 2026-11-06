@@ -791,4 +791,80 @@ JSON
 FAKE_REAL_RELEASE=1 "$here/worker-pane-close.sh" dunp >/dev/null 2>&1
 check "unpushed: shell terminal in a worktree with unpushed commits kept" "$(listed term_ushell; echo $?)"
 
+# Sweep cost and safety (issue 571). A second fake orca that counts every call. Sweep reads each list once, not per dispatch.
+cat > "$tmp/orca2" <<'FAKE2'
+#!/usr/bin/env bash
+echo "$*" >> "$F2/calls.log"
+case "$*" in
+  "orchestration run-list"*) cat "$F2/runs.json" ;;
+  "orchestration worker-list"*)
+    r=$(printf '%s' "$*" | sed -n 's/.*--run \([^ ]*\).*/\1/p')
+    if [ -f "$F2/flip-after-first" ] && [ -f "$F2/flipped" ] && [ -f "$F2/workers-$r.live.json" ]; then cat "$F2/workers-$r.live.json"
+    else cat "$F2/workers-$r.json"; [ ! -f "$F2/flip-after-first" ] || : > "$F2/flipped"; fi ;;
+  "orchestration worker-show --dispatch "*) [ -f "$F2/show.$4" ] && cat "$F2/show.$4" || exit 1 ;;
+  "orchestration worker-release"*) printf '{"ok":true,"result":{"state":"released","dispatchId":"%s","processAction":"closed_agent_terminal"}}\n' "$4" ;;
+  "terminal list"*) cat "$F2/terminals.json" ;;
+  "terminal close --terminal "*) echo "$4" >> "$F2/closes.log"
+    python3 - "$F2/terminals.json" "$4" <<'RM'
+import json,sys
+p,h=sys.argv[1:]; r=json.load(open(p)); r['result']['terminals']=[t for t in r['result']['terminals'] if t['handle']!=h]; json.dump(r,open(p,'w'))
+RM
+    ;;
+  *) exit 1 ;;
+esac
+FAKE2
+chmod +x "$tmp/orca2"
+# scale RUNS PER_RUN: RUNS runs of PER_RUN settled dispatches each, every one with a recorded pane whose terminal is already gone.
+scale() {
+  export F2="$tmp/scale.$1.$2"; rm -rf "$F2"; mkdir -p "$F2/state"
+  python3 - "$F2" "$1" "$2" <<'GEN'
+import json,sys
+d,runs,per=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+json.dump({"ok":True,"result":{"runs":[{"id":f"run{i}","coordinator_handle":f"coord{i}"} for i in range(runs)]}},open(d+"/runs.json","w"))
+for i in range(runs):
+    ws=[]
+    for j in range(per):
+        n=f"d{i}_{j}"; ws.append({"dispatchId":n,"state":"succeeded","workspace":"repo1::/nonexistent/gone"})
+        json.dump({"result":{"state":"succeeded","workspace":"repo1::/nonexistent/gone"}},open(f"{d}/show.{n}","w"))
+        open(f"{d}/state/{n}","w").write(f"t_{n}\n")
+    json.dump({"ok":True,"result":{"workers":ws}},open(f"{d}/workers-run{i}.json","w"))
+json.dump({"ok":True,"result":{"truncated":False,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}},open(d+"/terminals.json","w"))
+GEN
+  ( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+  wc -l < "$F2/calls.log" | tr -d ' '
+}
+c_3_10=$(scale 3 10); c_3_40=$(scale 3 40); c_6_20=$(scale 6 7); c_3_20=$(scale 3 14)
+echo "sweep calls: 3 runs x 10 = $c_3_10, 3 runs x 40 = $c_3_40, 6 runs x 7 = $c_6_20, 3 runs x 14 = $c_3_20 (42 dispatches both)"
+check "sweep: calls grow by at most 5 per dispatch" "$([ $((c_3_40 - c_3_10)) -le $((5 * 90)) ]; echo $?)"
+check "sweep: same dispatch count over more Runs costs at most 8 more calls" "$([ $((c_6_20 - c_3_20)) -le 8 ]; echo $?)"
+check "sweep: every pane file with all handles gone is removed" "$([ -z "$(ls "$tmp/scale.3.40/state")" ]; echo $?)"
+# A terminal that a dispatch starts using after the sweep read its lists is not closed.
+F2="$tmp/live"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"dold","state":"succeeded","workspace":"repo1::/nonexistent/gone"}]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"dold","state":"succeeded","workspace":"repo1::/nonexistent/gone"},{"dispatchId":"dnew","state":"running","terminal":"t_shared","workspace":"repo1::/elsewhere"}]}}' > "$F2/workers-run0.live.json"
+echo '{"result":{"state":"succeeded","workspace":"repo1::/nonexistent/gone"}}' > "$F2/show.dold"
+echo t_shared > "$F2/state/dold"; : > "$F2/flip-after-first"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[{"handle":"t_shared","worktreePath":"/elsewhere"}]}}' > "$F2/terminals.json"
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "sweep: terminal a dispatch took after the read is not closed" "$([ ! -s "$F2/closes.log" ]; echo $?)"
+check "sweep: its record stays" "$([ -e "$F2/state/dold" ]; echo $?)"
+# Pane files that can never close: unknown dispatch with every handle gone goes; one with a listed handle stays.
+F2="$tmp/junk"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[{"handle":"t_alive","worktreePath":"/x"}]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/null"; echo t_gone > "$F2/state/unknown1"; echo t_alive > "$F2/state/unknown2"
+printf 't_gone\nt_alive\n' > "$F2/state/partial"
+echo t_gone > "$F2/state/running1"; echo '{"result":{"state":"running"}}' > "$F2/show.running1"
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "sweep: file of an unknown dispatch with every handle gone is removed" "$([ ! -e "$F2/state/null" ] && [ ! -e "$F2/state/unknown1" ]; echo $?)"
+check "sweep: file of a running dispatch keeps its record even with every handle gone" "$([ -e "$F2/state/running1" ]; echo $?)"
+check "sweep: file with a handle still listed stays" "$([ -e "$F2/state/unknown2" ] && [ -e "$F2/state/partial" ]; echo $?)"
+# An unreadable terminal list proves nothing: no file is removed.
+echo t_gone > "$F2/state/again"; echo 'not json' > "$F2/terminals.json"
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "sweep: unreadable terminal list removes nothing" "$([ -e "$F2/state/again" ]; echo $?)"
+unset F2
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
