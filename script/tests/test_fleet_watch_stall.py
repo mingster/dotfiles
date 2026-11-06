@@ -27,6 +27,7 @@ def base_worker(**kw):
         'resource': {'worktreeId': 'repo-x::/p'},
         'projection': {
             'host': {'id': 'local'},
+            'provider': {'id': 'claude', 'model': None},
             'outcome': 'in_progress',
             'liveness': {'verdict': 'idle'},
         },
@@ -39,22 +40,63 @@ class WorkerStallHelpers(unittest.TestCase):
     def test_normalize_zero_is_unknown(self):
         self.assertIsNone(fw._normalize_terminal_time_ms(0))
 
-    def test_retry_start_args_requires_task_worktree_and_terminal_or_agent(self):
+    def test_projection_host_id_accepts_string_or_object(self):
+        self.assertEqual(fw.projection_host_id({'host': 'remote-1'}), 'remote-1')
+        self.assertEqual(fw.projection_host_id({'projection': {'host': {'id': 'x'}}}), 'x')
+
+    def test_terminal_branch_map_from_refs_heads(self):
+        result = {
+            'terminals': [
+                {'handle': 't1', 'branch': 'refs/heads/mingster/fsd-watchdog-fold'},
+                {'handle': 't2'},
+            ],
+        }
+        self.assertEqual(fw.terminal_branch_map(result), {'t1': 'mingster/fsd-watchdog-fold'})
+
+    def test_retry_start_args_uses_agent_not_terminal_after_stop(self):
         w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
         args = fw.worker_stall_restart_start_args(w, 'd1')
         self.assertIsNotNone(args)
         self.assertIn('--task', args)
-        self.assertIn('--terminal', args)
+        self.assertIn('--agent', args)
+        self.assertNotIn('--terminal', args)
+        self.assertIn('claude', args)
         w2 = base_worker(taskId='t1', resource={'worktreeId': 'id::path'},
-                         agentTerminalHandle='', agent='')
+                         agentTerminalHandle='', agent='', projection={
+                             'host': {'id': 'local'},
+                             'outcome': 'in_progress',
+                             'liveness': {'verdict': 'idle'},
+                         })
         self.assertIsNone(fw.worker_stall_restart_start_args(w2, 'd1'))
+
+    def test_worker_pr_number_accepts_string_digits(self):
+        w = base_worker(githubPullRequestNumber='42')
+        self.assertEqual(fw.worker_pr_number(w), 42)
+
+    def test_resolve_pr_uses_terminal_branch_hint(self):
+        w = base_worker(headRefName='', resource={'worktreeId': 'wt::/p'}, githubPullRequestNumber=None)
+        gh_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            gh_cmd.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout='[{"number": 7}]')
+
+        def act(cmd):
+            return 0
+
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            n = fw.resolve_pr_number_for_worker(w, 'o/r', act, branch_hint='feature-x')
+        self.assertEqual(n, 7)
+        self.assertTrue(any('feature-x' in c for c in gh_cmd))
 
 
 class WorkerStallPass(unittest.TestCase):
-    def test_live_verdict_skips_restart(self):
+    def test_live_verdict_still_restarts_on_terminal_stall(self):
+        """Stall is lastOutputAt age; long tool use can look live while the TUI is quiet."""
         calls = []
         w = base_worker(projection={
             'host': {'id': 'local'},
+            'provider': {'id': 'claude', 'model': None},
             'outcome': 'in_progress',
             'liveness': {'verdict': 'live'},
         })
@@ -68,8 +110,8 @@ class WorkerStallPass(unittest.TestCase):
         notices, bits = fw.worker_stall_pass(
             {'worker_stall': {'label_repo': 'o/r'}}, state, T0, [w], term_times, rpc)
         self.assertEqual(notices, [])
-        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
-        self.assertNotIn('stall_restart=', ' '.join(bits))
+        self.assertTrue(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        self.assertIn('stall_restart=', ' '.join(bits))
 
     def test_terminal_list_failure_skips_stall_detection(self):
         calls = []
@@ -104,6 +146,38 @@ class WorkerStallPass(unittest.TestCase):
         fw.worker_stall_pass(cfg, state, T0 + 1, [w2], term_times, rpc)
         stops_after_second = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops_after_second), 0)
+
+    def test_pending_start_retries_after_row_not_live(self):
+        """If start fails right after stop, retry on a later pass with snapshot row."""
+        seq = []
+        starts = []
+        start_attempts = 0
+
+        def rpc(*a):
+            seq.append(a)
+            if a[:2] == ('orchestration', 'worker-start'):
+                starts.append(a)
+                nonlocal start_attempts
+                start_attempts += 1
+                if start_attempts == 1:
+                    raise RuntimeError('start failed')
+            return {}
+
+        w = base_worker(dispatchId='d1', taskId='t_retry', resource={'worktreeId': 'wt::/p'})
+        term_times = {'term_fix': OLD_MS}
+        state = {}
+        cfg = {'worker_stall': {'label_repo': 'o/r'}}
+        _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc)
+        self.assertIn('stall_stop_start_retry_next=d1', bits1)
+        self.assertIn('t_retry', state.get('stall_pending_start', {}))
+
+        seq.clear()
+        starts.clear()
+        _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 2, [], term_times, rpc)
+        self.assertIn('stall_restart=d1', bits2)
+        self.assertEqual(len(starts), 1)
+        self.assertIn('--agent', starts[0])
+        self.assertNotIn('--terminal', starts[0])
 
     def test_remote_row_logs_remote_only(self):
         calls = []

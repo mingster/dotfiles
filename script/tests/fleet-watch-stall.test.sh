@@ -20,16 +20,23 @@ T0 = 1_700_000_000  # unix seconds so lastOutputAt ms exceeds 1e12
 
 
 def live_worker():
+    # Shape from `orca orchestration worker-list --run <run> --full --json` (Nov 2026);
+    # PR 629 and branch match this worktree (`gh pr list --head mingster/fsd-watchdog-fold`).
     return {
         'dispatchId': 'disp1',
         'taskId': 'task_stall_fixture',
         'terminalState': 'retained',
         'dispatchStatus': 'dispatched',
         'agentTerminalHandle': 'term_w',
-        'githubPullRequestNumber': 42,
+        'githubPullRequestNumber': 629,
+        'headRefName': 'mingster/fsd-watchdog-fold',
         'agent': 'claude',
-        'resource': {'worktreeId': 'repo-fixture::/wt/path'},
+        'resource': {
+            'worktreeId': '5c45d9ec-0d77-4c92-859f-bda6af348340::/Users/mtsai/orca/workspaces/dotfiles/fsd-watchdog-fold',
+        },
         'projection': {
+            'host': {'kind': 'local', 'id': 'local'},
+            'provider': {'id': 'claude', 'model': None},
             'outcome': 'in_progress',
             'liveness': {'verdict': 'idle'},
         },
@@ -96,14 +103,15 @@ class Stall(unittest.TestCase):
         self.assertIn('task_stall_fixture', starts[0])
         self.assertIn('--retry-of', starts[0])
         self.assertIn('--worktree', starts[0])
-        self.assertIn('repo-fixture::/wt/path', starts[0])
-        self.assertIn('--terminal', starts[0])
-        self.assertIn('term_w', starts[0])
+        self.assertIn('5c45d9ec-0d77-4c92-859f-bda6af348340::/Users/mtsai/orca/workspaces/dotfiles/fsd-watchdog-fold', starts[0])
+        self.assertIn('--agent', starts[0])
+        self.assertIn('claude', starts[0])
+        self.assertNotIn('--terminal', starts[0])
         edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
-        self.assertTrue(any('42' in c and 'needs-elon' in c for c in edits))
+        self.assertTrue(any('629' in c and 'needs-elon' in c for c in edits))
         log = self.log_path.read_text()
         self.assertIn('stall_restart=disp1', log)
-        self.assertIn('stall_label_pr=disp1:42', log)
+        self.assertIn('stall_label_pr=disp1:629', log)
         self.assertIn('backup_stale', log)
 
     def test_no_worker_stop_without_stall_config(self):
