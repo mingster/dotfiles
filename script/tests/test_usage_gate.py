@@ -926,6 +926,21 @@ class RealReadingPolicy(unittest.TestCase):
             result = gate.run("claude", None, 95)
         self.assertEqual((result["verdict"], result["reading_age_min"]), ("allowed", 0))
 
+    def test_claude_refresh_prefers_keychain_when_the_file_token_expired(self):
+        import subprocess, urllib.request
+        gate = self.gate
+        gate.HOME = self.tmp.name
+        os.makedirs(self.tmp.name + '/.claude')
+        with open(self.tmp.name + '/.claude/.credentials.json', 'w') as f:
+            json.dump({'claudeAiOauth':{'accessToken':'expired', 'expiresAt':1000}}, f)
+        keychain = mock.Mock(stdout=json.dumps({'claudeAiOauth':{'accessToken':'fresh'}}))
+        body = io.StringIO(json.dumps({'seven_day':{'utilization':42, 'resets_at':FUT}}))
+        with mock.patch.object(gate.sys, 'platform', 'darwin'), \
+                mock.patch.object(subprocess, 'run', return_value=keychain), \
+                mock.patch.object(urllib.request, 'urlopen', return_value=body) as fetch:
+            gate.claude_refresh()
+        self.assertEqual(fetch.call_args.args[0].get_header('Authorization'), 'Bearer fresh')
+
     def test_claude_refresh_uses_own_usage_response(self):
         import urllib.request
         gate = self.gate
