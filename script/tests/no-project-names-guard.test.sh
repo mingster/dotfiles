@@ -137,5 +137,24 @@ set -e
 check "multiline pattern hits second term" "$ec" 1
 check "multiline pattern hit mentions FAIL" "$(echo "$out" | grep -c '^FAIL:')" 1
 
+tmp7=$(new_fixture_repo)
+cleanup+=("$tmp7")
+host=xyzzyhost003
+mkdir -p "$tmp7/templates/agent-team/docs/agents"
+printf 'Place the worker on %s first.\n' "$host" > "$tmp7/templates/agent-team/docs/agents/dispatch.md"
+(
+  cd "$tmp7" || exit 1
+  git add templates
+  git commit -qm init
+)
+printf '%s\n' "$host" > "$tmp7/pattern.host"
+set +e
+out=$(run_guard "$tmp7" "$tmp7/pattern.host" 2>&1)
+ec=$?
+set -e
+check "machine name in a template doc fails guard" "$ec" 1
+check "machine name hit names the template doc" "$(echo "$out" | grep -c '^templates/agent-team/docs/agents/dispatch.md$')" 1
+check "machine name hit hides the name" "$(echo "$out" | grep -c "$host")" 0
+
 echo "$fails failed"
 [ "$fails" -eq 0 ]

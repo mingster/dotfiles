@@ -4,9 +4,15 @@
 # Public CLI tests. All project writes and installer effects stay in a temp tree.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-export DOTFILES=$(cd "$here/.." && pwd)
+real_dotfiles=$(cd "$here/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# Same files as this repo, but not a git repo, so team-audit never reads this repo's real role history.
+export DOTFILES="$tmp/dotfiles"
+mkdir "$DOTFILES"
+for entry in "$real_dotfiles"/* "$real_dotfiles"/.[!.]*; do
+  [ "$(basename "$entry")" = .git ] || ln -s "$entry" "$DOTFILES/"
+done
 pass=0; fail=0
 check() {
   if [ "$2" = ok ]; then pass=$((pass+1)); echo "ok   $1";
@@ -38,7 +44,7 @@ out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 
   echo "$out" | grep -q 'team-audit: clean' &&
   echo "$out" | grep -q 'deploy-facts.md'; } && check "new project installs a complete audited team and labels" ok || { check "new project installs a complete audited team and labels" bad; echo "$out" | tail -12; }
 git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid add .
-git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm fixture
+git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm fixture -m "Owner-approved: Owner 2026-11-04 (test fixture)"
 before=$(git -C "$tmp/new project" rev-parse HEAD)
 out=$(bash "$here/agent-team.sh" reset "$tmp/new project" 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -z "$(git -C "$tmp/new project" status --porcelain)" ] &&
@@ -50,7 +56,7 @@ echo 'domain context' > "$tmp/new project/CONTEXT.md"
 echo stale > "$tmp/new project/.claude/hooks/worker-budget.py"
 printf '\nstale generated copy\n' >> "$tmp/new project/.agents/skills/crew/SKILL.md"
 git -C "$tmp/new project" add .
-git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm customization
+git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm customization -m "Owner-approved: Owner 2026-11-04 (test fixture)"
 before=$(git -C "$tmp/new project" rev-parse HEAD)
 out=$(bash "$here/agent-team.sh" reset "$tmp/new project" --apply 2>&1); rc=$?
 { [ "$rc" = 0 ] && echo "$out" | grep -q 'CONFLICT .claude/agents/fullstack-dev.md' &&
@@ -124,13 +130,13 @@ out=$(HOME="$tmp/machine-home" DOTFILES="$tmp/machine" bash "$here/agent-team.sh
 out=$(bash "$here/agent-team.sh" project "$tmp/new project" 2>&1); rc=$?
 { [ "$rc" != 0 ] && echo "$out" | grep -q 'use reset'; } && check "project refuses an existing team" ok || check "project refuses an existing team" bad
 git -C "$tmp/new project" add .
-git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm refreshed
+git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm refreshed -m "Owner-approved: Owner 2026-11-04 (test fixture)"
 out=$(bash "$here/agent-team.sh" all "$tmp/new project" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && echo "$out" | grep -q 'reset preview' && echo "$out" | grep -q 'machine: install-agent-clis.sh' &&
   [ -z "$(git -C "$tmp/new project" status --porcelain)" ]; } && check "all previews machine and automatically resets existing team" ok || check "all previews machine and automatically resets existing team" bad
 printf '\n## Token budget\n\nstale budget\n\n## Product policy\n\nkeep product policy\n' > "$tmp/new project/AGENTS.md"
 git -C "$tmp/new project" add .
-git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm budget
+git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm budget -m "Owner-approved: Owner 2026-11-04 (test fixture)"
 out=$(bash "$here/agent-team.sh" reset "$tmp/new project" --apply 2>&1); rc=$?
 { [ "$rc" = 0 ] && ! grep -q 'stale budget' "$tmp/new project/AGENTS.md" &&
   grep -q 'keep product policy' "$tmp/new project/AGENTS.md"; } && check "reset refreshes the managed budget and keeps other agent instructions" ok || check "reset refreshes the managed budget and keeps other agent instructions" bad
@@ -140,7 +146,7 @@ out=$(HOME="$tmp/claude-home" bash "$here/setup-claude-code.sh" --keep-settings 
 { [ "$rc" = 0 ] && grep -q preserve "$tmp/claude-home/.claude/settings.json"; } && check "Claude setup can retain composed settings" ok || check "Claude setup can retain composed settings" bad
 chmod -x "$tmp/new project/bin/changelog-compile.sh"
 git -C "$tmp/new project" add .
-git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm permissions
+git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm permissions -m "Owner-approved: Owner 2026-11-04 (test fixture)"
 out=$(bash "$here/agent-team.sh" reset "$tmp/new project" --apply 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -x "$tmp/new project/bin/changelog-compile.sh" ]; } && check "reset repairs template executable permissions" ok || check "reset repairs template executable permissions" bad
 mkdir -p "$tmp/machine/.agents/claude" "$tmp/machine/templates/agent-team/.claude" "$tmp/machine-home/.claude"
