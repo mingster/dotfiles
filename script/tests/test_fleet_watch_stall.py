@@ -308,7 +308,7 @@ class WorkerStallPass(unittest.TestCase):
         self.assertTrue(any(c for c in gh_calls if 'pr' in c and 'edit' in c))
 
     def test_fresh_terminal_after_restart_clears_stall_no_label(self):
-        """Replacement shows progress (fresh lastOutputAt): no needs-elon label."""
+        """Replacement shows progress (fresh lastOutputAt): no label/restart; one-restart record kept until TTL."""
         calls = []
 
         def rpc(*a):
@@ -331,6 +331,58 @@ class WorkerStallPass(unittest.TestCase):
         _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 60, [w], {'term_fix': fresh_ms}, rpc, act=fake_act)
         self.assertEqual(gh_calls, [])
         self.assertFalse(any('stall_label_pr' in b for b in bits2))
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        st = state['worker_stall'].get('task_fix')
+        self.assertIsInstance(st, dict)
+        self.assertTrue(st.get('restarted'))
+
+    def test_recovery_then_stall_again_labels_once_no_second_restart(self):
+        """After fresh output, stall again inside record TTL: label once, no second stop/restart."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        w = base_worker(dispatchId='d1')
+        state = {}
+        cfg = {
+            'worker_stall': {
+                'label_repo': 'o/r',
+                'label_cooldown_seconds': 0,
+                'stall_restart_record_ttl_seconds': 24 * 3600,
+            },
+        }
+        # Pass 1: stalled -> one restart
+        fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
+        stops_pass1 = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
+        self.assertEqual(len(stops_pass1), 1)
+        calls.clear()
+        gh_calls.clear()
+        # Pass 2: replacement prints (fresh output) -> no label, no restart; record retained
+        fresh_ms = int((T0 + 120) * 1000)
+        _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 120, [w], {'term_fix': fresh_ms}, rpc, act=fake_act)
+        self.assertEqual(gh_calls, [])
+        self.assertFalse(any('stall_label_pr' in b for b in bits2))
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        calls.clear()
+        gh_calls.clear()
+        # Pass 3: stuck again for 30+ minutes, still inside 24h TTL -> label, no second restart
+        t3 = T0 + 3 * 3600
+        stuck_ms = int((t3 - 2000) * 1000)
+        _, bits3 = fw.worker_stall_pass(cfg, state, t3, [w], {'term_fix': stuck_ms}, rpc, act=fake_act)
+        stops_pass3 = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
+        self.assertEqual(len(stops_pass3), 0)
+        edits = [c for c in gh_calls if len(c) >= 4 and c[0] == 'gh' and c[1] == 'pr' and c[2] == 'edit']
+        self.assertEqual(len(edits), 1)
+        self.assertIn('needs-elon', edits[0])
+        self.assertEqual(len([b for b in bits3 if 'stall_label_pr' in b]), 1)
 
     def test_labeled_worker_next_pass_does_not_label_again(self):
         gh_calls = []

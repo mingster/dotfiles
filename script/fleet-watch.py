@@ -958,7 +958,11 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
 
         is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
         if not is_stalled:
-            # Replacement recovered (fresh output) or agent is live — clear stall state for this task.
+            # Replacement recovered (fresh output) or agent is live.
+            # One-restart records expire by age only (see loop above); keep restarted=True until TTL.
+            if st.get('restarted'):
+                pending.pop(skey, None)
+                continue
             bucket.pop(skey, None)
             pending.pop(skey, None)
             continue
