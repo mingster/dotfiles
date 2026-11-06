@@ -7,6 +7,17 @@ from unittest.mock import patch
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('fleet_watch', root/'fleet-watch.py')
 watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+import atexit, shutil
+_fleet_dir = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, _fleet_dir, True)
+def fleet(caps, **extra):
+    """A fleet-watch config whose fleet-config.json holds these host caps."""
+    path = pathlib.Path(tempfile.mkstemp(dir=_fleet_dir, suffix='.json')[1])
+    path.write_text(json.dumps({'host_caps': caps}))
+    return dict({'fleet_config': str(path)}, **extra)
+
+watch.FLEET_CONFIG_DEFAULT = fleet({})['fleet_config']
+watch.DRAIN_LOG_DEFAULT = str(pathlib.Path(_fleet_dir)/'drain.log')
 class Leads(unittest.TestCase):
     def pass_with(self, state, gone):
         calls = []
@@ -23,7 +34,7 @@ class Leads(unittest.TestCase):
         with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
-        return [' '.join(c) for c in calls if c[:2] == ('terminal', 'send')]
+        return [' '.join(c) for c in calls if c[:2] == ('orchestration', 'send')]
     def test_dead_lead_alerts_once_and_rearms_after_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             state = pathlib.Path(directory)/'state.json'
@@ -35,7 +46,7 @@ class Leads(unittest.TestCase):
             self.assertEqual(self.pass_with(state, set()), [])
             self.assertEqual(len(self.pass_with(state, {'term_lead2'})), 1)
     def test_paged_remote_inventory_and_retries_deduplicate_by_dispatch_and_resource_identity(self):
-        config = {'host_caps': {'fleet-1': 2}}
+        config = fleet({'fleet-1': 2})
         # Duplicated observation across pages and retry sharing worktree resource identity
         workers = [
             {'dispatchId': 'd1', 'dispatchStatus': 'running', 'resource': {'worktreeId': 'wt1'}, 'projection': {'host': {'id': 'fleet-1'}}},
@@ -48,7 +59,7 @@ class Leads(unittest.TestCase):
         self.assertEqual(receipt['occupied'], 2)
 
     def test_missing_or_failed_remote_inventory_never_authorizes_start(self):
-        config = {'host_caps': {'fleet-1': 4}, 'runs': [{'id': 'r1', 'terminal': 't1', 'waiter_pattern': 'w'}]}
+        config = fleet({'fleet-1': 4}, runs=[{'id': 'r1', 'terminal': 't1', 'waiter_pattern': 'w'}])
         def failing_rpc(*args):
             raise RuntimeError('Orca refused inventory')
         with patch.object(watch, 'rpc', side_effect=failing_rpc):
@@ -57,7 +68,7 @@ class Leads(unittest.TestCase):
             self.assertIn('failed', receipt['reason'].lower())
 
     def test_release_unknown_never_authorizes_start(self):
-        config = {'host_caps': {'fleet-1': 4}}
+        config = fleet({'fleet-1': 4})
         workers = [
             {'dispatchId': 'b1', 'dispatchStatus': 'release_unknown', 'projection': {'host': {'id': 'fleet-1'}}},
         ]

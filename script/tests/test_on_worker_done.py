@@ -64,7 +64,7 @@ sys.exit(ug.main())
                 env['HOME'] = tmp
                 env.pop('ON_WORKER_DONE_FLEET_CONFIG', None)
                 if configuration != 'missing':
-                    config = root / '.config/fleet-watch/config.json'
+                    config = root / '.claude/state/fleet-config.json'
                     config.parent.mkdir(parents=True)
                     config.write_text(json.dumps(native.config if configuration == 'default' else {}))
             result = subprocess.run([
