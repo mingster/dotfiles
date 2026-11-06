@@ -1,1 +1,0 @@
-`script-list` in `script/team-audit.sh` now compares `script/` to paths listed in `TEAM_AUDIT_TOOL_LISTS` (project files); when unset the check is skipped with a NOTE. Removed `docs/specs/000-team-script-index.md`.

@@ -1,1 +1,0 @@
-`team-audit.sh` script-list: findings for missing or unreadable `TEAM_AUDIT_TOOL_LISTS` paths; match whole basenames only (not `foo.sh.bak` or `my-foo.sh` for `foo.sh`). `fleet-watch` tests set `FLEET_WATCH_LOG_PATH` via a shared helper; `main()` refuses the default log when `PYTEST_CURRENT_TEST` is set and `FLEET_WATCH_LOG_PATH` is unset.

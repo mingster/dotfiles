@@ -25,6 +25,7 @@ def live_worker():
     return {
         'dispatchId': 'disp1',
         'taskId': 'task_stall_fixture',
+        'runId': 'r1',
         'terminalState': 'retained',
         'dispatchStatus': 'dispatched',
         'agentTerminalHandle': 'term_w',
@@ -101,6 +102,8 @@ class Stall(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertIn('--task', starts[0])
         self.assertIn('task_stall_fixture', starts[0])
+        self.assertIn('--run', starts[0])
+        self.assertIn('r1', starts[0])
         self.assertIn('--retry-of', starts[0])
         self.assertIn('--worktree', starts[0])
         self.assertIn('5c45d9ec-0d77-4c92-859f-bda6af348340::/srv/orca/workspaces/example/fsd-watchdog-fold', starts[0])

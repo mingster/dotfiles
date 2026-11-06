@@ -279,10 +279,58 @@ def read_orca_inventory(config):
     return {'messages': inbox['messages'], 'workers': workers, 'alive': alive, 'leads': leads}
 
 
+def worker_run_id(w):
+    """Orca run id from a worker-list row when present (several JSON shapes)."""
+    w = w or {}
+    for key in ('runId', 'run_id'):
+        v = w.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    proj = w.get('projection') or {}
+    for key in ('runId', 'run_id', 'run'):
+        v = proj.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    resource = w.get('resource') or {}
+    for key in ('runId', 'run_id'):
+        v = resource.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    scope = w.get('scope') or {}
+    v = scope.get('run')
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return ''
+
+
+def default_list_run_id(config):
+    """When exactly one run is configured, use it as fallback for rows with no run id (legacy state)."""
+    runs = config.get('runs') or []
+    if len(runs) == 1:
+        rid = runs[0].get('id', '')
+        return rid.strip() if isinstance(rid, str) else ''
+    return ''
+
+
+def run_id_for_stall_restart(w, persisted=''):
+    """Resolved run id for worker-start: row fields, list pass tag, then persisted fallback."""
+    r = worker_run_id(w)
+    if r:
+        return r
+    if isinstance(w, dict):
+        tag = w.get('_fleet_watch_list_run')
+        if isinstance(tag, str) and tag.strip():
+            return tag.strip()
+    if isinstance(persisted, str) and persisted.strip():
+        return persisted.strip()
+    return ''
+
+
 def fetch_workers(config):
     """Retrieve and deduplicate workers across runs and pagination.
 
     worker-list without --run shows only the caller's Run, so without configured runs read every Run.
+    Rows that omit run id get _fleet_watch_list_run set from the list pass for stall restarts.
     """
     run_ids = [run['id'] for run in config.get('runs', [])]
     if not run_ids:
@@ -290,7 +338,10 @@ def fetch_workers(config):
     workers = []
     for run_id in run_ids:
         for result in list_pages('orchestration', 'worker-list', '--run', run_id, '--include-remote', '--full'):
-            workers.extend(result.get('workers', []))
+            for w in result.get('workers', []):
+                if isinstance(w, dict) and not worker_run_id(w):
+                    w['_fleet_watch_list_run'] = run_id
+                workers.append(w)
     return deduplicate_workers(workers)
 
 
@@ -740,11 +791,12 @@ def worker_branch_name(w):
     return ''
 
 
-def worker_stall_restart_start_args(w, old_dispatch_id):
+def worker_stall_restart_start_args(w, old_dispatch_id, run_id):
     """Orca worker-start args after a stop; None when the row cannot supply a valid start.
 
     After worker-stop the previous terminal is closed; do not pass --terminal. Agent and model
-    come from the stopped dispatch row or persisted stop record.
+    come from the stopped dispatch row or persisted stop record. run_id scopes worker-start to the
+    same Run as worker-list (Orca returns task_not_found without --run when the CLI default Run differs).
     """
     tid = worker_task_id(w)
     if not tid:
@@ -756,7 +808,13 @@ def worker_stall_restart_start_args(w, old_dispatch_id):
     model = worker_model_id(w)
     if not agent:
         return None
-    args = ['orchestration', 'worker-start', '--task', tid, '--retry-of', old_dispatch_id, '--worktree', wt, '--agent', agent]
+    rid = run_id_for_stall_restart(w, run_id)
+    if not rid:
+        return None
+    args = [
+        'orchestration', 'worker-start', '--run', rid, '--task', tid,
+        '--retry-of', old_dispatch_id, '--worktree', wt, '--agent', agent,
+    ]
     if model:
         args.extend(['--model', model])
     return args
@@ -936,7 +994,9 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not row or not old_dispatch:
             pending.pop(skey, None)
             continue
-        start_args = worker_stall_restart_start_args(row, old_dispatch)
+        run_for_start = run_id_for_stall_restart(
+            row, pend.get('stall_restart_run_id') or '') or default_list_run_id(config)
+        start_args = worker_stall_restart_start_args(row, old_dispatch, run_for_start)
         if not start_args:
             log_bits.append('stall_pending_no_args=%s' % old_dispatch)
             continue
@@ -989,7 +1049,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
 
         if not st['restarted']:
-            start_args = worker_stall_restart_start_args(w, did)
+            run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
+            start_args = worker_stall_restart_start_args(w, did, run_for_start)
             if start_args:
                 try:
                     rpc_call('orchestration', 'worker-stop', '--dispatch', did)
@@ -1004,6 +1065,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                         wt_sel = worker_worktree_selector(w)
                         pending[skey] = {
                             'old_dispatch': did,
+                            'stall_restart_run_id': run_for_start,
                             'row_snapshot': {
                                 'taskId': worker_task_id(w),
                                 'resource': {'worktreeId': wt_sel} if wt_sel else {},
@@ -1308,9 +1370,6 @@ def main():
     parser.add_argument('--state', type=Path, required=False)
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
     args = parser.parse_args()
-    if not os.environ.get('FLEET_WATCH_LOG_PATH', '').strip() and os.environ.get('PYTEST_CURRENT_TEST'):
-        print('fleet-watch: set FLEET_WATCH_LOG_PATH under test (would write the real default log)', file=sys.stderr)
-        return 2
     config = json.loads(args.config.read_text())
 
     if args.admit:
