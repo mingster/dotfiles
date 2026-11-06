@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for coordinator-drain.sh: the coordinator's inbox check, minus lead stop escalations and relayed worker_done.
+# Tests for coordinator-drain.sh: the coordinator's inbox check, minus lead stop escalations.
 here=$(cd "$(dirname "$0")" && pwd)
 script="$here/../coordinator-drain.sh"
 pass=0 fail=0
@@ -8,7 +8,7 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkdir "$tmp/bin" "$tmp/owners"
+mkdir "$tmp/bin"
 cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$ORCA_LOG"
@@ -16,7 +16,7 @@ cat "$FAKE_CHECK"
 exit "${FAKE_RC:-0}"
 EOS
 chmod +x "$tmp/bin/orca"
-export ORCA_LOG="$tmp/orca.log" ORCA_CLI_COMMAND="$tmp/bin/orca" WORKER_DONE_OWNER_DIR="$tmp/owners" FAKE_CHECK="$tmp/check.json"
+export ORCA_LOG="$tmp/orca.log" ORCA_CLI_COMMAND="$tmp/bin/orca" FAKE_CHECK="$tmp/check.json"
 export FLEET_WATCH_CONFIG="$tmp/config.json" COORDINATOR_DRAIN_STATE="$tmp/drain-state.json"
 echo '{"runs":[],"leads":[{"name":"L","terminal":"term_lead"}]}' > "$FLEET_WATCH_CONFIG"
 
@@ -30,14 +30,12 @@ messages = [
     msg('lead_stop', 'escalation', stop, {'dispatchId': 'ctx_lead', 'handle': 'term_lead'}, 'term_lead'),
     msg('worker_stop', 'escalation', stop, {'dispatchId': 'ctx_w', 'handle': 'term_worker'}, 'term_worker'),
     msg('other_esc', 'escalation', 'Blocked: x', {'dispatchId': 'ctx_lead', 'handle': 'term_lead'}, 'term_lead'),
-    msg('relayed_done', 'worker_done', 'done', {'dispatchId': 'ctx_r', 'taskId': 't'}),
     msg('plain_done', 'worker_done', 'done', {'dispatchId': 'ctx_p', 'taskId': 't'}),
     msg('odd_stop', 'escalation', stop, None, 'term_x'),
     msg('lead_stop_no_payload', 'escalation', stop, None, 'term_lead'),
 ]
 json.dump({'ok': True, 'result': {'messages': messages, 'extra': 7}}, open(sys.argv[1], 'w'))
 PY
-: > "$tmp/owners/ctx_r.relayed"
 run() { : > "$ORCA_LOG"; bash "$script" "$@" >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
 ids() { python3 -c "import json,sys; print(' '.join(m['id'] for m in json.load(open(sys.argv[1]))['result']['messages']))" "$tmp/out"; }
 
@@ -47,7 +45,7 @@ grep -q -- "orchestration check --run run_1 --wait" "$ORCA_LOG" && ok || bad "ar
 grep -q -- "--json" "$ORCA_LOG" && ok || bad "json is requested"
 [ "$(ids)" = "worker_stop other_esc plain_done odd_stop" ] && ok || bad "kept messages: $(ids)"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d['ok'] is True and d['result']['extra']==7 else 1)" "$tmp/out" && ok || bad "other fields keep their shape"
-grep -q "dropped 3 (lead stops 2, relayed worker_done 1)" "$tmp/err" && ok || bad "drop count is logged: $(cat "$tmp/err")"
+grep -q "dropped 2 (lead stops 2)" "$tmp/err" && ok || bad "drop count is logged: $(cat "$tmp/err")"
 
 # the same messages in the bare shape
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); json.dump({'messages': d['result']['messages']}, open(sys.argv[1],'w'))" "$FAKE_CHECK"
@@ -99,6 +97,28 @@ FAKE_RC=3 run --run run_1
 echo 'not json' > "$FAKE_CHECK"
 run --run run_1
 [ "$(cat "$tmp/out")" = "not json" ] && ok || bad "non JSON output is untouched"
+
+# a real "Worker stopped without reporting" message from the orca inbox history (task title shortened)
+cat > "$tmp/real-stop.json" <<'EOF2'
+{"ok": true, "result": {"messages": [{"id": "msg_stop_99abc148847c07b338443838", "type": "escalation", "from": "term_bbf7aacf-877a-4e75-a645-48930ae14b15", "to": "run:run_e7d1ee648485", "subject": "Worker stopped without reporting", "priority": "high", "handled": true, "body": "Worker ended its turn without sending worker_done.", "payload": {"taskId": "task_aabff3336d2a", "dispatchId": "ctx_0ce3068d6d5d", "handle": "term_bbf7aacf-877a-4e75-a645-48930ae14b15"}}]}}
+EOF2
+
+# default path: FLEET_WATCH_CONFIG unset reads $HOME/.config/fleet-watch/config.json. A config there with no leads key
+# (the coordinator's own file) must say so on stderr instead of letting every lead stop through quietly
+# HOME changes below, and a version manager's python3 shim needs the real HOME, so put the real interpreter first on PATH
+mkdir -p "$tmp/home/.config/fleet-watch"
+ln -s "$(python3 -c 'import sys; print(sys.executable)')" "$tmp/bin/python3"
+echo '{"local_host":"h","host_caps":{}}' > "$tmp/home/.config/fleet-watch/config.json"
+rm -f "$FAKE_CHECK".* "$COORDINATOR_DRAIN_STATE"
+cp "$tmp/real-stop.json" "$FAKE_CHECK"
+env -u FLEET_WATCH_CONFIG HOME="$tmp/home" PATH="$tmp/bin:$PATH" bash -c ': > "$ORCA_LOG"; bash "$0" --run run_1 >"$1/out" 2>"$1/err"' "$script" "$tmp"
+grep -q "no leads" "$tmp/err" && ok || bad "default config without a leads key says so on stderr: $(cat "$tmp/err")"
+grep -q "$tmp/home/.config/fleet-watch/config.json" "$tmp/err" && ok || bad "the warning names the config it read: $(cat "$tmp/err")"
+[ "$(ids)" = "msg_stop_99abc148847c07b338443838" ] && ok || bad "without leads the stop still passes: $(ids)"
+echo '{"leads":[{"name":"L","terminal":"term_bbf7aacf-877a-4e75-a645-48930ae14b15"}]}' > "$tmp/home/.config/fleet-watch/config.json"
+env -u FLEET_WATCH_CONFIG HOME="$tmp/home" PATH="$tmp/bin:$PATH" bash -c ': > "$ORCA_LOG"; bash "$0" --run run_1 >"$1/out" 2>"$1/err"' "$script" "$tmp"
+[ "$(ids)" = "" ] && ok || bad "default config with leads drops the lead stop: $(ids)"
+grep -q "no leads" "$tmp/err" && bad "no warning when the config has leads" || ok
 
 echo "coordinator-drain: $pass passed, $fail failed"
 [ "$fail" = 0 ]
