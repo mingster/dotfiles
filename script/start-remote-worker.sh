@@ -38,7 +38,10 @@ case "$worktree" in
   current|active|new-child) echo 'start-remote-worker: need an exact remote worktree or new-top-level' >&2; exit 2 ;;
   *) terminal_args+=(--worktree "$worktree") ;;
 esac
-result=$("$orca" terminal create "${terminal_args[@]}" --command "if $probe; then exit 0; else exit 127; fi")
+# The target host reads its own dotfiles, so bring them and the preset link up to date first.
+# A failed update must not stop a worker: the CLI probe alone decides.
+refresh='git -C "$HOME/dotfiles" pull -q --ff-only origin main; [ ! -f "$HOME/dotfiles/script/setup-orca.sh" ] || bash "$HOME/dotfiles/script/setup-orca.sh" >/dev/null;'
+result=$("$orca" terminal create "${terminal_args[@]}" --command "if $probe; then $refresh exit 0; else exit 127; fi")
 terminal=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["terminal"]["handle"])')
 result=$("$orca" terminal wait --environment "$environment" --terminal "$terminal" --for exit --timeout-ms 60000 --json)
 if ! printf '%s' "$result" | python3 -c '
