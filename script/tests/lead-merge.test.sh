@@ -61,7 +61,11 @@ done
 if [ "$run" = run_b ]; then read -ra ids <<<"${FAKE_DISPATCHES_B:-}"; else read -ra ids <<<"$FAKE_DISPATCHES"; fi
 w=""; for ((i=start; i<start+2 && i<${#ids[@]}; i++)); do w="$w${w:+,}{\"dispatchId\":\"${ids[i]}\"}"; done
 next=null; [ $((start+2)) -ge ${#ids[@]} ] || next="\"$((start+2))\""
-printf '{"ok":true,"result":{"workers":[%s],"page":{"nextCursor":%s}}}\n' "$w" "$next"
+if [ "${FAKE_PAGE_SHAPE:-page}" = top ]; then
+  printf '{"ok":true,"result":{"workers":[%s],"nextCursor":%s}}\n' "$w" "$next"
+else
+  printf '{"ok":true,"result":{"workers":[%s],"page":{"nextCursor":%s}}}\n' "$w" "$next"
+fi
 EOS
 chmod +x "$tmp/bin/"*
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
@@ -80,7 +84,7 @@ setup() {
   comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
   checks="Checks: PASS head=$SHA"; countersign=""; TRUNK_FILES=""
   export TRUNK_FILES
-  export FAKE_DISPATCHES="ctx_a ctx_b ctx_author ctx_other ctx_same ctx_verify"; unset FAKE_ORCA_FAIL FAKE_DISPATCHES_B
+  export FAKE_DISPATCHES="ctx_a ctx_b ctx_author ctx_other ctx_same ctx_verify"; unset FAKE_ORCA_FAIL FAKE_DISPATCHES_B FAKE_PAGE_SHAPE
   export OLD
   state=OPEN base=main headsha=$SHA mergeable=MERGEABLE branch=feature
   FINAL_JSON='{"state":"MERGED","mergeCommit":{"oid":"dddddddddddddddddddddddddddddddddddddddd"},"url":"https://github.com/o/r/pull/7"}'
@@ -303,6 +307,9 @@ check "T22 a PASS older than the FAIL it retires does not count" 1 'missing pass
 setup; PR_DIFF=$'+test.todo("later")'; COMMENTS_JSON=$(vc "$(jq -nc --arg p "$VP" --arg c "Countersign: Elon head=$SHA reason=supersedes https://x.test/c#fail" '[{body:$p,url:"https://x.test/c#pass"},{body:$c}]')")
 check "T22 a supersedes Countersign is not the gate Countersign" 1 'Countersign'
 setup; FAKE_DISPATCHES="ctx_a ctx_b ctx_c ctx_d ctx_author ctx_verify"; check "dispatch ids found on a later page" 0 '^MERGED' 1
+setup; FAKE_DISPATCHES="ctx_a ctx_b ctx_c ctx_d ctx_author ctx_verify"; export FAKE_PAGE_SHAPE=top; check "dispatch ids found on a later page with a top level nextCursor" 0 '^MERGED' 1
+setup; FAKE_DISPATCHES="ctx_a ctx_b ctx_c ctx_d ctx_author ctx_other"; export FAKE_PAGE_SHAPE=top; check "verifier on no page refused with a top level nextCursor" 1 'ctx_verify is not a known dispatch'
+setup; FAKE_DISPATCHES=$(printf 'ctx_%s ' $(seq 1 202))"ctx_author ctx_verify"; export FAKE_PAGE_SHAPE=top; check "more pages than the limit still stops with a top level nextCursor" 1 'worker-list has too many pages'
 setup; PR_DIFF=$'+  it("test.todos", () => {})'; check "test.todos is not a skip trigger" 0 '^MERGED' 1
 setup; PR_DIFF=$'+test.todo("later")'; check "test.todo needs countersign" 1 'Countersign'
 setup; PR_DIFF=$'+System.exit(1);'; check "System.exit is not a skip trigger" 0 '^MERGED' 1
