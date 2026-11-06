@@ -237,7 +237,7 @@ root=os.environ['NATIVE_FIXTURE_ROOT']; data=json.load(open(root+'/native.json')
 host=a[a.index('--environment')+1].removesuffix('-saved') if '--environment' in a else 'local'
 reply=dict(data[host]['worktrees']); limit=int(a[a.index('--limit')+1])
 with open(root+'/limits','a') as f: f.write(str(limit)+'\\n')
-reply['truncated']=len(reply['worktrees'])>limit; reply['worktrees']=reply['worktrees'][:limit]
+reply['truncated']=len(reply['worktrees'])>limit or reply.pop('stillTruncated',False); reply['worktrees']=reply['worktrees'][:limit]
 print(json.dumps({'ok':True,'result':reply}))
 ''' % str(base))
 
@@ -248,11 +248,22 @@ print(json.dumps({'ok':True,'result':reply}))
         self.assertEqual(limits[0], '100')
         self.assertIn('180', limits)
 
-    def test_worktree_inventory_still_truncated_after_paging_refuses(self):
+    def test_worktree_inventory_still_truncated_after_reread_refuses(self):
+        self.limited_worktree_orca(180)
+        for host in ('alpha', 'beta'):
+            self.f.data[host]['worktrees']['stillTruncated'] = True
+        self.refuse('worktree inventory: incomplete coverage')
+        limits = (Path(self.tmp.name)/'limits').read_text().split()
+        self.assertIn('100', limits)
+        self.assertIn('180', limits)
+
+    def test_worktree_inventory_total_above_cap_is_not_reread(self):
         self.limited_worktree_orca(180)
         for host in ('alpha', 'beta'):
             self.f.data[host]['worktrees']['totalCount'] = 10**6
         self.refuse('worktree inventory: incomplete coverage')
+        limits = (Path(self.tmp.name)/'limits').read_text().split()
+        self.assertEqual(set(limits), {'100'})
 
     def test_native_pagination_counts_later_page(self):
         self.f.occupy('alpha', 1)
