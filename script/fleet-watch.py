@@ -239,7 +239,16 @@ def read_orca_inventory(config):
     inbox = rpc('orchestration', 'inbox', '--limit', '5000')
     if not isinstance(inbox, dict) or 'messages' not in inbox or not isinstance(inbox['messages'], list):
         raise OrcaReadError('malformed inbox reply')
+    for m in inbox['messages']:
+        if not isinstance(m, dict):
+            raise OrcaReadError('malformed inbox message element')
     workers = fetch_workers(config)
+    for w in workers:
+        if not isinstance(w, dict):
+            raise OrcaReadError('malformed worker element')
+        did = w.get('dispatchId')
+        if did is None or (isinstance(did, str) and not did.strip()):
+            raise OrcaReadError('worker missing dispatchId')
     alive = {}
     for run in config['runs']:
         try:
@@ -799,11 +808,11 @@ def main():
     notices = []
     try:
         inv = read_orca_inventory(config)
-        state.pop('orca_inventory_skip_latched', None)
         notices = alerts(
             config, state, time.time(),
             inv['messages'], inv['workers'], inv['alive'], inv['leads'],
         )
+        state.pop('orca_inventory_skip_latched', None)
     except Exception as error:
         print('fleet-watch: Orca inventory unavailable: %s' % (repr(error),), file=sys.stderr)
         if not state.get('orca_inventory_skip_latched'):
