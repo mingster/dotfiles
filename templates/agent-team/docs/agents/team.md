@@ -19,8 +19,8 @@ GitHub issues and PRs are the state of record. Design: {{PROJECT_NAME}} issue 73
 
 - **Plan:** the owner approves only new features, new UI pages, prices and money rules. Elon decides the rest and records it.
 - **Design:** intent, spec and tickets are one document with one approval.
-- **Test:** Checks start on push. A fresh agent reviews each PR after Checks pass, with a stronger model for money, auth, schema and hooks. At most 2 reworks, then the `needs-elon` label. Full regression runs once a day; fix only what failed.
-- **Deploy:** production goes every two days on a one line summary and the owner's go. The page by page staging review is weekly.
+- **Test:** Checks start on push. A fresh agent reviews each PR after Checks pass, with a stronger model for money, auth, schema and hooks. At most 2 reworks, then the `needs-elon` label. Fix only what failed.
+- **Deploy:** staging deploys daily at 19:00 Taiwan time and is reviewed right after (full regression, smoke, changed pages). A successful review leads to a one line summary and the owner's go the same day. The page by page review is weekly.
 - **Maintain:** reviews file only release blockers; the rest goes on a weekly list. Search for duplicates before filing. Customer reports are always filed. Retro on about one session in five, failures first.
 - **Not live yet:** merge on review and start label builds are stopped by the owner (2026-11-06), so briefs, old QA and `lead-merge.sh` stay. `heavy-gate`, `usage-gate`, `fleet-watch`, load thresholds and lane caps stay.
 
