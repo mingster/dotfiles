@@ -47,7 +47,7 @@ def payload(message):
 kept, lead_stops, dropped_leads = [], 0, []
 for message in messages:
     body = payload(message)
-    lead = body.get("handle") or message.get("from_handle")
+    lead = body.get("handle") or message.get("from_handle") or message.get("from")
     if message.get("subject") == "Worker stopped without reporting" and lead in leads:
         lead_stops += 1
         dropped_leads.append(lead)
