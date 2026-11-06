@@ -12,7 +12,9 @@ routing enforcement and is logged, but never bypasses the weekly ceiling gate.
 
 Lead context limit: for a session whose git worktree is named lead-*, the context size is the latest usage
 entry at the end of the transcript. It warns at 150k and denies at 170k, except lead-handoff.sh, lead-merge.sh
-and orca commands. Only a lead is limited. An unreadable transcript warns on stderr and never denies.
+and orca commands, each optionally after a cd. A command with a backtick or a $( ) other than a plain
+`cat` or `git rev-parse` is denied. A session is a lead if its working folder or its start folder
+($CLAUDE_PROJECT_DIR) is in a lead-* worktree, so a cd cannot end the limit. Only a lead is limited. An unreadable transcript warns on stderr and never denies.
 
 Passes with a warning on stderr: an agent the gate cannot read
 (unknown providers), a worker-start without --agent, gate exit 4 (no reading) and
@@ -30,7 +32,7 @@ VAR = re.compile(r"^\$\{?(\w+)\}?$")
 LEAD_WARN, LEAD_DENY = 150_000, 170_000
 LEAD_ALLOWED = {"lead-handoff.sh", "lead-merge.sh", "orca"}
 SUBSHELL = re.compile(r"\$\(([^()]*)\)")
-SAFE_SUBSHELL = re.compile(r"^\s*(cat\s+(<<\s*$|[\w./~-]+\s*$)|git\s+rev-parse(\s+[\w./~^@-]+)*\s*$)")
+SAFE_SUBSHELL = re.compile(r"^\s*(cat[ \t]+(<<\s*$|[\w./~-]+\s*$)|git[ \t]+rev-parse([ \t]+[\w./~^@-]+)*\s*$)")
 
 
 def starts(cmd):
@@ -174,8 +176,7 @@ def context_tokens(path):
             chunk *= 4
 
 
-def is_lead(cwd):
-    """A lead runs in a worktree whose top level folder is named lead-*."""
+def in_lead_folder(cwd):
     if not cwd:
         return False
     try:
@@ -184,6 +185,14 @@ def is_lead(cwd):
         return bool(top) and os.path.basename(top).startswith("lead-")
     except Exception:
         return False
+
+
+def is_lead(cwd):
+    """A lead runs in a worktree whose top level folder is named lead-*.
+
+    The hook cwd follows a `cd`, so it can leave that worktree. $CLAUDE_PROJECT_DIR stays at the
+    folder the session started in, so either one in a lead-* worktree makes the session a lead."""
+    return in_lead_folder(cwd) or in_lead_folder(os.environ.get("CLAUDE_PROJECT_DIR"))
 
 
 def only_allowed(cmd):
@@ -217,7 +226,7 @@ def only_allowed(cmd):
         if len(words) > 1 and words[0] in ("bash", "sh"):
             words = words[1:]
         if len(words) == 2 and words[0] == "cd":
-            continue   # moving the shell is harmless; the rest of the line is still checked
+            continue   # a cd is harmless: the lead check also reads $CLAUDE_PROJECT_DIR, which a cd cannot change
         if words and os.path.basename(words[0]) not in LEAD_ALLOWED:
             return False
     return True
@@ -236,7 +245,7 @@ def lead_limit(data, cmd):
         return None, None
     if tokens < LEAD_WARN or not is_lead(data.get("cwd") or ""):
         return None, None
-    handoff = ("Hand off now: run script/lead-handoff.sh --branch <branch> --head <sha> --remainder <what is left> "
+    handoff = ("Hand off now: run ~/dotfiles/script/lead-handoff.sh --branch <branch> --head <sha> --remainder <what is left> "
                "--dispatch-ids <ids>, then end this session. The head may be a literal sha or $(git rev-parse HEAD).")
     if tokens >= LEAD_DENY and not only_allowed(cmd):
         return (f"Lead context is {tokens // 1000}k tokens, over the {LEAD_DENY // 1000}k limit. {handoff} "

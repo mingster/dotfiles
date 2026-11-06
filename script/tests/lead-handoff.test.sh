@@ -55,4 +55,24 @@ run --branch dir-branch --head h3 --remainder r3 --dispatch-ids d3 || fail 'dire
 grep -qF dir-branch "$LEAD_HANDOFFS_FILE/handoffs.log" || fail 'entry not written inside the directory'
 tests=$((tests + 1))
 
+# The default path (no LEAD_HANDOFFS_FILE) is created as a directory on a fresh home, so it never
+# blocks the handoff folder; running from another folder still works.
+unset LEAD_HANDOFFS_FILE
+fresh=$(mktemp -d)
+(cd "$fresh" && HOME=$fresh "$root/script/lead-handoff.sh" --branch def-branch --head h4 --remainder r4 --dispatch-ids d4 2>/dev/null) \
+  || fail 'default path on a fresh home exited nonzero'
+[[ -d $fresh/.claude/state/lead-handoffs ]] || fail 'default path was not created as a directory'
+grep -qF def-branch "$fresh/.claude/state/lead-handoffs/handoffs.log" || fail 'default entry not in the directory'
+(cd "$fresh" && HOME=$fresh "$root/script/lead-handoff.sh" --branch def-two --head h5 --remainder r5 --dispatch-ids d5 2>/dev/null) \
+  || fail 'second default entry exited nonzero'
+[[ $(wc -l <"$fresh/.claude/state/lead-handoffs/handoffs.log") -eq 2 ]] || fail 'default directory did not append'
+rm -rf "$fresh"
+tests=$((tests + 1))
+
+# LEAD_HANDOFFS_FILE keeps today's behaviour: a missing path stays a plain file.
+export LEAD_HANDOFFS_FILE="$tmp/plain-file"
+run --branch file-branch --head h6 --remainder r6 --dispatch-ids d6 || fail 'explicit file path exited nonzero'
+[[ -f $LEAD_HANDOFFS_FILE ]] || fail 'explicit path is not a plain file'
+tests=$((tests + 1))
+
 printf 'PASS: %s tests\n' "$tests"

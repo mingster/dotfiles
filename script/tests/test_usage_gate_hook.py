@@ -345,12 +345,15 @@ class LeadContext(unittest.TestCase):
             f.write(json.dumps(usage(tokens)) + "\n" + extra)
         return path
 
-    def run_hook(self, command, tokens=None, where="lead", transcript=None):
+    def run_hook(self, command, tokens=None, where="lead", transcript=None, project=None):
         path = transcript or (self.transcript(tokens) if tokens is not None else None)
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.dirs.get(where, self.plain)}
         if path:
             payload["transcript_path"] = path
         env = dict(os.environ, HOME=self.tmp.name, USAGE_GATE_STATE=self.tmp.name + "/state", USAGE_GATE_ORCA="false")
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        if project:
+            env["CLAUDE_PROJECT_DIR"] = self.dirs.get(project, project)
         r = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0)
         out = json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else {}
@@ -368,7 +371,7 @@ class LeadContext(unittest.TestCase):
 
     def test_lead_at_171k_plain_command_denied_with_handoff_command(self):
         deny, _, _ = self.run_hook("git status", 171000)
-        self.assertIn("script/lead-handoff.sh --branch", deny)
+        self.assertIn("lead-handoff.sh --branch", deny)
         self.assertIn("--dispatch-ids", deny)
 
     def test_lead_at_171k_allow_list(self):
@@ -410,6 +413,38 @@ class LeadContext(unittest.TestCase):
                 deny, _, _ = self.run_hook(command, 171000)
                 self.assertIsNotNone(deny)
 
+    def test_lead_at_171k_newline_in_a_substitution_stays_denied(self):
+        for command in ('orca send "$(git rev-parse HEAD\ntouch marker)"', 'orca send "$(git rev-parse HEAD\ngit push origin main)"',
+                        'orca send "$(cat\ntouch)"', 'orca send "$(cat\nmarker)"'):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNotNone(deny)
+
+    def test_lead_at_171k_bash_or_sh_cd_is_allowed(self):
+        for command in ("bash cd x", "sh cd x", "bash cd x && orca orchestration check", "cd x && bash script/lead-merge.sh --pr 1"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNone(deny)
+
+    def test_a_cd_into_a_nested_repo_does_not_end_lead_detection(self):
+        nested = os.path.join(self.dirs["lead"], "inner")
+        os.makedirs(nested)
+        subprocess.run(["git", "init", "-q", nested], check=True)
+        self.dirs["inner"] = nested
+        deny, _, _ = self.run_hook("git push", 171000, where="inner", project="lead")
+        self.assertIsNotNone(deny)
+        deny, _, _ = self.run_hook("git push", 171000, where="inner")   # no project dir: the cwd alone is not a lead
+        self.assertIsNone(deny)
+        deny, _, _ = self.run_hook("git push", 171000, where="build", project="build")   # neither is a lead
+        self.assertIsNone(deny)
+        deny, _, _ = self.run_hook("git push", 171000, where="plain", project="lead")   # cwd outside any repo
+        self.assertIsNotNone(deny)
+
+    def test_deny_text_uses_a_path_that_works_from_any_folder(self):
+        deny, _, _ = self.run_hook("git status", 171000)
+        self.assertIn("~/dotfiles/script/lead-handoff.sh --branch", deny)
+        self.assertNotIn(" script/lead-handoff.sh", deny.replace("~/dotfiles/script/lead-handoff.sh", ""))
+
     def test_lead_at_171k_cd_then_allowed_command(self):
         for command in ("cd /some/dir && script/lead-merge.sh --repo o/r --pr 3 --head abc",
                         "cd ~/work && orca orchestration check --json"):
@@ -429,8 +464,9 @@ class LeadContext(unittest.TestCase):
         self.assertIn("git rev-parse", deny)
 
     def test_a_lead_limit_error_never_skips_the_worker_start_gate(self):
-        source = open(HOOK).read().replace("def lead_limit(data, cmd):\n",
-                                           "def lead_limit(data, cmd):\n    raise RuntimeError('boom')\n")
+        original = open(HOOK).read()
+        source = original.replace("def lead_limit(data, cmd):\n", "def lead_limit(data, cmd):\n    raise RuntimeError('boom')\n")
+        self.assertNotEqual(source, original)   # the replace must really patch the hook
         patched = os.path.join(self.tmp.name, "patched-hook.py")
         open(patched, "w").write(source)
         payload = {"tool_name": "Bash", "cwd": self.dirs["lead"],
@@ -438,6 +474,24 @@ class LeadContext(unittest.TestCase):
         r = subprocess.run([sys.executable, patched], input=json.dumps(payload), capture_output=True, text=True,
                            env=dict(os.environ, HOME=self.tmp.name, USAGE_GATE_STATE=self.tmp.name + "/state"))
         self.assertIn("empty --spec", json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_a_lead_limit_error_never_skips_a_gate_exit_3_denial(self):
+        stub = os.path.join(self.tmp.name, "gate-stub.py")
+        open(stub, "w").write("import json, sys\nprint(json.dumps({'weekly_used': 99, 'ceiling': 95}))\nsys.exit(3)\n")
+        original = open(HOOK).read()
+        source = original.replace("def lead_limit(data, cmd):\n", "def lead_limit(data, cmd):\n    raise RuntimeError('boom')\n")
+        self.assertNotEqual(source, original)   # the replace must really patch the hook
+        gate_line = next(line for line in source.splitlines() if line.startswith("GATE = "))
+        patched_source = source.replace(gate_line, f"GATE = {stub!r}")
+        self.assertNotEqual(patched_source, source)
+        patched = os.path.join(self.tmp.name, "patched-hook.py")
+        open(patched, "w").write(patched_source)
+        payload = {"tool_name": "Bash", "cwd": self.dirs["lead"],
+                   "tool_input": {"command": "orca orchestration worker-start --spec x --agent claude"}}
+        r = subprocess.run([sys.executable, patched], input=json.dumps(payload), capture_output=True, text=True,
+                           env=dict(os.environ, HOME=self.tmp.name, USAGE_GATE_STATE=self.tmp.name + "/state",
+                                    USAGE_GATE_PRESETS=self.tmp.name + "/none.json"))
+        self.assertIn("Usage gate blocked claude", json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_non_leads_at_171k_pass(self):
         for where in ("build", "nested", "plain"):
