@@ -5,7 +5,7 @@ host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
 pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,
 optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo};
 --state FILE persists missing-waiter timers and alerts.
-Counts every active Dispatch, including descendants. May restart a stalled worker once per dispatch.
+Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
 """
 import argparse
 import calendar
@@ -484,6 +484,8 @@ def _normalize_terminal_time_ms(value):
         v = float(value)
     except (TypeError, ValueError):
         return None
+    if v == 0:
+        return None
     if v > 1e12:  # milliseconds
         return v / 1000.0
     if v > 1e10:  # unlikely stray unit
@@ -505,6 +507,116 @@ def worker_row_is_live(w):
     return (w.get('state') not in ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
             and w.get('stage') != 'released' and w.get('terminalState') != 'released'
             and w.get('liveness') != 'exited')
+
+
+def worker_liveness_verdict(w):
+    """Orca liveness.verdict when present ('live' means active tool use — not an output stall)."""
+    w = w or {}
+    proj = w.get('projection') or {}
+    liv = proj.get('liveness')
+    if isinstance(liv, dict):
+        return liv.get('verdict') or liv.get('state')
+    if liv:
+        return liv
+    return w.get('liveness') if isinstance(w.get('liveness'), str) else None
+
+
+def worker_execution_host_id(w):
+    w = w or {}
+    proj = w.get('projection') or {}
+    return (proj.get('host') or {}).get('id', 'local')
+
+
+def worker_task_id(w):
+    w = w or {}
+    tid = w.get('taskId')
+    if tid:
+        return tid
+    proj = w.get('projection') or {}
+    return proj.get('taskId') or ''
+
+
+def worker_agent_id(w):
+    """Agent id for worker-start, when the row carries one."""
+    w = w or {}
+    for key in ('agent', 'agentId'):
+        a = w.get(key)
+        if isinstance(a, str) and a:
+            return a
+    proj = w.get('projection') or {}
+    for key in ('agent', 'agentId'):
+        a = proj.get(key)
+        if isinstance(a, str) and a:
+            return a
+    return ''
+
+
+def worker_worktree_selector(w):
+    """Selector string for --worktree on worker-start (required when using --terminal)."""
+    w = w or {}
+    resource = w.get('resource') or {}
+    ws = w.get('workspace')
+    if isinstance(ws, str) and ws:
+        return ws
+    wid = (resource.get('worktreeId') or w.get('worktreeId')
+           or (w.get('projection') or {}).get('workspace', {}).get('id'))
+    if isinstance(wid, str) and wid:
+        return wid
+    return ''
+
+
+def worker_branch_name(w):
+    """Git branch for gh pr list --head when the row has no PR number."""
+    w = w or {}
+    for key in ('headRefName', 'branch', 'headBranch'):
+        b = w.get(key)
+        if isinstance(b, str) and b:
+            return b
+    proj = w.get('projection') or {}
+    for key in ('headRefName', 'branch', 'headBranch'):
+        b = proj.get(key)
+        if isinstance(b, str) and b:
+            return b
+    return ''
+
+
+def worker_stall_restart_start_args(w, dispatch_id):
+    """Orca worker-start args after a stop; None when the row cannot supply a valid start."""
+    tid = worker_task_id(w)
+    if not tid:
+        return None
+    wt = worker_worktree_selector(w)
+    if not wt:
+        return None
+    term = worker_terminal_handle(w)
+    agent = worker_agent_id(w)
+    args = ['orchestration', 'worker-start', '--task', tid, '--retry-of', dispatch_id, '--worktree', wt]
+    if term:
+        args.extend(['--terminal', term])
+    elif agent:
+        args.extend(['--agent', agent])
+    else:
+        return None
+    return args
+
+
+def resolve_pr_number_for_worker(w, label_repo, act):
+    """PR number from the row, or gh pr list --head from the branch."""
+    n = worker_pr_number(w)
+    if n:
+        return n
+    branch = worker_branch_name(w)
+    if not branch or not label_repo:
+        return None
+    command = ['gh', 'pr', 'list', '--repo', label_repo, '--head', branch, '--state', 'all', '--limit', '1', '--json', 'number']
+    try:
+        out = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        data = json.loads(out.stdout)
+        if isinstance(data, list) and data and isinstance(data[0].get('number'), int):
+            return data[0]['number']
+    except (subprocess.SubprocessError, OSError, ValueError, TypeError, KeyError):
+        pass
+    return None
 
 
 def worker_terminal_handle(w):
@@ -541,14 +653,17 @@ def terminal_last_output_map(result):
     return out
 
 
-def restart_stalled_dispatch(dispatch_id, rpc_call):
-    """Stop once then start with --retry-of."""
-    rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch_id)
-    rpc_call('orchestration', 'worker-start', '--retry-of', dispatch_id)
+def stall_state_key(w):
+    """Persist one restart per task; fall back to dispatch when task id is missing."""
+    tid = worker_task_id(w)
+    if tid:
+        return tid
+    did = w.get('dispatchId')
+    return 'dispatch:%s' % did if did else ''
 
 
-def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None):
-    """Detect no terminal output for STALL_IDLE_LIMIT; restart once; then label needs-elon."""
+def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True):
+    """Detect no terminal output for STALL_IDLE_LIMIT; restart once per task; then label needs-elon."""
     if act is None:
         act = run_gh
     cfg = config.get('worker_stall') or {}
@@ -559,51 +674,81 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     cooldown = int(cfg.get('label_cooldown_seconds', 120))
     notices = []
     log_bits = []
+    if not terminal_list_ok:
+        log_bits.append('terminal_list_failed')
+        return notices, log_bits
+
     bucket = state.setdefault('worker_stall', {})
     issue_keys = state.setdefault('stall_issue_keys', [])
-    active = {w.get('dispatchId') for w in workers if w.get('dispatchId')}
-    for stale_id in list(bucket.keys()):
-        if stale_id not in active:
-            bucket.pop(stale_id, None)
+    active_keys = {stall_state_key(w) for w in workers if stall_state_key(w)}
+    for stale_key in list(bucket.keys()):
+        if stale_key not in active_keys:
+            bucket.pop(stale_key, None)
+
+    local_handles = set(term_times.keys())
 
     for w in workers:
         did = w.get('dispatchId')
-        if not did or not worker_row_is_live(w):
-            bucket.pop(did, None)
+        skey = stall_state_key(w)
+        if not did or not skey or not worker_row_is_live(w):
+            bucket.pop(skey, None)
             continue
+
+        host_id = worker_execution_host_id(w)
         term = worker_terminal_handle(w)
         if not term:
             continue
+
+        if host_id != 'local':
+            last_raw = term_times.get(term)
+            last_s = _normalize_terminal_time_ms(last_raw)
+            if last_s is None:
+                continue
+            idle = now - last_s
+            if idle >= STALL_IDLE_LIMIT and worker_liveness_verdict(w) != 'live':
+                log_bits.append('remote_stall_unknown=%s' % did)
+            continue
+
+        if term not in local_handles:
+            continue
+
         last_raw = term_times.get(term)
         last_s = _normalize_terminal_time_ms(last_raw)
         if last_s is None:
             continue
+        if worker_liveness_verdict(w) == 'live':
+            bucket.pop(skey, None)
+            continue
         idle = now - last_s
         if idle < STALL_IDLE_LIMIT:
-            bucket.pop(did, None)
+            bucket.pop(skey, None)
             continue
 
-        st = bucket.setdefault(did, {'restarted': False, 'labeled': False})
-        pr_num = worker_pr_number(w)
+        st = bucket.setdefault(skey, {'restarted': False, 'labeled': False})
 
         if not st['restarted']:
-            try:
-                restart_stalled_dispatch(did, rpc_call)
+            start_args = worker_stall_restart_start_args(w, did)
+            if start_args:
+                try:
+                    rpc_call('orchestration', 'worker-stop', '--dispatch', did)
+                    rpc_call(*start_args)
+                    st['restarted'] = True
+                    st['restart_at'] = now
+                    log_bits.append('stall_restart=%s' % did)
+                except SEND_ERRORS as exc:
+                    log_bits.append('stall_restart_fail=%s:%s' % (did, type(exc).__name__))
+                    title = 'Fleet-watch: restart failed for dispatch %s' % did
+                    if title not in issue_keys:
+                        if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
+                                '--body', 'Fleet-watch could not restart this dispatch; inspect Orca and the worker terminal.']) == 0:
+                            issue_keys.append(title)
+                            notices.append(title)
+                        else:
+                            notices.append(title + ', issue not opened')
+            else:
                 st['restarted'] = True
                 st['restart_at'] = now
-                log_bits.append('stall_restart=%s' % did)
-            except SEND_ERRORS as exc:
-                st['restarted'] = True
-                st['restart_at'] = now
-                log_bits.append('stall_restart_fail=%s:%s' % (did, type(exc).__name__))
-                title = 'Fleet-watch: restart failed for dispatch %s' % did
-                if title not in issue_keys:
-                    if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
-                            '--body', 'Fleet-watch could not restart this dispatch; inspect Orca and the worker terminal.']) == 0:
-                        issue_keys.append(title)
-                        notices.append(title)
-                    else:
-                        notices.append(title + ', issue not opened')
+                log_bits.append('stall_skip_restart=%s' % did)
             continue
 
         if st.get('labeled'):
@@ -611,23 +756,28 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if now - st.get('restart_at', 0) < cooldown:
             continue
 
+        pr_num = resolve_pr_number_for_worker(w, label_repo, act)
         if pr_num:
             code = act(['gh', 'pr', 'edit', str(pr_num), '--repo', label_repo, '--add-label', label_name])
-            st['labeled'] = True
-            log_bits.append('stall_label_pr=%s:%s' % (did, pr_num))
-            if code != 0:
+            if code == 0:
+                st['labeled'] = True
+                log_bits.append('stall_label_pr=%s:%s' % (did, pr_num))
+            else:
                 notices.append('needs-elon label failed for PR %s' % pr_num)
         else:
-            st['labeled'] = True
-            log_bits.append('stall_no_pr=%s' % did)
             title = 'Fleet-watch: stalled worker dispatch %s (no PR to label)' % did
+            code = 1
             if title not in issue_keys:
-                if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
-                        '--body', 'Dispatch is stalled with no linked PR number in worker-list; assign or label manually.']) == 0:
+                code = act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
+                            '--body', 'Dispatch is stalled with no linked PR number in worker-list; assign or label manually.'])
+                if code == 0:
                     issue_keys.append(title)
-                    notices.append(title)
-                else:
-                    notices.append(title + ', issue not opened')
+            if code == 0:
+                st['labeled'] = True
+                log_bits.append('stall_no_pr=%s' % did)
+                notices.append(title)
+            else:
+                notices.append(title + ', issue not opened')
 
     return notices, log_bits
 
@@ -880,10 +1030,11 @@ def main():
     inbox = rpc('orchestration', 'inbox', '--limit', '5000')
     workers = fetch_workers(config)
     term_times = {}
+    terminal_list_ok = True
     try:
         term_times = terminal_last_output_map(rpc('terminal', 'list', '--json'))
     except SEND_ERRORS:
-        pass
+        terminal_list_ok = False
     # pgrep observes the dedicated waiter process; no process is stopped here.
     alive = {run['id']: subprocess.run(['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5).returncode == 0 for run in config['runs']}
     leads = {}
@@ -900,7 +1051,7 @@ def main():
     notices += workflow_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
-    stall_extra, stall_log = worker_stall_pass(config, state, now, workers, term_times, rpc)
+    stall_extra, stall_log = worker_stall_pass(config, state, now, workers, term_times, rpc, terminal_list_ok=terminal_list_ok)
     notices += stall_extra
     notices += coordinator
 
@@ -910,6 +1061,8 @@ def main():
         parts.append('pass failed: %.1fs' % duration)
     else:
         parts.append('pass ok %.1fs' % duration)
+    if not terminal_list_ok:
+        parts.append('terminal_list_failed')
     if backup_age is not None:
         parts.append('backup_age_s=%d' % int(backup_age))
         if backup_age > BACKUP_STALE_LOG:

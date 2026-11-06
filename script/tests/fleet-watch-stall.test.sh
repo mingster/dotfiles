@@ -22,13 +22,16 @@ T0 = 1_700_000_000  # unix seconds so lastOutputAt ms exceeds 1e12
 def live_worker():
     return {
         'dispatchId': 'disp1',
+        'taskId': 'task_stall_fixture',
         'terminalState': 'retained',
         'dispatchStatus': 'dispatched',
         'agentTerminalHandle': 'term_w',
         'githubPullRequestNumber': 42,
+        'agent': 'claude',
+        'resource': {'worktreeId': 'repo-fixture::/wt/path'},
         'projection': {
             'outcome': 'in_progress',
-            'liveness': {'verdict': 'live'},
+            'liveness': {'verdict': 'idle'},
         },
     }
 
@@ -86,9 +89,16 @@ class Stall(unittest.TestCase):
             watch.main()
 
         stops = [c for c in calls if c[:4] == ('orchestration', 'worker-stop', '--dispatch', 'disp1')]
-        starts = [c for c in calls if len(c) >= 4 and c[:2] == ('orchestration', 'worker-start') and c[-2:] == ('--retry-of', 'disp1')]
+        starts = [c for c in calls if len(c) >= 4 and c[:2] == ('orchestration', 'worker-start')]
         self.assertEqual(len(stops), 1)
         self.assertEqual(len(starts), 1)
+        self.assertIn('--task', starts[0])
+        self.assertIn('task_stall_fixture', starts[0])
+        self.assertIn('--retry-of', starts[0])
+        self.assertIn('--worktree', starts[0])
+        self.assertIn('repo-fixture::/wt/path', starts[0])
+        self.assertIn('--terminal', starts[0])
+        self.assertIn('term_w', starts[0])
         edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
         self.assertTrue(any('42' in c and 'needs-elon' in c for c in edits))
         log = self.log_path.read_text()
