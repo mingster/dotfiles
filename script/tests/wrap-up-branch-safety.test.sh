@@ -149,6 +149,15 @@ bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply --stale > "$tmp/output
 check 'stale protected branch survives locally' has_local archive
 check 'stale protected branch survives remotely' has_remote archive
 check 'stale protected branch is not offered for deletion' not_planned 'Delete stale archive'
+# A local only branch keeps its commits even when old, and says why.
+git checkout -q -b solo main
+echo solo > solo.txt
+git add solo.txt
+GIT_AUTHOR_DATE=2020-01-01T00:00:00Z GIT_COMMITTER_DATE=2020-01-01T00:00:00Z git commit -qm 'solo work'
+git checkout -q main
+bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply --stale > "$tmp/output" 2>&1
+check 'old local only branch survives apply' has_local solo
+check 'old local only branch is kept with a reason' grep -Eq '^Kept stale solo .*unpushed' "$tmp/output"
 # Omit lsof from a hermetic tool path, even on hosts that install it in /usr/sbin.
 mkdir -p "$tmp/no-lsof"
 for tool in /bin/* /usr/bin/*; do
