@@ -68,6 +68,41 @@ def _terminal_error_code(value):
     return None
 
 
+def _orca_failed_reply_error_code(receipt):
+    """Orca JSON reply with ok=false: stable error code string, or None."""
+    if not isinstance(receipt, dict) or receipt.get('ok') is not False:
+        return None
+    code = _terminal_error_code(receipt.get('error'))
+    if code:
+        return code
+    for key in ('code', 'errors', 'reason'):
+        code = _terminal_error_code(receipt.get(key))
+        if code:
+            return code
+    return None
+
+
+def orchestration_failure_log_code(exc):
+    """Log segment for a failed orchestration rpc: Orca error code if present, else exception type name."""
+    code = getattr(exc, 'orca_error_code', None)
+    if isinstance(code, str) and code:
+        return code
+    chain = exc.__cause__ if exc.__cause__ is not None else exc
+    if isinstance(chain, subprocess.CalledProcessError):
+        for part in (chain.stdout, chain.stderr):
+            if not part or not str(part).strip():
+                continue
+            try:
+                data = json.loads(part.strip())
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                parsed = _orca_failed_reply_error_code(data)
+                if parsed:
+                    return parsed
+    return type(exc).__name__
+
+
 def _receipt_denies_terminal_show(args_tuple, receipt):
     """True when terminal show failed for a missing or stale handle (exact Orca error codes)."""
     if len(args_tuple) < 2 or args_tuple[0] != 'terminal' or args_tuple[1] != 'show':
@@ -105,7 +140,10 @@ def rpc(*args):
             raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
                 output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
             )
-        raise OrcaReadError('orca CLI failed') from subprocess.CalledProcessError(
+        code = _orca_failed_reply_error_code(receipt) if isinstance(receipt, dict) else None
+        err = OrcaReadError(code or 'orca CLI failed')
+        err.orca_error_code = code
+        raise err from subprocess.CalledProcessError(
             output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
         )
 
@@ -118,7 +156,10 @@ def rpc(*args):
     if receipt.get('ok') is False:
         if _receipt_denies_terminal_show(args, receipt):
             raise TerminalNotFound('terminal_not_found')
-        raise OrcaReadError('Orca refused inventory')
+        code = _orca_failed_reply_error_code(receipt)
+        err = OrcaReadError(code or 'Orca refused inventory')
+        err.orca_error_code = code
+        raise err
     if 'result' not in receipt:
         raise OrcaReadError('missing result in orca reply')
     return receipt['result']
@@ -864,12 +905,32 @@ def worker_branch_name(w):
     return ''
 
 
-def worker_stall_restart_start_args(w, old_dispatch_id, run_id):
+def terminal_handle_for_configured_run(config, run_id):
+    """Sender terminal from config runs[] for this run id, or None when missing or not configured."""
+    if not isinstance(run_id, str) or not run_id.strip():
+        return None
+    needle = run_id.strip()
+    for run in config.get('runs') or []:
+        if not isinstance(run, dict):
+            continue
+        rid = run.get('id')
+        if not (isinstance(rid, str) and rid.strip() == needle):
+            continue
+        t = run.get('terminal')
+        if isinstance(t, str) and t.strip():
+            return t.strip()
+        return None
+    return None
+
+
+def worker_stall_restart_start_args(w, old_dispatch_id, run_id, config):
     """Orca worker-start args after a stop; None when the row cannot supply a valid start.
 
     After worker-stop the previous terminal is closed; do not pass --terminal. Agent and model
     come from the stopped dispatch row or persisted stop record. run_id scopes worker-start to the
     same Run as worker-list (Orca returns task_not_found without --run when the CLI default Run differs).
+    Requires a non-empty ``terminal`` on the matching ``runs[]`` row so fleet-watch can pass ``--from``
+    when the process has no active sender terminal (cron).
     """
     tid = worker_task_id(w)
     if not tid:
@@ -884,9 +945,13 @@ def worker_stall_restart_start_args(w, old_dispatch_id, run_id):
     rid = run_id_for_stall_restart(w, run_id)
     if not rid:
         return None
+    term_from = terminal_handle_for_configured_run(config or {}, rid)
+    if term_from is None:
+        return None
     args = [
         'orchestration', 'worker-start', '--run', rid, '--task', tid,
         '--retry-of', old_dispatch_id, '--worktree', wt, '--agent', agent,
+        '--from', term_from,
     ]
     if model:
         args.extend(['--model', model])
@@ -1010,6 +1075,22 @@ def stall_state_key(w):
     return 'dispatch:%s' % did if did else ''
 
 
+def stall_restart_start_blocked_log(old_dispatch_id, config, w, run_id):
+    """Log line when worker_stall_restart_start_args would return None; empty string when start is possible."""
+    if not worker_task_id(w):
+        return 'stall_pending_no_args=%s' % old_dispatch_id
+    if not worker_worktree_selector(w):
+        return 'stall_pending_no_args=%s' % old_dispatch_id
+    if not worker_agent_id(w):
+        return 'stall_pending_no_args=%s' % old_dispatch_id
+    rid = run_id_for_stall_restart(w, run_id) or default_list_run_id(config)
+    if not rid:
+        return 'stall_pending_no_args=%s' % old_dispatch_id
+    if terminal_handle_for_configured_run(config, rid) is None:
+        return 'stall_no_sender_terminal=%s' % old_dispatch_id
+    return ''
+
+
 def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True,
                      terminal_branches=None, inventory_ok=True):
     """Detect no terminal output for stall idle limit; restart once per task; then label needs-elon."""
@@ -1069,9 +1150,11 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
         run_for_start = run_id_for_stall_restart(
             row, pend.get('stall_restart_run_id') or '') or default_list_run_id(config)
-        start_args = worker_stall_restart_start_args(row, old_dispatch, run_for_start)
+        start_args = worker_stall_restart_start_args(row, old_dispatch, run_for_start, config)
         if not start_args:
-            log_bits.append('stall_pending_no_args=%s' % old_dispatch)
+            line = stall_restart_start_blocked_log(old_dispatch, config, row, run_for_start)
+            if line:
+                log_bits.append(line)
             continue
         try:
             rpc_call(*start_args)
@@ -1081,7 +1164,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             pending.pop(skey, None)
             log_bits.append('stall_restart=%s' % old_dispatch)
         except SEND_ERRORS as exc:
-            log_bits.append('stall_restart_retry=%s:%s' % (old_dispatch, type(exc).__name__))
+            log_bits.append('stall_restart_retry=%s:%s' % (old_dispatch, orchestration_failure_log_code(exc)))
 
     for w in workers:
         did = w.get('dispatchId')
@@ -1123,7 +1206,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
 
         if not st['restarted']:
             run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
-            start_args = worker_stall_restart_start_args(w, did, run_for_start)
+            start_args = worker_stall_restart_start_args(w, did, run_for_start, config)
             if start_args:
                 try:
                     rpc_call('orchestration', 'worker-stop', '--dispatch', did)
@@ -1134,27 +1217,31 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                         st['restart_at'] = now
                         log_bits.append('stall_restart=%s' % did)
                         pending.pop(skey, None)
-                    except SEND_ERRORS:
+                    except SEND_ERRORS as exc:
                         wt_sel = worker_worktree_selector(w)
+                        snap = {
+                            'taskId': worker_task_id(w),
+                            'resource': {'worktreeId': wt_sel} if wt_sel else {},
+                            'projection': {
+                                'provider': {
+                                    'id': worker_agent_id(w),
+                                    'model': worker_model_id(w) or None,
+                                },
+                            },
+                        }
+                        r_id = run_id_for_stall_restart(w, run_for_start)
+                        if isinstance(r_id, str) and r_id.strip():
+                            snap['runId'] = r_id.strip()
                         pending[skey] = {
                             'old_dispatch': did,
                             'stall_restart_run_id': run_for_start,
-                            'row_snapshot': {
-                                'taskId': worker_task_id(w),
-                                'resource': {'worktreeId': wt_sel} if wt_sel else {},
-                                'projection': {
-                                    'provider': {
-                                        'id': worker_agent_id(w),
-                                        'model': worker_model_id(w) or None,
-                                    },
-                                },
-                            },
+                            'row_snapshot': snap,
                             'started': False,
                         }
                         st['restarted'] = False
-                        log_bits.append('stall_stop_start_retry_next=%s' % did)
+                        log_bits.append('stall_stop_start_retry_next=%s:%s' % (did, orchestration_failure_log_code(exc)))
                 except SEND_ERRORS as exc:
-                    log_bits.append('stall_restart_fail=%s:%s' % (did, type(exc).__name__))
+                    log_bits.append('stall_restart_fail=%s:%s' % (did, orchestration_failure_log_code(exc)))
                     title = 'Fleet-watch: restart failed for dispatch %s' % did
                     if title not in issue_keys:
                         if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
@@ -1164,9 +1251,14 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                         else:
                             notices.append(title + ', issue not opened')
             else:
-                st['restarted'] = True
-                st['restart_at'] = now
-                log_bits.append('stall_skip_restart=%s' % did)
+                line = stall_restart_start_blocked_log(did, config, w, run_for_start)
+                if line.startswith('stall_no_sender_terminal='):
+                    st['restarted'] = False
+                else:
+                    st['restarted'] = True
+                    st['restart_at'] = now
+                if line:
+                    log_bits.append(line)
             continue
 
         if st.get('labeled'):
