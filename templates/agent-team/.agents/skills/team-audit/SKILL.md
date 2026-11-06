@@ -1,53 +1,28 @@
 ---
 name: team-audit
-description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Produce structural fixes, report delivery and post-merge metrics, and tune throughput (more workers, faster tickets, more merged PRs).
+description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Find evidenced problems, give each one fix, and report the four delivery metrics.
 ---
 
 # Team audit
 
-Run only when the owner says "team-audit", by architect-pm (or Elon). Edits only on a branch in your own worktree; Elon publishes and merges docs-only audit branches through the mechanical lane under `docs/agents/team.md`; Elon merges engineering branches too.
+Orca runs the script and the metrics weekly and reports one line. The full audit runs only on the owner's word, by architect-pm. Edits only on a branch in your own worktree; Elon publishes and merges it.
 
 ## 1. Deterministic checks
 
-Run `ROLE_RECEIPT_SINCE=<previous audit date> ~/dotfiles/script/team-audit.sh` (default projects come from the untracked `script/team-audit.local.conf`, one root per line; pass project roots to override). Each `FINDING <check>` line names the file. Fix every finding or explain why it is a false positive (a line may opt out with the comment `team-audit: allow`). For a `sync` finding, edit the dotfiles source and run `~/dotfiles/script/sync-team-skills.sh <project>`; never edit a generated copy. For an `mp-upstream` finding (the vendored Matt Pocock skills are behind upstream, or a role names one that is missing), run `~/dotfiles/script/sync-mattpocock-skills.sh`, review `git diff` of `.agents/skills`, and commit it on the team-audit branch in dotfiles. A `WARN mp-upstream` line means the network check was skipped; rerun later. A `receipt` finding is a role-file commit without its `Owner-approved:` trailer: report its diff to Elon for the owner's approval. Never run `skills update`.
+Run `ROLE_RECEIPT_SINCE=<previous audit date> ~/dotfiles/script/team-audit.sh` (default projects come from the untracked `script/team-audit.local.conf`, one root per line; pass project roots to override). Each `FINDING <check>` line names the file. Fix every finding or explain why it is a false positive (a line may opt out with the comment `team-audit: allow`). For a `sync` finding, edit the dotfiles source and run `~/dotfiles/script/sync-team-skills.sh <project>`; never edit a generated copy. For an `mp-upstream` finding, run `~/dotfiles/script/sync-mattpocock-skills.sh`, review `git diff` of `.agents/skills`, and commit it on the audit branch in dotfiles. A `WARN mp-upstream` line means the network check was skipped; rerun later. A `receipt` finding is a role-file commit without its `Owner-approved:` trailer: report its diff to Elon for the owner's approval. Never run `skills update`.
 
-## 2. Judgement review
+## 2. Evidenced problems
 
-**Scope (target about 10 minutes):** find the last audit date from the previous `team-audit` PR. Review only the roles, skills and docs changed since then (`git log --since <date> -- .claude .agents docs/agents`) plus roles with new observations or escalations. A project with no team file commits since then gets the script only, no judgement pass.
+Find the last audit date from the previous `team-audit` PR. Read only what changed since then (`git log --since <date> -- .claude .agents docs/agents`) and the private log `~/.claude/state/team-observations.md`, which holds only observations that would change a rule. Never copy it into a repository or `~/.claude/notes`, which is public.
 
-Use the `writing-for-agents` skill to assess duplication, pointer quality, relevance and instruction structure in each project's roles, model routing, team docs, daily run and skills. For a failure tied to a particular session, use the `retro` skill on that session instead of recreating its process here.
+Report a problem only with evidence, and give it one structural fix (a lint, check, script or rule). Use the `writing-for-agents` skill for wording, and the `retro` skill for a failure tied to one session. Name both file lines when rules disagree: owner rules and `docs/agents/team.md` win, then `.claude/model-routing.md`, then the role file. No per role write-ups. Delete each observation line you used.
 
-Add these team checks:
+Team rules and scripts must not grow in total lines; a safety fix may, with the reason stated.
 
-- **Authority conflicts:** owner rules and `docs/agents/team.md` win, then `.claude/model-routing.md` for provider and shipping policy, then the role file. Name both file lines when rules disagree. Orca's `orchestration` skill owns runtime lifecycle authority.
-- **Unused skills:** check the last 30 days of available session logs for skill invocations and file loads. A harness may read `SKILL.md` directly; no slash command match alone does not prove disuse. Propose removal with the evidence and log coverage; do not remove.
-- **Project drift:** compare role and skill copies with the dotfiles template. Product facts may differ; team policy should have one source.
+## 3. Metrics
 
-## 3. Role performance
+Run `bun bin/team-audit-metrics.ts`: ticket start to merge, P0 and P1 escapes in 30 days, reopen or hotfix rate, first pass Checks fail rate. Missing data reads unknown, never zero.
 
-**Encode Lessons in Structure:** review every role in scope (section 2) in each project's `.claude/agents/`, and turn evidenced failures into a lint, check, script or role-file rule rather than advice.
+## 4. Output
 
-Elon appends observations as work happens to `~/.claude/state/team-observations.md`, one line per observation with date, project, role, evidence reference and proposed change. This log is private. Never copy it verbatim into a repository or put it in `~/.claude/notes`, which is public.
-
-1. Read the unconsumed observations and the available Orca escalations and `worker_done` reports since the last audit, using the official `orchestration` guide to inspect the records. State the date range and report coverage. If a source is missing or unavailable, report that gap without treating it as a clean performance record.
-2. For each role in scope, give evidence of its decisions and outcomes, then produce a concrete structural fix (lint, check, script or role-file rule) for an evidenced recurring failure. Use sanitized evidence references rather than private log text. For an inactive role, record no activity and the evidence gap; mark a proposal provisional when there is insufficient evidence to justify adoption. Apply fixes within standing authority; route policy and reserved changes through Elon, preserving owner gates. Run each test suite once, at the end, not after every edit.
-3. After recording the review, mark each consumed observation in the private log with `audited: YYYY-MM-DD` using the audit date. Preserve the observation and leave unreviewed entries unmarked.
-
-Completion requires a full performance entry for every role in scope (section 2) with evidence or an explicit evidence gap, one line "no change, no activity" for every other role, justified structural fixes and their verification (or a named approval gate), plus the consumed markers in the private log.
-
-Every audit also removes at least one rule, check, hook or brief step, and reports what it removed (or why nothing qualified).
-
-## 4. Metrics since the last audit
-
-Record the previous audit date and current cutoff, with source references and coverage. Run `bun bin/team-audit-metrics.ts` for the four faster-delivery metrics: median PR created to merged, median created to PASS Verdict, first-pass Checks FAIL rate, and full regression minutes. Report ticket-start-to-merge time from the first recorded work start to confirmed merge, per ticket and as a median with sample count; list unmerged tickets separately. Report post-merge problems as counts of reopens and hotfixes, linked to the affected merged tickets, and distinguish overlapping incidents. Missing audit dates, timestamps or sources mean unknown, never zero.
-
-
-## 5. Throughput tune up
-
-Every audit answers three questions with readings from the same run: how to run more workers at once, how to finish each ticket faster, and how to merge more PRs. Measure first: provider headroom and reset times (`usage-gate.py show`), workers running per lane, the agent ready queue against the owner blocked queue, PRs merged per day, and where tickets waited (owner approval, review, an integration branch, quota).
-
-For each bottleneck, propose one concrete lever with its expected gain and cost, for example: an unused provider credit before it expires, more independent lanes on disjoint files, per ticket PRs instead of one integration PR, batched owner approvals, or a `/grill-backlog` round for owner blocked issues. Changes within standing authority go into the audit branch. Ask the owner in one numbered round for anything that spends quota or credit, changes an owner rule, or touches a protected path, each with a recommendation. Record accepted levers as rules, and the next audit checks whether each one delivered its gain.
-
-## 6. Output
-
-A `worker_done` (or a reply to Elon) with: the script result, each finding with file and line, and the structural fix with verification or its approval gate, plus every role's performance entry, both metrics, the throughput levers and the evidence coverage. Make agreed edits on `mingster/team-audit-<date>` in all three places (dotfiles template, <project-a>, <project-b>), keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing, and commit only on that branch.
+A `worker_done` to Elon with the script result, each problem with its file, line, fix and verification or approval gate, the metrics, and the line count change. Make agreed edits on `mingster/team-audit-<date>` in the dotfiles template and each project, keep `team-audit.sh` clean and `sync-team-skills.sh --check` passing.
