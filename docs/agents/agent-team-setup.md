@@ -64,35 +64,6 @@ only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `
 and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
 `ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the merge check.
 
-## Optional worker watchdog (macOS)
-
-Copy `templates/launchd/life.example.worker-watchdog.plist` to
-`~/Library/LaunchAgents/life.example.worker-watchdog.plist`. Replace `__HOME__` with
-an absolute home path, `__ORCA_CLI__` with the absolute path from `command -v orca`,
-`__RUN_ID__` with the run to monitor, and `__NOTIFY_HANDLE__` / `__NOTIFY_RUN_ID__`
-with the escalation recipient's terminal handle and owning run. Add more
-`--run`, run ID pairs to `ProgramArguments` to monitor several runs.
-
-After reviewing the file, load it with
-`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.example.worker-watchdog.plist`.
-Unload it with
-`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.example.worker-watchdog.plist`
-before changing run IDs or notification handles. This is an opt-in install;
-project adoption does not load the service.
-
-The KeepAlive job checks rendered coordinator and live worker screens every 90
-seconds, nudges after two idle checks (at most once per terminal per ten minutes),
-and escalates provider limits, three idle checks after a nudge, or three checks
-with no live workers. Counters and cooldowns survive restarts in
-`~/.orca/state/worker-watchdog/`; action lines go to
-`~/.orca/logs/worker-watchdog.log` without terminal text. It never stops workers.
-For a bounded foreground diagnostic, use
-`bash ~/dotfiles/script/worker-watchdog.sh --run RUN --notify HANDLE --notify-run RUN --checks 3`.
-The only gate block is fresh real provider usage plus running worker reserve at
-the weekly/cycle ceiling; daily pacing is advisory, and failed provider refreshes
-report unknown with the source and reason. A watchdog nudge does not replace the
-coordinator's screen check on every wake.
-
 ## Scheduled wrap-up (macOS)
 
 `script/wrap-up-scheduled.sh` runs one wrap-up round every two hours. A round takes a lock (one per

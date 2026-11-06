@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """One bounded watchdog pass; schedule every minute outside the coordinator.
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
-host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive and
-pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices;
+host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
+pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,
+optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo};
 --state FILE persists missing-waiter timers and alerts.
-Counts every active Dispatch, including descendants. No lifecycle mutations.
+Counts every active Dispatch, including descendants. May restart a stalled worker once per dispatch.
 """
 import argparse
 import calendar
@@ -15,6 +16,10 @@ import shlex
 import subprocess
 import sys
 import time
+
+
+SEND_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, OSError, ValueError, KeyError)
+NOTICE_PASS_LIMIT = 20
 
 
 def rpc(*args):
@@ -432,6 +437,9 @@ def pr_notices(config, state, now, fetch=fetch_prs):
 
 RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
+BACKUP_STALE_LOG = 10 * 60
+STALL_IDLE_LIMIT = 30 * 60
+PASS_FAIL_LIMIT = 4 * 60
 
 
 def fetch_failed_runs(repo):
@@ -452,8 +460,182 @@ def run_gh(command):
         return 1
 
 
-def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=run_gh):
+def fleet_watch_log_path():
+    return Path.home() / '.orca' / 'logs' / 'fleet-watch.log'
+
+
+def log_fleet_watch(message):
+    """Append one line to ~/.orca/logs/fleet-watch.log. Never log terminal screen text."""
+    path = fleet_watch_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) + ' ' + message + '\n'
+        with path.open('a', encoding='utf-8') as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
+def _normalize_terminal_time_ms(value):
+    """lastOutputAt may be ms since epoch or seconds; return seconds since epoch or None."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v > 1e12:  # milliseconds
+        return v / 1000.0
+    if v > 1e10:  # unlikely stray unit
+        return v / 1000.0
+    return v
+
+
+def worker_row_is_live(w):
+    """True when this worker-list row is an in-progress supervised worker (both JSON shapes)."""
+    w = w or {}
+    if 'dispatchStatus' in w or 'projection' in w:
+        proj = w.get('projection') or {}
+        liv = proj.get('liveness') or {}
+        ver = liv.get('verdict') if isinstance(liv, dict) else liv
+        return (w.get('terminalState') in ('active', 'retained')
+                and w.get('dispatchStatus') not in ('completed', 'failed', 'cancelled', 'abandoned')
+                and (proj.get('outcome') or 'in_progress') == 'in_progress'
+                and ver != 'exited')
+    return (w.get('state') not in ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
+            and w.get('stage') != 'released' and w.get('terminalState') != 'released'
+            and w.get('liveness') != 'exited')
+
+
+def worker_terminal_handle(w):
+    w = w or {}
+    t = w.get('terminal')
+    if isinstance(t, str) and t:
+        return t
+    return w.get('agentTerminalHandle') or ''
+
+
+def worker_pr_number(w):
+    """Optional GitHub PR number from a worker-list row for labeling."""
+    w = w or {}
+    for key in ('githubPullRequestNumber', 'pullRequestNumber', 'prNumber'):
+        n = w.get(key)
+        if isinstance(n, int) and n > 0:
+            return n
+    proj = w.get('projection') or {}
+    for key in ('githubPullRequestNumber', 'pullRequestNumber', 'prNumber', 'number'):
+        n = proj.get(key)
+        if isinstance(n, int) and n > 0:
+            return n
+    return None
+
+
+def terminal_last_output_map(result):
+    """Map terminal handle -> lastOutputAt from terminal list result dict."""
+    terminals = (result or {}).get('terminals') or []
+    out = {}
+    for t in terminals:
+        h = t.get('handle')
+        if h:
+            out[h] = t.get('lastOutputAt')
+    return out
+
+
+def restart_stalled_dispatch(dispatch_id, rpc_call):
+    """Stop once then start with --retry-of."""
+    rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch_id)
+    rpc_call('orchestration', 'worker-start', '--retry-of', dispatch_id)
+
+
+def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None):
+    """Detect no terminal output for STALL_IDLE_LIMIT; restart once; then label needs-elon."""
+    if act is None:
+        act = run_gh
+    cfg = config.get('worker_stall') or {}
+    label_repo = cfg.get('label_repo')
+    if not label_repo:
+        return [], []
+    label_name = cfg.get('needs_elon_label', 'needs-elon')
+    cooldown = int(cfg.get('label_cooldown_seconds', 120))
+    notices = []
+    log_bits = []
+    bucket = state.setdefault('worker_stall', {})
+    issue_keys = state.setdefault('stall_issue_keys', [])
+    active = {w.get('dispatchId') for w in workers if w.get('dispatchId')}
+    for stale_id in list(bucket.keys()):
+        if stale_id not in active:
+            bucket.pop(stale_id, None)
+
+    for w in workers:
+        did = w.get('dispatchId')
+        if not did or not worker_row_is_live(w):
+            bucket.pop(did, None)
+            continue
+        term = worker_terminal_handle(w)
+        if not term:
+            continue
+        last_raw = term_times.get(term)
+        last_s = _normalize_terminal_time_ms(last_raw)
+        if last_s is None:
+            continue
+        idle = now - last_s
+        if idle < STALL_IDLE_LIMIT:
+            bucket.pop(did, None)
+            continue
+
+        st = bucket.setdefault(did, {'restarted': False, 'labeled': False})
+        pr_num = worker_pr_number(w)
+
+        if not st['restarted']:
+            try:
+                restart_stalled_dispatch(did, rpc_call)
+                st['restarted'] = True
+                st['restart_at'] = now
+                log_bits.append('stall_restart=%s' % did)
+            except SEND_ERRORS as exc:
+                st['restarted'] = True
+                st['restart_at'] = now
+                log_bits.append('stall_restart_fail=%s:%s' % (did, type(exc).__name__))
+                title = 'Fleet-watch: restart failed for dispatch %s' % did
+                if title not in issue_keys:
+                    if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
+                            '--body', 'Fleet-watch could not restart this dispatch; inspect Orca and the worker terminal.']) == 0:
+                        issue_keys.append(title)
+                        notices.append(title)
+                    else:
+                        notices.append(title + ', issue not opened')
+            continue
+
+        if st.get('labeled'):
+            continue
+        if now - st.get('restart_at', 0) < cooldown:
+            continue
+
+        if pr_num:
+            code = act(['gh', 'pr', 'edit', str(pr_num), '--repo', label_repo, '--add-label', label_name])
+            st['labeled'] = True
+            log_bits.append('stall_label_pr=%s:%s' % (did, pr_num))
+            if code != 0:
+                notices.append('needs-elon label failed for PR %s' % pr_num)
+        else:
+            st['labeled'] = True
+            log_bits.append('stall_no_pr=%s' % did)
+            title = 'Fleet-watch: stalled worker dispatch %s (no PR to label)' % did
+            if title not in issue_keys:
+                if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
+                        '--body', 'Dispatch is stalled with no linked PR number in worker-list; assign or label manually.']) == 0:
+                    issue_keys.append(title)
+                    notices.append(title)
+                else:
+                    notices.append(title + ', issue not opened')
+
+    return notices, log_bits
+
+
+def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=None):
     """Rerun a failed workflow once, then open one issue. A repo whose fetch failed keeps its state."""
+    if act is None:
+        act = run_gh
     watch = config.get('pr_watch') or {}
     workflows = watch.get('workflows')
     if not workflows:
@@ -488,14 +670,26 @@ def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=run_gh):
     return notices
 
 
-def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=run_gh):
+def backup_age_seconds(config, now, stamp_time=os.path.getmtime):
+    """Age of backup stamp file in seconds, or None when missing/unconfigured."""
+    backup = config.get('backup')
+    if not backup or 'stamp' not in backup:
+        return None
+    try:
+        return now - stamp_time(backup['stamp'])
+    except OSError:
+        return None
+
+
+def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=None):
     """Open one issue per outage when the last good backup is over 30 minutes old."""
+    if act is None:
+        act = run_gh
     backup = config.get('backup')
     if not backup:
         return []
-    try:
-        age = now - stamp_time(backup['stamp'])
-    except OSError:
+    age = backup_age_seconds(config, now, stamp_time)
+    if age is None:
         age = BACKUP_LIMIT + 1
     if age <= BACKUP_LIMIT:
         state.pop('backup_issue', None)
@@ -625,10 +819,6 @@ def save_state(path, state):
     temporary.replace(path)
 
 
-SEND_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, OSError, ValueError, KeyError)
-NOTICE_PASS_LIMIT = 20
-
-
 def deliver_notices(config, state, new_lines, rpc_call=rpc):
     """Send each line to every run terminal that has not got it. A line is dropped once delivered or after 20 passes."""
     delivery = state.setdefault('notice_delivery', {})
@@ -686,8 +876,14 @@ def main():
     coordinator, done = coordinator_stage(config, state, args.state)
     if done:
         return 0
+    pass_start = time.time()
     inbox = rpc('orchestration', 'inbox', '--limit', '5000')
     workers = fetch_workers(config)
+    term_times = {}
+    try:
+        term_times = terminal_last_output_map(rpc('terminal', 'list', '--json'))
+    except SEND_ERRORS:
+        pass
     # pgrep observes the dedicated waiter process; no process is stopped here.
     alive = {run['id']: subprocess.run(['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5).returncode == 0 for run in config['runs']}
     leads = {}
@@ -697,12 +893,31 @@ def main():
             leads[lead['terminal']] = True
         except (subprocess.CalledProcessError, RuntimeError):
             leads[lead['terminal']] = False
-    notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
-    notices += pr_notices(config, state, time.time())
+    now = time.time()
+    notices = alerts(config, state, now, inbox['messages'], workers, alive, leads)
+    notices += pr_notices(config, state, now)
     notices += usage_notices(config)
-    notices += workflow_notices(config, state, time.time())
-    notices += backup_notices(config, state, time.time())
+    notices += workflow_notices(config, state, now)
+    backup_age = backup_age_seconds(config, now)
+    notices += backup_notices(config, state, now)
+    stall_extra, stall_log = worker_stall_pass(config, state, now, workers, term_times, rpc)
+    notices += stall_extra
     notices += coordinator
+
+    duration = time.time() - pass_start
+    parts = []
+    if duration > PASS_FAIL_LIMIT:
+        parts.append('pass failed: %.1fs' % duration)
+    else:
+        parts.append('pass ok %.1fs' % duration)
+    if backup_age is not None:
+        parts.append('backup_age_s=%d' % int(backup_age))
+        if backup_age > BACKUP_STALE_LOG:
+            parts.append('backup_stale')
+    if stall_log:
+        parts.append('stall ' + ','.join(stall_log))
+    log_fleet_watch('; '.join(parts))
+
     lines = []
     if notices:
         lines.append('fleet-watch: ' + '; '.join(notices))

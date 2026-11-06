@@ -75,6 +75,7 @@ class Guards(unittest.TestCase):
                 calls.append(args)
                 if args[1] == 'inbox': return {'messages': self.messages}
                 if args[1] == 'worker-list': return {'workers': [], 'page': {'hasMore': False}}
+                if args[:2] == ('terminal', 'list'): return {'terminals': []}
                 return {}
             with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
                 self.assertEqual(watch.main(), 0)

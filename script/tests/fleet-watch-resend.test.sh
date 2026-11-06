@@ -32,6 +32,8 @@ class Resend(unittest.TestCase):
                 return {'messages': []}
             if args[1] == 'worker-list':
                 return {'workers': workers, 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'):
+                return {'terminals': []}
             if args[:2] == ('terminal', 'send'):
                 term = args[args.index('--terminal') + 1]
                 if term in fail_terminals:

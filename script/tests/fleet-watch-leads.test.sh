@@ -14,6 +14,7 @@ class Leads(unittest.TestCase):
             calls.append(args)
             if args[1] == 'inbox': return {'messages': []}
             if args[1] == 'worker-list': return {'workers': [], 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'): return {'terminals': []}
             if args[:2] == ('terminal', 'show') and args[3] in gone:
                 raise subprocess.CalledProcessError(1, 'orca', 'terminal_not_found')
             return {}
