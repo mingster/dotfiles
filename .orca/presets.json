@@ -161,7 +161,7 @@
         },
         {
           "provider": "cursor",
-          "model": "composer-2.5"
+          "model": "grok-4.7-high"
         }
       ]
     },

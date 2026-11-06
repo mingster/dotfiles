@@ -49,6 +49,8 @@ def get_family(p, m):
             return "gpt"
         if ml.startswith("composer"):
             return "composer"
+        if "grok" in ml:
+            return "grok"
         if ml.startswith("gemini-") or "gemini" in ml:
             return "gemini"
         return "unknown"
@@ -61,7 +63,7 @@ def get_family(p, m):
     return "unknown"
 
 fam = get_family(provider, model)
-avoid_fam = fam if fam in ("claude", "gpt", "gemini", "composer") else "none"
+avoid_fam = fam if fam in ("claude", "gpt", "gemini", "composer", "grok") else "none"
 avoid_prov = provider if provider == "claude" else "none"
 print(f"{provider or 'unknown'} {fam} {avoid_fam} {avoid_prov}")
 PY
@@ -107,6 +109,8 @@ def get_family(p, m):
             return "gpt"
         if ml.startswith("composer"):
             return "composer"
+        if "grok" in ml:
+            return "grok"
         if ml.startswith("gemini-") or "gemini" in ml:
             return "gemini"
         return "unknown"

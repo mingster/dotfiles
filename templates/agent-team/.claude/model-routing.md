@@ -62,9 +62,9 @@ Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemin
 - Proven combo (owner 2026-11-01, 24 hour run): Elon on `--agent antigravity --model gemini-4-argon-medium` with Cursor `composer-2.5` workers for small, mechanical or bounded tickets (three files or fewer, no `"use server"`, auth, payment or schema change). Elon may run this way when Claude quota is tight. Escalate a ticket to Claude when it fails twice or touches the excluded areas.
 - The Cursor "Trust this workspace" stall is handled under Elon's supervision: read the screen after each Cursor start and accept the prompt.
 - Debug handoff preset: `fullstack-dev-debug` (Claude `sonnet` high, then `opus` high).
-- Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon). Argon is the Gemini family, so it counts as cross family for a Claude author. Cursor is never a reviewer: it runs only `composer-2.5` (owner 2026-11-04), so there is no Cursor GPT fallback. If none is available, report gate blocked.
-- Reviewer exception (owner 2026-11-05): Claude authored PRs go to Cursor `composer-2.5` until the Cursor limit resets on 2026-11-25. Composer authored PRs still go to a Claude reviewer. A Grok Verdict does not count for merge.
-- Cursor runs only `composer-2.5` (owner 2026-11-04). Never pass another Cursor model (`claude-*`, `gpt-*`, `gemini-*`); `usage-gate.py pick` skips them and `~/.orca/presets.json` lists none.
+- Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon). Argon is the Gemini family, so it counts as cross family for a Claude author. Cursor reviews only on `grok-4.7-high`. If none is available, report gate blocked.
+- Claude authored PRs (owner 2026-11-06, replaces the 2026-11-05 Composer exception): when Argon is out, Cursor `grok-4.7-high` reviews and its Verdict counts for merge. Composer authored PRs still go to a Claude reviewer.
+- Cursor runs only `composer-2.5` to build and `grok-4.7-high` to review (owner 2026-11-06). Never pass another Cursor model (`claude-*`, `gpt-*`, `gemini-*`); `usage-gate.py pick` skips them and `~/.orca/presets.json` lists none.
 - Argon workers still get the file list and i18n key audit before merge (see below).
 
 ## Saving quota (owner 2026-10-09)
