@@ -763,6 +763,18 @@ EOS
   : > "$FX_SSH_LOG"
   out=$(bash "$MF_DIR/script-copy/lead-merge.sh" --repo example/repo --batch 84 85 2>&1); code=$?
   [ "$code" -eq 0 ] && grep -q 'host=overlay-host' "$FX_SSH_LOG" && echo "ok   #564 the host comes from lead-merge.local.json" || echo "FAIL #564 overlay: exit $code: $out"
+
+  # A host set for one repo must not take another repo's checks.
+  printf '{"head_checks_remote":{"repo":"other/repo","host":"overlay-host","repo_dir":"/srv/repo","dir":"/srv/work"}}\n' > "$MF_DIR/script-copy/lead-merge.local.json"
+  mf_pr_add 86 q86 "$ok" docs/q86.md; mf_pr_add 87 q87 "$ok" docs/q87.md; fx_checks_pass 86 87
+  : > "$FX_SSH_LOG"
+  out=$(bash "$MF_DIR/script-copy/lead-merge.sh" --repo example/repo --batch 86 87 2>&1); code=$?
+  ! grep -q 'host=overlay-host' "$FX_SSH_LOG" && echo "ok   the overlay host skips a repo it does not name" || echo "FAIL overlay repo filter: exit $code: $out"
+  printf '{"head_checks_remote":{"repo":"example/repo","host":"overlay-host","repo_dir":"/srv/repo","dir":"/srv/work"}}\n' > "$MF_DIR/script-copy/lead-merge.local.json"
+  mf_pr_add 88 q88 "$ok" docs/q88.md; mf_pr_add 89 q89 "$ok" docs/q89.md; fx_checks_pass 88 89
+  : > "$FX_SSH_LOG"
+  out=$(bash "$MF_DIR/script-copy/lead-merge.sh" --repo example/repo --batch 88 89 2>&1); code=$?
+  grep -q 'host=overlay-host' "$FX_SSH_LOG" && echo "ok   the overlay host serves the repo it names" || echo "FAIL overlay named repo: exit $code: $out"
 }
 
 fx_out=$( (fx_suite) 2>&1; (fx_receipts) 2>&1; (fx_lock) 2>&1; (fx_verdict) 2>&1; (fx_dispatches) 2>&1; (fx_gate) 2>&1; (fx_log) 2>&1; (fx_remote) 2>&1 )

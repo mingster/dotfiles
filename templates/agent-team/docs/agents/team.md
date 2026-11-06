@@ -10,7 +10,7 @@
 | qa-sdet | `qa-sdet.md` | Test, Maintain | Automated PR review, old QA review until merge on review goes live, weekly staging review |
 | secops-finops | `secops-finops.md` | Test audit | Money and auth PR reviews, weekly reconciliation |
 | support-csm | `support-csm.md` | Maintain | Ticket triage, reply drafts and recurring pain points |
-| release-manager | `release-manager.md` | Deploy | Starts on the owner's go; release evidence, deployment and a rollback plan (a rollback still needs the owner) |
+| release-manager | `release-manager.md` | Deploy | Staging on the daily schedule, production on the owner's go; release evidence, deployment and a rollback plan (a rollback still needs the owner) |
 | sales-marketing | `sales-marketing.md` | On request | Positioning, acquisition plans, growth experiments, weekly numbers |
 
 ## Process (owner 2026-11-06)
