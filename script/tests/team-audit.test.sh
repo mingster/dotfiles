@@ -6,10 +6,9 @@ D="$tmp/dotfiles" P="$tmp/proj"
 
 setup() { # a clean dotfiles tree and a project synced from it
   rm -rf "$D" "$P"
-  mkdir -p "$D/script" "$D/docs/specs" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
+  mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
            "$D/.agents/skills/orca-team" "$P/.claude/agents" "$P/docs/agents"
   cp "$here/sync-team-skills.sh" "$D/script/"
-  cp "$here/../docs/specs/000-team-script-index.md" "$D/docs/specs/"
   printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nThe Tech Lead pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
   printf -- '---\nname: orca-team\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orca-team/SKILL.md"
   for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv; do
@@ -163,8 +162,22 @@ unset GH_FAIL; export GH_ISSUES="[]"
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'
 
-setup; touch "$D/script/planted-unlisted-team-script.sh"
-check "unlisted script under script/ is a finding" 1 'FINDING script-list: planted-unlisted-team-script.sh'
+setup; mkdir -p "$P/docs/intent/x"; printf 'script/list-covered.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/x/spec.md"; echo intent > "$P/docs/intent/x/intent.md"
+touch "$D/script/list-covered.sh"; touch "$D/script/planted-unlisted-team-script.sh"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/x/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: planted-unlisted-team-script.sh'; then pass=$((pass+1)); echo "ok   unlisted script under script/ is a finding"
+else fail=$((fail+1)); echo "FAIL unlisted script under script/ is a finding (exit $code)"; echo "$out"; fi
+
+setup; mkdir -p "$P/docs/intent/y"; printf 'Tools: list-covered.sh sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/y/spec.md"; echo intent > "$P/docs/intent/y/intent.md"
+touch "$D/script/list-covered.sh"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/y/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   listed script under script/ is not a finding"
+else fail=$((fail+1)); echo "FAIL listed script under script/ is not a finding (exit $code)"; echo "$out"; fi
+
+setup
+out=$(DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 0 ] && echo "$out" | grep -qE 'NOTE script-list: TEAM_AUDIT_TOOL_LISTS unset' && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   unset TEAM_AUDIT_TOOL_LISTS skips script-list without a finding"
+else fail=$((fail+1)); echo "FAIL unset TEAM_AUDIT_TOOL_LISTS skips script-list (exit $code)"; echo "$out"; fi
 
 setup
 out=$(DOTFILES="$D" "$here/team-audit.sh" --bogus 2>&1); code=$?
