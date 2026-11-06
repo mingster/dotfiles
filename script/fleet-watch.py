@@ -7,6 +7,7 @@ pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck no
 Counts every active Dispatch, including descendants. No lifecycle mutations.
 """
 import argparse
+import calendar
 import json
 import os
 from pathlib import Path
@@ -429,6 +430,63 @@ def pr_notices(config, state, now, fetch=fetch_prs):
     return notices
 
 
+RUN_WINDOW = 2 * 3600
+
+
+def fetch_failed_runs(repo):
+    """Recent failed runs in one gh call, or None when gh fails."""
+    command = ['gh', 'run', 'list', '--repo', repo, '--status', 'failure', '--limit', '30',
+               '--json', 'databaseId,workflowName,attempt,headSha,url,createdAt']
+    try:
+        output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def run_gh(command):
+    try:
+        return subprocess.run(command, capture_output=True, timeout=30).returncode
+    except (subprocess.SubprocessError, OSError):
+        return 1
+
+
+def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=run_gh):
+    """Rerun a failed workflow once, then open one issue. A repo whose fetch failed keeps its state."""
+    watch = config.get('pr_watch') or {}
+    workflows = watch.get('workflows')
+    if not workflows:
+        return []
+    notices = []
+    handled = state.setdefault('workflow_watch', {})
+    for repo in watch['repos']:
+        runs = fetch(repo)
+        if runs is None:
+            continue
+        old = handled.get(repo, {})
+        done = {}
+        for run in runs:
+            created = calendar.timegm(time.strptime(run['createdAt'], '%Y-%m-%dT%H:%M:%SZ'))
+            if run['workflowName'] not in workflows or now - created > RUN_WINDOW:
+                continue
+            key = str(run['databaseId'])
+            step = old.get(key)
+            if step == 'issue' or (step == 'rerun' and run['attempt'] < 2):
+                done[key] = step
+                continue
+            if run['attempt'] < 2 and act(['gh', 'run', 'rerun', key, '--repo', repo, '--failed']) == 0:
+                done[key] = 'rerun'
+                continue
+            title = f"{run['workflowName']} failed twice on {run['headSha'][:8]}"
+            if act(['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', run['url']]) == 0:
+                done[key] = 'issue'
+                notices.append(f'{repo}: {title}')
+            else:
+                notices.append(f'{repo}: {title}, issue not opened')
+        handled[repo] = done
+    return notices
+
+
 def usage_notices(config, run=subprocess.run):
     hosts = config.get('usage_hosts')
     if not hosts:
@@ -619,6 +677,7 @@ def main():
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
     notices += usage_notices(config)
+    notices += workflow_notices(config, state, time.time())
     notices += coordinator
     lines = []
     if notices:

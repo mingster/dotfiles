@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import time
 import unittest
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
@@ -146,6 +147,68 @@ class UsageNotices(unittest.TestCase):
             return type('R', (), {'returncode': 4})()
         self.assertEqual(fw.usage_notices({'usage_hosts': ['a', 'b']}, run=run), ['usage reading not published: exit 4'])
         self.assertEqual(calls[0][-5:], ['publish', '--host', 'a', '--host', 'b'])
+
+
+class WorkflowNotices(unittest.TestCase):
+    NOW = 1_000_000.0
+    CONFIG = {'pr_watch': {'repos': [REPO], 'workflows': ['Checks', 'Review']}}
+
+    def run_row(self, id=1, name='Checks', attempt=1, age=60):
+        created = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(self.NOW - age))
+        return {'databaseId': id, 'workflowName': name, 'attempt': attempt, 'headSha': HEAD, 'url': 'u', 'createdAt': created}
+
+    def setUp(self):
+        self.commands = []
+        self.code = 0
+
+    def act(self, command):
+        self.commands.append(command)
+        return self.code
+
+    def notices(self, state, *runs):
+        return fw.workflow_notices(self.CONFIG, state, self.NOW, fetch=lambda repo: list(runs), act=self.act)
+
+    def verbs(self):
+        return [command[1:3] for command in self.commands]
+
+    def test_first_failure_is_rerun_once(self):
+        state = {}
+        self.notices(state, self.run_row())
+        self.notices(state, self.run_row())
+        self.assertEqual(self.verbs(), [['run', 'rerun']])
+
+    def test_second_failure_opens_one_issue(self):
+        state = {}
+        self.notices(state, self.run_row())
+        self.assertIn('failed twice', self.notices(state, self.run_row(attempt=2))[0])
+        self.notices(state, self.run_row(attempt=2))
+        self.assertEqual(self.verbs(), [['run', 'rerun'], ['issue', 'create']])
+
+    def test_refused_rerun_opens_an_issue(self):
+        self.code = 1
+        self.notices({}, self.run_row())
+        self.assertEqual(self.commands[0][1:3], ['run', 'rerun'])
+        self.assertEqual(self.commands[1][1:3], ['issue', 'create'])
+
+    def test_failed_issue_is_reported_and_retried(self):
+        state = {}
+        self.code = 1
+        self.assertIn('issue not opened', self.notices(state, self.run_row(attempt=2))[0])
+        self.code = 0
+        self.notices(state, self.run_row(attempt=2))
+        self.assertEqual(self.verbs(), [['issue', 'create'], ['issue', 'create']])
+
+    def test_ignores_other_workflows_and_old_runs(self):
+        self.notices({}, self.run_row(name='CodeQL'), self.run_row(id=2, age=3 * 3600))
+        self.assertEqual(self.commands, [])
+
+    def test_failed_fetch_keeps_state(self):
+        state = {'workflow_watch': {REPO: {'1': 'rerun'}}}
+        fw.workflow_notices(self.CONFIG, state, self.NOW, fetch=lambda repo: None, act=self.act)
+        self.assertEqual(state['workflow_watch'][REPO], {'1': 'rerun'})
+
+    def test_no_workflows_configured_runs_nothing(self):
+        self.assertEqual(fw.workflow_notices({'pr_watch': {'repos': [REPO]}}, {}, self.NOW, fetch=None, act=None), [])
 
 
 if __name__ == '__main__':
