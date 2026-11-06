@@ -319,14 +319,16 @@ def claude_refresh():
     """Use Claude's own OAuth credentials in memory; never log tokens or response bodies."""
     import urllib.request
     path = HOME + "/.claude/.credentials.json"
+    credentials = None
     if os.path.isfile(path):
         with open(path) as f:
             credentials = json.load(f)
-    elif sys.platform == "darwin":
+    expires_at = credentials["claudeAiOauth"].get("expiresAt") if credentials else None
+    if sys.platform == "darwin" and (credentials is None or (expires_at and expires_at / 1000 < time.time())):
         result = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
                                 capture_output=True, text=True, timeout=2, check=True)
         credentials = json.loads(result.stdout)
-    else:
+    if credentials is None:
         return None
     token = credentials["claudeAiOauth"]["accessToken"]
     request = urllib.request.Request("https://api.anthropic.com/api/oauth/usage", headers={
