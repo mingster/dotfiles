@@ -77,6 +77,12 @@ test -f "$tmp/dirty worktree/untracked"
 git show-ref --verify --quiet refs/heads/dirty
 git --git-dir="$tmp/origin" show-ref --verify --quiet refs/heads/dirty
 echo 'ok dirty worktree and both branches kept'
+git worktree add -qb stamped "$tmp/stamped worktree"
+mkdir "$tmp/stamped worktree/web"
+echo sum > "$tmp/stamped worktree/web/.remote-heavy-lock-sha"
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -e "$tmp/stamped worktree"
+echo 'ok worktree holding only the install stamp removed'
 git worktree add -qb finished "$tmp/finished worktree"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test ! -d "$tmp/finished worktree"
