@@ -429,6 +429,17 @@ def pr_notices(config, state, now, fetch=fetch_prs):
     return notices
 
 
+def usage_notices(config, run=subprocess.run):
+    hosts = config.get('usage_hosts')
+    if not hosts:
+        return []
+    command = [sys.executable, str(Path(__file__).with_name('usage-gate.py')), 'publish']
+    for host in hosts:
+        command += ['--host', host]
+    code = run(command, capture_output=True, timeout=240).returncode
+    return [f'usage reading not published: exit {code}'] if code else []
+
+
 def ssh_reachable(name):
     """True when a quick ssh to the coordinator succeeds."""
     command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', name, 'true']
@@ -607,6 +618,7 @@ def main():
             leads[lead['terminal']] = False
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
+    notices += usage_notices(config)
     notices += coordinator
     lines = []
     if notices:

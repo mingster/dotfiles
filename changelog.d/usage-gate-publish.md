@@ -1,0 +1,1 @@
+Usage gate publish copies the Claude reading, numbers only, to hosts that cannot read it, renews a token with under an hour left, and accepts readings up to 15 minutes old. Fleet watch runs it for hosts in usage_hosts.
