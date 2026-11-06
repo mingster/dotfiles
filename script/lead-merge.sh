@@ -903,16 +903,70 @@ locale_additive() { # ancestor main head file
         and ($x[0] | type) == "object"' >/dev/null 2>&1 && ok=0
   rm -rf "$dir"; return "$ok"
 }
+# A shared locale JSON file that changed different leaf keys on each side is also accepted when the merge is clean and
+# every leaf of the merged file holds the value of the side that changed it. The merged file goes to $5; fails closed.
+locale_independent() { # ancestor main head file merged-out
+  local ancestor=$1 trunk=$2 tip=$3 f=$4 out=$5 dir ok=1
+  case "$f" in locales/*.json|*/locales/*.json) ;; *) return 1 ;; esac
+  dir=$(mktemp -d) || return 1
+  git show "$ancestor:$f" >"$dir/base" 2>/dev/null && git show "$trunk:$f" >"$dir/main" 2>/dev/null \
+    && git show "$tip:$f" >"$dir/head" 2>/dev/null \
+    && git merge-file -p "$dir/head" "$dir/base" "$dir/main" >"$dir/merged" 2>/dev/null \
+    && jq -e -n --slurpfile b "$dir/base" --slurpfile m "$dir/main" --slurpfile h "$dir/head" --slurpfile x "$dir/merged" '
+      def leaves: [paths(scalars or ((type == "object" or type == "array") and length == 0)) as $p | {key: ($p | tojson), value: getpath($p)}] | from_entries;
+      def st($o; $k): if $o | has($k) then [$o[$k]] else [] end;
+      ([$b, $m, $h, $x] | all(length == 1 and (.[0] | type) == "object"))
+      and (($b[0] | leaves) as $b | ($m[0] | leaves) as $m | ($h[0] | leaves) as $h | ($x[0] | leaves) as $x
+        | all(($b + $m + $h + $x | keys)[]; . as $k
+          | (st($m; $k) != st($b; $k)) as $tm | (st($h; $k) != st($b; $k)) as $th
+          | ($tm and $th | not)
+            and st($x; $k) == (if $tm then st($m; $k) elif $th then st($h; $k) else st($b; $k) end)))' >/dev/null 2>&1 \
+    && cp "$dir/merged" "$out" && ok=0
+  rm -rf "$dir"; return "$ok"
+}
+# The project's locale check, one line in the trunk's .agents/locale-merge-check.conf, run in a temporary detached
+# worktree of the merged tree. $LOCALE_MERGE_FILES lists the changed files. No conf, a failure or a timeout refuses.
+locale_step() { # stage-dir file...
+  local stage=$1 line wt rc=0 i=0 f
+  shift
+  line=$(git show origin/main:.agents/locale-merge-check.conf 2>/dev/null | awk '!/^[[:space:]]*(#|$)/ {print; exit}') || true
+  [ -n "$line" ] || return 1
+  wt=$(mktemp -d) || return 1
+  if git worktree add -q --detach "$wt/tree" "$head" >/dev/null 2>&1 \
+     && git -C "$wt/tree" merge -q --no-commit --no-ff origin/main >/dev/null 2>&1; then
+    for f in "$@"; do cp "$stage/$i" "$wt/tree/$f" || rc=1; i=$((i + 1)); done
+    if [ "$rc" = 0 ]; then
+      (cd "$wt/tree" && LOCALE_MERGE_FILES=$(printf '%s\n' "$@") perl -e '
+        $p = fork; exec @ARGV[1 .. $#ARGV] unless $p;
+        $SIG{ALRM} = sub { kill 9, $p; exit 124 }; alarm $ARGV[0]; waitpid $p, 0; exit($? ? ($? >> 8 || 1) : 0)' \
+        "${LEAD_MERGE_LOCALE_TIMEOUT:-120}" bash -c "$line") >"$wt/out" 2>&1 || rc=$?
+      [ "$rc" = 0 ] || tail -n 20 "$wt/out" >&2
+    fi
+  else
+    rc=1
+  fi
+  git worktree remove --force "$wt/tree" >/dev/null 2>&1 || true
+  git worktree prune >/dev/null 2>&1 || true
+  rm -rf "$wt"
+  return "$rc"
+}
 trunk_check() {
-  local f ancestor trunk_files
+  local f ancestor trunk_files stage pending=()
   # A carried Verdict is judged against the current head, which includes the merged main commits.
   ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
   trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
+  stage=$(mktemp -d) || die "cannot create a temporary directory"
   while IFS= read -r f; do
     if grep -Fxq -- "$f" <<<"$trunk_files"; then
-      locale_additive "$ancestor" origin/main "$head" "$f" || refuse "trunk changed $f; rebase and rerun head-checks"
+      if locale_additive "$ancestor" origin/main "$head" "$f"; then :
+      elif locale_independent "$ancestor" origin/main "$head" "$f" "$stage/${#pending[@]}"; then pending+=("$f")
+      else refuse "trunk changed $f; rebase and rerun head-checks"; fi
     fi
   done < <(jq -r '.[]' <<<"$files")
+  if [ "${#pending[@]}" -gt 0 ] && ! locale_step "$stage" "${pending[@]}"; then
+    for f in "${pending[@]}"; do refuse "trunk changed $f; rebase and rerun head-checks"; done
+  fi
+  rm -rf "$stage"
 }
 if [ -z "$train_head" ] && [ "$preflight_only" != 1 ]; then
   git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"
