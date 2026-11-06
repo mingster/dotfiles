@@ -15,7 +15,7 @@
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
 # Remote head checks (off unless a host is set): LEAD_MERGE_REMOTE_HOST, LEAD_MERGE_REMOTE_REPO_DIR and
-#   LEAD_MERGE_REMOTE_DIR, or head_checks_remote {host, repo_dir, dir} in the untracked lead-merge.local.json,
+#   LEAD_MERGE_REMOTE_DIR, or head_checks_remote {host, repo_dir, dir, optional repo} in the untracked lead-merge.local.json,
 #   run the real head-checks.sh on that host through remote-heavy.sh, for the batch train and for a single PR
 #   with no Checks at its head. The receipt must name the commit that was sent; anything else fails closed.
 set -euo pipefail
@@ -151,6 +151,8 @@ remote_load() {
   dir=$(cd "$(dirname "$0")" && pwd)
   cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
     || die "cannot read local head_checks_remote config"
+  # An overlay with a repo key serves only that repo; the environment still overrides it.
+  [ "$(jq -r --arg r "$repo" '.head_checks_remote.repo // $r' <<<"$cfg")" = "$repo" ] || cfg='{}'
   remote_host=${LEAD_MERGE_REMOTE_HOST:-$(jq -r '.head_checks_remote.host // ""' <<<"$cfg")}
   remote_repo_dir=${LEAD_MERGE_REMOTE_REPO_DIR:-$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")}
   remote_dir=${LEAD_MERGE_REMOTE_DIR:-$(jq -r '.head_checks_remote.dir // ""' <<<"$cfg")}
