@@ -161,7 +161,7 @@ for f in team.md team-facts.md deploy-facts.md; do
 done
 
 # 4c. Template owned docs the roles point at: always installed or updated.
-for f in coordinator-operations.md engineering-integration.md; do
+for f in coordinator-operations.md engineering-integration.md architect-pm-work.md elon-dispatch.md qa-sdet-execution.md release-manager-work.md; do
   copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
 done
 

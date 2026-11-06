@@ -18,9 +18,9 @@ has() { grep -qF -- "$2" "$1" && ok "$3" || bad "$3"; }
 has "$T/docs/agents/coordinator-operations.md" 'workspace-trusted' "cursor trust marker lives in coordinator-operations"
 has "$T/.claude/agents/tech-lead.md" 'Cursor worker start' "tech-lead points at the cursor worker start rule"
 has "$T/docs/agents/deploy-facts.md" 'Host preflight' "host preflight lives in deploy-facts"
-has "$T/.claude/agents/release-manager.md" 'Production job order' "release-manager points at the production job order"
+has "$T/docs/agents/release-manager-work.md" 'Production job order' "release-manager-work holds the production job order pointer"
 has "$T/docs/agents/coordinator-operations.md" 'Small task method' "small task method lives in coordinator-operations"
-has "$T/.claude/agents/release-manager.md" 'Host preflight' "release-manager still names host preflight"
+has "$T/docs/agents/release-manager-work.md" 'Host preflight' "release-manager-work still names host preflight"
 
 # Rules that must survive the trim.
 has "$T/.claude/agents/release-manager.md" 'Never roll back production without owner authorization' "rm keeps rollback guard"
@@ -53,7 +53,8 @@ for f in "$T"/.claude/agents/*.md; do
 done
 # Rules that moved behind a pointer must be in an always installed page, not the project owned deploy-facts.
 has "$A/proj/docs/agents/coordinator-operations.md" 'Production job order' "adopted coordinator-operations holds the production job order"
-has "$T/.claude/agents/release-manager.md" 'coordinator-operations.md`, Production job order' "release-manager points the job order at coordinator-operations"
+has "$T/docs/agents/release-manager-work.md" 'coordinator-operations.md`, Production job order' "release-manager-work points the job order at coordinator-operations"
+has "$T/.claude/agents/release-manager.md" 'docs/agents/release-manager-work.md' "release-manager role file points at release-manager-work"
 has "$T/.claude/agents/tech-lead.md" 'even a new spec no worker could run' "tech-lead keeps rerun of a new spec"
 has "$T/docs/agents/coordinator-operations.md" '{{PROJECT_NAME}}/<lane>' "small task method keeps the project placeholder"
 has "$A/proj/docs/agents/coordinator-operations.md" 'workspaces/acme/<lane>' "adopted small task method renders the project name"
