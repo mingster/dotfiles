@@ -1,39 +1,49 @@
 #!/usr/bin/env bash
-# Route a builder worker_done to the lead that owns the dispatch, and release the committer once.
+# Route a worker_done to the lead that owns the dispatch, and release the committer once.
 #   worker-done-relay.sh relay --dispatch ID --branch B --sha S --payload PATH --coordinator HANDLE
 #   worker-done-relay.sh release --dispatch ID
+#   worker-done-relay.sh record --dispatch ID --lead HANDLE [--kind builder|reviewer --repo R --branch B --pr N ...]
 #   worker-done-relay.sh sweep --coordinator HANDLE [--run RUN]   once per fleet-watch pass
-# Owner record: $WORKER_DONE_OWNER_DIR/<dispatch id> (default ~/.claude/state/dispatch-owners) holds the
-# owning lead's terminal handle on one line. No record, or an empty one, sends to the coordinator as a message only.
-# The lead's terminal gets a "check your inbox" nudge after the message; a failed nudge does not fail the relay
-# (the message was delivered), and the coordinator's terminal is never typed into.
-# A successful release writes <dispatch id>.released, so a second release does nothing.
-# More record lines, written when the worker starts: kind=builder|reviewer, repo=owner/name, branch=B (builder),
-# pr=N (reviewer, one line per PR). worker_done reaches <dispatch id>.done.json from two places: coordinator-drain.sh
-# (the waiter reads first and marks it read) and sweep (check --peek, for any still unread). Sweep relays it once and
-# releases the seat only on proof. <dispatch id>.relayed holds the relay state: "sending" is written before the send,
-# "sent" after it. A pass that died in between leaves "sending": the next pass repeats once ("resending", then "sent"),
-# so a crash gives at most one repeat. A failed send removes the marker and is retried; a failed nudge still counts as sent.
+# Owner record: $WORKER_DONE_OWNER_DIR/<dispatch id> (default ~/.claude/state/dispatch-owners). Line 1 is the owning
+# lead's terminal handle. `record` writes it atomically; with --lead alone on an existing record it changes only line 1
+# (a lead handoff), so the kind, repo, branch and pr lines survive. More lines, written when the worker starts:
+# kind=builder|reviewer, repo=owner/name, branch=B (builder), pr=N (reviewer, one line per PR).
+# `relay` sends the lead a message with the dispatch, branch, sha and the worker's own summary (the body of the saved
+# worker_done, not a path, because the saved file is deleted on release). No record, or an empty one, sends to the
+# coordinator as a message only. The lead's terminal also gets a "check your inbox" nudge; a failed nudge does not fail the
+# relay (the message was delivered), and the coordinator's terminal is never typed into.
+# A successful release writes <dispatch id>.released (atomically), so a second release does nothing.
+# `sweep` is the only writer of <dispatch id>.done.json. It reads the inbox with `orchestration inbox` (handled and
+# unhandled mail, nothing is marked read, so a waiter that read first loses nothing) and only for records with a kind=
+# line: old one line records are never relayed, released or listed. It relays once and releases the seat only on proof.
+# <dispatch id>.relayed holds the relay state: "sending" before the send, "sent" after it. A pass that died in between
+# leaves "sending": the next pass repeats once ("resending", then "sent"), so a crash gives at most one repeat; if that
+# repeat died too, the marker becomes "sent" without a third send and one digest line says the relay may be lost.
+# Only the exact word "sent" counts as relayed; an empty or half written marker is treated as "sending".
+# A failed send removes the marker, keeps done.json, does not release, and is retried on the next pass, with one
+# digest line however many passes fail. A failed nudge still counts as sent.
 # The outcome is worker-show's state (the worker_done payload carries only taskId and dispatchId); the payload's
 # outcome is used only when worker-show is unreadable. Only succeeded can release a seat.
 #   builder:  git ls-remote shows repo's branch at `git rev-parse HEAD` of the dispatch worktree. worker-show gives
 #             result.workspace as "<id>::<path>"; the path must be on the record's branch and have a remote of the record's repo,
 #   reviewer: each PR has a Verdict first line with head=<PR head now> and verifier=<this dispatch> (gh, skipped below 500 requests left).
-# No owner record: nothing happens. No proof: the seat stays and one digest line per dispatch is printed on stdout.
+# No proof: the seat stays and one digest line per dispatch is printed on stdout. A refused release is also one digest line
+# and is retried each pass.
 # Env: GH_COMMAND, WORKER_DONE_REMOTE_PREFIX (default https://github.com/).
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
 dir=${WORKER_DONE_OWNER_DIR:-$HOME/.claude/state/dispatch-owners}
 die() { echo "worker-done-relay: $*" >&2; exit 2; }
 
-[ $# -ge 1 ] || die "usage: relay|release --dispatch ID ..."
+[ $# -ge 1 ] || die "usage: relay|release|record|sweep ..."
 mode=$1; shift
-dispatch="" branch="" sha="" payload="" coordinator="" run=""
+dispatch="" branch="" sha="" payload="" coordinator="" run="" lead="" kind="" repo="" prs=()
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || die "$1 needs a value"
   case "$1" in
     --dispatch) dispatch=$2 ;; --branch) branch=$2 ;; --sha) sha=$2 ;;
     --payload) payload=$2 ;; --coordinator) coordinator=$2 ;; --run) run=$2 ;;
+    --lead) lead=$2 ;; --kind) kind=$2 ;; --repo) repo=$2 ;; --pr) prs+=("$2") ;;
     *) die "unknown argument $1" ;;
   esac
   shift 2
@@ -53,8 +63,18 @@ case "$mode" in
     fi
     bound=${ORCA_REPLY_BOUND_SECONDS:-30}
     bounded() { perl -e 'alarm shift; exec @ARGV or exit 127' "$bound" "$@"; }
-    bounded "$orca" orchestration send --to "$to" --subject "$subject" \
-      --body "dispatch=$dispatch branch=$branch sha=$sha payload=$payload" --json || exit $?
+    summary=$(python3 - "$payload" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    body = json.load(open(sys.argv[1])).get('body')
+except (OSError, ValueError, AttributeError):
+    body = None
+print(body[:1500] if isinstance(body, str) else '', end='')
+PY
+)
+    text="dispatch=$dispatch branch=$branch sha=$sha"
+    [ -z "$summary" ] || text="$text"$'\n'"summary: $summary"
+    bounded "$orca" orchestration send --to "$to" --subject "$subject" --body "$text" --json || exit $?
     if [ "$to" != "$coordinator" ]; then
       bounded "$orca" terminal send --terminal "$to" --text "check your inbox" --enter --json > /dev/null \
         || echo "worker-done-relay: message sent but the nudge to $to failed" >&2
@@ -63,7 +83,29 @@ case "$mode" in
   release)
     [ ! -f "$dir/$dispatch.released" ] || exit 0
     "$orca" orchestration worker-release --dispatch "$dispatch" --json
-    mkdir -p "$dir" && : > "$dir/$dispatch.released"
+    mkdir -p "$dir" && printf 'released\n' > "$dir/$dispatch.released.$$.tmp" \
+      && mv -f "$dir/$dispatch.released.$$.tmp" "$dir/$dispatch.released"
+    ;;
+  record)
+    [[ "$lead" =~ ^[A-Za-z0-9_.:-]+$ ]] || die "record needs --lead, a plain terminal handle"
+    case "$kind" in ''|builder|reviewer) ;; *) die "--kind must be builder or reviewer" ;; esac
+    [ -z "$repo" ] || [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--repo must be owner/name"
+    [ -z "$branch" ] || [[ "$branch" =~ ^[A-Za-z0-9_./+-]+$ ]] || die "--branch is not a plain branch name"
+    for number in ${prs[@]+"${prs[@]}"}; do [[ "$number" =~ ^[0-9]+$ ]] || die "--pr must be a number"; done
+    mkdir -p "$dir"
+    temporary="$dir/$dispatch.$$.tmp"
+    if [ -z "$kind$repo$branch" ] && [ ${#prs[@]} -eq 0 ] && [ -f "$dir/$dispatch" ]; then
+      { printf '%s\n' "$lead"; tail -n +2 "$dir/$dispatch"; } > "$temporary"
+    else
+      {
+        printf '%s\n' "$lead"
+        [ -z "$kind" ] || printf 'kind=%s\n' "$kind"
+        [ -z "$repo" ] || printf 'repo=%s\n' "$repo"
+        [ -z "$branch" ] || printf 'branch=%s\n' "$branch"
+        for number in ${prs[@]+"${prs[@]}"}; do printf 'pr=%s\n' "$number"; done
+      } > "$temporary"
+    fi
+    mv -f "$temporary" "$dir/$dispatch"
     ;;
   sweep)
     [ -n "$coordinator" ] || die "sweep needs --coordinator"
@@ -86,6 +128,8 @@ def call(command, timeout=30):
 
 
 def read_record(dispatch):
+    if not isinstance(dispatch, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', dispatch):
+        return None
     try:
         lines = open(os.path.join(owners, dispatch)).read().splitlines()
     except OSError:
@@ -100,23 +144,6 @@ def read_record(dispatch):
         elif key in ('kind', 'repo', 'branch'):
             record[key] = value.strip()
     return record
-
-
-def find(node, keys):
-    if isinstance(node, dict):
-        for key in keys:
-            if isinstance(node.get(key), str):
-                return node[key]
-        for value in node.values():
-            found = find(value, keys)
-            if found:
-                return found
-    elif isinstance(node, list):
-        for value in node:
-            found = find(value, keys)
-            if found:
-                return found
-    return None
 
 
 def show(dispatch):
@@ -148,8 +175,29 @@ def head_of(shown, record):
     return head.strip() if head and re.fullmatch(r'[0-9a-f]{40}', head.strip()) else None
 
 
-def mark(name, text=''):
-    open(os.path.join(owners, name), 'w').write(text)
+def mark(name, text='noted'):
+    """Write a marker whole or not at all: a crash leaves the old file, never an empty or half written one."""
+    path = os.path.join(owners, name)
+    temporary = '%s.%d.tmp' % (path, os.getpid())
+    with open(temporary, 'w') as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def read_mark(name):
+    try:
+        return open(os.path.join(owners, name)).read().strip()
+    except OSError:
+        return None
+
+
+def unmark(name):
+    try:
+        os.unlink(os.path.join(owners, name))
+    except OSError:
+        pass
 
 
 def payload_of(message):
@@ -165,9 +213,7 @@ def payload_of(message):
 def store(dispatch, message):
     path = os.path.join(owners, dispatch + '.done.json')
     if not os.path.exists(path):
-        temporary = '%s.%d.tmp' % (path, os.getpid())
-        json.dump(message, open(temporary, 'w'))
-        os.replace(temporary, path)
+        mark(dispatch + '.done.json', json.dumps(message))
 
 
 def proof(dispatch, record, sha):
@@ -207,9 +253,12 @@ def proof(dispatch, record, sha):
 
 def process(dispatch):
     record = read_record(dispatch)
-    if not record:
+    if not record or not record.get('kind'):
         return
     done = os.path.join(owners, dispatch + '.done.json')
+    if os.path.exists(os.path.join(owners, dispatch + '.released')):
+        unmark(dispatch + '.done.json')
+        return
     try:
         payload = payload_of(json.load(open(done)))
     except (OSError, ValueError, AttributeError):
@@ -217,39 +266,42 @@ def process(dispatch):
     shown = show(dispatch)
     sha = head_of(shown, record) if record.get('kind') == 'builder' else None
     marker = dispatch + '.relayed'
-    try:
-        state = open(os.path.join(owners, marker)).read().strip()
-    except OSError:
-        state = None
+    state = read_mark(marker)
+    if state is not None and state not in ('sent', 'resending'):
+        state = 'sending'   # only the exact word sent counts as relayed; an empty or half written marker is unknown
     if state == 'resending':
         mark(marker, 'sent')
-    elif state in (None, 'sending'):
+        print('worker-done sweep: %s the relay to the lead may be lost (two passes died before the send finished)' % dispatch)
+    elif state != 'sent':
         mark(marker, 'resending' if state else 'sending')
         relayed = subprocess.run(['bash', script, 'relay', '--dispatch', dispatch, '--branch', record.get('branch') or '-',
                                   '--sha', sha or '-', '--payload', done, '--coordinator', coordinator],
                                  capture_output=True, text=True).returncode
-        if relayed == 0:
-            mark(marker, 'sent')
-        else:
-            os.unlink(os.path.join(owners, marker))
-    if os.path.exists(os.path.join(owners, dispatch + '.released')):
-        os.path.exists(done) and os.unlink(done)
-        return
+        if relayed != 0:
+            unmark(marker)
+            if read_mark(dispatch + '.sendfail') is None:
+                mark(dispatch + '.sendfail')
+                print('worker-done sweep: %s relay to the lead failed, will retry each pass' % dispatch)
+            return   # nothing is released until the lead has the message
+        mark(marker, 'sent')
+        unmark(dispatch + '.sendfail')
     outcome = shown.get('state') or payload.get('outcome')
     reason = None if outcome == 'succeeded' else 'outcome is %s' % outcome
     reason = reason or proof(dispatch, record, sha)
     if reason == 'skip':
         return
+    name = dispatch + '.noted'
     if reason is None:
         if subprocess.run(['bash', script, 'release', '--dispatch', dispatch], capture_output=True).returncode == 0:
-            os.unlink(done)
-        return
-    if not os.path.exists(os.path.join(owners, dispatch + '.noted')):
-        mark(dispatch + '.noted')
+            unmark(dispatch + '.done.json')
+            return
+        reason, name = 'release was refused, will retry each pass', dispatch + '.noted-release'
+    if read_mark(name) is None:
+        mark(name)
         print('worker-done sweep: %s seat kept, %s' % (dispatch, reason))
 
 
-inbox = call(orca + ['orchestration', 'check'] + (['--run', run] if run else ['--terminal', coordinator]) + ['--peek', '--types', 'worker_done', '--json'], 60)
+inbox = call(orca + ['orchestration', 'inbox', '--terminal', 'run:' + run if run else coordinator, '--limit', '200', '--full', '--json'], 60)
 try:
     box = json.loads(inbox)
     messages = (box['result'] if isinstance(box.get('result'), dict) else box)['messages']
@@ -257,14 +309,21 @@ except (TypeError, ValueError, KeyError, AttributeError):
     messages = []
 os.makedirs(owners, exist_ok=True)
 for message in messages:
-    if message.get('type') != 'worker_done':
-        continue
-    dispatch = payload_of(message).get('dispatchId')
-    if re.fullmatch(r'[A-Za-z0-9_-]+', str(dispatch)) and read_record(dispatch) and not os.path.exists(os.path.join(owners, dispatch + '.released')):
-        store(dispatch, message)
+    try:
+        if message.get('type') != 'worker_done':
+            continue
+        dispatch = payload_of(message).get('dispatchId')
+        record = read_record(dispatch)
+        if record and record.get('kind') and not os.path.exists(os.path.join(owners, dispatch + '.released')):
+            store(dispatch, message)
+    except (AttributeError, OSError) as error:
+        print('worker-done sweep: skipped a message: %r' % error, file=sys.stderr)
 for path in sorted(glob.glob(os.path.join(owners, '*.done.json'))):
-    process(os.path.basename(path)[:-len('.done.json')])
+    try:
+        process(os.path.basename(path)[:-len('.done.json')])
+    except Exception as error:   # one bad dispatch must not stop the others
+        print('worker-done sweep: %s failed: %r' % (os.path.basename(path), error), file=sys.stderr)
 PY
     ;;
-  *) die "mode must be relay, release or sweep" ;;
+  *) die "mode must be relay, release, record or sweep" ;;
 esac

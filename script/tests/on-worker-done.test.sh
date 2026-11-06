@@ -209,8 +209,11 @@ check 'reviewer start with an owner succeeds' "$?"
 check 'record has the owner and the reviewer proof fields' "$([ "$(cat "$tmp/owners/ctx_rev1" 2>/dev/null)" = "$(printf 'term_lead_Z\nkind=reviewer\nrepo=mingster/dotfiles\npr=42')" ]; echo $?)"
 check 'worker-start output still reaches the caller' "$(grep -q ctx_rev1 "$tmp/out"; echo $?)"
 valid; rm -rf "$tmp/owners"
-FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_rev2"}}}' run
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_rev2"}}}' ORCA_TERMINAL_HANDLE= run
 check 'no owner: record has an empty first line' "$([ "$(head -n 1 "$tmp/owners/ctx_rev2" | wc -c)" -le 1 ] && grep -q kind=reviewer "$tmp/owners/ctx_rev2"; echo $?)"
+valid; rm -rf "$tmp/owners"
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_rev5"}}}' ORCA_TERMINAL_HANDLE=term_caller_Q run
+check '--owner defaults to ORCA_TERMINAL_HANDLE' "$([ "$(head -n 1 "$tmp/owners/ctx_rev5")" = term_caller_Q ]; echo $?)"
 valid; rm -rf "$tmp/owners"
 run --owner term_lead_Z
 check 'no dispatch id in the output: no record, still succeeds' "$([ ! -e "$tmp/owners" ] || [ -z "$(ls "$tmp/owners")" ]; echo $?)"

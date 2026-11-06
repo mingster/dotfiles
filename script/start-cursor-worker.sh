@@ -1,24 +1,71 @@
 #!/usr/bin/env bash
 # Create and trust a worktree on the execution environment before Cursor starts.
+# Optional --owner-lead HANDLE [--owner-repo R --owner-branch B] writes the owner record after the start.
 # Usage: --run ID --spec FILE --title TEXT --model ID [--from HANDLE] [--on ENV]
 #        (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment=''
 from=${ORCA_TERMINAL_HANDLE:-}
+owner_lead='' owner_repo='' owner_branch=''
+self=start-cursor-worker
 usage() { echo "need --run --spec --title --model --from and --worktree-path or --name --repo" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run|--spec|--title|--model|--from|--worktree-path|--name|--repo|--base-branch|--on)
+    --run|--spec|--title|--model|--from|--worktree-path|--name|--repo|--base-branch|--on|--owner-lead|--owner-repo|--owner-branch)
       [ $# -ge 2 ] || usage
       case "$1" in
         --run) run=$2 ;; --spec) spec=$2 ;; --title) title=$2 ;; --model) model=$2 ;;
         --on) environment=$2; [ -n "$environment" ] || usage ;; --from) from=$2 ;; --worktree-path) wt=$2 ;; --name) name=$2 ;; --repo) repo=$2 ;; --base-branch) base=$2 ;;
+        --owner-lead) owner_lead=$2 ;; --owner-repo) owner_repo=$2 ;; --owner-branch) owner_branch=$2 ;;
       esac; shift 2 ;;
     *) usage ;;
   esac
 done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$model" ] && [ -n "$from" ] || usage
+# Run worker-start; with --owner-lead, also write the owner record from the dispatch id in its output.
+# The start output is printed unchanged and a failed record write only warns.
+start_and_record() {
+  local out status dispatch record_args
+  out=$(mktemp)
+  status=0
+  "$orca" orchestration worker-start "$@" > "$out" || status=$?
+  cat "$out"
+  if [ "$status" = 0 ]; then
+    dispatch=$(python3 - "$out" <<'PY' 2>/dev/null || true
+import json, re, sys
+def find(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("dispatchId"), str):
+            return node["dispatchId"]
+        node = list(node.values())
+    if isinstance(node, list):
+        for value in node:
+            found = find(value)
+            if found:
+                return found
+try:
+    found = find(json.load(open(sys.argv[1])))
+except (OSError, ValueError):
+    found = None
+print(found if found and re.fullmatch(r"[A-Za-z0-9_-]+", found) else "")
+PY
+)
+    if [ -z "$dispatch" ]; then
+      echo "$self: no dispatch id in the start output, owner record not written" >&2
+    else
+      record_args=(record --dispatch "$dispatch" --lead "$owner_lead")
+      if [ -n "$owner_repo" ] && [ -n "$owner_branch" ]; then
+        record_args+=(--kind builder --repo "$owner_repo" --branch "$owner_branch")
+      elif [ -n "$owner_repo$owner_branch" ]; then
+        echo "$self: --owner-repo and --owner-branch go together; the record has no kind, so it is never swept" >&2
+      fi
+      bash "$(dirname "$0")/worker-done-relay.sh" "${record_args[@]}" || echo "$self: owner record for $dispatch not written" >&2
+    fi
+  fi
+  rm -f "$out"
+  return "$status"
+}
 brief=$(cat "$spec")
 [ -n "${brief//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
 if [ -z "$wt" ]; then
@@ -71,8 +118,12 @@ if not (wait.get("satisfied") is True and wait.get("status") == "exited" and wai
     sys.exit("remote workspace trust did not complete successfully")
 '
   "$orca" terminal close --environment "$environment" --terminal "$terminal" --json >/dev/null
+  owner_args=()
+  [ -z "$owner_lead" ] || owner_args+=(--owner-lead "$owner_lead")
+  [ -z "$owner_repo" ] || owner_args+=(--owner-repo "$owner_repo")
+  [ -z "$owner_branch" ] || owner_args+=(--owner-branch "$owner_branch")
   exec bash "$(dirname "$0")/start-remote-worker.sh" --run "$run" --spec "$brief" --agent cursor --model "$model" \
-    --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json
+    --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" ${owner_args[@]+"${owner_args[@]}"} --json
 else
 # Cursor omits the leading slash, then replaces remaining slashes and dots.
 python3 - "$wt" <<'PY'
@@ -86,5 +137,9 @@ with (directory / '.workspace-trusted').open('w') as f:
     json.dump({'trustedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'workspacePath': wt}, f)
 PY
 fi
-exec "$orca" orchestration worker-start --run "$run" --spec "$brief" --agent cursor --model "$model" \
+if [ -z "$owner_lead" ]; then
+  exec "$orca" orchestration worker-start --run "$run" --spec "$brief" --agent cursor --model "$model" \
+    --worktree "path:$wt" --task-title "$title" --from "$from" --json
+fi
+start_and_record --run "$run" --spec "$brief" --agent cursor --model "$model" \
   --worktree "path:$wt" --task-title "$title" --from "$from" --json

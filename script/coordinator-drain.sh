@@ -6,9 +6,9 @@
 #     by design. Each one is counted per lead (a line with the lead's handle appended to COORDINATOR_DRAIN_STATE), and
 #     fleet-watch reports the counts in its digest. A worker's stop always passes.
 #   - worker_done for a dispatch whose <dispatch>.relayed marker says sent (worker-done-relay.sh sweep already routed it).
-# Every other worker_done for a dispatch with an owner record and no .released marker is also saved as
-# <dispatch>.done.json (before it is printed), because the check marks it read and the sweep only peeks at unread
-# messages. The sweep reads that store, so the waiter reading first loses nothing.
+# It writes nothing into the owner directory: worker-done-relay.sh sweep is the only writer, and it reads the inbox
+# (handled and unhandled mail), so a worker_done this check marked read is still relayed.
+# With --wait, a batch where every message was dropped is not returned (the waiter would wake for nothing): it checks again.
 # The check marks what it returns as read, so dropped messages are gone from the inbox. Dropped ones are counted on stderr.
 # Env: FLEET_WATCH_CONFIG (default ~/.config/fleet-watch/config.json), WORKER_DONE_OWNER_DIR (default ~/.claude/state/dispatch-owners),
 #      COORDINATOR_DRAIN_STATE (dropped lead stops, one handle per line, default ~/.claude/state/coordinator-drain.log).
@@ -17,6 +17,10 @@ orca=${ORCA_CLI_COMMAND:-orca}
 args=("$@")
 case " $* " in *" --json "*) ;; *) args+=(--json) ;; esac
 
+DRAIN_WAIT=0
+case " $* " in *" --wait "*) DRAIN_WAIT=1 ;; esac
+export DRAIN_WAIT
+while :; do
 # shellcheck disable=SC2086
 $orca orchestration check "${args[@]}" | python3 -c '
 import json, os, re, sys
@@ -46,24 +50,12 @@ def payload(message):
     return value if isinstance(value, dict) else {}
 
 def relayed_already(dispatch):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", dispatch):
+        return False
     try:
-        return open(os.path.join(owners, dispatch + ".relayed")).read().strip() not in ("sending", "resending")
+        return open(os.path.join(owners, dispatch + ".relayed")).read().strip() == "sent"
     except OSError:
         return False
-
-def save(dispatch, message):
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", dispatch):
-        return
-    try:
-        if not open(os.path.join(owners, dispatch)).readline().strip() or os.path.exists(os.path.join(owners, dispatch + ".released")):
-            return
-        path = os.path.join(owners, dispatch + ".done.json")
-        if not os.path.exists(path):
-            temporary = "%s.%d.tmp" % (path, os.getpid())
-            json.dump(message, open(temporary, "w"))
-            os.replace(temporary, path)
-    except OSError as error:
-        print("coordinator-drain: cannot save worker_done for %s: %s" % (dispatch, error), file=sys.stderr)
 
 kept, lead_stops, relayed, dropped_leads = [], 0, 0, []
 for message in messages:
@@ -75,11 +67,11 @@ for message in messages:
     elif message.get("type") == "worker_done" and body.get("dispatchId") and relayed_already(str(body["dispatchId"])):
         relayed += 1
     else:
-        if message.get("type") == "worker_done" and body.get("dispatchId"):
-            save(str(body["dispatchId"]), message)
         kept.append(message)
 box["messages"] = kept
-print(json.dumps(data))
+everything_dropped = bool(messages) and not kept
+if not (everything_dropped and os.environ.get("DRAIN_WAIT") == "1"):
+    print(json.dumps(data))
 if dropped_leads:
     try:
         os.makedirs(os.path.dirname(state_path), exist_ok=True)
@@ -89,5 +81,11 @@ if dropped_leads:
         print("coordinator-drain: cannot save %s: %s" % (state_path, error), file=sys.stderr)
 if lead_stops or relayed:
     print("coordinator-drain: dropped %d (lead stops %d, relayed worker_done %d)" % (lead_stops + relayed, lead_stops, relayed), file=sys.stderr)
+if everything_dropped and os.environ.get("DRAIN_WAIT") == "1":
+    sys.exit(75)
 '
-exit "${PIPESTATUS[0]}"
+status=("${PIPESTATUS[@]}")
+[ "${status[0]}" = 0 ] && [ "${status[1]}" = 75 ] || break
+done
+[ "${status[0]}" != 0 ] && exit "${status[0]}"
+exit 0

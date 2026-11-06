@@ -12,7 +12,9 @@ mkdir "$tmp/bin" "$tmp/owners"
 cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$ORCA_LOG"
-cat "$FAKE_CHECK"
+n=$(grep -c . "$ORCA_LOG")
+if [ -f "$FAKE_CHECK.$n" ]; then cat "$FAKE_CHECK.$n"; else cat "$FAKE_CHECK"; fi
+[ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
 exit "${FAKE_RC:-0}"
 EOS
 chmod +x "$tmp/bin/orca"
@@ -37,7 +39,7 @@ messages = [
 ]
 json.dump({'ok': True, 'result': {'messages': messages, 'extra': 7}}, open(sys.argv[1], 'w'))
 PY
-: > "$tmp/owners/ctx_r.relayed"
+printf sent > "$tmp/owners/ctx_r.relayed"
 run() { : > "$ORCA_LOG"; bash "$script" "$@" >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
 ids() { python3 -c "import json,sys; print(' '.join(m['id'] for m in json.load(open(sys.argv[1]))['result']['messages']))" "$tmp/out"; }
 
@@ -105,6 +107,56 @@ run --run run_1
 echo '{"runs":[],"leads":[{"name":"L","terminal":"term_other"}]}' > "$FLEET_WATCH_CONFIG"
 run --run run_1
 [ "$(ids)" = "msg_stop_99abc148847c07b338443838" ] && ok || bad "the same real stop from a worker passes"
+
+
+# an empty or half written .relayed marker is not "sent": the message is kept
+printf '' > "$tmp/owners/ctx_p.relayed"
+echo '{"runs":[],"leads":[{"name":"L","terminal":"term_lead"}]}' > "$FLEET_WATCH_CONFIG"
+python3 - "$FAKE_CHECK" <<'PY'
+import json, sys
+json.dump({'ok': True, 'result': {'messages': [{'id': 'plain_done', 'type': 'worker_done', 'subject': 'done', 'from_handle': 'term_x', 'payload': json.dumps({'dispatchId': 'ctx_p'})}]}}, open(sys.argv[1], 'w'))
+PY
+run --run run_1
+[ "$(ids)" = "plain_done" ] && ok || bad "an empty marker is not sent: $(ids)"
+printf 'sen' > "$tmp/owners/ctx_p.relayed"
+run --run run_1
+[ "$(ids)" = "plain_done" ] && ok || bad "a half written marker is not sent: $(ids)"
+# the drain is not a writer: the sweep is the only one that writes <dispatch>.done.json
+printf 'term_lead\nkind=builder\nrepo=o/n\nbranch=b\n' > "$tmp/owners/ctx_p"
+rm -f "$tmp/owners/ctx_p.relayed"
+run --run run_1
+[ "$(ids)" = "plain_done" ] && [ ! -e "$tmp/owners/ctx_p.done.json" ] && ok || bad "drain leaves no done.json"
+grep -q 'done.json\|def save' "$script" && bad "drain script must not mention done.json or save" || ok
+
+# --wait: a pass where every message is dropped checks again instead of returning empty
+stop_for term_lead:a1 term_lead:a2
+cp "$FAKE_CHECK" "$FAKE_CHECK.1"
+python3 - "$FAKE_CHECK" <<'PY'
+import json, sys
+json.dump({'ok': True, 'result': {'messages': [{'id': 'w_real', 'type': 'worker_done', 'subject': 'done', 'from_handle': 'term_x', 'payload': json.dumps({'dispatchId': 'ctx_zz'})}]}}, open(sys.argv[1], 'w'))
+PY
+run --run run_1 --wait
+[ "$(ids)" = "w_real" ] && [ "$(grep -c 'orchestration check' "$ORCA_LOG")" = 2 ] && ok || bad "all dropped with --wait: checks again and returns the next batch: $(ids) / $(cat "$ORCA_LOG")"
+echo '{"ok":true,"result":{"messages":[]}}' > "$FAKE_CHECK"
+stop_for term_lead:a3; cp "$FAKE_CHECK" "$FAKE_CHECK.1"
+echo '{"ok":true,"result":{"messages":[]}}' > "$FAKE_CHECK"
+run --run run_1 --wait
+[ "$(ids)" = "" ] && [ "$(cat "$tmp/rc")" = 0 ] && [ "$(grep -c 'orchestration check' "$ORCA_LOG")" = 2 ] && ok || bad "all dropped, then the wait times out empty: returns empty"
+stop_for term_lead:a4
+run --run run_1
+[ "$(ids)" = "" ] && [ "$(grep -c 'orchestration check' "$ORCA_LOG")" = 1 ] && ok || bad "without --wait an all dropped batch returns at once"
+rm -f "$FAKE_CHECK".[0-9]
+FAKE_RC=3 run --run run_1 --wait
+[ "$(cat "$tmp/rc")" = 3 ] && [ "$(grep -c 'orchestration check' "$ORCA_LOG")" = 1 ] && ok || bad "a failing check is not retried"
+
+# fleet-watch finds the waiter with pgrep -f <waiter_pattern>; with the drain as parent the pattern still matches
+echo '{"ok":true,"result":{"messages":[]}}' > "$FAKE_CHECK"
+FAKE_SLEEP=3 bash "$script" --run run_pat --wait > /dev/null 2>&1 &
+drain_pid=$!
+sleep 1
+pgrep -f 'orchestration check --run run_pat' > /dev/null && ok || bad "waiter_pattern 'orchestration check --run <run>' matches while the drain waits"
+pgrep -f 'coordinator-drain.sh --run run_pat' > /dev/null && ok || bad "waiter_pattern 'coordinator-drain.sh --run <run>' matches the drain"
+wait "$drain_pid"
 
 # orca failure: exit code passes through
 FAKE_RC=3 run --run run_1

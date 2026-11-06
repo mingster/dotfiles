@@ -18,12 +18,15 @@ chmod +x "$tmp/bin/orca"
 export ORCA_LOG="$tmp/orca.log" ORCA_CLI_COMMAND="$tmp/bin/orca" WORKER_DONE_OWNER_DIR="$tmp/owners"
 sha=0123456789abcdef0123456789abcdef01234567
 printf 'term_lead_L\n' > "$tmp/owners/disp_owned"
+printf '{"id":"m","body":"SUMMARY-ONE the worker built the thing"}' > "$tmp/p.json"
 run() { : > "$ORCA_LOG"; bash "$script" "$@" >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
 
 # 1. owned dispatch: message goes to the lead with branch, sha and payload, and to no one else
-run relay --dispatch disp_owned --branch mingster/x-1 --sha "$sha" --payload /tmp/p.md --coordinator term_coord
+run relay --dispatch disp_owned --branch mingster/x-1 --sha "$sha" --payload "$tmp/p.json" --coordinator term_coord
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "owned relay exit 0"
-grep -q -- "orchestration send --to term_lead_L .*--body .*mingster/x-1.*$sha.*/tmp/p.md" "$ORCA_LOG" && ok || bad "lead gets branch, sha, payload"
+grep -q -- "orchestration send --to term_lead_L .*--body .*mingster/x-1.*$sha" "$ORCA_LOG" && ok || bad "lead gets branch and sha"
+grep -q -- "summary: SUMMARY-ONE the worker built the thing" "$ORCA_LOG" && ok || bad "the worker's summary is in the relay body"
+grep -q -- "--body .*$tmp/p.json" "$ORCA_LOG" && bad "body must not point at a path that gets deleted" || ok
 grep -q -- "terminal send --terminal term_lead_L " "$ORCA_LOG" && ok || bad "lead is nudged"
 grep -q term_coord "$ORCA_LOG" && bad "coordinator must not be contacted when owned" || ok
 
@@ -103,7 +106,9 @@ cat > "$swp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$SW_LOG"
 case "$*" in
-  *"orchestration check"*) cat "$SW_INBOX" ;;
+  *"orchestration inbox"*) cat "$SW_INBOX" ;;
+  *"orchestration check"*) echo "check is consuming; a sweep must never call it" >&2; exit 9 ;;
+  *"worker-release --dispatch "*) [ -z "${SW_FAIL_RELEASE:-}" ] || exit 1; echo '{"ok":true}' ;;
   *"worker-show --dispatch "*)
     d=$4
     if [ -f "$SW_ROOT/show-$d.json" ]; then cat "$SW_ROOT/show-$d.json"; else
@@ -142,10 +147,14 @@ inbox() {
   python3 - "$SW_INBOX" "$@" <<'PY'
 import json, sys
 path, *pairs = sys.argv[1:]
-messages = [{'id': 'msg_' + d, 'type': 'worker_done', 'subject': 'done', 'body': 'free text without fields',
-             'payload': json.dumps({'taskId': 't_' + d, 'dispatchId': d, 'outcome': o})}
-            for d, o in (pair.split(':') for pair in pairs)]
-json.dump({'ok': True, 'result': {'messages': messages}}, open(path, 'w'))
+messages = []
+for pair in pairs:
+    d, o, *rest = pair.split(':')
+    messages.append({'id': 'msg_' + d, 'run_id': 'run_1', 'from_handle': 'term_w_' + d, 'to_handle': 'run:run_1',
+                     'subject': 'done ' + d, 'body': 'SUMMARY-' + d + ' built and tested', 'type': 'worker_done',
+                     'priority': 'normal', 'payload': json.dumps({'taskId': 't_' + d, 'dispatchId': d, 'outcome': o}),
+                     'read': 1 if rest and rest[0] == 'read' else 0, 'sequence': 1})
+json.dump({'ok': True, 'result': {'messages': messages, 'count': len(messages)}}, open(path, 'w'))
 PY
 }
 record() { local id=$1; shift; printf '%s\n' "$@" > "$swp/owners/$id"; }
@@ -167,8 +176,9 @@ inbox b1:succeeded
 record b1 term_lead_L kind=builder repo=o/n branch=feat-1
 sweep
 [ "$(cat "$swp/rc")" = 0 ] && ok || bad "sweep exits 0: $(cat "$swp/err")"
-grep -q -- "orchestration check .*--peek" "$SW_LOG" && ok || bad "sweep reads with --peek"
-grep -q -- "--ack" "$SW_LOG" && bad "sweep must not ack" || ok
+grep -q -- "orchestration inbox --terminal run:run_1 --limit 200 --full --json" "$SW_LOG" && ok || bad "sweep reads the inbox, handled and unhandled"
+grep -q -- "orchestration check" "$SW_LOG" && bad "sweep must never make a consuming check" || ok
+grep -q -- "summary: SUMMARY-b1 built" "$SW_LOG" && ok || bad "sweep relay carries the worker's summary"
 [ "$(sent_to term_lead_L)" = 1 ] && ok || bad "owner lead gets one relay"
 grep -q "branch=feat-1 sha=$b1sha" "$SW_LOG" && ok || bad "relay carries the record branch and the worktree head"
 [ -f "$swp/owners/b1.relayed" ] && ok || bad "relayed marker written"
@@ -194,13 +204,19 @@ sweep
 [ "$(grep -c . "$SW_LOG")" = 1 ] && ok || bad "no record: only the check runs: $(cat "$SW_LOG")"
 [ ! -e "$swp/owners/nobody.relayed" ] && ok || bad "no record: no marker"
 
-# S4: a record without kind is relayed but never released, and is listed once
+# S4 (old records): a one line record with no kind= is never relayed, released or listed, even with old mail in the inbox
 builder_wt k1 feat-k push > /dev/null
-inbox k1:succeeded
-record k1 term_lead_L repo=o/n branch=feat-k
+inbox k1:succeeded k1:succeeded:read
+record k1 term_lead_L
 sweep; sweep
-[ "$(released k1)" = 0 ] && ok || bad "record without kind is never released"
-[ "$(lines_for k1)" = 0 ] && ok || bad "kindless digest line is not repeated"
+[ "$(sent_to term_lead_L)" = 0 ] && [ "$(sent_to term_coord)" = 0 ] && ok || bad "kindless record is not relayed"
+[ "$(released k1)" = 0 ] && ok || bad "kindless record is never released"
+[ ! -s "$swp/out" ] && ok || bad "kindless record adds no digest line: $(cat "$swp/out")"
+[ ! -e "$swp/owners/k1.relayed" ] && [ ! -e "$swp/owners/k1.done.json" ] && [ ! -e "$swp/owners/k1.noted" ] && ok || bad "kindless record leaves no marker"
+record k2 term_lead_L repo=o/n branch=feat-k
+inbox k2:succeeded
+sweep
+[ "$(sent_to term_lead_L)" = 0 ] && ok || bad "a record with repo and branch but no kind is not swept"
 
 # S5: a failed outcome is not released
 builder_wt f1 feat-f push > /dev/null
@@ -279,12 +295,15 @@ SW_FAIL_NUDGE=1 sweep
 
 # S11: a failed send is not marked and is retried on the next pass
 inbox n2:succeeded
-builder_wt n2 feat-n2 > /dev/null
+builder_wt n2 feat-n2 push > /dev/null
 record n2 term_lead_L kind=builder repo=o/n branch=feat-n2
 SW_FAIL_SEND=1 sweep
 [ ! -e "$swp/owners/n2.relayed" ] && ok || bad "failed send leaves no marker"
+[ "$(released n2)" = 0 ] && [ ! -e "$swp/owners/n2.released" ] && ok || bad "failed send with proof present is not released"
+[ -f "$swp/owners/n2.done.json" ] && ok || bad "failed send keeps done.json for the retry"
 sweep
 [ "$(sent_to term_lead_L)" = 1 ] && [ "$(cat "$swp/owners/n2.relayed")" = sent ] && ok || bad "send retried and marked after the failure"
+[ "$(released n2)" = 1 ] && ok || bad "released after the retried send"
 
 # S12: crash after the marker: 'sending' is taken before the send, so at most one repeat
 builder_wt n3 feat-n3 > /dev/null
@@ -298,6 +317,9 @@ sweep
 echo resending > "$swp/owners/n3.relayed"   # the repeat died too
 sweep
 [ "$(sent_to term_lead_L)" = 0 ] && [ "$(cat "$swp/owners/n3.relayed")" = sent ] && ok || bad "a second crash is not repeated again"
+[ "$(lines_for n3)" = 1 ] && grep -q "n3.*may be lost" "$swp/out" && ok || bad "two crashes: the digest line says the relay may be lost: $(cat "$swp/out")"
+sweep
+[ "$(lines_for 'may be lost')" = 0 ] && ok || bad "the may-be-lost line is printed once"
 # the marker is on disk while the send runs
 cat > "$swp/bin/orca-peek" <<'EOS'
 #!/usr/bin/env bash
@@ -311,45 +333,44 @@ record n4 term_lead_L kind=builder repo=o/n branch=feat-n4
 ORCA_CLI_COMMAND="$swp/bin/orca-peek" SW_WHO=n4 sweep
 [ "$(cat "$swp/seen-during-send" 2>/dev/null)" = sending ] && ok || bad "marker says sending while the send runs: $(cat "$swp/seen-during-send" 2>/dev/null)"
 
-# S13 (finding 2): the waiter reads first. The drain records the message, a sweep with an empty inbox still relays and releases
-builder_wt w1 feat-w push > /dev/null
-inbox w1:succeeded
-record w1 term_lead_L kind=builder repo=o/n branch=feat-w
+# S13: the waiter reads first. The message is handled (read) in the inbox; the sweep still relays and releases, once
 export FLEET_WATCH_CONFIG="$swp/none.json" COORDINATOR_DRAIN_STATE="$swp/drain.log" WORKER_DONE_OWNER_DIR="$swp/owners"
-drain() { bash "$here/../coordinator-drain.sh" --run run_1 "$@" > "$swp/drain.out" 2>/dev/null; }
-drain --wait
-grep -q msg_w1 "$swp/drain.out" && ok || bad "the waiter still receives the worker_done"
-[ -f "$swp/owners/w1.done.json" ] && ok || bad "drain recorded worker_done in the done.json store"
-inbox   # the waiter marked it read: nothing unread now
+builder_wt w1 feat-w push > /dev/null
+inbox w1:succeeded:read
+record w1 term_lead_L kind=builder repo=o/n branch=feat-w
 sweep
-[ "$(sent_to term_lead_L)" = 1 ] && ok || bad "read-first message is relayed by the sweep"
-[ "$(released w1)" = 1 ] && ok || bad "read-first message is released on proof"
-inbox w1:succeeded
-drain
-grep -q msg_w1 "$swp/drain.out" && bad "relayed worker_done is dropped by the drain" || ok
-[ ! -e "$swp/owners/w1.done.json" ] && ok || bad "a released dispatch is not recorded again"
-
-# S13b: drain records only owned dispatches, and does not overwrite
-inbox w2:succeeded nobody2:succeeded
+[ "$(sent_to term_lead_L)" = 1 ] && ok || bad "waiter-read message is relayed by the sweep"
+[ "$(released w1)" = 1 ] && ok || bad "waiter-read message is released on proof"
+sweep
+[ "$(sent_to term_lead_L)" = 0 ] && [ "$(released w1)" = 0 ] && ok || bad "waiter-read message is not relayed or released twice"
+# S13b: unread at sweep: same result, no second relay
+builder_wt w2 feat-w2 push > /dev/null
+inbox w2:succeeded:unread
 record w2 term_lead_L kind=builder repo=o/n branch=feat-w2
-drain
-[ -f "$swp/owners/w2.done.json" ] && [ ! -e "$swp/owners/nobody2.done.json" ] && ok || bad "only owned dispatches are recorded"
-printf '{"marker":1}' > "$swp/owners/w2.done.json"
-drain
-grep -q marker "$swp/owners/w2.done.json" && ok || bad "an existing record is not overwritten"
-rm -f "$swp/owners/w2.done.json"
-
-# S13c: a 'sending' marker does not make the drain drop the message
-inbox w3:succeeded
+sweep; sweep
+[ -f "$swp/owners/w2.released" ] && [ "$(cat "$swp/owners/w2.relayed")" = sent ] && [ "$(sent_to term_lead_L)" = 0 ] && ok || bad "unread message ends relayed and released"
+inbox w2:succeeded:unread
+sweep
+[ "$(sent_to term_lead_L)" = 0 ] && ok || bad "an old inbox entry of a released dispatch is not relayed again"
+# S13c: a drain that dies after the check, before printing: the check marked the mail read, the sweep still relays it
+builder_wt w3 feat-w3 push > /dev/null
+inbox w3:succeeded:read
 record w3 term_lead_L kind=builder repo=o/n branch=feat-w3
-echo sending > "$swp/owners/w3.relayed"
-drain
-grep -q msg_w3 "$swp/drain.out" && ok || bad "an unfinished relay is not dropped"
+cp "$SW_INBOX" "$swp/drain-check.json"
+cat > "$swp/bin/orca-drain" <<'EOS'
+#!/usr/bin/env bash
+case "$*" in *"orchestration check"*) cat "$SW_ROOT/drain-check.json" ;; *) exec "$SW_ROOT/bin/orca" "$@" ;; esac
+EOS
+chmod +x "$swp/bin/orca-drain"
+ORCA_CLI_COMMAND="$swp/bin/orca-drain" bash "$here/../coordinator-drain.sh" --run run_1 --wait >&- 2>/dev/null
+[ ! -e "$swp/owners/w3.done.json" ] && ok || bad "the drain writes nothing into the owner directory"
+sweep
+[ "$(sent_to term_lead_L)" = 1 ] && [ "$(released w3)" = 1 ] && ok || bad "drain died after the check: the sweep still relays and releases"
 
 # S13d: payload as an object (the real shape) works
 python3 - "$SW_INBOX" <<'EOP'
 import json, sys
-json.dump({'ok': True, 'result': {'messages': [{'id': 'msg_o1', 'type': 'worker_done', 'subject': 's', 'body': 'b',
+json.dump({'ok': True, 'result': {'messages': [{'id': 'msg_o1', 'type': 'worker_done', 'subject': 's', 'body': 'b', 'read': 1,
            'payload': {'taskId': 't', 'dispatchId': 'o1'}}]}}, open(sys.argv[1], 'w'))
 EOP
 builder_wt o1 feat-o push > /dev/null
@@ -406,6 +427,101 @@ record s9 term_lead_L kind=builder repo=o/n branch=feat-s
 printf '{"ok":true,"result":{"dispatchId":"s9","workspace":"0000::/nonexistent/path/here"}}\n' > "$swp/show-s9.json"
 sweep
 [ "$(released s9)" = 0 ] && ok || bad "unreadable path keeps the seat"
+
+
+# S15: a failed send, lead dead, many passes: one digest line, no release, no flood; recovers with one relay
+builder_wt d1 feat-d1 push > /dev/null
+inbox d1:succeeded
+record d1 term_lead_dead kind=builder repo=o/n branch=feat-d1
+total=0
+for _ in 1 2 3 4 5 6; do SW_FAIL_SEND=1 sweep; total=$((total + $(lines_for d1))); done
+[ "$total" = 1 ] && ok || bad "many failed passes give one digest line, got $total"
+[ "$(released d1)" = 0 ] && [ ! -e "$swp/owners/d1.released" ] && [ ! -e "$swp/owners/d1.relayed" ] && ok || bad "no release and no marker while the send fails"
+[ "$(cat "$swp/rc")" = 0 ] && ok || bad "the sweep keeps exiting 0"
+sweep
+[ "$(sent_to term_lead_dead)" = 1 ] && [ "$(released d1)" = 1 ] && ok || bad "the lead answers again: one relay, then released"
+
+# S16: a crash after the release, before .released: the rerun releases again (or the stub refuses), the sweep never crashes
+builder_wt e1 feat-e1 push > /dev/null
+inbox e1:succeeded
+record e1 term_lead_L kind=builder repo=o/n branch=feat-e1
+SW_FAIL_RELEASE=1 sweep
+[ "$(cat "$swp/rc")" = 0 ] && ok || bad "a refused release does not crash the sweep: $(cat "$swp/err")"
+[ ! -e "$swp/owners/e1.released" ] && [ -f "$swp/owners/e1.done.json" ] && ok || bad "a refused release keeps done.json and writes no .released"
+[ "$(lines_for e1)" = 1 ] && ok || bad "a refused release gets one digest line"
+sweep
+[ "$(released e1)" = 1 ] && [ -f "$swp/owners/e1.released" ] && [ "$(sent_to term_lead_L)" = 0 ] && ok || bad "the rerun releases, no second relay"
+[ -s "$swp/owners/e1.released" ] && ok || bad "the released marker is written whole (atomic), not an empty file"
+ls "$swp/owners" | grep -q '\.tmp' && bad "no temporary files are left behind" || ok
+
+# S17: an empty or half written marker never reads as relayed
+for content in "" "sen"; do
+  builder_wt g1 feat-g1 > /dev/null
+  rm -f "$swp/owners/g1".*
+  inbox g1:succeeded
+  record g1 term_lead_L kind=builder repo=o/n branch=feat-g1
+  printf '%s' "$content" > "$swp/owners/g1.relayed"
+  sweep
+  [ "$(sent_to term_lead_L)" = 1 ] && [ "$(cat "$swp/owners/g1.relayed")" = sent ] && ok || bad "marker '$content' is not relayed: relay once, then sent"
+done
+
+# S18: a worker_done with no dispatchId, or a payload that is not JSON, is skipped and the sweep goes on
+builder_wt h1 feat-h1 push > /dev/null
+python3 - "$SW_INBOX" <<'EOP'
+import json, sys
+good = {'id': 'm3', 'type': 'worker_done', 'subject': 's', 'body': 'SUMMARY-h1', 'read': 0, 'payload': json.dumps({'dispatchId': 'h1', 'taskId': 't'})}
+messages = [{'id': 'm1', 'type': 'worker_done', 'subject': 's', 'body': 'b', 'read': 0, 'payload': json.dumps({'taskId': 't'})},
+            {'id': 'm2', 'type': 'worker_done', 'subject': 's', 'body': 'b', 'read': 0, 'payload': 'not json'},
+            {'id': 'm4', 'type': 'worker_done', 'subject': 's', 'body': 'b', 'read': 0, 'payload': None},
+            {'id': 'm5', 'type': 'worker_done', 'subject': 's', 'body': 'b', 'read': 0, 'payload': json.dumps({'dispatchId': 7})}, good]
+json.dump({'ok': True, 'result': {'messages': messages}}, open(sys.argv[1], 'w'))
+EOP
+record h1 term_lead_L kind=builder repo=o/n branch=feat-h1
+sweep
+[ "$(cat "$swp/rc")" = 0 ] && ok || bad "no dispatchId: sweep exits 0: $(cat "$swp/err")"
+grep -q Traceback "$swp/err" && bad "no traceback" || ok
+[ "$(sent_to term_lead_L)" = 1 ] && [ "$(released h1)" = 1 ] && ok || bad "the sweep goes on to the valid message"
+
+# S19: a real worker_done shape (ids changed): payload is a JSON string with taskId, dispatchId, outcome, filesModified; read is an integer
+builder_wt z1 feat-z1 push > /dev/null
+cat > "$SW_INBOX" <<'EOJ'
+{"ok": true, "result": {"messages": [{"id": "msg_000000000001", "run_id": "run_000000000001", "delivery_contract": "current_delivery", "from_handle": "term_00000000-0000-0000-0000-000000000001", "to_handle": "run:run_000000000001", "subject": "built: wording change", "body": "Replaced the wording in 58 strings plus a changelog fragment and one new test. Tests: 6 pass 0 fail.", "type": "worker_done", "priority": "normal", "thread_id": null, "payload": "{\"taskId\":\"task_000000000001\",\"dispatchId\":\"z1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.json\",\"b.ts\"]}", "read": 1, "sequence": 12, "created_at": "2026-01-01T00:00:00.000Z", "delivered_at": null, "sender_pane_key": "x", "pointer_enter_pending": 0, "pointer_pty_id": null, "pointer_process_incarnation": null}], "count": 1}}
+EOJ
+record z1 term_lead_L kind=builder repo=o/n branch=feat-z1
+sweep
+grep -q -- "summary: Replaced the wording in 58 strings" "$SW_LOG" && [ "$(released z1)" = 1 ] && ok || bad "the real shape is relayed with its summary and released"
+
+# S20: old one line records and history in the inbox: nothing is relayed on the first pass
+inbox old1:succeeded:read old2:succeeded:read old3:succeeded:read
+record old1 term_lead_L
+record old2 term_lead_L
+sweep
+[ "$(grep -c 'orchestration send' "$SW_LOG")" = 0 ] && [ ! -s "$swp/out" ] && ok || bad "old records and history: nothing is relayed on the first pass"
+
+# record mode
+rdir=$tmp/recowners; mkdir "$rdir"
+rrun() { WORKER_DONE_OWNER_DIR="$rdir" bash "$script" record "$@" >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
+rrun --dispatch r_a --lead term_L1 --kind builder --repo o/n --branch feat-x
+[ "$(cat "$tmp/rc")" = 0 ] && [ "$(cat "$rdir/r_a")" = "$(printf 'term_L1\nkind=builder\nrepo=o/n\nbranch=feat-x')" ] && ok || bad "record writes lead, kind, repo, branch: $(cat "$rdir/r_a")"
+rrun --dispatch r_a --lead term_L2
+[ "$(cat "$rdir/r_a")" = "$(printf 'term_L2\nkind=builder\nrepo=o/n\nbranch=feat-x')" ] && ok || bad "a handoff changes only line 1: $(cat "$rdir/r_a")"
+rrun --dispatch r_b --lead term_L1 --kind reviewer --repo o/n --pr 7 --pr 8
+[ "$(cat "$rdir/r_b")" = "$(printf 'term_L1\nkind=reviewer\nrepo=o/n\npr=7\npr=8')" ] && ok || bad "reviewer record carries every pr line: $(cat "$rdir/r_b")"
+rrun --dispatch r_c --lead term_L1
+[ "$(cat "$rdir/r_c")" = term_L1 ] && ok || bad "lead alone, no record yet: one line"
+rrun --dispatch r_a --lead term_L3 --kind builder --repo o/m --branch b2
+[ "$(cat "$rdir/r_a")" = "$(printf 'term_L3\nkind=builder\nrepo=o/m\nbranch=b2')" ] && ok || bad "full flags replace the whole record"
+ls "$rdir" | grep -q '\.tmp' && bad "record leaves no temporary file" || ok
+rrun --dispatch r_d
+[ "$(cat "$tmp/rc")" = 2 ] && [ ! -e "$rdir/r_d" ] && ok || bad "no --lead is refused"
+rrun --dispatch "../x" --lead term_L1
+[ "$(cat "$tmp/rc")" = 2 ] && ok || bad "unsafe dispatch id is refused"
+rrun --dispatch r_e --lead $'term\nkind=builder'
+[ "$(cat "$tmp/rc")" = 2 ] && [ ! -e "$rdir/r_e" ] && ok || bad "a lead with a newline is refused"
+rrun --dispatch r_f --lead term_L1 --kind other
+[ "$(cat "$tmp/rc")" = 2 ] && ok || bad "unknown kind is refused"
+rrun --dispatch r_g --lead term_L1 --kind builder --repo "bad repo" --branch b
+[ "$(cat "$tmp/rc")" = 2 ] && [ ! -e "$rdir/r_g" ] && ok || bad "a repo that is not owner/name is refused"
 
 echo "worker-done-relay: $pass passed, $fail failed"
 [ "$fail" = 0 ]

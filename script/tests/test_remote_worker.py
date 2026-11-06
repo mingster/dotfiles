@@ -41,7 +41,8 @@ elif a[:2] == ['terminal', 'wait']:
 elif a[:2] == ['terminal', 'close']: reply({})
 elif a[:2] == ['orchestration', 'worker-start']:
     assert value('--on') == 'fixture-environment'
-    reply({'state': 'ready'})
+    if os.environ.get('START_FAIL'): print('{"ok":false}'); sys.exit(3)
+    reply({'state': 'ready', 'dispatch': {'dispatchId': 'ctx_remote1'}})
 else: sys.exit(99)
 ''')
         stub.chmod(0o700)
@@ -71,6 +72,47 @@ else: sys.exit(99)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([a[:2] for a in calls], [['terminal', 'create'], ['terminal', 'wait'],
                                                 ['terminal', 'close'], ['orchestration', 'worker-start']])
+
+    def owner_launch(self, *extra):
+        self.owners = self.home / 'owners'
+        self.env['WORKER_DONE_OWNER_DIR'] = str(self.owners)
+        (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'agy').chmod(0o700)
+        return subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'), '--on', 'fixture-environment',
+                               '--agent', 'antigravity', '--worktree', 'path:/srv/fixture', '--spec', 'Fixture task', *extra],
+                              env=self.env, capture_output=True, text=True)
+
+    def test_owner_flags_write_the_record_and_leave_the_start_output_alone(self):
+        result = self.owner_launch('--owner-lead', 'term_lead_Z', '--owner-repo', 'o/n', '--owner-branch', 'feat-x')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {'result': {'state': 'ready', 'dispatch': {'dispatchId': 'ctx_remote1'}}})
+        self.assertEqual((self.owners / 'ctx_remote1').read_text(), 'term_lead_Z\nkind=builder\nrepo=o/n\nbranch=feat-x\n')
+        start = [json.loads(line) for line in self.log.read_text().splitlines()][-1]
+        self.assertFalse([a for a in start if a.startswith('--owner')])
+
+    def test_no_owner_flags_no_record(self):
+        result = self.owner_launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.owners.exists())
+
+    def test_failed_record_write_warns_and_the_start_succeeds(self):
+        blocked = self.home / 'blocked'
+        blocked.write_text('')
+        result = self.owner_launch('--owner-lead', 'term_lead_Z')
+        self.assertEqual(result.returncode, 0)
+        self.env['WORKER_DONE_OWNER_DIR'] = str(blocked)
+        result = subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'), '--on', 'fixture-environment',
+                                 '--agent', 'antigravity', '--worktree', 'path:/srv/fixture', '--spec', 'x',
+                                 '--owner-lead', 'term_lead_Z'], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('owner record', result.stderr)
+        self.assertIn('ctx_remote1', result.stdout)
+
+    def test_failed_start_keeps_its_exit_code_and_writes_no_record(self):
+        self.env['START_FAIL'] = '1'
+        result = self.owner_launch('--owner-lead', 'term_lead_Z')
+        self.assertEqual(result.returncode, 3)
+        self.assertFalse(self.owners.exists())
 
     def test_uncertain_completion_never_dispatches(self):
         (self.bin / 'agy').touch(mode=0o700)

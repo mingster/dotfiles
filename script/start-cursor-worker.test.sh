@@ -31,7 +31,8 @@ with open(os.environ['HOME'] + '/.cursor/projects/tmp-example-repo-work tree-v1/
 assert marker['workspacePath'] == '/tmp/example.repo/work tree.v1'
 datetime.strptime(marker['trustedAt'], '%Y-%m-%dT%H:%M:%SZ')
 PY
-    printf '%s\n' '{"result":{"state":"dispatched"}}' ;;
+    if [ -n "${CURSOR_START_OUT:-}" ]; then printf '%s\n' "$CURSOR_START_OUT"; else printf '%s\n' '{"result":{"state":"dispatched"}}'; fi
+    exit "${CURSOR_START_RC:-0}" ;;
   *) exit 99 ;;
 esac
 STUB
@@ -53,6 +54,34 @@ done
 launch --name fixture --repo id:abc > "$tmp/result"
 grep -Fq -- '--repo id:abc --setup' "$CURSOR_TEST_LOG"
 echo 'PASS: local id selector uses the Orca default base without local git access'
+# Owner record: --owner-lead (with --owner-repo and --owner-branch) writes it from the dispatch id in the start output
+export WORKER_DONE_OWNER_DIR="$tmp/owners"
+start_out='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_own1"}}}'
+: > "$CURSOR_TEST_LOG"
+CURSOR_START_OUT=$start_out launch --worktree-path '/tmp/example.repo/work tree.v1' --owner-lead term_lead_Z --owner-repo o/n --owner-branch feat-x > "$tmp/result" 2> "$tmp/err" || { cat "$tmp/err" >&2; exit 1; }
+test "$(cat "$tmp/result")" = "$start_out"
+test "$(cat "$tmp/owners/ctx_own1")" = "$(printf 'term_lead_Z\nkind=builder\nrepo=o/n\nbranch=feat-x')"
+! grep -q -- '--owner' "$CURSOR_TEST_LOG"
+echo 'PASS: owner flags write the record, the start output is unchanged and the flags never reach worker-start'
+rm -rf "$tmp/owners"; : > "$CURSOR_TEST_LOG"
+CURSOR_START_OUT=$start_out launch --worktree-path '/tmp/example.repo/work tree.v1' > "$tmp/result"
+test ! -e "$tmp/owners"
+echo 'PASS: no owner flags, no record'
+mkdir -p "$tmp/blocked" && : > "$tmp/blocked/file"
+WORKER_DONE_OWNER_DIR="$tmp/blocked/file" CURSOR_START_OUT=$start_out launch --worktree-path '/tmp/example.repo/work tree.v1' --owner-lead term_lead_Z > "$tmp/result" 2> "$tmp/err"
+test "$(cat "$tmp/result")" = "$start_out"
+grep -q 'owner record' "$tmp/err"
+echo 'PASS: a failed record write warns and the start still succeeds'
+rm -rf "$tmp/owners"
+if CURSOR_START_RC=3 CURSOR_START_OUT='{"ok":false}' launch --worktree-path '/tmp/example.repo/work tree.v1' --owner-lead term_lead_Z > "$tmp/result" 2> "$tmp/err"; then
+  echo 'FAIL: a failed start was reported as success' >&2; exit 1
+fi
+test ! -e "$tmp/owners"
+echo 'PASS: a failed start keeps failing and writes no record'
+CURSOR_START_OUT='{"ok":true,"result":{"state":"dispatched"}}' launch --worktree-path '/tmp/example.repo/work tree.v1' --owner-lead term_lead_Z > "$tmp/result" 2> "$tmp/err"
+grep -q 'no dispatch id' "$tmp/err" && test ! -e "$tmp/owners"
+echo 'PASS: no dispatch id in the output warns and writes no record'
+unset WORKER_DONE_OWNER_DIR
 cat > "$tmp/bin/git" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -221,4 +250,4 @@ fi
 grep -q 'spec file is empty' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: blank spec is refused before any Orca call'
-echo 'PASS: 19 tests'
+echo 'PASS: 24 tests'

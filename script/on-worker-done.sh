@@ -10,7 +10,7 @@
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--dry-run]" >&2; exit 2; }
-owner="" repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
+owner=${ORCA_TERMINAL_HANDLE:-} repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;

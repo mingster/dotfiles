@@ -1,9 +1,68 @@
 #!/usr/bin/env bash
 # Same arguments as Orca worker-start, requiring --on and --agent.
 # Probe the execution environment's login-shell PATH before creating a worker.
+# Optional --owner-lead HANDLE [--owner-repo R --owner-branch B]: after the start, write the owner record
+# (worker-done-relay.sh record) from the dispatch id in the start output. Not passed on to worker-start.
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
+self=start-remote-worker
+owner_lead= owner_repo= owner_branch=
+plain=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --owner-lead|--owner-repo|--owner-branch)
+      [ $# -ge 2 ] || exit 2
+      case "$1" in --owner-lead) owner_lead=$2 ;; --owner-repo) owner_repo=$2 ;; --owner-branch) owner_branch=$2 ;; esac
+      shift 2 ;;
+    *) plain+=("$1"); shift ;;
+  esac
+done
+set -- ${plain[@]+"${plain[@]}"}
 args=("$@")
+
+# Run worker-start; with --owner-lead, also write the owner record from the dispatch id in its output.
+# The start output is printed unchanged and a failed record write only warns.
+start_and_record() {
+  local out status dispatch record_args
+  out=$(mktemp)
+  status=0
+  "$orca" orchestration worker-start "$@" > "$out" || status=$?
+  cat "$out"
+  if [ "$status" = 0 ]; then
+    dispatch=$(python3 - "$out" <<'PY' 2>/dev/null || true
+import json, re, sys
+def find(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("dispatchId"), str):
+            return node["dispatchId"]
+        node = list(node.values())
+    if isinstance(node, list):
+        for value in node:
+            found = find(value)
+            if found:
+                return found
+try:
+    found = find(json.load(open(sys.argv[1])))
+except (OSError, ValueError):
+    found = None
+print(found if found and re.fullmatch(r"[A-Za-z0-9_-]+", found) else "")
+PY
+)
+    if [ -z "$dispatch" ]; then
+      echo "$self: no dispatch id in the start output, owner record not written" >&2
+    else
+      record_args=(record --dispatch "$dispatch" --lead "$owner_lead")
+      if [ -n "$owner_repo" ] && [ -n "$owner_branch" ]; then
+        record_args+=(--kind builder --repo "$owner_repo" --branch "$owner_branch")
+      elif [ -n "$owner_repo$owner_branch" ]; then
+        echo "$self: --owner-repo and --owner-branch go together; the record has no kind, so it is never swept" >&2
+      fi
+      bash "$(dirname "$0")/worker-done-relay.sh" "${record_args[@]}" || echo "$self: owner record for $dispatch not written" >&2
+    fi
+  fi
+  rm -f "$out"
+  return "$status"
+}
 environment= agent= worktree=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,4 +106,7 @@ sys.exit(0 if w.get("satisfied") is True and w.get("status") == "exited" and w.g
   exit 1
 fi
 "$orca" terminal close --environment "$environment" --terminal "$terminal" --json >/dev/null
-exec "$orca" orchestration worker-start "${args[@]}"
+if [ -z "$owner_lead" ]; then
+  exec "$orca" orchestration worker-start "${args[@]}"
+fi
+start_and_record "${args[@]}"
