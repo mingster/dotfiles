@@ -190,7 +190,7 @@ class WorkflowNotices(unittest.TestCase):
         self.assertEqual(self.commands[0][1:3], ['run', 'rerun'])
         self.assertEqual(self.commands[1][1:3], ['issue', 'create'])
 
-    def test_failed_issue_is_reported_and_retried(self):
+    def test_failed_workflow_issue_is_reported_and_retried(self):
         state = {}
         self.code = 1
         self.assertIn('issue not opened', self.notices(state, self.run_row(attempt=2))[0])
@@ -218,13 +218,19 @@ class BackupNotices(unittest.TestCase):
     def setUp(self):
         self.commands = []
         self.code = 0
+        self.open_titles = []
 
     def act(self, command):
         self.commands.append(command)
         return self.code
 
+    def list_open(self, repo):
+        return list(self.open_titles)
+
     def notices(self, state, age):
-        return fw.backup_notices(self.CONFIG, state, self.NOW, stamp_time=lambda path: self.NOW - age, act=self.act)
+        return fw.backup_notices(
+            self.CONFIG, state, self.NOW,
+            stamp_time=lambda path: self.NOW - age, act=self.act, list_open=self.list_open)
 
     def test_fresh_backup_is_quiet(self):
         self.assertEqual(self.notices({}, 29 * 60), [])
@@ -243,7 +249,13 @@ class BackupNotices(unittest.TestCase):
         self.notices(state, 31 * 60)
         self.assertEqual(len(self.commands), 2)
 
-    def test_failed_issue_is_reported_and_retried(self):
+    def test_duplicate_open_issue_skips_create(self):
+        state = {}
+        self.open_titles = [fw.AGENT_STATE_BACKUP_STALE_TITLE]
+        self.assertEqual(self.notices(state, 31 * 60), [])
+        self.assertEqual(self.commands, [])
+
+    def test_failed_backup_issue_is_reported_and_retried(self):
         state = {}
         self.code = 1
         self.assertIn('issue not opened', self.notices(state, 31 * 60)[0])
@@ -254,7 +266,8 @@ class BackupNotices(unittest.TestCase):
     def test_missing_stamp_counts_as_stale(self):
         def gone(path):
             raise OSError
-        fw.backup_notices(self.CONFIG, {}, self.NOW, stamp_time=gone, act=self.act)
+        fw.backup_notices(
+            self.CONFIG, {}, self.NOW, stamp_time=gone, act=self.act, list_open=self.list_open)
         self.assertEqual(len(self.commands), 1)
 
     def test_no_backup_configured_runs_nothing(self):
