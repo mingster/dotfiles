@@ -789,7 +789,7 @@ def candidate_reason(candidate):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish"])
+    ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish", "link"])
     ap.add_argument("--host", action="append", default=[])
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for composer-2.5 allowance")
@@ -803,8 +803,10 @@ def main(argv=None):
                     help="weekly percent held back per worker already running on the provider")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    if a.cmd in ("check", "pick"):
+    if a.cmd in ("check", "pick", "link"):
         link_presets()
+    if a.cmd == "link":
+        return 0
     if a.cmd == "publish":
         return publish(a.host)
     if a.cmd == "banner":

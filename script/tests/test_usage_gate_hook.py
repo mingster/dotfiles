@@ -35,8 +35,10 @@ class Hook(unittest.TestCase):
             today = datetime.now().strftime("%Y-%m-%d")
             json.dump({"date": today, "baseline": baseline, "resets_at": FUT}, open(self.state + "/claude.json", "w"))
 
-    def run_hook(self, command, tool="Bash"):
+    def run_hook(self, command, tool="Bash", presets=True):
         env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA="false", USAGE_GATE_PRESETS=self.presets)
+        if not presets:
+            del env["USAGE_GATE_PRESETS"]
         r = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0)
@@ -103,6 +105,8 @@ class Hook(unittest.TestCase):
             spec.loader.exec_module(hook)
 
         def gate(argv, **kwargs):
+            if argv[2] == "link":
+                return mock.Mock(returncode=0)
             self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
             extra = argv[5:]
             allowed = extra in ([], ["--model", "gemini-flash"]) if provider == "antigravity" else extra == []
@@ -128,7 +132,7 @@ class Hook(unittest.TestCase):
                 mock.patch.object(hook, "routing", return_value=None), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             hook.main()
-        return out.getvalue(), [call.args[0][5:] for call in run.call_args_list]
+        return out.getvalue(), [call.args[0][5:] for call in run.call_args_list if call.args[0][2] != "link"]
 
     def test_antigravity_gemini_allowed_while_claude_pool_blocked(self):
         for option in ("--model gemini-flash", "--model=gemini-flash", "--model 'gemini-flash'"):
@@ -274,6 +278,34 @@ class Hook(unittest.TestCase):
             self.assertIn("claude headroom", err)
         self.assertEqual(self.run_hook("orca orchestration worker-start --agent claude "
                                       "--task-title 'fullstack-dev - job'"), (None, ""))
+
+    def test_remote_start_must_use_the_start_tool(self):
+        self.claude(10)
+        for cmd in ("orca orchestration worker-start --on niteking --agent claude --spec x",
+                    "orca orchestration worker-start --on=niteking --agent claude --spec x"):
+            self.assertIn("start-remote-worker.sh", self.run_hook(cmd)[0] or "", cmd)
+
+    def test_override_does_not_allow_a_direct_remote_start(self):
+        self.claude(10)
+        cmd = "USAGE_GATE_OVERRIDE=why orca orchestration worker-start --on niteking --agent claude --spec x"
+        self.assertIn("start-remote-worker.sh", self.run_hook(cmd)[0] or "")
+
+    def test_remote_word_in_spec_text_is_not_a_remote_start(self):
+        self.claude(10)
+        self.assertIsNone(self.run_hook("orca orchestration worker-start --agent claude --spec 'use --on x'")[0])
+
+    def test_stale_preset_is_repaired_before_its_roles_are_read(self):
+        self.claude(10)
+        dotfiles = self.tmp.name + "/dotfiles/.orca"
+        os.makedirs(dotfiles)
+        os.makedirs(self.tmp.name + "/.orca")
+        os.rename(self.presets, dotfiles + "/presets.json")
+        with open(self.tmp.name + "/.orca/presets.json", "w") as f:
+            json.dump({"roles": {}}, f)
+        err = self.run_hook("orca orchestration worker-start --agent claude "
+                            "--task-title 'fullstack-dev - x' --spec x", presets=False)[1]
+        self.assertNotIn("no known role prefix", err)
+        self.assertTrue(os.path.islink(self.tmp.name + "/.orca/presets.json"))
 
     def test_unknown_role_warns(self):
         self.composer_pool(90, 85)
