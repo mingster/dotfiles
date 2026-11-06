@@ -47,7 +47,7 @@ class NoTerminalSend(unittest.TestCase):
             state = pathlib.Path(directory)/'state.json'
             state.write_text(json.dumps({'failed': [], 'r1': {'since': 0, 'alerted': False}}))
             for _ in range(3):
-                with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.dict('os.environ', {'FLEET_START_DIR': str(state.parent/'start-requests')}), \
                      patch.object(watch, 'rpc', side_effect=rpc), \
                      patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
                     watch.main()

@@ -2,6 +2,7 @@
   "local_host": "host-id-of-this-machine",
   "run": "run_example",
   "coordinator": "term_example_coordinator",
+  "roles": ["fullstack-dev", "qa"],
   "placement": {
     "builder": ["host-id-of-this-machine", "remote-host-id"],
     "reviewer": ["remote-host-id"]

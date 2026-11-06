@@ -31,7 +31,7 @@ class Leads(unittest.TestCase):
         config = state.parent/'config.json'
         config.write_text(json.dumps({'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
                                       'leads': [{'name': 'lead 2', 'terminal': 'term_lead2'}]}))
-        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
+        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.dict('os.environ', {'FLEET_START_DIR': str(state.parent/'start-requests')}), patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
         return [' '.join(c) for c in calls if c[:2] == ('orchestration', 'send')]

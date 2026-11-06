@@ -7,14 +7,19 @@
 #   fleet-start.sh delay                count, median and max of started_at - requested_at over started requests
 # `request` writes one file by atomic rename into FLEET_START_DIR (default ~/.claude/state/start-requests) and never calls orca.
 # Per request, drain runs: fleet-watch.py --admit (host cap, plus the seats this script started in the last 120 s, because
-# worker-list lags), usage-gate.py pick then check (exit 3 stops the drain), the project's guard-bash.py on the start command
+# worker-list lags), usage-gate.py pick then check (only check exit 0 starts; exit 3 stops the drain; any other exit, a crash,
+# a timeout or a missing gate leaves the request queued with its reason), the project's guard-bash.py on the start command
 # as PreToolUse JSON (the grill gate), then a "starting" marker, then orca worker-start (script/start-remote-worker.sh for a
 # remote host) with --run and --from set to the coordinator, then the owner record, then a reply to the lead.
-# A refused request stays queued, its reason in <id>.refused (fleet-watch puts it in the digest). A marker without a result
-# (crash, failed start) is an unknown state: it is never started again until a person runs `settle`.
+# A refused request stays queued, its reason in <id>.refused (fleet-watch puts it in the digest). A request file that fails the
+# same checks `request` makes (or is not JSON, or is half written) is set aside as <id>.bad with <id>.bad.why, shown in the digest,
+# and never stops the requests behind it. A marker without a result (crash, failed start) is an unknown state: it is never
+# started again until a person runs `settle`. If the marker already holds a dispatch id the worker exists, and settle only
+# finishes its owner record, it never queues a second start.
 # Nothing here depends on a coordinator terminal or on who calls drain, so cron or the coordinator's own wake can run it.
 # Config (FLEET_START_CONFIG, default ~/.config/fleet-start/config.json, see fleet-start.config.example.json):
-#   local_host, run, coordinator, placement {kind: [host, ...]}, projects {owner/name: checkout path}.
+#   local_host, run, coordinator, roles [role, ...], placement {kind: [host, ...]}, projects {owner/name: checkout path}.
+# A role not in roles, or a host that is neither local_host nor in placement, is refused.
 # Env: FLEET_START_DIR, WORKER_DONE_OWNER_DIR, FLEET_WATCH_CONFIG (for --admit), ORCA_CLI_COMMAND,
 #      FLEET_START_USAGE_GATE (default: python3 usage-gate.py beside this script), FLEET_START_NOW (epoch seconds, tests).
 set -euo pipefail
@@ -24,6 +29,7 @@ import glob, json, os, re, secrets, shlex, statistics, subprocess, sys, time
 
 here, args = sys.argv[1], sys.argv[2:]
 PENDING_SECONDS = 120
+STALE_LOCK_SECONDS = 60
 
 
 def die(message, code=2):
@@ -84,23 +90,57 @@ def parse(argv, valued, repeated=(), flags=()):
     return got
 
 
+NAME = r'(?!-)[A-Za-z0-9_.-]+'
+PATTERNS = {'role': r'(?!-)[A-Za-z0-9_-]+', 'ticket': r'(?!-)[A-Za-z0-9_.#-]+', 'from': r'(?!-)[A-Za-z0-9_-]+',
+            'repo': r'(?!-)[\w.-]+/[\w.-]+', 'host': NAME, 'branch': r'(?!-)[A-Za-z0-9_./-]+'}
+
+
+def validate(req, ident=None):
+    """None when a request has everything the start and the owner record need, else the reason. Used by request and by drain."""
+    if not isinstance(req, dict):
+        return 'not a JSON object'
+    for key in ('role', 'brief', 'ticket', 'kind', 'from', 'repo'):
+        if not isinstance(req.get(key), str) or not req[key].strip():
+            return 'missing or empty %s' % key
+    for key, pattern in PATTERNS.items():
+        value = req.get(key)
+        if value is not None and (not isinstance(value, str) or not re.fullmatch(pattern, value)):
+            return '%s has characters it may not have' % key
+    if req['kind'] not in ('builder', 'reviewer'):
+        return 'kind must be builder or reviewer'
+    prs = req.get('pr')
+    if not isinstance(prs, list) or not all(isinstance(n, str) and re.fullmatch(r'\d+', n) for n in prs):
+        return 'pr must be a list of numbers'
+    if req['kind'] == 'builder' and not req.get('branch'):
+        return 'a builder request needs a branch'
+    if req['kind'] == 'reviewer' and not prs:
+        return 'a reviewer request needs at least one pr'
+    stamp = req.get('requested_at')
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return 'requested_at is not a number'
+    if ident is not None and req.get('id') != ident:
+        return 'id does not match the file name'
+    return None
+
+
+def config_refusal(config, req):
+    """None when the role and host are in the config, else the reason."""
+    if req['role'] not in (config.get('roles') or []):
+        return 'role %s is not in the fleet-start config roles' % req['role']
+    known = set((config.get('placement') or {}).get('builder') or []) | set((config.get('placement') or {}).get('reviewer') or [])
+    known |= set(host for hosts in (config.get('placement') or {}).values() for host in hosts)
+    if config.get('local_host'):
+        known.add(config['local_host'])
+    if req.get('host') and req['host'] not in known:
+        return 'host %s is not in the fleet-start config' % req['host']
+    return None
+
+
 def request():
     got = parse(args[1:], {'role', 'brief', 'ticket', 'kind', 'host', 'from', 'repo', 'branch'}, repeated=('pr',))
     for key in ('role', 'brief', 'ticket', 'kind', 'from', 'repo'):
         if not got.get(key):
             die('refusing, --%s is required' % key)
-    if got['kind'] not in ('builder', 'reviewer'):
-        die('--kind must be builder or reviewer')
-    if got['kind'] == 'builder' and not got.get('branch'):
-        die('refusing, a builder request needs --branch (the owner record cannot prove a push without it)')
-    if got['kind'] == 'reviewer' and not got['pr']:
-        die('refusing, a reviewer request needs at least one --pr')
-    for key, pattern in (('role', r'[A-Za-z0-9_-]+'), ('ticket', r'[A-Za-z0-9_.#-]+'), ('from', r'[A-Za-z0-9_-]+'),
-                         ('repo', r'[\w.-]+/[\w.-]+'), ('host', r'[A-Za-z0-9_.-]+'), ('branch', r'[A-Za-z0-9_./-]+')):
-        if got.get(key) and not re.fullmatch(pattern, got[key]):
-            die('--%s has characters it may not have' % key)
-    if not all(re.fullmatch(r'\d+', number) for number in got['pr']):
-        die('--pr must be a number')
     try:
         with open(got['brief']) as stream:
             brief = stream.read(65536)
@@ -113,6 +153,9 @@ def request():
     record = {'id': ident, 'role': got['role'], 'brief': brief, 'ticket': got['ticket'], 'kind': got['kind'],
               'host': got.get('host') or None, 'from': got['from'], 'repo': got['repo'],
               'branch': got.get('branch') or None, 'pr': got['pr'], 'requested_at': at}
+    why = validate(record, ident) or config_refusal(load_config(), record)
+    if why:
+        die('refusing, ' + why)
     write_atomic(os.path.join(queue, ident + '.json'), json.dumps(record))
     print(ident)
 
@@ -147,7 +190,11 @@ def acquire_lock():
             holder = open(os.path.join(lock, 'pid')).read().strip()
         except OSError:
             holder = ''
-        if holder and not pid_alive(holder):
+        try:
+            old = time.time() - os.path.getmtime(lock) > STALE_LOCK_SECONDS
+        except OSError:
+            old = False
+        if (holder and not pid_alive(holder)) or (not holder and old):
             try:
                 os.mkdir(lock + '.takeover')
             except FileExistsError:
@@ -159,7 +206,7 @@ def acquire_lock():
             except OSError:
                 again = ''
             if again == holder:
-                print('fleet-start: taking over stale lock of pid %s' % holder, file=sys.stderr)
+                print('fleet-start: taking over stale lock of pid %s' % (holder or '(none recorded)'), file=sys.stderr)
                 subprocess.run(['rm', '-rf', lock])
             os.rmdir(lock + '.takeover')
             continue
@@ -240,8 +287,11 @@ def usage(role):
     command = gate + ['check', '--provider', chosen['provider']]
     if chosen['provider'] in ('antigravity', 'cursor') and chosen.get('model'):
         command += ['--model', chosen['model']]
-    if run(command, 60).returncode == 3:
+    checked = run(command, 60)
+    if checked.returncode == 3:
         return ('stop', 'usage gate: %s is at its ceiling (exit 3), the drain stops' % chosen['provider'])
+    if checked.returncode != 0:
+        return ('refused', 'usage gate: check for %s did not allow a start (exit %d)' % (chosen['provider'], checked.returncode))
     return ('ok', chosen['provider'], chosen.get('model'), chosen.get('effort'))
 
 
@@ -307,6 +357,9 @@ def reply(config, ident, started):
 
 def try_start(config, req, dry):
     """('started',), ('refused', reason), ('stop', reason) or ('dry',)."""
+    why = config_refusal(config, req)
+    if why:
+        return ('refused', why)
     hosts = [req['host']] if req['host'] else (config.get('placement') or {}).get(req['kind']) or []
     if not hosts:
         return ('refused', 'no host named and no placement for kind %s in the fleet-start config' % req['kind'])
@@ -355,6 +408,7 @@ def try_start(config, req, dry):
         write_atomic(side(ident, '.starting'), json.dumps({'host': host, 'at': now(), 'exit': done.returncode,
                                                             'error': (done.stderr or '').strip()[-300:]}))
         return ('unknown', 'start exited %d without a dispatch id: %s' % (done.returncode, (done.stderr or '').strip()[-200:]))
+    write_atomic(side(ident, '.starting'), json.dumps({'host': host, 'at': now(), 'dispatch': dispatch}))
     owner_record(dispatch, req)
     started = {'dispatch': dispatch, 'host': host, 'from': req['from'], 'role': req['role'], 'ticket': ticket,
                'requested_at': req['requested_at'], 'started_at': now()}
@@ -386,9 +440,20 @@ def drain():
             if os.path.exists(side(ident, '.started')) or os.path.exists(side(ident, '.starting')):
                 continue
             req = read_json(path)
-            if not isinstance(req, dict):
+            why = validate(req, ident)
+            if why:
+                print('fleet-start: %s is set aside: %s' % (ident, why), file=sys.stderr)
+                if not dry:
+                    write_atomic(side(ident, '.bad.why'), why)
+                    os.rename(path, side(ident, '.bad'))
                 continue
-            outcome = try_start(config, req, dry)
+            try:
+                outcome = try_start(config, req, dry)
+            except Exception as error:
+                if os.path.exists(side(ident, '.starting')):
+                    outcome = ('unknown', 'failed after the start marker: %r' % error)
+                else:
+                    outcome = ('refused', 'internal error before any start: %r' % error)
             if outcome[0] in ('refused', 'stop'):
                 print('fleet-start: %s stays queued: %s' % (ident, outcome[1]))
                 if not dry:
@@ -412,6 +477,22 @@ def settle():
         die('no request %s' % ident)
     if os.path.exists(side(ident, '.started')):
         die('request %s already started' % ident)
+    marker = read_json(side(ident, '.starting'))
+    if isinstance(marker, dict) and marker.get('dispatch'):
+        req = read_json(side(ident, '.json'))
+        if validate(req, ident) or not re.fullmatch(r'[A-Za-z0-9_-]+', str(marker['dispatch'])):
+            die('request %s started worker %s but its file is unusable, write the owner record by hand' % (ident, marker['dispatch']))
+        owner_record(marker['dispatch'], req)
+        started = {'dispatch': marker['dispatch'], 'host': marker['host'], 'from': req['from'], 'role': req['role'],
+                   'ticket': req['ticket'], 'requested_at': req['requested_at'], 'started_at': marker['at']}
+        write_atomic(side(ident, '.started'), json.dumps(started))
+        for suffix in ('.starting', '.refused', '.noted'):
+            try:
+                os.unlink(side(ident, suffix))
+            except OSError:
+                pass
+        print('fleet-start: %s had already started worker %s, owner record written, not queued again' % (ident, marker['dispatch']))
+        return
     for suffix in ('.starting', '.refused', '.noted'):
         try:
             os.unlink(side(ident, suffix))

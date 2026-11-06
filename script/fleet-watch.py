@@ -682,7 +682,11 @@ def start_notices(directory=None):
             if started.exists():
                 continue
             if (directory / (ident + '.starting')).exists():
-                text = 'start request %s is in an unknown state, check whether its worker exists, then run fleet-start.sh settle %s' % (label, ident)
+                dispatch = (json.loads((directory / (ident + '.starting')).read_text()) or {}).get('dispatch')
+                if dispatch:
+                    text = 'start request %s started worker %s but its owner record is not written, run fleet-start.sh settle %s' % (label, dispatch, ident)
+                else:
+                    text = 'start request %s is in an unknown state, check whether its worker exists, then run fleet-start.sh settle %s' % (label, ident)
             elif (directory / (ident + '.refused')).exists():
                 text = 'start request %s queued: %s' % (label, (directory / (ident + '.refused')).read_text().strip())
             else:
@@ -694,7 +698,56 @@ def start_notices(directory=None):
         except (OSError, ValueError, KeyError, TypeError):
             continue
         notices.append(text)
+    for bad in sorted(directory.glob('*.bad')):
+        try:
+            text = 'start request %s was set aside and never starts: %s' % (bad.stem, (directory / (bad.stem + '.bad.why')).read_text().strip())
+            noted = directory / (bad.stem + '.bad.noted')
+            if noted.exists() and noted.read_text() == text:
+                continue
+            noted.write_text(text)
+        except OSError:
+            continue
+        notices.append(text)
+    notices += lock_notices(directory)
     return notices
+
+
+def lock_notices(directory, stale=60):
+    """One digest line while the drain lock is stuck: no pid recorded or the holder is gone for longer than `stale` seconds,
+    or a live holder past 30 minutes."""
+    lock, noted = directory / 'drain.lock', directory / 'drain.lock.noted'
+    text = None
+    try:
+        age = time.time() - lock.stat().st_mtime
+        try:
+            holder = (lock / 'pid').read_text().strip()
+        except OSError:
+            holder = ''
+        running = False
+        if holder.isdigit():
+            try:
+                os.kill(int(holder), 0)
+                running = True
+            except PermissionError:
+                running = True
+            except OSError:
+                pass
+        if not running and age > stale:
+            text = 'fleet-start drain lock is stuck (%s), the next drain clears it' % ('pid %s is not running' % holder if holder else 'no pid recorded')
+        elif running and age > 1800:
+            text = 'fleet-start drain has held its lock for over 30 minutes (pid %s), check that it is not hung' % holder
+    except OSError:
+        pass
+    try:
+        if text is None:
+            noted.unlink(missing_ok=True)
+            return []
+        if noted.exists() and noted.read_text() == text:
+            return []
+        noted.write_text(text)
+    except OSError:
+        return []
+    return [text]
 
 
 def sweep_notices(config, runner=subprocess.run):

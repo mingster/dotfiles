@@ -46,7 +46,7 @@ chmod +x "$tmp/bin/orca" "$tmp/bin/usage-gate"
 
 root=$(cd "$here/../.." && pwd)
 cat > "$tmp/config.json" <<EOF
-{"local_host": "host-local", "run": "run_1", "coordinator": "term_coord",
+{"local_host": "host-local", "run": "run_1", "coordinator": "term_coord", "roles": ["fullstack-dev", "qa"],
  "placement": {"builder": ["host-local", "host-r"], "reviewer": ["host-r"]},
  "projects": {"owner/repo": "$tmp/proj", "owner/real": "$root/templates/agent-team"}}
 EOF
@@ -281,6 +281,123 @@ first = watch.start_notices()
 assert len(first) == 1 and 'unknown' in first[0] and 'settle' in first[0], first
 assert watch.start_notices() == []
 PY
+
+# 11. usage gate: only check exit 0 starts
+reset; req --host host-local > /dev/null; FAKE_CHECK_RC=4 drain; refused "usage check exit 4 (unknown)" "exit 4"
+reset; req --host host-local > /dev/null; FAKE_CHECK_RC=1 drain; refused "usage check crash" "exit 1"
+reset; req --host host-local > /dev/null; FLEET_START_USAGE_GATE="$tmp/no-such-gate" drain; refused "missing usage gate" "usage"
+reset
+req --host host-local > /dev/null; req --host host-local --branch b2 > /dev/null
+FAKE_CHECK_RC=4 drain
+[ "$(grep -c '^pick' "$GATE_LOG")" = 2 ] && ok || bad "a refused check moves on to the next request"
+drain
+[ "$(starts)" = 2 ] && ok || bad "refused requests start on a later drain once the gate allows"
+
+# 12. a bad request file is set aside, with a reason, and never blocks the requests behind it
+reset
+mkdir -p "$FLEET_START_DIR"
+echo '{}' > "$FLEET_START_DIR/0000000000001-aaaaaa.json"
+echo '{"id": "0000000000002-aaaaaa", "role": "fullst' > "$FLEET_START_DIR/0000000000002-aaaaaa.json"
+printf '{"id":"0000000000003-aaaaaa","role":"fullstack-dev","brief":"b","ticket":"574","kind":"builder","host":null,"from":"term_lead\\nkind=reviewer","repo":"owner/repo","branch":"b1","pr":[],"requested_at":1}' > "$FLEET_START_DIR/0000000000003-aaaaaa.json"
+printf '{"id":"../../x","role":"fullstack-dev","brief":"b","ticket":"574","kind":"builder","host":null,"from":"term_lead","repo":"owner/repo","branch":"b1","pr":[],"requested_at":1}' > "$FLEET_START_DIR/0000000000004-aaaaaa.json"
+printf '{"id":"0000000000005-aaaaaa","role":"fullstack-dev","brief":"b","ticket":"574","kind":"builder","host":null,"from":"term_lead","repo":"owner/repo","branch":null,"pr":[],"requested_at":1}' > "$FLEET_START_DIR/0000000000005-aaaaaa.json"
+echo 'not json at all' > "$FLEET_START_DIR/0000000000006-aaaaaa.json"
+req --host host-local > /dev/null
+drain
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "drain survives bad files: $(cat "$tmp/err")"
+[ "$(starts)" = 1 ] && ok || bad "the good request behind six bad files starts: starts=$(starts) $(cat "$tmp/err")"
+[ "$(ls "$FLEET_START_DIR"/*.bad 2>/dev/null | wc -l | tr -d ' ')" = 6 ] && ok || bad "six files set aside"
+[ "$(ls "$FLEET_START_DIR"/*.bad.why 2>/dev/null | wc -l | tr -d ' ')" = 6 ] && ok || bad "each has a reason"
+[ "$(queued)" = 1 ] && ok || bad "no bad file stays in the queue"
+python3 - "$here/../fleet-watch.py" <<'PY' && ok || bad "set-aside digest lines"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('fleet_watch', sys.argv[1])
+watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+first = watch.start_notices()
+assert len(first) == 6 and all('set aside' in line for line in first), first
+assert watch.start_notices() == [], 'reported once'
+PY
+[ "$(cat "$WORKER_DONE_OWNER_DIR/ctx_new1" | head -1)" = "term_lead" ] && ok || bad "owner record of the good request is clean"
+
+# 13. role and host must be in the config, and none may start with a dash
+reset
+req --host host-nowhere > /dev/null 2>&1; [ "$?" = 2 ] && ok || bad "host outside the config is refused"
+req --role wizard > /dev/null 2>&1; [ "$?" = 2 ] && ok || bad "role outside the config is refused"
+req --host -x > /dev/null 2>&1; [ "$?" = 2 ] && ok || bad "host with a leading dash is refused"
+req --role -x > /dev/null 2>&1; [ "$?" = 2 ] && ok || bad "role with a leading dash is refused"
+req --branch -x --host host-local > /dev/null 2>&1; [ "$?" = 2 ] && ok || bad "branch with a leading dash is refused"
+[ "$(queued)" = 0 ] && ok || bad "refused requests leave no file"
+mkdir -p "$FLEET_START_DIR"
+printf '{"id":"0000000000001-bbbbbb","role":"fullstack-dev","brief":"b","ticket":"574","kind":"builder","host":"host-nowhere","from":"term_lead","repo":"owner/repo","branch":"b1","pr":[],"requested_at":1}' > "$FLEET_START_DIR/0000000000001-bbbbbb.json"
+printf '{"id":"0000000000002-bbbbbb","role":"wizard","brief":"b","ticket":"574","kind":"builder","host":null,"from":"term_lead","repo":"owner/repo","branch":"b1","pr":[],"requested_at":1}' > "$FLEET_START_DIR/0000000000002-bbbbbb.json"
+req --host host-local > /dev/null
+drain
+[ "$(starts)" = 1 ] && ok || bad "hand-written host and role are not started, the next request is: $(cat "$tmp/err")"
+grep -q "not in the fleet-start config" "$FLEET_START_DIR/0000000000001-bbbbbb.refused" && grep -q "roles" "$FLEET_START_DIR/0000000000002-bbbbbb.refused" && ok || bad "config refusals carry their reason"
+startline | grep -q -- "--on host-nowhere" && bad "no start on the unknown host" || ok
+
+# 14. stuck lock: an empty pid is taken over once old enough, and a stuck lock shows in the digest
+reset
+mkdir -p "$FLEET_START_DIR/drain.lock"; : > "$FLEET_START_DIR/drain.lock/pid"
+req --host host-local > /dev/null
+drain
+[ "$(starts)" = 0 ] && grep -qi "running" "$tmp/out" && ok || bad "a young empty lock still blocks: $(cat "$tmp/out")"
+touch -t 200001010000 "$FLEET_START_DIR/drain.lock"
+python3 - "$here/../fleet-watch.py" <<'PY' && ok || bad "stuck lock digest line"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('fleet_watch', sys.argv[1])
+watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+first = watch.start_notices()
+assert len(first) == 1 and 'stuck' in first[0] and 'no pid' in first[0], first
+assert watch.start_notices() == [], 'reported once'
+PY
+drain
+[ "$(starts)" = 1 ] && ok || bad "an old empty lock is taken over: $(cat "$tmp/err") $(cat "$tmp/out")"
+[ ! -d "$FLEET_START_DIR/drain.lock" ] && ok || bad "the lock is released after the takeover"
+reset
+mkdir -p "$FLEET_START_DIR/drain.lock"; touch -t 200001010000 "$FLEET_START_DIR/drain.lock"
+req --host host-local > /dev/null
+drain
+[ "$(starts)" = 1 ] && ok || bad "an old lock with no pid file is taken over"
+
+# 15. crash after the start but before the owner record: settle never starts a second worker
+reset
+: > "$tmp/afile"
+req --host host-local > /dev/null
+WORKER_DONE_OWNER_DIR="$tmp/afile/sub" drain
+[ "$(starts)" = 1 ] && ok || bad "first drain started once"
+id=$(basename "$(ls "$FLEET_START_DIR"/*.json)" .json)
+grep -q "ctx_new1" "$FLEET_START_DIR/$id.starting" && ok || bad "marker keeps the dispatch id"
+python3 - "$here/../fleet-watch.py" <<'PY' && ok || bad "owner-record digest line"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('fleet_watch', sys.argv[1])
+watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+first = watch.start_notices()
+assert len(first) == 1 and 'ctx_new1' in first[0] and 'owner record' in first[0] and 'settle' in first[0], first
+PY
+drain
+[ "$(starts)" = 1 ] && ok || bad "a later drain does not start again"
+bash "$script" settle "$id" > /dev/null 2>&1
+drain
+[ "$(starts)" = 1 ] && ok || bad "settle after a start never starts a second worker, starts=$(starts)"
+[ "$(cat "$WORKER_DONE_OWNER_DIR/ctx_new1" 2>/dev/null)" = "term_lead
+kind=builder
+repo=owner/repo
+branch=b1" ] && ok || bad "settle wrote the owner record"
+[ -f "$FLEET_START_DIR/$id.started" ] && [ ! -f "$FLEET_START_DIR/$id.starting" ] && ok || bad "settle moved the request to started"
+grep -q "orchestration send --to term_lead.*dispatch=ctx_new1" "$ORCA_LOG" && ok || bad "the lead is told after settle"
+
+# 16. delay summary: one request, and an even count
+reset
+FLEET_START_NOW=1000 req --host host-local > /dev/null
+FLEET_START_NOW=1010 drain
+bash "$script" delay > "$tmp/out"
+[ "$(cat "$tmp/out")" = "count=1 median=10s max=10s" ] && ok || bad "delay with one: $(cat "$tmp/out")"
+sleep 0.01
+FLEET_START_NOW=2000 req --host host-local --branch b2 > /dev/null
+FLEET_START_NOW=2030 drain
+bash "$script" delay > "$tmp/out"
+[ "$(cat "$tmp/out")" = "count=2 median=20s max=30s" ] && ok || bad "delay with an even count: $(cat "$tmp/out")"
 
 echo "fleet-start: $pass passed, $fail failed"
 [ "$fail" = 0 ]
