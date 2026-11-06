@@ -93,11 +93,33 @@ origin_commit() { # <bare.git> — second commit on main (clone may not check ou
   rm -rf "$w"
 }
 
+# PATH with only stub bin + usual system dirs (no brew/local) so a real asdf is not picked up
+node_match_path() { # <stub_bin_dir> : echoes PATH; links jq/git into stub if missing from system dirs
+  local stub sys need origin
+  stub=$1
+  sys="/usr/bin:/bin"
+  mkdir -p "$stub"
+  for need in jq git; do
+    if PATH="$sys" command -v "$need" >/dev/null 2>&1; then
+      continue
+    fi
+    origin=$(PATH="$bin:/usr/local/bin:/opt/homebrew/bin:$PATH" command -v "$need") || {
+      echo "node_match_path: missing $need" >&2
+      exit 99
+    }
+    ln -sf "$origin" "$stub/$need"
+  done
+  printf '%s:%s' "$stub" "$sys"
+}
+
 # Clean repo on main: host-check fast-forwards
 clean="$tmp/clean"
 clean_bare="$tmp/clean.git"
 make_repo "$clean" "$clean_bare"
 origin_commit "$clean_bare"
+bare_tip=$(git --git-dir="$clean_bare" rev-parse refs/heads/main)
+clean_before=$(git -C "$clean" rev-parse HEAD)
+[ "$clean_before" != "$bare_tip" ] && ok || bad "fast-forward setup: clone HEAD should differ from bare tip ($clean_before vs $bare_tip)"
 cat >"$tmp/fleet.json" <<EOF
 {"hosts":[],"repos":["$clean"]}
 EOF
@@ -107,8 +129,7 @@ ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "clean repo host-check exits 0 ($ec) $(cat "$tmp/h1.err")"
 clean_head=$(git -C "$clean" rev-parse HEAD)
-origin_head=$(git -C "$clean" rev-parse origin/main)
-[ "$clean_head" = "$origin_head" ] && ok || bad "fast-forward: HEAD $clean_head != origin/main $origin_head"
+[ "$clean_head" = "$bare_tip" ] && ok || bad "fast-forward: HEAD $clean_head != bare origin $bare_tip"
 
 # Dirty repo: must not fail the whole host-check (skip line); treat as ok for exit
 dirty="$tmp/dirty"
@@ -212,16 +233,17 @@ git -C "$nodeok" push -q
 cat >"$tmp/fleet-nodeok.json" <<EOF
 {"hosts":[],"repos":["$nodeok"]}
 EOF
-mini_bin="$tmp/mini-bin"
-mkdir -p "$mini_bin"
-ln -sf "$jq_bin" "$mini_bin/jq"
-cat >"$mini_bin/node" <<'EOS'
+mini_stub="$tmp/mini-stub-bin"
+mkdir -p "$mini_stub"
+cat >"$mini_stub/node" <<'EOS'
 #!/bin/sh
 echo v9.9.9
 EOS
-chmod +x "$mini_bin/node"
+chmod +x "$mini_stub/node"
+nm_path=$(node_match_path "$mini_stub")
+PATH="$nm_path" command -v asdf >/dev/null 2>&1 && bad "nodeok PATH should not expose asdf" || ok
 set +e
-PATH="$mini_bin:$PATH" FLEET_PULL_CONFIG="$tmp/fleet-nodeok.json" bash "$script" --host-check 2>"$tmp/h4c.err"
+PATH="$nm_path" FLEET_PULL_CONFIG="$tmp/fleet-nodeok.json" bash "$script" --host-check 2>"$tmp/h4c.err"
 ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "node matches pin without asdf should exit 0 ($ec)"
@@ -354,7 +376,8 @@ run_path="$bin:/usr/bin:/bin"
 # Isolate bun from the real home: otherwise ~/.bun/bin can satisfy an extreme pin and skip the failing curl.
 badbun_home="$tmp/home-badbun-run"
 mkdir -p "$badbun_home"
-wt_proof="$root/wt-proof"
+wt_proof="$tmp/wt proof dir"
+mkdir -p "$wt_proof"
 cat >"$orca_stub" <<EOS
 #!/usr/bin/env bash
 # Minimal orca: worktree create + worker-start JSON (recorded from a live worker-start --json receipt).
@@ -391,6 +414,7 @@ env -u BASH_ENV \
 ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "run claude exits 0 ($ec) $(cat "$tmp/run.err")"
+grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
 grep -q 'stub-gate-ran' "$run_order_log" && ok || bad "stub gate ran (logged)"

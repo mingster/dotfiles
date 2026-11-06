@@ -244,7 +244,8 @@ run_mode() {
     }
     wt=$(printf '%s' "$result" | jq -r '.result.worktree.path // empty')
     wt=${wt//$'\r'/}
-    wt=${wt//[[:space:]]/}
+    wt="${wt#"${wt%%[![:space:]]*}"}"
+    wt="${wt%"${wt##*[![:space:]]}"}"
   fi
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
 
