@@ -23,8 +23,9 @@ class Env(unittest.TestCase):
         self.env['GATE_OUT'] = str(self.args)
     def stub(self, name, text):
         p = self.bin/name; p.write_text(text); p.chmod(0o755); return str(p)
-    def run_heavy(self, command, gate=True):
+    def run_heavy(self, command, gate=True, extra=()):
         flags = ['--gate', self.gate] if gate else []
+        flags += extra
         return subprocess.run(['bash', str(scripts/'remote-heavy.sh'), '--host', 'fixture', '--repo-dir', 'checkout', '--dir', str(self.remote), *flags, '--', *command], env=self.env, text=True, capture_output=True)
     def test_dotfiles_dir_is_set_when_main_checkout_exists(self):
         (self.home/'dotfiles-main').mkdir()
@@ -55,6 +56,30 @@ class Env(unittest.TestCase):
         result = self.run_heavy(['true'], gate=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.args.read_text().strip(), str(g))
+    def gate_args(self, extra=(), env=None):
+        full = self.root/'all-args'
+        self.gate = self.stub('gate', '#!/bin/sh\nprintf "%s\\n" "$@" > "$ALL_ARGS"\nshift 2\n[ "$1" != --memory-mb ] || shift 2\nshift\nexec "$@"\n')
+        saved = dict(self.env); self.env.update(env or {}, ALL_ARGS=str(full))
+        try: result = self.run_heavy(['true'], extra=extra)
+        finally: self.env = saved
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return full.read_text().split()
+    def test_memory_flag_is_forwarded_to_the_gate(self):
+        args = self.gate_args(['--memory-mb', '2048'])
+        self.assertEqual(args[:4], ['--weight', '1', '--memory-mb', '2048'], args)
+    def test_memory_env_is_forwarded_and_flag_wins(self):
+        self.assertEqual(self.gate_args(env={'HEAVY_GATE_MEMORY_MB': '3000'})[2:4], ['--memory-mb', '3000'])
+        args = self.gate_args(['--memory-mb', '500'], env={'HEAVY_GATE_MEMORY_MB': '3000'})
+        self.assertEqual(args[2:4], ['--memory-mb', '500'], args)
+    def test_no_memory_declared_adds_nothing(self):
+        args = self.gate_args()
+        self.assertNotIn('--memory-mb', args)
+        self.assertEqual(args[:2], ['--weight', '1'])
+    def test_bad_memory_is_refused_before_ssh(self):
+        for value in ('0', '-1', 'lots'):
+            result = self.run_heavy(['true'], extra=['--memory-mb', value])
+            self.assertEqual(result.returncode, 64, result.stderr)
+            self.assertIn('memory', result.stderr)
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY

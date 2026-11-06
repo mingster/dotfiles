@@ -167,7 +167,7 @@ remote_head_checks() {
   remote_load
   wt=$(mktemp -d) || die "cannot create a scratch directory for the remote head checks"
   git worktree add -q --detach "$wt" "$ref" >&2 || { rm -rf "$wt"; die "remote head-checks: cannot check out $ref to ship it"; }
-  out=$(cd "$wt" && bash "$(dirname "${BASH_SOURCE[0]}")/remote-heavy.sh" --host "$remote_host" --repo-dir "$remote_repo_dir" --dir "$remote_dir" -- \
+  out=$(cd "$wt" && bash "$(dirname "${BASH_SOURCE[0]}")/remote-heavy.sh" --host "$remote_host" --repo-dir "$remote_repo_dir" --dir "$remote_dir" --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}" -- \
     bash -c 'exec "${DOTFILES_DIR:-$HOME/dotfiles}/script/head-checks.sh" --repo "$PWD" --ref "$1" --base "$2" ${3:+--train-heads "$3"}' _ "$ref" "$base" "$heads") && status=0 || status=$?
   git worktree remove --force "$wt" >&2 2>/dev/null || rm -rf "$wt"
   first=${out%%$'\n'*}

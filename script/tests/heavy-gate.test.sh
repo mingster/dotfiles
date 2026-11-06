@@ -53,22 +53,34 @@ esac
         temporary.write_text(value)
         temporary.replace(self.reading)
 
-    def run_gate(self, command, weight=1, gate_class=None):
-        env = dict(self.env, HEAVY_GATE_CLASS=gate_class) if gate_class else self.env
-        p = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), '--weight', str(weight), '--', *command],
+    def run_gate(self, command, weight=1, gate_class=None, memory=None, env_memory=None):
+        env = dict(self.env, HEAVY_GATE_CLASS=gate_class) if gate_class else dict(self.env)
+        if env_memory is not None:
+            env['HEAVY_GATE_MEMORY_MB'] = str(env_memory)
+        flag = ['--memory-mb', str(memory)] if memory is not None else []
+        p = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), '--weight', str(weight), *flag, '--', *command],
                              env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.processes.append(p)
         return p
 
-    def job(self, label='job', delay=0.15, weight=1, gate_class=None):
+    def release(self, label):
+        (self.root/f'release-{label}').write_text('go')
+
+    def job(self, label='job', delay=0.15, weight=1, gate_class=None, memory=None, env_memory=None, hold=False, wrap=None):
         # Independent append-only workload events reveal actual overlap.
+        # hold=True keeps the job running until release(label), so no sleep can race its end.
         code = '''import os,sys,time
 with open(sys.argv[1], 'a', buffering=1) as f:
  f.write(f'{time.time()} start {sys.argv[2]} {os.getpid()}\\n')
- time.sleep(float(sys.argv[3]))
+ if sys.argv[4]:
+  while not os.path.exists(sys.argv[4]): time.sleep(0.02)
+ else:
+  time.sleep(float(sys.argv[3]))
  f.write(f'{time.time()} end {sys.argv[2]} {os.getpid()}\\n')
 '''
-        return self.run_gate([sys.executable, '-c', code, str(self.root/'events'), label, str(delay)], weight, gate_class)
+        argv = [sys.executable, '-c', code, str(self.root/'events'), label, str(delay),
+                str(self.root/f'release-{label}') if hold else '']
+        return self.run_gate(wrap(argv) if wrap else argv, weight, gate_class, memory, env_memory)
 
     def wait_for(self, predicate):
         deadline = time.monotonic() + 8
@@ -595,6 +607,156 @@ child.wait()
         self.finish(second)
         self.finish(first)
         self.finish(long)
+
+    def host_memory(self, mib):
+        self.env['HEAVY_GATE_HARDWARE'] = f'12 8 {mib * 1024 * 1024}'
+
+    def memory_files(self):
+        return sorted(p.read_text() for p in (self.root/'.cache/heavy-gate').glob('slot-*/memory'))
+
+    def test_declared_memory_over_host_total_never_runs_at_once(self):
+        self.host_memory(3000)
+        first = self.job('first', memory=2000, hold=True)
+        self.wait_for(lambda: self.started('first'))
+        second = self.job('second', 0.1, memory=2000)
+        time.sleep(0.5)
+        self.assertFalse(self.started('second'), 'second job started while first held its memory')
+        self.release('first')
+        self.finish(first)
+        self.finish(second)
+        self.assert_overlap({'first': 1, 'second': 1}, 1)
+
+    def test_declared_memory_that_fits_runs_together(self):
+        self.host_memory(3000)
+        first = self.job('first', 0.5, memory=1000)
+        self.wait_for(lambda: self.started('first'))
+        second = self.job('second', 0.1, memory=1000)
+        self.wait_for(lambda: self.started('second'))
+        self.finish(first)
+        self.finish(second)
+
+    def test_memory_env_matches_flag_and_flag_wins(self):
+        self.host_memory(3000)
+        first = self.job('first', env_memory=2000, hold=True)
+        self.wait_for(lambda: self.started('first'))
+        self.assertEqual(self.memory_files(), ['2000'])
+        second = self.job('second', 0.1, env_memory=2000)
+        time.sleep(0.5)
+        self.assertFalse(self.started('second'))
+        self.release('first')
+        self.finish(first)
+        self.finish(second)
+        flagged = self.job('flagged', memory=500, env_memory=2900, hold=True)
+        self.wait_for(lambda: self.started('flagged'))
+        self.assertEqual(self.memory_files(), ['500'])
+        self.release('flagged')
+        self.finish(flagged)
+
+    # Command shapes that run playwright: the argv or the bash -c script names it.
+    PLAYWRIGHT_SHAPES = {
+        'direct': lambda argv: ['sh', '-c', 'exec "$@"', 'playwright', *argv],
+        'bunx': lambda argv: ['sh', '-c', 'shift; exec "$@"', 'bunx', 'playwright', *argv],
+        'npx': lambda argv: ['sh', '-c', 'shift; exec "$@"', 'npx', 'playwright', *argv],
+        'bashc': lambda argv: ['bash', '-c', 'exec "$@" # bunx playwright test', '_', *argv],
+    }
+
+    def test_playwright_default_is_declared_and_declared_value_wins(self):
+        self.host_memory(15360)
+        for name, wrap in self.PLAYWRIGHT_SHAPES.items():
+            job = self.job(name, hold=True, wrap=wrap)
+            self.wait_for(lambda: self.started(name))
+            self.assertEqual(self.memory_files(), ['8192'], name)
+            self.release(name)
+            self.finish(job)
+        declared = self.job('declared', memory=500, hold=True, wrap=self.PLAYWRIGHT_SHAPES['bunx'])
+        self.wait_for(lambda: self.started('declared'))
+        self.assertEqual(self.memory_files(), ['500'])
+        self.release('declared')
+        self.finish(declared)
+        env_declared = self.job('envdeclared', env_memory=700, hold=True, wrap=self.PLAYWRIGHT_SHAPES['npx'])
+        self.wait_for(lambda: self.started('envdeclared'))
+        self.assertEqual(self.memory_files(), ['700'])
+        self.release('envdeclared')
+        self.finish(env_declared)
+
+    def test_other_undeclared_job_still_declares_nothing(self):
+        self.host_memory(15360)
+        job = self.job('plain', hold=True)
+        self.wait_for(lambda: self.started('plain'))
+        self.assertEqual(self.memory_files(), [])
+        self.release('plain')
+        self.finish(job)
+
+    def test_incident_numbers_9216_job_and_playwright_never_run_at_once(self):
+        self.host_memory(15360)
+        checks = self.job('checks', memory=9216, hold=True)
+        self.wait_for(lambda: self.started('checks'))
+        browser = self.job('browser', 0.1, wrap=self.PLAYWRIGHT_SHAPES['bunx'])
+        time.sleep(0.5)
+        self.assertFalse(self.started('browser'), 'browser run started beside a 9216 MiB job')
+        self.release('checks')
+        self.finish(checks)
+        self.finish(browser)
+        self.assert_overlap({'checks': 1, 'browser': 1}, 1)
+
+    def test_memory_record_is_in_the_slot_and_released_with_it(self):
+        self.host_memory(3000)
+        self.config(2)
+        heavy = self.job('heavy', 0.5, weight=2, memory=1500)
+        self.wait_for(lambda: self.started('heavy'))
+        self.assertEqual(self.memory_files(), ['1500'])
+        self.finish(heavy)
+        self.assertEqual(list((self.root/'.cache/heavy-gate').glob('slot-*')), [])
+
+    def test_dead_owner_does_not_hold_declared_memory(self):
+        self.host_memory(3000)
+        slot = self.root/'.cache/heavy-gate/slot-1'
+        slot.mkdir(parents=True)
+        dead = subprocess.Popen(['true']); dead.wait()
+        (slot/'pid').write_text(str(dead.pid))
+        (slot/'memory').write_text('2500')
+        _, err = self.finish(self.job('after', 0.1, memory=2000))
+        self.assertTrue(self.started('after'), err)
+        self.assertFalse(slot.exists())
+
+    def test_job_larger_than_host_runs_alone_and_does_not_wait_for_ever(self):
+        self.host_memory(3000)
+        big = self.job('big', memory=5000, hold=True)
+        self.wait_for(lambda: self.started('big'))
+        small = self.job('small', 0.1, memory=100)
+        time.sleep(0.4)
+        self.assertFalse(self.started('small'), 'a job larger than the host must run alone')
+        self.release('big')
+        out, err = self.finish(big)
+        self.assertIn('exceeds host memory', err)
+        self.assertIn('among jobs that declare memory', err)
+        self.finish(small)
+        self.assert_overlap({'big': 1, 'small': 1}, 1)
+
+    def test_undeclared_job_is_not_held_by_declared_memory(self):
+        self.host_memory(3000)
+        declared = self.job('declared', 0.6, memory=3000)
+        self.wait_for(lambda: self.started('declared'))
+        plain = self.job('plain', 0.1)
+        self.wait_for(lambda: self.started('plain'))
+        self.finish(plain)
+        self.finish(declared)
+        self.assertEqual(self.memory_files(), [])
+
+    def test_free_memory_floor_still_blocks_a_declared_job(self):
+        self.host_memory(3000)
+        self.set_reading('0 10')
+        job = self.job('declared', 0.1, memory=100)
+        time.sleep(0.4)
+        self.assertFalse(self.started('declared'))
+        self.set_reading('0 90')
+        self.finish(job)
+
+    def test_bad_memory_declaration_is_refused(self):
+        for value in ('0', '-5', 'many'):
+            _, err = self.finish(self.job(memory=value), 1)
+            self.assertIn('memory', err)
+        self.assertEqual(self.events(), [])
 
     def test_memory_floor_blocks_short_job_at_high_load(self):
         self.config(2)

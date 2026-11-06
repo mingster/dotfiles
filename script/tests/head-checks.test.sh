@@ -69,6 +69,26 @@ else: sys.exit(1)
     run('stop at first red',line('lint')+'\nexit 9\n'+line('tests'),1)
     if order.read_text()=='lint\n': passed+=1; print('ok   later checks never start')
     else: failed+=1; print('FAIL later checks ran')
+    # A killed check (exit 137) still blocks, but says the code was not judged.
+    run('kill signal check',line('before')+'\nkill -9 $$\n'+line('after'),1)
+    receipt=comments.read_text(); result_line=[l for l in receipt.splitlines() if l.startswith('Result: ')][-1]
+    if receipt.startswith('Checks: FAIL head=') and result_line=='Result: exit 137; remaining checks stopped; interrupted by a kill signal, the code was not judged, rerun Checks' and order.read_text()=='before\n':
+        passed+=1; print('ok   exit 137 keeps FAIL and says the run was interrupted')
+    else: failed+=1; print('FAIL exit 137 receipt',result_line,receipt)
+    run('ordinary failure',line('lint')+'\nexit 9',1)
+    if 'Result: exit 9; remaining checks stopped\n' in comments.read_text() and 'kill signal' not in comments.read_text():
+        passed+=1; print('ok   other exit codes keep their result line')
+    else: failed+=1; print('FAIL exit 9 receipt',comments.read_text())
+    # The whole run holds one gate entry that declares the type check's memory.
+    memline="cat \"$HOME\"/.cache/heavy-gate/slot-*/memory >> '"+str(order)+"'"
+    run('declares default memory',memline,0)
+    default_memory=order.read_text()
+    env['HEAD_CHECKS_MEMORY_MB']='400'
+    run('declares chosen memory',memline,0)
+    chosen_memory=order.read_text()
+    env.pop('HEAD_CHECKS_MEMORY_MB')
+    if default_memory=='9216' and chosen_memory=='400': passed+=1; print('ok   head-checks declares memory, HEAD_CHECKS_MEMORY_MB overrides')
+    else: failed+=1; print('FAIL declared memory',default_memory,chosen_memory)
     run('ref checks do not post',line('ref'),0,False)
     train_heads=base+','+env['GH_HEAD']
     train=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf),'--train-heads',train_heads],env=env,text=True,capture_output=True)
@@ -208,7 +228,7 @@ else: sys.exit(1)
         while len(list((root/'home/.cache/heavy-gate').glob('slot-*')))!=3 and time.time()<deadline:
             time.sleep(0.02)
         order.unlink(missing_ok=True)
-        pending=subprocess.Popen(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        pending=subprocess.Popen(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env={**env,'HEAD_CHECKS_MEMORY_MB':'100'},stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         ready=select.select([pending.stderr],[],[],10)[0]
         notice=pending.stderr.readline() if ready else ''
         held=not order.exists() and pending.poll() is None and 'slots' in notice

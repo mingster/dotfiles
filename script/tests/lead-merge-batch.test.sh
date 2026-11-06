@@ -667,10 +667,11 @@ EOS
 host=$1; shift 5
 b() { printf '%s' "$1" | base64 -d; }
 sha=$(b "$2"); cmd=$(b "$6"); tag=$(b "$8")
+mem=$(b "$9"); mem=${mem#m}
 cat > /dev/null
 eval "set -- $cmd"   # bash -c <script> _ <ref> <base> <train-heads>
 ref=$5 heads=${7:-}
-echo "ssh host=$host sent=$sha ref=$ref heads=$heads" >> "$FX_SSH_LOG"
+echo "ssh host=$host sent=$sha ref=$ref heads=$heads memory=$mem" >> "$FX_SSH_LOG"
 case "${FX_REMOTE:-pass}" in
   sshfail) echo "ssh: connect to host failed" >&2; exit 255 ;;
   noreceipt) printf '@@begin-%s@@\n@@end-%s-0@@\n' "$tag" "$tag"; exit 0 ;;
@@ -707,6 +708,11 @@ EOS
   [ "$code" -eq 0 ] && [ "$(grep -c . "$FX_SSH_LOG")" -eq 1 ] && [ ! -s "$FX_HC_LOG" ] \
     && echo "ok   #564 batch runs one head check on the named host, not locally" || echo "FAIL #564 on: exit $code ssh=$(cat "$FX_SSH_LOG") local=$(cat "$FX_HC_LOG"): $out"
   grep -q 'host=chk-host sent=\([0-9a-f]\{40\}\) ref=\1 ' "$FX_SSH_LOG" && echo "ok   #564 the exact train commit is what ships" || echo "FAIL #564 sent: $(cat "$FX_SSH_LOG")"
+  grep -q ' memory=9216$' "$FX_SSH_LOG" && echo "ok   #568 remote head checks declare 9216 MiB by default" || echo "FAIL #568 remote memory: $(cat "$FX_SSH_LOG")"
+  mf_pr_add 79 q79 "$ok" docs/q79.md; mf_pr_add 80 q80 "$ok" docs/q80.md; fx_checks_pass 79 80
+  : > "$FX_SSH_LOG"
+  env $on HEAD_CHECKS_MEMORY_MB=4096 bash "$here/lead-merge.sh" --repo example/repo --batch 79 80 >/dev/null 2>&1
+  grep -q ' memory=4096$' "$FX_SSH_LOG" && echo "ok   #568 HEAD_CHECKS_MEMORY_MB overrides the remote declaration" || echo "FAIL #568 remote override: $(cat "$FX_SSH_LOG")"
   [ "$(comments 73)$(comments 74)$(comments 75)" = 111 ] && [ "$(state 73 74 75)" = "MERGED MERGED MERGED " ] \
     && echo "ok   #564 the receipt is posted on each PR and the group merges" || echo "FAIL #564 comments/states: $(state 73 74 75)"
 
