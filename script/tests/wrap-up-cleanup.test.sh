@@ -71,6 +71,22 @@ git worktree add -q --detach "$tmp/wt-shot-merged" main
 printf x > "$tmp/wt-shot-merged/shot.png"
 printf x > "$tmp/wt-stale-shot/shot.PNG"
 printf x > "$tmp/wt-stale-dirty/notes.txt"
+# continual-learning.json: the one hook state file that never counts as work. Untracked cases first (file not yet tracked),
+# then the file is committed to main and the modified cases follow.
+cl=.cursor/hooks/state/continual-learning.json
+git worktree add -q --detach "$tmp/wt-cl-untracked" main
+git worktree add -q --detach "$tmp/wt-cl-image" main
+git worktree add -q --detach "$tmp/wt-cl-untracked-other" main
+for w in wt-cl-untracked wt-cl-image wt-cl-untracked-other; do mkdir -p "$tmp/$w/.cursor/hooks/state"; printf '{}' > "$tmp/$w/$cl"; done
+printf x > "$tmp/wt-cl-image/shot.png"
+printf x > "$tmp/wt-cl-untracked-other/other.txt"
+mkdir -p .cursor/hooks/state; printf '{"a":1}' > "$cl"; git add "$cl"; git commit -qm 'track hook state'; git push -q origin main
+git worktree add -q --detach "$tmp/wt-cl-mod" main
+git worktree add -q --detach "$tmp/wt-cl-mod-image" main
+git worktree add -q --detach "$tmp/wt-cl-mod-other" main
+for w in wt-cl-mod wt-cl-mod-image wt-cl-mod-other; do printf '{"a":2}' > "$tmp/$w/$cl"; done
+printf x > "$tmp/wt-cl-mod-image/shot.png"
+printf x > "$tmp/wt-cl-mod-other/other.txt"
 FAKE_PRS=$(printf '[{"headRefName":"open-pr","headRefOid":"%s","state":"OPEN"}]' "$(git rev-parse open-pr)")
 export FAKE_PRS
 
@@ -89,6 +105,12 @@ check 'squash-merged branch with no PR deleted local and remote' gone squashed
 check 'its clean worktree removed' test ! -d "$tmp/wt-squashed"
 check 'screenshot-only detached worktree at merged head removed' test ! -d "$tmp/wt-shot-merged"
 check 'open PR branch kept' kept open-pr
+check 'worktree whose only change is an untracked continual-learning.json removed' test ! -d "$tmp/wt-cl-untracked"
+check 'worktree with untracked continual-learning.json and an image removed' test ! -d "$tmp/wt-cl-image"
+check 'worktree with modified continual-learning.json alone removed' test ! -d "$tmp/wt-cl-mod"
+check 'worktree with modified continual-learning.json and an image removed' test ! -d "$tmp/wt-cl-mod-image"
+check 'untracked continual-learning.json plus another file stays dirty' test -d "$tmp/wt-cl-untracked-other"
+check 'modified continual-learning.json plus another file stays dirty' test -d "$tmp/wt-cl-mod-other"
 check 'unmerged old branch deleted by --apply' gone stale-old
 check 'stale section printed' grep -Fxq 'Stale (eligible for cleanup)' "$tmp/out1"
 check 'stale line has branch, age and subject' grep -Eq '^  stale-old, [0-9]+h old, work on stale-old$' "$tmp/out1"

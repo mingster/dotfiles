@@ -287,8 +287,10 @@ eligible() {
   return 1
 }
 # True when every status line is an untracked image (screenshot dirt).
-screenshots_only() {
-  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
+# A worktree counts as clean when every changed path is an untracked image or the hook state file continual-learning.json
+# (modified or untracked). Any other change keeps it dirty.
+only_ignorable_changes() {
+  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$|^.. \.cursor/hooks/state/continual-learning\.json$' "$1"
 }
 # Holder checks return true for busy OR unknown, with the reason in $busy.
 # fuser checks inodes, not directory trees: enumerate descendants as well as the
@@ -566,7 +568,7 @@ process_worktree() {
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
-  elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
+  elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
   elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
