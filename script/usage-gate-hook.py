@@ -246,10 +246,11 @@ def lead_limit(data, cmd):
     if tokens < LEAD_WARN or not is_lead(data.get("cwd") or ""):
         return None, None
     handoff = ("Hand off now: run ~/dotfiles/script/lead-handoff.sh --branch <branch> --head <sha> --remainder <what is left> "
-               "--dispatch-ids <ids>, then end this session. The head may be a literal sha or $(git rev-parse HEAD).")
+               "--dispatch-ids <ids>, then end this session. The head may be a literal sha or $(git rev-parse HEAD). "
+               "A remainder with a backtick or $( is denied, so write it without either.")
     if tokens >= LEAD_DENY and not only_allowed(cmd):
         return (f"Lead context is {tokens // 1000}k tokens, over the {LEAD_DENY // 1000}k limit. {handoff} "
-                "Only lead-handoff.sh, lead-merge.sh and orca commands run until then."), None
+                "Only lead-handoff.sh, lead-merge.sh, orca and cd commands run until then."), None
     return None, f"Lead context is {tokens // 1000}k tokens (warning at {LEAD_WARN // 1000}k, commands stop at {LEAD_DENY // 1000}k). {handoff}"
 
 

@@ -471,6 +471,14 @@ class LeadContext(unittest.TestCase):
                 deny, _, _ = self.run_hook(command, 171000)
                 self.assertIsNotNone(deny)
 
+    def test_deny_text_says_why_a_backtick_remainder_is_denied_and_that_cd_runs(self):
+        deny, _, _ = self.run_hook("git status", 171000)
+        self.assertIn("backtick", deny)
+        self.assertIn("$(", deny)
+        self.assertIn(" cd ", deny)
+        _, note, _ = self.run_hook("git status", 150000)
+        self.assertIn("backtick", note)
+
     def test_deny_text_says_a_literal_sha_also_works(self):
         deny, _, _ = self.run_hook("git status", 171000)
         self.assertIn("literal sha", deny)
