@@ -223,10 +223,10 @@ def only_allowed(cmd):
     for words in segments:
         while words and re.match(r"^\w+=", words[0]):
             words = words[1:]
-        if len(words) > 1 and words[0] in ("bash", "sh"):
-            words = words[1:]
         if len(words) == 2 and words[0] == "cd":
             continue   # a cd is harmless: the lead check also reads $CLAUDE_PROJECT_DIR, which a cd cannot change
+        if len(words) > 1 and words[0] in ("bash", "sh"):
+            words = words[1:]
         if words and os.path.basename(words[0]) not in LEAD_ALLOWED:
             return False
     return True

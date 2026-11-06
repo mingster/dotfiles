@@ -420,11 +420,24 @@ class LeadContext(unittest.TestCase):
                 deny, _, _ = self.run_hook(command, 171000)
                 self.assertIsNotNone(deny)
 
-    def test_lead_at_171k_bash_or_sh_cd_is_allowed(self):
-        for command in ("bash cd x", "sh cd x", "bash cd x && orca orchestration check", "cd x && bash script/lead-merge.sh --pr 1"):
+    def test_lead_at_171k_bash_or_sh_cd_is_denied(self):
+        # `bash cd x` runs a file named cd; only a real cd is a harmless first word.
+        for command in ("bash cd x", "sh cd x", "FOO=1 bash cd x", "bash cd x && orca orchestration check"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNotNone(deny)
+
+    def test_lead_at_171k_bare_cd_is_allowed(self):
+        for command in ("cd x", "FOO=1 cd x"):
             with self.subTest(command=command):
                 deny, _, _ = self.run_hook(command, 171000)
                 self.assertIsNone(deny)
+
+    def test_lead_at_171k_cd_then_a_denied_command_is_denied(self):
+        for command in ("cd x; git push", "FOO=1 cd x; rm -rf y"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNotNone(deny)
 
     def test_a_cd_into_a_nested_repo_does_not_end_lead_detection(self):
         nested = os.path.join(self.dirs["lead"], "inner")
