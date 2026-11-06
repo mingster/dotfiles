@@ -17,15 +17,24 @@ case "$*" in
 esac
 echo '[]'
 FAKE
-# Fake orca. FAKE_ACTIVE_CWD adds one running dispatch whose terminal sits in that path; FAKE_ORCA_BAD breaks the inventory.
+# Fake orca, with the real worker-show shape (ids, state, liveness, workspace; no task text, no terminal object).
+# FAKE_ACTIVE_CWD adds one running dispatch in that path; FAKE_OLD_PENDING adds a never started dispatch (worker-show fails);
+# FAKE_OLD_EXITED adds an old dispatch whose worker exited; FAKE_ORCA_BAD breaks the inventory.
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
-  'terminal list --json') [ -z "${FAKE_ORCA_BAD:-}" ] || exit 1; echo '{"ok":true,"result":{"terminals":[]}}' ;;
+  'terminal list --json') [ -z "${FAKE_ORCA_BAD:-}" ] || exit 1
+    if [ -n "${FAKE_TERM_CWD:-}" ]; then printf '{"ok":true,"result":{"terminals":[{"handle":"term_open","cwd":"%s"}]}}\n' "$FAKE_TERM_CWD"
+    else echo '{"ok":true,"result":{"terminals":[]}}'; fi ;;
   'orchestration worker-list --json')
-    if [ -n "${FAKE_ACTIVE_CWD:-}" ]; then echo '{"ok":true,"result":{"workers":[{"dispatchId":"d1","dispatchStatus":"running"}],"page":{"hasMore":false}}}'
-    else echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'; fi ;;
-  'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"state":"running","task":"%s","terminal":{"cwd":"%s"}}}\n' "${FAKE_ACTIVE_TASK:-edit docs}" "$FAKE_ACTIVE_CWD" ;;
+    w=''
+    [ -z "${FAKE_ACTIVE_CWD:-}" ] || w='{"dispatchId":"d1","dispatchStatus":"running"}'
+    [ -z "${FAKE_OLD_PENDING:-}" ] || w="${w:+$w,}"'{"dispatchId":"d2","dispatchStatus":"pending"}'
+    [ -z "${FAKE_OLD_EXITED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d3","dispatchStatus":"running"}'
+    printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
+  'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"dispatchId":"d1","state":"running","liveness":"running","terminal":"term_x","workspace":"wt-id::%s"}}\n' "$FAKE_ACTIVE_CWD" ;;
+  'orchestration worker-show --dispatch d2 --json') exit 1 ;;
+  'orchestration worker-show --dispatch d3 --json') echo '{"ok":true,"result":{"dispatchId":"d3","state":"running","liveness":"exited","terminal":"term_y","workspace":"wt-id::/gone"}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -71,7 +80,7 @@ T=$'\t'
 # proc <pid> <ppid> <age seconds> <command...>: one process table line; the start is derived from the pid.
 proc() { local pid=$1 ppid=$2 age=$3; shift 3; printf '%s\t%s\t%s\tstart-%s\t%s\n' "$pid" "$ppid" "$age" "$pid" "$*" >> "$FAKE_PS"; }
 cwd() { printf '%s\n' "$2" > "$FAKE_CWDS/$1"; }
-reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_ACTIVE_TASK FAKE_ORCA_BAD; }
+reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD; }
 run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1); }
 DEV='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
 STABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -126,7 +135,7 @@ proc 304 1 $OLD "$DEV --user-data-dir=/tmp/unreadable"
 proc 305 1 $OLD "$DEV --user-data-dir=/tmp/busy-cwd"; cwd 305 "$tmp/busy/sub"
 proc 306 1 $OLD "$DEV --user-data-dir=$tmp/busy/profile"; cwd 306 /Users/someone/work
 mkdir -p "$tmp/busy/sub" "$tmp/busy/profile"
-export FAKE_ACTIVE_CWD="$tmp/busy"
+export FAKE_TERM_CWD="$tmp/busy"
 run --apply
 check 'younger than 2 hours is kept' has 'Kept browser 301 (younger than 2 hours)'
 check 'a live parent that is not pid 1 keeps it' has 'Kept browser 302 (parent still running)'
@@ -168,21 +177,33 @@ for runcmd in 'bash /work/wrap-up-fix/script/head-checks.sh --pr 1' 'python3 /re
   check "a run with wrap-up in its arguments keeps the browser: ${runcmd:0:48}" has 'Kept browser 480 (a head-checks, QA or gated run is active)'
 done
 
-# An active dispatch that names a QA, browser, head-checks or gated run counts as a run, though no such process is left.
+# macOS shows /usr/bin/python3 as ".../Python.app/Contents/MacOS/Python", and a checkout path may hold a space.
+for runcmd in '/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/heavy-gate.py gate -- bun run e2e' '/opt/homebrew/Cellar/python@3.12/3.12.1/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/qa-admission.py admit x' 'bash /x/My Work/script/head-checks.sh --pr 1' 'python3 /x/My Work/script/heavy-gate.py gate -- bun run e2e'; do
+  reset
+  proc 485 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 485 /Users/someone/work
+  proc 486 900 100 "$runcmd"
+  run --apply
+  check "a gated run keeps the browser: ${runcmd: -40}" has 'Kept browser 485 (a head-checks, QA or gated run is active)'
+done
+
+# Any live dispatch holds the temp browsers, whatever its worktree is called. Real worker-show output has no task text.
+for wt in fix-123 build-571b docs-only; do
+  reset
+  mkdir -p "$tmp/$wt"
+  proc 490 1 $OLD "$DEV --user-data-dir=/tmp/dispatch-run"; cwd 490 /Users/someone/work
+  proc 491 1 $OLD "/opt/agent-browser/bin/agent-browser daemon"; cwd 491 /Users/someone/work
+  export FAKE_ACTIVE_CWD="$tmp/$wt"
+  run --apply
+  check "a live dispatch in $wt keeps the old browser" has 'Kept browser 490 (a head-checks, QA or gated run is active)'
+  check "a live dispatch in $wt keeps the old daemon" has 'Kept browser 491 (a head-checks, QA or gated run is active)'
+  check "a live dispatch in $wt stops nothing" nokill
+done
+# Old dispatches that never settled in Orca's records but hold nothing: never started, or the worker exited.
 reset
-mkdir -p "$tmp/elsewhere"
-proc 490 1 $OLD "$DEV --user-data-dir=/tmp/dispatch-run"; cwd 490 /Users/someone/work
-proc 491 1 $OLD "/opt/agent-browser/bin/agent-browser daemon"; cwd 491 /Users/someone/work
-export FAKE_ACTIVE_CWD="$tmp/elsewhere" FAKE_ACTIVE_TASK='run the QA pass in the browser'
+proc 492 1 $OLD "$DEV --user-data-dir=/tmp/old-dispatches"; cwd 492 /Users/someone/work
+export FAKE_OLD_PENDING=1 FAKE_OLD_EXITED=1
 run --apply
-check 'a dispatch that runs QA keeps the old browser' has 'Kept browser 490 (a head-checks, QA or gated run is active)'
-check 'a dispatch that runs QA keeps the old daemon' has 'Kept browser 491 (a head-checks, QA or gated run is active)'
-check 'a dispatch that runs QA stops nothing' nokill
-reset
-proc 492 1 $OLD "$DEV --user-data-dir=/tmp/dispatch-docs"; cwd 492 /Users/someone/work
-export FAKE_ACTIVE_CWD="$tmp/elsewhere" FAKE_ACTIVE_TASK='edit the docs'
-run --apply
-check 'a dispatch that is not a run leaves the old browser to close' has 'Close browser 492 (stale throwaway browser profile)'
+check 'a never started dispatch and an exited worker do not hold the old browser' has 'Close browser 492 (stale throwaway browser profile)'
 
 # Active holds "*", inventory broken, inventory never read: keep everything.
 reset

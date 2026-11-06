@@ -200,7 +200,8 @@ if command -v "$orca" >/dev/null 2>&1; then
       while IFS=$'\t' read -r dispatch status; do
         [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
-          jq -c 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not)' "$tmp/show" | grep -Eiq 'qa-admission|head-checks|heavy-gate|browser|(^|[^[:alnum:]])qa([^[:alnum:]]|$)' && dispatch_run=1
+          # Any dispatch still live on this host may hold a temp browser; its output names no run, so do not guess from words.
+          [ -z "$(jq -c 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not)' "$tmp/show")" ] || dispatch_run=1
           jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
         elif [ "$status" = pending ]; then
           # Never started: no worker and no worktree, so worker-show has nothing to return.
@@ -753,14 +754,17 @@ is_any_browser() {
   case "$1" in "/"*"/Google Chrome"*".app/"*|"/"*"/Chromium.app/"*|"/"*"/Microsoft Edge"*".app/"*) return 0 ;; esac
   return 1
 }
-# The program a command line runs: the first word that is not an interpreter, env, a flag or a NAME=value.
-run_word() {
-  local w
-  for w in $1; do
-    case "$w" in -*|*=*) continue ;; esac
-    case "${w##*/}" in env|bash|sh|zsh|python|python3|python3.*|node|bun|uv|run) continue ;; esac
-    printf '%s' "${w##*/}"; return 0
+# Whether a command line runs head-checks, QA admission or the heavy gate. Skips interpreters, env, flags and NAME=value,
+# then reads the path up to its first flag (a checkout path may hold a space). A stray match only keeps a browser.
+is_gated_run() {
+  local rest=$1 w
+  while [ -n "$rest" ]; do
+    w=${rest%%[[:space:]]*}
+    case "$w" in -*|*=*) ;; *) case "${w##*/}" in env|bash|sh|zsh|[Pp]ython|[Pp]ython[0-9]*|node|bun|uv|run) ;; *) break ;; esac ;; esac
+    rest=${rest#"$w"}; rest=${rest#"${rest%%[![:space:]]*}"}
   done
+  rest=${rest%%[[:space:]]-*}
+  case "$rest" in head-checks*|qa-admission*|heavy-gate*|*/head-checks*|*/qa-admission*|*/heavy-gate*) return 0 ;; esac
   return 1
 }
 is_agent_daemon() {
@@ -787,7 +791,7 @@ sweep_browsers() {
   # offers a debugging port (a daemon may be attached to it with nothing to show for it in the process table).
   run_active=$dispatch_run; cdp_outside=''
   while IFS=$'\t' read -r _ _ _ _ cmd; do
-    case "$(run_word "$cmd" || true)" in head-checks*|qa-admission*|heavy-gate*) run_active=1 ;; esac
+    if is_gated_run "$cmd"; then run_active=1; fi
     if is_any_browser "$cmd"; then
       case "$cmd" in *--remote-debugging-port*|*--remote-debugging-pipe*) profile=$(browser_profile "$cmd") && is_temp_path "$profile" || cdp_outside=1 ;; esac
     fi
