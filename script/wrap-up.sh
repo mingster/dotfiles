@@ -35,14 +35,49 @@ repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+finish() { # prints every failed item with its reason; exit 1 when there is any
+  local n; n=$(wc -l < "$tmp/failures" | tr -d ' ')
+  if [ "$n" -gt 0 ]; then
+    printf 'Failures (%s), retried next run:\n' "$n"
+    awk -F'\t' '{ printf "  %s: %s\n", $1, $2 }' "$tmp/failures"
+    exit 1
+  fi
+  exit "$inventory_failed"
+}
+# Failure ledger. An item wrap-up could not clean is named here with its reason and printed at the end; the run exits
+# non-zero and the next run tries it again. A file, so a call made in a subshell still records.
+: > "$tmp/failures"
+fail_item() { printf '%s\t%s\n' "$1" "$2" >> "$tmp/failures"; }
+# Every call to git on the network, gh and orca goes through bounded: at most WRAP_UP_CALL_TIMEOUT seconds each (default 60),
+# and none starts once WRAP_UP_TOTAL_TIMEOUT seconds (default 900) have passed. Runs the call in its own process group and
+# kills the group (perl, which needs no version manager), so a hung child cannot hold a pipe open. Exit 124 means timed out or skipped; either is recorded.
+call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
+total_timeout=${WRAP_UP_TOTAL_TIMEOUT:-900}
+deadline=$((SECONDS+total_timeout))
+bounded() {
+  local left=$((deadline-SECONDS)) t rc=0
+  if [ "$left" -le 0 ]; then
+    [ -e "$tmp/limit-noted" ] || { : > "$tmp/limit-noted"; fail_item run "overall time limit of ${total_timeout}s reached; later calls skipped"; }
+    return 124
+  fi
+  t=$call_timeout; [ "$left" -ge "$t" ] || t=$left
+  perl -e 'my $t = shift; my $pid = fork(); die "fork: $!" unless defined $pid;
+    if (!$pid) { setpgrp(0, 0); open(STDIN, "<", "/dev/null"); exec(@ARGV) or exit 127; }
+    $SIG{ALRM} = sub { kill("KILL", -$pid); waitpid($pid, 0); exit 124; };
+    alarm($t); waitpid($pid, 0); my $s = $?;
+    exit($s & 127 ? 128 + ($s & 127) : $s >> 8);' "$t" "$@" || rc=$?
+  if [ "$rc" -eq 124 ]; then fail_item "${1##*/} ${2:-} ${3:-}" "timed out after ${t}s"; fi
+  return "$rc"
+}
 # Preview also refreshes tracking refs; only apply changes branches or worktrees.
-git fetch --prune origin
+bounded git fetch --prune origin || fail_item 'git fetch' 'failed or timed out; refs may be stale, so fewer items qualify'
 git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin > "$tmp/remote-planned"
 git rev-parse --verify origin/main >/dev/null
 # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
 pr_ok=1
-if ! gh pr list --state all --limit 1000 --json headRefName,headRefOid,state > "$tmp/prs"; then
+if ! bounded gh pr list --state all --limit 1000 --json headRefName,headRefOid,state > "$tmp/prs"; then
   echo 'Warning: PR lookup unavailable; using ancestry only, stale branches not listed.' >&2
+  fail_item 'PR lookup' 'unavailable; closed-PR branches not cleaned this run'
   echo '[]' > "$tmp/prs"; pr_ok=0
 fi
 jq -e 'type == "array"' "$tmp/prs" >/dev/null
@@ -54,7 +89,9 @@ jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort 
 inventory_read=0
 # Set when an unsettled dispatch names a head-checks, QA, browser or gated run: its process may be gone while it still needs the browser.
 dispatch_run=''
-orca=${ORCA_CLI_COMMAND:-orca}
+orca_bin=${ORCA_CLI_COMMAND:-orca}
+orca_call() { bounded "$orca_bin" "$@"; }
+orca=orca_call
 # Close finished terminals on the local host and every listed environment, before the worktree check reads the inventory.
 # A released dispatch has no agentTerminalHandle and its leftover terminals still look connected, so a terminal is linked to
 # dispatches by handle and by worktree path. Closed: a terminal of a settled dispatch, one whose process exited, or one with
@@ -71,9 +108,7 @@ main_path=$(git worktree list --porcelain | sed -n '1s/^worktree //p'); main_pat
 : > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
 close_terminal() {
-  if command -v timeout >/dev/null 2>&1; then timeout 30 "$orca" terminal close "$@" >/dev/null 2>&1
-  else "$orca" terminal close "$@" >/dev/null 2>&1
-  fi
+  "$orca" terminal close "$@" >/dev/null 2>&1
 }
 # Prints the next page cursor, or nothing on the last page. Fails when a page cannot prove it is the last one.
 # Current Orca has top level nextCursor, absent on the last page; older Orca has page.hasMore; 1.4.246 has neither.
@@ -111,7 +146,7 @@ read_dispatches() {
       wargs=(--run "$run" --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
       if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
         || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
-        echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; return 1
+        echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; fail_item 'terminals' 'dispatch discovery failed; none closed'; return 1
       fi
       cat "$tmp/h-page" >> "$tmp/h-workers"
       if ! cursor=$(next_page_cursor "$tmp/h-page") || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
@@ -139,7 +174,7 @@ close_finished_terminals() {
   [ -z "$env" ] || eargs=(--environment "$env")
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
-    echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; return 0
+    echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; fail_item "terminals on $label" 'inventory incomplete; none closed'; return 0
   fi
   jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg main "$main_path" --arg local "${env:-}" '
     def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
@@ -169,18 +204,20 @@ close_finished_terminals() {
     printf 'Close terminal %s (%s, %s)\n' "$handle" "$label" "$reason"
     [ -n "$env" ] || printf '%s\n' "$handle" >> "$tmp/closing"
     if [ "$apply" -eq 1 ]; then
-      close_terminal ${eargs[@]+"${eargs[@]}"} --terminal "$handle" || echo "Warning: closing $handle on $label failed." >&2
+      if ! close_terminal ${eargs[@]+"${eargs[@]}"} --terminal "$handle"; then
+        echo "Warning: closing $handle on $label failed." >&2; fail_item "terminal $handle ($label)" 'close failed'; continue
+      fi
     fi
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
-if command -v "$orca" >/dev/null 2>&1 && terminal_dispatches; then
+if command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
   close_finished_terminals ''
   while IFS= read -r env_id; do
     [ -z "$env_id" ] || close_finished_terminals "$env_id"
   done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
 fi
-if command -v "$orca" >/dev/null 2>&1; then
+if command -v "$orca_bin" >/dev/null 2>&1; then
   if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
     # Unknown ownership is retained too: a live terminal can belong to another Run.
     : > "$tmp/worker-pages"
@@ -189,11 +226,11 @@ if command -v "$orca" >/dev/null 2>&1; then
     while :; do
       args=(); [ -z "$cursor" ] || args=(--cursor "$cursor")
       if ! "$orca" orchestration worker-list ${args[@]+"${args[@]}"} --json > "$tmp/workers"; then
-        echo 'Warning: dispatch discovery failed; retaining all worktrees.' >&2
+        echo 'Warning: dispatch discovery failed; retaining all worktrees.' >&2; fail_item 'worktrees' 'dispatch discovery failed; all kept'
         echo '*' >> "$tmp/active"; break
       fi
       if ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/workers" >/dev/null; then
-        echo 'Warning: unexpected worker-list page shape; retaining all worktrees.' >&2
+        echo 'Warning: unexpected worker-list page shape; retaining all worktrees.' >&2; fail_item 'worktrees' 'worker-list page unreadable; all kept'
         echo '*' >> "$tmp/active"; break
       fi
       cat "$tmp/workers" >> "$tmp/worker-pages"
@@ -210,12 +247,12 @@ if command -v "$orca" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
           echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
         else
-          echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2
+          echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2; fail_item "dispatch $dispatch" 'worker-show failed; all worktrees kept'
           echo '*' >> "$tmp/active"
         fi
       done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // "", (if (.terminal // "") != "" or (.workspace // "") != "" then "owned" else "free" end)] | @tsv' "$tmp/workers")
       if ! cursor=$(next_page_cursor "$tmp/workers") || grep -Fxq -- "$cursor" "$tmp/w-cursors"; then
-        echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2
+        echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2; fail_item 'worktrees' 'worker-list paging incomplete; all kept'
         echo '*' >> "$tmp/active"; break
       fi
       [ -n "$cursor" ] || break
@@ -228,7 +265,7 @@ if command -v "$orca" >/dev/null 2>&1; then
     jq -R . "$tmp/closing" | jq -s . > "$tmp/closing-handles"
     jq -r --slurpfile ended "$tmp/ended-handles" --slurpfile closing "$tmp/closing-handles" '.result.terminals[] | select(.handle as $h | ($ended[0] | index($h) | not) and ($closing[0] | index($h) | not)) | .cwd // .worktreePath // empty' "$tmp/terminals" >> "$tmp/active"
   else
-    echo 'Warning: Orca terminal inventory incomplete; retaining all worktrees.' >&2
+    echo 'Warning: Orca terminal inventory incomplete; retaining all worktrees.' >&2; fail_item 'worktrees' 'terminal inventory incomplete; all kept'
     echo '*' >> "$tmp/active"
   fi
 elif [ "$worktrees_only" -eq 1 ]; then
@@ -250,7 +287,7 @@ mv "$tmp/active-normalized" "$tmp/active"
 protection_ok=1
 : > "$tmp/protected"
 default_branch=''
-if gh repo view --json defaultBranchRef > "$tmp/default" 2>/dev/null; then
+if bounded gh repo view --json defaultBranchRef > "$tmp/default" 2>/dev/null; then
   default_branch=$(jq -er '.defaultBranchRef.name | select(type == "string" and length > 0)' "$tmp/default" 2>/dev/null) || default_branch=''
 fi
 if [ -z "$default_branch" ]; then
@@ -259,7 +296,7 @@ if [ -z "$default_branch" ]; then
 fi
 [ -n "$default_branch" ] || protection_ok=0
 pages_branch=''
-if gh api 'repos/{owner}/{repo}/pages' > "$tmp/pages" 2> "$tmp/pages-err"; then
+if bounded gh api 'repos/{owner}/{repo}/pages' > "$tmp/pages" 2> "$tmp/pages-err"; then
   if jq -e 'type == "object" and (.source == null or (.source.branch | type == "string" and length > 0))' "$tmp/pages" >/dev/null 2>&1; then
     pages_branch=$(jq -r '.source.branch // empty' "$tmp/pages")
   else protection_ok=0
@@ -267,7 +304,7 @@ if gh api 'repos/{owner}/{repo}/pages' > "$tmp/pages" 2> "$tmp/pages-err"; then
 elif ! grep -Eq 'HTTP 404|HTTP/[^ ]+ 404' "$tmp/pages-err"; then
   protection_ok=0
 fi
-if gh api --paginate 'repos/{owner}/{repo}/branches?protected=true&per_page=100' > "$tmp/protection-pages" 2>/dev/null \
+if bounded gh api --paginate 'repos/{owner}/{repo}/branches?protected=true&per_page=100' > "$tmp/protection-pages" 2>/dev/null \
   && jq -es 'length > 0 and all(.[]; type == "array" and all(.[]; .name | type == "string" and length > 0))' "$tmp/protection-pages" >/dev/null 2>&1; then
   jq -rs '.[][] | .name' "$tmp/protection-pages" > "$tmp/protected"
 else protection_ok=0
@@ -292,6 +329,17 @@ eligible() {
   # Squash or rebase merges: every commit has a patch-equivalent on origin/main.
   if [ "$pr_ok" -eq 1 ] && [ -n "$2" ] && cherry=$(git cherry origin/main "$1") && ! grep -q '^+' <<< "$cherry"; then reason='patch-merged'; return 0; fi
   return 1
+}
+# Last copy rule: a remote branch whose commits are not in origin/main, have no patch equivalent there and sit on no other
+# ref (a local branch of the same name goes with it) is the only copy of that work, so it stays. An unreadable answer keeps it too.
+last_copy_kept=0
+last_copy() { # <sha> <branch>
+  local others cherry
+  git merge-base --is-ancestor "$1" origin/main 2>/dev/null && return 1
+  cherry=$(git cherry origin/main "$1" 2>/dev/null) || return 0
+  if ! grep -q '^+' <<< "$cherry"; then return 1; fi
+  others=$(git for-each-ref --contains "$1" --format='%(refname)' refs/heads refs/remotes/origin 2>/dev/null) || return 0
+  [ -z "$(grep -vFx -e "refs/remotes/origin/$2" -e "refs/heads/$2" <<< "$others")" ]
 }
 # True when every status line is an untracked image (screenshot dirt).
 # A worktree counts as clean when every changed path is an untracked image or the hook state file continual-learning.json
@@ -453,7 +501,7 @@ guard_keep() { # <counter> <label> <why>
 fresh_inventory() { # [what the warning says stops]
   [ "$inventory_failed" -eq 0 ] && git worktree list --porcelain > "$tmp/wt-now" && return 0
   [ "$inventory_failed" -eq 1 ] || echo "Warning: could not list worktrees; ${1:-deleting nothing more in this repo}." >&2
-  inventory_failed=1; return 1
+  inventory_failed=1; fail_item 'worktree inventory' 'could not list worktrees; nothing more deleted in this repo'; return 1
 }
 # The worktree that has the branch checked out in the fresh inventory, if any.
 checkout_of() { awk -v b="branch refs/heads/$1" '/^worktree /{ p = substr($0, 10) } $0 == b { print p; exit }' "$tmp/wt-now"; }
@@ -466,7 +514,7 @@ guard_paths() { # <counter> <label> <path...>: fresh inventory, then in_use on e
 }
 branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the item when a worktree has the branch now
   local wt
-  wt=$(checkout_of "$3") || { inventory_failed=1; guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
+  wt=$(checkout_of "$3") || { inventory_failed=1; fail_item 'worktree inventory' 'could not read; item kept'; guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
   [ -n "$wt" ] || return 0
   echo "Warning: $2 is checked out in a worktree now; kept." >&2
   if in_use "$wt"; then guard_keep "$1" "$2" "checked out in $wt, $busy"; else guard_keep "$1" "$2" "checked out in $wt"; fi
@@ -475,7 +523,7 @@ branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the i
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
   guard_paths "$1" "$2" "$3" || return
   git worktree remove ${4:+"$4"} -- "$3" && return 0
-  echo "Warning: could not remove $2; kept." >&2; guard_keep "$1" "$2" 'remove failed'; return 1
+  echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
 }
 # A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
 # whatever made it eligible, and an unreadable count keeps it too.
@@ -496,19 +544,20 @@ guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason
   else
     git branch -D -- "$3" && return 0
   fi
-  echo "Warning: could not delete $2; kept." >&2; guard_keep "$1" "$2" 'delete failed'; return 1
+  echo "Warning: could not delete $2; kept." >&2; fail_item "$2" 'delete failed'; guard_keep "$1" "$2" 'delete failed'; return 1
 }
 guarded_remote_branch_delete() { # <name...>: sets remote_gone to how many went; kept ones count in kept
   local name status=0 live=() leases=()
   remote_gone=0
   remote_live "$@" || status=1
   [ ${#live[@]} -gt 0 ] || return "$status"
-  if git push origin --delete "${live[@]}" "${leases[@]}" --atomic; then remote_gone=${#live[@]}; return "$status"; fi
+  if bounded git push origin --delete "${live[@]}" "${leases[@]}" --atomic; then remote_gone=${#live[@]}; return "$status"; fi
   # One bad ref fails the whole push; retry one by one, each behind a fresh inventory, so only the failing ones are kept.
   for name in "${live[@]}"; do
     remote_live "$name" || { status=1; continue; }
-    if git push origin --delete "$name" "${leases[@]}"; then remote_gone=$((remote_gone+1)); continue; fi
+    if bounded git push origin --delete "$name" "${leases[@]}"; then remote_gone=$((remote_gone+1)); continue; fi
     echo "Warning: could not delete remote $name; kept." >&2
+    fail_item "remote $name" 'delete failed'
     guard_keep kept "remote $name" 'delete failed'; status=1
   done
   return "$status"
@@ -524,7 +573,8 @@ remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets ca
   for name in "$@"; do
     if ! branch_free kept "remote $name" "$name"; then status=1; continue; fi
     expected=$(awk -v r="refs/remotes/origin/$name" '$1 == r { print $2 }' "$tmp/remote-planned")
-    if ! git ls-remote --heads origin "refs/heads/$name" > "$tmp/remote-now"; then
+    if ! bounded git ls-remote --heads origin "refs/heads/$name" > "$tmp/remote-now"; then
+      fail_item "remote $name" 'live lookup failed'
       guard_keep kept "remote $name" 'live remote lookup failed'; status=1; continue
     fi
     actual=$(awk -v r="refs/heads/$name" '$2 == r { print $1 }' "$tmp/remote-now")
@@ -533,6 +583,9 @@ remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets ca
     fi
     if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
       guard_keep kept "remote $name" 'remote SHA changed since fetch'; status=1; continue
+    fi
+    if last_copy "$actual" "$name"; then
+      guard_keep kept "remote $name" 'last copy of unmerged work'; last_copy_kept=$((last_copy_kept+1)); status=1; continue
     fi
     live+=("$name")
     # Keep the check atomic if a writer races the ls-remote response.
@@ -548,7 +601,7 @@ guarded_rm() { # <counter> <label> <rf|dir> <path> [more paths to probe]
   else
     rm -rf -- "$target" && return 0
   fi
-  echo "Warning: could not remove $label; kept." >&2; guard_keep "$counter" "$label" 'remove failed'; return 1
+  echo "Warning: could not remove $label; kept." >&2; fail_item "$label" 'remove failed'; guard_keep "$counter" "$label" 'remove failed'; return 1
 }
 active_worktree() {
   local active_path
@@ -628,7 +681,7 @@ while IFS= read -r -d '' field; do
     '') process_worktree ;;
   esac
 done < "$tmp/worktrees"
-[ "$apply" -eq 0 ] || git worktree prune
+[ "$apply" -eq 0 ] || git worktree prune || fail_item 'git worktree prune' 'failed'
 while IFS= read -r branch; do
   if protected "$branch"; then
     keep "local $branch" "$protected_reason"
@@ -702,7 +755,7 @@ missing_lsof_summary() {
 update_main() {
   if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && [ -z "$(git -C "$main_checkout" status --porcelain --untracked-files=all)" ]; then
     echo 'Fast forward main checkout'
-    [ "$apply" -eq 0 ] || git -C "$main_checkout" pull --ff-only origin main
+    [ "$apply" -eq 0 ] || bounded git -C "$main_checkout" pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
     # The merged preset reaches Orca only through setup-orca.sh; prefer the copy from the freshly updated checkout.
     if [ -f "$main_checkout/.orca/presets.json" ]; then
       setup_orca="$main_checkout/script/setup-orca.sh"; [ -f "$setup_orca" ] || setup_orca="$here/setup-orca.sh"
@@ -848,7 +901,7 @@ if [ "$worktrees_only" -eq 1 ]; then
   printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
   missing_lsof_summary
-  exit "$inventory_failed"
+  finish
 fi
 batch=()
 flush_remote() {
@@ -865,6 +918,8 @@ while IFS= read -r ref; do
     keep "remote $branch" "$protected_reason"
   elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "remote $branch" 'checked out in kept worktree'
+  elif eligible "$ref" "$branch" && last_copy "$(git rev-parse "$ref")" "$branch"; then
+    keep "remote $branch" 'last copy of unmerged work'; last_copy_kept=$((last_copy_kept+1))
   elif eligible "$ref" "$branch"; then
     printf 'Delete remote %s (%s)\n' "$branch" "$reason"
     batch+=("$branch")
@@ -1033,12 +1088,13 @@ fi
 pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
-  [ "$apply" -eq 0 ] || bash "$pane_script"
+  [ "$apply" -eq 0 ] || ORCA_PANE_CLOSE_TIMEOUT=${WRAP_UP_PANE_TIMEOUT:-120} bash "$pane_script" || fail_item 'worker panes' "worker-pane-close exited $?"
 fi
 update_main
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
 printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
+printf 'last copies kept=%s\n' "$last_copy_kept"
 printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
@@ -1084,11 +1140,11 @@ REMOTE
       "${fwrap[@]}" < /dev/null > "$tmp/fleet-out" 2> "$tmp/fleet-err" || fstatus=$?
       rstatus=$(sed -n "s/^@@end-$ftag-\([0-9][0-9]*\)@@\$/\1/p" "$tmp/fleet-out" | tail -n 1)
       if [ "$fstatus" -ne 0 ] || [ -z "$rstatus" ]; then
-        echo "Warning: fleet host $fhost unreachable or incomplete (status $fstatus); skipped." >&2; continue
+        echo "Warning: fleet host $fhost unreachable or incomplete (status $fstatus); skipped." >&2; fail_item "fleet host $fhost" "unreachable or incomplete (status $fstatus)"; continue
       fi
       awk -v t="$ftag" '$0 == "@@begin-" t "@@" { on = 1; next } index($0, "@@end-" t "-") == 1 { on = 0; next } on' "$tmp/fleet-out" > "$tmp/fleet-body"
       cat "$tmp/fleet-body"
-      if [ "$rstatus" -ne 0 ]; then echo "Warning: wrap-up failed on fleet host $fhost (status $rstatus); not counted." >&2; continue; fi
+      if [ "$rstatus" -ne 0 ]; then echo "Warning: wrap-up failed on fleet host $fhost (status $rstatus); not counted." >&2; fail_item "fleet host $fhost" "wrap-up exited $rstatus"; continue; fi
       counts=$(sed -n 's/^removed worktrees=\([0-9][0-9]*\) deleted local=\([0-9][0-9]*\) deleted remote=[0-9]* kept=\([0-9][0-9]*\) .*$/\1 \2 \3/p' "$tmp/fleet-body" | tail -n 1)
       if [ -z "$counts" ]; then echo "Warning: no counts line from fleet host $fhost; not counted." >&2; continue; fi
       read -r c_removed c_local c_kept <<< "$counts"
@@ -1098,4 +1154,4 @@ REMOTE
   printf '\nFleet total (local plus %s of %s hosts reached):\n' "$t_up" "$t_hosts"
   printf 'removed worktrees=%s deleted local=%s kept=%s\n' "$t_removed" "$t_local" "$t_kept"
 fi
-exit "$inventory_failed"
+finish

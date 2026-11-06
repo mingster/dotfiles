@@ -86,7 +86,7 @@ T=$'\t'
 proc() { local pid=$1 ppid=$2 age=$3; shift 3; printf '%s\t%s\t%s\tstart-%s\t%s\n' "$pid" "$ppid" "$age" "$pid" "$*" >> "$FAKE_PS"; }
 cwd() { printf '%s\n' "$2" > "$FAKE_CWDS/$1"; }
 reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD FAKE_NEVER_SETTLED FAKE_NEVER_TERM FAKE_NEVER_ERR; }
-run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1); }
+run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1) || true; }
 DEV='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
 STABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 CHROMIUM='/Users/someone/Library/Caches/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium'

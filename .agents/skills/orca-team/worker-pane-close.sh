@@ -29,7 +29,7 @@ import sys,json
 sys.path.insert(0, sys.argv[1]); import worker_state as ws
 try: r=json.load(sys.stdin)["result"]
 except Exception: print(""); sys.exit(1)
-print(ws.status(r)); sys.exit(0 if ws.is_final(r) else 1)' "$here"
+print(ws.status(r)); sys.exit(0 if ws.can_close(r) else 1)' "$here"
 }
 leftovers() { # $1 worker-show json, $2 terminal list json, $3 protected handles and "wt:<path>" lines -> handles still listed that belong to the worker
   SHOW="$1" LIST="$2" PROTECT="${3:-}" python3 -c '

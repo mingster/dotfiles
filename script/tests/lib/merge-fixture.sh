@@ -154,9 +154,18 @@ upd() { jq "$1" "$d/$2" > "$d/$2.tmp" && mv "$d/$2.tmp" "$d/$2"; }
 case "$1 ${2:-}" in
   "orchestration run-list") jq '. + {ok: true, result: .}' "$d/runs.json" ;;
   "orchestration worker-list")
-    run=""; shift 2
-    while [ $# -gt 0 ]; do [ "$1" = --run ] && run=$2; shift; done
-    jq --arg r "$run" '.workers |= map(select($r=="" or .runId==$r)) | . + {ok:true, result:.}' "$d/workers.json" ;;
+    run=""; limit=0; cursor=0; shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in --run) run=$2 ;; --limit) limit=$2 ;; --cursor) cursor=$2 ;; esac
+      shift
+    done
+    # Like real Orca, a call without --run sees only the caller's Run (MF_ORCA_CALLER_RUN, unset = every Run).
+    [ -n "$run" ] || run=${MF_ORCA_CALLER_RUN:-}
+    jq --arg r "$run" --argjson o "$cursor" --argjson l "$limit" '
+      (.workers | map(select($r=="" or .runId==$r))) as $w
+      | (if $l > 0 then $w[$o:$o+$l] else $w end) as $p
+      | ($l > 0 and ($o+$l) < ($w|length)) as $more
+      | {workers: $p, ok: true, result: {workers: $p, page: {hasMore: $more, nextCursor: (if $more then (($o+$l)|tostring) else null end)}}}' "$d/workers.json" ;;
   "orchestration worker-release")
     id=""; shift 2
     while [ $# -gt 0 ]; do [ "$1" = --dispatch ] && id=$2; shift; done

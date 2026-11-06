@@ -70,23 +70,45 @@ else
   bounded git fetch -q origin >/dev/null 2>&1 || echo "merge-cleanup: fetch failed or timed out; using existing refs" >&2
 fi
 
-# Orca inventory, read once: status, worktree path, pane handle and dispatch id of every worker ("-" when empty).
-inventory="" inventory_ok=0
-if command -v "$orca" >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 \
-  && raw=$(bounded "$orca" orchestration worker-list --json 2>/dev/null) \
-  && inventory=$(jq -r '.result.workers[]? | [(.dispatchStatus // (if .stage == "released" or .terminalState == "released" then "released" else .state end) // "-"), ((.worktreeId // .workspace // "") | split("::")[1] // "-"), ((.agentTerminalHandle // (.terminal | strings) // "") | if . == "" then "-" else . end), (.dispatchId // "-")] | @tsv' <<<"$raw" 2>/dev/null); then
+# Orca inventory, read once: every worker row of every Run and page. worker-list without --run sees only the
+# caller's Run, so read run-list first; a Run or page that cannot be read leaves the inventory unavailable.
+# worker_state.can_remove decides per worktree.
+state_dir=${WORKER_STATE_DIR:-$here/../.agents/skills/orca-team}
+page_size=${MERGE_CLEANUP_PAGE_SIZE:-100}
+rows_json="" inventory_ok=0
+read_rows='
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+orca, size = sys.argv[2], sys.argv[3]
+def pages(args):
+    cursor, seen = "", set()
+    while True:
+        cmd = [orca, "orchestration", *args, "--limit", size, "--json"] + (["--cursor", cursor] if cursor else [])
+        r = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout)["result"]
+        yield r
+        cursor = ws.next_cursor(r)
+        if not cursor: return
+        if cursor in seen: raise ValueError("cursor repeated")
+        seen.add(cursor)
+rows = []
+for run in [x["id"] for r in pages(["run-list"]) for x in r["runs"]]:
+    for r in pages(["worker-list", "--run", run]): rows += r["workers"]
+json.dump(rows, sys.stdout)'
+if command -v "$orca" >/dev/null 2>&1 && [ -f "$state_dir/worker_state.py" ] \
+  && rows_json=$(bounded python3 -c "$read_rows" "$state_dir" "$orca" "$page_size" 2>/dev/null) && [ -n "$rows_json" ]; then
   inventory_ok=1
 fi
-# Sets owner_state (none, unreleased or released) and released_ids for a worktree path.
+# Sets owner_state (none, unreleased or released) and released_ids for a worktree path, by worker_state.can_remove.
 owner_of() {
-  local status path handle id seen=0 unreleased=0
+  local verdict
   released_ids=()
-  while IFS=$'\t' read -r status path handle id; do
-    [ "$path" != - ] && [ "$(real "$path")" = "$1" ] || continue
-    seen=1
-    if [ "$status" = released ]; then released_ids+=("$id"); else unreleased=1; fi
-  done <<<"$inventory"
-  if [ $seen = 0 ]; then owner_state=none; elif [ $unreleased = 1 ]; then owner_state=unreleased; else owner_state=released; fi
+  verdict=$(ROWS="$rows_json" python3 -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[1]); import worker_state as ws
+ok, reason, ids = ws.can_remove(json.loads(os.environ["ROWS"]), os.path.realpath(sys.argv[2]), os.path.realpath)
+print("released" if ok else ("none" if "owns" in reason else "unreleased"), *ids)' "$state_dir" "$1") || { owner_state=unreleased; return; }
+  owner_state=${verdict%% *}
+  [ "$verdict" = "$owner_state" ] || read -r -a released_ids <<<"${verdict#* }"
 }
 wt_of() { git worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{p=substr($0,10)} $0=="branch " b {print p; exit}'; }
 # True when the commit $1 is in origin/main, or equals the merged sha $2.

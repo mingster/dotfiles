@@ -92,7 +92,7 @@ no_local() { ! has_local "$1"; }
 no_remote() { ! has_remote "$1"; }
 PATH="$tmp/gitshim:$PATH" bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/output" 2>&1
 check '9h branch deleted locally by apply without stale flag' no_local stale
-check '9h branch deleted remotely by apply without stale flag' no_remote stale
+check '9h unmerged branch keeps its origin copy, the last copy, after apply' has_remote stale
 for name in young open-pr live; do
   check "$name branch kept locally" has_local "$name"
   check "$name branch kept remotely" has_remote "$name"

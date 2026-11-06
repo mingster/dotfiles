@@ -78,3 +78,36 @@ def next_cursor(result):
     if result.get("nextCursor") is not None:
         return cursor(result["nextCursor"])
     return ""
+
+
+def released(r):
+    """True once Orca has released the dispatch (list rows and worker-show, both shapes)."""
+    r = _dict(r)
+    d = r.get("dispatchStatus") or _dict(r.get("dispatch")).get("status")
+    if d:
+        return d == "released"
+    return "released" in (r.get("stage"), r.get("terminalState"), r.get("state"))
+
+
+def can_close(r):
+    """True when a dispatch's panes may close: it has positively ended. The one rule behind worker-pane-close."""
+    return is_final(r)
+
+
+def _path(r):
+    wid = workspace_id(r)
+    return wid.split("::", 1)[1] if "::" in wid else ""
+
+
+def can_remove(rows, path, real=lambda p: p):
+    """Whether the worktree at path may be freed, from the rows of every Run and page.
+
+    Returns (ok, reason, released_ids). Needs an owner and every owner released; a worktree no dispatch owns
+    stays, so does one with any dispatch not yet released.
+    """
+    owned = [r for r in rows if _path(r) and real(_path(r)) == path]
+    if not owned:
+        return False, "no Orca dispatch owns it", []
+    if not all(released(r) for r in owned):
+        return False, "its dispatch is not released", []
+    return True, "", [r.get("dispatchId") for r in owned if r.get("dispatchId")]
