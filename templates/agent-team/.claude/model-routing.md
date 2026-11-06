@@ -50,7 +50,7 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemini-3.8-flash`.
 
 - Cursor and Antigravity put the effort in the model id: pass no `--effort`.
-- Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent antigravity --model gemini-4-argon-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17). Cursor reviewers never run tests or heavy-gate jobs (Elon 2026-10-26): they review code only, and the lead runs the tests.
+- Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent antigravity --model gemini-4-argon-high` or `--agent cursor --model grok-4.7-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17). Cursor reviewers never run tests or heavy-gate jobs (Elon 2026-10-26): they review code only, and the lead runs the tests.
 - Cursor quota runs out per model family (2026-10-07: Gemini exhausted until 10/25, Opus spend limit hit earlier). A Cursor usage limit is a provider stop: fall back, never retry the same Cursor model.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt and report the effective model.
 
