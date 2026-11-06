@@ -22,6 +22,10 @@ class OrcaReadError(Exception):
     """Orca inventory could not be read or parsed."""
 
 
+class TerminalNotFound(OrcaReadError):
+    """Orca reports this terminal handle does not exist (lead pane gone)."""
+
+
 SEND_ERRORS = (
     subprocess.CalledProcessError,
     subprocess.TimeoutExpired,
@@ -35,14 +39,62 @@ NOTICE_PASS_LIMIT = 20
 ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
 
 
+def _json_object_from_orca_process(proc):
+    """If stdout or stderr is a JSON object, return it; else None."""
+    for part in (proc.stdout, proc.stderr):
+        if not part or not str(part).strip():
+            continue
+        try:
+            data = json.loads(part.strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _receipt_denies_terminal_show(args_tuple, receipt):
+    """True when this failure is terminal show for a missing pane (terminal_not_found)."""
+    if len(args_tuple) < 2 or args_tuple[0] != 'terminal' or args_tuple[1] != 'show':
+        return False
+    if not isinstance(receipt, dict):
+        return False
+    if receipt.get('ok') is not False:
+        return False
+    for key in ('error', 'errors', 'code', 'message', 'reason'):
+        blob = receipt.get(key)
+        if blob is None:
+            continue
+        text = blob if isinstance(blob, str) else json.dumps(blob)
+        if 'terminal_not_found' in text:
+            return True
+    return False
+
+
 def rpc(*args):
     command = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca'))
     try:
         output = subprocess.run(
-            command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=True
+            command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=False
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+    except (subprocess.TimeoutExpired, OSError) as e:
         raise OrcaReadError('orca CLI failed') from e
+
+    if output.returncode != 0:
+        receipt = _json_object_from_orca_process(output)
+        combined_err = (output.stderr or '') + (output.stdout or '')
+        if _receipt_denies_terminal_show(args, receipt) if isinstance(receipt, dict) else False:
+            raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
+                output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+            )
+        if len(args) >= 2 and args[0] == 'terminal' and args[1] == 'show' and 'terminal_not_found' in combined_err:
+            raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
+                output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+            )
+        raise OrcaReadError('orca CLI failed') from subprocess.CalledProcessError(
+            output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+        )
+
     try:
         receipt = json.loads(output.stdout)
     except json.JSONDecodeError as e:
@@ -50,6 +102,8 @@ def rpc(*args):
     if not isinstance(receipt, dict):
         raise OrcaReadError('orca body is not a JSON object')
     if receipt.get('ok') is False:
+        if _receipt_denies_terminal_show(args, receipt):
+            raise TerminalNotFound('terminal_not_found')
         raise OrcaReadError('Orca refused inventory')
     if 'result' not in receipt:
         raise OrcaReadError('missing result in orca reply')
@@ -274,8 +328,13 @@ def read_orca_inventory(config):
         alive[run['id']] = proc.returncode == 0
     leads = {}
     for lead in config.get('leads', []):
-        rpc('terminal', 'show', '--terminal', lead['terminal'])
-        leads[lead['terminal']] = True
+        handle = lead['terminal']
+        try:
+            rpc('terminal', 'show', '--terminal', handle)
+        except TerminalNotFound:
+            leads[handle] = False
+            continue
+        leads[handle] = True
     return {'messages': inbox['messages'], 'workers': workers, 'alive': alive, 'leads': leads}
 
 
