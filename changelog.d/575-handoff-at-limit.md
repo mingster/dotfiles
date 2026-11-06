@@ -1,0 +1,1 @@
+The lead context limit hook now lets a lead at the limit hand off with `$(git rev-parse HEAD)` as the head, or after a `cd <dir> &&`, and an error in the limit can no longer skip the worker-start gate.

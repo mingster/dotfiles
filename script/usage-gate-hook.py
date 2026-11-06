@@ -30,7 +30,7 @@ VAR = re.compile(r"^\$\{?(\w+)\}?$")
 LEAD_WARN, LEAD_DENY = 150_000, 170_000
 LEAD_ALLOWED = {"lead-handoff.sh", "lead-merge.sh", "orca"}
 SUBSHELL = re.compile(r"\$\(([^()]*)\)")
-SAFE_SUBSHELL = re.compile(r"^\s*cat\s+(<<\s*$|[\w./~-]+\s*$)")
+SAFE_SUBSHELL = re.compile(r"^\s*(cat\s+(<<\s*$|[\w./~-]+\s*$)|git\s+rev-parse(\s+[\w./~^@-]+)*\s*$)")
 
 
 def starts(cmd):
@@ -187,7 +187,7 @@ def is_lead(cwd):
 
 
 def only_allowed(cmd):
-    """True when every simple command in cmd is lead-handoff.sh, lead-merge.sh or orca."""
+    """True when every simple command in cmd is lead-handoff.sh, lead-merge.sh or orca (after an optional cd)."""
     cmd = HEREDOC.sub("<<", cmd.replace("\\\n", " "))
     if "`" in cmd or any(not SAFE_SUBSHELL.match(m) for m in SUBSHELL.findall(cmd)) \
             or cmd.count("$(") != len(SUBSHELL.findall(cmd)):
@@ -216,6 +216,8 @@ def only_allowed(cmd):
             words = words[1:]
         if len(words) > 1 and words[0] in ("bash", "sh"):
             words = words[1:]
+        if len(words) == 2 and words[0] == "cd":
+            continue   # moving the shell is harmless; the rest of the line is still checked
         if words and os.path.basename(words[0]) not in LEAD_ALLOWED:
             return False
     return True
@@ -235,7 +237,7 @@ def lead_limit(data, cmd):
     if tokens < LEAD_WARN or not is_lead(data.get("cwd") or ""):
         return None, None
     handoff = ("Hand off now: run script/lead-handoff.sh --branch <branch> --head <sha> --remainder <what is left> "
-               "--dispatch-ids <ids>, then end this session.")
+               "--dispatch-ids <ids>, then end this session. The head may be a literal sha or $(git rev-parse HEAD).")
     if tokens >= LEAD_DENY and not only_allowed(cmd):
         return (f"Lead context is {tokens // 1000}k tokens, over the {LEAD_DENY // 1000}k limit. {handoff} "
                 "Only lead-handoff.sh, lead-merge.sh and orca commands run until then."), None
@@ -258,7 +260,11 @@ def main():
     if data.get("tool_name") != "Bash":
         return
     cmd = (data.get("tool_input") or {}).get("command") or ""
-    lead_deny, note = lead_limit(data, cmd)
+    try:
+        lead_deny, note = lead_limit(data, cmd)
+    except Exception as exc:   # an error here must never skip the worker-start gate below
+        print(f"usage-gate-hook: lead context limit failed ({exc}); not enforced.", file=sys.stderr)
+        lead_deny, note = None, None
     if "worker-start" not in cmd:
         return emit([lead_deny] if lead_deny else [], note)
     blocked = [lead_deny] if lead_deny else []

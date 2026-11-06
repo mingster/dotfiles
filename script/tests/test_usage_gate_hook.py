@@ -394,6 +394,51 @@ class LeadContext(unittest.TestCase):
         deny, _, _ = self.run_hook("orca orchestration send --body \"$(cat <<'EOF'\nline; git push\nEOF\n)\"", 171000)
         self.assertIsNone(deny)
 
+    def test_lead_at_171k_handoff_head_from_git_rev_parse(self):
+        for command in ('script/lead-handoff.sh --branch b --head "$(git rev-parse HEAD)" --remainder r --dispatch-ids i',
+                        "script/lead-handoff.sh --branch b --head $(git rev-parse --short HEAD) --remainder r --dispatch-ids i",
+                        'orca orchestration send --body "$(git rev-parse origin/main)"'):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNone(deny)
+
+    def test_lead_at_171k_other_git_in_a_substitution_stays_denied(self):
+        for command in ('script/lead-handoff.sh --head "$(git push)"', "orca send $(git push)",
+                        "orca send $(git rev-parse HEAD; git push)", "orca send $(git rev-parse HEAD && rm x)",
+                        "orca send $(git rev-parse `git push`)", "orca send $(git rev-parse HEAD > x)"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNotNone(deny)
+
+    def test_lead_at_171k_cd_then_allowed_command(self):
+        for command in ("cd /some/dir && script/lead-merge.sh --repo o/r --pr 3 --head abc",
+                        "cd ~/work && orca orchestration check --json"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNone(deny)
+
+    def test_lead_at_171k_cd_then_denied_command_stays_denied(self):
+        for command in ("cd /some/dir && git push", "cd /some/dir; rm -rf y", "cd a b && orca x", "cd $(git push) && orca x"):
+            with self.subTest(command=command):
+                deny, _, _ = self.run_hook(command, 171000)
+                self.assertIsNotNone(deny)
+
+    def test_deny_text_says_a_literal_sha_also_works(self):
+        deny, _, _ = self.run_hook("git status", 171000)
+        self.assertIn("literal sha", deny)
+        self.assertIn("git rev-parse", deny)
+
+    def test_a_lead_limit_error_never_skips_the_worker_start_gate(self):
+        source = open(HOOK).read().replace("def lead_limit(data, cmd):\n",
+                                           "def lead_limit(data, cmd):\n    raise RuntimeError('boom')\n")
+        patched = os.path.join(self.tmp.name, "patched-hook.py")
+        open(patched, "w").write(source)
+        payload = {"tool_name": "Bash", "cwd": self.dirs["lead"],
+                   "tool_input": {"command": "orca orchestration worker-start --spec '' --agent unknownagent"}}
+        r = subprocess.run([sys.executable, patched], input=json.dumps(payload), capture_output=True, text=True,
+                           env=dict(os.environ, HOME=self.tmp.name, USAGE_GATE_STATE=self.tmp.name + "/state"))
+        self.assertIn("empty --spec", json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
+
     def test_non_leads_at_171k_pass(self):
         for where in ("build", "nested", "plain"):
             with self.subTest(where=where):

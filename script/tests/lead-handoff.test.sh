@@ -46,4 +46,13 @@ run --branch second --head h2 --remainder r2 --dispatch-ids d2
 [[ $(sed -n 1p "$LEAD_HANDOFFS_FILE") == *first* && $(sed -n 2p "$LEAD_HANDOFFS_FILE") == *second* ]] || fail 'entries out of order'
 tests=$((tests + 1))
 
+# The log path can be an existing directory: write inside it, leave what is there alone.
+export LEAD_HANDOFFS_FILE="$tmp/handoffs-dir"
+mkdir "$LEAD_HANDOFFS_FILE"
+echo keep >"$LEAD_HANDOFFS_FILE/old-entry"
+run --branch dir-branch --head h3 --remainder r3 --dispatch-ids d3 || fail 'directory log path exited nonzero'
+[[ -d $LEAD_HANDOFFS_FILE && $(cat "$LEAD_HANDOFFS_FILE/old-entry") == keep ]] || fail 'directory contents changed'
+grep -qF dir-branch "$LEAD_HANDOFFS_FILE/handoffs.log" || fail 'entry not written inside the directory'
+tests=$((tests + 1))
+
 printf 'PASS: %s tests\n' "$tests"
