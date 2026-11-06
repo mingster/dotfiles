@@ -104,7 +104,7 @@ for arg in "$@"; do
   prev=$arg
 done
 echo "head-checks $head $heads" >> "$EVENT_LOG"
-printf 'Checks: %s head=%s train-heads=%s\n' "$([ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]] && echo FAIL || echo PASS)" "$head" "$heads"
+printf 'Checks: %s head=%s main=2222222222222222222222222222222222222222 train-heads=%s\n' "$([ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]] && echo FAIL || echo PASS)" "$head" "$heads"
 red() { printf 'Command: bun run test\n(fail) widget keeps its label\n 1 fail\nResult: exit 1; remaining checks stopped\n\nReceipt cut to fit 20000 characters. Full log: /logs/head-checks-%s.log\n' "${head:0:12}"; exit 1; }
 if [ -n "${FAIL_HEAD:-}" ] && [[ ",$heads," == *",$FAIL_HEAD,"* ]]; then red; fi
 if [ -n "${FAIL_EXACT_HEADS:-}" ] && [ "$heads" = "$FAIL_EXACT_HEADS" ]; then

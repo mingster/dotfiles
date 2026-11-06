@@ -1,0 +1,1 @@
+- `lead-merge.sh` reads the Checks receipt with `main=` again, and a newer FAIL at the head blocks the merge or a carry.
