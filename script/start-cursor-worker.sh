@@ -19,6 +19,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$model" ] && [ -n "$from" ] || usage
+python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
+  || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
 brief=$(cat "$spec")
 [ -n "${brief//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
 if [ -z "$wt" ]; then

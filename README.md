@@ -12,7 +12,7 @@ This repository contains everything needed to turn a fresh operating system inst
 
 * **Unified system configuration:** Installs core developer tooling, the Zsh shell, Git configuration, and application preferences across macOS, Arch Linux, and Debian.
 * **Universal AI skills:** Supplies over 30 reusable engineering skills (slash commands) shared uniformly across Claude Code, Cursor, and Antigravity.
-* **Autonomous AI agent team:** Packages a drop in virtual software company led by a single executive front door (Elon), backed by a Product Architect, a Tech Lead, and specialist execution workers.
+* **Autonomous AI agent team:** Packages a drop in virtual software company led by a single executive front door (Elon), backed by a Product Architect and specialist execution workers.
 
 ### Core philosophy
 
@@ -87,13 +87,27 @@ After adoption, open the project and fill in two documentation files:
 * `docs/agents/team-facts.md`: Specific project context, team roster, repository urls, and tech stack details.
 * `docs/agents/deploy-facts.md`: Deployment targets, environment urls, and automated smoke test commands.
 
-#### Tech Lead merges
+#### Elon merges
 
-The Tech Lead merges exclusively through the verified `script/lead-merge.sh` utility.
+Elon merges exclusively through the verified `script/lead-merge.sh` utility.
 
 ## 3. The Agent Team Organization
 
 The agent team functions like an agile software organization. You interact with a single executive point of contact, Elon. Teammates coordinate through Orca orchestration in isolated worktrees, reporting progress back up the hierarchy.
+
+### Goal
+
+An agent team, run inside Orca ADE, that follows the Matt Pocock and pstack skills and their design. Each role does its job by the shortest path, with the highest chance of success and as few bugs as possible.
+
+* **Orca first:** Orca orchestration and automations run every agent and every schedule. GitHub Actions runs only Checks, which need no agent.
+* **Skills first:** Matt Pocock and pstack skills are the base process. Team rules keep only the usage gate, wrap-up, safety and product rules.
+* **Measured results:** low risk PRs reach merge in a median of 30 minutes or less, no P0 or P1 reaches production in 30 days, and under 5% of merged PRs are reopened or need a hotfix.
+* **Independent review:** no role reviews its own work. Automated review replaces QA only after a replay of past failures shows it catches at least 80% of real defects.
+* **AI usage gate:** every provider and every way of starting a worker passes the gate, and it refuses when it has no fresh reading. An agent that actually hits a provider limit means the gate failed: the worker commits its progress, a new worker on another provider continues from the same branch, and the owner gets a one line warning. If every provider is out, no new worker starts, branches are kept, the owner is warned once and Elon resumes after the reset. Host load limits stay.
+* **Wrap-up:** when a job merges, its worker stops, its worktree and its local and remote branches are deleted, and its terminals close. A sweep every 2 hours catches anything missed. Unmerged work is never deleted, and every run reports what it did.
+* **Daily staging:** staging deploys the latest main at 19:00 Taiwan time, with no merge freeze, unless main has no new commit, Checks are red or the usage gate refuses. Full regression, smoke and a review of changed pages run right after. A full page by page review runs weekly.
+* **Production:** a successful staging review, meaning no open P0 or P1, leads to a one line summary and the owner's go the same day. With no go, nothing deploys and the next day's version is offered. A failed review opens P0 and P1 tickets first in line for the next deploy, and the rest go on a weekly list. Nothing reaches production or its database without that go.
+* **Owner's time:** the owner decides only new features, new pages, prices, money rules and production. Elon decides the rest and records it.
 
 ### Organization chart
 
@@ -105,10 +119,9 @@ flowchart TD
     subgraph Direct_Reports["Direct Reports to Elon"]
         Sales["Sales and Marketing (sales-marketing)<br/>Commercial validation, demand signals, unit economics"]
         BA["BA and Product Architect (architect-pm)<br/>Product requirements, PRDs, domain modeling, ticket contracts"]
-        TL["Tech Lead (tech-lead)<br/>Engineering integration, reviewed PR merges, release coordination"]
     end
     
-    subgraph Tech_Specialists["Technical Execution Specialists (Supervised by Tech Lead)"]
+    subgraph Tech_Specialists["Technical Execution Specialists (Supervised by Elon)"]
         Dev["Fullstack Dev (fullstack-dev)<br/>TDD implementation inside isolated worktrees"]
         QA["QA SDET (qa-sdet)<br/>Dual axis audits (Standards and Spec), test suites"]
         SecOps["SecOps FinOps (secops-finops)<br/>Security boundaries, authentication, financial reconciliation"]
@@ -122,13 +135,12 @@ flowchart TD
     Board --> CEO
     CEO --> Sales
     CEO --> BA
-    CEO --> TL
     
-    BA -->|"Machine-checkable ticket contracts"| TL
-    TL --> Dev
-    TL --> QA
-    TL --> SecOps
-    TL --> RM
+    BA -->|"Machine-checkable ticket contracts"| CEO
+    CEO --> Dev
+    CEO --> QA
+    CEO --> SecOps
+    CEO --> RM
     CEO --> CSM
 ```
 
@@ -138,7 +150,6 @@ flowchart TD
 * **Elon (CEO):** Your direct peer and single front door. Dispatches teammates using Orca orchestration, monitors delivery progress, runs usage gates, and contacts you only when an Owner Reserved decision is reached.
 * **Sales and Marketing (`sales-marketing`):** Evaluates user acquisition channels, customer lifetime value, churn metrics, and market demand before software is built.
 * **BA and Product Architect (`architect-pm`):** Translates ideas into clear specifications (`intent.md` and `spec.md`). Breaks specifications into machine checkable GitHub issue tickets containing strict file allowlists and test criteria.
-* **Tech Lead (`tech-lead`):** Supervises engineering workers, opens pull requests, validates risk reviews, and merges pull requests via `script/lead-merge.sh`.
 * **Fullstack Dev (`fullstack-dev`):** Implements code strictly through test-driven development inside isolated Git worktrees. Only touches allowlisted files.
 * **QA SDET (`qa-sdet`):** Performs rigorous dual axis reviews on the pull request head commit (Standards conformity and Spec adherence).
 * **SecOps and FinOps (`secops-finops`):** Audits security, token access boundaries, multi-tenant isolation, and billing calculations.
@@ -157,7 +168,6 @@ sequenceDiagram
     actor Owner as Human Owner (Board)
     participant CEO as Elon (CEO)
     participant BA as Product Architect (architect-pm)
-    participant TL as Tech Lead (tech-lead)
     participant Dev as Fullstack Dev (fullstack-dev)
     participant QA as QA SDET / SecOps
     participant RM as Release Manager (release-manager)
@@ -167,15 +177,13 @@ sequenceDiagram
     BA->>Owner: Present intent.md for acceptance
     Note over Owner,BA: Owner reviews and explicitly accepts intent
     BA->>BA: Stress test edge cases and write spec.md with ADRs
-    BA->>TL: Hand off tickets as machine checkable contracts
-    CEO->>TL: Authorize engineering scope and usage budget
-    TL->>Dev: Dispatch tickets in isolated worktrees
+    BA->>CEO: Hand off tickets as machine checkable contracts
+    CEO->>Dev: Dispatch tickets in isolated worktrees
     Dev->>Dev: Red Green Refactor TDD with verification command
-    Dev->>TL: Report worker_done with branch, head SHA, and tests
-    TL->>QA: Request dual axis audit of current head SHA
-    QA->>TL: Report worker_done with standards and spec verification
-    TL->>TL: Validate reviews, green checks, and merge via lead-merge.sh
-    TL->>CEO: Deliver consolidated integration report
+    Dev->>CEO: Report worker_done with branch, head SHA, and tests
+    CEO->>QA: Request dual axis audit of current head SHA
+    QA->>CEO: Report worker_done with standards and spec verification
+    CEO->>CEO: Validate reviews, green checks, and merge via lead-merge.sh
     CEO->>Owner: Deliver release recommendation
     Owner->>RM: Explicit Go approval for exact production commit
     RM->>RM: Execute /deploy (Local to Staging to Production)
@@ -225,8 +233,8 @@ Slash commands work in Claude Code, Cursor, and Antigravity.
 | Goal | Command | Description |
 | --- | --- | --- |
 | Start or plan next objective | `/elon Help me choose the next objective.` | Elon reviews backlog and recommends priorities |
-| Check project status | `/elon status` or `/teddy status` | Returns concise status categorized into Now, Needs Owner, and Running |
-| Deliver a batch of tickets | `/elon Deliver ready tickets using /crew and /tdd.` | Hands scoped tickets to Tech Lead for worker dispatch |
+| Check project status | `/elon status` | Returns concise status categorized into Now, Needs Owner, and Running |
+| Deliver a batch of tickets | `/elon Deliver ready tickets using /crew and /tdd.` | Dispatches scoped tickets to workers |
 | Unblock decision backlog | `/grill-backlog` | Walks through unresolved tickets to clear decisions |
 | Deploy to Staging | `/deploy staging` | Promotes verified main branch to staging environment |
 | Deploy to Production | `/deploy production` | Requests owner approval, then deploys to production |

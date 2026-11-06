@@ -28,7 +28,7 @@ def orca(*args):
 
 
 WORKTREE = re.compile(r"/orca/workspaces/[^/]+/([^/]+)")
-COORDINATORS = ("lead-", "elon")  # tech-lead worktrees are lead-<slug>; Elon's start with elon
+COORDINATORS = ("lead-", "elon")  # merge worktrees are lead-<slug>; Elon's start with elon
 
 
 def coordinators(*env):
