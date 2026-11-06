@@ -5,6 +5,8 @@
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Writes the reviewer's owner record ($WORKER_DONE_OWNER_DIR/<its dispatch id>: the lead handle from --owner, then
 # kind=reviewer, repo=, pr=) so worker-done-relay.sh sweep can release the seat on proof. No dispatch id in the output: no record.
+# Before any gate or reviewer: if <worktree>/.agents/pre-qa-checks.conf exists, its commands run at the exact head (one per
+# line, each limited to ON_WORKER_DONE_CHECK_TIMEOUT seconds, default 120). A failure, timeout or moved head starts no reviewer.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
 #      ON_WORKER_DONE_FLEET_CONFIG selects the fleet-config.json with host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
@@ -33,6 +35,38 @@ done
 if [ -n "$fam" ]; then
   case "$fam" in claude|cursor|gemini|antigravity) ;; *) usage ;; esac
   [ -n "$author_provider" ] || author_provider="$fam"
+fi
+
+# Cheap checks: the project's .agents/pre-qa-checks.conf (one command per line, # comments and blank lines skipped)
+# runs from the worktree at the exact head before any reviewer starts. No file: nothing runs.
+cheap_conf="$wt/.agents/pre-qa-checks.conf"
+if [ -f "$cheap_conf" ]; then
+  now=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || now=""
+  if [ "$now" != "$head" ]; then
+    echo "QA start refused head=$head: head moved, the worktree is at ${now:-an unreadable head}" >&2
+    exit 1
+  fi
+  python3 - "$cheap_conf" "$wt" "${ON_WORKER_DONE_CHECK_TIMEOUT:-120}" "$head" <<'PY' || exit 1
+import os, signal, subprocess, sys
+
+conf, wt, limit, head = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
+for line in open(conf):
+    cmd = line.strip()
+    if not cmd or cmd.startswith("#"):
+        continue
+    proc = subprocess.Popen(["bash", "-c", cmd], cwd=wt, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors="replace", start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=limit)
+        why = None if proc.returncode == 0 else f"exit {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, _ = proc.communicate()
+        why = f"timed out after {limit:g}s"
+    if why:
+        tail = "\n".join((out or "").splitlines()[-20:])
+        sys.exit(f"QA start refused head={head}: cheap check failed ({why}): {cmd}\n{tail}")
+PY
 fi
 
 gate=${ON_WORKER_DONE_USAGE_GATE:-$HOME/dotfiles/script/usage-gate.py}

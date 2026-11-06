@@ -222,5 +222,49 @@ FAKE_START_RC=3 FAKE_START_OUT='{"ok":false,"result":{"dispatch":{"dispatchId":"
 rc=$?
 check 'a failed start keeps its exit code and writes no record' "$([ "$rc" = 3 ] && [ ! -e "$tmp/owners/ctx_rev4" ]; echo $?)"
 unset WORKER_DONE_OWNER_DIR
+# Cheap checks (.agents/pre-qa-checks.conf) run at the exact head, in its worktree, before any reviewer starts.
+cheap="$tmp/cheap"; mkdir -p "$cheap/.agents"
+git -C "$cheap" init -q && git -C "$cheap" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+cheap_head=$(git -C "$cheap" rev-parse HEAD)
+cheap_run() { run --worktree "$cheap" --head "$cheap_head" "$@"; }
+cheap_conf() { printf '%s\n' "$@" > "$cheap/.agents/pre-qa-checks.conf"; }
+cheap_refuses() {
+  rc=$1; shift
+  check "$1" "$([ "$rc" -ne 0 ] && [ ! -e "$tmp/launch.json" ]; echo $?)"
+}
+valid; cheap_conf '# cheap checks' '' 'echo lint ok' 'pwd > "$FIXTURE_ROOT/cheap.pwd"'
+cheap_run; rc=$?
+check 'cheap checks pass: reviewer starts' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+check 'cheap checks run from the worktree of the head' "$([ "$(cat "$tmp/cheap.pwd")" = "$(cd "$cheap" && pwd -P)" ]; echo $?)"
+for name in lint mock-contract locale; do
+  valid; cheap_conf 'true' "echo $name line1; echo $name broke >&2; exit 7" 'echo never reached > "$FIXTURE_ROOT/after-fail"'
+  rm -f "$tmp/after-fail"
+  cheap_run; rc=$?
+  cheap_refuses "$rc" "$name failure starts no reviewer"
+  check "$name failure names the check and its last output" "$(grep -q "cheap check failed" "$tmp/err" && grep -q "echo $name line1" "$tmp/err" && grep -q "$name broke" "$tmp/err"; echo $?)"
+  check "$name failure stops later checks" "$([ ! -e "$tmp/after-fail" ]; echo $?)"
+done
+valid; cheap_conf 'seq 1 50; exit 1'
+cheap_run
+check 'failure report keeps only the last lines' "$(grep -qx 50 "$tmp/err" && ! grep -qx 1 "$tmp/err"; echo $?)"
+valid; cheap_conf 'sleep 30'
+ON_WORKER_DONE_CHECK_TIMEOUT=1 cheap_run; rc=$?
+cheap_refuses "$rc" 'timeout starts no reviewer'
+check 'timeout is reported as a failure naming the check' "$(grep -q 'timed out' "$tmp/err" && grep -q 'sleep 30' "$tmp/err"; echo $?)"
+valid; rm -f "$cheap/.agents/pre-qa-checks.conf"
+cheap_run; rc=$?
+check 'no config behaves as today' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+valid; cheap_conf 'echo ok'
+git -C "$cheap" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+cheap_run; rc=$?
+cheap_refuses "$rc" 'a head that moved starts no reviewer'
+check 'moved head is named in the refusal' "$(grep -q 'head moved' "$tmp/err"; echo $?)"
+cheap_head=$(git -C "$cheap" rev-parse HEAD)
+valid; cheap_conf 'echo ok'
+cheap_run --dry-run; rc=$?
+check 'dry run runs the cheap checks too' "$rc"
+valid; cheap_conf 'exit 1'
+cheap_run --dry-run; rc=$?
+check 'dry run refuses on a failed check' "$([ "$rc" -ne 0 ]; echo $?)"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
