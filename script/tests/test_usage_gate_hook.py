@@ -132,7 +132,7 @@ class Hook(unittest.TestCase):
                 mock.patch.object(hook, "routing", return_value=None), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             hook.main()
-        return out.getvalue(), [call.args[0][5:] for call in run.call_args_list]
+        return out.getvalue(), [call.args[0][5:] for call in run.call_args_list if call.args[0][2] != "link"]
 
     def test_antigravity_gemini_allowed_while_claude_pool_blocked(self):
         for option in ("--model gemini-flash", "--model=gemini-flash", "--model 'gemini-flash'"):
