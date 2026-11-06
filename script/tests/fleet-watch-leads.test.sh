@@ -38,7 +38,12 @@ class Leads(unittest.TestCase):
             if args[:2] == ('terminal', 'show'):
                 term = args[args.index('--terminal') + 1]
                 if term in gone:
-                    raise watch.TerminalNotFound('terminal_not_found')
+                    # Real Orca maps gone leads to a specific error; before TerminalNotFound existed,
+                    # terminal show failure aborted inventory as a generic refusal (90d9aaf).
+                    tnf = getattr(watch, 'TerminalNotFound', None)
+                    if tnf is not None:
+                        raise tnf('terminal_not_found')
+                    raise watch.OrcaReadError('Orca refused inventory')
                 return {}
             return {}
 
@@ -93,11 +98,39 @@ class Leads(unittest.TestCase):
             self.assertIn(watch.ORCA_SKIP_NOTICE, out)
             self.assertNotIn('lead pane gone', out)
 
-    def test_rpc_maps_terminal_show_json_terminal_not_found(self):
+    def test_rpc_maps_terminal_show_stdout_matches_real_orca_stale_handle(self):
+        # Captured: `orca terminal show --terminal does-not-exist --json` → exit 1, stderr empty, stdout JSON.
+        stale_stdout = r'''{
+  "id": "a5839119-0279-4b82-9113-600d4cfa5daa",
+  "ok": false,
+  "error": {
+    "code": "terminal_handle_stale",
+    "message": "terminal_handle_stale",
+    "data": {
+      "nextSteps": [
+        "Terminal handles belong to the Orca server that issued them. If this handle came from a paired server (for example `orca terminal list --environment <server>`), pass the same --environment <server> to this command."
+      ]
+    }
+  },
+  "_meta": {
+    "runtimeId": "acc8d77d-9e56-4e28-b277-3f4dbabb0ceb"
+  }
+}
+'''
         proc = subprocess.CompletedProcess(
             ['orca', 'terminal', 'show', '--json'], 1,
-            stdout='',
-            stderr='{"ok":false,"error":"terminal_not_found"}',
+            stdout=stale_stdout,
+            stderr='',
+        )
+        with patch.object(watch.subprocess, 'run', return_value=proc):
+            with self.assertRaises(watch.TerminalNotFound):
+                watch.rpc('terminal', 'show', '--terminal', 'does-not-exist')
+
+    def test_rpc_maps_terminal_show_json_body_terminal_not_found(self):
+        proc = subprocess.CompletedProcess(
+            ['orca', 'terminal', 'show', '--json'], 0,
+            stdout='{"ok":false,"error":{"code":"terminal_not_found","message":"x"}}',
+            stderr='',
         )
         with patch.object(watch.subprocess, 'run', return_value=proc):
             with self.assertRaises(watch.TerminalNotFound):

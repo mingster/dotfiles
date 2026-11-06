@@ -53,20 +53,39 @@ def _json_object_from_orca_process(proc):
     return None
 
 
+_TERMINAL_SHOW_GONE_CODES = frozenset(('terminal_handle_stale', 'terminal_not_found'))
+
+
+def _terminal_error_code(value):
+    """Orca error code: top-level string, or nested error.code / error when dict."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ('code', 'message', 'error'):
+            v = value.get(key)
+            if isinstance(v, str) and v:
+                return v
+    return None
+
+
 def _receipt_denies_terminal_show(args_tuple, receipt):
-    """True when this failure is terminal show for a missing pane (terminal_not_found)."""
+    """True when terminal show failed for a missing or stale handle (exact Orca error codes)."""
     if len(args_tuple) < 2 or args_tuple[0] != 'terminal' or args_tuple[1] != 'show':
         return False
     if not isinstance(receipt, dict):
         return False
     if receipt.get('ok') is not False:
         return False
-    for key in ('error', 'errors', 'code', 'message', 'reason'):
-        blob = receipt.get(key)
-        if blob is None:
-            continue
-        text = blob if isinstance(blob, str) else json.dumps(blob)
-        if 'terminal_not_found' in text:
+    err = receipt.get('error')
+    code = _terminal_error_code(err)
+    if code in _TERMINAL_SHOW_GONE_CODES:
+        return True
+    if isinstance(err, list):
+        for item in err:
+            if _terminal_error_code(item) in _TERMINAL_SHOW_GONE_CODES:
+                return True
+    for key in ('errors', 'code', 'message', 'reason'):
+        if _terminal_error_code(receipt.get(key)) in _TERMINAL_SHOW_GONE_CODES:
             return True
     return False
 
@@ -82,12 +101,7 @@ def rpc(*args):
 
     if output.returncode != 0:
         receipt = _json_object_from_orca_process(output)
-        combined_err = (output.stderr or '') + (output.stdout or '')
-        if _receipt_denies_terminal_show(args, receipt) if isinstance(receipt, dict) else False:
-            raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
-                output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
-            )
-        if len(args) >= 2 and args[0] == 'terminal' and args[1] == 'show' and 'terminal_not_found' in combined_err:
+        if isinstance(receipt, dict) and _receipt_denies_terminal_show(args, receipt):
             raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
                 output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
             )
