@@ -20,6 +20,8 @@ FAKE
 # Fake orca, with the real worker-show shape (ids, state, liveness, workspace; no task text, no terminal object).
 # FAKE_ACTIVE_CWD adds one running dispatch in that path; FAKE_OLD_PENDING adds a never started dispatch (worker-show fails);
 # FAKE_OLD_EXITED adds an old dispatch whose worker exited; FAKE_ORCA_BAD breaks the inventory.
+# FAKE_NEVER_SETTLED adds the real never-settled row (state start_unknown, liveness unverifiable, no terminal, no workspace)
+# whose worker-show fails with dispatch_not_found; FAKE_NEVER_TERM gives that row a terminal; FAKE_NEVER_ERR makes the failure another error.
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
@@ -31,9 +33,12 @@ case "$*" in
     [ -z "${FAKE_ACTIVE_CWD:-}" ] || w='{"dispatchId":"d1","dispatchStatus":"running"}'
     [ -z "${FAKE_OLD_PENDING:-}" ] || w="${w:+$w,}"'{"dispatchId":"d2","dispatchStatus":"pending"}'
     [ -z "${FAKE_OLD_EXITED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d3","dispatchStatus":"running"}'
+    [ -z "${FAKE_NEVER_SETTLED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d4","state":"start_unknown","liveness":"unverifiable"'"${FAKE_NEVER_TERM:+,\"terminal\":\"term_z\"}"'}'
     printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
   'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"dispatchId":"d1","state":"running","liveness":"running","terminal":"term_x","workspace":"wt-id::%s"}}\n' "$FAKE_ACTIVE_CWD" ;;
   'orchestration worker-show --dispatch d2 --json') exit 1 ;;
+  'orchestration worker-show --dispatch d4 --json')
+    printf '{"ok":false,"error":{"code":"%s","message":"Worker Dispatch d4 was not found."}}\n' "${FAKE_NEVER_ERR:-dispatch_not_found}"; exit 1 ;;
   'orchestration worker-show --dispatch d3 --json') echo '{"ok":true,"result":{"dispatchId":"d3","state":"running","liveness":"exited","terminal":"term_y","workspace":"wt-id::/gone"}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
@@ -80,7 +85,7 @@ T=$'\t'
 # proc <pid> <ppid> <age seconds> <command...>: one process table line; the start is derived from the pid.
 proc() { local pid=$1 ppid=$2 age=$3; shift 3; printf '%s\t%s\t%s\tstart-%s\t%s\n' "$pid" "$ppid" "$age" "$pid" "$*" >> "$FAKE_PS"; }
 cwd() { printf '%s\n' "$2" > "$FAKE_CWDS/$1"; }
-reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD; }
+reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD FAKE_NEVER_SETTLED FAKE_NEVER_TERM FAKE_NEVER_ERR; }
 run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1); }
 DEV='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
 STABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -204,6 +209,26 @@ proc 492 1 $OLD "$DEV --user-data-dir=/tmp/old-dispatches"; cwd 492 /Users/someo
 export FAKE_OLD_PENDING=1 FAKE_OLD_EXITED=1
 run --apply
 check 'a never started dispatch and an exited worker do not hold the old browser' has 'Close browser 492 (stale throwaway browser profile)'
+# The real never-settled row (Orca keeps no time for it, and worker-show cannot find it) owns nothing, so it holds nothing.
+reset
+proc 493 1 $OLD "$DEV --user-data-dir=/tmp/never-settled"; cwd 493 /Users/someone/work
+export FAKE_NEVER_SETTLED=1
+run --apply
+check 'a start_unknown row with no terminal or workspace, not found by worker-show, does not hold the old browser' has 'Close browser 493 (stale throwaway browser profile)'
+check 'that row is skipped with a warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped.' "$tmp/output"
+# Anything else about such a row is unclear, so everything stays.
+reset
+proc 494 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-term"; cwd 494 /Users/someone/work
+export FAKE_NEVER_SETTLED=1 FAKE_NEVER_TERM=1
+run --apply
+check 'a start_unknown row with a terminal keeps everything' has 'Kept browser 494 (no complete dispatch inventory)'
+check 'a start_unknown row with a terminal stops nothing' nokill
+reset
+proc 495 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-err"; cwd 495 /Users/someone/work
+export FAKE_NEVER_SETTLED=1 FAKE_NEVER_ERR=internal_error
+run --apply
+check 'a start_unknown row whose worker-show fails another way keeps everything' has 'Kept browser 495 (no complete dispatch inventory)'
+check 'a start_unknown row with another failure stops nothing' nokill
 
 # Active holds "*", inventory broken, inventory never read: keep everything.
 reset

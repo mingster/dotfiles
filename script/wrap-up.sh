@@ -197,7 +197,7 @@ if command -v "$orca" >/dev/null 2>&1; then
         echo '*' >> "$tmp/active"; break
       fi
       cat "$tmp/workers" >> "$tmp/worker-pages"
-      while IFS=$'\t' read -r dispatch status; do
+      while IFS=$'\t' read -r dispatch status owned; do
         [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
           # Any dispatch still live on this host may hold a temp browser; its output names no run, so do not guess from words.
@@ -206,11 +206,14 @@ if command -v "$orca" >/dev/null 2>&1; then
         elif [ "$status" = pending ]; then
           # Never started: no worker and no worktree, so worker-show has nothing to return.
           echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
+        elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
+          # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
+          echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
         else
           echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2
           echo '*' >> "$tmp/active"
         fi
-      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // ""] | @tsv' "$tmp/workers")
+      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // "", (if (.terminal // "") != "" or (.workspace // "") != "" then "owned" else "free" end)] | @tsv' "$tmp/workers")
       if ! cursor=$(next_page_cursor "$tmp/workers") || grep -Fxq -- "$cursor" "$tmp/w-cursors"; then
         echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2
         echo '*' >> "$tmp/active"; break
