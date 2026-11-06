@@ -238,7 +238,7 @@ class BackupNotices(unittest.TestCase):
 
     def test_stale_backup_opens_one_issue(self):
         state = {}
-        self.assertIn('stamp', self.notices(state, 31 * 60)[0])
+        self.assertIn('agent-state', self.notices(state, 31 * 60)[0])
         self.assertEqual(self.notices(state, 36 * 60), [])
         self.assertEqual([command[1:3] for command in self.commands], [['issue', 'create']])
 
