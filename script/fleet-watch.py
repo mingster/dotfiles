@@ -434,7 +434,7 @@ def pr_notices(config, state, now, fetch=None):
 
 RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
-AGENT_STATE_BACKUP_STALE_TITLE = 'Backup stamp has not pushed for 30 minutes'
+AGENT_STATE_BACKUP_STALE_TITLE = 'agent-state backup has not pushed for 30 minutes'
 
 
 def open_issue_titles(repo, run=subprocess.run):
