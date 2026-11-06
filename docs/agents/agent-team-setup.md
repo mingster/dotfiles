@@ -93,6 +93,31 @@ the weekly/cycle ceiling; daily pacing is advisory, and failed provider refreshe
 report unknown with the source and reason. A watchdog nudge does not replace the
 coordinator's screen check on every wake.
 
+## Scheduled wrap-up (macOS)
+
+`script/wrap-up-scheduled.sh` runs one wrap-up round every two hours. A round takes a lock (one per
+host, under `~/.local/state/agent-team/`), checks that `orca status --json` reports ready, checks that
+the 1 minute load is under this host's ceiling in `~/.claude/state/fleet-config.json`, then runs
+`wrap-up.sh --apply` for each repo in `script/wrap-up-scheduled.config.json`. Any skip is logged and
+exits 0. A manual wrap-up run does not take the lock; wrap-up's own guards recheck before each delete.
+
+Install on a host:
+
+1. Copy `script/wrap-up-scheduled.config.example.json` to `script/wrap-up-scheduled.config.json` and
+   list the repos. Give a repo a `fleet_config` only when it should also clean the fleet hosts (each
+   fleet config carries one `repo_dir` per host). A repo without one runs without `--fleet`.
+2. Copy `templates/launchd/life.example.wrap-up.plist` to
+   `~/Library/LaunchAgents/life.example.wrap-up.plist` and replace `__HOME__` with an absolute home path.
+   Do not add `ORCA_CLI_COMMAND`: wrap-up refuses `--apply` when it is set.
+3. Load it: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
+
+Unload it: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
+
+Proof: `launchctl print gui/$(id -u)/life.example.wrap-up` shows the job with `run interval = 7200 seconds`.
+To see a round without waiting, run `launchctl kickstart gui/$(id -u)/life.example.wrap-up`, then read
+`~/.orca/logs/wrap-up-scheduled.log` for a `round finished` line. The log keeps one rotated copy
+(`.1`) once it passes 5 MB.
+
 ## Interpreters (asdf)
 
 The root `.tool-versions` pins python and nodejs. Every host runs both through asdf, so
