@@ -20,6 +20,10 @@ run_limited() {
 run() { if [ "$dry" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
 real() { if [ -d "$1" ]; then (cd -P "$1" && pwd); else printf '%s\n' "$1"; fi; }
 
+# Orca worker-list rows may name the worktree in .workspace or only in .projection.workspace.id (both "id::path").
+jq_worker_row_path_expr() { printf '%s' '((.workspace // .projection.workspace.id // "") | split("::")[1] // "")'; }
+jq_worker_row_path_finish_expr() { printf '%s' '((.workspace // .worktreeId // .projection.workspace.id // "") | split("::")[1] // "")'; }
+
 # --scheduled: one round on this host. Lock, orca lookup, Orca check, load check, then --apply on every git repo Orca lists.
 # A manual run does not take this lock; the guards below recheck before every delete. Always exits 0: a skip is normal, and a
 # failure goes to the log and, on two failed rounds in a row, to one GitHub issue. A schedule gives a bare environment, so
@@ -478,7 +482,7 @@ finish_worker() {
     while IFS=$'\t' read -r id path; do
       [ -n "$id" ] && [ "$(real "$path")" = "$wt" ] && dispatches+=("$id")
     done < <("$orca" orchestration worker-list --json 2>/dev/null \
-      | jq -r '.result.workers[]? | select((.dispatchStatus // .state) != "released" and .stage != "released") | [.dispatchId, ((.workspace // .worktreeId // "") | split("::")[1] // "")] | @tsv' 2>/dev/null || true)
+      | jq -r '.result.workers[]? | select((.dispatchStatus // .state) != "released" and .stage != "released") | [.dispatchId, ('"$(jq_worker_row_path_finish_expr)"')] | @tsv' 2>/dev/null || true)
   fi
 
   if ! command -v "$orca" >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
@@ -879,7 +883,7 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
           # Any dispatch still live on this host may hold a temp browser; its output names no run, so do not guess from words.
           [ -z "$(jq -c 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not)' "$tmp/show")" ] || dispatch_run=1
-          jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
+          jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // .projection.workspace.id // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
         elif [ "$status" = pending ]; then
           # Never started: no worker and no worktree, so worker-show has nothing to return.
           echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
@@ -895,7 +899,7 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
           echo "Warning: worker-show failed for $dispatch; retaining all worktrees." >&2; fail_item "dispatch $dispatch" 'worker-show failed; all worktrees kept'
           echo '*' >> "$tmp/active"
         fi
-      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | [.dispatchId // empty, .dispatchStatus // .state // "", (if (.terminal // "") != "" or (.workspace // "") != "" then "owned" else "free" end), ((.workspace // "") | split("::")[1] // "")] | @tsv' "$tmp/workers")
+      done < <(jq -r '.result.workers[]? | select(((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | . as $row | ($row | '"$(jq_worker_row_path_expr)"') as $p | [$row.dispatchId // empty, $row.dispatchStatus // $row.state // "", (if ($row.terminal // "") != "" or ($p | length > 0) then "owned" else "free" end), $p] | @tsv' "$tmp/workers")
       if ! cursor=$(next_page_cursor "$tmp/workers") || grep -Fxq -- "$cursor" "$tmp/w-cursors"; then
         echo 'Warning: worker-list paging incomplete; retaining all worktrees.' >&2; fail_item 'worktrees' 'worker-list paging incomplete; all kept'
         echo '*' >> "$tmp/active"; break
