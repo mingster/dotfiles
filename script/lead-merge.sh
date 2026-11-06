@@ -110,6 +110,7 @@ lock_acquire() {
   trap 'lock_release $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  trap 'exit 129' HUP
   while ! mkdir "$lock_dir" 2>/dev/null; do
     holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
     if [ "$holder" = "$$" ]; then lock_owned=true; return 0; fi # handed over through exec
@@ -898,7 +899,7 @@ locale_additive() { # ancestor main head file
     && jq -e -n --slurpfile b "$dir/base" --slurpfile m "$dir/main" --slurpfile h "$dir/head" --slurpfile x "$dir/merged" '
       def leaves: [paths((type | . != "object" and . != "array") or length == 0) as $p | {key: ($p | tojson), value: getpath($p)}] | from_entries;
       ($b[0] | leaves) as $b | ($m[0] | leaves) as $m | ($h[0] | leaves) as $h
-      | all($b | keys[]; . as $k | $m[$k] == $b[$k] and $h[$k] == $b[$k])
+      | all($b | keys[]; . as $k | ($m | has($k)) and ($h | has($k)) and $m[$k] == $b[$k] and $h[$k] == $b[$k])
         and ((($m | keys) - ($b | keys)) - (($m | keys) - ($h | keys)) | length) == 0
         and ($x[0] | type) == "object"' >/dev/null 2>&1 && ok=0
   rm -rf "$dir"; return "$ok"
@@ -976,15 +977,16 @@ locale_step() { # file...; the staged merged files are in $locale_stage
 }
 # defer: judge the files but run no locale step (preflight); the final check runs it once, after every refusal is flushed.
 trunk_check() { # [defer]
-  local f ancestor trunk_files pending=() old_int old_term before
+  local f ancestor trunk_files pending=() old_int old_term old_hup before
   [[ "${LEAD_MERGE_LOCALE_TIMEOUT:-120}" =~ ^[1-9][0-9]*$ ]] || { die "LEAD_MERGE_LOCALE_TIMEOUT must be a positive whole number"; return 1; }
   # A carried Verdict is judged against the current head, which includes the merged main commits.
   ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base; rebase and rerun head-checks"
   trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
   locale_stage=$(mktemp -d) || die "cannot create a temporary directory"
-  old_int=$(trap -p INT); old_term=$(trap -p TERM)
+  old_int=$(trap -p INT); old_term=$(trap -p TERM); old_hup=$(trap -p HUP)
   trap 'locale_abort 130' INT
   trap 'locale_abort 143' TERM
+  trap 'locale_abort 129' HUP
   while IFS= read -r f; do
     if grep -Fxq -- "$f" <<<"$trunk_files"; then
       if locale_additive "$ancestor" origin/main "$head" "$f"; then :
@@ -997,7 +999,7 @@ trunk_check() { # [defer]
     if locale_step "${pending[@]}"; then
       # The step can run for minutes: refuse if main moved meanwhile.
       if ! git fetch origin main >&2 || [ "$(git rev-parse origin/main)" != "$before" ]; then
-        locale_cleanup; eval "${old_int:-trap - INT}"; eval "${old_term:-trap - TERM}"
+        locale_cleanup; eval "${old_int:-trap - INT}"; eval "${old_term:-trap - TERM}"; eval "${old_hup:-trap - HUP}"
         die "main moved during the locale check; rerun"; return 1
       fi
     else
@@ -1005,7 +1007,7 @@ trunk_check() { # [defer]
     fi
   fi
   locale_cleanup
-  eval "${old_int:-trap - INT}"; eval "${old_term:-trap - TERM}"
+  eval "${old_int:-trap - INT}"; eval "${old_term:-trap - TERM}"; eval "${old_hup:-trap - HUP}"
 }
 if [ -z "$train_head" ] && [ "$preflight_only" != 1 ]; then
   git fetch origin main >&2 || die "cannot fetch main; rebase and rerun head-checks"

@@ -12,6 +12,9 @@ refuse() { refusals+=("$*"); echo "$*" >>"$refusals_file"; }
 die() { echo "die: $*" >>"$refusals_file"; return 1; }
 field() { echo "$base"; }
 export WT_LOG="$tmp/wt.log" LEAD_MERGE_LOCALE_TIMEOUT=2
+# macOS mktemp -d ignores TMPDIR, so route the script's temporary directories to a folder this test can inspect.
+mkdir -p "$tmp/tmpdir"
+mktemp() { command mktemp -d "$tmp/tmpdir/t.XXXXXX"; }
 
 # Each case starts from the same base: a locale file, a nested locale file, a plain file and a non locale json file.
 # An optional argument is the one line locale step, committed as .agents/locale-merge-check.conf.
@@ -261,6 +264,13 @@ on_pr && sed -i.bak 's/"m": "M"/"m": {}/' $EN && rm -f $EN.bak && commit_all pr
 finish '["web/locales/en.json"]'
 run_check "null on one key and {} on another key are accepted when the step passes" 0 "" ran
 
+# 28b. a key holding null deleted on both sides is not "no change": refused, no step
+EN_BASE=$LEAFBASE new_case "${SEEN}true"
+git checkout -q main && sed -i.bak '/"k": null,/d' $EN && rm -f $EN.bak && commit_all main
+on_pr && sed -i.bak '/"k": null,/d' $EN && rm -f $EN.bak && commit_all pr
+finish '["web/locales/en.json"]'
+run_check "null key deleted on both sides is refused" 1 "trunk changed web/locales/en.json" skipped
+
 # Process cases: the step starts a child, and the child must not outlive the step.
 CHILD="sleep 47 & echo \$! >$tmp/child.pid; wait"
 child_gone() { # name
@@ -283,20 +293,23 @@ pr_main_changed
 run_check "timed out step with a child is refused" 1 "trunk changed web/locales/en.json" ran
 child_gone "timed out step with a child"
 
-# 30. signal during the step: temporary worktree, stage directory and child are all gone
-rm -f "$tmp/child.pid"
-new_case "${SEEN}$CHILD"
-pr_main_changed
-mkdir -p "$tmp/tmpdir" && : >"$WT_LOG"
-( TMPDIR="$tmp/tmpdir" trunk_check ) & tc=$!
-for i in $(seq 1 50); do [ -s "$WT_LOG" ] && [ -s "$tmp/child.pid" ] && break; sleep 0.2; done
-kill -TERM "$tc"; rc=0; wait "$tc" || rc=$?
-[ "$rc" = 143 ] || { echo "FAIL: signal during the step: exit $rc, expected 143" >&2; exit 1; }
-[ "$(git worktree list | wc -l | tr -d ' ')" = 1 ] || { echo "FAIL: signal: temporary worktree left registered" >&2; exit 1; }
-[ ! -e "$(cat "$WT_LOG")" ] || { echo "FAIL: signal: temporary worktree directory left behind" >&2; exit 1; }
-[ -z "$(ls -A "$tmp/tmpdir")" ] || { echo "FAIL: signal: temporary files left behind: $(ls "$tmp/tmpdir")" >&2; exit 1; }
-child_gone "signal during the step"
-echo "ok signal during the step removes the worktree, the stage and the child"
+# 30. signal during the step: temporary worktree, stage directory and child are all gone (TERM, and HUP from a closed terminal)
+for sig in TERM:143 HUP:129; do
+  name=${sig%%:*}; want=${sig##*:}
+  rm -f "$tmp/child.pid"
+  new_case "${SEEN}$CHILD"
+  pr_main_changed
+  : >"$WT_LOG"
+  ( trunk_check ) & tc=$!
+  for i in $(seq 1 50); do [ -s "$WT_LOG" ] && [ -s "$tmp/child.pid" ] && break; sleep 0.2; done
+  kill -"$name" "$tc"; rc=0; wait "$tc" || rc=$?
+  [ "$rc" = "$want" ] || { echo "FAIL: $name during the step: exit $rc, expected $want" >&2; exit 1; }
+  [ "$(git worktree list | wc -l | tr -d ' ')" = 1 ] || { echo "FAIL: $name: temporary worktree left registered" >&2; exit 1; }
+  [ ! -e "$(cat "$WT_LOG")" ] || { echo "FAIL: $name: temporary worktree directory left behind" >&2; exit 1; }
+  [ -z "$(ls -A "$tmp/tmpdir")" ] || { echo "FAIL: $name: temporary files left behind: $(ls "$tmp/tmpdir")" >&2; exit 1; }
+  child_gone "$name during the step"
+  echo "ok $name during the step removes the worktree, the stage and the child"
+done
 
 # 31. LEAD_MERGE_LOCALE_TIMEOUT must be a positive whole number
 new_case "${SEEN}true"
