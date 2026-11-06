@@ -52,6 +52,8 @@ jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[]
 jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
 : > "$tmp/active"
 inventory_read=0
+# Set when an unsettled dispatch names a head-checks, QA, browser or gated run: its process may be gone while it still needs the browser.
+dispatch_run=''
 orca=${ORCA_CLI_COMMAND:-orca}
 # Close finished terminals on the local host and every listed environment, before the worktree check reads the inventory.
 # A released dispatch has no agentTerminalHandle and its leftover terminals still look connected, so a terminal is linked to
@@ -198,6 +200,7 @@ if command -v "$orca" >/dev/null 2>&1; then
       while IFS=$'\t' read -r dispatch status; do
         [ -n "$dispatch" ] || continue
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
+          jq -c 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not)' "$tmp/show" | grep -Eiq 'qa-admission|head-checks|heavy-gate|browser|(^|[^[:alnum:]])qa([^[:alnum:]]|$)' && dispatch_run=1
           jq -r 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not) | .result | (.terminal | objects | (.cwd // .worktreePath // empty)), ((.workspace // .worker.worktreeId // "") | split("::")[1] // empty)' "$tmp/show" >> "$tmp/active"
         elif [ "$status" = pending ]; then
           # Never started: no worker and no worktree, so worker-show has nothing to return.
@@ -594,6 +597,7 @@ process_worktree() {
   elif ! eligible "refs/heads/$branch" "$branch"; then
     why=$reason
     [ "$reason" = 'open PR' ] || printf '%s\t%s\n' "$branch" "$path" >> "$tmp/stale-ok"
+  elif local_unpushed "$branch"; then why='unpushed commits (or count unreadable)'
   fi
   if [ -z "$why" ] && in_use "$path"; then why=$busy; fi
   [ ! -s "$tmp/status" ] || force=--force
@@ -628,6 +632,7 @@ while IFS= read -r branch; do
     keep "local $branch" 'checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch" && local_unpushed "$branch"; then
     keep "local $branch" 'unpushed commits (or count unreadable)'
+    printf '%s\n' "$branch" >> "$tmp/kept-branches"
   elif eligible "refs/heads/$branch" "$branch"; then
     printf 'Delete local %s (%s)\n' "$branch" "$reason"
     if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" "$reason"; then
@@ -742,6 +747,22 @@ is_main_browser() {
   case "$1" in "/"*"/Google Chrome Dev.app/"*|"/"*"/Chromium.app/"*) return 0 ;; esac
   return 1
 }
+# Any Chrome family browser, for the "a daemon may drive it" checks. Only Chrome Dev and Chromium can be closed.
+is_any_browser() {
+  case "$1" in *' --type='*) return 1 ;; esac
+  case "$1" in "/"*"/Google Chrome"*".app/"*|"/"*"/Chromium.app/"*|"/"*"/Microsoft Edge"*".app/"*) return 0 ;; esac
+  return 1
+}
+# The program a command line runs: the first word that is not an interpreter, env, a flag or a NAME=value.
+run_word() {
+  local w
+  for w in $1; do
+    case "$w" in -*|*=*) continue ;; esac
+    case "${w##*/}" in env|bash|sh|zsh|python|python3|python3.*|node|bun|uv|run) continue ;; esac
+    printf '%s' "${w##*/}"; return 0
+  done
+  return 1
+}
 is_agent_daemon() {
   local w1 w2; read -r w1 w2 _ <<< "$1"
   case "${w1##*/}" in *agent-browser*) return 0 ;; node|bun) case "${w2:-}" in *agent-browser*) return 0 ;; esac ;; esac
@@ -764,11 +785,11 @@ sweep_browsers() {
   if ! ps_do list > "$tmp/procs" 2>/dev/null; then echo 'Warning: process list unavailable; closing no browsers.' >&2; return 0; fi
   # Signs that a browser is in use: a running head-checks, QA or heavy-gate run, and a browser outside temp that
   # offers a debugging port (a daemon may be attached to it with nothing to show for it in the process table).
-  run_active=''; cdp_outside=''
+  run_active=$dispatch_run; cdp_outside=''
   while IFS=$'\t' read -r _ _ _ _ cmd; do
-    case "$cmd" in *wrap-up*) continue ;; *head-checks*|*qa-admission*|*heavy-gate*) run_active=1 ;; esac
-    if is_main_browser "$cmd"; then
-      case "$cmd" in *--remote-debugging-port*) profile=$(browser_profile "$cmd") && is_temp_path "$profile" || cdp_outside=1 ;; esac
+    case "$(run_word "$cmd" || true)" in head-checks*|qa-admission*|heavy-gate*) run_active=1 ;; esac
+    if is_any_browser "$cmd"; then
+      case "$cmd" in *--remote-debugging-port*|*--remote-debugging-pipe*) profile=$(browser_profile "$cmd") && is_temp_path "$profile" || cdp_outside=1 ;; esac
     fi
   done < "$tmp/procs"
   while IFS=$'\t' read -r pid ppid age started cmd; do
@@ -791,7 +812,7 @@ sweep_browsers() {
     if [ "$kind" = 'stale agent-browser daemon' ]; then
       outside=''
       while IFS=$'\t' read -r child cppid _ _ cmdl; do
-        [ "$cppid" = "$pid" ] && is_main_browser "$cmdl" || continue
+        [ "$cppid" = "$pid" ] && is_any_browser "$cmdl" || continue
         profile=$(browser_profile "$cmdl") || continue
         is_temp_path "$profile" || outside=1
       done < "$tmp/procs"

@@ -25,7 +25,7 @@ case "$*" in
   'orchestration worker-list --json')
     if [ -n "${FAKE_ACTIVE_CWD:-}" ]; then echo '{"ok":true,"result":{"workers":[{"dispatchId":"d1","dispatchStatus":"running"}],"page":{"hasMore":false}}}'
     else echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'; fi ;;
-  'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"state":"running","terminal":{"cwd":"%s"}}}\n' "$FAKE_ACTIVE_CWD" ;;
+  'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"state":"running","task":"%s","terminal":{"cwd":"%s"}}}\n' "${FAKE_ACTIVE_TASK:-edit docs}" "$FAKE_ACTIVE_CWD" ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -71,7 +71,7 @@ T=$'\t'
 # proc <pid> <ppid> <age seconds> <command...>: one process table line; the start is derived from the pid.
 proc() { local pid=$1 ppid=$2 age=$3; shift 3; printf '%s\t%s\t%s\tstart-%s\t%s\n' "$pid" "$ppid" "$age" "$pid" "$*" >> "$FAKE_PS"; }
 cwd() { printf '%s\n' "$2" > "$FAKE_CWDS/$1"; }
-reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_ORCA_BAD; }
+reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_ACTIVE_TASK FAKE_ORCA_BAD; }
 run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1); }
 DEV='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
 STABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -159,6 +159,31 @@ proc 471 900 100 "bash /repo/script/wrap-up.sh --apply"
 run --apply
 check 'with no such run, the old browser with parent pid 1 still closes' has 'Close browser 470 (stale throwaway browser profile)'
 
+# The run check reads the command, not a substring: "wrap-up" in a path or argument does not hide a run.
+for runcmd in 'bash /work/wrap-up-fix/script/head-checks.sh --pr 1' 'python3 /repo/script/heavy-gate.py gate -- bash script/tests/wrap-up-browsers.test.sh' '/usr/bin/env python3 -I /repo/script/qa-admission.py admit wrap-up'; do
+  reset
+  proc 480 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 480 /Users/someone/work
+  proc 481 900 100 "$runcmd"
+  run --apply
+  check "a run with wrap-up in its arguments keeps the browser: ${runcmd:0:48}" has 'Kept browser 480 (a head-checks, QA or gated run is active)'
+done
+
+# An active dispatch that names a QA, browser, head-checks or gated run counts as a run, though no such process is left.
+reset
+mkdir -p "$tmp/elsewhere"
+proc 490 1 $OLD "$DEV --user-data-dir=/tmp/dispatch-run"; cwd 490 /Users/someone/work
+proc 491 1 $OLD "/opt/agent-browser/bin/agent-browser daemon"; cwd 491 /Users/someone/work
+export FAKE_ACTIVE_CWD="$tmp/elsewhere" FAKE_ACTIVE_TASK='run the QA pass in the browser'
+run --apply
+check 'a dispatch that runs QA keeps the old browser' has 'Kept browser 490 (a head-checks, QA or gated run is active)'
+check 'a dispatch that runs QA keeps the old daemon' has 'Kept browser 491 (a head-checks, QA or gated run is active)'
+check 'a dispatch that runs QA stops nothing' nokill
+reset
+proc 492 1 $OLD "$DEV --user-data-dir=/tmp/dispatch-docs"; cwd 492 /Users/someone/work
+export FAKE_ACTIVE_CWD="$tmp/elsewhere" FAKE_ACTIVE_TASK='edit the docs'
+run --apply
+check 'a dispatch that is not a run leaves the old browser to close' has 'Close browser 492 (stale throwaway browser profile)'
+
 # Active holds "*", inventory broken, inventory never read: keep everything.
 reset
 proc 401 1 $OLD "$DEV --user-data-dir=/tmp/a"; cwd 401 /Users/someone/work
@@ -199,6 +224,20 @@ check 'the shared browser itself is not a candidate' lacks 'browser 511'
 check 'daemon with no child, while a browser outside temp offers a debugging port, is kept' has 'Kept browser 512 (drives a browser outside temp)'
 check 'daemon started with --cdp is kept' has 'Kept browser 513 (drives a browser outside temp)'
 check 'nothing was stopped' nokill
+
+# A live daemon has no arguments, and the browser it drives may be stable Chrome with a debugging port.
+reset
+proc 540 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64"; cwd 540 /Users/someone/work
+proc 541 1 $OLD "$STABLE --user-data-dir=/Users/someone/chrome-profile --remote-debugging-port=9222"; cwd 541 /Users/someone/work
+run --apply
+check 'daemon with no arguments, while stable Chrome outside temp offers a debugging port, is kept' has 'Kept browser 540 (drives a browser outside temp)'
+check 'stable Chrome itself is not a candidate' lacks 'browser 541'
+check 'stable Chrome case stops nothing' nokill
+reset
+proc 550 1 $OLD "/opt/homebrew/lib/node_modules/agent-browser/bin/agent-browser-darwin-arm64"; cwd 550 /Users/someone/work
+proc 551 550 $OLD "$STABLE --user-data-dir=/Users/someone/chrome-profile"; cwd 551 /Users/someone/work
+run --apply
+check 'daemon whose child is stable Chrome outside temp is kept' has 'Kept browser 550 (drives a browser outside temp)'
 
 # Reused pid, failed stop.
 reset
