@@ -17,12 +17,28 @@ import sys
 import time
 
 
+class OrcaReadError(Exception):
+    """Orca inventory could not be read or parsed."""
+
+
 def rpc(*args):
     command = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca'))
-    output = subprocess.run(command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=True)
-    receipt = json.loads(output.stdout)
+    try:
+        output = subprocess.run(
+            command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=True
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        raise OrcaReadError('orca CLI failed') from e
+    try:
+        receipt = json.loads(output.stdout)
+    except json.JSONDecodeError as e:
+        raise OrcaReadError('invalid JSON from orca') from e
+    if not isinstance(receipt, dict):
+        raise OrcaReadError('orca body is not a JSON object')
     if receipt.get('ok') is False:
-        raise RuntimeError('Orca refused inventory')
+        raise OrcaReadError('Orca refused inventory')
+    if 'result' not in receipt:
+        raise OrcaReadError('missing result in orca reply')
     return receipt['result']
 
 
@@ -190,20 +206,63 @@ def list_pages(*command):
     cursor, seen = None, set()
     while True:
         result = rpc(*command, *(['--cursor', cursor] if cursor else []))
+        if not isinstance(result, dict):
+            raise OrcaReadError('list page is not an object')
+        sub = command[1] if len(command) > 1 else None
+        if sub == 'run-list':
+            if 'runs' not in result or not isinstance(result['runs'], list):
+                raise OrcaReadError('malformed run-list page')
+        elif sub == 'worker-list':
+            if 'workers' not in result or not isinstance(result['workers'], list):
+                raise OrcaReadError('malformed worker-list page')
         yield result
         if 'page' in result:
-            if result['page']['hasMore'] not in (True, False):
-                raise ValueError('bad page')
-            cursor = result['page'].get('nextCursor') if result['page']['hasMore'] else None
-            if cursor is None and result['page']['hasMore']:
-                raise ValueError('bad cursor')
+            page = result['page']
+            if not isinstance(page, dict) or 'hasMore' not in page:
+                raise OrcaReadError('bad page')
+            if page['hasMore'] not in (True, False):
+                raise OrcaReadError('bad page')
+            cursor = page.get('nextCursor') if page['hasMore'] else None
+            if cursor is None and page['hasMore']:
+                raise OrcaReadError('bad cursor')
         else:
             cursor = result.get('nextCursor')
         if cursor is None:
             return
         if not isinstance(cursor, str) or not cursor or cursor in seen:
-            raise ValueError('bad cursor')
+            raise OrcaReadError('bad cursor')
         seen.add(cursor)
+
+
+def read_orca_inventory(config):
+    """Read inbox, workers, lead terminals, and pgrep in one pass; validate JSON shapes. Raises OrcaReadError."""
+    inbox = rpc('orchestration', 'inbox', '--limit', '5000')
+    if not isinstance(inbox, dict) or 'messages' not in inbox or not isinstance(inbox['messages'], list):
+        raise OrcaReadError('malformed inbox reply')
+    for m in inbox['messages']:
+        if not isinstance(m, dict):
+            raise OrcaReadError('malformed inbox message element')
+    workers = fetch_workers(config)
+    for w in workers:
+        if not isinstance(w, dict):
+            raise OrcaReadError('malformed worker element')
+        did = w.get('dispatchId')
+        if did is None or (isinstance(did, str) and not did.strip()):
+            raise OrcaReadError('worker missing dispatchId')
+    alive = {}
+    for run in config['runs']:
+        try:
+            proc = subprocess.run(
+                ['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5
+            )
+        except (subprocess.SubprocessError, OSError) as e:
+            raise OrcaReadError('pgrep failed') from e
+        alive[run['id']] = proc.returncode == 0
+    leads = {}
+    for lead in config.get('leads', []):
+        rpc('terminal', 'show', '--terminal', lead['terminal'])
+        leads[lead['terminal']] = True
+    return {'messages': inbox['messages'], 'workers': workers, 'alive': alive, 'leads': leads}
 
 
 def fetch_workers(config):
@@ -414,8 +473,10 @@ def pr_events(repo, old, prs, now, stuck_seconds):
     return events, {'merged': merged, 'verdicts': verdicts, 'stuck': stuck}
 
 
-def pr_notices(config, state, now, fetch=fetch_prs):
+def pr_notices(config, state, now, fetch=None):
     """A repo whose fetch failed keeps its state, so its events arrive on a later pass."""
+    if fetch is None:
+        fetch = fetch_prs
     watch = config.get('pr_watch')
     if not watch:
         return []
@@ -432,6 +493,41 @@ def pr_notices(config, state, now, fetch=fetch_prs):
 
 RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
+AGENT_STATE_BACKUP_STALE_TITLE = 'agent-state backup has not pushed for 30 minutes'
+
+
+def open_backup_issue_exists(repo, title=AGENT_STATE_BACKUP_STALE_TITLE, run=subprocess.run):
+    """True if an open issue has the exact title, False if search succeeded with no match, None if search failed."""
+    q = '"%s" in:title' % title.replace('\\', '\\\\').replace('"', '\\"')
+    try:
+        proc = run(
+            [
+                'gh',
+                'issue',
+                'list',
+                '--repo',
+                repo,
+                '--state',
+                'open',
+                '--search',
+                q,
+                '--json',
+                'title',
+                '--limit',
+                '20',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        rows = json.loads(proc.stdout)
+        if not isinstance(rows, list):
+            return None
+        return any(isinstance(row, dict) and row.get('title') == title for row in rows)
+    except (subprocess.SubprocessError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def fetch_failed_runs(repo):
@@ -452,8 +548,12 @@ def run_gh(command):
         return 1
 
 
-def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=run_gh):
+def workflow_notices(config, state, now, fetch=None, act=None):
     """Rerun a failed workflow once, then open one issue. A repo whose fetch failed keeps its state."""
+    if fetch is None:
+        fetch = fetch_failed_runs
+    if act is None:
+        act = run_gh
     watch = config.get('pr_watch') or {}
     workflows = watch.get('workflows')
     if not workflows:
@@ -488,8 +588,12 @@ def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=run_gh):
     return notices
 
 
-def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=run_gh):
+def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=None, backup_issue_exists=None):
     """Open one issue per outage when the last good backup is over 30 minutes old."""
+    if act is None:
+        act = run_gh
+    if backup_issue_exists is None:
+        backup_issue_exists = open_backup_issue_exists
     backup = config.get('backup')
     if not backup:
         return []
@@ -502,7 +606,13 @@ def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=run_gh):
         return []
     if state.get('backup_issue'):
         return []
-    title = 'agent-state backup has not pushed for 30 minutes'
+    exists = backup_issue_exists(backup['issue_repo'])
+    if exists is None:
+        return []
+    if exists:
+        state['backup_issue'] = True
+        return []
+    title = AGENT_STATE_BACKUP_STALE_TITLE
     if act(['gh', 'issue', 'create', '--repo', backup['issue_repo'], '--title', title,
             '--body', 'Read the sync log on the coordinator. `scan.sh` may have refused a file.']):
         return [f'{title}, issue not opened']
@@ -625,8 +735,17 @@ def save_state(path, state):
     temporary.replace(path)
 
 
-SEND_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, OSError, ValueError, KeyError)
+SEND_ERRORS = (
+    subprocess.CalledProcessError,
+    subprocess.TimeoutExpired,
+    RuntimeError,
+    OSError,
+    ValueError,
+    KeyError,
+    OrcaReadError,
+)
 NOTICE_PASS_LIMIT = 20
+ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
 
 
 def deliver_notices(config, state, new_lines, rpc_call=rpc):
@@ -686,18 +805,19 @@ def main():
     coordinator, done = coordinator_stage(config, state, args.state)
     if done:
         return 0
-    inbox = rpc('orchestration', 'inbox', '--limit', '5000')
-    workers = fetch_workers(config)
-    # pgrep observes the dedicated waiter process; no process is stopped here.
-    alive = {run['id']: subprocess.run(['pgrep', '-f', run['waiter_pattern']], capture_output=True, timeout=5).returncode == 0 for run in config['runs']}
-    leads = {}
-    for lead in config.get('leads', []):
-        try:
-            rpc('terminal', 'show', '--terminal', lead['terminal'])
-            leads[lead['terminal']] = True
-        except (subprocess.CalledProcessError, RuntimeError):
-            leads[lead['terminal']] = False
-    notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
+    notices = []
+    try:
+        inv = read_orca_inventory(config)
+        notices = alerts(
+            config, state, time.time(),
+            inv['messages'], inv['workers'], inv['alive'], inv['leads'],
+        )
+        state.pop('orca_inventory_skip_latched', None)
+    except Exception as error:
+        print('fleet-watch: Orca inventory unavailable: %s' % (repr(error),), file=sys.stderr)
+        if not state.get('orca_inventory_skip_latched'):
+            notices.append(ORCA_SKIP_NOTICE)
+            state['orca_inventory_skip_latched'] = True
     notices += pr_notices(config, state, time.time())
     notices += usage_notices(config)
     notices += workflow_notices(config, state, time.time())
