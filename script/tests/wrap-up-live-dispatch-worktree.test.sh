@@ -21,8 +21,9 @@ cat > "$tmp/bin/orca" <<'FAKE'
 case "$*" in
   'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
   *'terminal list'*) echo '{"ok":true,"result":{"terminals":[]}}' ;;
+  *'worker-show --dispatch d-remote'*) echo '{"ok":false,"error":{"code":"dispatch_not_found","message":"Remote Dispatch d-remote was not found for this Run home."}}'; exit 1 ;;
   *worker-show*) printf '{"ok":true,"result":{"dispatchId":"d-live","state":"ready","liveness":"live","workspace":"wt-id::%s"}}\n' "$FAKE_LIVE_CWD" ;;
-  *worker-list*) printf '{"ok":true,"result":{"workers":[{"dispatchId":"d-live","state":"ready","liveness":"live","workspace":"wt-id::%s"}],"page":{"hasMore":false}}}\n' "$FAKE_LIVE_CWD" ;;
+  *worker-list*) printf '{"ok":true,"result":{"workers":[{"dispatchId":"d-live","state":"ready","liveness":"live","workspace":"wt-id::%s"},{"dispatchId":"d-remote","state":"ready","liveness":"live","workspace":"wt-id::%s"}],"page":{"hasMore":false}}}\n' "$FAKE_LIVE_CWD" "$FAKE_REMOTE_CWD" ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -42,8 +43,8 @@ git config user.name Test
 git commit -qm initial --allow-empty
 git remote add origin "$tmp/origin"
 git push -q -u origin main
-for n in w-live w-idle; do git worktree add -q --detach "$tmp/$n" main; done
-export FAKE_LIVE_CWD="$tmp/w-live"
+for n in w-live w-idle w-remote; do git worktree add -q --detach "$tmp/$n" main; done
+export FAKE_LIVE_CWD="$tmp/w-live" FAKE_REMOTE_CWD="$tmp/w-remote"
 
 fail() { echo "FAIL $*"; cat "$tmp/output"; exit 1; }
 bash "$here/wrap-up.sh" --worktrees-only --dry-run > "$tmp/output" 2>&1
@@ -51,3 +52,5 @@ grep -Fq "Remove worktree $tmp/w-idle" "$tmp/output" || fail 'an idle worktree i
 echo 'ok an idle worktree is planned for removal'
 grep -Fq "Remove worktree $tmp/w-live" "$tmp/output" && fail 'a live dispatch worktree is planned for removal'
 echo 'ok a live dispatch with no terminal listed keeps its worktree'
+grep -Fq "Remove worktree $tmp/w-remote" "$tmp/output" && fail 'a dispatch Orca cannot show loses the worktree its row names'
+echo 'ok a dispatch homed on another host keeps the worktree its row names'

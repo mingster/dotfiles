@@ -36,9 +36,12 @@ case "$*" in
     [ -z "${FAKE_OLD_EXITED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d3","dispatchStatus":"running"}'
     [ -z "${FAKE_NEVER_SETTLED:-}" ] || w="${w:+$w,}"'{"dispatchId":"d4","state":"start_unknown","liveness":"unverifiable"'"${FAKE_NEVER_TERM:+,\"terminal\":\"term_z\"}"'}'
     [ -z "${FAKE_GONE_HOST:-}" ] || w="${w:+$w,}"'{"dispatchId":"d5","dispatchStatus":"running"}'
+    [ -z "${FAKE_REMOTE_HOME:-}" ] || w="${w:+$w,}"'{"dispatchId":"d6","dispatchStatus":"running"}'
     printf '{"ok":true,"result":{"workers":[%s],"page":{"hasMore":false}}}\n' "$w" ;;
   'orchestration worker-show --dispatch d5 --json')
     echo '{"ok":false,"error":{"code":"invalid_argument","message":"Unknown environment: e842b011"}}'; exit 1 ;;
+  'orchestration worker-show --dispatch d6 --json')
+    echo '{"ok":false,"error":{"code":"dispatch_not_found","message":"Remote Dispatch d6 was not found for this Run home."}}'; exit 1 ;;
   'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"dispatchId":"d1","state":"running","liveness":"running","terminal":"term_x","workspace":"wt-id::%s"}}\n' "$FAKE_ACTIVE_CWD" ;;
   'orchestration worker-show --dispatch d2 --json') exit 1 ;;
   'orchestration worker-show --dispatch d4 --json')
@@ -228,6 +231,14 @@ run --apply
 check 'a dispatch on an unpaired host does not hold the old browser' has 'Close browser 494 (stale throwaway browser profile)'
 check 'that dispatch is skipped with a warning' grep -Fq 'worker-show failed for dispatch d5 on an unpaired host; skipped.' "$tmp/output"
 unset FAKE_GONE_HOST
+# Same for a dispatch whose Run home is another host: this Orca only says it cannot find it there.
+reset
+proc 495 1 $OLD "$DEV --user-data-dir=/tmp/remote-home"; cwd 495 /Users/someone/work
+export FAKE_REMOTE_HOME=1
+run --apply
+check 'a dispatch homed on another host does not hold the old browser' has 'Close browser 495 (stale throwaway browser profile)'
+check 'that remote dispatch is skipped with a warning' grep -Fq 'worker-show failed for dispatch d6 on an unpaired host; skipped.' "$tmp/output"
+unset FAKE_REMOTE_HOME
 # Anything else about such a row is unclear, so everything stays.
 reset
 proc 494 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-term"; cwd 494 /Users/someone/work

@@ -393,7 +393,7 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
     while read -r b s; do args+=(--branch "$b" --head-sha "$s"); done < "$cleanup_file"
     rm -f "$cleanup_file"
     echo "cleanup: starting after the last merge"
-    bash "${LEAD_MERGE_CLEANUP:-$(dirname "$0")/merge-cleanup.sh}" "${args[@]}" \
+    bash "${LEAD_MERGE_CLEANUP:-$(dirname "$0")/wrap-up.sh}" "${args[@]}" \
       || echo "cleanup: incomplete (merges succeeded); run script/wrap-up.sh" >&2
     return 0
   }
@@ -979,7 +979,7 @@ if [ "$retarget_ok" = true ]; then
     echo "cleanup: deferred until the batch ends ($head_branch)"
   else
     echo "cleanup: starting for $head_branch"
-    bash "${LEAD_MERGE_CLEANUP:-$(dirname "$0")/merge-cleanup.sh}" --branch "$head_branch" --head-sha "$head" ${issue:+--issue "$issue"} \
+    bash "${LEAD_MERGE_CLEANUP:-$(dirname "$0")/wrap-up.sh}" --branch "$head_branch" --head-sha "$head" ${issue:+--issue "$issue"} \
       || echo "cleanup: incomplete (merge succeeded); run script/wrap-up.sh" >&2
   fi
 else

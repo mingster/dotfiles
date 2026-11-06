@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# merge-cleanup.sh acts by ownership: the merged PR head, and released, idle, merged worktrees (spec #286, T4 to T12, T23, T27 to T29, T33).
+# wrap-up.sh --branch (after a merge) acts by ownership: the merged PR head, and released, idle, merged worktrees (spec #286, T4 to T12, T23, T27 to T29, T33).
 here=$(cd "$(dirname "$0")" && pwd)
 pass=0 fail=0
 ok() { pass=$((pass + 1)); }
@@ -10,9 +10,9 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1"; [ -f "$MF_DIR/out" ] && sed 's/^/  
 mf_setup
 trap mf_teardown EXIT
 G() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
-export MERGE_CLEANUP_CALL_TIMEOUT_SECONDS=5
+export WRAP_UP_CALL_TIMEOUT=5
 mf_orca_add_run run1
-cleanup="$here/../merge-cleanup.sh"
+cleanup="$here/../wrap-up.sh"
 cd "$MF_REPO" || exit 1
 
 # Fake pane close helper: closes the terminal of each dispatch id it is given. Logs its arguments.
@@ -145,7 +145,7 @@ kept unowned unowned && ok || bad "worktree without a dispatch kept"
 # T33 (cleanup half): a pane close that never returns is cut off by the call timeout and reported as kept.
 wt stuck stuck; dispatch stuck released term-stuck; mf_orca_add_terminal term-stuck "$(path stuck)"
 start=$SECONDS
-WORKER_PANE_CLOSE="$MF_DIR/pane-hang" MERGE_CLEANUP_CALL_TIMEOUT_SECONDS=2 mf_run_limited 15 bash -c \
+WORKER_PANE_CLOSE="$MF_DIR/pane-hang" WRAP_UP_CALL_TIMEOUT=2 mf_run_limited 15 bash -c \
   "bash '$cleanup' --branch merged-head --head-sha '$headsha' > '$MF_DIR/out' 2>&1"; echo $? > "$MF_DIR/rc"
 rc_is 0 && [ $((SECONDS - start)) -lt 15 ] && ok || bad "T33 hung pane close ends within the limit"
 says 'timed out' && kept stuck stuck && ok || bad "T33 timeout printed as kept"
@@ -186,14 +186,14 @@ kept live-ret live-ret && ok || bad "retained row: worktree kept"
 # #600: worker-list without --run sees only the caller's Run and one page. A live dispatch in another Run, on page 2,
 # still protects the worktree it shares with a released one.
 mf_orca_add_run run2
-export MF_ORCA_CALLER_RUN=run1 MERGE_CLEANUP_PAGE_SIZE=2
+export MF_ORCA_CALLER_RUN=run1 WRAP_UP_PAGE_SIZE=2
 wt shared shared; dispatch shared released
 for filler in 1 2 3; do wt "pad$filler" "pad$filler"; dispatch "pad$filler" released; done
 mf_orca_add_worker run2 "d-other-run" running "$(path shared)" ""
 clean_run
 kept shared shared && ok || bad "T600 live dispatch on page 2 in another Run protects the worktree"
 says "not released" && ok || bad "T600 says why"
-unset MF_ORCA_CALLER_RUN MERGE_CLEANUP_PAGE_SIZE
+unset MF_ORCA_CALLER_RUN WRAP_UP_PAGE_SIZE
 
-echo "merge-cleanup tests: $pass passed, $fail failed"
+echo "wrap-up after merge tests: $pass passed, $fail failed"
 [ "$fail" = 0 ]
