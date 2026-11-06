@@ -603,29 +603,6 @@ def owning_lead(author):
     return lines[0].strip() or None if lines else None
 
 
-def type_notices(terminals, state, new_lines, rpc_call):
-    """Typed lines, only for runs with "typed": true. A line is dropped once delivered or after 20 passes."""
-    delivery = state.setdefault('notice_delivery', {})
-    failed = set()
-    for line in dict.fromkeys(list(new_lines) + list(delivery)):
-        entry = delivery.setdefault(line, {'sent': [], 'passes': 0})
-        for term in terminals:
-            if term in entry['sent'] or term in failed:
-                continue
-            try:
-                rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
-                entry['sent'].append(term)
-            except SEND_ERRORS as error:
-                failed.add(term)
-                print('fleet-watch: terminal send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
-        entry['passes'] += 1
-        missing = [term for term in terminals if term not in entry['sent']]
-        if missing and entry['passes'] >= NOTICE_PASS_LIMIT:
-            print('fleet-watch: giving up notice %r after %d passes, missing %s' % (line, entry['passes'], ', '.join(missing)), file=sys.stderr)
-        if not missing or entry['passes'] >= NOTICE_PASS_LIMIT:
-            del delivery[line]
-
-
 def queue_notice(queue, term, text, urgent):
     items = queue.setdefault(term, [])
     for item in items:
@@ -692,12 +669,11 @@ def drain_notices(config, path=None, keep=False):
 
 
 def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of=owning_lead):
-    """Queue notices per terminal and send what is due. A run terminal is typed into only when its run has "typed": true.
+    """Queue notices per terminal and send what is due. No terminal is written to.
     A Verdict goes at once to the lead that owns its author dispatch, else to the digest."""
     now = time.time() if now is None else now
     runs = config['runs']
-    typed = [run['terminal'] for run in runs if run.get('typed')]
-    digest = [run['terminal'] for run in runs if not run.get('typed')]
+    digest = [run['terminal'] for run in runs]
     queue = state.setdefault('notice_queue', {})
     for notice in new_notices:
         targets, urgent = digest, isinstance(notice, Urgent)
@@ -707,8 +683,6 @@ def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of
                 targets, urgent = [lead], True
         for term in targets:
             queue_notice(queue, term, str(notice), urgent)
-    if typed or state.get('notice_delivery'):
-        type_notices(typed, state, [str(notice) for notice in new_notices], rpc_call)
     flush_queue(state, now, rpc_call)
 
 
