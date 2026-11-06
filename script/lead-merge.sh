@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Tech Lead's only way to merge a reviewed PR.
+# Elon's only way to merge a reviewed PR.
 # Usage: lead-merge.sh --repo owner/name --pr N --head <sha> [--mechanical]
 #        lead-merge.sh --repo owner/name --batch N N [N ...] [--dry-run]
 # Every refusal that needs no head-checks is collected and printed in one run (preflight); a batch drops the

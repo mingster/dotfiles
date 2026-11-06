@@ -45,10 +45,10 @@ For each proposal, Elon picks A or B, comments "Elon decision <date>: <choice>. 
 
 ## 4. Hand over
 
-- New ready-for-agent issues go to the tech-lead in one message.
+- New ready-for-agent issues go to Elon in one message.
 - Kind 2 steps join the next release brief through `deploy`.
 - Kind 4 items: tell the owner only the ones new since the last sweep, with the exact steps.
 
 ## Done when
 
-Both worker_done reports are in, every proposal has an Elon decision on its issue, and the new ready-for-agent issues are with the tech-lead. Report to the owner in one short message: how many issues became agent ready, and anything only he can do.
+Both worker_done reports are in, every proposal has an Elon decision on its issue, and the new ready-for-agent issues are with Elon. Report to the owner in one short message: how many issues became agent ready, and anything only he can do.

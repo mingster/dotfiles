@@ -10,6 +10,8 @@ trap 'rm -rf "$tmp"' EXIT
 if command -v asdf >/dev/null 2>&1; then PATH="$(dirname "$(asdf which python3)"):$PATH"; fi
 mkdir -p "$tmp/home" "$tmp/bin"
 export HOME="$tmp/home" CURSOR_TEST_LOG="$tmp/calls" ORCA_CLI_COMMAND="$tmp/bin/orca"
+export USAGE_GATE_CLI="$tmp/gate.py"
+printf 'import sys\nsys.exit(0)\n' > "$USAGE_GATE_CLI"
 cat > "$ORCA_CLI_COMMAND" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -221,4 +223,13 @@ fi
 grep -q 'spec file is empty' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: blank spec is refused before any Orca call'
-echo 'PASS: 19 tests'
+: > "$CURSOR_TEST_LOG"
+printf 'fixture brief\n' > "$tmp/spec"
+printf 'import sys\nsys.exit(3)\n' > "$USAGE_GATE_CLI"
+if launch >"$tmp/result" 2>&1; then
+  echo 'FAIL: a usage gate refusal still started a worker' >&2; exit 1
+fi
+grep -q 'refused by the usage gate' "$tmp/result"
+test ! -s "$CURSOR_TEST_LOG"
+echo 'PASS: usage gate refusal stops before any Orca call'
+echo 'PASS: 20 tests'

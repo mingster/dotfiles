@@ -10,14 +10,9 @@ Cursor forwards --model so non-Composer models reach the gate's unknown path (AD
 Known roles from the task title receive advisory `pick --role` recommendations. A command scoped USAGE_GATE_OVERRIDE reason bypasses
 routing enforcement and is logged, but never bypasses the weekly ceiling gate.
 
-Lead context limit: for a session whose git worktree is named lead-*, the context size is the latest usage
-entry at the end of the transcript. It warns at 150k and denies at 170k, except lead-handoff.sh, lead-merge.sh
-and orca commands. Only a lead is limited. An unreadable transcript warns on stderr and never denies.
-
-Passes with a warning on stderr: an agent the gate cannot read
-(unknown providers), a worker-start without --agent, gate exit 4 (no reading) and
-any gate error. Every other command passes untouched. Exit 0 always; a block is
-a JSON permissionDecision of "deny".
+Fail closed (owner 2026-11-06): a worker-start with no usable reading is denied, for an unknown agent,
+a worker-start without --agent, gate exit 4 (no or stale reading), any gate error and any error here.
+Every other command passes untouched. Exit 0 always; a block is a JSON permissionDecision of "deny".
 """
 import json, os, re, shlex, subprocess, sys
 from datetime import datetime, timezone
@@ -27,10 +22,6 @@ GATED = {"claude", "cursor", "antigravity"}
 PUNCT = set(";&|\n()<>")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
 VAR = re.compile(r"^\$\{?(\w+)\}?$")
-LEAD_WARN, LEAD_DENY = 150_000, 170_000
-LEAD_ALLOWED = {"lead-handoff.sh", "lead-merge.sh", "orca"}
-SUBSHELL = re.compile(r"\$\(([^()]*)\)")
-SAFE_SUBSHELL = re.compile(r"^\s*cat\s+(<<\s*$|[\w./~-]+\s*$)")
 
 
 def starts(cmd):
@@ -148,120 +139,22 @@ def reason(provider, d):
             "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 
 
-def context_tokens(path):
-    """Context size from the latest usage entry, reading only the end of the transcript."""
-    size = os.path.getsize(path)
-    chunk = 128 * 1024
-    with open(path, "rb") as f:
-        while True:
-            start = max(0, size - chunk)
-            f.seek(start)
-            lines = f.read(size - start).split(b"\n")
-            if start:
-                lines = lines[1:]   # the first line is cut mid-way
-            for line in reversed(lines):
-                try:
-                    entry = json.loads(line)
-                    usage = entry["message"]["usage"]
-                    if entry.get("isSidechain") or "input_tokens" not in usage:
-                        continue
-                    return sum(usage.get(k) or 0 for k in
-                               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-                except Exception:
-                    continue
-            if not start or chunk >= 16 * 1024 * 1024:
-                return None
-            chunk *= 4
-
-
-def is_lead(cwd):
-    """A lead runs in a worktree whose top level folder is named lead-*."""
-    if not cwd:
-        return False
-    try:
-        top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True,
-                             text=True, timeout=5).stdout.strip()
-        return bool(top) and os.path.basename(top).startswith("lead-")
-    except Exception:
-        return False
-
-
-def only_allowed(cmd):
-    """True when every simple command in cmd is lead-handoff.sh, lead-merge.sh or orca."""
-    cmd = HEREDOC.sub("<<", cmd.replace("\\\n", " "))
-    if "`" in cmd or any(not SAFE_SUBSHELL.match(m) for m in SUBSHELL.findall(cmd)) \
-            or cmd.count("$(") != len(SUBSHELL.findall(cmd)):
-        return False   # a command substitution can hide any command
-    cmd = SUBSHELL.sub("X", cmd)
-    try:
-        lex = shlex.shlex(cmd, posix=True, punctuation_chars="".join(PUNCT))
-        lex.whitespace, lex.commenters, lex.whitespace_split = " \t\r", "", True
-        toks = list(lex)
-    except ValueError:
-        return False
-    segments, current, skip = [], [], False
-    for t in toks:
-        if skip:
-            skip = False
-        elif set(t) <= set("<>&") and ("<" in t or ">" in t):
-            skip = True   # a redirect and its target are not commands
-        elif set(t) <= PUNCT:
-            segments.append(current)
-            current = []
-        else:
-            current.append(t)
-    segments.append(current)
-    for words in segments:
-        while words and re.match(r"^\w+=", words[0]):
-            words = words[1:]
-        if len(words) > 1 and words[0] in ("bash", "sh"):
-            words = words[1:]
-        if words and os.path.basename(words[0]) not in LEAD_ALLOWED:
-            return False
-    return True
-
-
-def lead_limit(data, cmd):
-    """(deny reason, note) for the lead context limit."""
-    path = data.get("transcript_path")
-    try:
-        tokens = context_tokens(path)
-        if tokens is None:
-            raise ValueError("no usage entry")
-    except Exception as exc:
-        if is_lead(data.get("cwd") or ""):
-            print(f"usage-gate-hook: lead context size unreadable ({exc}); context limit not enforced.", file=sys.stderr)
-        return None, None
-    if tokens < LEAD_WARN or not is_lead(data.get("cwd") or ""):
-        return None, None
-    handoff = ("Hand off now: run script/lead-handoff.sh --branch <branch> --head <sha> --remainder <what is left> "
-               "--dispatch-ids <ids>, then end this session.")
-    if tokens >= LEAD_DENY and not only_allowed(cmd):
-        return (f"Lead context is {tokens // 1000}k tokens, over the {LEAD_DENY // 1000}k limit. {handoff} "
-                "Only lead-handoff.sh, lead-merge.sh and orca commands run until then."), None
-    return None, f"Lead context is {tokens // 1000}k tokens (warning at {LEAD_WARN // 1000}k, commands stop at {LEAD_DENY // 1000}k). {handoff}"
-
-
-def emit(blocked, note=None):
-    out = {"hookEventName": "PreToolUse"}
+def emit(blocked):
     if blocked:
-        out.update(permissionDecision="deny", permissionDecisionReason=" ".join(blocked))
-    elif note:
-        out["additionalContext"] = note
-    else:
-        return
-    print(json.dumps({"hookSpecificOutput": out}))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": " ".join(blocked)}}))
 
 
 def main():
+    global starting
     data = json.load(sys.stdin)
     if data.get("tool_name") != "Bash":
         return
     cmd = (data.get("tool_input") or {}).get("command") or ""
-    lead_deny, note = lead_limit(data, cmd)
     if "worker-start" not in cmd:
-        return emit([lead_deny] if lead_deny else [], note)
-    blocked = [lead_deny] if lead_deny else []
+        return
+    starting = True
+    blocked = []
     commands = starts(cmd)
     # A heredoc inside $( ) can expand to nothing; Orca then starts a worker with no brief.
     if any(c.get("spec") is not None and (not c["spec"].strip() or re.match(r"\$\(\s*cat\s*<<", c["spec"]))
@@ -277,8 +170,8 @@ def main():
                             if start["provider"] in ("antigravity", "cursor") else None) for start in commands)
     for provider, model in checks:
         if provider not in GATED:
-            print(f"usage-gate-hook: no usage reading for agent {provider or '(none given)'}; "
-                  "worker-start allowed without the gate.", file=sys.stderr)
+            blocked.append(f"Usage gate: no usage reading for agent {provider or '(none given)'}; "
+                           "name a gated agent with --agent.")
             continue
         try:
             args = [sys.executable, GATE, "check", "--provider", provider]
@@ -288,7 +181,7 @@ def main():
             r = subprocess.run(args, capture_output=True, text=True, timeout=25)
             detail = json.loads(r.stdout or "{}")
         except Exception as e:
-            print(f"usage-gate-hook: gate failed for {provider} ({e}); worker-start allowed.", file=sys.stderr)
+            blocked.append(f"Usage gate failed for {provider} ({e}); no reading, no start.")
             continue
         if r.returncode == 3:
             try:
@@ -298,14 +191,16 @@ def main():
         elif r.returncode == 0 and detail.get("note"):
             print("usage-gate-hook: " + detail["note"], file=sys.stderr)
         elif r.returncode != 0:
-            print(f"usage-gate-hook: no usage reading for {provider} (gate exit {r.returncode}); "
-                  f"source {detail.get('source', 'unknown')}: {detail.get('reason', 'unknown')}; "
-                  "worker-start allowed, say so in your report.", file=sys.stderr)
-    emit(blocked, note)
+            blocked.append(f"Usage gate: no usage reading for {provider} (gate exit {r.returncode}); "
+                           f"source {detail.get('source', 'unknown')}: {detail.get('reason', 'unknown')}. "
+                           "Use the next provider that passes the gate.")
+    emit(blocked)
 
 
+starting = False
 try:
     main()
-except Exception:
-    pass
+except Exception as e:
+    if starting:
+        emit([f"Usage gate hook failed ({e}); no reading, no start."])
 sys.exit(0)
