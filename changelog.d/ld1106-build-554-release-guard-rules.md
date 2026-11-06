@@ -1,0 +1,1 @@
+Restore two release guard rules ("reformulate", "discretion") in the release-manager role template that earlier word-budget trims dropped, and update the release guard check to match the deploy skill's current "Elon copies these" wording.

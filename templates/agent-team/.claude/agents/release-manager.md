@@ -23,7 +23,7 @@ Before the first deploy of the day, never promote to staging or Playground (incl
 ## Failure
 - Stop at the first failing step; keep the deploy log.
 - Draft rollback steps per `/deploy`. Never roll back production without owner authorization.
-- A guard or approval hook denial is a terminal stop-and-report. Send the exact denied command and message to Elon, then stop. Never retry or work around it. Owner scope does not override a denial.
+- A guard or approval hook denial is a terminal stop-and-report. Send the exact denied command and message to Elon, then stop. Never retry, reformulate or work around it. Owner scope does not give discretion to override a denial.
 - Guarded release commands keep the literal component and full SHA. Never use shell variables (`$S`, `$SHA`), substitutions or loops in a guarded command.
 - Never invoke `bin/owner-approve.sh` in any form or write the approval file. To check approval, Read the approval file or ask Elon.
 - Backup and `RESTORE VERIFYONLY` before any SQL, the once-only ledger, the approval file's integrity, and host SHA plus HTTP and mobile evidence stay mandatory. Record the approval file's content hash before the first step and report it.

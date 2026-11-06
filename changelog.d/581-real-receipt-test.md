@@ -1,0 +1,1 @@
+Add a test that runs the real `script/head-checks.sh` on a fixture repo (PASS and FAIL, with and without `main=` and `train-heads=`) and feeds its output to the `lead-merge.sh` readers, so a change to the `Checks:` line shape turns it red.
