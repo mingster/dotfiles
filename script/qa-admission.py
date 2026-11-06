@@ -144,6 +144,14 @@ def workspace(rows, review):
         refuse('worktree inventory: authorized native identity/project/path/head mismatch')
 
 
+WORKTREE_PAGE_LIMIT = 100
+WORKTREE_LIST_CAP = 5000
+
+
+def worktree_list(orca, flags, repo_id, limit):
+    return orca_result(orca, 'worktree', 'list', *flags, '--repo', 'id:'+repo_id, '--limit', str(limit))
+
+
 def runtime_runs(orca, flags):
     """Every Run in the selected runtime; worker-list without --run is caller-bound."""
     runs, cursors, cursor = [], set(), None
@@ -327,7 +335,11 @@ def discover_workspace(orca, flags, args):
     repo_id = string(matches[0].get('id'), 'repo id')
     if not TOKEN.fullmatch(repo_id):
         refuse('repo inventory: invalid id')
-    result = orca_result(orca, 'worktree', 'list', *flags, '--repo', 'id:'+repo_id, '--limit', '100')
+    result = worktree_list(orca, flags, repo_id, WORKTREE_PAGE_LIMIT)
+    total = result.get('totalCount')
+    if result.get('truncated') is True and type(total) is int and WORKTREE_PAGE_LIMIT < total <= WORKTREE_LIST_CAP:
+        # worktree list has no cursor; totalCount sizes one full re-read.
+        result = worktree_list(orca, flags, repo_id, total)
     scope = obj(result.get('hostScope'), 'worktree inventory host scope')
     hosts = scope.get('hostIds')
     if (not isinstance(hosts, list) or not hosts or
