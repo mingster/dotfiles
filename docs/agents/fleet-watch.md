@@ -1,6 +1,14 @@
 # Fleet watchdog
 
 Run `python3 script/fleet-watch.py --config <private-json> --state <private-state>` once each minute from a supervisor independent of the coordinator's inbox waiter. Configure `runs` with each run's `id`, `terminal` (coordinator handle) and `waiter_pattern` (a process pattern unique to that run); configure `host_caps` using the host IDs returned by worker-list. Optional `leads` lists each lead's `name` and `terminal`; a lead whose `orca terminal show` fails gets one alert, rearmed when it answers again. Keep handles and machine names in the private config, never in this repository.
+Each pass appends one summary line to `~/.orca/logs/fleet-watch.log` (pass duration, backup stamp age when `backup.stamp` is set, and any worker-stall actions). It never logs terminal screen content.
+
+Optional `worker_stall`: set `label_repo` to a GitHub repo where stalled-worker issues and labels are applied (`needs-elon` by default). When a live worker's terminal has had no `lastOutputAt` progress for 30 minutes, the pass runs `worker-stop` once then `worker-start --retry-of <dispatch>`; if progress is still missing after the label cooldown, it adds the `needs-elon` label to the PR whose number appears on the worker row, or opens a fixed-title issue when there is no PR number.
+
+Optional `backup` (`stamp` path to the coordinator's `~/<agent-state>/.sync-ok`, `issue_repo` as `owner/name` for GitHub issues) opens at most one **open** issue with the fixed title `agent-state backup has not pushed for 30 minutes` when that stamp is older than 30 minutes; if that title already exists among open issues, it does not create another. Configure it on the host that runs the monitor pass for the coordinator. The log line includes `backup_age_s=…` and adds `backup_stale` when the age exceeds 10 minutes, so a blocked sync is visible before the issue opens.
+
+If `orca orchestration inbox` or `orca ... worker-list` fails or times out, one line reports that Orca could not be read and that pass skips worker inbox alerts (waiter, capacity, failed dispatch); backup and other checks still run.
+
 
 A waiter absent across ten minutes of observations with unread deliveries gets one terminal wake, then rearms when the waiter returns or the inbox clears. The first pass records existing failed dispatches without alerting. After that, each new failed dispatch gets one alert. Every nonfinal dispatch, including children, counts toward host capacity. The watchdog only alerts; the coordinator follows Orca recovery before stopping or retrying anything. A CLI failure preserves state and fails the pass so the supervisor can report it. Without an independent minute scheduler this is an unactivated guard, not liveness coverage.
 
