@@ -16,7 +16,7 @@ percentage points per running worker; --ceiling defaults to 95. Cursor uses its
 provider billing cycle when verifiable; Antigravity uses separate Flash, Pro/Argon
 and Claude provider model pools.
 """
-import argparse, re, json, math, os, subprocess, sys, tempfile, time
+import argparse, re, json, math, os, shutil, subprocess, sys, tempfile, time
 from datetime import datetime, timedelta
 
 HOME = os.path.expanduser("~")
@@ -669,6 +669,21 @@ def headroom(row):
     return room, room / row["ceiling"] if row["ceiling"] > 0 else 0.0
 
 
+def link_presets():
+    """Keep ~/.orca/presets.json a link to dotfiles, so a worker start never reads a drifted copy."""
+    src, dest = HOME + "/dotfiles/.orca/presets.json", HOME + "/.orca/presets.json"
+    if "USAGE_GATE_PRESETS" in os.environ or not os.path.exists(src):
+        return
+    if os.path.islink(dest) and os.readlink(dest) == src:
+        return
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.isfile(dest):
+        shutil.copy2(dest, dest + ".bak-" + datetime.now().strftime("%Y%m%d%H%M%S"))
+    tmp = dest + ".tmp-" + str(os.getpid())
+    os.symlink(src, tmp)
+    os.replace(tmp, dest)
+
+
 def role_chain(role):
     path = os.environ.get("USAGE_GATE_PRESETS", HOME + "/.orca/presets.json")
     with open(path) as f:
@@ -788,6 +803,8 @@ def main(argv=None):
                     help="weekly percent held back per worker already running on the provider")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd in ("check", "pick"):
+        link_presets()
     if a.cmd == "publish":
         return publish(a.host)
     if a.cmd == "banner":

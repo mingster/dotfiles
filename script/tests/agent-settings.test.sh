@@ -94,6 +94,7 @@ for pass in 1 2; do
   cmp "$HOME/.gemini/settings.json" "$ROOT/.gemini/settings.json"
   cmp "$HOME/.gemini/antigravity-cli/settings.json" "$ROOT/.gemini/antigravity-cli/settings.json"
   cmp "$HOME/.orca/presets.json" "$ROOT/.orca/presets.json"
+  [ -L "$HOME/.orca/presets.json" ]
 done
 echo 'PASS: standard CLI setup restores settings idempotently in temp HOME'
 mkdir -p "$XDG_CONFIG_HOME/Cursor/User" "$HOME/Library/Application Support/orca"

@@ -1092,6 +1092,60 @@ class Publish(unittest.TestCase):
         self.assertEqual(ug.MAX_AGE, 15 * 60)
 
 
+class PresetLinkTests(unittest.TestCase):
+    """Owner 2026-11-06: starting a worker repairs a host whose preset copy drifted from dotfiles."""
+
+    def setUp(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        self.home = t.name
+        os.makedirs(self.home + "/dotfiles/.orca")
+        os.makedirs(self.home + "/.orca")
+        self.src = self.home + "/dotfiles/.orca/presets.json"
+        self.dest = self.home + "/.orca/presets.json"
+        with open(self.src, "w") as f:
+            f.write("new")
+        patcher = mock.patch.object(ug, "HOME", self.home)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("USAGE_GATE_PRESETS", None)
+
+    def test_a_stale_copy_becomes_a_link_and_is_kept_as_a_backup(self):
+        with open(self.dest, "w") as f:
+            f.write("old")
+        ug.link_presets()
+        self.assertTrue(os.path.islink(self.dest))
+        self.assertEqual(open(self.dest).read(), "new")
+        backups = [n for n in os.listdir(self.home + "/.orca") if ".bak-" in n]
+        self.assertEqual([open(self.home + "/.orca/" + n).read() for n in backups], ["old"])
+
+    def test_a_missing_copy_becomes_a_link(self):
+        ug.link_presets()
+        self.assertEqual(os.readlink(self.dest), self.src)
+
+    def test_a_correct_link_is_left_alone(self):
+        os.symlink(self.src, self.dest)
+        ug.link_presets()
+        self.assertEqual(os.listdir(self.home + "/.orca"), ["presets.json"])
+
+    def test_a_worker_start_check_repairs_the_host(self):
+        with mock.patch.object(ug, "READERS", {}), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            try:
+                ug.main(["check", "--provider", "claude"])
+            except (SystemExit, KeyError):
+                pass
+        self.assertEqual(os.readlink(self.dest), self.src)
+
+    def test_a_test_preset_path_turns_it_off(self):
+        os.environ["USAGE_GATE_PRESETS"] = self.home + "/other.json"
+        ug.link_presets()
+        self.assertFalse(os.path.lexists(self.dest))
+
+
 if __name__ == "__main__":
     unittest.main()
 
