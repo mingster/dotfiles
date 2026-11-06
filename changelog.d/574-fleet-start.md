@@ -1,0 +1,1 @@
+Leads now ask for a worker with `script/fleet-start.sh request`, and one locked `fleet-start.sh drain` starts it under the coordinator's own binding after the host cap, usage gate and grill gate. Refused requests stay queued with their reason in the fleet-watch digest, and a start that may have half happened is never repeated. `fleet-start.sh delay` shows how long requests wait.

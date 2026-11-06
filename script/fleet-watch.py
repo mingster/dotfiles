@@ -668,6 +668,35 @@ def drain_notices(config, path=None, keep=False):
     return ['lead stops dropped from the coordinator inbox: ' + ', '.join('%s %d' % (names.get(h, h), n) for h, n in counts.items())]
 
 
+def start_notices(directory=None):
+    """Digest lines for fleet-start.sh requests: one for a request left queued (again when its reason changes), one for a start
+    left in an unknown state. <id>.noted keeps what was already reported."""
+    directory = Path(directory or os.environ.get('FLEET_START_DIR') or os.path.expanduser('~/.claude/state/start-requests'))
+    notices = []
+    for request in sorted(directory.glob('*.json')):
+        ident = request.stem
+        started = directory / (ident + '.started')
+        try:
+            req = json.loads(request.read_text())
+            label = '%s (%s %s for %s)' % (ident, req['role'], req['ticket'], req['from'])
+            if started.exists():
+                continue
+            if (directory / (ident + '.starting')).exists():
+                text = 'start request %s is in an unknown state, check whether its worker exists, then run fleet-start.sh settle %s' % (label, ident)
+            elif (directory / (ident + '.refused')).exists():
+                text = 'start request %s queued: %s' % (label, (directory / (ident + '.refused')).read_text().strip())
+            else:
+                continue
+            noted = directory / (ident + '.noted')
+            if noted.exists() and noted.read_text() == text:
+                continue
+            noted.write_text(text)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        notices.append(text)
+    return notices
+
+
 def sweep_notices(config, runner=subprocess.run):
     """Run the worker_done sweep once per run. Its stdout lines (seats kept for lack of proof) become digest notices."""
     relay = str(Path(__file__).resolve().with_name('worker-done-relay.sh'))
@@ -750,6 +779,7 @@ def main():
     notices += coordinator
     notices += drain_notices(config)
     notices += sweep_notices(config)
+    notices += start_notices()
     deliver_notices(config, state, notices, rpc, time.time())
     if notices:
         print('fleet-watch: ' + '; '.join(notices))
