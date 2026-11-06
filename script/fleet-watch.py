@@ -509,6 +509,7 @@ RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
 BACKUP_STALE_LOG = 10 * 60
 STALL_IDLE_LIMIT_DEFAULT = 30 * 60
+STALL_RESTART_RECORD_TTL_DEFAULT = 24 * 3600
 PASS_FAIL_LIMIT = 4 * 60
 
 
@@ -858,7 +859,7 @@ def stall_state_key(w):
 
 
 def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True,
-                     terminal_branches=None):
+                     terminal_branches=None, inventory_ok=True):
     """Detect no terminal output for stall idle limit; restart once per task; then label needs-elon."""
     if act is None:
         act = run_gh
@@ -869,8 +870,15 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     stall_limit = stall_idle_limit_seconds(config)
     label_name = cfg.get('needs_elon_label', 'needs-elon')
     cooldown = int(cfg.get('label_cooldown_seconds', 120))
+    try:
+        record_ttl = int(cfg.get('stall_restart_record_ttl_seconds', STALL_RESTART_RECORD_TTL_DEFAULT))
+    except (TypeError, ValueError):
+        record_ttl = STALL_RESTART_RECORD_TTL_DEFAULT
     notices = []
     log_bits = []
+    if not inventory_ok:
+        log_bits.append('orca_inventory_failed_stall_skipped')
+        return notices, log_bits
     if not terminal_list_ok:
         log_bits.append('terminal_list_failed')
         return notices, log_bits
@@ -878,11 +886,23 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     bucket = state.setdefault('worker_stall', {})
     pending = state.setdefault('stall_pending_start', {})
     issue_keys = state.setdefault('stall_issue_keys', [])
-    active_keys = {stall_state_key(w) for w in workers if stall_state_key(w)} | set(pending.keys())
-    for stale_key in list(bucket.keys()):
-        if stale_key not in active_keys:
-            bucket.pop(stale_key, None)
-            pending.pop(stale_key, None)
+    # One-restart state is keyed by task id only; it expires by age, never by worker-list membership.
+    for skey in list(bucket.keys()):
+        st_entry = bucket.get(skey)
+        if not isinstance(st_entry, dict):
+            continue
+        ra = st_entry.get('restart_at')
+        try:
+            ra_f = float(ra) if ra is not None else None
+        except (TypeError, ValueError):
+            ra_f = None
+        if ra_f is not None and now - ra_f >= record_ttl:
+            bucket.pop(skey, None)
+            pending.pop(skey, None)
+
+    if not workers and not pending:
+        log_bits.append('stall_skipped_empty_workers')
+        return notices, log_bits
 
     branches = terminal_branches or {}
     local_handles = set(term_times.keys())
@@ -901,7 +921,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
         try:
             rpc_call(*start_args)
-            st = bucket.setdefault(skey, {'restarted': False, 'labeled': False})
+            st = bucket.setdefault(skey, {'restarted': False, 'labeled': False, 'restart_at': None})
             st['restarted'] = True
             st['restart_at'] = now
             pending.pop(skey, None)
@@ -915,8 +935,6 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not did or not skey:
             continue
         if not worker_row_is_live(w):
-            if skey not in pending:
-                bucket.pop(skey, None)
             continue
 
         host_id = worker_execution_host_id(w)
@@ -936,15 +954,14 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
 
         last_raw = term_times.get(term)
         last_s = _normalize_terminal_time_ms(last_raw)
-        prev = bucket.get(skey)
-        if not worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit):
-            # After a successful restart the terminal bytes are fresh again, but we may
-            # still owe needs-elon; do not drop restarted state until labeled.
-            if not (prev and prev.get('restarted') and not prev.get('labeled')):
-                bucket.pop(skey, None)
-            continue
+        st = bucket.setdefault(skey, {'restarted': False, 'labeled': False, 'restart_at': None})
 
-        st = bucket.setdefault(skey, {'restarted': False, 'labeled': False})
+        is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
+        if not is_stalled:
+            # Replacement recovered (fresh output) or agent is live — clear stall state for this task.
+            bucket.pop(skey, None)
+            pending.pop(skey, None)
+            continue
 
         if not st['restarted']:
             start_args = worker_stall_restart_start_args(w, did)
@@ -1281,6 +1298,7 @@ def main():
     now = pass_start
     workers = []
     notices = []
+    inventory_ok = True
     try:
         inv = read_orca_inventory(config)
         workers = inv['workers']
@@ -1290,6 +1308,8 @@ def main():
         )
         state.pop('orca_inventory_skip_latched', None)
     except Exception as error:
+        inventory_ok = False
+        workers = []
         print('fleet-watch: Orca inventory unavailable: %s' % (repr(error),), file=sys.stderr)
         if not state.get('orca_inventory_skip_latched'):
             notices.append(ORCA_SKIP_NOTICE)
@@ -1310,7 +1330,8 @@ def main():
     notices += backup_notices(config, state, now)
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
-        terminal_list_ok=terminal_list_ok, terminal_branches=term_branches)
+        terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
+        inventory_ok=inventory_ok)
     notices += stall_extra
     notices += coordinator
 

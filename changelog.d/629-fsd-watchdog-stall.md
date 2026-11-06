@@ -1,0 +1,1 @@
+Fleet-watch stall pass: task-scoped restart records expire by TTL only (not worker list), skip stall when Orca inventory fails or worker list is empty, clear state when the worker recovers or is live, and label once after restart per Elon T4 (c).

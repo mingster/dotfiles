@@ -32,7 +32,7 @@ def live_worker():
         'headRefName': 'mingster/fsd-watchdog-fold',
         'agent': 'claude',
         'resource': {
-            'worktreeId': '5c45d9ec-0d77-4c92-859f-bda6af348340::/Users/mtsai/orca/workspaces/dotfiles/fsd-watchdog-fold',
+            'worktreeId': '5c45d9ec-0d77-4c92-859f-bda6af348340::/srv/orca/workspaces/example/fsd-watchdog-fold',
         },
         'projection': {
             'host': {'kind': 'local', 'id': 'local'},
@@ -103,7 +103,7 @@ class Stall(unittest.TestCase):
         self.assertIn('task_stall_fixture', starts[0])
         self.assertIn('--retry-of', starts[0])
         self.assertIn('--worktree', starts[0])
-        self.assertIn('5c45d9ec-0d77-4c92-859f-bda6af348340::/Users/mtsai/orca/workspaces/dotfiles/fsd-watchdog-fold', starts[0])
+        self.assertIn('5c45d9ec-0d77-4c92-859f-bda6af348340::/srv/orca/workspaces/example/fsd-watchdog-fold', starts[0])
         self.assertIn('--agent', starts[0])
         self.assertIn('claude', starts[0])
         self.assertNotIn('--terminal', starts[0])

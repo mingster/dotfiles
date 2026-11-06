@@ -150,6 +150,7 @@ class WorkerStallPass(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_one_restart_per_task_survives_dispatch_change(self):
+        """Replacement on same task id: one stop/restart; next pass labels once, no second restart."""
         calls = []
         w1 = base_worker(dispatchId='disp_old')
         w2 = base_worker(dispatchId='disp_new')
@@ -161,13 +162,23 @@ class WorkerStallPass(unittest.TestCase):
 
         state = {}
         cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
-        fw.worker_stall_pass(cfg, state, T0, [w1], term_times, rpc)
+        gh_calls = []
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        fw.worker_stall_pass(cfg, state, T0, [w1], term_times, rpc, act=fake_act)
         stops_after_first = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops_after_first), 1)
         calls.clear()
-        fw.worker_stall_pass(cfg, state, T0 + 1, [w2], term_times, rpc)
+        gh_calls.clear()
+        fw.worker_stall_pass(cfg, state, T0 + 1, [w2], term_times, rpc, act=fake_act)
         stops_after_second = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops_after_second), 0)
+        edits = [c for c in gh_calls if len(c) >= 4 and c[0] == 'gh' and c[1] == 'pr' and c[2] == 'edit']
+        self.assertEqual(len(edits), 1)
+        self.assertIn('needs-elon', edits[0])
 
     def test_pending_start_retries_after_row_not_live(self):
         """If start fails right after stop, retry on a later pass with snapshot row."""
@@ -218,6 +229,220 @@ class WorkerStallPass(unittest.TestCase):
             {'worker_stall': {'label_repo': 'o/r'}}, {}, T0, [w], term_times, rpc)
         self.assertFalse(calls)
         self.assertTrue(any(b.startswith('remote_stall_unknown=') for b in bits))
+
+    def test_non_live_sibling_same_task_one_restart_then_label(self):
+        """Two rows same task: only the live stalled row restarts; one label after cooldown."""
+        calls = []
+        w_old = base_worker(
+            dispatchId='disp_completed',
+            taskId='task_shared',
+            agentTerminalHandle='term_other',
+            dispatchStatus='completed',
+        )
+        w_live = base_worker(dispatchId='disp_live', taskId='task_shared')
+        term_times = {'term_fix': OLD_MS}
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        state = {}
+        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        fw.worker_stall_pass(cfg, state, T0, [w_old, w_live], term_times, rpc, act=fake_act)
+        stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
+        self.assertEqual(len(stops), 1)
+        self.assertEqual(stops[0][3], 'disp_live')
+        calls.clear()
+        gh_calls.clear()
+        fw.worker_stall_pass(cfg, state, T0 + 1, [w_old, w_live], term_times, rpc, act=fake_act)
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        edits = [c for c in gh_calls if len(c) >= 4 and c[0] == 'gh' and c[1] == 'pr' and c[2] == 'edit']
+        self.assertEqual(len(edits), 1)
+
+    def test_inventory_failure_skipped_pass_preserves_restart_state(self):
+        """Orca inventory failure skips stall logic without clearing one-restart state."""
+        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0}}}
+        w = base_worker()
+        notices, bits = fw.worker_stall_pass(
+            {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}},
+            state, T0 + 10, [w], {'term_fix': OLD_MS}, lambda *a: None,
+            inventory_ok=False)
+        self.assertIn('orca_inventory_failed_stall_skipped', bits)
+        self.assertIn('task_fix', state['worker_stall'])
+        self.assertTrue(state['worker_stall']['task_fix']['restarted'])
+
+    def test_failed_inventory_between_passes_then_label_no_second_restart(self):
+        """After restart, a failed inventory pass preserves state; next ok pass labels, no second stop."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        w = base_worker(dispatchId='d1')
+        term_times = {'term_fix': OLD_MS}
+        state = {}
+        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
+        self.assertTrue(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        calls.clear()
+        gh_calls.clear()
+        fw.worker_stall_pass(cfg, state, T0 + 1, [w], term_times, rpc, act=fake_act,
+                             inventory_ok=False)
+        self.assertEqual(calls, [])
+        fw.worker_stall_pass(cfg, state, T0 + 2, [w], term_times, rpc, act=fake_act,
+                             inventory_ok=True)
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        self.assertTrue(any(c for c in gh_calls if 'pr' in c and 'edit' in c))
+
+    def test_fresh_terminal_after_restart_clears_stall_no_label(self):
+        """Replacement shows progress (fresh lastOutputAt): no needs-elon label."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        gh_calls = []
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        w = base_worker(dispatchId='d1')
+        fresh_ms = int(T0 * 1000)
+        state = {}
+        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
+        calls.clear()
+        gh_calls.clear()
+        _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 60, [w], {'term_fix': fresh_ms}, rpc, act=fake_act)
+        self.assertEqual(gh_calls, [])
+        self.assertFalse(any('stall_label_pr' in b for b in bits2))
+
+    def test_labeled_worker_next_pass_does_not_label_again(self):
+        gh_calls = []
+
+        def fake_act(cmd):
+            gh_calls.append(cmd)
+            return 0
+
+        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': True, 'restart_at': T0}}}
+        w = base_worker()
+        fw.worker_stall_pass(
+            {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}},
+            state, T0 + 4000, [w], {'term_fix': OLD_MS}, lambda *a: None, act=fake_act)
+        edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
+        self.assertEqual(len(edits), 0)
+
+    def test_record_ttl_expiry_allows_new_stall_restart(self):
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        state = {
+            'worker_stall': {
+                'task_fix': {'restarted': True, 'labeled': True, 'restart_at': T0 - 4000},
+            }
+        }
+        w = base_worker(dispatchId='d_after_ttl')
+        cfg = {
+            'worker_stall': {
+                'label_repo': 'o/r',
+                'label_cooldown_seconds': 0,
+                'stall_restart_record_ttl_seconds': 3600,
+            },
+        }
+        fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc)
+        stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
+        self.assertEqual(len(stops), 1)
+        self.assertEqual(stops[0][3], 'd_after_ttl')
+
+
+class MainStallInventory(unittest.TestCase):
+    def test_main_skips_stall_when_inventory_fails(self):
+        calls = []
+
+        def rpc(*args):
+            calls.append(args)
+            if args[1] == 'inbox':
+                raise RuntimeError('inventory failed')
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({
+                'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+                'worker_stall': {'label_repo': 'o/r'},
+            }))
+            state.write_text(json.dumps({'worker_stall': {'task_x': {'restarted': True}}}))
+            log_path = Path(directory) / 'log'
+            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
+                    patch.dict(os.environ, {'HOME': str(directory)}), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                code = fw.main()
+                self.assertEqual(code, 0)
+                text = log_path.read_text()
+                self.assertIn('orca_inventory_failed_stall_skipped', text)
+                saved = json.loads(state.read_text())
+                self.assertIn('task_x', saved.get('worker_stall', {}))
+
+    def test_main_skips_stall_when_worker_list_empty(self):
+        calls = []
+
+        def rpc(*args):
+            calls.append(args)
+            if args[1] == 'inbox':
+                return {'messages': []}
+            if args[1] == 'worker-list':
+                return {'workers': [], 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'):
+                return {'terminals': []}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({
+                'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+                'worker_stall': {'label_repo': 'o/r'},
+            }))
+            state.write_text('{}')
+            log_path = Path(directory) / 'log'
+            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
+                    patch.dict(os.environ, {'HOME': str(directory)}), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                code = fw.main()
+                self.assertEqual(code, 0)
+                text = log_path.read_text()
+                self.assertIn('stall_skipped_empty_workers', text)
 
 
 class MainTerminalListFailure(unittest.TestCase):
