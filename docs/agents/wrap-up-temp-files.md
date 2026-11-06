@@ -67,3 +67,7 @@ fetch/prune and deletion races, and the missing-`lsof` summary.
 A fleet host (`--worktrees-only`) closes the terminals of its own Orca, by the same rules as the coordinator. Before this, it closed none, so every old terminal looked like an owner and kept its worktree.
 
 A local terminal with no dispatch and no running agent is closed, and its worktree is then removed if it is clean and merged. Kept, with the reason printed: a running agent, an unsettled dispatch, a `lead-` worktree, uncommitted work, the main checkout, the caller's own terminal, output in the last 10 minutes, and anything the holder check cannot clear. Test: `script/tests/wrap-up-unknown-owner.test.sh`.
+
+## Browser sweep
+
+After the dispatch inventory, wrap-up closes stale throwaway browsers: a main Chrome Dev or Chromium process whose `--user-data-dir` is under a temp root, and agent-browser daemons. Stable Chrome and any profile outside temp are never candidates. It keeps a browser younger than 2 hours, with a live parent that is not pid 1, in an active dispatch path, with an unreadable working directory, or when no complete dispatch inventory was read. It stops by pid with TERM after rereading the pid. Tests: `script/tests/wrap-up-browsers.test.sh` (seams `WRAP_UP_PS_CMD`, `WRAP_UP_KILL_CMD`; in test mode the sweep runs only when both are set).

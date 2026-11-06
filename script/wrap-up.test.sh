@@ -647,7 +647,7 @@ unset FAKE_PS
 echo 'ok quoted and escaped paths in a command line protect the cache; siblings are not matched'
 # 3. A failed stale local delete counts as kept.
 old=$(GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' git commit-tree -p main -m old "$(printf '100644 blob %s\tstale\n' "$(echo x | git hash-object -w --stdin)" | git mktree)")
-git branch stale-stuck "$old"; git branch stale-ok "$old"
+git branch stale-stuck "$old"; git branch stale-ok "$old"; git push -q origin stale-stuck stale-ok # pushed: a local only branch is now kept
 status=0
 PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="branch*stale-stuck" bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || status=$?
 [ "$status" -eq 0 ] || { echo "a failed stale delete changed the exit status ($status)"; exit 1; }
@@ -724,6 +724,7 @@ tfixtures() { # recreate whatever a failing case deleted
   [ -d "$tmp/t-wt" ] || git worktree add -q -B t-wt "$tmp/t-wt" main
   [ -d "$tmp/t-wto" ] || git worktree add -q -B t-wto "$tmp/t-wto" main
   [ -d "$tmp/t-stale" ] || git worktree add -q -B t-stale "$tmp/t-stale" "$told"
+  git push -q -f origin t-stale # pushed: a local only branch is kept, so this fixture must not be one
   if [ ! -d "$tmp/t-cache" ]; then
     git worktree add -q -B t-cache "$tmp/t-cache" main; git -C "$tmp/t-cache" commit -q --allow-empty -m t-cache
   fi

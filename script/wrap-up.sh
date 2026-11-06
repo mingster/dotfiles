@@ -27,6 +27,9 @@ done
 if [ "$apply" -eq 1 ] && [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_SCRATCH_ROOT+x}" ] || [ -z "${WRAP_UP_LOOSE_ROOT+x}" ]; }; then
   echo 'wrap-up: ORCA_CLI_COMMAND is set (test mode); set WRAP_UP_SCRATCH_ROOT and WRAP_UP_LOOSE_ROOT before --apply' >&2; exit 2
 fi
+# The browser sweep stops real processes. In test mode it runs only through both fake seams, never the real ps or stop.
+browser_sweep=1
+if [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_PS_CMD:-}" ] || [ -z "${WRAP_UP_KILL_CMD:-}" ]; }; then browser_sweep=0; fi
 command -v jq >/dev/null || { echo 'wrap-up requires jq' >&2; exit 1; }
 repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
@@ -48,6 +51,7 @@ jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | sel
 jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
 jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
 : > "$tmp/active"
+inventory_read=0
 orca=${ORCA_CLI_COMMAND:-orca}
 # Close finished terminals on the local host and every listed environment, before the worktree check reads the inventory.
 # A released dispatch has no agentTerminalHandle and its leftover terminals still look connected, so a terminal is linked to
@@ -210,6 +214,7 @@ if command -v "$orca" >/dev/null 2>&1; then
       [ -n "$cursor" ] || break
       printf '%s\n' "$cursor" >> "$tmp/w-cursors"
     done
+    inventory_read=1
     # Discard terminals positively owned only by settled dispatches. Unknown owners stay safe.
     jq -s '[.[].result.workers[] | .agentTerminalHandle //= (.terminal | strings)] | group_by(.agentTerminalHandle) | map(select(all(.[]; ((.dispatchStatus // .state) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited")) | .[0].agentTerminalHandle) | map(select(. != null))' "$tmp/worker-pages" > "$tmp/ended-handles"
     # A preview leaves the terminals it plans to close open; apply has closed them, so count them as gone in both.
@@ -282,8 +287,10 @@ eligible() {
   return 1
 }
 # True when every status line is an untracked image (screenshot dirt).
-screenshots_only() {
-  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$' "$1"
+# A worktree counts as clean when every changed path is an untracked image or the hook state file continual-learning.json
+# (modified or untracked). Any other change keeps it dirty.
+only_ignorable_changes() {
+  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$|^.. \.cursor/hooks/state/continual-learning\.json$' "$1"
 }
 # Holder checks return true for busy OR unknown, with the reason in $busy.
 # fuser checks inodes, not directory trees: enumerate descendants as well as the
@@ -561,7 +568,7 @@ process_worktree() {
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
-  elif [ -s "$tmp/status" ] && ! screenshots_only "$tmp/status"; then why='dirty'
+  elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
   elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
@@ -684,6 +691,102 @@ update_main() {
   else keep 'main update' 'checkout is not on main or is dirty'
   fi
 }
+# Browser sweep (issue 571). Candidates only: a main Chrome Dev or Chromium process on a throwaway profile under a temp
+# root, and an agent-browser daemon. Stable Chrome and any profile outside temp are never candidates. Test seams:
+# WRAP_UP_PS_CMD (list | show PID | cwd PID) and WRAP_UP_KILL_CMD (PID). Stops by pid with TERM after rereading the pid.
+# Process lines are tab separated: pid, ppid, age in seconds, start time, command.
+browser_closed=0; browser_kept=0
+ps_real() {
+  case "$1" in
+    list|show)
+      local pargs=(-axww); [ "$1" = list ] || pargs=(-ww -p "$2")
+      ps "${pargs[@]}" -o pid=,ppid=,etime=,lstart=,command= | awk '{
+        t = $3; d = 0
+        if (index(t, "-")) { split(t, dp, "-"); d = dp[1]; t = dp[2] }
+        n = split(t, a, ":")
+        s = (n == 3) ? a[1]*3600 + a[2]*60 + a[3] : a[1]*60 + a[2]; s += d*86400
+        cmd = $9; for (i = 10; i <= NF; i++) cmd = cmd " " $i
+        printf "%s\t%s\t%s\t%s %s %s %s %s\t%s\n", $1, $2, s, $4, $5, $6, $7, $8, cmd }' ;;
+    cwd) command -v lsof >/dev/null 2>&1 || return 1
+      local out; out=$(lsof -a -p "$2" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1); [ -n "$out" ] && printf '%s\n' "$out" ;;
+  esac
+}
+ps_do() { if [ -n "${WRAP_UP_PS_CMD:-}" ]; then "$WRAP_UP_PS_CMD" "$@"; else ps_real "$@"; fi; }
+kill_do() { if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then "$WRAP_UP_KILL_CMD" "$1"; else kill -TERM "$1"; fi; }
+squash_path() { printf '%s' "$1" | sed 's#//*#/#g; s#/$##'; }
+is_temp_path() {
+  local p root; p=$(squash_path "$1")
+  case "$p" in /*) : ;; *) return 1 ;; esac
+  case "$p" in */../*|*/..|*/./*|*/.) return 1 ;; esac
+  for root in /tmp /private/tmp /var/folders /private/var/folders "$(squash_path "${TMPDIR:-}")"; do
+    [ -n "$root" ] || continue
+    case "$p" in "$root"/*) return 0 ;; esac
+  done
+  return 1
+}
+browser_profile() { local p=${1#*--user-data-dir=}; [ "$p" != "$1" ] || return 1; printf '%s' "${p%% --*}"; }
+is_main_browser() {
+  case "$1" in *' --type='*) return 1 ;; esac
+  case "$1" in "/"*"/Google Chrome Dev.app/"*|"/"*"/Chromium.app/"*) return 0 ;; esac
+  return 1
+}
+is_agent_daemon() {
+  local w1 w2; read -r w1 w2 _ <<< "$1"
+  case "${w1##*/}" in *agent-browser*) return 0 ;; node|bun) case "${w2:-}" in *agent-browser*) return 0 ;; esac ;; esac
+  return 1
+}
+in_active_path() {
+  local target=$1 a
+  [ -n "$target" ] || return 1
+  [ ! -d "$target" ] || target=$(cd "$target" && pwd -P)
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    case "$target" in "$a"|"$a"/*) return 0 ;; esac
+  done < "$tmp/active"
+  return 1
+}
+browser_keep() { printf 'Kept browser %s (%s)\n' "$1" "$2"; browser_kept=$((browser_kept+1)); }
+sweep_browsers() {
+  local pid ppid age started cmd kind profile cwdir child cppid cmdl now_line n_started n_cmd outside
+  [ "$browser_sweep" -eq 1 ] || return 0
+  if ! ps_do list > "$tmp/procs" 2>/dev/null; then echo 'Warning: process list unavailable; closing no browsers.' >&2; return 0; fi
+  while IFS=$'\t' read -r pid ppid age started cmd; do
+    [ -n "$pid" ] || continue
+    kind=''; profile=''
+    if is_main_browser "$cmd"; then
+      profile=$(browser_profile "$cmd") || continue
+      is_temp_path "$profile" || continue
+      kind='stale throwaway browser profile'
+    elif is_agent_daemon "$cmd"; then kind='stale agent-browser daemon'
+    else continue; fi
+    if [ "$inventory_read" -eq 0 ] || grep -Fxq '*' "$tmp/active"; then browser_keep "$pid" 'no complete dispatch inventory'; continue; fi
+    case "$age" in ''|*[!0-9]*) browser_keep "$pid" 'age unknown'; continue ;; esac
+    if [ "$age" -lt 7200 ]; then browser_keep "$pid" 'younger than 2 hours'; continue; fi
+    if [ "$ppid" != 1 ] && [ "$ppid" != 0 ] && awk -F'\t' -v p="$ppid" '$1 == p { f = 1 } END { exit !f }' "$tmp/procs"; then browser_keep "$pid" 'parent still running'; continue; fi
+    if ! cwdir=$(ps_do cwd "$pid" 2>/dev/null) || [ -z "$cwdir" ]; then browser_keep "$pid" 'working directory unreadable'; continue; fi
+    if in_active_path "$cwdir" || in_active_path "$profile"; then browser_keep "$pid" 'inside an active dispatch path'; continue; fi
+    if [ "$kind" = 'stale agent-browser daemon' ]; then
+      outside=''
+      while IFS=$'\t' read -r child cppid _ _ cmdl; do
+        [ "$cppid" = "$pid" ] && is_main_browser "$cmdl" || continue
+        profile=$(browser_profile "$cmdl") || continue
+        is_temp_path "$profile" || outside=1
+      done < "$tmp/procs"
+      if [ -n "$outside" ]; then browser_keep "$pid" 'drives a browser outside temp'; continue; fi
+    fi
+    if [ "$apply" -eq 1 ]; then
+      # Age moves on a live host, so identity is the start time and the command.
+      now_line=$(ps_do show "$pid" 2>/dev/null | head -n 1) || now_line=''
+      IFS=$'\t' read -r _ _ _ n_started n_cmd <<< "$now_line"
+      if [ -z "$now_line" ] || [ "$n_started" != "$started" ] || [ "$n_cmd" != "$cmd" ]; then browser_keep "$pid" 'process changed since listed'; continue; fi
+      if ! kill_do "$pid" >/dev/null 2>&1; then browser_keep "$pid" 'stop failed'; continue; fi
+    fi
+    printf 'Close browser %s (%s)\n' "$pid" "$kind"
+    browser_closed=$((browser_closed+1))
+  done < "$tmp/procs"
+  printf 'browsers closed=%s kept=%s\n' "$browser_closed" "$browser_kept"
+}
+sweep_browsers
 # A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once. With
 # --main-update it also fast forwards a clean main checkout and installs the merged preset.
 if [ "$worktrees_only" -eq 1 ]; then
@@ -814,6 +917,15 @@ if [ -d "$loose_root" ]; then
   done
 fi
 # Stale: unmerged, no open PR, at least 8 h old, nothing running. Deleted with --apply.
+# A local branch with a commit on no origin ref holds work that exists only on this host: it is never deleted, and an
+# unreadable count keeps it too. Checked again right before the delete.
+local_unpushed() { # name; succeeds when the local branch is absent or has nothing unpushed
+  local n
+  git show-ref --verify --quiet "refs/heads/$1" || return 1
+  n=$(git rev-list --count "refs/heads/$1" --not --remotes=origin 2>/dev/null) || return 0
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -gt 0 ]
+}
 stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
@@ -839,6 +951,7 @@ if [ "$pr_ok" -eq 1 ]; then
     done
     [ $((now - newest)) -ge 28800 ] || continue
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
+    if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
     if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
     stale_found=$((stale_found+1))
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
@@ -846,6 +959,7 @@ if [ "$pr_ok" -eq 1 ]; then
     # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
     if [ "$apply" -eq 1 ]; then
       if ! fresh_inventory 'deleting no more stale branches'; then keep "stale $name" 'worktree inventory unavailable'; continue; fi
+      if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
       now_wt=$(checkout_of "$name")
       if [ -n "$now_wt" ] && [ "$now_wt" != "$wt" ]; then
         if in_use "$now_wt"; then keep "stale $name" "checked out in $now_wt, $busy"

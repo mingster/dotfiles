@@ -102,5 +102,7 @@ mac/bin/claude
 
 # Per machine fleet host list for wrap-up.sh --fleet (copy the .example)
 script/wrap-up-fleet.config.json
+# Per machine scheduled wrap-up repo list (copy the .example)
+script/wrap-up-scheduled.config.json
 script/fleet-pull.config.json
 script/secrets-sync.config.json
