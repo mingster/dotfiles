@@ -64,6 +64,8 @@ class NoTerminalSend(unittest.TestCase):
 def digest_rpc(calls, broken=None):
     def rpc(*args):
         calls.append(args)
+        if args[:2] == ('orchestration', 'send') and '--from' not in args:
+            raise subprocess.CalledProcessError(1, args, stderr='error: no_active_sender_terminal')
         term = args[args.index('--to') + 1] if '--to' in args else args[args.index('--terminal') + 1]
         if term in (broken or {}):
             raise broken[term]
@@ -86,6 +88,14 @@ class Digest(unittest.TestCase):
         watch.deliver_notices(UNTYPED, {}, ['n1'], digest_rpc(calls), now=0, owner_of=NO_OWNER)
         self.assertEqual([c for c in calls if c[:2] == ('terminal', 'send')], [])
         self.assertEqual(sent(calls), [('term_first', 'n1'), ('term_second', 'n1')])
+
+    def test_every_send_names_the_terminal_it_goes_to_as_its_sender(self):
+        calls = []
+        watch.deliver_notices(UNTYPED, {}, ['n1'], digest_rpc(calls), now=0, owner_of=NO_OWNER)
+        sends = [c for c in calls if c[:2] == ('orchestration', 'send')]
+        self.assertEqual(len(sends), 2)
+        for c in sends:
+            self.assertEqual(c[c.index('--from') + 1], c[c.index('--to') + 1])
 
     def test_digest_goes_out_at_most_every_600_seconds_oldest_first(self):
         state, calls = {}, []

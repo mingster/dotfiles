@@ -625,7 +625,7 @@ def flush_queue(state, now, rpc_call):
         if not any(item['urgent'] for item in items) and term in sent_at and now - sent_at[term] < DIGEST_SECONDS:
             continue
         try:
-            rpc_call('orchestration', 'send', '--to', term, '--subject', 'fleet-watch digest', '--body', '\n'.join(item['text'] for item in items))
+            rpc_call('orchestration', 'send', '--from', term, '--to', term, '--subject', 'fleet-watch digest', '--body', '\n'.join(item['text'] for item in items))
         except SEND_ERRORS as error:
             print('fleet-watch: send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
             kept = []
