@@ -1,0 +1,1 @@
+Heavy gate: a job can declare its memory with `--memory-mb` or `HEAVY_GATE_MEMORY_MB`, and that amount counts as taken while it runs, so jobs that would not fit together wait. Head checks declare 9216 MiB for the whole run (`HEAD_CHECKS_MEMORY_MB` overrides), and a check killed with exit 137 now says the run was interrupted and the code was not judged.

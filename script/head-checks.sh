@@ -6,7 +6,9 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
   [ -z "${HEAD_CHECKS_SLOTS:-}" ] || [[ "$HEAD_CHECKS_SLOTS" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_SLOTS must be a positive number' >&2; exit 1; }
-  exec python3 "$script_dir/heavy-gate.py" gate --head-checks -- \
+  # The type check can grow to 9 GB, so the whole run declares that much (MiB) unless told otherwise.
+  [ -z "${HEAD_CHECKS_MEMORY_MB:-}" ] || [[ "$HEAD_CHECKS_MEMORY_MB" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_MEMORY_MB must be a positive number' >&2; exit 1; }
+  exec python3 "$script_dir/heavy-gate.py" gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}" -- \
     env HEAD_CHECKS_GATE_HELD=1 bash "$0" "$@"
 fi
 unset HEAD_CHECKS_GATE_HELD
@@ -287,7 +289,9 @@ while IFS= read -r command || [ -n "$command" ]; do
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     summary=$(test_summary "$output")
     tail -20 "$output" >> "$log"
-    printf 'Result: exit %s; remaining checks stopped\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
+    # Exit 137 is a kill signal (often the kernel out of memory killer): still a FAIL, but not a verdict on the code.
+    note=""; [ "$status" -ne 137 ] || note="; interrupted by a kill signal, the code was not judged, rerun Checks"
+    printf 'Result: exit %s; remaining checks stopped%s\nDuration: %ss\n' "$status" "$note" "$((SECONDS - started))" >> "$log"
     [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
     rm -f "$output"
     exit 1

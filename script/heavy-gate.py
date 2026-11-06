@@ -41,6 +41,15 @@ leaders never authorize signals. Nested gates share the tracked ancestor group;
 their survivors keep capacity. Legacy slots without kernel authority cannot nest,
 but retain dead-PID reclaim.
 Timeout and admission limits are unchanged.
+A job may declare the memory it expects to use, in MiB: --memory-mb N or
+HEAVY_GATE_MEMORY_MB (the flag wins). The amount is written as a memory file in
+the job's first slot, so it is counted across processes and released with the
+slot, including when the owner dies and the slot is reclaimed. A job is admitted
+only while the declared memory of the jobs holding slots, itself included, stays
+within the host total. A job that declares more than the host total cannot ever
+fit, so it runs alone: it waits until no job holds declared memory, then starts,
+and says so on stderr. Jobs that declare nothing count for nothing and never wait
+on memory. The free-memory floor and every other check are unchanged.
 A job that cannot get its slots publishes a waiter record. Once a waiter of weight
 W has waited HEAVY_GATE_MAX_WAIT_SECONDS (default 300), jobs lighter than W stop
 taking slots until it has run, so a weight 2 job cannot be starved by a stream of
@@ -295,7 +304,16 @@ class Slots:
                     continue
                 shutil.rmtree(path)
 
-    def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False):
+    def declared(self, paths):
+        """MiB declared by the given slots; a slot without a record declares nothing."""
+        total = 0
+        for path in paths:
+            with contextlib.suppress(OSError, ValueError):
+                total += int((path / 'memory').read_text())
+        return total
+
+    def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False,
+              memory=0, host_memory=0):
         with self.allocation():
             self.reclaim()
             if self.starved_heavier(weight):
@@ -308,9 +326,14 @@ class Slots:
             # Count even slots above a lowered configuration or a caller override.
             if len(occupied) + weight > self.count - reserve:
                 return False
+            # Declared memory counts like a slot; an oversize job can only run alone.
+            if memory:
+                held = self.declared(occupied)
+                if held and held + memory > host_memory:
+                    return False
             available = [self.root / f'slot-{i}' for i in range(1, self.count + 1)
                          if not (self.root / f'slot-{i}').exists()]
-            for path in available[:weight]:
+            for index, path in enumerate(available[:weight]):
                 # Initialize the durable unknown barrier while still invisible to
                 # reclaim. A failed initialization can never look like a legacy slot.
                 staging = self.root / f'.claim-{self.token}-{path.name}'
@@ -328,6 +351,8 @@ class Slots:
                         (staging / 'exclusive').touch()
                     if long_job:
                         (staging / 'long').touch()
+                    if memory and index == 0:
+                        (staging / 'memory').write_text(str(memory))
                     staging.rename(path)
                     self.owned.append(path)
                 finally:
@@ -570,8 +595,28 @@ def job_class():
     return value
 
 
+def declared_memory(args):
+    """MiB the job declares, 0 for none. The flag wins over the environment."""
+    flag = getattr(args, 'memory_mb', None)
+    value = flag if flag is not None else os.environ.get('HEAVY_GATE_MEMORY_MB', '')
+    if value == '':
+        return 0
+    try:
+        memory = int(value)
+    except ValueError:
+        memory = 0
+    if memory < 1:
+        raise ValueError('declared memory must be a positive whole number of MiB (--memory-mb or HEAVY_GATE_MEMORY_MB)')
+    return memory
+
+
 def gate(args):
     timeout = command_timeout()
+    memory = declared_memory(args)
+    host_memory = hardware()[2] // (1024 * 1024) if memory else 0
+    if memory > host_memory > 0:
+        print(f'heavy-gate: declared memory {memory} MiB exceeds host memory {host_memory} MiB; '
+              'it will run alone', file=sys.stderr, flush=True)
     settings = config()
     count = settings['slots']
     if args.head_checks and os.environ.get('HEAD_CHECKS_SLOTS'):
@@ -596,11 +641,14 @@ def gate(args):
             if hot and free >= 20 and short_job and slots.claim(weight, only_long=True):
                 break
             if not reason:
-                if slots.claim(weight, reserve=int(long_job), long_job=long_job):
+                if slots.claim(weight, reserve=int(long_job), long_job=long_job,
+                               memory=memory, host_memory=host_memory):
                     break
                 slots.wait_record(weight)
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
+                if memory:
+                    reason += f' and {memory} MiB of {host_memory} MiB declared memory'
                 if slots.stuck:
                     reason += ('; held with the owner gone and no proof its processes exited: '
                                + ', '.join(slots.stuck))
@@ -732,6 +780,7 @@ def main():
         'disables it. Timeout stops the process group (TERM, then KILL after a '
         '3-second grace), releases slots, and exits 124.'))
     run.add_argument('--weight', type=int, default=1)
+    run.add_argument('--memory-mb', metavar='MIB', help='memory the job expects to use, counted while it runs')
     run.add_argument('--head-checks', action='store_true', help=argparse.SUPPRESS)
     run.add_argument('command', nargs=argparse.REMAINDER)
     inspect = commands.add_parser('probe')
