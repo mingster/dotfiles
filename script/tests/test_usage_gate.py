@@ -424,6 +424,27 @@ class Cursor(unittest.TestCase):
                 os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
             return status, json.loads(out.getvalue())
 
+    def test_grok_reviewer_uses_the_shared_cursor_pool(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=0):
+            path = t + "/summary.json"
+            payload = summary(100)
+            payload["individualUsage"]["plan"].update(autoPercentUsed=10)
+            json.dump(payload, open(path, "w"))
+            os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
+            ug.CURSOR_SUMMARY = path
+            try:
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(ug.main(["check", "--provider", "cursor", "--model", "grok-4.7-high"]), 0)
+                self.assertEqual(json.loads(out.getvalue())["weekly_used"], 10)
+            finally:
+                os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
+                ug.CURSOR_SUMMARY = None
+
+    def test_grok_is_its_own_family(self):
+        self.assertEqual(ug.family({"provider": "cursor", "model": "grok-4.7-high"}), "grok")
+
     def test_non_composer_model_never_allowed_from_auto_composer_pool(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
@@ -764,10 +785,10 @@ class Pick(unittest.TestCase):
             chain = json.load(f)["roles"]["reviewer"]["chain"]
         self.assertEqual([(e["provider"], e["model"]) for e in chain],
                          [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet"),
-                          ("cursor", "composer-2.5")])
-        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "composer"})
+                          ("cursor", "grok-4.7-high")])
+        self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "grok"})
 
-    def test_claude_authored_pr_reviewer_pick_offers_cursor_composer(self):
+    def test_claude_authored_pr_reviewer_pick_offers_cursor_grok(self):
         path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
         def fake_run(provider, *a, **k):
             verdict = "allowed" if provider == "cursor" else "blocked"
@@ -777,18 +798,18 @@ class Pick(unittest.TestCase):
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             result = ug.pick("reviewer", "claude", None, 95, 1, avoid_provider="claude")
         self.assertEqual((result["selected"]["provider"], result["selected"]["model"]),
-                         ("cursor", "composer-2.5"))
+                         ("cursor", "grok-4.7-high"))
         self.assertTrue(all(ug.family(c) != "claude" for c in [result["selected"]]))
 
     def test_cursor_composer_is_its_own_family(self):
         self.assertEqual(ug.family({"provider": "cursor", "model": "composer-2.5"}), "composer")
 
-    def test_no_preset_lists_a_cursor_model_other_than_composer(self):
+    def test_no_preset_lists_an_unapproved_cursor_model(self):
         path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
         with open(path) as f:
             roles = json.load(f)["roles"]
         bad = [(r, e["model"]) for r, v in roles.items() for e in v.get("chain", [])
-               if e["provider"] == "cursor" and e["model"] != "composer-2.5"]
+               if e["provider"] == "cursor" and e["model"] not in ug.CURSOR_MODELS]
         self.assertEqual(bad, [])
 
 

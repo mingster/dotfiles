@@ -29,6 +29,8 @@ NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
 CURSOR_COMPOSER_MODEL = "composer-2.5"
+CURSOR_GROK_MODEL = "grok-4.7-high"
+CURSOR_MODELS = (CURSOR_COMPOSER_MODEL, CURSOR_GROK_MODEL)
 
 
 def epoch(at):
@@ -619,7 +621,7 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
             until = blocked_until(detail, now)
             detail["blocked_until"], detail["blocked_until_local"] = until, local(until)
     result = {"provider": provider, "verdict": verdict, **detail}
-    if provider == "cursor" and model and model != CURSOR_COMPOSER_MODEL and result["verdict"] == "allowed":
+    if provider == "cursor" and model and model not in CURSOR_MODELS and result["verdict"] == "allowed":
         result = {"provider": "cursor", "verdict": "unknown",
                   "reason": ("auto+composer allowance does not measure Cursor model "
                              + model + "; read the Cursor dashboard"),
@@ -707,6 +709,8 @@ def family(entry):
         return "gpt"
     if provider == "cursor" and model.startswith("composer"):
         return "composer"
+    if provider == "cursor" and model.startswith("grok"):
+        return "grok"
     if provider in ("antigravity", "cursor") and model.startswith("gemini-"):
         return "gemini"
     return None
@@ -729,8 +733,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
         excluded_provider = entry["provider"] == avoid_provider
-        if entry["provider"] == "cursor" and entry["model"] != CURSOR_COMPOSER_MODEL:
-            eligible, row = False, {**row, "verdict": "cursor runs only composer-2.5"}
+        if entry["provider"] == "cursor" and entry["model"] not in CURSOR_MODELS:
+            eligible, row = False, {**row, "verdict": "cursor runs only composer-2.5 and grok-4.7-high"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
@@ -775,7 +779,7 @@ def main(argv=None):
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for composer-2.5 allowance")
     ap.add_argument("--role")
-    ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer"])
+    ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer", "grok"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])
     ap.add_argument("--cap", type=float, default=None,
                     help="advisory daily pacing hint; never blocks")
