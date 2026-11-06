@@ -8,7 +8,7 @@ t() { # <name> <python expression that must be true>
 REL='{"dispatchId":"d1","dispatchStatus":"released","worktreeId":"repo::/w/a"}'
 LIVE='{"dispatchId":"d2","dispatchStatus":"running","worktreeId":"repo::/w/a"}'
 t "released owner frees the worktree and names the dispatch" "ws.can_remove([$REL], '/w/a') == (True, '', ['d1'])"
-t "a live dispatch of another Run on the same worktree keeps it (merge-cleanup incident, #600)" "ws.can_remove([$REL, $LIVE], '/w/a')[0] is False"
+t "a live dispatch of another Run on the same worktree keeps it (after merge cleanup incident, #600)" "ws.can_remove([$REL, $LIVE], '/w/a')[0] is False"
 t "a worktree no dispatch owns stays" "ws.can_remove([$REL], '/w/b') == (False, 'no Orca dispatch owns it', [])"
 t "flat row released by terminalState frees it" "ws.can_remove([{'dispatchId':'d3','state':'succeeded','terminalState':'released','workspace':'repo::/w/c'}], '/w/c')[0] is True"
 t "flat row that succeeded but is not released stays" "ws.can_remove([{'dispatchId':'d4','state':'succeeded','workspace':'repo::/w/c'}], '/w/c')[0] is False"

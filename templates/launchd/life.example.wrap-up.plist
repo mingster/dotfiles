@@ -6,13 +6,15 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__HOME__/dotfiles/script/wrap-up-scheduled.sh</string>
+    <string>__HOME__/dotfiles/script/wrap-up.sh</string>
+    <string>--scheduled</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>__HOME__/.orca/cli/bin:__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>WRAP_UP_ISSUE_REPO</key><string>__ISSUE_REPO__</string>
   </dict>
-  <key>StartInterval</key><integer>7200</integer>
+  <key>StartInterval</key><integer>600</integer>
   <key>RunAtLoad</key><false/>
   <key>StandardOutPath</key><string>__HOME__/.orca/logs/wrap-up-scheduled.log</string>
   <key>StandardErrorPath</key><string>__HOME__/.orca/logs/wrap-up-scheduled.log</string>
