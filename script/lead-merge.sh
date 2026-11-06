@@ -889,8 +889,8 @@ if [ -n "$triggers" ]; then
 fi
 
 # Trunk drift of a single PR needs no head-checks, so it is part of preflight (a batch checks its train instead).
-# A shared locale JSON file is accepted when both sides only added keys and the three way merge is clean (fails closed).
-locale_additive() { # ancestor main head file
+# A shared locale JSON file is accepted unless both sides gave one key different text, when the three way merge is clean (fails closed).
+locale_mergeable() { # ancestor main head file
   local ancestor=$1 trunk=$2 tip=$3 f=$4 dir ok=1
   case "$f" in locales/*.json|*/locales/*.json) ;; *) return 1 ;; esac
   dir=$(mktemp -d) || return 1
@@ -900,8 +900,7 @@ locale_additive() { # ancestor main head file
     && jq -e -n --slurpfile b "$dir/base" --slurpfile m "$dir/main" --slurpfile h "$dir/head" --slurpfile x "$dir/merged" '
       def leaves: [paths(scalars) as $p | {key: ($p | tojson), value: getpath($p)}] | from_entries;
       ($b[0] | leaves) as $b | ($m[0] | leaves) as $m | ($h[0] | leaves) as $h
-      | all($b | keys[]; . as $k | $m[$k] == $b[$k] and $h[$k] == $b[$k])
-        and ((($m | keys) - ($b | keys)) - (($m | keys) - ($h | keys)) | length) == 0
+      | all(($b + $m + $h) | keys[]; . as $k | $m[$k] == $b[$k] or $h[$k] == $b[$k] or $m[$k] == $h[$k])
         and ($x[0] | type) == "object"' >/dev/null 2>&1 && ok=0
   rm -rf "$dir"; return "$ok"
 }
@@ -912,7 +911,7 @@ trunk_check() {
   trunk_files=$(git diff --name-only "$ancestor" origin/main --) || die "cannot inspect trunk drift"
   while IFS= read -r f; do
     if grep -Fxq -- "$f" <<<"$trunk_files"; then
-      locale_additive "$ancestor" origin/main "$head" "$f" || refuse "trunk changed $f; rebase and rerun head-checks"
+      locale_mergeable "$ancestor" origin/main "$head" "$f" || refuse "trunk changed $f; rebase and rerun head-checks"
     fi
   done < <(jq -r '.[]' <<<"$files")
 }
