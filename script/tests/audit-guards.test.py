@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,6 +18,11 @@ def load(name):
 watch = load('fleet-watch')
 idle = load('worktree-idle')
 scoped = load('run-scoped-tests')
+
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', ROOT / 'tests' / 'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env)
+_spec_env.loader.exec_module(_fwe)
+isolated_main_env = _fwe.isolated_main_env
 
 class Guards(unittest.TestCase):
     def setUp(self):
@@ -77,7 +83,8 @@ class Guards(unittest.TestCase):
                 if args[1] == 'worker-list': return {'workers': [], 'page': {'hasMore': False}}
                 if args[:2] == ('terminal', 'list'): return {'terminals': []}
                 return {}
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
                 self.assertEqual(watch.main(), 0)
                 self.assertEqual(watch.main(), 0)
             sends = [call for call in calls if call[:2] == ('terminal', 'send')]
@@ -94,7 +101,7 @@ class Guards(unittest.TestCase):
         self.assertTrue(idle.idle('/work/a', {'result': {'terminals': [{'cwd': '/work/ab'}]}}))
 
     def test_cli_unknown_inventory_refuses_removal(self):
-        result = subprocess.run(['python3', str(ROOT / 'worktree-idle.py'), '/work/a'], env=dict(os.environ, ORCA_CLI_COMMAND='/nonexistent-command'), capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(ROOT / 'worktree-idle.py'), '/work/a'], env=dict(os.environ, ORCA_CLI_COMMAND='/nonexistent-command'), capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn('retaining', result.stderr)
 

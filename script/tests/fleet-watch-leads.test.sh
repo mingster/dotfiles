@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # No orca: the CLI wrapper is patched. A configured lead whose terminal is gone alerts once, then again only after it returns and dies.
 set -euo pipefail
-python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
+PYTHON=python3
+if [[ -x /usr/bin/python3 ]]; then PYTHON=/usr/bin/python3; fi
+"$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import importlib.util, json, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('fleet_watch', root/'fleet-watch.py')
 watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', root/'tests'/'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env); _spec_env.loader.exec_module(_fwe)
+redirect_main_log_under = _fwe.redirect_main_log_under
 class Leads(unittest.TestCase):
     def pass_with(self, state, gone):
         calls = []
@@ -15,13 +20,25 @@ class Leads(unittest.TestCase):
             if args[1] == 'inbox': return {'messages': []}
             if args[1] == 'worker-list': return {'workers': [], 'page': {'hasMore': False}}
             if args[:2] == ('terminal', 'list'): return {'terminals': []}
-            if args[:2] == ('terminal', 'show') and args[3] in gone:
-                raise subprocess.CalledProcessError(1, 'orca', 'terminal_not_found')
             return {}
+        def read_inventory(cfg):
+            """Avoid terminal show during inventory; lead pane state comes from gone set (matches real lead_alive map)."""
+            leads = {}
+            for lead in cfg.get('leads', []):
+                h = lead['terminal']
+                leads[h] = h not in gone
+            return {
+                'messages': [],
+                'workers': [],
+                'alive': {r['id']: True for r in cfg['runs']},
+                'leads': leads,
+            }
         config = state.parent/'config.json'
         config.write_text(json.dumps({'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
                                       'leads': [{'name': 'lead 2', 'terminal': 'term_lead2'}]}))
-        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
+        with redirect_main_log_under(str(state.parent.resolve())), \
+             patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
+             patch.object(watch, 'read_orca_inventory', side_effect=read_inventory), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
         return [' '.join(c) for c in calls if c[:2] == ('terminal', 'send')]

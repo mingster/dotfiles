@@ -1,0 +1,1 @@
+Fleet-watch shell and audit tests redirect pass logs via `FLEET_WATCH_LOG_PATH` (or isolated HOME for stall). Embedded tests prefer `/usr/bin/python3` when present so broken `python3` shims do not fail CI. Leads test stubs `read_orca_inventory` so a vanished lead pane does not fail the whole inventory path. Audit guards invoke `worktree-idle` with `sys.executable`.

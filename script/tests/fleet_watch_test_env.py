@@ -17,3 +17,9 @@ def env_main_uses_default_log_under_home(home_dir):
     env.pop('FLEET_WATCH_LOG_PATH', None)
     env['HOME'] = str(home_dir)
     return env
+
+
+def redirect_main_log_under(dir_path):
+    """Only FLEET_WATCH_LOG_PATH under dir_path; leaves HOME unchanged (for tests that depend on it)."""
+    log_path = Path(dir_path) / 'fleet-watch-test.log'
+    return patch.dict(os.environ, {'FLEET_WATCH_LOG_PATH': str(log_path)}, clear=False)
