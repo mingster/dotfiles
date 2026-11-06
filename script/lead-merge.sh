@@ -591,7 +591,7 @@ load_dispatches() {
         while IFS= read -r id; do
           [ -z "$id" ] || known_owners+="$id"$'\t'"$handle"$'\n'
         done <<<"$ids"
-        cursor=$(jq -r '.result.page.nextCursor // empty' <<<"$page")
+        cursor=$(jq -r '.result.nextCursor // .result.page.nextCursor // empty' <<<"$page")
         [ -n "$cursor" ] || break
       done
       [ -z "$cursor" ] || die "worker-list has too many pages to verify verdict dispatch ids"

@@ -1,0 +1,1 @@
+lead-merge now reads every page of worker-list for current Orca, which returns the next cursor at the top level of the reply, so dispatch ids on older pages are known again. The older reply shape still pages, and too many pages still stops.
