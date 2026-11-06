@@ -668,8 +668,9 @@ def drain_notices(config, path=None, keep=False):
     return ['lead stops dropped from the coordinator inbox: ' + ', '.join('%s %d' % (names.get(h, h), n) for h, n in counts.items())]
 
 
-def sweep_notices(config, runner=subprocess.run):
+def sweep_notices(config, runner=None):
     """Run the worker_done sweep once per run. Its stdout lines (seats kept for lack of proof) become digest notices."""
+    runner = runner or subprocess.run
     relay = str(Path(__file__).resolve().with_name('worker-done-relay.sh'))
     notices = []
     for run in config.get('runs', []):
@@ -749,8 +750,12 @@ def main():
     notices += pr_notices(config, state, time.time())
     notices += coordinator
     notices += drain_notices(config)
-    notices += sweep_notices(config)
+    # Urgent notices go first and the state is saved, so a slow sweep (up to its timeout) cannot delay or lose them.
     deliver_notices(config, state, notices, rpc, time.time())
+    save_state(args.state, state)
+    swept = sweep_notices(config)
+    deliver_notices(config, state, swept, rpc, time.time())
+    notices += swept
     if notices:
         print('fleet-watch: ' + '; '.join(notices))
     save_state(args.state, state)

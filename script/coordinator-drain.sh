@@ -5,7 +5,10 @@
 #   - "Worker stopped without reporting" for a lead terminal (from the fleet-watch config). Leads hold their dispatch open
 #     by design. Each one is counted per lead (a line with the lead's handle appended to COORDINATOR_DRAIN_STATE), and
 #     fleet-watch reports the counts in its digest. A worker's stop always passes.
-#   - worker_done for a dispatch with a <dispatch>.relayed marker (worker-done-relay.sh sweep already routed it).
+#   - worker_done for a dispatch whose <dispatch>.relayed marker says sent (worker-done-relay.sh sweep already routed it).
+# Every other worker_done for a dispatch with an owner record and no .released marker is also saved as
+# <dispatch>.done.json (before it is printed), because the check marks it read and the sweep only peeks at unread
+# messages. The sweep reads that store, so the waiter reading first loses nothing.
 # The check marks what it returns as read, so dropped messages are gone from the inbox. Dropped ones are counted on stderr.
 # Env: FLEET_WATCH_CONFIG (default ~/.config/fleet-watch/config.json), WORKER_DONE_OWNER_DIR (default ~/.claude/state/dispatch-owners),
 #      COORDINATOR_DRAIN_STATE (dropped lead stops, one handle per line, default ~/.claude/state/coordinator-drain.log).
@@ -16,7 +19,7 @@ case " $* " in *" --json "*) ;; *) args+=(--json) ;; esac
 
 # shellcheck disable=SC2086
 $orca orchestration check "${args[@]}" | python3 -c '
-import json, os, sys
+import json, os, re, sys
 raw = sys.stdin.read()
 try:
     data = json.loads(raw)
@@ -42,16 +45,38 @@ def payload(message):
             return {}
     return value if isinstance(value, dict) else {}
 
+def relayed_already(dispatch):
+    try:
+        return open(os.path.join(owners, dispatch + ".relayed")).read().strip() not in ("sending", "resending")
+    except OSError:
+        return False
+
+def save(dispatch, message):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", dispatch):
+        return
+    try:
+        if not open(os.path.join(owners, dispatch)).readline().strip() or os.path.exists(os.path.join(owners, dispatch + ".released")):
+            return
+        path = os.path.join(owners, dispatch + ".done.json")
+        if not os.path.exists(path):
+            temporary = "%s.%d.tmp" % (path, os.getpid())
+            json.dump(message, open(temporary, "w"))
+            os.replace(temporary, path)
+    except OSError as error:
+        print("coordinator-drain: cannot save worker_done for %s: %s" % (dispatch, error), file=sys.stderr)
+
 kept, lead_stops, relayed, dropped_leads = [], 0, 0, []
 for message in messages:
     body = payload(message)
-    lead = body.get("handle") or message.get("from_handle")
+    lead = body.get("handle") or message.get("from_handle") or message.get("from")
     if message.get("subject") == "Worker stopped without reporting" and lead in leads:
         lead_stops += 1
         dropped_leads.append(lead)
-    elif message.get("type") == "worker_done" and body.get("dispatchId") and os.path.exists(os.path.join(owners, str(body["dispatchId"]) + ".relayed")):
+    elif message.get("type") == "worker_done" and body.get("dispatchId") and relayed_already(str(body["dispatchId"])):
         relayed += 1
     else:
+        if message.get("type") == "worker_done" and body.get("dispatchId"):
+            save(str(body["dispatchId"]), message)
         kept.append(message)
 box["messages"] = kept
 print(json.dumps(data))

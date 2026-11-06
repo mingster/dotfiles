@@ -139,6 +139,10 @@ fleet_config="${ON_WORKER_DONE_FLEET_CONFIG:-}"
 if [ -z "$fleet_config" ]; then
   fleet_config="$HOME/.claude/state/fleet-config.json"
 fi
+if [ ! -r "$fleet_config" ]; then
+  echo "QA start refused head=$head: fleet config missing or unreadable: $fleet_config" >&2
+  exit 1
+fi
 policy=${ON_WORKER_DONE_ADMISSION_POLICY:-}
 if [ -n "$policy" ] && [ ! -f "$policy" ]; then
   echo "QA start refused head=$head: admission policy missing or unreadable" >&2

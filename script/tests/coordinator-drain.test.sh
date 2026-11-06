@@ -91,6 +91,21 @@ run --run run_1
 [ "$(ids)" = "w2" ] && ok || bad "worker stop passes again"
 [ "$(counts)" = "term_lead=3 term_lead_m=1" ] && ok || bad "a worker stop changes no count"
 
+# a real "Worker stopped without reporting" message from the orca inbox history (task title shortened):
+# fields are from/to/priority/handled, the payload is an object with only taskId and dispatchId, and there is no handle key
+cat > "$tmp/real-stop.json" <<'EOF'
+{"ok": true, "result": {"messages": [{"id": "msg_stop_99abc148847c07b338443838", "type": "escalation", "from": "term_bbf7aacf-877a-4e75-a645-48930ae14b15", "to": "run:run_e7d1ee648485", "subject": "Worker stopped without reporting", "priority": "high", "handled": true, "body": "Worker term_bbf7aacf-877a-4e75-a645-48930ae14b15 ended its turn without sending worker_done for task \"lead lane\" (task_aabff3336d2a).\nThe Dispatch is still open. Answer it wi\u2026 (truncated; --full)", "payload": {"taskId": "task_aabff3336d2a", "dispatchId": "ctx_0ce3068d6d5d"}}]}}
+EOF
+echo '{"runs":[],"leads":[{"name":"L","terminal":"term_bbf7aacf-877a-4e75-a645-48930ae14b15"}]}' > "$FLEET_WATCH_CONFIG"
+rm -f "$COORDINATOR_DRAIN_STATE"
+cp "$tmp/real-stop.json" "$FAKE_CHECK"
+run --run run_1
+[ "$(ids)" = "" ] && ok || bad "real lead stop is dropped: $(ids)"
+[ "$(counts)" = "term_bbf7aacf-877a-4e75-a645-48930ae14b15=1" ] && ok || bad "real lead stop is counted: $(counts)"
+echo '{"runs":[],"leads":[{"name":"L","terminal":"term_other"}]}' > "$FLEET_WATCH_CONFIG"
+run --run run_1
+[ "$(ids)" = "msg_stop_99abc148847c07b338443838" ] && ok || bad "the same real stop from a worker passes"
+
 # orca failure: exit code passes through
 FAKE_RC=3 run --run run_1
 [ "$(cat "$tmp/rc")" = 3 ] && ok || bad "check exit code passes through"

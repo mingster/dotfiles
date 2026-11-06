@@ -97,6 +97,13 @@ sys.exit(ug.main())
                 self.assertIn('fleet config', result.stderr)
                 self.assertIsNone(args)
 
+    def test_missing_fleet_config_refusal_names_the_file(self):
+        result, args = self.dispatch('claude', configuration='missing')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, r'fleet config missing or unreadable: \S+/\.claude/state/fleet-config\.json')
+        self.assertNotIn('.config/fleet-watch', result.stderr)
+        self.assertIsNone(args)
+
     def test_real_admission_pins_native_launch_argv(self):
         result, args = self.dispatch('claude')
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -281,6 +281,63 @@ class Sweep(unittest.TestCase):
             self.assertEqual(watch.sweep_notices(config, runner), [])
         self.assertIn('sweep failed', err.getvalue())
 
+class UrgentBeforeSweep(unittest.TestCase):
+    def test_urgent_notices_are_sent_before_the_sweep_runs_and_survive_a_slow_sweep(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = pathlib.Path(directory)/'fleet-config.json'
+            fleet.write_text(json.dumps({'host_caps': {'h': 1}}))
+            config = pathlib.Path(directory)/'config.json'
+            config.write_text(json.dumps({'runs': [UNTYPED['runs'][0]], 'fleet_config': str(fleet)}))
+            events = []
+            def rpc(*args):
+                if args[1] == 'send':
+                    events.append(('send', args[args.index('--body') + 1]))
+                if args[1] == 'inbox':
+                    return {'messages': []}
+                if args[1] == 'worker-list':
+                    return {'workers': run_on('h', n=2), 'page': {'hasMore': False}}
+                return {}
+            def runner(command, **kwargs):
+                if command[0] == 'pgrep':
+                    return subprocess.CompletedProcess(command, 1)
+                events.append(('sweep',))
+                raise subprocess.TimeoutExpired(command, 300)
+            state = pathlib.Path(directory)/'state.json'
+            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                 patch.object(watch, 'rpc', side_effect=rpc), \
+                 patch.object(watch.subprocess, 'run', runner), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                watch.main()
+            self.assertEqual(events[-1], ('sweep',))
+            self.assertTrue(any(e[0] == 'send' and 'host cap exceeded' in e[1] for e in events[:-1]), events)
+            self.assertIn('notice_sent_at', json.loads(state.read_text()))
+
+    def test_sweep_notices_go_out_after_the_sweep_in_the_same_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = pathlib.Path(directory)/'fleet-config.json'
+            fleet.write_text(json.dumps({'host_caps': {}}))
+            config = pathlib.Path(directory)/'config.json'
+            config.write_text(json.dumps({'runs': [UNTYPED['runs'][0]], 'fleet_config': str(fleet)}))
+            sent_bodies = []
+            def rpc(*args):
+                if args[1] == 'send':
+                    sent_bodies.append(args[args.index('--body') + 1])
+                if args[1] == 'inbox':
+                    return {'messages': []}
+                if args[1] == 'worker-list':
+                    return {'workers': [], 'page': {'hasMore': False}}
+                return {}
+            def runner(command, **kwargs):
+                if command[0] == 'pgrep':
+                    return subprocess.CompletedProcess(command, 1)
+                return subprocess.CompletedProcess(command, 0, stdout='worker-done sweep: d1 seat kept, x\n', stderr='')
+            state = pathlib.Path(directory)/'state.json'
+            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                 patch.object(watch, 'rpc', side_effect=rpc), \
+                 patch.object(watch.subprocess, 'run', runner):
+                watch.main()
+            self.assertIn('worker-done sweep: d1 seat kept, x', ' '.join(sent_bodies))
+
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY
