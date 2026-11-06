@@ -197,7 +197,9 @@ comments=$(gh pr view "$pr" --repo "$repo" --json comments) || {
   echo "QA start refused head=$head: cannot read head-checks receipts" >&2
   exit 1
 }
-printf '%s' "$comments" | python3 -c '
+# Prints "pending" when no receipt exists at this exact head; QA starts anyway.
+# A Checks: FAIL, a bad receipt or an unreadable comment list still refuses.
+checks_state=$(printf '%s' "$comments" | python3 -c '
 import json, re, sys
 head = sys.argv[1]
 def refuse(reason):
@@ -209,9 +211,8 @@ except (ValueError, KeyError, TypeError):
 receipts = [c["body"] for c in comments if re.match(r"^Checks: (?:PASS|FAIL) head=[0-9a-f]{40}(?:\s|$)", c.get("body", ""))]
 exact = [body for body in receipts if re.match(r"^Checks: (?:PASS|FAIL) head=" + head + r"(?:\s|$)", body)]
 if not exact:
-    if receipts:
-        refuse("head-checks run exists but this head has no receipt")
-    refuse("no Checks: PASS receipt for this head")
+    print("pending")
+    sys.exit(0)
 body = exact[-1]
 if body.startswith("Checks: FAIL "):
     print("needs-author")
@@ -228,10 +229,13 @@ if len(tests) != len(errors):
     refuse("incomplete test execution metadata")
 if re.search(r"^Command: .*\bbun (?:run )?test\b|^bun test v", body, re.M) and not tests:
     refuse("test command has no execution metadata")
-' "$head" || exit 1
+' "$head") || { [ -n "$checks_state" ] && printf '%s\n' "$checks_state"; exit 1; }
 
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
-gate_footer='Read the exact-head Checks receipt on this PR (comment body starting with Checks: PASS or Checks: FAIL head='"$head"'). Never rerun bun test, tsc, lint, or the regression suite; cite that receipt for automated check outcomes.'
+gate_footer='Look for the Checks receipt for exactly this head on this PR (a comment body starting with Checks: PASS head='"$head"' or Checks: FAIL head='"$head"'). If it is Checks: PASS, cite it for automated check outcomes. If it is Checks: FAIL, stop the review and post Verdict: FAIL. Never rerun bun test, tsc, lint, or the regression suite.'
+if [ "$checks_state" = pending ]; then
+  gate_footer="Checks are pending: no Checks receipt exists for head $head yet. That is not a failure. Review the code anyway and say in your verdict that Checks were pending. $gate_footer"
+fi
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
 Review the conflict-resolution merge for PR #$pr in $repo at head $head. You did not write this merge resolution.
