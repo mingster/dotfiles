@@ -17,7 +17,7 @@ When the conversation is compacted, keep: your role, the task list and who acts 
 
 ## Owner context commands
 
-- **Context commands** (you or the tech-lead run these; agents cannot): `/clear` between tickets, `/compact` at a slice boundary, `/btw` for a side question that should not grow the session. Tech-lead only: `/fork` copies the conversation into a new background session and `/subtask` spawns a forked subagent, both cheap because they reuse the cached context, but a fork cannot spawn further agents. A worker's prompt cache lasts about 5 minutes and the main session's about 1 hour, so give workers the full contract up front and never park one waiting on a reply.
+- **Context commands** (you or Elon run these; agents cannot): `/clear` between tickets, `/compact` at a slice boundary, `/btw` for a side question that should not grow the session. Elon only: `/fork` copies the conversation into a new background session and `/subtask` spawns a forked subagent, both cheap because they reuse the cached context, but a fork cannot spawn further agents. A worker's prompt cache lasts about 5 minutes and the main session's about 1 hour, so give workers the full contract up front and never park one waiting on a reply.
 
 ## Project facts the roles point to
 

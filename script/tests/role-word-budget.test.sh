@@ -16,7 +16,6 @@ done
 # Moved detail must still be reachable: role file names the doc, the doc holds the detail.
 has() { grep -qF -- "$2" "$1" && ok "$3" || bad "$3"; }
 has "$T/docs/agents/coordinator-operations.md" 'workspace-trusted' "cursor trust marker lives in coordinator-operations"
-has "$T/.claude/agents/tech-lead.md" 'Cursor worker start' "tech-lead points at the cursor worker start rule"
 has "$T/docs/agents/deploy-facts.md" 'Host preflight' "host preflight lives in deploy-facts"
 has "$T/docs/agents/release-manager-work.md" 'Production job order' "release-manager-work holds the production job order pointer"
 has "$T/docs/agents/coordinator-operations.md" 'Small task method' "small task method lives in coordinator-operations"
@@ -26,9 +25,8 @@ has "$T/docs/agents/release-manager-work.md" 'Host preflight' "release-manager-w
 has "$T/.claude/agents/release-manager.md" 'Never roll back production without owner authorization' "rm keeps rollback guard"
 has "$T/.claude/agents/release-manager.md" 'Never invoke `bin/owner-approve.sh`' "rm keeps owner-approve guard"
 has "$T/.claude/agents/release-manager.md" 'Never stop a process by name' "rm keeps kill guard"
-has "$T/.claude/agents/tech-lead.md" 'lead-merge.sh' "tl keeps lead-merge rule"
-has "$T/.claude/agents/tech-lead.md" 'One writer per branch' "tl keeps one writer rule"
-has "$T/.claude/agents/tech-lead.md" 'never pass 200 calls' "tl keeps handoff cap" 
+has "$T/.claude/agents/elon.md" 'lead-merge.sh' "elon keeps lead-merge rule"
+has "$T/docs/agents/engineering-integration.md" 'One writer per branch' "merge rules keep one writer rule"
 has "$T/.claude/agents/elon.md" 'Owner-Reserved' "elon keeps owner-reserved list"
 has "$T/.claude/agents/elon.md" 'Traditional Chinese' "elon keeps owner language rule"
 has "$T/.claude/agents/elon.md" 'team-grill-backlog' "elon keeps backlog sweep"
@@ -55,7 +53,7 @@ done
 has "$A/proj/docs/agents/coordinator-operations.md" 'Production job order' "adopted coordinator-operations holds the production job order"
 has "$T/docs/agents/release-manager-work.md" 'coordinator-operations.md`, Production job order' "release-manager-work points the job order at coordinator-operations"
 has "$T/.claude/agents/release-manager.md" 'docs/agents/release-manager-work.md' "release-manager role file points at release-manager-work"
-has "$T/.claude/agents/tech-lead.md" 'even a new spec no worker could run' "tech-lead keeps rerun of a new spec"
+has "$T/docs/agents/engineering-integration.md" 'even a new spec no worker could run' "merge rules keep rerun of a new spec"
 has "$T/docs/agents/coordinator-operations.md" '{{PROJECT_NAME}}/<lane>' "small task method keeps the project placeholder"
 has "$A/proj/docs/agents/coordinator-operations.md" 'workspaces/acme/<lane>' "adopted small task method renders the project name"
 

@@ -1,6 +1,6 @@
 ---
 name: staging-review
-description: Page by page review of the staging site after a deploy. Elon sends one reviewer per area through every page (function, wording in each locale, layout at the target devices), then architect-pm and sales-marketing grill the findings into ready-for-agent tickets on disjoint files, and the tech-lead builds them at full fleet. Use with /staging-review, "review staging page by page", or after a staging deploy when the owner asks for a review round.
+description: Page by page review of the staging site after a deploy. Elon sends one reviewer per area through every page (function, wording in each locale, layout at the target devices), then architect-pm and sales-marketing grill the findings into ready-for-agent tickets on disjoint files, and Elon builds them at full fleet. Use with /staging-review, "review staging page by page", or after a staging deploy when the owner asks for a review round.
 ---
 
 # Staging review
@@ -32,7 +32,7 @@ Rules: no code, no commits, never touch production, never press maintenance or d
 worker_done: counts per severity, top 10 findings, pages not reached, the findings file path.
 ```
 
-A P0 (data loss, payment wrong, sign-in or checkout broken) goes to the tech-lead as a hotfix at once, before the grill.
+A P0 (data loss, payment wrong, sign-in or checkout broken) goes to Elon as a hotfix at once, before the grill.
 
 ## 2. Grill (architect-pm and sales-marketing)
 
@@ -55,7 +55,7 @@ Elon answers each ask within minutes and decides every disagreement. Legal text 
 
 ## 3. Build
 
-Send the new ready-for-agent numbers to the tech-lead in one message, P0/P1 first, grouped by shared files. Builders and reviewers come from different model families. Use the exact strings already accepted in the spec and ticket; missing or changed copy returns to architect-pm for a spec amendment under the project Handoffs contract. Merge reviewed PRs under the existing eager-merge and fix-batch rules.
+Send the new ready-for-agent numbers to Elon in one message, P0/P1 first, grouped by shared files. Builders and reviewers come from different model families. Use the exact strings already accepted in the spec and ticket; missing or changed copy returns to architect-pm for a spec amendment under the project Handoffs contract. Merge reviewed PRs under the existing eager-merge and fix-batch rules.
 
 ## 4. Close the round
 

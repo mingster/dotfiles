@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Context was compacted. Keep your role from before (Tech Lead unless you were spawned as a teammate or subagent). Before you act, re-read: (1) .claude/agents/<role>.md, (2) .agents/skills/crew/OPERATIONS.md, (3) the Pre-build grill gate in docs/agents/team.md. Then continue from TaskList and the last owner message. Rules that still hold: do not raise host or provider caps; do not commit or open a PR while the owner is discussing.'"
+            "command": "echo 'Context was compacted. Keep your role from before (Elon unless you were spawned as a teammate or subagent). Before you act, re-read: (1) .claude/agents/<role>.md, (2) .agents/skills/crew/OPERATIONS.md, (3) the Pre-build grill gate in docs/agents/team.md. Then continue from TaskList and the last owner message. Rules that still hold: do not raise host or provider caps; do not commit or open a PR while the owner is discussing.'"
           }
         ]
       }
