@@ -9,12 +9,14 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/bin" "$tmp/proj/.claude/hooks"
+mkdir -p "$tmp/bin" "$tmp/proj/.claude/hooks" "$tmp/proj2/.claude/hooks" "$tmp/home"
 
 cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$ORCA_LOG"
+[ "$1 $2" != "orchestration worker-start" ] || python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@" >> "$ORCA_ARGV"
 case "$1 $2" in
+  "worktree create") echo '{"ok":true,"result":{"worktree":{"path":"'"$FAKE_WT"'"}}}' ;;
   "orchestration run-list") echo '{"ok":true,"result":{"runs":[{"id":"run_1"}]}}' ;;
   "orchestration worker-list") cat "$FAKE_WORKERS" ;;
   "orchestration worker-start")
@@ -42,18 +44,20 @@ if os.environ.get("FAKE_GUARD_DENY"):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                              "permissionDecisionReason": os.environ["FAKE_GUARD_DENY"]}}))
 EOS
+cp "$tmp/proj/.claude/hooks/guard-bash.py" "$tmp/proj2/.claude/hooks/guard-bash.py"
 chmod +x "$tmp/bin/orca" "$tmp/bin/usage-gate"
 
 root=$(cd "$here/../.." && pwd)
 cat > "$tmp/config.json" <<EOF
 {"local_host": "host-local", "run": "run_1", "coordinator": "term_coord", "roles": ["fullstack-dev", "qa"],
  "placement": {"builder": ["host-local", "host-r"], "reviewer": ["host-r"]},
- "projects": {"owner/repo": "$tmp/proj", "owner/real": "$root/templates/agent-team"}}
+ "projects": {"owner/repo": "$tmp/proj", "owner/other": "$tmp/proj2", "owner/real": "$root/templates/agent-team"},
+ "remote_projects": {"host-r": {"owner/repo": "/remote/repo", "owner/other": "/remote/other"}}}
 EOF
 echo '{"runs":[{"id":"run_1","terminal":"term_coord","waiter_pattern":"w"}],"fleet_config":"'"$tmp"'/fleet-config.json"}' > "$tmp/watch.json"
 echo "role: fullstack-dev, issue dotfiles#574" > "$tmp/brief.md"
 
-export ORCA_LOG="$tmp/orca.log" GATE_LOG="$tmp/gate.log" GUARD_LOG="$tmp/guard.log"
+export ORCA_ARGV="$tmp/orca-argv.log" FAKE_WT="$tmp/wt/new" ORCA_LOG="$tmp/orca.log" GATE_LOG="$tmp/gate.log" GUARD_LOG="$tmp/guard.log"
 export ORCA_CLI_COMMAND="$tmp/bin/orca" FLEET_START_USAGE_GATE="$tmp/bin/usage-gate"
 export FLEET_START_DIR="$tmp/requests" WORKER_DONE_OWNER_DIR="$tmp/owners"
 export FLEET_START_CONFIG="$tmp/config.json" FLEET_WATCH_CONFIG="$tmp/watch.json"
@@ -62,7 +66,7 @@ export FAKE_PICK='{"selected":{"provider":"claude","model":"opus","effort":"high
 
 reset() {
   rm -rf "$FLEET_START_DIR" "$WORKER_DONE_OWNER_DIR"
-  : > "$ORCA_LOG"; : > "$GATE_LOG"; : > "$GUARD_LOG"
+  : > "$ORCA_LOG"; : > "$GATE_LOG"; : > "$GUARD_LOG"; : > "$ORCA_ARGV"; rm -rf "$tmp/home/.cursor"
   echo '{"host_caps":{"host-local":2,"host-r":2}}' > "$tmp/fleet-config.json"
   echo '{"ok":true,"result":{"workers":[]}}' > "$FAKE_WORKERS"
   unset FAKE_START_SLEEP FAKE_START_KILL FAKE_PICK_RC FAKE_CHECK_RC FAKE_GUARD_DENY FLEET_START_NOW
@@ -73,6 +77,11 @@ req() {
 }
 drain() { bash "$script" drain "$@" > "$tmp/out" 2> "$tmp/err"; echo $? > "$tmp/rc"; }
 startline() { tr '\n' ' ' < "$ORCA_LOG" | grep -o 'orchestration worker-start.*' || true; }
+lastargs() { tail -1 "$ORCA_ARGV"; }
+args_are() { # name, python expression (list) the last worker-start argv must equal exactly
+  lastargs | python3 -c 'import json,sys; got=json.loads(sys.stdin.read()); want=eval(sys.argv[1]); sys.exit(0 if got==want else (print("got ",got,"\nwant",want) or 1))' "$2" > "$tmp/argdiff" 2>&1 \
+    && ok || bad "$1: $(cat "$tmp/argdiff")"
+}
 starts() { grep -c "orchestration worker-start" "$ORCA_LOG" || true; }
 queued() { ls "$FLEET_START_DIR"/*.json 2>/dev/null | wc -l | tr -d ' '; }
 occupy() { # host
@@ -126,7 +135,7 @@ grep -q -- "--from term_coord" <(grep "orchestration send" "$ORCA_LOG") && ok ||
 
 # 3. remote start: reviewer goes through start-remote-worker with --on, owner record lists the prs
 reset
-bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 --pr 13 > /dev/null
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 --pr 13 --author-family gemini > /dev/null
 drain
 [ "$(starts)" = 1 ] && ok || bad "one remote start: $(cat "$tmp/err")"
 grep -q "terminal create --environment host-r" "$ORCA_LOG" && ok || bad "remote start probes the host first"
@@ -398,6 +407,114 @@ FLEET_START_NOW=2000 req --host host-local --branch b2 > /dev/null
 FLEET_START_NOW=2030 drain
 bash "$script" delay > "$tmp/out"
 [ "$(cat "$tmp/out")" = "count=2 median=20s max=30s" ] && ok || bad "delay with an even count: $(cat "$tmp/out")"
+
+# 17. grill gate sees the request's role even when the brief never says it
+reset
+echo "no role word here, issue unknown" > "$tmp/brief3.md"
+bash "$script" request --role fullstack-dev --brief "$tmp/brief3.md" --ticket abc --kind builder --from term_lead --repo owner/real --branch b1 --host host-local > /dev/null
+drain; refused "real guard, role only in the request" "issue"
+grep -q 'fullstack-dev' <(startline) && bad "no start was made" || ok
+
+# 18. the request's repo reaches the start, exact arguments, two projects in config
+reset
+req --repo owner/other --host host-local > /dev/null
+drain
+args_are "local start arguments" '["orchestration","worker-start","--task-title","fullstack-dev - #574","--spec","role: fullstack-dev, issue dotfiles#574\n","--worktree","new-top-level","--name","fullstack-dev-574","--repo","path:'"$tmp"'/proj2","--base-branch","origin/main","--setup","run","--agent","claude","--model","opus","--effort","high","--run","run_1","--from","term_coord","--json"]'
+grep -q '"cwd": "'"$tmp"'/proj2"' "$GUARD_LOG" && ok || bad "guard ran in the request's project: $(cat "$GUARD_LOG")"
+reset
+req --host host-local > /dev/null
+drain
+grep -q -- '--repo path:'"$tmp"'/proj ' <(startline) && ok || bad "the other project resolves to its own path: $(startline)"
+reset
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/other --pr 12 --author-family gemini > /dev/null
+drain
+args_are "remote start arguments" '["orchestration","worker-start","--task-title","qa - #574","--spec","role: fullstack-dev, issue dotfiles#574\n","--worktree","new-top-level","--name","qa-574","--repo","path:/remote/other","--base-branch","origin/main","--setup","run","--agent","claude","--model","opus","--effort","high","--run","run_1","--from","term_coord","--on","host-r","--json"]'
+reset
+python3 - "$tmp/config.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["remote_projects"] = {}; json.dump(c, open(sys.argv[1] + ".norem", "w"))
+PY
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 --author-family gemini > /dev/null
+FLEET_START_CONFIG="$tmp/config.json.norem" drain
+refused "remote start with no remote checkout in config" "remote"
+
+# 19. reviewer family: the author's family is avoided, and a reviewer request without one is refused
+reset
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 --author-family claude > /dev/null
+drain
+grep -q "^pick --role qa --avoid-family claude" "$GATE_LOG" && ok || bad "pick avoids the author family: $(cat "$GATE_LOG")"
+reset
+req --host host-local > /dev/null
+drain
+grep -q "avoid-family" "$GATE_LOG" && bad "a builder pick has no avoid-family" || ok
+reset
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 > /dev/null 2>&1
+[ "$?" = 2 ] && [ "$(queued)" = 0 ] && ok || bad "reviewer without an author family is refused at request"
+bash "$script" request --role qa --brief "$tmp/brief.md" --ticket 574 --kind reviewer --from term_lead --repo owner/repo --pr 12 --author-family llama > /dev/null 2>&1
+[ "$?" = 2 ] && ok || bad "unknown author family is refused at request"
+mkdir -p "$FLEET_START_DIR"
+printf '{"id":"0000000000001-cccccc","role":"qa","brief":"b","ticket":"574","kind":"reviewer","host":null,"from":"term_lead","repo":"owner/repo","branch":null,"pr":["12"],"requested_at":1}' > "$FLEET_START_DIR/0000000000001-cccccc.json"
+drain
+[ "$(starts)" = 0 ] && [ -f "$FLEET_START_DIR/0000000000001-cccccc.bad" ] && grep -q "author_family" "$FLEET_START_DIR/0000000000001-cccccc.bad.why" && ok || bad "hand-written reviewer without a family is set aside, not started"
+
+# 20. Cursor goes through start-cursor-worker.sh: trust marker written, same gates, same repo
+# a throwaway HOME for the trust marker; the python shim still needs the real asdf data and versions file
+export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
+[ ! -f "$HOME/.tool-versions" ] || cp "$HOME/.tool-versions" "$tmp/home/.tool-versions"
+export FAKE_CURSOR_PICK='{"selected":{"provider":"cursor","model":"composer-2.5","effort":null},"candidates":[]}'
+reset
+FAKE_PICK="$FAKE_CURSOR_PICK" req --repo owner/other --host host-local > /dev/null
+FAKE_PICK="$FAKE_CURSOR_PICK" HOME="$tmp/home" drain
+[ "$(starts)" = 1 ] && ok || bad "one cursor start: $(cat "$tmp/err") $(cat "$tmp/out")"
+args_are "cursor start arguments" '["orchestration","worker-start","--run","run_1","--spec","role: fullstack-dev, issue dotfiles#574","--agent","cursor","--model","composer-2.5","--worktree","path:'"$tmp"'/wt/new","--task-title","fullstack-dev - #574","--from","term_coord","--json"]'
+grep -q "^worktree create --name fullstack-dev-574 --repo path:$tmp/proj2 --base-branch origin/main --setup run" "$ORCA_LOG" && ok || bad "cursor worktree from the request's repo: $(grep '^worktree' "$ORCA_LOG")"
+[ -f "$tmp/home/.cursor/projects/$(echo "$tmp/wt/new" | sed 's|^/||; s|[/.]|-|g')/.workspace-trusted" ] && ok || bad "trust marker written: $(find "$tmp/home" -type f 2>/dev/null)"
+grep -q "start-cursor-worker.sh" "$GUARD_LOG" && grep -q -- "--title" "$GUARD_LOG" && ok || bad "guard saw the cursor start script command: $(cat "$GUARD_LOG")"
+grep -q '"cwd": "'"$tmp"'/proj2"' "$GUARD_LOG" && ok || bad "cursor guard ran in the request's project"
+[ "$(cat "$WORKER_DONE_OWNER_DIR/ctx_new1" 2>/dev/null | head -1)" = "term_lead" ] && ok || bad "cursor start has an owner record"
+ls "$FLEET_START_DIR"/.brief-* > /dev/null 2>&1 && bad "no brief temp file left behind" || ok
+reset
+FAKE_PICK="$FAKE_CURSOR_PICK" req --host host-r > /dev/null
+FAKE_PICK="$FAKE_CURSOR_PICK" HOME="$tmp/home" drain
+[ "$(starts)" = 1 ] && ok || bad "remote cursor start: $(cat "$tmp/err") $(cat "$tmp/out")"
+grep -q "terminal create --environment host-r --worktree path:$tmp/wt/new" "$ORCA_LOG" && ok || bad "remote trust terminal ran before dispatch"
+grep -q "^worktree create .*--repo path:/remote/repo .*--environment host-r" "$ORCA_LOG" && ok || bad "remote cursor worktree from the remote checkout: $(grep '^worktree' "$ORCA_LOG")"
+reset
+FAKE_PICK='{"selected":{"provider":"cursor","model":null,"effort":null},"candidates":[]}' req --host host-local > /dev/null
+FAKE_PICK='{"selected":{"provider":"cursor","model":null,"effort":null},"candidates":[]}' drain
+refused "cursor pick with no model" "model"
+
+# 21. corrupt side files: set aside or skipped, the drain and the watcher pass go on
+reset
+mkdir -p "$FLEET_START_DIR"
+mk() { printf '{"id":"%s","role":"fullstack-dev","brief":"b","ticket":"574","kind":"builder","host":"host-local","from":"term_lead","repo":"owner/repo","branch":"b1","pr":[],"requested_at":1}' "$1" > "$FLEET_START_DIR/$1.json"; }
+mk 0000000000001-dddddd; echo '{}' > "$FLEET_START_DIR/0000000000001-dddddd.started"
+mk 0000000000002-dddddd; echo '[1, 2]' > "$FLEET_START_DIR/0000000000002-dddddd.started"
+mk 0000000000003-dddddd; python3 -c 'print("[" * 200000)' > "$FLEET_START_DIR/0000000000003-dddddd.started"
+mk 0000000000004-dddddd; echo '[]' > "$FLEET_START_DIR/0000000000004-dddddd.starting"
+mk 0000000000005-dddddd; echo '7' > "$FLEET_START_DIR/0000000000005-dddddd.starting"
+python3 -c 'print("[" * 200000)' > "$FLEET_START_DIR/0000000000006-dddddd.json"
+mk 0000000000007-dddddd; python3 -c 'print("[" * 200000)' > "$FLEET_START_DIR/0000000000007-dddddd.refused"
+mkdir -p "$FLEET_START_DIR/seats"; echo '{"at": "yesterday"}' > "$FLEET_START_DIR/seats/host-local.junk"; echo '[]' > "$FLEET_START_DIR/seats/host-local.junk2"
+printf '{"id":"0000000000008-dddddd","role":"fullstack-dev","brief":"a\\u0000b","ticket":"574","kind":"builder","host":"host-local","from":"term_lead","repo":"owner/repo","branch":"b1","pr":[],"requested_at":1}' > "$FLEET_START_DIR/0000000000008-dddddd.json"
+printf '{"id":"0000000000009-dddddd","role":"fullstack-dev","brief":"b","ticket":"574","kind":"builder","host":"host-local","from":"term_lead","repo":"owner/repo","branch":"b1","pr":[],"requested_at":NaN}' > "$FLEET_START_DIR/0000000000009-dddddd.json"
+req --host host-local > /dev/null
+drain
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "drain survives corrupt side files: $(tail -3 "$tmp/err")"
+[ "$(starts)" = 2 ] && ok || bad "the good request and the one with a damaged reason file start: starts=$(starts) $(tail -3 "$tmp/err")"
+[ -f "$FLEET_START_DIR/0000000000006-dddddd.bad" ] && [ -f "$FLEET_START_DIR/0000000000008-dddddd.bad" ] && [ -f "$FLEET_START_DIR/0000000000009-dddddd.bad" ] && ok || bad "deep, NUL and NaN request files are set aside"
+python3 - "$here/../fleet-watch.py" <<'PY' && ok || bad "watcher pass survives corrupt side files"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('fleet_watch', sys.argv[1])
+watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+lines = watch.start_notices()
+assert any('0000000000004-dddddd' in line for line in lines), lines
+assert any('0000000000005-dddddd' in line for line in lines), lines
+PY
+reset
+mkdir -p "$FLEET_START_DIR/seats"
+echo '[]' > "$FLEET_START_DIR/0000000000001-eeeeee.started"; echo '{"started_at":"x","requested_at":null}' > "$FLEET_START_DIR/0000000000002-eeeeee.started"
+bash "$script" delay > "$tmp/out" 2>&1; [ "$?" = 0 ] && grep -q "count=0" "$tmp/out" && ok || bad "delay skips damaged started files: $(cat "$tmp/out")"
 
 echo "fleet-start: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -2,12 +2,25 @@
   "local_host": "host-id-of-this-machine",
   "run": "run_example",
   "coordinator": "term_example_coordinator",
-  "roles": ["fullstack-dev", "qa"],
+  "roles": [
+    "fullstack-dev",
+    "qa-sdet"
+  ],
   "placement": {
-    "builder": ["host-id-of-this-machine", "remote-host-id"],
-    "reviewer": ["remote-host-id"]
+    "builder": [
+      "host-id-of-this-machine",
+      "remote-host-id"
+    ],
+    "reviewer": [
+      "remote-host-id"
+    ]
   },
   "projects": {
     "owner/name": "~/path/to/checkout"
+  },
+  "remote_projects": {
+    "remote-host-id": {
+      "owner/name": "/path/to/checkout/on/the/remote/host"
+    }
   }
 }

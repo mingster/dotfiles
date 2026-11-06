@@ -83,7 +83,7 @@ class Guards(unittest.TestCase):
                 if args[1] == 'inbox': return {'messages': self.messages}
                 if args[1] == 'worker-list': return {'workers': [], 'page': {'hasMore': False}}
                 return {}
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
+            with patch.dict(os.environ, {'FLEET_START_DIR': directory}), patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
                 self.assertEqual(watch.main(), 0)
                 self.assertEqual(watch.main(), 0)
             sends = [call for call in calls if call[:2] == ('orchestration', 'send')]

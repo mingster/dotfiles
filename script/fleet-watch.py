@@ -680,9 +680,16 @@ def start_notices(directory=None):
             req = json.loads(request.read_text())
             label = '%s (%s %s for %s)' % (ident, req['role'], req['ticket'], req['from'])
             if started.exists():
-                continue
-            if (directory / (ident + '.starting')).exists():
-                dispatch = (json.loads((directory / (ident + '.starting')).read_text()) or {}).get('dispatch')
+                try:
+                    damaged = not isinstance(json.loads(started.read_text()), dict)
+                except (ValueError, RecursionError):
+                    damaged = True
+                if not damaged:
+                    continue
+                text = 'start request %s has a damaged .started file: check its worker and owner record by hand, the lead may not have been told' % label
+            elif (directory / (ident + '.starting')).exists():
+                marker = json.loads((directory / (ident + '.starting')).read_text())
+                dispatch = marker.get('dispatch') if isinstance(marker, dict) else None
                 if dispatch:
                     text = 'start request %s started worker %s but its owner record is not written, run fleet-start.sh settle %s' % (label, dispatch, ident)
                 else:
@@ -695,7 +702,7 @@ def start_notices(directory=None):
             if noted.exists() and noted.read_text() == text:
                 continue
             noted.write_text(text)
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             continue
         notices.append(text)
     for bad in sorted(directory.glob('*.bad')):
@@ -705,7 +712,7 @@ def start_notices(directory=None):
             if noted.exists() and noted.read_text() == text:
                 continue
             noted.write_text(text)
-        except OSError:
+        except (OSError, ValueError):
             continue
         notices.append(text)
     notices += lock_notices(directory)
@@ -832,7 +839,10 @@ def main():
     notices += coordinator
     notices += drain_notices(config)
     notices += sweep_notices(config)
-    notices += start_notices()
+    try:
+        notices += start_notices()
+    except Exception as error:
+        notices.append('the fleet-start queue could not be read: %r' % error)
     deliver_notices(config, state, notices, rpc, time.time())
     if notices:
         print('fleet-watch: ' + '; '.join(notices))
