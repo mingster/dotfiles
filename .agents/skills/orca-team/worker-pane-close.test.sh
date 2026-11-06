@@ -895,7 +895,7 @@ echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}
 echo '{"ok":true,"result":{"workers":[{"dispatchId":"dh","state":"released","stage":"released","workspace":"repo1::/nonexistent/gone"}]}}' > "$F2/workers-run0.json"
 echo '{"result":{"state":"released","stage":"released","workspace":"repo1::/nonexistent/gone"}}' > "$F2/show.dh"
 echo t_remote > "$F2/state/dh"
-echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":["niteking"]},"terminals":[]}}' > "$F2/terminals.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":["other-host"]},"terminals":[]}}' > "$F2/terminals.json"
 ( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
 check "#597 a host that does not answer keeps its records" "$([ -e "$F2/state/dh" ]; echo $?)"
 unset F2
