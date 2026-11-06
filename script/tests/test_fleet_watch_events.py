@@ -211,5 +211,55 @@ class WorkflowNotices(unittest.TestCase):
         self.assertEqual(fw.workflow_notices({'pr_watch': {'repos': [REPO]}}, {}, self.NOW, fetch=None, act=None), [])
 
 
+class BackupNotices(unittest.TestCase):
+    NOW = 1_000_000.0
+    CONFIG = {'backup': {'stamp': '/stamp', 'issue_repo': REPO}}
+
+    def setUp(self):
+        self.commands = []
+        self.code = 0
+
+    def act(self, command):
+        self.commands.append(command)
+        return self.code
+
+    def notices(self, state, age):
+        return fw.backup_notices(self.CONFIG, state, self.NOW, stamp_time=lambda path: self.NOW - age, act=self.act)
+
+    def test_fresh_backup_is_quiet(self):
+        self.assertEqual(self.notices({}, 29 * 60), [])
+        self.assertEqual(self.commands, [])
+
+    def test_stale_backup_opens_one_issue(self):
+        state = {}
+        self.assertIn('backup', self.notices(state, 31 * 60)[0])
+        self.assertEqual(self.notices(state, 36 * 60), [])
+        self.assertEqual([command[1:3] for command in self.commands], [['issue', 'create']])
+
+    def test_next_outage_opens_a_new_issue(self):
+        state = {}
+        self.notices(state, 31 * 60)
+        self.notices(state, 60)
+        self.notices(state, 31 * 60)
+        self.assertEqual(len(self.commands), 2)
+
+    def test_failed_issue_is_reported_and_retried(self):
+        state = {}
+        self.code = 1
+        self.assertIn('issue not opened', self.notices(state, 31 * 60)[0])
+        self.code = 0
+        self.notices(state, 36 * 60)
+        self.assertEqual(len(self.commands), 2)
+
+    def test_missing_stamp_counts_as_stale(self):
+        def gone(path):
+            raise OSError
+        fw.backup_notices(self.CONFIG, {}, self.NOW, stamp_time=gone, act=self.act)
+        self.assertEqual(len(self.commands), 1)
+
+    def test_no_backup_configured_runs_nothing(self):
+        self.assertEqual(fw.backup_notices({}, {}, self.NOW, stamp_time=None, act=None), [])
+
+
 if __name__ == '__main__':
     unittest.main()
