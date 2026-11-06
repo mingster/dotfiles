@@ -2,7 +2,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 # trunk_check against a real git fixture: origin/main is a local ref, base/head come from commits.
-eval "$(sed -n '/^locale_additive() {/,/^}$/p;/^trunk_check() {/,/^}$/p' "$here/lead-merge.sh")"
+eval "$(sed -n '/^locale_mergeable() {/,/^}$/p;/^trunk_check() {/,/^}$/p' "$here/lead-merge.sh")"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -54,26 +54,40 @@ on_pr && sed -i.bak 's/"a": "A",/"a": "A",\n  "z": "pr",/' web/locales/en.json &
 finish '["web/locales/en.json"]'
 run_check "same key added with different values is refused" 1 "trunk changed web/locales/en.json"
 
-# 3. main changes an existing value, PR adds another key: refused
+# 3. main changes an existing value, PR adds another key: accepted
 new_case
 git checkout -q main && sed -i.bak 's/"c": "C"/"c": "changed"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all main
 on_pr && sed -i.bak 's/"f": "F"/"f": "F",\n  "p": "P"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all pr
 finish '["web/locales/en.json"]'
-run_check "main changing an existing key is refused" 1 "trunk changed web/locales/en.json"
+run_check "main changing a key the PR left alone is accepted" 0
 
-# 4. PR changes an existing value, main adds a key: refused
+# 4. PR changes an existing value, main adds a key: accepted
 new_case
 git checkout -q main && sed -i.bak 's/"f": "F"/"f": "F",\n  "m": "M"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all main
 on_pr && sed -i.bak 's/"a": "A"/"a": "changed"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all pr
 finish '["web/locales/en.json"]'
-run_check "PR changing an existing key is refused" 1 "trunk changed web/locales/en.json"
+run_check "PR changing a key main left alone is accepted" 0
 
-# 5. main removes an existing key, PR adds a key: refused
+# 5. main removes an existing key, PR adds a key: accepted
 new_case
 git checkout -q main && sed -i.bak '/"c": "C",/d' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all main
 on_pr && sed -i.bak 's/"f": "F"/"f": "F",\n  "p": "P"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all pr
 finish '["web/locales/en.json"]'
-run_check "main removing an existing key is refused" 1 "trunk changed web/locales/en.json"
+run_check "main removing a key the PR left alone is accepted" 0
+
+# 5b. both sides change one key to different text: refused
+new_case
+git checkout -q main && sed -i.bak 's/"c": "C"/"c": "main"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all main
+on_pr && sed -i.bak 's/"c": "C"/"c": "pr"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all pr
+finish '["web/locales/en.json"]'
+run_check "both sides changing one key differently is refused" 1 "trunk changed web/locales/en.json"
+
+# 5c. main removes a key the PR changed: refused
+new_case
+git checkout -q main && sed -i.bak '/"e": "E",/d' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all main
+on_pr && sed -i.bak 's/"e": "E"/"e": "changed"/' web/locales/en.json && rm -f web/locales/en.json.bak && commit_all pr
+finish '["web/locales/en.json"]'
+run_check "main removing a key the PR changed is refused" 1 "trunk changed web/locales/en.json"
 
 # 6. textual conflict in the same lines of a locale file: refused
 new_case
