@@ -28,7 +28,8 @@ cat > "$tmp/bin/orca" <<'PY'
 import json,os,sys
 from pathlib import Path
 (Path(os.environ['FIXTURE_ROOT'])/'launch.json').write_text(json.dumps(sys.argv[1:]))
-print('{"ok":true}')
+print(os.environ.get('FAKE_START_OUT', '{"ok":true}'))
+sys.exit(int(os.environ.get('FAKE_START_RC', '0')))
 PY
 cat > "$tmp/bin/gh" <<'PY'
 #!/usr/bin/env python3
@@ -200,5 +201,26 @@ for args in '--pr x' '--author-family gpt' '--head invalid'; do
 done
 "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 > "$tmp/out" 2> "$tmp/err"
 check 'missing required CLI arguments refuse' "$([ $? -ne 0 ]; echo $?)"
+# The reviewer's owner record: written when the worker starts, from the dispatch id in worker-start's output
+export WORKER_DONE_OWNER_DIR="$tmp/owners"
+valid; rm -rf "$tmp/owners"
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_rev1"}}}' run --owner term_lead_Z
+check 'reviewer start with an owner succeeds' "$?"
+check 'record has the owner and the reviewer proof fields' "$([ "$(cat "$tmp/owners/ctx_rev1" 2>/dev/null)" = "$(printf 'term_lead_Z\nkind=reviewer\nrepo=mingster/dotfiles\npr=42')" ]; echo $?)"
+check 'worker-start output still reaches the caller' "$(grep -q ctx_rev1 "$tmp/out"; echo $?)"
+valid; rm -rf "$tmp/owners"
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_rev2"}}}' run
+check 'no owner: record has an empty first line' "$([ "$(head -n 1 "$tmp/owners/ctx_rev2" | wc -c)" -le 1 ] && grep -q kind=reviewer "$tmp/owners/ctx_rev2"; echo $?)"
+valid; rm -rf "$tmp/owners"
+run --owner term_lead_Z
+check 'no dispatch id in the output: no record, still succeeds' "$([ ! -e "$tmp/owners" ] || [ -z "$(ls "$tmp/owners")" ]; echo $?)"
+valid; rm -rf "$tmp/owners"
+FAKE_START_OUT='{"ok":true,"result":{"dispatch":{"dispatchId":"ctx_rev3"}}}' run --dry-run --owner term_lead_Z
+check 'dry run writes no record' "$([ ! -e "$tmp/owners/ctx_rev3" ]; echo $?)"
+valid; rm -rf "$tmp/owners"
+FAKE_START_RC=3 FAKE_START_OUT='{"ok":false,"result":{"dispatch":{"dispatchId":"ctx_rev4"}}}' run --owner term_lead_Z
+rc=$?
+check 'a failed start keeps its exit code and writes no record' "$([ "$rc" = 3 ] && [ ! -e "$tmp/owners/ctx_rev4" ]; echo $?)"
+unset WORKER_DONE_OWNER_DIR
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

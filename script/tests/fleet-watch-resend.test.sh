@@ -387,6 +387,33 @@ class DrainCounts(unittest.TestCase):
         self.assertEqual(len(claimed), 1)
         self.assertEqual(len(watch.drain_notices(self.config, self.path)), 1)
 
+
+class Sweep(unittest.TestCase):
+    def test_each_run_is_swept_once_per_pass_and_output_lines_become_notices(self):
+        config = {'runs': [{'id': 'r1', 'terminal': 'term_first', 'waiter_pattern': 'w1'},
+                           {'id': 'r2', 'terminal': 'term_second', 'waiter_pattern': 'w2'}]}
+        calls = []
+        def runner(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout='worker-done sweep: d1 seat kept, x\n\n', stderr='')
+        notices = watch.sweep_notices(config, runner)
+        self.assertEqual(len(calls), 2)
+        for command, run, terminal in zip(calls, ('r1', 'r2'), ('term_first', 'term_second')):
+            self.assertEqual(command[0], 'bash')
+            self.assertTrue(command[1].endswith('worker-done-relay.sh'))
+            self.assertEqual(command[2:], ['sweep', '--coordinator', terminal, '--run', run])
+        self.assertEqual(notices, ['worker-done sweep: d1 seat kept, x'] * 2)
+        self.assertNotIsInstance(notices[0], watch.Urgent)
+
+    def test_failing_sweep_adds_no_notice_and_does_not_stop_the_pass(self):
+        config = {'runs': [{'id': 'r1', 'terminal': 'term_first', 'waiter_pattern': 'w1'}]}
+        def runner(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, 1)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(watch.sweep_notices(config, runner), [])
+        self.assertIn('sweep failed', err.getvalue())
+
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY

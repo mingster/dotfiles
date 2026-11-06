@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
 # Start the cross family reviewer for a coding worker_done.
 # on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|gemini|antigravity
-#                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
+#                   --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
+# Writes the reviewer's owner record ($WORKER_DONE_OWNER_DIR/<its dispatch id>: the lead handle from --owner, then
+# kind=reviewer, repo=, pr=) so worker-done-relay.sh sweep can release the seat on proof. No dispatch id in the output: no record.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
 #      ON_WORKER_DONE_FLEET_CONFIG selects the fleet-config.json with host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
-usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
-repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
+usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--owner LEAD_HANDLE] [--resolution] [--dry-run]" >&2; exit 2; }
+owner="" repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
     --resolution) resolution=1; shift ;;
-    --repo|--pr|--head|--author-family|--author-provider|--author-model|--worktree|--run|--author-dispatch)
+    --repo|--pr|--head|--author-family|--author-provider|--author-model|--worktree|--run|--author-dispatch|--owner)
       [ $# -ge 2 ] || usage
       case "$1" in
         --repo) repo=$2 ;; --pr) pr=$2 ;; --head) head=$2 ;; --author-family) fam=$2 ;;
         --author-provider) author_provider=$2 ;; --author-model) author_model=$2 ;;
-        --worktree) wt=$2 ;; --run) run=$2 ;; --author-dispatch) author_dispatch=$2 ;;
+        --worktree) wt=$2 ;; --run) run=$2 ;; --author-dispatch) author_dispatch=$2 ;; --owner) owner=$2 ;;
       esac; shift 2 ;;
     *) usage ;;
   esac
@@ -266,4 +268,31 @@ cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --wor
 echo "$cmd"
 [ "$dry" = 1 ] && exit 0
 # shellcheck disable=SC2086
-exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json
+started=$($orca orchestration worker-start --run "$run" --spec "$(cat $brief)" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json)
+rc=$?
+printf '%s\n' "$started"
+[ "$rc" = 0 ] || exit "$rc"
+reviewer_dispatch=$(printf '%s' "$started" | python3 -c '
+import json, re, sys
+def find(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("dispatchId"), str):
+            return node["dispatchId"]
+        node = list(node.values())
+    if isinstance(node, list):
+        for value in node:
+            found = find(value)
+            if found:
+                return found
+try:
+    found = find(json.load(sys.stdin))
+except ValueError:
+    found = None
+print(found if found and re.fullmatch(r"[A-Za-z0-9_-]+", found) else "")
+')
+if [ -n "$reviewer_dispatch" ]; then
+  owners=${WORKER_DONE_OWNER_DIR:-$HOME/.claude/state/dispatch-owners}
+  { mkdir -p "$owners" && printf '%s\nkind=reviewer\nrepo=%s\npr=%s\n' "$owner" "$repo" "$pr" > "$owners/$reviewer_dispatch"; } \
+    || echo "on-worker-done: could not write the owner record for $reviewer_dispatch" >&2
+fi
+exit 0

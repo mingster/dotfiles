@@ -691,6 +691,21 @@ def drain_notices(config, path=None, keep=False):
     return ['lead stops dropped from the coordinator inbox: ' + ', '.join('%s %d' % (names.get(h, h), n) for h, n in counts.items())]
 
 
+def sweep_notices(config, runner=subprocess.run):
+    """Run the worker_done sweep once per run. Its stdout lines (seats kept for lack of proof) become digest notices."""
+    relay = str(Path(__file__).resolve().with_name('worker-done-relay.sh'))
+    notices = []
+    for run in config.get('runs', []):
+        try:
+            done = runner(['bash', relay, 'sweep', '--coordinator', run['terminal'], '--run', run['id']],
+                          capture_output=True, text=True, timeout=300)
+        except (subprocess.SubprocessError, OSError) as error:
+            print('fleet-watch: sweep failed for %s: %r' % (run['id'], error), file=sys.stderr)
+            continue
+        notices.extend(line for line in (done.stdout or '').splitlines() if line.strip())
+    return notices
+
+
 def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of=owning_lead):
     """Queue notices per terminal and send what is due. A run terminal is typed into only when its run has "typed": true.
     A Verdict goes at once to the lead that owns its author dispatch, else to the digest."""
@@ -760,6 +775,7 @@ def main():
     notices += pr_notices(config, state, time.time())
     notices += coordinator
     notices += drain_notices(config)
+    notices += sweep_notices(config)
     deliver_notices(config, state, notices, rpc, time.time())
     if notices:
         print('fleet-watch: ' + '; '.join(notices))
