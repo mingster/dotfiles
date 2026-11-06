@@ -218,19 +218,19 @@ class BackupNotices(unittest.TestCase):
     def setUp(self):
         self.commands = []
         self.code = 0
-        self.open_titles = []
+        self.backup_exists_result = False
 
     def act(self, command):
         self.commands.append(command)
         return self.code
 
-    def list_open(self, repo):
-        return list(self.open_titles)
+    def backup_issue_exists(self, repo):
+        return self.backup_exists_result
 
     def notices(self, state, age):
         return fw.backup_notices(
             self.CONFIG, state, self.NOW,
-            stamp_time=lambda path: self.NOW - age, act=self.act, list_open=self.list_open)
+            stamp_time=lambda path: self.NOW - age, act=self.act, backup_issue_exists=self.backup_issue_exists)
 
     def test_fresh_backup_is_quiet(self):
         self.assertEqual(self.notices({}, 29 * 60), [])
@@ -251,19 +251,19 @@ class BackupNotices(unittest.TestCase):
 
     def test_duplicate_open_issue_skips_create(self):
         state = {}
-        self.open_titles = [fw.AGENT_STATE_BACKUP_STALE_TITLE]
+        self.backup_exists_result = True
         self.assertEqual(self.notices(state, 31 * 60), [])
         self.assertEqual(self.commands, [])
 
-    def test_gh_issue_list_failure_skips_create_and_sets_no_flag(self):
+    def test_backup_search_failure_skips_create_and_sets_no_flag(self):
         state = {}
 
-        def list_open_returns_none(repo):
+        def backup_search_returns_none(repo):
             return None
 
         n = fw.backup_notices(
             self.CONFIG, state, self.NOW,
-            stamp_time=lambda path: self.NOW - 31 * 60, act=self.act, list_open=list_open_returns_none)
+            stamp_time=lambda path: self.NOW - 31 * 60, act=self.act, backup_issue_exists=backup_search_returns_none)
         self.assertEqual(n, [])
         self.assertEqual(self.commands, [])
         self.assertNotIn('backup_issue', state)
@@ -280,7 +280,7 @@ class BackupNotices(unittest.TestCase):
         def gone(path):
             raise OSError
         fw.backup_notices(
-            self.CONFIG, {}, self.NOW, stamp_time=gone, act=self.act, list_open=self.list_open)
+            self.CONFIG, {}, self.NOW, stamp_time=gone, act=self.act, backup_issue_exists=self.backup_issue_exists)
         self.assertEqual(len(self.commands), 1)
 
     def test_no_backup_configured_runs_nothing(self):

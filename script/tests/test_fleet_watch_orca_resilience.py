@@ -81,7 +81,7 @@ class MainOrcaInventoryFailure(unittest.TestCase):
             with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', side_effect=run_gh_side_effect), \
-                    patch.object(fw, 'open_issue_titles', return_value=[]), \
+                    patch.object(fw, 'open_backup_issue_exists', return_value=False), \
                     patch.object(fw, 'fetch_prs', fetch_prs_side_effect), \
                     patch.object(fw, 'deliver_notices', side_effect=capture_deliver), \
                     patch.object(fw.time, 'time', return_value=now):
@@ -122,7 +122,7 @@ class MainOrcaInventoryFailure(unittest.TestCase):
             with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', return_value=0), \
-                    patch.object(fw, 'open_issue_titles', return_value=[]), \
+                    patch.object(fw, 'open_backup_issue_exists', return_value=False), \
                     patch.object(fw, 'fetch_prs', return_value=[]), \
                     patch.object(fw, 'deliver_notices', side_effect=capture_deliver), \
                     patch.object(fw.time, 'time', return_value=now):
@@ -148,6 +148,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
             gh_calls = []
             fetch_repos = []
 
+            delivered = []
+
             def rpc_side_effect(*args):
                 if args[:2] == ('orchestration', 'inbox'):
                     return {'messages': []}
@@ -163,15 +165,21 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 fetch_repos.append(repo)
                 return []
 
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+                delivered.extend(list(new_lines))
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+
             with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', side_effect=run_gh_side_effect), \
-                    patch.object(fw, 'open_issue_titles', return_value=[]), \
+                    patch.object(fw, 'open_backup_issue_exists', return_value=False), \
                     patch.object(fw, 'fetch_prs', side_effect=fetch_prs_side_effect), \
+                    patch.object(fw, 'deliver_notices', side_effect=capture_deliver), \
                     patch.object(fw.time, 'time', return_value=now):
                 code = fw.main()
             self.assertEqual(code, 0)
             self.assertEqual(fetch_repos, [REPO])
+            self.assertTrue(any(fw.ORCA_SKIP_NOTICE in line for line in delivered))
 
     def test_malformed_inbox_missing_messages_field_skips_and_runs_checks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -203,15 +211,109 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 fetch_repos.append(repo)
                 return []
 
+            delivered = []
+
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+                delivered.extend(list(new_lines))
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+
             with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', side_effect=run_gh_side_effect), \
-                    patch.object(fw, 'open_issue_titles', return_value=[]), \
+                    patch.object(fw, 'open_backup_issue_exists', return_value=False), \
                     patch.object(fw, 'fetch_prs', side_effect=fetch_prs_side_effect), \
+                    patch.object(fw, 'deliver_notices', side_effect=capture_deliver), \
                     patch.object(fw.time, 'time', return_value=now):
                 code = fw.main()
             self.assertEqual(code, 0)
             self.assertEqual(fetch_repos, [REPO])
+            self.assertTrue(any(fw.ORCA_SKIP_NOTICE in line for line in delivered))
+
+    def test_terminal_show_refused_skips_alerts_with_skip_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            now = 1_000_000.0
+            stamp = _stale_stamp_file(directory, now)
+            config = {
+                'runs': [{'id': 'r', 'terminal': 'term_x', 'waiter_pattern': 'waiter_pat'}],
+                'leads': [{'name': 'lead1', 'terminal': 'term_lead'}],
+                'backup': {'stamp': str(stamp), 'issue_repo': 'owner/repo'},
+                'pr_watch': {'repos': [REPO]},
+            }
+            cfg_path = directory / 'config.json'
+            state_path = directory / 'state.json'
+            cfg_path.write_text(json.dumps(config))
+            state_path.write_text('{}')
+            delivered = []
+
+            def rpc_side_effect(*args):
+                if args[:2] == ('orchestration', 'inbox'):
+                    return {'messages': []}
+                if len(args) >= 2 and args[1] == 'worker-list':
+                    return {'workers': [], 'page': {'hasMore': False}}
+                if args[:2] == ('terminal', 'show'):
+                    raise fw.OrcaReadError('terminal refused')
+                return {}
+
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+                delivered.extend(list(new_lines))
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+
+            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
+                    patch.object(fw, 'run_gh', return_value=0), \
+                    patch.object(fw, 'open_backup_issue_exists', return_value=False), \
+                    patch.object(fw, 'fetch_prs', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', side_effect=capture_deliver), \
+                    patch.object(fw.time, 'time', return_value=now):
+                code = fw.main()
+            self.assertEqual(code, 0)
+            self.assertTrue(any(fw.ORCA_SKIP_NOTICE in line for line in delivered))
+
+    def test_pgrep_failure_skips_alerts_with_skip_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            now = 1_000_000.0
+            stamp = _stale_stamp_file(directory, now)
+            config = {
+                'runs': [{'id': 'r', 'terminal': 'term_x', 'waiter_pattern': 'waiter_pat'}],
+                'backup': {'stamp': str(stamp), 'issue_repo': 'owner/repo'},
+                'pr_watch': {'repos': [REPO]},
+            }
+            cfg_path = directory / 'config.json'
+            state_path = directory / 'state.json'
+            cfg_path.write_text(json.dumps(config))
+            state_path.write_text('{}')
+            delivered = []
+            real_run = fw.subprocess.run
+
+            def rpc_side_effect(*args):
+                if args[:2] == ('orchestration', 'inbox'):
+                    return {'messages': []}
+                if len(args) >= 2 and args[1] == 'worker-list':
+                    return {'workers': [], 'page': {'hasMore': False}}
+                return {}
+
+            def subprocess_run_side_effect(cmd, **kwargs):
+                if cmd[:1] == ['pgrep']:
+                    raise subprocess.TimeoutExpired('pgrep', 5)
+                return real_run(cmd, **kwargs)
+
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+                delivered.extend(list(new_lines))
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+
+            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
+                    patch.object(fw.subprocess, 'run', side_effect=subprocess_run_side_effect), \
+                    patch.object(fw, 'run_gh', return_value=0), \
+                    patch.object(fw, 'open_backup_issue_exists', return_value=False), \
+                    patch.object(fw, 'fetch_prs', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', side_effect=capture_deliver), \
+                    patch.object(fw.time, 'time', return_value=now):
+                code = fw.main()
+            self.assertEqual(code, 0)
+            self.assertTrue(any(fw.ORCA_SKIP_NOTICE in line for line in delivered))
 
 
 if __name__ == '__main__':
