@@ -32,8 +32,9 @@ print('{"ok":true}')
 PY
 cat > "$tmp/bin/gh" <<'PY'
 #!/usr/bin/env python3
-import json,os
+import json,os,sys
 from pathlib import Path
+if os.environ.get('GH_RC','0')!='0': sys.exit(int(os.environ['GH_RC']))
 print((Path(os.environ['FIXTURE_ROOT'])/'checks.json').read_text())
 PY
 chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
@@ -90,8 +91,7 @@ for body in \
   "Checks: FAIL head=$head" \
   "Checks: PASS head=$head|Command: bun test|Tests executed: 0|Load errors: 0" \
   "Checks: PASS head=$head|Command: bun test|Tests executed: 1|Load errors: 1" \
-  "Checks: PASS head=$head|Command: bun test" \
-  'Checks: PASS head=ffffffffffffffffffffffffffffffffffffffff'; do
+  "Checks: PASS head=$head|Command: bun test"; do
   valid
   CHECKS_BODY="$body" python3 - "$tmp/checks.json" <<'PY'
 import json,os,sys
@@ -99,6 +99,47 @@ with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHEC
 PY
   refuses "canonical receipt refuses: $body"
 done
+# No receipt at the exact head: QA starts and the brief says Checks are pending.
+pending_case() {
+  valid
+  printf '%s\n' "$2" > "$tmp/checks.json"
+  rm -f "$tmp/briefs"/reviewer-brief.*
+  run --dry-run
+  rc=$?
+  check "$1 starts QA" "$rc"
+  brief=$(ls -t "$tmp/briefs"/reviewer-brief.* 2>/dev/null | head -1)
+  check "$1 brief says Checks are pending" "$([ -n "$brief" ] && grep -q 'Checks are pending' "$brief"; echo $?)"
+}
+pending_case 'no receipt at all' '{"comments":[]}'
+pending_case 'unrelated comment only' '{"comments":[{"body":"looks good"}]}'
+pending_case 'receipt for another head' '{"comments":[{"body":"Checks: PASS head=ffffffffffffffffffffffffffffffffffffffff\nCommand: docs-check\n"}]}'
+pending_case 'FAIL receipt for another head' '{"comments":[{"body":"Checks: FAIL head=ffffffffffffffffffffffffffffffffffffffff"}]}'
+valid
+printf '{"comments":[{"body":"Checks: FAIL head=ffffffffffffffffffffffffffffffffffffffff"},{"body":"Checks: PASS head=%s\\nCommand: docs-check\\n"}]}\n' "$head" > "$tmp/checks.json"
+rm -f "$tmp/briefs"/reviewer-brief.*
+run --dry-run
+brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
+check 'PASS at exact head amid other heads starts' "$?"
+check 'PASS at exact head is not marked pending' "$(grep -q 'Checks are pending' "$brief"; echo $((1-$?)))"
+# A failed comment read is not a missing receipt.
+valid
+GH_RC=1 refuses 'gh failure refuses'
+check 'gh failure names unreadable receipts' "$(grep -q 'cannot read head-checks receipts' "$tmp/err"; echo $?)"
+valid
+printf 'not-json\n' > "$tmp/checks.json"
+refuses 'unparseable comments refuse'
+check 'unparseable comments name unreadable receipts' "$(grep -q 'cannot read head-checks receipts' "$tmp/err"; echo $?)"
+valid
+printf '{"comments":[{"body":"Checks: PASS head=ffffffffffffffffffffffffffffffffffffffff"},{"body":"Checks: FAIL head=%s"}]}\n' "$head" > "$tmp/checks.json"
+refuses 'FAIL at exact head refuses despite PASS at another head'
+# Footer: pending is not a failure, a FAIL still stops the review.
+valid
+printf '{"comments":[]}\n' > "$tmp/checks.json"
+rm -f "$tmp/briefs"/reviewer-brief.*
+run --dry-run
+brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
+check 'footer lets a pending receipt through' "$(grep -q 'not a failure' "$brief"; echo $?)"
+check 'footer stops the review on FAIL' "$(grep -q 'If it is Checks: FAIL, stop the review' "$brief"; echo $?)"
 valid
 printf '{"comments":[{"body":"Checks: FAIL head=%s"}]}\n' "$head" > "$tmp/checks.json"
 run
