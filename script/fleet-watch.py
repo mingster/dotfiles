@@ -431,6 +431,7 @@ def pr_notices(config, state, now, fetch=fetch_prs):
 
 
 RUN_WINDOW = 2 * 3600
+BACKUP_LIMIT = 30 * 60
 
 
 def fetch_failed_runs(repo):
@@ -485,6 +486,28 @@ def workflow_notices(config, state, now, fetch=fetch_failed_runs, act=run_gh):
                 notices.append(f'{repo}: {title}, issue not opened')
         handled[repo] = done
     return notices
+
+
+def backup_notices(config, state, now, stamp_time=os.path.getmtime, act=run_gh):
+    """Open one issue per outage when the last good backup is over 30 minutes old."""
+    backup = config.get('backup')
+    if not backup:
+        return []
+    try:
+        age = now - stamp_time(backup['stamp'])
+    except OSError:
+        age = BACKUP_LIMIT + 1
+    if age <= BACKUP_LIMIT:
+        state.pop('backup_issue', None)
+        return []
+    if state.get('backup_issue'):
+        return []
+    title = 'agent-state backup has not pushed for 30 minutes'
+    if act(['gh', 'issue', 'create', '--repo', backup['issue_repo'], '--title', title,
+            '--body', 'Read the sync log on the coordinator. `scan.sh` may have refused a file.']):
+        return [f'{title}, issue not opened']
+    state['backup_issue'] = True
+    return [title]
 
 
 def usage_notices(config, run=subprocess.run):
@@ -678,6 +701,7 @@ def main():
     notices += pr_notices(config, state, time.time())
     notices += usage_notices(config)
     notices += workflow_notices(config, state, time.time())
+    notices += backup_notices(config, state, time.time())
     notices += coordinator
     lines = []
     if notices:
