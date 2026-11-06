@@ -915,6 +915,15 @@ if [ -d "$loose_root" ]; then
   done
 fi
 # Stale: unmerged, no open PR, at least 8 h old, nothing running. Deleted with --apply.
+# A local branch with a commit on no origin ref holds work that exists only on this host: it is never deleted, and an
+# unreadable count keeps it too. Checked again right before the delete.
+local_unpushed() { # name; succeeds when the local branch is absent or has nothing unpushed
+  local n
+  git show-ref --verify --quiet "refs/heads/$1" || return 1
+  n=$(git rev-list --count "refs/heads/$1" --not --remotes=origin 2>/dev/null) || return 0
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -gt 0 ]
+}
 stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
   now=$(date +%s)
@@ -940,6 +949,7 @@ if [ "$pr_ok" -eq 1 ]; then
     done
     [ $((now - newest)) -ge 28800 ] || continue
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
+    if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
     if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
     stale_found=$((stale_found+1))
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
@@ -947,6 +957,7 @@ if [ "$pr_ok" -eq 1 ]; then
     # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
     if [ "$apply" -eq 1 ]; then
       if ! fresh_inventory 'deleting no more stale branches'; then keep "stale $name" 'worktree inventory unavailable'; continue; fi
+      if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
       now_wt=$(checkout_of "$name")
       if [ -n "$now_wt" ] && [ "$now_wt" != "$wt" ]; then
         if in_use "$now_wt"; then keep "stale $name" "checked out in $now_wt, $busy"
