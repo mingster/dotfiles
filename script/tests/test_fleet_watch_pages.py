@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -64,7 +66,10 @@ class WorkerPages(unittest.TestCase):
         with patch.object(fw, 'rpc', side_effect=lambda *a: pages[(
                 a[1], a[a.index('--run') + 1] if '--run' in a else None,
                 a[a.index('--cursor') + 1] if '--cursor' in a else None)]):
-            receipt = fw.admit('fleet-1', {'host_caps': {'fleet-1': 4}})
+            with tempfile.TemporaryDirectory() as directory:
+                fleet_config = Path(directory) / 'fleet-config.json'
+                fleet_config.write_text(json.dumps({'host_caps': {'fleet-1': 4}}))
+                receipt = fw.admit('fleet-1', {'fleet_config': str(fleet_config)})
         self.assertFalse(receipt['admitted'])
 
 

@@ -4,7 +4,7 @@
 #                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
 # Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
 # Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
-#      ON_WORKER_DONE_FLEET_CONFIG selects configured host caps and optional load ceilings.
+#      ON_WORKER_DONE_FLEET_CONFIG selects the fleet-config.json with host caps and optional load ceilings.
 #      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
@@ -135,7 +135,7 @@ host_flags=()
 worktree_selector=""
 fleet_config="${ON_WORKER_DONE_FLEET_CONFIG:-}"
 if [ -z "$fleet_config" ]; then
-  fleet_config="$HOME/.config/fleet-watch/config.json"
+  fleet_config="$HOME/.claude/state/fleet-config.json"
 fi
 policy=${ON_WORKER_DONE_ADMISSION_POLICY:-}
 if [ -n "$policy" ] && [ ! -f "$policy" ]; then

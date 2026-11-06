@@ -1,6 +1,5 @@
 {
   "runs": [],
-  "host_caps": {},
   "leads": [],
   "pr_watch": {
     "repos": ["mingster/dotfiles", "mingster/project-a"],

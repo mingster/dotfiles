@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One bounded watchdog pass; schedule every minute outside the coordinator.
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
-host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive and
+fleet_config (path to fleet-config.json, the one source of host_caps and host_load_ceilings),
+leads [{name, terminal}] whose panes must stay alive and
 pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices;
 --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. No lifecycle mutations.
@@ -10,10 +11,20 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
 import time
+
+
+class Urgent(str):
+    """A notice that skips the digest wait. alerts() returns this type, so routing never reads the text."""
+
+
+class Verdict(str):
+    """A Verdict notice. `author` is the author dispatch named on the Verdict line, or None."""
+    author = None
 
 
 def rpc(*args):
@@ -224,7 +235,21 @@ def admit(host, config, workers=None):
     """Evaluate host admission under its configured cap.
     Returns an admission receipt dict. Missing/failed remote inventory and release_unknown never authorize a start.
     """
-    cap = config.get('host_caps', {}).get(host, 4)
+    try:
+        cap = load_fleet_config(config)['host_caps'].get(host, DEFAULT_HOST_CAP)
+    except RuntimeError as error:
+        return {
+            'ok': False,
+            'admitted': False,
+            'host': host,
+            'cap': None,
+            'occupied': None,
+            'live_count': 0,
+            'retained_count': 0,
+            'resources': [],
+            'reason': str(error),
+            'receipt': {'host': host, 'admitted': False, 'status': 'rejected', 'error': 'fleet config unreadable'}
+        }
     if workers is None:
         try:
             workers = fetch_workers(config)
@@ -308,6 +333,23 @@ def admit(host, config, workers=None):
     }
 
 
+FLEET_CONFIG_DEFAULT = os.path.expanduser('~/.claude/state/fleet-config.json')
+DEFAULT_HOST_CAP = 4
+
+
+def load_fleet_config(config):
+    """host_caps and host_load_ceilings from fleet-config.json, the one source for both. Raises when unreadable."""
+    path = config.get('fleet_config') or FLEET_CONFIG_DEFAULT
+    try:
+        data = json.loads(Path(path).read_text())
+        caps = data['host_caps']
+        if not isinstance(caps, dict):
+            raise ValueError('host_caps must be an object')
+        return {'host_caps': caps, 'host_load_ceilings': data.get('host_load_ceilings', {})}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise RuntimeError('fleet config %s unreadable: %r' % (path, error))
+
+
 def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None):
     notices = []
     counts = {}
@@ -320,7 +362,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
         retried = any(w.get('taskId') == worker.get('taskId') and w.get('dispatchStatus') != 'failed' for w in workers) if worker.get('taskId') else False
         if status == 'failed' and not retried and dispatch not in state['failed']:
             if not baseline:
-                notices.append('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity')
+                notices.append(Urgent('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity'))
             state['failed'].append(dispatch)
 
     deduped = deduplicate_workers(workers)
@@ -330,9 +372,17 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
             host = info['host']
             counts[host] = counts.get(host, 0) + 1
 
-    for host, cap in config.get('host_caps', {}).items():
+    try:
+        caps = load_fleet_config(config)['host_caps']
+        state.pop('fleet_config_failed', None)
+    except RuntimeError as error:
+        caps = {}
+        if not state.get('fleet_config_failed'):
+            state['fleet_config_failed'] = True
+            notices.append('%s; host caps are not checked and no start is admitted until it reads' % error)
+    for host, cap in caps.items():
         if counts.get(host, 0) > cap:
-            notices.append('host cap exceeded: %s %d/%d (includes child dispatches)' % (host, counts[host], cap))
+            notices.append(Urgent('host cap exceeded: %s %d/%d (includes child dispatches)' % (host, counts[host], cap)))
     # A lead pane can vanish (terminal_not_found) while its merges silently stop.
     dead = state.setdefault('dead_leads', [])
     for lead in config.get('leads', []):
@@ -341,7 +391,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
             if handle in dead:
                 dead.remove(handle)
         elif handle not in dead:
-            notices.append('lead pane gone: %s (%s); restart it or move its PRs to a live lead' % (lead['name'], handle))
+            notices.append(Urgent('lead pane gone: %s (%s); restart it or move its PRs to a live lead' % (lead['name'], handle)))
             dead.append(handle)
     for run in config['runs']:
         key = run['id']
@@ -351,7 +401,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
             continue
         timer = state.setdefault(key, {'since': now, 'alerted': False})
         if now - timer['since'] >= 600 and not timer['alerted']:
-            notices.append('inbox waiter absent for 10 minutes with unacked deliveries: ' + key)
+            notices.append(Urgent('inbox waiter absent for 10 minutes with unacked deliveries: ' + key))
             timer['alerted'] = True
     return notices
 
@@ -395,7 +445,10 @@ def pr_events(repo, old, prs, now, stuck_seconds):
             if first.startswith('Verdict:') and comment['id'] not in verdicts:
                 verdicts.append(comment['id'])
                 if not baseline:
-                    events.append('%s #%d %s' % (repo, number, first))
+                    event = Verdict('%s #%d %s' % (repo, number, first))
+                    found = re.search(r'\bauthor=([A-Za-z0-9_-]+)', first)
+                    event.author = found.group(1) if found else None
+                    events.append(event)
         if pr['state'] == 'MERGED' and number not in merged:
             merged.append(number)
             if not baseline:
@@ -535,12 +588,24 @@ def save_state(path, state):
 
 SEND_ERRORS = (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, OSError, ValueError, KeyError)
 NOTICE_PASS_LIMIT = 20
+DIGEST_SECONDS = 600
 
 
-def deliver_notices(config, state, new_lines, rpc_call=rpc):
-    """Send each line to every run terminal that has not got it. A line is dropped once delivered or after 20 passes."""
+def owning_lead(author):
+    """The lead terminal in the owner record for an author dispatch, or None."""
+    if not author or not re.fullmatch(r'[A-Za-z0-9_-]+', author):
+        return None
+    owners = os.environ.get('WORKER_DONE_OWNER_DIR') or os.path.expanduser('~/.claude/state/dispatch-owners')
+    try:
+        lines = (Path(owners) / author).read_text().splitlines()
+    except OSError:
+        return None
+    return lines[0].strip() or None if lines else None
+
+
+def type_notices(terminals, state, new_lines, rpc_call):
+    """Typed lines, only for runs with "typed": true. A line is dropped once delivered or after 20 passes."""
     delivery = state.setdefault('notice_delivery', {})
-    terminals = [run['terminal'] for run in config['runs']]
     failed = set()
     for line in dict.fromkeys(list(new_lines) + list(delivery)):
         entry = delivery.setdefault(line, {'sent': [], 'passes': 0})
@@ -559,6 +624,92 @@ def deliver_notices(config, state, new_lines, rpc_call=rpc):
             print('fleet-watch: giving up notice %r after %d passes, missing %s' % (line, entry['passes'], ', '.join(missing)), file=sys.stderr)
         if not missing or entry['passes'] >= NOTICE_PASS_LIMIT:
             del delivery[line]
+
+
+def queue_notice(queue, term, text, urgent):
+    items = queue.setdefault(term, [])
+    for item in items:
+        if item['text'] == text:
+            item['urgent'] = item['urgent'] or urgent
+            return
+    items.append({'text': text, 'urgent': urgent, 'passes': 0})
+
+
+def flush_queue(state, now, rpc_call):
+    """One orchestration send per terminal: at once when urgent, else at most every DIGEST_SECONDS.
+    A failed send keeps the queue for the next pass; a delivered one clears it."""
+    queue = state.setdefault('notice_queue', {})
+    sent_at = state.setdefault('notice_sent_at', {})
+    for term in list(queue):
+        items = queue[term]
+        if not items:
+            del queue[term]
+            continue
+        if not any(item['urgent'] for item in items) and term in sent_at and now - sent_at[term] < DIGEST_SECONDS:
+            continue
+        try:
+            rpc_call('orchestration', 'send', '--to', term, '--subject', 'fleet-watch digest', '--body', '\n'.join(item['text'] for item in items))
+        except SEND_ERRORS as error:
+            print('fleet-watch: send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
+            kept = []
+            for item in items:
+                item['passes'] += 1
+                if item['passes'] >= NOTICE_PASS_LIMIT:
+                    print('fleet-watch: giving up notice %r after %d passes, missing %s' % (item['text'], item['passes'], term), file=sys.stderr)
+                else:
+                    kept.append(item)
+            queue[term] = kept
+            continue
+        sent_at[term] = now
+        del queue[term]
+
+
+DRAIN_LOG_DEFAULT = os.path.expanduser('~/.claude/state/coordinator-drain.log')
+
+
+def drain_notices(config, path=None, keep=False):
+    """One digest line counting the lead stops coordinator-drain.sh dropped since the last pass, per lead.
+    The log is claimed by rename so drain keeps appending to a fresh file; a claim left by an interrupted pass is read again."""
+    path = Path(path or os.environ.get('COORDINATOR_DRAIN_STATE') or DRAIN_LOG_DEFAULT)
+    claimed = path.with_name(path.name + '.claimed')
+    try:
+        if path.exists():
+            with open(claimed, 'a') as out, open(path) as source:
+                out.write(source.read())
+            path.unlink()
+        handles = claimed.read_text().split()
+    except OSError:
+        return []
+    if not keep:
+        claimed.unlink()
+    counts = {}
+    for handle in handles:
+        counts[handle] = counts.get(handle, 0) + 1
+    if not counts:
+        return []
+    names = {lead['terminal']: lead['name'] for lead in config.get('leads', [])}
+    return ['lead stops dropped from the coordinator inbox: ' + ', '.join('%s %d' % (names.get(h, h), n) for h, n in counts.items())]
+
+
+def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of=owning_lead):
+    """Queue notices per terminal and send what is due. A run terminal is typed into only when its run has "typed": true.
+    A Verdict goes at once to the lead that owns its author dispatch, else to the digest."""
+    now = time.time() if now is None else now
+    runs = config['runs']
+    typed = [run['terminal'] for run in runs if run.get('typed')]
+    digest = [run['terminal'] for run in runs if not run.get('typed')]
+    queue = state.setdefault('notice_queue', {})
+    for notice in new_notices:
+        targets, urgent = digest, isinstance(notice, Urgent)
+        if isinstance(notice, Verdict):
+            lead = owner_of(notice.author)
+            if lead:
+                targets, urgent = [lead], True
+        for term in targets:
+            queue_notice(queue, term, str(notice), urgent)
+    if typed or state.get('notice_delivery'):
+        type_notices(typed, state, [str(notice) for notice in new_notices], rpc_call)
+    flush_queue(state, now, rpc_call)
 
 
 def coordinator_stage(config, state, state_path):
@@ -608,12 +759,10 @@ def main():
     notices = alerts(config, state, time.time(), inbox['messages'], workers, alive, leads)
     notices += pr_notices(config, state, time.time())
     notices += coordinator
-    lines = []
+    notices += drain_notices(config)
+    deliver_notices(config, state, notices, rpc, time.time())
     if notices:
-        lines.append('fleet-watch: ' + '; '.join(notices))
-    deliver_notices(config, state, lines, rpc)
-    if notices:
-        print(lines[0])
+        print('fleet-watch: ' + '; '.join(notices))
     save_state(args.state, state)
     return 0
 

@@ -18,9 +18,16 @@ watch = load('fleet-watch')
 idle = load('worktree-idle')
 scoped = load('run-scoped-tests')
 
+_default = Path(tempfile.mkdtemp()) / 'fleet-config.json'
+_default.write_text('{"host_caps": {}}')
+watch.FLEET_CONFIG_DEFAULT = str(_default)
+watch.DRAIN_LOG_DEFAULT = str(_default.parent / 'drain.log')
+
 class Guards(unittest.TestCase):
     def setUp(self):
-        self.config = {'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'waiter-r'}], 'host_caps': {'local': 1}}
+        caps = Path(tempfile.mkdtemp()) / 'fleet-config.json'
+        caps.write_text(json.dumps({'host_caps': {'local': 1}}))
+        self.config = {'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'waiter-r'}], 'fleet_config': str(caps)}
         self.messages = [{'run_id': 'r', 'read': 0}]
 
     def test_waiter_missing_for_ten_minutes_wakes_once_and_rearms(self):
@@ -79,7 +86,7 @@ class Guards(unittest.TestCase):
             with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
                 self.assertEqual(watch.main(), 0)
                 self.assertEqual(watch.main(), 0)
-            sends = [call for call in calls if call[:2] == ('terminal', 'send')]
+            sends = [call for call in calls if call[:2] == ('orchestration', 'send')]
             self.assertEqual(len(sends), 1)
             self.assertIn('t', sends[0])
             self.assertTrue(json.loads(state.read_text())['r']['alerted'])
