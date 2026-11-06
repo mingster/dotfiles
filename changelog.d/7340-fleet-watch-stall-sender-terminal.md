@@ -1,0 +1,1 @@
+Fleet-watch stall restarts pass `--from` using the configured `runs[].terminal` for the resolved run so `worker-start` works when the watchdog runs outside an Orca terminal; missing terminal logs `stall_no_sender_terminal` and keeps the pending record. Stall retry and worker-stop failure logs include the Orca error code when the CLI returns JSON (else the exception type name).

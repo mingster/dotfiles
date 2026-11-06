@@ -115,6 +115,8 @@ class Stall(unittest.TestCase):
         self.assertIn('--agent', starts[0])
         self.assertIn('claude', starts[0])
         self.assertNotIn('--terminal', starts[0])
+        self.assertIn('--from', starts[0])
+        self.assertIn('tcoord', starts[0])
         edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
         self.assertTrue(any('629' in c and 'needs-elon' in c for c in edits))
         log = self.log_path.read_text()

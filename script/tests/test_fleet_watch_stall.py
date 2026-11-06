@@ -19,6 +19,16 @@ isolated_main_env = _fwe.isolated_main_env
 T0 = 1_700_000_000
 OLD_MS = int((T0 - 4000) * 1000)
 
+STALL_RUNS = [{'id': 'run_fixture', 'terminal': 'term_stall_sender', 'waiter_pattern': 'fw-stall-wait'}]
+
+
+def stall_test_config(worker_stall_extra=None):
+    """Minimal config: stall restarts need a matching runs[].terminal for --from."""
+    cfg = {'runs': list(STALL_RUNS), 'worker_stall': {'label_repo': 'o/r'}}
+    if worker_stall_extra:
+        cfg['worker_stall'] = {**cfg['worker_stall'], **worker_stall_extra}
+    return cfg
+
 
 def base_worker(**kw):
     w = {
@@ -76,33 +86,47 @@ class WorkerStallHelpers(unittest.TestCase):
         self.assertEqual(fw.terminal_branch_map(result), {'t1': 'mingster/fsd-watchdog-fold'})
 
     def test_retry_start_args_uses_agent_not_terminal_after_stop(self):
+        cfg = {'runs': STALL_RUNS}
         w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
-        args = fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored')
+        args = fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg)
         self.assertIsNotNone(args)
         self.assertIn('--task', args)
         self.assertIn('--run', args)
         self.assertEqual(args[args.index('--run') + 1], 'run_fixture')
         self.assertIn('--agent', args)
         self.assertNotIn('--terminal', args)
+        self.assertIn('--from', args)
+        self.assertEqual(args[args.index('--from') + 1], 'term_stall_sender')
         self.assertIn('claude', args)
         w_no_run = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
         del w_no_run['runId']
         w_no_run['_fleet_watch_list_run'] = 'run_from_list'
-        args2 = fw.worker_stall_restart_start_args(w_no_run, 'd1', 'run_persisted')
+        cfg_list = {'runs': [{'id': 'run_from_list', 'terminal': 't_other', 'waiter_pattern': 'w'}]}
+        args2 = fw.worker_stall_restart_start_args(w_no_run, 'd1', 'run_persisted', cfg_list)
         self.assertIsNotNone(args2)
         self.assertEqual(args2[args2.index('--run') + 1], 'run_from_list')
+        self.assertEqual(args2[args2.index('--from') + 1], 't_other')
         w3 = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
         del w3['runId']
-        args3 = fw.worker_stall_restart_start_args(w3, 'd1', 'run_persisted')
+        cfg_persist = {'runs': [{'id': 'run_persisted', 'terminal': 't_persist', 'waiter_pattern': 'w'}]}
+        args3 = fw.worker_stall_restart_start_args(w3, 'd1', 'run_persisted', cfg_persist)
         self.assertIsNotNone(args3)
         self.assertEqual(args3[args3.index('--run') + 1], 'run_persisted')
+        self.assertEqual(args3[args3.index('--from') + 1], 't_persist')
         w2 = base_worker(taskId='t1', resource={'worktreeId': 'id::path'},
                          agentTerminalHandle='', agent='', projection={
                              'host': {'id': 'local'},
                              'outcome': 'in_progress',
                              'liveness': {'verdict': 'idle'},
                          })
-        self.assertIsNone(fw.worker_stall_restart_start_args(w2, 'd1', 'run_z'))
+        self.assertIsNone(fw.worker_stall_restart_start_args(w2, 'd1', 'run_z', cfg))
+
+    def test_retry_start_args_none_without_configured_sender_terminal(self):
+        w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
+        cfg_no_row = {'runs': [{'id': 'other', 'terminal': 't1', 'waiter_pattern': 'w'}]}
+        self.assertIsNone(fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg_no_row))
+        cfg_blank = {'runs': [{'id': 'run_fixture', 'terminal': '', 'waiter_pattern': 'w'}]}
+        self.assertIsNone(fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg_blank))
 
     def test_worker_pr_number_accepts_string_digits(self):
         w = base_worker(githubPullRequestNumber='42')
@@ -144,7 +168,7 @@ class WorkerStallPass(unittest.TestCase):
 
         state = {}
         notices, bits = fw.worker_stall_pass(
-            {'worker_stall': {'label_repo': 'o/r'}}, state, T0, [w], term_times, rpc)
+            stall_test_config(), state, T0, [w], term_times, rpc)
         self.assertEqual(notices, [])
         self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
         self.assertNotIn('stall_restart=', ' '.join(bits))
@@ -166,7 +190,7 @@ class WorkerStallPass(unittest.TestCase):
 
         state = {}
         notices, bits = fw.worker_stall_pass(
-            {'worker_stall': {'label_repo': 'o/r'}}, state, T0, [w], term_times, rpc)
+            stall_test_config(), state, T0, [w], term_times, rpc)
         self.assertEqual(notices, [])
         self.assertTrue(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
         self.assertIn('stall_restart=', ' '.join(bits))
@@ -180,7 +204,7 @@ class WorkerStallPass(unittest.TestCase):
             return {}
 
         notices, bits = fw.worker_stall_pass(
-            {'worker_stall': {'label_repo': 'o/r'}}, {}, T0, [w], {}, rpc, terminal_list_ok=False)
+            stall_test_config(), {}, T0, [w], {}, rpc, terminal_list_ok=False)
         self.assertEqual(notices, [])
         self.assertIn('terminal_list_failed', bits)
         self.assertEqual(calls, [])
@@ -197,7 +221,7 @@ class WorkerStallPass(unittest.TestCase):
             return {}
 
         state = {}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         gh_calls = []
 
         def fake_act(cmd):
@@ -229,15 +253,19 @@ class WorkerStallPass(unittest.TestCase):
                 nonlocal start_attempts
                 start_attempts += 1
                 if start_attempts == 1:
-                    raise RuntimeError('start failed')
+                    body = json.dumps({'ok': False, 'error': {'code': 'no_active_sender_terminal'}})
+                    proc_err = subprocess.CalledProcessError(1, ['orca'], '', body)
+                    err = fw.OrcaReadError('no_active_sender_terminal')
+                    err.orca_error_code = 'no_active_sender_terminal'
+                    raise err from proc_err
             return {}
 
         w = base_worker(dispatchId='d1', taskId='t_retry', resource={'worktreeId': 'wt::/p'})
         term_times = {'term_fix': OLD_MS}
         state = {}
-        cfg = {'worker_stall': {'label_repo': 'o/r'}}
+        cfg = stall_test_config()
         _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc)
-        self.assertIn('stall_stop_start_retry_next=d1', bits1)
+        self.assertIn('stall_stop_start_retry_next=d1:no_active_sender_terminal', bits1)
         self.assertIn('t_retry', state.get('stall_pending_start', {}))
 
         seq.clear()
@@ -249,6 +277,8 @@ class WorkerStallPass(unittest.TestCase):
         self.assertIn('--run', starts[0])
         self.assertEqual(starts[0][starts[0].index('--run') + 1], 'run_fixture')
         self.assertNotIn('--terminal', starts[0])
+        self.assertIn('--from', starts[0])
+        self.assertEqual(starts[0][starts[0].index('--from') + 1], 'term_stall_sender')
 
     def test_pending_start_retries_old_record_without_stored_run_uses_single_config_run(self):
         """Legacy pending (no stall_restart_run_id): retry uses the sole configured run id."""
@@ -299,9 +329,39 @@ class WorkerStallPass(unittest.TestCase):
             return {}
 
         notices, bits = fw.worker_stall_pass(
-            {'worker_stall': {'label_repo': 'o/r'}}, {}, T0, [w], term_times, rpc)
+            stall_test_config(), {}, T0, [w], term_times, rpc)
         self.assertFalse(calls)
         self.assertTrue(any(b.startswith('remote_stall_unknown=') for b in bits))
+
+    def test_stall_no_sender_terminal_skips_restart_and_logs(self):
+        """Without runs[].terminal for the resolved run, do not stop; log and keep trying next pass."""
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            return {}
+
+        w = base_worker(dispatchId='d_ns', projection={
+            'host': {'id': 'local'},
+            'provider': {'id': 'claude', 'model': None},
+            'outcome': 'in_progress',
+            'liveness': {'verdict': 'idle'},
+        })
+        term_times = {'term_fix': OLD_MS}
+        cfg = {'runs': [{'id': 'run_fixture', 'waiter_pattern': 'w'}], 'worker_stall': {'label_repo': 'o/r'}}
+        notices, bits = fw.worker_stall_pass(cfg, {}, T0, [w], term_times, rpc)
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        self.assertTrue(any(b == 'stall_no_sender_terminal=d_ns' for b in bits))
+
+    def test_orchestration_failure_log_code_prefers_json_code(self):
+        body = json.dumps({'ok': False, 'error': {'code': 'task_gone'}})
+        proc = subprocess.CalledProcessError(1, ['orca'], '', body)
+        err = fw.OrcaReadError('task_gone')
+        err.orca_error_code = 'task_gone'
+        self.assertEqual(fw.orchestration_failure_log_code(err), 'task_gone')
+        wrapped = RuntimeError('wrapper')
+        wrapped.__cause__ = proc
+        self.assertEqual(fw.orchestration_failure_log_code(wrapped), 'task_gone')
 
     def test_non_live_sibling_same_task_one_restart_then_label(self):
         """Two rows same task: only the live stalled row restarts; one label after cooldown."""
@@ -326,7 +386,7 @@ class WorkerStallPass(unittest.TestCase):
             return 0
 
         state = {}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         fw.worker_stall_pass(cfg, state, T0, [w_old, w_live], term_times, rpc, act=fake_act)
         stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops), 1)
@@ -343,7 +403,7 @@ class WorkerStallPass(unittest.TestCase):
         state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0}}}
         w = base_worker()
         notices, bits = fw.worker_stall_pass(
-            {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}},
+            stall_test_config({'label_cooldown_seconds': 0}),
             state, T0 + 10, [w], {'term_fix': OLD_MS}, lambda *a: None,
             inventory_ok=False)
         self.assertIn('orca_inventory_failed_stall_skipped', bits)
@@ -367,7 +427,7 @@ class WorkerStallPass(unittest.TestCase):
         w = base_worker(dispatchId='d1')
         term_times = {'term_fix': OLD_MS}
         state = {}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
         self.assertTrue(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
         calls.clear()
@@ -397,7 +457,7 @@ class WorkerStallPass(unittest.TestCase):
         w = base_worker(dispatchId='d1')
         fresh_ms = int(T0 * 1000)
         state = {}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
         calls.clear()
         gh_calls.clear()
@@ -425,13 +485,10 @@ class WorkerStallPass(unittest.TestCase):
 
         w = base_worker(dispatchId='d1')
         state = {}
-        cfg = {
-            'worker_stall': {
-                'label_repo': 'o/r',
-                'label_cooldown_seconds': 0,
-                'stall_restart_record_ttl_seconds': 24 * 3600,
-            },
-        }
+        cfg = stall_test_config({
+            'label_cooldown_seconds': 0,
+            'stall_restart_record_ttl_seconds': 24 * 3600,
+        })
         # Pass 1: stalled -> one restart
         fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
         stops_pass1 = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
@@ -467,7 +524,7 @@ class WorkerStallPass(unittest.TestCase):
         state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': True, 'restart_at': T0}}}
         w = base_worker()
         fw.worker_stall_pass(
-            {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}},
+            stall_test_config({'label_cooldown_seconds': 0}),
             state, T0 + 4000, [w], {'term_fix': OLD_MS}, lambda *a: None, act=fake_act)
         edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
         self.assertEqual(len(edits), 0)
@@ -485,13 +542,10 @@ class WorkerStallPass(unittest.TestCase):
             }
         }
         w = base_worker(dispatchId='d_after_ttl')
-        cfg = {
-            'worker_stall': {
-                'label_repo': 'o/r',
-                'label_cooldown_seconds': 0,
-                'stall_restart_record_ttl_seconds': 3600,
-            },
-        }
+        cfg = stall_test_config({
+            'label_cooldown_seconds': 0,
+            'stall_restart_record_ttl_seconds': 3600,
+        })
         fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc)
         stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops), 1)
@@ -525,7 +579,7 @@ class WorkerStallPass(unittest.TestCase):
         )
         term_times = {'term_fix': OLD_MS}
         state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         with patch.object(fw.subprocess, 'run', side_effect=fake_run):
             _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
         issues1 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
@@ -573,7 +627,7 @@ class WorkerStallPass(unittest.TestCase):
         )
         term_times = {'term_fix': OLD_MS}
         state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         with patch.object(fw.subprocess, 'run', side_effect=fake_run):
             _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
         issues1 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
@@ -613,7 +667,7 @@ class WorkerStallPass(unittest.TestCase):
         )
         term_times = {'term_fix': OLD_MS}
         state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
-        cfg = {'worker_stall': {'label_repo': 'o/r', 'label_cooldown_seconds': 0}}
+        cfg = stall_test_config({'label_cooldown_seconds': 0})
         with patch.object(fw.subprocess, 'run', side_effect=fake_run):
             _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
             _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 100, [w], term_times, rpc, act=fake_act)
