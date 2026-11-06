@@ -5,7 +5,7 @@ description: Audit agent roles, team skills, model-routing.md and team docs when
 
 # Team audit
 
-Orca runs the script and the metrics weekly and reports one line. The full audit runs only on the owner's word, by architect-pm. Edits only on a branch in your own worktree; Elon publishes and merges it.
+Orca runs the script and the metrics weekly and reports one line; that run fixes nothing. The full audit runs only on the owner's word, by architect-pm. Edits only on a branch in your own worktree; Elon publishes and merges it.
 
 ## 1. Deterministic checks
 
@@ -13,15 +13,15 @@ Run `ROLE_RECEIPT_SINCE=<previous audit date> ~/dotfiles/script/team-audit.sh` (
 
 ## 2. Evidenced problems
 
-Find the last audit date from the previous `team-audit` PR. Read only what changed since then (`git log --since <date> -- .claude .agents docs/agents`) and the private log `~/.claude/state/team-observations.md`, which holds only observations that would change a rule. Never copy it into a repository or `~/.claude/notes`, which is public.
+Find the last audit date from the previous `team-audit` PR. Read only what changed since then (`git log --since <date> -- .claude .agents docs/agents`) and the private log `~/.claude/state/team-observations.md`, which holds only observations that would change a rule. A source you cannot read is a gap to report, never a clean record. Never copy it into a repository or `~/.claude/notes`, which is public.
 
-Report a problem only with evidence, and give it one structural fix (a lint, check, script or rule). Use the `writing-for-agents` skill for wording, and the `retro` skill for a failure tied to one session. Name both file lines when rules disagree: owner rules and `docs/agents/team.md` win, then `.claude/model-routing.md`, then the role file. No per role write-ups. Delete each observation line you used.
+Report a problem only with evidence, and give it one structural fix (a lint, check, script or rule). Use the `writing-for-agents` skill for wording, and the `retro` skill for a failure tied to one session. Name both file lines when rules disagree: owner rules and `docs/agents/team.md` win, then `.claude/model-routing.md`, then the role file; Orca's `orchestration` skill owns worker lifecycle. No per role write-ups. Once the report is published, delete each observation line you used.
 
 Team rules and scripts must not grow in total lines; a safety fix may, with the reason stated.
 
 ## 3. Metrics
 
-Run `bun bin/team-audit-metrics.ts`: ticket start to merge, P0 and P1 escapes in 30 days, reopen or hotfix rate, first pass Checks fail rate. Missing data reads unknown, never zero.
+Run `bun bin/team-audit-metrics.ts`: median PR created to merged, median PR created to PASS Verdict, first pass Checks fail rate, full regression minutes. Missing data reads unknown, never zero.
 
 ## 4. Output
 

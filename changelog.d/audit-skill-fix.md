@@ -1,0 +1,1 @@
+- Team audit skill names the metrics the script really prints, reports unreadable sources as gaps, and keeps observations until the report is published.
