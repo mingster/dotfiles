@@ -22,7 +22,7 @@
 # Only the exact word "sent" counts as relayed; an empty or half written marker is treated as "sending".
 # A failed send removes the marker, keeps done.json, does not release, and is retried on the next pass, with one
 # digest line however many passes fail. A failed nudge still counts as sent.
-# The outcome is worker-show's state (the worker_done payload carries only taskId and dispatchId); the payload's
+# The outcome is worker-show's state (the worker_done payload carries an outcome too); the payload's
 # outcome is used only when worker-show is unreadable. Only succeeded can release a seat.
 #   builder:  git ls-remote shows repo's branch at `git rev-parse HEAD` of the dispatch worktree. worker-show gives
 #             result.workspace as "<id>::<path>"; the path must be on the record's branch and have a remote of the record's repo,

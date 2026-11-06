@@ -376,7 +376,7 @@ EOP
 builder_wt o1 feat-o push > /dev/null
 record o1 term_lead_L kind=builder repo=o/n branch=feat-o
 sweep
-[ "$(grep -c 'dispatch=o1 ' "$SW_LOG")" = 1 ] && [ "$(released o1)" = 1 ] && ok || bad "real payload (object, no outcome) is relayed and released on worker-show state"
+[ "$(grep -c 'dispatch=o1 ' "$SW_LOG")" = 1 ] && [ "$(released o1)" = 1 ] && ok || bad "object payload is relayed and released on worker-show state"
 
 # S13e: a dispatch that is not settled yet (worker-show state ready) is not released
 builder_wt u1 feat-u push > /dev/null

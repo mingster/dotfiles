@@ -94,7 +94,7 @@ run --run run_1
 [ "$(counts)" = "term_lead=3 term_lead_m=1" ] && ok || bad "a worker stop changes no count"
 
 # a real "Worker stopped without reporting" message from the orca inbox history (task title shortened):
-# fields are from/to/priority/handled, the payload is an object with only taskId and dispatchId, and there is no handle key
+# fields are from/to/priority/handled, the payload is an object (taskId, dispatchId, and handle and stopReason in the real inbox)
 cat > "$tmp/real-stop.json" <<'EOF'
 {"ok": true, "result": {"messages": [{"id": "msg_stop_99abc148847c07b338443838", "type": "escalation", "from": "term_bbf7aacf-877a-4e75-a645-48930ae14b15", "to": "run:run_e7d1ee648485", "subject": "Worker stopped without reporting", "priority": "high", "handled": true, "body": "Worker term_bbf7aacf-877a-4e75-a645-48930ae14b15 ended its turn without sending worker_done for task \"lead lane\" (task_aabff3336d2a).\nThe Dispatch is still open. Answer it wi\u2026 (truncated; --full)", "payload": {"taskId": "task_aabff3336d2a", "dispatchId": "ctx_0ce3068d6d5d"}}]}}
 EOF
@@ -166,6 +166,23 @@ FAKE_RC=3 run --run run_1
 echo 'not json' > "$FAKE_CHECK"
 run --run run_1
 [ "$(cat "$tmp/out")" = "not json" ] && ok || bad "non JSON output is untouched"
+
+# default path: FLEET_WATCH_CONFIG unset reads $HOME/.config/fleet-watch/config.json. A config there with no leads key
+# (the coordinator's own file) must say so on stderr instead of letting every lead stop through quietly
+# HOME changes below, and a version manager's python3 shim needs the real HOME, so put the real interpreter first on PATH
+mkdir -p "$tmp/home/.config/fleet-watch"
+ln -s "$(python3 -c 'import sys; print(sys.executable)')" "$tmp/bin/python3"
+echo '{"local_host":"h","host_caps":{}}' > "$tmp/home/.config/fleet-watch/config.json"
+rm -f "$FAKE_CHECK".* "$COORDINATOR_DRAIN_STATE"
+cp "$tmp/real-stop.json" "$FAKE_CHECK"
+env -u FLEET_WATCH_CONFIG HOME="$tmp/home" PATH="$tmp/bin:$PATH" bash -c ': > "$ORCA_LOG"; bash "$0" --run run_1 >"$1/out" 2>"$1/err"' "$script" "$tmp"
+grep -q "no leads" "$tmp/err" && ok || bad "default config without a leads key says so on stderr: $(cat "$tmp/err")"
+grep -q "$tmp/home/.config/fleet-watch/config.json" "$tmp/err" && ok || bad "the warning names the config it read: $(cat "$tmp/err")"
+[ "$(ids)" = "msg_stop_99abc148847c07b338443838" ] && ok || bad "without leads the stop still passes: $(ids)"
+echo '{"leads":[{"name":"L","terminal":"term_bbf7aacf-877a-4e75-a645-48930ae14b15"}]}' > "$tmp/home/.config/fleet-watch/config.json"
+env -u FLEET_WATCH_CONFIG HOME="$tmp/home" PATH="$tmp/bin:$PATH" bash -c ': > "$ORCA_LOG"; bash "$0" --run run_1 >"$1/out" 2>"$1/err"' "$script" "$tmp"
+[ "$(ids)" = "" ] && ok || bad "default config with leads drops the lead stop: $(ids)"
+grep -q "no leads" "$tmp/err" && bad "no warning when the config has leads" || ok
 
 echo "coordinator-drain: $pass passed, $fail failed"
 [ "$fail" = 0 ]

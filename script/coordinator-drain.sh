@@ -10,7 +10,8 @@
 # (handled and unhandled mail), so a worker_done this check marked read is still relayed.
 # With --wait, a batch where every message was dropped is not returned (the waiter would wake for nothing): it checks again.
 # The check marks what it returns as read, so dropped messages are gone from the inbox. Dropped ones are counted on stderr.
-# Env: FLEET_WATCH_CONFIG (default ~/.config/fleet-watch/config.json), WORKER_DONE_OWNER_DIR (default ~/.claude/state/dispatch-owners),
+# Env: FLEET_WATCH_CONFIG (the config fleet-watch runs with, the one that has the leads key; the default
+#      ~/.config/fleet-watch/config.json usually has none, and then every check says so on stderr), WORKER_DONE_OWNER_DIR (default ~/.claude/state/dispatch-owners),
 #      COORDINATOR_DRAIN_STATE (dropped lead stops, one handle per line, default ~/.claude/state/coordinator-drain.log).
 set -uo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
@@ -34,9 +35,12 @@ except (ValueError, KeyError, TypeError, AttributeError):
     sys.exit(0)
 config = os.environ.get("FLEET_WATCH_CONFIG") or os.path.expanduser("~/.config/fleet-watch/config.json")
 try:
-    leads = {lead["terminal"] for lead in json.load(open(config)).get("leads", [])}
-except (OSError, ValueError, KeyError, TypeError):
-    leads = set()
+    configured = json.load(open(config)).get("leads")
+    leads = {lead["terminal"] for lead in configured or []}
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    configured, leads = None, set()
+if configured is None:
+    print("coordinator-drain: no leads in %s (missing, unreadable or no leads key); no lead stop is dropped. Set FLEET_WATCH_CONFIG to the config fleet-watch runs with." % config, file=sys.stderr)
 state_path = os.environ.get("COORDINATOR_DRAIN_STATE") or os.path.expanduser("~/.claude/state/coordinator-drain.log")
 owners = os.environ.get("WORKER_DONE_OWNER_DIR") or os.path.expanduser("~/.claude/state/dispatch-owners")
 
