@@ -39,12 +39,13 @@ if os.environ.get('GH_RC','0')!='0': sys.exit(int(os.environ['GH_RC']))
 print((Path(os.environ['FIXTURE_ROOT'])/'checks.json').read_text())
 PY
 chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
+export ON_WORKER_DONE_REVIEWER_DIR="$tmp/rmarkers"
 head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 valid() {
   printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
-  rm -f "$tmp/launch.json"
+  rm -f "$tmp/launch.json"; rm -rf "$tmp/rmarkers"
 }
 run() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$head" --author-family claude --worktree '/authorized/path with spaces' --run run_fixture "$@" > "$tmp/out" 2> "$tmp/err"; }
 pass=0; fail=0
@@ -225,6 +226,7 @@ unset WORKER_DONE_OWNER_DIR
 # Cheap checks (.agents/pre-qa-checks.conf) run at the exact head, in its worktree, before any reviewer starts.
 cheap="$tmp/cheap"; mkdir -p "$cheap/.agents"
 git -C "$cheap" init -q && git -C "$cheap" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+printf '.agents/\n' > "$cheap/.git/info/exclude"
 cheap_head=$(git -C "$cheap" rev-parse HEAD)
 cheap_run() { run --worktree "$cheap" --head "$cheap_head" "$@"; }
 cheap_conf() { printf '%s\n' "$@" > "$cheap/.agents/pre-qa-checks.conf"; }
@@ -371,5 +373,56 @@ HC_HOLD=1 cheap_run; rc=$?
 check 'a running Checks does not delay the reviewer start' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ] && [ ! -e "$tmp/hc-release" ]; echo $?)"
 check 'and the run is still going when on-worker-done returns' "$(hc_wait 1 && pgrep -f "$tmp/hc" >/dev/null; echo $?)"
 touch "$tmp/hc-release"
+
+# After the cheap checks finish, the head is compared again and the worktree must be clean before Checks start.
+hc_valid; cheap_conf 'git -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved-by-a-check'
+cheap_run; rc=$?
+hc_settle
+check 'a check that moves the head: no Checks' "$([ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
+check 'moved head is named to the lead' "$(grep -q "^Checks not started head=$cheap_head: the worktree is at" "$tmp/out"; echo $?)"
+cheap_head=$(git -C "$cheap" rev-parse HEAD)
+hc_valid; cheap_conf 'echo junk > "$FIXTURE_ROOT/../dirty-probe" 2>/dev/null; echo junk > untracked-by-a-check'
+cheap_run; rc=$?
+hc_settle
+check 'a check that leaves an untracked file: no Checks' "$([ "$(hc_lines)" = 0 ] && [ "$(hc_marker_count)" = 0 ]; echo $?)"
+check 'dirty worktree is named to the lead' "$(grep -q "^Checks not started head=$cheap_head: the worktree is dirty" "$tmp/out"; echo $?)"
+check 'a dirty worktree does not stop the reviewer' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+rm -f "$cheap/untracked-by-a-check"
+hc_valid; cheap_conf 'true'
+printf 'x\n' > "$cheap/tracked"; git -C "$cheap" add tracked; git -C "$cheap" -c user.name=t -c user.email=t@t commit -q -m tracked
+cheap_head=$(git -C "$cheap" rev-parse HEAD); hc_valid
+printf 'y\n' > "$cheap/tracked"
+cheap_run
+hc_settle
+check 'an edited tracked file: no Checks' "$([ "$(hc_lines)" = 0 ]; echo $?)"
+git -C "$cheap" checkout -q -- tracked
+hc_valid
+cheap_run
+check 'a clean worktree starts Checks' "$(hc_wait 1; echo $?)"
+
+# A repeat worker_done for the same head starts no second reviewer.
+valid; cheap_conf 'true'; hc_valid
+cheap_run; rc=$?
+check 'first call starts the reviewer' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+rm -f "$tmp/launch.json"
+cheap_run; rc=$?
+check 'repeat call for the same head starts no second reviewer' "$([ "$rc" = 0 ] && [ ! -e "$tmp/launch.json" ]; echo $?)"
+check 'repeat call tells the lead why' "$(grep -q "^Reviewer not started head=$cheap_head: already started" "$tmp/out"; echo $?)"
+check 'repeat call writes no second command' "$(! grep -q 'worker-start' "$tmp/out"; echo $?)"
+rm -f "$tmp/launch.json"
+cheap_run --resolution; rc=$?
+check 'a resolution review of the same head is its own start' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+valid; cheap_run --dry-run; cheap_run --dry-run; rc=$?
+check 'dry runs take no reviewer marker' "$([ "$rc" = 0 ] && [ ! -e "$tmp/rmarkers" ] || [ -z "$(ls "$tmp/rmarkers")" ]; echo $?)"
+valid
+FAKE_START_RC=3 cheap_run; rc=$?
+check 'a failed reviewer start fails' "$([ "$rc" = 3 ]; echo $?)"
+rm -f "$tmp/launch.json"
+cheap_run; rc=$?
+check 'a retry after a failed reviewer start launches' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
+valid
+run --head ffffffffffffffffffffffffffffffffffffffff; rm -f "$tmp/launch.json"
+run; rc=$?
+check 'another head is not blocked by the first' "$([ "$rc" = 0 ] && [ -e "$tmp/launch.json" ]; echo $?)"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

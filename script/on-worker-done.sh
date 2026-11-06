@@ -7,6 +7,8 @@
 # kind=reviewer, repo=, pr=) so worker-done-relay.sh sweep can release the seat on proof. No dispatch id in the output: no record.
 # Before any gate or reviewer: if <worktree>/.agents/pre-qa-checks.conf exists, its commands run at the exact head (one per
 # line, each limited to ON_WORKER_DONE_CHECK_TIMEOUT seconds, default 120). A failure, timeout or moved head starts no reviewer.
+# A repeat call for the same repo, PR, head and kind (review or --resolution) starts no second reviewer (marker in ON_WORKER_DONE_REVIEWER_DIR).
+# Checks also start only if the head is unchanged and the worktree clean after the cheap checks.
 # Then, still before any gate or reviewer, head-checks.sh --repo <worktree> --pr N starts detached (output in a log, once per repo,
 # PR and head via a marker; none if the worktree or PR head moved or a Checks comment for the head exists). The reviewer never waits on it.
 # Env: ON_WORKER_DONE_HEAD_CHECKS, ON_WORKER_DONE_CHECKS_DIR, ON_WORKER_DONE_CHECKS_LOG_DIR override head-checks.sh, markers, logs (tests).
@@ -81,6 +83,7 @@ start_checks() {
   local now info state hc slug dir marker log
   now=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || now=""
   [ "$now" = "$head" ] || { checks_note "the worktree is at ${now:-an unreadable head}"; return 0; }
+  [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || { checks_note "the worktree is dirty"; return 0; }
   info=$(gh pr view "$pr" --repo "$repo" --json headRefOid,comments 2>/dev/null) || { checks_note "cannot read the PR"; return 0; }
   state=$(printf '%s' "$info" | python3 -c '
 import json, re, sys
@@ -362,13 +365,21 @@ EOF
 fi
 
 cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree $worktree_selector --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
+[ "$dry" = 1 ] && { echo "$cmd"; exit 0; }
+# One reviewer per repo, PR, head and kind: a repeat worker_done for the same head starts none. A failed start clears the marker.
+rdir=${ON_WORKER_DONE_REVIEWER_DIR:-$HOME/.claude/state/reviewer-started}
+rmarker="$rdir/$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')-$pr-$head-$([ "$resolution" = 1 ] && echo resolution || echo review)"
+mkdir -p "$rdir" || { echo "on-worker-done: cannot write the reviewer start marker" >&2; exit 1; }
+if ! mkdir "$rmarker" 2>/dev/null; then
+  printf 'Reviewer not started head=%s: already started\n' "$head"
+  exit 0
+fi
 echo "$cmd"
-[ "$dry" = 1 ] && exit 0
 # shellcheck disable=SC2086
 started=$($orca orchestration worker-start --run "$run" --spec "$(cat $brief)" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json)
 rc=$?
 printf '%s\n' "$started"
-[ "$rc" = 0 ] || exit "$rc"
+[ "$rc" = 0 ] || { rmdir "$rmarker" 2>/dev/null; exit "$rc"; }
 reviewer_dispatch=$(printf '%s' "$started" | python3 -c '
 import json, re, sys
 def find(node):
