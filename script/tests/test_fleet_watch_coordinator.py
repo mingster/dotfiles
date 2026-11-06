@@ -197,7 +197,8 @@ class NoOrca(unittest.TestCase):
             config = tmp / 'config.json'
             config.write_text(json.dumps({'runs': [], 'coordinator_watch': {'state_dir': str(tmp)}}))
             state = tmp / 'state.json'
-            env = dict(os.environ, ORCA_CLI_COMMAND=str(tmp / 'no-such-orca'))
+            log_path = tmp / 'fleet-watch-test.log'
+            env = dict(os.environ, ORCA_CLI_COMMAND=str(tmp / 'no-such-orca'), FLEET_WATCH_LOG_PATH=str(log_path))
             done = subprocess.run([sys.executable, str(SCRIPT), '--config', str(config), '--state', str(state)],
                                   capture_output=True, text=True, env=env, timeout=30)
             self.assertEqual(done.returncode, 0, done.stderr)

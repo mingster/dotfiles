@@ -168,11 +168,35 @@ out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/x/spec.md" "$here/team
 if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: planted-unlisted-team-script.sh'; then pass=$((pass+1)); echo "ok   unlisted script under script/ is a finding"
 else fail=$((fail+1)); echo "FAIL unlisted script under script/ is a finding (exit $code)"; echo "$out"; fi
 
-setup; mkdir -p "$P/docs/intent/y"; printf 'Tools: list-covered.sh sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/y/spec.md"; echo intent > "$P/docs/intent/y/intent.md"
+setup; mkdir -p "$P/docs/intent/y"; printf 'Tools: script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/y/spec.md"; echo intent > "$P/docs/intent/y/intent.md"
 touch "$D/script/list-covered.sh"
 out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/y/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
 if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   listed script under script/ is not a finding"
 else fail=$((fail+1)); echo "FAIL listed script under script/ is not a finding (exit $code)"; echo "$out"; fi
+
+setup; missing="$tmp/missing-tool-list.txt"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$missing" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: TEAM_AUDIT_TOOL_LISTS path missing or unreadable:'; then pass=$((pass+1)); echo "ok   missing TEAM_AUDIT_TOOL_LISTS path is a finding"
+else fail=$((fail+1)); echo "FAIL missing TEAM_AUDIT_TOOL_LISTS path (exit $code)"; echo "$out"; fi
+
+setup; mkdir -p "$P/docs/intent/unread"; printf 'script/x.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/unread/spec.md"; echo intent > "$P/docs/intent/unread/intent.md"
+chmod a-r "$P/docs/intent/unread/spec.md"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/unread/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+chmod u+r "$P/docs/intent/unread/spec.md" 2>/dev/null || true
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: TEAM_AUDIT_TOOL_LISTS path missing or unreadable:'; then pass=$((pass+1)); echo "ok   unreadable TEAM_AUDIT_TOOL_LISTS path is a finding"
+else fail=$((fail+1)); echo "FAIL unreadable TEAM_AUDIT_TOOL_LISTS path (exit $code)"; echo "$out"; fi
+
+setup; mkdir -p "$P/docs/intent/bak"; printf 'script/foo.sh.bak\n\n## Test plan\n1. case\n' > "$P/docs/intent/bak/spec.md"; echo intent > "$P/docs/intent/bak/intent.md"
+touch "$D/script/foo.sh"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/bak/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: foo.sh not listed'; then pass=$((pass+1)); echo "ok   substring foo.sh.bak does not cover foo.sh"
+else fail=$((fail+1)); echo "FAIL foo.sh.bak must not satisfy foo.sh (exit $code)"; echo "$out"; fi
+
+setup; mkdir -p "$P/docs/intent/prefix"; printf 'script/my-foo.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/prefix/spec.md"; echo intent > "$P/docs/intent/prefix/intent.md"
+touch "$D/script/foo.sh"
+out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/prefix/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: foo.sh not listed'; then pass=$((pass+1)); echo "ok   my-foo.sh does not cover foo.sh"
+else fail=$((fail+1)); echo "FAIL my-foo.sh must not satisfy foo.sh (exit $code)"; echo "$out"; fi
 
 setup
 out=$(DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1); code=$?

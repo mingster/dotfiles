@@ -1308,6 +1308,9 @@ def main():
     parser.add_argument('--state', type=Path, required=False)
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
     args = parser.parse_args()
+    if not os.environ.get('FLEET_WATCH_LOG_PATH', '').strip() and os.environ.get('PYTEST_CURRENT_TEST'):
+        print('fleet-watch: set FLEET_WATCH_LOG_PATH under test (would write the real default log)', file=sys.stderr)
+        return 2
     config = json.loads(args.config.read_text())
 
     if args.admit:

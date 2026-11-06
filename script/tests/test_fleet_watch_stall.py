@@ -11,6 +11,12 @@ spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).pare
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env)
+_spec_env.loader.exec_module(_fwe)
+isolated_main_env = _fwe.isolated_main_env
+env_main_uses_default_log_under_home = _fwe.env_main_uses_default_log_under_home
+
 T0 = 1_700_000_000
 OLD_MS = int((T0 - 4000) * 1000)
 
@@ -588,14 +594,14 @@ class MainStallInventory(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text(json.dumps({'worker_stall': {'task_x': {'restarted': True}}}))
-            log_path = Path(directory) / 'log'
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            log_path = Path(directory) / 'fleet-watch-test.log'
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.dict(os.environ, {'HOME': str(directory), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -625,14 +631,14 @@ class MainStallInventory(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text('{}')
-            log_path = Path(directory) / 'log'
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            log_path = Path(directory) / 'fleet-watch-test.log'
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.dict(os.environ, {'HOME': str(directory), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -662,20 +668,20 @@ class MainTerminalListFailure(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text('{}')
-            log_path = Path(directory) / 'log'
+            log_path = Path(directory) / 'fleet-watch-test.log'
             home_root = Path(directory) / 'home'
             home_root.mkdir()
             default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
             default_log.parent.mkdir(parents=True)
             default_log.write_text('untouched\n')
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw, 'fetch_workers', return_value=[]), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.dict(os.environ, {'HOME': str(home_root), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -704,26 +710,67 @@ class MainTerminalListFailure(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text('{}')
-            log_path = Path(directory) / 'override.log'
+            log_path = Path(directory) / 'fleet-watch-test.log'
             home_root = Path(directory) / 'home'
             home_root.mkdir()
             default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
             default_log.parent.mkdir(parents=True)
             default_log.write_text('seed\n')
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw, 'fetch_workers', return_value=[]), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.dict(os.environ, {'HOME': str(home_root), 'FLEET_WATCH_LOG_PATH': str(log_path)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
             self.assertTrue(log_path.is_file())
             self.assertIn('pass ok', log_path.read_text())
             self.assertEqual(default_log.read_text(), 'seed\n')
+
+
+class MainDefaultLogGuard(unittest.TestCase):
+    def test_main_aborts_under_pytest_without_fleet_watch_log_path(self):
+        """Regression: unittest sets PYTEST_CURRENT_TEST; main() must refuse the default log."""
+
+        def rpc(*args):
+            if args[1] == 'inbox':
+                return {'messages': []}
+            if args[1] == 'worker-list':
+                return {'workers': [], 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'):
+                return {'terminals': []}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({
+                'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+                'worker_stall': {'label_repo': 'o/r'},
+            }))
+            state.write_text('{}')
+            home_root = Path(directory) / 'home'
+            home_root.mkdir()
+            default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
+            default_log.parent.mkdir(parents=True)
+            default_log.write_text('marker\n')
+            env = env_main_uses_default_log_under_home(home_root)
+            env['PYTEST_CURRENT_TEST'] = 'guard (MainDefaultLogGuard)'
+            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.dict(os.environ, env, clear=True), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                code = fw.main()
+            self.assertEqual(code, 2)
+            self.assertEqual(default_log.read_text(), 'marker\n')
 
 
 if __name__ == '__main__':

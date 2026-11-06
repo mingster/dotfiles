@@ -31,8 +31,9 @@
 #             rule 2026-11-02). Commits are checked from ROLE_RECEIPT_SINCE (pass the last audit date);
 #             commits before 2026-11-03 are grandfathered, so the date is never earlier.
 #   script-list  when TEAM_AUDIT_TOOL_LISTS is set (colon-separated absolute paths to project files),
-#             every top-level file under script/ is named in the concatenation of those files, as either
-#             script/<basename> or the bare basename. When unset or empty, the check is skipped (one NOTE).
+#             every top-level file under script/ is named in the concatenation of those readable files, as either
+#             script/<basename> or the bare basename as a whole token (not a substring such as foo.sh.bak for foo.sh).
+#             A path that is missing or not a readable regular file is a finding. When unset or empty, the check is skipped (one NOTE).
 #             Exempt apply-ide-overlay.py and apply-local-overlay.py. Skips *.test.sh and test_* (not tools).
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles), TEAM_AUDIT_TOOL_LISTS.
@@ -157,7 +158,10 @@ else
     _list="${_sl%%:*}"
     _sl="${_sl#*:}"
     [ -n "$_list" ] || continue
-    [ -f "$_list" ] || continue
+    if [ ! -f "$_list" ] || [ ! -r "$_list" ]; then
+      finding script-list "TEAM_AUDIT_TOOL_LISTS path missing or unreadable: $_list"
+      continue
+    fi
     SCRIPT_INDEX="${SCRIPT_INDEX}$(cat "$_list")"$'\n'
   done
   for _sf in "$DOTFILES/script"/*; do
@@ -165,7 +169,15 @@ else
     _base=$(basename "$_sf")
     case "$_base" in apply-ide-overlay.py|apply-local-overlay.py) continue ;; esac
     case "$_base" in *.test.sh|test_*) continue ;; esac
-    case $SCRIPT_INDEX in *"script/${_base}"*|*"${_base}"*) ;; *) finding script-list "${_base} not listed in TEAM_AUDIT_TOOL_LISTS" ;; esac
+    if ! printf '%s' "$SCRIPT_INDEX" | python3 -c '
+import re, sys
+base = sys.argv[1]
+text = sys.stdin.read()
+pat = r"(^|[^A-Za-z0-9_./-])(?:script/)?" + re.escape(base) + r"([^A-Za-z0-9_./-]|$)"
+sys.exit(0 if re.search(pat, text) else 1)
+' "$_base"; then
+      finding script-list "${_base} not listed in TEAM_AUDIT_TOOL_LISTS"
+    fi
   done
 fi
 
