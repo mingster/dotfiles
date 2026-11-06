@@ -2,13 +2,15 @@
 # Run a heavy job (tsc, bun test, Playwright) for the current commit on a remote host.
 #
 #   remote-heavy.sh --host <ssh host> --repo-dir <remote checkout> --dir <remote worktree>
-#                   [--sub <subdir>] [--weight N] [--gate <remote heavy-gate.sh>]
+#                   [--sub <subdir>] [--weight N] [--memory-mb MIB] [--gate <remote heavy-gate.sh>]
 #                   [--fetch <worktree-relative path/glob> ... --into <local dir>] -- <command>
 #
 # Sends HEAD (as a git bundle over ssh) to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
 # detached in the remote worktree, reinstalls packages when the lockfile changed, and runs
 # the command under the remote heavy-gate. Exit status is the command's. A missing
 # --dir is created as a detached worktree of --repo-dir.
+# The caller declares the job's memory with --memory-mb or HEAVY_GATE_MEMORY_MB (the flag wins);
+# it is forwarded to the remote heavy-gate, which counts it while the job runs. No default here.
 # Every ssh call runs a base64 transported script and frames its stdout between tagged
 # markers, so lines a login shell prints around the command never reach the caller.
 # Fetches use remote Python 3 globbing and OpenSSH scp (SFTP); files land by basename
@@ -17,7 +19,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC2016 # expanded on the remote host
-host="" repo_dir="" dir="" sub=. weight=1 gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh'
+host="" repo_dir="" dir="" sub=. weight=1 memory="${HEAVY_GATE_MEMORY_MB:-}" gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh'
 fetches=()
 into=""
 while [ $# -gt 0 ]; do
@@ -29,13 +31,15 @@ while [ $# -gt 0 ]; do
     --dir) dir="$2"; shift 2 ;;
     --sub) sub="$2"; shift 2 ;;
     --weight) weight="$2"; shift 2 ;;
+    --memory-mb) memory="$2"; shift 2 ;;
     --gate) gate="$2"; shift 2 ;;
     --) shift; break ;;
     *) echo "remote-heavy: unknown argument $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$host" ] && [ -n "$repo_dir" ] && [ -n "$dir" ] && [ $# -gt 0 ] \
-  || { echo "usage: remote-heavy.sh --host H --repo-dir R --dir D [--sub S] [--weight N] -- cmd" >&2; exit 64; }
+  || { echo "usage: remote-heavy.sh --host H --repo-dir R --dir D [--sub S] [--weight N] [--memory-mb MIB] -- cmd" >&2; exit 64; }
+[ -z "$memory" ] || [[ "$memory" =~ ^[1-9][0-9]*$ ]] || { echo 'remote-heavy: memory must be a positive whole number of MiB' >&2; exit 64; }
 case "$host" in -*|*[!A-Za-z0-9._-]*) echo "remote-heavy: bad host $host" >&2; exit 64 ;; esac
 
 if [ "${#fetches[@]}" -gt 0 ] || [ -n "$into" ]; then
@@ -63,7 +67,8 @@ tag="remote-heavy-$$-$RANDOM"
 remote=$(cat <<'REMOTE'
 set -euo pipefail
 d() { printf '%s' "$1" | base64 -d; }
-dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(d "$6") repo_dir=$(d "$7") tag=$(d "$8")
+dir=$(d "$1") sha=$(d "$2") sub=$(d "$3") weight=$(d "$4") gate=$(d "$5") cmd=$(d "$6") repo_dir=$(d "$7") tag=$(d "$8") memory=$(d "${9}")
+memory=${memory#m} # the leading m keeps an empty value from vanishing in the ssh word list
 # The bundle on stdin carries HEAD, so no git transport shares stdout with the login shell.
 bundle=$(mktemp)
 trap 'rm -f "$bundle"' EXIT
@@ -97,7 +102,7 @@ fi
 [ -f next-env.d.ts ] || [ ! -f next.config.ts ] || bunx next typegen >/dev/null 2>&1 || true
 printf '%s\n' "@@begin-$tag@@"
 status=0
-"$gate" --weight "$weight" -- bash -c "$cmd" || status=$?
+"$gate" --weight "$weight" ${memory:+--memory-mb "$memory"} -- bash -c "$cmd" || status=$?
 printf '\n%s\n' "@@end-$tag-$status@@"
 REMOTE
 )
@@ -118,7 +123,7 @@ trap 'rm -f "$status_file"' EXIT
 # shellcheck disable=SC2029
 { git bundle create - "${bundle_range[@]}" 2>/dev/null | base64 | tr -d '\n'; } \
   | ssh "$host" bash -c "\"\$(echo $(b64 "$remote") | base64 -d)\"" remote-heavy \
-    "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" "$(b64 "$repo_dir")" "$(b64 "$tag")" \
+    "$(b64 "$dir")" "$(b64 "$sha")" "$(b64 "$sub")" "$(b64 "$weight")" "$(b64 "$gate")" "$(b64 "$cmd")" "$(b64 "$repo_dir")" "$(b64 "$tag")" "$(b64 "m$memory")" \
   | awk -v tag="$tag" -v sf="$status_file" "$framed" || true
 # No end marker means the remote setup failed before the command ran.
 status=$(cat "$status_file")
