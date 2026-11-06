@@ -4,7 +4,6 @@
 #        (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
-py3_gate=${PYTHON3:-python3}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment=''
 from=${ORCA_TERMINAL_HANDLE:-}
 usage() { echo "need --run --spec --title --model --from and --worktree-path or --name --repo" >&2; exit 2; }
@@ -20,7 +19,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$model" ] && [ -n "$from" ] || usage
-"$py3_gate" "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
+python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
   || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
 brief=$(cat "$spec")
 [ -n "${brief//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }

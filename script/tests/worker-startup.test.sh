@@ -9,6 +9,11 @@ pass=0 fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "worker-startup.test.sh: skip — jq not on PATH (jq-dependent cases not run)" >&2
+  exit 0
+fi
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 unset -f python3 2>/dev/null || true
@@ -16,20 +21,8 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export WORKER_STARTUP_STATE="$tmp/state"
 mkdir -p "$WORKER_STARTUP_STATE"
-# Log paths for the $bin/python3 stub (usage-gate detection in --run); must exist before the stub runs.
-export PYTHON3_GATE_LOG="$tmp/gate.invoked" PYTHON3_RUN_ORDER_LOG="$tmp/run-order.log"
-: >"$PYTHON3_GATE_LOG"
-: >"$PYTHON3_RUN_ORDER_LOG"
 
-# --- red: missing jq / missing config ---
-set +e
-out=$(FLEET_PULL_CONFIG=/no/such.json bash "$script" --host-check 2>&1)
-ec=$?
-set -e
-grep -q "missing config" <<<"$out" && ok || bad "missing config message"
-[ "$ec" -ne 0 ] && ok || bad "missing config exits non-zero"
-
-# --- stubs: fake jq forwards to the real binary ---
+# --- stubs: fake jq forwards to the real binary; python3 runs USAGE_GATE_CLI or real python ---
 bin="$tmp/bin"
 mkdir -p "$bin"
 jq_bin=$(command -v jq)
@@ -44,23 +37,36 @@ if [ -x /usr/bin/python3 ]; then
 fi
 cat >"$bin/python3" <<EOS
 #!/usr/bin/env bash
+set -e
+case "\$1" in
+  *.py)
+    if [ "\${2:-}" = check ]; then
+      printf 'stub-gate-ran\n' >>"$tmp/run-order.log"
+      printf 'usage-gate check %s\n' "\${*:3}" >>"$tmp/gate.invoked"
+      printf 'gate-before-worker-start\n' >>"$tmp/run-order.log"
+      exit 0
+    fi
+    ;;
+esac
 exec "$python3_real" "\$@"
 EOS
 chmod +x "$bin/python3"
-# Worker-startup uses \$PYTHON3 only for usage-gate (see script); log those invocations for ordering tests.
-cat >"$bin/py3-gate" <<EOS
-#!/usr/bin/env bash
+touch "$tmp/gate-stub.py"
+export USAGE_GATE_CLI="$tmp/gate-stub.py"
+export PYTHON="$bin/python3"
+# Log paths for the gate (ordering tests); must exist before the stub runs.
+export PYTHON3_GATE_LOG="$tmp/gate.invoked" PYTHON3_RUN_ORDER_LOG="$tmp/run-order.log"
+: >"$PYTHON3_GATE_LOG"
+: >"$PYTHON3_RUN_ORDER_LOG"
+
+# --- red: missing config (needs stub jq on PATH so we do not hit missing jq first) ---
+set +e
+out=$(PATH="$bin:$PATH" FLEET_PULL_CONFIG=/no/such.json bash "$script" --host-check 2>&1)
+ec=$?
 set -e
-# usage-gate.py is always invoked as: <interpreter> <script> check ...
-if [ "\${2:-}" = check ]; then
-  printf 'usage-gate check %s\n' "\${*:3}" >>"$tmp/gate.invoked"
-  printf 'gate-before-worker-start\n' >>"$tmp/run-order.log"
-  exit 0
-fi
-exec "$python3_real" "\$@"
-EOS
-chmod +x "$bin/py3-gate"
-export PYTHON3="$bin/py3-gate"
+grep -q "missing config" <<<"$out" && ok || bad "missing config message"
+[ "$ec" -ne 0 ] && ok || bad "missing config exits non-zero"
+grep -q 'stub-gate-ran' "$tmp/run-order.log" && bad "stub gate must not run for --host-check" || ok
 
 make_repo() { # <workdir> <bare.git> — local main with origin bare, push
   git init -q --bare "$2"
@@ -343,7 +349,7 @@ run_order_log="$PYTHON3_RUN_ORDER_LOG"
 : >"$gate_invoked"
 : >"$run_order_log"
 orca_stub="$tmp/orca"
-# Minimal PATH for --run (PYTHON3 is explicit via \$PYTHON3 -> py3-gate).
+# Minimal PATH for --run (PYTHON + USAGE_GATE_CLI exercise the gate stub).
 run_path="$bin:/usr/bin:/bin"
 # Isolate bun from the real home: otherwise ~/.bun/bin can satisfy an extreme pin and skip the failing curl.
 badbun_home="$tmp/home-badbun-run"
@@ -379,7 +385,7 @@ set +e
 unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca.log" \
-  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON3="$PYTHON3" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run.err"
 ec=$?
@@ -387,11 +393,12 @@ set -e
 [ "$ec" = 0 ] && ok || bad "run claude exits 0 ($ec) $(cat "$tmp/run.err")"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
-grep 'gate-before-worker-start' "$run_order_log" | head -1 >"$tmp/order.a"
-grep 'orca-after-gate' "$run_order_log" | head -1 >"$tmp/order.b"
-[ -s "$tmp/order.a" ] && [ -s "$tmp/order.b" ] && ok || bad "gate and orca order markers present"
-if ! awk '/gate-before-worker-start/{b=NR} /orca-after-gate/{o=NR} END{exit !(b>0 && o>0 && b<o)}' "$run_order_log"; then
-  bad "usage gate must run before orca worker-start path"
+grep -q 'stub-gate-ran' "$run_order_log" && ok || bad "stub gate ran (logged)"
+grep 'stub-gate-ran' "$run_order_log" | head -1 >"$tmp/order.stub"
+grep 'orca-after-gate' "$run_order_log" | head -1 >"$tmp/order.orca"
+[ -s "$tmp/order.stub" ] && [ -s "$tmp/order.orca" ] && ok || bad "stub gate and orca order markers present"
+if ! awk '/stub-gate-ran/{s=NR} /orca-after-gate/{o=NR} END{exit !(s>0 && o>0 && s<o)}' "$run_order_log"; then
+  bad "stub usage gate must run before orca worker-start path"
 else
   ok
 fi
@@ -417,7 +424,7 @@ set +e
 unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   HOME="$badbun_home" PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-bad.log" \
-  FLEET_PULL_CONFIG="$tmp/fleet-badbun.json" PYTHON3="$PYTHON3" CURL="$bin/curl" \
+  FLEET_PULL_CONFIG="$tmp/fleet-badbun.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" CURL="$bin/curl" \
   bash --noprofile --norc "$script" --run run_bad --spec "$spec_file" --title bad --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$badbun" 2>"$tmp/run-bad.err"
 ec_bad=$?
@@ -440,7 +447,7 @@ set +e
 unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
-  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON3="$PYTHON3" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_y --spec "$spec_file" --title cjob --agent cursor --model composer-2.5 \
   --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor.err"
 ec=$?

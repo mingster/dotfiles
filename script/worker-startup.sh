@@ -9,7 +9,7 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 orca=${ORCA_CLI_COMMAND:-orca}
-py3_gate=${PYTHON3:-python3}
+python3=${PYTHON:-python3}
 cfg=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
 state_dir=${WORKER_STARTUP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/worker-startup}
 mkdir -p "$state_dir"
@@ -221,7 +221,7 @@ run_mode() {
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${repo:+--repo "$repo"} ${base:+--base-branch "$base"}
   fi
 
-  "$py3_gate" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
+  "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
     || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
 
   if [ -z "$wt" ]; then
