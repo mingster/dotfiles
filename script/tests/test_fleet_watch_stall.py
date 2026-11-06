@@ -11,6 +11,11 @@ spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).pare
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env)
+_spec_env.loader.exec_module(_fwe)
+isolated_main_env = _fwe.isolated_main_env
+
 T0 = 1_700_000_000
 OLD_MS = int((T0 - 4000) * 1000)
 
@@ -19,6 +24,7 @@ def base_worker(**kw):
     w = {
         'dispatchId': 'disp_fixture',
         'taskId': 'task_fix',
+        'runId': 'run_fixture',
         'terminalState': 'retained',
         'dispatchStatus': 'dispatched',
         'agentTerminalHandle': 'term_fix',
@@ -37,6 +43,22 @@ def base_worker(**kw):
 
 
 class WorkerStallHelpers(unittest.TestCase):
+    def test_fleet_watch_log_path_env_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / 'fw.log'
+            with patch.dict(os.environ, {'FLEET_WATCH_LOG_PATH': str(p), 'HOME': directory}):
+                self.assertEqual(fw.fleet_watch_log_path(), p)
+
+    def test_fleet_watch_log_path_default_ignores_empty_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / 'h'
+            home.mkdir()
+            with patch.dict(os.environ, {'HOME': str(home), 'FLEET_WATCH_LOG_PATH': '   '}):
+                self.assertEqual(
+                    fw.fleet_watch_log_path(),
+                    home / '.orca' / 'logs' / 'fleet-watch.log',
+                )
+
     def test_normalize_zero_is_unknown(self):
         self.assertIsNone(fw._normalize_terminal_time_ms(0))
 
@@ -55,19 +77,32 @@ class WorkerStallHelpers(unittest.TestCase):
 
     def test_retry_start_args_uses_agent_not_terminal_after_stop(self):
         w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
-        args = fw.worker_stall_restart_start_args(w, 'd1')
+        args = fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored')
         self.assertIsNotNone(args)
         self.assertIn('--task', args)
+        self.assertIn('--run', args)
+        self.assertEqual(args[args.index('--run') + 1], 'run_fixture')
         self.assertIn('--agent', args)
         self.assertNotIn('--terminal', args)
         self.assertIn('claude', args)
+        w_no_run = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
+        del w_no_run['runId']
+        w_no_run['_fleet_watch_list_run'] = 'run_from_list'
+        args2 = fw.worker_stall_restart_start_args(w_no_run, 'd1', 'run_persisted')
+        self.assertIsNotNone(args2)
+        self.assertEqual(args2[args2.index('--run') + 1], 'run_from_list')
+        w3 = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
+        del w3['runId']
+        args3 = fw.worker_stall_restart_start_args(w3, 'd1', 'run_persisted')
+        self.assertIsNotNone(args3)
+        self.assertEqual(args3[args3.index('--run') + 1], 'run_persisted')
         w2 = base_worker(taskId='t1', resource={'worktreeId': 'id::path'},
                          agentTerminalHandle='', agent='', projection={
                              'host': {'id': 'local'},
                              'outcome': 'in_progress',
                              'liveness': {'verdict': 'idle'},
                          })
-        self.assertIsNone(fw.worker_stall_restart_start_args(w2, 'd1'))
+        self.assertIsNone(fw.worker_stall_restart_start_args(w2, 'd1', 'run_z'))
 
     def test_worker_pr_number_accepts_string_digits(self):
         w = base_worker(githubPullRequestNumber='42')
@@ -211,7 +246,44 @@ class WorkerStallPass(unittest.TestCase):
         self.assertIn('stall_restart=d1', bits2)
         self.assertEqual(len(starts), 1)
         self.assertIn('--agent', starts[0])
+        self.assertIn('--run', starts[0])
+        self.assertEqual(starts[0][starts[0].index('--run') + 1], 'run_fixture')
         self.assertNotIn('--terminal', starts[0])
+
+    def test_pending_start_retries_old_record_without_stored_run_uses_single_config_run(self):
+        """Legacy pending (no stall_restart_run_id): retry uses the sole configured run id."""
+        seq = []
+
+        def rpc(*a):
+            seq.append(a)
+            return {}
+
+        wt_sel = 'wt::/p'
+        state = {
+            'stall_pending_start': {
+                't_legacy': {
+                    'old_dispatch': 'd_old',
+                    'row_snapshot': {
+                        'taskId': 't_legacy',
+                        'resource': {'worktreeId': wt_sel},
+                        'projection': {
+                            'provider': {'id': 'claude', 'model': None},
+                        },
+                    },
+                    'started': False,
+                },
+            },
+        }
+        cfg = {
+            'runs': [{'id': 'solo_run', 'terminal': 't', 'waiter_pattern': 'w'}],
+            'worker_stall': {'label_repo': 'o/r'},
+        }
+        _, bits = fw.worker_stall_pass(cfg, state, T0, [], {'term_fix': OLD_MS}, rpc)
+        self.assertIn('stall_restart=d_old', bits)
+        starts = [a for a in seq if len(a) >= 4 and a[:2] == ('orchestration', 'worker-start')]
+        self.assertEqual(len(starts), 1)
+        self.assertIn('--run', starts[0])
+        self.assertEqual(starts[0][starts[0].index('--run') + 1], 'solo_run')
 
     def test_remote_row_logs_remote_only(self):
         calls = []
@@ -572,15 +644,14 @@ class MainStallInventory(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text(json.dumps({'worker_stall': {'task_x': {'restarted': True}}}))
-            log_path = Path(directory) / 'log'
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            log_path = Path(directory) / 'fleet-watch-test.log'
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
-                    patch.dict(os.environ, {'HOME': str(directory)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -610,15 +681,14 @@ class MainStallInventory(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text('{}')
-            log_path = Path(directory) / 'log'
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            log_path = Path(directory) / 'fleet-watch-test.log'
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
-                    patch.dict(os.environ, {'HOME': str(directory)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
@@ -648,22 +718,68 @@ class MainTerminalListFailure(unittest.TestCase):
                 'worker_stall': {'label_repo': 'o/r'},
             }))
             state.write_text('{}')
-            log_path = Path(directory) / 'log'
-            with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+            log_path = Path(directory) / 'fleet-watch-test.log'
+            home_root = Path(directory) / 'home'
+            home_root.mkdir()
+            default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
+            default_log.parent.mkdir(parents=True)
+            default_log.write_text('untouched\n')
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                     patch.object(fw, 'rpc', side_effect=rpc), \
                     patch.object(fw, 'fetch_workers', return_value=[]), \
                     patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
                     patch.object(fw, 'pr_notices', return_value=[]), \
                     patch.object(fw, 'usage_notices', return_value=[]), \
                     patch.object(fw, 'deliver_notices', return_value=None), \
-                    patch.object(fw, 'fleet_watch_log_path', return_value=log_path), \
-                    patch.dict(os.environ, {'HOME': str(directory)}), \
                     patch.object(fw.time, 'time', return_value=T0):
                 code = fw.main()
                 self.assertEqual(code, 0)
                 text = log_path.read_text()
                 self.assertIn('terminal_list_failed', text)
                 self.assertIn('pass ok', text)
+                self.assertEqual(default_log.read_text(), 'untouched\n')
+
+    def test_main_pass_writes_to_log_env_and_leaves_default_path_untouched(self):
+        """A full pass appends only to FLEET_WATCH_LOG_PATH, not the default under HOME."""
+
+        def rpc(*args):
+            if args[1] == 'inbox':
+                return {'messages': []}
+            if args[1] == 'worker-list':
+                return {'workers': [], 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'):
+                raise RuntimeError('list failed')
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({
+                'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+                'worker_stall': {'label_repo': 'o/r'},
+            }))
+            state.write_text('{}')
+            log_path = Path(directory) / 'fleet-watch-test.log'
+            home_root = Path(directory) / 'home'
+            home_root.mkdir()
+            default_log = home_root / '.orca' / 'logs' / 'fleet-watch.log'
+            default_log.parent.mkdir(parents=True)
+            default_log.write_text('seed\n')
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw, 'fetch_workers', return_value=[]), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                code = fw.main()
+                self.assertEqual(code, 0)
+            self.assertTrue(log_path.is_file())
+            self.assertIn('pass ok', log_path.read_text())
+            self.assertEqual(default_log.read_text(), 'seed\n')
 
 
 if __name__ == '__main__':

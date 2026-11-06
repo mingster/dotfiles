@@ -13,6 +13,11 @@ spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).pare
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env)
+_spec_env.loader.exec_module(_fwe)
+isolated_main_env = _fwe.isolated_main_env
+
 _clean_spec = importlib.util.spec_from_file_location('fleet_watch_unpatched', Path(__file__).parent.parent / 'fleet-watch.py')
 _fw_clean = importlib.util.module_from_spec(_clean_spec)
 _clean_spec.loader.exec_module(_fw_clean)
@@ -85,7 +90,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 delivered.extend(list(new_lines))
                 DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
 
-            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+            with isolated_main_env(str(directory)), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', side_effect=run_gh_side_effect), \
                     patch.object(fw, 'open_backup_issue_exists', return_value=False), \
@@ -133,7 +139,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 delivered_passes.append(list(new_lines))
                 DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
 
-            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+            with isolated_main_env(str(directory)), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', return_value=0), \
                     patch.object(fw, 'open_backup_issue_exists', return_value=False), \
@@ -190,7 +197,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 delivered.extend(list(new_lines))
                 DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
 
-            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+            with isolated_main_env(str(directory)), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', side_effect=run_gh_side_effect), \
                     patch.object(fw, 'open_backup_issue_exists', return_value=False), \
@@ -245,7 +253,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 delivered.extend(list(new_lines))
                 DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
 
-            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+            with isolated_main_env(str(directory)), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', side_effect=run_gh_side_effect), \
                     patch.object(fw, 'open_backup_issue_exists', return_value=False), \
@@ -295,7 +304,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 workflow_repos.append(repo)
                 return []
 
-            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+            with isolated_main_env(str(directory)), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw, 'run_gh', return_value=0), \
                     patch.object(fw, 'open_backup_issue_exists', return_value=False), \
@@ -346,7 +356,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 delivered.extend(list(new_lines))
                 DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
 
-            with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+            with isolated_main_env(str(directory)), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                     patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                     patch.object(fw.subprocess, 'run', side_effect=subprocess_run_side_effect), \
                     patch.object(fw, 'run_gh', return_value=0), \
@@ -409,7 +420,8 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                         delivered_passes.append(list(new_lines))
                         DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
 
-                    with patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
+                    with isolated_main_env(str(directory)), \
+                            patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
                             patch.object(fw, 'rpc', side_effect=rpc_side_effect), \
                             patch.object(fw, 'run_gh', return_value=0), \
                             patch.object(fw, 'open_backup_issue_exists', return_value=False), \

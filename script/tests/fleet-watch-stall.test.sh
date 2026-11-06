@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # No orca: worker stall uses terminal lastOutputAt, worker-stop/start and gh label.
 set -euo pipefail
-python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
+PYTHON=python3
+if [[ -x /usr/bin/python3 ]]; then PYTHON=/usr/bin/python3; fi
+"$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import importlib.util
 import json
 import os
@@ -16,6 +18,11 @@ spec = importlib.util.spec_from_file_location('fleet_watch', root / 'fleet-watch
 watch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(watch)
 
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', root / 'tests' / 'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env)
+_spec_env.loader.exec_module(_fwe)
+isolated_main_env = _fwe.isolated_main_env
+
 T0 = 1_700_000_000  # unix seconds so lastOutputAt ms exceeds 1e12
 
 
@@ -25,6 +32,7 @@ def live_worker():
     return {
         'dispatchId': 'disp1',
         'taskId': 'task_stall_fixture',
+        'runId': 'r1',
         'terminalState': 'retained',
         'dispatchStatus': 'dispatched',
         'agentTerminalHandle': 'term_w',
@@ -48,10 +56,7 @@ class Stall(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = pathlib.Path(self.tmp.name)
-        self.env = patch.dict(os.environ, {'HOME': str(self.home)})
-        self.env.start()
-        self.addCleanup(self.env.stop)
-        self.log_path = self.home / '.orca' / 'logs' / 'fleet-watch.log'
+        self.log_path = self.home / 'fleet-watch-test.log'
 
     def test_stall_restarts_once_then_labels(self):
         calls = []
@@ -85,7 +90,8 @@ class Stall(unittest.TestCase):
             'backup': {'stamp': str(backup_stamp), 'issue_repo': 'owner/repo'},
         }))
 
-        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+        with isolated_main_env(str(self.home)), \
+                patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                 patch.object(watch, 'rpc', side_effect=rpc), \
                 patch.object(watch, 'run_gh', side_effect=fake_gh), \
                 patch.object(watch, 'pr_notices', return_value=[]), \
@@ -101,6 +107,8 @@ class Stall(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertIn('--task', starts[0])
         self.assertIn('task_stall_fixture', starts[0])
+        self.assertIn('--run', starts[0])
+        self.assertIn('r1', starts[0])
         self.assertIn('--retry-of', starts[0])
         self.assertIn('--worktree', starts[0])
         self.assertIn('5c45d9ec-0d77-4c92-859f-bda6af348340::/srv/orca/workspaces/example/fsd-watchdog-fold', starts[0])
@@ -133,7 +141,8 @@ class Stall(unittest.TestCase):
             'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
         }))
 
-        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+        with isolated_main_env(str(self.home)), \
+                patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                 patch.object(watch, 'rpc', side_effect=rpc), \
                 patch.object(watch, 'pr_notices', return_value=[]), \
                 patch.object(watch, 'usage_notices', return_value=[]), \

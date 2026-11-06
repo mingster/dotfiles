@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # No orca: partial terminal send must not repeat notices on terminals that already got them.
 set -euo pipefail
-python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
+PYTHON=python3
+if [[ -x /usr/bin/python3 ]]; then PYTHON=/usr/bin/python3; fi
+"$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import contextlib, importlib.util, io, json, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('fleet_watch', root/'fleet-watch.py')
 watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', root/'tests'/'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env); _spec_env.loader.exec_module(_fwe)
+redirect_main_log_under = _fwe.redirect_main_log_under
 
 def failed(name):
     return {'dispatchId': name, 'dispatchStatus': 'failed'}
@@ -45,7 +50,8 @@ class Resend(unittest.TestCase):
             {'id': 'r1', 'terminal': 'term_first', 'waiter_pattern': 'w1'},
             {'id': 'r2', 'terminal': 'term_second', 'waiter_pattern': 'w2'},
         ]}))
-        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+        with redirect_main_log_under(str(state.parent.resolve())), \
+             patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
              patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()

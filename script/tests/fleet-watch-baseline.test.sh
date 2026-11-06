@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # No orca: the CLI wrapper is patched. First pass baselines failures, later passes report only new ones.
 set -euo pipefail
-python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
+PYTHON=python3
+if [[ -x /usr/bin/python3 ]]; then PYTHON=/usr/bin/python3; fi
+"$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import importlib.util, json, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('fleet_watch', root/'fleet-watch.py')
 watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
+_spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', root/'tests'/'fleet_watch_test_env.py')
+_fwe = importlib.util.module_from_spec(_spec_env); _spec_env.loader.exec_module(_fwe)
+redirect_main_log_under = _fwe.redirect_main_log_under
 def failed(name): return {'dispatchId': name, 'dispatchStatus': 'failed'}
 class Baseline(unittest.TestCase):
     def pass_with(self, state, workers):
@@ -19,7 +24,8 @@ class Baseline(unittest.TestCase):
             return {}
         config = state.parent/'config.json'
         config.write_text(json.dumps({'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}]}))
-        with patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
+        with redirect_main_log_under(str(state.parent.resolve())), \
+             patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
         return [c for c in calls if c[:2] == ('terminal', 'send')]

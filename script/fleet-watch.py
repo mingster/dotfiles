@@ -22,6 +22,10 @@ class OrcaReadError(Exception):
     """Orca inventory could not be read or parsed."""
 
 
+class TerminalNotFound(OrcaReadError):
+    """Orca reports this terminal handle does not exist (lead pane gone)."""
+
+
 SEND_ERRORS = (
     subprocess.CalledProcessError,
     subprocess.TimeoutExpired,
@@ -35,14 +39,76 @@ NOTICE_PASS_LIMIT = 20
 ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
 
 
+def _json_object_from_orca_process(proc):
+    """If stdout or stderr is a JSON object, return it; else None."""
+    for part in (proc.stdout, proc.stderr):
+        if not part or not str(part).strip():
+            continue
+        try:
+            data = json.loads(part.strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+_TERMINAL_SHOW_GONE_CODES = frozenset(('terminal_handle_stale', 'terminal_not_found'))
+
+
+def _terminal_error_code(value):
+    """Orca error code: top-level string, or nested error.code / error when dict."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ('code', 'message', 'error'):
+            v = value.get(key)
+            if isinstance(v, str) and v:
+                return v
+    return None
+
+
+def _receipt_denies_terminal_show(args_tuple, receipt):
+    """True when terminal show failed for a missing or stale handle (exact Orca error codes)."""
+    if len(args_tuple) < 2 or args_tuple[0] != 'terminal' or args_tuple[1] != 'show':
+        return False
+    if not isinstance(receipt, dict):
+        return False
+    if receipt.get('ok') is not False:
+        return False
+    err = receipt.get('error')
+    code = _terminal_error_code(err)
+    if code in _TERMINAL_SHOW_GONE_CODES:
+        return True
+    if isinstance(err, list):
+        for item in err:
+            if _terminal_error_code(item) in _TERMINAL_SHOW_GONE_CODES:
+                return True
+    for key in ('errors', 'code', 'message', 'reason'):
+        if _terminal_error_code(receipt.get(key)) in _TERMINAL_SHOW_GONE_CODES:
+            return True
+    return False
+
+
 def rpc(*args):
     command = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca'))
     try:
         output = subprocess.run(
-            command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=True
+            command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=False
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+    except (subprocess.TimeoutExpired, OSError) as e:
         raise OrcaReadError('orca CLI failed') from e
+
+    if output.returncode != 0:
+        receipt = _json_object_from_orca_process(output)
+        if isinstance(receipt, dict) and _receipt_denies_terminal_show(args, receipt):
+            raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
+                output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+            )
+        raise OrcaReadError('orca CLI failed') from subprocess.CalledProcessError(
+            output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+        )
+
     try:
         receipt = json.loads(output.stdout)
     except json.JSONDecodeError as e:
@@ -50,6 +116,8 @@ def rpc(*args):
     if not isinstance(receipt, dict):
         raise OrcaReadError('orca body is not a JSON object')
     if receipt.get('ok') is False:
+        if _receipt_denies_terminal_show(args, receipt):
+            raise TerminalNotFound('terminal_not_found')
         raise OrcaReadError('Orca refused inventory')
     if 'result' not in receipt:
         raise OrcaReadError('missing result in orca reply')
@@ -274,15 +342,68 @@ def read_orca_inventory(config):
         alive[run['id']] = proc.returncode == 0
     leads = {}
     for lead in config.get('leads', []):
-        rpc('terminal', 'show', '--terminal', lead['terminal'])
-        leads[lead['terminal']] = True
+        handle = lead['terminal']
+        try:
+            rpc('terminal', 'show', '--terminal', handle)
+        except TerminalNotFound:
+            leads[handle] = False
+            continue
+        leads[handle] = True
     return {'messages': inbox['messages'], 'workers': workers, 'alive': alive, 'leads': leads}
+
+
+def worker_run_id(w):
+    """Orca run id from a worker-list row when present (several JSON shapes)."""
+    w = w or {}
+    for key in ('runId', 'run_id'):
+        v = w.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    proj = w.get('projection') or {}
+    for key in ('runId', 'run_id', 'run'):
+        v = proj.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    resource = w.get('resource') or {}
+    for key in ('runId', 'run_id'):
+        v = resource.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    scope = w.get('scope') or {}
+    v = scope.get('run')
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return ''
+
+
+def default_list_run_id(config):
+    """When exactly one run is configured, use it as fallback for rows with no run id (legacy state)."""
+    runs = config.get('runs') or []
+    if len(runs) == 1:
+        rid = runs[0].get('id', '')
+        return rid.strip() if isinstance(rid, str) else ''
+    return ''
+
+
+def run_id_for_stall_restart(w, persisted=''):
+    """Resolved run id for worker-start: row fields, list pass tag, then persisted fallback."""
+    r = worker_run_id(w)
+    if r:
+        return r
+    if isinstance(w, dict):
+        tag = w.get('_fleet_watch_list_run')
+        if isinstance(tag, str) and tag.strip():
+            return tag.strip()
+    if isinstance(persisted, str) and persisted.strip():
+        return persisted.strip()
+    return ''
 
 
 def fetch_workers(config):
     """Retrieve and deduplicate workers across runs and pagination.
 
     worker-list without --run shows only the caller's Run, so without configured runs read every Run.
+    Rows that omit run id get _fleet_watch_list_run set from the list pass for stall restarts.
     """
     run_ids = [run['id'] for run in config.get('runs', [])]
     if not run_ids:
@@ -290,7 +411,10 @@ def fetch_workers(config):
     workers = []
     for run_id in run_ids:
         for result in list_pages('orchestration', 'worker-list', '--run', run_id, '--include-remote', '--full'):
-            workers.extend(result.get('workers', []))
+            for w in result.get('workers', []):
+                if isinstance(w, dict) and not worker_run_id(w):
+                    w['_fleet_watch_list_run'] = run_id
+                workers.append(w)
     return deduplicate_workers(workers)
 
 
@@ -602,6 +726,10 @@ def run_gh(command):
 
 
 def fleet_watch_log_path():
+    """Return log path; set FLEET_WATCH_LOG_PATH to override the default under HOME."""
+    override = (os.environ.get('FLEET_WATCH_LOG_PATH') or '').strip()
+    if override:
+        return Path(override)
     return Path.home() / '.orca' / 'logs' / 'fleet-watch.log'
 
 
@@ -736,11 +864,12 @@ def worker_branch_name(w):
     return ''
 
 
-def worker_stall_restart_start_args(w, old_dispatch_id):
+def worker_stall_restart_start_args(w, old_dispatch_id, run_id):
     """Orca worker-start args after a stop; None when the row cannot supply a valid start.
 
     After worker-stop the previous terminal is closed; do not pass --terminal. Agent and model
-    come from the stopped dispatch row or persisted stop record.
+    come from the stopped dispatch row or persisted stop record. run_id scopes worker-start to the
+    same Run as worker-list (Orca returns task_not_found without --run when the CLI default Run differs).
     """
     tid = worker_task_id(w)
     if not tid:
@@ -752,7 +881,13 @@ def worker_stall_restart_start_args(w, old_dispatch_id):
     model = worker_model_id(w)
     if not agent:
         return None
-    args = ['orchestration', 'worker-start', '--task', tid, '--retry-of', old_dispatch_id, '--worktree', wt, '--agent', agent]
+    rid = run_id_for_stall_restart(w, run_id)
+    if not rid:
+        return None
+    args = [
+        'orchestration', 'worker-start', '--run', rid, '--task', tid,
+        '--retry-of', old_dispatch_id, '--worktree', wt, '--agent', agent,
+    ]
     if model:
         args.extend(['--model', model])
     return args
@@ -932,7 +1067,9 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not row or not old_dispatch:
             pending.pop(skey, None)
             continue
-        start_args = worker_stall_restart_start_args(row, old_dispatch)
+        run_for_start = run_id_for_stall_restart(
+            row, pend.get('stall_restart_run_id') or '') or default_list_run_id(config)
+        start_args = worker_stall_restart_start_args(row, old_dispatch, run_for_start)
         if not start_args:
             log_bits.append('stall_pending_no_args=%s' % old_dispatch)
             continue
@@ -985,7 +1122,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
 
         if not st['restarted']:
-            start_args = worker_stall_restart_start_args(w, did)
+            run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
+            start_args = worker_stall_restart_start_args(w, did, run_for_start)
             if start_args:
                 try:
                     rpc_call('orchestration', 'worker-stop', '--dispatch', did)
@@ -1000,6 +1138,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                         wt_sel = worker_worktree_selector(w)
                         pending[skey] = {
                             'old_dispatch': did,
+                            'stall_restart_run_id': run_for_start,
                             'row_snapshot': {
                                 'taskId': worker_task_id(w),
                                 'resource': {'worktreeId': wt_sel} if wt_sel else {},

@@ -27,6 +27,13 @@ class WorkerPages(unittest.TestCase):
         with patch.object(fw, 'rpc', side_effect=rpc):
             return fw.fetch_workers(config), calls
 
+    def test_tags_list_run_on_rows_missing_run_id(self):
+        w = worker('a')
+        got, _ = self.fetch({'runs': [{'id': 'rx'}]}, {
+            ('worker-list', 'rx', None): {'workers': [w], 'scope': {}, 'warnings': []}})
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0].get('_fleet_watch_list_run'), 'rx')
+
     def test_follows_top_level_next_cursor(self):
         got, _ = self.fetch({'runs': [{'id': 'r'}]}, {
             ('worker-list', 'r', None): {'workers': [worker('a')], 'scope': {}, 'nextCursor': 'p2', 'warnings': []},
