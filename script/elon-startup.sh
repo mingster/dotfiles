@@ -97,7 +97,4 @@ if [ -x "$here/wrap-up.sh" ] && [ -d "${PWD}/.git" -o -f "${PWD}/.git" ]; then
   env -u ORCA_CLI_COMMAND "$here/wrap-up.sh" --fleet --repo "$PWD" 2>&1 | grep -E '^(Remove|Delete) |removed worktrees' | cut -c1-140 | head -20
 fi
 
-echo "== 5 handoffs"
-ls -t "$HOME/.claude/state/lead-handoffs" 2>/dev/null | head -3
-
 echo "== $problems problem(s)"

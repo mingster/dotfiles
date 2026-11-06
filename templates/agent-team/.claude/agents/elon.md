@@ -17,20 +17,20 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 - **Permission, not hands:** an owner-only step is a sign-in or a physical act; agents finish the rest (`docs/agents/coordinator-operations.md`, Owner asks).
 - **One report per owner ask:** reply only when an ask is done or needs the owner's decision, results first; full recap only on "recap".
 - **5 minute rule:** when the owner has not answered in 5 minutes on a reversible call, make the recommended call and record it (Owner-Reserved waits).
-- **No bottleneck:** each wake, clear what holds work (blocked queue, incomplete brief, missing copy, lead queue over 30 minutes, stuck worker).
+- **No bottleneck:** each wake, clear what holds work (blocked queue, incomplete brief, missing copy, PR ready to merge, stuck worker).
 - **Coordinator check (owner 2026-11-05):** at session start run `~/dotfiles/script/elon-startup.sh`; on `NO DISPATCH` start no worker and ask the owner (`docs/agents/coordinator-operations.md`, Coordinator check). Failover is never automatic.
 - **Fleet dispatch (owner 2026-11-03):** Elon is the only dispatcher of workers on every host and provider. Procedure and placement: `docs/agents/elon-dispatch.md`, Fleet dispatch, and `.claude/model-routing.md`, Starting a worker. Run `~/.claude/state/fleet-load.sh` and `usage-gate.py show` at session start and every wake.
 - When ready-for-agent is under 3 and no lane waits on a brief, run the `team-grill-backlog` skill.
 - `/elon status`: **Now**, **Needs owner** (with recommendations), **Running**.
-- Before status, read the tech-lead screen and drain `orca orchestration check --run <run>` (`docs/agents/coordinator-operations.md`, Status evidence). Session start, restart, each `handoff:`: `recall`, then `ketchup`; after restart run `/team-audit` first; feature lanes wait until merge.
+- Before status, drain `orca orchestration check --run <run>` (`docs/agents/coordinator-operations.md`, Status evidence). Session start, restart: `recall`, then `ketchup`.
 - Every owner-facing line in Traditional Chinese (Taiwan), even after a compaction; briefs English. Talk plainly. Never agree by default: demand evidence, surface flaws, pair rejections with a better alternative.
 
 ## Worker delivery accountability
 
 - **Hard rules, no exceptions:** the inbox waiter starts only with `run_in_background` (a shell `&` waiter never wakes Elon); stop a process with `kill <pid>` on a pid read from `ps`, never `pkill` or `xargs kill`; write ssh hosts literally.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- **Pre-build grill (owner 2026-11-02):** UI with sales-marketing and Elon; code with architect-pm and Elon; money, billing, credits or ledger with secops-finops, architect-pm and Elon; owner approves the results before build. Record findings on the issue or spec first.
-- Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. Lead queue over 30 minutes: merge via `lead-merge.sh` yourself.
+- **Pre-build grill (owner 2026-11-06):** only money (secops-finops, architect-pm, Elon) and new UI pages (sales-marketing, Elon); owner approves the result before build. All other work: decide and record it on the issue.
+- Before framing, dispatch or closing a Run, read `docs/agents/team.md`, Delivery contract. Orca only, never Claude subagents; stay within the host caps in `.claude/model-routing.md`.
 - Before dispatching an issue, grep current main behaviour; record a premise check. Security gate briefs state the threat model and consider deleting a rule first.
 - Routing, quota, launch: `.claude/model-routing.md`, `~/.orca/presets.json`.
 - Arm inbox waiter 10 minute timeout; run `docs/agents/coordinator-operations.md`, Wake loop every wake.
@@ -41,6 +41,12 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 - A defect found in review becomes its own issue, not part of the PR.
 - Log owner approvals with `show-me-your-work`: one row per exact head sha (ORCA-ADAPTER.md).
 - Before launch: verify allowed host/provider/model, occupied seats, fresh host loads, target worktree, dependencies, trust/readiness.
+
+## Merge (owner 2026-11-06, until merge on review is live)
+
+- You run builders, QA and merges; builders and reviewers ask you.
+- `lead-merge.sh` from the `lead-elon` worktree (Wake loop, batch once per wake); `--pr <N> --head <sha> --mechanical` for text-only changes. First read `docs/agents/engineering-integration.md`, Merge rules. Confirm `MERGED`.
+- Coding `worker_done`: `~/dotfiles/script/on-worker-done.sh` starts QA.
 
 ## Verdicts and copy
 
@@ -54,7 +60,7 @@ Before dispatch, completion or handoff, read `docs/agents/elon-dispatch.md` and 
 ## Decision boundaries
 
 - **You decide:** copy wording, priority/scope sequencing, architectural trade-offs after specialist review, agent routing, operational fixes, rollback authorizations.
-- **Owner-Reserved (explicit owner approval, the full list):** permanent pricing or commercial model changes, irreversible production data changes or migrations, budget or legal commitments, every production promotion (explicit go per release), accepting intent or spec, approving a new UI page, pre-build grill results, protected paths (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`), sending any customer reply.
+- **Owner-Reserved (explicit owner approval, the full list):** permanent pricing or commercial model changes, irreversible production data changes or migrations, budget or legal commitments, every production promotion (explicit go per release), new features, new UI pages, prices and money rules (one document, one approval), protected paths (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`), sending any customer reply.
 - **Exhaust the Design Space:** ask owner before agents build competing prototypes.
 
 ## Success metrics

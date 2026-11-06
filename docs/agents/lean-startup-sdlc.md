@@ -4,7 +4,7 @@
 
 ## 1. 核心開發編制與角色職責
 
-全流程遵循專案 SDLC 規範。需求由 `architect-pm` 分析，工程排程由 `tech-lead` (Tech Lead) 統籌，程式碼實作由 `fullstack-dev` 負責，品質由 QA 與安全團隊獨立審查，上線由 `release-manager` 推進，最終發布門禁由人類創辦人把關。
+全流程遵循專案 SDLC 規範。需求由 `architect-pm` 分析，工程排程由 Elon 統籌，程式碼實作由 `fullstack-dev` 負責，品質由 QA 與安全團隊獨立審查，上線由 `release-manager` 推進，最終發布門禁由人類創辦人把關。
 
 ### 需求分析師兼產品架構師 (`architect-pm`)
 
@@ -62,12 +62,12 @@ Agent 在執行多輪複雜任務時，透過工作目錄中的輕量 `active_ru
 
 1. **環境變數零信任 (Zero-Env Disclosure)**：Agent 在任何時候更新或建立 Markdown 文件時，嚴禁將 `.env` 中的真實金鑰、密碼或 Token 寫入檔案。
 2. **預留占位符 (Placeholders)**：所有涉及金流密鑰或資料庫連線字串的地方，一律使用 `[Omitted/Configured via Env]` 替代。
-3. **人類審查與合併門禁**：AI 代理人僅在專屬分支開發，合併由 Tech Lead 依審查結果執行，正式上線與發布門禁由人類創辦人把關。
+3. **人類審查與合併門禁**：AI 代理人僅在專屬分支開發，合併由 Elon 依審查結果執行，正式上線與發布門禁由人類創辦人把關。
 
 ## 5. 對話脈絡與 Token 節省守則 (Context Hygiene & Token Conservation)
 
 1. **任務即會話生命週期 (One Ticket, One Session)**：
-   當 `fullstack-dev` 完成任務並開立 PR 後，該次任務的 Agent 執行即告結束。嚴禁在同一個會話中直接開啟下一項無關任務。下一項任務應由 Tech Lead 或創辦人啟動全新乾淨的會話或新子代理人，確保上下文 Token 從零開始，徹底避免前案歷史殘留造成的 Token 膨脹。
+   當 `fullstack-dev` 完成任務並開立 PR 後，該次任務的 Agent 執行即告結束。嚴禁在同一個會話中直接開啟下一項無關任務。下一項任務應由 Elon 或創辦人啟動全新乾淨的會話或新子代理人，確保上下文 Token 從零開始，徹底避免前案歷史殘留造成的 Token 膨脹。
 2. **多輪長任務的 Compaction 容錯 (In-Task Compaction Resilience)**：
    若單一任務執行輪數較多（例如超過 15 到 20 輪），創辦人可在對話中執行 `/compact`。由於 Agent 已即時維護 `active_run.md`，Compaction 後 Agent 能在第一輪重讀 `active_run.md` 恢復狀態，無痛接續工作。
 3. **側枝隔離 (Side Subagent Offloading)**：

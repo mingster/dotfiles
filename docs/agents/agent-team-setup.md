@@ -55,14 +55,14 @@ from upstream is a separate maintainer operation through
 `script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
 changes the dotfiles checkout. No command commits or pushes the target project.
 
-## Letting the Tech Lead merge
+## Letting Elon merge
 
-The Tech Lead merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`.
+Elon merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`.
 The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
 open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
 and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
-`ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the tech-lead check.
+`ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the merge check.
 
 ## Optional worker watchdog (macOS)
 

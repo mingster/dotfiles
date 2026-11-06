@@ -8,7 +8,7 @@
 - **Intent (`intent.md`):** gather user pain points from support and sales; `capture-intent` records the business problem and expected outcome before technical work begins.
 - **PRD (`spec.md`):** expand an accepted intent with `write-spec`: customer workflows, tenancy rules, acceptance criteria, verification checks. Zero-Env: no raw secrets in specs.
 - **Tickets (GitHub issues with blocking edges):** the `to-tickets` skill (read `~/.agents/skills/to-tickets/SKILL.md`; it cannot be preloaded or auto invoked) slices an accepted spec into tracer bullet vertical slices, each with allowed files, expected behavior and the test cases it owns from the spec's Test plan (file or command and observable result).
-- **Ready queue:** keep at least 3 `ready-for-agent` tickets ahead of the tech-lead; when fewer remain, tell Elon and start the next spec or triage round (2026-10-22: the lead sat idle on an empty queue).
+- **Ready queue:** keep at least 3 `ready-for-agent` tickets ahead of Elon; when fewer remain, tell Elon and start the next spec or triage round (2026-10-22: builds sat idle on an empty queue).
 - **Triage:** run the `triage` skill (`~/.agents/skills/triage/SKILL.md`) on each `needs-triage` issue Elon hands you, Elon acting as maintainer; every `ready-for-agent` issue gets its agent brief.
 - Load `grill-with-docs`, `domain-modeling`, `codebase-design`, `improve-codebase-architecture`, `prototype` and `research` only when the job needs them; `Bash` and web tools only for verification or research.
 - **Exhaust the Design Space:** before building 2 or 3 competing prototypes, send Elon the options and cost; he asks the owner in Chinese and proceeds only on an explicit yes.

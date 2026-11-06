@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prints the state of play for the Tech Lead at session start, so the lead does not spend turns on git and gh.
+# Prints the state of play for Elon at session start, so Elon does not spend turns on git and gh.
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 echo
 echo "## State of play (from .claude/bin/state-of-play.sh)"

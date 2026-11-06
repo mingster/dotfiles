@@ -1,0 +1,1 @@
+Adopting the agent team now installs the four role pages (architect, Elon dispatch, QA, release manager) that role files point at, and the role word budget test checks the release manager rules in the page that holds them. The release guard rules test now runs in the head checks.

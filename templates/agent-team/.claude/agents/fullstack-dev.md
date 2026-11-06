@@ -21,7 +21,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Run ledger:** for a ticket with more than one slice, keep `active_run.md` (git ignored) in the worktree root, written at the start (allowlisted files, verify command) and when blocked.
 - **Local servers:** start your own server on your own port and stop it by PID, never by name.
 - **Paths:** quote bracketed paths; no escaped paths, `..` or paths outside the worktree (they stall approval); scratch goes in `<worktree>/.scratch/`, never `/tmp`.
-- **Delete before adding:** the PR body has one line `Deleted:` naming what you removed, or "nothing, because ...". Add a hook, gate or check script only when the tech-lead brief says it survived the requirement and manual step test.
+- **Delete before adding:** the PR body has one line `Deleted:` naming what you removed, or "nothing, because ...". Add a hook, gate or check script only when the brief says it survived the requirement and manual step test.
 
 ## Stack and standards
 - Next.js 16 App Router, `next-safe-action` 8 with Zod 4, Prisma 7 on PostgreSQL, Better Auth, Tailwind 4 with shadcn/ui, Bun.
@@ -33,7 +33,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - **Lint first:** before every local commit run changed-file lint, the typecheck and scoped tests; build only when repo rules require it. Record the full head SHA. A red cheap check stops the line.
 - **E2E drift:** grep the e2e specs for each user-facing string and route you change; update and run the matching specs in the same commit and list them.
 - Add one new file `changelog.d/<issue>-<short-slug>.md` (or `<branch-slug>.md` with no issue) holding only the changelog entry line(s). Update living design notes in `docs/<AREA>/`.
-- **Before `worker_done`:** merge `origin/main`, resolve conflicts and rerun touched tests. Run `bin/head-checks.sh` on your PR head and `bun bin/pr-body-lint.ts` on the PR body (`## Verification`, `Closes #N`, no Test plan section). State the head SHA and whether Checks passed in `worker_done`; fix a red Checks result before sending `worker_done`. Lead runs PR head-checks after publication. No sub-dispatch without a coordinator grant. Route, metadata and sitemap changes require the build command in the brief.
+- **Before `worker_done`:** merge `origin/main`, resolve conflicts and rerun touched tests. Run `bun bin/pr-body-lint.ts` on the PR body (`## Verification`, `Closes #N`, no Test plan section). State the head SHA and whether Checks passed in `worker_done`; fix a red Checks result before sending `worker_done`. Checks run on push. No sub-dispatch without a coordinator grant. Route, metadata and sitemap changes require the build command in the brief.
 - **Leave the PR body ready:** `Closes #N`, one `## Verification` section (1–3 bullets: run path and outcome), a `Review:` line, no Test plan, no footer. Your tests do not replace the independent verifier's verdict.
 - Report in `worker_done` per `.claude/model-routing.md` (Commit, push and merge, rule 1).
 - Skills: `tdd`; a whole ticket with `implement` (read `~/.agents/skills/implement/SKILL.md`); a bug starts with `diagnosing-bugs`. Never `create-pr`.
@@ -44,7 +44,7 @@ Operating mode: poteto-mode via `.agents/skills/poteto-mode/ORCA-ADAPTER.md`; re
 - Check failures against `origin/main` first; on-main failures are follow-ups, not blockers. A pre-existing claim needs the exact failing test name from an `origin/main` run this turn.
 - Fix tests or fixtures inside the allowlist without weakening assertions, one check run per edit.
 - **Strikes:** `docs/agents/team.md`, Delivery contract 8 (Attack the Premise, tooling failures are not strikes, three-strike hard stop).
-- Ask the tech-lead only for a file outside the allowlist, a scope or behaviour change, a hard stop, or a security or money question. Never ask Elon directly.
+- Ask Elon only for a file outside the allowlist, a scope or behaviour change, a hard stop, or a security or money question.
 
 ## Never
 - `git push`, `gh pr create`, merge PRs or force push.
