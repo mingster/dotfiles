@@ -82,15 +82,18 @@ class Hook(unittest.TestCase):
         self.assertIsNone(deny)
 
     def test_one_blocked_start_in_a_chain_blocks_the_command(self):
-        self.cursor(40, 38); self.claude(100)
+        self.composer_pool(40, 38); self.claude(100)
         deny, _ = self.run_hook("orca orchestration worker-start --task a --agent cursor && "
                                 "orca orchestration worker-start --task b \\\n  --agent claude")
         self.assertIn("claude", deny); self.assertNotIn("cursor", deny)
 
-    def test_unknown_provider_passes_with_warning(self):
-        deny, err = self.run_hook("orca orchestration worker-start --task t --agent unknown")
-        self.assertIsNone(deny)
-        self.assertIn("no usage reading for agent unknown", err)
+    def test_unknown_provider_is_denied(self):
+        deny, _ = self.run_hook("orca orchestration worker-start --task t --agent unknown")
+        self.assertIn("no usage reading for agent unknown", deny or "")
+
+    def test_start_without_agent_is_denied(self):
+        deny, _ = self.run_hook("orca orchestration worker-start --task t")
+        self.assertIn("no usage reading", deny or "")
 
     def run_stubbed_pool_hook(self, command, provider="antigravity", unavailable_model=None):
         spec = importlib.util.spec_from_file_location("hook", HOOK)
@@ -153,7 +156,7 @@ class Hook(unittest.TestCase):
                 out, checks = self.run_stubbed_pool_hook(
                     "orca orchestration worker-start --agent antigravity --model " + model,
                     unavailable_model=model)
-                self.assertEqual(out, "")
+                self.assertIn("no usage reading for antigravity", out)
                 self.assertEqual(checks, [["--model", model]])
 
     def test_antigravity_invalid_model_arguments_use_default_flash_pool(self):
@@ -213,20 +216,18 @@ class Hook(unittest.TestCase):
         os.environ["USAGE_GATE_CURSOR_SUMMARY"] = self.state + "/summary.json"
         self.addCleanup(os.environ.pop, "USAGE_GATE_CURSOR_SUMMARY", None)
 
-    def test_cursor_non_composer_model_warns_when_composer_pool_has_headroom(self):
+    def test_cursor_non_composer_model_is_denied_when_composer_pool_has_headroom(self):
         cmd = ("orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high "
                "--task-title 'qa-sdet - review'")
         self.composer_pool(16, 14)
-        deny, err = self.run_hook(cmd)
-        self.assertIsNone(deny)
-        self.assertIn("no usage reading for cursor", err)
+        deny, _ = self.run_hook(cmd)
+        self.assertIn("no usage reading for cursor", deny or "")
 
-    def test_cursor_non_composer_model_with_unreadable_summary_warns(self):
+    def test_cursor_non_composer_model_with_unreadable_summary_is_denied(self):
         cmd = "orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high"
         self.cursor(10, 8)
-        deny, err = self.run_hook(cmd)
-        self.assertIsNone(deny)
-        self.assertIn("no usage reading for cursor", err)
+        deny, _ = self.run_hook(cmd)
+        self.assertIn("no usage reading for cursor", deny or "")
 
     def test_cursor_non_composer_model_blocked_at_exhausted_composer_pool(self):
         cmd = "orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high"
@@ -235,30 +236,24 @@ class Hook(unittest.TestCase):
         self.assertIn("blocked cursor", deny or "")
         self.assertNotIn("no usage reading for cursor", err)
 
-    def test_cursor_aggregate_usage_warns_without_blocking_composer(self):
+    def test_cursor_aggregate_usage_alone_is_denied(self):
         cmd = "orca orchestration worker-start --task t --agent cursor"
         self.cursor(40, 38)
-        self.assertIsNone(self.run_hook(cmd)[0])
-        self.cursor(95, 90)
-        deny, err = self.run_hook(cmd)
-        self.assertIsNone(deny)
-        self.assertIn("read the Cursor dashboard", err)
+        self.assertIn("no usage reading for cursor", self.run_hook(cmd)[0] or "")
 
-    def test_no_reading_passes_with_warning(self):
-        deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")
-        self.assertIsNone(deny)
-        self.assertIn("gate exit 4", err)
+    def test_no_reading_is_denied(self):
+        deny, _ = self.run_hook("orca orchestration worker-start --task t --agent claude")
+        self.assertIn("gate exit 4", deny or "")
 
     def test_stale_reading_at_ceiling_still_blocks_before_reset(self):
         self.claude(99, written_at=time.time() - 7 * 3600)
         deny, _ = self.run_hook("orca orchestration worker-start --task t --agent claude")
-        self.assertIsNone(deny)
+        self.assertIn("gate exit 4", deny or "")
 
-    def test_stale_reading_under_ceiling_passes_with_warning(self):
+    def test_stale_reading_under_ceiling_is_denied(self):
         self.claude(50, written_at=time.time() - 7 * 3600)
-        deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude")
-        self.assertIsNone(deny)
-        self.assertIn("gate exit 4", err)
+        deny, _ = self.run_hook("orca orchestration worker-start --task t --agent claude")
+        self.assertIn("gate exit 4", deny or "")
 
     def test_other_commands_pass_without_running_the_gate(self):
         self.claude(100)
@@ -269,7 +264,8 @@ class Hook(unittest.TestCase):
 
     def test_start_must_use_pick_even_on_retry(self):
         self.claude(44, baseline=40)
-        # Cursor has no reliable reading, so the pick lands on claude and a cursor start is flagged.
+        # Cursor has less headroom than claude, so the pick lands on claude and a cursor start is flagged.
+        self.composer_pool(90, 85)
         for retry in ("", " --retry-of dispatch_old"):
             deny, err = self.run_hook("orca orchestration worker-start --task t --agent cursor "
                                     "--task-title 'fullstack-dev - job'" + retry)
@@ -280,12 +276,14 @@ class Hook(unittest.TestCase):
                                       "--task-title 'fullstack-dev - job'"), (None, ""))
 
     def test_unknown_role_warns(self):
+        self.composer_pool(90, 85)
         self.claude(41, baseline=40)
         deny, err = self.run_hook("orca orchestration worker-start --agent cursor --task-title 'mystery - job'")
         self.assertIsNone(deny)
         self.assertIn("no known role prefix", err)
 
     def test_override_allows_routing_mismatch_logs_reason_and_keeps_daily_cap(self):
+        self.composer_pool(90, 85)
         self.claude(44, baseline=40)
         cmd = "USAGE_GATE_OVERRIDE='provider outage' orca orchestration worker-start --agent cursor " \
               "--task-title 'fullstack-dev - job'"
@@ -301,6 +299,7 @@ class Hook(unittest.TestCase):
         self.assertIn("weekly ceiling", self.run_hook(cmd)[0] or "")
 
     def test_override_only_applies_to_its_command_and_not_spec_text(self):
+        self.composer_pool(90, 85)
         self.claude(44, baseline=40)
         start = "orca orchestration worker-start --agent cursor --task-title 'fullstack-dev - job'"
         for cmd in ("USAGE_GATE_OVERRIDE=outage " + start + " && " + start,
@@ -317,130 +316,6 @@ class Hook(unittest.TestCase):
         self.assertIn("no known role prefix", err)
         with open(self.state + "/overrides.log") as f:
             self.assertIn("manual recovery", f.read())
-
-
-class LeadContext(unittest.TestCase):
-    """Context limit for a session identified as a lead by its worktree basename (lead-*)."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.dirs = {}
-        for name, rel in (("lead", "lead-one"), ("build", "build-one"), ("nested", "lead-parent/build-one")):
-            path = os.path.join(self.tmp.name, rel)
-            os.makedirs(path)
-            subprocess.run(["git", "init", "-q", path], check=True)
-            self.dirs[name] = path
-        self.plain = os.path.join(self.tmp.name, "not-a-repo")
-        os.makedirs(self.plain)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def transcript(self, tokens, name="t.jsonl", extra=""):
-        path = os.path.join(self.tmp.name, name)
-        usage = lambda n: {"type": "assistant", "message": {"usage": {
-            "input_tokens": 3, "cache_read_input_tokens": n - 3 - 10, "cache_creation_input_tokens": 10, "output_tokens": 99}}}
-        with open(path, "w") as f:
-            f.write(json.dumps(usage(900000)) + "\n")  # an older, larger entry: the latest wins, never a sum
-            f.write(json.dumps(usage(tokens)) + "\n" + extra)
-        return path
-
-    def run_hook(self, command, tokens=None, where="lead", transcript=None):
-        path = transcript or (self.transcript(tokens) if tokens is not None else None)
-        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.dirs.get(where, self.plain)}
-        if path:
-            payload["transcript_path"] = path
-        env = dict(os.environ, HOME=self.tmp.name, USAGE_GATE_STATE=self.tmp.name + "/state", USAGE_GATE_ORCA="false")
-        r = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), capture_output=True, text=True, env=env)
-        self.assertEqual(r.returncode, 0)
-        out = json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else {}
-        return out.get("permissionDecisionReason"), out.get("additionalContext"), r.stderr
-
-    def test_lead_under_warn_line_passes_silently(self):
-        deny, note, err = self.run_hook("git status", 149999)
-        self.assertEqual((deny, note, err), (None, None, ""))
-
-    def test_lead_at_150k_is_warned_not_denied(self):
-        deny, note, _ = self.run_hook("git status", 150000)
-        self.assertIsNone(deny)
-        self.assertIn("150k", note)
-        self.assertIn("lead-handoff.sh", note)
-
-    def test_lead_at_171k_plain_command_denied_with_handoff_command(self):
-        deny, _, _ = self.run_hook("git status", 171000)
-        self.assertIn("script/lead-handoff.sh --branch", deny)
-        self.assertIn("--dispatch-ids", deny)
-
-    def test_lead_at_171k_allow_list(self):
-        for command in ("script/lead-handoff.sh --branch b --head h --remainder r --dispatch-ids i",
-                        "~/dotfiles/script/lead-merge.sh --repo o/r --pr 3 --head abc",
-                        "bash script/lead-merge.sh --repo o/r --pr 3 --head abc",
-                        "orca orchestration check --json",
-                        "orca terminal read --terminal t 2>&1 >/dev/null",
-                        "LEAD_X=1 orca orchestration send --body 'a; git push'"):
-            with self.subTest(command=command):
-                deny, _, _ = self.run_hook(command, 171000)
-                self.assertIsNone(deny)
-
-    def test_lead_at_171k_compound_hiding_a_denied_command(self):
-        for command in ("orca orchestration check && git push", "orca x; rm -rf y", "orca x | sh", "orca x & git push",
-                        "script/lead-merge.sh --pr 1\ngit push", "orca $(git push)", "orca `git push`",
-                        "orca x > out; cat y", "(git push)", "git push || orca x", "orca x\n cat <<EOF\nhi\nEOF\ngit push"):
-            with self.subTest(command=command):
-                deny, _, _ = self.run_hook(command, 171000)
-                self.assertIsNotNone(deny)
-
-    def test_heredoc_body_is_text_for_an_allowed_command(self):
-        deny, _, _ = self.run_hook("orca orchestration send --body \"$(cat <<'EOF'\nline; git push\nEOF\n)\"", 171000)
-        self.assertIsNone(deny)
-
-    def test_non_leads_at_171k_pass(self):
-        for where in ("build", "nested", "plain"):
-            with self.subTest(where=where):
-                deny, note, _ = self.run_hook("git status", 171000, where=where)
-                self.assertEqual((deny, note), (None, None))
-
-    def test_missing_cwd_is_not_a_lead(self):
-        path = self.transcript(171000)
-        r = subprocess.run([sys.executable, HOOK], input=json.dumps(
-            {"tool_name": "Bash", "tool_input": {"command": "git status"}, "transcript_path": path}),
-            capture_output=True, text=True, env=dict(os.environ, HOME=self.tmp.name))
-        self.assertEqual(r.stdout.strip(), "")
-
-    def test_missing_transcript_warns_only(self):
-        deny, _, err = self.run_hook("git status", transcript=self.tmp.name + "/none.jsonl")
-        self.assertIsNone(deny)
-        self.assertIn("context size unreadable", err)
-        deny, _, err = self.run_hook("git status")
-        self.assertIsNone(deny)
-        self.assertIn("context size unreadable", err)
-
-    def test_malformed_transcript_warns_only(self):
-        path = os.path.join(self.tmp.name, "bad.jsonl")
-        open(path, "w").write("not json\n{\"message\": {\"usage\": \n\x00\x01 garbage")
-        deny, _, err = self.run_hook("git status", transcript=path)
-        self.assertIsNone(deny)
-        self.assertIn("context size unreadable", err)
-
-    def test_truncated_last_line_uses_the_last_complete_entry(self):
-        path = self.transcript(171000, extra='{"type":"assistant","message":{"usage":{"input_to')
-        deny, _, _ = self.run_hook("git status", transcript=path)
-        self.assertIsNotNone(deny)
-
-    def test_reads_only_the_end_of_a_large_transcript(self):
-        path = self.transcript(171000, name="big.jsonl", extra=json.dumps({"type": "user", "pad": "x" * 3000000}) + "\n")
-        start = time.time()
-        deny, _, _ = self.run_hook("git status", transcript=path)
-        self.assertIsNotNone(deny)
-        self.assertLess(time.time() - start, 2)
-
-    def test_worker_start_gate_still_runs_for_a_lead_under_the_limit(self):
-        deny, note, _ = self.run_hook("orca orchestration worker-start --spec '' --agent claude", 100000)
-        self.assertIn("empty --spec", deny)
-
-    def test_lead_over_limit_worker_start_is_allowed_by_context_gate(self):
-        deny, _, _ = self.run_hook("orca orchestration worker-start --spec x --agent unknownagent", 171000)
-        self.assertIsNone(deny)
 
 
 if __name__ == "__main__":

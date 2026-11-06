@@ -1,0 +1,1 @@
+- Remove the Tech Lead role: Elon dispatches and merges once per wake, the lead context limit and lead handoff are gone. The usage gate now fails closed, and Cursor and remote worker starts pass through it.

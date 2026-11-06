@@ -4,15 +4,16 @@
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
 args=("$@")
-environment= agent= worktree=
+environment= agent= worktree= model=
 while [ $# -gt 0 ]; do
   case "$1" in
-    --on|--agent|--worktree)
+    --on|--agent|--worktree|--model)
       [ $# -ge 2 ] || exit 2
       case "$1" in
         --on) [ -z "$environment" ] || exit 2; environment=$2 ;;
         --agent) [ -z "$agent" ] || exit 2; agent=$2 ;;
         --worktree) [ -z "$worktree" ] || exit 2; worktree=$2 ;;
+        --model) model=$2 ;;
       esac; shift 2 ;;
     --terminal|--environment|--pairing-code)
       echo "start-remote-worker: refused alternate placement or existing terminal: $1" >&2; exit 2 ;;
@@ -23,6 +24,8 @@ done
 [ -n "$environment" ] && [ -n "$agent" ] || {
   echo 'start-remote-worker: need --on <environment> --agent <agent>' >&2; exit 2;
 }
+python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
+  || { echo "start-remote-worker: refused by the usage gate" >&2; exit 3; }
 case "$agent" in
   claude) cli=$agent; probe="command -v $agent >/dev/null 2>&1" ;;
   cursor) cli='agent (or cursor-agent)'; probe='command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1' ;;

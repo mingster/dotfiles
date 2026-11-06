@@ -45,13 +45,23 @@ elif a[:2] == ['orchestration', 'worker-start']:
 else: sys.exit(99)
 ''')
         stub.chmod(0o700)
-        self.env = dict(os.environ, ORCA_CLI_COMMAND=str(stub), REMOTE_FIXTURE=str(self.home))
+        self.gate = self.home / 'gate.py'
+        self.gate.write_text('import sys\nsys.exit(0)\n')
+        self.env = dict(os.environ, ORCA_CLI_COMMAND=str(stub), REMOTE_FIXTURE=str(self.home),
+                        USAGE_GATE_CLI=str(self.gate))
 
     def launch(self, agent='antigravity'):
         return subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'),
                                '--on', 'fixture-environment', '--agent', agent,
                                '--worktree', 'path:/srv/fixture', '--spec', 'Fixture task'],
                               env=self.env, capture_output=True, text=True)
+
+    def test_usage_gate_refusal_stops_before_any_orca_call(self):
+        self.gate.write_text('import sys\nsys.exit(3)\n')
+        result = self.launch()
+        self.assertEqual(result.returncode, 3)
+        self.assertIn('usage gate', result.stderr)
+        self.assertFalse(self.log.exists())
 
     def test_missing_cli_refuses_and_names_it_without_dispatch(self):
         for agent, cli in [('antigravity', 'agy'), ('cursor', 'agent'),
