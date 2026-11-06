@@ -345,7 +345,7 @@ last_copy() { # <sha> <branch>
 # A worktree counts as clean when every changed path is an untracked image or the hook state file continual-learning.json
 # (modified or untracked). Any other change keeps it dirty.
 only_ignorable_changes() {
-  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$|^.. \.cursor/hooks/state/continual-learning\.json$' "$1"
+  ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$|^\?\? (.*/)?\.remote-heavy-lock-sha$|^.. \.cursor/hooks/state/continual-learning\.json$' "$1"
 }
 # Holder checks return true for busy OR unknown, with the reason in $busy.
 # fuser checks inodes, not directory trees: enumerate descendants as well as the
