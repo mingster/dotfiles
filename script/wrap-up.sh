@@ -192,6 +192,8 @@ scheduled_round() {
 # WRAP_UP_CALL_TIMEOUT (default 60); a call that times out is reported as kept.
 # --issue and --pr are accepted and ignored: the caller no longer needs numbers here.
 limited() { run_limited "$call_timeout" "$@"; }
+# Branches under archive/ are never deleted by any cleanup route.
+archive_branch() { case "$1" in archive/*) return 0 ;; esac; return 1; }
 # True for main/master/staging/production/HEAD and the current branch, as a bare name, refs/heads/<name>,
 # any origin/ ref, or any name whose last path component is one of those (feature/main).
 is_protected() {
@@ -280,6 +282,7 @@ free_worktree() {
 drop_branch() {
   local b=$1 sha=${2:-} wt tip
   keep_protected "$b" && return 0
+  archive_branch "$b" && { echo "Kept $b (archive branch)"; return 0; }
   if git show-ref --verify --quiet "refs/heads/$b"; then tip=refs/heads/$b
   elif git show-ref --verify --quiet "refs/remotes/origin/$b"; then tip=refs/remotes/origin/$b
   else return 0; fi
@@ -1284,6 +1287,7 @@ process_worktree() {
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why=$protected_reason
+  elif archive_branch "$branch"; then why='archive branch'
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
@@ -1334,6 +1338,8 @@ done < "$tmp/worktrees"
 while IFS= read -r branch; do
   if protected "$branch"; then
     keep "local $branch" "$protected_reason"
+  elif archive_branch "$branch"; then
+    keep "local $branch" 'archive branch'
   elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "local $branch" 'checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch" && local_unpushed "$branch"; then
@@ -1565,6 +1571,8 @@ while IFS= read -r ref; do
   branch=${ref#refs/remotes/origin/}
   if protected "$branch"; then
     keep "remote $branch" "$protected_reason"
+  elif archive_branch "$branch"; then
+    keep "remote $branch" 'archive branch'
   elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "remote $branch" 'checked out in kept worktree'
   elif eligible "$ref" "$branch" && last_copy "$(git rev-parse "$ref")" "$branch"; then
@@ -1700,6 +1708,7 @@ if [ "$pr_ok" -eq 1 ]; then
       t=$(git log -1 --format=%ct "$ref"); [ "$t" -le "$newest" ] || newest=$t
     done
     [ $((now - newest)) -ge 28800 ] || continue
+    case "$name" in archive/*) keep "stale $name" 'archive branch'; continue ;; esac
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
     if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
     if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
