@@ -55,7 +55,7 @@ node_lts_from_index() {
       return 1
     fi
   fi
-  if ! python3 - "$pin" "$json" >"$tmp" 2>"$err" <<'PY'; then
+  python3 - "$pin" "$json" >"$tmp" 2>"$err" <<'PY' || {
 import json
 import sys
 
@@ -100,8 +100,12 @@ PY
     rc=$?
     rm -f "$tmp" "$json" "$err"
     return "$rc"
-  fi
+  }
   lts=$(cat "$tmp")
+  if [ -z "$lts" ]; then
+    rm -f "$tmp" "$json" "$err"
+    return 1
+  fi
   rm -f "$tmp" "$json"
   if [ -s "$err" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
@@ -230,6 +234,7 @@ apply_toolchain() {
     fi
     lts=$(cat "$lts_file")
     rm -f "$lts_file"
+    [ -n "$lts" ] || { apply_fail "empty Node LTS from index"; return 1; }
   fi
   if [ -f "$pin_file" ]; then
     if grep -q '^nodejs ' "$pin_file"; then

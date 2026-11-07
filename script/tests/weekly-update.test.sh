@@ -386,5 +386,31 @@ tcre=$(grep -c -- '--head mingster/weekly-toolchain-' "$GH_LOG" 2>/dev/null) || 
 [ "$tcre" = 0 ] && ok 'index fetch fail opens no toolchain PR' \
   || bad 'toolchain PR opened on fetch fail' "$(cat "$GH_LOG")"
 
+assert_index_apply_fail() {
+  local idx="$1" label="$2" expect_pin="${3:-24.22.0}"
+  setup_fixture
+  write_node_index
+  push_main_pin "nodejs $expect_pin"
+  printf '%s' "$idx" >"$tmp/bad-index.json"
+  : >"$GH_LOG"
+  sum=$(run_weekly_from_index WEEKLY_UPDATE_NODE_INDEX="$tmp/bad-index.json" \
+    WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+    WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 2>&1) || true
+  echo "$sum" | grep -q 'PR toolchain: failed (apply)' \
+    && ok "$label marks toolchain apply failed" \
+    || bad "$label summary" "$sum"
+  fc=$(printf '%s\n' "$sum" | grep -c 'PR toolchain: failed (apply)' || true)
+  [ "$fc" = 1 ] && ok "$label one toolchain failure line" || bad "$label failure line count" "$sum"
+  tcre=$(grep -c -- '--head mingster/weekly-toolchain-' "$GH_LOG" 2>/dev/null) || tcre=0
+  [ "$tcre" = 0 ] && ok "$label opens no toolchain PR" \
+    || bad "$label opened toolchain PR" "$(cat "$GH_LOG")"
+  pin=$(awk '$1=="nodejs"{print $2}' "$work/.tool-versions")
+  [ "$pin" = "$expect_pin" ] && ok "$label leaves pin unchanged" \
+    || bad "$label pin changed" "pin=$pin want=$expect_pin"
+}
+
+assert_index_apply_fail 'not-json at all' 'index bad JSON'
+assert_index_apply_fail '[]' 'index empty releases'
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
