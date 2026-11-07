@@ -156,6 +156,7 @@ class SetupTests(unittest.TestCase):
                      'orca', 'obsidian', 'vscode', 'antigravity', 'zed'):
             (scripts / ('setup-' + name + '.sh')).write_text(
                 'echo setup >> "$HOME/install-log"\n')
+        (scripts / 'check-agent-startup.sh').write_text('#!/usr/bin/env bash\nexit 0\n')
         (scripts / 'setup-check.sh').write_text(
             'echo check >> "$HOME/install-log"\nexit "$READINESS_STATUS"\n')
         (scripts / 'install-agent-clis.sh').write_text('echo agent-clis >> "$HOME/install-log"\n')
