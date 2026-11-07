@@ -1,6 +1,6 @@
 ---
 name: team-audit
-description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Find evidenced problems, give each one fix, and report the four delivery metrics.
+description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Find evidenced problems, give each one fix, and report the five delivery metrics.
 ---
 
 # Team audit
@@ -21,7 +21,7 @@ Team rules and scripts must not grow in total lines; a safety fix may, with the 
 
 ## 3. Metrics
 
-Run `bun bin/team-audit-metrics.ts`: median PR created to merged, median PR created to PASS Verdict, first pass Checks fail rate, full regression minutes. Missing data reads unknown, never zero.
+Run `bun bin/team-audit-metrics.ts`; stdout is five lines: `median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, and `reopened_or_hotfix_rate` (each `key=value`, with `n=` sample counts on rates and medians; month counts are plain integers). Missing data reads unknown, never zero.
 
 ## 4. Output
 
