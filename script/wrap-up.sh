@@ -115,8 +115,8 @@ round_failed() {
 scheduled_round() {
   set +e
   unset ORCA_CLI_COMMAND WRAP_UP_FLEET_CONFIG
-  local started=$SECONDS round_limit=${WRAP_UP_SCHEDULED_ROUND_LIMIT:-240} wrap_up=${WRAP_UP_SCHEDULED_WRAP_UP:-$here/wrap-up.sh}
-  local detail_file orca_dir status_json load cores list_json repo_path left code count=0 fails="" seconds
+  local started=$SECONDS repo_limit=${WRAP_UP_SCHEDULED_REPO_LIMIT:-${WRAP_UP_TOTAL_TIMEOUT:-900}} wrap_up=${WRAP_UP_SCHEDULED_WRAP_UP:-$here/wrap-up.sh}
+  local detail_file orca_dir status_json load cores list_json repo_path code count=0 fails="" seconds kill_limit
   call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
   round_state=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
   log_file=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
@@ -154,23 +154,21 @@ scheduled_round() {
     round_failed 'cannot read orca repo list'; exit 0
   fi
 
-  # Per repo, within what is left of the round. A running wrap-up is told its time and is stopped only if it hangs past that.
+  # Per repo, each with its own budget. A running wrap-up is told its time and is stopped only if it hangs past that.
   # Orca also lists repos the team does not run; those have no head checks and stay untouched.
+  kill_limit=$((repo_limit+${WRAP_UP_SCHEDULED_KILL_GRACE:-30}))
   while IFS= read -r repo_path; do
     [ -n "$repo_path" ] || continue
     [ -f "$repo_path/.agents/head-checks.conf" ] || continue
-    left=$((round_limit-(SECONDS-started)))
-    if [ "$left" -le 0 ]; then fails="${fails:+$fails; }repo $repo_path not started"; continue; fi
     printf '%s repo %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
     # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
-    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$left run_limited "$((left+${WRAP_UP_SCHEDULED_KILL_GRACE:-30}))" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
+    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$repo_limit run_limited "$kill_limit" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
     code=$?
     count=$((count+1))
     [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
   done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
 
   seconds=$((SECONDS-started))
-  [ "$seconds" -lt "$round_limit" ] || fails="${fails:+$fails; }round took ${seconds}s, limit ${round_limit}s"
   if [ -n "$fails" ]; then round_failed "$fails"; exit 0; fi
   guarded_round_rm f "$streak"
   round_log "round ok: repos=$count seconds=$seconds"

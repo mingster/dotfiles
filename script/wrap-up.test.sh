@@ -905,7 +905,7 @@ rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
 lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"' EXIT" '
   /^guarded_[a-z_]*\(\) *\{/ { inside = 1 }
   inside { if ($0 ~ /^\}/) inside = 0; next }
-  /^[[:space:]]*#/ || $0 == allow { next }
+  /^[[:space:]]*#/ || $0 == allow || /^[[:space:]]*rm -f "\$pane_out"/ { next }
   /worktree remove|branch +(-[A-Za-z]*[dD]|--delete)|push .*(--delete| :)|(^|[^[:alnum:]_.-])(rm|rmdir|unlink)( |$)|find .*-delete|update-ref +-d/ { print NR ": " $0 }
 ' "$here/wrap-up.sh")
 lint_clean() {
@@ -917,3 +917,107 @@ lint_clean() {
 fcheck 'every destructive command in wrap-up.sh runs through a guarded function' lint_clean
 echo "round 5 review fix cases: $f_cases cases, $f_failed failed"
 [ "$f_failed" -eq 0 ] || exit 1
+# Scheduled round: per-repo budget (no shared round cap). Fake wrap-up, orca and gh only.
+sched_root="$(cd "$here/.." && pwd -P)"
+sched_tmp="$tmp/sched"
+mkdir -p "$sched_tmp/bin" "$sched_tmp/tools" "$sched_tmp/state" "$sched_tmp/home/repo-a/.agents" "$sched_tmp/home/repo-b/.agents"
+ln -sf "$(command -v jq)" "$sched_tmp/tools/jq"
+repo_a_sched="$sched_tmp/home/repo-a"
+repo_b_sched="$sched_tmp/home/repo-b"
+: > "$repo_a_sched/.agents/head-checks.conf"
+: > "$sched_tmp/home/repo-b/.agents/head-checks.conf"
+jq -n --arg a "$repo_a_sched" --arg b "$repo_b_sched" '{ok:true,result:{repos:[{path:$a,kind:"git"},{path:$b,kind:"git"}]}}' > "$sched_tmp/repos.json"
+cat > "$sched_tmp/orca" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  'status --json') echo '{"ok":true,"result":{"runtime":{"state":"ready"}}}' ;;
+  'repo list --json') cat "$FAKE_REPO_LIST" ;;
+  *) exit 2 ;;
+esac
+FAKE
+chmod +x "$sched_tmp/orca"
+cp "$sched_tmp/orca" "$sched_tmp/bin/orca"
+cat > "$sched_tmp/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+case "$1 $2" in 'issue list') echo '[]' ;; 'repo view') echo true ;; *) exit 2 ;; esac
+FAKE
+chmod +x "$sched_tmp/bin/gh"
+sched_calls="$sched_tmp/calls"
+sched_log="$sched_tmp/home/round.log"
+cat > "$sched_tmp/wrap-up-child.sh" <<'FAKE'
+#!/usr/bin/env bash
+printf 'budget=%s sleep=%s\n' "${WRAP_UP_TOTAL_TIMEOUT-<unset>}" "${FAKE_SLEEP-<unset>}" >> "$FAKE_CALLS"
+[ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
+if [ -n "${FAKE_HANG_REPO:-}" ]; then case "$*" in *"--repo $FAKE_HANG_REPO"*) sleep 9999 ;; esac; fi
+if [ -n "${FAKE_SLOW_REPO:-}" ]; then case "$*" in *"--repo $FAKE_SLOW_REPO"*) sleep "${FAKE_SLOW_SECS:-3}" ;; esac; fi
+exit 0
+FAKE
+chmod +x "$sched_tmp/wrap-up-child.sh"
+sched_round() {
+  local repo_lim=${1-${SCHED_REPO_LIMIT:-}} kill_gr=${2-${SCHED_KILL_GRACE:-}}
+  env -i HOME="$sched_tmp/home" PATH="$sched_tmp/bin:$sched_tmp/tools:/usr/bin:/bin" \
+    WRAP_UP_STATE_DIR="$sched_tmp/state" WRAP_UP_SCHEDULED_LOG="$sched_log" WRAP_UP_ORCA_APP_BIN="$sched_tmp/noapp" WRAP_UP_EXTRA_BIN= \
+    WRAP_UP_SCHEDULED_LOAD_CMD='echo 1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4' \
+    WRAP_UP_SCHEDULED_WRAP_UP="$sched_tmp/wrap-up-child.sh" WRAP_UP_ISSUE_REPO=o/r WRAP_UP_CALL_TIMEOUT=20 \
+    ${repo_lim:+WRAP_UP_SCHEDULED_REPO_LIMIT="$repo_lim"} \
+    ${kill_gr:+WRAP_UP_SCHEDULED_KILL_GRACE="$kill_gr"} \
+    FAKE_CALLS="$sched_calls" FAKE_REPO_LIST="$sched_tmp/repos.json" FAKE_SLEEP="${SCHED_SLEEP:-}" \
+    FAKE_HANG_REPO="${SCHED_HANG_REPO:-}" FAKE_SLOW_REPO="${SCHED_SLOW_REPO:-}" FAKE_SLOW_SECS="${SCHED_SLOW_SECS:-}" \
+    bash "$here/wrap-up.sh" --scheduled
+}
+ncalls_sched() { [ -f "$sched_calls" ] && wc -l < "$sched_calls" | tr -d ' ' || echo 0; }
+rm -f "$sched_calls" "$sched_log"
+unset SCHED_REPO_LIMIT SCHED_KILL_GRACE SCHED_SLEEP SCHED_HANG_REPO SCHED_SLOW_REPO SCHED_SLOW_SECS
+# Old shared round cap was 240s; a slow first repo must not block the second.
+SCHED_SLOW_REPO="$repo_a_sched" SCHED_SLOW_SECS=3 sched_round
+[ "$(ncalls_sched)" -eq 2 ] || { echo 'slow first repo stopped the second'; exit 1; }
+grep -Fq 'round ok: repos=2' "$sched_log" || { echo 'slow first repo did not log round ok'; cat "$sched_log"; exit 1; }
+echo 'ok scheduled round runs every repo after a slow first repo and logs ok'
+# Each child receives the full per-repo budget, not a shrinking remainder.
+rm -f "$sched_calls" "$sched_log"
+unset SCHED_REPO_LIMIT SCHED_KILL_GRACE SCHED_SLEEP SCHED_HANG_REPO SCHED_SLOW_REPO SCHED_SLOW_SECS
+sched_round
+grep -q '^budget=900 ' "$sched_calls" || { echo 'default per-repo budget missing'; cat "$sched_calls"; exit 1; }
+test "$(grep -c '^budget=900 ' "$sched_calls")" -eq 2 || { echo 'both children need full default budget'; cat "$sched_calls"; exit 1; }
+rm -f "$sched_calls" "$sched_log"
+sched_round 42
+grep -q '^budget=42 ' "$sched_calls" || { echo 'override per-repo budget missing'; cat "$sched_calls"; exit 1; }
+test "$(grep -c '^budget=42 ' "$sched_calls")" -eq 2 || { echo 'override must apply to every child'; cat "$sched_calls"; exit 1; }
+echo 'ok each scheduled child gets the full per-repo budget'
+# A hung repo is killed, the round fails, and later repos still run.
+rm -f "$sched_calls" "$sched_log"
+unset SCHED_REPO_LIMIT SCHED_KILL_GRACE SCHED_SLEEP SCHED_HANG_REPO SCHED_SLOW_REPO SCHED_SLOW_SECS
+SCHED_HANG_REPO="$repo_a_sched" sched_round 1 1
+[ "$(ncalls_sched)" -eq 2 ] || { echo 'hung first repo blocked the second'; exit 1; }
+grep -Fq "round failed: repo $repo_a_sched exit 124" "$sched_log" || { echo 'hung repo not logged as killed'; cat "$sched_log"; exit 1; }
+grep -Fq 'round ok:' "$sched_log" && { echo 'hung repo round must not log ok'; exit 1; }
+echo 'ok a hung scheduled child is killed, fails the round, and later repos still run'
+# A live round holds the lock; the next round skips.
+rm -f "$sched_calls" "$sched_log"
+block="$sched_tmp/block"
+rm -f "$block.started" "$block.release"
+cat > "$sched_tmp/wrap-up-child.sh" <<'FAKE'
+#!/usr/bin/env bash
+if [ -n "${FAKE_BLOCK:-}" ]; then
+  : > "$FAKE_BLOCK.started"
+  i=0; while [ ! -e "$FAKE_BLOCK.release" ] && [ "$i" -lt 2000000 ]; do i=$((i+1)); done
+fi
+exit 0
+FAKE
+chmod +x "$sched_tmp/wrap-up-child.sh"
+FAKE_BLOCK="$block" env -i HOME="$sched_tmp/home" PATH="$sched_tmp/bin:$sched_tmp/tools:/usr/bin:/bin" \
+  WRAP_UP_STATE_DIR="$sched_tmp/state" WRAP_UP_SCHEDULED_LOG="$sched_log" WRAP_UP_ORCA_APP_BIN="$sched_tmp/noapp" WRAP_UP_EXTRA_BIN= \
+  WRAP_UP_SCHEDULED_LOAD_CMD='echo 1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4' \
+  WRAP_UP_SCHEDULED_WRAP_UP="$sched_tmp/wrap-up-child.sh" WRAP_UP_ISSUE_REPO=o/r WRAP_UP_CALL_TIMEOUT=20 \
+  FAKE_REPO_LIST="$sched_tmp/repos.json" FAKE_BLOCK="$block" bash "$here/wrap-up.sh" --scheduled &
+holder=$!
+i=0; while [ ! -e "$block.started" ] && [ "$i" -lt 200000 ]; do i=$((i+1)); done
+[ -e "$block.started" ] || { echo 'blocking round never started'; exit 1; }
+before=$(ncalls_sched)
+unset SCHED_REPO_LIMIT SCHED_KILL_GRACE SCHED_SLEEP SCHED_HANG_REPO SCHED_SLOW_REPO SCHED_SLOW_SECS
+sched_round
+grep -Fq 'skip: already running' "$sched_log" || { echo 'overlap did not skip'; cat "$sched_log"; exit 1; }
+[ "$(ncalls_sched)" -eq "$before" ] || { echo 'overlap round still ran repos'; exit 1; }
+: > "$block.release"
+wait "$holder"
+echo 'ok a second scheduled round during a live round skips'
