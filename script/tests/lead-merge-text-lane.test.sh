@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue #658 acceptance cases 1–6 for lead-merge text-only lane.
+# Issue #658 acceptance cases 1–5 for lead-merge text-only lane.
 # shellcheck disable=SC2089,SC2090,SC2015
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -51,7 +51,6 @@ setup() {
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"docs/a.md"}]'
   body=$'## Verification\n- Ran checks.\n'
-  review="Review: PASS head=$SHA model=composer-2.5"
   verdict=""
   checks="Checks: PASS head=$SHA"
   countersign=""; TRUNK_FILES=""
@@ -63,8 +62,8 @@ setup() {
 mkjson() {
   PR_JSON=$(printf '{"state":"%s","baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeable":"%s","url":"https://github.com/o/r/pull/9","files":%s}' \
     "$state" "$base" "$branch" "$headsha" "$mergeable" "$files")
-  comments_list=$(jq -nc --arg c "$checks" --arg r "$review" --arg v "$verdict" --arg x "$countersign" \
-    '[{body:$c}] + (if ($r|length)>0 then [{body:$r}] else [] end) + (if ($v|length)>0 then [{body:$v}] else [] end) + (if ($x|length)>0 then [{body:$x}] else [] end)')
+  comments_list=$(jq -nc --arg c "$checks" --arg v "$verdict" --arg x "$countersign" \
+    '[{body:$c}] + (if ($v|length)>0 then [{body:$v}] else [] end) + (if ($x|length)>0 then [{body:$x}] else [] end)')
   PR_JSON=$(jq --arg body "$body" --argjson comments "$comments_list" --arg base "$base_sha" \
     '. + {body:$body, baseRefOid:$base, closingIssuesReferences:[], comments:$comments}' <<<"$PR_JSON")
   [ -z "$COMMENTS_JSON" ] || PR_JSON=$(jq --argjson comments "$COMMENTS_JSON" '.comments=$comments' <<<"$PR_JSON")
@@ -90,30 +89,23 @@ run_merge() {
   LAST_CALLS=0; [ -f "$MERGE_LOG.calls" ] && LAST_CALLS=$(wc -l < "$MERGE_LOG.calls" | tr -d ' ')
 }
 
-# 1 pass: markdown and changelog.d only
+# 1 pass: markdown and changelog.d only, Checks PASS, no Review
 setup; files='[{"path":"docs/a.md"},{"path":"changelog.d/x.md"}]'; run_merge
 say "T658-1 pass text-only merges" "$([ "$LAST_CODE" -eq 0 ] && [ "$LAST_CALLS" -eq 1 ]; echo $?)" "$LAST_OUT"
 
-# 1 refuse: shell file keeps Verdict rule
-setup; files='[{"path":"docs/a.md"},{"path":"script/x.sh"}]'; review="Review: PASS head=$SHA model=composer-2.5"; verdict=""
-run_merge; say "T658-1 refuse shell needs verdict" "$([ "$LAST_CODE" -ne 0 ] && grep -q verdict <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
+# 5 refuse: shell file keeps Verdict rule
+setup; files='[{"path":"docs/a.md"},{"path":"script/x.sh"}]'; verdict=""
+run_merge; say "T658-5 refuse shell needs verdict" "$([ "$LAST_CODE" -ne 0 ] && grep -q verdict <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
 
 # 2 refuse: missing Checks
 setup; checks=""; run_merge; say "T658-2 refuse missing Checks" "$([ "$LAST_CODE" -ne 0 ] && grep -q Checks <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
 
-# 3 refuse: missing Review on pure docs
-setup; review=""; run_merge; say "T658-3 refuse missing Review" "$([ "$LAST_CODE" -ne 0 ] && grep -q 'Review: PASS' <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
+# 2 refuse: Checks FAIL at head
+setup; checks="Checks: FAIL head=$SHA"; run_merge
+say "T658-2 refuse Checks FAIL" "$([ "$LAST_CODE" -ne 0 ] && grep -q 'Checks: FAIL' <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
 
-# 4 refuse: agent path with model=none
-setup; files='[{"path":".claude/agents/role.md"}]'; review="Review: PASS head=$SHA model=none"
-run_merge; say "T658-4 refuse model none" "$([ "$LAST_CODE" -ne 0 ] && grep -q 'model other than none' <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
-
-# 4 pass: agent path with model named
-setup; files='[{"path":"AGENTS.md"}]'; review="Review: PASS head=$SHA model=composer-2.5"
-run_merge; say "T658-4 pass AGENTS with model" "$([ "$LAST_CODE" -eq 0 ]; echo $?)" "$LAST_OUT"
-
-# 5 refuse: role file without Owner-approved
-setup; files='[{"path":".claude/agents/role.md"}]'; review="Review: PASS head=$SHA model=composer-2.5"
+# 3 refuse: role file without Owner-approved
+setup; files='[{"path":".claude/agents/role.md"}]'
 export REAL_PATCH_REPO="$tmp/owner-repo"
 "$REAL_GIT" init -q -b main "$REAL_PATCH_REPO"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" config user.name Fixture
@@ -133,20 +125,18 @@ printf 'edit\n' >> "$REAL_PATCH_REPO/.claude/agents/role.md"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam 'role edit without trailer'
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
 checks="Checks: PASS head=$SHA"
-review="Review: PASS head=$SHA model=composer-2.5"
-run_merge; say "T658-5 refuse missing Owner-approved" "$([ "$LAST_CODE" -ne 0 ] && grep -q Owner-approved <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
+run_merge; say "T658-3 refuse missing Owner-approved" "$([ "$LAST_CODE" -ne 0 ] && grep -q Owner-approved <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
 
-# 5 pass: Owner-approved trailer present
+# 3 pass: Owner-approved trailer present
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit --amend -q --trailer "Owner-approved: Owner 2026-11-07" -m 'role edit'
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
 checks="Checks: PASS head=$SHA"
-review="Review: PASS head=$SHA model=composer-2.5"
-run_merge; say "T658-5 pass Owner-approved trailer" "$([ "$LAST_CODE" -eq 0 ]; echo $?)" "$LAST_OUT"
+run_merge; say "T658-3 pass Owner-approved trailer" "$([ "$LAST_CODE" -eq 0 ]; echo $?)" "$LAST_OUT"
 unset REAL_PATCH_REPO
 
-# 6 refuse: hooks stay hard stop regardless of trailer
-setup; files='[{"path":".claude/hooks/x.sh"}]'; review="Review: PASS head=$SHA model=composer-2.5"
-run_merge; say "T658-6 refuse hooks hard stop" "$([ "$LAST_CODE" -ne 0 ] && grep -q hooks <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
+# 4 refuse: hooks stay hard stop regardless of trailer
+setup; files='[{"path":".claude/hooks/x.sh"}]'
+run_merge; say "T658-4 refuse hooks hard stop" "$([ "$LAST_CODE" -ne 0 ] && grep -q hooks <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
 
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]

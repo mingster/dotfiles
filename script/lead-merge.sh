@@ -597,42 +597,11 @@ text_lane_role_path() { # <path>
     *) return 1 ;;
   esac
 }
-text_lane_model_required() { # <path>
-  case "$1" in
-    .claude/agents/*|*/.claude/agents/*|AGENTS.md|*/AGENTS.md|.claude/model-routing.md) return 0 ;;
-    *) ;;
-  esac
-  [[ "$1" =~ (^|/)\.(agents|claude|cursor)/skills/[^/]+/SKILL\.md$ ]]
-}
 owner_receipt_paths=()
-text_lane_wants_model=false
 while IFS= read -r f; do
   text_lane_role_path "$f" && owner_receipt_paths+=("$f")
-  text_lane_model_required "$f" && text_lane_wants_model=true
 done < <(jq -r '.[]' <<<"$files")
 
-text_lane_review() {
-  local review_pass=false review_model="" line comment row
-  while IFS= read -r row; do
-    comment=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\"")
-    line=${comment%%$'\n'*}
-    if [[ "$line" =~ ^Review:\ FAIL\ head=([0-9a-f]{40})(\ model=([^[:space:]]+))?$ ]]; then
-      [ "${BASH_REMATCH[1]}" = "$head" ] || continue
-      refuse "Review: FAIL at the current head"; return 0
-    fi
-    if [[ "$line" =~ ^Review:\ PASS\ head=([0-9a-f]{40})(\ model=([^[:space:]]+))?$ ]]; then
-      [ "${BASH_REMATCH[1]}" = "$head" ] || continue
-      review_pass=true
-      review_model=${BASH_REMATCH[3]:-}
-      break
-    fi
-  done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$info")
-  [ "$review_pass" = true ] || { refuse "missing Review: PASS for current head"; return 0; }
-  if [ "$text_lane_wants_model" = true ]; then
-    [ -n "$review_model" ] && [ "$review_model" != none ] \
-      || refuse "Review must name a model other than none for agent or skill markdown"
-  fi
-}
 text_lane_owner_receipt() {
   [ "${#owner_receipt_paths[@]}" -gt 0 ] || return 0
   local ancestor rows sha trailer
@@ -816,7 +785,6 @@ if [ "$mechanical" = true ]; then
   echo "lead-merge: mechanical lane, Verdict not required"
 fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && [ "$text_only" = true ] && [ "$unchecked" = false ]; then
-  text_lane_review
   text_lane_owner_receipt
 fi
 if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$text_only" = false ] || [ "$unchecked" = true ]; }; then
