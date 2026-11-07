@@ -99,6 +99,52 @@ def _path(r):
     return wid.split("::", 1)[1] if "::" in wid else ""
 
 
+def terminal_inventory_ok(doc):
+    """True when terminal list JSON proves a complete, trusted inventory (strict).
+
+    Matches the inventory half of worker-pane-close ``terminal_absent``: ``ok`` must be
+    exactly true, ``truncated`` false, ``hostIds`` a non-empty list of non-blank strings,
+    ``omittedHostIds`` present and empty, and every terminal row has a non-blank handle.
+    """
+    if not isinstance(doc, dict):
+        return False
+    if doc.get("ok") is not True:
+        return False
+    res = doc.get("result")
+    if not isinstance(res, dict):
+        return False
+    if res.get("truncated") is not False:
+        return False
+    scope = res.get("hostScope")
+    if not isinstance(scope, dict):
+        return False
+    host_ids = scope.get("hostIds")
+    if not isinstance(host_ids, list) or not host_ids:
+        return False
+    if not all(isinstance(x, str) and x for x in host_ids):
+        return False
+    omitted = scope.get("omittedHostIds")
+    if not isinstance(omitted, list) or omitted:
+        return False
+    terms = res.get("terminals")
+    if not isinstance(terms, list):
+        return False
+    for t in terms:
+        if not isinstance(t, dict):
+            return False
+        h = t.get("handle")
+        if not isinstance(h, str) or not h:
+            return False
+    return True
+
+
+def terminal_live_handles(doc):
+    """Live handles when inventory is strict-proof; None when it is not."""
+    if not terminal_inventory_ok(doc):
+        return None
+    return {t["handle"] for t in doc["result"]["terminals"]}
+
+
 def can_remove(rows, path, real=lambda p: p):
     """Whether the worktree at path may be freed, from the rows of every Run and page.
 

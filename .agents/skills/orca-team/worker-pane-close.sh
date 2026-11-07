@@ -214,54 +214,27 @@ terminal_absent() {
   list=$(close_rpc terminal list --json 2>/dev/null) || return 1
   printf '%s' "$list" | python3 -c '
 import json,sys
-def valid_inventory(res):
-    if not isinstance(res, dict):
-        return False
-    if res.get("truncated") is not False:
-        return False
-    scope = res.get("hostScope")
-    if not isinstance(scope, dict):
-        return False
-    host_ids = scope.get("hostIds")
-    if not isinstance(host_ids, list) or not host_ids:
-        return False
-    if not all(isinstance(x, str) and x for x in host_ids):
-        return False
-    omitted = scope.get("omittedHostIds")
-    if not isinstance(omitted, list) or omitted:
-        return False
-    terms = res.get("terminals")
-    if not isinstance(terms, list):
-        return False
-    for t in terms:
-        if not isinstance(t, dict):
-            return False
-        h = t.get("handle")
-        if not isinstance(h, str) or not h:
-            return False
-    return True
+sys.path.insert(0, sys.argv[2]); import worker_state as ws
 try:
-    r=json.load(sys.stdin)
-    if r.get("ok") is not True:
+    doc = json.load(sys.stdin)
+    if not ws.terminal_inventory_ok(doc):
         sys.exit(1)
-    res=r.get("result")
-    if not valid_inventory(res):
-        sys.exit(1)
-    target=sys.argv[1]
-    for t in res["terminals"]:
-        if t["handle"]==target:
+    target = sys.argv[1]
+    for t in doc["result"]["terminals"]:
+        if t["handle"] == target:
             sys.exit(1)
     sys.exit(0)
 except Exception:
-    sys.exit(1)' "$h"
+    sys.exit(1)' "$h" "$here"
 }
 # The only gate that deletes a pane state file or its released marker.
 pane_record_rm() {
   local d=$1 final_proof=$2 worker_list_ok=${3:-0} list_json=${4:-} f="$state/$1" r="$state/released/$1"
   [ -f "$f" ] || return 1
-  PANE_RM_FINAL="$final_proof" PANE_RM_WORKER_LIST_OK="$worker_list_ok" \
+  PANE_RM_HERE="$here" PANE_RM_FINAL="$final_proof" PANE_RM_WORKER_LIST_OK="$worker_list_ok" \
     PANE_RM_LIST="$list_json" PANE_RM_STATE="$f" python3 -c '
 import json, os, sys
+sys.path.insert(0, os.environ["PANE_RM_HERE"]); import worker_state as ws
 if os.environ.get("PANE_RM_WORKER_LIST_OK") != "1":
     sys.exit(1)
 final = os.environ.get("PANE_RM_FINAL", "")
@@ -276,16 +249,10 @@ except Exception:
 lst = os.environ.get("PANE_RM_LIST", "")
 try:
     doc = json.loads(lst) if lst else {}
-    res = doc.get("result") or {}
-    ok = (doc.get("ok") is not False and res.get("truncated") is False
-          and isinstance(res.get("terminals"), list)
-          and isinstance(res.get("hostScope"), dict)
-          and res["hostScope"].get("hostIds")
-          and not res["hostScope"].get("omittedHostIds"))
-    live = {t["handle"] for t in res["terminals"] if isinstance(t, dict) and t.get("handle")}
+    live = ws.terminal_live_handles(doc)
 except Exception:
-    ok = False
-if not ok or any(h in live for h in hs):
+    live = None
+if live is None or any(h in live for h in hs):
     sys.exit(1)
 sys.exit(0)
 ' || return 1
@@ -495,22 +462,23 @@ sweep_list=$(close_rpc terminal list --json 2>/dev/null) || sweep_list=''
 # A pane file whose handles are all gone has nothing left to close once its dispatch ended or is unknown. Needs a complete
 # terminal inventory: an unreadable or partial list proves nothing and removes nothing.
 if [ -n "$sweep_list" ]; then
-  gone=$(STATE="$state" LIST="$sweep_list" python3 -c '
-import json,os
+  gone=$(STATE="$state" LIST="$sweep_list" HERE="$here" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
 try:
-    r=json.loads(os.environ["LIST"])
-    res=r["result"]
-    ok=(r.get("ok") is not False and res.get("truncated") is False and isinstance(res.get("terminals"),list)
-        and isinstance(res.get("hostScope"),dict) and res["hostScope"].get("hostIds") and not res["hostScope"].get("omittedHostIds"))
-    live={t["handle"] for t in res["terminals"] if isinstance(t,dict) and t.get("handle")}
-except Exception: ok=False
-if ok:
-    st=os.environ["STATE"]
+    doc = json.loads(os.environ["LIST"])
+    live = ws.terminal_live_handles(doc)
+except Exception:
+    live = None
+if live is not None:
+    st = os.environ["STATE"]
     for n in sorted(os.listdir(st)):
-        p=os.path.join(st,n)
-        if not os.path.isfile(p) or "\n" in n: continue
-        hs=[l.strip() for l in open(p) if l.strip()]
-        if not any(h in live for h in hs): print(n)' 2>/dev/null) || gone=''
+        p = os.path.join(st, n)
+        if not os.path.isfile(p) or "\n" in n:
+            continue
+        hs = [l.strip() for l in open(p) if l.strip()]
+        if not any(h in live for h in hs):
+            print(n)' 2>/dev/null) || gone=''
   # A dispatch that is still running keeps its record (its pane may not be listed yet). An ended or unknown one does not.
   # Use the worker-list rows read for the sweep; worker-show only when a dispatch is missing from every page.
   while IFS= read -r d; do
