@@ -1,0 +1,1 @@
+Add `script/weekly-update.sh` (spec T17): one entry for Matt Pocock and pstack upstream, bun and Node LTS pins, and project skill gates via the four existing sync scripts. Three tested PRs plus a summary, no merge. Proof: `bash script/tests/weekly-update.test.sh`.
