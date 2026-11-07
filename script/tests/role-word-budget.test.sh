@@ -31,30 +31,44 @@ has "$T/.claude/agents/elon.md" 'Owner-Reserved' "elon keeps owner-reserved list
 has "$T/.claude/agents/elon.md" 'Traditional Chinese' "elon keeps owner language rule"
 has "$T/.claude/agents/elon.md" 'team-grill-backlog' "elon keeps backlog sweep"
 
-# Every docs/agents/<file>.md named in a role file exists.
+# Every docs/agents/<file>.md named in a role file exists, and team docs point at ~/dotfiles/templates/agent-team/docs/agents/.
 for f in "$T"/.claude/agents/*.md; do
-  for p in $(grep -oE 'docs/agents/[a-z0-9-]+\.md' "$f" | sort -u); do
-    [ -f "$T/$p" ] || [ -f "$here/$p" ] || bad "$(basename "$f") names missing $p"
+  for p in $(grep -oE '(~/dotfiles/templates/agent-team/)?docs/agents/[a-z0-9-]+\.md' "$f" | sort -u); do
+    rel=${p#"~/dotfiles/templates/agent-team/"}
+    [ -f "$T/$rel" ] || [ -f "$here/$rel" ] || bad "$(basename "$f") names missing $rel"
+    case "$rel" in
+      docs/agents/issue-tracker.md|docs/agents/triage-labels.md|docs/agents/domain.md|docs/agents/team-facts.md|docs/agents/deploy-facts.md)
+        [ "$p" = "$rel" ] && ok "$(basename "$f") keeps project path $rel" || bad "$(basename "$f") must keep project path $rel (got $p)" ;;
+      *)
+        [ "$p" = "~/dotfiles/templates/agent-team/$rel" ] && ok "$(basename "$f") points at template $rel" || bad "$(basename "$f") points at project $p instead of ~/dotfiles/templates/agent-team/$rel" ;;
+    esac
   done
 done
 
-# Adoption installs every template doc a role names, even when the project already has deploy-facts.md.
+# Every skill in templates/agent-team/.agents/skills/ points at ~/dotfiles/templates/agent-team/docs/agents/<file> for the 10 team docs.
+if grep -rnE '(^|[^/])docs/agents/(team|coordinator-operations|engineering-integration|architect-pm-work|elon-dispatch|qa-sdet-execution|release-manager-work|persistent-memory-protocol|pstack-attribution|process-review)\.md' "$T/.agents/skills" >/dev/null; then
+  bad "template skills still point at project copies of team docs"
+else
+  ok "template skills point at ~/dotfiles/templates/agent-team/docs/agents/ for team docs"
+fi
+
+# Adoption seeds only team-facts.md and deploy-facts.md under docs/agents/ (preserving existing files) and copies no team docs.
 A=$(mktemp -d); trap 'rm -rf "$A"' EXIT
 mkdir -p "$A/proj/docs/agents"; echo "# project owned" > "$A/proj/docs/agents/deploy-facts.md"
 DOTFILES="$here" bash "$here/script/adopt-agent-team.sh" --project-name acme "$A/proj" >/dev/null 2>&1
-for f in "$T"/.claude/agents/*.md; do
-  for p in $(grep -oE 'docs/agents/[a-z0-9-]+\.md' "$f" | sort -u); do
-    [ -f "$T/$p" ] || continue
-    case "$p" in */team.md|*/team-facts.md|*/deploy-facts.md) continue ;; esac
-    [ -f "$A/proj/$p" ] && ok "adoption installs $p" || bad "$(basename "$f") names $p but adoption does not install it"
-  done
+[ -f "$A/proj/docs/agents/team-facts.md" ] && [ "$(cat "$A/proj/docs/agents/deploy-facts.md")" = "# project owned" ] \
+  && ok "adoption seeds team-facts.md and preserves deploy-facts.md" \
+  || bad "adoption failed to seed team-facts.md or preserve deploy-facts.md"
+for d in team.md coordinator-operations.md engineering-integration.md architect-pm-work.md elon-dispatch.md qa-sdet-execution.md release-manager-work.md persistent-memory-protocol.md pstack-attribution.md process-review.md; do
+  [ ! -e "$A/proj/docs/agents/$d" ] && ok "adoption does not copy $d" || bad "adoption still copies $d into project docs/agents/"
 done
-# Rules that moved behind a pointer must be in an always installed page, not the project owned deploy-facts.
-has "$A/proj/docs/agents/coordinator-operations.md" 'Production job order' "adopted coordinator-operations holds the production job order"
+has "$T/docs/agents/coordinator-operations.md" 'Production job order' "template coordinator-operations holds the production job order"
 has "$T/docs/agents/release-manager-work.md" 'coordinator-operations.md`, Production job order' "release-manager-work points the job order at coordinator-operations"
-has "$T/.claude/agents/release-manager.md" 'docs/agents/release-manager-work.md' "release-manager role file points at release-manager-work"
+has "$T/.claude/agents/release-manager.md" '~/dotfiles/templates/agent-team/docs/agents/release-manager-work.md' "release-manager role file points at template release-manager-work"
+has "$T/.claude/agents/qa-sdet.md" '~/dotfiles/templates/agent-team/docs/agents/qa-sdet-execution.md' "qa-sdet role file points at template qa-sdet-execution"
 has "$T/docs/agents/engineering-integration.md" 'even a new spec no worker could run' "merge rules keep rerun of a new spec"
 has "$T/docs/agents/coordinator-operations.md" '{{PROJECT_NAME}}/<lane>' "small task method keeps the project placeholder"
-has "$A/proj/docs/agents/coordinator-operations.md" 'workspaces/acme/<lane>' "adopted small task method renders the project name"
+has "$T/docs/agents/team.md" 'team-facts.md` only' "template team.md says project differences go in team-facts.md only"
+has "$T/docs/agents/team-facts.md" 'team-facts.md` only' "template team-facts.md says project differences go in team-facts.md only"
 
 echo "pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

@@ -2,19 +2,19 @@
 
 ## Team
 
-- Roles, reporting and the secrets rule: `docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
-- Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Merge code PRs via `lead-merge.sh`, never by hand (`elon.md`, Merge). Merge docs-only PRs (`docs/agents/team.md`, Orchestration rule 3).
+- Roles, reporting and the secrets rule: `~/dotfiles/templates/agent-team/docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
+- Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Merge code PRs via `lead-merge.sh`, never by hand (`elon.md`, Merge). Merge docs-only PRs (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Orchestration rule 3).
 - release-manager owns every release end to end (staging, gates, production after the owner go), reports to you and diagnoses failed gates. Regression runs only in that pass, or with the owner's approval recorded on the issue (`docs/SDLC.md`).
 
 
 ## Dispatch
 
-- **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
+- **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- Before framing, dispatching or closing a Run, read `docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `docs/agents/coordinator-operations.md`, Wake loop.
+- Before framing, dispatching or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
 - Routing, quota and launch: `.claude/model-routing.md` and `~/.orca/presets.json`.
-- Arm the inbox waiter with a 10 minute timeout and run `docs/agents/coordinator-operations.md`, Wake loop, on every wake.
+- Arm the inbox waiter with a 10 minute timeout and run `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop, on every wake.
 - A worker asking to touch a file outside its scope gets an answer at once: decide and comment "Elon decision <date>" on the issue.
 - A defect spotted in review becomes its own issue, never part of the PR under review.
 - Log each owner approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).

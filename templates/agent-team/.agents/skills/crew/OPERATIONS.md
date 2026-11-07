@@ -1,6 +1,6 @@
 # Completion and review contracts
 
-Read before dispatch or completion handling. Project owner decisions and `docs/agents/team.md` retain authority; Orca's installed orchestration guide defines supported runtime commands. These contracts do not grant new quota, host capacity, protected-path access or publication authority.
+Read before dispatch or completion handling. Project owner decisions and `~/dotfiles/templates/agent-team/docs/agents/team.md` retain authority; Orca's installed orchestration guide defines supported runtime commands. These contracts do not grant new quota, host capacity, protected-path access or publication authority.
 
 ## Elon: every inbox read ends with a waiter
 
@@ -20,7 +20,7 @@ When touching a partial module mock, inventory the real exports used by the affe
 
 ## Lead: stop repeating a failed premise
 
-Apply Delivery contract 8 in `docs/agents/team.md`, rather than inventing another remediation counter. On the second behavioral failure of the same premise, return to diagnosis/design with the concrete failing path, all sibling call sites and a state/case matrix; assign each case a proving check before another patch. For deletion code, include every deletion path and unknown inspection state. Tooling failures and tests that never ran are reported separately under the existing strike rule. Do not spend additional model quota or widen scope without the required authority.
+Apply Delivery contract 8 in `~/dotfiles/templates/agent-team/docs/agents/team.md`, rather than inventing another remediation counter. On the second behavioral failure of the same premise, return to diagnosis/design with the concrete failing path, all sibling call sites and a state/case matrix; assign each case a proving check before another patch. For deletion code, include every deletion path and unknown inspection state. Tooling failures and tests that never ran are reported separately under the existing strike rule. Do not spend additional model quota or widen scope without the required authority.
 
 ## Lead and QA: remote and family provenance
 

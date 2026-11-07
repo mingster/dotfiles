@@ -60,13 +60,13 @@ safe_path() {
 }
 for path in .claude .agents .cursor .agent docs/agents bin changelog.d AGENTS.md CLAUDE.md .gitignore \
   .claude/agent-team-project-name .claude/agent-team-baseline \
-  docs/agents/team.md docs/agents/team-facts.md docs/agents/deploy-facts.md \
+  docs/agents/team-facts.md docs/agents/deploy-facts.md \
   docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md; do
   safe_path "$path"
 done
 while IFS= read -r src; do
   safe_path "${src#"$TEMPLATES/"}"
-done < <(find "$TEMPLATES/.claude" "$TEMPLATES/.agents" "$TEMPLATES/bin" "$TEMPLATES/changelog.d" "$TEMPLATES/docs" -type f)
+done < <(find "$TEMPLATES/.claude" "$TEMPLATES/.agents" "$TEMPLATES/bin" "$TEMPLATES/changelog.d" -type f)
 for src in "$TEMPLATES/.claude/agents"/*.md; do
   safe_path ".claude/agent-team-baseline/$(basename "$src").sha256"
 done
@@ -153,22 +153,12 @@ if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET_DIR/.agents/skills" ] && [ ! -e "$TARGE
   ln -s ../.agents/skills "$TARGET_DIR/.agent/skills"
 fi
 
-# 4b. Project team docs. Owned by the project: written only when missing.
-for f in team.md team-facts.md deploy-facts.md; do
+# 4b. Project team facts. Owned by the project: written only when missing. Team docs live in $TEMPLATES/docs/agents/.
+for f in team-facts.md deploy-facts.md; do
   if [ ! -f "$TARGET_DIR/docs/agents/$f" ]; then
     copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
   fi
 done
-
-# 4c. Template owned docs the roles point at: always installed or updated.
-for f in coordinator-operations.md engineering-integration.md architect-pm-work.md elon-dispatch.md qa-sdet-execution.md release-manager-work.md; do
-  copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
-done
-
-# 5. Install persistent memory protocol
-if [ -f "$TEMPLATES/docs/agents/persistent-memory-protocol.md" ]; then
-  copy_file "$TEMPLATES/docs/agents/persistent-memory-protocol.md" "$TARGET_DIR/docs/agents/persistent-memory-protocol.md"
-fi
 
 # 6. Install hooks (settings.json points at them; without them Bash calls fail)
 for src in "$TEMPLATES/.claude/hooks"/*.py; do

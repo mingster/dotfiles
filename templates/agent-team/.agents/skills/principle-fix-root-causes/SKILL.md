@@ -20,4 +20,4 @@ When debugging, fix the fault, not the place where it surfaced. The symptom is w
 - If a workaround needs a paragraph-long comment to justify it, the code is wrong. Fix the code, not the comment.
 - If the deciding fact took a deep dig to find, propose the cheap, always-on signal that would have shown it at first look.
 
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see docs/agents/pstack-attribution.md. -->
+<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->
