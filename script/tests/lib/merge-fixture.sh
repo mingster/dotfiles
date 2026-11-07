@@ -30,8 +30,11 @@ mf_setup() {
   _mf_write_git; _mf_write_gh; _mf_write_orca
   chmod +x "$MF_BIN/git" "$MF_BIN/gh" "$MF_BIN/orca"
   export PATH="$MF_BIN:$PATH"
-  # after_merge resolves orca via find_orca_dir (app bundle before PATH); point it at the fixture.
-  export WRAP_UP_ORCA_APP_BIN="$MF_BIN"
+  # find_orca_dir prepends its hit to PATH; keep orca separate from MF_BIN so fixture git/gh stay visible.
+  MF_ORCA_APP_BIN="$MF_DIR/orca-app-bin"
+  mkdir -p "$MF_ORCA_APP_BIN"
+  ln -sf "$MF_BIN/orca" "$MF_ORCA_APP_BIN/orca"
+  export MF_ORCA_APP_BIN WRAP_UP_ORCA_APP_BIN="$MF_ORCA_APP_BIN"
 }
 
 mf_teardown() { [ -n "${MF_DIR:-}" ] && rm -rf "$MF_DIR"; }
