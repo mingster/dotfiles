@@ -86,9 +86,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                     }
                 ]
 
-            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                 delivered.extend(list(new_lines))
-                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
             with isolated_main_env(str(directory)), \
                     patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
@@ -135,9 +135,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 workflow_repos.append(repo)
                 return []
 
-            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                 delivered_passes.append(list(new_lines))
-                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
             with isolated_main_env(str(directory)), \
                     patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
@@ -193,9 +193,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 workflow_repos.append(repo)
                 return []
 
-            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                 delivered.extend(list(new_lines))
-                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
             with isolated_main_env(str(directory)), \
                     patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
@@ -249,9 +249,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
 
             delivered = []
 
-            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                 delivered.extend(list(new_lines))
-                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
             with isolated_main_env(str(directory)), \
                     patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
@@ -294,9 +294,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                     raise fw.OrcaReadError('terminal refused')
                 return {}
 
-            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                 delivered.extend(list(new_lines))
-                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
             workflow_repos = []
 
@@ -352,9 +352,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                 workflow_repos.append(repo)
                 return []
 
-            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+            def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                 delivered.extend(list(new_lines))
-                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
             with isolated_main_env(str(directory)), \
                     patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \
@@ -416,9 +416,9 @@ class MainOrcaInventoryFailure(unittest.TestCase):
                         workflow_repos.append(repo)
                         return []
 
-                    def capture_deliver(config, state, new_lines, rpc_call=fw.rpc):
+                    def capture_deliver(config, state, new_lines, rpc_call=fw.rpc, now=None, owner_of=None):
                         delivered_passes.append(list(new_lines))
-                        DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call)
+                        DELIVER_NOTICES_REAL(config, state, new_lines, rpc_call, now, owner_of)
 
                     with isolated_main_env(str(directory)), \
                             patch('sys.argv', ['fleet-watch', '--config', str(cfg_path), '--state', str(state_path)]), \

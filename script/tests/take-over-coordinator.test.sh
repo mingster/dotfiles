@@ -7,6 +7,8 @@
 # sync.sh has no coordinator fence.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 script="$root/script/take-over-coordinator.sh"
 src=${AGENT_STATE_SRC:-$HOME/agent-state}
 if ! grep -q 'coordinator refused' "$src/sync.sh" 2>/dev/null; then

@@ -670,7 +670,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
 
 def fetch_prs(repo):
     """Recent PRs in one gh call, or None when gh fails."""
-    fields = 'number,state,headRefOid,comments,statusCheckRollup,mergeCommit'
+    fields = 'number,state,isDraft,headRefOid,headRefName,labels,comments,statusCheckRollup,mergeCommit'
     command = ['gh', 'pr', 'list', '--repo', repo, '--state', 'all', '--limit', '50', '--json', fields]
     try:
         output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -1678,6 +1678,257 @@ def checks_pass_at_head(pr):
     return False
 
 
+def checks_receipt_at_head(pr):
+    head = pr.get('headRefOid') or ''
+    for comment in reversed(pr.get('comments') or []):
+        first = (comment.get('body') or '').split('\n')[0]
+        if not first.startswith('Checks: '):
+            continue
+        if 'head=' + head not in first:
+            continue
+        return first.startswith('Checks: PASS') or first.startswith('Checks: FAIL')
+    return False
+
+
+def review_verdict_at_head(pr):
+    head = pr.get('headRefOid') or ''
+    for comment in reversed(pr.get('comments') or []):
+        first = (comment.get('body') or '').split('\n')[0]
+        if 'head=' + head not in first:
+            continue
+        if first.startswith('Verdict:') or first.startswith('Review:'):
+            return True
+    return False
+
+
+def pr_has_label(pr, label_name):
+    for item in pr.get('labels') or []:
+        if isinstance(item, dict) and item.get('name') == label_name:
+            return True
+        if item == label_name:
+            return True
+    return False
+
+
+def coordinator_publication_state_dir():
+    """Coordinator-local stamp storage; same default tree as coordinator-waiter."""
+    override = (os.environ.get('COORDINATOR_PUBLICATION_STATE_DIR') or '').strip()
+    if override:
+        return override
+    waiter = (os.environ.get('COORDINATOR_WAITER_STATE_DIR') or '').strip()
+    if waiter:
+        return waiter
+    xdg = (os.environ.get('XDG_STATE_HOME') or '').strip()
+    if not xdg:
+        xdg = os.path.expanduser('~/.local/state')
+    return os.path.join(xdg, 'agent-team')
+
+
+def post_push_repo_slug(repo):
+    slug = re.sub(r'[^A-Za-z0-9._-]+', '--', repo or '')
+    slug = slug.strip('-.')
+    return slug or 'unknown'
+
+
+def coordinator_post_push_stamp_path(repo, head):
+    state_dir = coordinator_publication_state_dir()
+    slug = post_push_repo_slug(repo)
+    return os.path.join(state_dir, 'post-push', slug, '%s.env' % head)
+
+
+def read_post_push_stamp_file(path):
+    stamp = {}
+    try:
+        with open(path, encoding='utf-8') as stream:
+            for line in stream:
+                line = line.rstrip('\n')
+                if not line or '=' not in line:
+                    continue
+                key, val = line.split('=', 1)
+                if key in ('repo', 'head_sha', 'checks_started', 'reviewer_started'):
+                    stamp[key] = val
+    except OSError:
+        return None
+    return stamp
+
+
+def post_push_flags_for_head(repo, head):
+    path = coordinator_post_push_stamp_path(repo, head)
+    stamp = read_post_push_stamp_file(path)
+    if not stamp:
+        return False, False
+    if stamp.get('repo') != repo or stamp.get('head_sha') != head:
+        return False, False
+    return stamp.get('checks_started') == '1', stamp.get('reviewer_started') == '1'
+
+
+def write_post_push_stamp(repo, head, checks_started=False, reviewer_started=False):
+    path = coordinator_post_push_stamp_path(repo, head)
+    pub_dir = os.path.dirname(path)
+    stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
+    if checks_started:
+        stamp_checks = True
+    if reviewer_started:
+        stamp_reviewer = True
+    try:
+        os.makedirs(pub_dir, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix='post-push.env.tmp.', dir=pub_dir)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                stream.write('repo=%s\n' % repo)
+                stream.write('head_sha=%s\n' % head)
+                stream.write('checks_started=%s\n' % (1 if stamp_checks else 0))
+                stream.write('reviewer_started=%s\n' % (1 if stamp_reviewer else 0))
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def _repo_checks_lock_path(repo_root):
+    try:
+        output = subprocess.run(
+            ['git', '-C', repo_root, 'config', '--get', 'remote.origin.url'],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        remote = (output.stdout or '').strip()
+    except (subprocess.SubprocessError, OSError):
+        remote = ''
+    name = os.path.basename(remote.rstrip('/')) if remote else os.path.basename(repo_root)
+    if name.endswith('.git'):
+        name = name[:-4]
+    return os.path.expanduser(os.path.join('~', 'orca', 'workspaces', name, '_checks.lock'))
+
+
+def head_checks_lock_live(repo_root, lock_live=None):
+    if lock_live is not None:
+        return lock_live(repo_root)
+    lock = _repo_checks_lock_path(repo_root)
+    if not os.path.isdir(lock):
+        return False
+    pid_path = os.path.join(lock, 'pid')
+    try:
+        with open(pid_path, encoding='utf-8') as stream:
+            holder = stream.read().strip()
+    except OSError:
+        return False
+    if not holder.isdigit():
+        return False
+    try:
+        os.kill(int(holder), 0)
+    except OSError:
+        return False
+    return True
+
+
+def worker_worktree_path(w):
+    w = w or {}
+    proj = w.get('projection') or {}
+    ws = proj.get('workspace')
+    if isinstance(ws, dict):
+        path = ws.get('path')
+        if isinstance(path, str) and path:
+            return path
+    raw = w.get('workspace')
+    if isinstance(raw, str) and '::' in raw:
+        return raw.split('::', 1)[1]
+    return ''
+
+
+def pr_author_worker_metadata(workers, pr_row):
+    number = pr_row.get('number')
+    branch = pr_row.get('headRefName') or ''
+    for w in workers:
+        if number is not None and worker_pr_number(w) == number:
+            return _author_metadata_from_worker(w)
+        if branch and worker_branch_name(w) == branch:
+            return _author_metadata_from_worker(w)
+    return None
+
+
+def _author_metadata_from_worker(w):
+    w = w or {}
+    proj = w.get('projection') or {}
+    prov = proj.get('provider') if isinstance(proj.get('provider'), dict) else {}
+    provider = prov.get('id') if isinstance(prov.get('id'), str) else worker_agent_id(w)
+    model = prov.get('model') if isinstance(prov.get('model'), str) else ''
+    dispatch = w.get('dispatchId')
+    if not isinstance(provider, str) or not provider:
+        return None
+    if not isinstance(dispatch, str) or not dispatch:
+        return None
+    worktree = worker_worktree_path(w)
+    if not worktree:
+        worktree = worker_worktree_selector(w)
+    if not worktree or worktree.startswith('identity:'):
+        return None
+    run_id = w.get('runId')
+    if not isinstance(run_id, str) or not run_id:
+        run_id = proj.get('runId') if isinstance(proj.get('runId'), str) else ''
+    family = provider
+    if provider == 'antigravity':
+        family = 'gemini'
+    return {
+        'provider': provider,
+        'model': model,
+        'family': family,
+        'dispatch': dispatch,
+        'run': run_id,
+        'worktree': worktree,
+    }
+
+
+def build_head_checks_command(config, repo, pr_row):
+    root = _issue_scan_repo_root(config, repo)
+    if not root:
+        return None
+    head = pr_row.get('headRefOid') or ''
+    if not head:
+        return None
+    script = str(Path(__file__).with_name('head-checks.sh'))
+    return ['bash', script, '--repo', root, '--pr', str(pr_row['number'])]
+
+
+def build_on_worker_done_command(config, repo, pr_row, meta):
+    scan = config.get('issue_scan') or {}
+    from_terminal = scan.get('from_terminal')
+    if not from_terminal:
+        return None
+    run_id = meta.get('run') or scan.get('run')
+    if not run_id:
+        return None
+    head = pr_row.get('headRefOid') or ''
+    script = str(Path(__file__).with_name('on-worker-done.sh'))
+    command = [
+        'bash', script, '--repo', repo, '--pr', str(pr_row['number']), '--head', head,
+        '--worktree', meta['worktree'], '--run', run_id, '--author-dispatch', meta['dispatch'],
+    ]
+    if meta.get('model'):
+        command += ['--author-provider', meta['provider'], '--author-model', meta['model']]
+    elif meta.get('family'):
+        command += ['--author-family', meta['family']]
+    else:
+        return None
+    return command
+
+
+def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    try:
+        popen(command, start_new_session=True, env=env)
+        return 0
+    except OSError:
+        return 1
+
+
 def review_failed_at_head(pr):
     head = pr.get('headRefOid') or ''
     for comment in reversed(pr.get('comments') or []):
@@ -1815,7 +2066,8 @@ def _issue_scan_has_slot(host, config, admission, extra_starts):
 def issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
-    inventory_ok=True, persist_state=None,
+    inventory_ok=True, persist_state=None, start_detached=None,
+    checks_lock_live=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -1834,6 +2086,8 @@ def issue_scan_pass(
         admit_fn = admit
     if start_worker is None:
         start_worker = default_issue_scan_start
+    if start_detached is None:
+        start_detached = default_detached_start
 
     host = scan.get('host') or 'local'
     if not gate_check(config):
@@ -1847,8 +2101,54 @@ def issue_scan_pass(
     if pr_fetch is None:
         pr_fetch = fetch_prs
     pr_repos = scan.get('pr_repos') or repos
+    needs_elon = (config.get('worker_stall') or {}).get('needs_elon_label', 'needs-elon')
+    head_checks_started = state.setdefault('head_checks_started', {})
+    reviewer_started = state.setdefault('reviewer_started', {})
     rework_heads = state.setdefault('issue_scan_rework', {})
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
+
+    for repo in pr_repos:
+        prs = pr_fetch(repo)
+        if prs is None:
+            continue
+        checks_seen = head_checks_started.setdefault(repo, {})
+        review_seen = reviewer_started.setdefault(repo, {})
+        for pr_row in prs:
+            if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
+                continue
+            if pr_has_label(pr_row, needs_elon):
+                continue
+            head = pr_row.get('headRefOid') or ''
+            if not head:
+                continue
+            root = _issue_scan_repo_root(config, repo)
+            if not root:
+                continue
+            meta = pr_author_worker_metadata(workers, pr_row)
+            stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
+            if stamp_checks:
+                checks_seen[head] = True
+            if stamp_reviewer:
+                review_seen[head] = True
+            if not checks_receipt_at_head(pr_row):
+                if not checks_seen.get(head) and not head_checks_lock_live(root, lock_live=checks_lock_live):
+                    command = build_head_checks_command(config, repo, pr_row)
+                    if command and start_detached(command) == 0:
+                        checks_seen[head] = True
+                        log_bits.append('head_checks_start=%s' % head[:8])
+                        write_post_push_stamp(repo, head, checks_started=True)
+                        if persist_state:
+                            persist_state()
+            if not review_verdict_at_head(pr_row) and not review_seen.get(head):
+                if meta:
+                    command = build_on_worker_done_command(config, repo, pr_row, meta)
+                    from_terminal = (config.get('issue_scan') or {}).get('from_terminal')
+                    if command and start_detached(command, {'ORCA_TERMINAL_HANDLE': from_terminal}) == 0:
+                        review_seen[head] = True
+                        log_bits.append('reviewer_start=%s' % head[:8])
+                        write_post_push_stamp(repo, head, reviewer_started=True)
+                        if persist_state:
+                            persist_state()
 
     for repo in pr_repos:
         prs = pr_fetch(repo)

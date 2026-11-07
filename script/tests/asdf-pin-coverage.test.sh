@@ -18,7 +18,12 @@ check "lib: preset data dir kept"          "$(pinned "$tmp/home" "$tmp/other")" 
 check "lib: no asdf under HOME, none set"  "$(pinned "$tmp/other")" ""
 
 py="$root/script/tests/lib/asdf_pin.py"
-pypin() { env -u ASDF_DATA_DIR -u ASDF_PYTHON_VERSION HOME="$tmp/home" python3 -I -c '
+# Temp HOME breaks asdf shims before pin() runs; use a real interpreter (same idea as check-agent-startup.test.sh).
+path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
+python_bin=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
+[ -x "$python_bin" ] || python_bin="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"
+[ -x "$python_bin" ] || { echo "missing python3 for py lib check" >&2; exit 1; }
+pypin() { env -u ASDF_DATA_DIR -u ASDF_PYTHON_VERSION HOME="$tmp/home" "$python_bin" -I -c '
 import importlib.util, os, sys
 s = importlib.util.spec_from_file_location("asdf_pin", sys.argv[1]); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
 m.pin(); print(os.environ.get("ASDF_DATA_DIR", ""), os.environ.get("ASDF_PYTHON_VERSION", ""))' "$py"; }

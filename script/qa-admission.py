@@ -423,7 +423,7 @@ def admit(args):
         if counts['occupied'] < cap:
             candidates.append({'environment_id': eid or 'local',
                                'worktree_selector': 'identity:'+review['worktree_identity'],
-                               'host': host})
+                               'host': host, 'repo_id': review['repo_id']})
     observations = load_observations(args.fleet_load, caps)
     validate_loads(observations, config, policy)
     if policy:

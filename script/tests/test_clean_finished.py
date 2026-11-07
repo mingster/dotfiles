@@ -579,6 +579,82 @@ class CleanFinishedTests(unittest.TestCase):
         self.assertEqual(out.returncode, 1)
         self.assertIn("delete failed", out.stdout)
 
+    def _remote_only_branch(self, g: GitFix, name: str, *, merge: bool = False) -> str:
+        g.branch(name)
+        wt = g.worktree(f"wt-{name}", name)
+        (wt / "n").write_text("1\n")
+        g._run(wt, "add", "n")
+        g._run(wt, "commit", "-m", "n")
+        g._run(wt, "push", "-u", "origin", name)
+        tip = head_oid(wt)
+        if merge:
+            g.merge_to_main(name)
+        g._run(g.main, "worktree", "remove", str(wt))
+        g.wts.remove(wt)
+        g._run(g.main, "branch", "-D", name)
+        return tip
+
+    def test_closed_pr_old_remote_no_worktree_preview_apply(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        tip = self._remote_only_branch(g, "ghost", merge=False)
+        when = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prs = [{"headRefName": "ghost", "state": "CLOSED", "closedAt": when}]
+        env = StubEnv(g, prs)
+        prev = env.run()
+        self.assertIn("Remove remote ghost", prev.stdout)
+        self.assertIn("refs/tags/archive/ghost", prev.stdout)
+        self.assertIn(f"git push origin {tip}:refs/tags/archive/ghost", prev.stdout)
+        self.assertRegex(prev.stdout.splitlines()[-1], r"would delete remote=1")
+        out = env.run(apply=True)
+        self.assertEqual(out.returncode, 0)
+        self.assertRegex(out.stdout.splitlines()[-1], r"deleted remote=1")
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(g.origin), "show-ref", "--verify", "refs/tags/archive/ghost"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+        self.assertNotEqual(
+            subprocess.run(
+                ["git", "-C", str(g.origin), "show-ref", "refs/heads/ghost"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
+    def test_open_pr_remote_no_worktree_kept(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        self._remote_only_branch(g, "stillopen", merge=False)
+        out = StubEnv(g, [{"headRefName": "stillopen", "state": "OPEN"}]).run()
+        self.assertIn("Kept remote stillopen (open pull request)", out.stdout)
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(g.origin), "show-ref", "refs/heads/stillopen"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
+    def test_closed_pr_young_remote_no_worktree_kept(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        self._remote_only_branch(g, "young", merge=False)
+        when = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prs = [{"headRefName": "young", "state": "CLOSED", "closedAt": when}]
+        out = StubEnv(g, prs).run()
+        self.assertIn("Kept remote young (closed", out.stdout)
+        self.assertIn("deleted after 7 days", out.stdout)
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(g.origin), "show-ref", "refs/heads/young"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
