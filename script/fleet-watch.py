@@ -189,7 +189,7 @@ def deduplicate_workers(workers):
             by_dispatch[id(w)] = w
 
     def worker_priority(w):
-        status = w.get('dispatchStatus') or w.get('status')
+        status = worker_inventory_status(w)
         if status in ('running', 'dispatched', 'active', 'pending'):
             return 3
         if status == 'completed':
@@ -220,11 +220,55 @@ def deduplicate_workers(workers):
     return deduped
 
 
+def worker_inventory_status(worker):
+    """Dispatch status for admit/classify: nested dispatchStatus, else map flat Orca state."""
+    w = worker or {}
+    status = w.get('dispatchStatus') or w.get('status')
+    if status:
+        return status
+    state = w.get('state')
+    if state in ('succeeded', 'completed'):
+        return 'completed'
+    if state == 'released':
+        return 'released'
+    if state == 'release_unknown':
+        return 'release_unknown'
+    if state in ('running', 'ready', 'accepted', 'active', 'pending'):
+        return 'running'
+    if state == 'failed':
+        return 'failed'
+    return state
+
+
+def worker_terminal_released(worker):
+    """True when Orca has released the worker terminal (flat and nested rows)."""
+    w = worker or {}
+    evidence = w.get('evidence') or {}
+    projection = w.get('projection') or {}
+    status = worker_inventory_status(w)
+    if status == 'released':
+        return True
+    if w.get('released') is True or evidence.get('released') is True or projection.get('released') is True:
+        return True
+    if evidence.get('release') in (True, 'confirmed'):
+        return True
+    return w.get('terminalState') == 'released' or w.get('stage') == 'released'
+
+
+def worker_freed_by_terminal_exit(worker):
+    """Worker-list row with exited liveness and a released terminal does not retain a slot.
+
+    Full rows place liveness under projection.liveness.verdict; flat rows may set top-level liveness.
+    """
+    w = worker or {}
+    return worker_liveness_verdict(w) == 'exited' and w.get('terminalState') == 'released'
+
+
 def classify_worker(worker):
     """Classifies a worker and determines if it occupies a host slot with evidence.
     Returns: (occupies: bool, classification: dict, has_release_unknown: bool)
     """
-    status = worker.get('dispatchStatus') or worker.get('status')
+    status = worker_inventory_status(worker)
     projection = worker.get('projection') or {}
     host = projection_host_id(worker)
     role = projection.get('role') or worker.get('role') or 'builder'
@@ -247,13 +291,7 @@ def classify_worker(worker):
         evidence_dict.get('push') in (True, 'confirmed')
     )
 
-    released = bool(
-        (status == 'released' and not release_unknown) or
-        worker.get('released') is True or
-        evidence_dict.get('released') is True or
-        projection.get('released') is True or
-        evidence_dict.get('release') in (True, 'confirmed')
-    )
+    released = worker_terminal_released(worker) and not release_unknown
 
     dispatch_id = worker.get('dispatchId')
 
@@ -278,6 +316,22 @@ def classify_worker(worker):
             'evidence': {'status': status, 'role': role, 'live': True}
         }
         return True, info, False
+
+    if worker_freed_by_terminal_exit(worker):
+        info = {
+            'dispatchId': dispatch_id,
+            'host': host,
+            'category': 'freed',
+            'role': role,
+            'evidence': {
+                'status': status,
+                'pushed': pushed,
+                'released': True,
+                'liveness': 'exited',
+                'terminalState': 'released',
+            }
+        }
+        return False, info, False
 
     if status == 'completed':
         if pushed and released:
