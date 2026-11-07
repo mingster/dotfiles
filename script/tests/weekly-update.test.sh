@@ -276,5 +276,141 @@ echo "$out" | grep -q 'weekly-update: summary' && ok 'ignored projects conf reac
 grep -qxF 'script/weekly-update.projects.conf' "$root/.gitignore" && ok 'projects conf gitignored' \
   || bad 'missing gitignore for weekly-update.projects.conf'
 
+# --- Node LTS from index.json (not local node) ---
+node_index="$tmp/node-index.json"
+write_node_index() {
+  cat >"$node_index" <<'EOF'
+[
+  {"version":"v24.22.1","date":"2026-10-15","files":[],"npm":"11.6.0","lts":"Krypton","security":false},
+  {"version":"v24.22.0","date":"2026-10-01","files":[],"npm":"11.5.0","lts":"Krypton","security":false},
+  {"version":"v26.13.0","date":"2026-10-28","files":[],"npm":"11.20.0","lts":"Lithium","security":false},
+  {"version":"v20.19.0","date":"2025-03-13","files":[],"npm":"10.8.0","lts":"Iron","security":false}
+]
+EOF
+}
+
+run_weekly_from_index() {
+  local extra=() args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      *=*) extra+=("$1"); shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  "$gate" --weight 1 -- env \
+    DOTFILES="$work" WEEKLY_UPDATE_DOTFILES="$work" \
+    MP_REPO="$mp_up" PLUGINS_REPO="$plugins_up" \
+    WEEKLY_UPDATE_BUN_UPGRADE=':' WEEKLY_UPDATE_BUN_UPDATE=':' \
+    WEEKLY_UPDATE_NODE_INDEX="$node_index" \
+    "${extra[@]}" \
+    /bin/bash "$work/script/weekly-update.sh" ${args+"${args[@]}"}
+}
+
+if grep -q 'command -v node' "$script" || grep -q 'process.versions.node' "$script"; then
+  bad 'weekly-update must not detect Node from local node'
+else
+  ok 'no local node detection in weekly-update.sh'
+fi
+
+write_node_index
+
+push_main_pin() {
+  printf '%s\n' "$1" >"$work/.tool-versions"
+  git -C "$work" add .tool-versions
+  git -C "$work" commit -qm pin
+  git -C "$work" push -q origin main
+}
+
+setup_fixture
+write_node_index
+push_main_pin 'nodejs 24.22.0'
+: >"$GH_LOG"
+run_weekly_from_index WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 >/dev/null 2>&1 || true
+tbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mingster/weekly-toolchain-*' 2>/dev/null | head -1)
+pin=$(git -C "$work" show "$tbranch:.tool-versions" 2>/dev/null | awk '$1=="nodejs"{print $2}')
+[ "$pin" = "24.22.1" ] && ok 'index picks newest LTS on pinned major' \
+  || bad 'index LTS pick' "pin=$pin branch=$tbranch"
+
+setup_fixture
+write_node_index
+push_main_pin 'nodejs 24.22.1'
+: >"$GH_LOG"
+run_weekly_from_index WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 >/dev/null 2>&1 || true
+tbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mingster/weekly-toolchain-*' 2>/dev/null | head -1)
+pin=$(git -C "$work" show "$tbranch:.tool-versions" 2>/dev/null | awk '$1=="nodejs"{print $2}')
+[ "$pin" = "24.22.1" ] && ok 'index never downgrades node pin' \
+  || bad 'index downgrade' "pin=$pin"
+
+setup_fixture
+write_node_index
+push_main_pin 'nodejs 24.22.0'
+cat >"$tmp/bin/node" <<'EOS'
+#!/bin/sh
+exec /bin/echo '99.0.0'
+EOS
+chmod +x "$tmp/bin/node"
+export PATH="$tmp/bin:$CASE_SAVE_PATH"
+: >"$GH_LOG"
+run_weekly_from_index WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 >/dev/null 2>&1 || true
+export PATH="$CASE_SAVE_PATH"
+tbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mingster/weekly-toolchain-*' 2>/dev/null | head -1)
+pin=$(git -C "$work" show "$tbranch:.tool-versions" 2>/dev/null | awk '$1=="nodejs"{print $2}')
+[ "$pin" = "24.22.1" ] && ok 'index ignores local node binary' \
+  || bad 'used local node' "pin=$pin"
+
+setup_fixture
+write_node_index
+push_main_pin 'nodejs 24.22.0'
+: >"$GH_LOG"
+sum=$(run_weekly_from_index WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 2>&1) || true
+echo "$sum" | grep -q 'Node LTS major 26' && ok 'new LTS major reported in summary' \
+  || bad 'missing new major note' "$sum"
+tbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mingster/weekly-toolchain-*' 2>/dev/null | head -1)
+pin=$(git -C "$work" show "$tbranch:.tool-versions" 2>/dev/null | awk '$1=="nodejs"{print $2}')
+case "$pin" in 24.*) ok 'new LTS major does not change pin' ;; *) bad 'pin jumped major' "pin=$pin" ;; esac
+
+setup_fixture
+: >"$GH_LOG"
+sum=$(run_weekly_from_index WEEKLY_UPDATE_NODE_INDEX='https://127.0.0.1:9/no-index' \
+  WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 2>&1) || true
+echo "$sum" | grep -q 'PR toolchain: failed (apply)' && ok 'index fetch fail marks toolchain apply failed' \
+  || bad 'fetch fail summary' "$sum"
+fc=$(printf '%s\n' "$sum" | grep -c 'PR toolchain: failed (apply)' || true)
+[ "$fc" = 1 ] && ok 'index fetch fail one toolchain failure line' || bad 'fetch fail line count' "$sum"
+tcre=$(grep -c -- '--head mingster/weekly-toolchain-' "$GH_LOG" 2>/dev/null) || tcre=0
+[ "$tcre" = 0 ] && ok 'index fetch fail opens no toolchain PR' \
+  || bad 'toolchain PR opened on fetch fail' "$(cat "$GH_LOG")"
+
+assert_index_apply_fail() {
+  local idx="$1" label="$2" expect_pin="${3:-24.22.0}"
+  setup_fixture
+  write_node_index
+  push_main_pin "nodejs $expect_pin"
+  printf '%s' "$idx" >"$tmp/bad-index.json"
+  : >"$GH_LOG"
+  sum=$(run_weekly_from_index WEEKLY_UPDATE_NODE_INDEX="$tmp/bad-index.json" \
+    WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+    WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 2>&1) || true
+  echo "$sum" | grep -q 'PR toolchain: failed (apply)' \
+    && ok "$label marks toolchain apply failed" \
+    || bad "$label summary" "$sum"
+  fc=$(printf '%s\n' "$sum" | grep -c 'PR toolchain: failed (apply)' || true)
+  [ "$fc" = 1 ] && ok "$label one toolchain failure line" || bad "$label failure line count" "$sum"
+  tcre=$(grep -c -- '--head mingster/weekly-toolchain-' "$GH_LOG" 2>/dev/null) || tcre=0
+  [ "$tcre" = 0 ] && ok "$label opens no toolchain PR" \
+    || bad "$label opened toolchain PR" "$(cat "$GH_LOG")"
+  pin=$(awk '$1=="nodejs"{print $2}' "$work/.tool-versions")
+  [ "$pin" = "$expect_pin" ] && ok "$label leaves pin unchanged" \
+    || bad "$label pin changed" "pin=$pin want=$expect_pin"
+}
+
+assert_index_apply_fail 'not-json at all' 'index bad JSON'
+assert_index_apply_fail '[]' 'index empty releases'
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

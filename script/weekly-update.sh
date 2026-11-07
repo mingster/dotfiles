@@ -8,9 +8,12 @@
 # Env: DOTFILES, WEEKLY_UPDATE_DOTFILES (override repo root), WEEKLY_UPDATE_PROJECTS (colon-separated roots),
 #      WEEKLY_UPDATE_PROJECTS_CONF (default $DOTFILES/script/weekly-update.projects.conf, untracked),
 #      WEEKLY_UPDATE_TESTS_<id> (override per-PR test command), WEEKLY_UPDATE_SKIP_APPLY=1,
-#      WEEKLY_UPDATE_NO_PUSH=1, PLUGINS_REPO, MP_REPO, WEEKLY_UPDATE_NODE_LTS, WEEKLY_UPDATE_BUN_UPGRADE,
-#      WEEKLY_UPDATE_BUN_UPDATE (shell commands; default bun upgrade / bun update in listed bun roots).
+#      WEEKLY_UPDATE_NO_PUSH=1, PLUGINS_REPO, MP_REPO, WEEKLY_UPDATE_NODE_LTS (test override),
+#      WEEKLY_UPDATE_NODE_INDEX (index.json URL or absolute fixture path; default nodejs.org dist index),
+#      WEEKLY_UPDATE_BUN_UPGRADE, WEEKLY_UPDATE_BUN_UPDATE (shell commands; default bun upgrade / bun update).
 set -euo pipefail
+
+declare -a TOOLCHAIN_SUMMARY_LINES=()
 
 DOTFILES="${WEEKLY_UPDATE_DOTFILES:-${DOTFILES:-$HOME/dotfiles}}"
 DOTFILES=$(cd "$DOTFILES" && pwd -P)
@@ -34,6 +37,84 @@ PROJECTS_CONF="$DOTFILES/script/weekly-update.projects.conf"
 die() { echo "weekly-update: $*" >&2; exit 1; }
 
 apply_fail() { echo "weekly-update: $*" >&2; return 1; }
+
+node_lts_from_index() {
+  local pin="$1" idx="${WEEKLY_UPDATE_NODE_INDEX:-https://nodejs.org/dist/index.json}"
+  local tmp json err rc lts
+  tmp=$(mktemp)
+  json=$(mktemp)
+  err=$(mktemp)
+  if [[ "$idx" == /* ]]; then
+    cp "$idx" "$json" || { rm -f "$tmp" "$json" "$err"; return 1; }
+  elif [[ "$idx" == file://* ]]; then
+    cp "${idx#file://}" "$json" || { rm -f "$tmp" "$json" "$err"; return 1; }
+  else
+    if ! curl -fsSL --connect-timeout 10 "$idx" -o "$json" 2>"$tmp"; then
+      rm -f "$tmp" "$json" "$err"
+      cat "$tmp" >&2 2>/dev/null || true
+      return 1
+    fi
+  fi
+  python3 - "$pin" "$json" >"$tmp" 2>"$err" <<'PY' || {
+import json
+import sys
+
+
+def ver_tuple(s):
+    s = s.lstrip("v")
+    parts = s.split(".")
+    while len(parts) < 3:
+        parts.append("0")
+    return tuple(int(x) for x in parts[:3])
+
+
+pin = sys.argv[1]
+with open(sys.argv[2], encoding="utf-8") as f:
+    data = json.load(f)
+
+pin_t = ver_tuple(pin)
+pin_major = pin_t[0]
+lts_on_major = []
+newer_majors = set()
+
+for entry in data:
+    lts = entry.get("lts")
+    if not lts:
+        continue
+    vt = ver_tuple(entry["version"])
+    if vt[0] == pin_major:
+        lts_on_major.append(vt)
+    elif vt[0] > pin_major:
+        newer_majors.add(vt[0])
+
+if not lts_on_major:
+    sys.exit(3)
+
+newest = max(lts_on_major)
+chosen = max(newest, pin_t)
+print(".".join(str(x) for x in chosen))
+if newer_majors:
+    joined = ", ".join(str(m) for m in sorted(newer_majors))
+    print(f"Node LTS major {joined} available (pin stays on {pin_major})", file=sys.stderr)
+PY
+    rc=$?
+    rm -f "$tmp" "$json" "$err"
+    return "$rc"
+  }
+  lts=$(cat "$tmp")
+  if [ -z "$lts" ]; then
+    rm -f "$tmp" "$json" "$err"
+    return 1
+  fi
+  rm -f "$tmp" "$json"
+  if [ -s "$err" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] && TOOLCHAIN_SUMMARY_LINES+=("$line")
+    done <"$err"
+  fi
+  rm -f "$err"
+  printf '%s' "$lts"
+}
 
 read_projects() {
   PROJECTS=()
@@ -141,10 +222,20 @@ apply_toolchain() {
   local lts tv pin_file="$DOTFILES/.tool-versions"
   if [ -n "${WEEKLY_UPDATE_NODE_LTS:-}" ]; then
     lts=$WEEKLY_UPDATE_NODE_LTS
-  elif command -v node >/dev/null 2>&1; then
-    lts=$(node -e 'const v=process.versions.node.split("."); console.log(v[0]+"."+v[1]+".0")' 2>/dev/null || true)
+  else
+    tv=$(awk '$1=="nodejs" { print $2; exit }' "$pin_file" 2>/dev/null || true)
+    [ -n "${tv:-}" ] || { apply_fail "missing nodejs pin in .tool-versions"; return 1; }
+    local lts_file
+    lts_file=$(mktemp)
+    if ! node_lts_from_index "$tv" >"$lts_file"; then
+      rm -f "$lts_file"
+      apply_fail "could not resolve Node LTS from index"
+      return 1
+    fi
+    lts=$(cat "$lts_file")
+    rm -f "$lts_file"
+    [ -n "$lts" ] || { apply_fail "empty Node LTS from index"; return 1; }
   fi
-  [ -n "${lts:-}" ] || { apply_fail "set WEEKLY_UPDATE_NODE_LTS or install node to detect LTS"; return 1; }
   if [ -f "$pin_file" ]; then
     if grep -q '^nodejs ' "$pin_file"; then
       sed -i.bak "s/^nodejs .*/nodejs $lts/" "$pin_file"
@@ -345,6 +436,12 @@ while [ "$idx" -lt ${#PR_ID[@]} ]; do
   run_slice "${PR_ID[$idx]}" "${PR_TITLE[$idx]}"
   idx=$((idx + 1))
 done
+
+if [ ${#TOOLCHAIN_SUMMARY_LINES[@]} -gt 0 ]; then
+  for line in "${TOOLCHAIN_SUMMARY_LINES[@]}"; do
+    SUMMARY+=("$line")
+  done
+fi
 
 echo "weekly-update: summary"
 for line in "${SUMMARY[@]}"; do
