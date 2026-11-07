@@ -678,6 +678,23 @@ child.wait()
             self.assertTrue(self.started(label))
         self.finish(long)
 
+    def test_short_job_only_long_path_holds_declared_memory(self):
+        self.host_memory(3000)
+        self.config(2)
+        long = self.job('long', 2.5, gate_class='long')
+        self.wait_for(lambda: self.started('long'))
+        self.set_reading('13 90')
+        short = self.job('short', hold=True, gate_class='short', memory=2000)
+        self.wait_for(lambda: self.started('short'))
+        self.assertEqual(self.memory_files(), ['2000'])
+        blocked = self.job('blocked', 0.1, memory=2000)
+        time.sleep(0.5)
+        self.assertFalse(self.started('blocked'))
+        self.release('short')
+        self.finish(short)
+        self.finish(blocked)
+        self.finish(long)
+
     def test_short_job_held_at_high_load_when_short_job_holds_reserve(self):
         self.config(2)
         long = self.job('long', 2.5, gate_class='long')

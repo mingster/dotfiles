@@ -76,7 +76,6 @@ import platform
 from pathlib import Path
 import re
 import shutil
-import re
 import shlex
 import signal
 import socket
@@ -810,7 +809,8 @@ def gate(args):
             reason = (f'free memory {free:.1f}% is below 20%' if free < 20
                       else f'load {load:.2f} exceeds {settings["load_max"]:g}' if hot
                       else '')
-            if hot and free >= 20 and short_job and slots.claim(weight, only_long=True):
+            if hot and free >= 20 and short_job and slots.claim(
+                    weight, only_long=True, memory=memory, host_memory=host_memory):
                 break
             if not reason:
                 if slots.claim(weight, reserve=int(long_job), long_job=long_job,
