@@ -123,6 +123,17 @@ case7_lead_merge_prefix() {
   ok "case7 lead-merge maps base and prefix family tests"
 }
 
+case9_sync_team_skills_agent_team() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/sync-team-skills.sh 2>&1)
+  grep -Fq 'Selected: script/agent-team.test.sh' <<<"$out" \
+    || fail "case9 must select agent-team.test.sh for sync-team-skills.sh"
+  grep -Fq 'Selected: script/tests/release-guard-rules.test.sh' <<<"$out" \
+    || fail "case9 must select release-guard-rules.test.sh for sync-team-skills.sh"
+  ok "case9 sync-team-skills maps agent-team and release-guard-rules tests"
+}
+
 case8_full_suite_fallback() {
   local out count
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
@@ -144,4 +155,5 @@ case5_py_runner
 case6_on_worker_done
 case7_lead_merge_prefix
 case8_full_suite_fallback
-echo 'PASS: 9 acceptance cases'
+case9_sync_team_skills_agent_team
+echo 'PASS: 10 acceptance cases'

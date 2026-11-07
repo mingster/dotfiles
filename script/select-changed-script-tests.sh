@@ -94,6 +94,10 @@ map_file() {
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
+    script/sync-team-skills.sh)
+      add_if_exists "script/agent-team.test.sh"
+      add_if_exists "script/tests/release-guard-rules.test.sh"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
@@ -107,7 +111,7 @@ map_file() {
     .agents/skills/orca-team/*)
       add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
       ;;
-    templates/agent-team/*|script/sync-team-skills.sh)
+    templates/agent-team/*)
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
