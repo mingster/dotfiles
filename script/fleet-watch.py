@@ -27,6 +27,18 @@ import sys
 import tempfile
 import time
 
+def _load_receipt_state():
+    path = Path(__file__).resolve().parent / 'receipt-state.py'
+    spec = importlib.util.spec_from_file_location('receipt_state', path)
+    if spec is None or spec.loader is None:
+        raise ImportError('receipt-state.py missing beside fleet-watch.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+rs = _load_receipt_state()
+
 
 class Urgent(str):
     """A notice that skips the digest wait. alerts() returns this type, so routing never reads the text."""
@@ -680,42 +692,12 @@ def fetch_prs(repo):
         return None
 
 
-_HEAD_RECEIPT_RE = re.compile(
-    r'^(?P<label>Checks|Review|Verdict): (?P<status>\S+) '
-    r'head=(?P<head>[0-9a-f]{40})(?: main=[0-9a-f]{40})?(?:\s|$)'
-)
-
-
-def _receipt_first_line(body):
-    return (body or '').split('\n')[0]
-
-
-def newest_comment_receipt(comments, label, head):
-    """Newest comment (by createdAt) whose first line is ``label:`` for an exact head (optional main=)."""
-    best = None
-    best_at = ''
-    for comment in comments or []:
-        first = _receipt_first_line(comment.get('body'))
-        match = _HEAD_RECEIPT_RE.match(first)
-        if not match or match.group('label') != label or match.group('head') != head:
-            continue
-        created = comment.get('createdAt') or ''
-        if created >= best_at:
-            best = comment
-            best_at = created
-    return best
+newest_comment_receipt = rs.newest_comment_receipt
+_receipt_first_line = rs.receipt_first_line
 
 
 def newest_checks_kind(comments, head):
-    comment = newest_comment_receipt(comments, 'Checks', head)
-    if not comment:
-        return None
-    first = _receipt_first_line(comment.get('body'))
-    if first.startswith('Checks: PASS'):
-        return 'PASS'
-    if first.startswith('Checks: FAIL'):
-        return 'FAIL'
-    return None
+    return rs.newest_receipt_kind(comments, 'Checks', head)
 
 
 def newest_checks_comment(comments, head):
@@ -723,40 +705,10 @@ def newest_checks_comment(comments, head):
     return newest_comment_receipt(comments, 'Checks', head)
 
 
-def newest_review_or_verdict(comments, head):
-    """Newest Review or Verdict comment at head."""
-    best = None
-    best_first = ''
-    best_at = ''
-    for comment in comments or []:
-        first = _receipt_first_line(comment.get('body'))
-        match = _HEAD_RECEIPT_RE.match(first)
-        if not match or match.group('head') != head:
-            continue
-        if match.group('label') not in ('Review', 'Verdict'):
-            continue
-        created = comment.get('createdAt') or ''
-        if created >= best_at:
-            best = comment
-            best_first = first
-            best_at = created
-    if best is None:
-        return None
-    return best, best_first
-
-
 def failing(pr):
     """The newest Checks receipt at this head decides, unless a status check failed after it; otherwise any failed status check."""
     head = pr.get('headRefOid') or ''
-    comment = newest_checks_comment(pr.get('comments'), head)
-    if comment:
-        first = _receipt_first_line(comment.get('body'))
-        if first.startswith('Checks: FAIL'):
-            return True
-        receipt = comment.get('createdAt') or ''
-        return any(check.get('conclusion') == 'FAILURE' and (check.get('completedAt') or '') > receipt
-                   for check in pr.get('statusCheckRollup') or [])
-    return any(check.get('conclusion') == 'FAILURE' for check in pr.get('statusCheckRollup') or [])
+    return rs.status_rollup_failure_at_head(pr, head)
 
 
 def pr_events(repo, old, prs, now, stuck_seconds):
@@ -1755,7 +1707,12 @@ def checks_receipt_at_head(pr):
 
 
 def review_verdict_at_head(pr):
-    return newest_review_or_verdict(pr.get('comments'), pr.get('headRefOid') or '') is not None
+    head = pr.get('headRefOid') or ''
+    comments = pr.get('comments') or []
+    return (
+        newest_comment_receipt(comments, 'Review', head) is not None
+        or newest_comment_receipt(comments, 'Verdict', head) is not None
+    )
 
 
 def pr_has_label(pr, label_name):
@@ -1803,9 +1760,10 @@ def rework_failure_excerpt(pr_row):
         first = _receipt_first_line(comment.get('body'))
         if first.startswith('Checks: FAIL'):
             return (comment.get('body') or '')[:8000]
-    row = newest_review_or_verdict(comments, head)
-    if row and row[1].startswith(('Verdict: FAIL', 'Review: FAIL')):
-        return (row[0].get('body') or '')[:8000]
+    for label in ('Review', 'Verdict'):
+        comment = newest_comment_receipt(comments, label, head)
+        if comment and rs.newest_receipt_kind(comments, label, head) == 'FAIL':
+            return (comment.get('body') or '')[:8000]
     for check in pr_row.get('statusCheckRollup') or []:
         if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
             continue
@@ -2038,28 +1996,7 @@ def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
 
 
 def review_failed_at_head(pr):
-    head = pr.get('headRefOid') or ''
-    row = newest_review_or_verdict(pr.get('comments'), head)
-    if row:
-        _, first = row
-        if first.startswith('Verdict: PASS') or first.startswith('Review: PASS'):
-            return False
-        if first.startswith('Verdict: PASS+NOTES'):
-            return False
-        if first.startswith('Verdict: FAIL') or first.startswith('Review: FAIL'):
-            return True
-    saw_failure = False
-    for check in pr.get('statusCheckRollup') or []:
-        if not isinstance(check, dict):
-            continue
-        ctx = (check.get('context') or check.get('name') or '').lower()
-        if ctx == 'review':
-            conclusion = check.get('conclusion')
-            if conclusion == 'SUCCESS':
-                return False
-            if conclusion == 'FAILURE':
-                saw_failure = True
-    return saw_failure
+    return rs.review_failed_at_head(pr)
 
 
 def fetch_ready_issues(repo, run=subprocess.run):

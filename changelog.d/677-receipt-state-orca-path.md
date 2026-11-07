@@ -1,0 +1,1 @@
+Share receipt-state between lead-merge and fleet-watch (per-kind newest; Verdict PASS does not clear Review FAIL). Fleet-toolchain resolves Orca via the same path order as wrap-up (app CLI before stale ~/.orca/cli/bin).

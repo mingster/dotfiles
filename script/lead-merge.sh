@@ -19,6 +19,8 @@
 #   run the real head-checks.sh on that host through remote-heavy.sh, for the batch train and for a single PR
 #   with no Checks at its head. The receipt must name the commit that was sent; anything else fails closed.
 set -euo pipefail
+lead_merge_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+receipt_state_py="$lead_merge_dir/receipt-state.py"
 
 # Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
 refusals=()
@@ -579,28 +581,11 @@ else
     rm -f "$single_receipt"
   else refuse "$no_checks_reason"; fi
 fi
-if jq -e --arg head "$head" '
-  def checks_head_line: test("^Checks: (PASS|FAIL) head=" + $head + "( main=[0-9a-f]{40})?($| )");
-  def newest_checks:
-    [.comments[] | {body, createdAt} |
-      select((.body // "") != "" and (.body | split("\n")[0] | checks_head_line))] | sort_by(.createdAt) | last // null;
-  (newest_checks) as $r |
-  if $r != null and ($r.body | split("\n")[0] | startswith("Checks: FAIL")) then true
-  elif $r != null and ($r.body | split("\n")[0] | startswith("Checks: PASS")) then
-    any(.statusCheckRollup[]?; .conclusion == "FAILURE" and (
-      (($r.createdAt // "") | length) == 0 or (.completedAt // "") > ($r.createdAt // "")))
-  else any(.statusCheckRollup[]?; .conclusion == "FAILURE") end
-' <<<"$info" >/dev/null 2>&1; then
+if python3 "$receipt_state_py" --head "$head" status-rollup-failure <<<"$info" >/dev/null 2>&1; then
   refuse "statusCheckRollup has a FAILURE at the current head"
 fi
 review_newest_fail=false
-if jq -e --arg head "$head" '
-  def review_head_line: test("^Review: (PASS|FAIL) head=" + $head + "( main=[0-9a-f]{40})?($| )");
-  def newest_review:
-    [.comments[] | {body, createdAt} |
-      select((.body // "") != "" and (.body | split("\n")[0] | review_head_line))] | sort_by(.createdAt) | last // null;
-  (newest_review) as $r | $r != null and ($r.body | split("\n")[0] | startswith("Review: FAIL"))
-' <<<"$info" >/dev/null 2>&1; then
+if python3 "$receipt_state_py" --head "$head" merge-refuse-review <<<"$info" >/dev/null 2>&1; then
   review_newest_fail=true
 fi
 if [ "$review_newest_fail" = false ]; then

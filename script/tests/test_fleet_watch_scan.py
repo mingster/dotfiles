@@ -149,10 +149,20 @@ class ReviewAtHead(unittest.TestCase):
     def test_later_pass_verdict_cancels_rework(self):
         head = 'e' * 40
         row = pr(3, head=head, comments=[
-            {'body': 'Verdict: FAIL head=%s x' % head},
-            {'body': 'Verdict: PASS head=%s y' % head},
+            {'body': 'Verdict: FAIL head=%s x' % head, 'createdAt': '2026-11-05T10:00:00Z'},
+            {'body': 'Verdict: PASS head=%s y' % head, 'createdAt': '2026-11-05T10:05:00Z'},
         ])
         self.assertFalse(fw.review_failed_at_head(row))
+
+    def test_verdict_pass_does_not_clear_review_fail(self):
+        head = 'd' * 40
+        row = pr(3, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head, 'createdAt': '2026-11-08T09:00:00Z'},
+            {'body': 'Review: FAIL head=%s' % head, 'createdAt': '2026-11-08T10:00:00Z'},
+            {'body': 'Verdict: PASS head=%s verifier=x author=y' % head, 'createdAt': '2026-11-08T11:00:00Z'},
+        ])
+        self.assertTrue(fw.review_failed_at_head(row))
+        self.assertTrue(fw.rework_needed_at_head(row, {}, REPO))
 
     def test_review_check_success_cancels_failure(self):
         head = 'f' * 40

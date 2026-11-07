@@ -6,6 +6,8 @@
 # Tests: FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE}, FLEET_TOOLCHAIN_VERSIONS (json).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/find-orca-dir.sh
+. "$here/lib/find-orca-dir.sh"
 cfg=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
 dotfiles=${DOTFILES_DIR:-$HOME/dotfiles}
 baseline_host=${FLEET_TOOLCHAIN_BASELINE_HOST:-mini6}
@@ -81,12 +83,10 @@ host_orca() { # <host>
   v=$(version_from_json "$h" orca) || true
   [ -n "$v" ] && { norm_ver "$v"; return; }
   if [ "$h" = "$me" ]; then
-    for b in "$HOME/.orca/cli/bin/orca" orca; do
-      command -v "$b" >/dev/null 2>&1 && { norm_ver "$("$b" --version 2>/dev/null | head -1)"; return; }
-    done
+    v=$(orca_version_local) || true
+    [ -n "$v" ] && { norm_ver "$v"; return; }
   else
-    v=$("$run" -o BatchMode=yes -o ConnectTimeout=8 "$h" \
-      'export PATH="$HOME/.orca/cli/bin:$HOME/.local/bin:$PATH"; o=$HOME/.orca/cli/bin/orca; [ -x "$o" ] && "$o" --version 2>/dev/null || orca --version 2>/dev/null' 2>/dev/null | head -1)
+    v=$("$run" -o BatchMode=yes -o ConnectTimeout=8 "$h" bash -s 2>/dev/null < <(orca_version_remote_shell) | head -1)
     [ -n "$v" ] && norm_ver "$v"
   fi
 }

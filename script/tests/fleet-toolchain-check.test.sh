@@ -82,4 +82,19 @@ except OSError:
 check "677 latest node prefers LTS lookup over .tool-versions pin" \
   "$([ "$latest_node_out" = 26.13.0 ]; echo $?)"
 
+# shellcheck source=lib/find-orca-dir.sh
+. "$here/lib/find-orca-dir.sh"
+# shellcheck source=lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
+orca_stub_home="$tmp/orca-home"
+mkdir -p "$orca_stub_home/.orca/cli/bin" "$tmp/orca-app/bin"
+printf '#!/usr/bin/env bash\necho orca version 1.4.247\n' > "$orca_stub_home/.orca/cli/bin/orca"
+printf '#!/usr/bin/env bash\necho orca version 1.4.253\n' > "$tmp/orca-app/bin/orca"
+chmod +x "$orca_stub_home/.orca/cli/bin/orca" "$tmp/orca-app/bin/orca"
+export HOME="$orca_stub_home"
+export PATH="$orca_stub_home/.orca/cli/bin:$PATH"
+export FLEET_ORCA_APP_BIN="$tmp/orca-app/bin"
+local_ver=$(orca_version_local | sed -E 's/.*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+check "677 orca prefers app CLI over stale ~/.orca/cli/bin" "$([ "$local_ver" = 1.4.253 ]; echo $?)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
