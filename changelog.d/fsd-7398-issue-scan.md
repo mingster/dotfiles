@@ -1,0 +1,1 @@
+Add optional `issue_scan` to `fleet-watch.py` (off by default): start one ready issue per pass when gates pass (P0, P1, then FIFO) via `worker-startup.sh`, and one rework worker per review-failing PR head; covered by `script/tests/test_fleet_watch_scan.py`.

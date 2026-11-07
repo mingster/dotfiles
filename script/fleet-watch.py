@@ -3,7 +3,8 @@
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
 host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
 pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,
-optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo};
+optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo},
+optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure;
 --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
 """
@@ -12,9 +13,11 @@ import calendar
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -1295,6 +1298,341 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     return notices, log_bits
 
 
+_ISSUE_ACCEPTANCE_RE = re.compile(
+    r'^## (?:[0-9]+[.)] +)?(?:Acceptance criteria|Done check)\b', re.I | re.M)
+
+
+def issue_scan_has_acceptance(text):
+    return bool(_ISSUE_ACCEPTANCE_RE.search(text or ''))
+
+
+def issue_scan_blocked(issue):
+    blocked = issue.get('blockedBy')
+    if isinstance(blocked, dict):
+        for node in blocked.get('nodes') or []:
+            if not isinstance(node, dict):
+                continue
+            state = (node.get('state') or '').upper()
+            if state in ('', 'OPEN'):
+                return True
+    return False
+
+
+def issue_scan_eligible(issue):
+    labels = {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
+    if 'ready-for-agent' not in labels:
+        return False
+    if issue_scan_blocked(issue):
+        return False
+    texts = [issue.get('body') or '']
+    texts += [entry.get('body') or '' for entry in (issue.get('comments') or []) if isinstance(entry, dict)]
+    return any(issue_scan_has_acceptance(text) for text in texts)
+
+
+def issue_scan_priority(issue):
+    labels = {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
+    if 'P0' in labels:
+        return 0
+    if 'P1' in labels:
+        return 1
+    return 2
+
+
+def issue_scan_sort_key(issue):
+    created = issue.get('createdAt') or ''
+    return (issue_scan_priority(issue), created)
+
+
+def issue_scan_sorted_eligible(issues):
+    rows = [row for row in issues if issue_scan_eligible(row)]
+    return sorted(rows, key=issue_scan_sort_key)
+
+
+def checks_pass_at_head(pr):
+    head = pr.get('headRefOid') or ''
+    for comment in reversed(pr.get('comments') or []):
+        first = (comment.get('body') or '').split('\n')[0]
+        if first.startswith('Checks: ') and 'head=' + head in first:
+            return first.startswith('Checks: PASS')
+    for check in pr.get('statusCheckRollup') or []:
+        if not isinstance(check, dict):
+            continue
+        ctx = (check.get('context') or check.get('name') or '').lower()
+        if 'head-checks' in ctx or ctx == 'checks':
+            return check.get('conclusion') == 'SUCCESS'
+    return False
+
+
+def review_failed_at_head(pr):
+    head = pr.get('headRefOid') or ''
+    for comment in reversed(pr.get('comments') or []):
+        first = (comment.get('body') or '').split('\n')[0]
+        if 'head=' + head not in first or not first.startswith('Verdict:'):
+            continue
+        if first.startswith('Verdict: PASS'):
+            return False
+        if first.startswith('Verdict: FAIL'):
+            return True
+    saw_failure = False
+    for check in pr.get('statusCheckRollup') or []:
+        if not isinstance(check, dict):
+            continue
+        ctx = (check.get('context') or check.get('name') or '').lower()
+        if ctx == 'review':
+            conclusion = check.get('conclusion')
+            if conclusion == 'SUCCESS':
+                return False
+            if conclusion == 'FAILURE':
+                saw_failure = True
+    return saw_failure
+
+
+def fetch_ready_issues(repo, run=subprocess.run):
+    command = [
+        'gh', 'issue', 'list', '--repo', repo, '--label', 'ready-for-agent', '--state', 'open',
+        '--limit', '100', '--json', 'number,title,body,labels,comments,createdAt,blockedBy',
+    ]
+    try:
+        output = run(command, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _issue_scan_startup_script(config):
+    scan = config.get('issue_scan') or {}
+    configured = (scan.get('startup') or '').strip()
+    if configured:
+        return configured
+    return str(Path(__file__).with_name('worker-startup.sh'))
+
+
+def _write_issue_scan_spec(text):
+    handle, path = tempfile.mkstemp(prefix='fleet-watch-spec-', suffix='.md')
+    os.close(handle)
+    Path(path).write_text(text, encoding='utf-8')
+    return path
+
+
+def _issue_scan_repo_root(config, repo):
+    roots = (config.get('issue_scan') or {}).get('repo_roots') or {}
+    root = roots.get(repo)
+    if isinstance(root, str) and root:
+        return root
+    return None
+
+
+def build_issue_start_command(config, repo, issue_row):
+    scan = config['issue_scan']
+    root = _issue_scan_repo_root(config, repo)
+    if not root:
+        return None
+    spec_path = _write_issue_scan_spec(
+        '# %s#%d\n\n%s' % (repo, issue_row['number'], issue_row.get('body') or issue_row.get('title') or ''))
+    role = scan.get('role') or 'builder'
+    title = '%s - #%d' % (role, issue_row['number'])
+    command = [
+        'bash', _issue_scan_startup_script(config),
+        '--run', scan['run'],
+        '--spec', spec_path,
+        '--title', title,
+        '--agent', scan.get('agent') or 'cursor',
+        '--model', scan.get('model') or '',
+        '--from', scan['from_terminal'],
+        '--name', 'issue-%d' % issue_row['number'],
+        '--repo', 'path:' + root,
+    ]
+    return [part for part in command if part]
+
+
+def build_rework_start_command(config, repo, pr_row):
+    scan = config['issue_scan']
+    root = _issue_scan_repo_root(config, repo)
+    if not root:
+        return None
+    head = pr_row.get('headRefOid') or ''
+    spec_path = _write_issue_scan_spec('Rework after review failure on %s PR #%d head %s' % (repo, pr_row['number'], head))
+    title = 'rework #%d' % pr_row['number']
+    agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
+    model = scan.get('rework_model') or scan.get('model') or ''
+    command = [
+        'bash', _issue_scan_startup_script(config),
+        '--run', scan['run'],
+        '--spec', spec_path,
+        '--title', title,
+        '--agent', agent,
+        '--model', model,
+        '--from', scan['from_terminal'],
+        '--name', 'rework-%d' % pr_row['number'],
+        '--repo', 'path:' + root,
+    ]
+    return [part for part in command if part]
+
+
+def default_issue_scan_gate(config, run=subprocess.run):
+    scan = config.get('issue_scan') or {}
+    agent = scan.get('agent') or 'cursor'
+    command = [sys.executable, str(Path(__file__).with_name('usage-gate.py')), 'check', '--provider', agent]
+    model = scan.get('model')
+    if model:
+        command += ['--model', model]
+    try:
+        return run(command, capture_output=True, timeout=60).returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def default_issue_scan_start(command, run=subprocess.run):
+    try:
+        return run(command, capture_output=True, text=True, timeout=180).returncode
+    except (subprocess.SubprocessError, OSError):
+        return 1
+
+
+def _issue_scan_has_slot(host, config, admission, extra_starts):
+    cap = config.get('host_caps', {}).get(host, 4)
+    occupied = admission.get('occupied')
+    if occupied is None:
+        occupied = 0
+    return extra_starts + occupied < cap
+
+
+def issue_scan_pass(
+    config, state, now, workers, list_issues=None, pr_fetch=None,
+    gate_check=None, admit_fn=None, start_worker=None,
+    inventory_ok=True, persist_state=None,
+):
+    """Start at most one eligible ready issue and one rework worker per new failing review head."""
+    notices = []
+    log_bits = []
+    scan = config.get('issue_scan') or {}
+    if not scan.get('enabled'):
+        return notices, ['issue_scan_off']
+
+    if not inventory_ok:
+        log_bits.append('issue_scan_inventory_failed')
+        return notices, log_bits
+
+    if gate_check is None:
+        gate_check = default_issue_scan_gate
+    if admit_fn is None:
+        admit_fn = admit
+    if start_worker is None:
+        start_worker = default_issue_scan_start
+
+    host = scan.get('host') or 'local'
+    if not gate_check(config):
+        return notices, ['issue_scan_gate']
+    admission = admit_fn(host, config, workers)
+    if not admission.get('admitted'):
+        return notices, ['issue_scan_load']
+
+    extra_starts = 0
+    repos = scan.get('repos') or []
+    if pr_fetch is None:
+        pr_fetch = fetch_prs
+    pr_repos = scan.get('pr_repos') or repos
+    rework_heads = state.setdefault('issue_scan_rework', {})
+    rework_pending = state.setdefault('issue_scan_rework_pending', {})
+
+    for repo in pr_repos:
+        prs = pr_fetch(repo)
+        if prs is None:
+            continue
+        seen = rework_heads.setdefault(repo, {})
+        pending = rework_pending.setdefault(repo, {})
+        for pr_row in prs:
+            if pr_row.get('state') != 'OPEN':
+                continue
+            if not checks_pass_at_head(pr_row) or not review_failed_at_head(pr_row):
+                continue
+            head = pr_row.get('headRefOid') or ''
+            if not head or seen.get(head) or pending.get(head):
+                continue
+            if not _issue_scan_has_slot(host, config, admission, extra_starts):
+                continue
+            command = build_rework_start_command(config, repo, pr_row)
+            if command is None:
+                log_bits.append('rework_skip=%d' % pr_row['number'])
+                continue
+            pending[head] = True
+            if persist_state:
+                persist_state()
+            if start_worker(command) == 0:
+                seen[head] = True
+                pending.pop(head, None)
+                extra_starts += 1
+                notices.append('rework %s #%d %s' % (repo, pr_row['number'], head[:8]))
+                log_bits.append('rework_start=%s' % head[:8])
+                if persist_state:
+                    persist_state()
+            else:
+                pending.pop(head, None)
+                if persist_state:
+                    persist_state()
+                log_bits.append('rework_fail=%d' % pr_row['number'])
+
+    if list_issues is None:
+        list_issues = fetch_ready_issues
+
+    started = state.setdefault('issue_scan_started', {})
+    issue_pending = state.setdefault('issue_scan_pending', {})
+
+    def issue_already_claimed(repo, number):
+        return (
+            number in started.get(repo, [])
+            or number in issue_pending.get(repo, [])
+        )
+
+    candidates = []
+    for repo in repos:
+        issues = list_issues(repo)
+        if issues is None:
+            log_bits.append('issue_scan_list_failed')
+            continue
+        for row in issues:
+            if not issue_scan_eligible(row):
+                continue
+            if issue_already_claimed(repo, row['number']):
+                continue
+            candidates.append((repo, row))
+
+    if not candidates:
+        if not log_bits:
+            log_bits.append('issue_scan_none')
+        return notices, log_bits
+
+    if not _issue_scan_has_slot(host, config, admission, extra_starts):
+        return notices, log_bits
+
+    candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
+    repo, row = candidates[0]
+    command = build_issue_start_command(config, repo, row)
+    if command is None:
+        log_bits.append('issue_scan_skip')
+        return notices, log_bits
+    issue_pending.setdefault(repo, []).append(row['number'])
+    if persist_state:
+        persist_state()
+    if start_worker(command) == 0:
+        pending_list = issue_pending.setdefault(repo, [])
+        if row['number'] in pending_list:
+            pending_list.remove(row['number'])
+        started.setdefault(repo, []).append(row['number'])
+        notices.append('issue %s #%d' % (repo, row['number']))
+        log_bits.append('issue_start=%d' % row['number'])
+        if persist_state:
+            persist_state()
+    else:
+        pending_list = issue_pending.setdefault(repo, [])
+        if row['number'] in pending_list:
+            pending_list.remove(row['number'])
+        if persist_state:
+            persist_state()
+        log_bits.append('issue_start_fail=%d' % row['number'])
+    return notices, log_bits
+
+
 def workflow_notices(config, state, now, fetch=None, act=None):
     """Rerun a failed workflow once, then open one issue. A repo whose fetch failed keeps its state."""
     if fetch is None:
@@ -1583,6 +1921,15 @@ def main():
     notices += workflow_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
+    def persist_scan_state():
+        save_state(args.state, state)
+
+    scan_extra, scan_log = issue_scan_pass(
+        config, state, now, workers,
+        inventory_ok=inventory_ok,
+        persist_state=persist_scan_state,
+    )
+    notices += scan_extra
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
@@ -1604,6 +1951,8 @@ def main():
             parts.append('backup_stale')
     if stall_log:
         parts.append('stall ' + ','.join(stall_log))
+    if scan_log:
+        parts.append('scan ' + ','.join(scan_log))
     log_fleet_watch('; '.join(parts))
 
     lines = []
