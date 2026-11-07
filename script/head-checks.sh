@@ -226,18 +226,49 @@ if ! merge_out=$(git -C "$worktree" -c user.name=head-checks -c user.email=head-
   exit 1
 fi
 printf 'Trial merge: head %s with main %s\n' "$sha" "$main_sha" >> "$log"
-config="${override:-$worktree/.agents/head-checks.conf}"
-[ -f "$config" ] || usage "missing .agents/head-checks.conf"
-if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
-printf "Checklist: %s\n" "$checklist_sum" >> "$log"
 changed=$(mktemp)
 : > "$changed.unchecked"
-git -C "$worktree" diff --name-only -z "$base...$sha" -- > "$changed" 2>> "$log" || usage "cannot determine changed paths"
+git -C "$worktree" diff --no-renames --name-only -z "$base...$sha" -- > "$changed" 2>> "$log" || usage "cannot determine changed paths"
 files=""
+file_count=0
 while IFS= read -r -d '' file; do
+  file_count=$((file_count+1))
   printf -v quoted '%q' "$file"
   files="$files $quoted"
 done < "$changed"
+is_doc_path() {
+  case "$1" in
+    *.md) ;;
+    *) return 1 ;;
+  esac
+  case "$1" in
+    .claude/*|*/.claude/*|.agents/*|*/.agents/*|templates/*|script/*|.github/*)
+      return 1 ;;
+  esac
+  case "$1" in
+    AGENTS.md|*/AGENTS.md|CLAUDE.md|*/CLAUDE.md|docs/agents/agent-team-architecture.md)
+      return 1 ;;
+  esac
+  [ "${1#docs/intent/}" != "$1" ] && return 1
+  return 0
+}
+docs_lane=0
+if [ -z "$override" ] && [ "$file_count" -gt 0 ] && [ -f "$worktree/.agents/head-checks-docs.conf" ]; then
+  docs_lane=1
+  while IFS= read -r -d '' file; do
+    is_doc_path "$file" || { docs_lane=0; break; }
+  done < "$changed"
+fi
+if [ -n "$override" ]; then
+  config="$override"
+elif [ "$docs_lane" = 1 ]; then
+  config="$worktree/.agents/head-checks-docs.conf"
+else
+  config="$worktree/.agents/head-checks.conf"
+fi
+[ -f "$config" ] || usage "missing .agents/head-checks.conf"
+if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
+printf "Checklist: %s\n" "$checklist_sum" >> "$log"
 # The base commit's .claude/deploy-guard-paths (one glob per line) lists paths a deploy refuses; a PR cannot add one.
 if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/null); then
   while IFS= read -r -d '' file; do

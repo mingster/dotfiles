@@ -247,6 +247,120 @@ else: sys.exit(1)
     if mismatch.returncode==0 and mismatch.stderr.count('recalibrate')==1:
         passed+=1; print('ok   head-checks warns once on hardware mismatch and falls back')
     else: failed+=1; print('FAIL fingerprint fallback',mismatch.stdout,mismatch.stderr)
+    dotfiles=pathlib.Path(runner).resolve().parent.parent
+    docs_lane_src=dotfiles/'.agents/head-checks-docs.conf'
+    def install_docs_lane_fixtures():
+        (repo/'.agents').mkdir(exist_ok=True)
+        (repo/'script/tests').mkdir(parents=True, exist_ok=True)
+        for name in ('no-project-names.test.sh','no-pgrep-wait.test.sh'):
+            dst=repo/'script/tests'/name
+            dst.write_text((dotfiles/'script/tests'/name).read_text())
+            dst.chmod(0o755)
+        (repo/'.agents/head-checks-docs.conf').write_text(docs_lane_src.read_text())
+        (repo/'.agents/head-checks.conf').write_text(line('full-checklist-marker')+'\n'+line('full-checklist-second')+'\n')
+    def docs_checklist_hash():
+        return hashlib.sha256((repo/'.agents/head-checks-docs.conf').read_bytes()).hexdigest()
+    def docs_only_commit(name,extra_paths=None):
+        (repo/'README.md').write_text('# docs lane\n')
+        (repo/'docs/agents').mkdir(parents=True, exist_ok=True)
+        (repo/'docs/agents/agent-files.md').write_text('agent files\n')
+        (repo/'changelog.d').mkdir(exist_ok=True)
+        (repo/'changelog.d/x.md').write_text('- fragment\n')
+        for rel,text in (extra_paths or {}).items():
+            path=repo/rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        git('add','.'); git('commit','-qm',name); return git('rev-parse','HEAD')
+    install_docs_lane_fixtures()
+    git('add','-A','.')
+    if git('status','--porcelain'): git('commit','-qm','docs lane baseline')
+    docs_main=git('rev-parse','HEAD')
+    git('update-ref','refs/remotes/origin/main',docs_main)
+    env['GH_BASE']=docs_main
+    def run_docs_pr(name,extra_paths=None,expected=0,extra_env=None,pr=True):
+        git('reset','--hard',docs_main)
+        install_docs_lane_fixtures()
+        head=docs_only_commit(name,extra_paths)
+        env['GH_HEAD']=head
+        order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+        cmd=['bash',runner,'--repo',str(repo),*(['--pr','7'] if pr else ['--ref',head,'--base',docs_main])]
+        result=subprocess.run(cmd,env={**env,**(extra_env or {})},text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        receipt=comments.read_text() if comments.exists() else ''
+        return result,receipt,head
+    result,receipt,doc_head=run_docs_pr('docs-only lane')
+    doc_hash=docs_checklist_hash()
+    total=[l for l in receipt.splitlines() if l.startswith('Total: ')]
+    if result.returncode==0 and receipt.startswith('Checks: PASS head='+doc_head) and doc_hash in receipt and 'full-checklist-marker' not in (order.read_text() if order.exists() else '') and total and int(total[-1].split()[1].rstrip('s'))<60:
+        passed+=1; print('ok   docs-only PR uses head-checks-docs.conf under 60s')
+    else: failed+=1; print('FAIL docs-only lane',result.returncode,receipt,order.read_text() if order.exists() else '')
+    run_docs_pr('mixed script path',{'script/touch.sh':'#!/bin/bash\necho hi\n'})
+    if order.exists() and 'full-checklist-marker' in order.read_text():
+        passed+=1; print('ok   script change keeps full checklist')
+    else: failed+=1; print('FAIL mixed script path',order.read_text() if order.exists() else 'no order')
+    run_docs_pr('changelog non-md',{'changelog.d/change.txt':'not md\n'})
+    if order.exists() and 'full-checklist-marker' in order.read_text():
+        passed+=1; print('ok   changelog.d non-md keeps full checklist')
+    else: failed+=1; print('FAIL changelog non-md',order.read_text() if order.exists() else 'no order')
+    git('reset','--hard',docs_main); install_docs_lane_fixtures()
+    (repo/'script').mkdir(exist_ok=True); (repo/'script/x.sh').write_text('echo x\n')
+    git('add','-A','.'); git('commit','-qm','script on main for rename')
+    script_main=git('rev-parse','HEAD'); git('update-ref','refs/remotes/origin/main',script_main); env['GH_BASE']=script_main
+    (repo/'docs').mkdir(exist_ok=True); git('mv','script/x.sh','docs/x.md'); git('commit','-qm','rename script to docs md')
+    env['GH_HEAD']=git('rev-parse','HEAD'); order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+    renamed=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    if renamed.returncode==0 and order.exists() and 'full-checklist-marker' in order.read_text():
+        passed+=1; print('ok   rename non-doc to doc keeps full checklist')
+    else: failed+=1; print('FAIL rename slip',renamed.returncode,order.read_text() if order.exists() else '')
+    env['GH_BASE']=docs_main; env['GH_HEAD']=docs_main
+    order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+    empty_run=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    if empty_run.returncode==0 and order.exists() and 'full-checklist-marker' in order.read_text():
+        passed+=1; print('ok   empty diff keeps full checklist')
+    else: failed+=1; print('FAIL empty diff',empty_run.returncode,order.read_text() if order.exists() else '')
+    excluded={
+        '.claude/agents/role.md':'role',
+        '.agents/skills/x/SKILL.md':'skill',
+        'templates/agent-team/docs/agents/team.md':'team',
+        'script/notes.md':'notes',
+        'AGENTS.md':'agents',
+        'CLAUDE.md':'claude',
+        '.github/copilot-instructions.md':'copilot',
+        'docs/agents/agent-team-architecture.md':'arch',
+        'docs/intent/a/spec.md':'spec',
+    }
+    for rel,text in excluded.items():
+        run_docs_pr('excluded '+rel,{rel:text})
+        label='excluded md '+rel
+        if order.exists() and 'full-checklist-marker' in order.read_text():
+            passed+=1; print('ok  ',label)
+        else: failed+=1; print('FAIL',label,order.read_text() if order.exists() else '')
+    token='xyzzydoclane001'
+    pattern_dir=root/'home'/'.config'/'dotfiles'
+    pattern_dir.mkdir(parents=True)
+    (pattern_dir/'project-names.pattern').write_text(token+'\n')
+    result,receipt,head=run_docs_pr('docs name leak',{'README.md':'mentions '+token+'\n'},expected=1)
+    if result.returncode==1 and receipt.startswith('Checks: FAIL head='+head) and 'project names found' in receipt:
+        passed+=1; print('ok   docs-only project name fails checks')
+    else: failed+=1; print('FAIL docs name leak',result.returncode,receipt)
+    git('reset','--hard',docs_main); install_docs_lane_fixtures()
+    (repo/'.agents/head-checks-docs.conf').unlink()
+    git('add','-A','.'); git('commit','-qm','drop docs conf')
+    no_docs_main=git('rev-parse','HEAD')
+    git('update-ref','refs/remotes/origin/main',no_docs_main)
+    env['GH_BASE']=no_docs_main
+    env['GH_HEAD']=docs_only_commit('docs without docs conf file')
+    order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+    missing_docs=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    if missing_docs.returncode==0 and order.exists() and 'full-checklist-marker' in order.read_text():
+        passed+=1; print('ok   missing head-checks-docs.conf falls back to full')
+    else: failed+=1; print('FAIL missing docs conf',missing_docs.returncode,order.read_text() if order.exists() else '')
+    result,_,head=run_docs_pr('docs with config override')
+    order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+    override_conf=repo/'.agents/head-checks.conf'
+    overridden=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',head,'--base',docs_main,'--config',str(override_conf)],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    if overridden.returncode==0 and order.exists() and 'full-checklist-marker' in order.read_text():
+        passed+=1; print('ok   --config override ignores docs lane')
+    else: failed+=1; print('FAIL config override',overridden.returncode,order.read_text() if order.exists() else '')
 print(f'passed {passed}, failed {failed}')
 sys.exit(bool(failed))
 PY
