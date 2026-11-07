@@ -73,18 +73,12 @@ take_round_lock() {
 release_round_lock() { if [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then guarded_round_rm f "$lock"; fi; }
 # The directory of the orca to use. On one host ~/.orca/cli/bin holds a stale remote CLI that cannot reach the app, so it comes last.
 find_orca_dir() {
-  local stale="$HOME/.orca/cli/bin" dir list app
-  app="${WRAP_UP_ORCA_APP_BIN-/Applications/_dev/Orca.app/Contents/Resources/bin}"
-  if [ -n "${WRAP_UP_ORCA_APP_BIN:-}" ] && [ -x "$app/orca" ]; then
-    printf '%s\n' "$app"
-    return 0
-  fi
-  list="$PATH:$HOME/.local/bin:${extra_bin:-}"
+  local stale="$HOME/.orca/cli/bin" dir list
+  list="${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}:$PATH:$HOME/.local/bin:${extra_bin:-}"
   local IFS=:
   for dir in $list; do
     if [ "$dir" != "$stale" ] && [ -x "$dir/orca" ]; then printf '%s\n' "$dir"; return 0; fi
   done
-  if [ -x "$app/orca" ]; then printf '%s\n' "$app"; return 0; fi
   [ -x "$stale/orca" ] && printf '%s\n' "$stale"
 }
 read_load() {

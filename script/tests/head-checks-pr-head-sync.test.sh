@@ -94,3 +94,51 @@ grep -q 'local pushed head' "$tmp/err" || {
   exit 1
 }
 echo "ok stale GitHub PR head refuses with no receipt"
+
+rm -f "$comments" "$GH_VIEW_STATE"
+export GH_FRESH_AFTER=99
+cat > "$tmp/bin/gh" <<'EOS'
+#!/usr/bin/env bash
+state="${GH_VIEW_STATE:-$TMP/gh-views}"
+mkdir -p "$(dirname "$state")"
+n=0
+[ -f "$state" ] && n=$(cat "$state")
+n=$((n + 1))
+printf '%s' "$n" > "$state"
+stale="${GH_STALE_HEAD:?GH_STALE_HEAD unset}"
+case "$1 $2" in
+  'pr view')
+    if [ "$n" -eq 1 ]; then
+      printf '{"headRefOid":"%s","baseRefOid":"%s","headRefName":"topic"}\n' "$stale" "$GH_BASE"
+    else
+      echo 'gh: transient failure' >&2
+      exit 1
+    fi ;;
+  'pr comment')
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = --body-file ] && cp "$a" "$COMMENTS"
+      prev=$a
+    done ;;
+  *) exit 1 ;;
+esac
+EOS
+chmod +x "$tmp/bin/gh"
+export HEAD_CHECKS_PR_HEAD_WAIT_SECONDS=1
+set +e
+bash "$here/head-checks.sh" --repo "$tmp/repo" --pr 678 >"$tmp/out" 2>"$tmp/err"
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && { echo "FAIL: expected refusal when gh pr view fails during wait"; exit 1; }
+[ -f "$comments" ] && { echo "FAIL: posted receipt after gh failure"; cat "$comments"; exit 1; }
+grep -q 'head=' "$tmp/out" && grep -q "head=$GH_STALE_HEAD" "$tmp/out" && {
+  echo "FAIL: stdout receipt used stale head after gh failure"
+  cat "$tmp/out"
+  exit 1
+}
+grep -qE 'gh pr view|transient|GitHub PR' "$tmp/err" || {
+  echo "FAIL: missing gh failure refusal message"
+  cat "$tmp/err"
+  exit 1
+}
+echo "ok gh pr view failure during wait refuses with no receipt"

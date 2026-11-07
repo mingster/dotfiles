@@ -143,14 +143,26 @@ if [ -n "$pr" ]; then
   local_pushed=$(git -C "$repo" rev-parse HEAD) || usage "cannot resolve local HEAD"
   [[ "$local_pushed" =~ ^[0-9a-f]{40}$ ]] || usage "cannot resolve local HEAD"
   gh_head_attempt=0
+  pr_local_branch=0
   while :; do
-    info=$(cd "$repo" && gh pr view "$pr" --json headRefOid,baseRefOid,headRefName)
+    if ! info=$(cd "$repo" && gh pr view "$pr" --json headRefOid,baseRefOid,headRefName); then
+      gh_head_attempt=$((gh_head_attempt + 1))
+      [ "$gh_head_attempt" -lt $((pr_head_wait * 2)) ] || {
+        refused=1
+        usage "gh pr view failed for PR #$pr; waited ${pr_head_wait}s"
+      }
+      sleep 0.5
+      continue
+    fi
     sha=$(jq -r .headRefOid <<<"$info"); base=$(jq -r .baseRefOid <<<"$info")
     branch=$(jq -r .headRefName <<<"$info")
+    pr_local_branch=0
     if [ -n "$branch" ] && [ "$branch" != null ] && git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
       local_pushed=$(git -C "$repo" rev-parse "refs/heads/$branch")
+      pr_local_branch=1
     fi
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$base" =~ ^[0-9a-f]{40}$ ]] || usage "invalid head or base SHA from GitHub"
+    [ "$pr_local_branch" -eq 0 ] && break
     [ "$sha" = "$local_pushed" ] && break
     gh_head_attempt=$((gh_head_attempt + 1))
     [ "$gh_head_attempt" -lt $((pr_head_wait * 2)) ] || {
