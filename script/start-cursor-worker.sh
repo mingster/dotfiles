@@ -23,8 +23,7 @@ python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider curs
   || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
 spec_body=$(cat "$spec")
 [ -n "${spec_body//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
-dotfiles="${DOTFILES:-$HOME/dotfiles}"
-brief=$(printf 'Read %s/.agents/claude/CLAUDE.md for global agent instructions before starting work.\n\n%s' "$dotfiles" "$spec_body")
+brief=$spec_body
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || usage
   case "$repo" in

@@ -48,7 +48,7 @@ grep -q 'worktree create.*--base-branch origin/main' "$CURSOR_TEST_LOG"
 grep -q 'orchestration worker-start' "$CURSOR_TEST_LOG"
 grep -q -- '--agent cursor' "$CURSOR_TEST_LOG"
 grep -q -- '--model composer-2.5' "$CURSOR_TEST_LOG"
-grep -Fq "Read $root/.agents/claude/CLAUDE.md for global agent instructions before starting work." "$CURSOR_TEST_LOG"
+grep -Fq 'Do the fixture task.' "$CURSOR_TEST_LOG"
 grep -q -- '--worktree path:/tmp/example.repo/work tree.v1' "$CURSOR_TEST_LOG"
 echo 'PASS: new worktree is trusted at the encoded path before dispatch'
 for selector in id:abc path:/tmp/example.repo; do

@@ -1,0 +1,33 @@
+name: Script tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  script-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run changed script tests
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            mapfile -t changed < <(git diff --name-only "$GITHUB_SHA^1" "$GITHUB_SHA")
+          else
+            if [ -z "${GITHUB_BEFORE_SHA:-}" ] || [ "$GITHUB_BEFORE_SHA" = '0000000000000000000000000000000000000000' ]; then
+              changed=()
+            else
+              mapfile -t changed < <(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA")
+            fi
+          fi
+          bash script/select-changed-script-tests.sh "${changed[@]+"${changed[@]}"}"
