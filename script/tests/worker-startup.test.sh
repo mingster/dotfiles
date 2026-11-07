@@ -33,10 +33,10 @@ cat >"$bin/jq" <<EOS
 exec "$jq_bin" "\$@"
 EOS
 chmod +x "$bin/jq"
-python3_real=$(command -v python3)
-if [ -x /usr/bin/python3 ]; then
-  python3_real=/usr/bin/python3
-fi
+path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
+python3_real=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
+[ -x "$python3_real" ] || python3_real="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"
+[ -x "$python3_real" ] || { echo "missing python3" >&2; exit 1; }
 cat >"$bin/python3" <<EOS
 #!/usr/bin/env bash
 set -e
