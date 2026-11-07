@@ -46,10 +46,14 @@ updates remote-tracking refs while leaving local and remote branches, worktrees,
 and files intact.
 
 Local and remote branches are kept when they are the repository default branch,
-`gh-pages`, the GitHub Pages source branch, or a protected branch. The default comes
-from GitHub with `origin/HEAD` as a fallback; Pages and protected branch metadata
-come from GitHub. Unavailable or malformed safety metadata keeps all branches,
-with a reason, rather than guessing that they are disposable.
+`gh-pages`, the GitHub Pages source branch, a protected branch, or an `archive/*`
+branch (kept on every delete route, including ancestor, closed-PR, patch-merged,
+stale, `--worktrees-only` and `--branch`). The default comes from GitHub with
+`origin/HEAD` as a fallback; Pages and protected branch metadata come from GitHub.
+Unavailable or malformed safety metadata keeps all branches, with a reason, rather
+than guessing that they are disposable. When `wrap-up.sh` fast-forwards a clean
+`main` checkout, it runs `script/setup-orca.sh` so `~/.orca/presets.json` stays
+linked on every host.
 
 Apply checks each remote branch with `git ls-remote` immediately before deletion.
 A missing branch, a changed SHA, or a failed lookup is reported as kept. Deletion
@@ -66,7 +70,7 @@ fetch/prune and deletion races, and the missing-`lsof` summary.
 
 A fleet host (`--worktrees-only`) closes the terminals of its own Orca, by the same rules as the coordinator. Before this, it closed none, so every old terminal looked like an owner and kept its worktree.
 
-A local terminal with no dispatch and no running agent is closed, and its worktree is then removed if it is clean and merged. Kept, with the reason printed: a running agent, an unsettled dispatch, a `lead-` worktree, uncommitted work, the main checkout, the caller's own terminal, output in the last 10 minutes, and anything the holder check cannot clear. Test: `script/tests/wrap-up-unknown-owner.test.sh`.
+A local terminal with no dispatch and no running agent is closed, and its worktree is then removed if it is clean and merged (untracked `.orca-install-stamp`, `.continual-learning.json` and image files do not count as dirty). Kept, with the reason printed: a running agent, an unsettled or never-settled dispatch, a `lead-` worktree, uncommitted work, the main checkout, the caller's own terminal, output in the last 10 minutes, and anything the holder check cannot clear. Ended worker panes are swept within a bounded per-round budget, pruned only when `worker-list` is complete, and removed through `pane_record_rm` only after strict terminal inventory proof confirms the pane terminal is gone. Test: `script/tests/wrap-up-unknown-owner.test.sh`.
 
 ## Browser sweep
 

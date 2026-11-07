@@ -13,7 +13,7 @@ Read this before adding, moving, or growing an agent instruction file.
 | `<subdir>/AGENTS.md` | Symlink to `../AGENTS.md` |
 | `docs/agents/*.md` | Everything that only matters in one area. Loaded on demand. |
 
-`AGENTS.md` is canonical because Cursor, Copilot, Gemini CLI, Zed and others read it.
+`AGENTS.md` is canonical because Cursor, Antigravity, Copilot, Gemini CLI, Zed and others read it.
 `CLAUDE.md` exists because Claude Code reads `CLAUDE.md` and **not** `AGENTS.md`, so without the
 pointer file Claude sees nothing.
 
@@ -33,7 +33,7 @@ things actually reduce what a session pays for:
 2. Moving content to `.claude/rules/<topic>.md` with `paths:` frontmatter (Claude only, loads
    automatically when a matching file is touched)
 
-Default to option 1 so Cursor keeps seeing it. Reach for option 2 only when a rule is
+Default to option 1 so Cursor and Antigravity keep seeing it. Reach for option 2 only when a rule is
 being ignored and the automatic trigger is worth losing cross tool visibility.
 
 ## What belongs where

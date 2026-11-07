@@ -1,55 +1,37 @@
 # SDLC skill map
 
-Which role owns each SDLC stage and recurring job, which Matt Pocock skill it runs, and what was wrong before the 2026-10-12 alignment. Read it before changing a role file, the crew or tl skill, `model-routing.md`, a project `daily-run.md` or the Engineering workflow table in `.agents/claude/CLAUDE.md`.
+Which role owns each SDLC stage and recurring job, which Matt Pocock or team skill it runs, and how the 2026-11-06 team guideline applies them. Read it before changing a role file, the crew or elon skill, `model-routing.md`, a project `daily-run.md` or the Engineering workflow table in `.agents/claude/CLAUDE.md`.
 
-Sources checked: the vendored skills in `.agents/skills/` (upstream `mattpocock/skills` README, its user invoked and model invoked split), `.agents/claude/CLAUDE.md`, `templates/agent-team/`, and in <project-a> and <project-b> the role files, `docs/SDLC.md`, `docs/agents/team.md`, `daily-run.md` and `lean-startup-sdlc.md`.
+## Two rules for invoking skills in Orca workers
 
-## Two facts that drive most fixes
+1. **A `disable-model-invocation` skill runs only when named.** `grill-me`, `grill-with-docs`, `handoff`, `implement`, `improve-codebase-architecture`, `retro`, `to-spec`, `to-tickets`, `triage` and `wayfinder` carry the flag. Claude Code skips them in a role's `skills:` list and refuses them through the Skill tool; Antigravity hides them until the prompt names them. Because an Orca worker spec is not a typed slash command, the spec names the file path: "read `~/.agents/skills/<name>/SKILL.md` and follow it".
+2. **`skills:` preloads the whole skill on every start.** Only `claude --agent <role>` reads frontmatter `skills:`; default Orca workers read the role body. Keep `skills:` limited to a role's primary skills (`qa-sdet` preloads `[tdd, code-review]`; `secops-finops` preloads `[code-review]`) and name on-demand skills in the role body with when to load them.
 
-1. **A `disable-model-invocation` skill runs only when named.** grill-me, grill-with-docs, handoff, implement, improve-codebase-architecture, retro, to-spec, to-tickets, triage and wayfinder carry the flag. Claude Code skips them in a role's `skills:` list (preloading draws from the skills the model may invoke) and refuses them through the Skill tool; Antigravity hides them until the prompt names them. An Orca worker spec is not a typed slash command, so the spec names the file: "read `~/.agents/skills/<name>/SKILL.md` and follow it".
-2. **`skills:` preloads the whole skill on every start.** Only `claude --agent <role>` reads it; default Orca workers read the role body. So `skills:` holds the role's primary skills only, and the body names the rest with when to load them.
+## Stage and job map
 
-## Map
+| Job | Owner | Skill or tool | Current rule |
+| --- | --- | --- | --- |
+| Intake and triage of an issue | `architect-pm`, Elon as maintainer | `triage` (agent brief per `AGENT-BRIEF.md`) | Each `ready-for-agent` issue carries `## Acceptance criteria`, `Requirement owner` and `Deleted` in one text (enforced by `script/team-audit.sh`). |
+| Intent, Grill and Spec (Design) | `architect-pm` with Elon; `sales-marketing` for UI/wording; `secops-finops` for money | `capture-intent`, `grill-with-docs` (`grilling` and `domain-modeling`), `write-spec` (or `to-spec`) | One design document per feature (intent, spec and tickets) with one owner approval (`docs/agents/team.md`, Process 2026-11-06). Every spec committed since 2026-10-21 has a sibling `intent.md` and a `## Test plan` section. |
+| Tickets | `architect-pm` | `to-tickets` (GitHub issues with blocking edges) | Invoked by file path; slices accepted specs into GitHub issues with test cases from `## Test plan` and native GitHub sub-issue / dependency links. |
+| Implement | `fullstack-dev` | `implement` per ticket (drives `tdd`, ends with `code-review`); `tdd` on the fast path | Runs only the ticket's listed test cases and touched unit tests (red on `main`, green after) via `script/run-scoped-tests.py`; commits locally on its own branch and reports `worker_done`. |
+| Bug diagnosis | `qa-sdet` reproduces, `fullstack-dev` fixes | `diagnosing-bugs`, then `tdd` | `qa-sdet` records a failing reproduction test; `fullstack-dev` makes it pass. |
+| Head checks | Elon / `on-worker-done.sh` | `script/head-checks.sh` | Runs the repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree under `script/heavy-gate.sh`, posting the `Checks` receipt. |
+| Review | `qa-sdet`, `secops-finops` | `code-review`, `script/qa-admission.py`, `script/post-verdict.sh` | Cross-family reviewer on a host other than Elon's reads the diff and `head-checks.sh` receipt (never reruns unit tests, `tsc` or lint), proves behaviour live and posts the `Verdict`. |
+| Merge conflicts | `fullstack-dev` | `resolving-merge-conflicts` | Used when rebasing or merging `origin/main` into a worker branch. |
+| Publish and merge | Elon | `script/coordinator-publication.sh`, `script/lead-merge.sh` | Elon publishes worker branches and batch-merges passing PRs once per wake after verifying `Checks: PASS` and independent `Verdict: PASS` (`verdict_carry` across clean `main` merges). |
+| Architecture review and prototyping | `architect-pm` | `improve-codebase-architecture`, `codebase-design`, `prototype` | Loaded on demand; competing prototypes (Exhaust the Design Space) require owner approval via Elon. |
+| Retro | Elon / `architect-pm` | `retro` | Runs on about one session in five (failures first) and after a task fails both rework rounds. |
+| Session handoff and startup | Worker at budget or Elon at session start | `handoff`, `recall`, `ketchup` | Workers at 80% context or 120 turns write a `handoff` artifact; Elon runs `recall` then `ketchup` at session start. |
+| Deploy and staging review | `release-manager`, `qa-sdet` | `deploy`, `staging-review` | Staging deploys daily at 19:00 Taiwan time, followed immediately by `/staging-review` and full regression; page-by-page review runs weekly; production deploys on the owner's explicit go. |
+| Wrap-up | Elon / host schedule | `wrap-up` (`script/wrap-up.sh`) | Scheduled every 10 minutes on each host (`--scheduled`) and run after merges to clear finished worktrees, branches, terminals and temp files. |
+| Team audit and weekly update | Orca schedule / `architect-pm` | `team-audit` (`script/team-audit.sh`, `bin/team-audit-metrics.ts`), `script/weekly-update.sh` | Orca runs the audit script and five metrics weekly for one line; `architect-pm` runs the full `/team-audit` skill on the owner's word; `weekly-update.sh` opens three upstream update PRs for owner review. |
 
-| Job | Owner | Skill | Our files before | Mismatch (fixed unless noted) |
-| --- | --- | --- | --- | --- |
-| Intake and triage of an issue | architect-pm, Elon as maintainer | `triage` (agent brief per `AGENT-BRIEF.md`) | daily run step 2: Elon reads each `needs-triage` issue and relabels it by hand | Home grown step duplicating `triage`, without its redundancy check, claim verification or agent brief |
-| Intent | architect-pm | `capture-intent` (ours, no upstream equivalent) | correct | None |
-| Grill | architect-pm with the owner; pre-build gate adds sales-marketing or secops-finops per category | `grill-with-docs` (`grilling` and `domain-modeling` inside) | correct; <project-b> SDLC paired it with `to-spec` | See Spec; pre-build grill gate below |
-| Spec | architect-pm | `write-spec` when the repo has `docs/SDLC.md`, else `to-spec` | <project-b> `fileServer/docs/SDLC.md` said `/grill-with-docs` and `/to-spec` | Wrong skill: `to-spec` publishes an issue, <project-b> commits spec files, so `write-spec` |
-| Tickets | architect-pm | `to-tickets` (GitHub issues with blocking edges) | `skills: [..., to-tickets]`; role body and crew Step 1 said `tickets.md` | DMI skill in `skills:` is silently skipped; `tickets.md` contradicted `docs/SDLC.md` (issues) |
-| Implement | fullstack-dev | `implement` per ticket (drives `tdd`, ends with `code-review`); `tdd` on the fast path | `tdd` only; Elon's "fast loop" ran `to-spec` on an issue that already exists | `implement` unused; `to-spec` misapplied to an existing issue |
-| Bug diagnosis | qa-sdet reproduces, fullstack-dev fixes | `diagnosing-bugs`, then `tdd` | `diagnosing-bugs` preloaded on support-csm (read only, never diagnoses); hotfix "reproduce" step home grown | Skill on the wrong role; reproduce step now names the skill's feedback loop |
-| Review | qa-sdet, secops-finops | `code-review` (fixed point the default branch, spec the ticket) | crew Step 4 and qa-sdet restated the two axes by hand | Home grown restatement; now runs the skill |
-| Merge conflicts | fullstack-dev | `resolving-merge-conflicts` | named in fullstack-dev only; daily run step 4 did not | Daily run now names it |
-| Architecture review | architect-pm | `improve-codebase-architecture`, `codebase-design` | only `codebase-design` named | Missing skill; now on architect-pm's load list. Cadence still unscheduled (open) |
-| Prototype | architect-pm | `prototype` | not named anywhere | Missing skill; now on architect-pm's load list |
-| Retro | Elon after a failed task | `retro` | none; owner requested `team-audit` covers team files, not a session | Missing; crew Step 4 now runs it after a task fails both remediation rounds |
-| Handoff between sessions | the worker that runs out of context | `handoff` | model-routing: a "what is left" list in `worker_done`; `active_run.md` for multi slice tickets | Home grown list; now written with `handoff` and its path reported. `active_run.md` stays (it lives in the worktree, `handoff` writes to `$TMPDIR`) |
-| Worker spec | Elon | names the skill and its file | crew Step 2 spec had no skill field | Missing; crew Step 2 and elon.md now require it |
-| Deploy | release-manager | `deploy` (ours) | correct | Unchanged by rule |
+## Pre-build grill gate (owner rule 2026-11-06)
 
-## Pre-build grill gate (owner rule 2026-11-02)
+A multi-role pre-build grill runs only for two categories:
 
-Before any implementation starts, record grill findings on the issue or spec:
-
-* **UI or user-facing copy:** sales-marketing and Elon (`grill-with-docs` or grilling as appropriate).
-* **Code changes:** architect-pm and Elon.
-* **Money** (payments, billing, refunds, ledger, Store AI credits or metering, pricing, entitlements): secops-finops, architect-pm and Elon.
-* **Owner approval:** all grill results and decisions need explicit owner approval before implementation starts (Owner-Reserved; the 5 minute rule does not bypass this).
-
-## Other fixes
-
-* `qa-sdet` preloaded five skills its body said to load only on demand; now `[tdd, code-review]`. `secops-finops` dropped `research`, the template and <project-a> `tech-lead` dropped `deploy` and `code-review`, for the same reason.
-* `e2e-test-scaffold` exists only in <project-a>; it was named in the template and <project-b> qa-sdet. Removed there.
-* dotfiles `AGENTS.md` named `implement-spec`, which is not vendored (`skills-inventory.md` explains why).
-* `script/init-agent-project.sh` wrote `$to-tickets` inside an unquoted heredoc, which aborts under `set -u`; escaped, and the "Invoking skills" block now covers Claude Code. <project-a> `AGENTS.md` gained the block <project-b> already had.
-
-## Open items closed
-
-Closed by owner rulings (issue 73):
-
-* `agent-team-architecture.md` and its SVGs now say GitHub issues instead of `tickets.md`; the PDF is deleted.
-* `improve-codebase-architecture` gets no cadence. Owner decision: no change.
-* Upstream `pr` stays unvendored; `create-pr` stays. Owner decision: no change.
-* The `team-audit` default projects come from the untracked `script/team-audit.local.conf` (one real checkout per line), never a bare repo.
+* **Money** (payments, billing, refunds, ledger, credits, pricing or entitlements): `secops-finops`, `architect-pm` and Elon.
+* **New UI pages:** `sales-marketing` and Elon, with phone screenshots of the design or prototype attached to the spec (`~/.claude/state/screenshots/<repo>/<issue>/`).
+* **Owner approval:** the owner approves the grill result before build starts.
+* **All other work:** no multi-role grill; Elon decides and records the decision on the issue.

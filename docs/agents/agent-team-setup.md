@@ -23,8 +23,10 @@ Cursor and Antigravity installers. Installer references:
 [Cursor](https://cursor.com/docs/cli/installation) and
 [Antigravity](https://antigravity.google/docs/cli/install/).
 Existing differing configuration files are moved to `<file>.bak.<date>` before
-replacement. Usage gate and worker budget hooks are composed from the existing
-Claude hook templates. Logins and credentials are never migrated or inspected.
+replacement. `setup-orca.sh` links `~/.orca/presets.json` to `~/dotfiles/.orca/presets.json`
+after backing up any differing file. Usage gate (`usage-gate-hook.py`) and worker budget
+(`worker-budget.py`) hooks are composed into Claude Code, Cursor and Antigravity hook
+files via `setup-agent-hooks.sh`. Logins and credentials are never migrated or inspected.
 Orca installation and sign in remain owner steps when its CLI is missing.
 
 Project adoption runs `adopt-agent-team.sh`, `init-agent-project.sh --labels`,
@@ -52,12 +54,16 @@ the project's team files. Existing projects retain reset's preview default; use
 
 The commands use the vendored skills already in dotfiles. Updating that snapshot
 from upstream is a separate maintainer operation through
+`script/weekly-update.sh` (which refreshes Matt Pocock skills, pstack template skills,
+Bun and Node LTS across three tested PRs and one summary for the owner's go) or
 `script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
 changes the dotfiles checkout. No command commits or pushes the target project.
 
 ## Letting Elon merge
 
-Elon merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`.
+Elon merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
+(or `--batch <N> <N>` once per wake from the `lead-elon` worktree, and `--mechanical`
+for docs-only PRs).
 The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
 open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
