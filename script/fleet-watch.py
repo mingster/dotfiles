@@ -12,6 +12,7 @@ Counts every active Dispatch, including descendants. May restart a stalled worke
 """
 import argparse
 import calendar
+import copy
 import datetime
 import importlib.util
 import json
@@ -679,17 +680,83 @@ def fetch_prs(repo):
         return None
 
 
+_HEAD_RECEIPT_RE = re.compile(
+    r'^(?P<label>Checks|Review|Verdict): (?P<status>\S+) '
+    r'head=(?P<head>[0-9a-f]{40})(?: main=[0-9a-f]{40})?(?:\s|$)'
+)
+
+
+def _receipt_first_line(body):
+    return (body or '').split('\n')[0]
+
+
+def newest_comment_receipt(comments, label, head):
+    """Newest comment (by createdAt) whose first line is ``label:`` for an exact head (optional main=)."""
+    best = None
+    best_at = ''
+    for comment in comments or []:
+        first = _receipt_first_line(comment.get('body'))
+        match = _HEAD_RECEIPT_RE.match(first)
+        if not match or match.group('label') != label or match.group('head') != head:
+            continue
+        created = comment.get('createdAt') or ''
+        if created >= best_at:
+            best = comment
+            best_at = created
+    return best
+
+
+def newest_checks_kind(comments, head):
+    comment = newest_comment_receipt(comments, 'Checks', head)
+    if not comment:
+        return None
+    first = _receipt_first_line(comment.get('body'))
+    if first.startswith('Checks: PASS'):
+        return 'PASS'
+    if first.startswith('Checks: FAIL'):
+        return 'FAIL'
+    return None
+
+
+def newest_checks_comment(comments, head):
+    """Newest Checks receipt comment at head, if any."""
+    return newest_comment_receipt(comments, 'Checks', head)
+
+
+def newest_review_or_verdict(comments, head):
+    """Newest Review or Verdict comment at head."""
+    best = None
+    best_first = ''
+    best_at = ''
+    for comment in comments or []:
+        first = _receipt_first_line(comment.get('body'))
+        match = _HEAD_RECEIPT_RE.match(first)
+        if not match or match.group('head') != head:
+            continue
+        if match.group('label') not in ('Review', 'Verdict'):
+            continue
+        created = comment.get('createdAt') or ''
+        if created >= best_at:
+            best = comment
+            best_first = first
+            best_at = created
+    if best is None:
+        return None
+    return best, best_first
+
+
 def failing(pr):
-    """The latest Checks receipt at this head decides, unless a status check failed after it; otherwise any failed status check."""
-    for comment in reversed(pr['comments']):
-        first = comment['body'].split('\n')[0]
-        if first.startswith('Checks: ') and 'head=' + pr['headRefOid'] in first:
-            if first.startswith('Checks: FAIL'):
-                return True
-            receipt = comment.get('createdAt') or ''
-            return any(check.get('conclusion') == 'FAILURE' and (check.get('completedAt') or '') > receipt
-                       for check in pr['statusCheckRollup'])
-    return any(check.get('conclusion') == 'FAILURE' for check in pr['statusCheckRollup'])
+    """The newest Checks receipt at this head decides, unless a status check failed after it; otherwise any failed status check."""
+    head = pr.get('headRefOid') or ''
+    comment = newest_checks_comment(pr.get('comments'), head)
+    if comment:
+        first = _receipt_first_line(comment.get('body'))
+        if first.startswith('Checks: FAIL'):
+            return True
+        receipt = comment.get('createdAt') or ''
+        return any(check.get('conclusion') == 'FAILURE' and (check.get('completedAt') or '') > receipt
+                   for check in pr.get('statusCheckRollup') or [])
+    return any(check.get('conclusion') == 'FAILURE' for check in pr.get('statusCheckRollup') or [])
 
 
 def pr_events(repo, old, prs, now, stuck_seconds):
@@ -1665,10 +1732,11 @@ def issue_scan_sorted_eligible(issues):
 
 def checks_pass_at_head(pr):
     head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if first.startswith('Checks: ') and 'head=' + head in first:
-            return first.startswith('Checks: PASS')
+    kind = newest_checks_kind(pr.get('comments'), head)
+    if kind == 'PASS':
+        return True
+    if kind == 'FAIL':
+        return False
     for check in pr.get('statusCheckRollup') or []:
         if not isinstance(check, dict):
             continue
@@ -1679,35 +1747,15 @@ def checks_pass_at_head(pr):
 
 
 def checks_fail_at_head(pr):
-    head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if first.startswith('Checks: FAIL') and 'head=' + head in first:
-            return True
-    return False
+    return newest_checks_kind(pr.get('comments'), pr.get('headRefOid') or '') == 'FAIL'
 
 
 def checks_receipt_at_head(pr):
-    head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if not first.startswith('Checks: '):
-            continue
-        if 'head=' + head not in first:
-            continue
-        return first.startswith('Checks: PASS') or first.startswith('Checks: FAIL')
-    return False
+    return newest_checks_kind(pr.get('comments'), pr.get('headRefOid') or '') in ('PASS', 'FAIL')
 
 
 def review_verdict_at_head(pr):
-    head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if 'head=' + head not in first:
-            continue
-        if first.startswith('Verdict:') or first.startswith('Review:'):
-            return True
-    return False
+    return newest_review_or_verdict(pr.get('comments'), pr.get('headRefOid') or '') is not None
 
 
 def pr_has_label(pr, label_name):
@@ -1719,8 +1767,8 @@ def pr_has_label(pr, label_name):
     return False
 
 
-def status_rollup_failure_after_rerun(pr, state, repo):
-    watched = (state.get('workflow_watch') or {}).get(repo, {})
+def status_rollup_failure_after_rerun(pr, workflow_watch_state, repo):
+    watched = (workflow_watch_state or {}).get(repo, {})
     tracked_rerun = any(step in ('rerun', 'issue') for step in watched.values())
     for check in pr.get('statusCheckRollup') or []:
         if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
@@ -1733,23 +1781,27 @@ def status_rollup_failure_after_rerun(pr, state, repo):
     return False
 
 
-def rework_needed_at_head(pr, state, repo):
+def rework_needed_at_head(pr, workflow_watch_state, repo):
     if checks_fail_at_head(pr):
         return True
     if checks_pass_at_head(pr) and review_failed_at_head(pr):
         return True
-    return status_rollup_failure_after_rerun(pr, state, repo)
+    return status_rollup_failure_after_rerun(pr, workflow_watch_state, repo)
 
 
 def rework_failure_excerpt(pr_row):
     head = pr_row.get('headRefOid') or ''
-    for comment in reversed(pr_row.get('comments') or []):
-        body = comment.get('body') or ''
-        first = body.split('\n')[0]
-        if 'head=' + head not in first:
+    comments = pr_row.get('comments') or []
+    for label in ('Checks', 'Review', 'Verdict'):
+        comment = newest_comment_receipt(comments, label, head)
+        if not comment:
             continue
-        if first.startswith(('Checks: FAIL', 'Verdict: FAIL', 'Review: FAIL')):
-            return body[:8000]
+        first = _receipt_first_line(comment.get('body'))
+        if first.startswith('%s: FAIL' % label):
+            return (comment.get('body') or '')[:8000]
+    row = newest_review_or_verdict(comments, head)
+    if row and row[1].startswith(('Verdict: FAIL', 'Review: FAIL')):
+        return (row[0].get('body') or '')[:8000]
     for check in pr_row.get('statusCheckRollup') or []:
         if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
             continue
@@ -1983,12 +2035,9 @@ def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
 
 def review_failed_at_head(pr):
     head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if 'head=' + head not in first:
-            continue
-        if not (first.startswith('Verdict:') or first.startswith('Review:')):
-            continue
+    row = newest_review_or_verdict(pr.get('comments'), head)
+    if row:
+        _, first = row
         if first.startswith('Verdict: PASS') or first.startswith('Review: PASS'):
             return False
         if first.startswith('Verdict: PASS+NOTES'):
@@ -2128,7 +2177,7 @@ def issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
-    start_detached=None, checks_lock_live=None,
+    start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -2171,6 +2220,8 @@ def issue_scan_pass(
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
     rework_rounds = state.setdefault('issue_scan_rework_rounds', {})
     rework_escalated = state.setdefault('issue_scan_rework_escalated', {})
+    if workflow_watch_prior is None:
+        workflow_watch_prior = state.get('workflow_watch') or {}
 
     for repo in pr_repos:
         prs = pr_fetch(repo)
@@ -2228,7 +2279,7 @@ def issue_scan_pass(
                 continue
             if pr_has_label(pr_row, needs_elon):
                 continue
-            if not rework_needed_at_head(pr_row, state, repo):
+            if not rework_needed_at_head(pr_row, workflow_watch_prior, repo):
                 continue
             head = pr_row.get('headRefOid') or ''
             pr_num = pr_row['number']
@@ -2726,6 +2777,7 @@ def main():
         terminal_list_ok = False
     notices += pr_notices(config, state, now)
     notices += usage_notices(config)
+    workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
     notices += workflow_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
@@ -2740,6 +2792,7 @@ def main():
         config, state, now, workers,
         inventory_ok=inventory_ok,
         persist_state=persist_scan_state,
+        workflow_watch_prior=workflow_watch_prior,
     )
     notices += scan_extra
     stall_extra, stall_log = worker_stall_pass(

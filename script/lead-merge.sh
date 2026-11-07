@@ -580,9 +580,10 @@ else
   else refuse "$no_checks_reason"; fi
 fi
 if jq -e --arg head "$head" '
+  def checks_head_line: test("^Checks: (PASS|FAIL) head=" + $head + "( main=[0-9a-f]{40})?($| )");
   def newest_checks:
     [.comments[] | {body, createdAt} |
-      select((.body // "") != "" and (.body | split("\n")[0] | test("^Checks: (PASS|FAIL) head=" + $head + "$")))] | last // null;
+      select((.body // "") != "" and (.body | split("\n")[0] | checks_head_line))] | sort_by(.createdAt) | last // null;
   (newest_checks) as $r |
   if $r != null and ($r.body | split("\n")[0] | startswith("Checks: FAIL")) then true
   elif $r != null and ($r.body | split("\n")[0] | startswith("Checks: PASS")) then
@@ -592,13 +593,38 @@ if jq -e --arg head "$head" '
 ' <<<"$info" >/dev/null 2>&1; then
   refuse "statusCheckRollup has a FAILURE at the current head"
 fi
-review_blocked=false
-while IFS= read -r line; do
-  [ -n "$line" ] || continue
-  if [[ "$line" =~ ^Review:\ PASS\ head=$head($|[[:space:]]) ]]; then review_blocked=false; break; fi
-  if [[ "$line" =~ ^Review:\ FAIL\ head=$head($|[[:space:]]) ]]; then review_blocked=true; fi
-done < <(jq -r '.comments | reverse[] | .body | split("\n")[0] | select(startswith("Review: "))' <<<"$info" 2>/dev/null || true)
-[ "$review_blocked" = false ] || refuse "Review: FAIL at the current head"
+review_newest_fail=false
+if jq -e --arg head "$head" '
+  def review_head_line: test("^Review: (PASS|FAIL) head=" + $head + "( main=[0-9a-f]{40})?($| )");
+  def newest_review:
+    [.comments[] | {body, createdAt} |
+      select((.body // "") != "" and (.body | split("\n")[0] | review_head_line))] | sort_by(.createdAt) | last // null;
+  (newest_review) as $r | $r != null and ($r.body | split("\n")[0] | startswith("Review: FAIL"))
+' <<<"$info" >/dev/null 2>&1; then
+  review_newest_fail=true
+fi
+if [ "$review_newest_fail" = false ]; then
+  [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Review"; main_fetched=true; }
+  while IFS= read -r v_sha v_at; do
+    [ -n "$v_sha" ] || continue
+    [ "$v_sha" = "$head" ] && continue
+    verdict_carry "$v_sha" "$head" || continue
+    if jq -e --arg head "$head" --arg since "$v_at" '
+      any(.comments[]?;
+        (.body | split("\n")[0] | test("^Review: PASS head=" + $head + "( main=[0-9a-f]{40})?($| )"))
+        and (($since | length) == 0 or (.createdAt // "") > $since))
+    ' <<<"$info" >/dev/null 2>&1; then
+      continue
+    fi
+    refuse "Review: FAIL carried from ${v_sha:0:12}"
+  done < <(jq -r '
+    [.comments[] | select((.body | split("\n")[0] | test("^Review: FAIL head=[0-9a-f]{40}"))) |
+      {h: (.body | split("\n")[0] | capture("^Review: FAIL head=(?<h>[0-9a-f]{40})").h), at: (.createdAt // "")}]
+    | sort_by(.at) | reverse[] | "\(.h) \(.at)"
+  ' <<<"$info" 2>/dev/null || true)
+else
+  refuse "Review: FAIL at the current head"
+fi
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
 # Text-only lane: every changed path, including removed, is markdown or under changelog.d/ (issue #658).

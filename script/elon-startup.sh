@@ -77,14 +77,20 @@ for s in $HOME/.cache/heavy-gate/slot-*; do
   p=$(cat "$s/pid"); kill -0 "$p" 2>/dev/null || echo "heavy-gate $(basename $s) held by dead pid $p"
 done'
 
-echo "== 2 tools, pins, gh, heavy-gate (per host)"
+echo "== 2 toolchain (orca, bun, node)"
+if [ -x "$here/fleet-toolchain-check.sh" ]; then
+  tc=$("$here/fleet-toolchain-check.sh" 2>&1) || true
+  if [ -n "$tc" ]; then echo "$tc" | sed 's/^/toolchain: /'; problems=$((problems + 1)); else echo "ok toolchain"; fi
+fi
+
+echo "== 3 tools, pins, gh, heavy-gate (per host)"
 out=$(bash -c "$check" _ $repos 2>&1); [ -z "$out" ] && echo "ok local" || { echo "$out" | sed 's/^/local: /'; problems=$((problems + 1)); }
 for h in $hosts; do
   out=$(ssh -o BatchMode=yes -o ConnectTimeout=6 "$h" bash -s -- $repos <<<"$check" 2>&1) || { flag "$h unreachable by ssh"; continue; }
   [ -z "$out" ] && echo "ok $h" || { echo "$out" | sed "s/^/$h: /"; problems=$((problems + 1)); }
 done
 
-echo "== 3 load and usage"
+echo "== 4 load and usage"
 "$HOME/.claude/state/fleet-load.sh" 2>&1 | cut -c1-120
 python3 "$here/usage-gate.py" check 2>&1 | python3 -c '
 import sys, json
@@ -92,7 +98,7 @@ try:
     for r in json.load(sys.stdin): print(r["provider"], r["verdict"], r.get("weekly_used", ""))
 except Exception: print("usage gate unreadable")'
 
-echo "== 4 leftovers (preview only, nothing deleted)"
+echo "== 5 leftovers (preview only, nothing deleted)"
 if [ -x "$here/wrap-up.sh" ] && [ -d "${PWD}/.git" -o -f "${PWD}/.git" ]; then
   env -u ORCA_CLI_COMMAND "$here/wrap-up.sh" --fleet --repo "$PWD" 2>&1 | grep -E '^(Remove|Delete) |removed worktrees' | cut -c1-140 | head -20
 fi

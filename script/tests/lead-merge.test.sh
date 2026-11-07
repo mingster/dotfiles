@@ -262,6 +262,16 @@ setup; export STATUS_ROLLUP_JSON='[{"context":"ShellCheck","conclusion":"FAILURE
 setup; export STATUS_ROLLUP_JSON='[{"context":"head-checks","conclusion":"FAILURE","completedAt":"2026-11-05T09:00:00Z"}]'; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg ts "2026-11-05T10:00:00Z" '[{body:("Checks: PASS head="+$sha), createdAt:$ts},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "statusCheck after Checks PASS receipt allowed" 0 '^MERGED' 1
 setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")},{body:("Review: FAIL head="+$sha)}]'); check "Review FAIL at head refused" 1 'Review: FAIL'
 setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")},{body:("Review: FAIL head="+$sha)},{body:("Review: PASS head="+$sha)}]'); check "newer Review PASS clears FAIL" 0 '^MERGED' 1
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[
+  {body:("Checks: PASS head="+$sha), createdAt:"2026-11-05T10:00:00Z"},
+  {body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author"), createdAt:"2026-11-05T10:01:00Z"},
+  {body:("Review: PASS head="+$sha), createdAt:"2026-11-05T10:02:00Z"},
+  {body:("Review: FAIL head="+$sha), createdAt:"2026-11-05T10:03:00Z"}
+]'); check "677 newer Review FAIL after PASS refused" 1 'Review: FAIL'
+setup; export STATUS_ROLLUP_JSON='[{"context":"ShellCheck","conclusion":"FAILURE","completedAt":"2026-11-05T09:00:00Z"}]'; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg m "$M1" --arg ts "2026-11-05T10:00:00Z" '[
+  {body:("Checks: PASS head="+$sha+" main="+$m), createdAt:$ts},
+  {body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author"), createdAt:"2026-11-05T10:01:00Z"}
+]'); check "677 Checks PASS with main= clears older rollup FAILURE" 0 '^MERGED' 1
 setup; checks="Checks: PASS head=$SHA whatever"; check "557 text after the sha is refused" 1 'Checks'
 setup; checks="Checks: PASS head=$SHA main=$M1 whatever"; check "557 text after main= is refused" 1 'Checks'
 setup; checks="Checks: PASS head=$SHA main=$M1 main=$M1"; check "557 repeated main= is refused" 1 'Checks'
