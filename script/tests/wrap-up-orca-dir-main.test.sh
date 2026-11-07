@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Issue 678: main update ignores host pull.rebase; non-scheduled wrap-up resolves orca via find_orca_dir.
 set -euo pipefail
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)

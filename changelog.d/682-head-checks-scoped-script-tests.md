@@ -1,0 +1,1 @@
+Scope dotfiles `head-checks` script suites through `select-changed-script-tests.sh` with prefix and Python test mapping plus full-suite fallback for unmapped script changes, and run fast repo-wide guards before the selector.
