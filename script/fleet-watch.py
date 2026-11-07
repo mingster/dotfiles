@@ -1696,7 +1696,8 @@ def review_verdict_at_head(pr):
         first = (comment.get('body') or '').split('\n')[0]
         if 'head=' + head not in first:
             continue
-        return first.startswith('Verdict:') or first.startswith('Review:')
+        if first.startswith('Verdict:') or first.startswith('Review:'):
+            return True
     return False
 
 

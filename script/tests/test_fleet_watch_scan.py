@@ -122,6 +122,15 @@ class ReviewAtHead(unittest.TestCase):
         ])
         self.assertFalse(fw.review_failed_at_head(row))
 
+    def test_checks_receipt_does_not_hide_verdict(self):
+        head = 'a' * 40
+        other = 'b' * 40
+        row = pr(5, head=head, comments=[
+            {'body': 'Verdict: PASS head=%s' % head},
+            {'body': 'Checks: PASS head=%s main=%s' % (head, other)},
+        ])
+        self.assertTrue(fw.review_verdict_at_head(row))
+
 
 class IssueScanOrder(unittest.TestCase):
     def test_p0_before_p1_before_oldest(self):
@@ -354,6 +363,24 @@ class IssueScanPass(unittest.TestCase):
         self.assertIn('reviewer_start=' + head[:8], ','.join(log))
         _, _, starts2, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
         self.assertEqual(starts2, [])
+
+    def test_verdict_blocks_second_reviewer_when_checks_receipt_is_newer(self):
+        state = {}
+        head = '7' * 40
+        other = '6' * 40
+        branch = 'mingster/build-683'
+        pr_row = pr(
+            22, head=head, branch=branch,
+            comments=[
+                {'body': 'Verdict: PASS head=%s' % head},
+                {'body': 'Checks: PASS head=%s main=%s' % (head, other)},
+            ],
+        )
+        prs = {REPO: [pr_row]}
+        workers = [author_worker(22, branch)]
+        _, log, starts, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
+        self.assertEqual(starts, [])
+        self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
 
     def test_locked_checks_skips_second_head_checks_spawn(self):
         state = {}
