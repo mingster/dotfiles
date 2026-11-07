@@ -456,19 +456,28 @@ class IssueScanPass(unittest.TestCase):
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
     def test_open_pr_starts_checks_and_reviewer_in_parallel_once(self):
-        state = {}
-        head = '9' * 40
-        branch = 'mingster/build-683'
-        prs = {REPO: [pr(20, head=head, branch=branch)]}
-        workers = [author_worker(20, branch)]
-        _, log, starts, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
-        self.assertEqual(len(starts), 2)
-        self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
-        self.assertTrue(any('on-worker-done.sh' in ' '.join(cmd) for cmd in starts))
-        self.assertIn('head_checks_start=' + head[:8], ','.join(log))
-        self.assertIn('reviewer_start=' + head[:8], ','.join(log))
-        _, _, starts2, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
-        self.assertEqual(starts2, [])
+        with tempfile.TemporaryDirectory() as td:
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
+            try:
+                state = {}
+                head = '9' * 40
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(20, head=head, branch=branch)]}
+                workers = [author_worker(20, branch)]
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True,
+                )
+                self.assertEqual(len(starts), 2)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
+                self.assertTrue(any('on-worker-done.sh' in ' '.join(cmd) for cmd in starts))
+                self.assertIn('head_checks_start=' + head[:8], ','.join(log))
+                self.assertIn('reviewer_start=' + head[:8], ','.join(log))
+                _, _, starts2, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True,
+                )
+                self.assertEqual(starts2, [])
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
     def test_verdict_blocks_second_reviewer_when_checks_receipt_is_newer(self):
         state = {}

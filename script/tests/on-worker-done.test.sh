@@ -75,7 +75,7 @@ export QA_HEAD="$head"
 valid() {
   unset GATE_OUT GATE_RC ORCA_REPO_LIST_RC
   write_default_repos
-  printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking"}' > "$tmp/admission.json"
+  printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking","repo_id":"fixture-main-repo-id"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
   printf '%s\n' '{"headRefName":"feature/worker-pr"}' > "$tmp/pr-meta.json"
   rm -f "$tmp/launch.json"
@@ -258,10 +258,12 @@ printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"fixture-repo-id-671
 export QA_WORKTREE="$linked_root"
 unset GATE_OUT GATE_RC
 valid
+printf '%s\n' '{"environment_id":"local","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking","repo_id":"fixture-repo-id-671"}' > "$tmp/admission.json"
 printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"fixture-repo-id-671\",\"path\":\"$registered_link\",\"kind\":\"git\"}]}}" > "$tmp/orca-repos.json"
 run --dry-run
 check 'linked worktree passes registered repo id' "$(grep -Fq -- '--repo id:fixture-repo-id-671' "$tmp/out"; echo $?)"
 valid
+printf '%s\n' '{"environment_id":"local","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking","repo_id":"fixture-repo-id-671"}' > "$tmp/admission.json"
 printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"other-repo\",\"path\":\"$tmp/unrelated-checkout\",\"kind\":\"git\"}]}}" > "$tmp/orca-repos.json"
 mkdir -p "$tmp/unrelated-checkout"
 git -C "$tmp/unrelated-checkout" init -q
@@ -270,6 +272,7 @@ run --dry-run
 rc=$?
 check 'unregistered checkout refuses with path message' "$([ "$rc" -ne 0 ] && grep -Fq 'no registered Orca repo for checkout' "$tmp/err" && grep -Fq "$main_root" "$tmp/err"; echo $?)"
 valid
+printf '%s\n' '{"environment_id":"local","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking","repo_id":"fixture-main-repo-id"}' > "$tmp/admission.json"
 ORCA_REPO_LIST_RC=1 run --dry-run
 rc=$?
 check 'unreadable orca repo list refuses' "$([ "$rc" -ne 0 ] && grep -Fq 'cannot read orca repo list' "$tmp/err"; echo $?)"
