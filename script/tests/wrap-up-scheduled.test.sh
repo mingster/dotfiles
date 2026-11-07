@@ -78,7 +78,7 @@ round() {
     WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_SCHEDULED_LOG="$log" WRAP_UP_ORCA_APP_BIN="${APP_BIN:-$tmp/noapp}" WRAP_UP_EXTRA_BIN= \
     WRAP_UP_SCHEDULED_LOAD_CMD="${LOAD_CMD-echo ${LOAD:-1}}" WRAP_UP_SCHEDULED_CORES_CMD="${CORES_CMD-echo 4}" \
     WRAP_UP_SCHEDULED_WRAP_UP="$tmp/wrap-up.sh" WRAP_UP_ISSUE_REPO="${ISSUE_REPO-o/r}" WRAP_UP_CALL_TIMEOUT="${CALL_TIMEOUT:-20}" \
-    ${ROUND_LIMIT:+WRAP_UP_SCHEDULED_ROUND_LIMIT="$ROUND_LIMIT"} ${KILL_GRACE:+WRAP_UP_SCHEDULED_KILL_GRACE="$KILL_GRACE"} \
+    ${ROUND_LIMIT:+WRAP_UP_SCHEDULED_REPO_LIMIT="$ROUND_LIMIT"} ${KILL_GRACE:+WRAP_UP_SCHEDULED_KILL_GRACE="$KILL_GRACE"} \
     FAKE_CALLS="$calls" FAKE_FAIL_REPO="${FAIL_REPO:-none}" FAKE_ORCA="${FAKE_ORCA:-ready}" FAKE_BLOCK="${FAKE_BLOCK:-}" \
     FAKE_REPOS="${FAKE_REPOS:-ok}" FAKE_REPO_LIST="$tmp/repos.json" FAKE_SLEEP="${FAKE_SLEEP:-}" \
     FAKE_GH_LOG="$ghlog" FAKE_GH_OPEN="$tmp/gh-open.json" FAKE_GH_LIST_FAIL="${FAKE_GH_LIST_FAIL:-}" FAKE_GH_PUBLIC="${FAKE_GH_PUBLIC:-}" \
@@ -309,21 +309,25 @@ echo '[{"title":"wrap-up: scheduled rounds failing on another-host-xx"}]' > "$tm
 FAIL_REPO="$repo_a" round; FAIL_REPO="$repo_a" round
 check 'an issue with another title is no duplicate' test "$(nissues)" -eq 1
 
-# Round limit. The default gives a child at most 4 minutes; a slow round is a failure line.
+# Per-repo budget. Each child gets the full limit; a slow first repo does not skip the rest.
 reset
 round
-check 'a child gets no more than the 4 minute round limit' test "$(sed -n 's/.*budget=\([0-9]*\).*/\1/p' "$calls" | sort -n | tail -1)" -le 240
+check 'each child gets the default per-repo budget' test "$(grep -c 'budget=900 ' "$calls")" -eq 2
 reset
-ROUND_LIMIT=1 FAKE_SLEEP=2 round; status=$?
-check 'a slow round exits 0' test "$status" -eq 0
-check 'a slow round is a failure line' has 'round failed:' "$log"
-check 'a slow round says the time' has 'limit 1s' "$log"
-check 'the repo after the limit is not started' test "$(ncalls)" -eq 1
-check 'the repo not started is named' has "repo $repo_b not started" "$log"
+ROUND_LIMIT=42 round
+check 'each child gets the configured per-repo budget' test "$(grep -c 'budget=42 ' "$calls")" -eq 2
+check 'every child gets the same per-repo budget' test "$(sed -n 's/.*budget=\([0-9]*\).*/\1/p' "$calls" | sort -u | wc -l | tr -d ' ')" -eq 1
+reset
+ROUND_LIMIT=10 FAKE_SLEEP=3 round; status=$?
+check 'a round with slow repos exits 0' test "$status" -eq 0
+check 'a slow first repo does not block the second' test "$(ncalls)" -eq 2
+check 'a slow first repo still logs round ok' has 'round ok: repos=2' "$log"
 reset
 ROUND_LIMIT=1 KILL_GRACE=1 FAKE_SLEEP=30 round; status=$?
 check 'a hung repo run is killed and exits 0' test "$status" -eq 0
-check 'a hung repo run is a failure line' has "repo $repo_a exit 124" "$log"
+check 'a hung repo run is a failure line' has 'round failed:' "$log"
+check 'a hung repo run names the killed repo' has "repo $repo_a exit 124" "$log"
+check 'the repo after a hung one still runs' test "$(ncalls)" -eq 2
 # A hung inner call has its own process group, so stopping the outer one must reach it too.
 eval "$(sed -n '/^run_limited() {/,/^}/p' "$script")"
 inner=$(declare -f run_limited)
