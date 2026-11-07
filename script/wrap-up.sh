@@ -1743,10 +1743,23 @@ if [ "$pr_ok" -eq 1 ]; then
     [ "$stale_failed" -eq 1 ] || stale_deleted=$((stale_deleted+1))
   done < "$tmp/names"
 fi
-pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
+pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
-  [ "$apply" -eq 0 ] || ORCA_PANE_CLOSE_TIMEOUT=${WRAP_UP_PANE_TIMEOUT:-120} bash "$pane_script" || fail_item 'worker panes' "worker-pane-close exited $?"
+  if [ "$apply" -eq 1 ]; then
+    pane_left=${WRAP_UP_PANE_TIMEOUT:-120}
+    round_left=$((deadline-SECONDS))
+    if [ "$round_left" -gt 0 ] && [ "$round_left" -lt "$pane_left" ]; then
+      pane_left=$round_left
+    fi
+    [ "$pane_left" -gt 0 ] || pane_left=1
+    rc=0
+    pane_out=$(mktemp)
+    ORCA_PANE_CLOSE_TIMEOUT=$pane_left bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
+    sed -n '/^sweep: /p' "$pane_out"
+    rm -f "$pane_out"
+    [ "$rc" -eq 0 ] || fail_item 'worker panes' "worker-pane-close exited $rc"
+  fi
 fi
 update_main
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi

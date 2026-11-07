@@ -1,0 +1,1 @@
+- Pane sweep no longer drops state files when `worker-list` cannot be read fully; wrap-up scheduled apply keeps `sweep: deadline reached` lines in the detail log.

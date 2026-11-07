@@ -799,9 +799,23 @@ case "$*" in
   "orchestration run-list"*) cat "$F2/runs.json" ;;
   "orchestration worker-list"*)
     r=$(printf '%s' "$*" | sed -n 's/.*--run \([^ ]*\).*/\1/p')
-    if [ -f "$F2/flip-after-first" ] && [ -f "$F2/flipped" ] && [ -f "$F2/workers-$r.live.json" ]; then cat "$F2/workers-$r.live.json"
-    else cat "$F2/workers-$r.json"; [ ! -f "$F2/flip-after-first" ] || : > "$F2/flipped"; fi ;;
-  "orchestration worker-show --dispatch "*) [ -f "$F2/show.$4" ] && cat "$F2/show.$4" || exit 1 ;;
+    wl_cursor=$(printf '%s' "$*" | sed -n 's/.*--cursor \([^ ]*\).*/\1/p')
+    if [ -n "$wl_cursor" ]; then
+      [ -n "${F2_WORKER_LIST_FAIL_PAGE2:-}" ] && exit 1
+      [ -n "${F2_WORKER_LIST_PAGE2_JUNK:-}" ] && printf 'not json\n' && exit 0
+      [ -n "${F2_WORKER_LIST_PAGE2_FALSE:-}" ] && printf '{"ok":false}\n' && exit 0
+      if [ -f "$F2/workers-$r-$wl_cursor.json" ]; then cat "$F2/workers-$r-$wl_cursor.json"
+      elif [ -f "$F2/workers-$r-next.json" ]; then cat "$F2/workers-$r-next.json"
+      else exit 1; fi
+    else
+      [ -n "${F2_WORKER_LIST_FAIL:-}" ] && exit 1
+      [ -n "${F2_WORKER_LIST_PAGE1_JUNK:-}" ] && printf 'not json\n' && exit 0
+      if [ -f "$F2/flip-after-first" ] && [ -f "$F2/flipped" ] && [ -f "$F2/workers-$r.live.json" ]; then cat "$F2/workers-$r.live.json"
+      else cat "$F2/workers-$r.json"; [ ! -f "$F2/flip-after-first" ] || : > "$F2/flipped"; fi
+    fi ;;
+  "orchestration worker-show --dispatch "*)
+    [ -z "${F2_SHOW_DELAY:-}" ] || sleep "$F2_SHOW_DELAY"
+    [ -f "$F2/show.$4" ] && cat "$F2/show.$4" || exit 1 ;;
   "orchestration worker-release"*) printf '{"ok":true,"result":{"state":"released","dispatchId":"%s","processAction":"closed_agent_terminal"}}\n' "$4" ;;
   "terminal list"*) cat "$F2/terminals.json" ;;
   "terminal close --terminal "*) echo "$4" >> "$F2/closes.log"
@@ -902,5 +916,198 @@ unset F2
 
 # The pane file is replaced through a temp file and rename, so a reader never sees it empty or half written.
 check "pane file is written through a temp file and rename" "$(grep -q 'mv -f' "$here/worker-pane-close.sh" && ! grep -q '> "$f"$' "$here/worker-pane-close.sh"; echo $?)"
+
+# Sweep stops at ORCA_PANE_CLOSE_TIMEOUT, keeps records, exits 0, prints how many are left.
+F2="$tmp/sweep-deadline"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+python3 - "$F2" <<'GEN'
+import json,sys
+d=sys.argv[1]
+ws=[]
+terms=[]
+for j in range(25):
+    n=f"slow{j}"
+    ws.append({"dispatchId":n,"state":"succeeded","workspace":"repo1::/nonexistent/gone","terminal":f"term_{n}"})
+    terms.append({"handle":f"term_{n}"})
+    json.dump({"result":{"state":"succeeded","workspace":"repo1::/nonexistent/gone","terminal":f"term_{n}"}},open(f"{d}/show.{n}","w"))
+    open(f"{d}/state/{n}","w").write(f"term_{n}\n")
+json.dump({"ok":True,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}},open(d+"/runs.json","w"))
+json.dump({"ok":True,"result":{"workers":ws}},open(d+"/workers-run0.json","w"))
+json.dump({"ok":True,"result":{"truncated":False,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":terms}},open(d+"/terminals.json","w"))
+GEN
+# worker-show delay exceeds the sweep budget so the deadline path is deterministic under load.
+out=$(F2_SHOW_DELAY=3 ORCA_PANE_CLOSE_TIMEOUT=2 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" 2>&1); rc=$?
+left=0
+for f in "$F2/state"/*; do [ -f "$f" ] || continue; left=$((left + 1)); done
+reported=$(printf '%s' "$out" | sed -n 's/^sweep: deadline reached, \([0-9][0-9]*\) pane record(s) left$/\1/p')
+check "sweep: stops before deadline without a non-zero exit" "$([ "$rc" = 0 ] && [ "$left" -gt 0 ]; echo $?)"
+check "sweep: prints how many pane records are left" "$([ -n "$reported" ] && [ "$reported" = "$left" ]; echo $?)"
+unset F2_SHOW_DELAY
+
+# Prune stale pane files from worker-list rows, not one worker-show per file.
+F2="$tmp/sweep-rows"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"endedrow","state":"succeeded","liveness":"exited","workspace":"repo1::/x"},{"dispatchId":"live","state":"running","workspace":"repo1::/y"}]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[{"handle":"t_still","worktreePath":"/x"}]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/endedrow"
+echo t_still > "$F2/state/live"
+: > "$F2/calls.log"
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "sweep: stale-file prune uses worker-list without worker-show for listed dispatches" "$([ ! -e "$F2/state/endedrow" ] && [ -e "$F2/state/live" ] && ! grep -q 'worker-show --dispatch endedrow' "$F2/calls.log" 2>/dev/null; echo $?)"
+unset F2
+
+# Failed worker-list read: incomplete inventory must not drop pane state (live Orca shape: scope, workers, optional nextCursor).
+F2="$tmp/list-fail"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"warnings":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/listfail"
+echo '{"ok":true,"result":{"state":"succeeded","liveness":"exited","terminalState":"released"}}' > "$F2/show.listfail"
+F2_WORKER_LIST_FAIL=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "sweep: worker-list exit 1 on first page keeps pane record despite ended worker-show" "$([ -e "$F2/state/listfail" ]; echo $?)"
+unset F2_WORKER_LIST_FAIL
+
+F2="$tmp/list-page2"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"nextCursor":"page2","warnings":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"page2only","state":"succeeded","liveness":"exited","terminalState":"released","workspace":"repo1::/gone"}],"scope":{"source":"flag"},"warnings":[]}}' > "$F2/workers-run0-next.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/page2only"
+F2_WORKER_LIST_FAIL_PAGE2=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "sweep: worker-list exit 1 on page after nextCursor keeps absent dispatch record" "$([ -e "$F2/state/page2only" ]; echo $?)"
+unset F2_WORKER_LIST_FAIL_PAGE2
+
+F2="$tmp/list-page2-show"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"nextCursor":"page2","warnings":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/noshow"
+: > "$F2/calls.log"
+F2_WORKER_LIST_FAIL_PAGE2=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "sweep: incomplete list and worker-show exit 1 keeps pane record" "$([ -e "$F2/state/noshow" ]; echo $?)"
+unset F2
+
+# Deletion gate: one rm site, logging via ORCA_PANE_RM_LOG (synthetic ids only).
+gate_rm() { [ -s "$1/rm.log" ] && grep -c '^rm ' "$1/rm.log" | tr -d ' ' || echo 0; }
+gate_setup() {
+  export F2="$1"
+  rm -rf "$F2"
+  mkdir -p "$F2/state"
+  echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+  echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+  : > "$F2/rm.log"
+}
+gate_sweep() {
+  ORCA_PANE_RM_LOG="$F2/rm.log" ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" \
+    "$here/worker-pane-close.sh" >/dev/null 2>&1
+}
+gate_p1_final() {
+  printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"'"$1"'","state":"succeeded","liveness":"exited","terminalState":"released","workspace":"repo1::/gone"}],"scope":{"source":"flag"},"nextCursor":"p2","warnings":[]}}' > "$F2/workers-run0.json"
+  echo t_gone > "$F2/state/$1"
+}
+
+F2="$tmp/gate-p2exit"; gate_setup "$F2"
+gate_p1_final p2exit
+F2_WORKER_LIST_FAIL_PAGE2=1 gate_sweep
+check "deletion gate: final on page 1 and page 2 exit 1 keeps record" "$([ -e "$F2/state/p2exit" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2_WORKER_LIST_FAIL_PAGE2
+
+F2="$tmp/gate-p2junk"; gate_setup "$F2"
+gate_p1_final p2junk
+F2_WORKER_LIST_PAGE2_JUNK=1 gate_sweep
+check "deletion gate: final on page 1 and page 2 non-JSON keeps record" "$([ -e "$F2/state/p2junk" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2_WORKER_LIST_PAGE2_JUNK
+
+F2="$tmp/gate-p2false"; gate_setup "$F2"
+gate_p1_final p2false
+F2_WORKER_LIST_PAGE2_FALSE=1 gate_sweep
+check "deletion gate: final on page 1 and page 2 ok false keeps record" "$([ -e "$F2/state/p2false" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2_WORKER_LIST_PAGE2_FALSE
+
+F2="$tmp/gate-p1exit"; gate_setup "$F2"
+echo t_gone > "$F2/state/p1exit"
+F2_WORKER_LIST_FAIL=1 gate_sweep
+check "deletion gate: worker-list exit 1 on page 1 keeps record" "$([ -e "$F2/state/p1exit" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2_WORKER_LIST_FAIL
+
+F2="$tmp/gate-p1junk"; gate_setup "$F2"
+echo t_gone > "$F2/state/p1junk"
+F2_WORKER_LIST_PAGE1_JUNK=1 gate_sweep
+check "deletion gate: worker-list non-JSON on page 1 keeps record" "$([ -e "$F2/state/p1junk" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2_WORKER_LIST_PAGE1_JUNK
+
+F2="$tmp/gate-show"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"warnings":[]}}' > "$F2/workers-run0.json"
+echo t_gone > "$F2/state/showexit"
+echo t_gone > "$F2/state/showjunk"
+echo t_gone > "$F2/state/shownone"
+echo 'not json' > "$F2/show.showjunk"
+echo '{"ok":true}' > "$F2/show.shownone"
+gate_sweep
+check "deletion gate: worker-show exit 1 keeps record" "$([ -e "$F2/state/showexit" ]; echo $?)"
+check "deletion gate: worker-show non-JSON keeps record" "$([ -e "$F2/state/showjunk" ]; echo $?)"
+check "deletion gate: worker-show ok with no result keeps record" "$([ -e "$F2/state/shownone" ]; echo $?)"
+check "deletion gate: failed worker-show emits no rm log" "$([ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+
+F2="$tmp/gate-unread"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"unread","state":"succeeded","liveness":"exited","workspace":"repo1::/gone"}]}}' > "$F2/workers-run0.json"
+echo t_gone > "$F2/state/unread"
+chmod 000 "$F2/state/unread"
+gate_sweep
+check "deletion gate: unreadable state file on sweep keeps record" "$([ -e "$F2/state/unread" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+chmod 644 "$F2/state/unread" 2>/dev/null || true
+
+flat_show unread2 succeeded released exited term_x "$tmp/gone"
+echo t_gone > "$tmp/state/unread2"
+chmod 000 "$tmp/state/unread2"
+ORCA_PANE_RM_LOG="$tmp/unread2-rm.log" : > "$tmp/unread2-rm.log"
+echo '{"ok":true,"result":{"terminals":[],"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]}}}' > "$tmp/terminals.json"
+FAKE_APPEND_COORDINATOR=0 "$here/worker-pane-close.sh" unread2 >/dev/null 2>&1
+check "deletion gate: unreadable state file on explicit id keeps record" "$([ -e "$tmp/state/unread2" ] && [ ! -s "$tmp/unread2-rm.log" ]; echo $?)"
+chmod 644 "$tmp/state/unread2" 2>/dev/null || true
+
+F2="$tmp/gate-remove"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"goneok","state":"succeeded","liveness":"exited","workspace":"repo1::/gone"}]}}' > "$F2/workers-run0.json"
+echo t_gone > "$F2/state/goneok"
+gate_sweep
+check "deletion gate: complete list final row handles gone removes record" "$([ ! -e "$F2/state/goneok" ] && [ "$(gate_rm "$F2")" -gt 0 ]; echo $?)"
+
+F2="$tmp/gate-close"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"closeme","state":"succeeded","liveness":"exited","workspace":"repo1::/gone"}]}}' > "$F2/workers-run0.json"
+echo '{"result":{"state":"succeeded","workspace":"repo1::/gone"}}' > "$F2/show.closeme"
+echo t_close > "$F2/state/closeme"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[{"handle":"t_close"}]}}' > "$F2/terminals.json"
+gate_sweep
+check "deletion gate: listed handle is closed before record removal" "$(grep -qx t_close "$F2/closes.log" && [ ! -e "$F2/state/closeme" ] && [ "$(gate_rm "$F2")" -gt 0 ]; echo $?)"
+
+F2="$tmp/gate-running"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"stillrun","state":"running","workspace":"repo1::/y"}]}}' > "$F2/workers-run0.json"
+echo t_live > "$F2/state/stillrun"
+gate_sweep
+check "deletion gate: running worker-list row keeps record" "$([ -e "$F2/state/stillrun" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2
+
+F2="$tmp/gate-hostblank"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"hostblank","state":"succeeded","liveness":"exited","workspace":"repo1::/gone"}]}}' > "$F2/workers-run0.json"
+echo t_gone > "$F2/state/hostblank"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":[""],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+gate_sweep
+check "deletion gate: sweep blank hostId keeps record" "$([ -e "$F2/state/hostblank" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2
+
+F2="$tmp/gate-missok"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"missok","state":"succeeded","liveness":"exited","workspace":"repo1::/gone"}]}}' > "$F2/workers-run0.json"
+echo t_gone > "$F2/state/missok"
+echo '{"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+gate_sweep
+check "deletion gate: sweep missing ok keeps record" "$([ -e "$F2/state/missok" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2
+
+F2="$tmp/gate-missomit"; gate_setup "$F2"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"missomit","state":"succeeded","liveness":"exited","workspace":"repo1::/gone"}]}}' > "$F2/workers-run0.json"
+echo t_gone > "$F2/state/missomit"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"]},"terminals":[]}}' > "$F2/terminals.json"
+gate_sweep
+check "deletion gate: sweep missing omitted keeps record" "$([ -e "$F2/state/missomit" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
+unset F2
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
