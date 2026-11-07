@@ -88,6 +88,20 @@ fallback_eligible() {
   esac
 }
 
+path_already_selected() {
+  local path=$1 existing
+  [ -f "$ROOT/$path" ] || return 1
+  case "$path" in
+    script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
+      for existing in "${selected[@]+"${selected[@]}"}"; do
+        [ "$existing" = "$path" ] && return 0
+      done
+      return 1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 map_file() {
   local path=$1 base py before=${#selected[@]}
   case "$path" in
@@ -95,6 +109,7 @@ map_file() {
       add_test "$path"
       ;;
     script/sync-team-skills.sh)
+      map_script_sh_base "sync-team-skills"
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
@@ -116,7 +131,7 @@ map_file() {
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
   esac
-  if fallback_eligible "$path" && [ "${#selected[@]}" -eq "$before" ]; then
+  if fallback_eligible "$path" && [ "${#selected[@]}" -eq "$before" ] && ! path_already_selected "$path"; then
     printf 'Fallback: %s -> full suite\n' "$path"
     add_full_suite
   fi
