@@ -2,6 +2,8 @@
 # wrap-up.sh --scheduled: lock, CLI lookup, Orca check, load check, per repo run, log, issue. Fake wrap-up, orca and gh only.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 script="$root/script/wrap-up.sh"
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
