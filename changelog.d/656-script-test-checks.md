@@ -1,0 +1,2 @@
+- Add a GitHub hosted workflow that runs script tests mapped from changed `script/` paths, with a skip list for macOS-only and heavy-gate suites (#656).
+- Stop prepending the global Claude instructions file in `script/start-cursor-worker.sh` worker briefs (#656).
