@@ -509,7 +509,10 @@ def children(slots, nested=False):
         # Keep capacity claimed through all process-group cleanup attempts.
         with cleanup_signals():
             # Revoke kernel authority first. Failed filesystem quarantine then
-            # surfaces without signalling, while running still prevents reclaim.
+            # surfaces without signalling. groups_empty release still needs a
+            # dropped running marker for a live owner; dead_owner_reclaimable
+            # reclaims once the owner is gone unless both running and quarantine
+            # markers remain.
             slots.revoke()
             for path in slots.owned:
                 (path / 'running').rename(path / 'quarantine')

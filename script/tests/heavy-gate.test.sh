@@ -437,6 +437,15 @@ with open(sys.argv[1], 'a', buffering=1) as f:
         self.assertFalse(self.try_reclaim(self.zombie_members))
         self.assertTrue(slot.exists())
 
+    def test_dead_owner_quarantine_only_empty_groups_reclaimed(self):
+        slot = self.seed_slot(quarantine=True)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module, 'group_members', side_effect=self.empty_members):
+            gates = module.Slots(1)
+            gates.reclaim()
+            self.assertEqual(gates.stuck, [])
+        self.assertFalse(slot.exists())
+
     def test_live_owner_held(self):
         slot = self.seed_slot(running=True, pid=os.getpid())
         self.assertFalse(self.try_reclaim(self.empty_members))
@@ -509,10 +518,23 @@ with open(sys.argv[1], 'a', buffering=1) as f:
             killpg.assert_not_called()
             paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
             self.assertEqual(len(paths), 1)
+            with mock.patch.dict(os.environ, dict(self.env,
+                             HEAVY_GATE_TOKEN=(paths[0]/'token').read_text()), clear=True):
+                self.assertFalse(module.holds_slot(),
+                                 'failed rename must not leave old token authorized')
+            marker = self.root/'stale-token-command'
+            claimant = module.argparse.Namespace(weight=1, head_checks=False,
+                                                 command=['--', 'touch', str(marker)])
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                 mock.patch.object(module.time, 'sleep', side_effect=module.Interrupted(signal.SIGTERM)):
+                with self.assertRaises(module.Interrupted):
+                    module.gate(claimant)
+            self.assertFalse(marker.exists(), 'stale token must not admit a command')
             dead = subprocess.Popen(['true'])
             dead.wait()
             (paths[0]/'pid').write_text(str(dead.pid))
-            with mock.patch.dict(os.environ, self.env, clear=True):
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                 mock.patch.object(module, 'group_members', side_effect=self.empty_members):
                 stuck = module.Slots(1)
                 stuck.reclaim()
                 self.assertEqual(stuck.stuck, [])
