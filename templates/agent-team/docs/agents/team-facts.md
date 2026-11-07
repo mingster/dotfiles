@@ -1,6 +1,6 @@
 # Team facts
 
-Product facts read by the generated team skills (`crew`), which hold none themselves. This project owns this file. Keep the headings: the skills look values up by heading.
+Product facts read by the generated team skills (`crew`), which hold none themselves. This project owns this file, and project differences from `~/dotfiles/templates/agent-team/docs/agents/team.md` go in `docs/agents/team-facts.md` only. Keep the headings: the skills look values up by heading.
 
 ## Repository
 

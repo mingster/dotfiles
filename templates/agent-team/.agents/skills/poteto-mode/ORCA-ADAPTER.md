@@ -1,6 +1,6 @@
 # Pstack in Orca
 
-Read this adapter before `SKILL.md` and the selected playbook. This is the pinned vendored runtime for Elon and engineering workers, with local Orca integration. No plugin installation, upstream scripts, automatic updates or Cursor cloud execution is authorized. The pin and license are in `docs/agents/pstack-attribution.md`. The first pilot is ticket #3810 after #3770 merges; adoption alone does not start that pilot.
+Read this adapter before `SKILL.md` and the selected playbook. This is the pinned vendored runtime for Elon and engineering workers, with local Orca integration. No plugin installation, upstream scripts, automatic updates or Cursor cloud execution is authorized. The pin and license are in `~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md`. The first pilot is ticket #3810 after #3770 merges; adoption alone does not start that pilot.
 
 ## Our gates win
 
@@ -20,7 +20,7 @@ Map upstream model slugs, strong/fast tiers, `high` and `xhigh` through `.claude
 | --- | --- |
 | Subagent, Task tool, cloud subagent, `poteto-agent` | A supervised Orca worker with a complete local brief; no cloud worker. |
 | Agent prompt | Include role, ticket, exact worktree and cwd, file allowlist, acceptance criteria, exact checks, full-suite permission, budget and escalation gates, verbatim role Standing authority, and absolute paths to this adapter, poteto-mode and selected leaf skills. |
-| Start or fan out | Read `docs/agents/team.md` and the `orchestration` skill; create the supervised Run/tasks, start workers with `worker-start --agent` per `.claude/model-routing.md`, use `worker-panes.sh` according to its help and team facts, and respect capacity. |
+| Start or fan out | Read `~/dotfiles/templates/agent-team/docs/agents/team.md` and the `orchestration` skill; create the supervised Run/tasks, start workers with `worker-start --agent` per `.claude/model-routing.md`, use `worker-panes.sh` according to its help and team facts, and respect capacity. |
 | Agent result | Require `worker_done` with matching task and dispatch IDs, evidence, local commit and remaining gates. A terminal message alone does not settle a dispatch. |
 | Review/fix iteration | Use a fresh worker for every fix round and an independent reviewer for the resulting head. Keep the existing strike rule; no iteration floor or broad fan-out overrides the brief or budget. |
 
@@ -40,7 +40,7 @@ Do not guess helper flags or run absent upstream scripts. Follow local helper do
 
 - **ketchup and recall.** Elon runs `recall` and then `ketchup` at every session start and every handoff, instead of reading only the handoff note. `recall` rebuilds context from this project's own session history (Claude Code keeps it under `~/.claude/projects/<slug>/`), the `.scratch/` handoff, Orca run state and `git` and `gh`. Its `why` sweep maps to `gh` issue and PR search; skip a source we do not have and say so. `ketchup` then lists every item waiting on the owner. Both stay read only: no code change, dispatch or message during the catch up. `bro` is vendored only as ketchup's voice; `/visualize` is not, so use Mermaid for diagrams.
 - **show-me-your-work.** Elon logs each owner approval as one row: phase `approval`, the decision, the owner's message reference as why, the exact head sha it covers as evidence, result `approved`. An approval covers only that sha, so a new head needs a new row before a gated merge, and Elon checks the merge head against the latest row. Keep the log at `.scratch/decisions.tsv` outside git. Its cross model review needs another model family; when only Claude is available, report that review as blocked, never as self reviewed.
-- **correct.** When the owner corrects the same agent mistake twice, Elon or architect-pm turns it into a lint, test, hook or script in the skill's order, with a check proven to fail on the past mistake. Keep the rule table in `docs/agents/team.md`, never in `AGENTS.md`. A hook or protected path change needs the owner's read before merge.
+- **correct.** When the owner corrects the same agent mistake twice, Elon or architect-pm turns it into a lint, test, hook or script in the skill's order, with a check proven to fail on the past mistake. Keep the rule table in `~/dotfiles/templates/agent-team/docs/agents/team.md`, never in `AGENTS.md`. A hook or protected path change needs the owner's read before merge.
 - **unslop.** Run it over agent documents, briefs, reports and owner messages. It cuts wording, never a rule, gate or number. Our doc style overrides its rule 13: parentheses are allowed and dashes are never punctuation.
 
 ## Skill and tool translations

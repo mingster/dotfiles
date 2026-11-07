@@ -15,7 +15,7 @@ Bugs, chores and small tasks touching 3 files or fewer use `tdd` directly, with 
 
 ## Step 1. Scope and plan
 
-Before implementation starts, meet the pre-build grill gate in `docs/agents/team.md` (owner rule 2026-11-02): grill findings recorded on the issue or spec, and the owner's explicit approval of them.
+Before implementation starts, meet the pre-build grill gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` (owner rule 2026-11-02): grill findings recorded on the issue or spec, and the owner's explicit approval of them.
 
 Elon aligns the objective with Sales-Marketing and assigns architect-pm to use the `to-tickets` skill for ticket contracts and dependencies. Read `~/.agents/skills/to-tickets/SKILL.md` and follow it. Elon reviews the resulting plan for integration risks. Existing accepted tickets need no second breakdown. Each ticket lists its test cases from the spec's Test plan (owner rule 2026-10-21).
 
@@ -41,15 +41,15 @@ Team additions to its task contract:
 
 Use the assigned implementation skill and the component checks in team facts. Documentation changes need link and reference checks plus `git diff --check`, with no app build. Follow the Token budget and strike rule in `AGENTS.md`.
 
-For a ticket with several slices, use `docs/agents/persistent-memory-protocol.md` for the worktree's `active_run.md`. Edit only allowed files; a scope extension goes to Elon through orchestration.
+For a ticket with several slices, use `~/dotfiles/templates/agent-team/docs/agents/persistent-memory-protocol.md` for the worktree's `active_run.md`. Edit only allowed files; a scope extension goes to Elon through orchestration.
 
 Include the branch, commits, worktree path, `git diff <default branch>...HEAD --stat`, check counts and unresolved items in the completion evidence required by orchestration. Use the `handoff` skill if context runs out, and include its artifact path.
 
 ## Step 4. Review
 
-Use the `code-review` skill against the default branch and ticket, with `AGENTS.md` and the team facts checklist as standards. Apply the review tier in `docs/agents/engineering-integration.md`; add `secops-finops` for auth, tenancy, entitlement, rate limits, money or payments, and any reviewers named in team facts.
+Use the `code-review` skill against the default branch and ticket, with `AGENTS.md` and the team facts checklist as standards. Apply the review tier in `~/dotfiles/templates/agent-team/docs/agents/engineering-integration.md`; add `secops-finops` for auth, tenancy, entitlement, rate limits, money or payments, and any reviewers named in team facts.
 
-The reviewer verifies the ticket's listed test cases pass; that is the ticket's definition of done. Use the canonical Verdict in `docs/agents/team.md`; apply its Delivery contract premise and strike rules, recording concrete remediation. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
+The reviewer verifies the ticket's listed test cases pass; that is the ticket's definition of done. Use the canonical Verdict in `~/dotfiles/templates/agent-team/docs/agents/team.md`; apply its Delivery contract premise and strike rules, recording concrete remediation. Review timing follows "Merge on completion" in `.claude/model-routing.md`.
 
 ## Step 5. Integration and completion
 

@@ -107,9 +107,39 @@ class RoleFileGate(Gate):
         self.assertDenied('git commit -m "tweak elon"', "Owner-approved:", self.repo)
 
     def test_commit_with_trailer_allowed(self):
-        self.write("docs/agents/team.md", "x\n")
+        self.write("docs/agents/team-facts.md", "x\n")
         sh(self.repo, "git", "add", "-A")
-        self.assertAllowed(f'git commit -m "tweak team{TRAILER}"', self.repo)
+        self.assertAllowed(f'git commit -m "tweak team-facts{TRAILER}"', self.repo)
+
+    def test_commit_protected_docs_and_template_paths_denied_without_trailer(self):
+        for rel in (
+            "docs/agents/issue-tracker.md",
+            "docs/agents/triage-labels.md",
+            "docs/agents/domain.md",
+            "docs/agents/team-facts.md",
+            "docs/agents/deploy-facts.md",
+            "templates/agent-team/docs/agents/team.md",
+            "templates/agent-team/.claude/agents/elon.md",
+        ):
+            with self.subTest(rel=rel):
+                sh(self.repo, "git", "reset", "-q", "--hard", "HEAD")
+                self.write(rel, "x\n")
+                sh(self.repo, "git", "add", "-A")
+                self.assertDenied('git commit -m "tweak protected"', "Owner-approved:", self.repo)
+                self.assertAllowed(f'git commit -m "tweak protected{TRAILER}"', self.repo)
+
+    def test_commit_unprotected_docs_agents_files_allowed_without_trailer(self):
+        for rel in (
+            "docs/agents/learned.md",
+            "docs/agents/experiences/gotcha.md",
+            "docs/agents/team.md",
+            "docs/other.md",
+        ):
+            with self.subTest(rel=rel):
+                sh(self.repo, "git", "reset", "-q", "--hard", "HEAD")
+                self.write(rel, "x\n")
+                sh(self.repo, "git", "add", "-A")
+                self.assertAllowed('git commit -m "tweak unprotected"', self.repo)
 
     def test_commit_with_heredoc_trailer_allowed(self):
         self.write(".claude/model-routing.md", "x\n")
@@ -131,7 +161,7 @@ class RoleFileGate(Gate):
         self.assertDenied("git push origin work", "Owner-approved:", self.repo)
 
     def test_push_with_trailer_allowed(self):
-        self.commit_real("docs/agents/team.md", "tweak team" + TRAILER)
+        self.commit_real("docs/agents/team-facts.md", "tweak team-facts" + TRAILER)
         self.assertAllowed("git push origin work", self.repo)
 
     def test_push_without_role_files_allowed(self):
