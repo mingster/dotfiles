@@ -19,6 +19,9 @@
     "hosts": {
       "host-id": "/path/to/private/heavy-gate-wait.log"
     },
+    "slot_roots": {
+      "host-id": "/path/to/private/heavy-gate-cache"
+    },
     "issue_repo": "owner/name"
   },
   "wrap_up": {

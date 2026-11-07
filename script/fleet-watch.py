@@ -4,7 +4,8 @@ Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
 host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
 pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,
 optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo},
-optional heavy_gate {hosts, issue_repo} wait-log median check, optional wrap_up {hosts, issue_repo}
+optional heavy_gate {hosts, slot_roots, issue_repo} wait-log median and held-slot checks,
+optional wrap_up {hosts, issue_repo}
 round-log freshness, optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure;
 --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
@@ -12,6 +13,7 @@ Counts every active Dispatch, including descendants. May restart a stalled worke
 import argparse
 import calendar
 import datetime
+import importlib.util
 import json
 import math
 import os
@@ -724,6 +726,22 @@ def projection_host_id(w):
 
 AGENT_STATE_BACKUP_STALE_TITLE = 'agent-state backup has not pushed for 30 minutes'
 HEAVY_GATE_MEDIAN_TITLE = 'heavy-gate median wait exceeds 2 minutes on %s'
+HEAVY_GATE_STUCK_LIMIT = 10 * 60
+HEAVY_GATE_STUCK_TITLE = 'heavy-gate slot %s stuck on %s'
+
+_heavy_gate_module = None
+
+
+def heavy_gate_module():
+    """Load script/heavy-gate.py for slot inspection."""
+    global _heavy_gate_module
+    if _heavy_gate_module is None:
+        path = Path(__file__).resolve().parent / 'heavy-gate.py'
+        spec = importlib.util.spec_from_file_location('heavy_gate', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _heavy_gate_module = mod
+    return _heavy_gate_module
 WRAP_UP_STALE_TITLE = 'wrap-up last round stale on %s'
 
 
@@ -840,45 +858,99 @@ def wrap_up_last_line_age_seconds(log_path, now):
     return None
 
 
+def heavy_gate_stuck_notices(block, state, now, repo, act, issue_exists):
+    """Open one issue per held slot after it stays stuck beyond the limit."""
+    slot_roots = block.get('slot_roots') or {}
+    if not slot_roots or not repo:
+        return [], []
+    limit = block.get('stuck_limit_seconds', HEAVY_GATE_STUCK_LIMIT)
+    mod = heavy_gate_module()
+    since = state.setdefault('heavy_gate_stuck_since', {})
+    tracked = state.setdefault('heavy_gate_stuck_issues', {})
+    notices = []
+    log_bits = []
+    seen = set()
+    for host, root in slot_roots.items():
+        try:
+            stuck = mod.stuck_slot_names(root)
+        except OSError:
+            continue
+        for slot in stuck:
+            key = '%s:%s' % (host, slot)
+            seen.add(key)
+            log_bits.append('heavy_gate_stuck_%s_%s' % (host, slot))
+            first = since.get(key)
+            if first is None:
+                since[key] = now
+                continue
+            if now - first < limit:
+                continue
+            title = HEAVY_GATE_STUCK_TITLE % (slot, host)
+            if tracked.get(key):
+                continue
+            exists = issue_exists(repo, title)
+            if exists is None:
+                continue
+            if exists:
+                tracked[key] = True
+                continue
+            if act(['gh', 'issue', 'create', '--repo', repo, '--title', title,
+                    '--body', 'slot %s on host %s held with dead owner; inspect %s/%s'
+                    % (slot, host, root, slot)]):
+                notices.append('%s, issue not opened' % title)
+                continue
+            tracked[key] = True
+            notices.append(title)
+    for key in list(since):
+        if key not in seen:
+            since.pop(key, None)
+            tracked.pop(key, None)
+    return notices, log_bits
+
+
 def heavy_gate_notices(config, state, now, act=None, issue_exists=None):
-    """Open one issue per host when median wait in the log exceeds two minutes."""
+    """Median wait-log check and held-slot inspection."""
     block = config.get('heavy_gate') or {}
     hosts = block.get('hosts') or {}
     repo = block.get('issue_repo')
-    if not hosts or not repo:
+    if not repo:
         return [], []
     if act is None:
         act = run_gh
     if issue_exists is None:
         issue_exists = open_fixed_title_issue_exists
-    limit = block.get('median_limit_seconds', HEAVY_GATE_MEDIAN_LIMIT)
-    tracked = state.setdefault('heavy_gate_issues', {})
     notices = []
     log_bits = []
-    for host, path in hosts.items():
-        waits = read_heavy_gate_waits(path, now)
-        median = statistics.median(waits) if waits else None
-        if median is not None:
-            log_bits.append('heavy_gate_median_%s=%.0f' % (host, median))
-        if median is None or median <= limit:
-            tracked.pop(host, None)
-            continue
-        log_bits.append('heavy_gate_slow_%s' % host)
-        title = HEAVY_GATE_MEDIAN_TITLE % host
-        if tracked.get(host):
-            continue
-        exists = issue_exists(repo, title)
-        if exists is None:
-            continue
-        if exists:
+    if hosts:
+        limit = block.get('median_limit_seconds', HEAVY_GATE_MEDIAN_LIMIT)
+        tracked = state.setdefault('heavy_gate_issues', {})
+        for host, path in hosts.items():
+            waits = read_heavy_gate_waits(path, now)
+            median = statistics.median(waits) if waits else None
+            if median is not None:
+                log_bits.append('heavy_gate_median_%s=%.0f' % (host, median))
+            if median is None or median <= limit:
+                tracked.pop(host, None)
+                continue
+            log_bits.append('heavy_gate_slow_%s' % host)
+            title = HEAVY_GATE_MEDIAN_TITLE % host
+            if tracked.get(host):
+                continue
+            exists = issue_exists(repo, title)
+            if exists is None:
+                continue
+            if exists:
+                tracked[host] = True
+                continue
+            if act(['gh', 'issue', 'create', '--repo', repo, '--title', title,
+                    '--body', 'median wait %.0fs on host %s; see %s' % (median, host, path)]):
+                notices.append('%s, issue not opened' % title)
+                continue
             tracked[host] = True
-            continue
-        if act(['gh', 'issue', 'create', '--repo', repo, '--title', title,
-                '--body', 'median wait %.0fs on host %s; see %s' % (median, host, path)]):
-            notices.append('%s, issue not opened' % title)
-            continue
-        tracked[host] = True
-        notices.append(title)
+            notices.append(title)
+    stuck_notices, stuck_log = heavy_gate_stuck_notices(block, state, now, repo, act, issue_exists)
+    notices.extend(stuck_notices)
+    log_bits.extend(stuck_log)
     return notices, log_bits
 
 
