@@ -285,8 +285,42 @@ fi
 receipt_dir="$git_path"
 mkdir -p "$receipt_dir"
 receipt="$receipt_dir/receipt.env"
-post_push_stamp="$receipt_dir/post-push.env"
 _script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+coordinator_publication_state_dir() {
+  if [ -n "${COORDINATOR_PUBLICATION_STATE_DIR:-}" ]; then
+    printf '%s' "$COORDINATOR_PUBLICATION_STATE_DIR"
+  elif [ -n "${COORDINATOR_WAITER_STATE_DIR:-}" ]; then
+    printf '%s' "$COORDINATOR_WAITER_STATE_DIR"
+  else
+    printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/agent-team"
+  fi
+}
+
+post_push_repo_slug() {
+  local r=${1:-} out ch
+  out=
+  while [ -n "$r" ]; do
+    ch=${r:0:1}
+    r=${r:1}
+    case "$ch" in
+      [a-zA-Z0-9._-]) out=$out$ch ;;
+      *) out=$out-- ;;
+    esac
+  done
+  out=${out#"${out%%[!-.]*}"}
+  out=${out%"${out##*[!-.]}"}
+  [ -n "$out" ] || out=unknown
+  printf '%s' "$out"
+}
+
+post_push_stamp_path() {
+  local state_dir slug
+  state_dir=$(coordinator_publication_state_dir)
+  slug=$(post_push_repo_slug "$want_repo")
+  mkdir -p "$state_dir/post-push/$slug"
+  post_push_stamp="$state_dir/post-push/$slug/$head_sha.env"
+}
 
 head_checks_lock_held() {
   local repo_root=$1 remote name lock holder
@@ -321,7 +355,10 @@ read_post_push_stamp() {
 }
 
 write_post_push_stamp() {
-  local tmp="$receipt_dir/post-push.env.tmp.$$"
+  local tmp dir
+  post_push_stamp_path
+  dir=$(dirname "$post_push_stamp")
+  tmp="$dir/post-push.env.tmp.$$"
   {
     printf 'repo=%s\n' "$want_repo"
     printf 'head_sha=%s\n' "$head_sha"
@@ -336,6 +373,7 @@ start_post_publication_jobs() {
   set +e
   [ -n "$pr_number" ] || { set -e; return 0; }
   repo_root=$(cd -P "$worktree" && git rev-parse --show-toplevel 2>/dev/null) || return 0
+  post_push_stamp_path
   read_post_push_stamp
   if [ -f "$post_push_stamp" ]; then
     local stamped_repo stamped_head

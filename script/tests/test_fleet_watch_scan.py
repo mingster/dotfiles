@@ -368,21 +368,92 @@ class IssueScanPass(unittest.TestCase):
             head = subprocess.check_output(
                 ['git', '-C', wt, 'rev-parse', 'HEAD'], text=True,
             ).strip()
-            self.assertTrue(fw.write_post_push_stamp(
-                wt, REPO, head, checks_started=True, reviewer_started=True,
-            ))
-            state = {}
-            branch = 'mingster/build-683'
-            prs = {REPO: [pr(30, head=head, branch=branch)]}
-            workers = [author_worker(30, branch, worktree=wt)]
-            cfg = json.loads(json.dumps(self.CONFIG))
-            cfg['issue_scan']['repo_roots'] = {REPO: wt}
-            _, log, starts, _ = self.run_pass(
-                state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
+            try:
+                self.assertTrue(fw.write_post_push_stamp(
+                    REPO, head, checks_started=True, reviewer_started=True,
+                ))
+                state = {}
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(30, head=head, branch=branch)]}
+                workers = [author_worker(30, branch, worktree=wt)]
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: wt}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(starts, [])
+                self.assertNotIn('head_checks_start=' + head[:8], ','.join(log))
+                self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+    def test_remote_author_worktree_coordinator_stamp_starts_checks_and_reviewer_once(self):
+        remote_wt = '/remote/blueDevil/workspaces/dotfiles/pr-680'
+        with tempfile.TemporaryDirectory() as td:
+            state_root = os.path.join(td, 'coord-state')
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = state_root
+            root = os.path.join(td, 'repo-root')
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'config', 'user.email', 't@example.com'],
+                check=True,
             )
-            self.assertEqual(starts, [])
-            self.assertNotIn('head_checks_start=' + head[:8], ','.join(log))
-            self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
+            subprocess.run(['git', '-C', root, 'config', 'user.name', 't'], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'commit', '--allow-empty', '-m', 'init', '-q'],
+                check=True,
+            )
+            try:
+                head = 'b' * 40
+                self.assertTrue(fw.write_post_push_stamp(
+                    REPO, head, checks_started=True, reviewer_started=True,
+                ))
+                state = {}
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(31, head=head, branch=branch)]}
+                workers = [author_worker(31, branch, worktree=remote_wt)]
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: root}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(starts, [], log)
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+        with tempfile.TemporaryDirectory() as td:
+            state_root = os.path.join(td, 'coord-state')
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = state_root
+            root = os.path.join(td, 'repo-root')
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'config', 'user.email', 't@example.com'],
+                check=True,
+            )
+            subprocess.run(['git', '-C', root, 'config', 'user.name', 't'], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'commit', '--allow-empty', '-m', 'init', '-q'],
+                check=True,
+            )
+            try:
+                head = 'c' * 40
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(32, head=head, branch=branch)]}
+                workers = [author_worker(32, branch, worktree=remote_wt)]
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: root}
+                state = {}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(len(starts), 2, log)
+                _, _, starts2, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(starts2, [])
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
     def test_open_pr_starts_checks_and_reviewer_in_parallel_once(self):
         state = {}

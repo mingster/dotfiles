@@ -1710,24 +1710,30 @@ def pr_has_label(pr, label_name):
     return False
 
 
-def _coordinator_publication_dir(git_worktree, run=None):
-    if run is None:
-        run = subprocess.run
-    try:
-        proc = run(
-            ['git', '-C', git_worktree, 'rev-parse', '--git-path', 'coordinator-publication'],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return None
-    if proc.returncode != 0:
-        return None
-    git_path = (proc.stdout or '').strip()
-    if not git_path:
-        return None
-    if not os.path.isabs(git_path):
-        git_path = os.path.join(git_worktree, git_path)
-    return git_path
+def coordinator_publication_state_dir():
+    """Coordinator-local stamp storage; same default tree as coordinator-waiter."""
+    override = (os.environ.get('COORDINATOR_PUBLICATION_STATE_DIR') or '').strip()
+    if override:
+        return override
+    waiter = (os.environ.get('COORDINATOR_WAITER_STATE_DIR') or '').strip()
+    if waiter:
+        return waiter
+    xdg = (os.environ.get('XDG_STATE_HOME') or '').strip()
+    if not xdg:
+        xdg = os.path.expanduser('~/.local/state')
+    return os.path.join(xdg, 'agent-team')
+
+
+def post_push_repo_slug(repo):
+    slug = re.sub(r'[^A-Za-z0-9._-]+', '--', repo or '')
+    slug = slug.strip('-.')
+    return slug or 'unknown'
+
+
+def coordinator_post_push_stamp_path(repo, head):
+    state_dir = coordinator_publication_state_dir()
+    slug = post_push_repo_slug(repo)
+    return os.path.join(state_dir, 'post-push', slug, '%s.env' % head)
 
 
 def read_post_push_stamp_file(path):
@@ -1746,17 +1752,8 @@ def read_post_push_stamp_file(path):
     return stamp
 
 
-def post_push_env_path(git_worktree, run=None):
-    pub_dir = _coordinator_publication_dir(git_worktree, run=run)
-    if not pub_dir:
-        return None
-    return os.path.join(pub_dir, 'post-push.env')
-
-
-def post_push_flags_for_head(git_worktree, repo, head, run=None):
-    path = post_push_env_path(git_worktree, run=run)
-    if not path:
-        return False, False
+def post_push_flags_for_head(repo, head):
+    path = coordinator_post_push_stamp_path(repo, head)
     stamp = read_post_push_stamp_file(path)
     if not stamp:
         return False, False
@@ -1765,12 +1762,10 @@ def post_push_flags_for_head(git_worktree, repo, head, run=None):
     return stamp.get('checks_started') == '1', stamp.get('reviewer_started') == '1'
 
 
-def write_post_push_stamp(git_worktree, repo, head, checks_started=False, reviewer_started=False, run=None):
-    pub_dir = _coordinator_publication_dir(git_worktree, run=run)
-    if not pub_dir:
-        return False
-    path = os.path.join(pub_dir, 'post-push.env')
-    stamp_checks, stamp_reviewer = post_push_flags_for_head(git_worktree, repo, head, run=run)
+def write_post_push_stamp(repo, head, checks_started=False, reviewer_started=False):
+    path = coordinator_post_push_stamp_path(repo, head)
+    pub_dir = os.path.dirname(path)
+    stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
     if checks_started:
         stamp_checks = True
     if reviewer_started:
@@ -2130,23 +2125,18 @@ def issue_scan_pass(
             if not root:
                 continue
             meta = pr_author_worker_metadata(workers, pr_row)
-            stamp_root = (meta or {}).get('worktree') or root
-            if stamp_root:
-                stamp_checks, stamp_reviewer = post_push_flags_for_head(stamp_root, repo, head)
-                if stamp_checks:
-                    checks_seen[head] = True
-                if stamp_reviewer:
-                    review_seen[head] = True
+            stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
+            if stamp_checks:
+                checks_seen[head] = True
+            if stamp_reviewer:
+                review_seen[head] = True
             if not checks_receipt_at_head(pr_row):
                 if not checks_seen.get(head) and not head_checks_lock_live(root, lock_live=checks_lock_live):
                     command = build_head_checks_command(config, repo, pr_row)
                     if command and start_detached(command) == 0:
                         checks_seen[head] = True
                         log_bits.append('head_checks_start=%s' % head[:8])
-                        if stamp_root:
-                            write_post_push_stamp(
-                                stamp_root, repo, head, checks_started=True,
-                            )
+                        write_post_push_stamp(repo, head, checks_started=True)
                         if persist_state:
                             persist_state()
             if not review_verdict_at_head(pr_row) and not review_seen.get(head):
@@ -2156,10 +2146,7 @@ def issue_scan_pass(
                     if command and start_detached(command, {'ORCA_TERMINAL_HANDLE': from_terminal}) == 0:
                         review_seen[head] = True
                         log_bits.append('reviewer_start=%s' % head[:8])
-                        if meta.get('worktree'):
-                            write_post_push_stamp(
-                                meta['worktree'], repo, head, reviewer_started=True,
-                            )
+                        write_post_push_stamp(repo, head, reviewer_started=True)
                         if persist_state:
                             persist_state()
 

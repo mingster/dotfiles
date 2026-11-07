@@ -912,7 +912,10 @@ chmod +x "$MF_BIN/on-worker-done-stub"
 export COORDINATOR_PUBLICATION_HEAD_CHECKS="$MF_BIN/head-checks-stub"
 export COORDINATOR_PUBLICATION_ON_WORKER_DONE="$MF_BIN/on-worker-done-stub"
 export COORDINATOR_PUBLICATION_POST_LOG="$MF_DIR/post-push.log"
+export COORDINATOR_PUBLICATION_STATE_DIR="$MF_DIR/coord-state"
 export ORCA_TERMINAL_HANDLE=term_fixture
+rm -rf "$COORDINATOR_PUBLICATION_STATE_DIR"
+mkdir -p "$COORDINATOR_PUBLICATION_STATE_DIR"
 : > "$COORDINATOR_PUBLICATION_POST_LOG"
 good_body
 "$MF_TEST_GIT" -C "$MF_REPO" update-ref refs/remotes/origin/main "$base_sha" 2>/dev/null || true
@@ -924,6 +927,9 @@ grep -q 'head-checks --repo' "$COORDINATOR_PUBLICATION_POST_LOG" && ok "publicat
   || bad "missing head-checks start: $(cat "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null)"
 grep -q 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" && ok "publication starts reviewer in parallel" \
   || bad "missing on-worker-done start"
+stamp=$(find "$COORDINATOR_PUBLICATION_STATE_DIR/post-push" -name '*.env' 2>/dev/null | head -1)
+[ -n "$stamp" ] && [ -f "$stamp" ] && ok "post-push stamp lives in coordinator state" \
+  || bad "missing coordinator post-push stamp under $COORDINATOR_PUBLICATION_STATE_DIR"
 hc_count=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" || true)
 owd_count=$(grep -c 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" || true)
 out=$(pub --keep-receipt feat-post-push --run run_x --author-family claude --from term_fixture); code=$?
