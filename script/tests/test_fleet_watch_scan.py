@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import os
 import subprocess
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -164,8 +166,9 @@ class IssueScanPass(unittest.TestCase):
     def run_pass(
         self, state, issues_by_repo=None, starts=None, gate_ok=True, admitted=True,
         prs_by_repo=None, inventory_ok=True, start_rc=0, workers=None, persist=None,
-        admit_occupied=0, host_cap=4, detached=None, checks_locked=False,
+        admit_occupied=0, host_cap=4, detached=None, checks_locked=False, config=None,
     ):
+        cfg = config or self.CONFIG
         issues_by_repo = issues_by_repo or {}
         prs_by_repo = prs_by_repo or {}
         starts = starts if starts is not None else []
@@ -202,7 +205,7 @@ class IssueScanPass(unittest.TestCase):
             persists.append(True)
 
         notices, log = fw.issue_scan_pass(
-            self.CONFIG, state, NOW, workers,
+            cfg, state, NOW, workers,
             list_issues=list_issues, pr_fetch=fetch_prs,
             gate_check=gate_check, admit_fn=admit, start_worker=start_worker,
             inventory_ok=inventory_ok, persist_state=persist_state,
@@ -348,6 +351,38 @@ class IssueScanPass(unittest.TestCase):
         )
         self.assertEqual(len(starts), 1)
         self.assertIn('rework_start=', ','.join(log))
+
+    def test_publication_stamp_then_issue_scan_starts_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            wt = os.path.join(td, 'wt')
+            subprocess.run(['git', 'init', '-q', wt], check=True)
+            subprocess.run(
+                ['git', '-C', wt, 'config', 'user.email', 't@example.com'],
+                check=True,
+            )
+            subprocess.run(['git', '-C', wt, 'config', 'user.name', 't'], check=True)
+            subprocess.run(
+                ['git', '-C', wt, 'commit', '--allow-empty', '-m', 'init', '-q'],
+                check=True,
+            )
+            head = subprocess.check_output(
+                ['git', '-C', wt, 'rev-parse', 'HEAD'], text=True,
+            ).strip()
+            self.assertTrue(fw.write_post_push_stamp(
+                wt, REPO, head, checks_started=True, reviewer_started=True,
+            ))
+            state = {}
+            branch = 'mingster/build-683'
+            prs = {REPO: [pr(30, head=head, branch=branch)]}
+            workers = [author_worker(30, branch, worktree=wt)]
+            cfg = json.loads(json.dumps(self.CONFIG))
+            cfg['issue_scan']['repo_roots'] = {REPO: wt}
+            _, log, starts, _ = self.run_pass(
+                state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+            )
+            self.assertEqual(starts, [])
+            self.assertNotIn('head_checks_start=' + head[:8], ','.join(log))
+            self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
 
     def test_open_pr_starts_checks_and_reviewer_in_parallel_once(self):
         state = {}
