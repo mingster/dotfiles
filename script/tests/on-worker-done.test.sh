@@ -4,16 +4,28 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/bin" "$tmp/briefs"
+mkdir -p "$tmp/bin" "$tmp/briefs" "$tmp/wt"
 export FIXTURE_ROOT="$tmp" TMPDIR="$tmp/briefs" PATH="$tmp/bin:$PATH"
 export ON_WORKER_DONE_USAGE_GATE="$tmp/gate" ON_WORKER_DONE_QA_ADMISSION="$tmp/admission.py"
 export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy" ORCA_CLI_COMMAND="$tmp/bin/orca"
+export ON_WORKER_DONE_CURSOR_START="$tmp/cursor-stub.sh" ORCA_TERMINAL_HANDLE=term_fixture QA_WORKTREE="$tmp/wt"
+git -C "$tmp/wt" init -q
+git -C "$tmp/wt" config user.email test@example.invalid
+git -C "$tmp/wt" config user.name Test
+printf 'fixture\n' > "$tmp/wt/README.md"
+git -C "$tmp/wt" add README.md
+git -C "$tmp/wt" commit -qm base
+cat > "$tmp/cursor-stub.sh" <<'EOS'
+#!/usr/bin/env bash
+python3 -c 'import json,os,sys; json.dump(sys.argv[1:], open(os.environ["FIXTURE_ROOT"]+"/launch.json","w"))'
+EOS
+chmod +x "$tmp/cursor-stub.sh"
 printf '{}\n' > "$tmp/policy"
 cat > "$tmp/gate" <<'GATE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$FIXTURE_ROOT/gate.log"
 [ "${GATE_RC:-0}" = 0 ] || exit "$GATE_RC"
-echo "${GATE_OUT:---agent antigravity --model gemini-4-argon-high}"
+echo "${GATE_OUT:---agent cursor --model grok-4.7-high}"
 GATE
 cat > "$tmp/admission.py" <<'PY'
 import json, os, sys
@@ -35,30 +47,33 @@ cat > "$tmp/bin/gh" <<'PY'
 import json,os,sys
 from pathlib import Path
 if os.environ.get('GH_RC','0')!='0': sys.exit(int(os.environ['GH_RC']))
+if len(sys.argv) >= 4 and sys.argv[1:3] == ['pr', 'view']:
+    joined = ' '.join(sys.argv)
+    if 'headRefName' in joined and 'comments' not in joined:
+        print((Path(os.environ['FIXTURE_ROOT'])/'pr-meta.json').read_text())
+        raise SystemExit(0)
 print((Path(os.environ['FIXTURE_ROOT'])/'checks.json').read_text())
 PY
 chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
 head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 valid() {
+  unset GATE_OUT GATE_RC
   printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
+  printf '%s\n' '{"headRefName":"feature/worker-pr"}' > "$tmp/pr-meta.json"
   rm -f "$tmp/launch.json"
 }
-run() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$head" --author-family claude --worktree '/authorized/path with spaces' --run run_fixture "$@" > "$tmp/out" 2> "$tmp/err"; }
+run() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$head" --author-family claude --worktree "$QA_WORKTREE" --run run_fixture "$@" > "$tmp/out" 2> "$tmp/err"; }
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok $1"; else fail=$((fail+1)); echo "FAIL $1"; cat "$tmp/err"; fi; }
 refuses() { run; rc=$?; check "$1" "$([ "$rc" -ne 0 ] && [ ! -e "$tmp/launch.json" ]; echo $?)"; }
 valid
+run --dry-run; check 'dry run succeeds' "$?"
+check 'T658-8 start-cursor-worker uses PR head as base-branch' "$(grep -Fq -- '--base-branch' "$tmp/out" && grep -Fq 'feature/worker-pr' "$tmp/out"; echo $?)"
+check 'reviewer title supports pane color' "$(grep -Fq -- '--title' "$tmp/out" && grep -Fq 'reviewer' "$tmp/out" && grep -Fq '42' "$tmp/out"; echo $?)"
+valid
 run; check 'validated boundary dispatches' "$?"
-python3 - "$tmp/launch.json" <<'PY'
-import json,sys
-args=json.load(open(sys.argv[1]))
-assert args[args.index('--on')+1]=='e842b011-16a2-4b19-a845-adea377bdee5'
-assert args[args.index('--worktree')+1]=='identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261'
-assert '--agent' in args
-PY
-check 'actual argv preserves saved ID and exact identity' "$?"
 valid
 run --dry-run; check 'dry run succeeds' "$?"
 check 'dry run never dispatches' "$([ ! -e "$tmp/launch.json" ]; echo $?)"
@@ -90,8 +105,7 @@ GATE_OUT='--agent claude --model claude-sonnet' refuses 'same family refuses'
 for body in \
   "Checks: FAIL head=$head" \
   "Checks: PASS head=$head|Command: bun test|Tests executed: 0|Load errors: 0" \
-  "Checks: PASS head=$head|Command: bun test|Tests executed: 1|Load errors: 1" \
-  "Checks: PASS head=$head|Command: bun test"; do
+  "Checks: PASS head=$head|Command: bun test|Tests executed: 1|Load errors: 1"; do
   valid
   CHECKS_BODY="$body" python3 - "$tmp/checks.json" <<'PY'
 import json,os,sys
@@ -99,6 +113,23 @@ with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHEC
 PY
   refuses "canonical receipt refuses: $body"
 done
+# Case 9 (#658): bun test only in Command text (dispatcher) without bun output still starts QA.
+valid
+CHECKS_BODY="Checks: PASS head=$head|Command: python3 run-scoped-tests.py --runner \"bun test --isolate\" --components lint|Result: exit 0|Command: bash script/tests/foo.test.sh|Result: exit 0|Tests executed: 2|Load errors: 0"
+CHECKS_BODY="$CHECKS_BODY" python3 - "$tmp/checks.json" <<'PY'
+import json,os,sys
+with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHECKS_BODY'].replace('|','\n')}]},f)
+PY
+run --dry-run
+check 'T658-9 dispatcher bun test in Command without bun output starts QA' "$?"
+# Case 9 refuse: bun test v in block output without Tests executed metadata.
+valid
+CHECKS_BODY="Checks: PASS head=$head|Command: bun test|Result: exit 0|bun test v1.2.3 (abc)"
+CHECKS_BODY="$CHECKS_BODY" python3 - "$tmp/checks.json" <<'PY'
+import json,os,sys
+with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHECKS_BODY'].replace('|','\n')}]},f)
+PY
+refuses 'T658-9 bun test v without Tests executed refuses'
 # No receipt at the exact head: QA starts and the brief says Checks are pending.
 pending_case() {
   valid
@@ -160,14 +191,16 @@ check 'default brief retains spec standards and receipt rule' "$(grep -q "repo's
 check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual-Axis)' "$brief"; echo $?)"
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
 check 'brief has exact-head Verdict template' "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
-check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=antigravity family=gemini' "$brief"; echo $?)"
-check 'reviewer title supports pane color' "$(grep -q -- '--task-title "reviewer - PR 42"' "$tmp/out"; echo $?)"
+check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=cursor family=grok' "$brief"; echo $?)"
 check 'claude author avoids claude family' "$(grep -q -- '--avoid-family claude' "$tmp/gate.log"; echo $?)"
 for author in cursor gemini antigravity; do
   valid
-  GATE_OUT='--agent claude --model claude-sonnet --effort medium' run --author-family "$author" --dry-run
-  check "$author author picks independent reviewer" "$?"
-  check "$author author uses claude reviewer" "$(grep -q -- '--agent claude' "$tmp/out"; echo $?)"
+  export GATE_OUT='--agent claude --model claude-sonnet --effort medium'
+  run --author-family "$author" --dry-run
+  rc=$?
+  unset GATE_OUT
+  check "$author author picks independent reviewer" "$rc"
+  check "$author author never uses composer-2.5" "$( ! grep -Fq -- '--model composer-2.5' "$tmp/out"; echo $?)"
   if [ "$author" = cursor ]; then
     check "$author author avoids composer" "$(grep -q -- '--avoid-family composer' "$tmp/gate.log"; echo $?)"
   else

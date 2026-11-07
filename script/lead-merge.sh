@@ -581,16 +581,42 @@ else
 fi
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
-skip_review=false
-if grep -qiE '^review: skipped \(.+\)$' <<<"$normalized_body"; then skip_review=true; fi
-docs_only=true
+# Text-only lane: every changed path, including removed, is markdown or under changelog.d/ (issue #658).
+text_only=true
 while IFS= read -r f; do
   case "$f" in
-    .claude/agents/*|*/.claude/agents/*|.agents/skills/*|*/.agents/skills/*) [ "$skip_review" = true ] || docs_only=false ;;
-    docs/*|*.md|changelog.d/*) ;;
-    *) docs_only=false ;;
+    changelog.d/*|*/changelog.d/*) ;;
+    *.md) ;;
+    *) text_only=false ;;
   esac
 done < <(jq -r '.[]' <<<"$files")
+
+text_lane_role_path() { # <path>
+  case "$1" in
+    docs/agents/elon-dispatch.md|docs/agents/team.md) return 0 ;;
+  esac
+  [[ "$1" == */.claude/agents/* || "$1" == .claude/agents/* ]] && return 0
+  [[ "$1" == *AGENTS.md ]] && return 0
+  [[ "$1" == *model-routing.md ]] && return 0
+  return 1
+}
+owner_receipt_paths=()
+while IFS= read -r f; do
+  text_lane_role_path "$f" && owner_receipt_paths+=("$f")
+done < <(jq -r '.[]' <<<"$files")
+
+text_lane_owner_receipt() {
+  [ "${#owner_receipt_paths[@]}" -gt 0 ] || return 0
+  local ancestor rows sha trailer
+  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head for owner receipt"
+  ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base for owner receipt"
+  rows=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "${owner_receipt_paths[@]}" 2>/dev/null) \
+    || die "cannot list commits for owner receipt"
+  while IFS=$'\x1f' read -r sha trailer; do
+    [ -n "$sha" ] || continue
+    [ -n "$trailer" ] || refuse "commit ${sha:0:12} touches owner-gated paths without Owner-approved trailer"
+  done <<<"$rows"
+}
 
 # Coordinator ids allowed as a Verdict author (not a dispatch): the run coordinator from Orca, or coordinator_ids in
 # lead-merge.local.json (read lazily).
@@ -761,7 +787,10 @@ if [ "$mechanical" = true ]; then
   [ -z "$bad" ] || die "--mechanical needs a pure substitution or deletion diff: $bad"
   echo "lead-merge: mechanical lane, Verdict not required"
 fi
-if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$docs_only" = false ] || [ "$unchecked" = true ]; }; then
+if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && [ "$text_only" = true ] && [ "$unchecked" = false ]; then
+  text_lane_owner_receipt
+fi
+if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$text_only" = false ] || [ "$unchecked" = true ]; }; then
   applicable=()
   passes=0 fails=0 edited=0 misplaced=0 main_fetched=${main_fetched:-false} carry_notes=""
   ignored_notes=() row_n=0 retired_seen=false newest_seen=false
