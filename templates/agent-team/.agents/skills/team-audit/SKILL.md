@@ -1,6 +1,6 @@
 ---
 name: team-audit
-description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Find evidenced problems, give each one fix, and report the five delivery metrics.
+description: Audit agent roles, team skills, model-routing.md and team docs when the owner says "team-audit". Find evidenced problems, give each one fix, and report the delivery and Orca stage metrics.
 ---
 
 # Team audit
@@ -21,7 +21,11 @@ Team rules and scripts must not grow in total lines; a safety fix may, with the 
 
 ## 3. Metrics
 
-Run `bun bin/team-audit-metrics.ts`; stdout is five lines: `median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, and `reopened_or_hotfix_rate` (each `key=value`, with `n=` sample counts on rates and medians; month counts are plain integers). Missing data reads unknown, never zero.
+Run `bun bin/team-audit-metrics.ts`; stdout is one `key=value` line per metric (`n=` sample counts on rates and medians; month counts are plain integers). Missing data reads unknown, never zero.
+
+Delivery: `median_ticket_start_to_merge_minutes` (starts when the closing issue received `ready-for-agent`, or unknown for that PR), `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, and `reopened_or_hotfix_rate`.
+
+Orca stages: `median_stage_queue_minutes`, `median_stage_build_minutes`, and `median_stage_merge_minutes`. Fleet per host: `heavy_gate_median_wait_minutes_<host>` and `worktrees_over_limit_<host>` (`worktrees_over_limit_<host>` reads unknown until a fixed host list exists).
 
 ## 4. Output
 
