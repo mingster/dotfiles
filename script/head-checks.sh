@@ -138,8 +138,27 @@ trap finish EXIT
 # A killed run must not read as a pass: bash hands the EXIT trap status 0 after SIGTERM.
 trap 'exit 143' TERM; trap 'exit 130' INT
 if [ -n "$pr" ]; then
-  info=$(cd "$repo" && gh pr view "$pr" --json headRefOid,baseRefOid)
-  sha=$(jq -r .headRefOid <<<"$info"); base=$(jq -r .baseRefOid <<<"$info")
+  pr_head_wait="${HEAD_CHECKS_PR_HEAD_WAIT_SECONDS:-60}"
+  [[ "$pr_head_wait" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_PR_HEAD_WAIT_SECONDS must be a whole number"
+  local_pushed=$(git -C "$repo" rev-parse HEAD) || usage "cannot resolve local HEAD"
+  [[ "$local_pushed" =~ ^[0-9a-f]{40}$ ]] || usage "cannot resolve local HEAD"
+  gh_head_attempt=0
+  while :; do
+    info=$(cd "$repo" && gh pr view "$pr" --json headRefOid,baseRefOid,headRefName)
+    sha=$(jq -r .headRefOid <<<"$info"); base=$(jq -r .baseRefOid <<<"$info")
+    branch=$(jq -r .headRefName <<<"$info")
+    if [ -n "$branch" ] && [ "$branch" != null ] && git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+      local_pushed=$(git -C "$repo" rev-parse "refs/heads/$branch")
+    fi
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$base" =~ ^[0-9a-f]{40}$ ]] || usage "invalid head or base SHA from GitHub"
+    [ "$sha" = "$local_pushed" ] && break
+    gh_head_attempt=$((gh_head_attempt + 1))
+    [ "$gh_head_attempt" -lt $((pr_head_wait * 2)) ] || {
+      refused=1
+      usage "GitHub PR #$pr head is $sha but local pushed head is $local_pushed; waited ${pr_head_wait}s for GitHub to update"
+    }
+    sleep 0.5
+  done
 else
   sha=$(git -C "$repo" rev-parse --verify "$ref^{commit}")
   if [ -z "$explicit_base" ] && git -C "$repo" merge-base --is-ancestor "$sha" origin/main; then
