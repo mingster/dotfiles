@@ -4,6 +4,8 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/lib/asdf-pin.sh"
 script="$here/../worker-startup.sh"
 pass=0 fail=0
 ok() { pass=$((pass + 1)); }

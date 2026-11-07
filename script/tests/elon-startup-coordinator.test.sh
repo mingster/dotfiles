@@ -3,6 +3,8 @@
 # origin, fake hostname. Never touches the real state directories or the real fleet config.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Tests for coordinator-drain.sh: the coordinator's inbox check, minus lead stop escalations and relayed worker_done.
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/lib/asdf-pin.sh"
 script="$here/../coordinator-drain.sh"
 pass=0 fail=0
 ok() { pass=$((pass + 1)); }
