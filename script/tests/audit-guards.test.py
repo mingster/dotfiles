@@ -87,9 +87,10 @@ class Guards(unittest.TestCase):
                     patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), patch.object(watch.time, 'time', return_value=601):
                 self.assertEqual(watch.main(), 0)
                 self.assertEqual(watch.main(), 0)
-            sends = [call for call in calls if call[:2] == ('terminal', 'send')]
+            sends = [call for call in calls if call[:2] == ('orchestration', 'send')]
             self.assertEqual(len(sends), 1)
             self.assertIn('t', sends[0])
+            self.assertIn('inbox waiter absent', sends[0][sends[0].index('--body') + 1])
             self.assertTrue(json.loads(state.read_text())['r']['alerted'])
 
     def test_live_terminal_inside_detached_worktree_is_retained(self):

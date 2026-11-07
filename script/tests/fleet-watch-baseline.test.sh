@@ -28,7 +28,7 @@ class Baseline(unittest.TestCase):
              patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
-        return [c for c in calls if c[:2] == ('terminal', 'send')]
+        return [c for c in calls if c[:2] == ('orchestration', 'send')]
     def test_old_failures_are_silent_and_one_new_failure_alerts_once(self):
         with tempfile.TemporaryDirectory() as directory:
             state = pathlib.Path(directory)/'state.json'
@@ -37,7 +37,7 @@ class Baseline(unittest.TestCase):
             self.assertEqual(self.pass_with(state, old), [])
             sends = self.pass_with(state, old + [failed('c')])
             self.assertEqual(len(sends), 1)
-            self.assertIn('failed dispatch c', ' '.join(sends[0]))
+            self.assertIn('failed dispatch c', sends[0][sends[0].index('--body') + 1])
             self.assertEqual(self.pass_with(state, old + [failed('c')]), [])
     def test_four_occupied_slots_reject_fifth_including_completed_pending_push_author(self):
         config = {'host_caps': {'fleet-1': 4}}
