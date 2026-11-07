@@ -46,6 +46,13 @@ class PrEvents(unittest.TestCase):
         self.assertEqual(events, ['mingster/dotfiles #7 ' + line])
         self.assertEqual(self.diff(state, prs)[0], [])
 
+    def test_new_review_line_emitted_like_verdict(self):
+        _, state = self.diff(None, [pr()])
+        line = 'Review: FAIL head=%s' % HEAD
+        prs = [pr(comments=[comment('r1', line)])]
+        events, state = self.diff(state, prs)
+        self.assertEqual(events, ['mingster/dotfiles #7 ' + line])
+
     def test_failing_pr_is_stuck_once_after_the_limit(self):
         prs = [pr(comments=[comment('k1', 'Checks: FAIL head=' + HEAD)])]
         _, state = self.diff(None, prs, 0)
@@ -180,9 +187,12 @@ class WorkflowNotices(unittest.TestCase):
     def test_second_failure_opens_one_issue(self):
         state = {}
         self.notices(state, self.run_row())
-        self.assertIn('failed twice', self.notices(state, self.run_row(attempt=2))[0])
+        notice = self.notices(state, self.run_row(attempt=2))[0]
+        self.assertIn('failed twice', notice)
+        self.assertIsInstance(notice, fw.Urgent)
         self.notices(state, self.run_row(attempt=2))
         self.assertEqual(self.verbs(), [['run', 'rerun'], ['issue', 'create']])
+        self.assertIn('needs-elon', self.commands[1])
 
     def test_refused_rerun_opens_an_issue(self):
         self.code = 1
@@ -207,8 +217,15 @@ class WorkflowNotices(unittest.TestCase):
         fw.workflow_notices(self.CONFIG, state, self.NOW, fetch=lambda repo: None, act=self.act)
         self.assertEqual(state['workflow_watch'][REPO], {'1': 'rerun'})
 
-    def test_no_workflows_configured_runs_nothing(self):
-        self.assertEqual(fw.workflow_notices({'pr_watch': {'repos': [REPO]}}, {}, self.NOW, fetch=None, act=None), [])
+    def test_empty_workflows_watches_all_failed_runs(self):
+        state = {}
+        config = {'pr_watch': {'repos': [REPO]}}
+        fw.workflow_notices(
+            config, state, self.NOW,
+            fetch=lambda repo: [self.run_row(name='ShellCheck')],
+            act=self.act,
+        )
+        self.assertEqual(self.verbs(), [['run', 'rerun']])
 
 
 class BackupNotices(unittest.TestCase):

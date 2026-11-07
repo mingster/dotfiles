@@ -77,7 +77,7 @@ OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 setup() {
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
-  COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""
+  COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""; unset STATUS_ROLLUP_JSON
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"script/foo.sh"}]'
   body=$'## Verification\n- Ran script successfully.'
@@ -90,9 +90,10 @@ setup() {
   FINAL_JSON='{"state":"MERGED","mergeCommit":{"oid":"dddddddddddddddddddddddddddddddddddddddd"},"url":"https://github.com/o/r/pull/7"}'
 }
 mkjson() {
-  PR_JSON=$(printf '{"state":"%s","baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeable":"%s","url":"https://github.com/o/r/pull/7","files":%s}' \
+  PR_JSON=$(printf '{"state":"%s","baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeable":"%s","url":"https://github.com/o/r/pull/7","files":%s,"statusCheckRollup":[]}' \
     "$state" "$base" "$branch" "$headsha" "$mergeable" "$files")
   PR_JSON=$(jq --arg body "$body" --arg comments "$comments" --arg checks "$checks" --arg countersign "$countersign" --arg base "$base_sha" '. + {body:$body, baseRefOid:$base, closingIssuesReferences:('"${CLOSING_JSON:-[]}"'), comments:[$checks,$comments,$countersign | {body:.}]}' <<<"$PR_JSON")
+  PR_JSON=$(jq --argjson rollup "${STATUS_ROLLUP_JSON:-[]}" '.statusCheckRollup=$rollup' <<<"$PR_JSON")
   [ -z "$COMMENTS_JSON" ] || PR_JSON=$(jq --argjson comments "$COMMENTS_JSON" '.comments=$comments' <<<"$PR_JSON")
   API_FILES=${API_OVERRIDE:-$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")}
   PR_JSON=$(jq --argjson count "${COUNT_OVERRIDE:-$(jq length <<<"$API_FILES")}" '.changedFiles=$count' <<<"$PR_JSON")
@@ -257,6 +258,10 @@ setup; checks="Checks: PASS head=$SHA main=$M1"; check "557 PASS with main= at t
 setup; checks="Checks: PASS head=$SHA main=$M1"$'\nUnchecked paths: script/foo.sh'; check "557 suffixed receipt still reads Unchecked paths" 1 'unchecked'
 setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg m "$M1" '[{body:("Checks: PASS head="+$sha)},{body:("Checks: FAIL head="+$sha+" main="+$m)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "557 newer FAIL with main= outvotes an older PASS" 1 'Checks: FAIL'
 setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg m "$M1" '[{body:("Checks: FAIL head="+$sha+" main="+$m)},{body:("Checks: PASS head="+$sha+" main="+$m)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "557 newer PASS with main= outvotes an older FAIL" 0 '^MERGED' 1
+setup; export STATUS_ROLLUP_JSON='[{"context":"ShellCheck","conclusion":"FAILURE","completedAt":"2026-11-05T11:00:00Z"}]'; check "statusCheckRollup FAILURE refused" 1 'statusCheckRollup'
+setup; export STATUS_ROLLUP_JSON='[{"context":"head-checks","conclusion":"FAILURE","completedAt":"2026-11-05T09:00:00Z"}]'; COMMENTS_JSON=$(jq -n --arg sha "$SHA" --arg ts "2026-11-05T10:00:00Z" '[{body:("Checks: PASS head="+$sha), createdAt:$ts},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "statusCheck after Checks PASS receipt allowed" 0 '^MERGED' 1
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")},{body:("Review: FAIL head="+$sha)}]'); check "Review FAIL at head refused" 1 'Review: FAIL'
+setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")},{body:("Review: FAIL head="+$sha)},{body:("Review: PASS head="+$sha)}]'); check "newer Review PASS clears FAIL" 0 '^MERGED' 1
 setup; checks="Checks: PASS head=$SHA whatever"; check "557 text after the sha is refused" 1 'Checks'
 setup; checks="Checks: PASS head=$SHA main=$M1 whatever"; check "557 text after main= is refused" 1 'Checks'
 setup; checks="Checks: PASS head=$SHA main=$M1 main=$M1"; check "557 repeated main= is refused" 1 'Checks'

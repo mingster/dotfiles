@@ -670,7 +670,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
 
 def fetch_prs(repo):
     """Recent PRs in one gh call, or None when gh fails."""
-    fields = 'number,state,headRefOid,comments,statusCheckRollup,mergeCommit'
+    fields = 'number,state,headRefOid,headRefName,labels,comments,statusCheckRollup,mergeCommit'
     command = ['gh', 'pr', 'list', '--repo', repo, '--state', 'all', '--limit', '50', '--json', fields]
     try:
         output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -704,7 +704,7 @@ def pr_events(repo, old, prs, now, stuck_seconds):
         number = pr['number']
         for comment in pr['comments']:
             first = comment['body'].split('\n')[0]
-            if first.startswith('Verdict:') and comment['id'] not in verdicts:
+            if (first.startswith('Verdict:') or first.startswith('Review:')) and comment['id'] not in verdicts:
                 verdicts.append(comment['id'])
                 if not baseline:
                     event = Verdict('%s #%d %s' % (repo, number, first))
@@ -1678,15 +1678,80 @@ def checks_pass_at_head(pr):
     return False
 
 
+def checks_fail_at_head(pr):
+    head = pr.get('headRefOid') or ''
+    for comment in reversed(pr.get('comments') or []):
+        first = (comment.get('body') or '').split('\n')[0]
+        if first.startswith('Checks: FAIL') and 'head=' + head in first:
+            return True
+    return False
+
+
+def pr_has_label(pr_row, label_name):
+    for item in pr_row.get('labels') or []:
+        if isinstance(item, dict) and item.get('name') == label_name:
+            return True
+        if item == label_name:
+            return True
+    return False
+
+
+def status_rollup_failure_after_rerun(pr, state, repo):
+    watched = (state.get('workflow_watch') or {}).get(repo, {})
+    tracked_rerun = any(step in ('rerun', 'issue') for step in watched.values())
+    for check in pr.get('statusCheckRollup') or []:
+        if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
+            continue
+        attempt = check.get('attempt')
+        if attempt is not None and attempt >= 2:
+            return True
+        if tracked_rerun:
+            return True
+    return False
+
+
+def rework_needed_at_head(pr, state, repo):
+    if checks_fail_at_head(pr):
+        return True
+    if checks_pass_at_head(pr) and review_failed_at_head(pr):
+        return True
+    return status_rollup_failure_after_rerun(pr, state, repo)
+
+
+def rework_failure_excerpt(pr_row):
+    head = pr_row.get('headRefOid') or ''
+    for comment in reversed(pr_row.get('comments') or []):
+        body = comment.get('body') or ''
+        first = body.split('\n')[0]
+        if 'head=' + head not in first:
+            continue
+        if first.startswith(('Checks: FAIL', 'Verdict: FAIL', 'Review: FAIL')):
+            return body[:8000]
+    for check in pr_row.get('statusCheckRollup') or []:
+        if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
+            continue
+        name = check.get('context') or check.get('name') or 'check'
+        parts = ['statusCheckRollup FAILURE: %s' % name]
+        summary = check.get('summary') or check.get('title')
+        if summary:
+            parts.append(summary)
+        return '\n'.join(parts)
+    return 'Rework after failure on head %s' % head
+
+
 def review_failed_at_head(pr):
     head = pr.get('headRefOid') or ''
     for comment in reversed(pr.get('comments') or []):
         first = (comment.get('body') or '').split('\n')[0]
-        if 'head=' + head not in first or not first.startswith('Verdict:'):
+        if 'head=' + head not in first:
             continue
-        if first.startswith('Verdict: PASS'):
+        if not (first.startswith('Verdict:') or first.startswith('Review:')):
+            continue
+        if first.startswith('Verdict: PASS') or first.startswith('Review: PASS'):
             return False
-        if first.startswith('Verdict: FAIL'):
+        if first.startswith('Verdict: PASS+NOTES'):
+            return False
+        if first.startswith('Verdict: FAIL') or first.startswith('Review: FAIL'):
             return True
     saw_failure = False
     for check in pr.get('statusCheckRollup') or []:
@@ -1766,7 +1831,9 @@ def build_rework_start_command(config, repo, pr_row):
     if not root:
         return None
     head = pr_row.get('headRefOid') or ''
-    spec_path = _write_issue_scan_spec('Rework after review failure on %s PR #%d head %s' % (repo, pr_row['number'], head))
+    excerpt = rework_failure_excerpt(pr_row)
+    spec_path = _write_issue_scan_spec(
+        'Rework %s PR #%d head %s\n\n%s' % (repo, pr_row['number'], head, excerpt))
     title = 'rework #%d' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
     model = scan.get('rework_model') or scan.get('model') or ''
@@ -1781,6 +1848,9 @@ def build_rework_start_command(config, repo, pr_row):
         '--name', 'rework-%d' % pr_row['number'],
         '--repo', 'path:' + root,
     ]
+    branch = pr_row.get('headRefName')
+    if branch:
+        command += ['--base-branch', branch]
     return [part for part in command if part]
 
 
@@ -1815,7 +1885,7 @@ def _issue_scan_has_slot(host, config, admission, extra_starts):
 def issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
-    inventory_ok=True, persist_state=None,
+    inventory_ok=True, persist_state=None, act=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -1834,6 +1904,11 @@ def issue_scan_pass(
         admit_fn = admit
     if start_worker is None:
         start_worker = default_issue_scan_start
+    if act is None:
+        act = run_gh
+
+    stall_cfg = config.get('worker_stall') or {}
+    needs_elon = stall_cfg.get('needs_elon_label', 'needs-elon')
 
     host = scan.get('host') or 'local'
     if not gate_check(config):
@@ -1849,6 +1924,8 @@ def issue_scan_pass(
     pr_repos = scan.get('pr_repos') or repos
     rework_heads = state.setdefault('issue_scan_rework', {})
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
+    rework_rounds = state.setdefault('issue_scan_rework_rounds', {})
+    rework_escalated = state.setdefault('issue_scan_rework_escalated', {})
 
     for repo in pr_repos:
         prs = pr_fetch(repo)
@@ -1856,13 +1933,31 @@ def issue_scan_pass(
             continue
         seen = rework_heads.setdefault(repo, {})
         pending = rework_pending.setdefault(repo, {})
+        rounds = rework_rounds.setdefault(repo, {})
+        escalated = rework_escalated.setdefault(repo, {})
         for pr_row in prs:
             if pr_row.get('state') != 'OPEN':
                 continue
-            if not checks_pass_at_head(pr_row) or not review_failed_at_head(pr_row):
+            if pr_has_label(pr_row, needs_elon):
+                continue
+            if not rework_needed_at_head(pr_row, state, repo):
                 continue
             head = pr_row.get('headRefOid') or ''
+            pr_num = pr_row['number']
             if not head or seen.get(head) or pending.get(head):
+                continue
+            pr_key = str(pr_num)
+            if escalated.get(pr_key):
+                continue
+            if rounds.get(pr_key, 0) >= 2:
+                if act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', needs_elon]) == 0:
+                    escalated[pr_key] = True
+                    notices.append(Urgent('%s #%d rework cap reached; needs-elon' % (repo, pr_num)))
+                    log_bits.append('rework_cap=%d' % pr_num)
+                    if persist_state:
+                        persist_state()
+                else:
+                    log_bits.append('rework_cap_label_fail=%d' % pr_num)
                 continue
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 continue
@@ -1876,6 +1971,7 @@ def issue_scan_pass(
             if start_worker(command) == 0:
                 seen[head] = True
                 pending.pop(head, None)
+                rounds[pr_key] = rounds.get(pr_key, 0) + 1
                 extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_row['number'], head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
@@ -1955,9 +2051,12 @@ def workflow_notices(config, state, now, fetch=None, act=None):
     if act is None:
         act = run_gh
     watch = config.get('pr_watch') or {}
-    workflows = watch.get('workflows')
-    if not workflows:
+    if not watch.get('repos'):
         return []
+    workflows = watch.get('workflows') or []
+    workflow_filter = set(workflows) if workflows else None
+    stall_cfg = config.get('worker_stall') or {}
+    needs_elon = stall_cfg.get('needs_elon_label', 'needs-elon')
     notices = []
     handled = state.setdefault('workflow_watch', {})
     for repo in watch['repos']:
@@ -1968,7 +2067,9 @@ def workflow_notices(config, state, now, fetch=None, act=None):
         done = {}
         for run in runs:
             created = calendar.timegm(time.strptime(run['createdAt'], '%Y-%m-%dT%H:%M:%SZ'))
-            if run['workflowName'] not in workflows or now - created > RUN_WINDOW:
+            if workflow_filter is not None and run['workflowName'] not in workflow_filter:
+                continue
+            if now - created > RUN_WINDOW:
                 continue
             key = str(run['databaseId'])
             step = old.get(key)
@@ -1979,9 +2080,11 @@ def workflow_notices(config, state, now, fetch=None, act=None):
                 done[key] = 'rerun'
                 continue
             title = f"{run['workflowName']} failed twice on {run['headSha'][:8]}"
-            if act(['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', run['url']]) == 0:
+            issue_cmd = ['gh', 'issue', 'create', '--repo', repo, '--title', title,
+                         '--body', run['url'], '--label', needs_elon]
+            if act(issue_cmd) == 0:
                 done[key] = 'issue'
-                notices.append(f'{repo}: {title}')
+                notices.append(Urgent(f'{repo}: {title}'))
             else:
                 notices.append(f'{repo}: {title}, issue not opened')
         handled[repo] = done

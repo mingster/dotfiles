@@ -415,13 +415,13 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
 fi
 
 # 2. PR state
-info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
+info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences,statusCheckRollup) \
   || die "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
 for mergeable_retry in 1 2 3; do
   [ "$(field .mergeable)" = UNKNOWN ] || break
   sleep 2
-  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
+  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences,statusCheckRollup) \
     || die "cannot reread PR $pr while mergeability is UNKNOWN"
 done
 preflight_only=${LEAD_MERGE_PREFLIGHT_ONLY:-0}
@@ -579,6 +579,26 @@ else
     rm -f "$single_receipt"
   else refuse "$no_checks_reason"; fi
 fi
+if jq -e --arg head "$head" '
+  def newest_checks:
+    [.comments[] | {body, createdAt} |
+      select((.body // "") != "" and (.body | split("\n")[0] | test("^Checks: (PASS|FAIL) head=" + $head + "$")))] | last // null;
+  (newest_checks) as $r |
+  if $r != null and ($r.body | split("\n")[0] | startswith("Checks: FAIL")) then true
+  elif $r != null and ($r.body | split("\n")[0] | startswith("Checks: PASS")) then
+    any(.statusCheckRollup[]?; .conclusion == "FAILURE" and (
+      (($r.createdAt // "") | length) == 0 or (.completedAt // "") > ($r.createdAt // "")))
+  else any(.statusCheckRollup[]?; .conclusion == "FAILURE") end
+' <<<"$info" >/dev/null 2>&1; then
+  refuse "statusCheckRollup has a FAILURE at the current head"
+fi
+review_blocked=false
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  if [[ "$line" =~ ^Review:\ PASS\ head=$head($|[[:space:]]) ]]; then review_blocked=false; break; fi
+  if [[ "$line" =~ ^Review:\ FAIL\ head=$head($|[[:space:]]) ]]; then review_blocked=true; fi
+done < <(jq -r '.comments | reverse[] | .body | split("\n")[0] | select(startswith("Review: "))' <<<"$info" 2>/dev/null || true)
+[ "$review_blocked" = false ] || refuse "Review: FAIL at the current head"
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
 # Text-only lane: every changed path, including removed, is markdown or under changelog.d/ (issue #658).

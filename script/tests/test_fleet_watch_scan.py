@@ -34,13 +34,15 @@ def issue(number, labels=None, body='', comments=None, created=None, blocked=Fal
     return row
 
 
-def pr(number, head='a' * 40, checks=(), comments=()):
+def pr(number, head='a' * 40, checks=(), comments=(), branch='feature/rework', labels=()):
     return {
         'number': number,
         'state': 'OPEN',
         'headRefOid': head,
+        'headRefName': branch,
         'statusCheckRollup': list(checks),
         'comments': list(comments),
+        'labels': [{'name': n} for n in labels],
     }
 
 
@@ -105,6 +107,66 @@ class ReviewAtHead(unittest.TestCase):
             {'context': 'review', 'conclusion': 'SUCCESS'},
         ])
         self.assertFalse(fw.review_failed_at_head(row))
+
+    def test_review_fail_comment_triggers_rework(self):
+        head = 'g' * 40
+        row = pr(5, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head},
+            {'body': 'Review: FAIL head=%s' % head},
+        ])
+        self.assertTrue(fw.review_failed_at_head(row))
+
+    def test_review_pass_cancels_fail(self):
+        head = 'h' * 40
+        row = pr(6, head=head, comments=[
+            {'body': 'Review: FAIL head=%s' % head},
+            {'body': 'Review: PASS head=%s' % head},
+        ])
+        self.assertFalse(fw.review_failed_at_head(row))
+
+
+class FetchPrsFields(unittest.TestCase):
+    def test_json_includes_head_ref_and_labels(self):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout='[]')
+
+        orig = fw.subprocess.run
+        fw.subprocess.run = fake_run
+        try:
+            fw.fetch_prs(REPO)
+            fields = calls[0][calls[0].index('--json') + 1]
+            self.assertIn('headRefName', fields)
+            self.assertIn('labels', fields)
+        finally:
+            fw.subprocess.run = orig
+
+
+class BuildReworkCommand(unittest.TestCase):
+    CONFIG = {
+        'issue_scan': {
+            'enabled': True,
+            'repos': [REPO],
+            'run': 'run_x',
+            'from_terminal': 'term_coord',
+            'host': 'local',
+            'repo_roots': {REPO: '/tmp/app'},
+        },
+    }
+
+    def test_base_branch_and_failure_excerpt(self):
+        head = 'i' * 40
+        row = pr(8, head=head, branch='mingster/issue-677', comments=[
+            {'body': 'Checks: FAIL head=%s\nlint broke' % head},
+        ])
+        cmd = fw.build_rework_start_command(self.CONFIG, REPO, row)
+        self.assertIn('--base-branch', cmd)
+        self.assertIn('mingster/issue-677', cmd)
+        spec = cmd[cmd.index('--spec') + 1]
+        text = Path(spec).read_text(encoding='utf-8')
+        self.assertIn('lint broke', text)
 
 
 class IssueScanOrder(unittest.TestCase):
@@ -331,6 +393,47 @@ class IssueScanPass(unittest.TestCase):
         prs[REPO][0]['headRefOid'] = other
         _, _, starts3, _ = self.run_pass(state, prs_by_repo=prs)
         self.assertEqual(len(starts3), 1)
+
+    def test_checks_fail_starts_rework(self):
+        state = {}
+        head = '1' * 40
+        prs = {REPO: [pr(9, head=head, comments=[{'body': 'Checks: FAIL head=%s' % head}])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
+        self.assertEqual(len(starts), 1)
+
+    def test_rework_cap_labels_needs_elon(self):
+        state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
+        head = '2' * 40
+        prs = {REPO: [pr(10, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head},
+            {'body': 'Review: FAIL head=%s' % head},
+        ])]}
+        edits = []
+
+        def act(command):
+            edits.append(command)
+            return 0
+
+        notices, _ = fw.issue_scan_pass(
+            self.CONFIG, state, NOW, [],
+            pr_fetch=lambda repo: prs.get(repo, []),
+            gate_check=lambda _c: True,
+            admit_fn=lambda _h, _c, _w: {'admitted': True, 'occupied': 0},
+            start_worker=lambda _c: 1,
+            act=act,
+        )
+        self.assertTrue(any(c[:3] == ['gh', 'pr', 'edit'] for c in edits))
+        self.assertIn('needs-elon', edits[0])
+        self.assertTrue(any(isinstance(n, fw.Urgent) for n in notices))
+
+    def test_needs_elon_label_skips_rework(self):
+        state = {}
+        head = '3' * 40
+        prs = {REPO: [pr(11, head=head, labels=['needs-elon'], comments=[
+            {'body': 'Checks: FAIL head=%s' % head},
+        ])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
+        self.assertEqual(starts, [])
 
 
 if __name__ == '__main__':

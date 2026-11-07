@@ -1,0 +1,1 @@
+Fleet-watch issue scan fans out one-shot rework from check, review, and rollup failures (two rounds, then `needs-elon`); workflow notices watch all workflows when `pr_watch.workflows` is omitted and label twice-failed runs. Lead-merge preflight blocks `statusCheckRollup` failures and `Review: FAIL` at the head.
