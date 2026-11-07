@@ -31,13 +31,14 @@ add_test() {
 map_file() {
   local path=$1 base py
   case "$path" in
-    script/tests/*.test.sh|script/tests/test_*.py|script/*.test.sh)
+    script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
       add_test "script/tests/${base}.test.sh"
+      add_test "script/${base}.test.sh"
       ;;
     script/*.py)
       base=${path#script/}
@@ -58,7 +59,7 @@ skip_reason() {
     [ -n "$line" ] || continue
     path=${line%%[[:space:]]*}
     reason=${line#"$path"}
-    reason=${reason#"${reason%%[![:space:]]*}"}}
+    reason=${reason#"${reason%%[![:space:]]*}"}
     [ "$path" = "$target" ] || continue
     [ -n "$reason" ] || reason="skipped on hosted runner"
     printf '%s' "$reason"
@@ -94,7 +95,7 @@ printf 'Script tests: %d\n' "${#run_list[@]}"
 for test_path in "${run_list[@]}"; do
   case "$test_path" in
     *.test.sh) bash "$ROOT/$test_path" ;;
-    script/tests/test_*.py)
+    script/tests/test_*.py|script/tests/*.test.py)
       pattern=$(basename "$test_path")
       python3 -m unittest "discover" -s "$ROOT/script/tests" -p "$pattern"
       ;;

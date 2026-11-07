@@ -52,7 +52,46 @@ case3() {
   ok "case3 skip list prints UNCHECKED and does not select the test"
 }
 
+case3_skip_reasons() {
+  local fixture=$tmp/case3b
+  mkdir -p "$fixture/script/tests"
+  printf '#!/usr/bin/env bash\n' >"$fixture/script/bare.sh"
+  printf '#!/usr/bin/env bash\n' >"$fixture/script/tests/bare.test.sh"
+  chmod +x "$fixture/script/tests/bare.test.sh"
+  printf '%s\n' 'script/tests/bare.test.sh' >"$fixture/script/script-test-skip.list"
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$fixture" SELECT_SCRIPT_TESTS_SKIP="$fixture/script/script-test-skip.list" \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/bare.sh 2>&1)
+  grep -Fq 'UNCHECKED: script/tests/bare.test.sh skipped on hosted runner' <<<"$out" \
+    || fail "case3b bare skip must use default reason without stray brace"
+  grep -Fq 'UNCHECKED: script/tests/bare.test.sh }' <<<"$out" && fail "case3b must not append stray brace"
+  printf '%s\n' \
+    'script/tests/bare.test.sh needs coordinator host' \
+    >"$fixture/script/script-test-skip.list"
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$fixture" SELECT_SCRIPT_TESTS_SKIP="$fixture/script/script-test-skip.list" \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/bare.sh 2>&1)
+  grep -Fq 'UNCHECKED: script/tests/bare.test.sh needs coordinator host' <<<"$out" \
+    || fail "case3b named skip reason missing or mangled"
+  grep -Eq 'needs coordinator host\}' <<<"$out" && fail "case3b reason must not end with stray brace"
+  ok "case3b skip reasons default and explicit without stray brace"
+}
+
+case4_test_py() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" bash "$root/script/select-changed-script-tests.sh" --list-only \
+    script/tests/audit-guards.test.py 2>&1)
+  grep -Fq 'Selected: script/tests/audit-guards.test.py' <<<"$out" || fail "case4 must select *.test.py on direct touch"
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" bash "$root/script/select-changed-script-tests.sh" --list-only \
+    script/start-cursor-worker.sh 2>&1)
+  grep -Fq 'Selected: script/start-cursor-worker.test.sh' <<<"$out" || fail "case4 must select co-located script/*.test.sh"
+  grep -Fq 'Selected: script/tests/start-cursor-worker.test.sh' <<<"$out" \
+    && fail "case4 must not select removed duplicate tests path"
+  ok "case4 selects script/tests/*.test.py and co-located script/*.test.sh"
+}
+
 case1
 case2
 case3
-echo 'PASS: 3 acceptance cases'
+case3_skip_reasons
+case4_test_py
+echo 'PASS: 5 acceptance cases'
