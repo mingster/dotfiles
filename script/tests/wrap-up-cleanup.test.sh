@@ -59,6 +59,7 @@ branch open-pr o.txt "$old"
 branch stale-old st.txt "$old"
 branch stale-shot sh.txt "$old"
 branch stale-dirty sd.txt "$old"
+branch 'archive/2026-11-07/snapshot' arch.txt "$old"
 branch fresh f.txt
 # Squash merge: same patch, new sha.
 git cherry-pick -x squashed >/dev/null 2>&1 || git cherry-pick squashed >/dev/null
@@ -90,6 +91,8 @@ printf x > "$tmp/wt-cl-mod-other/other.txt"
 FAKE_PRS=$(printf '[{"headRefName":"open-pr","headRefOid":"%s","state":"OPEN"}]' "$(git rev-parse open-pr)")
 export FAKE_PRS
 
+bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --dry-run > "$tmp/out0" 2>&1
+
 passed=0; failed=0
 check() { # description, command...
   local d=$1; shift
@@ -101,6 +104,9 @@ gone() { ! has_local "$1" && ! has_remote "$1"; }
 kept() { has_local "$1" && has_remote "$1"; }
 # Unmerged work: the pushed local copy goes, the origin copy is the last one and stays.
 local_gone_origin_kept() { ! has_local "$1" && has_remote "$1"; }
+
+check 'archive branch not listed stale on dry-run' bash -c "! grep -Eq '^  archive/2026-11-07/snapshot,' '$tmp/out0'"
+check 'archive branch not offered for deletion on dry-run' bash -c "! grep -Fq 'Delete stale archive/2026-11-07/snapshot' '$tmp/out0'"
 
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/out1" 2>&1
 check 'squash-merged branch with no PR deleted local and remote' gone squashed
@@ -120,6 +126,10 @@ check 'open PR branch not listed as stale' bash -c "! grep -q 'open-pr, ' '$tmp/
 check 'fresh unmerged branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/fresh && ! grep -q 'fresh, ' '$tmp/out1'"
 check 'dirty worktree branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/stale-dirty && test -d '$tmp/wt-stale-dirty' && ! grep -q 'stale-dirty, ' '$tmp/out1'"
 check 'stale branch with screenshot-only worktree listed' grep -Eq '^  stale-shot, ' "$tmp/out1"
+check 'archive branch kept on apply' kept 'archive/2026-11-07/snapshot'
+check 'archive branch not listed stale on apply' bash -c "! grep -Eq '^  archive/2026-11-07/snapshot,' '$tmp/out1'"
+check 'archive branch not deleted on apply' bash -c "! grep -Fq 'Delete stale archive/2026-11-07/snapshot' '$tmp/out1'"
+check 'archive branch reported kept' grep -Fq 'Kept stale archive/2026-11-07/snapshot (archive branch)' "$tmp/out1"
 
 check 'apply deletes the local stale branch with screenshot-only worktree, keeps its origin copy' local_gone_origin_kept stale-shot
 check 'apply removed that worktree' test ! -d "$tmp/wt-stale-shot"

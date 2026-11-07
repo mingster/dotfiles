@@ -1700,6 +1700,7 @@ if [ "$pr_ok" -eq 1 ]; then
       t=$(git log -1 --format=%ct "$ref"); [ "$t" -le "$newest" ] || newest=$t
     done
     [ $((now - newest)) -ge 28800 ] || continue
+    case "$name" in archive/*) keep "stale $name" 'archive branch'; continue ;; esac
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
     if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
     if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
