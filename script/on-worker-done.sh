@@ -242,14 +242,16 @@ for line in body.splitlines():
         cur.append(line)
 if cur is not None:
     blocks.append(cur)
+has_non_skipped_bun = False
 for block in blocks:
     block_text = "\n".join(block)
     if not bun_test_cmd.search(block[0]):
         continue
     if re.search(r"^Skipped:", block_text, re.M):
         continue
-    if re.search(r"^Tests executed:", block_text, re.M) or re.search(r"^Load errors:", block_text, re.M):
-        continue
+    has_non_skipped_bun = True
+    break
+if has_non_skipped_bun and not tests:
     refuse("test command has no execution metadata")
 if not tests and re.search(r"^bun test v", body, re.M):
     refuse("test command has no execution metadata")

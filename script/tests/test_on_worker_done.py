@@ -212,6 +212,37 @@ sys.exit(ug.main())
         self.assertIn("test command has no execution metadata", result.stderr)
         self.assertIsNone(args)
 
+    def test_scoped_runner_line_then_bun_test_with_counts_starts_qa(self):
+        head = "a" * 40
+        receipt = (
+            f"Checks: PASS head={head}\n"
+            'Command: python3 run-scoped-tests.py --runner "bun test --isolate" --components lint\n'
+            "Result: exit 0\n"
+            "Command: bun test\n"
+            "Result: exit 0\n"
+            "Tests executed: 4\n"
+            "Load errors: 0\n"
+        )
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(args)
+
+    def test_scoped_tests_zero_line_then_bun_test_with_counts_starts_qa(self):
+        head = "a" * 40
+        receipt = (
+            f"Checks: PASS head={head}\n"
+            'Command: python3 run-scoped-tests.py --runner "bun test --isolate" --components lint\n'
+            "Result: exit 0\n"
+            "Scoped tests: 0\n"
+            "Command: bun test\n"
+            "Result: exit 0\n"
+            "Tests executed: 4\n"
+            "Load errors: 0\n"
+        )
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(args)
+
     def assert_reviewer(self, author, expected):
         result, args = self.dispatch(author)
         self.assertEqual(result.returncode, 0, result.stderr)
