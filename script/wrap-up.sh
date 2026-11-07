@@ -73,12 +73,18 @@ take_round_lock() {
 release_round_lock() { if [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then guarded_round_rm f "$lock"; fi; }
 # The directory of the orca to use. On one host ~/.orca/cli/bin holds a stale remote CLI that cannot reach the app, so it comes last.
 find_orca_dir() {
-  local stale="$HOME/.orca/cli/bin" dir list
-  list="${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}:$PATH:$HOME/.local/bin:$extra_bin"
+  local stale="$HOME/.orca/cli/bin" dir list app
+  app="${WRAP_UP_ORCA_APP_BIN-/Applications/_dev/Orca.app/Contents/Resources/bin}"
+  if [ -n "${WRAP_UP_ORCA_APP_BIN:-}" ] && [ -x "$app/orca" ]; then
+    printf '%s\n' "$app"
+    return 0
+  fi
+  list="$PATH:$HOME/.local/bin:${extra_bin:-}"
   local IFS=:
   for dir in $list; do
     if [ "$dir" != "$stale" ] && [ -x "$dir/orca" ]; then printf '%s\n' "$dir"; return 0; fi
   done
+  if [ -x "$app/orca" ]; then printf '%s\n' "$app"; return 0; fi
   [ -x "$stale/orca" ] && printf '%s\n' "$stale"
 }
 read_load() {
@@ -304,6 +310,9 @@ drop_branch() {
 }
 after_merge() {
   dry=${DRY_RUN:-0}
+  extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
+  orca_dir=$(find_orca_dir) || true
+  export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin"
   orca=${ORCA_CLI_COMMAND:-orca}
   pane_close=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
   call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
@@ -450,6 +459,9 @@ guarded_finish_remove() { # <path>: after every check in finish_worker
 
 finish_worker() {
   dry=${DRY_RUN:-0}
+  extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
+  orca_dir=$(find_orca_dir) || true
+  export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin"
   orca=${ORCA_CLI_COMMAND:-orca}
   wt="" dispatches=() skip="" skip_set=0 expect_task=""
   while [ $# -gt 0 ]; do
@@ -681,6 +693,9 @@ fi
 browser_sweep=1
 if [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_PS_CMD:-}" ] || [ -z "${WRAP_UP_KILL_CMD:-}" ]; }; then browser_sweep=0; fi
 command -v jq >/dev/null || { echo 'wrap-up requires jq' >&2; exit 1; }
+extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
+orca_dir=$(find_orca_dir) || true
+export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin"
 repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
 tmp=$(mktemp -d)
@@ -1410,7 +1425,7 @@ missing_lsof_summary() {
 update_main() {
   if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && [ -z "$(git -C "$main_checkout" status --porcelain --untracked-files=all)" ]; then
     echo 'Fast forward main checkout'
-    [ "$apply" -eq 0 ] || bounded git -C "$main_checkout" pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
+    [ "$apply" -eq 0 ] || bounded git -C "$main_checkout" -c pull.rebase=false pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
     # The merged preset reaches Orca only through setup-orca.sh; prefer the copy from the freshly updated checkout.
     if [ -f "$main_checkout/.orca/presets.json" ]; then
       setup_orca="$main_checkout/script/setup-orca.sh"; [ -f "$setup_orca" ] || setup_orca="$here/setup-orca.sh"

@@ -1,0 +1,1 @@
+Wrap-up now calls `find_orca_dir` before every non-scheduled `orca` invocation so a stale `~/.orca/cli/bin/orca` is not chosen, and `update_main` passes `-c pull.rebase=false` so a host-wide `pull.rebase=true` with extra `branch.main.merge` entries cannot break fast-forwarding main.
