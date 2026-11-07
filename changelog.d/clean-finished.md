@@ -1,1 +1,1 @@
-Add `script/clean-finished.py` to preview and apply removal of finished worktrees per wrap-up redesign issue decisions.
+Add `script/clean-finished.py` to preview and apply removal of finished worktrees per wrap-up redesign issue decisions. Fetch `origin` before decisions, require main ancestry or merged pull request head before delete, and keep remotes that are ahead or fail to delete.

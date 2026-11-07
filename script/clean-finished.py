@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Remove finished git worktrees on this host. Preview unless --apply."""
 from __future__ import annotations
 
 import json
@@ -21,7 +20,6 @@ def run(cmd: list[str], cwd: str | None = None, limit: float | None = None) -> t
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return 124, ""
-
 
 def gitc(repo: str, *args: str, limit: float = 30) -> tuple[int, str]:
     return run(["git", "-C", repo, *args], limit=limit)
@@ -47,7 +45,7 @@ def worktrees(repo: str) -> list[tuple[str, str | None, str, bool]]:
 def fetch_prs(repo: str, end: float) -> tuple[bool, dict[str, dict]]:
     gh, size, rank = os.environ.get("GH", "gh"), 1000, {"OPEN": 3, "MERGED": 2, "CLOSED": 1}
     rc, out = run([gh, "pr", "list", "--state", "all", "--limit", str(size),
-                   "--json=number,state,headRefName,closedAt"], repo, max(1.0, end - time.monotonic()))
+                   "--json=number,state,headRefName,headRefOid,closedAt"], repo, max(1.0, end - time.monotonic()))
     if rc:
         return False, {}
     try:
@@ -77,27 +75,49 @@ def on_origin(repo: str, sha: str) -> bool:
     return rc == 0 and bool(out.strip())
 def in_main(repo: str, ref: str) -> bool:
     return gitc(repo, "merge-base", "--is-ancestor", ref, "origin/main")[0] == 0
-def all_main(repo: str, br: str) -> bool:
-    rc, out = gitc(repo, "rev-list", f"refs/heads/{br}", "--not", "origin/main")
-    return rc == 0 and not out.strip()
 def cherry_ok(repo: str, ref: str) -> bool:
     rc, out = gitc(repo, "cherry", "origin/main", ref)
     return rc == 0 and not any(x.startswith("+") for x in out.splitlines())
+def remote_age(pr: dict) -> tuple[bool, str]:
+    raw = pr.get("closedAt") or ""
+    if not raw:
+        return False, "unknown"
+    try:
+        days = (datetime.now(timezone.utc) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).days
+    except ValueError:
+        return False, raw[:10]
+    return days >= 7, raw[:10]
+def commits_safe(repo: str, sha: str, row: dict | None) -> bool:
+    if in_main(repo, sha):
+        return True
+    oid = (row or {}).get("headRefOid") or ""
+    return bool(row and row.get("state") == "MERGED" and oid and oid == sha)
+def remote_plan(repo: str, br: str, head: str, row: dict | None, closed: bool) -> bool | str:
+    ref = f"refs/remotes/origin/{br}"
+    if not br or gitc(repo, "show-ref", "--verify", ref)[0]:
+        return False
+    if head:
+        rc, out = gitc(repo, "rev-list", ref, "--not", head)
+        if rc == 0 and out.strip():
+            return "newer"
+    rc, tip = gitc(repo, "rev-parse", ref)
+    tip = tip.strip() if rc == 0 else ""
+    if not tip or not commits_safe(repo, tip, row):
+        return "unsafe"
+    if closed:
+        return "delayed" if not remote_age(row or {})[0] else True
+    return True
 def under(parent: str, child: str) -> bool:
     try:
         Path(child).resolve().relative_to(Path(parent).resolve())
         return True
     except ValueError:
         return Path(child).resolve() == Path(parent).resolve()
-def lsof_bin() -> str | None:
-    raw = os.environ.get("CLEAN_FINISHED_LSOF", "lsof")
-    if not raw or raw == "missing":
-        return None
-    return raw
 def path_busy(path: str, terms: set[str], end: float) -> tuple[bool, str | None]:
     if any(under(path, b) for b in terms):
         return True, "running process"
-    lb = lsof_bin()
+    raw = os.environ.get("CLEAN_FINISHED_LSOF", "lsof")
+    lb = None if not raw or raw == "missing" else raw
     if not lb:
         return False, "could not check processes"
     rc, out = run([lb, "-t", "+D", path], limit=max(0.2, end - time.monotonic()))
@@ -106,31 +126,22 @@ def path_busy(path: str, terms: set[str], end: float) -> tuple[bool, str | None]
     if out.strip():
         return True, "running process"
     return False, None
-def terminal_cwds(end: float) -> set[str] | None:
-    rc, out = run([os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", "list", "--json"], limit=end - time.monotonic())
+def orca_set(end: float, args: list[str], key: str, pin: bool = False) -> set[str] | None:
+    rc, out = run([os.environ.get("ORCA_CLI_COMMAND", "orca"), *args], limit=end - time.monotonic())
     if rc:
         return None
     try:
-        terms = (json.loads(out).get("result") or {}).get("terminals") or []
-    except json.JSONDecodeError:
-        return None
-    return {t.get(k) for t in terms if isinstance(t, dict) for k in ("cwd", "worktreePath") if t.get(k)}
-def pinned(end: float) -> set[str] | None:
-    rc, out = run([os.environ.get("ORCA_CLI_COMMAND", "orca"), "worktree", "list", "--json"], limit=end - time.monotonic())
-    if rc:
-        return None
-    try:
-        items = (json.loads(out).get("result") or {}).get("worktrees") or []
+        items = (json.loads(out).get("result") or {}).get(key) or []
     except (json.JSONDecodeError, AttributeError):
         return None
-    return {p for it in items if isinstance(it, dict) and it.get("pinned")
-            for p in (it.get("path"), it.get("workspacePath")) if p}
+    return ({p for it in items if isinstance(it, dict) and it.get("pinned")
+             for p in (it.get("path"), it.get("workspacePath")) if p} if pin else
+            {t.get(k) for t in items if isinstance(t, dict) for k in ("cwd", "worktreePath") if t.get(k)})
 def repos(end: float) -> list[str]:
     env = os.environ.get("CLEAN_FINISHED_REPOS")
     if env:
         return [p for p in env.split(os.pathsep) if p]
-    oc = os.environ.get("ORCA_CLI_COMMAND", "orca")
-    rc, out = run([oc, "repo", "list", "--json"], limit=end - time.monotonic())
+    rc, out = run([os.environ.get("ORCA_CLI_COMMAND", "orca"), "repo", "list", "--json"], limit=end - time.monotonic())
     if rc:
         return []
     try:
@@ -176,33 +187,33 @@ def decide(repo: str, wt: tuple, main: str, dflt: str, pr_ok: bool, pr: dict, pi
     ref = f"refs/heads/{br}" if br else head
     if br:
         if row and row.get("state") == "MERGED":
-            return "delete", "merged pull request", True
-        if all_main(repo, br) or in_main(repo, ref) or cherry_ok(repo, ref):
-            return "delete", "already in main", True
+            if not commits_safe(repo, head, row):
+                return "keep", "commits not in main", False
+            return "delete", "merged pull request", remote_plan(repo, br, head, row, False)
+        rc, ahead = gitc(repo, "rev-list", f"refs/heads/{br}", "--not", "origin/main")
+        if (rc == 0 and not ahead.strip()) or in_main(repo, ref) or cherry_ok(repo, ref):
+            return "delete", "already in main", remote_plan(repo, br, head, row, False)
         if row and row.get("state") == "CLOSED":
-            return ("delete", "closed pull request", True if in_main(repo, head) or cherry_ok(repo, head) else "delayed")
+            return "delete", "closed pull request", (remote_plan(repo, br, head, row, False) if in_main(repo, head) or cherry_ok(repo, head) else "delayed")
         return "keep", "no pull request", False
     if in_main(repo, head) or cherry_ok(repo, head):
         return "delete", "detached at merged commit", False
     return "keep", "detached, commits not on a remote", False
-def remote_age(pr: dict) -> tuple[bool, str]:
-    raw = pr.get("closedAt") or ""
-    if not raw:
-        return False, "unknown"
-    try:
-        days = (datetime.now(timezone.utc) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).days
-    except ValueError:
-        return False, raw[:10]
-    return days >= 7, raw[:10]
 def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[bool]) -> None:
     def keep(target: str, why: str) -> None:
-        print(f"Kept {target} ({why})")
-        s["kept"] += 1
-
+        print(f"Kept {target} ({why})"); s["kept"] += 1
+    def del_remote(br: str) -> None:
+        rc, err = gitc(repo, "push", "origin", "--delete", br)
+        if rc:
+            keep(f"remote {br}", f"delete failed: {err.strip()}" if err.strip() else "delete failed")
+            failed.append(True)
+        else:
+            s["deleted_remote"] += 1
     wts = worktrees(repo)
     if not wts:
         return
-    main, dflt, pins = wts[0][0], "main", pinned(end)
+    main, dflt = wts[0][0], "main"
+    pins = orca_set(end, ["worktree", "list", "--json"], "worktrees", pin=True)
     rc, out = gitc(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
     if rc == 0 and out.strip():
         dflt = out.strip().split("/")[-1]
@@ -210,8 +221,12 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
         for wt in wts[1:]:
             keep(wt[0], "orca worktree list unavailable")
         return
+    if gitc(repo, "fetch", "origin", limit=max(0.1, end - time.monotonic()))[0]:
+        for wt in wts[1:]:
+            keep(wt[0], "fetch failed")
+        return
     now = time.monotonic()
-    terms = terminal_cwds(min(end, now + 8))
+    terms = orca_set(min(end, now + 8), ["terminal", "list", "--json"], "terminals")
     pr_ok, pr = fetch_prs(repo, min(end, now + 40))
     kept_br, plan = set(), []
     for wt in wts[1:]:
@@ -234,48 +249,51 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             print(f"Remove worktree {path} ({why})")
             s["removed"] += 1
             if br and remote is True:
-                s["dr"] += 1
+                s["deleted_remote"] += 1
             continue
         busy, pwhy = path_busy(path, terms or set(), end)
-        if pwhy or busy:
-            keep(path, pwhy or "running process")
-            failed.append(True)
-            continue
         ok, sw = status_ok(path)
-        if not ok:
-            keep(path, sw)
+        if pwhy or busy or not ok:
+            keep(path, pwhy or ("running process" if busy else sw))
             failed.append(True)
             continue
-        if gitc(repo, "worktree", "remove", path)[0]:
-            keep(path, "remove failed")
+        rc, err = gitc(repo, "worktree", "remove", path)
+        if rc:
+            keep(path, f"remove failed: {err.strip()}" if err.strip() else "remove failed")
             failed.append(True)
             continue
         s["removed"] += 1
         if br and not any(w[1] == br for w in worktrees(repo)) and not unpushed(repo, br, head):
-            if gitc(repo, "branch", "-d", br)[0]:
-                keep(f"local {br}", "delete failed")
+            rc, err = gitc(repo, "branch", "-d", br)
+            if rc:
+                keep(f"local {br}", f"delete failed: {err.strip()}" if err.strip() else "delete failed")
                 failed.append(True)
-                continue
-            s["dl"] += 1
-        if br and remote is True and not gitc(repo, "push", "origin", "--delete", br)[0]:
-            s["dr"] += 1
-        elif br and remote == "delayed":
-            ok_age, when = remote_age(pr.get(br) or {})
-            if ok_age and not gitc(repo, "push", "origin", "--delete", br)[0]:
-                s["dr"] += 1
             else:
-                print(f"Kept remote {br} (closed {when}, deleted after 7 days)")
+                s["deleted_local"] += 1
+        if br and remote:
+            if remote == "newer":
+                keep(f"remote {br}", "remote has newer commits")
+            elif remote == "unsafe":
+                keep(f"remote {br}", "commits not in main")
+            elif remote == "delayed":
+                ok_age, when = remote_age(pr.get(br) or {})
+                (del_remote(br) if ok_age else print(f"Kept remote {br} (closed {when}, deleted after 7 days)"))
+            else:
+                del_remote(br)
         if not run([os.environ.get("ORCA_CLI_COMMAND", "orca"), "worktree", "rm", path], repo)[0]:
             s["orca"] += 1
 
 def main() -> int:
     apply = "--apply" in sys.argv[1:]
-    s = {"removed": 0, "dl": 0, "dr": 0, "orca": 0, "kept": 0}
+    s = {"removed": 0, "deleted_local": 0, "deleted_remote": 0, "orca": 0, "kept": 0}
     failed: list[bool] = []
     t0 = time.monotonic()
     for r in repos(t0 + BUDGET * 20):
         do_repo(r, apply, time.monotonic() + BUDGET, s, failed)
-    print(f"removed worktrees={s['removed']} deleted local={s['dl']} deleted remote={s['dr']} "
+    verb = "removed" if apply else "would remove"
+    dloc = "deleted local" if apply else "would delete local"
+    drem = "deleted remote" if apply else "would delete remote"
+    print(f"{verb} worktrees={s['removed']} {dloc}={s['deleted_local']} {drem}={s['deleted_remote']} "
           f"orca records={s['orca']} kept={s['kept']}")
     return 1 if failed else 0
 if __name__ == "__main__":

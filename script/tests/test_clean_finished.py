@@ -26,6 +26,14 @@ def load_cf():
 cf = load_cf()
 
 
+def head_oid(cwd) -> str:
+    return subprocess.check_output(["git", "-C", str(cwd), "rev-parse", "HEAD"], text=True).strip()
+
+
+def merged_pr(branch: str, cwd) -> dict:
+    return {"headRefName": branch, "state": "MERGED", "headRefOid": head_oid(cwd), "closedAt": "2026-01-01T00:00:00Z"}
+
+
 class GitFix:
     def __init__(self):
         self.tmp = tempfile.mkdtemp()
@@ -75,7 +83,8 @@ class GitFix:
 
 
 class StubEnv:
-    def __init__(self, fix: GitFix, prs=None, *, lsof="true", pins=None, term_cwds=None, fail_remove=None):
+    def __init__(self, fix: GitFix, prs=None, *, lsof="true", pins=None, term_cwds=None,
+                 fail_remove=None, fail_fetch=False, fail_push=False):
         self.fix = fix
         self.bin = Path(fix.tmp) / "bin"
         self.bin.mkdir(exist_ok=True)
@@ -123,17 +132,24 @@ esac
             self.env["CLEAN_FINISHED_LSOF"] = "missing"
         else:
             self.env["CLEAN_FINISHED_LSOF"] = str(lsof_bin) if (self.bin / "lsof").exists() else "missing"
-        if fail_remove:
+        if fail_remove or fail_fetch or fail_push:
             gitsh = self.bin / "git"
-            name = Path(fail_remove).name
+            name = Path(fail_remove).name if fail_remove else ""
             real_git = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
-            gitsh.write_text(
-                f"#!/bin/sh\n"
-                f'if [ \"$3\" = worktree ] && [ \"$4\" = remove ]; then case \"$5\" in *{name}*) exit 1 ;; esac; fi\n'
-                f'exec {real_git} \"$@\"\n'
-            )
+            hooks = []
+            if fail_remove:
+                hooks.append(f'if [ "$3" = worktree ] && [ "$4" = remove ]; then case "$5" in *{name}*) exit 1 ;; esac; fi')
+            if fail_fetch:
+                hooks.append('if [ "$3" = fetch ] && [ "$4" = origin ]; then echo fetch-fail >&2; exit 1; fi')
+            if fail_push:
+                hooks.append('if [ "$3" = push ] && [ "$5" = --delete ]; then echo push-fail >&2; exit 1; fi')
+            gitsh.write_text("#!/bin/sh\n" + "\n".join(hooks) + f'\nexec {real_git} "$@"\n')
             gitsh.chmod(0o755)
             self.env["PATH"] = str(self.bin) + os.pathsep + self.env["PATH"]
+            if fail_fetch:
+                self.env["fail_fetch"] = "1"
+            if fail_push:
+                self.env["fail_push"] = "1"
 
     def run(self, apply=False):
         cmd = [sys.executable, str(SCRIPT)] + (["--apply"] if apply else [])
@@ -151,7 +167,7 @@ class CleanFinishedTests(unittest.TestCase):
         g._run(wt, "commit", "-m", "c")
         g._run(wt, "push", "-u", "origin", "done")
         g.merge_to_main("done")
-        prs = [{"headRefName": "done", "state": "MERGED", "closedAt": "2026-01-01T00:00:00Z"}]
+        prs = [merged_pr("done", wt)]
         out = StubEnv(g, prs).run()
         self.assertEqual(out.returncode, 0)
         self.assertIn("Remove worktree", out.stdout)
@@ -176,7 +192,7 @@ class CleanFinishedTests(unittest.TestCase):
         (hook / "continual-learning.json").write_text("{}")
         g._run(wt, "add", ".cursor/hooks/state/continual-learning.json")
         g.merge_to_main("hooky")
-        out = StubEnv(g, [{"headRefName": "hooky", "state": "MERGED"}]).run()
+        out = StubEnv(g, [merged_pr("hooky", wt)]).run()
         self.assertIn("Remove worktree", out.stdout)
 
     def test_second_dirty_file_kept(self):
@@ -264,7 +280,7 @@ class CleanFinishedTests(unittest.TestCase):
         g.branch("p")
         wt = g.worktree("wt-p", "p")
         g.merge_to_main("p")
-        out = StubEnv(g, [{"headRefName": "p", "state": "MERGED"}], pins=[str(wt.resolve())]).run()
+        out = StubEnv(g, [merged_pr("p", wt)], pins=[str(wt.resolve())]).run()
         self.assertIn("pinned", out.stdout)
 
     def test_detach_merged_delete(self):
@@ -301,7 +317,7 @@ class CleanFinishedTests(unittest.TestCase):
         wt = g.worktree("wt-busy", "busy")
         g.merge_to_main("busy")
         # lsof stub returns no paths; terminal cwd inside worktree
-        out = StubEnv(g, [{"headRefName": "busy", "state": "MERGED"}], term_cwds=[str(wt.resolve())]).run()
+        out = StubEnv(g, [merged_pr("busy", wt)], term_cwds=[str(wt.resolve())]).run()
         self.assertIn("running process", out.stdout)
 
     def test_apply_remove_failure_exit_one(self):
@@ -310,7 +326,7 @@ class CleanFinishedTests(unittest.TestCase):
         g.branch("stuck")
         wt = g.worktree("wt-stuck", "stuck")
         g.merge_to_main("stuck")
-        out = StubEnv(g, [{"headRefName": "stuck", "state": "MERGED"}], fail_remove=str(wt)).run(apply=True)
+        out = StubEnv(g, [merged_pr("stuck", wt)], fail_remove=str(wt)).run(apply=True)
         self.assertEqual(out.returncode, 1)
         self.assertIn("remove failed", out.stdout)
 
@@ -330,7 +346,18 @@ class CleanFinishedTests(unittest.TestCase):
         g = GitFix()
         self.addCleanup(g.cleanup)
         out = StubEnv(g).run()
-        self.assertRegex(out.stdout.strip().splitlines()[-1], r"^removed worktrees=\d+ deleted local=\d+")
+        self.assertRegex(
+            out.stdout.strip().splitlines()[-1],
+            r"^would remove worktrees=\d+ would delete local=\d+ would delete remote=\d+",
+        )
+        g.branch("ap")
+        wt = g.worktree("wt-ap", "ap")
+        g.merge_to_main("ap")
+        apply_out = StubEnv(g, [merged_pr("ap", wt)]).run(apply=True)
+        self.assertRegex(
+            apply_out.stdout.strip().splitlines()[-1],
+            r"^removed worktrees=\d+ deleted local=\d+ deleted remote=\d+",
+        )
 
     def test_decide_archive_protected(self):
         g = GitFix()
@@ -360,8 +387,56 @@ class CleanFinishedTests(unittest.TestCase):
         g._run(g.main, "cherry-pick", "--no-commit", tip)
         g._run(g.main, "commit", "-m", "squashed")
         g._run(g.main, "push", "origin", "main")
-        out = StubEnv(g, [{"headRefName": "sq", "state": "MERGED"}]).run()
+        out = StubEnv(g, [merged_pr("sq", wt)]).run()
         self.assertIn("Remove worktree", out.stdout)
+
+    def test_fetch_failed_keeps_all(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("a")
+        wt = g.worktree("wt-a", "a")
+        out = StubEnv(g, [merged_pr("a", wt)], fail_fetch=True).run()
+        self.assertIn("fetch failed", out.stdout)
+        self.assertNotIn("Remove worktree", out.stdout)
+
+    def test_merged_not_in_main_kept(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("extra")
+        wt = g.worktree("wt-extra", "extra")
+        (wt / "n").write_text("1\n")
+        g._run(wt, "add", "n")
+        g._run(wt, "commit", "-m", "n")
+        g._run(wt, "push", "-u", "origin", "extra")
+        prs = [{"headRefName": "extra", "state": "MERGED", "headRefOid": head_oid(g.main), "closedAt": "2026-01-01T00:00:00Z"}]
+        out = StubEnv(g, prs).run(apply=True)
+        self.assertIn("commits not in main", out.stdout)
+        self.assertEqual(subprocess.run(["git", "-C", str(g.origin), "show-ref", "refs/heads/extra"], capture_output=True).returncode, 0)
+
+    def test_remote_ahead_kept(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("stale")
+        wt = g.worktree("wt-stale", "stale")
+        old = head_oid(wt)
+        g.merge_to_main("stale")
+        g._run(wt, "commit", "--allow-empty", "-m", "remote-only")
+        g._run(wt, "push", "origin", "stale")
+        g._run(wt, "reset", "--hard", old)
+        out = StubEnv(g, [merged_pr("stale", wt)]).run(apply=True)
+        self.assertIn("remote has newer commits", out.stdout)
+        self.assertEqual(subprocess.run(["git", "-C", str(g.origin), "show-ref", "refs/heads/stale"], capture_output=True).returncode, 0)
+
+    def test_push_delete_failure_exit_one(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("rem")
+        wt = g.worktree("wt-rem", "rem")
+        g._run(wt, "push", "-u", "origin", "rem")
+        g.merge_to_main("rem")
+        out = StubEnv(g, [merged_pr("rem", wt)], fail_push=True).run(apply=True)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("delete failed", out.stdout)
 
 
 if __name__ == "__main__":
