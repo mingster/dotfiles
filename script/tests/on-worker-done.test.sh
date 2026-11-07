@@ -233,5 +233,15 @@ for args in '--pr x' '--author-family gpt' '--head invalid'; do
 done
 "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 > "$tmp/out" 2> "$tmp/err"
 check 'missing required CLI arguments refuse' "$([ $? -ne 0 ]; echo $?)"
+# #671: Orca registers the main checkout only; Cursor --repo path: must not be a linked worktree root.
+main_root="$tmp/wt"
+linked_root="$tmp/linked-wt"
+git -C "$main_root" worktree add -q "$linked_root" -b linked-feature-671
+expected_repo="path:$(dirname "$(cd -P "$(git -C "$linked_root" rev-parse --path-format=absolute --git-common-dir)" && pwd)")"
+export QA_WORKTREE="$linked_root"
+unset GATE_OUT GATE_RC
+valid
+run --dry-run
+check 'linked worktree uses main checkout for --repo path' "$(grep -Fq -- "--repo $expected_repo" "$tmp/out"; echo $?)"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
