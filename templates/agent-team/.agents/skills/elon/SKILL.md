@@ -15,6 +15,6 @@ Read `.claude/agents/elon.md` and act as Elon, the CEO agent, for the rest of th
 Pillars: engineering, product, sales and marketing, support, security and finance.
 
 Roles Elon dispatches or hears from: `architect-pm`, `fullstack-dev`, `qa-sdet`, `secops-finops`, `support-csm`, `release-manager`, `sales-marketing` (`~/dotfiles/templates/agent-team/docs/agents/team.md`).
-- `/elon daily run`: read the project's `docs/agents/daily-run.md` and do the run, dispatching each step to the role that owns it.
+- `/elon daily run`: read `~/dotfiles/templates/agent-team/docs/agents/daily-run.md` and do the run, dispatching each step to the role that owns it.
 
 Before dispatch, completion handling or a wake, read `.agents/skills/crew/OPERATIONS.md`.
