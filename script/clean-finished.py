@@ -23,8 +23,6 @@ def run(cmd: list[str], cwd: str | None = None, limit: float | None = None) -> t
 
 def gitc(repo: str, *args: str, limit: float = 30) -> tuple[int, str]:
     return run(["git", "-C", repo, *args], limit=limit)
-
-
 def worktrees(repo: str) -> list[tuple[str, str | None, str, bool]]:
     rc, out = gitc(repo, "worktree", "list", "--porcelain")
     if rc:
@@ -46,13 +44,11 @@ def fetch_prs(repo: str, end: float) -> tuple[bool, dict[str, dict]]:
     gh, size, rank = os.environ.get("GH", "gh"), 1000, {"OPEN": 3, "MERGED": 2, "CLOSED": 1}
     rc, out = run([gh, "pr", "list", "--state", "all", "--limit", str(size),
                    "--json=number,state,headRefName,headRefOid,closedAt"], repo, max(1.0, end - time.monotonic()))
-    if rc:
-        return False, {}
     try:
-        all_p = json.loads(out or "[]")
+        all_p = json.loads(out or "[]") if not rc else []
     except json.JSONDecodeError:
         return False, {}
-    if not isinstance(all_p, list):
+    if rc or not isinstance(all_p, list):
         return False, {}
     by: dict[str, dict] = {}
     for pr in all_p:
@@ -60,12 +56,14 @@ def fetch_prs(repo: str, end: float) -> tuple[bool, dict[str, dict]]:
         if br and rank.get(st, 0) > rank.get((by.get(br) or {}).get("state"), 0):
             by[br] = pr
     return True, by
-def status_ok(path: str) -> tuple[bool, str]:
+def wt_dirty(path: str) -> tuple[bool, str, bool]:
     rc, out = run(["git", "-C", path, "status", "--porcelain", "-uall"])
-    if rc:
-        return False, "status unreadable"
-    lines = [x for x in out.splitlines() if x.strip()]
-    return (True, "") if not lines or all(x[3:].strip().strip('"') == HOOK for x in lines) else (False, "uncommitted changes")
+    lines = [] if rc else [x for x in out.splitlines() if x.strip()]
+    hook = bool(lines) and all(x[3:].strip().strip('"') == HOOK for x in lines)
+    return (not lines or hook, "" if not lines or hook else "uncommitted changes", hook)
+def status_ok(path: str) -> tuple[bool, str]:
+    ok, why, _ = wt_dirty(path)
+    return ok, why
 def unpushed(repo: str, br: str | None, head: str) -> bool:
     ref = f"refs/heads/{br}" if br else head
     rc, out = gitc(repo, "rev-list", "--count", ref, "--not", "--remotes=origin")
@@ -87,12 +85,9 @@ def remote_age(pr: dict) -> tuple[bool, str]:
     except ValueError:
         return False, raw[:10]
     return days >= 7, raw[:10]
-def commits_safe(repo: str, sha: str, row: dict | None) -> bool:
-    if in_main(repo, sha):
-        return True
-    oid = (row or {}).get("headRefOid") or ""
-    return bool(row and row.get("state") == "MERGED" and oid and oid == sha)
-def remote_plan(repo: str, br: str, head: str, row: dict | None, closed: bool) -> bool | str:
+def commits_safe(repo: str, sha: str, _row: dict | None) -> bool:
+    return in_main(repo, sha) or cherry_ok(repo, sha)
+def remote_plan(repo: str, br: str, head: str, row: dict | None) -> bool | str:
     ref = f"refs/remotes/origin/{br}"
     if not br or gitc(repo, "show-ref", "--verify", ref)[0]:
         return False
@@ -104,8 +99,6 @@ def remote_plan(repo: str, br: str, head: str, row: dict | None, closed: bool) -
     tip = tip.strip() if rc == 0 else ""
     if not tip or not commits_safe(repo, tip, row):
         return "unsafe"
-    if closed:
-        return "delayed" if not remote_age(row or {})[0] else True
     return True
 def under(parent: str, child: str) -> bool:
     try:
@@ -189,12 +182,13 @@ def decide(repo: str, wt: tuple, main: str, dflt: str, pr_ok: bool, pr: dict, pi
         if row and row.get("state") == "MERGED":
             if not commits_safe(repo, head, row):
                 return "keep", "commits not in main", False
-            return "delete", "merged pull request", remote_plan(repo, br, head, row, False)
+            return "delete", "merged pull request", remote_plan(repo, br, head, row)
         rc, ahead = gitc(repo, "rev-list", f"refs/heads/{br}", "--not", "origin/main")
         if (rc == 0 and not ahead.strip()) or in_main(repo, ref) or cherry_ok(repo, ref):
-            return "delete", "already in main", remote_plan(repo, br, head, row, False)
+            return "delete", "already in main", remote_plan(repo, br, head, row)
         if row and row.get("state") == "CLOSED":
-            return "delete", "closed pull request", (remote_plan(repo, br, head, row, False) if in_main(repo, head) or cherry_ok(repo, head) else "delayed")
+            r = remote_plan(repo, br, head, row) if in_main(repo, head) or cherry_ok(repo, head) else "delayed"
+            return "delete", "closed pull request", r
         return "keep", "no pull request", False
     if in_main(repo, head) or cherry_ok(repo, head):
         return "delete", "detached at merged commit", False
@@ -246,10 +240,17 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             keep(path, why)
             continue
         if not apply:
-            print(f"Remove worktree {path} ({why})")
-            s["removed"] += 1
+            print(f"Remove worktree {path} ({why})"); s["removed"] += 1
+            if br and not unpushed(repo, br, head) and len([w for w in worktrees(repo) if w[1] == br]) == 1:
+                s["deleted_local"] += 1
             if br and remote is True:
-                s["deleted_remote"] += 1
+                print(f"Remove remote {br} ({why})"); s["deleted_remote"] += 1
+            elif br and remote == "delayed":
+                ok_age, when = remote_age(pr.get(br) or {})
+                if ok_age:
+                    print(f"Remove remote {br} (closed pull request)"); s["deleted_remote"] += 1
+                else:
+                    print(f"Kept remote {br} (closed {when}, deleted after 7 days)"); s["kept"] += 1
             continue
         busy, pwhy = path_busy(path, terms or set(), end)
         ok, sw = status_ok(path)
@@ -257,7 +258,8 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             keep(path, pwhy or ("running process" if busy else sw))
             failed.append(True)
             continue
-        rc, err = gitc(repo, "worktree", "remove", path)
+        rm = ["worktree", "remove"] + (["--force"] if wt_dirty(path)[2] else []) + [path]
+        rc, err = gitc(repo, *rm)
         if rc:
             keep(path, f"remove failed: {err.strip()}" if err.strip() else "remove failed")
             failed.append(True)
@@ -290,11 +292,8 @@ def main() -> int:
     t0 = time.monotonic()
     for r in repos(t0 + BUDGET * 20):
         do_repo(r, apply, time.monotonic() + BUDGET, s, failed)
-    verb = "removed" if apply else "would remove"
-    dloc = "deleted local" if apply else "would delete local"
-    drem = "deleted remote" if apply else "would delete remote"
-    print(f"{verb} worktrees={s['removed']} {dloc}={s['deleted_local']} {drem}={s['deleted_remote']} "
-          f"orca records={s['orca']} kept={s['kept']}")
+    v, dl, dr = ("removed", "deleted local", "deleted remote") if apply else ("would remove", "would delete local", "would delete remote")
+    print(f"{v} worktrees={s['removed']} {dl}={s['deleted_local']} {dr}={s['deleted_remote']} orca records={s['orca']} kept={s['kept']}")
     return 1 if failed else 0
 if __name__ == "__main__":
     sys.exit(main())

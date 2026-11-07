@@ -192,8 +192,12 @@ class CleanFinishedTests(unittest.TestCase):
         (hook / "continual-learning.json").write_text("{}")
         g._run(wt, "add", ".cursor/hooks/state/continual-learning.json")
         g.merge_to_main("hooky")
-        out = StubEnv(g, [merged_pr("hooky", wt)]).run()
+        env = StubEnv(g, [merged_pr("hooky", wt)])
+        out = env.run()
         self.assertIn("Remove worktree", out.stdout)
+        apply_out = env.run(apply=True)
+        self.assertEqual(apply_out.returncode, 0)
+        self.assertNotIn("remove failed", apply_out.stdout)
 
     def test_second_dirty_file_kept(self):
         g = GitFix()
@@ -254,8 +258,13 @@ class CleanFinishedTests(unittest.TestCase):
         g._run(wt, "push", "-u", "origin", "oldc")
         when = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
         prs = [{"headRefName": "oldc", "state": "CLOSED", "closedAt": when}]
-        out = StubEnv(g, prs).run(apply=True)
+        env = StubEnv(g, prs)
+        prev = env.run()
+        self.assertIn("Remove remote oldc", prev.stdout)
+        self.assertRegex(prev.stdout.splitlines()[-1], r"would delete remote=1")
+        out = env.run(apply=True)
         self.assertEqual(out.returncode, 0)
+        self.assertRegex(out.stdout.splitlines()[-1], r"deleted remote=1")
 
     def test_lsof_missing_keeps_repo(self):
         g = GitFix()
@@ -408,10 +417,57 @@ class CleanFinishedTests(unittest.TestCase):
         g._run(wt, "add", "n")
         g._run(wt, "commit", "-m", "n")
         g._run(wt, "push", "-u", "origin", "extra")
-        prs = [{"headRefName": "extra", "state": "MERGED", "headRefOid": head_oid(g.main), "closedAt": "2026-01-01T00:00:00Z"}]
+        tip = head_oid(wt)
+        prs = [{"headRefName": "extra", "state": "MERGED", "headRefOid": tip, "closedAt": "2026-01-01T00:00:00Z"}]
         out = StubEnv(g, prs).run(apply=True)
         self.assertIn("commits not in main", out.stdout)
+        self.assertNotIn("Remove worktree", out.stdout)
         self.assertEqual(subprocess.run(["git", "-C", str(g.origin), "show-ref", "refs/heads/extra"], capture_output=True).returncode, 0)
+
+    def test_merged_pr_record_does_not_make_tip_safe(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("mergeonly")
+        wt = g.worktree("wt-mergeonly", "mergeonly")
+        (wt / "n").write_text("1\n")
+        g._run(wt, "add", "n")
+        g._run(wt, "commit", "-m", "n")
+        g._run(wt, "push", "-u", "origin", "mergeonly")
+        out = StubEnv(g, [merged_pr("mergeonly", wt)]).run()
+        self.assertIn("commits not in main", out.stdout)
+        self.assertNotIn("Remove worktree", out.stdout)
+
+    def test_preview_apply_summary_counts_match(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("sync")
+        wt = g.worktree("wt-sync", "sync")
+        (wt / "n").write_text("1\n")
+        g._run(wt, "add", "n")
+        g._run(wt, "commit", "-m", "n")
+        g._run(wt, "push", "-u", "origin", "sync")
+        g.merge_to_main("sync")
+        env = StubEnv(g, [merged_pr("sync", wt)])
+        prev = env.run()
+        apply_out = env.run(apply=True)
+        self.assertEqual(prev.returncode, 0)
+        self.assertEqual(apply_out.returncode, 0)
+
+        def counts(line):
+            parts = {}
+            for tok in line.split():
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    parts[k] = int(v)
+            return parts
+
+        pline = prev.stdout.strip().splitlines()[-1]
+        aline = apply_out.stdout.strip().splitlines()[-1]
+        pc = counts(pline)
+        ac = counts(aline)
+        self.assertEqual(pc["worktrees"], ac["worktrees"])
+        self.assertEqual(pc["local"], ac["local"])
+        self.assertEqual(pc["remote"], ac["remote"])
 
     def test_remote_ahead_kept(self):
         g = GitFix()
