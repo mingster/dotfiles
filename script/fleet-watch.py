@@ -822,9 +822,10 @@ def read_heavy_gate_waits(log_path, now=None):
 def wrap_up_last_line_age_seconds(log_path, now):
     """Age of the last wrap-up-scheduled log line, or None when missing or unparsable."""
     try:
-        lines = [ln for ln in Path(log_path).read_text(encoding='utf-8').splitlines() if ln.strip()]
+        text = Path(log_path).read_bytes().decode('utf-8', errors='replace')
     except OSError:
         return None
+    lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines:
         return None
     token = lines[-1].split(None, 1)[0]
