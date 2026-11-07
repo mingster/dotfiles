@@ -27,6 +27,16 @@
     },
     "issue_repo": "owner/name"
   },
+  "issue_scan": {
+    "enabled": false,
+    "repos": ["owner/app"],
+    "repo_roots": {"owner/app": "/path/to/checkout"},
+    "run": "run_id",
+    "from_terminal": "coordinator_terminal_handle",
+    "host": "local",
+    "agent": "cursor",
+    "model": "composer-2.5"
+  },
   "coordinator_watch": {
     "state_dir": "/path/to/private/state",
     "offline_minutes": 10,
