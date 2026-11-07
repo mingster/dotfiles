@@ -101,10 +101,47 @@ case5_py_runner() {
   ok "case5 runs *.test.py files directly and maps script/*.py to them"
 }
 
+case6_on_worker_done() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/on-worker-done.sh 2>&1)
+  grep -Fq 'Selected: script/tests/on-worker-done.test.sh' <<<"$out" \
+    || fail "case6 must select on-worker-done.test.sh"
+  grep -Fq 'Selected: script/tests/test_on_worker_done.py' <<<"$out" \
+    || fail "case6 must select test_on_worker_done.py"
+  ok "case6 on-worker-done maps shell and python tests"
+}
+
+case7_lead_merge_prefix() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/lead-merge.sh 2>&1)
+  grep -Fq 'Selected: script/tests/lead-merge.test.sh' <<<"$out" \
+    || fail "case7 must select lead-merge.test.sh"
+  grep -Fq 'Selected: script/tests/lead-merge-batch.test.sh' <<<"$out" \
+    || fail "case7 must select lead-merge-batch.test.sh"
+  ok "case7 lead-merge maps base and prefix family tests"
+}
+
+case8_full_suite_fallback() {
+  local out count
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/unmapped-helper.sh 2>&1)
+  grep -Fq 'Fallback: script/unmapped-helper.sh -> full suite' <<<"$out" \
+    || fail "case8 missing fallback line"
+  count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
+  [ "${count:-0}" -gt 1 ] || fail "case8 want Script tests > 1 got ${count:-0}"
+  grep -Fq 'Script tests: 0' <<<"$out" && fail "case8 must never report zero script tests"
+  ok "case8 unmapped script falls back to full suite"
+}
+
 case1
 case2
 case3
 case3_skip_reasons
 case4_test_py
 case5_py_runner
-echo 'PASS: 6 acceptance cases'
+case6_on_worker_done
+case7_lead_merge_prefix
+case8_full_suite_fallback
+echo 'PASS: 9 acceptance cases'
