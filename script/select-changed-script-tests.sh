@@ -19,9 +19,14 @@ while [ $# -gt 0 ]; do
 done
 
 selected=()
+MAPPING_ACTIVE=0
+PATH_MAP_HITS=0
 add_test() {
   local candidate=$1 existing
   [ -f "$ROOT/$candidate" ] || return 0
+  if [ "$MAPPING_ACTIVE" -eq 1 ]; then
+    PATH_MAP_HITS=$((PATH_MAP_HITS + 1))
+  fi
   for existing in "${selected[@]+"${selected[@]}"}"; do
     [ "$existing" = "$candidate" ] && return 0
   done
@@ -88,22 +93,10 @@ fallback_eligible() {
   esac
 }
 
-path_already_selected() {
-  local path=$1 existing
-  [ -f "$ROOT/$path" ] || return 1
-  case "$path" in
-    script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
-      for existing in "${selected[@]+"${selected[@]}"}"; do
-        [ "$existing" = "$path" ] && return 0
-      done
-      return 1
-      ;;
-    *) return 1 ;;
-  esac
-}
-
 map_file() {
-  local path=$1 base py before=${#selected[@]}
+  local path=$1 base py
+  MAPPING_ACTIVE=1
+  PATH_MAP_HITS=0
   case "$path" in
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
@@ -131,7 +124,8 @@ map_file() {
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
   esac
-  if fallback_eligible "$path" && [ "${#selected[@]}" -eq "$before" ] && ! path_already_selected "$path"; then
+  MAPPING_ACTIVE=0
+  if fallback_eligible "$path" && [ "$PATH_MAP_HITS" -eq 0 ]; then
     printf 'Fallback: %s -> full suite\n' "$path"
     add_full_suite
   fi
