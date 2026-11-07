@@ -89,9 +89,22 @@ case4_test_py() {
   ok "case4 selects script/tests/*.test.py and co-located script/*.test.sh"
 }
 
+case5_py_runner() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" bash "$root/script/select-changed-script-tests.sh" --list-only \
+    script/run-scoped-tests.py 2>&1)
+  grep -Fq 'Selected: script/tests/run-scoped-tests.test.py' <<<"$out" \
+    || fail "case5 script/run-scoped-tests.py must select its *.test.py"
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" bash "$root/script/select-changed-script-tests.sh" \
+    script/tests/audit-guards.test.py 2>&1) || fail "case5 *.test.py must run and pass: $out"
+  grep -Eq 'Ran [1-9][0-9]* tests?' <<<"$out" || fail "case5 *.test.py must run at least one test"
+  ok "case5 runs *.test.py files directly and maps script/*.py to them"
+}
+
 case1
 case2
 case3
 case3_skip_reasons
 case4_test_py
-echo 'PASS: 5 acceptance cases'
+case5_py_runner
+echo 'PASS: 6 acceptance cases'

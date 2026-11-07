@@ -17,13 +17,12 @@ jobs:
       - name: Run changed script tests
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_BEFORE_SHA: ${{ github.event.before }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            mapfile -t changed < <(git diff --name-only "$GITHUB_BASE_SHA" "$GITHUB_SHA")
+            mapfile -t changed < <(git diff --name-only "$GITHUB_SHA^1" "$GITHUB_SHA")
           else
             if [ -z "${GITHUB_BEFORE_SHA:-}" ] || [ "$GITHUB_BEFORE_SHA" = '0000000000000000000000000000000000000000' ]; then
               changed=()

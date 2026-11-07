@@ -44,6 +44,7 @@ map_file() {
       base=${path#script/}
       base=${base%.py}
       add_test "script/tests/${base}.test.sh"
+      add_test "script/tests/${base}.test.py"
       py=${base//-/_}
       add_test "script/tests/test_${py}.py"
       ;;
@@ -95,7 +96,8 @@ printf 'Script tests: %d\n' "${#run_list[@]}"
 for test_path in "${run_list[@]}"; do
   case "$test_path" in
     *.test.sh) bash "$ROOT/$test_path" ;;
-    script/tests/test_*.py|script/tests/*.test.py)
+    script/tests/*.test.py) python3 "$ROOT/$test_path" ;;
+    script/tests/test_*.py)
       pattern=$(basename "$test_path")
       python3 -m unittest "discover" -s "$ROOT/script/tests" -p "$pattern"
       ;;
