@@ -67,7 +67,9 @@ mkjson() {
   PR_JSON=$(jq --arg body "$body" --argjson comments "$comments_list" --arg base "$base_sha" \
     '. + {body:$body, baseRefOid:$base, closingIssuesReferences:[], comments:$comments}' <<<"$PR_JSON")
   [ -z "$COMMENTS_JSON" ] || PR_JSON=$(jq --argjson comments "$COMMENTS_JSON" '.comments=$comments' <<<"$PR_JSON")
-  API_FILES=$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")
+  API_FILES=${API_OVERRIDE:-$(jq '[.files[] | {filename:.path}]' <<<"$PR_JSON")}
+  files_list=$(jq -s '[.[][] | .filename]' <<<"$API_FILES")
+  PR_JSON=$(jq --argjson fl "$files_list" '.files = ($fl | map({path: .}))' <<<"$PR_JSON")
   PR_JSON=$(jq --argjson count "$(jq length <<<"$API_FILES")" '.changedFiles=$count' <<<"$PR_JSON")
   export API_FILES
   printf '%s' "$PR_DIFF" > "$MERGE_LOG.diff"; export PR_DIFF_FILE="$MERGE_LOG.diff"
@@ -92,6 +94,13 @@ run_merge() {
 # 1 pass: markdown and changelog.d only, Checks PASS, no Review
 setup; files='[{"path":"docs/a.md"},{"path":"changelog.d/x.md"}]'; run_merge
 say "T658-1 pass text-only merges" "$([ "$LAST_CODE" -eq 0 ] && [ "$LAST_CALLS" -eq 1 ]; echo $?)" "$LAST_OUT"
+
+# 1 refuse: deleted non-markdown file keeps text lane off
+setup; API_OVERRIDE='[{"filename":"docs/a.md"},{"filename":"script/removed.sh","status":"removed"}]'
+files='[{"path":"docs/a.md"}]'
+run_merge
+say "T658-1 refuse deleted non-markdown" "$([ "$LAST_CODE" -ne 0 ] && grep -q verdict <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
+unset API_OVERRIDE
 
 # 5 refuse: shell file keeps Verdict rule
 setup; files='[{"path":"docs/a.md"},{"path":"script/x.sh"}]'; verdict=""

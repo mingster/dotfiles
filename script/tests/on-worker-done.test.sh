@@ -25,7 +25,7 @@ cat > "$tmp/gate" <<'GATE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$FIXTURE_ROOT/gate.log"
 [ "${GATE_RC:-0}" = 0 ] || exit "$GATE_RC"
-echo "${GATE_OUT:---agent antigravity --model gemini-4-argon-high}"
+echo "${GATE_OUT:---agent cursor --model grok-4.7-high}"
 GATE
 cat > "$tmp/admission.py" <<'PY'
 import json, os, sys
@@ -58,6 +58,7 @@ chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
 head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 valid() {
+  unset GATE_OUT GATE_RC
   printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
   printf '%s\n' '{"headRefName":"feature/worker-pr"}' > "$tmp/pr-meta.json"
@@ -190,13 +191,16 @@ check 'default brief retains spec standards and receipt rule' "$(grep -q "repo's
 check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual-Axis)' "$brief"; echo $?)"
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
 check 'brief has exact-head Verdict template' "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
-check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=antigravity family=gemini' "$brief"; echo $?)"
+check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=cursor family=grok' "$brief"; echo $?)"
 check 'claude author avoids claude family' "$(grep -q -- '--avoid-family claude' "$tmp/gate.log"; echo $?)"
 for author in cursor gemini antigravity; do
   valid
-  GATE_OUT='--agent claude --model claude-sonnet --effort medium' run --author-family "$author" --dry-run
-  check "$author author picks independent reviewer" "$?"
-  check "$author author uses cursor QA" "$(grep -q -- '--model composer-2.5' "$tmp/out"; echo $?)"
+  export GATE_OUT='--agent claude --model claude-sonnet --effort medium'
+  run --author-family "$author" --dry-run
+  rc=$?
+  unset GATE_OUT
+  check "$author author picks independent reviewer" "$rc"
+  check "$author author never uses composer-2.5" "$( ! grep -Fq -- '--model composer-2.5' "$tmp/out"; echo $?)"
   if [ "$author" = cursor ]; then
     check "$author author avoids composer" "$(grep -q -- '--avoid-family composer' "$tmp/gate.log"; echo $?)"
   else

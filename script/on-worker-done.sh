@@ -297,12 +297,27 @@ from_handle=${ORCA_TERMINAL_HANDLE:-}
   echo "QA start refused head=$head: missing ORCA_TERMINAL_HANDLE" >&2
   exit 1
 }
-cursor_model=composer-2.5
-qa_name="reviewer-pr-$pr"
-cursor_start=${ON_WORKER_DONE_CURSOR_START:-$_here/start-cursor-worker.sh}
-start_args=(bash "$cursor_start" --run "$run" --spec "$brief" --title "reviewer - PR $pr"
-  --model "$cursor_model" --from "$from_handle" --name "$qa_name" --repo "path:$repo_root" --base-branch "$pr_branch")
-[ "${#host_flags[@]}" -eq 0 ] || start_args+=("${host_flags[@]}")
-printf '%q ' "${start_args[@]}"; echo
+[ -n "$ver_model" ] || {
+  echo "QA start refused head=$head: usage gate did not name a reviewer model" >&2
+  exit 1
+}
+if [ "$verifier_provider" = cursor ]; then
+  [ "$ver_model" != "composer-2.5" ] || {
+    echo "QA start refused head=$head: Cursor reviewer must not use composer-2.5" >&2
+    exit 1
+  }
+  qa_name="reviewer-pr-$pr"
+  cursor_start=${ON_WORKER_DONE_CURSOR_START:-$_here/start-cursor-worker.sh}
+  start_args=(bash "$cursor_start" --run "$run" --spec "$brief" --title "reviewer - PR $pr"
+    --model "$ver_model" --from "$from_handle" --name "$qa_name" --repo "path:$repo_root" --base-branch "$pr_branch")
+  [ "${#host_flags[@]}" -eq 0 ] || start_args+=("${host_flags[@]}")
+  printf '%q ' "${start_args[@]}"; echo
+  [ "$dry" = 1 ] && exit 0
+  exec "${start_args[@]}"
+fi
+# shellcheck disable=SC2086
+cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree $worktree_selector --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
+echo "$cmd"
 [ "$dry" = 1 ] && exit 0
-exec "${start_args[@]}"
+# shellcheck disable=SC2086
+exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json

@@ -581,7 +581,7 @@ else
 fi
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi
-# Text-only lane: every live path is markdown or under changelog.d/ (issue #658).
+# Text-only lane: every changed path, including removed, is markdown or under changelog.d/ (issue #658).
 text_only=true
 while IFS= read -r f; do
   case "$f" in
@@ -589,13 +589,16 @@ while IFS= read -r f; do
     *.md) ;;
     *) text_only=false ;;
   esac
-done < <(jq -r '.[]' <<<"$live_files")
+done < <(jq -r '.[]' <<<"$files")
 
 text_lane_role_path() { # <path>
   case "$1" in
-    .claude/agents/*|*/.claude/agents/*|docs/agents/elon-dispatch.md|docs/agents/team.md) return 0 ;;
-    *) return 1 ;;
+    docs/agents/elon-dispatch.md|docs/agents/team.md) return 0 ;;
   esac
+  [[ "$1" == */.claude/agents/* || "$1" == .claude/agents/* ]] && return 0
+  [[ "$1" == *AGENTS.md ]] && return 0
+  [[ "$1" == *model-routing.md ]] && return 0
+  return 1
 }
 owner_receipt_paths=()
 while IFS= read -r f; do
@@ -607,7 +610,7 @@ text_lane_owner_receipt() {
   local ancestor rows sha trailer
   git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head for owner receipt"
   ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base for owner receipt"
-  rows=$(git log --no-merges --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "${owner_receipt_paths[@]}" 2>/dev/null) \
+  rows=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "${owner_receipt_paths[@]}" 2>/dev/null) \
     || die "cannot list commits for owner receipt"
   while IFS=$'\x1f' read -r sha trailer; do
     [ -n "$sha" ] || continue
