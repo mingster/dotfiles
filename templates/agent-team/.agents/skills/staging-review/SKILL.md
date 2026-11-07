@@ -7,7 +7,7 @@ description: Page by page review of the staging site after a deploy. Elon sends 
 
 Run by Elon. Goal: find what is broken, unclear or badly worded on staging, and turn it into tickets the fleet can build in parallel, without the owner. Repeat in rounds; each round reviews the latest deploy.
 
-Product facts (staging URL, demo store, sign-in helper, areas, devices, locales, Owner-Reserved list) come from the project's `docs/agents/staging-review.md`. If that file is missing, write it first from the project's deploy and team docs.
+Product facts (staging URL, demo store, sign-in helper, areas, devices, locales, Owner-Reserved list) come from the Staging review section of the project's `docs/agents/deploy-facts.md`. If that section is missing, write it first from the project's deploy and team docs.
 
 ## 0. Before
 

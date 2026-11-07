@@ -118,6 +118,17 @@ Run `tsc` and `bun test` through `~/dotfiles/script/heavy-gate.sh --weight 1 -- 
 
 `head-checks.sh` may run on any fleet host that has the repo and dotfiles, not only one fixed host; pick the least loaded host (owner rule 2026-10-27). Waiting on the gate (Elon 2026-10-27): never wait through a background shell you poll (Cursor AwaitShell and similar). Each poll starts a shell, so several waiting agents keep the load above the gate and none is admitted (two waiting Cursor workers held an 8 core host at load 20 for 40 minutes; stopping one dropped it to 12 in 2 minutes). A foreground `heavy-gate.sh` wait starts no polling shell, so keep it in the foreground under the tool timeout and continue when admitted; write all code first and gate only the red run and the final touched tests. (Removed 2026-10-28: the 2 minute stop, `gate-blocked` escalation and idle step. In one day it ended 8 workers with code uncommitted or untested and sent 32 gate messages to the coordinators.)
 
+## Issue budget
+
+Every role that files issues follows this; Elon enforces it in the daily run. Keep the list honest: every open issue is real, current and owned.
+
+- **No cap.** There is no limit on open issues. Search first, close duplicates and issues a merged PR fixed, and file one issue per incident.
+- **Bar for a new issue.** It names the change, the done condition as an observable result (command output, screenshot or DB row, never only "tests pass"), the requirement owner (who asked and why), a `Deleted:` line (what it removes, or "nothing, because ...") and the owner role, and a bug carries its P label.
+- **Ready brief check.** `~/dotfiles/script/team-audit.sh` flags every open `ready-for-agent` issue whose body or one comment lacks any of `Acceptance criteria`, `Requirement owner`, `Done condition` or `Deleted`; opt out with the `team-audit: allow` label or line.
+- **Search first.** Run `gh issue list --search` on the key terms before filing, and add to the existing issue instead of opening a duplicate.
+- **Review findings.** A finding on an open PR is fixed in that PR when it is small (about 30 lines or less). Otherwise it becomes at most one follow up issue per PR that lists every finding, never one issue per finding.
+- **State lives in labels.** `blocked` means the issue waits on something outside the team (a halt, an owner decision, a release), and its body names what and who. A `blocked` issue never also carries `ready-for-agent`. When a hold starts or ends, relabel every issue it covers in the same turn, and never say a hold is on or lifted without naming who set or lifted it and when.
+
 ## Gated actions
 
 Holding back a gated action is the default. Only the owner approves actions identified by project policy, including:

@@ -38,7 +38,7 @@ Use the `grilling` skill for the interview and its "Grilling on tracker issues" 
 
 ## 4. Queue the resolved work
 
-Use the `crew` skill to deliver resolved issues under the usage gate. Production steps join the next release batch through `deploy`; the release still needs the owner's explicit go. New facts that affect a spec go on its issue. New problems follow `docs/agents/issue-budget.md`.
+Use the `crew` skill to deliver resolved issues under the usage gate. Production steps join the next release batch through `deploy`; the release still needs the owner's explicit go. New facts that affect a spec go on its issue. New problems follow the Issue budget in `~/dotfiles/templates/agent-team/docs/agents/team.md`.
 
 ## Done when
 
