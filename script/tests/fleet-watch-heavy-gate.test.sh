@@ -37,9 +37,10 @@ def rpc_stub(*_args, **_kwargs):
     return {}
 
 
-def write_wait_log(path, host, seconds_list):
+def write_wait_log(path, host, seconds_list, stamp=None):
     path.parent.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(T0))
+    if stamp is None:
+        stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(T0))
     lines = ['%s host=%s wait_s=%s' % (stamp, host, s) for s in seconds_list]
     path.write_text('\n'.join(lines) + '\n')
 
@@ -58,10 +59,12 @@ class HeavyGateWatch(unittest.TestCase):
             return 0
         return 0
 
-    def run_pass(self, config_body, state_path, issue_exists=False):
+    def run_pass(self, config_body, state_path, issue_exists=False, now=None):
         config = self.home / 'config.json'
         config.write_text(json.dumps(config_body))
         exists = issue_exists
+        if now is None:
+            now = T0 + 5000
 
         def open_exists(repo, title):
             return exists
@@ -74,7 +77,7 @@ class HeavyGateWatch(unittest.TestCase):
                 patch.object(watch, 'pr_notices', return_value=[]), \
                 patch.object(watch, 'usage_notices', return_value=[]), \
                 patch.object(watch, 'deliver_notices', return_value=None), \
-                patch.object(watch.time, 'time', return_value=T0 + 5000):
+                patch.object(watch.time, 'time', return_value=now):
             watch.main()
 
     def test_median_over_two_minutes_opens_one_issue_then_dedupes(self):
@@ -95,6 +98,27 @@ class HeavyGateWatch(unittest.TestCase):
         self.assertEqual(title, 'heavy-gate median wait exceeds 2 minutes on host-a')
         self.gh_calls.clear()
         self.run_pass(cfg, state, issue_exists=True)
+        creates = [c for c in self.gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        self.assertEqual(creates, [])
+
+    def test_recent_fast_waits_ignore_older_slow_rows_for_median(self):
+        wait_log = self.home / 'wait.log'
+        now = T0 + 200_000
+        old_stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(T0))
+        write_wait_log(wait_log, 'host-a', ['180'] * 20, stamp=old_stamp)
+        recent_stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 100))
+        with open(wait_log, 'a') as stream:
+            for _ in range(10):
+                stream.write('%s host=host-a wait_s=1\n' % recent_stamp)
+        state = self.home / 'state.json'
+        cfg = {
+            'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+            'heavy_gate': {
+                'hosts': {'host-a': str(wait_log)},
+                'issue_repo': 'owner/repo',
+            },
+        }
+        self.run_pass(cfg, state, now=now)
         creates = [c for c in self.gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
         self.assertEqual(creates, [])
 

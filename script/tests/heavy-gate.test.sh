@@ -1188,6 +1188,30 @@ while not pathlib.Path(sys.argv[3]).exists():
         body = wait_log.read_text()
         self.assertRegex(body, r'host=fixture-host wait_s=[0-9.]+')
 
+    def test_wait_log_stays_within_line_bound_after_many_appends(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        bound = 40
+        with mock.patch.dict(os.environ, {**self.env, 'HEAVY_GATE_WAIT_LOG': str(wait_log),
+                                          'HEAVY_GATE_WAIT_LOG_MAX_LINES': str(bound)}, clear=True):
+            for i in range(bound + 60):
+                module.log_heavy_gate_wait(0.5 + i * 0.001)
+        lines = [ln for ln in wait_log.read_text().splitlines() if ln.strip()]
+        self.assertLessEqual(len(lines), bound)
+        self.assertGreater(len(lines), 0)
+
+    def test_failed_wait_log_trim_does_not_break_gate(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        self.env['HEAVY_GATE_WAIT_LOG'] = str(wait_log)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module, 'trim_heavy_gate_wait_log', side_effect=OSError('trim failed')):
+            module.log_heavy_gate_wait(1.0)
+        self.config(1)
+        args = module.argparse.Namespace(weight=1, head_checks=False, command=['--', 'true'])
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            self.assertEqual(module.gate(args), 0)
+
 
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):

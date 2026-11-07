@@ -61,6 +61,7 @@ weight 1 jobs. Until then lighter jobs run as usual. Only waits for slots count,
 never waits on the load or memory sensors. Waiter records of dead owners are ignored.
 """
 import argparse
+import calendar
 import contextlib
 import datetime
 import fcntl
@@ -601,6 +602,77 @@ def heavy_gate_wait_log_path():
     return Path.home() / '.orca' / 'logs' / 'heavy-gate-wait.log'
 
 
+HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_LINES = 2000
+HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600
+
+
+def wait_log_max_lines():
+    value = (os.environ.get('HEAVY_GATE_WAIT_LOG_MAX_LINES') or '').strip()
+    if value:
+        try:
+            lines = int(value)
+            if lines > 0:
+                return lines
+        except ValueError:
+            pass
+    return HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_LINES
+
+
+def wait_log_max_age_seconds():
+    value = (os.environ.get('HEAVY_GATE_WAIT_LOG_MAX_AGE_SECONDS') or '').strip()
+    if value:
+        try:
+            seconds = float(value)
+            if math.isfinite(seconds) and seconds > 0:
+                return seconds
+        except ValueError:
+            pass
+    return HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_AGE_SECONDS
+
+
+def wait_log_line_age_seconds(token, now):
+    """Seconds since a log timestamp token, or None when unparsable."""
+    for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ'):
+        try:
+            stamp = datetime.datetime.strptime(token, fmt)
+        except ValueError:
+            continue
+        if stamp.tzinfo is not None:
+            return now - stamp.timestamp()
+        return now - calendar.timegm(stamp.timetuple())
+    return None
+
+
+def trim_heavy_gate_wait_log(path):
+    """Drop aged lines and keep a tail so the wait log cannot grow without limit."""
+    max_lines = wait_log_max_lines()
+    max_age = wait_log_max_age_seconds()
+    try:
+        lines = [line for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    except OSError:
+        return
+    if not lines:
+        return
+    now = time.time()
+    kept = []
+    for line in lines:
+        token = line.split(None, 1)[0]
+        age = wait_log_line_age_seconds(token, now)
+        if age is None or age <= max_age:
+            kept.append(line)
+    if len(kept) > max_lines:
+        kept = kept[-max_lines:]
+    if kept == lines:
+        return
+    temporary = path.with_name(f'.{path.name}.trim-{os.getpid()}.tmp')
+    try:
+        temporary.write_text('\n'.join(kept) + ('\n' if kept else ''), encoding='utf-8')
+        temporary.replace(path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)
+
+
 def heavy_gate_host():
     override = (os.environ.get('HEAVY_GATE_HOST') or '').strip()
     if override:
@@ -621,6 +693,7 @@ def log_heavy_gate_wait(seconds):
         line = f'{stamp} host={heavy_gate_host()} wait_s={seconds:.3f}\n'
         with path.open('a', encoding='utf-8') as stream:
             stream.write(line)
+        trim_heavy_gate_wait_log(path)
     except OSError:
         pass
 

@@ -680,6 +680,7 @@ RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
 BACKUP_STALE_LOG = 10 * 60
 HEAVY_GATE_MEDIAN_LIMIT = 2 * 60
+HEAVY_GATE_WAIT_MEDIAN_DEFAULT_MAX_AGE_SECONDS = 24 * 3600
 WRAP_UP_STALE_LIMIT = 20 * 60
 WRAP_UP_STALE_LOG = 10 * 60
 STALL_IDLE_LIMIT_DEFAULT = 30 * 60
@@ -763,14 +764,48 @@ def open_backup_issue_exists(repo, title=AGENT_STATE_BACKUP_STALE_TITLE, run=sub
     return open_fixed_title_issue_exists(repo, title, run=run)
 
 
-def read_heavy_gate_waits(log_path):
-    """Seconds recorded in a heavy-gate wait log, in file order."""
+def heavy_gate_wait_median_max_age_seconds():
+    value = (os.environ.get('HEAVY_GATE_WAIT_MEDIAN_MAX_AGE_SECONDS') or '').strip()
+    if value:
+        try:
+            seconds = float(value)
+            if math.isfinite(seconds) and seconds > 0:
+                return seconds
+        except ValueError:
+            pass
+    return HEAVY_GATE_WAIT_MEDIAN_DEFAULT_MAX_AGE_SECONDS
+
+
+def wait_log_line_age_seconds(token, now):
+    """Seconds since a wait-log timestamp token, or None when unparsable."""
+    for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ'):
+        try:
+            stamp = datetime.datetime.strptime(token, fmt)
+        except ValueError:
+            continue
+        if stamp.tzinfo is not None:
+            return now - stamp.timestamp()
+        return now - calendar.timegm(stamp.timetuple())
+    return None
+
+
+def read_heavy_gate_waits(log_path, now=None):
+    """Seconds from recent heavy-gate wait log lines, in file order."""
+    if now is None:
+        now = time.time()
+    max_age = heavy_gate_wait_median_max_age_seconds()
     try:
         text = Path(log_path).read_text(encoding='utf-8')
     except OSError:
         return []
     waits = []
     for line in text.splitlines():
+        if not line.strip():
+            continue
+        token = line.split(None, 1)[0]
+        age = wait_log_line_age_seconds(token, now)
+        if age is not None and age > max_age:
+            continue
         match = re.search(r'\bwait_s=([0-9]+(?:\.[0-9]+)?)', line)
         if not match:
             continue
@@ -819,7 +854,7 @@ def heavy_gate_notices(config, state, now, act=None, issue_exists=None):
     notices = []
     log_bits = []
     for host, path in hosts.items():
-        waits = read_heavy_gate_waits(path)
+        waits = read_heavy_gate_waits(path, now)
         median = statistics.median(waits) if waits else None
         if median is not None:
             log_bits.append('heavy_gate_median_%s=%.0f' % (host, median))
