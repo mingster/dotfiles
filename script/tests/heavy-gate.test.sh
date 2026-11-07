@@ -1163,6 +1163,31 @@ while not pathlib.Path(sys.argv[3]).exists():
         self.finish(holder)
         self.finish(waiting)
 
+    def test_free_host_does_not_sleep_before_admission(self):
+        self.config(1)
+        sleeps = []
+        args = module.argparse.Namespace(weight=1, head_checks=False, command=['--', 'true'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module.time, 'sleep', side_effect=lambda s: sleeps.append(s)):
+            self.assertEqual(module.gate(args), 0)
+        self.assertEqual(sleeps, [])
+
+    def test_wait_appends_host_and_seconds_to_wait_log(self):
+        self.config(1)
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        self.env['HEAVY_GATE_WAIT_LOG'] = str(wait_log)
+        self.env['HEAVY_GATE_HOST'] = 'fixture-host'
+        holder = self.job('hold', hold=True)
+        self.wait_for(lambda: self.started('hold'))
+        after = self.job('after', 0.05)
+        self.wait_for(lambda: bool(select.select([after.stderr], [], [], 0)[0]))
+        self.release('hold')
+        self.finish(after)
+        self.finish(holder)
+        body = wait_log.read_text()
+        self.assertRegex(body, r'host=fixture-host wait_s=[0-9.]+')
+
 
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):

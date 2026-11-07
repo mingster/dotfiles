@@ -15,6 +15,18 @@
     "stamp": "/path/to/private/agent-state/.last-push-stamp",
     "issue_repo": "owner/name"
   },
+  "heavy_gate": {
+    "hosts": {
+      "host-id": "/path/to/private/heavy-gate-wait.log"
+    },
+    "issue_repo": "owner/name"
+  },
+  "wrap_up": {
+    "hosts": {
+      "host-id": "/path/to/private/wrap-up-scheduled.log"
+    },
+    "issue_repo": "owner/name"
+  },
   "coordinator_watch": {
     "state_dir": "/path/to/private/state",
     "offline_minutes": 10,

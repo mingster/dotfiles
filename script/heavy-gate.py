@@ -75,6 +75,7 @@ import shutil
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -593,6 +594,37 @@ def max_wait():
     return value
 
 
+def heavy_gate_wait_log_path():
+    override = (os.environ.get('HEAVY_GATE_WAIT_LOG') or '').strip()
+    if override:
+        return Path(override)
+    return Path.home() / '.orca' / 'logs' / 'heavy-gate-wait.log'
+
+
+def heavy_gate_host():
+    override = (os.environ.get('HEAVY_GATE_HOST') or '').strip()
+    if override:
+        return override
+    try:
+        return socket.gethostname()
+    except OSError:
+        return 'unknown'
+
+
+def log_heavy_gate_wait(seconds):
+    if not math.isfinite(seconds) or seconds < 0:
+        return
+    path = heavy_gate_wait_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        line = f'{stamp} host={heavy_gate_host()} wait_s={seconds:.3f}\n'
+        with path.open('a', encoding='utf-8') as stream:
+            stream.write(line)
+    except OSError:
+        pass
+
+
 def job_class():
     value = os.environ.get('HEAVY_GATE_CLASS', '')
     if value not in ('', 'short', 'long'):
@@ -641,6 +673,7 @@ def gate(args):
     slots = Slots(count)
     last_notice = -math.inf
     nested = holds_slot()
+    wait_begin = None
     try:
         while not nested:
             load, free = sample()
@@ -668,7 +701,11 @@ def gate(args):
             if now - last_notice >= 60:
                 print(f'heavy-gate: {reason}', file=sys.stderr, flush=True)
                 last_notice = now
+            if wait_begin is None:
+                wait_begin = now
             time.sleep(poll_interval())
+        if wait_begin is not None:
+            log_heavy_gate_wait(time.monotonic() - wait_begin)
         with children(slots, nested=nested) as processes:
             env = dict(os.environ)
             if not nested:

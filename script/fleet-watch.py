@@ -3,16 +3,22 @@
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
 host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
 pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,
-optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo};
+optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo},
+optional heavy_gate {hosts, issue_repo} wait-log median check, optional wrap_up {hosts, issue_repo}
+round-log freshness;
 --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
 """
 import argparse
 import calendar
+import datetime
 import json
+import math
 import os
 from pathlib import Path
+import re
 import shlex
+import statistics
 import subprocess
 import sys
 import time
@@ -673,6 +679,9 @@ def pr_notices(config, state, now, fetch=None):
 RUN_WINDOW = 2 * 3600
 BACKUP_LIMIT = 30 * 60
 BACKUP_STALE_LOG = 10 * 60
+HEAVY_GATE_MEDIAN_LIMIT = 2 * 60
+WRAP_UP_STALE_LIMIT = 20 * 60
+WRAP_UP_STALE_LOG = 10 * 60
 STALL_IDLE_LIMIT_DEFAULT = 30 * 60
 STALL_RESTART_RECORD_TTL_DEFAULT = 24 * 3600
 PASS_FAIL_LIMIT = 4 * 60
@@ -712,9 +721,11 @@ def projection_host_id(w):
     return 'local'
 
 AGENT_STATE_BACKUP_STALE_TITLE = 'agent-state backup has not pushed for 30 minutes'
+HEAVY_GATE_MEDIAN_TITLE = 'heavy-gate median wait exceeds 2 minutes on %s'
+WRAP_UP_STALE_TITLE = 'wrap-up last round stale on %s'
 
 
-def open_backup_issue_exists(repo, title=AGENT_STATE_BACKUP_STALE_TITLE, run=subprocess.run):
+def open_fixed_title_issue_exists(repo, title, run=subprocess.run):
     """True if an open issue has the exact title, False if search succeeded with no match, None if search failed."""
     q = '"%s" in:title' % title.replace('\\', '\\\\').replace('"', '\\"')
     try:
@@ -746,6 +757,136 @@ def open_backup_issue_exists(repo, title=AGENT_STATE_BACKUP_STALE_TITLE, run=sub
         return any(isinstance(row, dict) and row.get('title') == title for row in rows)
     except (subprocess.SubprocessError, OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+def open_backup_issue_exists(repo, title=AGENT_STATE_BACKUP_STALE_TITLE, run=subprocess.run):
+    return open_fixed_title_issue_exists(repo, title, run=run)
+
+
+def read_heavy_gate_waits(log_path):
+    """Seconds recorded in a heavy-gate wait log, in file order."""
+    try:
+        text = Path(log_path).read_text(encoding='utf-8')
+    except OSError:
+        return []
+    waits = []
+    for line in text.splitlines():
+        match = re.search(r'\bwait_s=([0-9]+(?:\.[0-9]+)?)', line)
+        if not match:
+            continue
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            continue
+        if math.isfinite(value) and value >= 0:
+            waits.append(value)
+    return waits
+
+
+def wrap_up_last_line_age_seconds(log_path, now):
+    """Age of the last wrap-up-scheduled log line, or None when missing or unparsable."""
+    try:
+        lines = [ln for ln in Path(log_path).read_text(encoding='utf-8').splitlines() if ln.strip()]
+    except OSError:
+        return None
+    if not lines:
+        return None
+    token = lines[-1].split(None, 1)[0]
+    for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ'):
+        try:
+            stamp = datetime.datetime.strptime(token, fmt)
+        except ValueError:
+            continue
+        if stamp.tzinfo is not None:
+            return now - stamp.timestamp()
+        return now - calendar.timegm(stamp.timetuple())
+    return None
+
+
+def heavy_gate_notices(config, state, now, act=None, issue_exists=None):
+    """Open one issue per host when median wait in the log exceeds two minutes."""
+    block = config.get('heavy_gate') or {}
+    hosts = block.get('hosts') or {}
+    repo = block.get('issue_repo')
+    if not hosts or not repo:
+        return [], []
+    if act is None:
+        act = run_gh
+    if issue_exists is None:
+        issue_exists = open_fixed_title_issue_exists
+    limit = block.get('median_limit_seconds', HEAVY_GATE_MEDIAN_LIMIT)
+    tracked = state.setdefault('heavy_gate_issues', {})
+    notices = []
+    log_bits = []
+    for host, path in hosts.items():
+        waits = read_heavy_gate_waits(path)
+        median = statistics.median(waits) if waits else None
+        if median is not None:
+            log_bits.append('heavy_gate_median_%s=%.0f' % (host, median))
+        if median is None or median <= limit:
+            tracked.pop(host, None)
+            continue
+        log_bits.append('heavy_gate_slow_%s' % host)
+        title = HEAVY_GATE_MEDIAN_TITLE % host
+        if tracked.get(host):
+            continue
+        exists = issue_exists(repo, title)
+        if exists is None:
+            continue
+        if exists:
+            tracked[host] = True
+            continue
+        if act(['gh', 'issue', 'create', '--repo', repo, '--title', title,
+                '--body', 'median wait %.0fs on host %s; see %s' % (median, host, path)]):
+            notices.append('%s, issue not opened' % title)
+            continue
+        tracked[host] = True
+        notices.append(title)
+    return notices, log_bits
+
+
+def wrap_up_notices(config, state, now, stamp_age=None, act=None, issue_exists=None):
+    """Open one issue per host when the last wrap-up round line is older than the stale limit."""
+    block = config.get('wrap_up') or {}
+    hosts = block.get('hosts') or {}
+    repo = block.get('issue_repo')
+    if not hosts or not repo:
+        return [], []
+    if stamp_age is None:
+        stamp_age = wrap_up_last_line_age_seconds
+    if act is None:
+        act = run_gh
+    if issue_exists is None:
+        issue_exists = open_fixed_title_issue_exists
+    limit = block.get('stale_limit_seconds', WRAP_UP_STALE_LIMIT)
+    tracked = state.setdefault('wrap_up_issues', {})
+    notices = []
+    log_bits = []
+    for host, path in hosts.items():
+        age = stamp_age(path, now)
+        if age is not None:
+            log_bits.append('wrap_up_age_%s=%d' % (host, int(age)))
+            if age > WRAP_UP_STALE_LOG:
+                log_bits.append('wrap_up_stale_%s' % host)
+        if age is None or age <= limit:
+            tracked.pop(host, None)
+            continue
+        title = WRAP_UP_STALE_TITLE % host
+        if tracked.get(host):
+            continue
+        exists = issue_exists(repo, title)
+        if exists is None:
+            continue
+        if exists:
+            tracked[host] = True
+            continue
+        if act(['gh', 'issue', 'create', '--repo', repo, '--title', title,
+                '--body', 'last wrap-up log line on host %s is %ds old; see %s' % (host, int(age), path)]):
+            notices.append('%s, issue not opened' % title)
+            continue
+        tracked[host] = True
+        notices.append(title)
+    return notices, log_bits
 
 
 def fetch_failed_runs(repo):
@@ -1583,6 +1724,9 @@ def main():
     notices += workflow_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
+    heavy_extra, heavy_log = heavy_gate_notices(config, state, now)
+    wrap_extra, wrap_log = wrap_up_notices(config, state, now)
+    notices += heavy_extra + wrap_extra
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
@@ -1602,6 +1746,10 @@ def main():
         parts.append('backup_age_s=%d' % int(backup_age))
         if backup_age > BACKUP_STALE_LOG:
             parts.append('backup_stale')
+    if heavy_log:
+        parts.extend(heavy_log)
+    if wrap_log:
+        parts.extend(wrap_log)
     if stall_log:
         parts.append('stall ' + ','.join(stall_log))
     log_fleet_watch('; '.join(parts))
