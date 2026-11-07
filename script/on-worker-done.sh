@@ -174,22 +174,25 @@ try:
     environment = result["environment_id"]
     selector = result["worktree_selector"]
     host = result["host"]
+    repo_id = result.get("repo_id", "")
     if not isinstance(environment, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", environment) or environment == "LOCAL":
         raise ValueError("saved ID required")
     if not isinstance(selector, str) or not re.fullmatch(r"identity:wt2:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", selector):
         raise ValueError("native identity required")
     if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", host):
         raise ValueError("host required")
+    if not isinstance(repo_id, str) or not repo_id:
+        raise ValueError("repo_id required")
 except (ValueError, KeyError, TypeError):
     sys.exit("invalid validated admission result")
-print(environment, selector)
+print(environment, selector, repo_id)
 PYJSON
 ); then
   echo "QA start refused head=$head: invalid validated admission result" >&2
   rm -f "$admission_err" "$admission_out"
   exit 1
 fi
-read -r environment_id worktree_selector <<< "$admission_fields"
+read -r environment_id worktree_selector admission_repo_id <<< "$admission_fields"
 rm -f "$admission_err" "$admission_out"
 if [ "$environment_id" != local ]; then
   host_flags=(--on "$environment_id")
@@ -288,24 +291,25 @@ pr_branch=$(gh pr view "$pr" --repo "$repo" --json headRefName -q .headRefName 2
   echo "QA start refused head=$head: cannot read PR head branch" >&2
   exit 1
 }
-common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
-  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
-  exit 1
-}
-repo_root=$(dirname "$(cd -P "$common" && pwd)") || {
-  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
-  exit 1
-}
-repo_root_physical=$(cd -P "$repo_root" && pwd) || {
-  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
-  exit 1
-}
-repo_list_json=$("$orca" repo list --json 2>/dev/null) || {
-  echo "QA start refused head=$head: cannot read orca repo list" >&2
-  exit 1
-}
-repo_resolve_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-repo.err.XXXXXX")
-if ! orca_repo_id=$(python3 - "$repo_list_json" "$repo_root_physical" 2>"$repo_resolve_err" <<'PYREPO'
+if [ "$environment_id" = local ]; then
+  common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+    exit 1
+  }
+  repo_root=$(dirname "$(cd -P "$common" && pwd)") || {
+    echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+    exit 1
+  }
+  repo_root_physical=$(cd -P "$repo_root" && pwd) || {
+    echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+    exit 1
+  }
+  repo_list_json=$("$orca" repo list --json 2>/dev/null) || {
+    echo "QA start refused head=$head: cannot read orca repo list" >&2
+    exit 1
+  }
+  repo_resolve_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-repo.err.XXXXXX")
+  if ! orca_repo_id=$(python3 - "$repo_list_json" "$repo_root_physical" 2>"$repo_resolve_err" <<'PYREPO'
 import json, os, sys
 
 try:
@@ -332,13 +336,20 @@ for entry in repos:
 print(f"no registered Orca repo for checkout {target}", file=sys.stderr)
 sys.exit(1)
 PYREPO
-); then
-  resolve_msg=$(tr '\n' ' ' < "$repo_resolve_err")
+  ); then
+    resolve_msg=$(tr '\n' ' ' < "$repo_resolve_err")
+    rm -f "$repo_resolve_err"
+    echo "QA start refused head=$head: ${resolve_msg:-cannot resolve registered repo}" >&2
+    exit 1
+  fi
   rm -f "$repo_resolve_err"
-  echo "QA start refused head=$head: ${resolve_msg:-cannot resolve registered repo}" >&2
-  exit 1
+  if [ "$admission_repo_id" != "$orca_repo_id" ]; then
+    echo "QA start refused head=$head: admission repo_id does not match local checkout" >&2
+    exit 1
+  fi
+else
+  orca_repo_id=$admission_repo_id
 fi
-rm -f "$repo_resolve_err"
 repo_selector="id:$orca_repo_id"
 from_handle=${ORCA_TERMINAL_HANDLE:-}
 [ -n "$from_handle" ] || {

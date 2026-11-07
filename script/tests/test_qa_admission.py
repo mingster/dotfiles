@@ -49,6 +49,10 @@ class QaAdmission(unittest.TestCase):
         self.assertIn(reason, p.stderr)
         self.assertNotIn('Traceback', p.stderr)
 
+    def test_success_includes_repo_id(self):
+        data = self.success()
+        self.assertEqual(data['repo_id'], 'repo-id')
+
     def test_absent_optional_policy_accepts_claude(self):
         self.success()
 

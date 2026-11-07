@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # No orca: digest delivery via orchestration send; typed runs may still use terminal send.
 set -euo pipefail
-PYTHON=python3
-if [[ -x /usr/bin/python3 ]]; then PYTHON=/usr/bin/python3; fi
+path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
+PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
+[ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"
+[ -x "$PYTHON" ] || { echo "missing python3" >&2; exit 1; }
 "$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import contextlib, importlib.util, io, json, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch

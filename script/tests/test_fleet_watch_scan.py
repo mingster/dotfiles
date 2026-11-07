@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import os
 import subprocess
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -34,15 +36,29 @@ def issue(number, labels=None, body='', comments=None, created=None, blocked=Fal
     return row
 
 
-def pr(number, head='a' * 40, checks=(), comments=(), branch='feature/rework', labels=()):
+def pr(number, head='a' * 40, checks=(), comments=(), branch='feature/pr', labels=(), draft=False):
     return {
         'number': number,
         'state': 'OPEN',
+        'isDraft': draft,
         'headRefOid': head,
         'headRefName': branch,
         'statusCheckRollup': list(checks),
         'comments': list(comments),
         'labels': [{'name': n} for n in labels],
+    }
+
+
+def author_worker(number, branch, worktree='/tmp/wt', dispatch='ctx_author'):
+    return {
+        'dispatchId': dispatch,
+        'githubPullRequestNumber': number,
+        'headRefName': branch,
+        'projection': {
+            'provider': {'id': 'claude', 'model': 'sonnet'},
+            'workspace': {'path': worktree},
+            'runId': 'run_x',
+        },
     }
 
 
@@ -108,6 +124,15 @@ class ReviewAtHead(unittest.TestCase):
         ])
         self.assertFalse(fw.review_failed_at_head(row))
 
+    def test_checks_receipt_does_not_hide_verdict(self):
+        head = 'a' * 40
+        other = 'b' * 40
+        row = pr(5, head=head, comments=[
+            {'body': 'Verdict: PASS head=%s' % head},
+            {'body': 'Checks: PASS head=%s main=%s' % (head, other)},
+        ])
+        self.assertTrue(fw.review_verdict_at_head(row))
+
     def test_review_fail_comment_triggers_rework(self):
         head = 'g' * 40
         row = pr(5, head=head, comments=[
@@ -140,6 +165,7 @@ class FetchPrsFields(unittest.TestCase):
             fields = calls[0][calls[0].index('--json') + 1]
             self.assertIn('headRefName', fields)
             self.assertIn('labels', fields)
+            self.assertIn('isDraft', fields)
         finally:
             fw.subprocess.run = orig
 
@@ -201,8 +227,9 @@ class IssueScanPass(unittest.TestCase):
     def run_pass(
         self, state, issues_by_repo=None, starts=None, gate_ok=True, admitted=True,
         prs_by_repo=None, inventory_ok=True, start_rc=0, workers=None, persist=None,
-        admit_occupied=0, host_cap=4,
+        admit_occupied=0, host_cap=4, detached=None, checks_locked=False, config=None,
     ):
+        cfg = config or self.CONFIG
         issues_by_repo = issues_by_repo or {}
         prs_by_repo = prs_by_repo or {}
         starts = starts if starts is not None else []
@@ -224,19 +251,30 @@ class IssueScanPass(unittest.TestCase):
                 'occupied': admit_occupied,
             }
 
+        detached_starts = []
+
         def start_worker(command):
             starts.append(command)
             return start_rc
+
+        def start_detached(command, extra_env=None):
+            if detached is True:
+                detached_starts.append((command, extra_env))
+            return 0
 
         def persist_state():
             persists.append(True)
 
         notices, log = fw.issue_scan_pass(
-            self.CONFIG, state, NOW, workers,
+            cfg, state, NOW, workers,
             list_issues=list_issues, pr_fetch=fetch_prs,
             gate_check=gate_check, admit_fn=admit, start_worker=start_worker,
             inventory_ok=inventory_ok, persist_state=persist_state,
+            start_detached=start_detached,
+            checks_lock_live=(lambda _root: True) if checks_locked else None,
         )
+        if detached is True:
+            starts.extend([row[0] for row in detached_starts])
         return notices, log, starts, persists
 
     def test_disabled_starts_nothing(self):
@@ -374,6 +412,159 @@ class IssueScanPass(unittest.TestCase):
         )
         self.assertEqual(len(starts), 1)
         self.assertIn('rework_start=', ','.join(log))
+
+    def test_publication_stamp_then_issue_scan_starts_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            wt = os.path.join(td, 'wt')
+            subprocess.run(['git', 'init', '-q', wt], check=True)
+            subprocess.run(
+                ['git', '-C', wt, 'config', 'user.email', 't@example.com'],
+                check=True,
+            )
+            subprocess.run(['git', '-C', wt, 'config', 'user.name', 't'], check=True)
+            subprocess.run(
+                ['git', '-C', wt, 'commit', '--allow-empty', '-m', 'init', '-q'],
+                check=True,
+            )
+            head = subprocess.check_output(
+                ['git', '-C', wt, 'rev-parse', 'HEAD'], text=True,
+            ).strip()
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
+            try:
+                self.assertTrue(fw.write_post_push_stamp(
+                    REPO, head, checks_started=True, reviewer_started=True,
+                ))
+                state = {}
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(30, head=head, branch=branch)]}
+                workers = [author_worker(30, branch, worktree=wt)]
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: wt}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(starts, [])
+                self.assertNotIn('head_checks_start=' + head[:8], ','.join(log))
+                self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+    def test_remote_author_worktree_coordinator_stamp_starts_checks_and_reviewer_once(self):
+        remote_wt = '/remote/blueDevil/workspaces/dotfiles/pr-680'
+        with tempfile.TemporaryDirectory() as td:
+            state_root = os.path.join(td, 'coord-state')
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = state_root
+            root = os.path.join(td, 'repo-root')
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'config', 'user.email', 't@example.com'],
+                check=True,
+            )
+            subprocess.run(['git', '-C', root, 'config', 'user.name', 't'], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'commit', '--allow-empty', '-m', 'init', '-q'],
+                check=True,
+            )
+            try:
+                head = 'b' * 40
+                self.assertTrue(fw.write_post_push_stamp(
+                    REPO, head, checks_started=True, reviewer_started=True,
+                ))
+                state = {}
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(31, head=head, branch=branch)]}
+                workers = [author_worker(31, branch, worktree=remote_wt)]
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: root}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(starts, [], log)
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+        with tempfile.TemporaryDirectory() as td:
+            state_root = os.path.join(td, 'coord-state')
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = state_root
+            root = os.path.join(td, 'repo-root')
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'config', 'user.email', 't@example.com'],
+                check=True,
+            )
+            subprocess.run(['git', '-C', root, 'config', 'user.name', 't'], check=True)
+            subprocess.run(
+                ['git', '-C', root, 'commit', '--allow-empty', '-m', 'init', '-q'],
+                check=True,
+            )
+            try:
+                head = 'c' * 40
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(32, head=head, branch=branch)]}
+                workers = [author_worker(32, branch, worktree=remote_wt)]
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: root}
+                state = {}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(len(starts), 2, log)
+                _, _, starts2, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
+                )
+                self.assertEqual(starts2, [])
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+    def test_open_pr_starts_checks_and_reviewer_in_parallel_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
+            try:
+                state = {}
+                head = '9' * 40
+                branch = 'mingster/build-683'
+                prs = {REPO: [pr(20, head=head, branch=branch)]}
+                workers = [author_worker(20, branch)]
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True,
+                )
+                self.assertEqual(len(starts), 2)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
+                self.assertTrue(any('on-worker-done.sh' in ' '.join(cmd) for cmd in starts))
+                self.assertIn('head_checks_start=' + head[:8], ','.join(log))
+                self.assertIn('reviewer_start=' + head[:8], ','.join(log))
+                _, _, starts2, _ = self.run_pass(
+                    state, prs_by_repo=prs, workers=workers, detached=True,
+                )
+                self.assertEqual(starts2, [])
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+    def test_verdict_blocks_second_reviewer_when_checks_receipt_is_newer(self):
+        state = {}
+        head = '7' * 40
+        other = '6' * 40
+        branch = 'mingster/build-683'
+        pr_row = pr(
+            22, head=head, branch=branch,
+            comments=[
+                {'body': 'Verdict: PASS head=%s' % head},
+                {'body': 'Checks: PASS head=%s main=%s' % (head, other)},
+            ],
+        )
+        prs = {REPO: [pr_row]}
+        workers = [author_worker(22, branch)]
+        _, log, starts, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
+        self.assertEqual(starts, [])
+        self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
+
+    def test_locked_checks_skips_second_head_checks_spawn(self):
+        state = {}
+        head = '8' * 40
+        prs = {REPO: [pr(21, head=head)]}
+        _, log, starts, _ = self.run_pass(state, prs_by_repo=prs, detached=True, checks_locked=True)
+        self.assertEqual(starts, [])
+        self.assertNotIn('head_checks_start=', ','.join(log))
 
     def test_failed_review_starts_one_rework_per_head(self):
         state = {}

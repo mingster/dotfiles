@@ -1,0 +1,1 @@
+Store post-publication checks/reviewer stamps in coordinator-local state keyed by repo and head so fleet-watch on the coordinator does not respawn when the author worktree lives on a remote builder (#683).

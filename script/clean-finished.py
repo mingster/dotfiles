@@ -103,6 +103,43 @@ def remote_keep_line(br: str, remote: bool | str) -> str | None:
 
 def archive_line(br: str, sha: str) -> str:
     return f"Archive remote {br} (git push origin {sha}:refs/tags/archive/{br})"
+def origin_branches(repo: str) -> list[str]:
+    rc, out = gitc(repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
+    if rc:
+        return []
+    return [ln[7:] for ln in out.splitlines() if ln.startswith("origin/") and ln != "origin/HEAD"]
+
+
+def decide_remote_only(repo: str, br: str, dflt: str, pr_ok: bool, pr: dict) -> tuple[str, str, bool | str]:
+    if br == dflt or br in PROT:
+        return "keep", "default branch" if br == dflt else br, False
+    if br.startswith("archive/"):
+        return "keep", "archive branch", False
+    if not pr_ok:
+        return "keep", "pull request list unavailable", False
+    row = pr.get(br)
+    if not row:
+        return "keep", "no pull request", False
+    if row.get("state") == "OPEN":
+        return "keep", "open pull request", False
+    ref = f"refs/remotes/origin/{br}"
+    if gitc(repo, "show-ref", "--verify", ref)[0]:
+        return "keep", "no remote branch", False
+    rc, tip = gitc(repo, "rev-parse", ref)
+    tip = tip.strip() if rc == 0 else ""
+    if not tip:
+        return "keep", "no remote branch", False
+    if row.get("state") == "MERGED":
+        if not commits_safe(repo, tip):
+            return "keep", "commits not in main", False
+        return "delete", "merged pull request", remote_plan(repo, br, "", row)
+    if row.get("state") == "CLOSED":
+        if in_main(repo, tip) or cherry_ok(repo, tip):
+            return "delete", "closed pull request", remote_plan(repo, br, "", row)
+        return "delete", "closed pull request", "delayed"
+    return "keep", "no pull request", False
+
+
 def remote_plan(repo: str, br: str, head: str, row: dict | None) -> bool | str:
     ref = f"refs/remotes/origin/{br}"
     if not br or gitc(repo, "show-ref", "--verify", ref)[0]:
@@ -214,6 +251,9 @@ def decide(repo: str, wt: tuple, main: str, dflt: str, pr_ok: bool, pr: dict, pi
 def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[bool]) -> None:
     def keep(target: str, why: str) -> None:
         print(f"Kept {target} ({why})"); s["kept"] += 1
+
+    def keep_remote(br: str, why: str) -> None:
+        print(f"Kept remote {br} ({why})"); s["kept"] += 1
     def del_remote(br: str) -> None:
         rc, err = gitc(repo, "push", "origin", "--delete", br)
         if rc:
@@ -326,6 +366,21 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             failed.append(True)
         else:
             s["orca"] += 1
+    checked_out = {wt[1] for wt in wts if wt[1]} | kept_br
+    for br in origin_branches(repo):
+        if time.monotonic() >= end:
+            keep_remote(br, "time budget")
+            continue
+        if br in checked_out:
+            continue
+        act, why, remote = decide_remote_only(repo, br, dflt, pr_ok, pr)
+        if act == "keep":
+            keep_remote(br, why)
+            continue
+        ref = f"refs/remotes/origin/{br}"
+        rc, tip = gitc(repo, "rev-parse", ref)
+        head = tip.strip() if rc == 0 else ""
+        plan_remote(br, head, remote, why)
 
 def main() -> int:
     apply = "--apply" in sys.argv[1:]

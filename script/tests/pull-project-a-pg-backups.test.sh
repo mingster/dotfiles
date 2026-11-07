@@ -4,6 +4,8 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/lib/asdf-pin.sh"
 script="$root/arch/bin/pull-project-a-pg-backups.sh"
 conf_name=pull-project-a-pg-backups.local.conf
 
