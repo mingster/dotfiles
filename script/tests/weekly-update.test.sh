@@ -224,33 +224,53 @@ fi
 br=$(git -C "$work" symbolic-ref --short HEAD 2>/dev/null || true)
 [ "$br" = main ] && ok 'dirty refusal stays on main' || bad 'dirty refusal wrong branch' "$br"
 
-# --- case: untracked file not staged ---
-setup_fixture
-printf 'note\n' >"$work/script/local-notes.txt"
-printf 'tracked dirty\n' >>"$work/README.md"
-git -C "$work" checkout -- README.md
-: >"$GH_LOG"
-out=$(run_weekly WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
-  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 2>&1) || true
-branch=$(git -C "$work" for-each-ref --format='%(refname:short)' refs/heads/mingster/weekly-mattpocock-* 2>/dev/null | head -1)
-if [ -n "$branch" ]; then
-  files=$(git -C "$work" show --name-only --pretty=format: "$branch" | tr '\n' ' ')
-  echo "$files" | grep -q 'local-notes' && bad 'untracked staged in commit' "$files" \
-    || ok 'untracked absent from mattpocock commit'
-  [ -f "$work/script/local-notes.txt" ] && ok 'untracked file still present' || bad 'untracked removed'
-else
-  # All slices ran; inspect first mattpocock commit on remote
-  git -C "$work" fetch -q origin 2>/dev/null || true
-  branch=$(git -C "$work" for-each-ref --format='%(refname:short)' refs/heads/mingster/weekly-mattpocock-* 2>/dev/null | head -1)
-  if [ -n "$branch" ]; then
-    files=$(git -C "$work" show --name-only --pretty=format: "$branch" | tr '\n' ' ')
-    echo "$files" | grep -q 'local-notes' && bad 'untracked in commit' "$files" \
-      || ok 'untracked absent from mattpocock commit'
-    [ -f "$work/script/local-notes.txt" ] && ok 'untracked file still present' || bad 'untracked removed'
+# --- case: untracked under slice paths refused at start ---
+assert_untracked_refused() {
+  local rel="$1" ok_label="$2"
+  setup_fixture
+  printf 'stray\n' >"$work/$rel"
+  : >"$GH_LOG"
+  refuse_rc=0
+  if run_weekly WEEKLY_UPDATE_SKIP_APPLY=1 WEEKLY_UPDATE_NO_PUSH=1 \
+    2>"$tmp/err" >/dev/null; then
+    refuse_rc=0
   else
-    bad 'no mattpocock branch for untracked case' "$out"
+    refuse_rc=$?
   fi
-fi
+  if [ "$refuse_rc" = 0 ]; then
+    bad "$ok_label must refuse to start"
+  else
+    ok "$ok_label refuses to start"
+  fi
+  grep -qF "refusing to start: untracked file $rel" "$tmp/err" \
+    && ok "$ok_label names untracked file" \
+    || bad "$ok_label refusal message" "$(cat "$tmp/err")"
+  br=$(git -C "$work" symbolic-ref --short HEAD 2>/dev/null || true)
+  [ "$br" = main ] && ok "$ok_label stays on main" || bad "$ok_label wrong branch" "$br"
+  n=$(git -C "$work" for-each-ref --format='%(refname:short)' refs/heads/mingster/weekly-mattpocock-* 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n" = 0 ] && ok "$ok_label does not open slice branch" || bad "$ok_label created branch"
+}
+
+assert_untracked_refused '.agents/skills/stray-untracked.txt' 'mattpocock slice untracked'
+assert_untracked_refused 'templates/agent-team/.agents/skills/stray-untracked.txt' 'pstack slice untracked'
+assert_untracked_refused 'script/stray-untracked-toolchain.txt' 'toolchain slice untracked'
+
+# --- ignored projects conf does not refuse ---
+setup_fixture
+grep -qxF 'script/weekly-update.projects.conf' "$root/.gitignore" || bad 'missing gitignore for weekly-update.projects.conf'
+cp "$root/.gitignore" "$work/.gitignore"
+git -C "$work" add .gitignore
+git -C "$work" commit -qm gitignore
+printf '# local project roots only\n' >"$work/script/weekly-update.projects.conf"
+: >"$GH_LOG"
+out=$(run_weekly WEEKLY_UPDATE_SKIP_APPLY=1 WEEKLY_UPDATE_NO_PUSH=1 \
+  WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' 2>&1) || ec=$?
+echo "$out" | grep -q 'refusing to start: untracked' && bad 'ignored projects conf refused' "$out" \
+  || ok 'ignored projects conf does not refuse'
+[ "${ec:-0}" = 0 ] && ok 'ignored projects conf run completes' || bad 'projects conf run failed' "$out"
+echo "$out" | grep -q 'weekly-update: summary' && ok 'ignored projects conf reaches summary' \
+  || bad 'projects conf no summary' "$out"
 
 # --- projects conf is gitignored in source tree ---
 grep -qxF 'script/weekly-update.projects.conf' "$root/.gitignore" && ok 'projects conf gitignored' \

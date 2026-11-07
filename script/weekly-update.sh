@@ -214,6 +214,11 @@ require_clean_start() {
   if ! git -C "$DOTFILES" diff --quiet || ! git -C "$DOTFILES" diff --cached --quiet; then
     die "refusing to start on a dirty tree"
   fi
+  local untracked
+  untracked=$(git -C "$DOTFILES" ls-files --others --exclude-standard | head -1)
+  if [ -n "$untracked" ]; then
+    die "refusing to start: untracked file $untracked"
+  fi
 }
 
 checkout_main() {
