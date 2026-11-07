@@ -3,24 +3,15 @@
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=check-agent-startup.sh
+. "$DOTFILES/script/check-agent-startup.sh"
 
 case "${OSTYPE:-}" in
   darwin*)
     AG_USER="$HOME/Library/Application Support/Antigravity IDE/User"
-    if [ ! -d "/Applications/Antigravity IDE.app" ] \
-        && [ ! -d "/Applications/_dev/Antigravity IDE.app" ] \
-        && [ ! -d "$HOME/Applications/Antigravity IDE.app" ] \
-        && ! command -v agy >/dev/null 2>&1; then
-      echo "setup-antigravity: Antigravity IDE not installed; skipping." >&2
-      exit 0
-    fi
     ;;
   linux*)
     AG_USER="${XDG_CONFIG_HOME:-$HOME/.config}/Antigravity IDE/User"
-    if ! command -v antigravity >/dev/null 2>&1 && ! command -v antigravity-ide >/dev/null 2>&1 && ! command -v agy >/dev/null 2>&1; then
-      echo "setup-antigravity: Antigravity IDE not installed; skipping." >&2
-      exit 0
-    fi
     ;;
   msys* | cygwin*)
     echo "setup-antigravity: Windows not automated; copy ${DOTFILES}/Antigravity/settings.json manually." >&2
@@ -31,6 +22,11 @@ case "${OSTYPE:-}" in
     exit 0
     ;;
 esac
+
+if antigravity_should_skip; then
+  echo "setup-antigravity: Antigravity IDE not installed; skipping." >&2
+  exit 0
+fi
 
 AG_SRC="$DOTFILES/ide/antigravity"
 if [ ! -f "$AG_SRC/settings.json" ] || [ ! -f "$AG_SRC/keybindings.json" ]; then
@@ -55,6 +51,8 @@ AGENTS_ROOT="$DOTFILES/.agents"
 
 mkdir -p "$AG_AGENT_CONFIG"
 ln -sfn "$AGENTS_ROOT/claude/CLAUDE.md" "$AG_AGENT_CONFIG/AGENTS.md"
+mkdir -p "$AG_AGENT_CONFIG/rules"
+ln -sfn "$AGENTS_ROOT/gemini/rules/orca-agy.md" "$AG_AGENT_CONFIG/rules/orca-agy.md"
 
 cat > "$AG_AGENT_CONFIG/skills.json" <<EOF
 {
@@ -96,3 +94,5 @@ if command -v jq >/dev/null 2>&1; then
   jq -s '.[0] * .[1]' "$AGY_HOOKS" "$AG_SRC/hooks.json" > "$AGY_HOOKS.tmp" && mv "$AGY_HOOKS.tmp" "$AGY_HOOKS"
   echo "setup-antigravity: merged usage-gate hook into $AGY_HOOKS"
 fi
+
+bash "$DOTFILES/script/check-agent-startup.sh"

@@ -21,8 +21,10 @@ done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$model" ] && [ -n "$from" ] || usage
 python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
   || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
-brief=$(cat "$spec")
-[ -n "${brief//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
+spec_body=$(cat "$spec")
+[ -n "${spec_body//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
+dotfiles="${DOTFILES:-$HOME/dotfiles}"
+brief=$(printf 'Read %s/.agents/claude/CLAUDE.md for global agent instructions before starting work.\n\n%s' "$dotfiles" "$spec_body")
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || usage
   case "$repo" in
