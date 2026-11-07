@@ -63,6 +63,12 @@ check "a role opening a PR is allowed" 0 'team-audit: clean'
 setup; echo 'fullstack-dev merges the PR.' >> "$P/docs/agents/team.md"
 check "implementation worker merging a PR is banned" 1 'FINDING wording: .*team.md'
 
+setup; echo 'release-manager merges the PR.' >> "$P/docs/agents/team.md"
+check "release-manager merging a PR is banned" 1 'FINDING wording: .*team.md'
+
+setup; echo 'Workers open a PR and merge it when checks pass.' >> "$P/docs/agents/team.md"
+check "open a PR and merge it is banned" 1 'FINDING wording: .*team.md'
+
 setup; echo 'fullstack-dev merges `main` into the branch.' >> "$P/docs/agents/team.md"
 check "merging main into a branch is allowed" 0 'team-audit: clean'
 

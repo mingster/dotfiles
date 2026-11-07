@@ -6,7 +6,8 @@
 # Checks, each printed as "FINDING <check>: <detail>":
 #   sync      sync-team-skills.sh --check passes for each project
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
-#   wording   no banned wording in team files: implementation workers merge PRs,
+#   wording   no banned wording in team files: implementation workers and release-manager
+#             merge PRs, the phrase "open a PR and merge it",
 #             task_plan.md or progress.md ledgers, the old orca claude-teams layout, the retired
 #             gpt-6-luna model (400 since 2026-10-21), a coordinator wait whose --types omit status
 #   skill     every SKILL.md has name and description frontmatter
@@ -65,6 +66,8 @@ finding() { echo "FINDING $1: $2"; findings=$((findings + 1)); }
 # Banned wording, as extended regexes. A line may opt out with "team-audit: allow".
 BANNED=(
   '(fullstack-dev|qa-sdet|support-csm|sales|architect-pm|teammate)s? merges (the |a |its |team )?PRs?'
+  'release-manager merges (the |a |its |team )?PRs?'
+  'open a PR and merge it'
   'task_plan\.md'
   '(^|[^_[:alnum:]])progress\.md'
   'orca claude-teams'
