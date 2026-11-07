@@ -30,7 +30,7 @@ Do not include a "Test plan" section in PR descriptions
 
 `AGENTS.md` at the repo root is the single source. `CLAUDE.md` beside it holds one line, `@AGENTS.md`, because Claude Code does not read `AGENTS.md`. Same in a subdirectory: `web/CLAUDE.md` is `@../AGENTS.md`, and `web/AGENTS.md` is a symlink to `../AGENTS.md`.
 
-Keep `AGENTS.md` under 200 lines. It loads into every session, so it holds the map and the rules that are always true: layout, commands, constraints, pointers. Anything that only matters in one area goes in `docs/agents/<topic>.md` behind a pointer that names when to read it ("Read it before changing X"). Anything derivable from the codebase goes in neither. More `@` imports do not help, since imported files load at launch too.
+Keep `AGENTS.md` under 200 lines. It loads into every session, so it holds the map and the rules that are always true: layout, commands, constraints, pointers. Anything that only matters in one area goes in `docs/<area>/<topic>.md` behind a pointer that names when to read it ("Read it before changing X"). Anything derivable from the codebase goes in neither. More `@` imports do not help, since imported files load at launch too.
 
 Never accumulate learnings in `AGENTS.md`. Auto memory owns those.
 
