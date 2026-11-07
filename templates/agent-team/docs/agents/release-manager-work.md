@@ -10,5 +10,5 @@
 3. **Production (`deploy/production`):**
    - When the staging smoke test passes, message Elon `Ready for owner to approve production: <sha>`. Elon asks the owner; deploy only after Elon relays the owner's explicit go for that release. If `docs/agents/deploy-facts.md` names an owner approval script, give Elon the exact command the owner must run, scoped to cover any production SQL or secrets.
    - **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): check the owner approval's scope and expiry as `docs/agents/deploy-facts.md`, Owner approval, says. If missing, expired or wrong scope, stop before any ssh and ask Elon.
-   - Production SQL and secrets are yours, not the owner's, and run only inside a matching owner approval. Before you move the production branch, follow `docs/agents/coordinator-operations.md`, Production job order, including the pending data steps and the schema rehearsal pass at the exact sha.
+   - Production SQL and secrets are yours, not the owner's, and run only inside a matching owner approval. Before you move the production branch, follow `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Production job order, including the pending data steps and the schema rehearsal pass at the exact sha.
    - Then ask `qa-sdet` for a live smoke test.

@@ -335,7 +335,7 @@ def check_worker_start(args, script=False):
         return
     if not any(GRILL_APPROVAL.search(t) for t in texts[1:]):
         deny(f"Missing: a comment on {repo_name}#{number} naming the owner's approval of the grill results "
-             "(docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
+             "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
              "then dispatch. Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
 
 
