@@ -199,6 +199,7 @@ PR_DIFF=$'diff --git a/docs/intent/a/intent.md b/docs/intent/a/intent.md\n+++ b/
 check "intent accepted refused" 1 'accepts an intent'
 setup; files='[{"path":"docs/intent/a/intent.md"}]'
 PR_DIFF=$'+++ b/docs/intent/a/intent.md\n+Some text mentioning Accepted\n'
+comments="Review: PASS head=$SHA model=composer-2.5"
 check "intent edit without status change allowed" 0 '^MERGED' 1
 # Mechanical lane: substitution or deletion only, no Verdict.
 SUBST=$'diff --git a/script/foo.sh b/script/foo.sh\n--- a/script/foo.sh\n+++ b/script/foo.sh\n@@ -1,2 +1,2 @@\n-cd /Users/x/dotfiles\n+cd "$HOME/dotfiles"\n echo hi\n'
@@ -240,11 +241,13 @@ if [ -s "$HC_LOG" ]; then cn=$((cn+1)); printf 'FAIL T32 head-checks ran: %s\n' 
 else cn=$((cn+1)); echo "ok   T32 no head-checks run for an exact head Checks PASS" > "$ucd/result.$(printf %04d "$cn")"; fi
 ) </dev/null &
 setup; comments="Verdict: PASS+NOTES head=$SHA verifier=ctx_verify author=ctx_author"; check "PASS+NOTES allowed" 0 '^MERGED' 1
-setup; files='[{"path":"docs/guide.txt"},{"path":"README.md"},{"path":"changelog.d/change.txt"}]'; comments=""; check "docs only skips verdict" 0 '^MERGED' 1
-setup; files='[{"path":".claude/agents/qa-sdet.md"}]'; comments=""; check "agent instructions require verdict" 1 'verdict'
+setup; files='[{"path":"docs/guide.txt"},{"path":"README.md"},{"path":"changelog.d/change.txt"}]'; comments=""; check "non-markdown text needs verdict" 1 'verdict'
+setup; files='[{"path":"docs/guide.md"},{"path":"changelog.d/x.md"}]'; comments="Review: PASS head=$SHA model=composer-2.5"; check "text only merges on Review without Verdict" 0 '^MERGED' 1
+setup; files='[{"path":"docs/guide.md"}]'; comments=""; check "text only without Review refused" 1 'Review: PASS'
+setup; files='[{"path":"docs/agents/note.md"}]'; comments="Review: PASS head=$SHA model=composer-2.5"; check "docs agents md merges with Review" 0 '^MERGED' 1
 setup; files='[{"path":"docs/guide.md"}]'; body=""; comments=""; check "docs still needs Verification" 1 'Verification'
 
-setup; files='[{"path":"templates/agent-team/.claude/agents/qa-sdet.md"}]'; comments=""; check "template agents require verdict" 1 'verdict'
+setup; files='[{"path":"templates/agent-team/.claude/agents/qa-sdet.md"}]'; comments=""; check "template agents without Review refused" 1 'Review: PASS'
 setup; COMMENTS_JSON=$(jq -n --arg sha "$SHA" '[{body:("Checks: PASS head="+$sha)},{body:("Verdict: PASS head="+$sha+" verifier=ctx_verify author=ctx_author")},{body:("Verdict: FAIL head="+$sha+" verifier=ctx_verify author=ctx_author")}]'); check "newer FAIL supersedes PASS" 1 'verdict'
 
 setup; body=$'## Verification\n- Ran the script: passed.\n## Test plan'; check "Test plan forbidden" 1 'Test plan'
@@ -327,7 +330,8 @@ setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$SH
 setup; PR_DIFF=$'+test.skip("case", () => {})'; comments="Verdict: PASS head=$OLD verifier=ctx_verify author=ctx_author"; countersign="Countersign: Elon head=$OLD reason=fixture only"; checks="Checks: PASS head=$OLD"; check "countersign refused without checks on the current head" 1 'Checks: PASS'
 setup; TRUNK_FILES="script/foo.sh"; export TRUNK_FILES; check "overlapping trunk drift refused" 1 'rebase and rerun head-checks'
 setup; TRUNK_FILES="unrelated.sh"; export TRUNK_FILES; check "disjoint trunk drift allowed" 0 '^MERGED' 1
-setup; files='[{"path":".agents/skills/a/SKILL.md"}]'; comments=""; check "skills need verifier" 1 'verdict'
+setup; files='[{"path":".agents/skills/a/SKILL.md"}]'; comments="Review: PASS head=$SHA model=none"; check "skill markdown Review model=none refused" 1 'model other than none'
+setup; files='[{"path":".agents/skills/a/SKILL.md"}]'; comments=""; check "skills without Review refused" 1 'Review: PASS'
 
 setup; API_OVERRIDE=$(jq -n '[range(101) | {filename:("docs/"+tostring+".md")}] + [{filename:".claude/hooks/late.py"}]'); check "paginated owner path after 100 refused" 1 'late.py'
 setup; COUNT_OVERRIDE=2; check "incomplete file inventory refused" 1 'file count'
@@ -615,7 +619,9 @@ check "verdict-from refuses an untracked file under templates/agent-team" 1 'not
   mf_pr_add 2 t14b $'## Verification\n- Passed.' docs/t14b.md
   for n in 1 2; do
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
-    jq --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false}]' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+    jq --arg c "Checks: PASS head=$h" --arg r "Review: PASS head=$h model=composer-2.5" \
+      '.comments += [{body:$c, author:"fixture", edited:false, minimized:false},{body:$r, author:"fixture", edited:false, minimized:false}]' \
+      "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
   done
   # A gh that holds each merge for two seconds, so an unserialized second run overlaps the first.
   mkdir -p "$MF_DIR/slow"

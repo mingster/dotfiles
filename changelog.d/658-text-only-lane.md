@@ -1,0 +1,1 @@
+Text-only pull requests merge on Checks PASS plus Review PASS without a QA Verdict when every changed file is markdown or under `changelog.d/`, owner-gated paths still need an Owner-approved trailer, and `on-worker-done.sh` starts Cursor QA on the PR head branch through `start-cursor-worker.sh`.

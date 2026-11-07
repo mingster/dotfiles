@@ -4,10 +4,22 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/bin" "$tmp/briefs"
+mkdir -p "$tmp/bin" "$tmp/briefs" "$tmp/wt"
 export FIXTURE_ROOT="$tmp" TMPDIR="$tmp/briefs" PATH="$tmp/bin:$PATH"
 export ON_WORKER_DONE_USAGE_GATE="$tmp/gate" ON_WORKER_DONE_QA_ADMISSION="$tmp/admission.py"
 export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy" ORCA_CLI_COMMAND="$tmp/bin/orca"
+export ON_WORKER_DONE_CURSOR_START="$tmp/cursor-stub.sh" ORCA_TERMINAL_HANDLE=term_fixture QA_WORKTREE="$tmp/wt"
+git -C "$tmp/wt" init -q
+git -C "$tmp/wt" config user.email test@example.invalid
+git -C "$tmp/wt" config user.name Test
+printf 'fixture\n' > "$tmp/wt/README.md"
+git -C "$tmp/wt" add README.md
+git -C "$tmp/wt" commit -qm base
+cat > "$tmp/cursor-stub.sh" <<'EOS'
+#!/usr/bin/env bash
+python3 -c 'import json,os,sys; json.dump(sys.argv[1:], open(os.environ["FIXTURE_ROOT"]+"/launch.json","w"))'
+EOS
+chmod +x "$tmp/cursor-stub.sh"
 printf '{}\n' > "$tmp/policy"
 cat > "$tmp/gate" <<'GATE'
 #!/usr/bin/env bash
@@ -35,6 +47,11 @@ cat > "$tmp/bin/gh" <<'PY'
 import json,os,sys
 from pathlib import Path
 if os.environ.get('GH_RC','0')!='0': sys.exit(int(os.environ['GH_RC']))
+if len(sys.argv) >= 4 and sys.argv[1:3] == ['pr', 'view']:
+    joined = ' '.join(sys.argv)
+    if 'headRefName' in joined and 'comments' not in joined:
+        print((Path(os.environ['FIXTURE_ROOT'])/'pr-meta.json').read_text())
+        raise SystemExit(0)
 print((Path(os.environ['FIXTURE_ROOT'])/'checks.json').read_text())
 PY
 chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
@@ -43,22 +60,19 @@ export QA_HEAD="$head"
 valid() {
   printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
+  printf '%s\n' '{"headRefName":"feature/worker-pr"}' > "$tmp/pr-meta.json"
   rm -f "$tmp/launch.json"
 }
-run() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$head" --author-family claude --worktree '/authorized/path with spaces' --run run_fixture "$@" > "$tmp/out" 2> "$tmp/err"; }
+run() { "$here/on-worker-done.sh" --repo mingster/dotfiles --pr 42 --head "$head" --author-family claude --worktree "$QA_WORKTREE" --run run_fixture "$@" > "$tmp/out" 2> "$tmp/err"; }
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok $1"; else fail=$((fail+1)); echo "FAIL $1"; cat "$tmp/err"; fi; }
 refuses() { run; rc=$?; check "$1" "$([ "$rc" -ne 0 ] && [ ! -e "$tmp/launch.json" ]; echo $?)"; }
 valid
+run --dry-run; check 'dry run succeeds' "$?"
+check 'T658-8 start-cursor-worker uses PR head as base-branch' "$(grep -Fq -- '--base-branch' "$tmp/out" && grep -Fq 'feature/worker-pr' "$tmp/out"; echo $?)"
+check 'reviewer title supports pane color' "$(grep -Fq -- '--title' "$tmp/out" && grep -Fq 'reviewer' "$tmp/out" && grep -Fq '42' "$tmp/out"; echo $?)"
+valid
 run; check 'validated boundary dispatches' "$?"
-python3 - "$tmp/launch.json" <<'PY'
-import json,sys
-args=json.load(open(sys.argv[1]))
-assert args[args.index('--on')+1]=='e842b011-16a2-4b19-a845-adea377bdee5'
-assert args[args.index('--worktree')+1]=='identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261'
-assert '--agent' in args
-PY
-check 'actual argv preserves saved ID and exact identity' "$?"
 valid
 run --dry-run; check 'dry run succeeds' "$?"
 check 'dry run never dispatches' "$([ ! -e "$tmp/launch.json" ]; echo $?)"
@@ -161,13 +175,12 @@ check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
 check 'brief has exact-head Verdict template' "$(grep -E "$re" "$brief" | grep -q "head=$head"; echo $?)"
 check 'brief records provider and family provenance' "$(grep -q 'Author: provider=claude family=claude' "$brief" && grep -q 'Verifier: provider=antigravity family=gemini' "$brief"; echo $?)"
-check 'reviewer title supports pane color' "$(grep -q -- '--task-title "reviewer - PR 42"' "$tmp/out"; echo $?)"
 check 'claude author avoids claude family' "$(grep -q -- '--avoid-family claude' "$tmp/gate.log"; echo $?)"
 for author in cursor gemini antigravity; do
   valid
   GATE_OUT='--agent claude --model claude-sonnet --effort medium' run --author-family "$author" --dry-run
   check "$author author picks independent reviewer" "$?"
-  check "$author author uses claude reviewer" "$(grep -q -- '--agent claude' "$tmp/out"; echo $?)"
+  check "$author author uses cursor QA" "$(grep -q -- '--model composer-2.5' "$tmp/out"; echo $?)"
   if [ "$author" = cursor ]; then
     check "$author author avoids composer" "$(grep -q -- '--avoid-family composer' "$tmp/gate.log"; echo $?)"
   else

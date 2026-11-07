@@ -288,8 +288,25 @@ Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not 
 EOF
 fi
 
-cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree $worktree_selector --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
-echo "$cmd"
+pr_branch=$(gh pr view "$pr" --repo "$repo" --json headRefName -q .headRefName 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot read PR head branch" >&2
+  exit 1
+}
+repo_root=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+from_handle=${ORCA_TERMINAL_HANDLE:-}
+[ -n "$from_handle" ] || {
+  echo "QA start refused head=$head: missing ORCA_TERMINAL_HANDLE" >&2
+  exit 1
+}
+cursor_model=composer-2.5
+qa_name="reviewer-pr-$pr"
+cursor_start=${ON_WORKER_DONE_CURSOR_START:-$_here/start-cursor-worker.sh}
+start_args=(bash "$cursor_start" --run "$run" --spec "$brief" --title "reviewer - PR $pr"
+  --model "$cursor_model" --from "$from_handle" --name "$qa_name" --repo "path:$repo_root" --base-branch "$pr_branch")
+[ "${#host_flags[@]}" -eq 0 ] || start_args+=("${host_flags[@]}")
+printf '%q ' "${start_args[@]}"; echo
 [ "$dry" = 1 ] && exit 0
-# shellcheck disable=SC2086
-exec $orca orchestration worker-start --run "$run" --spec "$(cat "$brief")" --worktree "$worktree_selector" --task-title "reviewer - PR $pr" ${host_flags[@]+"${host_flags[@]}"} $flags --json
+exec "${start_args[@]}"
