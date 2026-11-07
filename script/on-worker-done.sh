@@ -288,10 +288,58 @@ pr_branch=$(gh pr view "$pr" --repo "$repo" --json headRefName -q .headRefName 2
   echo "QA start refused head=$head: cannot read PR head branch" >&2
   exit 1
 }
-repo_root=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null) || {
+common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
   echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
   exit 1
 }
+repo_root=$(dirname "$(cd -P "$common" && pwd)") || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+repo_root_physical=$(cd -P "$repo_root" && pwd) || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+repo_list_json=$("$orca" repo list --json 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot read orca repo list" >&2
+  exit 1
+}
+repo_resolve_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-repo.err.XXXXXX")
+if ! orca_repo_id=$(python3 - "$repo_list_json" "$repo_root_physical" 2>"$repo_resolve_err" <<'PYREPO'
+import json, os, sys
+
+try:
+    payload = json.loads(sys.argv[1])
+    repos = payload.get("result", {}).get("repos")
+    if not isinstance(repos, list):
+        raise ValueError("repos array required")
+except (TypeError, ValueError, json.JSONDecodeError):
+    print("invalid orca repo list", file=sys.stderr)
+    sys.exit(1)
+target = os.path.realpath(sys.argv[2])
+for entry in repos:
+    if entry.get("kind") != "git":
+        continue
+    path, repo_id = entry.get("path"), entry.get("id")
+    if not isinstance(path, str) or not isinstance(repo_id, str):
+        continue
+    try:
+        if os.path.realpath(path) == target:
+            print(repo_id)
+            sys.exit(0)
+    except OSError:
+        continue
+print(f"no registered Orca repo for checkout {target}", file=sys.stderr)
+sys.exit(1)
+PYREPO
+); then
+  resolve_msg=$(tr '\n' ' ' < "$repo_resolve_err")
+  rm -f "$repo_resolve_err"
+  echo "QA start refused head=$head: ${resolve_msg:-cannot resolve registered repo}" >&2
+  exit 1
+fi
+rm -f "$repo_resolve_err"
+repo_selector="id:$orca_repo_id"
 from_handle=${ORCA_TERMINAL_HANDLE:-}
 [ -n "$from_handle" ] || {
   echo "QA start refused head=$head: missing ORCA_TERMINAL_HANDLE" >&2
@@ -309,7 +357,7 @@ if [ "$verifier_provider" = cursor ]; then
   qa_name="reviewer-pr-$pr"
   cursor_start=${ON_WORKER_DONE_CURSOR_START:-$_here/start-cursor-worker.sh}
   start_args=(bash "$cursor_start" --run "$run" --spec "$brief" --title "reviewer - PR $pr"
-    --model "$ver_model" --from "$from_handle" --name "$qa_name" --repo "path:$repo_root" --base-branch "$pr_branch")
+    --model "$ver_model" --from "$from_handle" --name "$qa_name" --repo "$repo_selector" --base-branch "$pr_branch")
   [ "${#host_flags[@]}" -eq 0 ] || start_args+=("${host_flags[@]}")
   printf '%q ' "${start_args[@]}"; echo
   [ "$dry" = 1 ] && exit 0

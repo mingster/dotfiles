@@ -35,11 +35,26 @@ root=Path(os.environ['FIXTURE_ROOT'])
 sys.stdout.write((root/'admission.json').read_text())
 sys.exit(int(os.environ.get('ADMISSION_RC','0')))
 PY
+write_default_repos() {
+  printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"fixture-main-repo-id\",\"path\":\"$main_root\",\"kind\":\"git\"}]}}" > "$tmp/orca-repos.json"
+}
+main_root="$tmp/wt"
+write_default_repos
 cat > "$tmp/bin/orca" <<'PY'
 #!/usr/bin/env python3
-import json,os,sys
+import json, os, sys
 from pathlib import Path
-(Path(os.environ['FIXTURE_ROOT'])/'launch.json').write_text(json.dumps(sys.argv[1:]))
+root = Path(os.environ['FIXTURE_ROOT'])
+argv = sys.argv[1:]
+if len(argv) >= 2 and argv[0:2] == ['repo', 'list']:
+    rc = os.environ.get('ORCA_REPO_LIST_RC', '0')
+    if rc != '0':
+        sys.exit(int(rc))
+    if '--json' in argv:
+        repos_file = root / 'orca-repos.json'
+        sys.stdout.write(repos_file.read_text() if repos_file.is_file() else '{"ok":true,"result":{"repos":[]}}')
+        raise SystemExit(0)
+(root / 'launch.json').write_text(json.dumps(argv))
 print('{"ok":true}')
 PY
 cat > "$tmp/bin/gh" <<'PY'
@@ -58,7 +73,8 @@ chmod +x "$tmp/gate" "$tmp/bin/orca" "$tmp/bin/gh"
 head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 valid() {
-  unset GATE_OUT GATE_RC
+  unset GATE_OUT GATE_RC ORCA_REPO_LIST_RC
+  write_default_repos
   printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
   printf '%s\n' '{"headRefName":"feature/worker-pr"}' > "$tmp/pr-meta.json"
@@ -233,5 +249,30 @@ for args in '--pr x' '--author-family gpt' '--head invalid'; do
 done
 "$here/on-worker-done.sh" --dry-run --repo o/n --pr 42 > "$tmp/out" 2> "$tmp/err"
 check 'missing required CLI arguments refuse' "$([ $? -ne 0 ]; echo $?)"
+# #671: resolve Orca repo id from registered checkout (symlink path), not physical git-common-dir parent.
+linked_root="$tmp/linked-wt"
+git -C "$main_root" worktree add -q "$linked_root" -b linked-feature-671
+registered_link="$tmp/orca-registered"
+ln -s "$main_root" "$registered_link"
+printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"fixture-repo-id-671\",\"path\":\"$registered_link\",\"kind\":\"git\"}]}}" > "$tmp/orca-repos.json"
+export QA_WORKTREE="$linked_root"
+unset GATE_OUT GATE_RC
+valid
+printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"fixture-repo-id-671\",\"path\":\"$registered_link\",\"kind\":\"git\"}]}}" > "$tmp/orca-repos.json"
+run --dry-run
+check 'linked worktree passes registered repo id' "$(grep -Fq -- '--repo id:fixture-repo-id-671' "$tmp/out"; echo $?)"
+valid
+printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"other-repo\",\"path\":\"$tmp/unrelated-checkout\",\"kind\":\"git\"}]}}" > "$tmp/orca-repos.json"
+mkdir -p "$tmp/unrelated-checkout"
+git -C "$tmp/unrelated-checkout" init -q
+export QA_WORKTREE="$linked_root"
+run --dry-run
+rc=$?
+check 'unregistered checkout refuses with path message' "$([ "$rc" -ne 0 ] && grep -Fq 'no registered Orca repo for checkout' "$tmp/err" && grep -Fq "$main_root" "$tmp/err"; echo $?)"
+valid
+ORCA_REPO_LIST_RC=1 run --dry-run
+rc=$?
+check 'unreadable orca repo list refuses' "$([ "$rc" -ne 0 ] && grep -Fq 'cannot read orca repo list' "$tmp/err"; echo $?)"
+export QA_WORKTREE="$main_root"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
