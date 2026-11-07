@@ -98,6 +98,23 @@ class Baseline(unittest.TestCase):
         row.update(extra)
         return row
 
+    def full_row_exited_released(self, dispatch_id, host_local=True):
+        """worker-list --full shape: liveness under projection, no top-level liveness."""
+        host = {'kind': 'local'} if host_local else {'id': 'local'}
+        return {
+            'dispatchId': dispatch_id,
+            'workerState': 'succeeded',
+            'dispatchStatus': 'completed',
+            'terminalState': 'released',
+            'projection': {
+                'role': 'worker',
+                'host': host,
+                'outcome': 'succeeded',
+                'liveness': {'verdict': 'exited', 'source': 'resource_release'},
+                'resource': {'state': 'released'},
+            },
+        }
+
     def test_flat_exited_released_terminal_frees_slot_without_push(self):
         config = {'host_caps': {'local': 4}}
         freed = [self.flat_exited(dispatchId='f%d' % i, terminalState='released') for i in range(62)]
@@ -112,13 +129,28 @@ class Baseline(unittest.TestCase):
         self.assertFalse(occupies)
         self.assertEqual(info['category'], 'freed')
 
-    def test_flat_exited_without_released_terminal_still_retained(self):
+    def test_full_row_exited_released_frees_slot_without_push(self):
         config = {'host_caps': {'local': 4}}
+        freed = [self.full_row_exited_released('f%d' % i) for i in range(62)]
+        live = [{'dispatchId': 'live%d' % i, 'dispatchStatus': 'running',
+                 'projection': {'host': {'id': 'local'}}} for i in range(3)]
+        receipt = watch.admit('local', config, freed + live)
+        self.assertTrue(receipt['admitted'])
+        self.assertEqual(receipt['occupied'], 3)
+        self.assertEqual(receipt['live_count'], 3)
+        self.assertEqual(receipt['retained_count'], 0)
+        occupies, info, _ = watch.classify_worker(freed[0])
+        self.assertFalse(occupies)
+        self.assertEqual(info['category'], 'freed')
+
+    def test_flat_exited_without_released_terminal_still_retained(self):
+        config = {'host_caps': {'local': 1}}
         workers = [self.flat_exited(terminalState='retained')]
         receipt = watch.admit('local', config, workers)
         self.assertFalse(receipt['admitted'])
         self.assertEqual(receipt['occupied'], 1)
         self.assertEqual(receipt['retained_count'], 1)
+        self.assertEqual(receipt['live_count'], 0)
 
     def test_live_dispatched_worker_still_counts_toward_cap(self):
         config = {'host_caps': {'local': 1}}

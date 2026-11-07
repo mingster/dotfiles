@@ -256,9 +256,12 @@ def worker_terminal_released(worker):
 
 
 def worker_freed_by_terminal_exit(worker):
-    """Flat worker-list row with exited liveness and a released terminal does not retain a slot."""
+    """Worker-list row with exited liveness and a released terminal does not retain a slot.
+
+    Full rows place liveness under projection.liveness.verdict; flat rows may set top-level liveness.
+    """
     w = worker or {}
-    return w.get('liveness') == 'exited' and w.get('terminalState') == 'released'
+    return worker_liveness_verdict(w) == 'exited' and w.get('terminalState') == 'released'
 
 
 def classify_worker(worker):

@@ -1,1 +1,1 @@
-Free host cap slots for flat Orca worker-list rows whose liveness is exited and terminalState is released, including read-only roles that never push.
+Free host cap slots when worker-list rows have terminalState released and liveness exited, including projection.liveness.verdict on --full inventory rows.
