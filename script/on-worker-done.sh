@@ -231,7 +231,6 @@ if any(int(n) > 0 for n in errors):
 tests = re.findall(r"^Tests executed: ([0-9]+)$", body, re.M)
 if len(tests) != len(errors):
     refuse("incomplete test execution metadata")
-bun_test_cmd = re.compile(r"^Command: .*\bbun (?:run )?test\b")
 blocks, cur = [], None
 for line in body.splitlines():
     if line.startswith("Command: "):
@@ -242,18 +241,15 @@ for line in body.splitlines():
         cur.append(line)
 if cur is not None:
     blocks.append(cur)
-has_non_skipped_bun = False
+bun_actually_ran = False
 for block in blocks:
     block_text = "\n".join(block)
-    if not bun_test_cmd.search(block[0]):
-        continue
     if re.search(r"^Skipped:", block_text, re.M):
         continue
-    has_non_skipped_bun = True
-    break
-if has_non_skipped_bun and not tests:
-    refuse("test command has no execution metadata")
-if not tests and re.search(r"^bun test v", body, re.M):
+    if re.search(r"^bun test v", block_text, re.M):
+        bun_actually_ran = True
+        break
+if bun_actually_ran and not tests:
     refuse("test command has no execution metadata")
 ' "$head") || { [ -n "$checks_state" ] && printf '%s\n' "$checks_state"; exit 1; }
 

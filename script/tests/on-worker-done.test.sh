@@ -104,8 +104,7 @@ GATE_OUT='--agent claude --model claude-sonnet' refuses 'same family refuses'
 for body in \
   "Checks: FAIL head=$head" \
   "Checks: PASS head=$head|Command: bun test|Tests executed: 0|Load errors: 0" \
-  "Checks: PASS head=$head|Command: bun test|Tests executed: 1|Load errors: 1" \
-  "Checks: PASS head=$head|Command: bun test"; do
+  "Checks: PASS head=$head|Command: bun test|Tests executed: 1|Load errors: 1"; do
   valid
   CHECKS_BODY="$body" python3 - "$tmp/checks.json" <<'PY'
 import json,os,sys
@@ -113,6 +112,23 @@ with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHEC
 PY
   refuses "canonical receipt refuses: $body"
 done
+# Case 9 (#658): bun test only in Command text (dispatcher) without bun output still starts QA.
+valid
+CHECKS_BODY="Checks: PASS head=$head|Command: python3 run-scoped-tests.py --runner \"bun test --isolate\" --components lint|Result: exit 0|Command: bash script/tests/foo.test.sh|Result: exit 0|Tests executed: 2|Load errors: 0"
+CHECKS_BODY="$CHECKS_BODY" python3 - "$tmp/checks.json" <<'PY'
+import json,os,sys
+with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHECKS_BODY'].replace('|','\n')}]},f)
+PY
+run --dry-run
+check 'T658-9 dispatcher bun test in Command without bun output starts QA' "$?"
+# Case 9 refuse: bun test v in block output without Tests executed metadata.
+valid
+CHECKS_BODY="Checks: PASS head=$head|Command: bun test|Result: exit 0|bun test v1.2.3 (abc)"
+CHECKS_BODY="$CHECKS_BODY" python3 - "$tmp/checks.json" <<'PY'
+import json,os,sys
+with open(sys.argv[1],'w') as f: json.dump({'comments':[{'body':os.environ['CHECKS_BODY'].replace('|','\n')}]},f)
+PY
+refuses 'T658-9 bun test v without Tests executed refuses'
 # No receipt at the exact head: QA starts and the brief says Checks are pending.
 pending_case() {
   valid
