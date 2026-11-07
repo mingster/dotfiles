@@ -55,10 +55,13 @@ setup; echo 'When a review passes, the Tech Lead merges it.' >> "$P/docs/agents/
 check "lead merging is allowed" 0 'team-audit: clean'
 
 setup; echo 'sales pushes its branch.' >> "$P/docs/agents/team.md"
-check "sales pushing is banned" 1 'FINDING wording: .*team.md'
+check "sales pushing is allowed" 0 'team-audit: clean'
 
 setup; echo 'Then release-manager opens the PR.' >> "$P/.claude/agents/tech-lead.md"
-check "a role opening a PR is banned" 1 'FINDING wording: .*tech-lead.md'
+check "a role opening a PR is allowed" 0 'team-audit: clean'
+
+setup; echo 'fullstack-dev merges the PR.' >> "$P/docs/agents/team.md"
+check "implementation worker merging a PR is banned" 1 'FINDING wording: .*team.md'
 
 setup; echo 'fullstack-dev merges `main` into the branch.' >> "$P/docs/agents/team.md"
 check "merging main into a branch is allowed" 0 'team-audit: clean'
