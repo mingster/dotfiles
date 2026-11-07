@@ -339,7 +339,8 @@ class CleanFinishedTests(unittest.TestCase):
         g.worktree("wt-arch", "archive/snap")
         head = subprocess.check_output(["git", "-C", str(g.wts[-1]), "rev-parse", "HEAD"], text=True).strip()
         act, why, _ = cf.decide(
-            str(g.main), (str(g.wts[-1]), "archive/snap", head, False), str(g.main), "main", True, {}, set(), set(), set()
+            str(g.main), (str(g.wts[-1]), "archive/snap", head, False), str(g.main), "main",
+            True, {}, set(), set(), set(), time.time() + 60
         )
         self.assertEqual(act, "keep")
         self.assertEqual(why, "archive branch")
