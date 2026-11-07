@@ -19,40 +19,121 @@ while [ $# -gt 0 ]; do
 done
 
 selected=()
+MAPPING_ACTIVE=0
+PATH_MAP_HITS=0
 add_test() {
   local candidate=$1 existing
   [ -f "$ROOT/$candidate" ] || return 0
+  if [ "$MAPPING_ACTIVE" -eq 1 ]; then
+    PATH_MAP_HITS=$((PATH_MAP_HITS + 1))
+  fi
   for existing in "${selected[@]+"${selected[@]}"}"; do
     [ "$existing" = "$candidate" ] && return 0
   done
   selected+=("$candidate")
 }
 
+add_if_exists() {
+  local candidate=$1
+  if [ -f "$ROOT/$candidate" ]; then
+    add_test "$candidate"
+  fi
+}
+
+add_glob_under_root() {
+  local pattern=$1 f rel
+  shopt -s nullglob
+  # shellcheck disable=SC2086
+  for f in $ROOT/$pattern; do
+    [ -f "$f" ] || continue
+    rel=${f#"$ROOT/"}
+    add_test "$rel"
+  done
+  shopt -u nullglob
+}
+
+map_script_sh_base() {
+  local base=$1 py
+  py=${base//-/_}
+  add_if_exists "script/tests/${base}.test.sh"
+  add_glob_under_root "script/tests/${base}-*.test.sh"
+  add_if_exists "script/${base}.test.sh"
+  add_glob_under_root "script/${base}-*.test.sh"
+  add_if_exists "script/tests/${base}.test.py"
+  add_if_exists "script/tests/test_${py}.py"
+  add_glob_under_root "script/tests/test_${py}_*.py"
+}
+
+map_script_py_base() {
+  local base=$1 py
+  py=${base//-/_}
+  add_if_exists "script/tests/${base}.test.sh"
+  add_glob_under_root "script/tests/${base}-*.test.sh"
+  add_if_exists "script/tests/${base}.test.py"
+  add_if_exists "script/tests/test_${py}.py"
+  add_glob_under_root "script/tests/test_${py}_*.py"
+}
+
+add_full_suite() {
+  add_glob_under_root "script/*.test.sh"
+  add_glob_under_root "script/tests/*.test.sh"
+  add_glob_under_root "script/tests/*.test.py"
+  add_glob_under_root "script/tests/test_*.py"
+  add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
+}
+
+fallback_eligible() {
+  local path=$1
+  case "$path" in
+    script/README*|script/*.md) return 1 ;;
+    script/*) return 0 ;;
+    .agents/head-checks.conf|.agents/head-checks-docs.conf) return 0 ;;
+    templates/agent-team/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 map_file() {
   local path=$1 base py
+  MAPPING_ACTIVE=1
+  PATH_MAP_HITS=0
   case "$path" in
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
+    script/sync-team-skills.sh)
+      map_script_sh_base "sync-team-skills"
+      add_if_exists "script/agent-team.test.sh"
+      add_if_exists "script/tests/release-guard-rules.test.sh"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
-      add_test "script/tests/${base}.test.sh"
-      add_test "script/${base}.test.sh"
+      map_script_sh_base "$base"
       ;;
     script/*.py)
       base=${path#script/}
       base=${base%.py}
-      add_test "script/tests/${base}.test.sh"
-      add_test "script/tests/${base}.test.py"
-      py=${base//-/_}
-      add_test "script/tests/test_${py}.py"
+      map_script_py_base "$base"
+      ;;
+    .agents/skills/orca-team/*)
+      add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
+      ;;
+    templates/agent-team/*)
+      add_if_exists "script/agent-team.test.sh"
+      add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
   esac
+  MAPPING_ACTIVE=0
+  if fallback_eligible "$path" && [ "$PATH_MAP_HITS" -eq 0 ]; then
+    printf 'Fallback: %s -> full suite\n' "$path"
+    add_full_suite
+  fi
 }
 
 skip_reason() {
   local target=$1 line path reason
+  [ "$SKIP_FILE" = /dev/null ] && return 1
   [ -f "$SKIP_FILE" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%%#*}

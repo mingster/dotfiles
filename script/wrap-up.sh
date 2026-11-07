@@ -34,6 +34,10 @@ guarded_round_rm() { # <rf|f> <path>: only this round's own files, inside the st
   case "$2" in "$round_state"/*) ;; *) return 1 ;; esac
   if [ "$1" = rf ]; then rm -rf "$2"; else rm -f "$2"; fi
 }
+guarded_scratch_rm() { # <rf|f> <path>: only this run's $tmp scratch files
+  case "$2" in "$tmp"/*) ;; *) return 1 ;; esac
+  if [ "$1" = rf ]; then rm -rf "$2"; else rm -f "$2"; fi
+}
 # Lock, one per host: a file holding the owner's pid, linked into place so it never exists without it. A holder counts
 # only when its pid is alive and still runs a scheduled round. A lock with no readable pid counts as live until it is old
 # enough to be stale (an older version made a directory). A takeover goes through a guard file, so two runs that both
@@ -1763,10 +1767,10 @@ if [ -f "$pane_script" ]; then
     fi
     [ "$pane_left" -gt 0 ] || pane_left=1
     rc=0
-    pane_out=$(mktemp)
+    pane_out="$tmp/pane-close"
     ORCA_PANE_CLOSE_TIMEOUT=$pane_left bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
     sed -n '/^sweep: /p' "$pane_out"
-    rm -f "$pane_out"
+    guarded_scratch_rm f "$pane_out"
     [ "$rc" -eq 0 ] || fail_item 'worker panes' "worker-pane-close exited $rc"
   fi
 fi
