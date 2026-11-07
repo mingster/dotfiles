@@ -105,3 +105,4 @@ script/wrap-up-fleet.config.json
 # Per machine scheduled wrap-up repo list (copy the .example)
 script/fleet-pull.config.json
 script/secrets-sync.config.json
+script/weekly-update.projects.conf

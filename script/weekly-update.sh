@@ -29,8 +29,11 @@ PSTACK_STATE="$DOTFILES/script/.pstack-template-upstream"
 TEMPLATE_SKILLS="$DOTFILES/templates/agent-team/.agents/skills"
 BASE_BRANCH="${WEEKLY_UPDATE_BASE:-main}"
 DATE_TAG="$(date '+%Y%m%d')"
+PROJECTS_CONF="$DOTFILES/script/weekly-update.projects.conf"
 
 die() { echo "weekly-update: $*" >&2; exit 1; }
+
+apply_fail() { echo "weekly-update: $*" >&2; return 1; }
 
 read_projects() {
   PROJECTS=()
@@ -44,7 +47,7 @@ read_projects() {
     done
     return 0
   fi
-  local conf="${WEEKLY_UPDATE_PROJECTS_CONF:-$DOTFILES/script/weekly-update.projects.conf}"
+  local conf="${WEEKLY_UPDATE_PROJECTS_CONF:-$PROJECTS_CONF}"
   [ -f "$conf" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|'#'*) continue ;; esac
@@ -104,17 +107,20 @@ apply_mattpocock() {
 apply_pstack() {
   [ "${WEEKLY_UPDATE_SKIP_APPLY:-0}" = 1 ] && return 0
   [ "$DRY" -eq 1 ] && return 0
-  [ -f "$PSTACK_STATE" ] || die "missing $PSTACK_STATE"
+  [ -f "$PSTACK_STATE" ] || { apply_fail "missing $PSTACK_STATE"; return 1; }
   local subpath names new tmp src
   subpath=$(sed -n 's/^subpath=//p' "$PSTACK_STATE")
   names=$(sed -n 's/^skills=//p' "$PSTACK_STATE")
-  [ -n "$subpath" ] || die "pstack state has no subpath"
+  [ -n "$subpath" ] || { apply_fail "pstack state has no subpath"; return 1; }
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' RETURN
-  git clone -q --depth 1 "$PLUGINS_REPO" "$tmp/up"
+  git clone -q --depth 1 "$PLUGINS_REPO" "$tmp/up" || { rm -rf "$tmp"; return 1; }
   new=$(git -C "$tmp/up" rev-parse HEAD)
   src="$tmp/up/$subpath/skills"
-  [ -d "$src" ] || die "upstream missing $subpath/skills"
+  if [ ! -d "$src" ]; then
+    rm -rf "$tmp"
+    apply_fail "upstream missing $subpath/skills"
+    return 1
+  fi
   local n from to
   for n in $names; do
     from="$src/$n"
@@ -125,6 +131,7 @@ apply_pstack() {
   done
   sed -i.bak "s/^sha=.*/sha=$new/" "$PSTACK_STATE"
   rm -f "$PSTACK_STATE.bak"
+  rm -rf "$tmp"
   echo "weekly-update: pstack upstream $new"
 }
 
@@ -137,7 +144,7 @@ apply_toolchain() {
   elif command -v node >/dev/null 2>&1; then
     lts=$(node -e 'const v=process.versions.node.split("."); console.log(v[0]+"."+v[1]+".0")' 2>/dev/null || true)
   fi
-  [ -n "${lts:-}" ] || die "set WEEKLY_UPDATE_NODE_LTS or install node to detect LTS"
+  [ -n "${lts:-}" ] || { apply_fail "set WEEKLY_UPDATE_NODE_LTS or install node to detect LTS"; return 1; }
   if [ -f "$pin_file" ]; then
     if grep -q '^nodejs ' "$pin_file"; then
       sed -i.bak "s/^nodejs .*/nodejs $lts/" "$pin_file"
@@ -202,8 +209,53 @@ ensure_origin_main() {
     || die "missing $BASE_BRANCH"
 }
 
+require_clean_start() {
+  [ "$DRY" -eq 1 ] && return 0
+  if ! git -C "$DOTFILES" diff --quiet || ! git -C "$DOTFILES" diff --cached --quiet; then
+    die "refusing to start on a dirty tree"
+  fi
+}
+
+checkout_main() {
+  git -C "$DOTFILES" checkout -q "$BASE_BRANCH" 2>/dev/null || git -C "$DOTFILES" checkout -q main
+}
+
+slice_reset_worktree() {
+  checkout_main
+  git -C "$DOTFILES" reset --hard HEAD
+  git -C "$DOTFILES" clean -fd \
+    -e 'script/weekly-update.projects.conf' \
+    -e 'weekly-update.projects.conf' 2>/dev/null \
+    || git -C "$DOTFILES" clean -fd
+}
+
+slice_abort_branch() {
+  local branch="$1"
+  slice_reset_worktree
+  git -C "$DOTFILES" branch -D "$branch" >/dev/null 2>&1 || true
+}
+
+stage_slice_changes() {
+  local id="$1"
+  case "$id" in
+    mattpocock) git -C "$DOTFILES" add -- .agents/skills ;;
+    pstack)
+      git -C "$DOTFILES" add -- templates/agent-team/.agents/skills script/.pstack-template-upstream
+      ;;
+    toolchain)
+      git -C "$DOTFILES" add -- .tool-versions script/install_node.sh 2>/dev/null || true
+      local root
+      for root in ${WEEKLY_UPDATE_BUN_ROOTS:-}; do
+        [ -f "$root/package.json" ] || continue
+        git -C "$root" add -- package.json bun.lockb bun.lock 2>/dev/null || true
+      done
+      ;;
+    *) die "unknown PR id $id" ;;
+  esac
+}
+
 run_slice() {
-  local id="$1" title="$2" branch status url= body
+  local id="$1" title="$2" branch status url= body slice_ok=0
   branch=$(branch_for "$id")
   body=$(mktemp)
   if [ "$DRY" -eq 1 ]; then
@@ -211,24 +263,46 @@ run_slice() {
     rm -f "$body"
     return 0
   fi
+
+  _slice_unwind() {
+    [ "$slice_ok" = 1 ] && return 0
+    slice_abort_branch "$branch"
+    return 0
+  }
+  trap _slice_unwind RETURN
+
   git -C "$DOTFILES" checkout -q -B "$branch" "origin/$BASE_BRANCH" 2>/dev/null \
     || git -C "$DOTFILES" checkout -q -B "$branch" "$BASE_BRANCH"
-  apply_for "$id" || { SUMMARY+=("PR $id: failed (apply)"); rm -f "$body"; return 0; }
+  if ! apply_for "$id"; then
+    SUMMARY+=("PR $id: failed (apply)")
+    rm -f "$body"
+    return 0
+  fi
   if ! run_tests "$id"; then
-    git -C "$DOTFILES" checkout -q "$BASE_BRANCH" 2>/dev/null || git -C "$DOTFILES" checkout -q main
-    git -C "$DOTFILES" branch -D "$branch" >/dev/null 2>&1 || true
     SUMMARY+=("PR $id: failed (tests)")
     rm -f "$body"
     return 0
   fi
-  if ! git -C "$DOTFILES" diff --quiet || ! git -C "$DOTFILES" diff --cached --quiet; then
-    git -C "$DOTFILES" add -A
-    git -C "$DOTFILES" commit -qm "weekly-update: $title"
+  if git -C "$DOTFILES" diff --quiet && git -C "$DOTFILES" diff --cached --quiet; then
+    if ! git -C "$DOTFILES" commit --allow-empty -qm "weekly-update: $title"; then
+      SUMMARY+=("PR $id: failed (commit)")
+      rm -f "$body"
+      return 0
+    fi
   else
-    git -C "$DOTFILES" commit --allow-empty -qm "weekly-update: $title"
+    stage_slice_changes "$id"
+    if ! git -C "$DOTFILES" commit -qm "weekly-update: $title"; then
+      SUMMARY+=("PR $id: failed (commit)")
+      rm -f "$body"
+      return 0
+    fi
   fi
   if [ "${WEEKLY_UPDATE_NO_PUSH:-0}" != 1 ]; then
-    git -C "$DOTFILES" push -q -u origin "$branch"
+    if ! git -C "$DOTFILES" push -q -u origin "$branch" 2>&1; then
+      SUMMARY+=("PR $id: failed (push)")
+      rm -f "$body"
+      return 0
+    fi
   fi
   {
     printf 'Weekly update slice `%s`.\n\nTests: `%s`\n\nMerged only on the owner'"'"'s yes.\n' "$id" "$(pr_tests "$id")"
@@ -239,7 +313,9 @@ run_slice() {
     SUMMARY+=("PR $id: failed (publish)")
   fi
   rm -f "$body"
-  git -C "$DOTFILES" checkout -q "$BASE_BRANCH" 2>/dev/null || git -C "$DOTFILES" checkout -q main
+  slice_ok=1
+  trap - RETURN
+  checkout_main
 }
 
 SUMMARY=()
@@ -257,6 +333,7 @@ fi
 
 project_gates
 ensure_origin_main
+require_clean_start
 
 idx=0
 while [ "$idx" -lt ${#PR_ID[@]} ]; do
