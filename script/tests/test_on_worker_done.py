@@ -62,6 +62,9 @@ sys.exit(ug.main())
                 native.config['local_host'] = 'alpha'
                 native.data['environments'] = [r for r in native.data['environments'] if r['name'] != 'alpha']
                 native.data['local'] = native.data.pop('alpha')
+            local_repos = native.data.setdefault('local', {}).setdefault('repos', [{'id': 'repo-id'}])
+            for entry in local_repos:
+                entry.update({'kind': 'git', 'path': str(wt)})
             gh = root / "gh"
             gh.write_text("""#!/usr/bin/env python3
 import json, os, sys
@@ -140,7 +143,7 @@ exec "${ORCA_CLI_COMMAND:-orca}" "${args[@]}"
                 result, args = self.dispatch(author, configuration='default')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
-                self.assertTrue(args[args.index('--worktree')+1].startswith('path:'))
+                self.assertEqual(args[args.index('--worktree')+1], 'id:repo-id')
                 self.assertEqual(args[args.index('--agent')+1], 'cursor')
                 self.assertEqual(args[args.index('--model')+1], 'grok-4.7-high')
 
@@ -156,14 +159,14 @@ exec "${ORCA_CLI_COMMAND:-orca}" "${args[@]}"
         result, args = self.dispatch('claude')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[args.index('--on')+1], 'alpha-saved')
-        self.assertTrue(args[args.index('--worktree')+1].startswith('path:'))
+        self.assertEqual(args[args.index('--worktree')+1], 'id:repo-id')
         self.assertEqual(args[args.index('--model')+1], 'grok-4.7-high')
 
     def test_full_host_fallback_pins_actual_native_argv(self):
         result, args = self.dispatch('claude', full_hosts=('alpha',))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[args.index('--on')+1], 'beta-saved')
-        self.assertTrue(args[args.index('--worktree')+1].startswith('path:'))
+        self.assertEqual(args[args.index('--worktree')+1], 'id:repo-id')
         self.assertEqual(args[args.index('--model')+1], 'grok-4.7-high')
 
     def test_all_full_starts_nothing_and_reports_counts(self):
@@ -177,7 +180,7 @@ exec "${ORCA_CLI_COMMAND:-orca}" "${args[@]}"
         result, args = self.dispatch('claude', local=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('--on', args)
-        self.assertTrue(args[args.index('--worktree')+1].startswith('path:'))
+        self.assertEqual(args[args.index('--worktree')+1], 'id:repo-id')
 
     def test_zero_executed_refuses_start(self):
         receipt = "Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\nTests executed: 0\nLoad errors: 0\n"
