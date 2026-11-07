@@ -132,6 +132,27 @@ class HeavyGateWatch(unittest.TestCase):
         self.assertEqual(len(waits), 5)
         self.assertGreater(statistics.median(waits), 120)
 
+    def test_non_utf8_wrap_up_log_still_completes_pass_and_saves_state(self):
+        wrap_log = self.home / 'wrap-up-scheduled.log'
+        wrap_log.parent.mkdir(parents=True, exist_ok=True)
+        old = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(T0))
+        line = '%s wrap-up-scheduled [1] round ok: repos=1 seconds=3\n' % old
+        wrap_log.write_bytes(b'\xff\n' + line.encode('utf-8'))
+        state = self.home / 'state.json'
+        cfg = {
+            'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+            'wrap_up': {
+                'hosts': {'host-b': str(wrap_log)},
+                'issue_repo': 'owner/repo',
+            },
+        }
+        self.run_pass(cfg, state)
+        self.assertTrue(state.is_file())
+        saved = json.loads(state.read_text())
+        self.assertIsInstance(saved, dict)
+        age = watch.wrap_up_last_line_age_seconds(wrap_log, T0 + 5000)
+        self.assertIsNotNone(age)
+
     def test_stale_wrap_up_round_opens_one_issue(self):
         wrap_log = self.home / 'wrap-up-scheduled.log'
         wrap_log.parent.mkdir(parents=True, exist_ok=True)
