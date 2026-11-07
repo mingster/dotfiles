@@ -374,6 +374,83 @@ with open(sys.argv[1], 'a', buffering=1) as f:
             self.assertEqual(claimant.stuck, [slot.name])
             self.assertTrue(slot.exists())
 
+    def dead_pid(self):
+        dead = subprocess.Popen(['true'])
+        dead.wait()
+        return dead.pid
+
+    def seed_slot(self, *, running=False, groups_ready=True, groups=None, quarantine=False, pid=None):
+        self.config(1)
+        slot = self.root / '.cache/heavy-gate/slot-1'
+        slot.mkdir(parents=True)
+        (slot / 'pid').write_text(str(pid if pid is not None else self.dead_pid()))
+        (slot / 'groups').write_text(json.dumps(groups if groups is not None else [424242]))
+        if groups_ready:
+            (slot / 'groups-ready').touch()
+        if running:
+            (slot / 'running').touch()
+        if quarantine:
+            (slot / 'quarantine').touch()
+        return slot
+
+    def empty_members(self, _pgid):
+        return []
+
+    def zombie_members(self, _pgid):
+        return [('Z', 'fixture-zombie')]
+
+    def live_members(self, _pgid):
+        return [('S', 'fixture-live')]
+
+    def try_reclaim(self, members):
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module, 'group_members', side_effect=members):
+            return module.Slots(1).claim(1)
+
+    def test_dead_owner_running_marker_empty_groups_reclaimed(self):
+        slot = self.seed_slot(running=True)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module, 'group_members', side_effect=self.empty_members):
+            gates = module.Slots(1)
+            gates.reclaim()
+            self.assertEqual(gates.stuck, [])
+        self.assertFalse(slot.exists())
+
+    def test_dead_owner_live_group_held(self):
+        slot = self.seed_slot(running=True)
+        self.assertFalse(self.try_reclaim(self.live_members))
+        self.assertTrue(slot.exists())
+
+    def test_dead_owner_missing_groups_ready_held(self):
+        slot = self.seed_slot(groups_ready=False, running=True)
+        self.assertFalse(self.try_reclaim(self.empty_members))
+        self.assertTrue(slot.exists())
+
+    def test_dead_owner_malformed_ledger_held(self):
+        slot = self.seed_slot(running=True)
+        (slot / 'groups').write_text('not-json')
+        self.assertFalse(self.try_reclaim(self.empty_members))
+        self.assertTrue(slot.exists())
+
+    def test_dead_owner_quarantine_marker_held(self):
+        slot = self.seed_slot(running=True, quarantine=True)
+        self.assertFalse(self.try_reclaim(self.zombie_members))
+        self.assertTrue(slot.exists())
+
+    def test_dead_owner_quarantine_only_empty_groups_reclaimed(self):
+        slot = self.seed_slot(quarantine=True)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module, 'group_members', side_effect=self.empty_members):
+            gates = module.Slots(1)
+            gates.reclaim()
+            self.assertEqual(gates.stuck, [])
+        self.assertFalse(slot.exists())
+
+    def test_live_owner_held(self):
+        slot = self.seed_slot(running=True, pid=os.getpid())
+        self.assertFalse(self.try_reclaim(self.empty_members))
+        self.assertTrue(slot.exists())
+
     def test_killed_gate_with_live_command_stays_held(self):
         self.config(1)
         self.run_gate(['sleep', '30'])
@@ -441,19 +518,27 @@ with open(sys.argv[1], 'a', buffering=1) as f:
             killpg.assert_not_called()
             paths = list((self.root/'.cache/heavy-gate').glob('slot-*'))
             self.assertEqual(len(paths), 1)
-            os.environ['HEAVY_GATE_TOKEN'] = (paths[0]/'token').read_text()
-            self.assertFalse(module.holds_slot(), 'failed rename must not leave old token authorized')
+            with mock.patch.dict(os.environ, dict(self.env,
+                             HEAVY_GATE_TOKEN=(paths[0]/'token').read_text()), clear=True):
+                self.assertFalse(module.holds_slot(),
+                                 'failed rename must not leave old token authorized')
             marker = self.root/'stale-token-command'
             claimant = module.argparse.Namespace(weight=1, head_checks=False,
                                                  command=['--', 'touch', str(marker)])
-            with mock.patch.object(module.time, 'sleep', side_effect=module.Interrupted(signal.SIGTERM)):
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                 mock.patch.object(module.time, 'sleep', side_effect=module.Interrupted(signal.SIGTERM)):
                 with self.assertRaises(module.Interrupted):
                     module.gate(claimant)
             self.assertFalse(marker.exists(), 'stale token must not admit a command')
             dead = subprocess.Popen(['true'])
             dead.wait()
             (paths[0]/'pid').write_text(str(dead.pid))
-            self.assertFalse(module.Slots(1).claim(1))
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                 mock.patch.object(module, 'group_members', side_effect=self.empty_members):
+                stuck = module.Slots(1)
+                stuck.reclaim()
+                self.assertEqual(stuck.stuck, [])
+            self.assertFalse(paths[0].exists())
 
     def test_later_cleanup_cannot_forget_failed_publication(self):
         with mock.patch.dict(os.environ, self.env, clear=True):

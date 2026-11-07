@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -152,6 +153,41 @@ class HeavyGateWatch(unittest.TestCase):
         self.assertIsInstance(saved, dict)
         age = watch.wrap_up_last_line_age_seconds(wrap_log, T0 + 5000)
         self.assertIsNotNone(age)
+
+    def test_stuck_slot_opens_issue_after_ten_minutes(self):
+        cache = self.home / 'cache'
+        slot = cache / 'slot-1'
+        slot.mkdir(parents=True)
+        holder = subprocess.Popen(['sleep', '120'], start_new_session=True)
+        self.addCleanup(lambda: (holder.kill(), holder.wait()))
+        dead = subprocess.Popen(['true'])
+        dead.wait()
+        slot.joinpath('pid').write_text(str(dead.pid))
+        slot.joinpath('groups').write_text(json.dumps([holder.pid]))
+        slot.joinpath('groups-ready').touch()
+        slot.joinpath('running').touch()
+        state = self.home / 'state.json'
+        cfg = {
+            'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
+            'heavy_gate': {
+                'slot_roots': {'host-a': str(cache)},
+                'issue_repo': 'owner/repo',
+                'stuck_limit_seconds': 600,
+            },
+        }
+        self.run_pass(cfg, state, now=T0)
+        creates = [c for c in self.gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        self.assertEqual(creates, [])
+        self.gh_calls.clear()
+        self.run_pass(cfg, state, now=T0 + 601)
+        creates = [c for c in self.gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        self.assertEqual(len(creates), 1)
+        title = creates[0][creates[0].index('--title') + 1]
+        self.assertEqual(title, 'heavy-gate slot slot-1 stuck on host-a')
+        self.gh_calls.clear()
+        self.run_pass(cfg, state, issue_exists=True, now=T0 + 900)
+        creates = [c for c in self.gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
+        self.assertEqual(creates, [])
 
     def test_stale_wrap_up_round_opens_one_issue(self):
         wrap_log = self.home / 'wrap-up-scheduled.log'

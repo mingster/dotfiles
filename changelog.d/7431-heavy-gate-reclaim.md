@@ -1,0 +1,1 @@
+Reclaim heavy-gate slots when a dead owner leaves a `running` marker but inspection proves every recorded group empty or zombie-only; fleet-watch opens an issue when a slot stays held for ten minutes. (#7431)

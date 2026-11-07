@@ -30,9 +30,12 @@ never signals: complete inspection proving empty/zombie-only groups releases slo
 The command is released only after its group is published, so a gate that dies
 before publication never ran it: its slot (marked prelaunch) is reclaimed once
 the owner is gone. After release, a dead owner is reclaimed only when inspection
-proves every recorded group empty or zombie-only. Any other hold (live group,
-malformed ledger, interrupted cleanup) keeps capacity, is named in the wait
-notice, and requires operator inspection. There is no manual release.
+proves every recorded group empty or zombie-only; a leftover ``running`` marker
+from a killed owner does not block that reclaim. Any other hold (live group,
+malformed ledger, missing ``groups-ready``, or both ``running`` and ``quarantine``
+from interrupted cleanup) keeps capacity, is named in the wait notice, and requires
+operator
+inspection. There is no manual release.
 Reused PGIDs during reclaim may prolong a hold but never authorize killing there.
 Signals require a positively inspected live group and an unreaped direct-child
 leader, verified with waitid(WNOWAIT) before each signal when available, else ps
@@ -232,18 +235,53 @@ def verify_unreaped_leader(proc):
         raise ChildProcessError('leader already reaped; generation unknown')
 
 
-def groups_empty(path):
+def recorded_groups_empty(path, members=None):
+    """True when groups-ready is published and every recorded group is empty or zombie-only."""
+    inspect = group_members if members is None else members
+    if not (path / 'groups-ready').is_file():
+        return False
+    groups = json.loads((path / 'groups').read_text())
+    if not isinstance(groups, list) or any(type(pgid) is not int or pgid <= 0 for pgid in groups):
+        return False
+    return all(not any(not state.startswith('Z') for state, _ in inspect(pgid)) for pgid in groups)
+
+
+def dead_owner_reclaimable(path, members=None):
+    """Inspect-only reclaim when the owner is gone."""
     try:
-        # A ready marker is published only after the entire ledger is written.
-        if (path / 'running').exists() or not (path / 'groups-ready').is_file():
+        if (path / 'quarantine').exists() and (path / 'running').exists():
             return False
-        groups = json.loads((path / 'groups').read_text())
-        if not isinstance(groups, list) or any(type(pgid) is not int or pgid <= 0 for pgid in groups):
-            return False
-        return all(not any(not state.startswith('Z') for state, _ in group_members(pgid))
-                   for pgid in groups)
+        return recorded_groups_empty(path, members)
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
+
+
+def groups_empty(path, members=None):
+    try:
+        # Normal release still requires cleanup to have dropped the running marker.
+        if (path / 'running').exists():
+            return False
+        return recorded_groups_empty(path, members)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def stuck_slot_names(root, members=None):
+    """Slot directory names held with a dead owner and no reclaim proof."""
+    names = []
+    for path in Path(root).glob('slot-*'):
+        if not path.is_dir():
+            continue
+        try:
+            pid = int((path / 'pid').read_text())
+        except (FileNotFoundError, ValueError):
+            pid = 0
+        if alive(pid) or (path / 'prelaunch').exists() or not (path / 'groups').exists():
+            continue
+        if dead_owner_reclaimable(path, members=members):
+            continue
+        names.append(path.name)
+    return names
 
 
 class Slots:
@@ -306,7 +344,7 @@ class Slots:
                 # prelaunch: the workload is released only after its group is
                 # published, so a dead owner here never ran anything.
                 if (not (path / 'prelaunch').exists() and (path / 'groups').exists()
-                        and not groups_empty(path)):
+                        and not dead_owner_reclaimable(path)):
                     self.stuck.append(path.name)
                     continue
                 shutil.rmtree(path)
@@ -471,7 +509,10 @@ def children(slots, nested=False):
         # Keep capacity claimed through all process-group cleanup attempts.
         with cleanup_signals():
             # Revoke kernel authority first. Failed filesystem quarantine then
-            # surfaces without signalling, while running still prevents reclaim.
+            # surfaces without signalling. groups_empty release still needs a
+            # dropped running marker for a live owner; dead_owner_reclaimable
+            # reclaims once the owner is gone unless both running and quarantine
+            # markers remain.
             slots.revoke()
             for path in slots.owned:
                 (path / 'running').rename(path / 'quarantine')
