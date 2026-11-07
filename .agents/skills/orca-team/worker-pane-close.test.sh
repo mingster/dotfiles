@@ -801,7 +801,9 @@ case "$*" in
     r=$(printf '%s' "$*" | sed -n 's/.*--run \([^ ]*\).*/\1/p')
     if [ -f "$F2/flip-after-first" ] && [ -f "$F2/flipped" ] && [ -f "$F2/workers-$r.live.json" ]; then cat "$F2/workers-$r.live.json"
     else cat "$F2/workers-$r.json"; [ ! -f "$F2/flip-after-first" ] || : > "$F2/flipped"; fi ;;
-  "orchestration worker-show --dispatch "*) [ -f "$F2/show.$4" ] && cat "$F2/show.$4" || exit 1 ;;
+  "orchestration worker-show --dispatch "*)
+    [ -z "${F2_SHOW_DELAY:-}" ] || sleep "$F2_SHOW_DELAY"
+    [ -f "$F2/show.$4" ] && cat "$F2/show.$4" || exit 1 ;;
   "orchestration worker-release"*) printf '{"ok":true,"result":{"state":"released","dispatchId":"%s","processAction":"closed_agent_terminal"}}\n' "$4" ;;
   "terminal list"*) cat "$F2/terminals.json" ;;
   "terminal close --terminal "*) echo "$4" >> "$F2/closes.log"
@@ -902,5 +904,40 @@ unset F2
 
 # The pane file is replaced through a temp file and rename, so a reader never sees it empty or half written.
 check "pane file is written through a temp file and rename" "$(grep -q 'mv -f' "$here/worker-pane-close.sh" && ! grep -q '> "$f"$' "$here/worker-pane-close.sh"; echo $?)"
+
+# Sweep stops at ORCA_PANE_CLOSE_TIMEOUT, keeps records, exits 0, prints how many are left.
+F2="$tmp/sweep-deadline"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+python3 - "$F2" <<'GEN'
+import json,sys
+d=sys.argv[1]
+ws=[]
+terms=[]
+for j in range(25):
+    n=f"slow{j}"
+    ws.append({"dispatchId":n,"state":"succeeded","workspace":"repo1::/nonexistent/gone","terminal":f"term_{n}"})
+    terms.append({"handle":f"term_{n}"})
+    json.dump({"result":{"state":"succeeded","workspace":"repo1::/nonexistent/gone","terminal":f"term_{n}"}},open(f"{d}/show.{n}","w"))
+    open(f"{d}/state/{n}","w").write(f"term_{n}\n")
+json.dump({"ok":True,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}},open(d+"/runs.json","w"))
+json.dump({"ok":True,"result":{"workers":ws}},open(d+"/workers-run0.json","w"))
+json.dump({"ok":True,"result":{"truncated":False,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":terms}},open(d+"/terminals.json","w"))
+GEN
+out=$(F2_SHOW_DELAY=2 ORCA_PANE_CLOSE_TIMEOUT=5 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" 2>&1); rc=$?
+left=$(find "$F2/state" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+check "sweep: stops before deadline without a non-zero exit" "$([ "$rc" = 0 ] && [ "$left" -gt 0 ]; echo $?)"
+check "sweep: prints how many pane records are left" "$(printf '%s' "$out" | grep -q "sweep: deadline reached, ${left} pane record"; echo $?)"
+unset F2_SHOW_DELAY
+
+# Prune stale pane files from worker-list rows, not one worker-show per file.
+F2="$tmp/sweep-rows"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"endedrow","state":"succeeded","liveness":"exited","workspace":"repo1::/x"},{"dispatchId":"live","state":"running","workspace":"repo1::/y"}]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[{"handle":"t_still","worktreePath":"/x"}]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/endedrow"
+echo t_still > "$F2/state/live"
+: > "$F2/calls.log"
+( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
+check "sweep: stale-file prune uses worker-list without worker-show for listed dispatches" "$([ ! -e "$F2/state/endedrow" ] && [ -e "$F2/state/live" ] && ! grep -q 'worker-show --dispatch endedrow' "$F2/calls.log" 2>/dev/null; echo $?)"
+unset F2
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

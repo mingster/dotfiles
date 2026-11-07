@@ -23,6 +23,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/worker-pane-retry.sh"
 state="${ORCA_PANE_STATE_DIR:-$HOME/.cache/orca-worker-panes}"
 close_deadline=$((SECONDS+${ORCA_PANE_CLOSE_TIMEOUT:-1800}))
+sweep_before_deadline() { [ "$SECONDS" -lt "$close_deadline" ]; }
 dispatch_final() { # worker-show json on stdin -> rc 0 only when the dispatch has positively ended; prints its status
   python3 -c '
 import sys,json
@@ -274,6 +275,7 @@ native_release_for_close() {
 close_one() {
   local d="$1" f="$state/$1" show list h agent fresh
   local handles=() pending=()
+  [ "${2:-}" != sweep ] || sweep_before_deadline || return 0
   show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || return 0
   printf '%s' "$show" | dispatch_final >/dev/null || return 0
   [ "${2:-}" != sweep ] || [ -e "$state/released/$d" ] || worktree_gone "$show" || return 0
@@ -424,15 +426,26 @@ $found"
 fi
 # Read each list once for the whole sweep, not once per dispatch. Any list that cannot be read closes nothing.
 sweep_ok=1; sweep_coords=''; sweep_busy=''; sweep_list=''
+sweep_rows_file=$(mktemp); sweep_rows_cleanup() { rm -f "$sweep_rows_file"; }
+trap sweep_rows_cleanup EXIT
+: > "$sweep_rows_file"
+export ORCA_SWEEP_ROWS_FILE="$sweep_rows_file"
 sweep_coords=$(run_coordinators) || sweep_ok=0
 sweep_busy=$(each_worker_page '
+import json, os
+rows_path=os.environ.get("ORCA_SWEEP_ROWS_FILE") or ""
+rows=open(rows_path,"a") if rows_path else None
 for w in r["workers"]:
+    did=w.get("dispatchId") or ""
+    if rows and did:
+        rows.write(did+"\t"+json.dumps(w,separators=(",",":"))+"\n")
     if ws.is_final(w): continue
-    d=w.get("dispatchId") or ""
+    d=did
     for h in (ws.terminal(w), w.get("agentTerminalHandle"), (w.get("resource") or {}).get("terminalHandle")):
         if h: print(d+"\t"+h)
     wid=ws.workspace_id(w)
-    if wid: print(d+"\twt:"+wid.split("::",1)[-1])') || sweep_ok=0
+    if wid: print(d+"\twt:"+wid.split("::",1)[-1])' "$here") || sweep_ok=0
+unset ORCA_SWEEP_ROWS_FILE
 sweep_list=$(close_rpc terminal list --json 2>/dev/null) || sweep_list=''
 # A pane file whose handles are all gone has nothing left to close once its dispatch ended or is unknown. Needs a complete
 # terminal inventory: an unreadable or partial list proves nothing and removes nothing.
@@ -454,21 +467,55 @@ if ok:
         hs=[l.strip() for l in open(p) if l.strip()]
         if not any(h in live for h in hs): print(n)' 2>/dev/null) || gone=''
   # A dispatch that is still running keeps its record (its pane may not be listed yet). An ended or unknown one does not.
+  # Use the worker-list rows read for the sweep; worker-show only when a dispatch is missing from every page.
   while IFS= read -r d; do
     [ -n "$d" ] || continue
-    # Drop only on a real answer: the dispatch ended, or Orca says it does not exist. A failed or unreadable
-    # worker-show proves nothing, so the record stays.
-    show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || :
-    if ! printf '%s' "$show" | dispatch_final >/dev/null; then
-      printf '%s' "$show" | python3 -c '
+    drop=$(DID="$d" ROWS="$sweep_rows_file" HERE="$here" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+did = os.environ["DID"]
+row = None
+for line in open(os.environ["ROWS"]):
+    line = line.rstrip("\n")
+    if not line: continue
+    i, raw = line.split("\t", 1)
+    if i == did:
+        try: row = json.loads(raw)
+        except Exception: pass
+        break
+if row is not None:
+    print(1 if ws.is_final(row) else 0)
+else:
+    print(2)' 2>/dev/null) || continue
+    case "$drop" in
+      1) rm -f "$state/$d" "$state/released/$d" ;;
+      0) continue ;;
+      *)
+        show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || :
+        if printf '%s' "$show" | dispatch_final >/dev/null; then
+          rm -f "$state/$d" "$state/released/$d"
+        elif printf '%s' "$show" | python3 -c '
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(1)
-sys.exit(0 if d.get("ok") is False and (d.get("error") or {}).get("code")=="dispatch_not_found" else 1)' || continue
-    fi
-    rm -f "$state/$d" "$state/released/$d"
+sys.exit(0 if d.get("ok") is False and (d.get("error") or {}).get("code")=="dispatch_not_found" else 1)' 2>/dev/null; then
+          rm -f "$state/$d" "$state/released/$d"
+        fi
+        ;;
+    esac
   done <<< "$gone"
   dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "${found:-}")
 fi
-while IFS= read -r d; do [ -z "$d" ] || close_one "$d" sweep; done < <(printf '%s\n' "$dispatches" | sort -u)
+sweep_stopped=0
+while IFS= read -r d || [ -n "$d" ]; do
+  [ -z "$d" ] && continue
+  if [ "$SECONDS" -ge "$close_deadline" ]; then sweep_stopped=1; break; fi
+  close_one "$d" sweep
+done < <(printf '%s\n' "$dispatches" | sort -u)
+if [ "$sweep_stopped" -eq 1 ]; then
+  n=0
+  for f in "$state"/*; do [ -f "$f" ] || continue; n=$((n+1)); done
+  printf 'sweep: deadline reached, %s pane record(s) left\n' "$n"
+fi
+sweep_rows_cleanup; trap - EXIT
 exit 0

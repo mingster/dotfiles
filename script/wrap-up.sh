@@ -1746,7 +1746,17 @@ fi
 pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
-  [ "$apply" -eq 0 ] || ORCA_PANE_CLOSE_TIMEOUT=${WRAP_UP_PANE_TIMEOUT:-120} bash "$pane_script" || fail_item 'worker panes' "worker-pane-close exited $?"
+  if [ "$apply" -eq 1 ]; then
+    pane_left=${WRAP_UP_PANE_TIMEOUT:-120}
+    round_left=$((deadline-SECONDS))
+    if [ "$round_left" -gt 0 ] && [ "$round_left" -lt "$pane_left" ]; then
+      pane_left=$round_left
+    fi
+    [ "$pane_left" -gt 0 ] || pane_left=1
+    rc=0
+    ORCA_PANE_CLOSE_TIMEOUT=$pane_left bash "$pane_script" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || fail_item 'worker panes' "worker-pane-close exited $rc"
+  fi
 fi
 update_main
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
