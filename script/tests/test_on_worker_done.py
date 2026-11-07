@@ -207,7 +207,14 @@ sys.exit(ug.main())
         self.assertIsNotNone(args)
 
     def test_ran_bun_test_without_counts_still_refuses(self):
-        result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\n"])
+        result, args = self.dispatch(
+            "claude",
+            receipts=[
+                "Checks: PASS head="
+                + "a" * 40
+                + "\nCommand: bun test\nResult: exit 0\nbun test v1.2.3 (abc)\n"
+            ],
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("test command has no execution metadata", result.stderr)
         self.assertIsNone(args)
