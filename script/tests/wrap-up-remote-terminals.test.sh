@@ -2,6 +2,8 @@
 # Public CLI regression: coordinator dispatches own remote terminals too.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
