@@ -196,7 +196,17 @@ sys.exit(ug.main())
         self.assertIn("incomplete test execution metadata", result.stderr)
         self.assertIsNone(args)
 
-    def test_legacy_bun_receipt_without_counts_refuses(self):
+    def test_skipped_bun_test_step_starts_qa(self):
+        receipt = (
+            "Checks: PASS head=" + "a" * 40 + "\n"
+            "Command: bun test\n"
+            "Skipped: no app code changed\n"
+        )
+        result, args = self.dispatch("claude", receipts=[receipt])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(args)
+
+    def test_ran_bun_test_without_counts_still_refuses(self):
         result, args = self.dispatch("claude", receipts=["Checks: PASS head=" + "a" * 40 + "\nCommand: bun test\nResult: exit 0\n"])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("test command has no execution metadata", result.stderr)
