@@ -1212,6 +1212,62 @@ while not pathlib.Path(sys.argv[3]).exists():
         with mock.patch.dict(os.environ, self.env, clear=True):
             self.assertEqual(module.gate(args), 0)
 
+    def test_non_utf8_wait_log_does_not_fail_gate(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        wait_log.write_bytes(b'\xff\xfejunk\n')
+        self.env['HEAVY_GATE_WAIT_LOG'] = str(wait_log)
+        self.env['HEAVY_GATE_HOST'] = 'fixture-host'
+        self.config(1)
+        holder = self.job('hold', hold=True)
+        self.wait_for(lambda: self.started('hold'))
+        waiter = self.job('after', 0.05)
+        self.wait_for(lambda: bool(select.select([waiter.stderr], [], [], 0)[0]))
+        self.release('hold')
+        self.finish(waiter, 0)
+        self.finish(holder, 0)
+        self.assertRegex(wait_log.read_bytes().decode('utf-8', errors='replace'),
+                         r'host=fixture-host wait_s=[0-9.]+')
+
+    def test_concurrent_wait_log_trims_keep_every_fresh_row(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        bound = 8
+        stamp = '2025-06-01T12:00:00Z'
+        seed = [f'{stamp} host=fixture-host wait_s=0.{i:03d}' for i in range(24)]
+        wait_log.write_text('\n'.join(seed) + '\n')
+        worker_env = dict(self.env, HEAVY_GATE_WAIT_LOG=str(wait_log),
+                          HEAVY_GATE_WAIT_LOG_MAX_LINES=str(bound),
+                          HEAVY_GATE_HOST='fixture-host')
+        markers = [1.111, 2.222, 3.333, 4.444, 5.555, 6.666]
+        child = '''import importlib.util, json, os, pathlib, sys
+scripts = pathlib.Path(sys.argv[1])
+marker = float(sys.argv[2])
+env = json.loads(sys.argv[3])
+spec = importlib.util.spec_from_file_location('heavy_gate', scripts / 'heavy-gate.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+os.environ.update(env)
+mod.log_heavy_gate_wait(marker)
+'''
+        env_json = json.dumps(worker_env)
+        processes = []
+        try:
+            for marker in markers:
+                processes.append(subprocess.Popen(
+                    [sys.executable, '-c', child, str(scripts), str(marker), env_json],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
+            for proc in processes:
+                out, err = proc.communicate(timeout=60)
+                self.assertEqual(proc.returncode, 0, err)
+        finally:
+            for proc in processes:
+                if proc.poll() is None:
+                    proc.kill()
+        body = wait_log.read_text(encoding='utf-8', errors='replace')
+        for marker in markers:
+            self.assertIn(f'wait_s={marker:.3f}', body, body)
+
 
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):

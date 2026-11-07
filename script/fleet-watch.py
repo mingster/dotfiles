@@ -796,7 +796,7 @@ def read_heavy_gate_waits(log_path, now=None):
         now = time.time()
     max_age = heavy_gate_wait_median_max_age_seconds()
     try:
-        text = Path(log_path).read_text(encoding='utf-8')
+        text = Path(log_path).read_bytes().decode('utf-8', errors='replace')
     except OSError:
         return []
     waits = []

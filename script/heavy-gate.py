@@ -643,14 +643,29 @@ def wait_log_line_age_seconds(token, now):
     return None
 
 
+@contextlib.contextmanager
+def heavy_gate_wait_log_lock(path):
+    """Serialize append and trim on the wait log across processes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f'.{path.name}.lock')
+    with lock_path.open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def read_heavy_gate_wait_log_lines(path):
+    try:
+        text = path.read_bytes().decode('utf-8', errors='replace')
+    except OSError:
+        return None
+    return [line for line in text.splitlines() if line.strip()]
+
+
 def trim_heavy_gate_wait_log(path):
     """Drop aged lines and keep a tail so the wait log cannot grow without limit."""
     max_lines = wait_log_max_lines()
     max_age = wait_log_max_age_seconds()
-    try:
-        lines = [line for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
-    except OSError:
-        return
+    lines = read_heavy_gate_wait_log_lines(path)
     if not lines:
         return
     now = time.time()
@@ -688,13 +703,13 @@ def log_heavy_gate_wait(seconds):
         return
     path = heavy_gate_wait_log_path()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         line = f'{stamp} host={heavy_gate_host()} wait_s={seconds:.3f}\n'
-        with path.open('a', encoding='utf-8') as stream:
-            stream.write(line)
-        trim_heavy_gate_wait_log(path)
-    except OSError:
+        with heavy_gate_wait_log_lock(path):
+            with path.open('a', encoding='utf-8') as stream:
+                stream.write(line)
+            trim_heavy_gate_wait_log(path)
+    except (OSError, ValueError, UnicodeError):
         pass
 
 

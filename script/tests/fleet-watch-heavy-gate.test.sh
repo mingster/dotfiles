@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import statistics
 import sys
 import tempfile
 import time
@@ -121,6 +122,15 @@ class HeavyGateWatch(unittest.TestCase):
         self.run_pass(cfg, state, now=now)
         creates = [c for c in self.gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
         self.assertEqual(creates, [])
+
+    def test_non_utf8_wait_log_still_yields_median(self):
+        wait_log = self.home / 'wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        wait_log.write_bytes(b'\xff')
+        write_wait_log(wait_log, 'host-a', ['30', '130', '140', '150', '160'])
+        waits = watch.read_heavy_gate_waits(wait_log, T0 + 5000)
+        self.assertEqual(len(waits), 5)
+        self.assertGreater(statistics.median(waits), 120)
 
     def test_stale_wrap_up_round_opens_one_issue(self):
         wrap_log = self.home / 'wrap-up-scheduled.log'
