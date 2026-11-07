@@ -229,9 +229,11 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
                 print(f"Kept remote {br} (closed {when}, deleted after 7 days)")
                 s["kept"] += 1
                 return
-            print(archive_line(br, head))
+            rc, tip = gitc(repo, "rev-parse", f"refs/remotes/origin/{br}")
+            tip = tip.strip() if rc == 0 and tip.strip() else head
+            print(archive_line(br, tip))
             if apply:
-                rc, err = archive_push(repo, br, head)
+                rc, err = archive_push(repo, br, tip)
                 if rc:
                     keep(f"remote {br}", f"archive failed: {err.strip()}" if err.strip() else "archive failed")
                     failed.append(True)

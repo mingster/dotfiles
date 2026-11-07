@@ -281,6 +281,29 @@ class CleanFinishedTests(unittest.TestCase):
         ).returncode
         self.assertNotEqual(branch_rc, 0)
 
+    def test_closed_pr_old_remote_archives_remote_tip(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("newer")
+        wt = g.worktree("wt-newer", "newer")
+        for n in ("a", "b"):
+            (wt / n).write_text(n + "\n")
+            g._run(wt, "add", n)
+            g._run(wt, "commit", "-m", n)
+        g._run(wt, "push", "-u", "origin", "newer")
+        tip = head_oid(wt)
+        g._run(wt, "reset", "--hard", "HEAD~1")
+        when = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prs = [{"headRefName": "newer", "state": "CLOSED", "closedAt": when}]
+        env = StubEnv(g, prs)
+        self.assertIn(f"git push origin {tip}:refs/tags/archive/newer", env.run().stdout)
+        self.assertEqual(env.run(apply=True).returncode, 0)
+        got = subprocess.run(
+            ["git", "-C", str(g.origin), "rev-parse", "refs/tags/archive/newer"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        self.assertEqual(got, tip)
+
     def test_lsof_missing_keeps_repo(self):
         g = GitFix()
         self.addCleanup(g.cleanup)
