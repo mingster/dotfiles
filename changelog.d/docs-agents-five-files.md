@@ -1,0 +1,1 @@
+- Project `docs/agents/` holds only five fixed path files; team docs live once in the template and area notes go in `docs/<area>/` (owner 2026-11-07).
