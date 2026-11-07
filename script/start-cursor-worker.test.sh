@@ -7,9 +7,12 @@ trap 'rm -rf "$tmp"' EXIT
 # shellcheck source=tests/lib/asdf-pin.sh
 . "$root/script/tests/lib/asdf-pin.sh"
 # Resolve python before HOME changes; the asdf shim otherwise loses its installs.
-if command -v asdf >/dev/null 2>&1; then PATH="$(dirname "$(asdf which python3)"):$PATH"; fi
+path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
+python_bin=$(PATH="$path_no_asdf" type -P python3)
+[ -x "$python_bin" ] || { echo "missing python3" >&2; exit 1; }
 mkdir -p "$tmp/home" "$tmp/bin"
-export HOME="$tmp/home" CURSOR_TEST_LOG="$tmp/calls" ORCA_CLI_COMMAND="$tmp/bin/orca"
+export HOME="$tmp/home" DOTFILES="$root" CURSOR_TEST_LOG="$tmp/calls" ORCA_CLI_COMMAND="$tmp/bin/orca"
+export PATH="$tmp/bin:$(dirname "$python_bin"):/usr/bin:/bin"
 export USAGE_GATE_CLI="$tmp/gate.py"
 printf 'import sys\nsys.exit(0)\n' > "$USAGE_GATE_CLI"
 cat > "$ORCA_CLI_COMMAND" <<'STUB'
@@ -42,7 +45,10 @@ printf 'Do the fixture task.\n' > "$tmp/spec"
 launch() { bash "$root/script/start-cursor-worker.sh" --run run_fixture --spec "$tmp/spec" --title 'fullstack-dev - fixture' --model composer-2.5 --from term_fixture "$@"; }
 launch --name fixture --repo /tmp/example.repo --base-branch origin/main > "$tmp/result"
 grep -q 'worktree create.*--base-branch origin/main' "$CURSOR_TEST_LOG"
-grep -q 'worker-start.*--agent cursor.*--model composer-2.5' "$CURSOR_TEST_LOG"
+grep -q 'orchestration worker-start' "$CURSOR_TEST_LOG"
+grep -q -- '--agent cursor' "$CURSOR_TEST_LOG"
+grep -q -- '--model composer-2.5' "$CURSOR_TEST_LOG"
+grep -Fq "Read $root/.agents/claude/CLAUDE.md for global agent instructions before starting work." "$CURSOR_TEST_LOG"
 grep -q -- '--worktree path:/tmp/example.repo/work tree.v1' "$CURSOR_TEST_LOG"
 echo 'PASS: new worktree is trusted at the encoded path before dispatch'
 for selector in id:abc path:/tmp/example.repo; do
@@ -232,4 +238,4 @@ fi
 grep -q 'refused by the usage gate' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: usage gate refusal stops before any Orca call'
-echo 'PASS: 20 tests'
+echo 'PASS: 21 tests'

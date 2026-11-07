@@ -55,6 +55,8 @@ AGENTS_ROOT="$DOTFILES/.agents"
 
 mkdir -p "$AG_AGENT_CONFIG"
 ln -sfn "$AGENTS_ROOT/claude/CLAUDE.md" "$AG_AGENT_CONFIG/AGENTS.md"
+mkdir -p "$AG_AGENT_CONFIG/rules"
+ln -sfn "$AGENTS_ROOT/gemini/rules/orca-agy.md" "$AG_AGENT_CONFIG/rules/orca-agy.md"
 
 cat > "$AG_AGENT_CONFIG/skills.json" <<EOF
 {
@@ -96,3 +98,5 @@ if command -v jq >/dev/null 2>&1; then
   jq -s '.[0] * .[1]' "$AGY_HOOKS" "$AG_SRC/hooks.json" > "$AGY_HOOKS.tmp" && mv "$AGY_HOOKS.tmp" "$AGY_HOOKS"
   echo "setup-antigravity: merged usage-gate hook into $AGY_HOOKS"
 fi
+
+bash "$DOTFILES/script/check-agent-startup.sh"

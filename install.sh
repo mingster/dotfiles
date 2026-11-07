@@ -143,5 +143,6 @@ esac
 
 # DOTFILES_SKIP_SETUP_CHECK=1 skips the host readiness check (tests run in a bare temp HOME).
 if [ "${DOTFILES_SKIP_SETUP_CHECK:-}" != "1" ]; then
+  bash "$DOTFILES_ROOT/script/check-agent-startup.sh" || exit 1
   bash "$DOTFILES_ROOT/script/setup-check.sh"
 fi
