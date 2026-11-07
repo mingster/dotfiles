@@ -34,15 +34,32 @@ case "$agent" in
 esac
 terminal_args=(--environment "$environment" --json)
 case "$worktree" in
-  ''|new-top-level) ;; # Probe the remote default workspace before creation.
+  ''|new-top-level) # The remote refuses a terminal without a worktree, so probe in an existing one.
+    existing=$("$orca" worktree list --environment "$environment" --json 2>&1 | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)["result"]["worktrees"]
+rows = [r for r in rows if not r.get("isArchived") and r.get("path")]
+rows.sort(key=lambda r: not r.get("isMainWorktree"))
+print("path:" + rows[0]["path"] if rows else "")
+' 2>/dev/null) || existing=
+    [ -n "$existing" ] || { echo "start-remote-worker: no existing worktree on $environment for the preflight terminal" >&2; exit 1; }
+    terminal_args+=(--worktree "$existing") ;;
   current|active|new-child) echo 'start-remote-worker: need an exact remote worktree or new-top-level' >&2; exit 2 ;;
   *) terminal_args+=(--worktree "$worktree") ;;
 esac
 # The target host reads its own dotfiles, so bring them and the preset link up to date first.
 # A failed update must not stop a worker: the CLI probe alone decides.
 refresh='git -C "$HOME/dotfiles" pull -q --ff-only origin main; [ ! -f "$HOME/dotfiles/script/setup-orca.sh" ] || bash "$HOME/dotfiles/script/setup-orca.sh" >/dev/null;'
-result=$("$orca" terminal create "${terminal_args[@]}" --command "if $probe; then $refresh exit 0; else exit 127; fi")
-terminal=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["terminal"]["handle"])')
+preflight_failed() {
+  echo "start-remote-worker: preflight failed on $environment: $1" >&2
+  exit 1
+}
+errors=$(mktemp)
+trap 'rm -f "$errors"' EXIT
+result=$("$orca" terminal create "${terminal_args[@]}" --command "if $probe; then $refresh exit 0; else exit 127; fi" 2>"$errors") \
+  || preflight_failed "$(cat "$errors"; printf '%s' "$result")"
+terminal=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["terminal"]["handle"])') \
+  || preflight_failed "$result"
 result=$("$orca" terminal wait --environment "$environment" --terminal "$terminal" --for exit --timeout-ms 60000 --json)
 if ! printf '%s' "$result" | python3 -c '
 import json, sys

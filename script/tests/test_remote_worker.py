@@ -27,8 +27,18 @@ home = Path(os.environ['REMOTE_FIXTURE'])
 with (home / 'calls').open('a') as f: f.write(json.dumps(a) + '\\n')
 def value(k): return a[a.index(k) + 1]
 def reply(r): print(json.dumps({'result': r}))
-if a[:2] == ['terminal', 'create']:
+if a[:2] == ['worktree', 'list']:
+    reply({'worktrees': [
+        {'path': '/srv/other', 'isMainWorktree': False},
+        {'path': '/srv/main', 'isMainWorktree': True}]})
+elif a[:2] == ['terminal', 'create']:
     assert value('--environment') == 'fixture-environment'
+    if '--worktree' not in a:
+        print('Remote terminal create requires --worktree because the client cwd cannot identify a server worktree.', file=sys.stderr)
+        sys.exit(1)
+    if os.environ.get('CREATE_MODE') == 'fail':
+        print('Orca server unreachable', file=sys.stderr)
+        sys.exit(1)
     code = subprocess.run(value('--command'), shell=True,
                           env=dict(os.environ, HOME=str(home), PATH=str(home / 'bin'))).returncode
     (home / 'exit').write_text(str(code))
@@ -50,10 +60,10 @@ else: sys.exit(99)
         self.env = dict(os.environ, ORCA_CLI_COMMAND=str(stub), REMOTE_FIXTURE=str(self.home),
                         USAGE_GATE_CLI=str(self.gate))
 
-    def launch(self, agent='antigravity'):
+    def launch(self, agent='antigravity', worktree='path:/srv/fixture'):
         return subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'),
                                '--on', 'fixture-environment', '--agent', agent,
-                               '--worktree', 'path:/srv/fixture', '--spec', 'Fixture task'],
+                               '--worktree', worktree, '--spec', 'Fixture task'],
                               env=self.env, capture_output=True, text=True)
 
     def test_usage_gate_refusal_stops_before_any_orca_call(self):
@@ -95,6 +105,25 @@ else: sys.exit(99)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('pull', (self.home / 'git-calls').read_text())
         self.assertTrue((self.home / 'preset-linked').exists())
+
+    def test_new_top_level_preflights_in_the_main_remote_worktree(self):
+        (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'agy').chmod(0o700)
+        result = self.launch(worktree='new-top-level')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        create = next(a for a in calls if a[:2] == ['terminal', 'create'])
+        self.assertEqual(create[create.index('--worktree') + 1], 'path:/srv/main')
+        start = next(a for a in calls if a[:2] == ['orchestration', 'worker-start'])
+        self.assertEqual(start[start.index('--worktree') + 1], 'new-top-level')
+
+    def test_failed_preflight_prints_host_and_orca_error(self):
+        self.env['CREATE_MODE'] = 'fail'
+        result = self.launch(worktree='new-top-level')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('fixture-environment', result.stderr)
+        self.assertIn('Orca server unreachable', result.stderr)
+        self.assertNotIn('worker-start', self.log.read_text())
 
     def test_uncertain_completion_never_dispatches(self):
         (self.bin / 'agy').touch(mode=0o700)
