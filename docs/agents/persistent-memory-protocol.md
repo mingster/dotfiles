@@ -18,7 +18,7 @@ Written once before modifying code, and again only when blocked or at a handoff.
 
 ## 2. Machine-Checkable Verification Criteria
 - [ ] Test command: `<test command> path/to/test` (Expected: 0 failures)
-- [ ] Type check: `<type check command>` (Expected: 0 errors)
+- [ ] Type check: `~/dotfiles/script/heavy-gate.sh --weight 1 -- bunx tsc --noEmit` (Expected: 0 errors)
 - [ ] Linter: `<lint command>` (Expected: clean)
 
 ## 3. Execution Milestones
@@ -37,6 +37,7 @@ Written once before modifying code, and again only when blocked or at a handoff.
 - Decision: Handled transformation in application layer.
 
 ## 6. Known Blockers and Strike Tracker (Three-Strike Rule)
+The rule itself is in `AGENTS.md` (Token budget); this section only records the count.
 - Strike Count: 2 of 3
 - Blockers Log:
   - Error: `AssertionError: expected true to be false` at `path/to/test.ts:42`
@@ -51,9 +52,9 @@ Written once before modifying code, and again only when blocked or at a handoff.
 
 ## 2. Alignment with SDLC
 
-- Specifications and requirements live exclusively in the project's intent and spec folders (`intent.md` and `spec.md`). `active_run.md` is strictly an ephemeral execution ledger for active tasks.
+- Specifications and requirements live exclusively in the project's intent and spec folders (`intent.md` and `spec.md`). `active_run.md` is strictly an ephemeral execution ledger for active multi-slice tasks and does not replace the coordinator's child ledger (`docs/agents/team.md`, Delivery contract 3).
 - Enforce Zero-Env Disclosure: never record `.env` secrets or keys into markdown artifacts; use `[Omitted/Configured via Env]`.
-- Once the PR is opened and verified, `active_run.md` can be deleted or reset.
+- Once the branch is verified and merged, `active_run.md` is deleted or reset.
 
 ## 3. Why This Prevents Amnesia and Hallucination
 

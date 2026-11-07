@@ -1,6 +1,6 @@
 # Coordinator publication
 
-Coordinators publish engineering branches with `~/dotfiles/script/coordinator-publication.sh`; workers still stop at local commits.
+Elon publishes engineering branches with `~/dotfiles/script/coordinator-publication.sh`; workers stop at local commits on their own branches.
 
 ## Command
 
