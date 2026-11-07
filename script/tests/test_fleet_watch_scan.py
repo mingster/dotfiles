@@ -34,13 +34,29 @@ def issue(number, labels=None, body='', comments=None, created=None, blocked=Fal
     return row
 
 
-def pr(number, head='a' * 40, checks=(), comments=()):
+def pr(number, head='a' * 40, checks=(), comments=(), branch='feature/pr', labels=(), draft=False):
     return {
         'number': number,
         'state': 'OPEN',
+        'isDraft': draft,
         'headRefOid': head,
+        'headRefName': branch,
         'statusCheckRollup': list(checks),
         'comments': list(comments),
+        'labels': [{'name': n} for n in labels],
+    }
+
+
+def author_worker(number, branch, worktree='/tmp/wt', dispatch='ctx_author'):
+    return {
+        'dispatchId': dispatch,
+        'githubPullRequestNumber': number,
+        'headRefName': branch,
+        'projection': {
+            'provider': {'id': 'claude', 'model': 'sonnet'},
+            'workspace': {'path': worktree},
+            'runId': 'run_x',
+        },
     }
 
 
@@ -139,7 +155,7 @@ class IssueScanPass(unittest.TestCase):
     def run_pass(
         self, state, issues_by_repo=None, starts=None, gate_ok=True, admitted=True,
         prs_by_repo=None, inventory_ok=True, start_rc=0, workers=None, persist=None,
-        admit_occupied=0, host_cap=4,
+        admit_occupied=0, host_cap=4, detached=None, checks_locked=False,
     ):
         issues_by_repo = issues_by_repo or {}
         prs_by_repo = prs_by_repo or {}
@@ -162,9 +178,16 @@ class IssueScanPass(unittest.TestCase):
                 'occupied': admit_occupied,
             }
 
+        detached_starts = []
+
         def start_worker(command):
             starts.append(command)
             return start_rc
+
+        def start_detached(command, extra_env=None):
+            if detached is True:
+                detached_starts.append((command, extra_env))
+            return 0
 
         def persist_state():
             persists.append(True)
@@ -174,7 +197,11 @@ class IssueScanPass(unittest.TestCase):
             list_issues=list_issues, pr_fetch=fetch_prs,
             gate_check=gate_check, admit_fn=admit, start_worker=start_worker,
             inventory_ok=inventory_ok, persist_state=persist_state,
+            start_detached=start_detached,
+            checks_lock_live=(lambda _root: True) if checks_locked else None,
         )
+        if detached is True:
+            starts.extend([row[0] for row in detached_starts])
         return notices, log, starts, persists
 
     def test_disabled_starts_nothing(self):
@@ -312,6 +339,29 @@ class IssueScanPass(unittest.TestCase):
         )
         self.assertEqual(len(starts), 1)
         self.assertIn('rework_start=', ','.join(log))
+
+    def test_open_pr_starts_checks_and_reviewer_in_parallel_once(self):
+        state = {}
+        head = '9' * 40
+        branch = 'mingster/build-683'
+        prs = {REPO: [pr(20, head=head, branch=branch)]}
+        workers = [author_worker(20, branch)]
+        _, log, starts, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
+        self.assertEqual(len(starts), 2)
+        self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
+        self.assertTrue(any('on-worker-done.sh' in ' '.join(cmd) for cmd in starts))
+        self.assertIn('head_checks_start=' + head[:8], ','.join(log))
+        self.assertIn('reviewer_start=' + head[:8], ','.join(log))
+        _, _, starts2, _ = self.run_pass(state, prs_by_repo=prs, workers=workers, detached=True)
+        self.assertEqual(starts2, [])
+
+    def test_locked_checks_skips_second_head_checks_spawn(self):
+        state = {}
+        head = '8' * 40
+        prs = {REPO: [pr(21, head=head)]}
+        _, log, starts, _ = self.run_pass(state, prs_by_repo=prs, detached=True, checks_locked=True)
+        self.assertEqual(starts, [])
+        self.assertNotIn('head_checks_start=', ','.join(log))
 
     def test_failed_review_starts_one_rework_per_head(self):
         state = {}

@@ -223,6 +223,7 @@ lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/validate-publication-body
 [ -f "$lib" ] || die "missing validate-publication-body.sh"
 
 repo="" branch="" body_file="" title="" worktree=""
+pub_run="" pub_author_family="" pub_author_provider="" pub_author_model="" pub_author_dispatch="" pub_from=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:-}"; shift 2 ;;
@@ -230,6 +231,12 @@ while [ $# -gt 0 ]; do
     --body-file) body_file="${2:-}"; shift 2 ;;
     --title) title="${2:-}"; shift 2 ;;
     --worktree) worktree="${2:-}"; shift 2 ;;
+    --run) pub_run="${2:-}"; shift 2 ;;
+    --author-family) pub_author_family="${2:-}"; shift 2 ;;
+    --author-provider) pub_author_provider="${2:-}"; shift 2 ;;
+    --author-model) pub_author_model="${2:-}"; shift 2 ;;
+    --author-dispatch) pub_author_dispatch="${2:-}"; shift 2 ;;
+    --from) pub_from="${2:-}"; shift 2 ;;
     --force) echo "coordinator-publication: refused: force push is forbidden" >&2; exit 1 ;;
     *) echo "coordinator-publication: refused: unknown argument $1" >&2; exit 1 ;;
   esac
@@ -278,6 +285,91 @@ fi
 receipt_dir="$git_path"
 mkdir -p "$receipt_dir"
 receipt="$receipt_dir/receipt.env"
+post_push_stamp="$receipt_dir/post-push.env"
+_script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+head_checks_lock_held() {
+  local repo_root=$1 remote name lock holder
+  repo_root=$(cd "$repo_root" && pwd) || return 1
+  remote=$(git -C "$repo_root" config --get remote.origin.url 2>/dev/null || true)
+  name=$(basename "${remote:-$repo_root}" .git)
+  case "$name" in
+    *[!a-zA-Z0-9._-]*) return 1 ;;
+  esac
+  lock="$HOME/orca/workspaces/$name/_checks.lock"
+  [ -d "$lock" ] || return 1
+  holder=$(cat "$lock/pid" 2>/dev/null || true)
+  [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null
+}
+
+read_post_push_stamp() {
+  post_checks_started=0 post_reviewer_started=0
+  [ -f "$post_push_stamp" ] || return 0
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      checks_started=*|reviewer_started=*)
+        key=${line%%=*}; val=${line#*=}
+        case "$key" in
+          checks_started) [ "$val" = 1 ] && post_checks_started=1 ;;
+          reviewer_started) [ "$val" = 1 ] && post_reviewer_started=1 ;;
+        esac
+        ;;
+    esac
+  done < "$post_push_stamp"
+}
+
+write_post_push_stamp() {
+  local tmp="$receipt_dir/post-push.env.tmp.$$"
+  {
+    printf 'repo=%s\n' "$want_repo"
+    printf 'head_sha=%s\n' "$head_sha"
+    printf 'checks_started=%s\n' "$post_checks_started"
+    printf 'reviewer_started=%s\n' "$post_reviewer_started"
+  } >"$tmp"
+  mv "$tmp" "$post_push_stamp"
+}
+
+start_post_publication_jobs() {
+  local repo_root
+  set +e
+  [ -n "$pr_number" ] || { set -e; return 0; }
+  repo_root=$(cd -P "$worktree" && git rev-parse --show-toplevel 2>/dev/null) || return 0
+  read_post_push_stamp
+  if [ -f "$post_push_stamp" ]; then
+    local stamped_repo stamped_head
+    stamped_repo=$(sed -n 's/^repo=//p' "$post_push_stamp" | head -1)
+    stamped_head=$(sed -n 's/^head_sha=//p' "$post_push_stamp" | head -1)
+    if [ "$stamped_repo" != "$want_repo" ] || [ "$stamped_head" != "$head_sha" ]; then
+      post_checks_started=0
+      post_reviewer_started=0
+    fi
+  fi
+  local head_checks=${COORDINATOR_PUBLICATION_HEAD_CHECKS:-$_script_dir/head-checks.sh}
+  local on_done=${COORDINATOR_PUBLICATION_ON_WORKER_DONE:-$_script_dir/on-worker-done.sh}
+  if [ "$post_checks_started" != 1 ] && ! head_checks_lock_held "$repo_root"; then
+    (bash "$head_checks" --repo "$repo_root" --pr "$pr_number" >/dev/null 2>&1 &) || true
+    post_checks_started=1
+    write_post_push_stamp
+  fi
+  if [ -n "$pub_run" ] && { [ -n "$pub_author_family" ] || { [ -n "$pub_author_provider" ] && [ -n "$pub_author_model" ]; }; } \
+    && [ "$post_reviewer_started" != 1 ]; then
+    local from_handle=${pub_from:-${ORCA_TERMINAL_HANDLE:-}}
+    [ -n "$from_handle" ] || return 0
+    local done_args=(bash "$on_done" --repo "$want_repo" --pr "$pr_number" --head "$head_sha"
+      --worktree "$worktree" --run "$pub_run" --author-dispatch "${pub_author_dispatch:-unknown}")
+    if [ -n "$pub_author_provider" ]; then
+      done_args+=(--author-provider "$pub_author_provider" --author-model "$pub_author_model")
+    else
+      done_args+=(--author-family "$pub_author_family")
+    fi
+    (ORCA_TERMINAL_HANDLE="$from_handle" "${done_args[@]}" >/dev/null 2>&1 &) || true
+    post_reviewer_started=1
+    write_post_push_stamp
+  fi
+  set -e
+}
 write_receipt() {
   local tmp="$receipt_dir/receipt.env.tmp.$$"
   receipt_scalar_ok repo "$want_repo" || die "internal receipt repo"
@@ -414,6 +506,7 @@ ensure_pr_body_for_publication() {
 complete_publication() {
   ensure_pr_body_for_publication "$pr_number"
   write_receipt
+  start_post_publication_jobs
   echo "PUBLISHED $pr_url"
 }
 

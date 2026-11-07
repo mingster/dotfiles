@@ -348,6 +348,69 @@ exec "${ORCA_CLI_COMMAND:-orca}" "${args[@]}"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[args.index("--model") + 1], "grok-4.7-high")
 
+    def test_remote_saved_worktree_without_local_path_starts_reviewer(self):
+        remote_path = "/remote/blueDevil/workspaces/dotfiles/pr-680"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            presets = root / "presets.json"
+            presets.write_text(json.dumps({"roles": {"reviewer": {"chain": [
+                {"provider": "cursor", "model": "grok-4.7-high"},
+            ]}}}))
+            gate = root / "gate"
+            gate.write_text(f'''#!/usr/bin/env python3
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("usage_gate", {str(SCRIPT / "usage-gate.py")!r})
+ug = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ug)
+def usage(provider, *args, **kwargs):
+    return {{"verdict": "allowed", "weekly_used": 1, "ceiling": 95}}
+ug.run = usage
+ug.antigravity_models = lambda: None
+sys.exit(ug.main())
+''')
+            gate.chmod(0o755)
+            native = NativeFixture(root, path=remote_path)
+            for host in ('alpha', 'beta'):
+                for row in native.data[host]['worktrees']['worktrees']:
+                    row['path'] = remote_path
+                    row['git']['path'] = remote_path
+            native.occupy('alpha', 1)
+            gh = root / "gh"
+            gh.write_text("""#!/usr/bin/env python3
+import json, os, sys
+if len(sys.argv) >= 4 and sys.argv[1:3] == ['pr', 'view']:
+    print(os.environ.get('TEST_COMMENTS', '{"comments": []}'))
+""")
+            gh.chmod(0o755)
+            cursor_stub = root / "cursor-stub.sh"
+            cursor_stub.write_text("""#!/usr/bin/env bash
+exec "${ORCA_CLI_COMMAND:-orca}" orchestration worker-start "$@"
+""")
+            cursor_stub.chmod(0o755)
+            log = root / "launch.json"
+            head_sha = "f" * 40
+            for host in ('alpha', 'beta'):
+                for row in native.data[host]['worktrees']['worktrees']:
+                    row['head'] = head_sha
+                    row['git']['head'] = head_sha
+            env = {**native.env(), "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                   "TEST_COMMENTS": json.dumps({"comments": []}),
+                   "ON_WORKER_DONE_USAGE_GATE": str(gate),
+                   "USAGE_GATE_PRESETS": str(presets),
+                   "ON_WORKER_DONE_CURSOR_START": str(cursor_stub),
+                   "ORCA_TERMINAL_HANDLE": "term_fixture",
+                   "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
+            result = subprocess.run([
+                "bash", str(SCRIPT / "on-worker-done.sh"), "--repo", "o/n",
+                "--pr", "680", "--head", head_sha, "--author-family", "claude",
+                "--worktree", remote_path, "--run", "run_remote",
+            ], env=env, text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("cannot resolve repository root", result.stderr)
+            args = json.loads(log.read_text())
+            self.assertEqual(args[args.index('--on') + 1], 'alpha-saved')
+            self.assertEqual(args[args.index('--repo') + 1], 'id:repo-id')
+
 
 if __name__ == "__main__":
     unittest.main()
