@@ -1307,13 +1307,14 @@ def issue_scan_has_acceptance(text):
 
 
 def issue_scan_blocked(issue):
-    if issue.get('isBlocked'):
-        return True
     blocked = issue.get('blockedBy')
     if isinstance(blocked, dict):
-        nodes = blocked.get('nodes')
-        if nodes:
-            return True
+        for node in blocked.get('nodes') or []:
+            if not isinstance(node, dict):
+                continue
+            state = (node.get('state') or '').upper()
+            if state in ('', 'OPEN'):
+                return True
     return False
 
 
@@ -1366,21 +1367,30 @@ def review_failed_at_head(pr):
     head = pr.get('headRefOid') or ''
     for comment in reversed(pr.get('comments') or []):
         first = (comment.get('body') or '').split('\n')[0]
-        if first.startswith('Verdict: FAIL') and 'head=' + head in first:
+        if 'head=' + head not in first or not first.startswith('Verdict:'):
+            continue
+        if first.startswith('Verdict: PASS'):
+            return False
+        if first.startswith('Verdict: FAIL'):
             return True
+    saw_failure = False
     for check in pr.get('statusCheckRollup') or []:
         if not isinstance(check, dict):
             continue
         ctx = (check.get('context') or check.get('name') or '').lower()
         if ctx == 'review':
-            return check.get('conclusion') == 'FAILURE'
-    return False
+            conclusion = check.get('conclusion')
+            if conclusion == 'SUCCESS':
+                return False
+            if conclusion == 'FAILURE':
+                saw_failure = True
+    return saw_failure
 
 
 def fetch_ready_issues(repo, run=subprocess.run):
     command = [
         'gh', 'issue', 'list', '--repo', repo, '--label', 'ready-for-agent', '--state', 'open',
-        '--limit', '100', '--json', 'number,title,body,labels,comments,createdAt,isBlocked',
+        '--limit', '100', '--json', 'number,title,body,labels,comments,createdAt,blockedBy',
     ]
     try:
         output = run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -1479,9 +1489,18 @@ def default_issue_scan_start(command, run=subprocess.run):
         return 1
 
 
+def _issue_scan_has_slot(host, config, admission, extra_starts):
+    cap = config.get('host_caps', {}).get(host, 4)
+    occupied = admission.get('occupied')
+    if occupied is None:
+        occupied = 0
+    return extra_starts + occupied < cap
+
+
 def issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
+    inventory_ok=True, persist_state=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -1489,6 +1508,10 @@ def issue_scan_pass(
     scan = config.get('issue_scan') or {}
     if not scan.get('enabled'):
         return notices, ['issue_scan_off']
+
+    if not inventory_ok:
+        log_bits.append('issue_scan_inventory_failed')
+        return notices, log_bits
 
     if gate_check is None:
         gate_check = default_issue_scan_gate
@@ -1504,49 +1527,73 @@ def issue_scan_pass(
     if not admission.get('admitted'):
         return notices, ['issue_scan_load']
 
+    extra_starts = 0
     repos = scan.get('repos') or []
     if pr_fetch is None:
         pr_fetch = fetch_prs
     pr_repos = scan.get('pr_repos') or repos
     rework_heads = state.setdefault('issue_scan_rework', {})
+    rework_pending = state.setdefault('issue_scan_rework_pending', {})
 
     for repo in pr_repos:
         prs = pr_fetch(repo)
         if prs is None:
             continue
         seen = rework_heads.setdefault(repo, {})
+        pending = rework_pending.setdefault(repo, {})
         for pr_row in prs:
             if pr_row.get('state') != 'OPEN':
                 continue
             if not checks_pass_at_head(pr_row) or not review_failed_at_head(pr_row):
                 continue
             head = pr_row.get('headRefOid') or ''
-            if not head or seen.get(head):
+            if not head or seen.get(head) or pending.get(head):
+                continue
+            if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 continue
             command = build_rework_start_command(config, repo, pr_row)
             if command is None:
                 log_bits.append('rework_skip=%d' % pr_row['number'])
                 continue
+            pending[head] = True
+            if persist_state:
+                persist_state()
             if start_worker(command) == 0:
                 seen[head] = True
+                pending.pop(head, None)
+                extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_row['number'], head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
+                if persist_state:
+                    persist_state()
             else:
+                pending.pop(head, None)
+                if persist_state:
+                    persist_state()
                 log_bits.append('rework_fail=%d' % pr_row['number'])
 
     if list_issues is None:
         list_issues = fetch_ready_issues
 
     started = state.setdefault('issue_scan_started', {})
+    issue_pending = state.setdefault('issue_scan_pending', {})
+
+    def issue_already_claimed(repo, number):
+        return (
+            number in started.get(repo, [])
+            or number in issue_pending.get(repo, [])
+        )
+
     candidates = []
     for repo in repos:
         issues = list_issues(repo)
         if issues is None:
+            log_bits.append('issue_scan_list_failed')
             continue
         for row in issues:
             if not issue_scan_eligible(row):
                 continue
-            if row['number'] in started.get(repo, []):
+            if issue_already_claimed(repo, row['number']):
                 continue
             candidates.append((repo, row))
 
@@ -1555,17 +1602,33 @@ def issue_scan_pass(
             log_bits.append('issue_scan_none')
         return notices, log_bits
 
+    if not _issue_scan_has_slot(host, config, admission, extra_starts):
+        return notices, log_bits
+
     candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
     repo, row = candidates[0]
     command = build_issue_start_command(config, repo, row)
     if command is None:
         log_bits.append('issue_scan_skip')
         return notices, log_bits
+    issue_pending.setdefault(repo, []).append(row['number'])
+    if persist_state:
+        persist_state()
     if start_worker(command) == 0:
+        pending_list = issue_pending.setdefault(repo, [])
+        if row['number'] in pending_list:
+            pending_list.remove(row['number'])
         started.setdefault(repo, []).append(row['number'])
         notices.append('issue %s #%d' % (repo, row['number']))
         log_bits.append('issue_start=%d' % row['number'])
+        if persist_state:
+            persist_state()
     else:
+        pending_list = issue_pending.setdefault(repo, [])
+        if row['number'] in pending_list:
+            pending_list.remove(row['number'])
+        if persist_state:
+            persist_state()
         log_bits.append('issue_start_fail=%d' % row['number'])
     return notices, log_bits
 
@@ -1858,7 +1921,14 @@ def main():
     notices += workflow_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
-    scan_extra, scan_log = issue_scan_pass(config, state, now, workers)
+    def persist_scan_state():
+        save_state(args.state, state)
+
+    scan_extra, scan_log = issue_scan_pass(
+        config, state, now, workers,
+        inventory_ok=inventory_ok,
+        persist_state=persist_scan_state,
+    )
     notices += scan_extra
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,

@@ -1,0 +1,25 @@
+[
+  {
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "body": "## Acceptance criteria\n- proof\n",
+    "comments": [
+      {
+        "body": "## Acceptance criteria\n- y"
+      }
+    ],
+    "createdAt": "2026-11-07T01:23:38Z",
+    "labels": [
+      {
+        "color": "0e8a16",
+        "description": "Fully specified, ready for an AFK agent",
+        "id": "LA_kwDOMyFO9s8AAAACzMm0cA",
+        "name": "ready-for-agent"
+      }
+    ],
+    "number": 42,
+    "title": "ticket example"
+  }
+]
