@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Install or repair the GitHub runner of a macOS host so it can run Review:
-#   setup-review-runner.sh <owner/repo> <runner name>
+#   setup-review-runner.sh <owner/repo> <runner name> [runner dir]
+# The runner dir defaults to ~/actions-runner-<repo name>; pass the old dir to repair an existing runner.
 # A runner service gets SessionCreate, which starts a new security session where the login keychain is
 # locked: claude then says "Not logged in" although it works in a terminal. This script removes it.
 set -euo pipefail
 repo=$1 name=$2
-dir=$HOME/actions-runner-riben
+dir=${3:-$HOME/actions-runner-${repo#*/}}
 label=actions.runner.${repo/\//-}.$name
 plist=$HOME/Library/LaunchAgents/$label.plist
 domain=gui/$(id -u)
