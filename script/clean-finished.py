@@ -85,8 +85,24 @@ def remote_age(pr: dict) -> tuple[bool, str]:
     except ValueError:
         return False, raw[:10]
     return days >= 7, raw[:10]
-def commits_safe(repo: str, sha: str, _row: dict | None) -> bool:
+def commits_safe(repo: str, sha: str) -> bool:
     return in_main(repo, sha) or cherry_ok(repo, sha)
+
+
+def archive_push(repo: str, br: str, sha: str) -> tuple[int, str]:
+    return gitc(repo, "push", "origin", f"{sha}:refs/tags/archive/{br}")
+
+
+def remote_keep_line(br: str, remote: bool | str) -> str | None:
+    if remote == "newer":
+        return f"Kept remote {br} (remote has newer commits)"
+    if remote == "unsafe":
+        return f"Kept remote {br} (commits not in main)"
+    return None
+
+
+def archive_line(br: str, sha: str) -> str:
+    return f"Archive remote {br} (git push origin {sha}:refs/tags/archive/{br})"
 def remote_plan(repo: str, br: str, head: str, row: dict | None) -> bool | str:
     ref = f"refs/remotes/origin/{br}"
     if not br or gitc(repo, "show-ref", "--verify", ref)[0]:
@@ -97,7 +113,7 @@ def remote_plan(repo: str, br: str, head: str, row: dict | None) -> bool | str:
             return "newer"
     rc, tip = gitc(repo, "rev-parse", ref)
     tip = tip.strip() if rc == 0 else ""
-    if not tip or not commits_safe(repo, tip, row):
+    if not tip or not commits_safe(repo, tip):
         return "unsafe"
     return True
 def under(parent: str, child: str) -> bool:
@@ -180,7 +196,7 @@ def decide(repo: str, wt: tuple, main: str, dflt: str, pr_ok: bool, pr: dict, pi
     ref = f"refs/heads/{br}" if br else head
     if br:
         if row and row.get("state") == "MERGED":
-            if not commits_safe(repo, head, row):
+            if not commits_safe(repo, head):
                 return "keep", "commits not in main", False
             return "delete", "merged pull request", remote_plan(repo, br, head, row)
         rc, ahead = gitc(repo, "rev-list", f"refs/heads/{br}", "--not", "origin/main")
@@ -192,6 +208,8 @@ def decide(repo: str, wt: tuple, main: str, dflt: str, pr_ok: bool, pr: dict, pi
         return "keep", "no pull request", False
     if in_main(repo, head) or cherry_ok(repo, head):
         return "delete", "detached at merged commit", False
+    if on_origin(repo, head):
+        return "keep", "no pull request", False
     return "keep", "detached, commits not on a remote", False
 def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[bool]) -> None:
     def keep(target: str, why: str) -> None:
@@ -203,6 +221,37 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             failed.append(True)
         else:
             s["deleted_remote"] += 1
+
+    def plan_remote(br: str, head: str, remote: bool | str, why: str) -> None:
+        if remote == "delayed":
+            ok_age, when = remote_age(pr.get(br) or {})
+            if not ok_age:
+                print(f"Kept remote {br} (closed {when}, deleted after 7 days)")
+                s["kept"] += 1
+                return
+            print(archive_line(br, head))
+            if apply:
+                rc, err = archive_push(repo, br, head)
+                if rc:
+                    keep(f"remote {br}", f"archive failed: {err.strip()}" if err.strip() else "archive failed")
+                    failed.append(True)
+                    return
+                del_remote(br)
+            else:
+                print(f"Remove remote {br} ({why})")
+                s["deleted_remote"] += 1
+            return
+        line = remote_keep_line(br, remote)
+        if line:
+            print(line)
+            s["kept"] += 1
+            return
+        if remote is True:
+            if not apply:
+                print(f"Remove remote {br} ({why})")
+                s["deleted_remote"] += 1
+            else:
+                del_remote(br)
     wts = worktrees(repo)
     if not wts:
         return
@@ -243,14 +292,8 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             print(f"Remove worktree {path} ({why})"); s["removed"] += 1
             if br and not unpushed(repo, br, head) and len([w for w in worktrees(repo) if w[1] == br]) == 1:
                 s["deleted_local"] += 1
-            if br and remote is True:
-                print(f"Remove remote {br} ({why})"); s["deleted_remote"] += 1
-            elif br and remote == "delayed":
-                ok_age, when = remote_age(pr.get(br) or {})
-                if ok_age:
-                    print(f"Remove remote {br} (closed pull request)"); s["deleted_remote"] += 1
-                else:
-                    print(f"Kept remote {br} (closed {when}, deleted after 7 days)"); s["kept"] += 1
+            if br and remote:
+                plan_remote(br, head, remote, why)
             continue
         busy, pwhy = path_busy(path, terms or set(), end)
         ok, sw = status_ok(path)
@@ -273,16 +316,13 @@ def do_repo(repo: str, apply: bool, end: float, s: dict[str, int], failed: list[
             else:
                 s["deleted_local"] += 1
         if br and remote:
-            if remote == "newer":
-                keep(f"remote {br}", "remote has newer commits")
-            elif remote == "unsafe":
-                keep(f"remote {br}", "commits not in main")
-            elif remote == "delayed":
-                ok_age, when = remote_age(pr.get(br) or {})
-                (del_remote(br) if ok_age else print(f"Kept remote {br} (closed {when}, deleted after 7 days)"))
-            else:
-                del_remote(br)
-        if not run([os.environ.get("ORCA_CLI_COMMAND", "orca"), "worktree", "rm", path], repo)[0]:
+            plan_remote(br, head, remote, why)
+        rc, err = run([os.environ.get("ORCA_CLI_COMMAND", "orca"), "worktree", "rm", path], repo)
+        if rc:
+            why_orca = err.strip() if err.strip() else f"orca worktree rm exited {rc}"
+            keep(f"orca record {path}", why_orca)
+            failed.append(True)
+        else:
             s["orca"] += 1
 
 def main() -> int:

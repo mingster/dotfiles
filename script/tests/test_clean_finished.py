@@ -84,7 +84,7 @@ class GitFix:
 
 class StubEnv:
     def __init__(self, fix: GitFix, prs=None, *, lsof="true", pins=None, term_cwds=None,
-                 fail_remove=None, fail_fetch=False, fail_push=False):
+                 fail_remove=None, fail_fetch=False, fail_push=False, fail_orca_rm=False):
         self.fix = fix
         self.bin = Path(fix.tmp) / "bin"
         self.bin.mkdir(exist_ok=True)
@@ -101,7 +101,7 @@ case "$1 $2" in
 "repo list") echo '{{"result":{{"repos":[{{"kind":"git","path":"{fix.main}"}}]}}}}' ;;
 "worktree list") python3 -c "import json,os; print(json.dumps({{'result':{{'worktrees':[{{'path':p,'pinned':True}} for p in json.loads(os.environ.get('ORCA_PINS','[]'))]}}}}))" ;;
 "terminal list") python3 -c "import json,os; print(json.dumps({{'result':{{'terminals':[{{'cwd':c}} for c in json.loads(os.environ.get('ORCA_CWDS','[]'))]}}}}))" ;;
-"worktree rm") exit 0 ;;
+"worktree rm") [ -n "$FAIL_ORCA_RM" ] && exit 1; exit 0 ;;
 *) exit 0 ;;
 esac
 ''')
@@ -132,6 +132,8 @@ esac
             self.env["CLEAN_FINISHED_LSOF"] = "missing"
         else:
             self.env["CLEAN_FINISHED_LSOF"] = str(lsof_bin) if (self.bin / "lsof").exists() else "missing"
+        if fail_orca_rm:
+            self.env["FAIL_ORCA_RM"] = "1"
         if fail_remove or fail_fetch or fail_push:
             gitsh = self.bin / "git"
             name = Path(fail_remove).name if fail_remove else ""
@@ -259,12 +261,25 @@ class CleanFinishedTests(unittest.TestCase):
         when = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
         prs = [{"headRefName": "oldc", "state": "CLOSED", "closedAt": when}]
         env = StubEnv(g, prs)
+        tip = head_oid(wt)
         prev = env.run()
+        self.assertIn("refs/tags/archive/oldc", prev.stdout)
+        self.assertIn(f"git push origin {tip}:refs/tags/archive/oldc", prev.stdout)
         self.assertIn("Remove remote oldc", prev.stdout)
         self.assertRegex(prev.stdout.splitlines()[-1], r"would delete remote=1")
         out = env.run(apply=True)
         self.assertEqual(out.returncode, 0)
         self.assertRegex(out.stdout.splitlines()[-1], r"deleted remote=1")
+        tag_rc = subprocess.run(
+            ["git", "-C", str(g.origin), "show-ref", "--verify", f"refs/tags/archive/oldc"],
+            capture_output=True,
+        ).returncode
+        self.assertEqual(tag_rc, 0)
+        branch_rc = subprocess.run(
+            ["git", "-C", str(g.origin), "show-ref", "refs/heads/oldc"],
+            capture_output=True,
+        ).returncode
+        self.assertNotEqual(branch_rc, 0)
 
     def test_lsof_missing_keeps_repo(self):
         g = GitFix()
@@ -482,6 +497,53 @@ class CleanFinishedTests(unittest.TestCase):
         out = StubEnv(g, [merged_pr("stale", wt)]).run(apply=True)
         self.assertIn("remote has newer commits", out.stdout)
         self.assertEqual(subprocess.run(["git", "-C", str(g.origin), "show-ref", "refs/heads/stale"], capture_output=True).returncode, 0)
+
+    def test_preview_apply_keep_lines_match_newer(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("stale")
+        wt = g.worktree("wt-stale", "stale")
+        old = head_oid(wt)
+        g.merge_to_main("stale")
+        g._run(wt, "commit", "--allow-empty", "-m", "remote-only")
+        g._run(wt, "push", "origin", "stale")
+        g._run(wt, "reset", "--hard", old)
+        env = StubEnv(g, [merged_pr("stale", wt)])
+
+        def keep_lines(proc):
+            return [ln for ln in proc.stdout.splitlines() if ln.startswith("Kept remote ")]
+
+        prev = env.run()
+        apply_out = env.run(apply=True)
+        self.assertEqual(keep_lines(prev), keep_lines(apply_out))
+        self.assertEqual(
+            prev.stdout.strip().splitlines()[-1].split()[-1],
+            apply_out.stdout.strip().splitlines()[-1].split()[-1],
+        )
+
+    def test_orca_worktree_rm_failure_exit_one(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("orca")
+        wt = g.worktree("wt-orca", "orca")
+        g.merge_to_main("orca")
+        out = StubEnv(g, [merged_pr("orca", wt)], fail_orca_rm=True).run(apply=True)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("Kept orca record", out.stdout)
+
+    def test_detached_on_remote_not_kept_as_off_remote(self):
+        g = GitFix()
+        self.addCleanup(g.cleanup)
+        g.branch("side")
+        swt = g.worktree("wt-side", "side")
+        (swt / "s").write_text("1\n")
+        g._run(swt, "add", "s")
+        g._run(swt, "commit", "-m", "s")
+        g._run(swt, "push", "-u", "origin", "side")
+        sha = head_oid(swt)
+        g.worktree("wt-det-side", detach=sha)
+        out = StubEnv(g).run()
+        self.assertNotIn("detached, commits not on a remote", out.stdout)
 
     def test_push_delete_failure_exit_one(self):
         g = GitFix()
