@@ -109,7 +109,7 @@ Configured so far: `<project-a>`, `mingster.com`, `dotfiles`, `<project-b>/web2`
 ## Agent instruction file convention
 
 `AGENTS.md` is the single source in every repo; `CLAUDE.md` is a one line `@AGENTS.md` pointer.
-Keep `AGENTS.md` under 200 lines and push area-specific content into `docs/agents/<topic>.md`
+Keep `AGENTS.md` under 200 lines and push area-specific content into `docs/<area>/<topic>.md`
 behind a pointer that names when to read it. Full convention, including why `~/.claude/CLAUDE.md`
 is copied rather than symlinked: `docs/agents/agent-files.md`. Read it before adding, moving, or
 growing an agent instruction file in any repo.

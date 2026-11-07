@@ -133,7 +133,7 @@ A project's `docs/agents/` holds only five files, because shared skills, scripts
 
 * `issue-tracker.md`, `triage-labels.md`, `domain.md`: read by the Matt Pocock skills and `init-agent-project.sh`.
 * `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
-* `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill and the command hook.
+* `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
 
 Anything else in a project's `docs/agents/` is a special case that needs the owner's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
 
