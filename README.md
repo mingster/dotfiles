@@ -125,6 +125,18 @@ flowchart TD
 | `sales-marketing` | Joins the grill for UI and wording. Sends requests to Elon |
 | `support-csm` | Joins the grill for support matters. Sends requests to Elon. Replies go out only after the owner approves |
 
+### Team files
+
+The team docs live once, in `~/dotfiles/templates/agent-team/`. Role files and skills read them there by path, and no project keeps a copy.
+
+A project's `docs/agents/` holds only five files, because shared skills, scripts and hooks read them by a fixed path:
+
+* `issue-tracker.md`, `triage-labels.md`, `domain.md`: read by the Matt Pocock skills and `init-agent-project.sh`.
+* `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
+* `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
+
+Anything else in a project's `docs/agents/` is a special case that needs the owner's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
+
 ### Owner decisions
 
 New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the owner.

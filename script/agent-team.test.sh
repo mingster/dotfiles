@@ -36,6 +36,11 @@ git init -q "$tmp/new project"
 git -C "$tmp/new project" remote add origin https://github.com/mingster/synthetic.git
 out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -f "$tmp/new project/docs/agents/issue-tracker.md" ] &&
+  [ -f "$tmp/new project/docs/agents/team-facts.md" ] &&
+  [ -f "$tmp/new project/docs/agents/deploy-facts.md" ] &&
+  [ ! -e "$tmp/new project/docs/agents/team.md" ] &&
+  [ ! -e "$tmp/new project/docs/agents/coordinator-operations.md" ] &&
+  [ ! -e "$tmp/new project/docs/agents/persistent-memory-protocol.md" ] &&
   [ -f "$tmp/new project/.claude/hooks/worker-budget.py" ] &&
   [ -f "$tmp/new project/.claude/bin/env-peek.py" ] &&
   [ -f "$tmp/new project/.claude/agents/support-csm.md" ] &&

@@ -195,7 +195,17 @@ def check_pattern_kill(segment, base, args):
 # Team gates (#6936): role file commits, the grill gate on dispatch, an owning lead on remote workers.
 # These stop accidents, not a determined agent: an agent can type the trailer or the comment itself,
 # so the owner reads the diff of the files these gates guard.
-PROTECTED_PATHS = (".claude/agents/", "docs/agents/", ".claude/model-routing.md")
+PROTECTED_PATHS = (
+    ".claude/agents/",
+    ".claude/model-routing.md",
+    "docs/agents/issue-tracker.md",
+    "docs/agents/triage-labels.md",
+    "docs/agents/domain.md",
+    "docs/agents/team-facts.md",
+    "docs/agents/deploy-facts.md",
+    "templates/agent-team/docs/agents/",
+    "templates/agent-team/.claude/agents/",
+)
 OWNER_TRAILER = re.compile(r"Owner-approved:\s*\S", re.I)
 GRILL_APPROVAL = re.compile(r"(?is)(?=.*grill)(?=.*(owner.{0,60}approv|approv.{0,60}owner))")
 GRILL_EXEMPT_LABELS = ("hotfix", "mechanical")
@@ -325,7 +335,7 @@ def check_worker_start(args, script=False):
         return
     if not any(GRILL_APPROVAL.search(t) for t in texts[1:]):
         deny(f"Missing: a comment on {repo_name}#{number} naming the owner's approval of the grill results "
-             "(docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
+             "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
              "then dispatch. Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
 
 

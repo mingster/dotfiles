@@ -33,7 +33,7 @@ For each issue read the body, the last comments and any linked spec or ADR, then
 2. Production step by procedure: rewrite as release-manager steps for the next release; relabel ready-for-agent if nothing else blocks.
 3. Product, scope or copy call: comment "Proposed decision (Elon to confirm)" with A (recommended, one line why) and B.
 4. Needs the owner's own hands: make sure the exact steps are on the issue, paste ready.
-5. Blocked: check the blocker is still real. If a slice can be built now, file it as a new ready-for-agent issue with acceptance criteria and the proving test (search first, docs/agents/issue-budget.md).
+5. Blocked: check the blocker is still real. If a slice can be built now, file it as a new ready-for-agent issue with acceptance criteria and the proving test (search first, Issue budget in `~/dotfiles/templates/agent-team/docs/agents/team.md`).
 On a non-Owner-Reserved ask timeout, proceed with recommended A and label "Elon decision pending"; report it to Elon. Owner-Reserved work remains blocked.
 Never change a priority or close an issue. Never touch Owner-Reserved items (pricing rulings, prod data, credentials). Never read secrets.
 Finish within 30 minutes. worker_done: one line per issue (number, kind, action), new ready-for-agent numbers, proposed decisions as a numbered A/B list.

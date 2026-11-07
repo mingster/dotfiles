@@ -1,6 +1,6 @@
 # Engineering integration
 
-Read before judging engineering reviews or tests. Docs-only PRs follow Elon's mechanical lane in `docs/agents/team.md`, Orchestration.
+Read before judging engineering reviews or tests. Docs-only PRs follow Elon's mechanical lane in `~/dotfiles/templates/agent-team/docs/agents/team.md`, Orchestration.
 
 ## Review and tests
 

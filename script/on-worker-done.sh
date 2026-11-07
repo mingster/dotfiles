@@ -231,7 +231,6 @@ if any(int(n) > 0 for n in errors):
 tests = re.findall(r"^Tests executed: ([0-9]+)$", body, re.M)
 if len(tests) != len(errors):
     refuse("incomplete test execution metadata")
-bun_test_cmd = re.compile(r"^Command: .*\bbun (?:run )?test\b")
 blocks, cur = [], None
 for line in body.splitlines():
     if line.startswith("Command: "):
@@ -242,18 +241,15 @@ for line in body.splitlines():
         cur.append(line)
 if cur is not None:
     blocks.append(cur)
-has_non_skipped_bun = False
+bun_actually_ran = False
 for block in blocks:
     block_text = "\n".join(block)
-    if not bun_test_cmd.search(block[0]):
-        continue
     if re.search(r"^Skipped:", block_text, re.M):
         continue
-    has_non_skipped_bun = True
-    break
-if has_non_skipped_bun and not tests:
-    refuse("test command has no execution metadata")
-if not tests and re.search(r"^bun test v", body, re.M):
+    if re.search(r"^bun test v", block_text, re.M):
+        bun_actually_ran = True
+        break
+if bun_actually_ran and not tests:
     refuse("test command has no execution metadata")
 ' "$head") || { [ -n "$checks_state" ] && printf '%s\n' "$checks_state"; exit 1; }
 
@@ -288,6 +284,86 @@ Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not 
 EOF
 fi
 
+pr_branch=$(gh pr view "$pr" --repo "$repo" --json headRefName -q .headRefName 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot read PR head branch" >&2
+  exit 1
+}
+common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+repo_root=$(dirname "$(cd -P "$common" && pwd)") || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+repo_root_physical=$(cd -P "$repo_root" && pwd) || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+repo_list_json=$("$orca" repo list --json 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot read orca repo list" >&2
+  exit 1
+}
+repo_resolve_err=$(mktemp "${TMPDIR:-/tmp}/on-worker-done-repo.err.XXXXXX")
+if ! orca_repo_id=$(python3 - "$repo_list_json" "$repo_root_physical" 2>"$repo_resolve_err" <<'PYREPO'
+import json, os, sys
+
+try:
+    payload = json.loads(sys.argv[1])
+    repos = payload.get("result", {}).get("repos")
+    if not isinstance(repos, list):
+        raise ValueError("repos array required")
+except (TypeError, ValueError, json.JSONDecodeError):
+    print("invalid orca repo list", file=sys.stderr)
+    sys.exit(1)
+target = os.path.realpath(sys.argv[2])
+for entry in repos:
+    if entry.get("kind") != "git":
+        continue
+    path, repo_id = entry.get("path"), entry.get("id")
+    if not isinstance(path, str) or not isinstance(repo_id, str):
+        continue
+    try:
+        if os.path.realpath(path) == target:
+            print(repo_id)
+            sys.exit(0)
+    except OSError:
+        continue
+print(f"no registered Orca repo for checkout {target}", file=sys.stderr)
+sys.exit(1)
+PYREPO
+); then
+  resolve_msg=$(tr '\n' ' ' < "$repo_resolve_err")
+  rm -f "$repo_resolve_err"
+  echo "QA start refused head=$head: ${resolve_msg:-cannot resolve registered repo}" >&2
+  exit 1
+fi
+rm -f "$repo_resolve_err"
+repo_selector="id:$orca_repo_id"
+from_handle=${ORCA_TERMINAL_HANDLE:-}
+[ -n "$from_handle" ] || {
+  echo "QA start refused head=$head: missing ORCA_TERMINAL_HANDLE" >&2
+  exit 1
+}
+[ -n "$ver_model" ] || {
+  echo "QA start refused head=$head: usage gate did not name a reviewer model" >&2
+  exit 1
+}
+if [ "$verifier_provider" = cursor ]; then
+  [ "$ver_model" != "composer-2.5" ] || {
+    echo "QA start refused head=$head: Cursor reviewer must not use composer-2.5" >&2
+    exit 1
+  }
+  qa_name="reviewer-pr-$pr"
+  cursor_start=${ON_WORKER_DONE_CURSOR_START:-$_here/start-cursor-worker.sh}
+  start_args=(bash "$cursor_start" --run "$run" --spec "$brief" --title "reviewer - PR $pr"
+    --model "$ver_model" --from "$from_handle" --name "$qa_name" --repo "$repo_selector" --base-branch "$pr_branch")
+  [ "${#host_flags[@]}" -eq 0 ] || start_args+=("${host_flags[@]}")
+  printf '%q ' "${start_args[@]}"; echo
+  [ "$dry" = 1 ] && exit 0
+  exec "${start_args[@]}"
+fi
+# shellcheck disable=SC2086
 cmd="$orca orchestration worker-start --run $run --spec \"\$(cat $brief)\" --worktree $worktree_selector --task-title \"reviewer - PR $pr\" ${host_flags[*]+"${host_flags[@]}"} $flags --json"
 echo "$cmd"
 [ "$dry" = 1 ] && exit 0

@@ -11,7 +11,8 @@ Read this before adding, moving, or growing an agent instruction file.
 | `CLAUDE.md` (repo root) | Exactly one line: `@AGENTS.md` |
 | `<subdir>/CLAUDE.md` | Exactly one line: `@../AGENTS.md` |
 | `<subdir>/AGENTS.md` | Symlink to `../AGENTS.md` |
-| `docs/agents/*.md` | Everything that only matters in one area. Loaded on demand. |
+| `docs/<area>/*.md` | Everything that only matters in one area. Loaded on demand. |
+| `docs/agents/` | Only the five fixed path files in README section 3 (Team files). Anything else needs the owner's approval. |
 
 `AGENTS.md` is canonical because Cursor, Antigravity, Copilot, Gemini CLI, Zed and others read it.
 `CLAUDE.md` exists because Claude Code reads `CLAUDE.md` and **not** `AGENTS.md`, so without the
@@ -29,7 +30,7 @@ adherence drops as it grows. `/doctor` proposes trims for an oversized file.
 Splitting into more `@` imports does **not** help: imported files load at launch too. Only two
 things actually reduce what a session pays for:
 
-1. Moving content to `docs/agents/<topic>.md` behind a pointer (cross tool, agent chooses to read)
+1. Moving content to `docs/<area>/<topic>.md` behind a pointer (cross tool, agent chooses to read)
 2. Moving content to `.claude/rules/<topic>.md` with `paths:` frontmatter (Claude only, loads
    automatically when a matching file is touched)
 
@@ -41,7 +42,7 @@ being ignored and the automatic trigger is worth losing cross tool visibility.
 Keep in `AGENTS.md`: workspace layout, commands, constraints that are always true, pitfalls that
 differ from tool defaults, and pointers to everything else.
 
-Move to `docs/agents/`: patterns that apply to one kind of code (CRUD pages, data fetching,
+Move to `docs/<area>/`: patterns that apply to one kind of code (CRUD pages, data fetching,
 logging, i18n), subsystem internals, and long reference tables.
 
 Do not write at all: anything an agent can read off the codebase (directory listings, dependency
@@ -54,8 +55,8 @@ sections are duplicated context.
 A pointer's wording, not its target, decides how reliably an agent follows it. Name the trigger
 condition:
 
-- Good: "Read `docs/agents/conventions.md` before adding an admin CRUD page or writing a log line."
-- Weak: "See `docs/agents/conventions.md` for more details."
+- Good: "Read `docs/web/conventions.md` before adding an admin CRUD page or writing a log line."
+- Weak: "See `docs/web/conventions.md` for more details."
 
 ## The global file is copied, not linked
 
@@ -81,7 +82,7 @@ links with a script over all tracked `.md` and `.mdc` files.
 
 ## New repos
 
-`script/init-agent-project.sh` creates the `docs/agents/` config and the `## Agent skills` block,
+`script/init-agent-project.sh` creates the three tracker files in `docs/agents/` and the `## Agent skills` block,
 and creates `AGENTS.md` plus the `CLAUDE.md` pointer when the repo has neither.
 
 Reference: [Claude Code memory docs](https://code.claude.com/docs/en/memory)
