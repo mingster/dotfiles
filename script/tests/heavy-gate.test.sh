@@ -1163,6 +1163,111 @@ while not pathlib.Path(sys.argv[3]).exists():
         self.finish(holder)
         self.finish(waiting)
 
+    def test_free_host_does_not_sleep_before_admission(self):
+        self.config(1)
+        sleeps = []
+        args = module.argparse.Namespace(weight=1, head_checks=False, command=['--', 'true'])
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module.time, 'sleep', side_effect=lambda s: sleeps.append(s)):
+            self.assertEqual(module.gate(args), 0)
+        self.assertEqual(sleeps, [])
+
+    def test_wait_appends_host_and_seconds_to_wait_log(self):
+        self.config(1)
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        self.env['HEAVY_GATE_WAIT_LOG'] = str(wait_log)
+        self.env['HEAVY_GATE_HOST'] = 'fixture-host'
+        holder = self.job('hold', hold=True)
+        self.wait_for(lambda: self.started('hold'))
+        after = self.job('after', 0.05)
+        self.wait_for(lambda: bool(select.select([after.stderr], [], [], 0)[0]))
+        self.release('hold')
+        self.finish(after)
+        self.finish(holder)
+        body = wait_log.read_text()
+        self.assertRegex(body, r'host=fixture-host wait_s=[0-9.]+')
+
+    def test_wait_log_stays_within_line_bound_after_many_appends(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        bound = 40
+        with mock.patch.dict(os.environ, {**self.env, 'HEAVY_GATE_WAIT_LOG': str(wait_log),
+                                          'HEAVY_GATE_WAIT_LOG_MAX_LINES': str(bound)}, clear=True):
+            for i in range(bound + 60):
+                module.log_heavy_gate_wait(0.5 + i * 0.001)
+        lines = [ln for ln in wait_log.read_text().splitlines() if ln.strip()]
+        self.assertLessEqual(len(lines), bound)
+        self.assertGreater(len(lines), 0)
+
+    def test_failed_wait_log_trim_does_not_break_gate(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        self.env['HEAVY_GATE_WAIT_LOG'] = str(wait_log)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(module, 'trim_heavy_gate_wait_log', side_effect=OSError('trim failed')):
+            module.log_heavy_gate_wait(1.0)
+        self.config(1)
+        args = module.argparse.Namespace(weight=1, head_checks=False, command=['--', 'true'])
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            self.assertEqual(module.gate(args), 0)
+
+    def test_non_utf8_wait_log_does_not_fail_gate(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        wait_log.write_bytes(b'\xff\xfejunk\n')
+        self.env['HEAVY_GATE_WAIT_LOG'] = str(wait_log)
+        self.env['HEAVY_GATE_HOST'] = 'fixture-host'
+        self.config(1)
+        holder = self.job('hold', hold=True)
+        self.wait_for(lambda: self.started('hold'))
+        waiter = self.job('after', 0.05)
+        self.wait_for(lambda: bool(select.select([waiter.stderr], [], [], 0)[0]))
+        self.release('hold')
+        self.finish(waiter, 0)
+        self.finish(holder, 0)
+        self.assertRegex(wait_log.read_bytes().decode('utf-8', errors='replace'),
+                         r'host=fixture-host wait_s=[0-9.]+')
+
+    def test_concurrent_wait_log_trims_keep_every_fresh_row(self):
+        wait_log = self.root / '.orca' / 'logs' / 'heavy-gate-wait.log'
+        wait_log.parent.mkdir(parents=True, exist_ok=True)
+        bound = 8
+        stamp = '2025-06-01T12:00:00Z'
+        seed = [f'{stamp} host=fixture-host wait_s=0.{i:03d}' for i in range(24)]
+        wait_log.write_text('\n'.join(seed) + '\n')
+        worker_env = dict(self.env, HEAVY_GATE_WAIT_LOG=str(wait_log),
+                          HEAVY_GATE_WAIT_LOG_MAX_LINES=str(bound),
+                          HEAVY_GATE_HOST='fixture-host')
+        markers = [1.111, 2.222, 3.333, 4.444, 5.555, 6.666]
+        child = '''import importlib.util, json, os, pathlib, sys
+scripts = pathlib.Path(sys.argv[1])
+marker = float(sys.argv[2])
+env = json.loads(sys.argv[3])
+spec = importlib.util.spec_from_file_location('heavy_gate', scripts / 'heavy-gate.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+os.environ.update(env)
+mod.log_heavy_gate_wait(marker)
+'''
+        env_json = json.dumps(worker_env)
+        processes = []
+        try:
+            for marker in markers:
+                processes.append(subprocess.Popen(
+                    [sys.executable, '-c', child, str(scripts), str(marker), env_json],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
+            for proc in processes:
+                out, err = proc.communicate(timeout=60)
+                self.assertEqual(proc.returncode, 0, err)
+        finally:
+            for proc in processes:
+                if proc.poll() is None:
+                    proc.kill()
+        body = wait_log.read_text(encoding='utf-8', errors='replace')
+        for marker in markers:
+            self.assertIn(f'wait_s={marker:.3f}', body, body)
+
 
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):

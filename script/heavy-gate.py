@@ -61,6 +61,7 @@ weight 1 jobs. Until then lighter jobs run as usual. Only waits for slots count,
 never waits on the load or memory sensors. Waiter records of dead owners are ignored.
 """
 import argparse
+import calendar
 import contextlib
 import datetime
 import fcntl
@@ -75,6 +76,7 @@ import shutil
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -593,6 +595,124 @@ def max_wait():
     return value
 
 
+def heavy_gate_wait_log_path():
+    override = (os.environ.get('HEAVY_GATE_WAIT_LOG') or '').strip()
+    if override:
+        return Path(override)
+    return Path.home() / '.orca' / 'logs' / 'heavy-gate-wait.log'
+
+
+HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_LINES = 2000
+HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600
+
+
+def wait_log_max_lines():
+    value = (os.environ.get('HEAVY_GATE_WAIT_LOG_MAX_LINES') or '').strip()
+    if value:
+        try:
+            lines = int(value)
+            if lines > 0:
+                return lines
+        except ValueError:
+            pass
+    return HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_LINES
+
+
+def wait_log_max_age_seconds():
+    value = (os.environ.get('HEAVY_GATE_WAIT_LOG_MAX_AGE_SECONDS') or '').strip()
+    if value:
+        try:
+            seconds = float(value)
+            if math.isfinite(seconds) and seconds > 0:
+                return seconds
+        except ValueError:
+            pass
+    return HEAVY_GATE_WAIT_LOG_DEFAULT_MAX_AGE_SECONDS
+
+
+def wait_log_line_age_seconds(token, now):
+    """Seconds since a log timestamp token, or None when unparsable."""
+    for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ'):
+        try:
+            stamp = datetime.datetime.strptime(token, fmt)
+        except ValueError:
+            continue
+        if stamp.tzinfo is not None:
+            return now - stamp.timestamp()
+        return now - calendar.timegm(stamp.timetuple())
+    return None
+
+
+@contextlib.contextmanager
+def heavy_gate_wait_log_lock(path):
+    """Serialize append and trim on the wait log across processes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f'.{path.name}.lock')
+    with lock_path.open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def read_heavy_gate_wait_log_lines(path):
+    try:
+        text = path.read_bytes().decode('utf-8', errors='replace')
+    except OSError:
+        return None
+    return [line for line in text.splitlines() if line.strip()]
+
+
+def trim_heavy_gate_wait_log(path):
+    """Drop aged lines and keep a tail so the wait log cannot grow without limit."""
+    max_lines = wait_log_max_lines()
+    max_age = wait_log_max_age_seconds()
+    lines = read_heavy_gate_wait_log_lines(path)
+    if not lines:
+        return
+    now = time.time()
+    kept = []
+    for line in lines:
+        token = line.split(None, 1)[0]
+        age = wait_log_line_age_seconds(token, now)
+        if age is None or age <= max_age:
+            kept.append(line)
+    if len(kept) > max_lines:
+        kept = kept[-max_lines:]
+    if kept == lines:
+        return
+    temporary = path.with_name(f'.{path.name}.trim-{os.getpid()}.tmp')
+    try:
+        temporary.write_text('\n'.join(kept) + ('\n' if kept else ''), encoding='utf-8')
+        temporary.replace(path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)
+
+
+def heavy_gate_host():
+    override = (os.environ.get('HEAVY_GATE_HOST') or '').strip()
+    if override:
+        return override
+    try:
+        return socket.gethostname()
+    except OSError:
+        return 'unknown'
+
+
+def log_heavy_gate_wait(seconds):
+    if not math.isfinite(seconds) or seconds < 0:
+        return
+    path = heavy_gate_wait_log_path()
+    try:
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        line = f'{stamp} host={heavy_gate_host()} wait_s={seconds:.3f}\n'
+        with heavy_gate_wait_log_lock(path):
+            with path.open('a', encoding='utf-8') as stream:
+                stream.write(line)
+            trim_heavy_gate_wait_log(path)
+    except (OSError, ValueError, UnicodeError):
+        pass
+
+
 def job_class():
     value = os.environ.get('HEAVY_GATE_CLASS', '')
     if value not in ('', 'short', 'long'):
@@ -641,6 +761,7 @@ def gate(args):
     slots = Slots(count)
     last_notice = -math.inf
     nested = holds_slot()
+    wait_begin = None
     try:
         while not nested:
             load, free = sample()
@@ -668,7 +789,11 @@ def gate(args):
             if now - last_notice >= 60:
                 print(f'heavy-gate: {reason}', file=sys.stderr, flush=True)
                 last_notice = now
+            if wait_begin is None:
+                wait_begin = now
             time.sleep(poll_interval())
+        if wait_begin is not None:
+            log_heavy_gate_wait(time.monotonic() - wait_begin)
         with children(slots, nested=nested) as processes:
             env = dict(os.environ)
             if not nested:
