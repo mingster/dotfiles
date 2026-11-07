@@ -288,7 +288,11 @@ pr_branch=$(gh pr view "$pr" --repo "$repo" --json headRefName -q .headRefName 2
   echo "QA start refused head=$head: cannot read PR head branch" >&2
   exit 1
 }
-repo_root=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null) || {
+common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+  echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
+  exit 1
+}
+repo_root=$(dirname "$(cd -P "$common" && pwd)") || {
   echo "QA start refused head=$head: cannot resolve repository root from worktree" >&2
   exit 1
 }
