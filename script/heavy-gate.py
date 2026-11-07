@@ -32,8 +32,9 @@ before publication never ran it: its slot (marked prelaunch) is reclaimed once
 the owner is gone. After release, a dead owner is reclaimed only when inspection
 proves every recorded group empty or zombie-only; a leftover ``running`` marker
 from a killed owner does not block that reclaim. Any other hold (live group,
-malformed ledger, missing ``groups-ready``, or ``quarantine`` from interrupted
-cleanup) keeps capacity, is named in the wait notice, and requires operator
+malformed ledger, missing ``groups-ready``, or both ``running`` and ``quarantine``
+from interrupted cleanup) keeps capacity, is named in the wait notice, and requires
+operator
 inspection. There is no manual release.
 Reused PGIDs during reclaim may prolong a hold but never authorize killing there.
 Signals require a positively inspected live group and an unreaped direct-child
@@ -246,9 +247,9 @@ def recorded_groups_empty(path, members=None):
 
 
 def dead_owner_reclaimable(path, members=None):
-    """Inspect-only reclaim when the owner is gone; quarantine keeps the hold."""
+    """Inspect-only reclaim when the owner is gone."""
     try:
-        if (path / 'quarantine').exists():
+        if (path / 'quarantine').exists() and (path / 'running').exists():
             return False
         return recorded_groups_empty(path, members)
     except (OSError, ValueError, subprocess.SubprocessError):
