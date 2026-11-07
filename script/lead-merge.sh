@@ -605,12 +605,15 @@ if jq -e --arg head "$head" '
 fi
 if [ "$review_newest_fail" = false ]; then
   [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Review"; main_fetched=true; }
-  while IFS= read -r v_sha v_at; do
+  while IFS=$'\t' read -r v_sha v_at; do
     [ -n "$v_sha" ] || continue
     [ "$v_sha" = "$head" ] && continue
     verdict_carry "$v_sha" "$head" || continue
-    if jq -e --arg head "$head" --arg since "$v_at" '
+    if jq -e --arg vsha "$v_sha" --arg head "$head" --arg since "$v_at" '
       any(.comments[]?;
+        (.body | split("\n")[0] | test("^Review: PASS head=" + $vsha + "( main=[0-9a-f]{40})?($| )"))
+        and (($since | length) == 0 or (.createdAt // "") > $since))
+      or any(.comments[]?;
         (.body | split("\n")[0] | test("^Review: PASS head=" + $head + "( main=[0-9a-f]{40})?($| )"))
         and (($since | length) == 0 or (.createdAt // "") > $since))
     ' <<<"$info" >/dev/null 2>&1; then
@@ -620,7 +623,7 @@ if [ "$review_newest_fail" = false ]; then
   done < <(jq -r '
     [.comments[] | select((.body | split("\n")[0] | test("^Review: FAIL head=[0-9a-f]{40}"))) |
       {h: (.body | split("\n")[0] | capture("^Review: FAIL head=(?<h>[0-9a-f]{40})").h), at: (.createdAt // "")}]
-    | sort_by(.at) | reverse[] | "\(.h) \(.at)"
+    | sort_by(.at) | reverse[] | "\(.h)\t\(.at)"
   ' <<<"$info" 2>/dev/null || true)
 else
   refuse "Review: FAIL at the current head"

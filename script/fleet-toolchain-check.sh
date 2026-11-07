@@ -30,14 +30,16 @@ version_from_json() { # <host> <tool>
 latest_orca() {
   [ -n "${FLEET_TOOLCHAIN_LATEST_ORCA:-}" ] && { norm_ver "$FLEET_TOOLCHAIN_LATEST_ORCA"; return; }
   python3 - <<'PY'
-import json, os, urllib.request, re
+import json, os, time, urllib.request, re
 cache = os.path.join(os.environ.get("HOME", "/tmp"), ".cache", "fleet-toolchain-orca-latest.json")
+ttl = 6 * 3600
 if os.path.isfile(cache):
     try:
         data = json.load(open(cache))
-        print(re.sub(r"^v", "", data.get("tag", "")))
-        raise SystemExit(0)
-    except (OSError, ValueError, KeyError):
+        if time.time() - float(data.get("ts", 0)) < ttl:
+            print(re.sub(r"^v", "", data.get("tag", "")))
+            raise SystemExit(0)
+    except (OSError, ValueError, KeyError, TypeError):
         pass
 req = urllib.request.Request(
     "https://api.github.com/repos/stablyai/orca/releases/latest",
@@ -48,7 +50,7 @@ with urllib.request.urlopen(req, timeout=15) as resp:
 tag = (data.get("tag_name") or "").lstrip("v")
 print(tag)
 os.makedirs(os.path.dirname(cache), exist_ok=True)
-json.dump({"tag": tag}, open(cache, "w"))
+json.dump({"tag": tag, "ts": time.time()}, open(cache, "w"))
 PY
 }
 
@@ -59,15 +61,18 @@ latest_bun() {
 
 latest_node() {
   [ -n "${FLEET_TOOLCHAIN_LATEST_NODE:-}" ] && { norm_ver "$FLEET_TOOLCHAIN_LATEST_NODE"; return; }
-  pin=$(read_pin nodejs)
-  [ -n "$pin" ] || pin=$(python3 -c '
+  pin=$(python3 -c '
 import json, urllib.request
-req = urllib.request.Request("https://nodejs.org/dist/index.json", headers={"User-Agent": "dotfiles"})
-with urllib.request.urlopen(req, timeout=15) as r:
-    for row in json.load(r):
-        if row.get("lts"):
-            print(row["version"].lstrip("v")); break
-')
+try:
+    req = urllib.request.Request("https://nodejs.org/dist/index.json", headers={"User-Agent": "dotfiles"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        for row in json.load(r):
+            if row.get("lts"):
+                print(row["version"].lstrip("v")); break
+except OSError:
+    pass
+' 2>/dev/null)
+  [ -n "$pin" ] || pin=$(read_pin nodejs)
   norm_ver "$pin"
 }
 
@@ -121,10 +126,10 @@ check_host() { # <host>
       node) have=$(host_node "$h"); need="$want_node"; floor="$floor_node" ;;
     esac
     [ -n "$have" ] || { echo "fleet-toolchain-check: $h $t version unreadable" >&2; continue; }
-    min="$need"
-    [ -n "$floor" ] && older "$floor" "$min" && min="$floor"
-    if older "$have" "$min"; then
-      echo "fleet-toolchain-check: $h $t $have is below latest $need${floor:+, mini6 runs $floor}"
+    if older "$have" "$need"; then
+      echo "fleet-toolchain-check: $h $t $have is below latest $need"
+    elif [ -n "$floor" ] && older "$have" "$floor"; then
+      echo "fleet-toolchain-check: $h $t $have is below mini6 $floor (latest $need)"
     fi
   done
 }

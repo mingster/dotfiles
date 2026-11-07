@@ -673,11 +673,42 @@ class IssueScanPass(unittest.TestCase):
         _, _, starts, _ = self.run_pass(state, prs_by_repo=prs, workflow_watch_prior={})
         self.assertEqual(starts, [])
 
+    def test_rollup_failure_unrelated_rerun_does_not_start_rework(self):
+        head = '4' * 40
+        fail_run = '42420403371'
+        checks = [{
+            'context': 'Script tests',
+            'conclusion': 'FAILURE',
+            'detailsUrl': 'https://github.com/%s/actions/runs/%s/job/1' % (REPO, fail_run),
+        }]
+        prs = {REPO: [pr(14, head=head, checks=checks)]}
+        prior = {REPO: {'11111111111': 'rerun'}}
+        _, _, starts, _ = self.run_pass({}, prs_by_repo=prs, workflow_watch_prior=prior)
+        self.assertEqual(starts, [])
+
+    def test_status_rollup_failure_after_rerun_keys_on_failing_run(self):
+        head = '5' * 40
+        run_id = '42420403371'
+        pr_row = pr(15, head=head, checks=[{
+            'context': 'Script tests',
+            'conclusion': 'FAILURE',
+            'detailsUrl': 'https://github.com/%s/actions/runs/%s/job/1' % (REPO, run_id),
+        }])
+        self.assertFalse(fw.status_rollup_failure_after_rerun(
+            pr_row, {REPO: {'11111111111': 'rerun'}}, REPO))
+        self.assertTrue(fw.status_rollup_failure_after_rerun(
+            pr_row, {REPO: {run_id: 'rerun'}}, REPO))
+
     def test_rollup_failure_with_prior_watch_starts_rework(self):
         state = {}
         head = '4' * 40
-        prs = {REPO: [pr(13, head=head, checks=[{'context': 'ShellCheck', 'conclusion': 'FAILURE'}])]}
-        prior = {REPO: {'77': 'rerun'}}
+        run_id = '77'
+        prs = {REPO: [pr(13, head=head, checks=[{
+            'context': 'ShellCheck',
+            'conclusion': 'FAILURE',
+            'detailsUrl': 'https://github.com/%s/actions/runs/%s/job/1' % (REPO, run_id),
+        }])]}
+        prior = {REPO: {run_id: 'rerun'}}
         _, _, starts, _ = self.run_pass(state, prs_by_repo=prs, workflow_watch_prior=prior)
         self.assertEqual(len(starts), 1)
 

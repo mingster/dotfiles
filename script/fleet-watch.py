@@ -1767,16 +1767,22 @@ def pr_has_label(pr, label_name):
     return False
 
 
+def _workflow_run_id_from_check(check):
+    url = (check.get('detailsUrl') or '') if isinstance(check, dict) else ''
+    match = re.search(r'/actions/runs/(\d+)', url)
+    return match.group(1) if match else None
+
+
 def status_rollup_failure_after_rerun(pr, workflow_watch_state, repo):
     watched = (workflow_watch_state or {}).get(repo, {})
-    tracked_rerun = any(step in ('rerun', 'issue') for step in watched.values())
     for check in pr.get('statusCheckRollup') or []:
         if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
             continue
         attempt = check.get('attempt')
         if attempt is not None and attempt >= 2:
             return True
-        if tracked_rerun:
+        run_id = _workflow_run_id_from_check(check)
+        if run_id and watched.get(run_id) in ('rerun', 'issue'):
             return True
     return False
 
@@ -1792,12 +1798,10 @@ def rework_needed_at_head(pr, workflow_watch_state, repo):
 def rework_failure_excerpt(pr_row):
     head = pr_row.get('headRefOid') or ''
     comments = pr_row.get('comments') or []
-    for label in ('Checks', 'Review', 'Verdict'):
-        comment = newest_comment_receipt(comments, label, head)
-        if not comment:
-            continue
+    comment = newest_comment_receipt(comments, 'Checks', head)
+    if comment:
         first = _receipt_first_line(comment.get('body'))
-        if first.startswith('%s: FAIL' % label):
+        if first.startswith('Checks: FAIL'):
             return (comment.get('body') or '')[:8000]
     row = newest_review_or_verdict(comments, head)
     if row and row[1].startswith(('Verdict: FAIL', 'Review: FAIL')):

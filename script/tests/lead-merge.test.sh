@@ -75,6 +75,7 @@ export MERGE_LOG="$tmp/merge.log"
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 setup() {
+  unset REAL_PATCH_REPO REAL_PATCH_REPO_MAIN
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
   COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""; unset STATUS_ROLLUP_JSON
@@ -501,6 +502,16 @@ PR_DIFF=$'+test.skip("case", () => {})'; countersign="Countersign: Elon head=$P 
 check "real merge of main keeps the countersign" 0 '^MERGED' 1
 SHA=$R; headsha=$R; checks="Checks: PASS head=$R"; comments="Verdict: PASS head=$R verifier=ctx_verify author=ctx_author"
 check "real changed patch loses the countersign" 1 'Countersign'
+
+SHA=$Q; headsha=$Q; checks="Checks: PASS head=$Q"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"
+COMMENTS_JSON=$(jq -n --arg ck "$checks" --arg vp "$comments" --arg rf "Review: FAIL head=$P" \
+  '[{body:$ck},{body:$vp},{body:$rf,createdAt:"2026-11-05T10:00:00Z"}]')
+check "677 carried Review FAIL after clean merge of main is refused" 1 'Review: FAIL carried'
+PR_DIFF=""; countersign=""
+COMMENTS_JSON=$(jq -n --arg ck "$checks" --arg vp "$comments" --arg rf "Review: FAIL head=$P" --arg rp "Review: PASS head=$P" \
+  '[{body:$rf,createdAt:"2026-11-05T09:00:00Z"},{body:$rp,createdAt:"2026-11-05T10:00:00Z"},{body:$vp},{body:$ck}]')
+check "677 ancestor Review PASS supersedes carried FAIL" 0 '^MERGED' 1
+unset COMMENTS_JSON
 
 ) </dev/null &
 # Cleanup after the merge never removes a lead-* worktree, even when it holds the PR branch.
