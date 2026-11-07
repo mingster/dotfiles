@@ -55,7 +55,7 @@ class Leads(unittest.TestCase):
              patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
-        return [' '.join(c) for c in calls if c[:2] == ('terminal', 'send')]
+        return [c[c.index('--body') + 1] for c in calls if c[:2] == ('orchestration', 'send')]
 
     def test_dead_lead_alerts_once_and_rearms_after_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
