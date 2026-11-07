@@ -491,7 +491,9 @@ else:
       1) rm -f "$state/$d" "$state/released/$d" ;;
       0) continue ;;
       *)
-        show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || :
+        # worker-list was incomplete: absence from the list proves nothing, and worker-show must not drop the record.
+        [ "$sweep_ok" -eq 1 ] || continue
+        show=$(close_rpc orchestration worker-show --dispatch "$d" --json 2>/dev/null) || continue
         if printf '%s' "$show" | dispatch_final >/dev/null; then
           rm -f "$state/$d" "$state/released/$d"
         elif printf '%s' "$show" | python3 -c '

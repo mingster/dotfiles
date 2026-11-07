@@ -1743,7 +1743,7 @@ if [ "$pr_ok" -eq 1 ]; then
     [ "$stale_failed" -eq 1 ] || stale_deleted=$((stale_deleted+1))
   done < "$tmp/names"
 fi
-pane_script="$HOME/.claude/skills/orca-team/worker-pane-close.sh"
+pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
   if [ "$apply" -eq 1 ]; then
@@ -1754,7 +1754,10 @@ if [ -f "$pane_script" ]; then
     fi
     [ "$pane_left" -gt 0 ] || pane_left=1
     rc=0
-    ORCA_PANE_CLOSE_TIMEOUT=$pane_left bash "$pane_script" >/dev/null 2>&1 || rc=$?
+    pane_out=$(mktemp)
+    ORCA_PANE_CLOSE_TIMEOUT=$pane_left bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
+    sed -n '/^sweep: /p' "$pane_out"
+    rm -f "$pane_out"
     [ "$rc" -eq 0 ] || fail_item 'worker panes' "worker-pane-close exited $rc"
   fi
 fi

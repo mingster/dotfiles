@@ -799,6 +799,10 @@ case "$*" in
   "orchestration run-list"*) cat "$F2/runs.json" ;;
   "orchestration worker-list"*)
     r=$(printf '%s' "$*" | sed -n 's/.*--run \([^ ]*\).*/\1/p')
+    case "$*" in *"--cursor next"*)
+      [ -z "${F2_WORKER_LIST_FAIL_PAGE2:-}" ] || exit 1
+      [ -f "$F2/workers-$r-next.json" ] && cat "$F2/workers-$r-next.json" || exit 1 ;; esac
+    [ -n "${F2_WORKER_LIST_FAIL:-}" ] && exit 1
     if [ -f "$F2/flip-after-first" ] && [ -f "$F2/flipped" ] && [ -f "$F2/workers-$r.live.json" ]; then cat "$F2/workers-$r.live.json"
     else cat "$F2/workers-$r.json"; [ ! -f "$F2/flip-after-first" ] || : > "$F2/flipped"; fi ;;
   "orchestration worker-show --dispatch "*)
@@ -938,6 +942,37 @@ echo t_still > "$F2/state/live"
 : > "$F2/calls.log"
 ( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
 check "sweep: stale-file prune uses worker-list without worker-show for listed dispatches" "$([ ! -e "$F2/state/endedrow" ] && [ -e "$F2/state/live" ] && ! grep -q 'worker-show --dispatch endedrow' "$F2/calls.log" 2>/dev/null; echo $?)"
+unset F2
+
+# Failed worker-list read: incomplete inventory must not drop pane state (live Orca shape: scope, workers, optional nextCursor).
+F2="$tmp/list-fail"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+echo '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"warnings":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/listfail"
+echo '{"ok":true,"result":{"state":"succeeded","liveness":"exited","terminalState":"released"}}' > "$F2/show.listfail"
+F2_WORKER_LIST_FAIL=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "sweep: worker-list exit 1 on first page keeps pane record despite ended worker-show" "$([ -e "$F2/state/listfail" ]; echo $?)"
+unset F2_WORKER_LIST_FAIL
+
+F2="$tmp/list-page2"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"nextCursor":"page2","warnings":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"workers":[{"dispatchId":"page2only","state":"succeeded","liveness":"exited","terminalState":"released","workspace":"repo1::/gone"}],"scope":{"source":"flag"},"warnings":[]}}' > "$F2/workers-run0-next.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/page2only"
+F2_WORKER_LIST_FAIL_PAGE2=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "sweep: worker-list exit 1 on page after nextCursor keeps absent dispatch record" "$([ -e "$F2/state/page2only" ]; echo $?)"
+unset F2_WORKER_LIST_FAIL_PAGE2
+
+F2="$tmp/list-page2-show"; export F2; rm -rf "$F2"; mkdir -p "$F2/state"
+echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"coord0"}]}}' > "$F2/runs.json"
+printf '%s\n' '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"},"nextCursor":"page2","warnings":[]}}' > "$F2/workers-run0.json"
+echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["h"],"omittedHostIds":[]},"terminals":[]}}' > "$F2/terminals.json"
+echo t_gone > "$F2/state/noshow"
+: > "$F2/calls.log"
+F2_WORKER_LIST_FAIL_PAGE2=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1
+check "sweep: incomplete list and worker-show exit 1 keeps pane record" "$([ -e "$F2/state/noshow" ]; echo $?)"
 unset F2
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

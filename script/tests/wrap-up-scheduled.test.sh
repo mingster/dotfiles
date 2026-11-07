@@ -341,5 +341,58 @@ round
 check 'big log is rotated once' test -f "$log.1" -a "$(wc -c < "$log.1" | tr -d ' ')" -gt 5000000
 check 'new log starts small' test "$(wc -c < "$log" | tr -d ' ')" -lt 100000
 
+# Child --apply must keep worker-pane-close sweep budget lines in the scheduled detail log (not /dev/null).
+reset
+real_git=$(command -v git)
+pane_stub="$tmp/home/pane-sweep-stub"
+mini="$tmp/home/mini-repo"
+origin="$tmp/home/mini-origin"
+detail="$tmp/home/round-detail.log"
+mkdir -p "$mini/.agents" "$(dirname "$pane_stub")"
+cat > "$pane_stub" <<'EOS'
+#!/usr/bin/env bash
+if [ "$#" -eq 0 ]; then
+  echo 'sweep: deadline reached, 4 pane record(s) left'
+fi
+exit 0
+EOS
+chmod +x "$pane_stub"
+"$real_git" init -q --bare "$origin"
+"$real_git" init -q -b main "$mini"
+git -C "$mini" config user.email 't@example.invalid'
+git -C "$mini" config user.name T
+git -C "$mini" commit -qm init --allow-empty
+git -C "$mini" remote add origin "$origin"
+git -C "$mini" push -q -u origin main
+: > "$mini/.agents/head-checks.conf"
+cat > "$tmp/bin/gh-apply" <<'FAKE'
+#!/usr/bin/env bash
+case "$1 $2 $3" in
+  'repo view --json') echo '{"defaultBranchRef":{"name":"main"}}' ;;
+  'api repos/{owner}/{repo}/pages') echo '{"source":null}' ;;
+  'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]' ;;
+  'pr list') echo '[]' ;;
+  *) exit 2 ;;
+esac
+FAKE
+cat > "$tmp/bin/orca-apply" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  'terminal list --json') echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":[]},"terminals":[]}}' ;;
+  'environment list --json') echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *run-list*--json*) echo '{"ok":true,"result":{"runs":[]}}' ;;
+  *worker-list*--json*) echo '{"ok":true,"result":{"workers":[],"scope":{"source":"flag"}}}' ;;
+  *) exit 2 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/gh-apply" "$tmp/bin/orca-apply"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"; chmod +x "$tmp/bin/lsof"
+env -i HOME="$tmp/home" PATH="$tmp/bin/orca-apply:$tmp/bin/gh-apply:$tmp/tools:/usr/bin:/bin" \
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 WRAP_UP_RECENT_MIN=0 WRAP_UP_CALL_TIMEOUT=30 \
+  WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose" \
+  WRAP_UP_CLONE_ROOT="$tmp/no-clones" ORCA_CLI_COMMAND="$tmp/bin/orca-apply" WORKER_PANE_CLOSE="$pane_stub" \
+  bash "$script" --apply --repo "$mini" >>"$detail" 2>&1 || true
+check 'scheduled child detail log keeps pane sweep budget line' has 'sweep: deadline reached, 4 pane record(s) left' "$detail"
+
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
