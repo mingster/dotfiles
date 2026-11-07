@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One bounded watchdog pass; schedule every minute outside the coordinator.
+"""One bounded watchdog pass; schedule every five minutes outside the coordinator.
 Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
 host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
 pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,

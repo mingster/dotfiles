@@ -65,6 +65,14 @@ branch fresh f.txt
 git cherry-pick -x squashed >/dev/null 2>&1 || git cherry-pick squashed >/dev/null
 git commit -q --amend -m 'squash squashed'
 git push -q origin main
+branch 'archive/ancestor' arch-anc.txt "$old"
+git merge -q archive/ancestor
+git push -q origin main
+branch 'archive/closed-pr-tip' arch-cl.txt "$old"
+branch 'archive/patch-merged' arch-pm.txt "$old"
+git cherry-pick -x archive/patch-merged >/dev/null 2>&1 || git cherry-pick archive/patch-merged >/dev/null
+git commit -q --amend -m 'squash archive/patch-merged'
+git push -q origin main
 git worktree add -q "$tmp/wt-squashed" squashed
 git worktree add -q "$tmp/wt-stale-shot" stale-shot
 git worktree add -q "$tmp/wt-stale-dirty" stale-dirty
@@ -88,10 +96,14 @@ git worktree add -q --detach "$tmp/wt-cl-mod-other" main
 for w in wt-cl-mod wt-cl-mod-image wt-cl-mod-other; do printf '{"a":2}' > "$tmp/$w/$cl"; done
 printf x > "$tmp/wt-cl-mod-image/shot.png"
 printf x > "$tmp/wt-cl-mod-other/other.txt"
-FAKE_PRS=$(printf '[{"headRefName":"open-pr","headRefOid":"%s","state":"OPEN"}]' "$(git rev-parse open-pr)")
+FAKE_PRS=$(printf '[{"headRefName":"open-pr","headRefOid":"%s","state":"OPEN"},{"headRefName":"archive/closed-pr-tip","headRefOid":"%s","state":"CLOSED"}]' \
+  "$(git rev-parse open-pr)" "$(git rev-parse archive/closed-pr-tip)")
 export FAKE_PRS
 
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --dry-run > "$tmp/out0" 2>&1
+bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --worktrees-only --dry-run > "$tmp/out-wto" 2>&1
+(cd "$tmp/repo" && DRY_RUN=1 PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca" \
+  bash "$root/script/wrap-up.sh" --branch archive/ancestor) > "$tmp/out-br" 2>&1
 
 passed=0; failed=0
 check() { # description, command...
@@ -107,6 +119,26 @@ local_gone_origin_kept() { ! has_local "$1" && has_remote "$1"; }
 
 check 'archive branch not listed stale on dry-run' bash -c "! grep -Eq '^  archive/2026-11-07/snapshot,' '$tmp/out0'"
 check 'archive branch not offered for deletion on dry-run' bash -c "! grep -Fq 'Delete stale archive/2026-11-07/snapshot' '$tmp/out0'"
+archive_route() { # <file> <branch>
+  grep -Fq "Kept local $2 (archive branch)" "$tmp/$1" \
+    && ! grep -Fq "Delete local $2" "$tmp/$1" \
+    && ! grep -Fq "Delete remote $2" "$tmp/$1"
+}
+check 'ancestor archive route kept on default dry-run' archive_route out0 archive/ancestor
+check 'closed-pr archive route kept on default dry-run' archive_route out0 archive/closed-pr-tip
+check 'patch-merged archive route kept on default dry-run' archive_route out0 archive/patch-merged
+check 'unmerged archive route kept on default dry-run' archive_route out0 archive/2026-11-07/snapshot
+check 'default dry-run stale counter matches non-archive stale listings' bash -c "
+  n=\$(grep -cE '^  [a-z0-9].*, [0-9]+h old,' '$tmp/out0' || true)
+  s=\$(sed -n 's/.* stale=\\([0-9][0-9]*\\) stale deleted=.*/\\1/p' '$tmp/out0' | tail -1)
+  test \"\$n\" = \"\$s\"
+"
+check 'default dry-run has no archive/ line in stale listing' bash -c "! grep -Eq '^  archive/' '$tmp/out0'"
+check 'ancestor archive route kept on worktrees-only dry-run' archive_route out-wto archive/ancestor
+check 'closed-pr archive route kept on worktrees-only dry-run' archive_route out-wto archive/closed-pr-tip
+check 'patch-merged archive route kept on worktrees-only dry-run' archive_route out-wto archive/patch-merged
+check '--branch mode keeps settled ancestor archive' grep -Fq 'Kept archive/ancestor (archive branch)' "$tmp/out-br"
+check '--branch mode does not delete ancestor archive' bash -c "! grep -Fq 'Delete local archive/ancestor' '$tmp/out-br'"
 
 bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply > "$tmp/out1" 2>&1
 check 'squash-merged branch with no PR deleted local and remote' gone squashed
