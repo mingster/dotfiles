@@ -446,7 +446,7 @@ class IssueScanPass(unittest.TestCase):
         '## Verify\n'
         'run test suite\n\n'
         '## Finish\n'
-        'worker_done\n'
+        'Self-review, then worker_done.\n'
     )
 
     def test_eligible_issue_starts_once(self):

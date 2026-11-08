@@ -135,9 +135,17 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/start-cursor-worker.sh` | Creates the worktree, writes `.workspace-trusted` via Python 3, checks `usage-gate.py`, and starts a Cursor worker. |
 | `script/pr-review.sh` | Cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass; picks a cross family model via `usage-gate.py`. |
 | `script/post-verdict.sh` | Posts the canonical `Verdict:` comment and `review` status. |
+| `script/doc-fact-check.sh` | Lists removed markdown lines that do not appear anywhere under `docs/` or `README.md` at head (exit 1 when any). Coordinators and reviewer briefs run it on doc rewrites. |
 | `script/ship.sh` | Shipping run (replacing `script/lead-merge.sh`): verifies required checks and matching `git patch-id` Verdict, squash merges, and reads back `MERGED`. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
 | `script/wrap-up.sh`, `script/worktree-idle.py` | Fleet-wide cleanup of finished worktrees, merged branches, ended terminals/panes and temp files. |
 
 Full tool list across all stages: [Agent team reference](team-reference.md).
+
+## Review rules (issue #760)
+
+1. **No fact lost.** On PRs that rewrite or move docs, run `script/doc-fact-check.sh` against the merge base and explain every flagged line in the Verdict notes.
+2. **Reviewer differs from builder.** `script/ship.sh` and `script/lead-merge.sh` resolve the builder from the Verdict `author=` dispatch (or the PR branch worker when `author=unknown`), read `agent` and `model` from `worker-startup` launch records and `orca orchestration worker-list` (not a self-reported `Builder:` line in the PR body), and refuse when the verifier matches the builder on both fields. When no other provider has quota, review waits instead of reusing the builder model.
+3. **Coordinator reviews Cursor-built PRs.** When the resolved builder `agent` is `cursor`, the passing Verdict must use a configured coordinator id (`coordinator_ids` in `script/lead-merge.local.json`) as `verifier=` and name the builder dispatch as `author=`, posted through `script/post-verdict.sh`. A worker can still paste `verifier=<coordinator id>` in a PR comment without proving they hold that terminal; merge gates only require `verifier≠builder` and membership in `coordinator_ids`. Treat coordinator Verdicts as binding only when posted through `post-verdict.sh` from the coordinator host.
+4. **Builder self-review.** Every push path: role files and `script/brief-lint.sh` require a self-review step; merge gates require a `## Self-review` section naming the current head sha. Plain-text steps: [self-review-checklist.md](self-review-checklist.md) (Cursor and Antigravity run it as-is).

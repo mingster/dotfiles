@@ -51,6 +51,22 @@ cat > "$tmp/bin/orca" <<'EOS'
 if [ "$1 $2" = "orchestration run-list" ]; then
   echo '{"ok":true,"result":{"runs":[{"id":"run_a","coordinator_handle":"'"${FAKE_COORD_A:-}"'"},{"id":"run_b","coordinator_handle":"'"${FAKE_COORD_B:-}"'"}],"nextCursor":null}}'; exit 0
 fi
+if [ "$1 $2" = "orchestration worker-show" ]; then
+  id=""
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dispatch) id=${2:-}; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  case "$id" in
+    ctx_verify|ctx_other) model=opus ;;
+    *) model=sonnet ;;
+  esac
+  printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"%s"}}\n' "$id" "$model"
+  exit 0
+fi
 [ "$1 $2" = "orchestration worker-list" ] || exit 1
 start=0; prev=""; run=""
 for a in "$@"; do
@@ -59,7 +75,8 @@ for a in "$@"; do
   prev=$a
 done
 if [ "$run" = run_b ]; then read -ra ids <<<"${FAKE_DISPATCHES_B:-}"; else read -ra ids <<<"$FAKE_DISPATCHES"; fi
-w=""; for ((i=start; i<start+2 && i<${#ids[@]}; i++)); do w="$w${w:+,}{\"dispatchId\":\"${ids[i]}\"}"; done
+branch_wt="${FAKE_BRANCH_WT:-$FAKE_TOP}"
+w=""; for ((i=start; i<start+2 && i<${#ids[@]}; i++)); do w="$w${w:+,}{\"dispatchId\":\"${ids[i]}\",\"agent\":\"claude\",\"workspace\":\"repo::$branch_wt\"}"; done
 next=null; [ $((start+2)) -ge ${#ids[@]} ] || next="\"$((start+2))\""
 if [ "${FAKE_PAGE_SHAPE:-page}" = top ]; then
   printf '{"ok":true,"result":{"workers":[%s],"nextCursor":%s}}\n' "$w" "$next"
@@ -81,16 +98,29 @@ setup() {
   COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""; unset STATUS_ROLLUP_JSON
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"script/foo.sh"}]'
-  body=$'## Verification\n- Ran script successfully.'
+  body=$'## Verification\n- Ran script successfully.\n\n## Self-review\n'"$SHA"
   comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
   checks="Checks: PASS head=$SHA"; countersign=""; TRUNK_FILES=""
   export TRUNK_FILES
   export FAKE_DISPATCHES="ctx_a ctx_b ctx_author ctx_other ctx_same ctx_verify"; unset FAKE_ORCA_FAIL FAKE_DISPATCHES_B FAKE_PAGE_SHAPE
+  export FAKE_BRANCH_WT="$LEAD/../feature"
   export OLD
   state=OPEN base=main headsha=$SHA mergeable=MERGEABLE branch=feature
   FINAL_JSON='{"state":"MERGED","mergeCommit":{"oid":"dddddddddddddddddddddddddddddddddddddddd"},"url":"https://github.com/o/r/pull/7"}'
 }
+self_review_body() { # <body> <head sha>
+  awk -v h="$2" '
+    BEGIN { in_sr=0; had=0 }
+    /^## Self-review([[:space:]]|$)/ { if (had) next; print; print h; had=1; in_sr=1; next }
+    in_sr && /^## / { in_sr=0 }
+    in_sr && /^[0-9a-f]{40}$/ { next }
+    in_sr { next }
+    { print }
+    END { if (!had) { print ""; print "## Self-review"; print h } }
+  ' <<<"$1"
+}
 mkjson() {
+  body=$(self_review_body "$body" "$headsha")
   PR_JSON=$(printf '{"state":"%s","baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeable":"%s","url":"https://github.com/o/r/pull/7","files":%s,"statusCheckRollup":[]}' \
     "$state" "$base" "$branch" "$headsha" "$mergeable" "$files")
   PR_JSON=$(jq --arg body "$body" --arg comments "$comments" --arg checks "$checks" --arg countersign "$countersign" --arg base "$base_sha" '. + {body:$body, baseRefOid:$base, closingIssuesReferences:('"${CLOSING_JSON:-[]}"'), comments:[$checks,$comments,$countersign | {body:.}]}' <<<"$PR_JSON")
@@ -376,6 +406,7 @@ copy_commit() {
   "$REAL_GIT" -C "$REAL_PATCH_REPO" add .
   "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm copy
   SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+  body=$'## Verification\n- Ran script successfully.\n\n## Self-review\n'"$SHA"
   PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
   files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})')
   checks="Checks: PASS head=$SHA"
@@ -620,10 +651,11 @@ check "verdict-from refuses an untracked file under templates/agent-team" 1 'not
   res="$ucd/result.9001"; fails=""
   body=$'## Verification\n- a\n- b\n- c\n- d\n- e\n\n## Test plan\n- x'
   mf_pr_add 5 t1 "$body" docs/t1.md
+  head=$(jq -r .headRefOid "$MF_GH_DIR/pr-5.json")
+  jq --arg h "$head" '.body += "\n\n## Self-review\n" + $h' "$MF_GH_DIR/pr-5.json" > "$MF_GH_DIR/pr-5.json.tmp" && mv "$MF_GH_DIR/pr-5.json.tmp" "$MF_GH_DIR/pr-5.json"
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q -B main origin/main
   mkdir -p docs; echo drift > docs/t1.md; "$MF_REAL_GIT" add docs/t1.md; "$MF_REAL_GIT" commit -q -m drift; "$MF_REAL_GIT" push -q origin main
   : > "$MF_GH_LOG"
-  head=$(jq -r .headRefOid "$MF_GH_DIR/pr-5.json")
   out=$(bash "$here/lead-merge.sh" --repo o/r --pr 5 --head "$head" 2>&1); code=$?
   [ "$code" = 1 ] || fails="$fails exit=$code"
   for want in 'Test plan heading is forbidden' 'Verification needs 1 to 3' 'trunk changed docs/t1.md' 'missing current-head or containing-train Checks'; do
@@ -648,8 +680,9 @@ check "verdict-from refuses an untracked file under templates/agent-team" 1 'not
   mf_pr_add 2 t14b $'## Verification\n- Passed.' docs/t14b.md
   for n in 1 2; do
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
-    jq --arg c "Checks: PASS head=$h" \
-      '.comments += [{body:$c, author:"fixture", edited:false, minimized:false}]' \
+    jq --arg h "$h" --arg c "Checks: PASS head=$h" --arg v "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author" \
+      '.body += "\n\n## Self-review\n" + $h
+      | .comments += [{body:$c, author:"fixture", edited:false, minimized:false}, {body:$v, author:"fixture", edited:false, minimized:false}]' \
       "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
   done
   # A gh that holds each merge for two seconds, so an unserialized second run overlaps the first.

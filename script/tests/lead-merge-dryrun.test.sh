@@ -51,6 +51,22 @@ cat > "$tmp/bin/orca" <<'EOS'
 if [ "$1 $2" = "orchestration run-list" ]; then
   echo '{"ok":true,"result":{"runs":[{"id":"run_a"},{"id":"run_b"}],"nextCursor":null}}'; exit 0
 fi
+if [ "$1 $2" = "orchestration worker-show" ]; then
+  id=""
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dispatch) id=${2:-}; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  case "$id" in
+    ctx_verify|ctx_other) model=opus ;;
+    *) model=sonnet ;;
+  esac
+  printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"%s"}}\n' "$id" "$model"
+  exit 0
+fi
 [ "$1 $2" = "orchestration worker-list" ] || exit 1
 start=0; prev=""; run=""
 for a in "$@"; do
@@ -76,7 +92,7 @@ setup() {
   COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"script/foo.sh"}]'
-  body=$'## Verification\n- Ran script successfully.'
+  body=$'## Verification\n- Ran script successfully.\n\n## Self-review\n'"$SHA"
   comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
   checks="Checks: PASS head=$SHA"; countersign=""; TRUNK_FILES=""
   export TRUNK_FILES

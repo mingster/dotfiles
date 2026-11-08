@@ -2,6 +2,7 @@
 # Proving suite for Verdict history preservation (issue #416).
 # Real git, fake gh and orca from the shared fixture; nothing leaves the temp dir.
 set -u
+export MF_SELF_REVIEW=1
 here=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/merge-fixture.sh
 . "$here/tests/lib/merge-fixture.sh"
@@ -103,7 +104,7 @@ fi
 # 4. Stale heads fail closed
 h3=$(new_pr 53); post_checks 53 "$h3"
 verdict 53 --result PASS --head "$h3" --verifier ctx_verify --author ctx_author >/dev/null
-# Advance branch with new commit (stale head)
+# Advance branch with new commit (stale head); the self-review follows the head so the Verdict gate is what refuses
 echo "new work" >> "$MF_REPO/stale.txt"
 git -C "$MF_REPO" checkout -q "vh53"
 git -C "$MF_REPO" add "stale.txt"
@@ -111,7 +112,7 @@ git -C "$MF_REPO" commit -q -m "stale work"
 git -C "$MF_REPO" push -q -f origin "vh53"
 git -C "$MF_REPO" checkout -q main
 new_h=$(git -C "$MF_REPO" rev-parse "vh53")
-jq --arg nh "$new_h" '.headRefOid = $nh' "$MF_GH_DIR/pr-53.json" > "$MF_GH_DIR/pr-53.json.tmp" && mv "$MF_GH_DIR/pr-53.json.tmp" "$MF_GH_DIR/pr-53.json"
+jq --arg nh "$new_h" --arg oh "$h3" '.headRefOid = $nh | .body |= sub($oh; $nh)' "$MF_GH_DIR/pr-53.json" > "$MF_GH_DIR/pr-53.json.tmp" && mv "$MF_GH_DIR/pr-53.json.tmp" "$MF_GH_DIR/pr-53.json"
 post_checks 53 "$new_h"
 out=$(merge 53 "$new_h"); code=$?
 if [ "$code" -ne 0 ] && grep -q 'missing passing verifier verdict' <<<"$out"; then
@@ -134,7 +135,7 @@ fi
 h5=$(new_pr 55); post_checks 55 "$h5"
 verdict 55 --result PASS --head "$h5" --verifier ctx_verify --author ctx_random >/dev/null
 out=$(merge 55 "$h5"); code=$?
-if [ "$code" -ne 0 ] && grep -q 'ctx_random is not a known dispatch' <<<"$out"; then
+if [ "$code" -ne 0 ] && grep -q 'cannot resolve builder agent/model for ctx_random' <<<"$out"; then
   ok "missing author identity fails closed"
 else
   bad "unknown author accepted: $out"

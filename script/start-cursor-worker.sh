@@ -4,6 +4,9 @@
 #        [--role NAME] (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
 # Refuses Strong tier roles (elon, architect-pm, secops-finops, qa-sdet); use usage-gate pick + worker-start.
 set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$here/lib/pr-review-gates.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment='' role=''
 from=${ORCA_TERMINAL_HANDLE:-}
@@ -129,5 +132,7 @@ with (directory / '.workspace-trusted').open('w') as f:
     json.dump({'trustedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'workspacePath': wt}, f)
 PY
 fi
-exec "$orca" orchestration worker-start --run "$run" --spec "$brief" --agent cursor --model "$model" \
-  --worktree "path:$wt" --task-title "$title" --from "$from" --json
+pr_review_gates_launch_record_worktree "$wt" cursor "$model"
+pr_review_gates_orchestration_worker_start cursor "$model" "$wt" -- \
+  --run "$run" --spec "$brief" --agent cursor --model "$model" \
+  --worktree "path:$wt" --task-title "$title" --from "$from"

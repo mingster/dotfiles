@@ -46,6 +46,7 @@ sec == "Verify" && /[^[:space:]]/ {
 }
 sec == "Finish" && /[^[:space:]]/ {
   has_finish = 1
+  if (tolower($0) ~ /self-review|self review/) has_self_review = 1
 }
 END {
   rc = 0
@@ -54,6 +55,7 @@ END {
   if (!has_out_of_scope) { print "brief-lint: missing Out of scope"; rc = 1 }
   if (!has_verify) { print "brief-lint: missing Verify"; rc = 1 }
   if (!has_finish) { print "brief-lint: missing Finish"; rc = 1 }
+  if (has_finish && !has_self_review) { print "brief-lint: missing Finish self-review step"; rc = 1 }
   exit rc
 }
 ' "$file"

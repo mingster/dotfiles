@@ -2309,7 +2309,7 @@ def build_issue_start_command(config, repo, issue_row):
         '## Verify\n'
         'Run the tests the change touches and show the Done condition.\n\n'
         '## Finish\n'
-        'Push, open the PR, then worker_done.\n'
+        'Self-review, push, open the PR, then worker_done.\n'
         % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip()))
     role = scan.get('role') or 'builder'
     title = '%s - #%d' % (role, issue_row['number'])
@@ -2345,7 +2345,7 @@ def build_rework_start_command(config, repo, pr_row):
         '## Verify\n'
         'the failing check:\n%s\n\n'
         '## Finish\n'
-        'worker_done\n'
+        'Self-review, then worker_done.\n'
         % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, excerpt))
     title = 'rework #%d' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'

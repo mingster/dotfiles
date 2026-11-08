@@ -28,7 +28,14 @@ done
 [ "$print_only" = true ] || { [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]]; } || die "--repo and a numeric --pr are required"
 [[ "$result" =~ ^(PASS\+NOTES|PASS|FAIL)$ ]] || die "--result must be PASS, PASS+NOTES or FAIL"
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "--head must be a full 40 character sha"
-[[ "$verifier" =~ ^[a-zA-Z0-9_-]+$ ]] || die "--verifier must be a dispatch id"
+[[ "$verifier" =~ ^[a-zA-Z0-9_-]+$ ]] || die "--verifier must be a dispatch or coordinator id"
+if [[ "$verifier" != ctx_* ]]; then
+  dir=$(cd "$(dirname "$0")" && pwd)
+  cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
+    || die "cannot read local coordinator config"
+  jq -e --arg v "$verifier" '(.coordinator_ids // []) | index($v) != null' <<<"$cfg" >/dev/null \
+    || die "--verifier $verifier is not a dispatch id or a configured coordinator id"
+fi
 [[ "$author" =~ ^[a-zA-Z0-9_-]+$ ]] || die "--author must be a dispatch id, unknown, or a configured coordinator id"
 if [ "$author" != unknown ] && [[ "$author" != ctx_* ]]; then
   dir=$(cd "$(dirname "$0")" && pwd)
