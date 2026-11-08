@@ -1,0 +1,1 @@
+- Align `templates/agent-team/.claude/agents/elon.md` and team docs with `README.md` section 3 and 4 by removing Elon merge-worker dispatch, wake-loop merge batching, relaying, and QA dispatch duties.
