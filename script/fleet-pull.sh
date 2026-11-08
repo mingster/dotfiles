@@ -97,17 +97,13 @@ fi
 for h in $(jq -r '(.hosts // [])[]' "$cfg"); do
   [ -n "$h" ] || continue
   echo "$h"
-  if ! out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "${repos[@]}" <<<"$remote" 2>&1); then
-    status=1
-    [ -n "$out" ] && printf '%s\n' "$out"
-    for r in "${repos[@]}"; do
-      case "$out" in
-        *" $h $r "*) ;;
-        *) echo "fail $h $r (unreachable host)" ;;
-      esac
-    done
-  else
-    [ -n "$out" ] && printf '%s\n' "$out"
+  rc=0
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "${repos[@]}" <<<"$remote" 2>&1) || rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || status=1
+  # ssh exits 255 when it cannot reach the host; any other failure already named its repo.
+  if [ "$rc" -eq 255 ]; then
+    for r in "${repos[@]}"; do echo "fail $h $r (unreachable host)"; done
   fi
 done
 

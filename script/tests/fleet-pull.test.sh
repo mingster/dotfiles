@@ -173,6 +173,31 @@ set -e
   && ok "unreachable host exits non-zero and names host and repo" \
   || bad "unreachable host should fail and name host-unreachable + $repo1 (ec=$ec): $out"
 
+# 6b. A reachable host whose repo fails is not reported as unreachable
+ssh_ok_bin="$tmp/ssh-runs"
+mkdir -p "$ssh_ok_bin"
+cat >"$ssh_ok_bin/ssh" <<'EOS'
+#!/usr/bin/env bash
+# Like real ssh: join the words into one command line for a remote shell, which expands ~.
+while [ "$#" -gt 0 ] && [ "$1" != bash ]; do shift; done
+exec sh -c "$*"
+EOS
+chmod +x "$ssh_ok_bin/ssh"
+cat >"$state1/fleet-pull.json" <<'EOF'
+{"hosts":["host-unreachable"],"repos":["~/repo1"]}
+EOF
+git -C "$state1" commit -qam tilde_repo
+git -C "$state1" push -q origin main
+echo uncommitted >>"$repo1/file.txt"
+set +e
+out=$(HOME="$tmp" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec=$?
+set -e
+git -C "$repo1" checkout -q -- file.txt
+[ "$ec" -ne 0 ] && grep -q "host-unreachable .*repo1 (dirty)" <<<"$out" && ! grep -q "unreachable host" <<<"$out" \
+  && ok "failing repo on a reachable host is not reported as unreachable" \
+  || bad "reachable host with a dirty repo reported wrong (ec=$ec): $out"
+
 # 7. elon-startup.sh fast-forwards AGENT_STATE_DIR instead of only fetching it
 elon_work="$tmp/elon"
 mkdir -p "$elon_work/bin" "$elon_work/script" "$elon_work/home/.claude/state" "$elon_work/cwd"
