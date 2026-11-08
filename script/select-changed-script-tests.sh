@@ -139,6 +139,9 @@ map_file() {
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
+    script/automation-precheck-*.sh)
+      add_if_exists "script/tests/install-fleet-automations.test.sh"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
