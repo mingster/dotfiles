@@ -112,7 +112,6 @@ exec "${ORCA_CLI_COMMAND:-orca}" "${args[@]}"
                    "ON_WORKER_DONE_USAGE_GATE": str(gate),
                    "USAGE_GATE_PRESETS": str(presets),
                    "ON_WORKER_DONE_CURSOR_START": str(cursor_stub),
-                   "ON_WORKER_DONE_SKIP_FENCE": "1",
                    "ORCA_TERMINAL_HANDLE": "term_fixture",
                    "TEST_AUTHOR": author, "TEST_ONLY_AUTHOR": str(int(only_author_available)),
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
@@ -399,7 +398,6 @@ exec "${ORCA_CLI_COMMAND:-orca}" orchestration worker-start "$@"
                    "ON_WORKER_DONE_USAGE_GATE": str(gate),
                    "USAGE_GATE_PRESETS": str(presets),
                    "ON_WORKER_DONE_CURSOR_START": str(cursor_stub),
-                   "ON_WORKER_DONE_SKIP_FENCE": "1",
                    "ORCA_TERMINAL_HANDLE": "term_fixture",
                    "TEST_ORCA_LOG": str(log), "TMPDIR": tmp}
             result = subprocess.run([

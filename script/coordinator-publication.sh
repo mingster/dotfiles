@@ -399,6 +399,7 @@ start_post_publication_jobs() {
   if [ -n "$pub_run" ] && { [ -n "$pub_author_family" ] || { [ -n "$pub_author_provider" ] && [ -n "$pub_author_model" ]; }; } \
     && [ "$post_reviewer_started" != 1 ]; then
     local from_handle=${pub_from:-${ORCA_TERMINAL_HANDLE:-}}
+    [ -n "$from_handle" ] || return 0
     local done_args=(bash "$on_done" --repo "$want_repo" --pr "$pr_number" --head "$head_sha"
       --worktree "$worktree" --run "$pub_run" --author-dispatch "${pub_author_dispatch:-unknown}")
     if [ -n "$pub_author_provider" ]; then

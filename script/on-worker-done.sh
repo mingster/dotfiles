@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-# Start the cross family reviewer for a coding worker_done.
-# on-worker-done.sh --repo owner/name --pr N --head SHA --author-family claude|cursor|gemini|antigravity
-#                   --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]
-# Prints the worker-start command (runs it unless --dry-run). Writes the reviewer brief to a temp file.
-# Env: ON_WORKER_DONE_USAGE_GATE overrides usage-gate.py (tests).
-#      ON_WORKER_DONE_FLEET_CONFIG selects configured host caps and optional load ceilings.
-#      ON_WORKER_DONE_ADMISSION_POLICY optional operator-owned narrowing JSON. qa-admission.py validates workspace.
+# Cross family reviewer for coding worker_done; see --help usage below.
 set -u
 usage() { echo "usage: ${0##*/} --repo owner/name --pr N --head SHA [--author-family claude|cursor|gemini|antigravity] [--author-provider PROVIDER] [--author-model MODEL] --worktree PATH --run RUN [--author-dispatch ID] [--resolution] [--dry-run]" >&2; exit 2; }
 repo="" pr="" head="" fam="" author_provider="" author_model="" wt="" run="" author_dispatch=unknown dry=0 resolution=0
@@ -163,7 +157,6 @@ if ! python3 "$qa_admission" --policy "$policy" --fleet-config "$fleet_config" -
   rm -f "$admission_err" "$admission_out"
   exit 1
 fi
-# Capture the parser exit explicitly: process substitution would hide failure.
 if ! admission_fields=$(python3 - "$admission_out" <<'PYJSON'
 import json, re, sys
 try:
@@ -197,15 +190,10 @@ rm -f "$admission_err" "$admission_out"
 if [ "$environment_id" != local ]; then
   host_flags=(--on "$environment_id")
 fi
-
-# All coding reviewer providers enter here. Read the latest receipt for this
-# exact head before starting a worker or producing a reviewer brief.
-comments=$(gh pr view "$pr" --repo "$repo" --json comments) || {
+comments=$(gh pr view "$pr" --repo "$repo" --json comments,body) || {
   echo "QA start refused head=$head: cannot read head-checks receipts" >&2
   exit 1
 }
-# Prints "pending" when no receipt exists at this exact head; QA starts anyway.
-# A Checks: FAIL, a bad receipt or an unreadable comment list still refuses.
 checks_state=$(printf '%s' "$comments" | python3 -c '
 import json, re, sys
 head = sys.argv[1]
@@ -255,73 +243,19 @@ for block in blocks:
 if bun_actually_ran and not tests:
     refuse("test command has no execution metadata")
 ' "$head") || { [ -n "$checks_state" ] && printf '%s\n' "$checks_state"; exit 1; }
-
-qa_state_root=${ON_WORKER_DONE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/on-worker-done}
-if [ "${ON_WORKER_DONE_SKIP_FENCE:-}" != 1 ]; then
-ON_WORKER_DONE_DRY=$dry python3 - "$repo" "$pr" "$head" "$qa_state_root" <<'PYFENCE' || exit 1
-import json, os, re, subprocess, sys
-repo, pr, head, root = sys.argv[1:5]
-slug = re.sub(r"[^a-zA-Z0-9._-]", "-", repo).strip("-.") or "unknown"
-head_stamp = os.path.join(root, "started", slug, head + ".env")
-if os.path.isfile(head_stamp):
-    sys.exit(f"QA start refused head={head}: reviewer dispatch already started for this head")
-pr_stamp = os.path.join(root, "started", slug, "pr-" + pr + ".env")
-held = ""
-if os.path.isfile(pr_stamp):
-    with open(pr_stamp, encoding="utf-8") as stream:
-        held = next((line.split("=", 1)[1] for line in stream if line.startswith("head_sha=")), "")
-if held and held != head:
-    orca = os.environ.get("ORCA_CLI_COMMAND", "orca")
-    title = "reviewer - PR " + pr
-    try:
-        workers = json.loads(subprocess.check_output(
-            [orca, "orchestration", "worker-list", "--include-remote", "--full", "--json"], text=True, timeout=30,
-        ))["result"]["workers"]
-    except (subprocess.SubprocessError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        workers = []
-    for w in workers:
-        if w.get("state") in ("succeeded", "completed", "failed", "cancelled", "released", "abandoned", "stopped"):
-            continue
-        task = w.get("taskTitle") or ""
-        if w.get("githubPullRequestNumber") == int(pr) or title in task:
-            sys.exit(f"QA start refused head={head}: open reviewer holds PR {pr} with a different head")
-if os.environ.get("ON_WORKER_DONE_DRY") != "1":
-    for path, body in ((head_stamp, f"repo={repo}\nhead_sha={head}\npr={pr}\n"), (pr_stamp, f"head_sha={head}\n")):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        open(path, "w", encoding="utf-8").write(body)
-PYFENCE
-fi
-playwright_proving=$(python3 - "$wt" "$repo" "$pr" <<'PY'
-import json, re, subprocess, sys
-wt, repo, pr = sys.argv[1:4]
-e2e = False
+playwright_proving=$(printf '%s' "$comments" | python3 -c 'import json,re,subprocess as s,sys;wt=sys.argv[1];p=json.load(sys.stdin);n=bool(re.search(r"playwright",p.get("body")or"",re.I));e=0
 try:
-    base = subprocess.check_output(["git", "-C", wt, "merge-base", "HEAD", "origin/main"], text=True, stderr=subprocess.DEVNULL).strip()
-    if base:
-        paths = subprocess.check_output(["git", "-C", wt, "diff", "--name-only", base, "HEAD"], text=True).replace("\\", "/").splitlines()
-        e2e = any("web/e2e" in p or "/e2e/" in p for p in paths)
-except (subprocess.CalledProcessError, OSError):
-    pass
-named = False
-try:
-    named = bool(re.search(r"playwright", json.loads(subprocess.check_output(
-        ["gh", "pr", "view", pr, "--repo", repo, "--json", "body"], text=True)).get("body") or "", re.I))
-except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
-    pass
-print("RUN" if e2e or named else "SKIP")
-PY
-)
-
+ b=s.check_output(["git","-C",wt,"merge-base","HEAD","origin/main"],text=True,stderr=s.DEVNULL).strip()
+ if b:e=any("web/e2e"in x or"/e2e/"in x for x in s.check_output(["git","-C",wt,"diff","--name-only",b,"HEAD"],text=True).replace("\\\\","/").splitlines())
+except (s.CalledProcessError,OSError): pass
+print("RUN"if e or n else"SKIP")' "$wt")
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
 gate_footer='Look for the Checks receipt for exactly this head on this PR (a comment body starting with Checks: PASS head='"$head"' or Checks: FAIL head='"$head"'). If it is Checks: PASS, cite it for automated check outcomes. If it is Checks: FAIL, stop the review and post Verdict: FAIL. Never rerun bun test, tsc, lint, or the regression suite.'
 if [ "$checks_state" = pending ]; then
   gate_footer="Checks are pending: no Checks receipt exists for head $head yet. That is not a failure. Review the code anyway and say in your verdict that Checks were pending. $gate_footer"
 fi
-if [ "$playwright_proving" = RUN ]; then
-  proving_clause=". Run the ticket's Playwright Proving command on a host with a database"
-else
-  proving_clause="; Playwright proving runs only when the diff touches web/e2e or this PR's verification names Playwright"
-fi
+proving_clause='; Playwright proving runs only when the diff touches web/e2e or this PR verification names Playwright'
+[ "$playwright_proving" = RUN ] && proving_clause=". Run the ticket's Playwright Proving command on a host with a database"
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
 Review the conflict-resolution merge for PR #$pr in $repo at head $head. You did not write this merge resolution.

@@ -1937,11 +1937,6 @@ def _author_metadata_from_worker(w):
     run_id = w.get('runId')
     if not isinstance(run_id, str) or not run_id:
         run_id = proj.get('runId') if isinstance(proj.get('runId'), str) else ''
-    terminal = w.get('agentTerminalHandle') or ''
-    if not terminal:
-        res = w.get('resource') or {}
-        if isinstance(res, dict):
-            terminal = res.get('terminalHandle') or ''
     family = provider
     if provider == 'antigravity':
         family = 'gemini'
@@ -1952,7 +1947,6 @@ def _author_metadata_from_worker(w):
         'dispatch': dispatch,
         'run': run_id,
         'worktree': worktree,
-        'terminal': terminal,
     }
 
 
@@ -1969,7 +1963,8 @@ def build_head_checks_command(config, repo, pr_row):
 
 def build_on_worker_done_command(config, repo, pr_row, meta):
     scan = config.get('issue_scan') or {}
-    if not meta.get('terminal'):
+    from_terminal = scan.get('from_terminal')
+    if not from_terminal:
         return None
     run_id = meta.get('run') or scan.get('run')
     if not run_id:
@@ -2277,14 +2272,11 @@ def issue_scan_pass(
         start_detached = default_detached_start
 
     host = scan.get('host') or 'local'
-    usage_gate_ok = gate_check(config)
-    if not usage_gate_ok:
-        log_bits.append('issue_scan_gate')
+    if not gate_check(config):
+        return notices, ['issue_scan_gate']
     admission = admit_fn(host, config, workers)
-    load_ok = bool(admission.get('admitted'))
-    if not load_ok:
-        log_bits.append('issue_scan_load')
-    scan_admit = usage_gate_ok and load_ok
+    if not admission.get('admitted'):
+        return notices, ['issue_scan_load']
 
     extra_starts = 0
     repos = scan.get('repos') or []
@@ -2331,16 +2323,13 @@ def issue_scan_pass(
             if not review_verdict_at_head(pr_row) and not review_seen.get(head):
                 if meta:
                     command = build_on_worker_done_command(config, repo, pr_row, meta)
-                    from_terminal = meta.get('terminal') or (config.get('issue_scan') or {}).get('from_terminal')
-                    if command and from_terminal and start_detached(command, {'ORCA_TERMINAL_HANDLE': from_terminal}) == 0:
+                    from_terminal = (config.get('issue_scan') or {}).get('from_terminal')
+                    if command and start_detached(command, {'ORCA_TERMINAL_HANDLE': from_terminal}) == 0:
                         review_seen[head] = True
                         log_bits.append('reviewer_start=%s' % head[:8])
                         write_post_push_stamp(repo, head, reviewer_started=True)
                         if persist_state:
                             persist_state()
-
-    if not scan_admit:
-        return notices, log_bits
 
     for repo in pr_repos:
         prs = pr_fetch(repo)
