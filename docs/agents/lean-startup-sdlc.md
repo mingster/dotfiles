@@ -16,7 +16,7 @@
 
 ### 全端工程師 (`fullstack-dev`)
 
-* **核心目標**：在獨立 Orca 子工作樹（`~/orca/workspaces/<project>/<lane>`）以 TDD 模式迅速實作功能，僅執行觸及的測試檔案（紅燈轉綠燈，嚴禁自行跑完整回歸測試）。
+* **核心目標**：在獨立 Orca 子工作樹（`~/orca/workspaces/<project>/<lane>`）迅速實作並附上測試（修 Bug 先寫失敗測試再修復，僅在測試成本過高、高度依賴整合或目標不明確時例外；新功能、腳本與重構須附測試並於真實產物驗證 Prove It Works，不強制先紅燈，重構須證明行為不變），僅執行觸及的測試檔案（嚴禁自行跑完整回歸測試）。
 * **交付產出**：
   * 符合規格的功能程式碼與測試案例
   * 獨立分支本地提交（新增 `changelog.d/<issue>-<slug>.md` 片段，嚴禁在 PR 直接修改 `CHANGELOG.md`）與 `worker_done` 報告（Elon 派遣 publication／merge worker 執行 `coordinator-publication.sh` 與 `lead-merge.sh`，須先通過 `head-checks.sh` 與跨家族 QA）

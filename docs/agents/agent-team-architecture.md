@@ -65,7 +65,7 @@ sequenceDiagram
     BA->>CEO: Ready GitHub issue tickets (Machine-checkable contracts)
 
     CEO->>Dev: 5 minute run starts scoped ticket in isolated worktree
-    Dev->>Dev: TDD (red, green, refactor) and local checks; push once and open PR
+    Dev->>Dev: Bug fixes start with a failing test, features, scripts and refactors require tests and proof on the real artifact (refactors prove behavior unchanged), local checks, push once and open PR
     Dev->>QA: Actions Checks pass; Actions Review (pr-review.sh) and verifier Verdict (post-verdict.sh)
     QA->>Ship: 5 minute babysit pass starts fix worker or Shipping run when Checks and Verdict pass
     Ship->>Ship: Squash merge (gh pr merge --squash), read back as MERGED; 10m wrap-up cleans worktree
