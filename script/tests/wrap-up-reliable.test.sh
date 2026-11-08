@@ -23,6 +23,8 @@ cat > "$tmp/bin/orca" <<'FAKE'
 echo "$*" >> "$ORCA_LOG"
 if [ -n "${ORCA_HANG_ON:-}" ] && [[ "$*" =~ $ORCA_HANG_ON ]]; then sleep 300; fi
 case "$*" in
+  'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  'worktree rm --worktree path:'*) exit 0 ;;
   'terminal close --terminal '*) [ "${3:-}" != "--terminal" ] || :; [ "${4:-}" != "${ORCA_CLOSE_FAIL:-none}" ] || exit 1; exit 0 ;;
   'terminal list --json') printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
   'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;

@@ -21,6 +21,8 @@ FAKE
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
+  'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  'worktree rm --worktree path:'*) exit 0 ;;
   'terminal list --json') printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
   'orchestration worker-show'*) printf '%s\n' "$FAKE_SHOW" ;;
   'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
