@@ -141,7 +141,7 @@ run_pr() {
     FAKE_PATCH_ID="${FAKE_PATCH_ID:-}" \
     FAKE_DUAL_DISAGREE="${FAKE_DUAL_DISAGREE:-}" \
     FAKE_PR_STATE="${FAKE_PR_STATE:-}" \
-    bash "$root/script/pr-review.sh" "$pr_num" "$pr_head"
+    bash "$root/script/pr-review.sh" "$pr_num" "$pr_head" >/dev/null
 }
 fail() { echo "FAIL: $1"; exit 1; }
 issue_comments_set
@@ -186,7 +186,7 @@ sed -i.bak '2i\
 if FAKE_GH_DOWN=1 run; then fail "a GitHub failure fails the run"; fi
 
 # gh api user fails (workflow_run token): no GITHUB_ACTOR is fatal; with GITHUB_ACTOR the run proceeds
-if FAKE_USER_FAIL=1 run; then fail "gh api user fail without GITHUB_ACTOR must exit non-zero"; fi
+if GITHUB_ACTOR='' FAKE_USER_FAIL=1 run; then fail "gh api user fail without GITHUB_ACTOR must exit non-zero"; fi
 issue_comments_set
 printf 'Review: PASS\nok\n' > "$tmp/answer"
 FAKE_USER_FAIL=1 GITHUB_ACTOR=mingster run
