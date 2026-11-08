@@ -81,6 +81,7 @@ round() {
     WRAP_UP_SCHEDULED_LOAD_CMD="${LOAD_CMD-echo ${LOAD:-1}}" WRAP_UP_SCHEDULED_CORES_CMD="${CORES_CMD-echo 4}" \
     WRAP_UP_SCHEDULED_WRAP_UP="$tmp/wrap-up.sh" WRAP_UP_ISSUE_REPO="${ISSUE_REPO-o/r}" WRAP_UP_CALL_TIMEOUT="${CALL_TIMEOUT:-20}" \
     ${ROUND_LIMIT:+WRAP_UP_SCHEDULED_REPO_LIMIT="$ROUND_LIMIT"} ${KILL_GRACE:+WRAP_UP_SCHEDULED_KILL_GRACE="$KILL_GRACE"} \
+    ${PRECHECK_TIMEOUT:+WRAP_UP_PRECHECK_TIMEOUT="$PRECHECK_TIMEOUT"} \
     FAKE_CALLS="$calls" FAKE_FAIL_REPO="${FAIL_REPO:-none}" FAKE_ORCA="${FAKE_ORCA:-ready}" FAKE_BLOCK="${FAKE_BLOCK:-}" \
     FAKE_REPOS="${FAKE_REPOS:-ok}" FAKE_REPO_LIST="$tmp/repos.json" FAKE_SLEEP="${FAKE_SLEEP:-}" \
     FAKE_GH_LOG="$ghlog" FAKE_GH_OPEN="$tmp/gh-open.json" FAKE_GH_LIST_FAIL="${FAKE_GH_LIST_FAIL:-}" FAKE_GH_PUBLIC="${FAKE_GH_PUBLIC:-}" \
@@ -91,7 +92,7 @@ round() {
 waitfor() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 200000 ]; do i=$((i+1)); done; [ -e "$1" ]; }
 reset() {
   rm -rf "$calls" "$log" "$detail" "$ghlog" "$tmp/gh-open.json" "$tmp/state"/* "$tmp/app"/* "$tmp/home/.local/bin"/* "$tmp/home/.orca/cli/bin"/*
-  FAKE_BLOCK=; FAKE_ORCA=ready; FAKE_REPOS=ok; FAKE_SLEEP=; LOAD=1; FAIL_REPO=none; ROUND_PATH=; APP_BIN=; ROUND_LIMIT=; CALL_TIMEOUT=; FAKE_GH_LIST_FAIL=; KILL_GRACE=; FAKE_GH_PUBLIC=; unset ISSUE_REPO
+  FAKE_BLOCK=; FAKE_ORCA=ready; FAKE_REPOS=ok; FAKE_SLEEP=; LOAD=1; FAIL_REPO=none; ROUND_PATH=; APP_BIN=; ROUND_LIMIT=; CALL_TIMEOUT=; FAKE_GH_LIST_FAIL=; KILL_GRACE=; FAKE_GH_PUBLIC=; PRECHECK_TIMEOUT=; unset ISSUE_REPO
   unset LOAD_CMD CORES_CMD
 }
 
@@ -393,6 +394,36 @@ env -i HOME="$tmp/home" PATH="$tmp/bin/orca-apply:$tmp/bin/gh-apply:$tmp/tools:/
   WRAP_UP_CLONE_ROOT="$tmp/no-clones" ORCA_CLI_COMMAND="$tmp/bin/orca-apply" WORKER_PANE_CLOSE="$pane_stub" \
   bash "$script" --apply --repo "$mini" >>"$detail" 2>&1 || true
 check 'scheduled child detail log keeps pane sweep budget line' has 'sweep: deadline reached, 4 pane record(s) left' "$detail"
+
+# A hung worker-pane-close.sh must be cut off by run_limited using the time-left budget.
+pane_hang="$tmp/home/pane-hang-stub"
+cat > "$pane_hang" <<'EOS'
+#!/usr/bin/env bash
+sleep 30
+EOS
+chmod +x "$pane_hang"
+: > "$detail"
+p_start=$SECONDS
+run_limited 5 env -i HOME="$tmp/home" PATH="$tmp/bin/orca-apply:$tmp/bin/gh-apply:$tmp/tools:/usr/bin:/bin" \
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 WRAP_UP_RECENT_MIN=0 WRAP_UP_CALL_TIMEOUT=30 \
+  WRAP_UP_PANE_TIMEOUT=1 WRAP_UP_TOTAL_TIMEOUT=2 \
+  WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose" \
+  WRAP_UP_CLONE_ROOT="$tmp/no-clones" ORCA_CLI_COMMAND="$tmp/bin/orca-apply" WORKER_PANE_CLOSE="$pane_hang" \
+  bash "$script" --apply --repo "$mini" >>"$detail" 2>&1 || true
+p_elapsed=$((SECONDS - p_start))
+check 'hung pane close is cut off by bounded helper within budget' test "$p_elapsed" -lt 4
+check 'hung pane close records timeout exit 124 in failures' has 'worker panes: worker-pane-close exited 124' "$detail"
+
+# Multi-repo scheduled round stops starting new repos when its budget is spent and logs which repos it skipped.
+reset
+b_start=$SECONDS
+PRECHECK_TIMEOUT=3 KILL_GRACE=1 ROUND_LIMIT=5 FAKE_SLEEP=2 round; status=$?
+b_elapsed=$((SECONDS - b_start))
+check 'budgeted multi-repo round exits 0' test "$status" -eq 0
+check 'budgeted multi-repo round finishes within precheck timeout' test "$b_elapsed" -le 3
+check 'budgeted multi-repo round stops starting new repos when budget is spent' test "$(ncalls)" -eq 1
+check 'budgeted multi-repo round logs skipped repo in summary log' has "skipped=$repo_b" "$log"
+check 'budgeted multi-repo round logs skipped repo in detail log' has "skip repo $repo_b" "$detail"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
