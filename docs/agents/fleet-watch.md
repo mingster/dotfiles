@@ -6,7 +6,7 @@ Fleet watch is a bounded precheck script in `script/fleet-watch.py`. It is meant
 
 ## What it is and how it runs
 
-Install scheduling with `script/install-fleet-automations.sh` (see below). That script registers five Orca automations: `fleet-watch` on `*/5 * * * *`, `wrap-up-scheduled` on `0 */2 * * *`, `sync-team-skills-drift` on `0 6 * * *`, `team-audit-weekly` on `0 7 * * 1`, and `weekly-update` on `0 8 * * 1`. On the coordinator host, `--install` enables all five (including the daily drift check and the two Monday jobs). The fleet watch precheck runs `python3 script/fleet-watch.py --config <private-json> --state <private-state>`, appends stderr/stdout to the precheck log, and exits with code 1 so the automation does not spawn an agent.
+Install scheduling with `script/install-fleet-automations.sh`; [Orca automations](orca-automations.md) lists all five registered jobs, crons, and coordinator enable rules. The fleet watch precheck runs `python3 script/fleet-watch.py --config <private-json> --state <private-state>`, appends stderr/stdout to the precheck log, and exits with code 1 so the automation does not spawn an agent.
 
 You invoke the same command manually for debugging. Pass duration and feature outcomes land in `~/.orca/logs/fleet-watch.log` unless `FLEET_WATCH_LOG_PATH` is set. The state file holds waiter timers, notice queues, issue scan progress, and similar data across passes. Notices queue there, then deliver to configured run terminals through `orchestration send` (digest at most every 600 seconds, urgent items at once). A run may set `"typed": true` to use legacy `terminal send` instead.
 
@@ -25,7 +25,7 @@ Each numbered step is one slice of a single pass, in the same order as `main` in
 7. **Backup.** When `backup.stamp` is set, logs stamp age and opens at most one open GitHub issue when the stamp is older than thirty minutes.
 8. **Heavy gate.** Reads recent `wait_s=` lines from per host wait logs, logs medians, and may open an issue when median wait exceeds two minutes (configurable).
 9. **Wrap up age.** Reads the last timestamp in per host wrap up round logs, logs ages, and may open an issue when the last round is older than twenty minutes (configurable).
-10. **Issue scan.** When `enabled: true` and Orca inventory succeeded: usage gate check, host admission under `host_caps`, detached head Checks workers, detached reviewer workers after push, rework workers on failing heads (cap two rounds), then at most one eligible `ready-for-agent` issue start. With no candidate issue and no other scan bits recorded yet, logs `issue_scan_none`. When inventory failed earlier in the pass, appends `issue_scan_inventory_failed` and returns without starting workers; the summary line still carries the bit. Team backlog sweep is not implemented on main; it is planned in open PR #699.
+10. **Issue scan.** When `enabled: true` and Orca inventory succeeded: usage gate check, host admission under `host_caps`, detached head Checks workers, detached reviewer workers after push, rework workers on failing heads (cap two rounds), then at most one eligible `ready-for-agent` issue start. When no candidate issue remains, may start read-only backlog sweep workers (`architect-pm`, `sales-marketing`) if the ready queue has fewer than three issues, the sweep interval elapsed, and slots allow. With no starts and no other scan bits, logs `issue_scan_none`. When inventory failed earlier in the pass, appends `issue_scan_inventory_failed` and returns without starting workers; the summary line still carries the bit.
 11. **Worker stall.** When enabled and inventory and terminal list succeeded: live workers with no terminal progress for thirty minutes get `worker-stop` then `worker-start --retry-of`; repeated silence after label cooldown adds `needs-elon` on the PR or opens a fixed title issue.
 
 After checks, coordinator watch notices from step 1 are merged, drain counts from `script/coordinator-drain.sh` may append digest notices, the pass appends the log line, delivers notices, and saves state. Match `FLEET_WATCH_CONFIG` between fleet watch and coordinator drain when leads are configured.
@@ -64,6 +64,8 @@ Keep the live JSON beside machine private paths (for example under `~/.config/fl
 | `issue_scan.from_terminal` | `--from` handle for worker starts | required when enabled |
 | `issue_scan.host` | Host id for admission | `local` |
 | `issue_scan.agent` / `model` | Provider and model for starts and gate | `cursor`, empty model |
+| `issue_scan.sweep_agent` / `sweep_model` | Overrides for backlog sweep starts | same as agent/model |
+| `issue_scan.backlog_sweep_interval_seconds` | Minimum seconds between full sweep pairs | `7200` |
 | `issue_scan.startup` | Worker startup script path | `script/worker-startup.sh` |
 | `issue_scan.role` | Default builder role name for issue starts | `builder` |
 | `issue_scan.rework_agent` / `rework_model` | Overrides for rework starts | same as agent/model |
@@ -74,19 +76,7 @@ Keep the live JSON beside machine private paths (for example under `~/.config/fl
 
 ## Install and uninstall
 
-Use `script/install-fleet-automations.sh` from dotfiles on every host.
-
-```bash
-script/install-fleet-automations.sh --status
-script/install-fleet-automations.sh --install
-script/install-fleet-automations.sh --uninstall
-```
-
-Optional env file: `~/.config/fleet-watch/automations.env` (or `FLEET_AUTOMATIONS_ENV`). Common overrides: `DOTFILES_DIR`, `AGENT_STATE_DIR`, `FLEET_WATCH_CONFIG`, `FLEET_WATCH_STATE`, `FLEET_WATCH_PRECHECK_LOG`, `FLEET_WATCH_PRECHECK_TIMEOUT` (default 280), `ORCA_CLI_COMMAND`.
-
-On install, the script compares `hostname -s` to the coordinator name in `agent-state/coordinator.conf`, or `mini6` when that file has no coordinator line. **Enabled** automations run only on that coordinator host. Other hosts get the same automation records **disabled** (precheck definition present, cron idle).
-
-Coordinator watch alerts say failover is manual; there is no automatic promotion.
+Same installer and coordinator enable rules as [Orca automations](orca-automations.md). Fleet watch paths in `automations.env`: `FLEET_WATCH_CONFIG`, `FLEET_WATCH_STATE`, `FLEET_WATCH_PRECHECK_LOG`, `FLEET_WATCH_PRECHECK_TIMEOUT` (default 280). Coordinator watch alerts say failover is manual; there is no automatic promotion.
 
 ## Reading the log
 
@@ -115,13 +105,15 @@ Issue scan bits inside `scan ...`:
 | `head_checks_start=abcdef12` | Detached Checks worker for PR head prefix |
 | `reviewer_start=abcdef12` | Detached reviewer worker for PR head prefix |
 | `rework_start` / `rework_fail` / `rework_cap` | Rework pipeline |
+| `backlog_sweep_start=role` / `backlog_sweep_fail=role` | Backlog sweep workers |
+| `backlog_sweep_skip_*` | Sweep skipped (queue, interval, load, pending, or list failure) |
 | `issue_scan_none` | No eligible ready issue and no other scan bits on that pass |
 
-**First day checks:** Confirm one new log line every five minutes on the coordinator. Confirm `pass ok` and no repeated `Orca could not be read`. With issue scan enabled, expect occasional `issue_start` or explicit `issue_scan_none`, not endless `issue_start_fail`.
+On the coordinator, expect one new line every five minutes, usually `pass ok`, and with issue scan enabled occasional `issue_start`, `backlog_sweep_start=...`, or explicit `issue_scan_none`, not endless `issue_start_fail`.
 
 ## Troubleshooting
 
-**Stale coordinator terminal in config.** A wrong `issue_scan.from_terminal` or run `terminal` handle can make issue starts log `issue_start_fail` and rework starts log `rework_fail`. Detached head checks do not read `from_terminal`. Orca may return `no_active_sender_terminal` on a failed stall restart or on a failed `orchestration send` (stderr from `flush_queue`), which is the stale run terminal case. Fix: set the current coordinator terminal handle in the private JSON.
+**Stale coordinator terminal in config.** Wrong `issue_scan.from_terminal` or run `terminal` handles produce `issue_start_fail`, `rework_fail`, or `no_active_sender_terminal` on stall restart or `orchestration send`. Detached head checks ignore `from_terminal`. Fix handles in the private JSON.
 
 **Orca inventory errors.** One latched notice per outage; worker inbox alerts and issue scan skip until Orca responds. Backup, heavy gate, and wrap up still run.
 
@@ -135,4 +127,4 @@ Issue scan bits inside `scan ...`:
 
 **Precheck log vs summary log.** Automation precheck appends full Python output to `FLEET_WATCH_PRECHECK_LOG`; the single line summary is always `fleet-watch.log`.
 
-**Toolchain.** `script/fleet-toolchain-check.sh` (also from elon startup and wrap up) reports fleet hosts below current orca, bun, or node versus `mini6`.
+**Toolchain.** `script/fleet-toolchain-check.sh` (also from elon startup and wrap up) reports fleet hosts below current orca, bun, or node versus the baseline host in private env (`FLEET_TOOLCHAIN_BASELINE_HOST`).
