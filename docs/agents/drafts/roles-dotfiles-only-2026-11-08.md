@@ -1,6 +1,6 @@
 # Spec: team role files live only in dotfiles
 
-**Owner decision (2026-11-08):** Each Mingster team role is authored once in dotfiles. Projects may hold **only local symlinks** under `.claude/agents/<role>.md` pointing into dotfiles — no copies, no `{{PROJECT_NAME}}` rendering, no generated regular files, **nothing committed under `.claude/agents/` for the eight team roles**.
+**Owner decision (2026-11-08):** Each Mingster team role is authored once in dotfiles. Projects may hold **only local symlinks** under `.claude/agents/<role>.md` pointing into dotfiles (no copies, no `{{PROJECT_NAME}}` rendering, no generated regular files, **nothing committed under `.claude/agents/` for the eight team roles**).
 
 **Roles in scope:** `elon`, `architect-pm`, `fullstack-dev`, `qa-sdet`, `release-manager`, `sales-marketing`, `secops-finops`, `support-csm`.
 
@@ -52,14 +52,14 @@ Optional: `setup-claude-code.sh` does **not** need team-role symlinks in `~/.cla
 | Trigger | Today (verified 2026-11-08) | Spec change |
 | --- | --- | --- |
 | **Adoption / `--reset`** | `adopt-agent-team.sh` **copies** role files | Replace copy with link step above; drop `agent-team-baseline` sha256 for roles. |
-| **Orca new worktree** | `script/worktree-setup.sh` (Orca repo settings / `orca.yaml` per `model-routing.md`) fetch/ff + `bun install` only — **no role links**. | Chain `link-agent-team-roles.sh` in the setup hook after the tree exists. |
+| **Orca new worktree** | `script/worktree-setup.sh` (Orca repo settings / `orca.yaml` per `model-routing.md`) fetch/ff + `bun install` only; **no role links**. | Chain `link-agent-team-roles.sh` in the setup hook after the tree exists. |
 | **Session start** | `SessionStart`: `session-start.md` + `state-of-play.sh`; autoinit touches `docs/agents` only. | On `startup\|clear`, link script when `docs/agents/team.md` exists and any team role is missing, not a symlink, or broken. |
 
 ### 1.3 Host without dotfiles
 
 No link script can run. Tier-2 skills still work (committed copies, ADR-0001). Roles need dotfiles on the host (`DOTFILES` or clone). Briefs may cite the canonical template path. `team-audit`: enforce **`role-tracked`**; **`role-symlink`** is `NOTE` or skip when dotfiles is absent.
 
-### Non–Claude Code workers (Cursor, Antigravity, Orca)
+### Non-Claude Code workers (Cursor, Antigravity, Orca)
 
 Worker specs may use project path when links exist, or absolute canonical under dotfiles. Update `model-routing.md` to require symlink or canonical path and to forbid a regular file at the project path.
 
@@ -84,7 +84,7 @@ Role files hold **shared** behaviour only. Per-repo facts live in project-owned 
 
 ## 3. Touch points: templates, scripts, hooks, gates
 
-Grep target: `.claude/agents` under `~/dotfiles` (34 paths, 2026-11-08) — appendix.
+Grep target: `.claude/agents` under `~/dotfiles` (34 paths, 2026-11-08); see appendix.
 
 ### Template tree (`templates/agent-team/`)
 
@@ -131,11 +131,11 @@ For each in-scope role name:
 
 ## 5. Migration (ordered PRs)
 
-### PR A — dotfiles (foundation)
+### PR A (dotfiles foundation)
 
 Canonical roles, adopt link mode, `team-audit` checks, owner-approved trailers on dotfiles role commits only, Orca setup + SessionStart self-heal docs.
 
-### PR B+ — each agent-team project (`riben.life`, `pstv`, …)
+### PR B+ (each agent-team project: `riben.life`, `pstv`, …)
 
 Remove committed role files; add gitignore; run link script; drop baselines; move facts into `team-facts.md` / `deploy-facts.md`; `team-audit` green; smoke one worker per role.
 
