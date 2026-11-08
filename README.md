@@ -167,7 +167,7 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | `/deploy` | Moves a commit to staging or production | Daily, or on the owner's go |
 | `/staging-review` | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
 | Test selection | Compares with the last green staging commit and follows real imports | Every staging review |
-| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs and one summary, merged only on the owner's yes | Weekly |
+| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the owner's yes | Weekly |
 | [`team-audit.sh`](script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the owner's word |
 | `/elon status` | "what now": waiting on the owner, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
 | Agent state backup | Private repository with memory, schedules and host config, used to rebuild the coordinator | Every 10 minutes |

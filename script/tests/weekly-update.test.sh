@@ -60,11 +60,14 @@ setup_fixture() {
   init_bare_main "$bare"
   mkdir -p "$work/script" "$work/script/tests" "$work/.agents/skills/tdd" \
     "$work/templates/agent-team/.agents/skills/benchmark-checklist"
-  for s in sync-mattpocock-skills.sh sync-team-skills.sh adopt-agent-team.sh \
-    check-skill-collisions.sh weekly-update.sh; do
+  for s in sync-mattpocock-skills.sh sync-pstack-template-skills.sh sync-team-skills.sh \
+    adopt-agent-team.sh check-skill-collisions.sh weekly-update.sh weekly-skill-impact.sh \
+    install_node.sh; do
     cp "$root/script/$s" "$work/script/"
   done
-  cp "$root/script/tests/sync-mattpocock-skills.test.sh" "$work/script/tests/" 2>/dev/null || true
+  for t in sync-mattpocock-skills.test.sh sync-pstack-template-skills.test.sh install_node.test.sh; do
+    cp "$root/script/tests/$t" "$work/script/tests/" 2>/dev/null || true
+  done
   chmod +x "$work/script/"*.sh 2>/dev/null || true
   printf 'init\n' >"$work/README.md"
   printf 'old\n' >"$work/.agents/skills/tdd/SKILL.md"
@@ -72,8 +75,8 @@ setup_fixture() {
   printf 'sha=old\nskills=tdd\n' >"$work/.agents/skills/.mattpocock-upstream"
   printf 'sha=old\nsubpath=harness/pstack/claude-code\nskills=benchmark-checklist\n' \
     >"$work/script/.pstack-template-upstream"
-  printf '#!/usr/bin/env bash\necho node\n' >"$work/script/install_node.sh"
   printf 'nodejs 20.0.0\n' >"$work/.tool-versions"
+  mkdir -p "$work/docs/agents/drafts"
   git -C "$work" init -q -b main
   git -C "$work" add -A
   git -C "$work" commit -qm init
@@ -127,6 +130,16 @@ else
   ok 'no merge calls in weekly-update.sh'
 fi
 
+grep -q 'sync-pstack-template-skills.test.sh' "$script" \
+  && ok 'default pstack tests use sync-pstack script' \
+  || bad 'pstack default test must not be noop'
+grep -q 'install_node.test.sh' "$script" \
+  && ok 'default toolchain tests include install_node parity' \
+  || bad 'toolchain default test missing install_node parity'
+! grep -q 'Absorbs sync-team-skills' "$script" \
+  && ok 'header does not claim sync apply absorption' \
+  || bad 'misleading weekly-update header'
+
 # --- dry-run lists three PRs, changes nothing ---
 before=$(git -C "$work" status --porcelain | wc -l | tr -d ' ')
 : >"$GH_LOG"
@@ -153,6 +166,10 @@ echo "$pstack_state" | grep -q "^sha=$newsha" && ok 'apply ok writes pstack sha'
   || bad 'pstack sha not updated' "$pstack_state"
 creates=$(grep -c 'pr create' "$GH_LOG" 2>/dev/null || echo 0)
 [ "${creates:-0}" = 3 ] && ok 'apply ok opens three PRs' || bad "want 3 pr creates got $creates" "$(cat "$GH_LOG")"
+mbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mingster/weekly-mattpocock-*' 2>/dev/null | head -1)
+impact_file=$(git -C "$work" ls-tree -r --name-only "$mbranch" 2>/dev/null | grep -E 'docs/agents/drafts/weekly-skill-impact-' || true)
+[ -n "$impact_file" ] && ok 'apply ok commits skill-impact draft on mattpocock branch' \
+  || bad 'missing skill-impact on mattpocock branch' "$impact_file"
 
 # --- case: apply fails ---
 setup_fixture
