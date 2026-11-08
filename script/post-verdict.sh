@@ -50,14 +50,4 @@ if [ "$print_only" = true ]; then printf '%s\n' "$body"; exit 0; fi
 printf '%s\n' "$body" | gh pr comment "$pr" --repo "$repo" --body-file - >/dev/null
 status_state=failure; [ "$result" = FAIL ] || status_state=success
 gh api -X POST "repos/$repo/statuses/$head" -f state="$status_state" -f context=review -f description="Verdict: $result ($verifier)" >/dev/null
-if [ "$status_state" = success ] && [ "${repo##*/}" = dotfiles ]; then
-  merge_err=$(mktemp)
-  if ! gh pr merge "$pr" --repo "$repo" --auto --merge --match-head-commit "$head" >"$merge_err" 2>&1; then
-    echo "post-verdict: gh pr merge --auto failed for PR $pr at ${head:0:12}" >&2
-    cat "$merge_err" >&2
-    rm -f "$merge_err"
-    exit 1
-  fi
-  rm -f "$merge_err"
-fi
 echo "post-verdict: posted $result for PR $pr at ${head:0:12}"
