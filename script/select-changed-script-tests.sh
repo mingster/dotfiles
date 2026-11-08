@@ -82,10 +82,43 @@ add_full_suite() {
   add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
 }
 
+map_tests_referencing() {
+  local needle=$1 f rel
+  [ -n "$needle" ] || return 0
+  shopt -s nullglob
+  for f in "$ROOT"/script/tests/*.test.sh "$ROOT"/script/tests/*.test.py "$ROOT"/script/*.test.sh; do
+    [ -f "$f" ] || continue
+    grep -qF "$needle" "$f" || continue
+    rel=${f#"$ROOT/"}
+    add_test "$rel"
+  done
+  shopt -u nullglob
+}
+
+map_test_lib_file() {
+  local path=$1 rel base
+  rel=${path#script/tests/lib/}
+  base=$(basename "$rel")
+  map_tests_referencing "lib/$rel"
+  map_tests_referencing "tests/lib/$base"
+}
+
+map_script_example() {
+  local path=$1 name
+  name=$(basename "$path")
+  map_tests_referencing "$name"
+  case "$path" in
+    *automations*)
+      add_if_exists "script/tests/install-fleet-automations.test.sh"
+      ;;
+  esac
+}
+
 fallback_eligible() {
   local path=$1
   case "$path" in
     script/README*|script/*.md) return 1 ;;
+    script/tests/lib/*|script/*example|script/*.example.json) return 1 ;;
     script/*) return 0 ;;
     .agents/head-checks.conf|.agents/head-checks-docs.conf) return 0 ;;
     templates/agent-team/*) return 0 ;;
@@ -115,6 +148,12 @@ map_file() {
       base=${path#script/}
       base=${base%.py}
       map_script_py_base "$base"
+      ;;
+    script/tests/lib/*)
+      map_test_lib_file "$path"
+      ;;
+    script/*example|script/*.example.json)
+      map_script_example "$path"
       ;;
     .agents/skills/orca-team/*)
       add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
