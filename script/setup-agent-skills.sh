@@ -4,13 +4,16 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DOTFILES=$(cd "$DOTFILES" && pwd -P)
 SKILLS="$DOTFILES/.agents/skills"
+TEAM_SKILLS="$DOTFILES/templates/agent-team/.agents/skills"
 
 bundled() { printf '%s\n' "$orca_bundled" | grep -qx -- "$1"; }
 
 # Use the tracked inventory, never ignored tool installations (or synced plugins).
 owned() {
-  [ -f "$SKILLS/$1/SKILL.md" ] &&
-    git -C "$DOTFILES" ls-files --error-unmatch -- ".agents/skills/$1/SKILL.md" >/dev/null 2>&1
+  { [ -f "$SKILLS/$1/SKILL.md" ] &&
+      git -C "$DOTFILES" ls-files --error-unmatch -- ".agents/skills/$1/SKILL.md" >/dev/null 2>&1; } ||
+  { [ -f "$TEAM_SKILLS/$1/SKILL.md" ] &&
+      git -C "$DOTFILES" ls-files --error-unmatch -- "templates/agent-team/.agents/skills/$1/SKILL.md" >/dev/null 2>&1; }
 }
 
 # Recognize ownership by source checkout, not just a colliding skill name.
@@ -18,10 +21,19 @@ dotfiles_skill() {
   local path="$1" name="$2" resolved old_root
   [ -f "$path/SKILL.md" ] || return 1
   resolved=$(cd "$path" && pwd -P) || return 1
-  old_root=$(cd "$resolved/../../.." && pwd -P) || return 1
-  [ -f "$old_root/install.sh" ] &&
-    [ "$resolved" = "$old_root/.agents/skills/$name" ] &&
-    git -C "$old_root" ls-files --error-unmatch -- ".agents/skills/$name/SKILL.md" >/dev/null 2>&1
+  if old_root=$(cd "$resolved/../../.." 2>/dev/null && pwd -P) &&
+     [ -f "$old_root/install.sh" ] &&
+     [ "$resolved" = "$old_root/.agents/skills/$name" ] &&
+     git -C "$old_root" ls-files --error-unmatch -- ".agents/skills/$name/SKILL.md" >/dev/null 2>&1; then
+    return 0
+  fi
+  if old_root=$(cd "$resolved/../../../../.." 2>/dev/null && pwd -P) &&
+     [ -f "$old_root/install.sh" ] &&
+     { [ "$resolved" = "$old_root/templates/agent-team/.agents/skills/$name" ] ||
+       { [ "$name" = tl ] && [ "$resolved" = "$old_root/templates/agent-team/.agents/skills/crew" ]; }; }; then
+    return 0
+  fi
+  return 1
 }
 
 copy_skills() {
@@ -78,10 +90,9 @@ else
   echo "agent-skills: orca not found, skipping bundled Orca skills"
 fi
 
-for entry in "$SKILLS"/*; do
-  name=$(basename "$entry")
-  owned "$name" || continue
-  bundled "$name" && continue
+link_skill() {
+  local entry="$1" name="$2" dst target
+  bundled "$name" && return 0
   for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     target="$dst/$name"
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$entry" ]; then
@@ -99,4 +110,17 @@ for entry in "$SKILLS"/*; do
     ln -s "$entry" "$target"
     echo "agent-skills: linked $target -> $entry"
   done
+}
+
+for src_root in "$SKILLS" "$TEAM_SKILLS"; do
+  [ -d "$src_root" ] || continue
+  for entry in "$src_root"/*; do
+    [ -e "$entry" ] || continue
+    name=$(basename "$entry")
+    owned "$name" || continue
+    link_skill "$entry" "$name"
+  done
 done
+if [ ! -d "$TEAM_SKILLS/tl" ] && [ -d "$TEAM_SKILLS/crew" ] && owned crew; then
+  link_skill "$TEAM_SKILLS/crew" tl
+fi

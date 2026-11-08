@@ -249,5 +249,88 @@ set -e
   && ok "elon-startup.sh fast-forwards state repo to origin/main" \
   || bad "elon-startup.sh did not fast-forward state repo (ec=$elon_ec): $elon_out"
 
+# 8. fleet-pull.sh refreshes user-level links (setup-claude-code.sh --keep-settings and setup-agent-skills.sh)
+#    on the local host and each reachable remote host after fast-forwarding dotfiles
+df_seed="$tmp/df-seed"
+df_bare="$tmp/df.git"
+make_repo "$df_seed" "$df_bare"
+mkdir -p "$df_seed/script" "$df_seed/.agents/claude" "$df_seed/.agents/skills/tdd" \
+  "$df_seed/templates/agent-team/.claude/hooks" "$df_seed/templates/agent-team/.claude/bin"
+cp "$root/script/setup-claude-code.sh" "$df_seed/script/setup-claude-code.sh"
+cp "$root/script/setup-agent-skills.sh" "$df_seed/script/setup-agent-skills.sh"
+printf '# claude\n' >"$df_seed/.agents/claude/CLAUDE.md"
+printf '{"template_settings":true}\n' >"$df_seed/.agents/claude/settings.json"
+printf '# tdd\n' >"$df_seed/.agents/skills/tdd/SKILL.md"
+for h in guard-bash.py strikes.py worker-budget.py session-start.md; do
+  printf '# %s\n' "$h" >"$df_seed/templates/agent-team/.claude/hooks/$h"
+done
+for b in env-peek.py state-of-play.sh; do
+  printf '# %s\n' "$b" >"$df_seed/templates/agent-team/.claude/bin/$b"
+done
+for s in ceo crew deploy elon poteto-mode staging-review team-audit tl; do
+  mkdir -p "$df_seed/templates/agent-team/.agents/skills/$s"
+  printf '# %s\n' "$s" >"$df_seed/templates/agent-team/.agents/skills/$s/SKILL.md"
+done
+git -C "$df_seed" add -A
+git -C "$df_seed" commit -qm "seed dotfiles"
+git -C "$df_seed" push -q origin main
+
+local_home="$tmp/local-home"
+rem_home="$tmp/rem-home"
+mkdir -p "$local_home/.claude" "$rem_home/.claude"
+printf '{"keep_settings":true}\n' >"$local_home/.claude/settings.json"
+printf '{"keep_settings":true}\n' >"$rem_home/.claude/settings.json"
+git clone -q "$df_bare" "$local_home/dotfiles"
+git clone -q "$df_bare" "$rem_home/dotfiles"
+advance_origin "$df_bare" "df-advance"
+df_tip=$(git --git-dir="$df_bare" rev-parse refs/heads/main)
+
+cat >"$state1/fleet-pull.json" <<'EOF'
+{"hosts":["host-a"],"repos":["~/dotfiles"]}
+EOF
+git -C "$state1" commit -qam pull_dotfiles
+git -C "$state1" push -q origin main
+git clone -q "$(git -C "$state1" remote get-url origin)" "$rem_home/agent-state"
+
+ssh_rem_bin="$tmp/ssh-rem"
+mkdir -p "$ssh_rem_bin"
+cat >"$ssh_rem_bin/ssh" <<EOS
+#!/usr/bin/env bash
+while [ "\$#" -gt 0 ] && [ "\$1" != bash ]; do shift; done
+export HOME="$rem_home"
+exec sh -c "\$*"
+EOS
+cat >"$ssh_rem_bin/orca" <<'EOS'
+#!/usr/bin/env bash
+exit 0
+EOS
+chmod +x "$ssh_rem_bin/ssh" "$ssh_rem_bin/orca"
+
+set +e
+out8=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec8=$?
+set -e
+
+check_host_links() {
+  local hdir="$1"
+  [ "$(git -C "$hdir/dotfiles" rev-parse HEAD)" = "$df_tip" ] || return 1
+  grep -q '"keep_settings":true' "$hdir/.claude/settings.json" || return 1
+  for h in guard-bash.py strikes.py worker-budget.py session-start.md; do
+    [ -L "$hdir/.claude/hooks/$h" ] && [ -f "$hdir/.claude/hooks/$h" ] || return 1
+  done
+  for b in env-peek.py state-of-play.sh; do
+    [ -L "$hdir/.claude/bin/$b" ] && [ -f "$hdir/.claude/bin/$b" ] || return 1
+  done
+  for s in ceo crew deploy elon poteto-mode staging-review team-audit tl; do
+    [ -L "$hdir/.agents/skills/$s" ] && [ -L "$hdir/.claude/skills/$s" ] || return 1
+  done
+}
+
+if [ "$ec8" -eq 0 ] && check_host_links "$local_home" && check_host_links "$rem_home"; then
+  ok "fleet-pull refreshes user-level hooks, bin, and Tier 2 skills on local and remote hosts"
+else
+  bad "fleet-pull failed to refresh user-level links on local or remote host (ec=$ec8): $out8"
+fi
+
 echo "fleet-pull: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

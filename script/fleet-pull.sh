@@ -48,6 +48,16 @@ for raw in "$@"; do
     continue
   fi
   echo "ok   $host_label $d $(git -C "$d" rev-parse --short HEAD)"
+  if [ -f "$d/script/setup-claude-code.sh" ] && [ -f "$d/script/setup-agent-skills.sh" ]; then
+    DOTFILES="$d"
+    export DOTFILES
+    if ! bash "$DOTFILES/script/setup-claude-code.sh" --keep-settings >/dev/null 2>&1 ||
+       ! bash "$DOTFILES/script/setup-agent-skills.sh" >/dev/null 2>&1; then
+      echo "fail $host_label $raw (user-level link refresh failed)"
+      rc=1
+      continue
+    fi
+  fi
 done
 exit "$rc"
 '
