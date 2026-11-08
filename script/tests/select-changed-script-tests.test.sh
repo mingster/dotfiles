@@ -147,7 +147,7 @@ case10_script_plus_already_selected_test() {
     bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-review.sh script/tests/pr-review.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 pr-review mix must not fall back"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 1 ] || fail "case10 pr-review want Script tests: 1 got ${count:-0}"
+  [ "${count:-0}" -eq 2 ] || fail "case10 pr-review want Script tests: 2 got ${count:-0}"
   ok "case10 script plus already-selected test avoids full-suite fallback"
 }
 

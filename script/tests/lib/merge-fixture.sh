@@ -60,6 +60,8 @@ mf_pr_add() {
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
   head=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$branch")
   files=$(jq -n --arg f "$path" '[{path:$f, filename:$f}]')
+  # MF_SELF_REVIEW=1: lead-merge refuses a PR whose body has no ## Self-review naming the head.
+  [ -z "${MF_SELF_REVIEW:-}" ] || grep -qE '^## Self-review' <<<"$body" || body=$(printf '%s\n\n## Self-review\n%s' "$body" "$head")
   jq -n --argjson n "$n" --arg b "$branch" --arg h "$head" --arg body "$body" --argjson files "$files" --arg base "$base" \
     '{number:$n, state:"OPEN", baseRefName:"main", headRefName:$b, headRefOid:$h, baseRefOid:$base, changedFiles:($files|length), body:$body, files:$files,
       comments:[], closingIssuesReferences:[], mergeable:"MERGEABLE", mergeCommit:null,
@@ -164,7 +166,7 @@ case "$1 ${2:-}" in
       case "$1" in --dispatch) id=${2:-}; shift 2 ;; *) shift ;; esac
     done
     jq -e --arg id "$id" '[.workers[]? | select(.dispatchId==$id)] | length > 0' "$d/workers.json" >/dev/null \
-      && { case "$id" in ctx_verify|ctx_other) model=opus ;; *) model=sonnet ;; esac; \
+      && { case "$id" in ctx_verify|ctx_verify2|ctx_other) model=opus ;; *) model=sonnet ;; esac; \
       printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"%s"}}\n' "$id" "$model"; } \
       || { printf '{"ok":false}\n'; exit 1; } ;;
   "orchestration worker-list")

@@ -50,7 +50,7 @@ setup() {
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
   base_sha=cccccccccccccccccccccccccccccccccccccccc
   files='[{"path":"docs/a.md"}]'
-  body=$'## Verification\n- Ran checks.\n'
+  body=$'## Verification\n- Ran checks.\n\n## Self-review\n'"$SHA"
   verdict=""
   checks="Checks: PASS head=$SHA"
   countersign=""; TRUNK_FILES=""
@@ -132,13 +132,13 @@ cp -R "$REAL_PATCH_REPO/.git" "$REAL_PATCH_REPO.origin.git"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" remote set-url origin "$REAL_PATCH_REPO.origin.git"
 printf 'edit\n' >> "$REAL_PATCH_REPO/.claude/agents/role.md"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam 'role edit without trailer'
-SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; body=$'## Verification\n- Ran checks.\n\n## Self-review\n'"$SHA"
 checks="Checks: PASS head=$SHA"
 run_merge; say "T658-3 refuse missing Owner-approved" "$([ "$LAST_CODE" -ne 0 ] && grep -q Owner-approved <<<"$LAST_OUT"; echo $?)" "$LAST_OUT"
 
 # 3 pass: Owner-approved trailer present
 "$REAL_GIT" -C "$REAL_PATCH_REPO" commit --amend -q --trailer "Owner-approved: Owner 2026-11-07" -m 'role edit'
-SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; body=$'## Verification\n- Ran checks.\n\n## Self-review\n'"$SHA"
 checks="Checks: PASS head=$SHA"
 run_merge; say "T658-3 pass Owner-approved trailer" "$([ "$LAST_CODE" -eq 0 ]; echo $?)" "$LAST_OUT"
 unset REAL_PATCH_REPO

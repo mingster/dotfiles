@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Batch train tests for lead-merge.sh; forge and network-facing git calls are fake.
 set -u
+export MF_SELF_REVIEW=1
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # shellcheck source=lib/asdf-pin.sh
@@ -19,9 +20,9 @@ heads=(
 )
 base=dddddddddddddddddddddddddddddddddddddddd
 BATCH_PRS_JSON=$(jq -nc --arg base "$base" --arg h1 "${heads[0]}" --arg h2 "${heads[1]}" --arg h3 "${heads[2]}" '
-  {"11":{state:"OPEN",baseRefName:"main",headRefName:"feature-11",headRefOid:$h1,mergeable:"MERGEABLE",url:"https://example.invalid/pull/11",changedFiles:1,body:"## Verification\n- Passed.",comments:[],baseRefOid:$base},
-   "12":{state:"OPEN",baseRefName:"main",headRefName:"feature-12",headRefOid:$h2,mergeable:"MERGEABLE",url:"https://example.invalid/pull/12",changedFiles:1,body:"## Verification\n- Passed.",comments:[],baseRefOid:$base},
-   "13":{state:"OPEN",baseRefName:"main",headRefName:"feature-13",headRefOid:$h3,mergeable:"MERGEABLE",url:"https://example.invalid/pull/13",changedFiles:1,body:"## Verification\n- Passed.",comments:[],baseRefOid:$base}}')
+  {"11":{state:"OPEN",baseRefName:"main",headRefName:"feature-11",headRefOid:$h1,mergeable:"MERGEABLE",url:"https://example.invalid/pull/11",changedFiles:1,body:"## Verification\n- Passed.\n\n## Self-review\n"+$h1,comments:[],baseRefOid:$base},
+   "12":{state:"OPEN",baseRefName:"main",headRefName:"feature-12",headRefOid:$h2,mergeable:"MERGEABLE",url:"https://example.invalid/pull/12",changedFiles:1,body:"## Verification\n- Passed.\n\n## Self-review\n"+$h2,comments:[],baseRefOid:$base},
+   "13":{state:"OPEN",baseRefName:"main",headRefName:"feature-13",headRefOid:$h3,mergeable:"MERGEABLE",url:"https://example.invalid/pull/13",changedFiles:1,body:"## Verification\n- Passed.\n\n## Self-review\n"+$h3,comments:[],baseRefOid:$base}}')
 export BATCH_PRS_JSON BASE_SHA="$base"
 
 cat > "$tmp/bin/git" <<'EOF'
@@ -395,7 +396,7 @@ EOS
   out=$(LEAD_MERGE_LOCK_WAIT_SECONDS=2 bash "$here/lead-merge.sh" --repo o/r --pr 13 --head "$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")" 2>&1); code=$?
   [ "$code" -ne 0 ] && echo "ok   T13 single merge refuses while the batch holds the lock" || echo "FAIL T13 single exit $code"
   grep -q "holder.*$holder\|pid $holder" <<<"$out" && echo "ok   T13 refusal names the holder pid" || echo "FAIL T13 holder not named: $out"
-  mf_barrier_release hc
+  mf_run_limited 10 mf_barrier_release hc  # bounded: an unread fifo would block the write forever
   wait "$bp"; code=$?
   [ "$code" -eq 0 ] && [ "$(jq -r .state "$MF_GH_DIR/pr-11.json")$(jq -r .state "$MF_GH_DIR/pr-12.json")" = MERGEDMERGED ] \
     && echo "ok   T13 after the fifo opens the batch merges every PR" || echo "FAIL T13 batch exit $code: $(tail -5 "$MF_DIR/batch.out")"
@@ -477,13 +478,13 @@ printf 'Checks: PASS head=%s train-heads=%s\n' "$ref" "$heads"
 EOS
   chmod +x "$MF_BIN/fake-head-checks"
   export LEAD_MERGE_HEAD_CHECKS="$MF_BIN/fake-head-checks" LEAD_MERGE_CLEANUP="$tmp/bin/cleanup"
-  mf_orca_add_run run_1; mf_orca_add_worker run_1 ctx_verify dispatched "$MF_DIR/wt"
+  mf_orca_add_run run_1; mf_orca_add_worker run_1 ctx_verify dispatched "$MF_DIR/wt"; mf_orca_add_worker run_1 ctx_author dispatched "$MF_DIR/wt-author"
   cd "$MF_REPO" || return 1
   local ok=$'## Verification\n- Passed.' n h out code runs merged=0
   for n in 41 42 43; do
     mf_pr_add "$n" "v$n" "$ok" "src/v$n.sh"; fx_checks_pass "$n"
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
-    jq --arg b "Verdict: PASS head=$h verifier=ctx_verify author=unknown" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' \
+    jq --arg b "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' \
       "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
   done
   : > "$MF_ORCA_LOG"
@@ -498,7 +499,7 @@ EOS
     local n=$1 who=$2 h
     mf_pr_add "$n" "v$n" "$ok" "src/v$n.sh"
     h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
-    jq --arg b "Verdict: PASS head=$h verifier=$who author=unknown" --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false},{body:$b, author:"fixture", edited:false, minimized:false}]' \
+    jq --arg b "Verdict: PASS head=$h verifier=$who author=ctx_author" --arg c "Checks: PASS head=$h" '.comments += [{body:$c, author:"fixture", edited:false, minimized:false},{body:$b, author:"fixture", edited:false, minimized:false}]' \
       "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
   }
   fx_verdict_pr 44 ctx_verify; fx_verdict_pr 45 ctx_verify
@@ -562,7 +563,8 @@ EOS
     "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$b"
     h=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$b")
     "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
-    jq --arg h "$h" '.headRefOid = $h' "$MF_GH_DIR/pr-$1.json" > "$MF_GH_DIR/pr-$1.tmp" && mv "$MF_GH_DIR/pr-$1.tmp" "$MF_GH_DIR/pr-$1.json"
+    # An authored commit needs a new self-review; a merge of main carries the old one.
+    jq --arg h "$h" --arg keep "${2:-}" '.headRefOid as $old | (if $keep == "merge" then . else .body |= sub($old; $h) end) | .headRefOid = $h' "$MF_GH_DIR/pr-$1.json" > "$MF_GH_DIR/pr-$1.tmp" && mv "$MF_GH_DIR/pr-$1.tmp" "$MF_GH_DIR/pr-$1.json"
   }
 
   # Criterion 1: no Checks comment on PR 12.
