@@ -14,6 +14,7 @@ _asdf_data=${ASDF_DATA_DIR:-$_real_home/.asdf}
 _py_ver=${ASDF_PYTHON_VERSION:-$(awk '$1 == "python" { print $2; exit }' "$root/.tool-versions")}
 python3_bin="$_asdf_data/installs/python/$_py_ver/bin/python3"
 [ -x "$python3_bin" ] || python3_bin=$(ASDF_DATA_DIR="$_asdf_data" asdf which python3 2>/dev/null || true)
+[ -x "$python3_bin" ] || python3_bin=$(command -v python3 2>/dev/null || true)
 [ -x "$python3_bin" ] || { echo "FAIL: no python3 for fake orca tests" >&2; exit 1; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
