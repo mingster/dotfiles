@@ -1,0 +1,1 @@
+- Register `sync-team-skills-drift` (daily) and `team-audit-weekly` (Monday) in `install-fleet-automations.sh` with precheck helpers and `docs/agents/orca-automations.md`.

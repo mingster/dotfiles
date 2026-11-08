@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install Orca automations for fleet-watch (5 min) and wrap-up-scheduled (2 h) on every host.
-# Enabled only when hostname -s matches coordinator in agent-state/coordinator.conf (default mini6).
+# Install Orca automations: fleet-watch (5 min), wrap-up-scheduled (2 h), sync drift (daily),
+# team-audit-weekly and weekly-update (Monday). Enabled only on the coordinator in agent-state/coordinator.conf.
 # Private paths: env vars or ~/.config/fleet-watch/automations.env (no secrets in this repo).
 #
 # Usage: install-fleet-automations.sh --status
@@ -17,9 +17,9 @@ action=""
 usage() {
   sed -n '2,9p' "$0"
   printf '\n'
-  printf '  --status     Print enabled/disabled for fleet-watch and wrap-up-scheduled\n'
-  printf '  --install    Create or update both automations (idempotent by name)\n'
-  printf '  --uninstall  Remove both automations by name\n'
+  printf '  --status     Print enabled/disabled for each fleet automation\n'
+  printf '  --install    Create or update automations (idempotent by name)\n'
+  printf '  --uninstall  Remove fleet automations by name\n'
   printf '  --dry-run    With --install, print planned orca commands only\n'
 }
 
@@ -50,6 +50,9 @@ if [ -f "$env_file" ]; then
 fi
 
 DOTFILES_DIR=${DOTFILES_DIR:-$dotfiles}
+if [ -d "$DOTFILES_DIR" ]; then
+  DOTFILES_DIR=$(cd "$DOTFILES_DIR" && pwd -P)
+fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}
 FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
@@ -59,6 +62,13 @@ FLEET_AUTOMATIONS_PROVIDER=${FLEET_AUTOMATIONS_PROVIDER:-claude}
 AUTOMATION_PROMPT=${FLEET_AUTOMATIONS_PROMPT:-'Script only job, the precheck always stops it.'}
 FLEET_WATCH_PRECHECK_TIMEOUT=${FLEET_WATCH_PRECHECK_TIMEOUT:-280}
 WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-300}
+SYNC_DRIFT_LOG=${SYNC_DRIFT_LOG:-$HOME/.local/state/agent-team/sync-team-skills-drift.log}
+TEAM_AUDIT_WEEKLY_LOG=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/team-audit-weekly.log}
+SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
+TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT=${TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT:-600}
+WEEKLY_UPDATE_LOG=${WEEKLY_UPDATE_LOG:-$HOME/.local/state/agent-team/weekly-update.log}
+WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-3600}
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update'
 
 precheck_path() {
   local p="$HOME/.local/bin"
@@ -95,6 +105,30 @@ wrap_up_precheck() {
   path=$(precheck_path)
   shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
   printf "PATH='%s' bash '%s/script/wrap-up.sh' --scheduled; exit 1" "$shell_pw" "$DOTFILES_DIR"
+}
+
+sync_drift_precheck() {
+  local path shell_pw
+  path=$(precheck_path)
+  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
+  printf "PATH='%s' DOTFILES='%s' SYNC_DRIFT_LOG='%s' bash '%s/script/automation-precheck-sync-drift.sh'; exit 1" \
+    "$shell_pw" "$DOTFILES_DIR" "$SYNC_DRIFT_LOG" "$DOTFILES_DIR"
+}
+
+team_audit_weekly_precheck() {
+  local path shell_pw
+  path=$(precheck_path)
+  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
+  printf "PATH='%s' DOTFILES='%s' TEAM_AUDIT_WEEKLY_LOG='%s' bash '%s/script/automation-precheck-team-audit-weekly.sh'; exit 1" \
+    "$shell_pw" "$DOTFILES_DIR" "$TEAM_AUDIT_WEEKLY_LOG" "$DOTFILES_DIR"
+}
+
+weekly_update_precheck() {
+  local path shell_pw
+  path=$(precheck_path)
+  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
+  printf "PATH='%s' DOTFILES='%s' WEEKLY_UPDATE_LOG='%s' bash '%s/script/automation-precheck-weekly-update.sh'; exit 1" \
+    "$shell_pw" "$DOTFILES_DIR" "$WEEKLY_UPDATE_LOG" "$DOTFILES_DIR"
 }
 
 list_json() {
@@ -245,7 +279,7 @@ PY
 
 print_status() {
   local name state
-  for name in fleet-watch wrap-up-scheduled; do
+  for name in $FLEET_AUTOMATION_NAMES; do
     if existing=$(automation_by_name "$name" 2>/dev/null); then
       state=$(AUTOMATION_ROW="$existing" python3 - <<'PY'
 import json, os
@@ -268,9 +302,13 @@ case "$action" in
     host_is_coordinator && enabled=1
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation wrap-up-scheduled '0 */2 * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" "$enabled"
     ;;
   uninstall)
-    remove_by_name fleet-watch
-    remove_by_name wrap-up-scheduled
+    for name in $FLEET_AUTOMATION_NAMES; do
+      remove_by_name "$name"
+    done
     ;;
 esac

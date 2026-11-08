@@ -139,6 +139,9 @@ map_file() {
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
+    script/automation-precheck-*.sh)
+      add_if_exists "script/tests/install-fleet-automations.test.sh"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
@@ -151,6 +154,9 @@ map_file() {
       ;;
     script/tests/lib/*)
       map_test_lib_file "$path"
+      ;;
+    script/fleet-watch.config*|script/fleet-watch*.json)
+      map_script_py_base "fleet-watch"
       ;;
     script/*example|script/*.example.json)
       map_script_example "$path"

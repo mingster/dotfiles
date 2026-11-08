@@ -210,4 +210,4 @@ All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Cl
 | `templates/agent-team/` | Roles and team skills adopted into projects |
 | `.config/` | Application configuration, managed with GNU Stow |
 | `ide/` | Editor settings |
-| `docs/agents/` | Deeper docs: [setup](docs/agents/agent-team-setup.md), [roles](docs/agents/team-reference.md), [settings backup](docs/agents/agent-settings-backup.md) |
+| `docs/agents/` | Deeper docs: [setup](docs/agents/agent-team-setup.md), [roles](docs/agents/team-reference.md), [Orca automations](docs/agents/orca-automations.md), [settings backup](docs/agents/agent-settings-backup.md) |
