@@ -9,6 +9,11 @@ import time
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import asdf_pin  # noqa: E402
+
+asdf_pin.pin()  # before any test sets HOME
+
 ROOT = Path(__file__).resolve().parents[2]
 FW_PATH = ROOT / 'script' / 'fleet-watch.py'
 
