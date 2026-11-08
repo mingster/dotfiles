@@ -23,8 +23,11 @@ if [ "${1:-} ${2:-}" = "orchestration worker-show" ]; then
     esac
   done
   case "$id" in
-    ctx_verifier|ctx_author)
+    ctx_author)
       printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"sonnet"}}\n' "$id"
+      exit 0 ;;
+    ctx_verifier)
+      printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"opus"}}\n' "$id"
       exit 0 ;;
     *)
       printf '{"ok":false,"error":{"code":"dispatch_not_found","message":"Dispatch %s was not found."}}\n' "$id"

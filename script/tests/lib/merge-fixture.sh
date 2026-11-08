@@ -164,7 +164,8 @@ case "$1 ${2:-}" in
       case "$1" in --dispatch) id=${2:-}; shift 2 ;; *) shift ;; esac
     done
     jq -e --arg id "$id" '[.workers[]? | select(.dispatchId==$id)] | length > 0' "$d/workers.json" >/dev/null \
-      && printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"sonnet"}}\n' "$id" \
+      && { case "$id" in ctx_verify|ctx_other) model=opus ;; *) model=sonnet ;; esac; \
+      printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"%s"}}\n' "$id" "$model"; } \
       || { printf '{"ok":false}\n'; exit 1; } ;;
   "orchestration worker-list")
     run=""; limit=0; cursor=0; shift 2

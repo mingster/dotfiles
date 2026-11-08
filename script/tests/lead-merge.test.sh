@@ -60,7 +60,11 @@ if [ "$1 $2" = "orchestration worker-show" ]; then
       *) shift ;;
     esac
   done
-  printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"sonnet"}}\n' "$id"
+  case "$id" in
+    ctx_verify|ctx_other) model=opus ;;
+    *) model=sonnet ;;
+  esac
+  printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"%s"}}\n' "$id" "$model"
   exit 0
 fi
 [ "$1 $2" = "orchestration worker-list" ] || exit 1
@@ -71,7 +75,8 @@ for a in "$@"; do
   prev=$a
 done
 if [ "$run" = run_b ]; then read -ra ids <<<"${FAKE_DISPATCHES_B:-}"; else read -ra ids <<<"$FAKE_DISPATCHES"; fi
-w=""; for ((i=start; i<start+2 && i<${#ids[@]}; i++)); do w="$w${w:+,}{\"dispatchId\":\"${ids[i]}\"}"; done
+branch_wt="${FAKE_BRANCH_WT:-$FAKE_TOP}"
+w=""; for ((i=start; i<start+2 && i<${#ids[@]}; i++)); do w="$w${w:+,}{\"dispatchId\":\"${ids[i]}\",\"agent\":\"claude\",\"workspace\":\"repo::$branch_wt\"}"; done
 next=null; [ $((start+2)) -ge ${#ids[@]} ] || next="\"$((start+2))\""
 if [ "${FAKE_PAGE_SHAPE:-page}" = top ]; then
   printf '{"ok":true,"result":{"workers":[%s],"nextCursor":%s}}\n' "$w" "$next"
@@ -98,6 +103,7 @@ setup() {
   checks="Checks: PASS head=$SHA"; countersign=""; TRUNK_FILES=""
   export TRUNK_FILES
   export FAKE_DISPATCHES="ctx_a ctx_b ctx_author ctx_other ctx_same ctx_verify"; unset FAKE_ORCA_FAIL FAKE_DISPATCHES_B FAKE_PAGE_SHAPE
+  export FAKE_BRANCH_WT="$LEAD/../feature"
   export OLD
   state=OPEN base=main headsha=$SHA mergeable=MERGEABLE branch=feature
   FINAL_JSON='{"state":"MERGED","mergeCommit":{"oid":"dddddddddddddddddddddddddddddddddddddddd"},"url":"https://github.com/o/r/pull/7"}'

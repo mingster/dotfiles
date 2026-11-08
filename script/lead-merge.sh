@@ -26,6 +26,30 @@ receipt_state_py="$lead_merge_dir/receipt-state.py"
 # shellcheck disable=SC1091
 . "$lead_merge_dir/lib/pr-review-gates.sh"
 
+# Carry a Verdict (and ## Self-review sha) across a clean merge of main (see also checks_carry).
+carry_why=""
+verdict_carry() { # <verdict head> <current head>
+  local v="$1" h="$2" commits c parents p replay
+  carry_why=""
+  git cat-file -e "$v^{commit}" 2>/dev/null || git fetch origin "$v" >&2 || { carry_why="cannot read verdict head"; return 1; }
+  git merge-base --is-ancestor "$v" "$h" || { carry_why="verdict head is not an ancestor of the PR head"; return 1; }
+  commits=$(git rev-list --first-parent "$v..$h") || { carry_why="check a: cannot list commits after the verdict head"; return 1; }
+  for c in $commits; do
+    parents=$(git rev-list --parents -n1 "$c") || { carry_why="check a: cannot read parents of $c"; return 1; }
+    set -- $parents
+    shift
+    [ $# -ge 2 ] || { carry_why="check a: ${c:0:12} is an authored commit after the verdict head, not a merge of main"; return 1; }
+    [ $# -eq 2 ] || { carry_why="check a: merge ${c:0:12} has more than two parents"; return 1; }
+    shift
+    for p in "$@"; do
+      git merge-base --is-ancestor "$p" origin/main || { carry_why="check a: merge ${c:0:12} takes a parent that is not in origin/main"; return 1; }
+    done
+    replay=$(git merge-tree --write-tree "$c^1" "$c^2" 2>/dev/null) || { carry_why="check b: conflicted merge ${c:0:12} needs a new Verdict"; return 1; }
+    replay=${replay%%$'\n'*}
+    [ "$replay" = "$(git rev-parse "$c^{tree}")" ] || { carry_why="check b: merge ${c:0:12} differs from a clean replay"; return 1; }
+  done
+}
+
 # Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
 refusals=()
 refuse() { refusals+=("$*"); }
@@ -436,7 +460,7 @@ preflight_only=${LEAD_MERGE_PREFLIGHT_ONLY:-0}
 [ "$(field .headRefOid)" = "$head" ] || refuse "PR $pr head is $(field .headRefOid), not $head"
 [ "$(field .mergeable)" = MERGEABLE ] || refuse "PR $pr is not MERGEABLE"
 if [ "$(field .headRefOid)" = "$head" ]; then
-  pr_review_gate_self_review "$(field .body)" "$head" refuse
+  pr_review_gate_self_review "$(field .body)" "$head" refuse verdict_carry
 fi
 
 # 4. Head branch
@@ -484,33 +508,6 @@ if grep -qE '^## verification$' <<<"$normalized_body"; then
   { [ "$bullet_count" -ge 1 ] && [ "$bullet_count" -le 3 ]; } || refuse "Verification needs 1 to 3 run and outcome bullets"
 else refuse "missing ## Verification heading"; fi
 if grep -qiE '^#{1,6} test plan$' <<<"$normalized_body"; then refuse "Test plan heading is forbidden"; fi
-# Carry a Verdict across a clean merge of main: V is an ancestor of H and every commit after V on the
-# first-parent chain is a two parent merge of main that replays to exactly the same tree.
-# Fails closed; sets carry_why to the failed check.
-carry_why=""
-verdict_carry() { # <verdict head> <current head>
-  local v="$1" h="$2" commits c parents p replay
-  carry_why=""
-  git cat-file -e "$v^{commit}" 2>/dev/null || git fetch origin "$v" >&2 || { carry_why="cannot read verdict head"; return 1; }
-  git merge-base --is-ancestor "$v" "$h" || { carry_why="verdict head is not an ancestor of the PR head"; return 1; }
-  # --first-parent: the commits main brought in are reachable only through the merge's second parent.
-  commits=$(git rev-list --first-parent "$v..$h") || { carry_why="check a: cannot list commits after the verdict head"; return 1; }
-  for c in $commits; do
-    parents=$(git rev-list --parents -n1 "$c") || { carry_why="check a: cannot read parents of $c"; return 1; }
-    set -- $parents
-    shift
-    [ $# -ge 2 ] || { carry_why="check a: ${c:0:12} is an authored commit after the verdict head, not a merge of main"; return 1; }
-    [ $# -eq 2 ] || { carry_why="check a: merge ${c:0:12} has more than two parents"; return 1; }
-    shift
-    for p in "$@"; do
-      git merge-base --is-ancestor "$p" origin/main || { carry_why="check a: merge ${c:0:12} takes a parent that is not in origin/main"; return 1; }
-    done
-    # Check b: replay the merge. A clean replay must give the merge's own tree, so the merge added nothing.
-    replay=$(git merge-tree --write-tree "$c^1" "$c^2" 2>/dev/null) || { carry_why="check b: conflicted merge ${c:0:12} needs a new Verdict"; return 1; }
-    replay=${replay%%$'\n'*}
-    [ "$replay" = "$(git rev-parse "$c^{tree}")" ] || { carry_why="check b: merge ${c:0:12} differs from a clean replay"; return 1; }
-  done
-}
 # One reader for the head-checks receipt header: "Checks: PASS|FAIL head=<sha>", then an optional
 # " main=<sha>" and an optional " train-heads=<list>". Anything else on the line is not a receipt.
 # main= is read but never compared: the carry rule and the merge of main already cover a moved main.
@@ -852,9 +849,11 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$text_only" 
       fi
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
-        if ! pr_review_gate_verifier_known "$verifier_id" "$known_dispatches" bad_verdict; then newest_seen=true; continue; fi
-        if ! pr_review_gate_coordinator_verdict "$verifier_id" "$author_id" "$(field .body)" bad_verdict; then newest_seen=true; continue; fi
-        if ! pr_review_gate_same_agent_model "$verifier_id" "$(field .body)" bad_verdict; then newest_seen=true; continue; fi
+        pr_review_gates_resolve_builder_dispatch "$author_id" "$(field .headRefName)" bad_verdict || { newest_seen=true; continue; }
+        builder_dispatch=${PRG_BUILDER_DISPATCH:-}
+        if ! pr_review_gate_verifier_known "$verifier_id" "$builder_dispatch" "$known_dispatches" bad_verdict; then newest_seen=true; continue; fi
+        if ! pr_review_gate_coordinator_verdict "$verifier_id" "$author_id" "$builder_dispatch" bad_verdict; then newest_seen=true; continue; fi
+        if ! pr_review_gate_same_agent_model "$verifier_id" "$builder_dispatch" bad_verdict; then newest_seen=true; continue; fi
         # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
         # or a configured coordinator id.
         if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id" "$verifier_id"; then

@@ -8,6 +8,8 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$here/lib/pr-review-gates.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 python3=${PYTHON:-python3}
 agent_state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
@@ -262,6 +264,9 @@ run_mode() {
     host_check >&2
     "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
       || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
+    case "$worktree_sel" in
+      path:*) pr_review_gates_launch_record_worktree "${worktree_sel#path:}" "$agent" "${model:-unknown}" ;;
+    esac
     exec "$orca" orchestration worker-start --run "$run" --task "$task" --retry-of "$retry_of" \
       --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"} --json
   fi
@@ -318,6 +323,7 @@ run_mode() {
 
   local brief
   brief=$(cat "$spec")
+  pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
   if [ -n "$environment" ]; then
     exec bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
       --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json

@@ -41,32 +41,6 @@ jq -e 'all((.statusCheckRollup // [])[] | select((.isRequired // true) != false)
   ((.status // "COMPLETED") == "COMPLETED") and ((.conclusion // .state // "") == "SUCCESS"))' <<<"$info" >/dev/null \
   || refuse "required checks are not all SUCCESS at head ${head:0:12}"
 
-# 3. Newest Verdict comment (exact post-verdict.sh first-line shape) is PASS or PASS+NOTES.
-verdict_status="" verdict_head=""
-while IFS= read -r flagged && IFS= read -r line; do
-  if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
-    if [ "$flagged" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then continue; fi
-    verifier="${BASH_REMATCH[3]}"
-    author_id="${BASH_REMATCH[4]}"
-    [ "$verifier" != "$author_id" ] || refuse "author cannot supply verifier verdict"
-    pr_review_gate_verifier_known "$verifier" "" refuse
-    verdict_status="${BASH_REMATCH[1]}"
-    verdict_head="${BASH_REMATCH[2]}"
-    break
-  fi
-done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0])}] | reverse[] | .f, .l' <<<"$info")
-[ -n "$verdict_status" ] || refuse "missing Verdict comment on PR $pr"
-case "$verdict_status" in
-  PASS|PASS+NOTES) ;;
-  *) refuse "newest Verdict on PR $pr is $verdict_status" ;;
-esac
-
-pr_body=$(field .body)
-pr_review_gate_self_review "$pr_body" "$head" refuse
-pr_review_gate_coordinator_verdict "$verifier" "$author_id" "$pr_body" refuse
-pr_review_gate_same_agent_model "$verifier" "$pr_body" refuse
-
-# 4. Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
 main_fetched=false
 patch_id() { # <sha>
   local sha=$1 base
@@ -81,6 +55,35 @@ verdict_carry() { # <verdict_head> <current_head>
   pid_h=$(patch_id "$2") || return 1
   [ -n "$pid_v" ] && [ "$pid_v" = "$pid_h" ]
 }
+
+# 3. Newest Verdict comment (exact post-verdict.sh first-line shape) is PASS or PASS+NOTES.
+verdict_status="" verdict_head=""
+while IFS= read -r flagged && IFS= read -r line; do
+  if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
+    if [ "$flagged" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then continue; fi
+    verifier="${BASH_REMATCH[3]}"
+    author_id="${BASH_REMATCH[4]}"
+    [ "$verifier" != "$author_id" ] || refuse "author cannot supply verifier verdict"
+    verdict_status="${BASH_REMATCH[1]}"
+    verdict_head="${BASH_REMATCH[2]}"
+    break
+  fi
+done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0])}] | reverse[] | .f, .l' <<<"$info")
+[ -n "$verdict_status" ] || refuse "missing Verdict comment on PR $pr"
+case "$verdict_status" in
+  PASS|PASS+NOTES) ;;
+  *) refuse "newest Verdict on PR $pr is $verdict_status" ;;
+esac
+
+pr_body=$(field .body)
+pr_review_gates_resolve_builder_dispatch "$author_id" "$(field .headRefName)" refuse
+builder_dispatch=${PRG_BUILDER_DISPATCH:-}
+pr_review_gate_verifier_known "$verifier" "$builder_dispatch" "" refuse
+pr_review_gate_self_review "$pr_body" "$head" refuse verdict_carry
+pr_review_gate_coordinator_verdict "$verifier" "$author_id" "$builder_dispatch" refuse
+pr_review_gate_same_agent_model "$verifier" "$builder_dispatch" refuse
+
+# 4. Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
 if [ "$verdict_head" != "$head" ]; then
   verdict_carry "$verdict_head" "$head" \
     || refuse "verdict head ${verdict_head:0:12} patch-id does not match current head ${head:0:12}"
