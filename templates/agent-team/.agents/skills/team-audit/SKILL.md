@@ -13,9 +13,9 @@ Run `ROLE_RECEIPT_SINCE=<previous audit date> ~/dotfiles/script/team-audit.sh` (
 
 ## 2. Evidenced problems
 
-Find the last audit date from the previous `team-audit` PR. Read only what changed since then (`git log --since <date> -- .claude .agents docs/agents`) and the private log `~/.claude/state/team-observations.md`, which holds only observations that would change a rule. A source you cannot read is a gap to report, never a clean record. Never copy it into a repository or `~/.claude/notes`, which is public.
+Find the last audit date from the previous `team-audit` PR. Read only what changed since then (`git log --since <date> -- .claude .agents docs/agents`) and rows in `.scratch/decisions.tsv` with `phase=obs` or `phase=audit` (append with `show-me-your-work/scripts/log.sh`; use `recall` to rebuild session context). A source you cannot read is a gap to report, never a clean record. Never copy private observations into a repository or `~/.claude/notes`, which is public.
 
-Report a problem only with evidence, and give it one structural fix (a lint, check, script or rule). Use the `writing-for-agents` skill for wording, and the `retro` skill for a failure tied to one session. Name both file lines when rules disagree: owner rules and `~/dotfiles/templates/agent-team/docs/agents/team.md` win, then `.claude/model-routing.md`, then the role file; Orca's `orchestration` skill owns worker lifecycle. No per role write-ups. Once the report is published, delete each observation line you used.
+Report a problem only with evidence, and give it one structural fix (a lint, check, script or rule). Classify recurring failures as `mistake classes` under `correct`; use `poteto-mode/playbooks/eval.md` to keep or revert a proposed rule change. Use `writing-for-agents` for wording. Name both file lines when rules disagree: owner rules and `~/dotfiles/templates/agent-team/docs/agents/team.md` win, then `.claude/model-routing.md`, then the role file; Orca's `orchestration` skill owns worker lifecycle. No per role write-ups.
 
 Team rules and scripts must not grow in total lines; a safety fix may, with the reason stated.
 

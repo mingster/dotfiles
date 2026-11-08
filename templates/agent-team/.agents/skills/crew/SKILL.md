@@ -9,6 +9,8 @@ The objective is the text after `/crew` ($ARGUMENTS). If it is missing, ask for 
 
 Elon owns the objective, dispatch and integration. Read `.claude/agents/elon.md` for the front door and owner decisions, and `.claude/model-routing.md` for provider selection, the usage gate and commit, push and merge authority.
 
+Orchestrate phases (see `poteto-mode/playbooks/orchestrate.md`): **Frame** (steps 0 to 1), **Pilot** (first dispatch), **Scale** (step 2 waves), **Drain** (inbox and completions), **Land** (step 5 integration), **Close** (wrap-up and ledger).
+
 ## Step 0. Fast path
 
 Bugs, chores and small tasks touching 3 files or fewer use `tdd` directly, with `diagnosing-bugs` first when diagnosis is needed. Run the fast checks in team facts. Small reversible documentation changes and lookups need no crew. Use the remaining steps for features across domains and large epics.

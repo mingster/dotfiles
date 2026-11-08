@@ -62,3 +62,18 @@ Read a local skill before using it and confirm it exists. A referenced upstream 
 | Any other unavailable route or bundled script | Skip and state what was omitted and why; ask Elon only if it blocks acceptance. |
 
 The vendored upstream harness adapter applies only when running a Claude worker; this Orca adapter takes precedence. The vendored benchmark-checklist is a principle dependency; apply its measurement guidance through local tools. Do not fetch or install omitted dependencies to satisfy a playbook.
+
+## Unvendored upstream names (read only)
+
+| Upstream name in vendored playbooks | Orca equivalent |
+| --- | --- |
+| `interrogate`, `architect`, `why`, `how` | `grill-with-docs`, `grilling`, `domain-modeling`, `codebase-design` |
+| `arena`, `swarm`, `poteto-agent`, `scripts/orch/orch.ts` | `crew`, `orchestration`, supervised `worker-start` |
+| `scripts/watch-pr/watch-pr` | `script/lead-merge.sh` |
+| `scripts/worktree-audit.sh` | `script/wrap-up.sh` |
+| `figure-it-out`, `reflect`, `automate-me` | Bounded brief plus assigned `diagnosing-bugs`, `handoff`, or project scripts |
+| `deslop`, `no-comments`, `references/bugbot-triage.md` | `code-review` with independent reviewer |
+| `control-ui`, `control-cli` | `agent-browser`, `computer-use` |
+| `create-skill`, `setup-pstack`, `technical-writing`, `visualize` | `writing-for-agents`, `skill-creator`, Mermaid in reports |
+| `typescript-best-practices` | Project `AGENTS.md` and `tsc` |
+| `check-plan.mjs`, `comment-sicko` | Skip; report omission to Elon if acceptance blocks |

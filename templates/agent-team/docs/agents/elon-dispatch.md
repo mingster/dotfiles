@@ -11,10 +11,10 @@
 
 - **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
-- Before framing, dispatching or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
+- Before framing, dispatching or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host worker slots in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Drain and tick loop.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
 - Routing, quota and launch: `.claude/model-routing.md` and `~/.orca/presets.json`.
-- Arm the inbox waiter with a 10 minute timeout and run `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop, on every wake.
+- Arm the inbox waiter with a 10 minute timeout and run `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Drain and tick loop, on every wake.
 - A worker asking to touch a file outside its scope gets an answer at once: decide and comment "Elon decision <date>" on the issue.
 - A defect spotted in review becomes its own issue, never part of the PR under review.
 - Log each owner approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
@@ -23,7 +23,7 @@
 - Elon monitors and steps in only when needed. On builder `worker_done`, Elon starts QA; workers push, diagnose Checks, and fix failures—Elon never patches a branch for routine CI. When gates pass, Elon dispatches a merge worker in `lead-elon` to run `lead-merge.sh` and releases the committer slot.
 - Elon steps in only for: a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
 
-Append to private `~/.claude/state/team-observations.md` only what would change a rule; never in repositories.
+Log only what would change a rule with `show-me-your-work/scripts/log.sh` (`phase=obs` into `.scratch/decisions.tsv`); never commit observations to a repository.
 
 ## Fleet dispatch (owner 2026-11-03)
 
@@ -32,4 +32,4 @@ Append to private `~/.claude/state/team-observations.md` only what would change 
 - **QA placement (owner 2026-11-06):** QA runs on any host except the one Elon is on; pick the lightest by `fleet-load.sh`.
 - **Admission rule (owner 2026-11-04):** start a worker on a host when its 1 minute load divided by cores is under 0.7 and free memory is at least 4 GB. The host caps in the project's `.claude/model-routing.md` are the ceiling, never the target: fill an idle host up to its cap before any host with queued work waits, and keep each host between 0.4 and 0.7 load per core. Read the top processes before blaming workers for a high load (Spotlight, a build or a regression run counts).
 - After the start: confirm acceptance within 2 minutes.
-- Each wake, a free lane plus a startable ticket (accepted document, grill approved where one is needed) means Elon starts it, and never holds it behind a regression or a deploy. Lane counts come from `fleet-load.sh`, never from dispatch notes.
+- Each wake, a free worker slot plus a startable ticket (accepted document, grill approved where one is needed) means Elon starts it, and never holds it behind a regression or a deploy. Slot counts come from `fleet-load.sh`, never from dispatch notes.

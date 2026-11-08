@@ -8,13 +8,13 @@ Read before reporting status or reviewing process performance.
 
 ## Process improvement (owner 2026-10-19)
 
-- Any ticket over 10 minutes from start to MERGED gets a reason or structural fix logged in `~/dotfiles/templates/agent-team/docs/agents/process-review.md` the same wake; finding it is Elon's job.
+- Any ticket whose start to MERGED timebox exceeds 60 minutes gets a reason or structural fix logged the same tick via `show-me-your-work/scripts/log.sh` (`phase=obs`); finding it is Elon's job.
 - Principle: The Algorithm (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Team rules 8). Every change cites the requirement questioned, its owner, and what was deleted.
 - Measures, read weekly from GitHub and Orca, never estimated:
   1. Errors: post-merge defects (a bug or hotfix issue tied to a PR merged in the last 7 days), reverts, owner re-asks, hard stops.
   2. Speed: hours from an issue labelled ready-for-agent (or a hotfix) to its PR MERGED, median.
   3. Throughput: PRs merged per working day that close an issue or ship a reviewed change.
-- Log each finding in `~/dotfiles/templates/agent-team/docs/agents/process-review.md` (evidence, finding, proposal, step of the Algorithm). Apply changes inside Elon's authority at once; protected files and Owner-Reserved items go to the owner with the diff.
+- Log each finding with `log.sh` into `.scratch/decisions.tsv` (`phase=audit`, evidence, finding, Algorithm step). Apply changes inside Elon's authority at once; protected files and Owner-Reserved items go to the owner with the diff.
 
 ## Worker run
 
@@ -24,7 +24,7 @@ Read this before your first dispatch.
 - At start and on every wake, run `orca orchestration worker-list --run <your run> --json` and settle each unreleased dispatch: completed, process its result now; ready, read its screen and answer open questions with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`; stopped or failed, inspect the native projection and follow the supported lifecycle transition in the official Orca orchestration guide (Delivery contract), preserving unmerged work. A new Elon session adopts every live worker this way before new work. A bare `orca orchestration reply` does not wake an idle worker session (approvals sat 10+ minutes), so never use it: `orca-reply.sh` replies and then nudges the terminal, and refuses an empty `--to`.
 - **Cursor worker trust marker:** use `~/dotfiles/script/start-cursor-worker.sh` as described in `.claude/model-routing.md`, Cursor start rule. It creates the worktree and writes `.workspace-trusted` before dispatching the worker.
 
-- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker, merge on checks.
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<unit>`, one Cursor `composer-2.5` worker, merge on checks.
 
 ## Independent inbox watchdog
 
@@ -36,11 +36,11 @@ The inbox waiter script and its output file live in `~/.local/state/agent-team/`
 
 - Permission, not hands: once the owner is signed in (Chrome Dev 9223, Keychain, `fileServer/secrets/`), Elon, RM or QA finish the step (agent-browser, `orca computer`, scripts). Never hand the owner a command an agent can run.
 - A message that needs nothing from the owner is not sent.
-- Ledger: append each owner ask and each answer to `~/.claude/state/elon-owner-asks.md` the turn it arrives (ask, issue, state, next gate). An ask is closed only when it is on production or the owner drops it.
+- Ledger: append each owner ask and each answer to `~/.claude/state/elon-owner-asks.md` the turn it arrives (ask, issue, state, next gate). Log owner decisions that gate merge to `.scratch/decisions.tsv` (`phase=approval`, per ORCA-ADAPTER.md). An ask is closed only when it is on production or the owner drops it.
 
-## Wake loop
+## Drain and tick loop
 
-Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
+Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23): queue and drain deliveries, then tick the fleet checks below.
 
 - After every `worker-start`, run `~/.claude/skills/orca-team/worker-start-check.sh <dispatch>`: exit 1 (failed or not accepted in 2 minutes) means restart once from the same brief. A silent start failure (`agent_not_in_foreground`) once sat unnoticed. Do not open worker panes.
 - `~/dotfiles/script/fleet-pull.sh` on every wake: a host whose dotfiles or main checkout lags breaks the fleet scripts (a lagging `wrap-up.sh` failed on jq). Report skipped dirty checkouts.
@@ -49,7 +49,7 @@ Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 - **Merge once per wake (owner 2026-11-06):** Elon dispatches a merge worker to run one `lead-merge.sh --repo <owner/name> --batch <N> <N>` from `lead-elon` for every PR with a PASS Verdict and green Checks. A batch that stops because main moved runs again next wake.
 - `gh pr list --label needs-elon`: decide each one this wake. `Review: FAIL` beside a PASS Verdict holds the merge until Elon reads the defect and records fix or override on the PR.
 - `worker-watch.sh` on your run and on every run with a live worker (it already includes remote workers). LONG_SESSION means act at once. A reviewer at a usage limit or idle is a stalled gate: restart it on the next `usage-gate.py pick` provider in the same wake. Stalled workers and backup freshness are covered by `fleet-watch.py` on the coordinator host (`docs/agents/fleet-watch.md`), not a separate script.
-- Fewer workers than the gate allows while startable tickets exist is a bottleneck: fill the lanes that turn.
+- Fewer workers than the gate allows while startable tickets exist is a bottleneck: fill the worker slots that turn.
 - Owner ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its owner in the ask's ledger row this wake.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending owner asks as one numbered batch before he leaves; one answer holds at most one ticket.
 - A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.

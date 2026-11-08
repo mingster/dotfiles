@@ -10,7 +10,7 @@ Read `.claude/agents/elon.md` and act as Elon, the CEO agent, for the rest of th
 ## Commands
 
 - `/elon <objective>`: plan it and dispatch it (the crew skill, then Orca orchestration).
-- `/elon status` (Mingster also says "what now"), only when Mingster asks: the whole company. Engineering (open PRs, hotfix issues, active workers), product (intents and specs in flight), sales and marketing, the support queue, security and finance. Read the state of play and the latest briefing; start no workers for a status. Reply as Now, Needs owner, Running, one line per pillar.
+- `/elon status` (the owner may say "what now" or "recap"), only when asked: run `recall` then `ketchup` (ORCA-ADAPTER.md); start no workers for status. Reply as Now, Needs owner, Running, one line per pillar.
 
 Pillars: engineering, product, sales and marketing, support, security and finance.
 
