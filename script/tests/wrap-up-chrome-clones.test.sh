@@ -86,12 +86,13 @@ PATH="$tmp/hermetic:/bin:/usr/bin" bash "$root/script/wrap-up.sh" --apply > "$tm
 check 'failing lsof keeps clone' test -d "$chrome/code_sign_clone.broken"
 check 'failing lsof reports reason' has "Kept Chrome clone $chrome/code_sign_clone.broken (lsof failed)"
 # Without lsof, Chrome clones must stay (macOS: unavailable; Linux: proc scan cannot prove idle).
-mkdir -p "$chrome/code_sign_clone.unknown" "$tmp/no-proc"
+mkdir -p "$chrome/code_sign_clone.unknown"
 rm -f "$tmp/hermetic/lsof"
 mv "$tmp/bin/lsof" "$tmp/lsof.off" 2>/dev/null || true
 case "$(uname -s)" in
   Linux)
-    OSTYPE=linux-gnu WRAP_UP_TEST_PROC_ROOT="$tmp/no-proc" PATH="$tmp/hermetic:/bin" \
+    # No lsof, no fuser, no proc root: path_busy fails closed as lsof unavailable.
+    OSTYPE=linux-gnu WRAP_UP_TEST_PROC_ROOT="$tmp/missing-proc" PATH="$tmp/hermetic:/bin" \
       bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true ;;
   *)
     OSTYPE=darwin PATH="$tmp/hermetic:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true ;;
