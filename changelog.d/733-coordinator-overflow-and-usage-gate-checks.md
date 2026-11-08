@@ -1,0 +1,1 @@
+- Enforce the coordinator load and memory overflow hard gate in `script/fleet-watch.py` and `script/usage-gate-hook.py`, fail closed in `script/usage-gate.py check` when no provider is allowed, and merge `.orca/presets.project.json` over global presets.

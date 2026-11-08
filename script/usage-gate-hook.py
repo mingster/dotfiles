@@ -14,10 +14,11 @@ Fail closed (owner 2026-11-06): a worker-start with no usable reading is denied,
 a worker-start without --agent, gate exit 4 (no or stale reading), any gate error and any error here.
 Every other command passes untouched. Exit 0 always; a block is a JSON permissionDecision of "deny".
 """
-import json, os, re, shlex, subprocess, sys
+import importlib.util, json, os, re, shlex, subprocess, sys
 from datetime import datetime, timezone
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
+FLEET_WATCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet-watch.py")
 GATED = {"claude", "cursor", "antigravity"}
 PUNCT = set(";&|\n()<>")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
@@ -94,6 +95,46 @@ def agents(cmd):
     return [start["provider"] for start in starts(cmd)]
 
 
+def project_presets_path(cwd=None):
+    env_path = os.environ.get("USAGE_GATE_PROJECT_PRESETS")
+    if env_path is not None:
+        return env_path if env_path and os.path.isfile(env_path) else None
+    try:
+        cur = os.path.abspath(cwd or os.getcwd())
+    except OSError:
+        return None
+    while True:
+        candidate = os.path.join(cur, ".orca", "presets.project.json")
+        if os.path.isfile(candidate):
+            return candidate
+        if os.path.exists(os.path.join(cur, ".git")):
+            return None
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def load_roles():
+    path = os.environ.get("USAGE_GATE_PRESETS", os.path.expanduser("~/.orca/presets.json"))
+    with open(path) as f:
+        roles = dict(json.load(f).get("roles", {}))
+    proj_path = project_presets_path()
+    if proj_path:
+        with open(proj_path) as f:
+            proj = json.load(f)
+        if isinstance(proj, dict):
+            proj_roles = proj.get("roles") if isinstance(proj.get("roles"), dict) else {
+                k: v for k, v in proj.items() if isinstance(v, dict) and k not in ("tiers",)
+            }
+            for rname, rval in proj_roles.items():
+                if isinstance(rval, dict) and isinstance(roles.get(rname), dict):
+                    roles[rname] = {**roles[rname], **rval}
+                else:
+                    roles[rname] = rval
+    return roles
+
+
 def routing(start):
     role, provider = start["role"], start["provider"]
     try:
@@ -103,9 +144,7 @@ def routing(start):
             with open(state + "/overrides.log", "a") as f:
                 f.write(json.dumps({"at": datetime.now(timezone.utc).isoformat(), "role": role,
                                    "provider": provider, "reason": start["override"]}) + "\n")
-        path = os.environ.get("USAGE_GATE_PRESETS", os.path.expanduser("~/.orca/presets.json"))
-        with open(path) as f:
-            roles = json.load(f).get("roles", {})
+        roles = load_roles()
         if role not in roles:
             print("usage-gate-hook: no known role prefix; provider pick not enforced.", file=sys.stderr)
             return None
@@ -141,6 +180,32 @@ def reason(provider, d):
             "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 
 
+def coordinator_overflow():
+    try:
+        spec = importlib.util.spec_from_file_location("fleet_watch", FLEET_WATCH)
+        fw = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fw)
+        load_per_core = fw.coordinator_load_per_core()
+        free_gb = fw.coordinator_free_gb()
+        load_breached = load_per_core is not None and load_per_core >= fw.COORDINATOR_MAX_LOAD_PER_CORE
+        mem_breached = free_gb is not None and free_gb < fw.COORDINATOR_MIN_FREE_GB
+        if not load_breached and not mem_breached:
+            return None
+        cfg_path = os.environ.get("FLEET_WATCH_CONFIG") or os.path.expanduser("~/.config/fleet-watch/config.json")
+        config = {}
+        if cfg_path and os.path.isfile(cfg_path):
+            with open(cfg_path) as f:
+                config = json.load(f)
+        receipt = fw.admit(config.get("local_host") or "local", config)
+        if not receipt.get("admitted"):
+            return "Coordinator capacity gate blocked local worker-start: " + (
+                receipt.get("reason") or "load or memory threshold exceeded"
+            )
+    except Exception as exc:
+        return f"Coordinator capacity check failed ({exc}); local worker-start denied."
+    return None
+
+
 def emit(blocked):
     if blocked:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
@@ -167,6 +232,10 @@ def main():
     if any(c.get("remote") for c in commands):
         blocked.append("Refused a direct remote worker-start: use script/start-remote-worker.sh "
                        "with the same arguments.")
+    if commands and any(not c.get("remote") for c in commands):
+        overflow = coordinator_overflow()
+        if overflow:
+            blocked.append(overflow)
     # Repair the preset link first, so the role check below never reads a stale copy.
     subprocess.run([sys.executable, GATE, "link"], capture_output=True, timeout=25)
     for start in commands:
