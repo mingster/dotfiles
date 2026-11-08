@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Daily 19:00 Asia/Taipei staging precheck for Orca fleet automations.
-# Inspects configured project repositories (from FLEET_STAGING_REPOS or fleet-config.json),
+# Inspects configured project repositories (from FLEET_STAGING_REPOS or fleet-pull.json),
 # fetches origin, and compares origin/main with origin/staging (or configured <component>/staging
 # branches in .claude/hooks/guard-config.json). Logs "skip: staging equals main" when up to date,
 # or wakes the active coordinator run via `orca orchestration send` to dispatch release-manager
 # for staging deploy followed by /staging-review (production deploy remains gated on owner approval).
 set -uo pipefail
 
-DOTFILES="${DOTFILES:-${DOTFILES_DIR:-$HOME/dotfiles}}"
 state_dir="${AGENT_STATE_DIR:-$HOME/agent-state}"
+fleet_pull_cfg="${FLEET_PULL_CONFIG:-$state_dir/fleet-pull.json}"
 fleet_watch_cfg="${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}"
 log="${STAGING_DAILY_LOG:-$HOME/.local/state/agent-team/staging-daily.log}"
 orca_cli="${ORCA_CLI_COMMAND:-orca}"
@@ -29,7 +29,7 @@ set_trace_summary() {
 }
 
 resolve_repos() {
-  DOTFILES="$DOTFILES" AGENT_STATE_DIR="$state_dir" FLEET_WATCH_CONFIG="$fleet_watch_cfg" python3 - <<'PY'
+  FLEET_PULL_CONFIG="$fleet_pull_cfg" python3 - <<'PY'
 import json
 import os
 import re
@@ -54,43 +54,17 @@ if raw_env:
             if token.strip():
                 repos.append(expand(token))
 else:
-    state_dir = os.environ.get("AGENT_STATE_DIR") or os.path.expanduser("~/agent-state")
-    dotfiles = os.environ.get("DOTFILES") or os.path.expanduser("~/dotfiles")
-    candidates = [
-        os.environ.get("FLEET_CONFIG") or "",
-        os.environ.get("FLEET_PULL_CONFIG") or "",
-        os.path.join(state_dir, "fleet-config.json"),
-        os.path.join(state_dir, "fleet-pull.json"),
-        os.path.join(dotfiles, "script", "fleet-pull.config.json"),
-    ]
-    for path in candidates:
-        if not path or not os.path.isfile(path):
-            continue
+    path = os.environ.get("FLEET_PULL_CONFIG") or ""
+    if path and os.path.isfile(path):
         try:
             data = json.load(open(path, encoding="utf-8"))
+            items = data.get("repos") or []
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, str) and item.strip():
+                        repos.append(expand(item))
         except Exception:
-            continue
-        items = data.get("staging_repos") or data.get("repos") or []
-        if isinstance(items, list) and items:
-            for item in items:
-                if isinstance(item, str) and item.strip():
-                    repos.append(expand(item))
-                elif isinstance(item, dict) and isinstance(item.get("path"), str):
-                    repos.append(expand(item["path"]))
-            if repos:
-                break
-    if not repos:
-        fw = os.environ.get("FLEET_WATCH_CONFIG") or ""
-        if fw and os.path.isfile(fw):
-            try:
-                data = json.load(open(fw, encoding="utf-8"))
-                roots = (data.get("issue_scan") or {}).get("repo_roots") or {}
-                if isinstance(roots, dict):
-                    for v in roots.values():
-                        if isinstance(v, str) and v.strip():
-                            repos.append(expand(v))
-            except Exception:
-                pass
+            pass
 
 seen = set()
 for r in repos:
@@ -137,75 +111,22 @@ PY
 }
 
 resolve_coordinator_target() {
-  local target=""
-  if [ -n "${FLEET_STAGING_COORDINATOR_RUN:-}" ]; then
-    printf '%s\n' "$FLEET_STAGING_COORDINATOR_RUN"
-    return 0
-  fi
-  if [ -n "${COORDINATOR_RUN_ID:-}" ]; then
-    printf '%s\n' "$COORDINATOR_RUN_ID"
-    return 0
-  fi
-  target=$(FLEET_WATCH_CONFIG="$fleet_watch_cfg" AGENT_STATE_DIR="$state_dir" python3 - <<'PY'
+  FLEET_WATCH_CONFIG="$fleet_watch_cfg" python3 - <<'PY'
 import json
 import os
 
-candidates = [
-    os.environ.get("FLEET_WATCH_CONFIG") or "",
-    os.path.expanduser("~/.claude/state/fleet-watch-elon.json"),
-    os.path.join(os.environ.get("AGENT_STATE_DIR") or os.path.expanduser("~/agent-state"), "fleet-config.json"),
-]
-for path in candidates:
-    if not path or not os.path.isfile(path):
-        continue
+path = os.environ.get("FLEET_WATCH_CONFIG") or ""
+if path and os.path.isfile(path):
     try:
         data = json.load(open(path, encoding="utf-8"))
+        runs = data.get("runs") or []
+        if isinstance(runs, list) and runs and isinstance(runs[0], dict):
+            rid = (runs[0].get("id") or "").strip()
+            if rid:
+                print(rid)
     except Exception:
-        continue
-    runs = data.get("runs") or []
-    if isinstance(runs, list) and runs:
-        first = runs[0] if isinstance(runs[0], dict) else {}
-        rid = (first.get("id") or "").strip()
-        if rid:
-            print(rid)
-            raise SystemExit(0)
-        term = (first.get("terminal") or "").strip()
-        if term:
-            print(term)
-            raise SystemExit(0)
-    scan = data.get("issue_scan") or {}
-    if isinstance(scan, dict):
-        rid = (scan.get("run") or "").strip()
-        if rid:
-            print(rid)
-            raise SystemExit(0)
-        term = (scan.get("from_terminal") or "").strip()
-        if term:
-            print(term)
-            raise SystemExit(0)
+        pass
 PY
-  )
-  if [ -n "$target" ]; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-  target=$({ "$orca_cli" orchestration run-list --json 2>/dev/null || true; } | python3 -c '
-import json, sys
-raw = sys.stdin.read().strip()
-try:
-    data = json.loads(raw)
-    box = data.get("result") if isinstance(data.get("result"), dict) else data
-    runs = (box or {}).get("runs") or []
-    if runs and isinstance(runs[0], dict) and runs[0].get("id"):
-        print(runs[0]["id"])
-except Exception:
-    pass
-')
-  if [ -n "$target" ]; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-  printf 'coordinator\n'
 }
 
 emit "$(date '+%Y-%m-%dT%H:%M:%S%z') staging-daily-1900"
@@ -265,8 +186,8 @@ for repo in "${repos[@]}"; do
   for stage_branch in "${stage_branches[@]}"; do
     stage_sha=$(git -C "$repo" rev-parse --verify -q "refs/remotes/origin/$stage_branch" 2>/dev/null || true)
     if [ -z "$stage_sha" ]; then
-      ahead_count=$(git -C "$repo" rev-list --count "$main_sha" 2>/dev/null || echo 1)
-      stage_short="none"
+      emit "warn: skipping missing origin/$stage_branch in $repo"
+      continue
     elif [ "$stage_sha" = "$main_sha" ]; then
       ahead_count=0
       stage_short=$(git -C "$repo" rev-parse --short "$stage_sha" 2>/dev/null || printf '%s' "$stage_sha")
@@ -300,20 +221,14 @@ ahead_summary=$(printf '%s; ' "${ahead_items[@]}")
 ahead_summary="${ahead_summary%; }"
 
 target=$(resolve_coordinator_target)
-case "$target" in
-  run:*)
-    to_arg="$target"
-    run_arg=("--run" "${target#run:}")
-    ;;
-  term_*)
-    to_arg="$target"
-    run_arg=()
-    ;;
-  *)
-    to_arg="run:$target"
-    run_arg=("--run" "$target")
-    ;;
-esac
+if [ -z "$target" ]; then
+  emit "error: missing coordinator run id in $fleet_watch_cfg"
+  set_trace_summary "missing coordinator run id in $fleet_watch_cfg"
+  exit 1
+fi
+run_id="${target#run:}"
+to_arg="run:$run_id"
+run_arg=("--run" "$run_id")
 
 subject="staging-daily-1900: deploy staging and run /staging-review"
 body="Daily 19:00 Asia/Taipei staging check: origin/main is ahead of staging for ${ahead_summary}. Dispatch release-manager for staging deploy (/deploy staging) and then run /staging-review. Production deploy remains gated on owner approval."

@@ -127,7 +127,7 @@ check 'wake message instructs coordinator to dispatch release-manager' grep -q '
 check 'wake message instructs coordinator to run /staging-review' grep -q '/staging-review' "$ORCA_LOG"
 check 'wake message states production deploy remains gated on owner approval' grep -qi 'production.*owner' "$ORCA_LOG"
 
-# --- 3. Per-component <component>/staging branches in .claude/hooks/guard-config.json & fleet-config.json ---
+# --- 3. Per-component <component>/staging branches in .claude/hooks/guard-config.json & fleet-pull.json ---
 repo_b_bare="$tmp/repo-b.git"
 repo_b="$tmp/repo-b"
 make_repo_with_origin "$repo_b_bare" "$repo_b"
@@ -148,7 +148,7 @@ git -C "$repo_b" push -q origin main
 git -C "$repo_b" push -q origin main:web2/staging
 git -C "$repo_b" push -q origin main:api/staging
 
-cat >"$tmp/state/fleet-config.json" <<EOF
+cat >"$tmp/state/fleet-pull.json" <<EOF
 {
   "hosts": [],
   "repos": ["$repo_b"]
@@ -180,6 +180,71 @@ if grep -q 'api/staging' "$ORCA_LOG"; then
 else
   check 'up-to-date component api/staging is not listed as ahead' true
 fi
+
+# --- 3c. Configured staging branch missing on origin logs warn and skips without waking ---
+repo_c_bare="$tmp/repo-c.git"
+repo_c="$tmp/repo-c"
+make_repo_with_origin "$repo_c_bare" "$repo_c"
+mkdir -p "$repo_c/.claude/hooks"
+cat >"$repo_c/.claude/hooks/guard-config.json" <<'EOF'
+{
+  "stage_branches": [
+    "uncreated/staging"
+  ]
+}
+EOF
+git -C "$repo_c" add .claude/hooks/guard-config.json
+git -C "$repo_c" commit -qm "add guard-config with uncreated staging branch"
+git -C "$repo_c" push -q origin main
+
+log3c="$tmp/staging-daily-3c.log"
+: >"$ORCA_LOG"
+rc3c=0
+FLEET_STAGING_REPOS="$repo_c" STAGING_DAILY_LOG="$log3c" bash "$script" >/dev/null 2>&1 || rc3c=$?
+check 'missing configured staging branch on origin exits 0' test "$rc3c" -eq 0
+check 'missing configured staging branch on origin logs warn' grep -q 'warn:.*origin/uncreated/staging' "$log3c"
+check 'missing configured staging branch on origin logs skip' grep -q 'skip: staging equals main' "$log3c"
+check 'missing configured staging branch on origin sends no wake' test ! -s "$ORCA_LOG"
+
+# --- 3d. Missing coordinator run id in fleet-watch config logs error and exits without sending ---
+empty_fw="$tmp/config/fleet-watch-empty.json"
+cat >"$empty_fw" <<'EOF'
+{
+  "runs": []
+}
+EOF
+log3d="$tmp/staging-daily-3d.log"
+: >"$ORCA_LOG"
+rc3d=0
+FLEET_WATCH_CONFIG="$empty_fw" FLEET_STAGING_REPOS="$repo_a" STAGING_DAILY_LOG="$log3d" bash "$script" >/dev/null 2>&1 || rc3d=$?
+check 'missing coordinator run id exits non-zero' test "$rc3d" -ne 0
+check 'missing coordinator run id logs error' grep -q 'error:.*coordinator run id' "$log3d"
+check 'missing coordinator run id does not call orca' test ! -s "$ORCA_LOG"
+
+# --- 3e. Repo resolution uses only fleet-pull config repos (plus FLEET_STAGING_REPOS) and ignores other fallbacks ---
+fallback_state="$tmp/fallback-state"
+mkdir -p "$fallback_state"
+cat >"$fallback_state/fleet-config.json" <<EOF
+{
+  "repos": ["$repo_a"]
+}
+EOF
+fw_with_roots="$tmp/config/fleet-watch-roots.json"
+cat >"$fw_with_roots" <<EOF
+{
+  "runs": [{"id": "run_coord_1900"}],
+  "issue_scan": {
+    "repo_roots": {"owner/repo-a": "$repo_a"}
+  }
+}
+EOF
+log3e="$tmp/staging-daily-3e.log"
+: >"$ORCA_LOG"
+rc3e=0
+env -u FLEET_STAGING_REPOS AGENT_STATE_DIR="$fallback_state" FLEET_WATCH_CONFIG="$fw_with_roots" STAGING_DAILY_LOG="$log3e" bash "$script" >/dev/null 2>&1 || rc3e=$?
+check 'ignores non-fleet-pull fallbacks exits 0' test "$rc3e" -eq 0
+check 'ignores fleet-config.json and fleet-watch repo_roots fallbacks (no wake)' test ! -s "$ORCA_LOG"
+check 'ignores non-fleet-pull fallbacks and logs no configured repositories' grep -q 'no configured repositories' "$log3e"
 
 # --- 4. Documentation in docs/agents/orca-automations.md ---
 check 'docs/agents/orca-automations.md documents staging-daily-1900' grep -q 'staging-daily-1900' "$doc"
