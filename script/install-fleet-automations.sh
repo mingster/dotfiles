@@ -102,7 +102,10 @@ WEEKLY_UPDATE_LOG=${WEEKLY_UPDATE_LOG:-$HOME/.local/state/agent-team/weekly-upda
 WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-600}  # Orca caps a precheck at 600 s
 FLEET_TOOLCHAIN_LOG=${FLEET_TOOLCHAIN_LOG:-$HOME/.local/state/agent-team/fleet-toolchain.log}
 FLEET_TOOLCHAIN_PRECHECK_TIMEOUT=${FLEET_TOOLCHAIN_PRECHECK_TIMEOUT:-600}
-FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain'
+STAGING_DAILY_LOG=${STAGING_DAILY_LOG:-$HOME/.local/state/agent-team/staging-daily.log}
+STAGING_DAILY_PRECHECK_TIMEOUT=${STAGING_DAILY_PRECHECK_TIMEOUT:-300}
+FLEET_STAGING_DAILY_TIMEZONE=${FLEET_STAGING_DAILY_TIMEZONE:-Asia/Taipei}
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain staging-daily-1900'
 
 precheck_path() {
   local p="$HOME/.local/bin"
@@ -189,6 +192,19 @@ fleet_toolchain_precheck() {
     bash -c "rc=0; bash '$DOTFILES_DIR/script/fleet-pull.sh' || rc=\$?; bash '$DOTFILES_DIR/script/fleet-toolchain-check.sh' --apply || rc=\$?; exit \$rc"
 }
 
+staging_daily_precheck() {
+  local env_args=(
+    "DOTFILES=$DOTFILES_DIR"
+    "AGENT_STATE_DIR=$state_dir"
+    "FLEET_WATCH_CONFIG=$FLEET_WATCH_CONFIG"
+    "STAGING_DAILY_LOG=$STAGING_DAILY_LOG"
+  )
+  [ -n "${FLEET_STAGING_REPOS:-}" ] && env_args+=("FLEET_STAGING_REPOS=$FLEET_STAGING_REPOS")
+  automation_wrap staging-daily-1900 "$STAGING_DAILY_LOG" \
+    env "${env_args[@]}" \
+    bash "$DOTFILES_DIR/script/automation-precheck-staging-daily.sh"
+}
+
 list_json() {
   "$orca_cli" automations list --json
 }
@@ -259,7 +275,7 @@ print("path:" + os.environ["WANT"])
 }
 
 ensure_automation() {
-  local name=$1 trigger=$2 precheck=$3 timeout=$4 enabled=$5
+  local name=$1 trigger=$2 precheck=$3 timeout=$4 enabled=$5 tz=${6:-$FLEET_AUTOMATIONS_TIMEZONE}
   local existing id
   if existing=$(automation_by_name "$name" 2>/dev/null); then
     id=$(AUTOMATION_ROW="$existing" python3 - <<'PY'
@@ -269,7 +285,7 @@ PY
 )
     if AUTOMATION_ROW="$existing" AUTOMATION_WANT_TRIGGER="$trigger" \
       AUTOMATION_WANT_PRECHECK="$precheck" AUTOMATION_WANT_TIMEOUT="$timeout" \
-      AUTOMATION_WANT_ENABLED="$enabled" python3 - <<'PY'
+      AUTOMATION_WANT_ENABLED="$enabled" AUTOMATION_WANT_TIMEZONE="$tz" python3 - <<'PY'
 import json, os
 cur = json.loads(os.environ["AUTOMATION_ROW"])
 want_enabled = os.environ["AUTOMATION_WANT_ENABLED"] == "1"
@@ -282,19 +298,22 @@ if int(pc.get("timeoutSeconds") or 0) != int(os.environ["AUTOMATION_WANT_TIMEOUT
     raise SystemExit(1)
 if bool(cur.get("enabled")) != want_enabled:
     raise SystemExit(1)
+want_tz = os.environ.get("AUTOMATION_WANT_TIMEZONE") or ""
+if want_tz and (cur.get("timezone") or "") != want_tz:
+    raise SystemExit(1)
 PY
     then
       echo "install-fleet-automations: $name unchanged (${id})"
       return 0
     fi
     if [ "$enabled" = 1 ]; then
-      run_orca_json "$orca_cli" automations edit "$id" \
+      FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations edit "$id" \
         --trigger "$trigger" \
         --precheck "$precheck" \
         --precheck-timeout "$timeout" \
         --enabled
     else
-      run_orca_json "$orca_cli" automations edit "$id" \
+      FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations edit "$id" \
         --trigger "$trigger" \
         --precheck "$precheck" \
         --precheck-timeout "$timeout" \
@@ -308,7 +327,7 @@ PY
     return 0
   fi
   if [ "$enabled" = 1 ]; then
-    run_orca_json "$orca_cli" automations create \
+    FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations create \
       --name "$name" \
       --trigger "$trigger" \
       --prompt "$AUTOMATION_PROMPT" \
@@ -319,7 +338,7 @@ PY
       --precheck-timeout "$timeout" \
       --enabled
   else
-    run_orca_json "$orca_cli" automations create \
+    FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations create \
       --name "$name" \
       --trigger "$trigger" \
       --prompt "$AUTOMATION_PROMPT" \
@@ -331,7 +350,7 @@ PY
       --disabled
   fi
   if [ "$dry" = 1 ]; then
-    echo "install-fleet-automations: would create $name"
+    echo "install-fleet-automations: would create $name ($trigger${tz:+ $tz})"
   else
     echo "install-fleet-automations: $name created"
   fi
@@ -389,6 +408,7 @@ case "$action" in
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" 0
     ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" 0
     ensure_automation fleet-toolchain '0 5 * * *' "$(fleet_toolchain_precheck)" "$FLEET_TOOLCHAIN_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation staging-daily-1900 '0 19 * * *' "$(staging_daily_precheck)" "$STAGING_DAILY_PRECHECK_TIMEOUT" "$enabled" "$FLEET_STAGING_DAILY_TIMEZONE"
     ;;
   uninstall)
     for name in $FLEET_AUTOMATION_NAMES; do

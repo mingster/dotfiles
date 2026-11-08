@@ -1,0 +1,1 @@
+Register daily 19:00 Asia/Taipei `staging-daily-1900` Orca automation and `script/automation-precheck-staging-daily.sh` precheck to skip when staging matches `origin/main` and otherwise wake the coordinator for staging deploy and `/staging-review` (#734).
