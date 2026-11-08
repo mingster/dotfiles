@@ -6,8 +6,8 @@
 # PRs preflight refuses and merges the rest.
 # --mechanical: mechanical lane (pure text substitution or deletion); replaces the Verdict, nothing else.
 # --verdict-from <owner/dotfiles#N>: a configured repo PR whose changed files are all generated team copies
-#   (inside a skill dir that sync-team-skills.sh owns), with sync-team-skills.sh
-#   --check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
+#   (paths that agent-team.sh syncs from templates/agent-team), with agent-team.sh
+#   check passing at the head, merges on the newest PASS Verdict of that MERGED dotfiles PR instead of its own.
 # One merge run per repo: a lead-merge.lock/ directory in the git common dir (pid and start time) is held from
 #   the start of the run to the last merge and released before cleanup. A second run waits up to
 #   LEAD_MERGE_LOCK_WAIT_SECONDS (default 1200), printing the holder, then refuses. A lock whose pid is gone is stale.
@@ -457,6 +457,10 @@ check_owner_only_paths
 if [ -z "$verdict_from" ]; then
   tmpl_skills="$(cd "$(dirname "$0")/.." && pwd)/templates/agent-team/.agents/skills"
   while IFS= read -r f; do
+    case "$f" in
+      .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+        refuse "PR edits generated team copy $f; edit the dotfiles template, re-sync, then merge with --verdict-from" ;;
+    esac
     if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)/ ]] && [ -f "$tmpl_skills/${BASH_REMATCH[2]}/SKILL.md" ]; then
       refuse "PR edits generated team copy $f; edit the dotfiles template, re-sync, then merge with --verdict-from"
     fi
@@ -732,21 +736,25 @@ if [ -n "$verdict_from" ]; then
   skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true) \
     || die "cannot list dotfiles team skills"
   while IFS= read -r f; do
-    # Only paths sync-team-skills.sh owns count: a header string inside a file proves nothing, and
-    # sync-team-skills.sh --check below byte-verifies every file in those directories.
+    # Only paths agent-team.sh syncs from templates/agent-team count: a header string inside a file proves nothing,
+    # and agent-team.sh check below byte-verifies every managed file in the repository.
     gen=false
+    case "$f" in
+      .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+        gen=true ;;
+    esac
     if [[ "$f" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"; then gen=true; fi
     if [ "$gen" = true ]; then
-      # A symlink is allowed only as the skills link itself (.claude|.cursor/skills/<name>); sync --check does not list other links.
       mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
-      if [ "$mode" = 120000 ] && ! [[ "$f" =~ ^\.(claude|cursor)/skills/[^/]+$ ]]; then die "--verdict-from refuses symlink $f"; fi
+      if [ "$mode" = 120000 ]; then die "--verdict-from refuses symlink $f"; fi
     fi
     [ "$gen" = true ] || die "--verdict-from needs every changed file to be a generated team copy; $f is not"
   done < <(jq -r '.[]' <<<"$files")
   sync_dir=$(mktemp -d); trap 'rc=$?; rm -rf "$sync_dir"; lock_release "$rc"' EXIT
-  git archive "$head" .agents .claude .cursor 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
-  DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/sync-team-skills.sh" --check "$sync_dir" >&2 \
-    || die "sync-team-skills.sh --check fails at head $head"
+  git archive "$head" 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
+  git -C "$sync_dir" init -q 2>/dev/null || true
+  (export DOTFILES="$dotfiles_root"; bash "$dotfiles_root/script/agent-team.sh" check "$sync_dir" >&2) \
+    || die "agent-team.sh check fails at head $head"
   src=$(gh pr view "$src_pr" --repo "$src_repo" --json state,headRefOid,comments) || die "cannot read $verdict_from"
   [ "$(jq -r .state <<<"$src")" = MERGED ] || die "$verdict_from is not MERGED"
   src_head=$(jq -r .headRefOid <<<"$src")

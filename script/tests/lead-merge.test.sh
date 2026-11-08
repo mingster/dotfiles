@@ -555,12 +555,18 @@ else echo "FAIL lead-y worktree removed" > "$ucd/result.9999"; fi
 unit; (
 unit_init
 copy_setup
-DOTFILES="$here/.." bash "$here/sync-team-skills.sh" "$REAL_PATCH_REPO" >/dev/null 2>&1
+DOTFILES="$here/.." bash "$here/agent-team.sh" project "$REAL_PATCH_REPO" --project-name acme >/dev/null 2>&1
+echo "# old" > "$REAL_PATCH_REPO/docs/agents/team.md"
+echo "# old" >> "$REAL_PATCH_REPO/bin/changelog-compile.sh"
+"$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm seed-base
+base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+"$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+DOTFILES="$here/.." bash "$here/agent-team.sh" sync "$REAL_PATCH_REPO" --project-name acme >/dev/null 2>&1
 copy_commit
 comments=""; REPO=acme/project-alpha; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
 # Fixture dotfiles root: a git repo whose origin/main matches its templates (the gate reads its own checkout).
-fx="$ucd/dot"; mkdir -p "$fx/script"
-cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"; cp -R "$here/lib" "$fx/script/lib"; cp -R "$here/../templates" "$fx/templates"
+fx="$ucd/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
+cp "$here/lead-merge.sh" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"; cp -R "$here/lib" "$fx/script/lib"; cp -R "$here/../templates" "$fx/templates"; cp -R "$here/../.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
 "$REAL_GIT" -C "$fx" init -q -b main && "$REAL_GIT" -C "$fx" add . && "$REAL_GIT" -C "$fx" -c user.name=t -c user.email=t@t commit -qm fx
 "$REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
 LEAD_MERGE="$fx/script/lead-merge.sh"
@@ -603,27 +609,27 @@ printf '<!-- Generated from dotfiles templates/agent-team/.agents/skills/x by sc
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
 check "verdict-from refuses a file that only carries the header string" 1 'spoof.md is not'
-# A hand edited generated copy fails sync-team-skills --check.
+# A hand edited generated copy fails agent-team.sh check.
 "$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
-f=$(ls "$REAL_PATCH_REPO"/.agents/skills/*/SKILL.md | head -n1); echo "hand edit" >> "$f"
+echo "hand edit" >> "$REAL_PATCH_REPO/docs/agents/team.md"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm edit
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
-check "verdict-from refuses a hand edited generated copy" 1 'sync-team-skills.sh --check fails'
-# A symlink slipped into an owned skill directory is refused (sync --check lists regular files only).
+check "verdict-from refuses a hand edited generated copy" 1 'agent-team.sh check fails'
+# A symlink slipped into a managed path is refused.
 "$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
-d=$(ls -d "$REAL_PATCH_REPO"/.agents/skills/*/ | head -n1); ln -s /etc/passwd "$d/evil"
+ln -sf /etc/passwd "$REAL_PATCH_REPO/docs/agents/team.md"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm link
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
 check "verdict-from refuses a symlink inside an owned skill directory" 1 'refuses symlink'
 # A PR that changes a template must not vouch for its own generated copies: the dotfiles tree has to match origin/main.
 "$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
-echo "unmerged template edit" >> "$(ls "$fx"/templates/agent-team/.agents/skills/*/SKILL.md | head -n1)"
+echo "unmerged template edit" >> "$fx/templates/agent-team/docs/agents/team.md"
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
 check "verdict-from refuses when the dotfiles tree differs from origin/main for templates/agent-team" 1 'not at origin/main'
-# An untracked template file is invisible to git diff but sync-team-skills.sh copies it, so it must be refused too.
+# An untracked template file is invisible to git diff but agent-team.sh copies it, so it must be refused too.
 "$REAL_GIT" -C "$fx" checkout -q -- templates/agent-team
 echo "untracked" > "$fx/templates/agent-team/untracked-template.md"
 check "verdict-from refuses an untracked file under templates/agent-team" 1 'not at origin/main'
