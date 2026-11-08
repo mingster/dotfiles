@@ -1624,7 +1624,7 @@ sweep_browsers
 if [ "$worktrees_only" -eq 1 ]; then
   [ "$main_update" -eq 0 ] || update_main
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
-  printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
+  printf 'removed worktrees=%s orca records=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$orca_removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
   missing_lsof_summary
   finish
