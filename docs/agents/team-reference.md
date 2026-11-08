@@ -130,6 +130,31 @@ A builder never reviews its own PR. Review has two layers after Actions Checks p
 
 Standard depth is one read. Strong depth adds a stronger model and the security check for money, sign-in, schema, hooks and workflows. A script picks the depth from the file list. Changes only to docs and changelog pass with no agent.
 
+### Team tools
+
+These are the only team tools we keep or build. Full contracts live in each project's process spec.
+
+| Tool | Job | Runs |
+| --- | --- | --- |
+| Orca automation | Starts every scheduled script. A script only job uses a precheck, so it spends no AI quota | On schedule |
+| [`fleet-watch.py`](script/fleet-watch.py) | The 5 minute run: copies usage readings, reruns failed workflows once, finds stuck workers, checks backups, starts ready issues, runs the babysit pass | Every 5 minutes on the coordinator |
+| [`usage-gate.py`](script/usage-gate.py) | Blocks a worker start at 95% of a weekly limit or with no fresh reading. Paid overage needs the owner's approval with an amount and an expiry | Every worker start |
+| [`heavy-gate.py`](script/heavy-gate.py) | Holds Playwright and production builds on each host; type checks use measure mode with no slot | Every Playwright run, build and full `tsc` |
+| `worker-startup` | Brings a host and worktree up to date, then starts the worker. A host that cannot be fixed takes no work | Daily, and before each worker |
+| [`head-checks.sh`](script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with main | Every PR push |
+| Review and Verdict | Actions Review (`script/pr-review.sh`) and verifier Verdict ([`post-verdict.sh`](script/post-verdict.sh)) | After Checks pass |
+| [`ship.sh`](script/ship.sh) | Shipping run: checks `git patch-id` against the verifier Verdict, squash merges and reads the PR back as merged | When Checks and Verdict pass |
+| [`wrap-up.sh`](script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Add `--apply` to run it by hand | Every 10 minutes on every host |
+| `/deploy` | Moves a commit to staging or production | Daily, or on the owner's go |
+| `/staging-review` | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
+| Test selection | Compares with the last green staging commit and follows real imports | Every staging review |
+| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the owner's yes | Weekly |
+| [`team-audit.sh`](script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the owner's word |
+| `/elon status` | "what now": waiting on the owner, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
+| Agent state backup | Private repository with memory, schedules and host config, used to rebuild the coordinator | Every 10 minutes |
+
+Project hooks stay small: a command guard for production, secrets and destructive commands, the three strike stop and the worker turn limit.
+
 ## Agent team template
 
 Use `script/agent-team.sh` for machine setup, new projects and safe reset previews. See [Agent team setup](agent-team-setup.md) for commands, backups and owner steps.

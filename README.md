@@ -109,7 +109,9 @@ Canonical team templates live under `templates/agent-team/`. Each project's `doc
 
 ## Tools
 
-Scheduled scripts, fleet watch, usage and heavy gates, worker startup, head checks, review helpers, ship, wrap up, deploy and audit tools are listed in [Agent team reference](docs/agents/team-reference.md#tools). Project hooks stay small: command guards, strike limits and worker turn limits.
+These are the only team tools we keep or build. Full contracts live in each project's process spec. The Job and Runs table is in [Agent team reference](docs/agents/team-reference.md#team-tools).
+
+Project hooks stay small: a command guard for production, secrets and destructive commands, the three strike stop and the worker turn limit.
 
 ## Engineering workflow
 
