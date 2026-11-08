@@ -1,0 +1,1 @@
+Fail closed in `script/automation-precheck-staging-daily.sh` when the coordinator run id is absent from the fleet-watch config, warn and skip when a configured staging branch is missing on `origin`, and resolve repositories only from the fleet-pull config `repos` list plus `FLEET_STAGING_REPOS` (#744).
