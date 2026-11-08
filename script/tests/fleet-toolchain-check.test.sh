@@ -161,7 +161,7 @@ done
 check "never checks or reports codex" "$(echo "$probe_out" | grep -qi 'codex' && echo 1 || echo 0)"
 
 # Missing tool exits non-zero
-rm -f "$remote_bin/shellcheck"
+rm -f "$remote_bin/agy"
 miss_out=$(
   PATH="$fake_bin:/usr/bin:/bin" \
   FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" \
@@ -173,8 +173,8 @@ miss_out=$(
 )
 miss_rc=$?
 check "missing tool exits non-zero" "$([ "$miss_rc" -ne 0 ] && echo 0 || echo 1)"
-check "missing tool prints missing line" "$(echo "$miss_out" | grep -q 'worker-a shellcheck missing'; echo $?)"
-make_tool "$remote_bin" shellcheck $'ShellCheck\nversion: 0.11.0'
+check "missing tool prints missing line" "$(echo "$miss_out" | grep -q 'worker-a agy missing'; echo $?)"
+make_tool "$remote_bin" agy "1.5.2"
 
 # Unreadable version exits non-zero
 make_tool "$remote_bin" claude "error: unreadable"
