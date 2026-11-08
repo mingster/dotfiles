@@ -196,7 +196,8 @@ script/adopt-agent-team.sh
 script/agent-team.sh
 script/agent-team.test.sh
 script/team-audit.sh
-script/team-audit.test.sh
+script/tests/team-audit.test.sh
+script/tests/team-audit-log.test.sh
 script/lead-merge.sh
 script/weekly-skill-impact.sh
 script/tests/release-guard-rules.sh

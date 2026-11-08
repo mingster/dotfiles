@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# Tests for team-audit.sh (--log, --report --times, plus the existing check suite).
+# Tests for team-audit.sh (--log, --report --times).
 set -uo pipefail
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-
-if [ "${SKIP_EXISTING_TEAM_AUDIT_TESTS:-0}" != "1" ]; then
-  bash "$here/tests/team-audit.test.sh" || exit 1
-fi
 
 pass=0
 fail=0
