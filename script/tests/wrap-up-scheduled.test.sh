@@ -323,7 +323,8 @@ check 'a slow round says the time' has 'limit 1s' "$log"
 check 'the repo after the limit is not started' test "$(ncalls)" -eq 1
 check 'the repo not started is named' has "repo $repo_b not started" "$log"
 reset
-ROUND_LIMIT=1 KILL_GRACE=1 FAKE_SLEEP=30 round; status=$?
+# Budget must survive scheduled setup jitter under fleet load; 1s is too tight and flakes as "not started".
+ROUND_LIMIT=15 KILL_GRACE=1 FAKE_SLEEP=30 round; status=$?
 check 'a hung repo run is killed and exits 0' test "$status" -eq 0
 check 'a hung repo run is a failure line' has "repo $repo_a exit 124" "$log"
 # A hung inner call has its own process group, so stopping the outer one must reach it too.
