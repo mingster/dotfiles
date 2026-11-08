@@ -70,6 +70,11 @@ def status_rollup_failure_at_head(pr, head):
     )
 
 
+def checks_receipt_at_head(pr):
+    head = pr.get('headRefOid') or ''
+    return newest_receipt_kind(pr.get('comments'), 'Checks', head) in ('PASS', 'FAIL')
+
+
 def merge_refuse_review_fail(pr, head):
     """Lead-merge preflight: refuse when the newest Review receipt at head is FAIL."""
     return newest_receipt_kind(pr.get('comments'), 'Review', head) == 'FAIL'
@@ -134,11 +139,14 @@ def main(argv=None):
     sub.add_parser('review-failed', help='exit 0 when rework review/verdict failed at head')
     sub.add_parser('status-rollup-failure', help='exit 0 when rollup failure blocks merge')
     sub.add_parser('rework-checks-review', help='exit 0 when receipt side of rework applies')
+    sub.add_parser('checks-receipt-at-head', help='exit 0 when Checks PASS or FAIL exists at head')
 
     args = parser.parse_args(argv)
     pr = _load_pr(sys.stdin)
     head = args.head or pr.get('headRefOid') or ''
 
+    if args.cmd == 'checks-receipt-at-head':
+        return 0 if checks_receipt_at_head(pr) else 1
     if args.cmd == 'merge-refuse-review':
         return 0 if merge_refuse_review_fail(pr, head) else 1
     if args.cmd == 'review-failed':

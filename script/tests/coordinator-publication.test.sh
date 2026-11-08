@@ -932,12 +932,19 @@ stamp=$(find "$COORDINATOR_PUBLICATION_STATE_DIR/post-push" -name '*.env' 2>/dev
   || bad "missing coordinator post-push stamp under $COORDINATOR_PUBLICATION_STATE_DIR"
 hc_count=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" || true)
 owd_count=$(grep -c 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" || true)
+pp_pr=$(jq -s '[.[] | select(.headRefName=="feat-post-push")][0]' "$MF_GH_DIR"/pr-*.json)
+pp_num=$(jq -r '.number' <<<"$pp_pr")
+pp_head=$(jq -r '.headRefOid' <<<"$pp_pr")
+jq --arg b "Checks: PASS head=$pp_head" \
+  '.comments += [{body:$b, createdAt:"2026-11-08T00:00:00Z"}]' \
+  "$MF_GH_DIR/pr-$pp_num.json" > "$MF_GH_DIR/pr-$pp_num.json.tmp" \
+  && mv "$MF_GH_DIR/pr-$pp_num.json.tmp" "$MF_GH_DIR/pr-$pp_num.json"
 out=$(pub --keep-receipt feat-post-push --run run_x --author-family claude --from term_fixture); code=$?
 say "$code" "second publication is idempotent for post-push jobs" "$out"
 sleep 1
 hc_after=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null || true)
 owd_after=$(grep -c 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null || true)
-[ "$hc_after" -eq "$hc_count" ] && ok "post-push stamp prevents duplicate head-checks" || bad "duplicate head-checks lines"
+[ "$hc_after" -eq "$hc_count" ] && ok "Checks receipt prevents duplicate head-checks" || bad "duplicate head-checks lines"
 [ "$owd_after" -eq "$owd_count" ] && ok "post-push stamp prevents duplicate reviewer" || bad "duplicate reviewer lines"
 
 echo "passed $pass, failed $fail"
