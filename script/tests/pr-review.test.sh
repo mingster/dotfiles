@@ -164,6 +164,36 @@ grep -qi 'style.*never a FAIL' "$tmp/claude-args" || fail "prompt says style is 
 grep -qi 'every defect' "$tmp/claude-args" || fail "prompt says to name every defect"
 grep -qi 'customer-visible' "$tmp/claude-args" || fail "prompt names customer-visible failure first"
 grep -qi 'changelog' "$tmp/claude-args" || fail "prompt says changelog-only claims are notes not FAIL alone"
+[ -s "$root/script/review-prompt.txt" ] || fail "script/review-prompt.txt exists and is non-empty"
+while IFS= read -r prompt_line || [ -n "$prompt_line" ]; do
+  [ -n "$prompt_line" ] || continue
+  grep -Fq -- "$prompt_line" "$tmp/claude-args" || fail "prompt contains review-prompt.txt with PR number substituted"
+done < <(sed 's/{{PR}}/7/g' "$root/script/review-prompt.txt")
+! grep -Fq '{{PR}}' "$tmp/claude-args" || fail "prompt substitutes {{PR}}"
+
+# Missing or empty review-prompt.txt fails closed with a one-line reason
+rm -f "$tmp/posted" "$tmp/claude-args"
+mkdir -p "$tmp/no-prompt-script"
+cp "$root/script/pr-review.sh" "$tmp/no-prompt-script/pr-review.sh"
+if FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY="fake/o" \
+  REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY="claude" \
+  bash "$tmp/no-prompt-script/pr-review.sh" 7 "$sha" >"$tmp/missing-prompt.out" 2>&1; then
+  fail "missing review-prompt.txt must exit non-zero"
+fi
+[ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "missing review-prompt.txt fails closed before invoking agent or posting"
+[ -s "$tmp/missing-prompt.out" ] && [ "$(wc -l <"$tmp/missing-prompt.out" | tr -d ' ')" -eq 1 ] \
+  || fail "missing review-prompt.txt prints a one-line reason"
+
+: > "$tmp/no-prompt-script/review-prompt.txt"
+if FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY="fake/o" \
+  REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY="claude" \
+  bash "$tmp/no-prompt-script/pr-review.sh" 7 "$sha" >"$tmp/empty-prompt.out" 2>&1; then
+  fail "empty review-prompt.txt must exit non-zero"
+fi
+[ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "empty review-prompt.txt fails closed before invoking agent or posting"
+[ -s "$tmp/empty-prompt.out" ] && [ "$(wc -l <"$tmp/empty-prompt.out" | tr -d ' ')" -eq 1 ] \
+  || fail "empty review-prompt.txt prints a one-line reason"
+run
 
 grep -q 'issue 41 asks for a refund button' "$tmp/seen-issues" || fail "the reviewer gets the linked issue text"
 
