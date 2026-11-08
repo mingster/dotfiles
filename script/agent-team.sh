@@ -574,6 +574,7 @@ GUARD_DEFAULT_PROMOTE = {
 
 GUARD_DEFAULTS = {
     "production_hosts": [],
+    "backstop_hosts": [],
     "stage_branches": [],
     "promote_scripts": GUARD_DEFAULT_PROMOTE,
     "rollback_scripts": ["rollback-production.sh"],
@@ -590,6 +591,8 @@ GUARD_DEFAULTS = {
     "sign_in_script": "",
     "secrets_stdin_ok": [],
     "worktree_env_allow": [".env.example", ".env.sample", ".env.template"],
+    "host_deploy_commands": {},
+    "remote_read_only": [],
 }
 
 GUARD_CONST_MAP = {
@@ -610,6 +613,8 @@ GUARD_CONST_MAP = {
     "SIGN_IN_SCRIPT": "sign_in_script",
     "SECRETS_STDIN_OK": "secrets_stdin_ok",
     "WORKTREE_ENV_ALLOW": "worktree_env_allow",
+    "HOST_DEPLOY_COMMANDS": "host_deploy_commands",
+    "REMOTE_READ_ONLY": "remote_read_only",
 }
 
 MANAGED_AGENTS_SECTIONS = (
@@ -627,36 +632,67 @@ def json_equal(a, b):
     return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-def eval_guard_ast(node, errors, ctx):
+def eval_guard_ast(node, errors, ctx, env=None):
+    # Literal values, plus what project guards build them from: names bound earlier at module level
+    # (env), f-strings over those names, list comprehensions, re.compile, os.path.join and
+    # os.path.expanduser("~"), which stays "~" so the config does not pin the migrating machine's HOME.
+    env = env or {}
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, (ast.List, ast.Tuple)):
-        return [eval_guard_ast(elt, errors, ctx) for elt in node.elts]
+        return [eval_guard_ast(elt, errors, ctx, env) for elt in node.elts]
     if isinstance(node, ast.Set):
-        return [eval_guard_ast(elt, errors, ctx) for elt in node.elts]
+        return [eval_guard_ast(elt, errors, ctx, env) for elt in node.elts]
     if isinstance(node, ast.Dict):
         out = {}
         for k_node, v_node in zip(node.keys, node.values):
-            key = eval_guard_ast(k_node, errors, ctx)
+            key = eval_guard_ast(k_node, errors, ctx, env) if k_node is not None else None
             if not isinstance(key, str):
                 errors.append(f"non-string dict key in {ctx}")
                 return None
-            val = eval_guard_ast(v_node, errors, ctx)
+            val = eval_guard_ast(v_node, errors, ctx, env)
             out[key] = val
         return out
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for v in node.values:
+            if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                parts.append(v.value)
+            elif isinstance(v, ast.FormattedValue) and v.conversion == -1 and v.format_spec is None:
+                val = eval_guard_ast(v.value, errors, ctx, env)
+                if not isinstance(val, (str, int)) or isinstance(val, bool):
+                    errors.append(f"f-string field in {ctx} is not a string")
+                    return None
+                parts.append(str(val))
+            else:
+                errors.append(f"unsupported f-string field in {ctx}")
+                return None
+        return "".join(parts)
+    if isinstance(node, ast.ListComp):
+        gens = node.generators
+        if len(gens) != 1 or gens[0].ifs or gens[0].is_async or not isinstance(gens[0].target, ast.Name):
+            errors.append(f"unsupported comprehension in {ctx}")
+            return None
+        items = eval_guard_ast(gens[0].iter, errors, ctx, env)
+        if not isinstance(items, list):
+            errors.append(f"comprehension in {ctx} does not loop over a literal list")
+            return None
+        return [eval_guard_ast(node.elt, errors, ctx, {**env, gens[0].target.id: item}) for item in items]
     if isinstance(node, ast.Call):
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr == "compile"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "re"
-            and node.args
-        ):
-            pat = eval_guard_ast(node.args[0], errors, ctx)
-            if isinstance(pat, str):
-                return pat
+        func = ast.unparse(node.func)
+        if node.keywords or any(isinstance(a, ast.Starred) for a in node.args):
+            errors.append(f"unsupported call in {ctx}")
+            return None
+        args = [eval_guard_ast(a, errors, ctx, env) for a in node.args]
+        if func == "re.compile" and args:
+            if isinstance(args[0], str):
+                return args[0]
             errors.append(f"re.compile pattern in {ctx} is not a string literal")
             return None
+        if func == "os.path.join" and args and all(isinstance(a, str) for a in args):
+            return os.path.join(*args)
+        if func == "os.path.expanduser" and args == ["~"]:
+            return "~"
         errors.append(f"unsupported call in {ctx}")
         return None
     if isinstance(node, ast.Name):
@@ -666,12 +702,42 @@ def eval_guard_ast(node, errors, ctx):
             return False
         if node.id == "None":
             return None
+        if node.id in env:
+            return env[node.id]
         errors.append(f"unsupported name {node.id} in {ctx}")
         return None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
         return -node.operand.value
     errors.append(f"unsupported expression in {ctx}")
     return None
+
+
+def bind_guard_names(node, env):
+    # Track module-level names for eval_guard_ast. A name whose value cannot be evaluated is dropped,
+    # so a guard constant built from it still fails closed.
+    if isinstance(node, ast.Assign):
+        targets, value = node.targets, node.value
+    elif isinstance(node, ast.AnnAssign) and node.value is not None:
+        targets, value = [node.target], node.value
+    else:
+        return
+    for t in targets:
+        if isinstance(t, ast.Name):
+            pairs = [(t.id, value)]
+        elif isinstance(t, ast.Tuple) and all(isinstance(e, ast.Name) for e in t.elts):
+            if isinstance(value, ast.Tuple) and len(value.elts) == len(t.elts):
+                pairs = [(e.id, v) for e, v in zip(t.elts, value.elts)]
+            else:
+                pairs = [(e.id, None) for e in t.elts]
+        else:
+            continue
+        for name, v_node in pairs:
+            errs = []
+            val = eval_guard_ast(v_node, errs, name, env) if v_node is not None else None
+            if v_node is None or errs:
+                env.pop(name, None)
+            else:
+                env[name] = val
 
 
 def normalize_promote_rule_entry(script, rule):
@@ -771,7 +837,7 @@ def normalize_guard_value(key, raw, errors, ctx):
         return raw
     if key == "promote_scripts":
         return raw
-    if key in ("production_hosts", "rollback_scripts", "apply_scripts", "blocked_scripts"):
+    if key in ("production_hosts", "backstop_hosts", "rollback_scripts", "apply_scripts", "blocked_scripts"):
         if isinstance(raw, (set, tuple, list)):
             lst = sorted({str(x) for x in raw if str(x).strip()})
         else:
@@ -793,6 +859,8 @@ def normalize_guard_value(key, raw, errors, ctx):
         if isinstance(raw, str):
             if raw == DEFAULT_SECRETS_DIR_PATTERN or raw == GUARD_DEFAULTS["secrets_dir"]:
                 return None
+            if re.fullmatch(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+", raw):
+                return raw
             extra = re.search(r"\\\.([A-Za-z0-9._-]+)", raw)
             if extra:
                 return f".{extra.group(1)}"
@@ -812,6 +880,25 @@ def normalize_guard_value(key, raw, errors, ctx):
         if not patterns:
             return None
         return patterns
+    if key == "host_deploy_commands":
+        if not isinstance(raw, dict) or not all(
+            isinstance(cmds, list) and all(isinstance(c, str) and c.strip() for c in cmds)
+            for cmds in raw.values()
+        ):
+            errors.append(f"{ctx}: HOST_DEPLOY_COMMANDS must map each ssh target to a list of strings")
+            return None
+        return {host.strip(): list(cmds) for host, cmds in raw.items() if host.strip() and cmds} or None
+    if key == "remote_read_only":
+        if not isinstance(raw, list) or not all(isinstance(p, str) and p.strip() for p in raw):
+            errors.append(f"{ctx}: REMOTE_READ_ONLY must be a list of patterns")
+            return None
+        for p in raw:
+            try:
+                re.compile(p)
+            except re.error as exc:
+                errors.append(f"{ctx}: REMOTE_READ_ONLY pattern {p!r} is not a valid regex ({exc})")
+                return None
+        return raw or None
     if key == "worktree_env_allow":
         if isinstance(raw, (list, tuple, set)):
             lst = [str(x) for x in raw if str(x).strip()]
@@ -915,6 +1002,7 @@ def extract_guard_config():
         if src != tpl_src:
             try:
                 tree = ast.parse(src)
+                env = {}
                 for node in tree.body:
                     names = []
                     val_node = None
@@ -924,17 +1012,23 @@ def extract_guard_config():
                     elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                         names = [node.target.id]
                         val_node = node.value
-                    if not names or val_node is None:
-                        continue
-                    for cname in names:
+                    for cname in names if val_node is not None else []:
                         if cname not in GUARD_CONST_MAP:
                             continue
                         ctx = f"{cname} in .claude/hooks/guard-bash.py"
-                        val = eval_guard_ast(val_node, errors, ctx)
+                        val = eval_guard_ast(val_node, errors, ctx, env)
                         if errors:
                             break
                         key = GUARD_CONST_MAP[cname]
                         raw_assigns.setdefault(key, []).append(val)
+                    bind_guard_names(node, env)
+                    if isinstance(node, ast.FunctionDef) and node.name == "names_production_host":
+                        # Old project guards add hosts such as the artifact store to the backstop here,
+                        # outside the config block: a set, list or tuple of host strings.
+                        extra = [e.value for n in ast.walk(node) if isinstance(n, (ast.Set, ast.List, ast.Tuple))
+                                 for e in n.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+                        if extra:
+                            raw_assigns.setdefault("backstop_hosts", []).append(extra)
                 if errors:
                     for err in errors:
                         sys.stderr.write(f"agent-team: guard config: {err}\n")
