@@ -32,6 +32,16 @@ case "$last" in *held*) echo 4242 ;; esac
 exit 0
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca" "$tmp/bin/lsof"
+hermetic_bin() {
+  mkdir -p "$tmp/hermetic"
+  for tool in jq git bash ps mktemp dirname sed awk grep printf test rm mkdir cat tr wc readlink; do
+    command -v "$tool" >/dev/null 2>&1 && ln -sf "$(command -v "$tool")" "$tmp/hermetic/$tool"
+  done
+  ln -sf "$tmp/bin/gh" "$tmp/hermetic/gh"
+  ln -sf "$tmp/bin/orca" "$tmp/hermetic/orca"
+  ln -sf "$tmp/bin/lsof" "$tmp/hermetic/lsof"
+}
+hermetic_bin
 export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca" HOME="$tmp/home"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
@@ -71,13 +81,21 @@ check 'counts report chrome clones' has 'chrome clones removed=2 kept=1'
 mkdir -p "$chrome/code_sign_clone.broken" "$tmp/badbin"
 printf '#!/usr/bin/env bash\nexit 2\n' > "$tmp/badbin/lsof"
 chmod +x "$tmp/badbin/lsof"
-PATH="$tmp/badbin:$PATH" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
+ln -sf "$tmp/badbin/lsof" "$tmp/hermetic/lsof"
+PATH="$tmp/hermetic:/bin:/usr/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
 check 'failing lsof keeps clone' test -d "$chrome/code_sign_clone.broken"
 check 'failing lsof reports reason' has "Kept Chrome clone $chrome/code_sign_clone.broken (lsof failed)"
-# On macOS a missing lsof must keep everything.
-mkdir -p "$chrome/code_sign_clone.unknown"
-mv "$tmp/bin/lsof" "$tmp/lsof.off"
-OSTYPE=darwin PATH="$tmp/bin:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
+# Without lsof, Chrome clones must stay (macOS: unavailable; Linux: proc scan cannot prove idle).
+mkdir -p "$chrome/code_sign_clone.unknown" "$tmp/no-proc"
+rm -f "$tmp/hermetic/lsof"
+mv "$tmp/bin/lsof" "$tmp/lsof.off" 2>/dev/null || true
+case "$(uname -s)" in
+  Linux)
+    OSTYPE=linux-gnu WRAP_UP_TEST_PROC_ROOT="$tmp/no-proc" PATH="$tmp/hermetic:/bin" \
+      bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true ;;
+  *)
+    OSTYPE=darwin PATH="$tmp/hermetic:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true ;;
+esac
 check 'no lsof keeps clones' test -d "$chrome/code_sign_clone.unknown"
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
