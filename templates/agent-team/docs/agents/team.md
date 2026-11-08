@@ -1,13 +1,13 @@
 # Agent team
 
-{{PROJECT_NAME}} is operated by its human owner and a team of AI agents: CEO Elon and specialist roles. The owner talks to Elon, who delegates work and contacts the owner only for a decision Elon cannot make. Elon owns dispatch, owner decisions, and merge dispatch. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
+{{PROJECT_NAME}} is operated by its human owner and a team of AI agents: CEO Elon and specialist roles. The owner talks to Elon, who delegates work and contacts the owner only for a decision Elon cannot make. Elon owns dispatch and owner decisions. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
 
 | Role | File | Stage | Primary output |
 | --- | --- | --- | --- |
-| Elon (CEO) | `elon.md` | Executive supervision | Priorities, labelled exceptions, owner contact, and until merge on review goes live, worker dispatch and merge-worker dispatch |
+| Elon (CEO) | `elon.md` | Executive supervision | Priorities, labelled exceptions, owner contact, and ready issue dispatch |
 | architect-pm | `architect-pm.md` | Plan, Design | One document per feature (intent, spec and tickets), issue triage, weekly list |
 | fullstack-dev | `fullstack-dev.md` | Build | Isolated branch, own tests by TDD, change report. Cursor Composer 2.5; Claude only when that quota is out |
-| qa-sdet | `qa-sdet.md` | Test, Maintain | Automated PR review, old QA review until merge on review goes live, weekly staging review |
+| qa-sdet | `qa-sdet.md` | Test, Maintain | Verifier Verdict (`script/post-verdict.sh`), Playwright runs, weekly staging review |
 | secops-finops | `secops-finops.md` | Test audit | Money and auth PR reviews, weekly reconciliation |
 | support-csm | `support-csm.md` | Maintain | Ticket triage, reply drafts and recurring pain points |
 | release-manager | `release-manager.md` | Deploy | Staging on the daily schedule, production on the owner's go; release evidence, deployment and a rollback plan (a rollback still needs the owner) |
@@ -32,9 +32,9 @@ Every change to a role definition requires human review and explicit approval of
 
 1. **Task tree:** Elon builds tasks from the accepted spec. Use the project's configured workflow and add specialist slices only when the work requires them.
 2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when Elon judges a full crew unnecessary.
-3. **Reports:** Every role reports to Elon. Elon dispatches fullstack-dev and qa-sdet, dispatches publication and merge workers for reviewed branches, and takes builder and reviewer questions. Docs-only PRs (specs, tickets, marketing copy) take the mechanical lane on checks. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go); a failed gate is its job to diagnose and report. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
+3. **Reports:** Every role reports to Elon. Elon dispatches fullstack-dev and takes builder and reviewer questions. Docs and changelog only PRs pass Checks and Review with no agent. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go); a failed gate is its job to diagnose and report. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
 4. **Monitor and close workers:** follow Delivery contract for the child ledger, inbox classification, read-only liveness and closure; use the official Orca guide and model-routing for lifecycle transitions.
-5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. Otherwise Elon dispatches merge workers for passing branches under `.claude/model-routing.md` and reports progress to the owner when required. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
+5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. A Shipping run (`script/ship.sh`) lands verified PRs with squash merge and read-back when Checks and Verdict pass. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
 
 Usage gate by coordinator host: `usage-gate-hook.py` gates every worker start from Claude Code (`.claude/settings.json`), Cursor (`~/.cursor/hooks.json`) and Antigravity (`~/.gemini/config/hooks.json`). The Cursor and Antigravity entries come from `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`; a coordinator that starts workers from either IDE first confirms its entry is installed, and otherwise runs in Claude Code.
 
@@ -59,8 +59,8 @@ Read this section before framing an objective, dispatching, reviewing a delivery
 Docs-only PRs follow Orchestration rule 3.
 
 - **Copy is approved at the spec (owner rule 2026-10-23):** the spec and each ticket carry the exact new user-facing strings in tw, en and jp, and the owner's acceptance of the spec approves them. Nobody asks the owner about copy at merge. A ticket that needs copy its ticket does not list goes back to architect-pm for a spec amendment. The owner's grill decisions of 2026-10-24 changed no team rule; this rule stands.
-- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. The merge worker passes it to `lead-merge.sh --verify-command`, which refuses a missing or different one. Never edit or minimize a Verdict; post a new one. lead-merge ignores an edited or minimized PASS and still counts an edited FAIL.
-- **Verdict carry (owner rule 2026-10-23):** a PASS Verdict survives a clean merge of main into the PR, so a merge of main alone never needs a re-review: lead-merge accepts the old Verdict head when every commit after it is a merge of main that replays cleanly to the same tree (an authored commit or a conflict edit fails and needs a new Verdict). The Checks PASS comment carries the same way (`lead-merge.sh` reuses `verdict_carry`): `Checks: PASS head=<V>` is accepted when every commit after V is a clean merge of main, so no checks rerun after a merge of main (owner rule 2026-10-27). A batch train still runs one `head-checks.sh` on the train head.
+- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. Never edit or minimize a Verdict; post a new one. `script/ship.sh` ignores an edited or minimized PASS and still counts an edited FAIL.
+- **Verdict carry (owner rule 2026-10-23):** a PASS Verdict survives a rebase or merge of main when the `git patch-id --stable` of `merge-base(origin/main, head)..head` matches the Verdict head (`script/ship.sh`, `verdict_carry`); an authored commit or a conflict edit that changes the patch id needs a new Verdict.
 - **WIP cap (owner rule 2026-10-23):** at most 6 open PRs per project. While 6 or more are open, start no new feature ticket; fix or merge the existing ones first. Test-fix and hotfix PRs are exempt, and so are PRs that wait only on the owner's UI look (owner rule 2026-10-26).
 - **Straight to staging (owner rule 2026-10-23):** release-manager promotes main to Playground after merges, without waiting for the queue to drain or an owner word. Production still needs the owner's go per release. Japanese homepage and main-page copy needs a native reader before launch.
 - **Native en and jp copy (owner rule 2026-10-21):** write `en` as fluent American English and `jp` as natural Japanese, natively from the intent, never a word-for-word translation of `tw`. A menu or button name quotes the real label in that locale's file. Copy reviewers reject literal translations.
@@ -71,7 +71,7 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 
 | Situation | Sender | Report |
 | --- | --- | --- |
-| Branch ready | fullstack-dev | Branch, worktree, diff summary, checks and open items; Elon handles review and repository integration |
+| Branch ready | fullstack-dev | Branch, worktree, diff summary, checks and open items |
 | Review done | qa-sdet, secops-finops | Approval or blocking findings in the worker report |
 | Bug fix verified | qa-sdet | Issue and ticket references with verification evidence |
 | Waiting on gate | any role | Owner action needed and related task |
@@ -86,7 +86,7 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 3. **Reproduce:** qa-sdet records the failing behavior and provides a failing reproduction test (a Functional test case) to fullstack-dev.
 4. **Fix:** fullstack-dev makes the test pass, adds the project's required changelog entry and reports the branch for review.
 5. **Verify:** qa-sdet and required reviewers audit the change and checks.
-6. **Ship:** a merge worker runs `lead-merge.sh`; release-manager owns release gates, staging and production after the owner go.
+6. **Ship:** a Shipping run (`script/ship.sh`) squash merges and reads back as merged when Checks and Verdict pass; release-manager owns release gates, staging and production after the owner go.
 7. **Close:** support-csm drafts any customer notice. Elon obtains owner approval before sending or closing a ticket.
 
 | Severity | Meaning | Action |

@@ -36,7 +36,7 @@ This copies the roles and skills, sets up the issue tracker labels, writes the t
 
 ### Goal
 
-An agent team that follows the Matt Pocock and pstack skills and their design, in Orca ADE. A ticket goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs a green staging review and the owner's go.
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A ticket goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs a green staging review and the owner's go.
 
 ### Principles
 
@@ -72,38 +72,50 @@ Each step is one run that does one job and ends. It never waits on a person or a
 flowchart TD
     Req["Request from the owner or Elon"] --> Intake["Intake: architect-pm grills with Elon"]
     Intake --> Design["Design, features only: one document, one owner approval"]
-    Intake --> Ready["Issue is ready"]
-    Design --> Ready
-    Ready --> Build["Build: fullstack-dev, TDD, pushes and opens its own PR"]
-    Build --> Checks["Checks: GitHub Actions"]
-    Checks --> Review["Review: read only, another model family"]
-    Review -->|"FAIL, at most 2 rounds"| Build
-    Review --> Merge["GitHub auto merge"]
-    Merge --> Staging["Staging: daily at 19:00"]
-    Staging --> SR["Staging review"]
-    SR --> Reg["Full regression"]
-    Reg --> Go["Owner's go"]
-    Go --> Prod["Production: backup, deploy, smoke"]
+    Intake & Design --> Ready["Issue is ready"]
+    Ready --> Build["Build: fullstack-dev, TDD, local checks, pushes and opens PR"]
+    Build --> Checks["Actions Checks"]
+    Checks --> Review["Actions Review and verifier Verdict (another model family)"]
+    Review --> Babysit["5 minute babysit pass"]
+    Babysit -->|"Fix needed"| Build
+    Babysit --> Ship["Shipping run (script/ship.sh): squash merge and read back"]
+    Ship --> Wrap["Wrap-up: 10 minute Orca automation"]
+    Ship --> Staging["Staging: daily at 19:00, staging review, full regression"]
+    Staging --> Go["Owner's go"] --> Prod["Production: backup, deploy, smoke"]
 ```
 
 | Step | Starts when | Who | Done when |
 | --- | --- | --- | --- |
 | Intake | A request arrives | architect-pm with Elon. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
 | Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and tickets | One document, one owner approval |
-| Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | PR open, pushed by the worker |
-| Checks | Push to a PR | GitHub Actions | `head-checks` status posted |
-| Review | Checks pass | Review script, read only | `review` status and one comment |
-| Rework | Review fails | A fresh worker on the same branch | Builder answers in one comment |
-| Merge | Both statuses pass | GitHub auto merge | PR merged |
-| Wrap-up | A worker ends, or a PR merges or closes | Orca automation on each host | All read back as gone |
-| Staging | Daily at 19:00 Taiwan time | release-manager | Latest main is on staging |
-| Staging review | Staging deploy finished | qa-sdet | Green or red recorded |
-| Full regression | Staging review all green | Machine, for every production deployment | Pass tells the owner. Fail opens an issue |
-| Production | Owner's go | release-manager | Smoke passes, or code rolls back |
+| Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
+| Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
+| Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
+| Verifier Verdict | Actions Checks pass | `qa-sdet` (another model family, runs parent against head as a user would) | `Verdict: PASS` or `PASS+NOTES` posted via `script/post-verdict.sh` |
+| Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one fix worker (fixes and pushes once) or a Shipping run |
+| Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
+| Wrap-up | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
+| Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest main deployed, staging review and regression green (or issue opened) |
+| Production | Owner's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
+
+**Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one of three groups.
+
+* Ready: checks are green and a verifier PASS covers this head. It starts a Shipping run.
+* Needs a fix: a conflict with main, an unresolved review thread, a review FAIL, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
+* Anything else waits for the next pass.
+
+**Shipping run.** One run of `script/ship.sh` handles one PR. It merges only when all of these hold:
+
+* The PR is open and mergeable, and every check passed.
+* The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
+* The Verdict covers this head, or a rebase of it with the same patch id.
+* Changes to protected paths carry the owner's approval.
+
+It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
 
 **Who can send a request.** The owner and Elon. Sales and support send requests to Elon, and Elon gets the owner's approval before passing one to architect-pm.
 
-**Start rule.** An issue starts when it has `ready-for-agent`, acceptance criteria and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out.
+**Start rule.** An issue starts when it has `ready-for-agent`, acceptance criteria and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, acceptance criteria, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/brief-lint.sh` checks the brief at every start, and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
 
 **Failure.** A worker with no progress for 30 minutes restarts once. The same error fixed 3 times stops the work. Review sends a PR back at most 2 times. Past any limit a label goes to Elon.
 
@@ -119,7 +131,7 @@ flowchart TD
 | Elon | The owner's window and only contact. Off the main line: the lifecycle runs without it. Answers "what now" and "recap", handles exceptions, sets priorities weekly |
 | `architect-pm` | Intake, the design document, the weekly list, full audits |
 | `fullstack-dev` | Builds one ticket with tests by TDD |
-| `qa-sdet` | Playwright runs and the staging review |
+| `qa-sdet` | Verifier Verdict, Playwright runs and the staging review |
 | `release-manager` | Staging on schedule, production on the owner's go |
 | `secops-finops` | Its check is part of Strong review. Weekly reconciliation |
 | `sales-marketing` | Joins the grill for UI and wording. Sends requests to Elon |
@@ -143,11 +155,9 @@ New features and pages, prices and money rules, production go, irreversible data
 
 ### Review
 
-A builder never reviews its own PR. Review answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. Style is never a FAIL.
+A builder never reviews its own PR. Review has two layers after Actions Checks pass: the read only bot review in Actions (`script/pr-review.sh`) and the verifier Verdict (`qa-sdet` from another model family running the change as a user would, parent against head, posted via `script/post-verdict.sh`). Review checks the diff against `## Scope` and answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. The first round lists every finding; later rounds check only earlier points plus the new diff. Style is never a FAIL. A flake reruns the job once, never an empty commit.
 
 Standard depth is one read. Strong depth adds a stronger model and the security check for money, sign-in, schema, hooks and workflows. A script picks the depth from the file list. Changes only to docs and changelog pass with no agent.
-
-Review replaces QA only after a replay of 30 defect heads and 30 clean heads shows at least 80% caught and at most 10% false FAILs.
 
 ## 4. Tools
 
@@ -156,13 +166,13 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | Tool | Job | Runs |
 | --- | --- | --- |
 | Orca automation | Starts every scheduled script. A script only job uses a precheck, so it spends no AI quota | On schedule |
-| [`fleet-watch.py`](script/fleet-watch.py) | The 5 minute run: copies usage readings, reruns failed workflows once, finds stuck workers, checks backups, starts ready issues | Every 5 minutes on the coordinator |
+| [`fleet-watch.py`](script/fleet-watch.py) | The 5 minute run: copies usage readings, reruns failed workflows once, finds stuck workers, checks backups, starts ready issues, runs the babysit pass | Every 5 minutes on the coordinator |
 | [`usage-gate.py`](script/usage-gate.py) | Blocks a worker start at 95% of a weekly limit or with no fresh reading. Paid overage needs the owner's approval with an amount and an expiry | Every worker start |
 | [`heavy-gate.py`](script/heavy-gate.py) | Holds Playwright and production builds on each host; type checks use measure mode with no slot | Every Playwright run, build and full `tsc` |
 | `worker-startup` | Brings a host and worktree up to date, then starts the worker. A host that cannot be fixed takes no work | Daily, and before each worker |
 | [`head-checks.sh`](script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with main | Every PR push |
-| Review | The three question review above. Posts the `review` status | After Checks pass |
-| GitHub auto merge | Merges when `head-checks` and `review` pass | Every PR |
+| Review and Verdict | Actions Review (`script/pr-review.sh`) and verifier Verdict ([`post-verdict.sh`](script/post-verdict.sh)) | After Checks pass |
+| [`ship.sh`](script/ship.sh) | Shipping run: checks `git patch-id` against the verifier Verdict, squash merges and reads the PR back as merged | When Checks and Verdict pass |
 | [`wrap-up.sh`](script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Add `--apply` to run it by hand | Every 10 minutes on every host |
 | `/deploy` | Moves a commit to staging or production | Daily, or on the owner's go |
 | `/staging-review` | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |

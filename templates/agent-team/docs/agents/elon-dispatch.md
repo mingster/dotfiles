@@ -3,7 +3,7 @@
 ## Team
 
 - Roles, reporting and the secrets rule: `~/dotfiles/templates/agent-team/docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
-- Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Elon never merges by hand; only a merge worker Elon dispatches runs `lead-merge.sh` from `lead-elon` (`.claude/model-routing.md`, rule 6). Docs-only PRs use the mechanical merge lane through that dispatch (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Orchestration rule 3).
+- Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Merge follows `~/dotfiles/README.md` section 3 (`script/ship.sh`).
 - release-manager owns every release end to end (staging, gates, production after the owner go) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with owner approval on the issue.
 
 
@@ -20,16 +20,14 @@
 - Log each owner approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
 
 ## Monitor, do not relay (owner 2026-10-29)
-- Elon monitors and steps in only when needed. On builder `worker_done`, Elon starts QA; workers push, diagnose Checks, and fix failures—Elon never patches a branch for routine CI. When gates pass, Elon dispatches a merge worker in `lead-elon` to run `lead-merge.sh` and releases the committer slot.
-- Elon steps in only for: a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
+- Elon steps in only for a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show. Workers push, diagnose Checks, and fix failures; Elon never patches a branch for routine CI.
 
 Append to private `~/.claude/state/team-observations.md` only what would change a rule; never in repositories.
 
 ## Fleet dispatch (owner 2026-11-03)
 
-- Elon starts every builder and every worker, on any fleet host, and owns ticket order, briefs, and merge dispatches.
+- Elon starts every builder on any fleet host and owns ticket order and briefs.
 - Elon places the worker: `~/.claude/state/fleet-load.sh`, then the primary code host first for code, test and review (load under 12; it also hosts the coordinators, owner 2026-11-04), the first overflow host (load under 8) then the second overflow host (load under 12), the browser host always for browser, secrets or the main checkout, release-manager only on a host the deploy facts name, the database host for dev DB and Playwright through `remote-heavy.sh` (it runs no workers). Provider by `usage-gate.py pick`. Details and caps: `.claude/model-routing.md`, Starting a worker.
-- **QA placement (owner 2026-11-06):** QA runs on any host except the one Elon is on; pick the lightest by `fleet-load.sh`.
 - **Admission rule (owner 2026-11-04):** start a worker on a host when its 1 minute load divided by cores is under 0.7 and free memory is at least 4 GB. The host caps in the project's `.claude/model-routing.md` are the ceiling, never the target: fill an idle host up to its cap before any host with queued work waits, and keep each host between 0.4 and 0.7 load per core. Read the top processes before blaming workers for a high load (Spotlight, a build or a regression run counts).
 - After the start: confirm acceptance within 2 minutes.
 - Each wake, a free lane plus a startable ticket (accepted document, grill approved where one is needed) means Elon starts it, and never holds it behind a regression or a deploy. Lane counts come from `fleet-load.sh`, never from dispatch notes.

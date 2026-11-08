@@ -39,23 +39,24 @@ flowchart TD
 ## 2. Responsibilities and decision boundaries
 
 - **Mingster (owner / board).** Talks to Elon (`/elon` or `/ceo`) as executive peer. Decides only new features, new UI pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, sending customer replies, and role file and hook changes. Nothing else interrupts the owner.
-- **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (workers). Plans, dispatches every teammate with Orca orchestration (`orchestration` skill, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, dispatches merge workers for `script/lead-merge.sh` (until merge-on-review goes live), and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; routine progress, merges, reviews and staging deploys are not reported. On `/elon status` ("what now") the format is **Now**, **Needs owner**, **Running**; on "recap" it reports merged, deployed, problems and numbers.
+- **Elon.** Critical, objective driven partner without flattery. The owner's window and only contact, off the main line (`README.md` section 3). Turns vision into commercial experiments (Sales), requirements (BA) and delivery (workers), sets priorities weekly, handles `needs-elon` exceptions, dispatches ready issues within `usage-gate.py` and `heavy-gate.py`, and contacts the owner only for an Owner-Reserved decision. Never uses Claude subagents. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; routine progress, merges, reviews and staging deploys are not reported. On `/elon status` ("what now") the format is **Now**, **Needs owner**, **Running**; on "recap" it reports merged, deployed, problems and numbers.
 - **Sales and Marketing (`sales-marketing`).** Owns self-serve acquisition, positioning, conversion experiments and metric definitions (MRR, LTV, CAC, churn, 14 day activation), and joins the pre-build grill for new UI pages and wording. Delegates market research, competitor price comparison and Taiwan merchant lookups to a Gemini worker on Antigravity (requiring a source URL for every number and merchant fact, spot-checked before use). Never plans manual outbound sales, sends unapproved emails, touches production tables or alters live pricing.
 - **BA (`architect-pm` / 需求分析師).** Runs intake, writes one design document per feature (intent, spec and tickets with one owner approval), slices specs into machine-checkable GitHub issues with `to-tickets`, maintains the weekly list of non-blocker findings, and runs full `/team-audit` reviews on the owner's word. Never writes application code.
 - **Support tickets (`support-csm`, owner rule 2026-10-12).** When a ticket or support email arrives, the underlying problem is resolved first when it needs a fix, `support-csm` drafts the reply in the customer's language, and Elon notifies Mingster the same day with the ticket, what was done and the draft. Nothing is sent or closed before the owner approves.
 
 ## 3. Delivery lifecycle
 
-GitHub issues and PRs are the state of record (`docs/agents/team.md`, Process 2026-11-06). Until merge-on-review and start-label builds are switched on, Elon dispatches workers, `script/on-worker-done.sh` starts QA, and a merge worker runs `script/lead-merge.sh` once per wake. Docs-only PRs (specs, tickets, marketing copy) use the mechanical lane on checks.
+GitHub issues and PRs are the state of record (`README.md` section 3). After each push, GitHub Actions `Checks` run first; when they pass, Actions `Review` (`script/pr-review.sh`) and the verifier (`qa-sdet` via `script/post-verdict.sh`) run, the 5 minute babysit pass (`fleet-watch.py`) starts one fix worker or a Shipping run (`script/ship.sh`), and `wrap-up.sh` cleans up every 10 minutes. Docs and changelog only PRs pass with no agent.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Owner as Mingster (Owner)
+    actor Owner as Owner
     participant CEO as Elon (CEO)
     participant BA as architect-pm / sales-marketing
     participant Dev as Fullstack-Dev
-    participant QA as QA-SDET / SecOps
+    participant QA as Actions Review & QA-SDET Verifier
+    participant Ship as Shipping Run (script/ship.sh)
     participant RM as Release-Manager
 
     Owner->>CEO: Product Vision / Feature Goal
@@ -63,12 +64,11 @@ sequenceDiagram
     BA->>Owner: One approval for new feature, new UI page (with phone screenshots), price or money rule
     BA->>CEO: Ready GitHub issue tickets (Machine-checkable contracts)
 
-    CEO->>Dev: Dispatch scoped ticket with Orca orchestration in isolated child worktree
-    Dev->>Dev: TDD (red, green, refactor) on touched tests only; local commits on own branch
-    Dev->>CEO: worker_done (branch, worktree, full head, diff stat, test counts)
-    CEO->>QA: Publish branch via coordinator-publication.sh; run head-checks.sh and cross-family QA
-    QA->>CEO: Read-only code + Checks receipt audit, live proof, Verdict on PR
-    CEO->>CEO: Dispatch merge worker (lead-merge.sh batch); release worker and wrap up
+    CEO->>Dev: 5 minute run starts scoped ticket in isolated worktree
+    Dev->>Dev: TDD (red, green, refactor) and local checks; push once and open PR
+    Dev->>QA: Actions Checks pass; Actions Review (pr-review.sh) and verifier Verdict (post-verdict.sh)
+    QA->>Ship: 5 minute babysit pass starts fix worker or Shipping run when Checks and Verdict pass
+    Ship->>Ship: Squash merge (gh pr merge --squash), read back as MERGED; 10m wrap-up cleans worktree
 
     RM->>RM: Daily 19:00 Taiwan time staging deploy
     RM->>QA: /staging-review (full regression, smoke, changed pages on phone viewport; all pages weekly)
@@ -178,7 +178,7 @@ Every repeatable team step is backed by a script under `script/`, `.agents/skill
 - **Setup, adoption and skill sync:** `agent-team.sh`, `adopt-agent-team.sh`, `init-agent-project.sh`, `agent-project-autoinit.sh`, `sync-team-skills.sh`, `sync-mattpocock-skills.sh`, `check-skill-collisions.sh`, `bootstrap-asdf-tools.sh`, `bun-pin-check.sh`, `switch-login-shell-zsh.sh`, `agent-settings-check.py`, `backup-claude-desktop.sh`, `contribute-to-agents.sh`.
 - **Coordinator, fleet and state sync:** `elon-startup.sh`, `new-coordinator.sh`, `take-over-coordinator.sh`, `coordinator-waiter.sh`, `orca-reply.sh`, `fleet-pull.sh`, `fleet-watch.py`, `fleet-workers.py`, `count-agents.sh`, `secrets-pack.sh`, `secrets-unpack.sh`, `secrets-sync.sh`.
 - **Worker launch, usage gate and heavy gate:** `worker-startup.sh`, `start-remote-worker.sh`, `start-cursor-worker.sh`, `worktree-setup.sh`, `usage-gate.py`, `usage-gate-hook.py`, `heavy-gate.sh`, `heavy-gate.py`, `hw-probe.sh`, `remote-heavy.sh`, `remote-shot.sh`, `run-scoped-tests.py`, and the `orca-team` helpers (`worker-start-check.sh`, `worker-watch.sh`, `worker-panes.sh`, `worker-pane.sh`, `worker-pane-close.sh`, `worker-pane-retry.sh`).
-- **Checks, review and merge:** `on-worker-done.sh`, `worker-done-relay.sh`, `coordinator-publication.sh`, `head-checks.sh`, `head-checks-tsc.sh`, `qa-admission.py`, `post-verdict.sh`, `protected-merge-check.sh`, `lead-merge.sh`.
+- **Checks, review and merge:** `coordinator-publication.sh`, `head-checks.sh`, `head-checks-tsc.sh`, `pr-review.sh`, `qa-admission.py`, `post-verdict.sh`, `protected-merge-check.sh`, `ship.sh` (replacing `lead-merge.sh`).
 - **Cleanup, audits and weekly maintenance:** `wrap-up.sh`, `worktree-idle.py`, `team-audit.sh`, `bin/team-audit-metrics.ts`, `weekly-update.sh`, `prepend-recent-change.ts`, `shellcheck-dotfiles.sh`.
 
 Full per-tool reference table: [Agent team reference](team-reference.md).

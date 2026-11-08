@@ -131,10 +131,10 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/worker-startup.sh` | Daily `--host-check` and unified worker launcher (aligns `~/dotfiles`, Orca presets, repo `main`, Node and Bun pins, checks `usage-gate.py`, and starts the worker). |
 | `script/start-remote-worker.sh` | Checks `usage-gate.py`, probes the remote CLI in an Orca terminal, refreshes `~/dotfiles` and presets, and calls `worker-start --on`. |
 | `script/start-cursor-worker.sh` | Creates the worktree, writes `.workspace-trusted` via Python 3, checks `usage-gate.py`, and starts a Cursor worker. |
-| `script/on-worker-done.sh` | Publishes a builder's branch (`coordinator-publication.sh`), starts `head-checks.sh`, and triggers `qa-admission.py`. |
+| `script/pr-review.sh` | Cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass; picks a cross family model via `usage-gate.py`. |
 | `script/worker-done-relay.sh` | Relays a builder's `worker_done` to the owning coordinator terminal and releases the committer once. |
-| `script/qa-admission.py` | Dispatches an independent cross-family `qa-sdet` reviewer on the lightest fleet host other than Elon's. |
-| `script/lead-merge.sh` | Merge gate from `lead-*` worktrees (`--pr` or `--batch`); merge worker Elon dispatches runs it. |
+| `script/qa-admission.py`, `script/post-verdict.sh` | Dispatches an independent cross-family `qa-sdet` verifier and posts the canonical `Verdict:` comment and `review` status. |
+| `script/ship.sh` | Shipping run (replacing `script/lead-merge.sh`): verifies required checks and matching `git patch-id` Verdict, squash merges, and reads back `MERGED`. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
 | `script/wrap-up.sh`, `script/worktree-idle.py` | Fleet-wide cleanup of finished worktrees, merged branches, ended terminals/panes and temp files. |
