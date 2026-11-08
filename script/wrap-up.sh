@@ -120,7 +120,17 @@ scheduled_round() {
   set +e
   unset ORCA_CLI_COMMAND WRAP_UP_FLEET_CONFIG
   local started=$SECONDS repo_limit=${WRAP_UP_SCHEDULED_REPO_LIMIT:-${WRAP_UP_TOTAL_TIMEOUT:-900}} wrap_up=${WRAP_UP_SCHEDULED_WRAP_UP:-$here/wrap-up.sh}
-  local detail_file orca_dir status_json load cores list_json repo_path code count=0 fails="" seconds kill_limit
+  local kill_grace=${WRAP_UP_SCHEDULED_KILL_GRACE:-30} precheck_timeout=${WRAP_UP_PRECHECK_TIMEOUT:-600} round_limit
+  local detail_file orca_dir status_json load cores list_json repo_path code count=0 fails="" skipped="" seconds left child_limit kill_limit
+  if [ -n "${WRAP_UP_SCHEDULED_ROUND_LIMIT:-}" ]; then
+    round_limit=$WRAP_UP_SCHEDULED_ROUND_LIMIT
+  elif [ "$precheck_timeout" -gt "$((kill_grace * 2))" ]; then
+    round_limit=$((precheck_timeout - kill_grace * 2))
+  elif [ "$precheck_timeout" -gt "$kill_grace" ]; then
+    round_limit=$((precheck_timeout - kill_grace))
+  else
+    round_limit=$precheck_timeout
+  fi
   call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
   round_state=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
   log_file=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
@@ -158,23 +168,33 @@ scheduled_round() {
     round_failed 'cannot read orca repo list'; exit 0
   fi
 
-  # Per repo, each with its own budget. A running wrap-up is told its time and is stopped only if it hangs past that.
-  kill_limit=$((repo_limit+${WRAP_UP_SCHEDULED_KILL_GRACE:-30}))
+  # Per repo, each with its own budget, while keeping the multi-repo round inside WRAP_UP_PRECHECK_TIMEOUT.
   while IFS= read -r repo_path; do
     [ -n "$repo_path" ] || continue
     [ -f "$repo_path/.agents/head-checks.conf" ] || continue
+    left=$((round_limit-(SECONDS-started)))
+    if [ "$left" -le 0 ]; then
+      printf '%s skip repo %s (round budget %ss spent)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" "$round_limit" >> "$detail_file"
+      skipped="${skipped:+$skipped, }$repo_path"
+      continue
+    fi
+    child_limit=$repo_limit
+    if [ "$left" -lt "$child_limit" ] && { [ -n "${WRAP_UP_PRECHECK_TIMEOUT:-}${WRAP_UP_SCHEDULED_ROUND_LIMIT:-}${WRAP_UP_SCHEDULED_REPO_LIMIT:-}" ] || [ "$((SECONDS-started))" -gt 0 ]; }; then
+      child_limit=$left
+    fi
+    kill_limit=$((child_limit+kill_grace))
     printf '%s repo %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
     # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
-    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$repo_limit run_limited "$kill_limit" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
+    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$child_limit run_limited "$kill_limit" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
     code=$?
     count=$((count+1))
     [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
   done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
 
   seconds=$((SECONDS-started))
-  if [ -n "$fails" ]; then round_failed "$fails"; exit 0; fi
+  if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
   guarded_round_rm f "$streak"
-  round_log "round ok: repos=$count seconds=$seconds"
+  round_log "round ok: repos=$count seconds=$seconds${skipped:+ skipped=$skipped}"
   exit 0
 }
 
@@ -1852,13 +1872,13 @@ if [ -f "$pane_script" ]; then
   if [ "$apply" -eq 1 ]; then
     pane_left=${WRAP_UP_PANE_TIMEOUT:-1800}
     round_left=$((deadline-SECONDS))
-    if [ "$round_left" -gt 0 ] && [ "$round_left" -lt "$pane_left" ]; then
+    if [ "$round_left" -lt "$pane_left" ]; then
       pane_left=$round_left
     fi
     [ "$pane_left" -gt 0 ] || pane_left=1
     rc=0
     pane_out="$tmp/pane-close"
-    ORCA_PANE_CLOSE_TIMEOUT=$pane_left bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
+    ORCA_PANE_CLOSE_TIMEOUT=$pane_left run_limited "$pane_left" bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
     sed -n '/^sweep: /p' "$pane_out"
     guarded_scratch_rm f "$pane_out"
     [ "$rc" -eq 0 ] || fail_item 'worker panes' "worker-pane-close exited $rc"

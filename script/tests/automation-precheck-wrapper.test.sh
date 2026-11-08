@@ -41,6 +41,61 @@ printf '%s wrap-up-scheduled [999] round failed: repo /tmp/repo-a exit 1\n' \
 env -u WRAP_UP_SCHEDULED_LOG bash "$wrapper" wrap-up-scheduled "$log" -- true
 check 'wrap-up-scheduled failed round in end summary' grep -q 'summary=round failed: repo /tmp/repo-a exit 1' "$log"
 check 'wrap-up-scheduled name in trace' grep -q 'automation=wrap-up-scheduled' "$log"
+check 'normal run writes exactly one phase=end line' test "$(grep -c 'phase=end' "$log")" -eq 1
+
+# TERM: wrapper writes exactly one phase=end line with exit=143 and stops the child process group.
+: >"$log"
+cat >"$tmp/hang-term.sh" <<'EOS'
+#!/usr/bin/env bash
+sleep 3 &
+printf '%s\n' "$!" >"$1"
+: >"$2"
+wait
+EOS
+chmod +x "$tmp/hang-term.sh"
+bash "$wrapper" test-term "$log" -- bash "$tmp/hang-term.sh" "$tmp/grandchild.pid" "$tmp/term.ready" &
+wpid=$!
+i=0
+while [ ! -f "$tmp/term.ready" ] && [ "$i" -lt 200 ]; do
+  sleep 0.02
+  i=$((i + 1))
+done
+gpid=$(cat "$tmp/grandchild.pid" 2>/dev/null || true)
+kill -TERM "$wpid" 2>/dev/null || true
+wait "$wpid" 2>/dev/null
+term_rc=$?
+pid_dead() { [ -n "$1" ] && ! kill -0 "$1" 2>/dev/null; }
+check 'TERM run exits 143' test "$term_rc" -eq 143
+check 'TERM run writes start line' grep -q 'phase=start' "$log"
+check 'TERM run writes exactly one phase=end line' test "$(grep -c 'phase=end' "$log")" -eq 1
+check 'TERM run records exit=143 in phase=end' grep -q 'phase=end exit=143 ' "$log"
+check 'TERM stops child process group' pid_dead "$gpid"
+[ -n "$gpid" ] && kill -KILL "$gpid" 2>/dev/null || true
+
+# INT: wrapper writes exactly one phase=end line with exit=130.
+: >"$log"
+cat >"$tmp/hang-int.sh" <<'EOS'
+#!/usr/bin/env bash
+: >"$1"
+sleep 3
+EOS
+chmod +x "$tmp/hang-int.sh"
+set -m
+bash "$wrapper" test-int "$log" -- bash "$tmp/hang-int.sh" "$tmp/int.ready" &
+wpid=$!
+set +m
+i=0
+while [ ! -f "$tmp/int.ready" ] && [ "$i" -lt 200 ]; do
+  sleep 0.02
+  i=$((i + 1))
+done
+kill -INT "$wpid" 2>/dev/null || true
+wait "$wpid" 2>/dev/null
+int_rc=$?
+check 'INT run exits 130' test "$int_rc" -eq 130
+check 'INT run writes exactly one phase=end line' test "$(grep -c 'phase=end' "$log")" -eq 1
+check 'INT run records exit=130 in phase=end' grep -q 'phase=end exit=130 ' "$log"
+pkill -P "$wpid" 2>/dev/null || true
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

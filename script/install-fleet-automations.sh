@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install Orca automations: fleet-watch (5 min), wrap-up-scheduled (10 min), sync drift (daily),
-# team-audit-weekly and weekly-update (Monday). Enabled only on the coordinator in agent-state/coordinator.conf.
+# team-audit-weekly and weekly-update (Monday). wrap-up-scheduled is enabled on every Orca host;
+# the rest are enabled only on the coordinator in agent-state/coordinator.conf.
 # Private paths: env vars or ~/.config/fleet-watch/automations.env (no secrets in this repo).
 #
 # Usage: install-fleet-automations.sh --status
@@ -55,6 +56,31 @@ if [ ! -f "$DOTFILES_DIR/script/fleet-watch.py" ]; then
   echo "install-fleet-automations: missing $DOTFILES_DIR/script/fleet-watch.py" >&2
   exit 1
 fi
+orca_app_bin=${FLEET_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}
+resolve_orca_cli() {
+  if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
+    command -v "$ORCA_CLI_COMMAND" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$ORCA_CLI_COMMAND"
+    return 0
+  fi
+  if [ -x "$orca_app_bin/orca" ]; then
+    printf '%s\n' "$orca_app_bin/orca"
+    return 0
+  fi
+  if [ -z "${FLEET_ORCA_APP_BIN+x}" ] && command -v orca >/dev/null 2>&1; then
+    command -v orca
+    return 0
+  fi
+  if [ -z "${FLEET_ORCA_APP_BIN+x}" ] && [ -x "$HOME/.local/bin/orca" ]; then
+    printf '%s\n' "$HOME/.local/bin/orca"
+    return 0
+  fi
+  return 1
+}
+if ! orca_cli=$(resolve_orca_cli); then
+  echo "install-fleet-automations: skip: Orca app not installed on $(hostname -s 2>/dev/null || hostname)"
+  exit 0
+fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}
 FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
@@ -67,6 +93,7 @@ FLEET_WATCH_PRECHECK_TIMEOUT=${FLEET_WATCH_PRECHECK_TIMEOUT:-280}
 WRAP_UP_SCHEDULED_REPO_LIMIT=${WRAP_UP_SCHEDULED_REPO_LIMIT:-300}
 WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-600}
 WRAP_UP_SCHEDULED_LOG=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
+WRAP_UP_ISSUE_REPO=${WRAP_UP_ISSUE_REPO:-}
 SYNC_DRIFT_LOG=${SYNC_DRIFT_LOG:-$HOME/.local/state/agent-team/sync-team-skills-drift.log}
 TEAM_AUDIT_WEEKLY_LOG=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/team-audit-weekly.log}
 SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
@@ -87,14 +114,14 @@ coordinator_name() {
   local conf want
   conf=$(cat "$state_dir/coordinator.conf" 2>/dev/null || true)
   want=$(printf '%s\n' "$conf" | awk '$1 == "coordinator" { print $2; exit }' | tr '[:upper:]' '[:lower:]')
-  printf '%s' "${want:-mini6}"
+  printf '%s' "$want"
 }
 
 host_is_coordinator() {
   local me want
   me=$(hostname -s | tr '[:upper:]' '[:lower:]')
   want=$(coordinator_name)
-  [ "$me" = "$want" ]
+  [ -n "$want" ] && [ "$me" = "$want" ]
 }
 
 automation_wrap() {
@@ -120,8 +147,14 @@ fleet_watch_precheck() {
 }
 
 wrap_up_precheck() {
+  local env_args=(
+    "WRAP_UP_SCHEDULED_LOG=$WRAP_UP_SCHEDULED_LOG"
+    "WRAP_UP_SCHEDULED_REPO_LIMIT=$WRAP_UP_SCHEDULED_REPO_LIMIT"
+    "WRAP_UP_PRECHECK_TIMEOUT=$WRAP_UP_PRECHECK_TIMEOUT"
+  )
+  [ -n "$WRAP_UP_ISSUE_REPO" ] && env_args+=("WRAP_UP_ISSUE_REPO=$WRAP_UP_ISSUE_REPO")
   automation_wrap wrap-up-scheduled "$WRAP_UP_SCHEDULED_LOG" \
-    env "WRAP_UP_SCHEDULED_LOG=$WRAP_UP_SCHEDULED_LOG" "WRAP_UP_SCHEDULED_REPO_LIMIT=$WRAP_UP_SCHEDULED_REPO_LIMIT" \
+    env "${env_args[@]}" \
     bash "$DOTFILES_DIR/script/wrap-up.sh" --scheduled
 }
 
@@ -310,7 +343,7 @@ case "$action" in
     enabled=0
     host_is_coordinator && enabled=1
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
-    ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" 1
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" "$enabled"

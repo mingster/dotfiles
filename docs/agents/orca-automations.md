@@ -1,8 +1,8 @@
 # Orca fleet automations
 
-Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each job runs only a precheck shell command; the automation prompt is a placeholder and the precheck always exits with status 1 so no agent session starts. On the host named in private `agent-state/coordinator.conf`, automations install **enabled**; on every other fleet host they install **disabled** (paused) so the same script is idempotent everywhere. Headless hosts without Orca in a login shell are not a failure for this installer.
+Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each job runs only a precheck shell command; the automation prompt is a placeholder and the precheck always exits with status 1 so no agent session starts. `wrap-up-scheduled` installs **enabled** (`*/10 * * * *`) on every host that runs Orca, while `fleet-watch` and the other coordinator jobs install **enabled** only on the host named in private `agent-state/coordinator.conf` and **disabled** (paused) on other Orca hosts. Re-running `--install` fixes a stale `wrap-up-scheduled` schedule (such as `0 */2 * * *`) or a disabled entry. Hosts without the Orca app (such as the headless database host) are skipped with a clear message and exit 0, and wrap-up there stays manual.
 
-Private paths and timezone live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
+Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). When `WRAP_UP_ISSUE_REPO` is set in `automations.env`, the installer passes it to `wrap-up-scheduled`. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
 
 ## Commands
 
@@ -18,17 +18,17 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 
 ## Installed automations
 
-| Name | Schedule (cron) | What the precheck does | Who reads the result | Pause |
-|------|-----------------|------------------------|----------------------|-------|
-| `fleet-watch` | `*/5 * * * *` | `script/automation-precheck-wrapper.sh` runs `script/fleet-watch.py` once | `~/.orca/logs/fleet-watch.log` (override `FLEET_WATCH_AUTOMATION_LOG`) | Same |
-| `wrap-up-scheduled` | `*/10 * * * *` | Wrapper runs `script/wrap-up.sh --scheduled` (per repo budget, round lock) | `~/.orca/logs/wrap-up-scheduled.log`; detail in `wrap-up-scheduled-detail.log` | Same |
-| `sync-team-skills-drift` | `0 6 * * *` | Wrapper runs `script/automation-precheck-sync-drift.sh` | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
-| `team-audit-weekly` | `0 7 * * 1` | Wrapper runs `script/automation-precheck-team-audit-weekly.sh` | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the owner asks) | Same |
-| `weekly-update` | `0 8 * * 1` | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
+| Name | Schedule (cron) | Enabled where | What the precheck does | Who reads the result | Pause |
+|------|-----------------|---------------|------------------------|----------------------|-------|
+| `fleet-watch` | `*/5 * * * *` | Coordinator only | `script/automation-precheck-wrapper.sh` runs `script/fleet-watch.py` once | `~/.orca/logs/fleet-watch.log` (override `FLEET_WATCH_AUTOMATION_LOG`) | Same |
+| `wrap-up-scheduled` | `*/10 * * * *` | Every Orca host | Wrapper runs `script/wrap-up.sh --scheduled` (per repo and round budget inside `WRAP_UP_PRECHECK_TIMEOUT`, round lock, `WRAP_UP_ISSUE_REPO` when set) | `~/.orca/logs/wrap-up-scheduled.log`; detail in `wrap-up-scheduled-detail.log` | Same |
+| `sync-team-skills-drift` | `0 6 * * *` | Coordinator only | Wrapper runs `script/automation-precheck-sync-drift.sh` | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
+| `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh` | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the owner asks) | Same |
+| `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
 
 ## Traceable precheck lines
 
-Every registered job runs its shell body through `script/automation-precheck-wrapper.sh`. Each run appends exactly one **start** and one **end** line to that job's log path (even when the inner script skips, the lock is held, or the command fails before the main script starts). Format:
+Every registered job runs its shell body through `script/automation-precheck-wrapper.sh`. The wrapper traps `EXIT`, `TERM`, and `INT`, stops the child process group on `TERM`, and appends exactly one **start** and one **end** line to that job's log path on every run (including `exit=143` on `TERM` and `exit=130` on `INT`, or when the inner script skips, the lock is held, or the command fails before the main script starts). Format:
 
 ```text
 YYYY-MM-DDTHH:MM:SS±ZZZZ host=<short hostname> automation=<name> run=<pid> phase=start exit=- duration=0s summary=starting
@@ -44,7 +44,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | Script | Automate | Reason |
 |--------|----------|--------|
 | `script/fleet-watch.py` | Yes (as `fleet-watch`) | Five minute watchdog; append-only private state and logs; coordinator already enabled elsewhere |
-| `script/wrap-up.sh --scheduled` | Yes (as `wrap-up-scheduled`) | Bounded cleanup round; no merge; writes logs and optional issue body |
+| `script/wrap-up.sh --scheduled` | Yes (as `wrap-up-scheduled`) | Enabled on every Orca host (headless host stays manual); bounded cleanup round inside `WRAP_UP_PRECHECK_TIMEOUT`, logs skipped repos and optional issue body |
 | `script/sync-team-skills.sh --check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |
 | `script/team-audit.sh`, `bin/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics optional |
 | `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; no merge; owner reviews |

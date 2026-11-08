@@ -70,7 +70,7 @@ check() {
 shellcheck -x --severity=error "$script"
 
 export FAKE_HOSTNAME=throwaway
-printf 'coordinator mini6\n' >"$HOME/agent-state/coordinator.conf"
+printf 'coordinator coord-host\n' >"$HOME/agent-state/coordinator.conf"
 
 dry=$(bash "$script" --dry-run --install 2>&1)
 echo "$dry" | grep -q '\[dry-run\]' && echo "$dry" | grep -q 'fleet-watch' && check 'dry-run prints fleet-watch create' true || check 'dry-run prints fleet-watch create' false
@@ -90,7 +90,35 @@ echo "$first" | grep -q 'weekly-update created' && check 'first install creates 
 
 status_off=$(bash "$script" --status)
 echo "$status_off" | grep -q 'fleet-watch: disabled' && check 'non-coordinator status disabled fleet-watch' true || check 'non-coordinator status disabled fleet-watch' false
-echo "$status_off" | grep -q 'wrap-up-scheduled: disabled' && check 'non-coordinator status disabled wrap-up' true || check 'non-coordinator status disabled wrap-up' false
+echo "$status_off" | grep -q 'wrap-up-scheduled: enabled' && check 'non-coordinator status enabled wrap-up' true || check 'non-coordinator status enabled wrap-up' false
+
+# Re-running the installer on a non-coordinator host fixes a stale rrule (0 */2 * * *) and a disabled entry.
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_ORCA_STORE"]
+d = json.load(open(p))
+for a in d["automations"]:
+    if a["name"] == "wrap-up-scheduled":
+        a["rrule"] = "0 */2 * * *"
+        a["enabled"] = False
+json.dump(d, open(p, "w"))
+PY
+fix_stale=$(bash "$script" --install 2>&1)
+echo "$fix_stale" | grep -q 'wrap-up-scheduled updated' && check 're-run updates stale disabled wrap-up-scheduled' true || check 're-run updates stale disabled wrap-up-scheduled' false
+stale_fixed_ok=0
+if python3 - <<'PY'
+import json, os, sys
+d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
+by_name = {a["name"]: a for a in d["automations"]}
+w = by_name["wrap-up-scheduled"]
+f = by_name["fleet-watch"]
+if w.get("rrule") != "*/10 * * * *" or not w.get("enabled") or f.get("enabled"):
+    sys.exit(1)
+PY
+then
+  stale_fixed_ok=1
+fi
+check 're-run fixes stale 0 */2 * * * rrule and enables wrap-up while keeping fleet-watch disabled' test "$stale_fixed_ok" -eq 1
 
 ids=$(python3 -c 'import json, os; d=json.load(open(os.environ["FAKE_ORCA_STORE"])); print(" ".join(a["id"] for a in d["automations"]))')
 
@@ -99,7 +127,7 @@ echo "$second" | grep -q 'unchanged' && check 'second install reports unchanged'
 ids2=$(python3 -c 'import json, os; d=json.load(open(os.environ["FAKE_ORCA_STORE"])); print(" ".join(a["id"] for a in d["automations"]))')
 [ "$ids" = "$ids2" ] && check 'second install keeps automation ids' true || check 'second install keeps automation ids' false
 
-export FAKE_HOSTNAME=mini6
+export FAKE_HOSTNAME=coord-host
 coord=$(bash "$script" --install 2>&1)
 echo "$coord" | grep -q 'updated\|unchanged' && check 'coordinator install settles' true || check 'coordinator install settles' false
 coord_status=$(bash "$script" --status)
@@ -158,6 +186,32 @@ for a in d["automations"]:
 echo "$wrap_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'wrap precheck uses trace wrapper' true || check 'wrap precheck uses trace wrapper' false
 echo "$wrap_pc" | grep -q 'wrap-up.sh' && check 'wrap precheck runs wrap-up.sh --scheduled' true || check 'wrap precheck runs wrap-up.sh --scheduled' false
 echo "$wrap_pc" | grep -q '\*/10 \* \* \* \*' && check 'wrap-up schedule is 10 min' true || check 'wrap-up schedule is 10 min' false
+
+# WRAP_UP_ISSUE_REPO is passed from automations.env when set.
+printf '%s\n' \
+  "DOTFILES_DIR=$DOTFILES_DIR" \
+  "FLEET_WATCH_CONFIG=$FLEET_WATCH_CONFIG" \
+  "FLEET_WATCH_STATE=$FLEET_WATCH_STATE" \
+  "FLEET_WATCH_PRECHECK_LOG=$FLEET_WATCH_PRECHECK_LOG" \
+  "WRAP_UP_ISSUE_REPO=owner/private-issues" \
+  >"$FLEET_AUTOMATIONS_ENV"
+bash "$script" --install >/dev/null 2>&1
+wrap_issue_pc=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a["name"] == "wrap-up-scheduled":
+        print(a["precheck"]["command"])
+')
+echo "$wrap_issue_pc" | grep -q 'WRAP_UP_ISSUE_REPO=owner/private-issues' && check 'wrap precheck passes WRAP_UP_ISSUE_REPO from automations.env' true || check 'wrap precheck passes WRAP_UP_ISSUE_REPO from automations.env' false
+
+# A host without the Orca app is skipped with a clear message and exits 0.
+no_orca_store="$tmp/no-orca-store.json"
+no_orca_rc=0
+no_orca_out=$(env -u ORCA_CLI_COMMAND FLEET_ORCA_APP_BIN="$tmp/no-orca-app" FAKE_ORCA_STORE="$no_orca_store" HOME="$tmp/no-orca-home" PATH="/usr/bin:/bin" DOTFILES_DIR="$root" bash "$script" --install 2>&1) || no_orca_rc=$?
+check 'host without Orca app exits 0' test "$no_orca_rc" -eq 0
+echo "$no_orca_out" | grep -iq 'skip.*orca' && check 'host without Orca app prints clear skip message' true || check 'host without Orca app prints clear skip message' false
+check 'host without Orca app leaves store untouched' test ! -f "$no_orca_store"
 
 sync_pc=$(python3 -c '
 import json, os
