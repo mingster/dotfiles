@@ -22,7 +22,7 @@ check_maps script/head-checks.sh 1
 check_maps script/heavy-gate.py 1
 check_maps script/post-verdict.sh 1
 check_maps script/coordinator-publication.sh 1
-check_maps script/on-worker-done.sh 2
+check_maps script/pr-review.sh 1
 check_maps script/fleet-watch.py 1
 
 dupes=$(find "$here/script" -name '*.test.sh' -exec basename {} \; | sort | uniq -d)

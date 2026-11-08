@@ -1,10 +1,14 @@
-name: Script tests
+name: Checks
 
 on:
   push:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
   script-tests:
@@ -36,3 +40,16 @@ jobs:
             fi
           fi
           bash script/select-changed-script-tests.sh "${changed[@]+"${changed[@]}"}"
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Run ShellCheck
+        run: bash script/shellcheck-dotfiles.sh

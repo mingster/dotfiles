@@ -141,7 +141,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 
 | Tool | Purpose |
 | --- | --- |
-| `script/on-worker-done.sh` | Handles a builder's `worker_done`: publishes the branch via `coordinator-publication.sh`, starts `head-checks.sh`, and triggers `qa-admission.py`. |
+| `script/coordinator-publication.sh` | Publishes a builder branch and starts `head-checks.sh` when needed. PR review starts in GitHub Actions via `script/pr-review.sh` after `Checks` pass. |
 | `script/worker-done-relay.sh` | Relays a builder's `worker_done` receipt to the owning coordinator terminal and releases the committer once. |
 | `script/coordinator-publication.sh` | Pushes an explicit engineering branch (`--branch <branch> --worktree <path>`) and opens or updates its PR after validating `Closes #<n>`, 3 `## Verification` bullets, and zero `.env` secrets. |
 | `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree under `heavy-gate.sh`, posting the `Checks` receipt. |

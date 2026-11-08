@@ -58,7 +58,9 @@ also be added to `.agents/head-checks.conf`.
 
 ### Slice 0: extend the QA start script
 
-The QA start script already exists: `script/on-worker-done.sh` (flags `--repo --pr --head
+**Superseded (2026-11-08, #717):** cross family cold review runs in GitHub Actions via `script/pr-review.sh` after `Checks` pass. The material below is historical context for the old `on-worker-done.sh` path.
+
+The QA start script already existed: `script/on-worker-done.sh` (flags `--repo --pr --head
 --author-family --worktree --run [--author-dispatch] [--dry-run]`). It starts the cross family
 reviewer. The lead runs it right after the push, so no one else has to start QA. This slice
 extends it; there is no new script.
@@ -245,7 +247,10 @@ When slice 4 lands, the split of PRs between two leads for merging is deleted fr
 and team docs.
 
 ## QA in parallel (owner 2026-10-29)
-- The lead starts the QA reviewer itself right after the push, with the QA start script, `script/on-worker-done.sh` (it picks a model family other than the author's, a host under its cap, and the brief template: full review for a new PR, resolution only for a main merge). The coordinator is not in the loop and does not forward or start QA; it only watches counts and caps. The lead runs head-checks in parallel; neither waits for the other.
+
+**Update (2026-11-08, #717):** review starts in GitHub Actions when `Checks` succeed (`script/pr-review.sh` on the self hosted `Review` runner). Fleet scan no longer starts a reviewer worker on push.
+
+- Historically the lead started QA right after push via `on-worker-done.sh`. That path is removed from dotfiles; parallel head checks still apply where repos run them outside Actions.
 - The QA Verdict is the review Verdict. On a builder PR that gets a QA Verdict, the lead posts no second Verdict; the lead pushes, runs head-checks and merges. Opus cross review stays only for payments, wallet and ledger, auth, schema, tenant isolation, gate scripts and large diffs.
 - QA runs tests through heavy-gate with HEAVY_GATE_TIMEOUT_SECONDS=1500 and waits for admission. A FAIL only because tests never ran is not a Verdict: keep waiting, or cite a Checks PASS receipt at the exact head that ran those files.
 - QA reads the Checks receipt at the end and says pending when none is posted. Merge needs both a QA PASS and a Checks PASS at the same head.

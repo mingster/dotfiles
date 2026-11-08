@@ -43,6 +43,7 @@ Precheck logs default under `~/.local/state/agent-team/` unless overridden in `a
 | `script/coordinator-drain.sh`, `script/worker-watch.sh` | No | Tied to Elon session and fleet-watch, not a cron |
 | `script/worker-startup.sh --host-check` | No | Runs before each worker launch |
 | `script/head-checks.sh` | No | PR CI and fleet-watch `issue_scan`; starts rework workers |
+| `script/pr-review.sh` | No | GitHub Actions `Review` workflow after `Checks` pass |
 | `script/lead-merge.sh`, `script/coordinator-publication.sh` | No | Merge, push, and owner-reserved publication |
 | `script/new-coordinator.sh`, `script/take-over-coordinator.sh` | No | Owner provisioning and failover |
 | `script/agent-project-autoinit.sh` | No | IDE SessionStart hook |

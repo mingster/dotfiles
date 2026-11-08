@@ -344,18 +344,15 @@ head_checks_lock_held() {
 }
 
 read_post_push_stamp() {
-  post_checks_started=0 post_reviewer_started=0
+  post_checks_started=0
   [ -f "$post_push_stamp" ] || return 0
   local line key val
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     case "$line" in
-      checks_started=*|reviewer_started=*)
+      checks_started=*)
         key=${line%%=*}; val=${line#*=}
-        case "$key" in
-          checks_started) [ "$val" = 1 ] && post_checks_started=1 ;;
-          reviewer_started) [ "$val" = 1 ] && post_reviewer_started=1 ;;
-        esac
+        [ "$val" = 1 ] && post_checks_started=1
         ;;
     esac
   done < "$post_push_stamp"
@@ -370,7 +367,6 @@ write_post_push_stamp() {
     printf 'repo=%s\n' "$want_repo"
     printf 'head_sha=%s\n' "$head_sha"
     printf 'checks_started=%s\n' "$post_checks_started"
-    printf 'reviewer_started=%s\n' "$post_reviewer_started"
   } >"$tmp"
   mv "$tmp" "$post_push_stamp"
 }
@@ -388,28 +384,11 @@ start_post_publication_jobs() {
     stamped_head=$(sed -n 's/^head_sha=//p' "$post_push_stamp" | head -1)
     if [ "$stamped_repo" != "$want_repo" ] || [ "$stamped_head" != "$head_sha" ]; then
       post_checks_started=0
-      post_reviewer_started=0
     fi
   fi
   local head_checks=${COORDINATOR_PUBLICATION_HEAD_CHECKS:-$_script_dir/head-checks.sh}
-  local on_done=${COORDINATOR_PUBLICATION_ON_WORKER_DONE:-$_script_dir/on-worker-done.sh}
   if ! head_checks_lock_held "$repo_root" && ! checks_receipt_at_pr_head; then
     (bash "$head_checks" --repo "$repo_root" --pr "$pr_number" >/dev/null 2>&1 &) || true
-  fi
-  if [ -n "$pub_run" ] && { [ -n "$pub_author_family" ] || { [ -n "$pub_author_provider" ] && [ -n "$pub_author_model" ]; }; } \
-    && [ "$post_reviewer_started" != 1 ]; then
-    local from_handle=${pub_from:-${ORCA_TERMINAL_HANDLE:-}}
-    [ -n "$from_handle" ] || return 0
-    local done_args=(bash "$on_done" --repo "$want_repo" --pr "$pr_number" --head "$head_sha"
-      --worktree "$worktree" --run "$pub_run" --author-dispatch "${pub_author_dispatch:-unknown}")
-    if [ -n "$pub_author_provider" ]; then
-      done_args+=(--author-provider "$pub_author_provider" --author-model "$pub_author_model")
-    else
-      done_args+=(--author-family "$pub_author_family")
-    fi
-    (ORCA_TERMINAL_HANDLE="$from_handle" "${done_args[@]}" >/dev/null 2>&1 &) || true
-    post_reviewer_started=1
-    write_post_push_stamp
   fi
   set -e
 }

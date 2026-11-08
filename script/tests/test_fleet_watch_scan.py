@@ -640,7 +640,7 @@ class IssueScanPass(unittest.TestCase):
             os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
             try:
                 self.assertTrue(fw.write_post_push_stamp(
-                    REPO, head, checks_started=True, reviewer_started=True,
+                    REPO, head, checks_started=True,
                 ))
                 state = {}
                 branch = 'mingster/build-683'
@@ -658,7 +658,7 @@ class IssueScanPass(unittest.TestCase):
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
-    def test_remote_author_worktree_coordinator_stamp_starts_checks_and_reviewer_once(self):
+    def test_remote_author_worktree_coordinator_stamp_starts_checks_once(self):
         remote_wt = '/remote/blueDevil/workspaces/dotfiles/pr-680'
         with tempfile.TemporaryDirectory() as td:
             state_root = os.path.join(td, 'coord-state')
@@ -677,7 +677,7 @@ class IssueScanPass(unittest.TestCase):
             try:
                 head = 'b' * 40
                 self.assertTrue(fw.write_post_push_stamp(
-                    REPO, head, checks_started=True, reviewer_started=True,
+                    REPO, head, checks_started=True,
                 ))
                 state = {}
                 branch = 'mingster/build-683'
@@ -718,7 +718,7 @@ class IssueScanPass(unittest.TestCase):
                 _, log, starts, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
                 )
-                self.assertEqual(len(starts), 2, log)
+                self.assertEqual(len(starts), 1, log)
                 _, _, starts2, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
                 )
@@ -727,7 +727,7 @@ class IssueScanPass(unittest.TestCase):
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
-    def test_open_pr_starts_checks_and_reviewer_in_parallel_once(self):
+    def test_open_pr_starts_checks_once(self):
         with tempfile.TemporaryDirectory() as td:
             os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
             try:
@@ -739,11 +739,10 @@ class IssueScanPass(unittest.TestCase):
                 _, log, starts, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True,
                 )
-                self.assertEqual(len(starts), 2)
+                self.assertEqual(len(starts), 1)
                 self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
-                self.assertTrue(any('on-worker-done.sh' in ' '.join(cmd) for cmd in starts))
                 self.assertIn('head_checks_start=' + head[:8], ','.join(log))
-                self.assertIn('reviewer_start=' + head[:8], ','.join(log))
+                self.assertNotIn('reviewer_start=', ','.join(log))
                 _, _, starts2, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True,
                 )
@@ -752,7 +751,7 @@ class IssueScanPass(unittest.TestCase):
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
-    def test_verdict_blocks_second_reviewer_when_checks_receipt_is_newer(self):
+    def test_verdict_does_not_start_reviewer_when_checks_receipt_is_newer(self):
         state = {}
         head = '7' * 40
         other = '6' * 40
