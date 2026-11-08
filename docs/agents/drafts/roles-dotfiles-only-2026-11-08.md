@@ -1,52 +1,52 @@
 # Spec: team role files live only in dotfiles
 
-**Owner decision (2026-11-08):** Each Mingster team role exists once in dotfiles. Projects (`riben.life`, `pstv`, others) must not keep copies under `.claude/agents/`.
+**Owner decision (2026-11-08):** Each Mingster team role is authored once in dotfiles. Projects may hold **only symlinks** under `.claude/agents/<role>.md` pointing into dotfiles — no copies, no `{{PROJECT_NAME}}` rendering, no generated regular files.
 
 **Roles in scope:** `elon`, `architect-pm`, `fullstack-dev`, `qa-sdet`, `release-manager`, `sales-marketing`, `secops-finops`, `support-csm`.
+
+**Settled (owner 2026-11-08, coordinator):** Project tree uses **symlink-only** role entries (not user-level-only with empty project dirs, and not committed file copies).
 
 ---
 
 ## 1. Canonical location and how Claude Code loads roles
 
-### Where the unique files live
+### Where the unique content lives
 
 | Layer | Path | Content |
 | --- | --- | --- |
-| **Canonical source (git)** | `~/dotfiles/templates/agent-team/.claude/agents/<role>.md` | Eight team roles; no `{{PROJECT_NAME}}` or other per-project placeholders. |
-| **User-level discovery (machine)** | `~/.claude/agents/<role>.md` | Symlinks installed by `script/setup-claude-code.sh`, one per team role → canonical source. Laravel-only agents (`laravel-*`) stay as today under `~/dotfiles/.agents/claude/agents/` and are linked the same way. |
-| **Forbidden in projects** | `<project>/.claude/agents/<team-role>.md` | Must not exist after migration (see §5). Project-only *custom* roles are out of scope until the owner defines a separate pattern. |
+| **Canonical source (git, dotfiles)** | `~/dotfiles/templates/agent-team/.claude/agents/<role>.md` | Eight team roles; shared behaviour only; no per-project placeholders. |
+| **Project discovery (git, each repo)** | `<project>/.claude/agents/<role>.md` | **Symlink only** → canonical file under dotfiles (see portability below). |
+| **User-level (optional, unchanged)** | `~/.claude/agents/` | Laravel agents via `setup-claude-code.sh` today; team roles **need not** duplicate here if project symlinks exist. |
 
 ### Claude Code behavior (verified)
 
 Per [Subagents](https://code.claude.com/docs/en/sub-agents) (2026):
 
-- **Project** `.claude/agents/` — discovered walking up from cwd; precedence over user when the same `name` is defined closer to the working directory.
-- **User** `~/.claude/agents/` — available in every project; lower precedence than a project file with the same `name`.
-- `claude --agent <name>` and the `agent` setting in `.claude/settings.json` resolve definitions from both trees (plus plugins / managed settings).
-- New `~/.claude/agents/` directories may require a session restart; symlinks created by `setup-claude-code.sh` should exist before workers start.
+- **Project** `.claude/agents/` is walked from cwd upward; definitions here take precedence over `~/.claude/agents/` when the same `name` is closer to the working directory.
+- Symlinks in `.claude/agents/` are normal files from Claude Code’s perspective; content resolves from the link target.
+- `claude --agent <name>` loads from project + user agent directories.
 
-**Implication:** team roles must load from `~/.claude/agents/` only. Any leftover `<project>/.claude/agents/elon.md` (etc.) **shadows** the dotfiles copy and violates the owner rule.
+**Implication:** committed project symlinks give correct project-relative discovery for workers in project worktrees while keeping a single editable source in dotfiles.
+
+### Symlink target portability (fleet: mini6, niteking, miniu, blueDevil)
+
+| Approach | Git | Local dev | Worktree | CI without dotfiles |
+| --- | --- | --- | --- | --- |
+| **Relative symlink** (project → dotfiles) | Portable if every host keeps the same relative layout (e.g. `$HOME/projects/<repo>` and `$HOME/dotfiles`). | Works when `DOTFILES` path matches adopt script assumptions. | Same inode via git worktree checkout of `.claude/agents/*`; child worktrees see the symlink. | Fails or dangling link unless CI checks out dotfiles beside the project (document required layout). |
+| **Absolute symlink** (`/Users/.../dotfiles/...`) | Committed path is host-specific; **do not commit** per-user absolutes. | Works on one machine. | Breaks on other hosts. | Unusable. |
+
+**Recommendation:** `adopt-agent-team.sh` (or successor `link-agent-team-roles.sh`) writes **relative** symlinks from `<project>/.claude/agents/<role>.md` to `$(relpath "$PROJECT" "$DOTFILES/templates/agent-team/.claude/agents/<role>.md")`. Document the fleet invariant: `~/dotfiles` is the dotfiles repo and projects live under predictable siblings (or re-run the link script after clone). Refuse adoption when relative path cannot be computed (exit 2 with fix instructions).
+
+Optional machine hook: `setup-claude-code.sh` does **not** need team-role symlinks in `~/.claude/agents/` when project symlinks are mandatory.
 
 ### Non–Claude Code workers (Cursor, Antigravity, Orca)
 
-Keep today’s rule: the worker spec names an **absolute path** to the canonical file, not the project tree:
+Worker specs may keep using either:
 
-```text
-Read ~/dotfiles/templates/agent-team/.claude/agents/<role>.md first and follow it.
-```
+- Project path: read `<repo>/.claude/agents/<role>.md` (resolves through symlink), or
+- Absolute canonical: `~/dotfiles/templates/agent-team/.claude/agents/<role>.md` for branch worktrees where a stale regular file must not exist.
 
-Update `templates/agent-team/.claude/model-routing.md` accordingly (drop “main checkout’s `.claude/agents/`”).
-
-### `setup-claude-code.sh` change (dotfiles PR, not this draft)
-
-After linking `~/dotfiles/.agents/claude/` into `~/.claude/`, also ensure `~/.claude/agents/` exists and contains symlinks:
-
-```text
-elon.md -> ~/dotfiles/templates/agent-team/.claude/agents/elon.md
-… (all eight team roles)
-```
-
-Re-run `install.sh` or `setup-claude-code.sh` on every fleet host after merge.
+Update `model-routing.md` to require symlink or canonical path, and to forbid a regular file at the project path.
 
 ---
 
@@ -63,50 +63,45 @@ Role files hold **shared** behaviour only. Per-repo facts live in project-owned 
 | Display name / marketing name | `docs/agents/team-facts.md` § Product | Replaces `{{PROJECT_NAME}}` in descriptions. |
 | Shared process depth (not product-specific) | `~/dotfiles/templates/agent-team/docs/agents/*.md` | Unchanged (`architect-pm-work.md`, `elon-dispatch.md`, `team.md`, etc.). |
 
-**Role frontmatter `description`:** use role title + “for the active project”; require reading `docs/agents/team-facts.md` § Product for the commercial name.
+**Role frontmatter `description`:** role title + “for the active project”; commercial name from `docs/agents/team-facts.md` § Product.
 
-**Skills:** tier-2 team skills stay generated under `<project>/.agents/skills/` via `sync-team-skills.sh`; they already read project facts from `docs/agents/` (unchanged).
+**Skills:** tier-2 team skills stay generated under `<project>/.agents/skills/` via `sync-team-skills.sh` (unchanged).
 
 ---
 
 ## 3. Touch points: templates, scripts, hooks, gates
 
-Grep target: `.claude/agents` under `~/dotfiles` (92 lines / 34 paths, 2026-11-08).
+Grep target: `.claude/agents` under `~/dotfiles` (34 paths, 2026-11-08) — appendix.
 
 ### Template tree (`templates/agent-team/`)
 
 | Path | Change |
 | --- | --- |
-| `.claude/agents/*.md` | Strip `{{PROJECT_NAME}}`; add pointers to `docs/agents/team-facts.md`. Canonical only. |
-| `docs/agents/team.md` | State roles live in dotfiles + `~/.claude/agents/`; projects hold facts only. |
-| `docs/agents/team-facts.md` | Remove “worker worktrees hold `.claude/agents/`”; add Product section. |
-| `docs/agents/engineering-integration.md`, `daily-run.md` | Paths → `~/dotfiles/templates/agent-team/.claude/agents/` or “user agent dir”. |
-| `.claude/model-routing.md` | Worker spec absolute path → dotfiles canonical; drop “project must have `.claude/agents`”. |
-| `.claude/settings.json` | Post-compact echo: `.claude/agents/<role>.md` → `~/dotfiles/templates/agent-team/.claude/agents/<role>.md` (or `~/.claude/agents/`). |
-| `.claude/hooks/session-start.md` | Elon line → canonical path. |
-| `.claude/hooks/guard-bash.py` | Keep protecting canonical `templates/agent-team/.claude/agents/`; optional: block writes to `<project>/.claude/agents/<known-team-role>.md`. |
-| `.claude/hooks/tests/test_team_gates.py` | Role gate paths: dotfiles canonical + `docs/agents`; drop expectation that projects commit role files. |
-| `.agents/skills/{elon,crew,team-grill-backlog,staging-review}/SKILL.md` | Read paths → `~/.claude/agents/<role>.md` or dotfiles canonical. |
-| `.claude/agents/elon.md` | Owner-Reserved list: “role file changes” → dotfiles path only. |
+| `.claude/agents/*.md` | Strip `{{PROJECT_NAME}}`; pointer to `docs/agents/team-facts.md`. Canonical only. |
+| `docs/agents/team.md` | Roles: canonical in dotfiles; projects commit symlinks only. |
+| `docs/agents/team-facts.md` | Document symlink layout; Product section; worker paths via `.claude/agents/` (symlinks). |
+| `docs/agents/engineering-integration.md`, `daily-run.md` | Keep `.claude/agents/<role>.md` paths (symlink-backed). |
+| `.claude/model-routing.md` | Workers must not see a regular file at project role path; symlink or dotfiles canonical. |
+| `.claude/settings.json`, `hooks/session-start.md` | `.claude/agents/<role>.md` (symlink) is fine. |
+| `.claude/hooks/guard-bash.py` | Protect dotfiles canonical paths; block replacing symlinks with regular files in projects. |
+| `.claude/hooks/tests/test_team_gates.py` | Gates on dotfiles canonical + `docs/agents`; project role paths are symlinks only. |
+| `.agents/skills/{elon,crew,team-grill-backlog,staging-review}/SKILL.md` | `.claude/agents/<role>.md` via symlink. |
 
-### Dotfiles scripts and docs (outside template)
+### Dotfiles scripts and docs
 
 | Path | Change |
 | --- | --- |
-| `script/adopt-agent-team.sh` | **Stop copying** `.claude/agents/*.md` into projects; `--reset` no longer merges role files. Optionally write `.claude/agent-team-roles` marker file listing dotfiles SHA. |
-| `script/sync-team-skills.sh` | No change to role files (skills only). |
-| `script/team-audit.sh` | Budget/receipt/wording: audit **template + dotfiles** roles only; add **`no-project-roles`** finding if `<project>/.claude/agents/<team-role>.md` exists. Remove project from `receipt_check` for `.claude/agents`. |
-| `script/agent-team.sh` | `project` / `reset`: do not require or install `<project>/.claude/agents/`. |
-| `script/lead-merge.sh` | Protected paths: treat `templates/agent-team/.claude/agents/` as the role path; projects must not land role edits. |
-| `script/weekly-skill-impact.sh` | Already iterates dotfiles template agents (OK). |
-| `script/tests/release-guard-rules.sh` | Prefer dotfiles canonical path (already falls back to template). |
-| `script/tests/{team-audit,lead-merge,lead-merge-text-lane,head-checks,role-word-budget,agent-team,release-guard-rules}.test.sh` | Update fixtures: no project `.claude/agents/` for team roles. |
-| `docs/agents/team-reference.md`, `agent-team-architecture.md` | Document dotfiles-only roles and facts split. |
-| `.agents/skills/orca-team/SKILL.md` | Detect team via `docs/agents/team.md` or marker, not `project/.claude/agents/elon.md`. |
+| `script/adopt-agent-team.sh` | Replace `copy_file` for roles with **symlink** to dotfiles canonical; drop `agent-team-baseline` sha256 conflict logic for roles; `--reset` refreshes broken links. |
+| `script/team-audit.sh` | Budget/receipt on dotfiles template only; **`role-symlink`** finding per project (see §4). Remove receipt on project `.claude/agents` content commits (projects should not commit role body changes). |
+| `script/agent-team.sh` | `project` installs symlinks, not copies. |
+| `script/sync-team-skills.sh` | Unchanged (skills only). |
+| `script/lead-merge.sh` | Reject PRs that replace a team role symlink with a regular file or edit role body via project path. |
+| `.agents/skills/orca-team/SKILL.md` | Detect team via `elon.md` symlink or `docs/agents/team.md`. |
+| `docs/agents/team-reference.md`, `agent-team-architecture.md` | Symlink-only contract. |
 
 ### SessionStart hook
 
-`script/agent-project-autoinit.sh` does **not** reference `.claude/agents/` (seeds `docs/agents/issue-tracker.md` only). SessionStart role text lives in adopted `templates/agent-team/.claude/settings.json` and `session-start.md` (above).
+`script/agent-project-autoinit.sh` does not touch roles. Role text in adopted `settings.json` / `session-start.md` uses `.claude/agents/<role>.md`.
 
 ---
 
@@ -114,64 +109,62 @@ Grep target: `.claude/agents` under `~/dotfiles` (92 lines / 34 paths, 2026-11-0
 
 ### PR A — dotfiles (foundation)
 
-1. Implement §1–§3 in dotfiles (roles, `setup-claude-code.sh`, `adopt-agent-team.sh`, `team-audit.sh`, docs).
-2. Add `team-audit` / `adopt-agent-team --check` rule: **fail** if any of the eight `*.md` files exist under `<project>/.claude/agents/`.
+1. Canonical roles + `adopt-agent-team.sh` symlink mode + `team-audit.sh` role-symlink checks + docs.
+2. Implement `script/check-project-team-role-links.sh` (or fold into `team-audit.sh`):
+
+```bash
+# For each team role name:
+#   - missing .claude/agents/<role>.md -> fail
+#   - regular file (not symlink) -> fail
+#   - symlink target must resolve and lie under $DOTFILES/templates/agent-team/.claude/agents/
+#   - optional: target basename must match role
+```
+
 3. Owner-approved trailer on dotfiles role commits only.
-4. Run `setup-claude-code.sh` on coordinator + fleet (manual checklist in PR body).
+4. Document CI: checkout dotfiles adjacent to project or set `DOTFILES` and run link script before audit.
 
 ### PR B — `riben.life`
 
-1. Delete `.claude/agents/{elon,architect-pm,fullstack-dev,qa-sdet,release-manager,sales-marketing,secops-finops,support-csm}.md`.
-2. Delete `.claude/agent-team-baseline/*.sha256` if present.
-3. Merge any project-only lines into `docs/agents/team-facts.md` / `deploy-facts.md` / role-work docs.
-4. Re-run `sync-team-skills.sh`; CI or `team-audit.sh --check` must pass **no-project-roles**.
-5. Smoke: spawn one worker per role; confirm `Read` resolves canonical path.
+1. Remove regular-file `.claude/agents/*.md`; add symlinks via adopt/link script.
+2. Delete `.claude/agent-team-baseline/*.sha256`.
+3. Move any project-only lines into `docs/agents/team-facts.md` / `deploy-facts.md`.
+4. `team-audit` / link check green; smoke one worker per role.
 
 ### PR C — `pstv`
 
-Same steps as PR B.
+Same as PR B.
 
 ### PR D — other agent-team projects
 
-Repeat B/C pattern; track in `docs/agents/team-reference.md` “configured” list.
-
-**Enforcement check (shared):**
-
-```bash
-# proposed helper (name TBD): script/check-no-project-team-roles.sh
-for role in elon architect-pm fullstack-dev qa-sdet release-manager sales-marketing secops-finops support-csm; do
-  [ -f ".claude/agents/$role.md" ] && exit 1
-done
-```
-
-Wire into `team-audit.sh` and project CI (`head-checks` or existing audit job).
+Repeat; track in `team-reference.md`.
 
 ---
 
-## 5. Risks, recommendation, owner A/B
+## 5. Risks and remaining owner decisions
 
 ### Risks
 
 | Risk | Mitigation |
 | --- | --- |
-| Stale project copy shadows user agents | Delete copies + CI fail on reintroduction. |
-| Hosts without fresh symlinks | `install.sh` / fleet doc; `team-audit` optional check `~/.claude/agents/elon.md` → dotfiles. |
-| Cursor session cwd in dotfiles worktree | Absolute paths in worker specs (already required). |
-| Custom per-project roles (e.g. old `tech-lead.md`) | Explicit owner policy: remove or rename; not in the eight. |
-| `Owner-approved` trailer scope | Only dotfiles role path in receipt gate. |
+| Regular file reintroduced in project | CI + `team-audit` fail on non-symlink. |
+| Dangling symlink (dotfiles not cloned) | Adopt script + fleet README; audit reports unresolved target. |
+| Wrong relative depth after repo move | Re-run link script; document layout. |
+| CI runner without dotfiles | Job checks out dotfiles or skips role-audit with explicit failure. |
+| Worktree on old branch missing symlinks | Symlinks are tree-wide via git; merge main before worker spawn. |
+| Custom `tech-lead.md` etc. | Out of scope for the eight; separate policy. |
 
 ### Recommendation
 
-**Adopt user-level symlinks from canonical template + hard ban on project team role files.** Matches Claude Code docs, keeps one git source, preserves project facts in `docs/agents/*`, minimizes drift from `adopt-agent-team` copies.
+**Canonical content in dotfiles; each project commits only relative symlinks; enforcement fails on regular files.**
 
-### Owner decisions (A/B)
+### Owner decisions (unset only)
 
-| ID | Question | Option A (recommended) | Option B |
+| ID | Question | Option B (recommended) | Notes |
 | --- | --- | --- | --- |
-| **A1** | Canonical git path | Keep `templates/agent-team/.claude/agents/` (adoption bundle stays colocated) | Move to `.agents/claude/agents/` next to Laravel agents (single `~/.claude/agents/` tree) |
-| **A2** | Machine install | `setup-claude-code.sh` symlinks each team role into `~/.claude/agents/` | Document manual `orca`/`claude` `--agents` JSON injection only (no install hook) |
-| **A3** | Project detection for Orca team | `docs/agents/team.md` exists + no forbidden role files | New marker `.claude/agent-team-roles` with dotfiles role SHA |
-| **A4** | Extra project-only roles later | Forbidden until a separate spec | Allow `<project>/.claude/agents/<custom>.md` with names outside the eight |
+| **A3** | Orca “has agent team” detection | `docs/agents/team.md` + valid role symlinks | vs marker file with SHA |
+| **A4** | Extra project-only roles later | Allow only names outside the eight as symlinks or separate spec | vs forbid all extras |
+
+*(A1 canonical path in `templates/agent-team/.claude/agents/` and A2 project symlinks via adopt script are settled.)*
 
 ---
 
