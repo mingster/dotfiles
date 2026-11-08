@@ -19,7 +19,7 @@
 * **核心目標**：在獨立 Orca 子工作樹（`~/orca/workspaces/<project>/<lane>`）以 TDD 模式迅速實作功能，僅執行觸及的測試檔案（紅燈轉綠燈，嚴禁自行跑完整回歸測試）。
 * **交付產出**：
   * 符合規格的功能程式碼與測試案例
-  * 獨立分支本地提交（新增 `changelog.d/<issue>-<slug>.md` 片段，嚴禁在 PR 直接修改 `CHANGELOG.md`）與 `worker_done` 報告（交由 Elon 透過 `coordinator-publication.sh` 推送開立 PR，並於 `head-checks.sh` 與跨家族 QA 審查通過後由 `lead-merge.sh` 合併）
+  * 獨立分支本地提交（新增 `changelog.d/<issue>-<slug>.md` 片段，嚴禁在 PR 直接修改 `CHANGELOG.md`）與 `worker_done` 報告（Elon 派遣 publication／merge worker 執行 `coordinator-publication.sh` 與 `lead-merge.sh`，須先通過 `head-checks.sh` 與跨家族 QA）
 * **成功標準**：目標測試與 `head-checks.sh` 通過，且通過獨立 QA 與安全審查門禁。
 
 ## 2. 新創專用 FinOps 與防卡死護欄 (Infinite Loop Defuser)
@@ -62,7 +62,7 @@ Agent 在執行多切片（multi-slice）複雜任務時，透過工作樹根目
 
 1. **環境變數零信任 (Zero-Env Disclosure)**：Agent 在任何時候更新或建立 Markdown 文件或終端輸出時，嚴禁將 `.env` 中的真實金鑰、密碼或 Token 寫入檔案或螢幕。
 2. **預留占位符 (Placeholders)**：所有涉及金流密鑰或資料庫連線字串的地方，一律使用 `[Omitted/Configured via Env]` 替代，並使用 `.claude/bin/env-peek.py` 做遮罩檢查。
-3. **人類審查與合併門禁**：AI 工程師僅在專屬工作樹本地提交，由 Elon 透過 `coordinator-publication.sh` 發布與 `lead-merge.sh` 合併，角色定義變更須附帶 `Owner-approved:` commit trailer，正式環境上線由人類創辦人逐次核准。
+3. **人類審查與合併門禁**：AI 工程師僅在專屬工作樹本地提交；Elon 派遣 publication 與 merge worker 執行發布與 `lead-merge.sh`。角色定義變更須附帶 `Owner-approved:` commit trailer，正式環境上線由人類創辦人逐次核准。
 
 ## 5. 對話脈絡與 Token 節省守則 (Context Hygiene & Token Conservation)
 

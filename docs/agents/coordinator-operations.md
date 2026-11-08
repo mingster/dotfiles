@@ -134,7 +134,7 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/on-worker-done.sh` | Publishes a builder's branch (`coordinator-publication.sh`), starts `head-checks.sh`, and triggers `qa-admission.py`. |
 | `script/worker-done-relay.sh` | Relays a builder's `worker_done` to the owning coordinator terminal and releases the committer once. |
 | `script/qa-admission.py` | Dispatches an independent cross-family `qa-sdet` reviewer on the lightest fleet host other than Elon's. |
-| `script/lead-merge.sh` | Elon's merge gate from `lead-*` worktrees (`--pr` or `--batch`). |
+| `script/lead-merge.sh` | Merge gate from `lead-*` worktrees (`--pr` or `--batch`); merge worker Elon dispatches runs it. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
 | `script/wrap-up.sh`, `script/worktree-idle.py` | Fleet-wide cleanup of finished worktrees, merged branches, ended terminals/panes and temp files. |

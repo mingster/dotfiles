@@ -6,7 +6,7 @@ Long reference moved out of the root [README](../../README.md). Read it when you
 
 Use `script/agent-team.sh` for machine setup, new projects and safe reset previews. See [Agent team setup](agent-team-setup.md) for commands, backups and owner steps.
 
-The team files give agents their jobs, working rules and repeatable steps. Elon is the front door: give him an objective and he plans, dispatches teammates through Orca orchestration, merges reviewed branches via `script/lead-merge.sh` (until merge-on-review goes live), and contacts the owner only on Owner-Reserved decisions. See [Agent team architecture](agent-team-architecture.md) for the full design.
+The team files give agents their jobs, working rules and repeatable steps. Elon is the front door: give him an objective and he plans, dispatches teammates through Orca orchestration, dispatches merge workers for `script/lead-merge.sh` (until merge-on-review goes live), and contacts the owner only on Owner-Reserved decisions. See [Agent team architecture](agent-team-architecture.md) for the full design.
 
 `script/adopt-agent-team.sh [--project-name <name>] <dir>` installs from [templates/agent-team](../../templates/agent-team/): roles, generated team skills, facts file skeletons, role reference docs, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
 
@@ -14,7 +14,7 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 
 | Role | Owns |
 | --- | --- |
-| `elon` | Owner front door, priorities, delegation, owner decisions, publishing branches (`coordinator-publication.sh`) and merging (`lead-merge.sh`). |
+| `elon` | Owner front door, priorities, delegation, owner decisions, publication merge dispatches (`coordinator-publication.sh`, `lead-merge.sh` workers). |
 | `architect-pm` | Intake, one design document per feature (intent, spec and tickets), issue triage, the weekly non-blocker list and full `/team-audit` runs. |
 | `fullstack-dev` | Features and fixes built with tests first by TDD (Cursor `composer-2.5` first, then Claude when quota is out), committed locally on its own branch. |
 | `qa-sdet` | Read-only cross-family PR review, Playwright proving runs and daily/weekly `/staging-review`. |
@@ -56,7 +56,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, Elon) or new UI pages (`sales-marketing`, Elon); owner approves before build. Elon decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/team-grill-backlog` | `/team-grill-backlog Run the pre-build grill on the pending money and UI issues.` |
 | Dispatch and build | Elon assigns ready tickets (`Acceptance criteria`, `Requirement owner`, `Deleted`) under the usage and host gates; workers build by TDD on touched tests in child worktrees and report `worker_done`. | `/elon <objective>`, `/crew`, `script/worker-startup.sh`, `/tdd` | `/elon Deliver the ready setup tickets.` |
 | Checks and review | `head-checks.sh` runs on a trial merge with `main`; a cross-family reviewer audits the diff and Checks receipt, proves behaviour live and posts the `Verdict` (Extra Strong Opus review only for money or explicit request). | `script/head-checks.sh`, `/code-review` | `/code-review Check this branch against main and its ticket.` |
-| Merge and wrap-up | Elon publishes via `coordinator-publication.sh`, batch-merges passing PRs once per wake via `lead-merge.sh`, releases workers and runs `wrap-up`. | `script/coordinator-publication.sh`, `script/lead-merge.sh`, `/wrap-up` | Elon, merge the passing branches and wrap up their worktrees. |
+| Merge and wrap-up | Elon dispatches merge workers for `lead-merge.sh` once per wake and runs `wrap-up`. | `script/coordinator-publication.sh`, `script/lead-merge.sh`, `/wrap-up` | Elon, dispatch merge on the passing branches and wrap up worktrees. |
 | Deploy and staging review | Staging deploys daily at 19:00 Taiwan time, followed by `/staging-review` and full regression; a green review leads to a one-line summary and same-day owner go for production. | `/deploy local`, `/deploy staging`, `/staging-review`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
 | Status and daily run | Get company status (**Now**, **Needs owner**, **Running**) or a recap, or run the project's daily checklist. | `/elon status`, `/elon daily run` | `/elon status Show Now, Needs owner and Running.` |
 | Audit and weekly update | Orca runs `team-audit.sh` and `team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the owner's word; `weekly-update.sh` opens three upstream PRs for owner review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
@@ -149,7 +149,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/qa-admission.py` | Admits and dispatches an independent cross-family `qa-sdet` reviewer on the lightest fleet host other than Elon's. |
 | `script/post-verdict.sh` | Validates and posts a canonical `Verdict: PASS|PASS+NOTES|FAIL head=<sha> verifier=<id> author=<id>` comment on a PR, refusing self-review. |
 | `script/protected-merge-check.sh` | Checks whether a PR touches protected paths (`.claude/agents/`, hooks, pricing, auth, migrations) requiring owner approval. |
-| `script/lead-merge.sh` | Elon's merge gate from `lead-*` worktrees: verifies exact head SHA, `Checks: PASS` receipt, independent `Verdict: PASS` with matching `--verify-command` (supporting `verdict_carry`), and merges `--pr` or `--batch`. |
+| `script/lead-merge.sh` | Merge gate from `lead-*` worktrees (merge worker Elon dispatches): exact head SHA, `Checks: PASS`, independent `Verdict: PASS` with `--verify-command` (`verdict_carry`), merges `--pr` or `--batch`. |
 
 ### Cleanup, audits and weekly maintenance
 

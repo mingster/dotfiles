@@ -39,14 +39,14 @@ flowchart TD
 ## 2. Responsibilities and decision boundaries
 
 - **Mingster (owner / board).** Talks to Elon (`/elon` or `/ceo`) as executive peer. Decides only new features, new UI pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, sending customer replies, and role file and hook changes. Nothing else interrupts the owner.
-- **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (workers). Plans, dispatches every teammate with Orca orchestration (`orchestration` skill, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, merges reviewed branches via `script/lead-merge.sh` (until merge-on-review goes live), and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; routine progress, merges, reviews and staging deploys are not reported. On `/elon status` ("what now") the format is **Now**, **Needs owner**, **Running**; on "recap" it reports merged, deployed, problems and numbers.
+- **Elon.** Critical, objective driven partner without flattery. Turns vision into commercial experiments (Sales), requirements (BA) and delivery (workers). Plans, dispatches every teammate with Orca orchestration (`orchestration` skill, `orca orchestration worker-start`, `check`, `worker-release`), collects each `worker_done`, dispatches merge workers for `script/lead-merge.sh` (until merge-on-review goes live), and contacts Mingster only for an Owner-Reserved decision. Never uses Claude subagents. Runs the usage gate before every `worker-start`. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; routine progress, merges, reviews and staging deploys are not reported. On `/elon status` ("what now") the format is **Now**, **Needs owner**, **Running**; on "recap" it reports merged, deployed, problems and numbers.
 - **Sales and Marketing (`sales-marketing`).** Owns self-serve acquisition, positioning, conversion experiments and metric definitions (MRR, LTV, CAC, churn, 14 day activation), and joins the pre-build grill for new UI pages and wording. Delegates market research, competitor price comparison and Taiwan merchant lookups to a Gemini worker on Antigravity (requiring a source URL for every number and merchant fact, spot-checked before use). Never plans manual outbound sales, sends unapproved emails, touches production tables or alters live pricing.
 - **BA (`architect-pm` / 需求分析師).** Runs intake, writes one design document per feature (intent, spec and tickets with one owner approval), slices specs into machine-checkable GitHub issues with `to-tickets`, maintains the weekly list of non-blocker findings, and runs full `/team-audit` reviews on the owner's word. Never writes application code.
 - **Support tickets (`support-csm`, owner rule 2026-10-12).** When a ticket or support email arrives, the underlying problem is resolved first when it needs a fix, `support-csm` drafts the reply in the customer's language, and Elon notifies Mingster the same day with the ticket, what was done and the draft. Nothing is sent or closed before the owner approves.
 
 ## 3. Delivery lifecycle
 
-GitHub issues and PRs are the state of record (`docs/agents/team.md`, Process 2026-11-06). Until merge-on-review and start-label builds are switched on, Elon dispatches workers, `script/on-worker-done.sh` starts QA, and Elon merges passing branches once per wake via `script/lead-merge.sh`. Docs-only PRs (specs, tickets, marketing copy) take Elon's mechanical lane and merge on checks.
+GitHub issues and PRs are the state of record (`docs/agents/team.md`, Process 2026-11-06). Until merge-on-review and start-label builds are switched on, Elon dispatches workers, `script/on-worker-done.sh` starts QA, and a merge worker runs `script/lead-merge.sh` once per wake. Docs-only PRs (specs, tickets, marketing copy) use the mechanical lane on checks.
 
 ```mermaid
 sequenceDiagram
@@ -68,7 +68,7 @@ sequenceDiagram
     Dev->>CEO: worker_done (branch, worktree, full head, diff stat, test counts)
     CEO->>QA: Publish branch via coordinator-publication.sh; run head-checks.sh and cross-family QA
     QA->>CEO: Read-only code + Checks receipt audit, live proof, Verdict on PR
-    CEO->>CEO: Batch merge passing PRs once per wake via lead-merge.sh; release worker and wrap up
+    CEO->>CEO: Dispatch merge worker (lead-merge.sh batch); release worker and wrap up
 
     RM->>RM: Daily 19:00 Taiwan time staging deploy
     RM->>QA: /staging-review (full regression, smoke, changed pages on phone viewport; all pages weekly)
