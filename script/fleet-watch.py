@@ -683,7 +683,10 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
 
 def fetch_prs(repo):
     """Recent PRs in one gh call, or None when gh fails."""
-    fields = 'number,state,isDraft,headRefOid,headRefName,labels,comments,statusCheckRollup,mergeCommit'
+    fields = (
+        'number,state,isDraft,headRefOid,headRefName,baseRefOid,mergeable,mergeStateStatus,'
+        'reviewDecision,files,labels,comments,statusCheckRollup,mergeCommit'
+    )
     command = ['gh', 'pr', 'list', '--repo', repo, '--state', 'all', '--limit', '50', '--json', fields]
     try:
         output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -1748,12 +1751,199 @@ def status_rollup_failure_after_rerun(pr, workflow_watch_state, repo):
     return False
 
 
-def rework_needed_at_head(pr, workflow_watch_state, repo):
-    if checks_fail_at_head(pr):
+_VERDICT_LINE_RE = re.compile(
+    r'^Verdict: (?P<status>PASS\+NOTES|PASS|FAIL) head=(?P<head>[0-9a-f]{40})'
+    r'(?: verifier=(?P<verifier>[A-Za-z0-9_-]+) author=(?P<author>[A-Za-z0-9_-]+))?$'
+)
+
+
+def pr_checks_all_success(pr_row):
+    if checks_fail_at_head(pr_row):
+        return False
+    required = [
+        c for c in (pr_row.get('statusCheckRollup') or [])
+        if isinstance(c, dict) and c.get('isRequired', True) is not False
+    ]
+    return bool(required) and all(
+        (c.get('status') or 'COMPLETED') == 'COMPLETED'
+        and (c.get('conclusion') or c.get('state') or '') == 'SUCCESS'
+        for c in required
+    )
+
+
+def _git_base_ref(repo_root):
+    rc = subprocess.run(
+        ['git', '-C', repo_root, 'rev-parse', '--verify', '-q', 'origin/main'],
+        capture_output=True, timeout=10,
+    ).returncode
+    return 'origin/main' if rc == 0 else 'main'
+
+
+def _git_patch_id(repo_root, sha):
+    if not repo_root or not os.path.isdir(repo_root):
+        return None
+    try:
+        if subprocess.run(['git', '-C', repo_root, 'cat-file', '-e', '%s^{commit}' % sha],
+                          capture_output=True, timeout=15).returncode != 0:
+            subprocess.run(['git', '-C', repo_root, 'fetch', 'origin', sha],
+                           capture_output=True, timeout=30, check=True)
+        base = subprocess.run(
+            ['git', '-C', repo_root, 'merge-base', _git_base_ref(repo_root), sha],
+            capture_output=True, text=True, timeout=15, check=True,
+        ).stdout.strip()
+        if not base:
+            return None
+        diff = subprocess.run(
+            ['git', '-C', repo_root, 'diff', '%s..%s' % (base, sha)],
+            capture_output=True, timeout=30, check=True,
+        ).stdout
+        pid = subprocess.run(
+            ['git', '-C', repo_root, 'patch-id', '--stable'],
+            input=diff, capture_output=True, timeout=15, check=True,
+        ).stdout.decode('utf-8', errors='replace').split()
+        return pid[0] if pid else None
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
+def pr_verdict_valid_for_head(pr_row, repo_root=None):
+    head = pr_row.get('headRefOid') or ''
+    if not re.fullmatch(r'[0-9a-f]{40}', head):
+        return False
+    comments = sorted(
+        [(idx, c) for idx, c in enumerate(pr_row.get('comments') or []) if isinstance(c, dict)],
+        key=lambda pair: (pair[1].get('createdAt') or '', pair[0]), reverse=True,
+    )
+    for _, comment in comments:
+        match = _VERDICT_LINE_RE.match(_receipt_first_line(comment.get('body')))
+        if not match:
+            continue
+        status = match.group('status')
+        if (comment.get('includesCreatedEdit') or comment.get('isMinimized')
+                or comment.get('edited') or comment.get('minimized')) and status != 'FAIL':
+            continue
+        if match.group('verifier') and match.group('verifier') == match.group('author'):
+            return False
+        if status not in ('PASS', 'PASS+NOTES'):
+            return False
+        verdict_head = match.group('head')
+        if verdict_head == head:
+            return True
+        pid_v = _git_patch_id(repo_root, verdict_head)
+        return bool(pid_v and pid_v == _git_patch_id(repo_root, head))
+    return False
+
+
+def pr_has_conflict(pr_row, repo_root=None):
+    if (pr_row.get('conflict') is True or pr_row.get('behindMainConflict') is True
+            or pr_row.get('mergeable') == 'CONFLICTING'
+            or pr_row.get('mergeStateStatus') in ('DIRTY', 'CONFLICTING')):
         return True
-    if checks_pass_at_head(pr) and review_failed_at_head(pr):
+    head = pr_row.get('headRefOid') or ''
+    if repo_root and head and os.path.isdir(repo_root):
+        try:
+            base_ref = _git_base_ref(repo_root)
+            if (subprocess.run(['git', '-C', repo_root, 'cat-file', '-e', '%s^{commit}' % head],
+                               capture_output=True, timeout=10).returncode == 0
+                    and subprocess.run(['git', '-C', repo_root, 'merge-base', '--is-ancestor', base_ref, head],
+                                       capture_output=True, timeout=10).returncode != 0):
+                return subprocess.run(
+                    ['git', '-C', repo_root, 'merge-tree', '--write-tree', base_ref, head],
+                    capture_output=True, timeout=15,
+                ).returncode != 0
+        except (subprocess.SubprocessError, OSError):
+            pass
+    return False
+
+
+def pr_has_unresolved_threads(pr_row):
+    if pr_row.get('reviewDecision') == 'CHANGES_REQUESTED':
         return True
-    return status_rollup_failure_after_rerun(pr, workflow_watch_state, repo)
+    unresolved = pr_row.get('unresolvedReviewThreads', pr_row.get('unresolved_threads'))
+    if (isinstance(unresolved, int) and unresolved > 0) or (isinstance(unresolved, list) and unresolved):
+        return True
+    threads = pr_row.get('reviewThreads')
+    if isinstance(threads, dict):
+        threads = threads.get('nodes')
+    return isinstance(threads, list) and any(
+        isinstance(t, dict) and not t.get('isResolved', t.get('resolved', False)) for t in threads
+    )
+
+
+def _file_set(items):
+    out = set()
+    for item in items or ():
+        path = item if isinstance(item, str) else ((item.get('path') or item.get('filename')) if isinstance(item, dict) else '')
+        if isinstance(path, str) and path:
+            out.add(path)
+    return out
+
+
+def pr_red_check_in_diff(pr_row, workflow_watch_state=None, repo=''):
+    diff_files = _file_set(pr_row['files']) if 'files' in pr_row and pr_row['files'] is not None else None
+    if checks_fail_at_head(pr_row):
+        if diff_files is None:
+            return True
+        comment = newest_comment_receipt(pr_row.get('comments') or [], 'Checks', pr_row.get('headRefOid') or '')
+        rest = '\n'.join(((comment or {}).get('body') or '').splitlines()[1:]).strip()
+        return any(f in rest for f in diff_files) if rest else bool(diff_files)
+    for check in pr_row.get('statusCheckRollup') or []:
+        if not isinstance(check, dict):
+            continue
+        if (check.get('conclusion') or check.get('state') or '') not in ('FAILURE', 'ERROR'):
+            continue
+        if (check.get('context') or check.get('name') or '').lower() == 'review':
+            continue
+        explicit = _file_set([check.get('file'), check.get('path')] + (check.get('failingFiles') or []) + (check.get('files') or []))
+        text = '\n'.join(str(check.get(k)) for k in ('summary', 'title', 'description', 'text', 'output') if check.get(k))
+        if diff_files is not None:
+            if explicit and (explicit & diff_files):
+                return True
+            if not explicit and text and any(f in text for f in diff_files):
+                return True
+        elif not explicit and status_rollup_failure_after_rerun({'statusCheckRollup': [check]}, workflow_watch_state, repo):
+            return True
+    return False
+
+
+def rework_needed_at_head(pr, workflow_watch_state=None, repo='', repo_root=None):
+    return (
+        pr_has_conflict(pr, repo_root=repo_root)
+        or pr_has_unresolved_threads(pr)
+        or review_failed_at_head(pr)
+        or pr_red_check_in_diff(pr, workflow_watch_state, repo)
+    )
+
+
+def classify_open_pr(pr_row, workflow_watch_state=None, repo='', repo_root=None):
+    if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
+        return 'waiting'
+    if rework_needed_at_head(pr_row, workflow_watch_state, repo, repo_root=repo_root):
+        return 'needs_fix'
+    if (pr_row.get('mergeable') not in ('CONFLICTING', 'UNKNOWN')
+            and pr_checks_all_success(pr_row)
+            and pr_verdict_valid_for_head(pr_row, repo_root=repo_root)):
+        return 'ready'
+    return 'waiting'
+
+
+def pr_has_live_fix_worker(workers, pr_row):
+    number = pr_row.get('number')
+    branch = pr_row.get('headRefName') or ''
+    names = {'rework-%s' % number, 'fix-%s' % number, 'rework #%s' % number, 'fix #%s' % number} if number is not None else set()
+    for w in workers or ():
+        if not isinstance(w, dict) or worker_terminal_released(w) or worker_freed_by_terminal_exit(w):
+            continue
+        if worker_inventory_status(w) in ('completed', 'succeeded', 'failed', 'released', 'cancelled', 'abandoned', 'stopped'):
+            continue
+        proj = w.get('projection') or {}
+        if (proj.get('role') or w.get('role') or '').lower() in ('qa', 'qa-sdet', 'reviewer', 'verifier'):
+            continue
+        if (number is not None and worker_pr_number(w) == number) or (branch and worker_branch_name(w) == branch):
+            return True
+        if any((w.get(k) or proj.get(k)) in names for k in ('name', 'title')):
+            return True
+    return False
 
 
 def rework_failure_excerpt(pr_row):
@@ -1778,87 +1968,6 @@ def rework_failure_excerpt(pr_row):
             parts.append(summary)
         return '\n'.join(parts)
     return 'Rework after failure on head %s' % head
-
-
-def coordinator_publication_state_dir():
-    """Coordinator-local stamp storage; same default tree as coordinator-waiter."""
-    override = (os.environ.get('COORDINATOR_PUBLICATION_STATE_DIR') or '').strip()
-    if override:
-        return override
-    waiter = (os.environ.get('COORDINATOR_WAITER_STATE_DIR') or '').strip()
-    if waiter:
-        return waiter
-    xdg = (os.environ.get('XDG_STATE_HOME') or '').strip()
-    if not xdg:
-        xdg = os.path.expanduser('~/.local/state')
-    return os.path.join(xdg, 'agent-team')
-
-
-def post_push_repo_slug(repo):
-    slug = re.sub(r'[^A-Za-z0-9._-]+', '--', repo or '')
-    slug = slug.strip('-.')
-    return slug or 'unknown'
-
-
-def coordinator_post_push_stamp_path(repo, head):
-    state_dir = coordinator_publication_state_dir()
-    slug = post_push_repo_slug(repo)
-    return os.path.join(state_dir, 'post-push', slug, '%s.env' % head)
-
-
-def read_post_push_stamp_file(path):
-    stamp = {}
-    try:
-        with open(path, encoding='utf-8') as stream:
-            for line in stream:
-                line = line.rstrip('\n')
-                if not line or '=' not in line:
-                    continue
-                key, val = line.split('=', 1)
-                if key in ('repo', 'head_sha', 'checks_started', 'reviewer_started'):
-                    stamp[key] = val
-    except OSError:
-        return None
-    return stamp
-
-
-def post_push_flags_for_head(repo, head):
-    path = coordinator_post_push_stamp_path(repo, head)
-    stamp = read_post_push_stamp_file(path)
-    if not stamp:
-        return False, False
-    if stamp.get('repo') != repo or stamp.get('head_sha') != head:
-        return False, False
-    return stamp.get('checks_started') == '1', stamp.get('reviewer_started') == '1'
-
-
-def write_post_push_stamp(repo, head, checks_started=False, reviewer_started=False):
-    path = coordinator_post_push_stamp_path(repo, head)
-    pub_dir = os.path.dirname(path)
-    stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
-    if checks_started:
-        stamp_checks = True
-    if reviewer_started:
-        stamp_reviewer = True
-    try:
-        os.makedirs(pub_dir, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix='post-push.env.tmp.', dir=pub_dir)
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                stream.write('repo=%s\n' % repo)
-                stream.write('head_sha=%s\n' % head)
-                stream.write('checks_started=%s\n' % (1 if stamp_checks else 0))
-                stream.write('reviewer_started=%s\n' % (1 if stamp_reviewer else 0))
-            os.replace(tmp, path)
-        except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            return False
-    except OSError:
-        return False
-    return True
 
 
 def _repo_checks_lock_path(repo_root):
@@ -1897,63 +2006,6 @@ def head_checks_lock_live(repo_root, lock_live=None):
     return True
 
 
-def worker_worktree_path(w):
-    w = w or {}
-    proj = w.get('projection') or {}
-    ws = proj.get('workspace')
-    if isinstance(ws, dict):
-        path = ws.get('path')
-        if isinstance(path, str) and path:
-            return path
-    raw = w.get('workspace')
-    if isinstance(raw, str) and '::' in raw:
-        return raw.split('::', 1)[1]
-    return ''
-
-
-def pr_author_worker_metadata(workers, pr_row):
-    number = pr_row.get('number')
-    branch = pr_row.get('headRefName') or ''
-    for w in workers:
-        if number is not None and worker_pr_number(w) == number:
-            return _author_metadata_from_worker(w)
-        if branch and worker_branch_name(w) == branch:
-            return _author_metadata_from_worker(w)
-    return None
-
-
-def _author_metadata_from_worker(w):
-    w = w or {}
-    proj = w.get('projection') or {}
-    prov = proj.get('provider') if isinstance(proj.get('provider'), dict) else {}
-    provider = prov.get('id') if isinstance(prov.get('id'), str) else worker_agent_id(w)
-    model = prov.get('model') if isinstance(prov.get('model'), str) else ''
-    dispatch = w.get('dispatchId')
-    if not isinstance(provider, str) or not provider:
-        return None
-    if not isinstance(dispatch, str) or not dispatch:
-        return None
-    worktree = worker_worktree_path(w)
-    if not worktree:
-        worktree = worker_worktree_selector(w)
-    if not worktree or worktree.startswith('identity:'):
-        return None
-    run_id = w.get('runId')
-    if not isinstance(run_id, str) or not run_id:
-        run_id = proj.get('runId') if isinstance(proj.get('runId'), str) else ''
-    family = provider
-    if provider == 'antigravity':
-        family = 'gemini'
-    return {
-        'provider': provider,
-        'model': model,
-        'family': family,
-        'dispatch': dispatch,
-        'run': run_id,
-        'worktree': worktree,
-    }
-
-
 def build_head_checks_command(config, repo, pr_row):
     if (repo or '').split('/')[-1] == 'dotfiles':
         return None
@@ -1967,27 +2019,9 @@ def build_head_checks_command(config, repo, pr_row):
     return ['bash', script, '--repo', root, '--pr', str(pr_row['number'])]
 
 
-def build_on_worker_done_command(config, repo, pr_row, meta):
-    scan = config.get('issue_scan') or {}
-    from_terminal = scan.get('from_terminal')
-    if not from_terminal:
-        return None
-    run_id = meta.get('run') or scan.get('run')
-    if not run_id:
-        return None
-    head = pr_row.get('headRefOid') or ''
-    script = str(Path(__file__).with_name('on-worker-done.sh'))
-    command = [
-        'bash', script, '--repo', repo, '--pr', str(pr_row['number']), '--head', head,
-        '--worktree', meta['worktree'], '--run', run_id, '--author-dispatch', meta['dispatch'],
-    ]
-    if meta.get('model'):
-        command += ['--author-provider', meta['provider'], '--author-model', meta['model']]
-    elif meta.get('family'):
-        command += ['--author-family', meta['family']]
-    else:
-        return None
-    return command
+def build_ship_command(repo, pr_row):
+    script = str(Path(__file__).with_name('ship.sh'))
+    return ['bash', script, '--repo', repo, '--pr', str(pr_row['number'])]
 
 
 def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
@@ -2290,7 +2324,7 @@ def issue_scan_pass(
         pr_fetch = fetch_prs
     pr_repos = scan.get('pr_repos') or repos
     needs_elon = (config.get('worker_stall') or {}).get('needs_elon_label', 'needs-elon')
-    reviewer_started = state.setdefault('reviewer_started', {})
+    ship_heads = state.setdefault('issue_scan_ship', {})
     rework_heads = state.setdefault('issue_scan_rework', {})
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
     rework_rounds = state.setdefault('issue_scan_rework_rounds', {})
@@ -2302,7 +2336,12 @@ def issue_scan_pass(
         prs = pr_fetch(repo)
         if prs is None:
             continue
-        review_seen = reviewer_started.setdefault(repo, {})
+        root = _issue_scan_repo_root(config, repo)
+        shipped = ship_heads.setdefault(repo, {})
+        seen = rework_heads.setdefault(repo, {})
+        pending = rework_pending.setdefault(repo, {})
+        rounds = rework_rounds.setdefault(repo, {})
+        escalated = rework_escalated.setdefault(repo, {})
         for pr_row in prs:
             if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
                 continue
@@ -2311,50 +2350,34 @@ def issue_scan_pass(
             head = pr_row.get('headRefOid') or ''
             if not head:
                 continue
-            root = _issue_scan_repo_root(config, repo)
-            if not root:
-                continue
-            meta = pr_author_worker_metadata(workers, pr_row)
-            _, stamp_reviewer = post_push_flags_for_head(repo, head)
-            if stamp_reviewer:
-                review_seen[head] = True
-            # Retry until a Checks receipt exists or a live head-checks lock holds the worktree.
-            if not checks_receipt_at_head(pr_row):
+            pr_num = pr_row['number']
+            if root and not checks_receipt_at_head(pr_row) and not pr_checks_all_success(pr_row):
                 if not head_checks_lock_live(root, lock_live=checks_lock_live):
                     command = build_head_checks_command(config, repo, pr_row)
                     if command and start_detached(command) == 0:
                         log_bits.append('head_checks_start=%s' % head[:8])
                         if persist_state:
                             persist_state()
-            if not review_verdict_at_head(pr_row) and not review_seen.get(head):
-                if meta:
-                    command = build_on_worker_done_command(config, repo, pr_row, meta)
-                    from_terminal = (config.get('issue_scan') or {}).get('from_terminal')
-                    if command and start_detached(command, {'ORCA_TERMINAL_HANDLE': from_terminal}) == 0:
-                        review_seen[head] = True
-                        log_bits.append('reviewer_start=%s' % head[:8])
-                        write_post_push_stamp(repo, head, reviewer_started=True)
-                        if persist_state:
-                            persist_state()
-
-    for repo in pr_repos:
-        prs = pr_fetch(repo)
-        if prs is None:
-            continue
-        seen = rework_heads.setdefault(repo, {})
-        pending = rework_pending.setdefault(repo, {})
-        rounds = rework_rounds.setdefault(repo, {})
-        escalated = rework_escalated.setdefault(repo, {})
-        for pr_row in prs:
-            if pr_row.get('state') != 'OPEN':
+            pr_class = classify_open_pr(pr_row, workflow_watch_prior, repo, repo_root=root)
+            if pr_class == 'ready':
+                if shipped.get(head):
+                    continue
+                shipped[head] = True
+                if persist_state:
+                    persist_state()
+                command = build_ship_command(repo, pr_row)
+                if start_worker(command) == 0:
+                    notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
+                    log_bits.append('ship_start=%s' % head[:8])
+                else:
+                    log_bits.append('ship_fail=%d' % pr_num)
                 continue
-            if pr_has_label(pr_row, needs_elon):
+            if pr_class != 'needs_fix':
                 continue
-            if not rework_needed_at_head(pr_row, workflow_watch_prior, repo):
+            if seen.get(head) or pending.get(head):
                 continue
-            head = pr_row.get('headRefOid') or ''
-            pr_num = pr_row['number']
-            if not head or seen.get(head) or pending.get(head):
+            if pr_has_live_fix_worker(workers, pr_row):
+                log_bits.append('rework_live=%d' % pr_num)
                 continue
             pr_key = str(pr_num)
             if escalated.get(pr_key):
@@ -2373,7 +2396,7 @@ def issue_scan_pass(
                 continue
             command = build_rework_start_command(config, repo, pr_row)
             if command is None:
-                log_bits.append('rework_skip=%d' % pr_row['number'])
+                log_bits.append('rework_skip=%d' % pr_num)
                 continue
             pending[head] = True
             if persist_state:
@@ -2383,7 +2406,7 @@ def issue_scan_pass(
                 pending.pop(head, None)
                 rounds[pr_key] = rounds.get(pr_key, 0) + 1
                 extra_starts += 1
-                notices.append('rework %s #%d %s' % (repo, pr_row['number'], head[:8]))
+                notices.append('rework %s #%d %s' % (repo, pr_num, head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
                 if persist_state:
                     persist_state()
@@ -2391,7 +2414,7 @@ def issue_scan_pass(
                 pending.pop(head, None)
                 if persist_state:
                     persist_state()
-                log_bits.append('rework_fail=%d' % pr_row['number'])
+                log_bits.append('rework_fail=%d' % pr_num)
 
     if list_issues is None:
         list_issues = fetch_ready_issues
