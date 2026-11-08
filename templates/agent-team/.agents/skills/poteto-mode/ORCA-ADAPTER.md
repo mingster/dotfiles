@@ -32,7 +32,7 @@ Do not guess helper flags or run absent upstream scripts. Follow local helper do
 
 **Session pickup** and **Pause safely** use a worktree `.scratch/` handoff with ticket, branch and head, worker/dispatch IDs, rulings, completed and pending checks, baseline failures, next action and gates. At the existing rotation boundary ask Elon for rotation. Do not kill unknown processes, delete worktrees with unmerged commits or silently abandon active workers. Resume only after reading the handoff and reconciling current Git and dispatch state.
 
-**Babysit**, **Opening a PR** and **Shipping** use the existing delivery contract and `script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Workers stop at local commits; Elon owns push, PR and merge. There is no PR CI: use recorded local checks and required exact-head review rather than waiting for or inventing CI success. The merge helper enforces current-head and owner-file gates. Deployment remains `/deploy` with the project's facts and owner production approval. Worktree cleanup follows `wrap-up`, after publication and successful merge are verified.
+**Babysit**, **Opening a PR** and **Shipping** use the existing delivery contract and `script/lead-merge.sh --repo <owner/name> --pr <N> --head <sha>`. Workers stop at local commits; Elon dispatches publication and merge workers. There is no PR CI: use recorded local checks and required exact-head review rather than waiting for or inventing CI success. The merge helper enforces current-head and owner-file gates. Deployment remains `/deploy` with the project's facts and owner production approval. Worktree cleanup follows `wrap-up`, after publication and successful merge are verified.
 
 ## Session start, approvals and corrections
 

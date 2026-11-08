@@ -59,11 +59,11 @@ Bun and Node LTS across three tested PRs and one summary for the owner's go) or
 `script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
 changes the dotfiles checkout. No command commits or pushes the target project.
 
-## Letting Elon merge
+## Merging through lead-merge.sh
 
-Elon merges only through `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
+A merge worker Elon dispatches runs `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
 (or `--batch <N> <N>` once per wake from the `lead-elon` worktree, and `--mechanical`
-for docs-only PRs).
+for docs-only PRs); Elon dispatches the worker only.
 The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
 open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
