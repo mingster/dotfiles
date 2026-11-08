@@ -191,6 +191,18 @@ repo_ready_for_tooling() { # <repo_dir> — same bar as fleet-pull: clean checko
   return 0
 }
 
+resolve_placement_config() {
+  if [ -n "${FLEET_WATCH_CONFIG:-}" ]; then
+    printf '%s\n' "${FLEET_WATCH_CONFIG/#\~/$HOME}"
+    return
+  fi
+  if [ -n "${FLEET_PLACEMENT_CONFIG:-}" ]; then
+    printf '%s\n' "${FLEET_PLACEMENT_CONFIG/#\~/$HOME}"
+    return
+  fi
+  printf '%s\n' "${HOME}/.config/fleet-watch/config.json"
+}
+
 placement_line_from_json() { # <json>
   "$python3" -c '
 import json, sys
@@ -207,10 +219,26 @@ else:
 ' <<<"$1"
 }
 
-apply_worker_placement() { # <spec_file> -> WORKER_STARTUP_PLACED_ENV; prints chosen line to stdout
-  local spec_file=$1 json line env_name
+apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACED_ENV, WORKER_STARTUP_PLACED_REPO
+  local spec_file=$1 repo_sel=${2:-} json line env_name placed_repo pick_args=() cfg
   WORKER_STARTUP_PLACED_ENV=
-  json=$("$python3" "$here/worker-placement.py" pick --spec "$spec_file" --json) || die "worker-placement failed"
+  WORKER_STARTUP_PLACED_REPO=
+  cfg=$(resolve_placement_config)
+  if [ ! -f "$cfg" ]; then
+    echo 'worker-placement: skipped (no fleet config)' >&2
+    return 0
+  fi
+  pick_args=(pick --spec "$spec_file" --json --config "$cfg")
+  [ -z "$repo_sel" ] || pick_args+=(--repo "$repo_sel")
+  set +e
+  json=$("$python3" "$here/worker-placement.py" "${pick_args[@]}")
+  local ec=$?
+  set -e
+  [ "$ec" -eq 2 ] && die "worker-placement failed (fleet config unreadable or malformed)"
+  [ -n "$json" ] || die "worker-placement failed"
+  if [ "$(printf '%s' "$json" | jq -r '.skipped // false')" = true ]; then
+    return 0
+  fi
   line=$(placement_line_from_json "$json")
   if [ "$(printf '%s' "$json" | jq -r '.ok')" != true ]; then
     echo "$line" >&2
@@ -219,6 +247,8 @@ apply_worker_placement() { # <spec_file> -> WORKER_STARTUP_PLACED_ENV; prints ch
   printf '%s\n' "$line"
   env_name=$(printf '%s' "$json" | jq -r '.environment // empty')
   WORKER_STARTUP_PLACED_ENV=$env_name
+  placed_repo=$(printf '%s' "$json" | jq -r '.repo // empty')
+  WORKER_STARTUP_PLACED_REPO=$placed_repo
 }
 
 pick_host_only() {
@@ -321,7 +351,7 @@ run_mode() {
   host_check
 
   if [ -z "$environment" ]; then
-    apply_worker_placement "$spec"
+    apply_worker_placement "$spec" "$repo"
     [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
   fi
 
@@ -348,6 +378,9 @@ run_mode() {
       id:*|path:*) repo_selector=$repo ;;
       *) repo_selector="path:$repo" ;;
     esac
+    if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
+      repo_selector=$WORKER_STARTUP_PLACED_REPO
+    fi
     if [ -z "$base" ] && [ -z "$environment" ] && [[ "$repo_selector" == path:* ]]; then
       base=$(git -C "${repo_selector#path:}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
     fi

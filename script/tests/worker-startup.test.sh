@@ -405,9 +405,15 @@ chmod +x "$orca_stub"
 cat >"$tmp/fleet-placement.json" <<'EOF'
 {
   "local_host": "host-primary",
-  "host_caps": {"host-primary": 4, "host-overflow": 4, "host-skip": 4},
-  "host_load_ceilings": {"host-primary": 12, "host-overflow": 8, "host-skip": 12},
-  "worker_placement": {"order": ["host-primary", "host-skip", "host-overflow"]}
+  "host_caps": {"host-primary": 4, "host-overflow": 4, "host-skip": 4, "host-browser": 2, "host-remote": 4},
+  "host_load_ceilings": {"host-primary": 12, "host-overflow": 8, "host-skip": 12, "host-browser": 12, "host-remote": 12},
+  "worker_placement": {
+    "order": ["host-primary", "host-skip", "host-overflow", "host-browser", "host-remote"],
+    "roles": {"host-browser": "browser"},
+    "repos": {
+      "host-remote": {"local-app-id": "id:remote-app-id"}
+    }
+  }
 }
 EOF
 cat >"$tmp/fleet-load.sh" <<'EOS'
@@ -747,6 +753,106 @@ ec_explicit=$?
 set -e
 [ "$ec_explicit" = 0 ] && ok || bad "explicit --on run exits 0 despite all-over load sensor ($ec_explicit)"
 grep -q 'worker-placement:' "$tmp/explicit-on.err" && bad "explicit --on must not run placement" || ok
+
+# Local host: 0.75 load per core (9 on 12) is over — overflow wins under ceiling
+cat >"$tmp/load-local-percore.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=12 load=9.0 9.0 9.0\n'
+printf 'host-overflow cores=8 load=2.0 2.0 2.0\n'
+EOS
+chmod +x "$tmp/load-local-percore.sh"
+set +e
+out_percore=$(FLEET_LOAD_SCRIPT="$tmp/load-local-percore.sh" FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+  "$python3_real" "$placement_py" pick --spec "$spec_file" 2>"$tmp/placement-percore.err")
+ec_percore=$?
+set -e
+[ "$ec_percore" = 0 ] && ok || bad "local 0.75 per core picks overflow ($ec_percore)"
+grep -q 'host=host-overflow load_1m=2.0' <<<"$out_percore" && ok || bad "per-core overflow line ($out_percore)"
+
+# Browser routing: prose "secrets" stays code; explicit Host role: browser uses browser host
+secrets_spec="$tmp/secrets-spec.txt"
+printf 'Never record secrets in the brief.\nDo code work.\n' >"$secrets_spec"
+set +e
+out_secrets=$(FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+  "$python3_real" "$placement_py" pick --spec "$secrets_spec" 2>"$tmp/placement-secrets.err")
+ec_secrets=$?
+set -e
+[ "$ec_secrets" = 0 ] && ok || bad "secrets prose stays code ($ec_secrets)"
+grep -q 'host=host-primary' <<<"$out_secrets" && ok || bad "code host for secrets prose ($out_secrets)"
+browser_spec="$tmp/browser-spec.txt"
+printf 'Host role: browser\n\nOpen staging and check UI.\n' >"$browser_spec"
+cat >"$tmp/load-browser.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=1.0 1.0 1.0\n'
+printf 'host-browser cores=8 load=1.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-browser.sh"
+set +e
+out_browser=$(FLEET_LOAD_SCRIPT="$tmp/load-browser.sh" FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+  "$python3_real" "$placement_py" pick --spec "$browser_spec" 2>"$tmp/placement-browser.err")
+ec_browser=$?
+set -e
+[ "$ec_browser" = 0 ] && ok || bad "browser role line picks browser host ($ec_browser)"
+grep -q 'host=host-browser' <<<"$out_browser" && ok || bad "browser host placement ($out_browser)"
+
+# Remote repo map: translated id on worktree create for auto-picked remote host
+cat >"$tmp/load-remote-map.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=15.0 15.0 15.0\n'
+printf 'host-remote cores=8 load=1.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-remote-map.sh"
+set +e
+out_map_json=$(FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+  "$python3_real" "$placement_py" pick --spec "$spec_file" --repo "id:local-app-id" --json 2>"$tmp/repo-map-pick.err")
+ec_map_json=$?
+set -e
+[ "$ec_map_json" = 0 ] && ok || bad "repo map pick exits 0 ($ec_map_json)"
+grep -q '"repo":"id:remote-app-id"' <<<"$out_map_json" && ok || bad "pick JSON includes mapped repo ($out_map_json)"
+: >"$tmp/orca-repo-map.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-repo-map.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
+  bash --noprofile --norc "$script" --run run_repo_map --spec "$spec_file" --title mapjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_map --repo "id:local-app-id" 2>"$tmp/repo-map.err"
+ec_repo_map=$?
+set -e
+[ "$ec_repo_map" = 0 ] && ok || bad "remote repo map run exits 0 ($ec_repo_map) $(cat "$tmp/repo-map.err")"
+grep -q 'worktree create' "$tmp/orca-repo-map.log" && ok || bad "repo map worktree create logged"
+grep -q 'id:remote-app-id' "$tmp/orca-repo-map.log" && ok || bad "worktree create uses mapped remote repo id ($(cat "$tmp/orca-repo-map.log"))"
+
+# Missing fleet config: skip placement and start locally; malformed config still refuses
+no_cfg_path="$tmp/no-fleet-placement.json"
+set +e
+out_no_cfg=$(FLEET_WATCH_CONFIG="$no_cfg_path" \
+  bash "$script" --pick-host-only --spec "$spec_file" 2>"$tmp/placement-nocfg.err")
+ec_no_cfg=$?
+set -e
+[ "$ec_no_cfg" = 0 ] && ok || bad "--pick-host-only without fleet config exits 0 ($ec_no_cfg)"
+grep -q 'worker-placement: skipped (no fleet config)' "$tmp/placement-nocfg.err" && ok || bad "missing config skip line ($(cat "$tmp/placement-nocfg.err"))"
+printf '{not-json' >"$tmp/fleet-broken.json"
+set +e
+out_broken=$(FLEET_WATCH_CONFIG="$tmp/fleet-broken.json" bash "$script" --pick-host-only --spec "$spec_file" 2>"$tmp/placement-broken.err")
+ec_broken=$?
+set -e
+[ "$ec_broken" -ne 0 ] && ok || bad "malformed fleet config refuses ($ec_broken)"
+: >"$tmp/orca-nocfg.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-nocfg.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$no_cfg_path" \
+  bash --noprofile --norc "$script" --run run_nocfg --spec "$spec_file" --title nocfg --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_nc --repo "path:$clean" 2>"$tmp/run-nocfg.err"
+ec_run_nocfg=$?
+set -e
+[ "$ec_run_nocfg" = 0 ] && ok || bad "--run without fleet config starts locally ($ec_run_nocfg)"
+grep -q 'worker-placement: skipped (no fleet config)' "$tmp/run-nocfg.err" && ok || bad "run skip placement stderr ($(cat "$tmp/run-nocfg.err"))"
+grep -q 'orchestration worker-start' "$tmp/orca-nocfg.log" && ok || bad "local worker-start without fleet config"
 
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]
