@@ -1,0 +1,8 @@
+{
+  "roles": {
+    "qa-sdet": {
+      "provider": "antigravity",
+      "model": "gemini-4-argon-high"
+    }
+  }
+}

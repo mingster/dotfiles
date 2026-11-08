@@ -353,6 +353,8 @@ check_safe_paths() {
     .claude/settings.json
     .claude/settings.project.json
     .claude/model-routing.md
+    .orca
+    .orca/presets.project.json
     .cursor
     .cursor/skills
     .cursor/changelog-hook.json
@@ -536,6 +538,11 @@ TIER2_SKILLS = sorted(
 
 TEMPLATE_SYNC_FILES = [
     ".claude/model-routing.md",
+]
+
+# Copied from the template only when missing. Once present the project owns them: a copy that
+# differs from the template prints "skip (project owned)" and is left alone.
+TEMPLATE_SEED_FILES = [
     "docs/agents/team.md",
     "docs/agents/elon-dispatch.md",
     "docs/agents/release-manager-work.md",
@@ -1167,6 +1174,20 @@ def is_legacy_template_hook_cmd(cmd):
     return False
 
 
+def removed_file_in_rule(rule):
+    # The project path a permission rule names that remove_legacy_copies deletes in this run, or
+    # None. A shared copy under ~/.claude or $HOME/.claude is not the project file.
+    rels = [f".claude/hooks/{h}" for h in SHARED_HOOKS] + [f".claude/bin/{b}" for b in SHARED_BINS]
+    rels.append("bin/team-audit-metrics.ts")
+    for rel in rels:
+        if not os.path.lexists(os.path.join(target, rel)):
+            continue
+        pattern = r"(?:^|[\s(=:'\"])(?:\./|\$CLAUDE_PROJECT_DIR/|\"\$CLAUDE_PROJECT_DIR\"/)?" + re.escape(rel)
+        if re.search(pattern, rule):
+            return rel
+    return None
+
+
 def extract_settings_project():
     proj_settings_path = os.path.join(target, ".claude/settings.project.json")
     settings_path = os.path.join(target, ".claude/settings.json")
@@ -1197,6 +1218,10 @@ def extract_settings_project():
             cur_perms = cur.get("permissions", {})
             if isinstance(cur_perms, dict):
                 for item in cur_perms.get("allow", []):
+                    gone = removed_file_in_rule(item)
+                    if gone and item not in tpl_allow:
+                        print(f"drop .claude/settings.project.json permissions.allow: {item} (names {gone}, which this run removes)")
+                        continue
                     if item not in tpl_allow and item not in existing["permissions"]["allow"]:
                         existing["permissions"]["allow"].append(item)
                         print(f"extract .claude/settings.project.json permissions.allow: {item}")
@@ -1278,7 +1303,76 @@ def norm_role_line(line):
     return s.strip()
 
 
-def extract_role_facts():
+def routing_role_rows(text):
+    rows = {}
+    for line in text.splitlines():
+        m = re.match(r"^\|\s*([a-z][a-z-]*)\s*\|.*\|\s*$", line)
+        if m and m.group(1) + ".md" in CANONICAL_ROLES:
+            rows[m.group(1)] = line.strip()
+    return rows
+
+
+def extract_model_pins():
+    """Rows of the project's .claude/model-routing.md that differ from the template are forked
+    model pins. Move each into .orca/presets.project.json (roles.<role>) before the file is
+    rewritten, and return the team-facts bullets for ## Model routing."""
+    rel = ".claude/model-routing.md"
+    path = os.path.join(target, rel)
+    if not os.path.isfile(path) or os.path.islink(path):
+        return []
+    tpl_rows = routing_role_rows(read_text(os.path.join(template_dir, rel)))
+    bullets = []
+    pins = {}
+    for role, row in routing_role_rows(read_text(path)).items():
+        if tpl_rows.get(role) == row:
+            continue
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        bullets.append(f"- `{role}`: " + "; ".join(c for c in cells[1:] if c))
+        m = re.search(r"--agent\s+([\w.-]+)\s+--model\s+([\w.-]+)(?:\s+--effort\s+(\w+))?", cells[-1])
+        if not m:
+            print(f"warning: {rel} row for {role} differs from the template but names no --agent/--model pin")
+            continue
+        pin = {"provider": m.group(1), "model": m.group(2)}
+        if m.group(3):
+            pin["effort"] = m.group(3)
+        pins[role] = pin
+    if not pins:
+        return bullets
+
+    presets_rel = ".orca/presets.project.json"
+    presets_path = os.path.join(target, presets_rel)
+    presets = {}
+    if os.path.isfile(presets_path):
+        try:
+            presets = json.loads(read_text(presets_path))
+        except Exception as exc:
+            sys.stderr.write(f"agent-team: {presets_rel} invalid JSON: {exc}\n")
+            sys.exit(1)
+        if not isinstance(presets, dict):
+            sys.stderr.write(f"agent-team: {presets_rel} root must be a JSON object\n")
+            sys.exit(1)
+    # usage-gate.py reads role entries from "roles", or from top level keys when "roles" is absent.
+    if isinstance(presets.get("roles"), dict):
+        roles = presets["roles"]
+    elif any(isinstance(v, dict) and k != "tiers" for k, v in presets.items()):
+        roles = presets
+    else:
+        roles = presets.setdefault("roles", {})
+    changed = False
+    for role, pin in pins.items():
+        if role in roles:
+            if roles[role] != pin:
+                print(f"keep {presets_rel} roles.{role}: already set, differs from the {rel} row")
+            continue
+        roles[role] = pin
+        print(f"extract {presets_rel} roles.{role}: " + " ".join(pin.values()))
+        changed = True
+    if changed:
+        write_text(presets_rel, json.dumps(presets, indent=2) + "\n")
+    return bullets
+
+
+def extract_role_facts(model_bullets=()):
     extracted_by_role = {}
     for role_file in CANONICAL_ROLES:
         proj_role_path = os.path.join(target, ".claude/agents", role_file)
@@ -1339,6 +1433,25 @@ def extract_role_facts():
     if "## Role facts" not in content:
         content = content.rstrip("\n") + "\n\n## Role facts\n"
 
+    new_model = [b for b in model_bullets if b not in content]
+    for b in new_model:
+        print(f"extract docs/agents/team-facts.md (## Model routing): {b}")
+    if new_model:
+        block = "\n".join(new_model)
+        mr = re.search(r"(?m)^## Model routing[ \t]*$", content)
+        if mr:
+            rest = content[mr.end():]
+            next_h2 = re.search(r"\n## ", rest)
+            pos = mr.end() + (next_h2.start() if next_h2 else len(rest))
+            content = content[:pos].rstrip("\n") + "\n" + block + "\n\n" + content[pos:].lstrip("\n")
+        else:
+            section = (
+                "## Model routing\n\nRole pins forked from `.claude/model-routing.md`. "
+                "`.orca/presets.project.json` holds the flags `usage-gate.py` reads.\n\n" + block + "\n\n"
+            )
+            pos = content.index("## Role facts")
+            content = content[:pos] + section + content[pos:]
+
     for role_name, bullets in extracted_by_role.items():
         new_bullets = [b for b in bullets if b not in content]
         for b in new_bullets:
@@ -1377,12 +1490,6 @@ def remove_path(rel):
     else:
         os.unlink(full)
     print(f"removed {rel}")
-
-
-def remove_symlink_only(rel):
-    full = os.path.join(target, rel)
-    if os.path.islink(full):
-        remove_path(rel)
 
 
 def tier2_template_files(skill):
@@ -1462,8 +1569,8 @@ def remove_legacy_copies():
     prune_empty_dir(".agents/skills")
     prune_empty_dir(".agents")
 
-    remove_symlink_only(".agent/skills")
-    prune_empty_dir(".agent")
+    if os.path.lexists(os.path.join(target, ".agent/skills")):
+        print("skip (project owned): .agent/skills")
 
     remove_path("bin/team-audit-metrics.ts")
 
@@ -1823,6 +1930,14 @@ def seed_and_sync_project(proj_settings_mem=None):
         is_exec = rel.endswith(".sh")
         write_text(rel, read_text(src), executable=is_exec)
 
+    for rel in TEMPLATE_SEED_FILES:
+        src_text = read_text(os.path.join(template_dir, rel))
+        full = os.path.join(target, rel)
+        if os.path.isfile(full) and read_text(full) != src_text:
+            print(f"skip (project owned): {rel}")
+            continue
+        write_text(rel, src_text, executable=rel.endswith(".sh"))
+
 
 def run_check():
     drifts = []
@@ -1871,9 +1986,6 @@ def run_check():
                     f"stale generated Tier 2 skill copy in project: .agents/skills/{skill_name}"
                 )
 
-    if os.path.islink(os.path.join(target, ".agent/skills")):
-        drifts.append("legacy symlink present: .agent/skills")
-
     guard_cfg = os.path.join(target, ".claude/hooks/guard-config.json")
     if not os.path.isfile(guard_cfg):
         drifts.append("missing .claude/hooks/guard-config.json")
@@ -1911,6 +2023,13 @@ def run_check():
                 drifts.append(f"template-managed file drifted: {rel}")
             if rel.endswith(".sh") and not os.access(full, os.X_OK):
                 drifts.append(f"template-managed script not executable: {rel}")
+
+    for rel in TEMPLATE_SEED_FILES:
+        full = os.path.join(target, rel)
+        if not os.path.isfile(full):
+            drifts.append(f"missing template-seeded file: {rel}")
+        elif rel.endswith(".sh") and not os.access(full, os.X_OK):
+            drifts.append(f"template-seeded script not executable: {rel}")
 
     if not os.path.isfile(os.path.join(target, ".cursor/changelog-hook.json")):
         drifts.append("missing .cursor/changelog-hook.json")
@@ -1993,7 +2112,8 @@ def run_check():
 if mode == "project":
     extract_guard_config()
     proj_settings_mem = extract_settings_project()
-    extract_role_facts()
+    model_bullets = extract_model_pins()
+    extract_role_facts(model_bullets)
     seed_and_sync_project(proj_settings_mem)
     remove_legacy_copies()
 elif mode == "check":
