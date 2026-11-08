@@ -1,29 +1,138 @@
-# Fleet watchdog
+# Fleet watch
 
 Orca registration for scheduled fleet jobs (including this pass) lives in [Orca automations](orca-automations.md).
 
-Run `python3 script/fleet-watch.py --config <private-json> --state <private-state>` every 5 minutes from a supervisor independent of the coordinator's inbox waiter. Configure `runs` with each run's `id`, `terminal` (coordinator handle) and `waiter_pattern` (a process pattern unique to that run); configure `host_caps` using the host IDs returned by worker-list. Optional `leads` lists each lead's `name` and `terminal`; a lead whose `orca terminal show` fails gets one alert, rearmed when it answers again. Keep handles and machine names in the private config, never in this repository.
+Fleet watch is a bounded precheck script in `script/fleet-watch.py`. It is meant to run every five minutes on each fleet host through an Orca automation. The automation runs only the precheck command (no agent turn). Each pass writes one summary line to the fleet watch log and updates a private JSON state file. Handles, host names, and repo paths belong in private config only, never in this repository.
 
-Each pass appends one summary line to `~/.orca/logs/fleet-watch.log` (pass duration, backup stamp age when `backup.stamp` is set, heavy-gate wait medians, wrap-up round ages, and any worker-stall or issue-scan actions). It never logs terminal screen content.
+## What it is and how it runs
 
-Nothing is typed into a coordinator terminal by default. Notices queue in the state file and go to each run terminal as one `orchestration send`, at most every 600 seconds, with duplicates merged. A `lead pane gone`, `host cap exceeded`, `failed dispatch`, or `inbox waiter absent` notice goes at once as a message, carrying whatever is already queued. A Verdict goes at once to the lead named by the owner record of its `author=` dispatch, or joins the digest when there is no record. A run may set `"typed": true` to keep the legacy `terminal send` path for that terminal only. `script/coordinator-drain.sh` filters "Worker stopped without reporting" for lead terminals from the coordinator's inbox check (`FLEET_WATCH_CONFIG` must name the same private json as fleet-watch's `--config`, including `leads`); fleet-watch turns `COORDINATOR_DRAIN_STATE` into one digest line with a count per lead. A worker's stop is never dropped.
+Install scheduling with `script/install-fleet-automations.sh` (see below). That script registers two Orca automations: fleet watch on a five minute cron, and wrap up scheduled on a two hour cron. The fleet watch precheck runs `python3 script/fleet-watch.py --config <private-json> --state <private-state>`, appends stderr/stdout to the precheck log, and exits with code 1 so the automation does not spawn an agent.
 
-Optional `worker_stall`: set `label_repo` to a GitHub repo where stalled-worker issues and labels are applied (`needs-elon` by default). When a live worker's terminal has had no `lastOutputAt` progress for 30 minutes, the pass runs `worker-stop` once then `worker-start --retry-of <dispatch>`; if progress is still missing after the label cooldown, it adds the `needs-elon` label to the PR whose number is on the worker row, or found by branch head lookup when the row has no number; otherwise it opens a fixed-title issue.
+You invoke the same command manually for debugging. Pass duration and feature outcomes land in `~/.orca/logs/fleet-watch.log` unless `FLEET_WATCH_LOG_PATH` is set. The state file holds waiter timers, notice queues, issue scan progress, and similar data across passes. Notices queue there, then deliver to configured run terminals through `orchestration send` (digest at most every 600 seconds, urgent items at once). A run may set `"typed": true` to use legacy `terminal send` instead.
 
-Optional `backup` (`stamp` path to the coordinator's `~/<agent-state>/.sync-ok`, `issue_repo` as `owner/name` for GitHub issues) opens at most one **open** issue with the fixed title `agent-state backup has not pushed for 30 minutes` when that stamp is older than 30 minutes; if that title already exists among open issues, it does not create another. Configure it on the host that runs the monitor pass for the coordinator. The log line includes `backup_age_s=…` and adds `backup_stale` when the age exceeds 10 minutes, so a blocked sync is visible before the issue opens.
+Without a five minute schedule the script is an inert guard, not liveness coverage.
 
-Optional `pr_watch` (`repos: ["owner/name"]`, `stuck_minutes` defaulting to 30, optional `workflows` defaulting to all failed runs in `RUN_WINDOW`) watches open PRs for merges, Verdicts, Review receipts, and stuck checks or reviews, reruns a failed GitHub Actions workflow once, then opens an issue labelled `needs-elon` when it fails twice.
+## Pass order
 
-Optional `heavy_gate` (`hosts: {host: wait_log_path}`, `issue_repo` as `owner/name`, optional `median_limit_seconds` defaulting to 120) reads `wait_s=` lines from the last 24 hours (`HEAVY_GATE_WAIT_MEDIAN_MAX_AGE_SECONDS`), logs `heavy_gate_median_<host>=<seconds>`, and opens at most one open issue titled `heavy-gate median wait exceeds 2 minutes on <host>` when the median exceeds two minutes.
+Each numbered step is one slice of a single pass, in the same order as `main` in `script/fleet-watch.py`. The script reads Orca once per pass and reuses that inventory where noted.
 
-Optional `wrap_up` (`hosts: {host: log_path}`, `issue_repo` as `owner/name`, optional `stale_limit_seconds` defaulting to 1200) reads the last timestamp in each host's `wrap-up-scheduled.log`, logs `wrap_up_age_<host>=<seconds>` (and `wrap_up_stale_<host>` past 10 minutes), and opens at most one open issue titled `wrap-up last round stale on <host>` when older than 20 minutes.
+1. **Coordinator watch.** When `coordinator_watch` is set: ssh probe and alerts on backup hosts only. Saves state immediately. When `runs` is empty, this step can end the pass before Orca inventory (host without Orca).
+2. **Orca inventory and worker alerts.** `read_orca_inventory` then `alerts`: inbox messages, worker list, per run inbox waiter checks (`pgrep` on `waiter_pattern`), and lead `terminal show`. On failure, one latched skip notice is queued and worker alerts, issue scan, and worker stall skip for that pass. When inventory succeeds: unacked inbox with no waiter for ten minutes yields one urgent notice per run; failed dispatches (after the first pass baseline), host cap exceeded (children count toward the cap), and dead lead panes yield urgent notices.
+3. **Terminal list.** Fetches terminal last output times for worker stall. A list failure sets `terminal_list_failed` on the summary line and worker stall does not run actions that pass.
+4. **PR watch.** When `pr_watch.repos` is set: merges, Verdict and Review receipts, and stuck failing open PRs (`stuck_minutes`).
+5. **Usage publish.** When `usage_hosts` is set: runs `usage-gate.py publish` for each host; failures become digest notices.
+6. **Workflow watch.** When `pr_watch.repos` is set: reruns each failed workflow once, then may open a `needs-elon` issue after two failures (optional `pr_watch.workflows` filter).
+7. **Backup.** When `backup.stamp` is set, logs stamp age and opens at most one open GitHub issue when the stamp is older than thirty minutes.
+8. **Heavy gate.** Reads recent `wait_s=` lines from per host wait logs, logs medians, and may open an issue when median wait exceeds two minutes (configurable).
+9. **Wrap up age.** Reads the last timestamp in per host wrap up round logs, logs ages, and may open an issue when the last round is older than twenty minutes (configurable).
+10. **Issue scan.** When `enabled: true` and Orca inventory succeeded: usage gate check, host admission under `host_caps`, detached head Checks workers, detached reviewer workers after push, rework workers on failing heads (cap two rounds), then at most one eligible `ready-for-agent` issue start. With no candidate issue and no other scan bits recorded yet, logs `issue_scan_none`. Skips entirely when inventory failed. Team backlog sweep is not implemented on main; it is planned in open PR #699.
+11. **Worker stall.** When enabled and inventory and terminal list succeeded: live workers with no terminal progress for thirty minutes get `worker-stop` then `worker-start --retry-of`; repeated silence after label cooldown adds `needs-elon` on the PR or opens a fixed title issue.
 
-Optional `issue_scan` (disabled unless `enabled: true`; `repos`, `repo_roots`, optional `pr_repos`, `host`, `startup_script` defaulting to `script/worker-startup.sh`) runs when Orca inventory, the usage gate and host admission pass. Receipt scans (`Checks`, `Review`, `Verdict`) take the newest comment per kind at an exact head by `createdAt` and accept an optional `main=` suffix on the first line. Open PRs without a Checks receipt at the head get `head-checks.sh` each pass until one posts or a check worktree lock is live (a publication stamp alone does not suppress retries). It starts at most one rework worker per new failing head when Checks fail, when Checks pass and Review or Verdict failed, or when `statusCheckRollup` still shows `FAILURE` after a workflow rerun recorded in `workflow_watch` from before the same pass (`workflow_notices` runs first and may request the rerun without starting rework until the next pass). Rework passes `--base-branch` and the failing receipt into the spec. At most two rework rounds per PR, then it adds `needs-elon`. It also starts eligible `ready-for-agent` issues (unblocked, with acceptance criteria, ordered `P0` and `P1` first, then FIFO).
+After checks, coordinator watch notices from step 1 are merged, drain counts from `script/coordinator-drain.sh` may append digest notices, the pass appends the log line, delivers notices, and saves state. Match `FLEET_WATCH_CONFIG` between fleet watch and coordinator drain when leads are configured.
 
-`script/fleet-toolchain-check.sh` (also run from `elon-startup.sh` and `wrap-up.sh --fleet`) reports fleet hosts whose orca, bun, or node is below the latest release or below `mini6`.
+## Config reference
 
-If `orca orchestration inbox` or `orca ... worker-list` fails or times out, one line reports that Orca could not be read and that pass skips worker inbox alerts (waiter, capacity, failed dispatch) and `issue_scan`; backup and other checks still run.
+Keep the live JSON beside machine private paths (for example under `~/.config/fleet-watch/`). Example shape: `script/fleet-watch.config.example.json`.
 
-A waiter absent across ten minutes of observations with unread deliveries gets one terminal wake, then rearms when the waiter returns or the inbox clears. The first pass records existing failed dispatches without alerting. After that, each new failed dispatch gets one alert. Every nonfinal dispatch, including children, counts toward host capacity. The watchdog only alerts unless `worker_stall` or `issue_scan` is enabled; the coordinator follows Orca recovery before stopping or retrying anything. A CLI failure preserves state and fails the pass so the supervisor can report it. Without scheduling the pass every five minutes this is an unactivated guard, not liveness coverage.
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `runs` | List of `{id, terminal, waiter_pattern}`; optional `typed: true` for legacy send | `[]` |
+| `runs[].terminal` | Coordinator (or run) terminal handle for notices | required when runs nonempty |
+| `host_caps` | Map host id to max concurrent dispatches (children included) | `{}` (issue scan admits with 4 when host missing) |
+| `leads` | `{name, terminal}` panes that must stay alive | `[]` |
+| `pr_watch.repos` | GitHub repos `owner/name` to watch | none |
+| `pr_watch.stuck_minutes` | Minutes before a stuck failing open PR alerts | `30` |
+| `pr_watch.workflows` | Workflow names to treat in rerun logic; empty means all failed runs in window | all in window |
+| `worker_stall.label_repo` | Repo for stall issues and PR labels | none (feature off without it) |
+| `worker_stall.needs_elon_label` | Label applied after cap | `needs-elon` |
+| `worker_stall.label_cooldown_seconds` | Wait before labeling after restart | `120` |
+| `worker_stall.stall_idle_seconds` | Silence before stall actions | `1800` (or `FLEET_WATCH_STALL_IDLE_SECONDS`) |
+| `backup.stamp` | Path to coordinator sync stamp file | none |
+| `backup.issue_repo` | Repo for backup stale issues | none |
+| `heavy_gate.hosts` | Host id to wait log path | none |
+| `heavy_gate.slot_roots` | Host id to heavy gate cache root | none |
+| `heavy_gate.issue_repo` | Repo for median and stuck slot issues | none |
+| `heavy_gate.median_limit_seconds` | Median wait threshold | `120` |
+| `wrap_up.hosts` | Host id to wrap up scheduled log path | none |
+| `wrap_up.issue_repo` | Repo for stale round issues | none |
+| `wrap_up.stale_limit_seconds` | Age before opening issue | `1200` |
+| `issue_scan.enabled` | Turn on automated issue and rework starts | `false` |
+| `issue_scan.repos` | Repos to list `ready-for-agent` issues | `[]` |
+| `issue_scan.repo_roots` | Repo to local checkout path | `{}` |
+| `issue_scan.pr_repos` | Repos for PR rework and head checks | `repos` |
+| `issue_scan.run` | Orca run id passed to worker startup | required when enabled |
+| `issue_scan.from_terminal` | `--from` handle for worker starts | required when enabled |
+| `issue_scan.host` | Host id for admission | `local` |
+| `issue_scan.agent` / `model` | Provider and model for starts and gate | `cursor`, empty model |
+| `issue_scan.startup` | Worker startup script path | `script/worker-startup.sh` |
+| `issue_scan.role` | Default builder role name for issue starts | `builder` |
+| `issue_scan.rework_agent` / `rework_model` | Overrides for rework starts | same as agent/model |
+| `coordinator_watch.state_dir` | Git checkout of agent state | none |
+| `coordinator_watch.offline_minutes` | Ssh failures before alert | `10` |
+| `coordinator_watch.alert_command` | Shell command; alert text is the last argument | none |
+| `usage_hosts` | Host ids passed to `usage-gate.py publish` | none |
 
-Optional `coordinator_watch` (`state_dir`, `offline_minutes` defaulting to 10, `alert_command`) belongs in the config of a backup host only, because a coordinator cannot report its own death. Each pass runs `git -C <state_dir> fetch -q origin` (ten second limit), then `git -C <state_dir> show origin/main:coordinator.conf`, and reads `coordinator <name>` from that text; on any git failure it falls back to `<state_dir>/coordinator.conf`. With no such line, or when this host is the named coordinator, it does nothing. Otherwise each pass runs `ssh -o BatchMode=yes -o ConnectTimeout=6 <name> true` with a ten second limit; a failed fetch alone does not count as the coordinator being offline. After `offline_minutes` of ssh failures it sends one alert, `coordinator <name> offline for <n> minutes; failover is manual, ask the owner`, by running `alert_command` with the text as its last argument (the private config picks the channel) and adding it to the normal notices even when `alert_command` fails, so configured runs and the log still see the line; a failed `alert_command` leaves `alerted` false and is retried on the next pass. When the coordinator answers again the state clears and one `coordinator <name> back` line goes out if an alert had been sent. A changed coordinator name resets the timer. This check runs first, before any Orca call, and saves its state at once. With `runs` empty it skips every Orca call, so a host without Orca passes cleanly. It only alerts: it starts nothing and fails over nothing.
+## Install and uninstall
+
+Use `script/install-fleet-automations.sh` from dotfiles on every host.
+
+```bash
+script/install-fleet-automations.sh --status
+script/install-fleet-automations.sh --install
+script/install-fleet-automations.sh --uninstall
+```
+
+Optional env file: `~/.config/fleet-watch/automations.env` (or `FLEET_AUTOMATIONS_ENV`). Common overrides: `DOTFILES_DIR`, `AGENT_STATE_DIR`, `FLEET_WATCH_CONFIG`, `FLEET_WATCH_STATE`, `FLEET_WATCH_PRECHECK_LOG`, `FLEET_WATCH_PRECHECK_TIMEOUT` (default 280), `ORCA_CLI_COMMAND`.
+
+On install, the script compares `hostname -s` to the coordinator name in `agent-state/coordinator.conf`. **Enabled** automations run only on that coordinator host. Other hosts get the same automation records **disabled** (precheck definition present, cron idle).
+
+Coordinator watch alerts say failover is manual; there is no automatic promotion.
+
+## Reading the log
+
+Each line is UTC timestamp plus semicolon separated fields. Never contains terminal screen text.
+
+| Bit | Meaning |
+|-----|---------|
+| `pass ok` / `pass failed` | Pass finished within or over four minute budget |
+| `backup_age_s` / `backup_stale` | Stamp age; stale when over ten minutes |
+| `heavy_gate_median_*` | Per host median wait seconds |
+| `wrap_up_age_*` / `wrap_up_stale_*` | Last wrap up round age |
+| `stall ...` | Worker stall actions taken this pass |
+| `scan ...` | Issue scan summary (see below) |
+| `terminal_list_failed` | Could not list terminals; worker stall skipped actions that pass |
+
+Issue scan bits inside `scan ...`:
+
+| Bit | Meaning |
+|-----|---------|
+| `issue_scan_off` | Feature disabled |
+| `issue_scan_inventory_failed` | Orca inventory failed earlier this pass |
+| `issue_scan_gate` | `usage-gate.py check` failed for configured agent/model |
+| `issue_scan_load` | Host at cap under `host_caps` |
+| `issue_start=N` | Started worker for issue number N |
+| `issue_start_fail=N` | `worker-start` failed for issue N |
+| `head_checks_start=abcdef12` | Detached Checks worker for PR head prefix |
+| `reviewer_start=abcdef12` | Detached reviewer worker for PR head prefix |
+| `rework_start` / `rework_fail` / `rework_cap` | Rework pipeline |
+| `issue_scan_none` | No eligible ready issue and no other scan bits on that pass |
+
+**First day checks:** Confirm one new log line every five minutes on the coordinator. Confirm `pass ok` and no repeated `Orca could not be read`. With issue scan enabled, expect occasional `issue_start` or explicit `issue_scan_none`, not endless `issue_start_fail`.
+
+## Troubleshooting
+
+**Stale coordinator terminal in config.** When `issue_scan.from_terminal` is wrong or a run `terminal` is an old Orca handle, every worker start fails with `issue_start_fail` in the log and notice delivery may log `no_active_sender_terminal`. Fix: set the current coordinator terminal handle in the private JSON.
+
+**Orca inventory errors.** One latched notice per outage; worker inbox alerts and issue scan skip until Orca responds. Backup, heavy gate, and wrap up still run.
+
+**Inbox waiter false positive.** Confirm `waiter_pattern` matches only the coordinator inbox waiter for that run id.
+
+**Host cap noise.** Count includes nested dispatches; raise the cap or reduce parallel work.
+
+**Issue scan never starts.** Check `enabled`, repo roots on disk, usage gate, and `host_caps`. Read `issue_scan_gate` vs `issue_scan_load` in the log.
+
+**Coordinator watch on the coordinator machine.** Should no op when this host is the named coordinator; configure only on backup hosts.
+
+**Precheck log vs summary log.** Automation precheck appends full Python output to `FLEET_WATCH_PRECHECK_LOG`; the single line summary is always `fleet-watch.log`.
+
+**Toolchain.** `script/fleet-toolchain-check.sh` (also from elon startup and wrap up) reports fleet hosts below current orca, bun, or node versus `mini6`.
