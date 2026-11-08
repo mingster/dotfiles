@@ -27,6 +27,8 @@
 #             fields missing from the text with the most. Opt out with the label "team-audit: allow" or a
 #             line containing "team-audit: allow" in the body or a comment. A gh or network failure
 #             prints "WARN ready-brief" and is not a finding.
+#   role-tracked  git indexes a team role under .claude/agents/ in a project (symlinks stay untracked)
+#   role-symlink  each team role is a symlink to dotfiles canonical (skipped when DOTFILES is missing)
 #   receipt   every non-merge commit touching role files (templates/agent-team/.claude/agents/ in
 #             DOTFILES, .claude/agents/ in each project) carries an "Owner-approved:" trailer (owner
 #             rule 2026-11-02). Commits are checked from ROLE_RECEIPT_SINCE (pass the last audit date);
@@ -47,8 +49,16 @@ BUDGET="${ROLE_WORD_BUDGET:-800}"
 LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
+TEAM_ROLE_FILES=(
+  elon.md architect-pm.md fullstack-dev.md qa-sdet.md release-manager.md
+  sales-marketing.md secops-finops.md support-csm.md
+)
+CANON_AGENTS=""
+if [ -d "$DOTFILES/templates/agent-team/.claude/agents" ]; then
+  CANON_AGENTS="$(cd "$DOTFILES" && pwd -P)/templates/agent-team/.claude/agents"
+fi
 
-case "${1:-}" in -h|--help) sed -n '2,39p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,41p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
@@ -232,6 +242,46 @@ receipt_check() { # <repo root> <role path inside it>
 }
 receipt_check "$DOTFILES" templates/agent-team/.claude/agents
 for proj in "${PROJECTS[@]}"; do [ -d "$proj" ] && receipt_check "$proj" .claude/agents; done
+
+role_symlink_checks() {
+  local proj="$1" base rel path target resolved
+  [ -d "$proj" ] || return 0
+  [ -f "$proj/docs/agents/team-facts.md" ] || [ -f "$proj/.claude/model-routing.md" ] || return 0
+  for base in "${TEAM_ROLE_FILES[@]}"; do
+    rel=".claude/agents/$base"
+    if git -C "$proj" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+      finding role-tracked "$proj: $rel is tracked in git"
+    fi
+  done
+  if [ -z "$CANON_AGENTS" ]; then
+    echo "NOTE role-symlink: DOTFILES templates missing; skipped symlink resolution"
+    return 0
+  fi
+  for base in "${TEAM_ROLE_FILES[@]}"; do
+    rel=".claude/agents/$base"
+    path="$proj/$rel"
+    if [ ! -e "$path" ]; then
+      finding role-symlink "$proj: $rel missing"
+      continue
+    fi
+    if [ ! -L "$path" ]; then
+      finding role-symlink "$proj: $rel is a regular file, not a symlink"
+      continue
+    fi
+    target=$(readlink "$path" || true)
+    if [ "${target#/}" = "$target" ]; then
+      target="$(cd "$(dirname "$path")" && pwd -P)/$target"
+    fi
+    if [ ! -f "$target" ]; then
+      finding role-symlink "$proj: $rel target does not resolve ($target)"
+      continue
+    fi
+    if [ "$target" != "$CANON_AGENTS/$base" ]; then
+      finding role-symlink "$proj: $rel points outside canonical ($(readlink "$path"))"
+    fi
+  done
+}
+for proj in "${PROJECTS[@]}"; do role_symlink_checks "$proj"; done
 
 # ready-brief: open ready-for-agent issues must carry the AGENT-BRIEF fields in one text.
 BRIEF_PY='

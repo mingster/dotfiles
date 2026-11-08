@@ -12,8 +12,18 @@ trap 'rm -rf "$tmp"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 mkdir "$tmp/bin"
 printf '#!/bin/sh\necho "$*" >> "$BUN_LOG"\nmkdir -p node_modules\n' > "$tmp/bin/bun"
-chmod +x "$tmp/bin/bun"
+printf '#!/bin/sh\necho link >> "$LINK_LOG"\n' > "$tmp/bin/fake-link"
+chmod +x "$tmp/bin/bun" "$tmp/bin/fake-link"
 export BUN_LOG="$tmp/bun.log" PATH="$tmp/bin:$PATH"
+export LINK_LOG="$tmp/link.log"
+export DOTFILES="$tmp/dotfiles"
+mkdir -p "$DOTFILES/script"
+cp "$script" "$DOTFILES/script/worktree-setup.sh"
+cat > "$DOTFILES/script/link-agent-team-roles.sh" <<'EOS'
+#!/usr/bin/env bash
+echo link >> "$LINK_LOG"
+EOS
+chmod +x "$DOTFILES/script/link-agent-team-roles.sh"
 
 g() { git -C "$1" "${@:2}" >/dev/null; }
 git init -q -b main "$tmp/origin"
@@ -27,26 +37,34 @@ before=$(git -C "$tmp/main" rev-parse HEAD)
 git -C "$tmp/main" worktree add -q "$tmp/wt" -b w origin/main
 
 : > "$BUN_LOG"
-(cd "$tmp/wt" && bash "$script") && ok || bad "hook exits 0"
+: > "$LINK_LOG"
+(cd "$tmp/wt" && bash "$DOTFILES/script/worktree-setup.sh") && ok || bad "hook exits 0"
 [ "$(git -C "$tmp/wt" rev-parse HEAD)" = "$new" ] && ok || bad "worktree reaches fresh origin/main"
 [ "$(git -C "$tmp/main" rev-parse HEAD)" = "$before" ] && ok || bad "main checkout HEAD unchanged"
 [ "$(cat "$tmp/main/package.json")" = dirty ] && ok || bad "dirty main file untouched"
 [ "$(wc -l < "$BUN_LOG" | tr -d ' ')" = 1 ] && ok || bad "install ran once"
 
+mkdir -p "$tmp/wt/docs/agents" "$tmp/home"
+printf 'facts\n' > "$tmp/wt/docs/agents/team-facts.md"
+ln -snf "$DOTFILES" "$tmp/home/dotfiles"
+: > "$LINK_LOG"
+(cd "$tmp/wt" && HOME="$tmp/home" bash "$DOTFILES/script/worktree-setup.sh") && ok || bad "team link run exits 0"
+[ "$(wc -l < "$LINK_LOG" | tr -d ' ')" = 1 ] && ok || bad "links roles once when team-facts exists"
+
 # node_modules present: no second install
-(cd "$tmp/wt" && bash "$script") && ok || bad "second run exits 0"
+(cd "$tmp/wt" && bash "$DOTFILES/script/worktree-setup.sh") && ok || bad "second run exits 0"
 [ "$(wc -l < "$BUN_LOG" | tr -d ' ')" = 1 ] && ok || bad "no install when node_modules exists"
 
 # a worktree with its own commit is not moved
 echo mine > "$tmp/wt/mine"; g "$tmp/wt" add -A; g "$tmp/wt" commit -qm mine
 echo three > "$tmp/origin/f"; g "$tmp/origin" commit -qam three
 mine=$(git -C "$tmp/wt" rev-parse HEAD)
-(cd "$tmp/wt" && bash "$script") && ok || bad "diverged run exits 0"
+(cd "$tmp/wt" && bash "$DOTFILES/script/worktree-setup.sh") && ok || bad "diverged run exits 0"
 [ "$(git -C "$tmp/wt" rev-parse HEAD)" = "$mine" ] && ok || bad "own commits kept"
 
 # a project in a subfolder (package.json under web/) gets its install there
 mkdir "$tmp/wt/web"; echo '{}' > "$tmp/wt/web/package.json"
-(cd "$tmp/wt" && bash "$script") && ok || bad "subfolder run exits 0"
+(cd "$tmp/wt" && bash "$DOTFILES/script/worktree-setup.sh") && ok || bad "subfolder run exits 0"
 [ -d "$tmp/wt/web/node_modules" ] && ok || bad "install ran in web/"
 [ "$(wc -l < "$BUN_LOG" | tr -d ' ')" = 2 ] && ok || bad "one install for web/"
 

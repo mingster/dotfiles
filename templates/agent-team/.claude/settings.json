@@ -12,7 +12,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.md\"; bash \"$CLAUDE_PROJECT_DIR/.claude/bin/state-of-play.sh\""
+            "command": "if [ -f \"$CLAUDE_PROJECT_DIR/docs/agents/team-facts.md\" ] && [ -x \"$HOME/dotfiles/script/link-agent-team-roles.sh\" ]; then bash \"$HOME/dotfiles/script/link-agent-team-roles.sh\" --quiet \"$CLAUDE_PROJECT_DIR\" || true; fi; cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.md\"; bash \"$CLAUDE_PROJECT_DIR/.claude/bin/state-of-play.sh\""
           }
         ]
       },

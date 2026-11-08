@@ -14,6 +14,11 @@ set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 TEMPLATES="$DOTFILES/templates/agent-team"
+TEAM_ROLE_PATHS=(
+  .claude/agents/elon.md .claude/agents/architect-pm.md .claude/agents/fullstack-dev.md
+  .claude/agents/qa-sdet.md .claude/agents/release-manager.md .claude/agents/sales-marketing.md
+  .claude/agents/secops-finops.md .claude/agents/support-csm.md
+)
 TARGET_DIR="${1:-$PWD}"
 PROJECT_NAME=""
 DRY_RUN=0
@@ -48,7 +53,13 @@ TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
   || { echo 'adopt-agent-team: refusing dotfiles or home as target' >&2; exit 2; }
 # Refuse redirected destinations before any mkdir/copy or skill sync. Never inspect
 # arbitrary project files: only paths these composed scripts may write.
+team_role_path() {
+  local p="$1" x
+  for x in "${TEAM_ROLE_PATHS[@]}"; do [ "$p" = "$x" ] && return 0; done
+  return 1
+}
 safe_path() {
+  team_role_path "$1" && return 0
   local path="$TARGET_DIR/$1"
   while [ "$path" != "$TARGET_DIR" ]; do
     if [ -L "$path" ]; then
@@ -59,17 +70,15 @@ safe_path() {
   done
 }
 for path in .claude .agents .cursor .agent docs/agents bin changelog.d AGENTS.md CLAUDE.md .gitignore \
-  .claude/agent-team-project-name .claude/agent-team-baseline \
+  .claude/agent-team-project-name \
   docs/agents/team-facts.md docs/agents/deploy-facts.md \
   docs/agents/issue-tracker.md docs/agents/triage-labels.md docs/agents/domain.md; do
   safe_path "$path"
 done
 while IFS= read -r src; do
   safe_path "${src#"$TEMPLATES/"}"
-done < <(find "$TEMPLATES/.claude" "$TEMPLATES/.agents" "$TEMPLATES/bin" "$TEMPLATES/changelog.d" -type f)
-for src in "$TEMPLATES/.claude/agents"/*.md; do
-  safe_path ".claude/agent-team-baseline/$(basename "$src").sha256"
-done
+done < <(find "$TEMPLATES/.claude" "$TEMPLATES/.agents" "$TEMPLATES/bin" "$TEMPLATES/changelog.d" -type f \
+  ! -path "$TEMPLATES/.claude/agents/*")
 for path in .claude/skills .cursor/skills .agent; do safe_path "$path"; done
 [ "$CHECK_PATHS" -eq 0 ] || exit 0
 if [ -z "$PROJECT_NAME" ]; then
@@ -83,27 +92,12 @@ echo "Adopting Agent Team for '$PROJECT_NAME' at $TARGET_DIR..."
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 replacement=$(printf '%s' "$PROJECT_NAME" | sed 's/[\\&|]/\\&/g')
-hash() { shasum -a 256 | cut -d' ' -f1; }
 
 copy_file() {
   local src="$1"
   local dest="$2"
-  local rel=${dest#"$TARGET_DIR/"} baseline
+  local rel=${dest#"$TARGET_DIR/"}
   sed "s|{{PROJECT_NAME}}|$replacement|g" "$src" > "$tmp/rendered"
-  case "$rel" in
-    .claude/agents/*.md)
-      baseline="$TARGET_DIR/.claude/agent-team-baseline/$(basename "$dest").sha256"
-      if [ "$RESET" -eq 1 ] && [ -f "$dest" ] && ! cmp -s "$dest" "$tmp/rendered"; then
-        if [ ! -f "$baseline" ] || [ "$(hash < "$dest")" != "$(cat "$baseline")" ]; then
-          # Print counts, never the role's product text.
-          local counts
-          counts=$(git diff --no-index --numstat -- "$tmp/rendered" "$dest" 2>/dev/null || true)
-          printf '  CONFLICT %s: preserved customized role (%s)\n' "$rel" "$(printf '%s\n' "$counts" | awk '{print $1 " lines only in project, " $2 " lines only in template"}')"
-          return
-        fi
-      fi
-      ;;
-  esac
   if [ -f "$dest" ] && cmp -s "$dest" "$tmp/rendered" && { [ ! -x "$src" ] || [ -x "$dest" ]; }; then
     echo "  keep $rel (matches template)"
   elif [ "$DRY_RUN" -eq 1 ]; then
@@ -114,24 +108,18 @@ copy_file() {
     [ ! -x "$src" ] || chmod +x "$dest"
     echo "  installed $dest"
   fi
-  if [ -n "${baseline:-}" ] && [ "$DRY_RUN" -eq 0 ]; then
-    mkdir -p "$(dirname "$baseline")"
-    hash < "$tmp/rendered" > "$baseline"
-  fi
 }
 
-# 1. Ensure directories exist
-[ "$DRY_RUN" -eq 1 ] || mkdir -p "$TARGET_DIR/.claude/agents"
+# 1. Project marker and team role symlinks (canonical content stays in dotfiles).
 if [ "$DRY_RUN" -eq 0 ]; then
+  mkdir -p "$TARGET_DIR/.claude"
   printf '%s\n' "$PROJECT_NAME" > "$TARGET_DIR/.claude/agent-team-project-name"
 fi
+link_args=("$TARGET_DIR")
+[ "$DRY_RUN" -eq 1 ] && link_args=(--dry-run "${link_args[@]}")
+bash "$DOTFILES/script/link-agent-team-roles.sh" "${link_args[@]}"
 
-# 2. Install standard roles
-for src in "$TEMPLATES/.claude/agents"/*.md; do
-  copy_file "$src" "$TARGET_DIR/.claude/agents/$(basename "$src")"
-done
-
-# 3. Install settings.json with default sonnet/medium
+# 2. Install settings.json with default sonnet/medium
 if [ "$RESET" -eq 1 ] || [ ! -f "$TARGET_DIR/.claude/settings.json" ]; then
   if [ -f "$TEMPLATES/.claude/settings.json" ]; then
     copy_file "$TEMPLATES/.claude/settings.json" "$TARGET_DIR/.claude/settings.json"

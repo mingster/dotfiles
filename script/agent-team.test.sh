@@ -43,8 +43,9 @@ out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 
   [ ! -e "$tmp/new project/docs/agents/persistent-memory-protocol.md" ] &&
   [ -f "$tmp/new project/.claude/hooks/worker-budget.py" ] &&
   [ -f "$tmp/new project/.claude/bin/env-peek.py" ] &&
-  [ -f "$tmp/new project/.claude/agents/support-csm.md" ] &&
-  grep -q 'on acme' "$tmp/new project/.claude/agents/fullstack-dev.md" &&
+  [ -L "$tmp/new project/.claude/agents/support-csm.md" ] &&
+  [ -L "$tmp/new project/.claude/agents/fullstack-dev.md" ] &&
+  grep -qxF '.claude/agents/elon.md' "$tmp/new project/.gitignore" &&
   [ "$(wc -l < "$TEST_LABELS" | tr -d ' ')" = 5 ] &&
   echo "$out" | grep -q 'team-audit: clean' &&
   echo "$out" | grep -q 'deploy-facts.md'; } && check "new project installs a complete audited team and labels" ok || { check "new project installs a complete audited team and labels" bad; echo "$out" | tail -12; }
@@ -54,7 +55,6 @@ before=$(git -C "$tmp/new project" rev-parse HEAD)
 out=$(bash "$here/agent-team.sh" reset "$tmp/new project" 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -z "$(git -C "$tmp/new project" status --porcelain)" ] &&
   echo "$out" | grep -q 'preview'; } && check "reset defaults to a read-only preview" ok || { check "reset defaults to a read-only preview" bad; echo "$out" | tail -5; }
-printf '\nProject role text\n' >> "$tmp/new project/.claude/agents/fullstack-dev.md"
 echo 'product facts' > "$tmp/new project/docs/agents/deploy-facts.md"
 echo 'domain facts' > "$tmp/new project/docs/agents/domain.md"
 echo 'domain context' > "$tmp/new project/CONTEXT.md"
@@ -64,9 +64,8 @@ git -C "$tmp/new project" add .
 git -C "$tmp/new project" -c user.name=Test -c user.email=test@example.invalid commit -qm customization -m "Owner-approved: Owner 2026-11-04 (test fixture)"
 before=$(git -C "$tmp/new project" rev-parse HEAD)
 out=$(bash "$here/agent-team.sh" reset "$tmp/new project" --apply 2>&1); rc=$?
-{ [ "$rc" = 0 ] && echo "$out" | grep -q 'CONFLICT .claude/agents/fullstack-dev.md' &&
-  echo "$out" | grep -q 'lines only in project' &&
-  grep -q 'Project role text' "$tmp/new project/.claude/agents/fullstack-dev.md" &&
+{ [ "$rc" = 0 ] &&
+  [ -L "$tmp/new project/.claude/agents/fullstack-dev.md" ] &&
   [ "$(cat "$tmp/new project/docs/agents/deploy-facts.md")" = 'product facts' ] &&
   [ "$(cat "$tmp/new project/docs/agents/domain.md")" = 'domain facts' ] &&
   [ "$(cat "$tmp/new project/CONTEXT.md")" = 'domain context' ] &&

@@ -18,3 +18,7 @@ for pkg in package.json */package.json; do
     (cd "$dir" && bun install)
   fi
 done
+# Agent team repos: refresh local role symlinks when team facts exist.
+if [ -f docs/agents/team-facts.md ] && [ -x "$HOME/dotfiles/script/link-agent-team-roles.sh" ]; then
+  bash "$HOME/dotfiles/script/link-agent-team-roles.sh" --quiet .
+fi
