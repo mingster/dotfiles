@@ -44,7 +44,11 @@ case "\$*" in
   *'terminal list'*) echo '{"ok":true,"result":{"terminals":[]}}' ;;
   *'worker-list'*) printf '%s\n' "\$WORKER_LIST_JSON" ;;
   *'worker-show'*) printf '%s\n' "\${WORKER_SHOW_JSON:-{\"ok\":true,\"result\":{\"state\":\"released\",\"liveness\":\"exited\"}}}" ;;
-  *'worktree rm'*) echo "orca-worktree-rm \$*" >> "$tmp/orca-rm.log"; exit 0 ;;
+  *'worktree rm'*)
+    echo "orca-worktree-rm \$*" >> "$tmp/orca-rm.log"
+    [ "\${FAKE_ORCA_RM_FAIL:-0}" = 1 ] && exit 1
+    for a in "\$@"; do case "\$a" in path:*) rm -rf "\${a#path:}" ;; esac; done
+    exit 0 ;;
   *) echo '{"ok":true,"result":{}}' ;;
 esac
 FAKE
@@ -118,6 +122,77 @@ run_wrap --dry-run
 after=$(git -C "$tmp/repo" worktree list | wc -l | tr -d ' ')
 check 'inventory failure keeps worktree count' test "$before" = "$after"
 check 'inventory failure mentions retain' grep -Fq 'retaining all worktrees' "$tmp/out"
+
+# Clean up wt-local, wt-live, wt-inv so later cases start only with their own worktrees.
+rm -rf "$tmp/wt-local" "$tmp/wt-live" "$tmp/wt-inv"
+git -C "$tmp/repo" worktree prune
+real_git=$(command -v git)
+
+# (e) git diff failing on a dirty published worktree keeps it ('archive failed') and nothing is removed.
+mkorca
+export WORKER_LIST_JSON='{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'
+git worktree add -q -b diff-fail "$tmp/wt-diff-fail" main
+echo base > "$tmp/wt-diff-fail/tracked.txt"
+git -C "$tmp/wt-diff-fail" add tracked.txt
+git -C "$tmp/wt-diff-fail" commit -qm base
+git push -q origin diff-fail
+echo dirty >> "$tmp/wt-diff-fail/tracked.txt"
+cat > "$tmp/bin/git" <<FAKE
+#!/usr/bin/env bash
+case "\$*" in *' diff HEAD'*) exit 1 ;; esac
+exec "$real_git" "\$@"
+FAKE
+chmod +x "$tmp/bin/git"
+run_wrap --apply
+rm -f "$tmp/bin/git"
+check 'git diff failure keeps dirty published worktree as archive failed' bash -c "grep -Fq 'dirty, archive failed' '$tmp/out' && test -d '$tmp/wt-diff-fail'"
+rm -rf "$tmp/wt-diff-fail"
+git -C "$tmp/repo" worktree prune
+
+# (f) Staged plus unstaged change produces a patch that git apply --check accepts on a clean copy; spaced untracked file and existing dest preserved.
+mkorca
+export WORKER_LIST_JSON='{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'
+git worktree add -q -b patch-branch "$tmp/wt-patch" main
+printf 'one\ntwo\nthree\n' > "$tmp/wt-patch/base.txt"
+git -C "$tmp/wt-patch" add base.txt
+git -C "$tmp/wt-patch" commit -qm base
+git push -q origin patch-branch
+printf 'ONE\ntwo\nthree\n' > "$tmp/wt-patch/base.txt"
+git -C "$tmp/wt-patch" add base.txt
+printf 'ONE\ntwo\nTHREE\n' > "$tmp/wt-patch/base.txt"
+run_wrap --apply
+git worktree add -q --detach "$tmp/wt-patch" origin/patch-branch
+echo 'spaced scratch' > "$tmp/wt-patch/file with spaces.txt"
+run_wrap --apply
+git worktree add -q --detach "$tmp/wt-clean-copy" origin/patch-branch
+patch_dir=''
+for d in "$tmp/wt-archive"/repo_wt-patch-*; do [ -d "$d" ] && patch_dir=$d; done
+check 'staged plus unstaged patch applies cleanly to clean copy' bash -c "git -C '$tmp/wt-clean-copy' apply --check '$tmp/wt-archive/repo_wt-patch/changes.patch' && test -n '$patch_dir' && tar -xOf '$patch_dir/scratch.tgz' 'file with spaces.txt' | grep -Fxq 'spaced scratch'"
+rm -rf "$tmp/wt-patch" "$tmp/wt-clean-copy"
+git -C "$tmp/repo" worktree prune
+
+# (g) Fake orca records worktree rm before any git worktree remove, and when fake orca rm fails the git fallback removes it.
+mkorca
+export WORKER_LIST_JSON='{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}'
+cat > "$tmp/bin/git" <<FAKE
+#!/usr/bin/env bash
+case "\$*" in *'worktree remove'*) echo "git-worktree-remove \$*" >> "$tmp/orca-rm.log" ;; esac
+exec "$real_git" "\$@"
+FAKE
+chmod +x "$tmp/bin/git"
+: > "$tmp/orca-rm.log"
+git worktree add -q -b order-ok "$tmp/wt-order-ok" main
+git -C "$tmp/wt-order-ok" commit -q --allow-empty -m tip1
+git push -q origin order-ok
+run_wrap --apply
+cp "$tmp/orca-rm.log" "$tmp/orca-rm-ok.log"
+: > "$tmp/orca-rm.log"
+git worktree add -q -b order-fail "$tmp/wt-order-fail" main
+git -C "$tmp/wt-order-fail" commit -q --allow-empty -m tip2
+git push -q origin order-fail
+FAKE_ORCA_RM_FAIL=1 run_wrap --apply
+rm -f "$tmp/bin/git"
+check 'orca worktree rm called before any git worktree remove and git fallback removes when orca rm fails' bash -c "head -n 1 '$tmp/orca-rm-ok.log' | grep -q '^orca-worktree-rm ' && ! grep -q '^git-worktree-remove ' '$tmp/orca-rm-ok.log' && test ! -d '$tmp/wt-order-ok' && head -n 1 '$tmp/orca-rm.log' | grep -q '^orca-worktree-rm ' && sed -n 2p '$tmp/orca-rm.log' | grep -q '^git-worktree-remove ' && test ! -d '$tmp/wt-order-fail'"
 
 printf '%s passed, %s failed\n' "$pass" "$fail"
 test "$fail" -eq 0

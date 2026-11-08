@@ -1016,11 +1016,13 @@ head_on_origin() {
 }
 archive_worktree_changes() { # <worktree-path> <archive-dir>
   local wt=$1 dest=$2 untracked
+  [ ! -e "$dest" ] || dest="$dest-$(date +%Y%m%d%H%M%S)"
   mkdir -p "$dest" || return 1
-  if ! git -C "$wt" diff HEAD > "$dest/changes.patch" 2>/dev/null; then : > "$dest/changes.patch"; fi
-  git -C "$wt" diff --cached HEAD >> "$dest/changes.patch" 2>/dev/null || true
+  git -C "$wt" diff HEAD > "$dest/changes.patch" 2>/dev/null || return 1
   untracked=$(git -C "$wt" ls-files -o --exclude-standard 2>/dev/null) || return 1
-  if [ -n "$untracked" ]; then tar -czf "$dest/scratch.tgz" -C "$wt" $untracked 2>/dev/null || return 1; fi
+  if [ -n "$untracked" ]; then
+    git -C "$wt" ls-files -o --exclude-standard -z 2>/dev/null | tar -czf "$dest/scratch.tgz" -C "$wt" --null -T - 2>/dev/null || return 1
+  fi
   return 0
 }
 # Holder checks return true for busy OR unknown, with the reason in $busy.
@@ -1197,18 +1199,20 @@ branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the i
   return 1
 }
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
-  local rc=0 orca_rm
+  local orca_rm
   guard_paths "$1" "$2" "$3" || return
+  if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
+    orca_rm=(worktree rm --worktree "path:$3")
+    [ "${4:-}" = --force ] && orca_rm+=(--force)
+    if bounded "$orca_bin" "${orca_rm[@]}" >/dev/null 2>&1 && [ ! -d "$3" ]; then
+      git worktree prune
+      return 0
+    fi
+  fi
   git worktree remove ${4:+"$4"} -- "$3" || {
     echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
   }
   git worktree prune
-  if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
-    orca_rm=(worktree rm --worktree "path:$3")
-    [ "${4:-}" = --force ] && orca_rm+=(--force)
-    bounded "$orca_bin" "${orca_rm[@]}" >/dev/null 2>&1 || rc=$?
-    [ "$rc" -eq 0 ] || echo "Warning: orca worktree rm failed for $3; git worktree is already gone." >&2
-  fi
   return 0
 }
 # A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
