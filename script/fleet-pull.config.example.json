@@ -1,4 +1,5 @@
 {
   "hosts": ["ssh-host-name"],
+  "agent_hosts": [],
   "repos": ["~/path/to/checkout"]
 }

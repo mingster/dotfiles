@@ -1,0 +1,1 @@
+- `script/fleet-pull.sh` resets configured repositories on `agent_hosts` to `origin/main` and cleans untracked files while keeping ignored files and fast-forwarding `~/agent-state` only (#724)
