@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # team-audit.sh: deterministic checks of the agent team files. The judgement part is the team-audit skill.
 #
-# Usage: ~/dotfiles/script/team-audit.sh [<project-root> ...]   (default: one project root per line in script/team-audit.local.conf, untracked)
+# Usage:
+#   ~/dotfiles/script/team-audit.sh [<project-root> ...]   (default: one project root per line in script/team-audit.local.conf, untracked)
+#   ~/dotfiles/script/team-audit.sh --log <finding> <evidence>
+#   ~/dotfiles/script/team-audit.sh --report [--times <file>]
 #
 # Checks, each printed as "FINDING <check>: <detail>":
 #   sync      sync-team-skills.sh --check passes for each project
@@ -48,7 +51,175 @@ LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
 
-case "${1:-}" in -h|--help) sed -n '2,39p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+LOG_FILE="${TEAM_AUDIT_LOG:-$HOME/agent-state/team-observations.tsv}"
+
+if [ "${1:-}" = "--log" ]; then
+  if [ $# -ne 3 ] || [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+    echo "team-audit: usage: team-audit.sh --log <finding> <evidence>" >&2
+    exit 2
+  fi
+  mkdir -p "$(dirname "$LOG_FILE")"
+  python3 - "$LOG_FILE" "$2" "$3" "${TEAM_AUDIT_DATE:-$(date +%Y-%m-%d)}" <<'PY'
+import os, sys
+
+path, finding, evidence, today = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+rows = []
+if os.path.exists(path):
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.rstrip("\r\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            while len(parts) < 6:
+                parts.append("")
+            rows.append(parts[:6])
+
+bumped = 0
+for row in rows:
+    if row[0] == "date" and row[1] == "finding":
+        continue
+    if row[1] == finding:
+        try:
+            cnt = int(row[3]) + 1
+        except ValueError:
+            cnt = 2
+        row[0] = today
+        ev_items = [x.strip() for x in row[2].split(",") if x.strip()]
+        if evidence not in ev_items:
+            ev_items.append(evidence)
+        row[2] = ", ".join(ev_items)
+        row[3] = str(cnt)
+        if not row[4]:
+            row[4] = "-"
+        if not row[5]:
+            row[5] = "open"
+        bumped = cnt
+        break
+
+if not bumped:
+    rows.append([today, finding, evidence, "1", "-", "open"])
+    bumped = 1
+
+with open(path, "w", encoding="utf-8") as fh:
+    for row in rows:
+        fh.write("\t".join(row) + "\n")
+
+if bumped >= 2:
+    print(f"promote: open a fix ticket for {finding}")
+PY
+  exit $?
+fi
+
+if [ "${1:-}" = "--report" ] || [ "${1:-}" = "--times" ] || [[ "${1:-}" == --times=* ]]; then
+  report_mode=0
+  times_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --report) report_mode=1; shift ;;
+      --times)
+        [ $# -ge 2 ] || { echo "team-audit: --times requires a file" >&2; exit 2; }
+        times_file="$2"; shift 2 ;;
+      --times=*) times_file="${1#--times=}"; shift ;;
+      *) echo "team-audit: unknown flag $1" >&2; exit 2 ;;
+    esac
+  done
+  [ "$report_mode" -eq 1 ] || { echo "team-audit: --times requires --report" >&2; exit 2; }
+  if [ -n "$times_file" ] && { [ ! -f "$times_file" ] || [ ! -r "$times_file" ]; }; then
+    echo "team-audit: unreadable times file: $times_file" >&2
+    exit 2
+  fi
+  python3 - "$LOG_FILE" "$times_file" <<'PY'
+import math, os, statistics, sys
+
+log_path, times_path = sys.argv[1], sys.argv[2]
+obs = []
+if log_path and os.path.isfile(log_path):
+    with open(log_path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.rstrip("\r\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2 and parts[0] == "date" and parts[1] == "finding":
+                continue
+            while len(parts) < 6:
+                parts.append("")
+            obs.append(parts[:6])
+
+def fmt_num(val):
+    if float(val).is_integer():
+        return str(int(val))
+    return f"{val:g}"
+
+print("## Problems with evidence")
+if obs:
+    for d, finding, evidence, count, ticket, status in obs:
+        print(f"- {finding} (date: {d}, count: {count}, evidence: {evidence}, ticket: {ticket or '-'}, status: {status or 'open'})")
+else:
+    print("- none recorded (evidence: none)")
+
+print("\n## Proposals with a recommended option")
+if obs:
+    for d, finding, evidence, count, ticket, status in obs:
+        try:
+            cnt = int(count)
+        except ValueError:
+            cnt = 1
+        if cnt >= 2:
+            print(f"- {finding}: Recommended: Option A (open a fix ticket and add a deterministic check for {finding}; evidence: {evidence}, count: {cnt}). Option B (defer to next audit).")
+        else:
+            print(f"- {finding}: Recommended: Option A (keep observing until count reaches 2; evidence: {evidence}, count: {cnt}). Option B (open a fix ticket early).")
+else:
+    print("- none: Recommended: Option A (keep current rules unchanged).")
+
+stages = []
+by_stage = {}
+total_samples = 0
+total_verified = 0
+if times_path:
+    with open(times_path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            st, mins_s, ver_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if st == "stage" and mins_s == "minutes":
+                continue
+            try:
+                mins = float(mins_s)
+                ver = int(ver_s)
+            except ValueError:
+                continue
+            if st not in by_stage:
+                stages.append(st)
+                by_stage[st] = []
+            by_stage[st].append((mins, ver))
+            total_samples += 1
+            if ver == 1:
+                total_verified += 1
+
+print("\n## Stage times")
+print(f"Samples: {total_samples}, verified: {total_verified}")
+print("| stage | median | p75 | max | samples | verified |")
+print("| --- | --- | --- | --- | --- | --- |")
+for st in stages:
+    rows = by_stage[st]
+    xs = sorted(r[0] for r in rows)
+    n = len(xs)
+    v = sum(1 for r in rows if r[1] == 1)
+    med = statistics.median(xs)
+    p75 = xs[max(0, math.ceil(0.75 * n) - 1)]
+    mx = xs[-1]
+    print(f"| {st} | {fmt_num(med)} | {fmt_num(p75)} | {fmt_num(mx)} | {n} | {v} |")
+PY
+  exit $?
+fi
+
+case "${1:-}" in -h|--help) sed -n '2,42p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
@@ -86,6 +257,7 @@ team_files() {
 
 for proj in "${PROJECTS[@]}"; do
   if [ ! -d "$proj" ]; then finding sync "$proj: no such project"; continue; fi
+  # shellcheck disable=SC2097,SC2098
   out=$(DOTFILES="$DOTFILES" "$DOTFILES/script/sync-team-skills.sh" --check "$proj" 2>&1) \
     || finding sync "$proj: $(echo "$out" | head -3 | tr '\n' ' ')"
 done
@@ -123,7 +295,7 @@ for proj in "${PROJECTS[@]}"; do
     finding sdlc "$s: no intent.md beside it (intent before spec)"
   done
   for s in "$proj"/docs/intent/*/spec.md; do
-    [ -f "$s" ] && ! grep -qE '^## ([0-9]+[.)] +)?Test plan([[:space:]]|$)' "$s" || continue
+    if [ ! -f "$s" ] || grep -qE '^## ([0-9]+[.)] +)?Test plan([[:space:]]|$)' "$s"; then continue; fi
     added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
     [ -n "$added" ] && [[ "$added" < "$TEST_PLAN_SINCE" ]] && continue
     finding sdlc "$s: no ## Test plan section (owner rule 2026-10-21)"

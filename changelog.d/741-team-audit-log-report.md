@@ -1,0 +1,1 @@
+- Add `--log <finding> <evidence>` and `--report [--times <file>]` to `script/team-audit.sh`, with tests in `script/team-audit.test.sh` and usage in `docs/agents/team-audit.md` (refs #741).
