@@ -1,2 +1,2 @@
 ### Changed
-* Dotfiles pull requests now rely on GitHub Actions (`script-tests` and `shellcheck`) for checks instead of spawning `head-checks.sh` through `heavy-gate.py`, and `post-verdict.sh` posts a `review` commit status at the reviewed head so GitHub auto merge can require both Actions and `review`.
+* Dotfiles pull requests now rely on GitHub Actions (`script-tests` and `shellcheck`) for checks instead of spawning `head-checks.sh` through `heavy-gate.py`, and `post-verdict.sh` posts a `review` commit status at the reviewed head so GitHub auto merge can require both Actions and `review`. The Script tests workflow installs Bun for `test_head_checks_execution.py`, and a failed `gh pr merge --auto` on dotfiles is logged and exits non zero instead of being discarded.

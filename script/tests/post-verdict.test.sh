@@ -102,5 +102,20 @@ out=$(bash "$here/post-verdict.sh" --repo example/dotfiles --pr 50 --result PASS
 say "$code" "dotfiles PASS: posts verdict" "$out"
 grep -Fq "gh pr merge 50 --repo example/dotfiles --auto --merge --match-head-commit $h" "$MF_GH_LOG" && ok "dotfiles PASS: arms auto-merge at head" || bad "dotfiles auto-merge missing"
 
+# dotfiles PASS: a failed gh pr merge --auto is logged and fails the helper
+h=$(new_pr 51)
+failgh="$MF_DIR/failgh"; mkdir -p "$failgh"
+cat > "$failgh/gh" <<EOS
+#!/usr/bin/env bash
+if [ "\$1" = pr ] && [ "\$2" = merge ]; then
+  echo "auto merge cannot be enabled" >&2
+  exit 1
+fi
+exec "$MF_BIN/gh" "\$@"
+EOS
+chmod +x "$failgh/gh"
+out=$(PATH="$failgh:$PATH" bash "$here/post-verdict.sh" --repo example/dotfiles --pr 51 --result PASS --head "$h" --verifier ctx_verify --author ctx_author 2>&1); code=$?
+[ "$code" -ne 0 ] && grep -Fq 'gh pr merge --auto failed' <<<"$out" && ok "dotfiles PASS: merge failure exits non-zero" || bad "dotfiles merge failure hidden: code=$code out=$out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
