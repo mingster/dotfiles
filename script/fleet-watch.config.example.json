@@ -4,7 +4,8 @@
   "leads": [],
   "pr_watch": {
     "repos": ["mingster/dotfiles", "mingster/project-a"],
-    "stuck_minutes": 30
+    "stuck_minutes": 30,
+    "workflows": ["Checks", "Review", "ShellCheck", "Script tests"]
   },
   "worker_stall": {
     "label_repo": "owner/name",

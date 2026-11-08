@@ -19,6 +19,8 @@
 #   run the real head-checks.sh on that host through remote-heavy.sh, for the batch train and for a single PR
 #   with no Checks at its head. The receipt must name the commit that was sent; anything else fails closed.
 set -euo pipefail
+lead_merge_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+receipt_state_py="$lead_merge_dir/receipt-state.py"
 
 # Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
 refusals=()
@@ -415,13 +417,13 @@ if [ "${#batch_prs[@]}" -gt 0 ]; then
 fi
 
 # 2. PR state
-info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
+info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences,statusCheckRollup) \
   || die "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
 for mergeable_retry in 1 2 3; do
   [ "$(field .mergeable)" = UNKNOWN ] || break
   sleep 2
-  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences) \
+  info=$(gh pr view "$pr" --repo "$repo" --json state,baseRefName,headRefName,headRefOid,mergeable,url,changedFiles,body,comments,baseRefOid,closingIssuesReferences,statusCheckRollup) \
     || die "cannot reread PR $pr while mergeability is UNKNOWN"
 done
 preflight_only=${LEAD_MERGE_PREFLIGHT_ONLY:-0}
@@ -578,6 +580,38 @@ else
     fi
     rm -f "$single_receipt"
   else refuse "$no_checks_reason"; fi
+fi
+if python3 "$receipt_state_py" --head "$head" status-rollup-failure <<<"$info" >/dev/null 2>&1; then
+  refuse "statusCheckRollup has a FAILURE at the current head"
+fi
+review_newest_fail=false
+if python3 "$receipt_state_py" --head "$head" merge-refuse-review <<<"$info" >/dev/null 2>&1; then
+  review_newest_fail=true
+fi
+if [ "$review_newest_fail" = false ]; then
+  [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry Review"; main_fetched=true; }
+  while IFS=$'\t' read -r v_sha v_at; do
+    [ -n "$v_sha" ] || continue
+    [ "$v_sha" = "$head" ] && continue
+    verdict_carry "$v_sha" "$head" || continue
+    if jq -e --arg vsha "$v_sha" --arg head "$head" --arg since "$v_at" '
+      any(.comments[]?;
+        (.body | split("\n")[0] | test("^Review: PASS head=" + $vsha + "( main=[0-9a-f]{40})?($| )"))
+        and (($since | length) == 0 or (.createdAt // "") > $since))
+      or any(.comments[]?;
+        (.body | split("\n")[0] | test("^Review: PASS head=" + $head + "( main=[0-9a-f]{40})?($| )"))
+        and (($since | length) == 0 or (.createdAt // "") > $since))
+    ' <<<"$info" >/dev/null 2>&1; then
+      continue
+    fi
+    refuse "Review: FAIL carried from ${v_sha:0:12}"
+  done < <(jq -r '
+    [.comments[] | select((.body | split("\n")[0] | test("^Review: FAIL head=[0-9a-f]{40}"))) |
+      {h: (.body | split("\n")[0] | capture("^Review: FAIL head=(?<h>[0-9a-f]{40})").h), at: (.createdAt // "")}]
+    | sort_by(.at) | reverse[] | "\(.h)\t\(.at)"
+  ' <<<"$info" 2>/dev/null || true)
+else
+  refuse "Review: FAIL at the current head"
 fi
 unchecked=false
 if grep -q '^Unchecked paths: .' <<<"$check_body"; then unchecked=true; fi

@@ -1,0 +1,1 @@
+Fleet-watch and lead-merge pick the newest Checks and Review receipt per head (by `createdAt`, tolerant of `main=`). Rollup rework uses `workflow_watch` from before the pass. Add `fleet-toolchain-check.sh` on elon startup and `wrap-up.sh --fleet`.

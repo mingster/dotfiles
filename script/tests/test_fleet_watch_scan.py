@@ -107,14 +107,62 @@ class FetchReadyIssues(unittest.TestCase):
         self.assertTrue(fw.issue_scan_eligible(result[0]))
 
 
+class ReceiptAtHead(unittest.TestCase):
+    def test_checks_fail_then_pass_with_main(self):
+        head = '0' * 40
+        main = '1' * 40
+        row = pr(1, head=head, comments=[
+            {'body': 'Checks: FAIL head=%s' % head, 'createdAt': '2026-11-05T10:00:00Z'},
+            {'body': 'Checks: PASS head=%s main=%s' % (head, main), 'createdAt': '2026-11-05T10:05:00Z'},
+        ])
+        self.assertFalse(fw.checks_fail_at_head(row))
+        self.assertTrue(fw.checks_pass_at_head(row))
+
+    def test_checks_pass_then_fail_with_main(self):
+        head = '2' * 40
+        main = '3' * 40
+        row = pr(2, head=head, comments=[
+            {'body': 'Checks: PASS head=%s main=%s' % (head, main), 'createdAt': '2026-11-05T10:00:00Z'},
+            {'body': 'Checks: FAIL head=%s' % head, 'createdAt': '2026-11-05T10:05:00Z'},
+        ])
+        self.assertTrue(fw.checks_fail_at_head(row))
+        self.assertFalse(fw.checks_pass_at_head(row))
+
+    def test_review_fail_then_pass_by_created_at(self):
+        head = '4' * 40
+        row = pr(3, head=head, comments=[
+            {'body': 'Review: FAIL head=%s' % head, 'createdAt': '2026-11-05T10:05:00Z'},
+            {'body': 'Review: PASS head=%s' % head, 'createdAt': '2026-11-05T10:00:00Z'},
+        ])
+        self.assertTrue(fw.review_failed_at_head(row))
+
+    def test_review_pass_then_fail_by_created_at(self):
+        head = '5' * 40
+        row = pr(4, head=head, comments=[
+            {'body': 'Review: PASS head=%s' % head, 'createdAt': '2026-11-05T10:00:00Z'},
+            {'body': 'Review: FAIL head=%s' % head, 'createdAt': '2026-11-05T10:05:00Z'},
+        ])
+        self.assertTrue(fw.review_failed_at_head(row))
+
+
 class ReviewAtHead(unittest.TestCase):
     def test_later_pass_verdict_cancels_rework(self):
         head = 'e' * 40
         row = pr(3, head=head, comments=[
-            {'body': 'Verdict: FAIL head=%s x' % head},
-            {'body': 'Verdict: PASS head=%s y' % head},
+            {'body': 'Verdict: FAIL head=%s x' % head, 'createdAt': '2026-11-05T10:00:00Z'},
+            {'body': 'Verdict: PASS head=%s y' % head, 'createdAt': '2026-11-05T10:05:00Z'},
         ])
         self.assertFalse(fw.review_failed_at_head(row))
+
+    def test_verdict_pass_does_not_clear_review_fail(self):
+        head = 'd' * 40
+        row = pr(3, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head, 'createdAt': '2026-11-08T09:00:00Z'},
+            {'body': 'Review: FAIL head=%s' % head, 'createdAt': '2026-11-08T10:00:00Z'},
+            {'body': 'Verdict: PASS head=%s verifier=x author=y' % head, 'createdAt': '2026-11-08T11:00:00Z'},
+        ])
+        self.assertTrue(fw.review_failed_at_head(row))
+        self.assertTrue(fw.rework_needed_at_head(row, {}, REPO))
 
     def test_review_check_success_cancels_failure(self):
         head = 'f' * 40
@@ -132,6 +180,67 @@ class ReviewAtHead(unittest.TestCase):
             {'body': 'Checks: PASS head=%s main=%s' % (head, other)},
         ])
         self.assertTrue(fw.review_verdict_at_head(row))
+
+    def test_review_fail_comment_triggers_rework(self):
+        head = 'c' * 40
+        row = pr(5, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head},
+            {'body': 'Review: FAIL head=%s' % head},
+        ])
+        self.assertTrue(fw.review_failed_at_head(row))
+
+    def test_review_pass_cancels_fail(self):
+        head = 'h' * 40
+        row = pr(6, head=head, comments=[
+            {'body': 'Review: FAIL head=%s' % head},
+            {'body': 'Review: PASS head=%s' % head},
+        ])
+        self.assertFalse(fw.review_failed_at_head(row))
+
+
+class FetchPrsFields(unittest.TestCase):
+    def test_json_includes_head_ref_and_labels(self):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout='[]')
+
+        orig = fw.subprocess.run
+        fw.subprocess.run = fake_run
+        try:
+            fw.fetch_prs(REPO)
+            fields = calls[0][calls[0].index('--json') + 1]
+            self.assertIn('headRefName', fields)
+            self.assertIn('labels', fields)
+            self.assertIn('isDraft', fields)
+        finally:
+            fw.subprocess.run = orig
+
+
+class BuildReworkCommand(unittest.TestCase):
+    CONFIG = {
+        'issue_scan': {
+            'enabled': True,
+            'repos': [REPO],
+            'run': 'run_x',
+            'from_terminal': 'term_coord',
+            'host': 'local',
+            'repo_roots': {REPO: '/tmp/app'},
+        },
+    }
+
+    def test_base_branch_and_failure_excerpt(self):
+        head = 'a' * 40
+        row = pr(8, head=head, branch='mingster/issue-677', comments=[
+            {'body': 'Checks: FAIL head=%s\nlint broke' % head},
+        ])
+        cmd = fw.build_rework_start_command(self.CONFIG, REPO, row)
+        self.assertIn('--base-branch', cmd)
+        self.assertIn('mingster/issue-677', cmd)
+        spec = cmd[cmd.index('--spec') + 1]
+        text = Path(spec).read_text(encoding='utf-8')
+        self.assertIn('lint broke', text)
 
 
 class IssueScanOrder(unittest.TestCase):
@@ -167,6 +276,7 @@ class IssueScanPass(unittest.TestCase):
         self, state, issues_by_repo=None, starts=None, gate_ok=True, admitted=True,
         prs_by_repo=None, inventory_ok=True, start_rc=0, workers=None, persist=None,
         admit_occupied=0, host_cap=4, detached=None, checks_locked=False, config=None,
+        workflow_watch_prior=None,
     ):
         cfg = config or self.CONFIG
         issues_by_repo = issues_by_repo or {}
@@ -211,6 +321,7 @@ class IssueScanPass(unittest.TestCase):
             inventory_ok=inventory_ok, persist_state=persist_state,
             start_detached=start_detached,
             checks_lock_live=(lambda _root: True) if checks_locked else None,
+            workflow_watch_prior=workflow_watch_prior,
         )
         if detached is True:
             starts.extend([row[0] for row in detached_starts])
@@ -523,6 +634,93 @@ class IssueScanPass(unittest.TestCase):
         prs[REPO][0]['headRefOid'] = other
         _, _, starts3, _ = self.run_pass(state, prs_by_repo=prs)
         self.assertEqual(len(starts3), 1)
+
+    def test_checks_fail_starts_rework(self):
+        state = {}
+        head = '1' * 40
+        prs = {REPO: [pr(9, head=head, comments=[{'body': 'Checks: FAIL head=%s' % head}])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
+        self.assertEqual(len(starts), 1)
+
+    def test_rework_cap_labels_needs_elon(self):
+        state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
+        head = '2' * 40
+        prs = {REPO: [pr(10, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head},
+            {'body': 'Review: FAIL head=%s' % head},
+        ])]}
+        edits = []
+
+        def act(command):
+            edits.append(command)
+            return 0
+
+        notices, _ = fw.issue_scan_pass(
+            self.CONFIG, state, NOW, [],
+            pr_fetch=lambda repo: prs.get(repo, []),
+            gate_check=lambda _c: True,
+            admit_fn=lambda _h, _c, _w: {'admitted': True, 'occupied': 0},
+            start_worker=lambda _c: 1,
+            act=act,
+        )
+        self.assertTrue(any(c[:3] == ['gh', 'pr', 'edit'] for c in edits))
+        self.assertIn('needs-elon', edits[0])
+        self.assertTrue(any(isinstance(n, fw.Urgent) for n in notices))
+
+    def test_needs_elon_label_skips_rework(self):
+        state = {}
+        head = '3' * 40
+        prs = {REPO: [pr(11, head=head, labels=['needs-elon'], comments=[
+            {'body': 'Checks: FAIL head=%s' % head},
+        ])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
+        self.assertEqual(starts, [])
+
+    def test_rollup_failure_without_prior_watch_starts_nothing(self):
+        state = {'workflow_watch': {REPO: {'77': 'rerun'}}}
+        head = '4' * 40
+        prs = {REPO: [pr(12, head=head, checks=[{'context': 'ShellCheck', 'conclusion': 'FAILURE'}])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs, workflow_watch_prior={})
+        self.assertEqual(starts, [])
+
+    def test_rollup_failure_unrelated_rerun_does_not_start_rework(self):
+        head = '4' * 40
+        fail_run = '42420403371'
+        checks = [{
+            'context': 'Script tests',
+            'conclusion': 'FAILURE',
+            'detailsUrl': 'https://github.com/%s/actions/runs/%s/job/1' % (REPO, fail_run),
+        }]
+        prs = {REPO: [pr(14, head=head, checks=checks)]}
+        prior = {REPO: {'11111111111': 'rerun'}}
+        _, _, starts, _ = self.run_pass({}, prs_by_repo=prs, workflow_watch_prior=prior)
+        self.assertEqual(starts, [])
+
+    def test_status_rollup_failure_after_rerun_keys_on_failing_run(self):
+        head = '5' * 40
+        run_id = '42420403371'
+        pr_row = pr(15, head=head, checks=[{
+            'context': 'Script tests',
+            'conclusion': 'FAILURE',
+            'detailsUrl': 'https://github.com/%s/actions/runs/%s/job/1' % (REPO, run_id),
+        }])
+        self.assertFalse(fw.status_rollup_failure_after_rerun(
+            pr_row, {REPO: {'11111111111': 'rerun'}}, REPO))
+        self.assertTrue(fw.status_rollup_failure_after_rerun(
+            pr_row, {REPO: {run_id: 'rerun'}}, REPO))
+
+    def test_rollup_failure_with_prior_watch_starts_rework(self):
+        state = {}
+        head = '4' * 40
+        run_id = '77'
+        prs = {REPO: [pr(13, head=head, checks=[{
+            'context': 'ShellCheck',
+            'conclusion': 'FAILURE',
+            'detailsUrl': 'https://github.com/%s/actions/runs/%s/job/1' % (REPO, run_id),
+        }])]}
+        prior = {REPO: {run_id: 'rerun'}}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs, workflow_watch_prior=prior)
+        self.assertEqual(len(starts), 1)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ Counts every active Dispatch, including descendants. May restart a stalled worke
 """
 import argparse
 import calendar
+import copy
 import datetime
 import importlib.util
 import json
@@ -25,6 +26,18 @@ import subprocess
 import sys
 import tempfile
 import time
+
+def _load_receipt_state():
+    path = Path(__file__).resolve().parent / 'receipt-state.py'
+    spec = importlib.util.spec_from_file_location('receipt_state', path)
+    if spec is None or spec.loader is None:
+        raise ImportError('receipt-state.py missing beside fleet-watch.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+rs = _load_receipt_state()
 
 
 class Urgent(str):
@@ -679,17 +692,23 @@ def fetch_prs(repo):
         return None
 
 
+newest_comment_receipt = rs.newest_comment_receipt
+_receipt_first_line = rs.receipt_first_line
+
+
+def newest_checks_kind(comments, head):
+    return rs.newest_receipt_kind(comments, 'Checks', head)
+
+
+def newest_checks_comment(comments, head):
+    """Newest Checks receipt comment at head, if any."""
+    return newest_comment_receipt(comments, 'Checks', head)
+
+
 def failing(pr):
-    """The latest Checks receipt at this head decides, unless a status check failed after it; otherwise any failed status check."""
-    for comment in reversed(pr['comments']):
-        first = comment['body'].split('\n')[0]
-        if first.startswith('Checks: ') and 'head=' + pr['headRefOid'] in first:
-            if first.startswith('Checks: FAIL'):
-                return True
-            receipt = comment.get('createdAt') or ''
-            return any(check.get('conclusion') == 'FAILURE' and (check.get('completedAt') or '') > receipt
-                       for check in pr['statusCheckRollup'])
-    return any(check.get('conclusion') == 'FAILURE' for check in pr['statusCheckRollup'])
+    """The newest Checks receipt at this head decides, unless a status check failed after it; otherwise any failed status check."""
+    head = pr.get('headRefOid') or ''
+    return rs.status_rollup_failure_at_head(pr, head)
 
 
 def pr_events(repo, old, prs, now, stuck_seconds):
@@ -704,7 +723,7 @@ def pr_events(repo, old, prs, now, stuck_seconds):
         number = pr['number']
         for comment in pr['comments']:
             first = comment['body'].split('\n')[0]
-            if first.startswith('Verdict:') and comment['id'] not in verdicts:
+            if (first.startswith('Verdict:') or first.startswith('Review:')) and comment['id'] not in verdicts:
                 verdicts.append(comment['id'])
                 if not baseline:
                     event = Verdict('%s #%d %s' % (repo, number, first))
@@ -1665,10 +1684,11 @@ def issue_scan_sorted_eligible(issues):
 
 def checks_pass_at_head(pr):
     head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if first.startswith('Checks: ') and 'head=' + head in first:
-            return first.startswith('Checks: PASS')
+    kind = newest_checks_kind(pr.get('comments'), head)
+    if kind == 'PASS':
+        return True
+    if kind == 'FAIL':
+        return False
     for check in pr.get('statusCheckRollup') or []:
         if not isinstance(check, dict):
             continue
@@ -1678,27 +1698,21 @@ def checks_pass_at_head(pr):
     return False
 
 
+def checks_fail_at_head(pr):
+    return newest_checks_kind(pr.get('comments'), pr.get('headRefOid') or '') == 'FAIL'
+
+
 def checks_receipt_at_head(pr):
-    head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if not first.startswith('Checks: '):
-            continue
-        if 'head=' + head not in first:
-            continue
-        return first.startswith('Checks: PASS') or first.startswith('Checks: FAIL')
-    return False
+    return newest_checks_kind(pr.get('comments'), pr.get('headRefOid') or '') in ('PASS', 'FAIL')
 
 
 def review_verdict_at_head(pr):
     head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if 'head=' + head not in first:
-            continue
-        if first.startswith('Verdict:') or first.startswith('Review:'):
-            return True
-    return False
+    comments = pr.get('comments') or []
+    return (
+        newest_comment_receipt(comments, 'Review', head) is not None
+        or newest_comment_receipt(comments, 'Verdict', head) is not None
+    )
 
 
 def pr_has_label(pr, label_name):
@@ -1708,6 +1722,58 @@ def pr_has_label(pr, label_name):
         if item == label_name:
             return True
     return False
+
+
+def _workflow_run_id_from_check(check):
+    url = (check.get('detailsUrl') or '') if isinstance(check, dict) else ''
+    match = re.search(r'/actions/runs/(\d+)', url)
+    return match.group(1) if match else None
+
+
+def status_rollup_failure_after_rerun(pr, workflow_watch_state, repo):
+    watched = (workflow_watch_state or {}).get(repo, {})
+    for check in pr.get('statusCheckRollup') or []:
+        if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
+            continue
+        attempt = check.get('attempt')
+        if attempt is not None and attempt >= 2:
+            return True
+        run_id = _workflow_run_id_from_check(check)
+        if run_id and watched.get(run_id) in ('rerun', 'issue'):
+            return True
+    return False
+
+
+def rework_needed_at_head(pr, workflow_watch_state, repo):
+    if checks_fail_at_head(pr):
+        return True
+    if checks_pass_at_head(pr) and review_failed_at_head(pr):
+        return True
+    return status_rollup_failure_after_rerun(pr, workflow_watch_state, repo)
+
+
+def rework_failure_excerpt(pr_row):
+    head = pr_row.get('headRefOid') or ''
+    comments = pr_row.get('comments') or []
+    comment = newest_comment_receipt(comments, 'Checks', head)
+    if comment:
+        first = _receipt_first_line(comment.get('body'))
+        if first.startswith('Checks: FAIL'):
+            return (comment.get('body') or '')[:8000]
+    for label in ('Review', 'Verdict'):
+        comment = newest_comment_receipt(comments, label, head)
+        if comment and rs.newest_receipt_kind(comments, label, head) == 'FAIL':
+            return (comment.get('body') or '')[:8000]
+    for check in pr_row.get('statusCheckRollup') or []:
+        if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
+            continue
+        name = check.get('context') or check.get('name') or 'check'
+        parts = ['statusCheckRollup FAILURE: %s' % name]
+        summary = check.get('summary') or check.get('title')
+        if summary:
+            parts.append(summary)
+        return '\n'.join(parts)
+    return 'Rework after failure on head %s' % head
 
 
 def coordinator_publication_state_dir():
@@ -1930,27 +1996,7 @@ def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
 
 
 def review_failed_at_head(pr):
-    head = pr.get('headRefOid') or ''
-    for comment in reversed(pr.get('comments') or []):
-        first = (comment.get('body') or '').split('\n')[0]
-        if 'head=' + head not in first or not first.startswith('Verdict:'):
-            continue
-        if first.startswith('Verdict: PASS'):
-            return False
-        if first.startswith('Verdict: FAIL'):
-            return True
-    saw_failure = False
-    for check in pr.get('statusCheckRollup') or []:
-        if not isinstance(check, dict):
-            continue
-        ctx = (check.get('context') or check.get('name') or '').lower()
-        if ctx == 'review':
-            conclusion = check.get('conclusion')
-            if conclusion == 'SUCCESS':
-                return False
-            if conclusion == 'FAILURE':
-                saw_failure = True
-    return saw_failure
+    return rs.review_failed_at_head(pr)
 
 
 def fetch_ready_issues(repo, run=subprocess.run):
@@ -2017,7 +2063,9 @@ def build_rework_start_command(config, repo, pr_row):
     if not root:
         return None
     head = pr_row.get('headRefOid') or ''
-    spec_path = _write_issue_scan_spec('Rework after review failure on %s PR #%d head %s' % (repo, pr_row['number'], head))
+    excerpt = rework_failure_excerpt(pr_row)
+    spec_path = _write_issue_scan_spec(
+        'Rework %s PR #%d head %s\n\n%s' % (repo, pr_row['number'], head, excerpt))
     title = 'rework #%d' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
     model = scan.get('rework_model') or scan.get('model') or ''
@@ -2032,6 +2080,9 @@ def build_rework_start_command(config, repo, pr_row):
         '--name', 'rework-%d' % pr_row['number'],
         '--repo', 'path:' + root,
     ]
+    branch = pr_row.get('headRefName')
+    if branch:
+        command += ['--base-branch', branch]
     return [part for part in command if part]
 
 
@@ -2066,8 +2117,8 @@ def _issue_scan_has_slot(host, config, admission, extra_starts):
 def issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
-    inventory_ok=True, persist_state=None, start_detached=None,
-    checks_lock_live=None,
+    inventory_ok=True, persist_state=None, act=None,
+    start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -2086,6 +2137,8 @@ def issue_scan_pass(
         admit_fn = admit
     if start_worker is None:
         start_worker = default_issue_scan_start
+    if act is None:
+        act = run_gh
     if start_detached is None:
         start_detached = default_detached_start
 
@@ -2106,6 +2159,10 @@ def issue_scan_pass(
     reviewer_started = state.setdefault('reviewer_started', {})
     rework_heads = state.setdefault('issue_scan_rework', {})
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
+    rework_rounds = state.setdefault('issue_scan_rework_rounds', {})
+    rework_escalated = state.setdefault('issue_scan_rework_escalated', {})
+    if workflow_watch_prior is None:
+        workflow_watch_prior = state.get('workflow_watch') or {}
 
     for repo in pr_repos:
         prs = pr_fetch(repo)
@@ -2156,13 +2213,31 @@ def issue_scan_pass(
             continue
         seen = rework_heads.setdefault(repo, {})
         pending = rework_pending.setdefault(repo, {})
+        rounds = rework_rounds.setdefault(repo, {})
+        escalated = rework_escalated.setdefault(repo, {})
         for pr_row in prs:
             if pr_row.get('state') != 'OPEN':
                 continue
-            if not checks_pass_at_head(pr_row) or not review_failed_at_head(pr_row):
+            if pr_has_label(pr_row, needs_elon):
+                continue
+            if not rework_needed_at_head(pr_row, workflow_watch_prior, repo):
                 continue
             head = pr_row.get('headRefOid') or ''
+            pr_num = pr_row['number']
             if not head or seen.get(head) or pending.get(head):
+                continue
+            pr_key = str(pr_num)
+            if escalated.get(pr_key):
+                continue
+            if rounds.get(pr_key, 0) >= 2:
+                if act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', needs_elon]) == 0:
+                    escalated[pr_key] = True
+                    notices.append(Urgent('%s #%d rework cap reached; needs-elon' % (repo, pr_num)))
+                    log_bits.append('rework_cap=%d' % pr_num)
+                    if persist_state:
+                        persist_state()
+                else:
+                    log_bits.append('rework_cap_label_fail=%d' % pr_num)
                 continue
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 continue
@@ -2176,6 +2251,7 @@ def issue_scan_pass(
             if start_worker(command) == 0:
                 seen[head] = True
                 pending.pop(head, None)
+                rounds[pr_key] = rounds.get(pr_key, 0) + 1
                 extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_row['number'], head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
@@ -2255,9 +2331,12 @@ def workflow_notices(config, state, now, fetch=None, act=None):
     if act is None:
         act = run_gh
     watch = config.get('pr_watch') or {}
-    workflows = watch.get('workflows')
-    if not workflows:
+    if not watch.get('repos'):
         return []
+    workflows = watch.get('workflows') or []
+    workflow_filter = set(workflows) if workflows else None
+    stall_cfg = config.get('worker_stall') or {}
+    needs_elon = stall_cfg.get('needs_elon_label', 'needs-elon')
     notices = []
     handled = state.setdefault('workflow_watch', {})
     for repo in watch['repos']:
@@ -2268,7 +2347,9 @@ def workflow_notices(config, state, now, fetch=None, act=None):
         done = {}
         for run in runs:
             created = calendar.timegm(time.strptime(run['createdAt'], '%Y-%m-%dT%H:%M:%SZ'))
-            if run['workflowName'] not in workflows or now - created > RUN_WINDOW:
+            if workflow_filter is not None and run['workflowName'] not in workflow_filter:
+                continue
+            if now - created > RUN_WINDOW:
                 continue
             key = str(run['databaseId'])
             step = old.get(key)
@@ -2279,9 +2360,11 @@ def workflow_notices(config, state, now, fetch=None, act=None):
                 done[key] = 'rerun'
                 continue
             title = f"{run['workflowName']} failed twice on {run['headSha'][:8]}"
-            if act(['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', run['url']]) == 0:
+            issue_cmd = ['gh', 'issue', 'create', '--repo', repo, '--title', title,
+                         '--body', run['url'], '--label', needs_elon]
+            if act(issue_cmd) == 0:
                 done[key] = 'issue'
-                notices.append(f'{repo}: {title}')
+                notices.append(Urgent(f'{repo}: {title}'))
             else:
                 notices.append(f'{repo}: {title}, issue not opened')
         handled[repo] = done
@@ -2635,6 +2718,7 @@ def main():
         terminal_list_ok = False
     notices += pr_notices(config, state, now)
     notices += usage_notices(config)
+    workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
     notices += workflow_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
@@ -2649,6 +2733,7 @@ def main():
         config, state, now, workers,
         inventory_ok=inventory_ok,
         persist_state=persist_scan_state,
+        workflow_watch_prior=workflow_watch_prior,
     )
     notices += scan_extra
     stall_extra, stall_log = worker_stall_pass(

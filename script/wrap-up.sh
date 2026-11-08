@@ -1837,5 +1837,9 @@ REMOTE
   fi
   printf '\nFleet total (local plus %s of %s hosts reached):\n' "$t_up" "$t_hosts"
   printf 'removed worktrees=%s deleted local=%s kept=%s\n' "$t_removed" "$t_local" "$t_kept"
+  if [ -x "$here/fleet-toolchain-check.sh" ]; then
+    tc=$("$here/fleet-toolchain-check.sh" 2>&1) || true
+    [ -z "$tc" ] || echo "$tc"
+  fi
 fi
 finish
