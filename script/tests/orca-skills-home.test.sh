@@ -2,6 +2,10 @@
 # Optional network integration proof; needs Orca, npx and GitHub access.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
+if ! command -v orca >/dev/null 2>&1; then
+  echo "SKIP: orca-skills-home.test.sh — orca not on PATH" >&2
+  exit 0
+fi
 TEST_ROOT=$(mktemp -d)
 cleanup() {
   result=$?

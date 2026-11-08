@@ -72,6 +72,20 @@ A fleet host (`--worktrees-only`) closes the terminals of its own Orca, by the s
 
 A local terminal with no dispatch and no running agent is closed, and its worktree is then removed if it is clean and merged (untracked `.orca-install-stamp`, `.continual-learning.json` and image files do not count as dirty). Kept, with the reason printed: a running agent, an unsettled or never-settled dispatch, a `lead-` worktree, uncommitted work, the main checkout, the caller's own terminal, output in the last 10 minutes, and anything the holder check cannot clear. Ended worker panes are swept within a bounded per-round budget, pruned only when `worker-list` is complete, and removed through `pane_record_rm` only after strict terminal inventory proof confirms the pane terminal is gone. Test: `script/tests/wrap-up-unknown-owner.test.sh`.
 
+### Release and close on every environment
+
+Each run reads every Run on this Orca and on every environment, then does two fleet wide steps before the worktree check.
+
+Release: a worker whose state is succeeded, stopped or failed, or whose liveness is exited or sleep, and whose terminal state is not released, gets `worker-release --dispatch <id>` (with `--environment` for a remote one). A ready or in progress worker that is live is never touched, nor the caller's `$ORCA_TERMINAL_HANDLE` or a Run coordinator's terminal.
+
+Close: on a remote environment a terminal whose worktree has only settled dispatches is closed (setup and plain shell panes included), and so is one whose worktree this run removed (a second pass after the worktree step). A terminal in a worktree with no dispatch record stays kept as unknown owner, since it may be an owner session, a dev server or another coordinator. Kept: a terminal outside a worktree, a running agent, a main branch terminal, and everything under a scheduled round.
+
+The dry run lists every `Release worker` and `Close terminal` line, and apply does exactly that list. Test: `script/tests/wrap-up-fleet-release.test.sh`.
+
+### One apply at a time, and runtime bounds
+
+`--apply` takes a lock file (`wrap-up-apply.lock` in `WRAP_UP_STATE_DIR`, default `~/.local/state/agent-team`). A second apply prints the holder and exits 75; a scheduled round logs it as a skip. A dry run takes no lock. The summary counts print before the pane close step. Worst case for `--apply`: `WRAP_UP_TOTAL_TIMEOUT` (900 s) plus the pane step, which is capped at `WRAP_UP_PANE_TIMEOUT` (1800 s) with every call inside it limited to `WRAP_UP_PANE_CALL_TIMEOUT` (10 s). A dry run takes about 5 minutes for one repo.
+
 ## Browser sweep
 
 After the dispatch inventory, wrap-up closes stale throwaway browsers: a main Chrome Dev or Chromium process whose `--user-data-dir` is under a temp root, and agent-browser daemons. Stable Chrome and any profile outside temp are never candidates. It keeps a browser younger than 2 hours, with a live parent that is not pid 1, in an active dispatch path, with an unreadable working directory, or when no complete dispatch inventory was read. It stops by pid with TERM after rereading the pid. Tests: `script/tests/wrap-up-browsers.test.sh` (seams `WRAP_UP_PS_CMD`, `WRAP_UP_KILL_CMD`; in test mode the sweep runs only when both are set).
