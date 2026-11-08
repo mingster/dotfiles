@@ -217,6 +217,69 @@ set -e
   && ok "remote host agent-state is fast-forwarded" \
   || bad "remote agent-state not pulled (ec=$ec): $out"
 
+# 6d. agent_hosts resets dirty and detached repos to origin/main, keeps ignored files, and leaves normal hosts untouched
+dirty_repo="$remote_home/repo-dirty"
+dirty_bare="$tmp/repo-dirty.git"
+detached_repo="$remote_home/repo-detached"
+detached_bare="$tmp/repo-detached.git"
+make_repo "$dirty_repo" "$dirty_bare"
+make_repo "$detached_repo" "$detached_bare"
+echo "ignored.env" >"$dirty_repo/.gitignore"
+git -C "$dirty_repo" add .gitignore
+git -C "$dirty_repo" commit -qm gitignore
+git -C "$dirty_repo" push -q origin main
+advance_origin "$dirty_bare" "dirty-advance"
+advance_origin "$detached_bare" "detached-advance"
+dirty_tip=$(git --git-dir="$dirty_bare" rev-parse refs/heads/main)
+dirty_short=$(git --git-dir="$dirty_bare" rev-parse --short refs/heads/main)
+detached_tip=$(git --git-dir="$detached_bare" rev-parse refs/heads/main)
+detached_short=$(git --git-dir="$detached_bare" rev-parse --short refs/heads/main)
+echo "secret=1" >"$dirty_repo/ignored.env"
+echo uncommitted >>"$dirty_repo/file.txt"
+echo scratch >"$dirty_repo/untracked.txt"
+git -C "$detached_repo" checkout -q --detach HEAD
+
+cat >"$state1/fleet-pull.json" <<'EOF'
+{"hosts":["host-normal"],"agent_hosts":["host-agent"],"repos":["~/repo-dirty","~/repo-detached"]}
+EOF
+git -C "$state1" commit -qam normal_host_cfg
+git -C "$state1" push -q origin main
+set +e
+out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec=$?
+set -e
+[ "$ec" -ne 0 ] \
+  && grep -q "fail host-normal .*repo-dirty (dirty)" <<<"$out" \
+  && grep -q "uncommitted" "$dirty_repo/file.txt" \
+  && [ "$(git -C "$dirty_repo" rev-parse HEAD)" != "$dirty_tip" ] \
+  && ok "normal host repo is untouched and still reported dirty" \
+  || bad "normal host repo should stay dirty and untouched (ec=$ec): $out"
+
+cat >"$state1/fleet-pull.json" <<'EOF'
+{"hosts":["host-agent"],"agent_hosts":["host-agent"],"repos":["~/repo-dirty","~/repo-detached"]}
+EOF
+git -C "$state1" commit -qam agent_host_cfg
+git -C "$state1" push -q origin main
+set +e
+out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec=$?
+set -e
+[ "$(git -C "$dirty_repo" branch --show-current)" = main ] \
+  && [ "$(git -C "$dirty_repo" rev-parse HEAD)" = "$dirty_tip" ] \
+  && [ -z "$(git -C "$dirty_repo" status --porcelain)" ] \
+  && [ "$(git -C "$detached_repo" branch --show-current)" = main ] \
+  && [ "$(git -C "$detached_repo" rev-parse HEAD)" = "$detached_tip" ] \
+  && [ -z "$(git -C "$detached_repo" status --porcelain)" ] \
+  && grep -q "ok   host-agent .*repo-dirty $dirty_short (reset)" <<<"$out" \
+  && grep -q "ok   host-agent .*repo-detached $detached_short (reset)" <<<"$out" \
+  && ! grep -q "agent-state .* (reset)" <<<"$out" \
+  && ok "dirty and detached repos on agent host end on origin/main clean and report reset" \
+  || bad "agent host repos not reset to origin/main clean (ec=$ec): $out"
+
+[ -f "$dirty_repo/ignored.env" ] && [ ! -e "$dirty_repo/untracked.txt" ] \
+  && ok "ignored file on agent host survives while untracked file is cleaned" \
+  || bad "ignored file missing or untracked file remained after agent host reset"
+
 # 7. elon-startup.sh fast-forwards AGENT_STATE_DIR instead of only fetching it
 elon_work="$tmp/elon"
 mkdir -p "$elon_work/bin" "$elon_work/script" "$elon_work/home/.claude/state" "$elon_work/cwd"
