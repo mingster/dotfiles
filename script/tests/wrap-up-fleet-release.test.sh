@@ -42,7 +42,7 @@ case "$*" in
   'orchestration worker-release --dispatch '*)
     printf '%s %s\n' "${e:-local}" "$4" >> "$FAKE_DIR/released"
     echo '{"ok":true,"result":{"state":"released"}}' ;;
-  'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  'worktree list --json') if [ -f "$FAKE_DIR/orca-worktrees" ]; then cat "$FAKE_DIR/orca-worktrees"; else echo '{"ok":true,"result":{"worktrees":[]}}'; fi ;;
   *) exit 1 ;;
 esac
 STUB
@@ -154,23 +154,49 @@ term() { jq -n --arg h "$1" --arg p "$2" --argjson a "${3:-null}" '{handle:$h,wo
 echo "$none" | jq . > /dev/null
 g worktree add -q --detach "$tmp/wt-gone" main
 wt_gone=$(cd "$tmp/wt-gone" && pwd -P)
-{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone "$wt_gone"; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
+# The environment reports its own path for the removed worktree; a terminal at the coordinator's local path is another place.
+jq -n --arg l "$wt_gone" '{ok:true,result:{worktrees:[{repoId:"r1",hostId:"local",path:$l,branch:"refs/heads/gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/gone-wt",branch:"gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/other-wt",branch:"other-br"}]}}' > "$tmp/orca-worktrees"
+{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /remote/gone-wt; term e-samepath "$wt_gone"; term e-other /remote/other-wt; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
 { term l-gone /fixture/removed; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-local"
 echo '{"ok":true,"result":{"workers":[]}}' > "$tmp/workers-local"
 run --dry-run
 expect 'Close terminal e-setup (env-a, settled dispatch on this path)'
 expect 'Remove worktree '"$wt_gone"' (detached at merged commit)'
 expect 'Close terminal e-gone (env-a, worktree gone in this run)'
+expect 'Kept terminal e-samepath (env-a, unknown owner, still running)'
 expect 'Kept terminal e-never (env-a, unknown owner, still running)'
 expect 'Close terminal l-gone (local, no dispatch, no agent)'
-for keep in e-live e-never e-agent e-none t-own; do
+for keep in e-live e-samepath e-other e-never e-agent e-none t-own; do
   ! grep -Fq "Close terminal $keep " "$tmp/output" || { echo "FAIL would close $keep"; exit 1; }
 done
 test ! -e "$tmp/closed"
+# A terminal kept in the first pass and closed in the late one is counted once, as closed.
+n_close=$(grep -c '^Close terminal ' "$tmp/output" || true); n_kept=$(grep -c '^Kept terminal ' "$tmp/output" || true)
+# The Kept line for e-gone was printed before its worktree went; the summary must not count it twice.
+expect "terminals closed=$n_close kept=$((n_kept-1))"
+echo 'ok 6 a remote terminal in a removed worktree is matched by the path its environment reports and counted once'
 grep -o '^Close terminal [^ ]* ([^,]*' "$tmp/output" | sed 's/^Close terminal \([^ ]*\) (\(.*\)/\2 \1/; s/^local/local/' | sort > "$tmp/planned"
 run --apply
 sort "$tmp/closed" | cmp - "$tmp/planned" || { echo 'FAIL apply closed other than the plan'; cat "$tmp/closed"; exit 1; }
 echo 'ok 6 leftover terminals close on every environment; live, agent, never dispatched, no-worktree and own terminals stay'
+
+# Item 8: sleep is settled for the terminal close too, so one run releases the worker and closes its terminals.
+{
+  row d-nap in_progress sleep retained '' /fixture/nap
+  row d-awake in_progress live retained '' /fixture/awake
+} | wrap > "$tmp/workers-local"
+cp "$tmp/workers-local" "$tmp/workers-env"
+{ term l-nap /fixture/nap; term l-awake /fixture/awake; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-local"
+{ term e-nap /fixture/nap; term e-awake /fixture/awake; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
+rm -f "$tmp/orca-worktrees"
+run --apply
+expect 'Release worker d-nap (local, liveness sleep)'
+expect 'Close terminal l-nap (local, settled dispatch on this path)'
+expect 'Close terminal e-nap (env-a, settled dispatch on this path)'
+expect 'Kept terminal l-awake (local, live dispatch)'
+expect 'Kept terminal e-awake (env-a, live dispatch)'
+grep -Fxq 'local l-nap' "$tmp/closed" && grep -Fxq 'env-a e-nap' "$tmp/closed" || { echo 'FAIL apply did not close the sleeping dispatch terminals'; cat "$tmp/closed"; exit 1; }
+echo 'ok 8 a sleeping dispatch is released and its terminals closed in the same run'
 
 # Item 7: one apply at a time, and every pane close call has its own short timeout.
 bash -c 'sleep 60; :' wrap-up.sh &

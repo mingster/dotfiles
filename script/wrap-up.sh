@@ -858,7 +858,8 @@ main_path=$(git worktree list --porcelain | sed -n '1s/^worktree //p'); main_pat
 : > "$tmp/closing"
 : > "$tmp/removed-paths"
 terminals_read=0
-terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
+: > "$tmp/kept-terminals"
+terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; printf '%s %s\n' "$2" "$1" >> "$tmp/kept-terminals"; term_kept=$((term_kept+1)); }
 close_terminal_err='close failed'
 close_terminal() {
   local h='' a show
@@ -936,12 +937,24 @@ terminal_dispatches() {
 close_finished_terminals() {
   local env=$1 label=${1:-local} late=${2:-0} eargs=() handle reason action
   [ -z "$env" ] || eargs=(--environment "$env")
+  # A remote terminal reports its own host's path. A removed worktree is matched to the paths this environment reports
+  # for the same repo and branch, never to the coordinator's local path.
+  cp "$tmp/removed-paths" "$tmp/h-gone"
+  if [ -n "$env" ]; then
+    jq -r --rawfile gone "$tmp/removed-paths" --arg env "$env" '
+      def br: (.branch // "") | sub("^refs/heads/"; "");
+      def path: .path // .workspacePath // "";
+      ($gone | split("\n")) as $g
+      | [.result.worktrees[]? | select((.hostId // "local") == "local" and (path as $p | $g | index($p)) != null)] as $loc
+      | .result.worktrees[]? | select((.hostId // "local") == $env) | . as $r
+      | select(path != "" and any($loc[]; .repoId == $r.repoId and (br | length) > 0 and br == ($r | br))) | path' "$tmp/orca-worktrees" > "$tmp/h-gone" 2>/dev/null || : > "$tmp/h-gone"
+  fi
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; fail_item "terminals on $label" 'inventory incomplete; none closed'; return 0
   fi
-  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg main "$main_path" --arg local "${env:-}" --rawfile gone "$tmp/removed-paths" '
-    def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg main "$main_path" --arg local "${env:-}" --rawfile gone "$tmp/h-gone" '
+    def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" or .liveness == "sleep";
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
     | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "") as $p
@@ -976,6 +989,8 @@ close_finished_terminals() {
       fi
     fi
     [ -n "$env" ] || printf '%s\n' "$handle" >> "$tmp/closing"
+    # Kept in the first pass, closed in the late one: count it once, as closed.
+    if grep -Fxq -- "$label $handle" "$tmp/kept-terminals"; then term_kept=$((term_kept-1)); fi
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
