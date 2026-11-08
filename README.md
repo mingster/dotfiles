@@ -1,258 +1,139 @@
-# Ming's Dotfiles and AI Agent Team
+# Dotfiles and AI agent team
 
-This repository does two jobs. It sets up a machine on macOS, Arch Linux or Debian. It also holds the basic guideline, tools and skills for an AI agent team that any project can adopt.
+This repository sets up a developer machine on macOS, Arch Linux or Debian. It also ships the shared roles, scripts and skills that any software project can adopt for an AI agent team.
 
-Each project uses what lives here as much as it can, and keeps only its own facts.
+Each project keeps its own facts in `docs/agents/`. Everything else is linked from this repo.
 
-## 1. Set up a machine
+## What an agent team is
+
+An **agent team** is a small set of AI agents that share one delivery playbook.
+
+One **coordinator agent** holds the CEO role. It reads the issue tracker, plans work, and **dispatches** tasks. A dispatch is a single start command that gives one worker a complete assignment.
+
+**Worker agents** each take one task. They work in their own **worktree**, a separate git checkout so their edits never collide with other tasks. When a worker finishes, it sends **worker_done**, an orchestration message that ends its turn and reports what it did.
+
+The **owner** is the human who approves money, production, irreversible data changes, and a short list of other reserved decisions. Agents run the rest without waiting on chat.
+
+Full role names and boundaries live in [Agent team reference](docs/agents/team-reference.md).
+
+## How one task runs
+
+1. **Issue.** Someone opens a tracker item with acceptance criteria. Intake roles may grill and slice it until it is ready.
+2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief lists `Refs`, scope, verify steps and finish steps. `script/brief-lint.sh` rejects incomplete briefs.
+3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks fleet load, usage quota and host readiness, then starts one worker in a fresh worktree.
+4. **Build.** The worker implements the ticket, runs local checks, commits, pushes once and opens a pull request.
+5. **Checks and review.** GitHub Actions runs required checks. A read only bot review and a separate verifier model post a **Verdict** (`PASS`, `PASS+NOTES` or `FAIL`) via `script/post-verdict.sh`.
+6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` may squash merge. A periodic babysit pass can start a fix worker or a shipping run.
+7. **Cleanup.** `script/wrap-up.sh` removes finished worktrees and merged branches. The issue closes when the PR merges.
+
+Orca orchestration details, gates and failure limits are in [Coordinator operations](docs/agents/coordinator-operations.md) and [Agent team architecture](docs/agents/agent-team-architecture.md).
+
+## Set up
+
+### Set up a machine
 
 ```bash
-mkdir -p ~/GitHub && cd ~/GitHub
-git clone https://github.com/mingster/dotfiles.git && cd dotfiles
+mkdir -p ~/src && cd ~/src
+git clone <repository-url> dotfiles && cd dotfiles
 sh mac/osxprep.sh   # macOS only: installs Command Line Tools
 sh install.sh
 ```
 
-`install.sh` links `~/dotfiles`, your home configuration files and the shared skill folders, sets up editors, and runs the package script for your system (`mac/`, `arch/` or `debian/`). You can run it again safely. Unchanged tools are skipped and conflicting files are backed up.
+`install.sh` links `~/dotfiles`, home dotfiles, editor settings and shared skills, then runs the package script for your system (`mac/`, `arch/` or `debian/`). Safe to re-run: unchanged tools are skipped and conflicting files are backed up.
 
 | Command | Effect |
 | --- | --- |
 | `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Refresh links without installing system packages |
 | `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also upgrade Homebrew packages on macOS |
-| `script/agent-team.sh machine` | Check agent tools on this machine (add `--dry-run` to preview) |
+| `script/agent-team.sh machine` | Install agent CLIs, link skills and settings, report missing logins (add `--dry-run` to preview) |
 
-### Fleet readiness
+Fleet host registration, pull scripts, automations and the readiness checklist are documented in [Agent team setup](docs/agents/agent-team-setup.md).
 
-After `install.sh` finishes on a host, add it to the private `~/agent-state` repository and register its scheduled Orca jobs.
+### Adopt the team in a project
 
-Roles live in `~/agent-state/coordinator.conf` with one `coordinator <name>` line for the active coordinator and ordered `backup <name>` lines for backup hosts, where `<name>` matches `hostname -s`. Every host in the fleet keeps a clean `main` checkout of `~/agent-state` and the configured project repositories.
+`script/agent-team.sh` is the single entry point for machine setup and project adoption (see open pull request 756 in this repository).
 
 ```bash
-~/dotfiles/script/fleet-pull.sh
-~/dotfiles/script/fleet-toolchain-check.sh
-~/dotfiles/script/install-fleet-automations.sh --dry-run --install
-~/dotfiles/script/install-fleet-automations.sh --install
-~/dotfiles/script/install-fleet-automations.sh --status
+script/agent-team.sh machine
+script/agent-team.sh project /path/to/project --project-name <name>
+script/agent-team.sh sync    /path/to/project
+script/agent-team.sh check   /path/to/project
+script/agent-team.sh all     /path/to/project
 ```
 
 | Command | Effect |
 | --- | --- |
-| `script/fleet-pull.sh` | Fast-forward `main` in `~/agent-state` and each configured repository on every host. Prints `ok` with the short commit, or exits non-zero with `fail <host> <repo>` when a checkout is `dirty`, `not on main: detached` (or on another branch), `diverged: not fast-forward`, `behind after pull`, or unreachable |
-| `script/fleet-toolchain-check.sh` | Compare CLI versions across fleet hosts against the coordinator in `coordinator.conf` and the latest release (add `--apply` to align `.tool-versions` pins and upgrade supported tools) |
-| `script/install-fleet-automations.sh --dry-run --install` | Print the planned `orca automations` commands without changing Orca |
-| `script/install-fleet-automations.sh --install` | Create or update the six fleet automations on this host (safe to run again) |
-| `script/install-fleet-automations.sh --status` | Print enabled or disabled status for each fleet automation on this host |
-| `script/worker-startup.sh --host-check` | Verify `~/dotfiles`, Orca presets, repository checkouts and runtime pins before the host takes work |
+| `machine` | Configure CLIs, skills, hooks and Orca presets on this computer |
+| `project` | Seed roles, labels, team skills and audit output on a new repository |
+| `sync` | Refresh linked roles, hooks, skills and template managed files on an existing repository |
+| `check` | Read only drift check on one or more repositories (exit non zero when something diverges) |
+| `all` | Run `machine`, then `project` or migration logic for the given directory |
 
-Each automation runs a shell precheck that exits `1` when done, so Orca starts no agent session and spends no AI quota. Orca caps every precheck at 600 seconds (`wrap-up-scheduled` and `weekly-update` bound their timeouts so each run finishes inside the 600 second cap). When `~/dotfiles` is a symlink on a host, `install-fleet-automations.sh` resolves the canonical path and matches the checkout in Orca by repository ID. Hosts without the Orca app installed (such as a headless host) are skipped with a clear message and exit `0`.
+After adoption, fill in project facts:
 
-| Automation | Schedule | Enabled where |
-| --- | --- | --- |
-| `fleet-watch` | `*/5 * * * *` | Coordinator only |
-| `fleet-toolchain` | `0 5 * * *` | Coordinator only |
-| `wrap-up-scheduled` | `*/10 * * * *` | Every Orca host (skipped on a headless host without the Orca app) |
-| `sync-team-skills-drift` | `0 6 * * *` | Created disabled for the owner to turn on |
-| `team-audit-weekly` | `0 7 * * 1` | Created disabled for the owner to turn on |
-| `weekly-update` | `0 8 * * 1` | Created disabled for the owner to turn on |
+* `docs/agents/team-facts.md`: repositories, stack and team facts
+* `docs/agents/deploy-facts.md`: deploy targets, URLs and smoke commands
+* `docs/agents/domain.md`: domain context for planning skills
 
-Readiness checklist for a fleet host:
+See [Agent team setup](docs/agents/agent-team-setup.md) for backups, reset flows and owner login steps.
 
-* [ ] `hostname -s` is set under `coordinator` or `backup` in `~/agent-state/coordinator.conf` and listed in the fleet pull config.
-* [ ] `~/dotfiles/script/fleet-pull.sh` prints `ok` for `~/agent-state` and every configured repository on every host, with no `dirty` or `detached` checkouts.
-* [ ] `~/dotfiles/script/fleet-toolchain-check.sh` reports all required CLIs present and aligned with the coordinator.
-* [ ] `~/dotfiles/script/install-fleet-automations.sh --status` shows `wrap-up-scheduled` enabled on every Orca host, `fleet-watch` and `fleet-toolchain` enabled on the coordinator only, and `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` created disabled for the owner to turn on (or skips cleanly on a headless host without the Orca app).
-* [ ] `~/dotfiles/script/worker-startup.sh --host-check` passes cleanly.
+## Fleet and load
 
-See [Orca automations](docs/agents/orca-automations.md), [Fleet watch](docs/agents/fleet-watch.md) and [Coordinator operations](docs/agents/coordinator-operations.md) for full details.
+The **fleet** is several computers paired in Orca. One host runs the coordinator agent. Other hosts run builders, reviewers, browser work and heavy checks.
 
-## 2. Adopt the team in a project
+Before each dispatch the coordinator reads load through `fleet-load.sh` (published under the coordinator state directory). Placement follows the order and per host limits in [Coordinator operations](docs/agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database and heavy host runs databases and remote Playwright or `head-checks.sh` jobs only, never interactive workers.
 
-```bash
-~/dotfiles/script/agent-team.sh project /path/to/project --project-name acme
-```
+The **coordinator overload gate** (issue 748) blocks a new worker when weekly model quota is nearly exhausted or when load and memory rules fail on the target host. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
 
-This copies the roles and skills, sets up the issue tracker labels, writes the team skills into the project and runs an audit. Then fill in two files with the project's own facts:
+`script/worker-startup.sh` (issue 757) chooses a host automatically when the caller passes no `--on`:
 
-* `docs/agents/team-facts.md`: repositories, stack and team facts.
-* `docs/agents/deploy-facts.md`: deploy targets, URLs and smoke test commands.
+1. Read load for every fleet host from the same source as `fleet-load.sh`.
+2. Walk the placement order and limits from [Coordinator operations](docs/agents/coordinator-operations.md).
+3. Start on the first host under its limit and print one line with the chosen host and load.
+4. When every host is over limit, refuse with one line listing each host's load.
+5. An explicit `--on <environment>` is honored unchanged, and the usage gate still applies there.
 
-## 3. The team guideline
+Host names, caps and roles come from private fleet configuration, not from hard coded values in this public repo.
+
+## Team guideline (summary)
 
 ### Goal
 
-An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A ticket goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs a green staging review and the owner's go.
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skill design inside Orca. A ready ticket reaches merge without message relay between agents. Staging updates on a daily schedule; production needs a green staging review and the owner's go.
 
-### Principles
-
-* Use Orca, pstack and Matt Pocock skills as they are. Customize only when we must, and record why.
-* Improve what exists before adding anything. Team rules and scripts must not grow in total.
-* Each role takes the shortest path that still reaches the targets.
-* When speed and quality conflict, quality wins for money, sign-in, database schema and hooks. Everything else takes the fast lane, and daily staging is the second line of defence.
-* State lives only in GitHub and Orca. After a restart the team carries on from there.
-
-### Targets
-
-| Measure | Target |
-| --- | --- |
-| Start to merge, median | 60 minutes or less |
-| Checks fail on first pass | 15% or less |
-| Reopened or hotfix | 2% or less |
-| P0 reaching production | 0 per month |
-| Ready to worker start | 15 minutes |
-| Build | 40 minutes |
-| Checks | 10 minutes |
-| Review | 10 minutes |
-| Daily staging tests | 15 minutes |
-| `heavy-gate` wait, median | 2 minutes or less |
-| Worktrees on a host | Running workers plus a fixed list |
-
-Missing data reads as unknown, never zero.
-
-### Lifecycle
-
-Each step is one run that does one job and ends. It never waits on a person or another agent. The next run reads GitHub.
-
-```mermaid
-flowchart TD
-    Req["Request from the owner or Elon"] --> Intake["Intake: architect-pm grills with Elon"]
-    Intake --> Design["Design, features only: one document, one owner approval"]
-    Intake & Design --> Ready["Issue is ready"]
-    Ready --> Build["Build: fullstack-dev, TDD, local checks, pushes and opens PR"]
-    Build --> Checks["Actions Checks"]
-    Checks --> Review["Actions Review and verifier Verdict (another model family)"]
-    Review --> Babysit["5 minute babysit pass"]
-    Babysit -->|"Fix needed"| Build
-    Babysit --> Ship["Shipping run (script/ship.sh): squash merge and read back"]
-    Ship --> Wrap["Wrap-up: 10 minute Orca automation"]
-    Ship --> Staging["Staging: daily at 19:00, staging review, full regression"]
-    Staging --> Go["Owner's go"] --> Prod["Production: backup, deploy, smoke"]
-```
-
-| Step | Starts when | Who | Done when |
-| --- | --- | --- | --- |
-| Intake | A request arrives | architect-pm with Elon. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
-| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and tickets | One document, one owner approval |
-| Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
-| Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
-| Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
-| Verifier Verdict | Actions Checks pass | `qa-sdet` (another model family, runs parent against head as a user would) | `Verdict: PASS` or `PASS+NOTES` posted via `script/post-verdict.sh` |
-| Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one fix worker (fixes and pushes once) or a Shipping run |
-| Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
-| Wrap-up | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
-| Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest main deployed, staging review and regression green (or issue opened) |
-| Production | Owner's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
-
-**Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one of three groups.
-
-* Ready: checks are green and a verifier PASS covers this head. It starts a Shipping run.
-* Needs a fix: a conflict with main, an unresolved review thread, a review FAIL, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
-* Anything else waits for the next pass.
-
-**Shipping run.** One run of `script/ship.sh` handles one PR. It merges only when all of these hold:
-
-* The PR is open and mergeable, and every check passed.
-* The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
-* The Verdict covers this head, or a rebase of it with the same patch id.
-* Changes to protected paths carry the owner's approval.
-
-It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
-
-**Who can send a request.** The owner and Elon. Sales and support send requests to Elon, and Elon gets the owner's approval before passing one to architect-pm.
-
-**Start rule.** An issue starts when it has `ready-for-agent`, acceptance criteria and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, acceptance criteria, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/brief-lint.sh` checks the brief at every start, and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
-
-**Failure.** A worker with no progress for 30 minutes restarts once. The same error fixed 3 times stops the work. Review sends a PR back at most 2 times. Past any limit a label goes to Elon.
-
-**Wrap-up.** A finished worker loses its terminal and worktree. A merged or closed PR loses its branches and anything left. Work that exists nowhere else is kept and listed for Elon.
-
-**Deploy safety.** Schema changes stay backward compatible. Production always backs up first, and a failed backup stops the deploy. If smoke fails, code rolls back by itself, and the database waits for the owner.
-
-### Roles
-
-| Role | Job |
-| --- | --- |
-| Owner | Decides the items listed under Owner decisions |
-| Elon | The owner's window and only contact. Off the main line: the lifecycle runs without it. Answers "what now" and "recap", handles exceptions, sets priorities weekly |
-| `architect-pm` | Intake, the design document, the weekly list, full audits |
-| `fullstack-dev` | Builds one ticket with tests by TDD |
-| `qa-sdet` | Verifier Verdict, Playwright runs and the staging review |
-| `release-manager` | Staging on schedule, production on the owner's go |
-| `secops-finops` | Its check is part of Strong review. Weekly reconciliation |
-| `sales-marketing` | Joins the grill for UI and wording. Sends requests to Elon |
-| `support-csm` | Joins the grill for support matters. Sends requests to Elon. Replies go out only after the owner approves |
+Principles, targets, the full lifecycle diagram, babysit and shipping rules, role table, owner decisions and review depth are in [Agent team reference](docs/agents/team-reference.md). Per project policy lives in each repo's `docs/agents/team.md`.
 
 ### Team files
 
-The team docs live once, in `~/dotfiles/templates/agent-team/`. Role files and skills read them there by path, and no project keeps a copy.
+Canonical team templates live under `templates/agent-team/`. Each project's `docs/agents/` keeps five required files (`issue-tracker.md`, `triage-labels.md`, `domain.md`, `team-facts.md`, `deploy-facts.md`). See [Docs for agent projects](docs/agents/domain.md).
 
-A project's `docs/agents/` holds only five files, because shared skills, scripts and hooks read them by a fixed path:
+## Tools
 
-* `issue-tracker.md`, `triage-labels.md`, `domain.md`: read by the Matt Pocock skills and `init-agent-project.sh`.
-* `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
-* `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
+Scheduled scripts, fleet watch, usage and heavy gates, worker startup, head checks, review helpers, ship, wrap up, deploy and audit tools are listed in [Agent team reference](docs/agents/team-reference.md#tools). Project hooks stay small: command guards, strike limits and worker turn limits.
 
-Anything else in a project's `docs/agents/` is a special case that needs the owner's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
+## Engineering workflow
 
-### Owner decisions
-
-New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the owner.
-
-### Review
-
-A builder never reviews its own PR. Review has two layers after Actions Checks pass: the read only bot review in Actions (`script/pr-review.sh`) and the verifier Verdict (`qa-sdet` from another model family running the change as a user would, parent against head, posted via `script/post-verdict.sh`). Review checks the diff against `## Scope` and answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. The first round lists every finding; later rounds check only earlier points plus the new diff. Style is never a FAIL. A flake reruns the job once, never an empty commit.
-
-Standard depth is one read. Strong depth adds a stronger model and the security check for money, sign-in, schema, hooks and workflows. A script picks the depth from the file list. Changes only to docs and changelog pass with no agent.
-
-## 4. Tools
-
-These are the only team tools we keep or build. Full contracts live in each project's process spec.
-
-| Tool | Job | Runs |
-| --- | --- | --- |
-| Orca automation | Starts every scheduled script. A script only job uses a precheck, so it spends no AI quota | On schedule |
-| [`fleet-watch.py`](script/fleet-watch.py) | The 5 minute run: copies usage readings, reruns failed workflows once, finds stuck workers, checks backups, starts ready issues, runs the babysit pass | Every 5 minutes on the coordinator |
-| [`usage-gate.py`](script/usage-gate.py) | Blocks a worker start at 95% of a weekly limit or with no fresh reading. Paid overage needs the owner's approval with an amount and an expiry | Every worker start |
-| [`heavy-gate.py`](script/heavy-gate.py) | Holds Playwright and production builds on each host; type checks use measure mode with no slot | Every Playwright run, build and full `tsc` |
-| `worker-startup` | Brings a host and worktree up to date, then starts the worker. A host that cannot be fixed takes no work | Daily, and before each worker |
-| [`head-checks.sh`](script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with main | Every PR push |
-| Review and Verdict | Actions Review (`script/pr-review.sh`) and verifier Verdict ([`post-verdict.sh`](script/post-verdict.sh)) | After Checks pass |
-| [`ship.sh`](script/ship.sh) | Shipping run: checks `git patch-id` against the verifier Verdict, squash merges and reads the PR back as merged | When Checks and Verdict pass |
-| [`wrap-up.sh`](script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Add `--apply` to run it by hand | Every 10 minutes on every host |
-| `/deploy` | Moves a commit to staging or production | Daily, or on the owner's go |
-| `/staging-review` | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
-| Test selection | Compares with the last green staging commit and follows real imports | Every staging review |
-| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the owner's yes | Weekly |
-| [`team-audit.sh`](script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the owner's word |
-| `/elon status` | "what now": waiting on the owner, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
-| Agent state backup | Private repository with memory, schedules and host config, used to rebuild the coordinator | Every 10 minutes |
-
-Project hooks stay small: a command guard for production, secrets and destructive commands, the three strike stop and the worker turn limit.
-
-## 5. Engineering workflow
-
-For a change in one repository, use the skills in order.
+For a change in one repository, use the shared skills in order: intent, grill, spec, tickets, build, review. Stage table and shortcuts are in [Skills inventory](docs/agents/skills-inventory.md) and [SDLC skill map](docs/agents/sdlc-skill-map.md).
 
 | Stage | Skill | What it does |
 | --- | --- | --- |
-| Intent | `/capture-intent` | The problem and outcome in the owner's words. New features only |
-| Grill | `/grill-with-docs` | Interview that finds edge cases and records decisions |
-| Spec | `/write-spec` or `/to-spec` | The agreed plan, no second interview |
+| Intent | `/capture-intent` | Capture the problem and outcome (new features) |
+| Grill | `/grill-with-docs` | Interview that records decisions |
+| Spec | `/write-spec` or `/to-spec` | Agreed plan without a second interview |
 | Tickets | `/to-tickets` | Small vertical slices with test cases |
-| Build | `/implement` or `/tdd` | Bug fixes start with a failing test, then the fix (skip only when expensive, integration heavy or unclear). Features, scripts and refactors require tests and proof on the real artifact (test need not fail first; refactors prove behavior unchanged) |
-| Review | `/code-review` | Standards and spec, never skipped |
+| Build | `/implement` or `/tdd` | Tests first where required, then implementation |
+| Review | `/code-review` | Standards and spec |
 
-Shortcuts: a typo or config tweak goes straight to `/tdd` or an edit. A bug starts with `/diagnosing-bugs` until a test goes red. A single slice skips `/to-tickets`.
+## Shared skills
 
-## 6. Shared skills
-
-All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Claude Code, Cursor and Antigravity. Change one here and every tool gets it.
+All skills live in `.agents/skills/<name>/`. `install.sh` links them into Claude Code, Cursor and Antigravity.
 
 * **Planning:** `capture-intent`, `grill-me`, `grilling`, `grill-with-docs`, `write-spec`, `to-spec`, `to-tickets`, `wayfinder`, `triage`, `domain-modeling`, `codebase-design`.
 * **Building:** `tdd`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
 * **Research and docs:** `research`, `retro`, `handoff`, `writing-for-agents`.
-* **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca's own skills come from `orca skills install --all`.
+* **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca bundled skills: `orca skills install --all`.
 
-## 7. Repository layout
+## Repository layout
 
 | Path | Purpose |
 | --- | --- |
@@ -261,7 +142,7 @@ All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Cl
 | `script/` | Setup scripts and team tools |
 | `.agents/skills/` | Shared skills |
 | `.agents/claude/` | Global Claude Code configuration |
-| `templates/agent-team/` | Roles and team skills adopted into projects |
-| `.config/` | Application configuration, managed with GNU Stow |
+| `templates/agent-team/` | Roles and team skills copied or linked into projects |
+| `.config/` | Application configuration (GNU Stow) |
 | `ide/` | Editor settings |
 | `docs/agents/` | Deeper docs: [setup](docs/agents/agent-team-setup.md), [roles](docs/agents/team-reference.md), [Orca automations](docs/agents/orca-automations.md), [settings backup](docs/agents/agent-settings-backup.md) |

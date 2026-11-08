@@ -1,0 +1,1 @@
+- Restructure root README for newcomers: agent team overview, task lifecycle, setup via `agent-team.sh`, and a Fleet and load section; move detailed guideline content behind `docs/agents/` links.
