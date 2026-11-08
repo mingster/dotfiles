@@ -78,7 +78,7 @@ resolve_orca_cli() {
   return 1
 }
 if ! orca_cli=$(resolve_orca_cli); then
-  echo "install-fleet-automations: skip: Orca app not installed on $(hostname -s 2>/dev/null || hostname)"
+  echo "install-fleet-automations: skip: Orca app not installed on $(uname -n)"
   exit 0
 fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
@@ -99,7 +99,7 @@ TEAM_AUDIT_WEEKLY_LOG=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/tea
 SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
 TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT=${TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT:-600}
 WEEKLY_UPDATE_LOG=${WEEKLY_UPDATE_LOG:-$HOME/.local/state/agent-team/weekly-update.log}
-WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-3600}
+WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-600}  # Orca caps a precheck at 600 s
 FLEET_TOOLCHAIN_LOG=${FLEET_TOOLCHAIN_LOG:-$HOME/.local/state/agent-team/fleet-toolchain.log}
 FLEET_TOOLCHAIN_PRECHECK_TIMEOUT=${FLEET_TOOLCHAIN_PRECHECK_TIMEOUT:-600}
 FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain'

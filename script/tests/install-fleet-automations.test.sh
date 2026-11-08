@@ -79,6 +79,8 @@ echo "$missing_coord_out" | grep -q 'coordinator.conf' && check 'missing coordin
 printf 'coordinator coord-host\n' >"$HOME/agent-state/coordinator.conf"
 
 dry=$(bash "$script" --dry-run --install 2>&1)
+over=$(echo "$dry" | grep -oE -- '--precheck-timeout [0-9]+' | awk '$2 > 600' | head -1)
+[ -z "$over" ] && check 'every precheck timeout fits the Orca 600s cap' true || check "every precheck timeout fits the Orca 600s cap ($over)" false
 echo "$dry" | grep -q '\[dry-run\]' && echo "$dry" | grep -q 'fleet-watch' && check 'dry-run prints fleet-watch create' true || check 'dry-run prints fleet-watch create' false
 echo "$dry" | grep -q 'wrap-up-scheduled' && check 'dry-run prints wrap-up create' true || check 'dry-run prints wrap-up create' false
 echo "$dry" | grep -q 'sync-team-skills-drift' && check 'dry-run prints sync drift create' true || check 'dry-run prints sync drift create' false
