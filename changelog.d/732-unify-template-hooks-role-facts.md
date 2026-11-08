@@ -1,0 +1,1 @@
+- Unified template hooks (`guard-bash.py` with `guard-config.json` and template path protection, `strikes.py` for Vitest, Maven, and Gradle, and `worker-budget.py` for post `worker_done` tool gating) and moved project role specifics out of `support-csm.md` into `docs/agents/team-facts.md` (`## Role facts`) (#732)

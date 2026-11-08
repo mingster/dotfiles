@@ -27,6 +27,22 @@ Product facts read by the generated team skills (`crew`), which hold none themse
 
 * Fragments: `changelog.d/<issue>-<slug>.md` at the repo root.
 
+## Role facts
+
+Project specific schemas, wrapper scripts, and domain rules per role. Keep the `### <role>` headings so roles and `agent-team.sh` find them.
+
+### sales-marketing
+
+* Read only data access: `<read only database variable or wrapper script, plus order and subscription tables>`.
+
+### secops-finops
+
+* Read only reconciliation access: `<read only database variable or wrapper script, plus ledger, order, and fee tables>`.
+
+### support-csm
+
+* Support thread reader and intake wrappers: `<wrapper commands, queue reader, and intake or draft contracts>`.
+
 ## Terminal shortcut
 
 * `team {{PROJECT_NAME}}`.
