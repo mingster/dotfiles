@@ -162,7 +162,7 @@ check 'old local only branch is kept with a reason' grep -Eq '^Kept stale solo .
 mkdir -p "$tmp/no-lsof"
 for tool in /bin/* /usr/bin/*; do
   case "${tool##*/}" in lsof|fuser) continue ;; esac
-  [ ! -x "$tool" ] || ln -sf "$tool" "$tmp/no-lsof/${tool##*/}"
+  [ ! -x "$tool" ] || [ -d "$tool" ] || ln -sf "$tool" "$tmp/no-lsof/${tool##*/}"
 done
 for tool in jq gh orca; do ln -sf "$(command -v "$tool")" "$tmp/no-lsof/$tool"; done
 git branch idle-wt
