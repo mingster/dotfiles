@@ -241,6 +241,12 @@ class BuildReworkCommand(unittest.TestCase):
         spec = cmd[cmd.index('--spec') + 1]
         text = Path(spec).read_text(encoding='utf-8')
         self.assertIn('lint broke', text)
+        self.assertIn('the failing check passes', text)
+        self.assertIn('files outside this PR', text)
+        self.assertIn('worker_done', text)
+        lint = Path(__file__).parent.parent / 'brief-lint.sh'
+        proc = subprocess.run(['bash', str(lint), spec], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
 class IssueScanOrder(unittest.TestCase):
@@ -431,10 +437,22 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(len(marketing_starts), 2)
         self.assertNotIn('issue_scan_backlog_sweep_roles', state)
 
+    VALID_BRIEF = (
+        'Refs owner/app#9\n\n'
+        '## Acceptance\n'
+        '- [ ] prove it\n\n'
+        '## Out of scope\n'
+        'other files\n\n'
+        '## Verify\n'
+        'run test suite\n\n'
+        '## Finish\n'
+        'worker_done\n'
+    )
+
     def test_eligible_issue_starts_once(self):
         state = {}
         issues = {
-            REPO: [issue(9, ['ready-for-agent'], '## Acceptance criteria\n- prove it')],
+            REPO: [issue(9, ['ready-for-agent'], self.VALID_BRIEF)],
         }
         _, log, starts, _ = self.run_pass(state, issues)
         self.assertEqual(len(starts), 1)
@@ -442,9 +460,77 @@ class IssueScanPass(unittest.TestCase):
         self.assertIn('worker-startup', joined)
         self.assertIn('--run', starts[0])
         self.assertIn('run_x', starts[0])
+        spec_path = starts[0][starts[0].index('--spec') + 1]
+        self.assertIn(self.VALID_BRIEF.rstrip(), Path(spec_path).read_text(encoding='utf-8'))
         _, log2, starts2, _ = self.run_pass(state, issues)
         self.assertEqual(starts2, [])
         self.assertIn('issue_scan_none', log2)
+
+    def test_incomplete_issue_brief_adds_needs_triage_and_comments_once(self):
+        state = {'issue_scan_backlog_sweep_at': NOW}
+        bad_issue = issue(19, ['ready-for-agent'], '## Acceptance criteria\n- prove it')
+        issues = {REPO: [bad_issue]}
+        starts = []
+        gh_calls = []
+
+        def act(command):
+            gh_calls.append(command)
+            return 0
+
+        for _ in range(2):
+            fw.issue_scan_pass(
+                self.CONFIG, state, NOW, [],
+                list_issues=lambda repo: issues.get(repo, []),
+                pr_fetch=lambda _repo: [],
+                gate_check=lambda _c: True,
+                admit_fn=lambda _h, _c, _w: {'admitted': True, 'occupied': 0},
+                start_worker=lambda cmd: (starts.append(cmd), 0)[1],
+                act=act,
+            )
+        self.assertEqual(starts, [])
+        edits = [c for c in gh_calls if c[:3] == ['gh', 'issue', 'edit']]
+        comments = [c for c in gh_calls if c[:3] == ['gh', 'issue', 'comment']]
+        self.assertEqual(len(edits), 1, gh_calls)
+        self.assertIn('needs-triage', edits[0])
+        self.assertEqual(len(comments), 1, gh_calls)
+        body = comments[0][comments[0].index('--body') + 1]
+        self.assertTrue(body.splitlines()[0].startswith('brief-lint: '), body)
+        self.assertIn('Out of scope', body.splitlines()[0])
+        for present in ('Refs', 'Acceptance', 'Verify', 'Finish'):
+            self.assertNotIn(present, body.splitlines()[0])
+
+    def test_agent_brief_template_issue_starts(self):
+        body = (
+            '## Agent Brief\n\n'
+            '**Category:** bug\n'
+            '**Summary:** fix it\n\n'
+            '**Acceptance criteria:**\n'
+            '- [ ] it is fixed\n\n'
+            '**Done condition:** command output\n\n'
+            '**Out of scope:**\n'
+            '- other files\n'
+        )
+        state = {}
+        issues = {REPO: [issue(21, ['ready-for-agent'], body)]}
+        _, _, starts, _ = self.run_pass(state, issues)
+        self.assertEqual(len(starts), 1)
+        spec = Path(starts[0][starts[0].index('--spec') + 1]).read_text(encoding='utf-8')
+        self.assertTrue(spec.startswith('Refs %s#21\n' % REPO), spec)
+        self.assertIn('## Verify\n', spec)
+        self.assertIn('## Finish\n', spec)
+
+    def test_agent_brief_comment_is_the_worker_brief(self):
+        row = issue(22, ['ready-for-agent'], 'original report, no criteria')
+        row['comments'] = [
+            {'body': 'old\n**Acceptance criteria:**\n- [ ] old item\n**Out of scope:**\n- x'},
+            {'body': '## Agent Brief\n**Acceptance criteria:**\n- [ ] new item\n**Out of scope:**\n- y'},
+        ]
+        _, _, starts, _ = self.run_pass({}, {REPO: [row]})
+        self.assertEqual(len(starts), 1)
+        spec = Path(starts[0][starts[0].index('--spec') + 1]).read_text(encoding='utf-8')
+        self.assertIn('new item', spec)
+        self.assertNotIn('old item', spec)
+        self.assertNotIn('original report', spec)
 
     def test_ineligible_never_starts(self):
         state = {}
@@ -476,8 +562,8 @@ class IssueScanPass(unittest.TestCase):
         state = {}
         issues = {
             REPO: [
-                issue(2, ['ready-for-agent'], '## Acceptance criteria\n- x', created='2026-01-02T00:00:00Z'),
-                issue(1, ['ready-for-agent', 'P0'], '## Acceptance criteria\n- x', created='2026-01-03T00:00:00Z'),
+                issue(2, ['ready-for-agent'], self.VALID_BRIEF, created='2026-01-02T00:00:00Z'),
+                issue(1, ['ready-for-agent', 'P0'], self.VALID_BRIEF, created='2026-01-03T00:00:00Z'),
             ],
         }
         _, _, starts, _ = self.run_pass(state, issues)
@@ -501,14 +587,14 @@ class IssueScanPass(unittest.TestCase):
 
     def test_pending_latch_before_start_blocks_second_pass(self):
         state = {'issue_scan_pending': {REPO: [8]}}
-        issues = {REPO: [issue(8, ['ready-for-agent'], '## Acceptance criteria\n- x')]}
+        issues = {REPO: [issue(8, ['ready-for-agent'], self.VALID_BRIEF)]}
         _, log2, starts2, _ = self.run_pass(state, issues, start_rc=0)
         self.assertEqual(starts2, [])
         self.assertIn('issue_scan_none', log2)
 
     def test_start_timeout_clears_pending_and_retries(self):
         state = {}
-        issues = {REPO: [issue(5, ['ready-for-agent'], '## Acceptance criteria\n- x')]}
+        issues = {REPO: [issue(5, ['ready-for-agent'], self.VALID_BRIEF)]}
         _, _, starts1, _ = self.run_pass(state, issues, start_rc=1)
         self.assertEqual(len(starts1), 1)
         self.assertNotIn(5, state.get('issue_scan_started', {}).get(REPO, []))

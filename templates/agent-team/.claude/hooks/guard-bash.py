@@ -24,6 +24,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 # Scripts only the deploy wrapper may run (none by default; list the project's raw deploy scripts here).
 BLOCKED_SCRIPTS: set[str] = set()
@@ -281,6 +282,18 @@ def check_role_file_gate(base, args):
 # `dotfiles#<n>` names an issue in the dotfiles repo. Set DOTFILES_REPO to `<owner>/dotfiles` for this project.
 DOTFILES_REPO = os.environ.get("DOTFILES_REPO") or "OWNER/dotfiles"
 DOTFILES_ISSUE = re.compile(r"(?:[\w.-]+/)?dotfiles#(\d{3,6})\b")
+BRIEF_LINT_REL = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "script", "brief-lint.sh")
+)
+
+
+def brief_lint_script():
+    if os.environ.get("BRIEF_LINT"):
+        return os.environ["BRIEF_LINT"]
+    if os.path.isfile(BRIEF_LINT_REL):
+        return BRIEF_LINT_REL
+    dotfiles = os.environ.get("DOTFILES") or os.path.expanduser("~/dotfiles")
+    return os.path.join(dotfiles, "script", "brief-lint.sh")
 
 
 def brief_text(path):
@@ -295,20 +308,37 @@ def brief_text(path):
     return None
 
 
-def check_worker_start(args, script=False):
-    """script: start-cursor-worker.sh, whose --spec is a brief file and which demands --from itself."""
-    if script:
-        path = option_value(args, "--spec")
-        brief = brief_text(path) if path else None
-        if path and brief is None:
-            deny(f"The brief `{path}` could not be read, so the grill check cannot tell which role it names. "
-                 "Fix the path (or write the brief first) and start the worker again.")
-        spec = "\n".join([" ".join(args), brief]) if brief is not None else RAW_COMMAND
-    else:
-        spec = RAW_COMMAND
-        if any(option_value(args, f) is not None or f in args for f in REMOTE_FLAGS) and not option_value(args, "--from"):
-            deny("This worker starts on another host with no owning lead recorded, so its worker_done would reach nobody. "
-                 "Add `--from <your terminal handle>` (the lead who receives worker_done) and start it again.")
+def check_brief_lint(brief):
+    lint = brief_lint_script()
+    if not os.path.isfile(lint):
+        deny(f"brief-lint.sh is missing at {lint} (fail closed); see ~/.agents/skills/triage/AGENT-BRIEF.md.")
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix="guard-brief-", suffix=".md")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(brief or "")
+        out = subprocess.run(["bash", lint, tmp], capture_output=True, text=True, timeout=10)
+    except Exception:
+        deny("brief-lint.sh could not run (fail closed); see ~/.agents/skills/triage/AGENT-BRIEF.md.")
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    if out.returncode != 0:
+        raw = (out.stdout or out.stderr or "").strip()
+        missing = [
+            line.split("brief-lint: missing ", 1)[1].strip()
+            for line in raw.splitlines()
+            if line.startswith("brief-lint: missing ")
+        ]
+        parts = ", ".join(missing) if missing else raw
+        deny(f"Brief is incomplete (missing: {parts}). {raw}\n"
+             "Follow ~/.agents/skills/triage/AGENT-BRIEF.md.")
+
+
+def check_grill_gate(args, spec):
     if "fullstack-dev" not in spec:
         return
     selector = option_value(args, "--worktree") or ""
@@ -337,6 +367,33 @@ def check_worker_start(args, script=False):
         deny(f"Missing: a comment on {repo_name}#{number} naming the owner's approval of the grill results "
              "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
              "then dispatch. Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
+
+
+def check_worker_start(args, script=False):
+    """script: start-cursor-worker.sh, whose --spec is a brief file and which demands --from itself."""
+    if script:
+        path = option_value(args, "--spec") or option_value(args, "--spec-file")
+        brief = brief_text(path) if path else None
+        if path and brief is None:
+            deny(f"The brief `{path}` could not be read, so the grill check cannot tell which role it names. "
+                 "Fix the path (or write the brief first) and start the worker again.")
+        spec = "\n".join([" ".join(args), brief]) if brief is not None else RAW_COMMAND
+    else:
+        if any(option_value(args, f) is not None or f in args for f in REMOTE_FLAGS) and not option_value(args, "--from"):
+            deny("This worker starts on another host with no owning lead recorded, so its worker_done would reach nobody. "
+                 "Add `--from <your terminal handle>` (the lead who receives worker_done) and start it again.")
+        spec_file = option_value(args, "--spec-file")
+        if spec_file is not None:
+            brief = brief_text(spec_file)
+            if brief is None:
+                deny(f"The brief `{spec_file}` could not be read. Fix the path (or write the brief first) and start the worker again; "
+                     "see ~/.agents/skills/triage/AGENT-BRIEF.md.")
+            spec = "\n".join([RAW_COMMAND, brief])
+        else:
+            brief = option_value(args, "--spec")
+            spec = RAW_COMMAND
+    check_grill_gate(args, spec)
+    check_brief_lint(brief)
 
 
 def check_team_gates(base, args):

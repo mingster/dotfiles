@@ -14,6 +14,7 @@ import argparse
 import calendar
 import copy
 import datetime
+import hashlib
 import importlib.util
 import json
 import math
@@ -1636,11 +1637,21 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
 
 
 _ISSUE_ACCEPTANCE_RE = re.compile(
-    r'^## (?:[0-9]+[.)] +)?(?:Acceptance criteria|Done check)\b', re.I | re.M)
+    r'^(?:## (?:[0-9]+[.)] +)?(?:Acceptance(?: criteria)?|Done check)\b|\*\*Acceptance(?: criteria)?:\*\*)',
+    re.I | re.M)
 
 
 def issue_scan_has_acceptance(text):
     return bool(_ISSUE_ACCEPTANCE_RE.search(text or ''))
+
+
+def issue_scan_brief_text(issue):
+    """The newest comment with acceptance criteria (the triage Agent Brief), else the body."""
+    comments = [entry.get('body') or '' for entry in (issue.get('comments') or []) if isinstance(entry, dict)]
+    for text in reversed(comments):
+        if issue_scan_has_acceptance(text):
+            return text
+    return issue.get('body') or ''
 
 
 def issue_scan_blocked(issue):
@@ -2074,13 +2085,41 @@ def _issue_scan_repo_root(config, repo):
     return None
 
 
+def _brief_lint_script():
+    return str(Path(__file__).with_name('brief-lint.sh'))
+
+
+def brief_lint_missing(spec_path, run=subprocess.run):
+    try:
+        proc = run(
+            ['bash', _brief_lint_script(), spec_path],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ['brief-lint failed']
+    if proc.returncode == 0:
+        return []
+    out = (proc.stdout or proc.stderr or '').strip()
+    missing = [
+        line.split('brief-lint: missing ', 1)[1].strip()
+        for line in out.splitlines()
+        if line.startswith('brief-lint: missing ')
+    ]
+    return missing or [out or 'brief-lint failed']
+
+
 def build_issue_start_command(config, repo, issue_row):
     scan = config['issue_scan']
     root = _issue_scan_repo_root(config, repo)
     if not root:
         return None
     spec_path = _write_issue_scan_spec(
-        '# %s#%d\n\n%s' % (repo, issue_row['number'], issue_row.get('body') or issue_row.get('title') or ''))
+        'Refs %s#%d\n\n%s\n\n'
+        '## Verify\n'
+        'Run the tests the change touches and show the Done condition.\n\n'
+        '## Finish\n'
+        'Push, open the PR, then worker_done.\n'
+        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip()))
     role = scan.get('role') or 'builder'
     title = '%s - #%d' % (role, issue_row['number'])
     command = [
@@ -2105,7 +2144,18 @@ def build_rework_start_command(config, repo, pr_row):
     head = pr_row.get('headRefOid') or ''
     excerpt = rework_failure_excerpt(pr_row)
     spec_path = _write_issue_scan_spec(
-        'Rework %s PR #%d head %s\n\n%s' % (repo, pr_row['number'], head, excerpt))
+        'Refs %s#%d\n'
+        'Rework %s PR #%d head %s\n\n'
+        '## Acceptance\n'
+        '- [ ] the failing check passes\n\n'
+        '%s\n\n'
+        '## Out of scope\n'
+        'files outside this PR\n\n'
+        '## Verify\n'
+        'the failing check:\n%s\n\n'
+        '## Finish\n'
+        'worker_done\n'
+        % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, excerpt))
     title = 'rework #%d' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
     model = scan.get('rework_model') or scan.get('model') or ''
@@ -2464,6 +2514,26 @@ def issue_scan_pass(
     command = build_issue_start_command(config, repo, row)
     if command is None:
         log_bits.append('issue_scan_skip')
+        return notices, log_bits
+    spec_path = command[command.index('--spec') + 1]
+    missing = brief_lint_missing(spec_path)
+    if missing:
+        issue_key = str(row['number'])
+        body_head = hashlib.sha256(issue_scan_brief_text(row).encode('utf-8')).hexdigest()
+        lint_state = state.setdefault('issue_scan_brief_lint', {}).setdefault(repo, {})
+        comment_head = 'brief-lint: %s' % ', '.join(missing)
+        comment_body = comment_head + '\n' + '\n'.join('brief-lint: missing %s' % m for m in missing)
+        already = lint_state.get(issue_key) == body_head or any(
+            (c.get('body') or '').splitlines()[:1] == [comment_head]
+            for c in (row.get('comments') or []) if isinstance(c, dict)
+        )
+        if not already:
+            act(['gh', 'issue', 'edit', issue_key, '--repo', repo, '--add-label', 'needs-triage'])
+            act(['gh', 'issue', 'comment', issue_key, '--repo', repo, '--body', comment_body])
+            lint_state[issue_key] = body_head
+            if persist_state:
+                persist_state()
+        log_bits.append('issue_needs_triage=%d' % row['number'])
         return notices, log_bits
     issue_pending.setdefault(repo, []).append(row['number'])
     if persist_state:

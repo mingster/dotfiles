@@ -403,7 +403,38 @@ EOS
 chmod +x "$orca_stub"
 
 spec_file="$tmp/spec.txt"
-printf 'Do the task.\n' >"$spec_file"
+cat >"$spec_file" <<'EOS'
+Refs #1
+
+## Acceptance
+- [ ] Do the task.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run tests.
+
+## Finish
+Send worker_done.
+EOS
+
+# Bad brief: refused by brief-lint before any start
+bad_spec="$tmp/bad-spec.txt"
+printf 'Do the task.\n' >"$bad_spec"
+: >"$tmp/orca-lint.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-lint.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_bad_spec --spec "$bad_spec" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run-lint.err"
+ec_lint=$?
+set -e
+[ "$ec_lint" -ne 0 ] && ok || bad "bad brief --run should exit non-zero"
+grep -q 'brief-lint: missing Refs' "$tmp/run-lint.err" && ok || bad "bad brief stderr should include brief-lint output ($(cat "$tmp/run-lint.err"))"
+grep -q 'orchestration worker-start' "$tmp/orca-lint.log" && bad "orca should not worker-start when brief-lint fails" || ok
 
 # Non-cursor: after host-check, worktree create + worker-start
 set +e
@@ -462,6 +493,7 @@ grep -q 'orchestration worker-start' "$tmp/orca-bad.log" && bad "orca should not
 helper_dir="$tmp/helpers"
 mkdir -p "$helper_dir"
 cp "$script" "$helper_dir/worker-startup.sh"
+[ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 chmod +x "$helper_dir/worker-startup.sh"
 cat >"$helper_dir/start-cursor-worker.sh" <<EOS
 #!/usr/bin/env bash

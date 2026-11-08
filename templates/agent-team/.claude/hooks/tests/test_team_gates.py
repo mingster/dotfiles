@@ -177,8 +177,19 @@ class RoleFileGate(Gate):
         self.assertAllowed('gh pr create --title "x" --body "y"', self.repo)
 
 
+BRIEF_SECTIONS = (
+    "\n## Acceptance\n- [ ] criterion\n"
+    "## Out of scope\nunrelated files\n"
+    "## Verify\nrun tests\n"
+    "## Finish\nsend worker_done\n"
+)
+
+
 class GrillGate(Gate):
-    BUILD = 'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket: mingster/project-a#6936"'
+    BUILD = (
+        'orca orchestration worker-start --agent claude --worktree new-child '
+        '--spec "Refs acme/project-a#6936. You are fullstack-dev.' + BRIEF_SECTIONS + '"'
+    )
 
     def test_build_worker_without_approval_denied(self):
         self.issue["comments"] = [{"body": "grill notes from architect-pm"}]
@@ -216,7 +227,7 @@ class GrillGate(Gate):
         self.assertDenied(cmd, "issue number")
 
     def test_review_worker_not_gated(self):
-        cmd = 'orca orchestration worker-start --agent claude --spec "You are qa-sdet. Review #6936."'
+        cmd = 'orca orchestration worker-start --agent claude --spec "Refs #6936. You are qa-sdet.' + BRIEF_SECTIONS + '"'
         self.assertAllowed(cmd)
 
     def test_gh_failure_lets_the_command_through(self):
@@ -234,7 +245,7 @@ class GrillGateRepo(Gate):
                         else os.environ.__setitem__("DOTFILES_REPO", previous))
 
     def spec(self, ref):
-        return f'orca orchestration worker-start --agent claude --worktree new-child --spec "You are fullstack-dev. Ticket {ref}"'
+        return f'orca orchestration worker-start --agent claude --worktree new-child --spec "Refs {ref}. You are fullstack-dev.{BRIEF_SECTIONS}"'
 
     def reset_log(self):
         if os.path.exists(self.gh_log):
@@ -277,11 +288,11 @@ class CursorWorkerScript(Gate):
             f.write(text)
 
     def test_build_brief_without_approval_denied(self):
-        self.write_brief("You are fullstack-dev. Ticket #7114\n")
+        self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
         self.assertDenied(f"{self.SCRIPT} --spec brief.md", "#7114")
 
     def test_build_brief_with_approval_allowed(self):
-        self.write_brief("You are fullstack-dev. Ticket #7114\n")
+        self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
         self.issue["comments"] = [{"body": "Owner approved the grill results."}]
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
 
@@ -289,17 +300,17 @@ class CursorWorkerScript(Gate):
         self.assertDenied(f"{self.SCRIPT} --spec missing.md", "could not be read")
 
     def test_brief_without_a_build_role_passes(self):
-        self.write_brief("You are qa-sdet. Review #7114.\n")
+        self.write_brief("Refs #7114. You are qa-sdet." + BRIEF_SECTIONS)
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
 
     def test_remote_run_is_not_denied_for_a_missing_lead(self):
         # The script reads the lead from ORCA_TERMINAL_HANDLE when --from is absent.
-        self.write_brief("You are qa-sdet. Review #7114.\n")
+        self.write_brief("Refs #7114. You are qa-sdet." + BRIEF_SECTIONS)
         self.assertAllowed(f"{self.SCRIPT.replace('--from term_abc', '')} --spec brief.md --on remote-host")
 
 
 class OwningLead(Gate):
-    REVIEW = 'orca orchestration worker-start --agent claude --spec "You are qa-sdet. Review #6936."'
+    REVIEW = 'orca orchestration worker-start --agent claude --spec "Refs #6936. You are qa-sdet.' + BRIEF_SECTIONS + '"'
 
     def test_remote_worker_without_lead_denied(self):
         for flag in ("--environment bluedevil", "--on bluedevil", "--pairing-code orca://pair?x=1"):
@@ -313,6 +324,52 @@ class OwningLead(Gate):
 
     def test_local_worker_without_lead_allowed(self):
         self.assertAllowed(self.REVIEW)
+
+
+class BriefLintGate(Gate):
+    SCRIPT = "~/dotfiles/script/start-cursor-worker.sh --run r1 --title t --model composer-2.5 --from term_abc --name n --repo id:x"
+    FULL_BRIEF = "Refs dotfiles#717" + BRIEF_SECTIONS
+
+    def write_brief(self, text, name="brief.md"):
+        with open(os.path.join(self.home, name), "w") as f:
+            f.write(text)
+
+    def test_inline_spec_missing_parts_denied_and_points_to_agent_brief(self):
+        cmd = 'orca orchestration worker-start --agent claude --spec "Refs dotfiles#717\n## Acceptance\n- [ ] ok\n"'
+        reason = self.bash(cmd)
+        self.assertIsNotNone(reason)
+        for missing in ("Out of scope", "Verify", "Finish", "~/.agents/skills/triage/AGENT-BRIEF.md"):
+            self.assertIn(missing, reason)
+
+    def test_inline_spec_complete_allowed(self):
+        cmd = f'orca orchestration worker-start --agent claude --spec "{self.FULL_BRIEF}"'
+        self.assertAllowed(cmd)
+
+    def test_spec_file_incomplete_denied_and_complete_allowed(self):
+        self.write_brief("Refs #1\n## Acceptance\n- [ ] x\n")
+        reason = self.bash("orca orchestration worker-start --agent claude --spec-file brief.md")
+        self.assertIsNotNone(reason)
+        self.assertIn("Out of scope", reason)
+        self.assertIn("~/.agents/skills/triage/AGENT-BRIEF.md", reason)
+        self.write_brief(self.FULL_BRIEF)
+        self.assertAllowed("orca orchestration worker-start --agent claude --spec-file brief.md")
+
+    def test_cursor_worker_script_incomplete_denied_and_complete_allowed(self):
+        self.write_brief("Refs #1\n## Verify\nrun tests\n")
+        reason = self.bash(f"{self.SCRIPT} --spec brief.md")
+        self.assertIsNotNone(reason)
+        self.assertIn("Acceptance", reason)
+        self.assertIn("~/.agents/skills/triage/AGENT-BRIEF.md", reason)
+        self.write_brief(self.FULL_BRIEF)
+        self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
+
+    def test_missing_brief_lint_script_fails_closed(self):
+        prev = os.environ.get("BRIEF_LINT")
+        os.environ["BRIEF_LINT"] = os.path.join(self.home, "no-such-brief-lint.sh")
+        self.addCleanup(lambda: os.environ.pop("BRIEF_LINT", None) if prev is None
+                        else os.environ.__setitem__("BRIEF_LINT", prev))
+        cmd = f'orca orchestration worker-start --agent claude --spec "{self.FULL_BRIEF}"'
+        self.assertDenied(cmd, "AGENT-BRIEF.md")
 
 
 class CompactReminder(unittest.TestCase):
