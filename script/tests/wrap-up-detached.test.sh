@@ -24,6 +24,8 @@ cat > "$tmp/bin/orca" <<'FAKE'
 case "$*" in
   'terminal list --json') printf '{"ok":true,"result":{"terminals":%s}}\n' "$FAKE_TERMINALS" ;;
   'orchestration worker-list --json') echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
+  'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  'worktree rm --worktree path:'*) exit 0 ;;
   *) exit 1 ;;
 esac
 FAKE
