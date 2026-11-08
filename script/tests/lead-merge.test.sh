@@ -535,7 +535,7 @@ copy_commit
 comments=""; REPO=acme/project-alpha; VFROM=d/dotfiles#9; export VERDICT_PR_JSON VFROM
 # Fixture dotfiles root: a git repo whose origin/main matches its templates (the gate reads its own checkout).
 fx="$ucd/dot"; mkdir -p "$fx/script"
-cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"; cp -R "$here/../templates" "$fx/templates"
+cp "$here/lead-merge.sh" "$here/sync-team-skills.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"; cp -R "$here/lib" "$fx/script/lib"; cp -R "$here/../templates" "$fx/templates"
 "$REAL_GIT" -C "$fx" init -q -b main && "$REAL_GIT" -C "$fx" add . && "$REAL_GIT" -C "$fx" -c user.name=t -c user.email=t@t commit -qm fx
 "$REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
 LEAD_MERGE="$fx/script/lead-merge.sh"
@@ -704,7 +704,7 @@ else printf 'FAIL T12 order (exit %s)\n%s\n' "$code" "$out" > "$ucd/result.$(pri
 unit; (
 unit_init
 cx="$ucd/dot"; mkdir -p "$cx/script"
-cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"; cp -R "$here/lib" "$cx/script/lib"
 LEAD_MERGE="$cx/script/lead-merge.sh"
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_coord"
 check "T31 a coordinator author is refused when none is configured" 1 'author ctx_coord is not a known dispatch or a configured coordinator id.*coordinator_ids'
@@ -722,7 +722,7 @@ check "T31 an id that is not configured is still refused" 1 'ctx_random is not a
 unit; (
 unit_init
 cx="$ucd/dot"; mkdir -p "$cx/script"
-cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"; cp -R "$here/lib" "$cx/script/lib"
 LEAD_MERGE="$cx/script/lead-merge.sh"
 export FAKE_COORD_A=ctx_runcoord
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_runcoord"
@@ -743,7 +743,7 @@ check "T373 no run coordinator and no host file refuses the author" 1 'ctx_runco
 unit; (
 unit_init
 cx="$ucd/dot"; mkdir -p "$cx/script"
-cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$cx/script/"; cp -R "$here/lib" "$cx/script/lib"
 LEAD_MERGE="$cx/script/lead-merge.sh"
 export FAKE_COORD_A=ctx_runcoord FAKE_COORD_B=ctx_oldcoord
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_oldcoord"
@@ -765,7 +765,7 @@ check "T373b the host file coordinator still counts" 0 '^MERGED' 1
 unit; (
 unit_init
 ux="$ucd/dot"; mkdir -p "$ux/script"
-cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$ux/script/"
+cp "$here/lead-merge.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$ux/script/"; cp -R "$here/lib" "$ux/script/lib"
 LEAD_MERGE="$ux/script/lead-merge.sh"
 printf '{"ui_path_patterns":["app/"]}\n' > "$ux/script/lead-merge.local.json"
 setup; files='[{"path":"app/page.tsx"}]'

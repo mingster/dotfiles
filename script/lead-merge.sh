@@ -21,6 +21,8 @@
 set -euo pipefail
 lead_merge_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 receipt_state_py="$lead_merge_dir/receipt-state.py"
+# shellcheck disable=SC1091
+. "$lead_merge_dir/lib/protected-paths.sh"
 
 # Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
 refusals=()
@@ -443,12 +445,8 @@ live_files=$(jq -s '[.[][] | select(.status != "removed") | .filename]' <<<"$fil
 [ "$(jq length <<<"$files")" = "$(field .changedFiles)" ] || die "PR file count differs from changed_files"
 
 # 3. Owner only paths
-while IFS= read -r f; do
-  case "$f" in
-    .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules)
-      refuse "PR touches $f, which waits for the owner through Elon" ;;
-  esac
-done < <(jq -r '.[]' <<<"$files")
+diff=$(gh pr diff "$pr" --repo "$repo") || die "cannot read diff of PR $pr"
+check_owner_only_paths
 # 3b. Generated team copies change only through the dotfiles template, then merge with --verdict-from
 # (a project PR hand edited a generated deploy skill and the next sync would have reverted it).
 if [ -z "$verdict_from" ]; then
@@ -458,10 +456,6 @@ if [ -z "$verdict_from" ]; then
       refuse "PR edits generated team copy $f; edit the dotfiles template, re-sync, then merge with --verdict-from"
     fi
   done < <(jq -r '.[]' <<<"$files")
-fi
-diff=$(gh pr diff "$pr" --repo "$repo") || die "cannot read diff of PR $pr"
-if awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//)} intent && /^\+Status:.*Accepted/{found=1} END{exit !found}' <<<"$diff"; then
-  refuse "PR accepts an intent under docs/intent/, which waits for the owner through Elon"
 fi
 
 # 5. Verification is required even for documentation changes.
@@ -625,32 +619,7 @@ while IFS= read -r f; do
   esac
 done < <(jq -r '.[]' <<<"$files")
 
-text_lane_role_path() { # <path>
-  case "$1" in
-    docs/agents/elon-dispatch.md|docs/agents/team.md) return 0 ;;
-  esac
-  [[ "$1" == */.claude/agents/* || "$1" == .claude/agents/* ]] && return 0
-  [[ "$1" == *AGENTS.md ]] && return 0
-  [[ "$1" == *model-routing.md ]] && return 0
-  return 1
-}
-owner_receipt_paths=()
-while IFS= read -r f; do
-  text_lane_role_path "$f" && owner_receipt_paths+=("$f")
-done < <(jq -r '.[]' <<<"$files")
-
-text_lane_owner_receipt() {
-  [ "${#owner_receipt_paths[@]}" -gt 0 ] || return 0
-  local ancestor rows sha trailer
-  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head for owner receipt"
-  ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base for owner receipt"
-  rows=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "${owner_receipt_paths[@]}" 2>/dev/null) \
-    || die "cannot list commits for owner receipt"
-  while IFS=$'\x1f' read -r sha trailer; do
-    [ -n "$sha" ] || continue
-    [ -n "$trailer" ] || refuse "commit ${sha:0:12} touches owner-gated paths without Owner-approved trailer"
-  done <<<"$rows"
-}
+collect_owner_receipt_paths
 
 # Coordinator ids allowed as a Verdict author (not a dispatch): the run coordinator from Orca, or coordinator_ids in
 # lead-merge.local.json (read lazily).
@@ -923,33 +892,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$text_only" 
 fi
 
 # Gate changes need a fresh, head-bound countersign from Elon.
-triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.])xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
-while IFS= read -r f; do
-  case "$f" in
-    .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh)
-      gate_lines=$(awk -v path="$f" '/^\+\+\+ / {active=($0 == "+++ b/" path)} active && /^[+-]/ && !/^\+\+\+ / && !/^--- / {print path ":" $0}' <<<"$diff")
-      triggers="${triggers}${triggers:+$'\n'}${gate_lines:-gate definition changed: $f}" ;;
-  esac
-done < <(jq -r '.[]' <<<"$files")
-if [ -n "$triggers" ]; then
-  echo "lead-merge: countersign triggers:" >&2
-  printf '%s\n' "$triggers" >&2
-  # Checks: PASS for the current head is already required above. Like a retained
-  # Verdict, a Countersign for an older head carries only across clean merges of main.
-  countersigned() { # head
-    jq -e --arg prefix "Countersign: Elon head=$1 reason=" \
-      'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]") and (startswith("supersedes ") | not)))' <<<"$info" >/dev/null
-  }
-  if ! countersigned "$head"; then
-    countersign_ok=false
-    while IFS= read -r candidate_head; do
-      [ "$candidate_head" != "$head" ] || continue
-      [ "${main_fetched:-false}" = true ] || { git fetch origin main >&2 || die "cannot fetch main to carry a countersign"; main_fetched=true; }
-      if countersigned "$candidate_head" && verdict_carry "$candidate_head" "$head"; then countersign_ok=true; break; fi
-    done < <(jq -r '.comments[].body | split("\n")[0] | capture("^Countersign: Elon head=(?<h>[0-9a-f]{40}) reason=").h?' <<<"$info" | awk '!seen[$0]++')
-    [ "$countersign_ok" = true ] || refuse "missing Countersign: Elon for current head or clean merge of main"
-  fi
-fi
+check_countersign_gate
 
 # Trunk drift of a single PR needs no head-checks, so it is part of preflight (a batch checks its train instead).
 # A shared locale JSON file is accepted unless both sides gave one key different text, when the three way merge is clean (fails closed).
