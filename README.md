@@ -238,7 +238,7 @@ For a change in one repository, use the skills in order.
 | Grill | `/grill-with-docs` | Interview that finds edge cases and records decisions |
 | Spec | `/write-spec` or `/to-spec` | The agreed plan, no second interview |
 | Tickets | `/to-tickets` | Small vertical slices with test cases |
-| Build | `/implement` or `/tdd` | Red, green, refactor |
+| Build | `/implement` or `/tdd` | Bug fixes start with a failing test, then the fix (skip only when expensive, integration heavy or unclear). Features, scripts and refactors require tests and proof on the real artifact (test need not fail first; refactors prove behavior unchanged) |
 | Review | `/code-review` | Standards and spec, never skipped |
 
 Shortcuts: a typo or config tweak goes straight to `/tdd` or an edit. A bug starts with `/diagnosing-bugs` until a test goes red. A single slice skips `/to-tickets`.

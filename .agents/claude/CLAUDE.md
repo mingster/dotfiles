@@ -46,13 +46,13 @@ Default path for any non-trivial feature, refactor, or bug. Run the stages in or
 | 1. Grill | `/grill-with-docs` | Interview me one question at a time to surface edge cases and align the design with the codebase, before writing any code. Produces ADRs and a glossary as a side effect. |
 | 2. Spec | `/write-spec` or `/to-spec` | When the repo has `docs/SDLC.md`, write `spec.md` next to the accepted intent (`/write-spec`); otherwise synthesize the agreed plan into a spec on the issue tracker (`/to-spec`). No second interview, just what we already settled. |
 | 3. Tickets | `/to-tickets` | Break the spec into tracer bullet vertical slices, each small enough to implement inside a fresh context window, with blocking edges declared. |
-| 4. Implement | `/implement` or `/tdd` | `/implement <ticket>` builds one ticket: it drives `/tdd` at each seam and ends with `/code-review`. `/tdd` alone for work with no ticket. Strict red, green, refactor. |
+| 4. Implement | `/implement` or `/tdd` | `/implement <ticket>` builds one ticket: it drives `/tdd` at each seam and ends with `/code-review`. `/tdd` alone for work with no ticket. Bug fixes start with a failing test, then the fix (skip only when the test would be expensive, integration heavy or unclear). Features, scripts and refactors require tests and proof on the real artifact (Prove It Works), but the test need not fail first; refactors prove behavior unchanged. |
 | 5. Review | `/code-review` | Check the diff against this repo's coding standards and against the originating spec, in parallel sub-agents. |
 
 Escape hatches, because the full loop is overkill for small work:
 
 - A one line fix, a typo, a config tweak: go straight to `/tdd`, or straight to the edit if no behaviour changes.
-- A bug: `/diagnosing-bugs` until a test goes red on it, then fix with `/tdd`. Skip stages 0 to 3.
+- A bug: `/diagnosing-bugs`, write a failing test first, then fix (skip the failing test only when it would be expensive, integration heavy or unclear). Skip stages 0 to 3.
 - A new issue: `/triage` decides whether it is ready for an agent, needs info, or needs me.
 - A change we already discussed in depth this session: start at `/to-spec`.
 - A single slice that needs no decomposition: skip `/to-tickets`.
@@ -106,9 +106,9 @@ The test: every changed line should trace directly to my request.
 
 ## 4. Goal-Driven Execution
 
-Turn every task into a verifiable goal before starting, and let `/tdd` own the loop that gets there. "Add validation" becomes a failing test for invalid input. "Fix the bug" becomes a test that reproduces it. "Refactor X" becomes a green suite before and after.
+Turn every task into a verifiable goal before starting. Bug fixes start with a failing test that reproduces the bug, then the fix (skip only when the test would be expensive, integration heavy or unclear). Features and scripts require tests and proof on the real artifact (Prove It Works), though the test need not fail first. Refactors prove behavior unchanged before and after.
 
-For multi-step work, state the plan with one verification check per step, then run the red, green, refactor loop until each check passes.
+For multi-step work, state the plan with one verification check per step, then prove each step on the real artifact until every check passes.
 
 ## Cursor Rules
 
