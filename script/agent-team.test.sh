@@ -455,16 +455,14 @@ else
 fi
 cp "$tmp/s.bak" "$empty_repo/.claude/settings.json"
 
-# 6e. Hand-edited model-routing.md fails check and sync restores it; a seeded doc is project owned
-echo "drift" >> "$empty_repo/.claude/model-routing.md"
+# 6e. Hand-edited template-managed file fails check, and sync restores it
 echo "drift" >> "$empty_repo/docs/agents/team.md"
 if ! bash "$SCRIPT" check "$empty_repo" >/dev/null 2>&1 \
   && bash "$SCRIPT" sync "$empty_repo" >/dev/null 2>&1 \
-  && bash "$SCRIPT" check "$empty_repo" >/dev/null 2>&1 \
-  && tail -n 1 "$empty_repo/docs/agents/team.md" | grep -qx drift; then
-  check "hand-edited model-routing.md fails check and sync restores it, team.md kept" ok
+  && bash "$SCRIPT" check "$empty_repo" >/dev/null 2>&1; then
+  check "hand-edited template doc fails check and sync restores it" ok
 else
-  check "hand-edited model-routing.md fails check and sync restores it, team.md kept" bad
+  check "hand-edited template doc fails check and sync restores it" bad
 fi
 
 # 6f. Tier 3 skill colliding with Tier 1/2 skill fails check
@@ -590,10 +588,10 @@ printf '# Root\n' > "$legacy_repo/CLAUDE.md"
 bash "$SCRIPT" project "$legacy_repo" --project-name legacy >/dev/null 2>&1
 if grep -q 'custom elon bullet' "$legacy_repo/docs/agents/team-facts.md" \
   && [ "$(cat "$legacy_repo/CLAUDE.md")" = "@AGENTS.md" ] \
-  && [ -L "$legacy_repo/.agent/skills" ]; then
-  check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills left alone" ok
+  && [ ! -e "$legacy_repo/.agent/skills" ]; then
+  check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills cleanup" ok
 else
-  check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills left alone" bad
+  check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills cleanup" bad
 fi
 
 claude_merge_repo="$tmp/claude-merge-repo"

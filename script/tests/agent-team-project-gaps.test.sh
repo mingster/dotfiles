@@ -3,8 +3,8 @@
 # 1. a forked model pin in .claude/model-routing.md moves to .orca/presets.project.json and the
 #    team-facts ## Model routing section before the file is rewritten, idempotently, while a row
 #    copied from an older template is not taken for a pin;
-# 2. template files the project owns (team docs, .agent/skills) print "skip (project owned)" and
-#    are left alone;
+# 2. the team docs and the legacy .agent/skills link stay template managed (decision on #738): a
+#    project copy is restored, the link removed, and no "skip (project owned)" line is printed;
 # 3. an extracted allow rule naming a file the same run removes is dropped with a printed line.
 # shellcheck source=script/tests/lib/asdf-pin.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
@@ -25,7 +25,7 @@ fail=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
-# A project from before the redesign: forked elon row, project owned team docs, a .agent/skills
+# A project from before the redesign: forked elon row, hand edited team docs, a .agent/skills
 # link, a project copy of env-peek.py and a settings.json allow rule that runs that copy.
 make_project() {
   local p=$1 doc
@@ -59,20 +59,19 @@ done | grep -vxF "$(grep -m1 '^| fullstack-dev |' "$TPL/.claude/model-routing.md
 PROJ="$TMP/proj"
 make_project "$PROJ"
 
-# Dry run on a scratch copy: shows the pin extraction, the skip lines and the dropped rule, writes nothing.
+# Dry run on a scratch copy: shows the pin extraction and the dropped rule, writes nothing.
 SCRATCH="$TMP/scratch"
 make_project "$SCRATCH"
 before="$(cd "$SCRATCH" && find . -path ./.git -prune -o -print | sort | xargs shasum 2>/dev/null)"
 dry="$(timeout 300 bash "$SCRIPT" project "$SCRATCH" --project-name gaps --dry-run 2>&1)"
 after="$(cd "$SCRATCH" && find . -path ./.git -prune -o -print | sort | xargs shasum 2>/dev/null)"
-echo "$dry" | grep -E '^(extract \.orca|extract docs/agents/team-facts.md \(## Model|skip \(project owned\)|drop )'
+echo "$dry" | grep -E '^(extract \.orca|extract docs/agents/team-facts.md \(## Model|drop )'
 if grep -qF 'extract .orca/presets.project.json roles.elon: claude claude-opus-5-5 high' <<<"$dry" \
-  && grep -qF 'skip (project owned): docs/agents/team.md' <<<"$dry" \
   && grep -qF 'drop .claude/settings.project.json permissions.allow: Bash(.claude/bin/env-peek.py *)' <<<"$dry" \
   && [ "$before" = "$after" ]; then
-  ok "dry run shows pin extraction, skip lines and the dropped rule, and writes nothing"
+  ok "dry run shows pin extraction and the dropped rule, and writes nothing"
 else
-  bad "dry run shows pin extraction, skip lines and the dropped rule, and writes nothing"
+  bad "dry run shows pin extraction and the dropped rule, and writes nothing"
 fi
 
 out="$(timeout 300 bash "$SCRIPT" project "$PROJ" --project-name gaps 2>&1)" || bad "project run exits 0 ($(tail -3 <<<"$out"))"
@@ -110,19 +109,18 @@ else
   bad "gap 1: forked elon pin moves to presets.project.json and team-facts, a second run changes nothing"
 fi
 
-# Gap 2: project owned template files are skipped, unchanged and still pass check.
-skips_ok=1
+# Gap 2: the team docs and .agent/skills stay managed: restored or removed, never skipped.
+docs_ok=1
 for doc in team.md elon-dispatch.md release-manager-work.md; do
-  grep -qxF "skip (project owned): docs/agents/$doc" <<<"$out" || skips_ok=0
-  cmp -s "$FIXTURE/project-doc.md" "$PROJ/docs/agents/$doc" || skips_ok=0
+  cmp -s "$TPL/docs/agents/$doc" "$PROJ/docs/agents/$doc" || docs_ok=0
 done
-if [ "$skips_ok" -eq 1 ] \
-  && grep -qxF 'skip (project owned): .agent/skills' <<<"$out" \
-  && [ "$(readlink "$PROJ/.agent/skills")" = ../.agents/skills ] \
+if [ "$docs_ok" -eq 1 ] \
+  && [ ! -e "$PROJ/.agent/skills" ] && [ ! -L "$PROJ/.agent/skills" ] \
+  && ! grep -q 'skip (project owned)' <<<"$out" \
   && timeout 300 bash "$SCRIPT" check "$PROJ" >/dev/null 2>&1; then
-  ok "gap 2: project owned docs and .agent/skills print skip lines, stay unchanged, and check passes"
+  ok "gap 2: team docs are restored from the template, .agent/skills is removed, no skip line, check passes"
 else
-  bad "gap 2: project owned docs and .agent/skills print skip lines, stay unchanged, and check passes"
+  bad "gap 2: team docs are restored from the template, .agent/skills is removed, no skip line, check passes"
 fi
 
 # Gap 3: no allow rule names the removed project env-peek.py; the shared and unrelated rules stay.

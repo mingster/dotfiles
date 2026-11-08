@@ -539,17 +539,12 @@ TIER2_SKILLS = sorted(
 
 TEMPLATE_SYNC_FILES = [
     ".claude/model-routing.md",
-    "bin/changelog-compile.sh",
-    "bin/changelog-compile.test.sh",
-    "changelog.d/README.md",
-]
-
-# Copied from the template only when missing. Once present the project owns them: a copy that
-# differs from the template prints "skip (project owned)" and is left alone.
-TEMPLATE_SEED_FILES = [
     "docs/agents/team.md",
     "docs/agents/elon-dispatch.md",
     "docs/agents/release-manager-work.md",
+    "bin/changelog-compile.sh",
+    "bin/changelog-compile.test.sh",
+    "changelog.d/README.md",
 ]
 
 GITIGNORE_ENTRIES = [
@@ -1524,6 +1519,12 @@ def remove_path(rel):
     print(f"removed {rel}")
 
 
+def remove_symlink_only(rel):
+    full = os.path.join(target, rel)
+    if os.path.islink(full):
+        remove_path(rel)
+
+
 def tier2_template_files(skill):
     root = os.path.join(template_dir, ".agents/skills", skill)
     found = set()
@@ -1601,8 +1602,8 @@ def remove_legacy_copies():
     prune_empty_dir(".agents/skills")
     prune_empty_dir(".agents")
 
-    if os.path.lexists(os.path.join(target, ".agent/skills")):
-        print("skip (project owned): .agent/skills")
+    remove_symlink_only(".agent/skills")
+    prune_empty_dir(".agent")
 
     remove_path("bin/team-audit-metrics.ts")
 
@@ -1962,14 +1963,6 @@ def seed_and_sync_project(proj_settings_mem=None):
         is_exec = rel.endswith(".sh")
         write_text(rel, read_text(src), executable=is_exec)
 
-    for rel in TEMPLATE_SEED_FILES:
-        src_text = read_text(os.path.join(template_dir, rel))
-        full = os.path.join(target, rel)
-        if os.path.isfile(full) and read_text(full) != src_text:
-            print(f"skip (project owned): {rel}")
-            continue
-        write_text(rel, src_text, executable=rel.endswith(".sh"))
-
 
 def run_check():
     drifts = []
@@ -2018,6 +2011,9 @@ def run_check():
                     f"stale generated Tier 2 skill copy in project: .agents/skills/{skill_name}"
                 )
 
+    if os.path.islink(os.path.join(target, ".agent/skills")):
+        drifts.append("legacy symlink present: .agent/skills")
+
     guard_cfg = os.path.join(target, ".claude/hooks/guard-config.json")
     if not os.path.isfile(guard_cfg):
         drifts.append("missing .claude/hooks/guard-config.json")
@@ -2055,13 +2051,6 @@ def run_check():
                 drifts.append(f"template-managed file drifted: {rel}")
             if rel.endswith(".sh") and not os.access(full, os.X_OK):
                 drifts.append(f"template-managed script not executable: {rel}")
-
-    for rel in TEMPLATE_SEED_FILES:
-        full = os.path.join(target, rel)
-        if not os.path.isfile(full):
-            drifts.append(f"missing template-seeded file: {rel}")
-        elif rel.endswith(".sh") and not os.access(full, os.X_OK):
-            drifts.append(f"template-seeded script not executable: {rel}")
 
     if not os.path.isfile(os.path.join(target, ".cursor/changelog-hook.json")):
         drifts.append("missing .cursor/changelog-hook.json")
