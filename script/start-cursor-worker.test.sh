@@ -43,6 +43,25 @@ STUB
 chmod +x "$ORCA_CLI_COMMAND"
 printf 'Do the fixture task.\n' > "$tmp/spec"
 launch() { bash "$root/script/start-cursor-worker.sh" --run run_fixture --spec "$tmp/spec" --title 'fullstack-dev - fixture' --model composer-2.5 --from term_fixture "$@"; }
+for strong in elon architect-pm secops-finops qa-sdet; do
+  : > "$CURSOR_TEST_LOG"
+  if launch --title "$strong - fixture job" --worktree-path '/tmp/example.repo/work tree.v1' >"$tmp/result" 2>&1; then
+    echo "FAIL: Strong role $strong was accepted" >&2; exit 1
+  fi
+  grep -Fq 'start-cursor-worker: Strong tier role' "$tmp/result" \
+    || { echo "FAIL: missing Strong tier refusal for $strong" >&2; exit 1; }
+  test ! -s "$CURSOR_TEST_LOG" || { echo "FAIL: Strong role $strong reached Orca" >&2; exit 1; }
+  echo "PASS: Strong role $strong is refused before Orca"
+done
+: > "$CURSOR_TEST_LOG"
+printf 'read /tmp/.claude/agents/architect-pm.md first\n' > "$tmp/spec"
+if launch --title 'fullstack-dev - fixture' --worktree-path '/tmp/example.repo/work tree.v1' >"$tmp/result" 2>&1; then
+  echo 'FAIL: Strong role in spec was accepted' >&2; exit 1
+fi
+grep -Fq 'start-cursor-worker: Strong tier role' "$tmp/result"
+test ! -s "$CURSOR_TEST_LOG"
+echo 'PASS: Strong role named in the spec is refused before Orca'
+printf 'Do the fixture task.\n' > "$tmp/spec"
 launch --name fixture --repo /tmp/example.repo --base-branch origin/main > "$tmp/result"
 grep -q 'worktree create.*--base-branch origin/main' "$CURSOR_TEST_LOG"
 grep -q 'orchestration worker-start' "$CURSOR_TEST_LOG"
@@ -238,4 +257,4 @@ fi
 grep -q 'refused by the usage gate' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: usage gate refusal stops before any Orca call'
-echo 'PASS: 21 tests'
+echo 'PASS: 27 tests'
