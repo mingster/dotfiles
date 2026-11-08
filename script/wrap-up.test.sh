@@ -465,7 +465,7 @@ git -C "$tmp/rrepo" worktree add -q "$tmp/rwt2" rdone2
 (cd "$tmp/rrepo" && ORCA_CLI_COMMAND="$tmp/does-not-exist/orca" bash "$here/wrap-up.sh" --worktrees-only --apply --repo "$tmp/rrepo") > "$tmp/output" 2> "$tmp/stderr"
 test -d "$tmp/rwt2"
 grep -Fq 'Orca unavailable' "$tmp/stderr"
-grep -Fq 'removed worktrees=0' "$tmp/output"
+grep -Fq 'removed worktrees=0 orca records=' "$tmp/output"
 echo 'ok --worktrees-only without orca keeps every worktree'
 mkdir -p "$HOME/.orca/cli/bin"; cp "$tmp/bin/orca" "$HOME/.orca/cli/bin/orca"
 mv "$tmp/bin/orca" "$tmp/bin/orca.off"
