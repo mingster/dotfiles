@@ -26,7 +26,7 @@ for raw in "$@"; do
     rc=1
     continue
   fi
-  if [ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ]; then
+  if [ -n "$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     echo "fail $host_label $raw (dirty)"
     rc=1
     continue

@@ -56,7 +56,7 @@ check_remote_repo() {
   local d=${1/#\~/$HOME}
   if [ -e "$d/.git" ]; then
     [ "$(git -C "$d" branch --show-current 2>/dev/null)" = main ] || exit 1
-    [ -z "$(git -C "$d" status --porcelain 2>/dev/null)" ] || exit 1
+    [ -z "$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ] || exit 1
     git -C "$d" pull -q --ff-only origin main || exit 1
   elif [ -d "$d" ]; then
     git -C "$d" pull -q --ff-only origin main || exit 1

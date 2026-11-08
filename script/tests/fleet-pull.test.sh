@@ -100,6 +100,17 @@ git -C "$repo1" checkout -q -- file.txt
   && ok "dirty checkout exits non-zero and names host and repo" \
   || bad "dirty checkout should fail and name local + $repo1 (ec=$ec): $out"
 
+# 3b. Untracked files alone do not block a fast-forward
+echo scratch >"$repo1/untracked.tmp"
+set +e
+out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec=$?
+set -e
+rm -f "$repo1/untracked.tmp"
+[ "$ec" -eq 0 ] && ! grep -qi "dirty" <<<"$out" \
+  && ok "untracked files alone do not count as dirty" \
+  || bad "untracked files should not fail the pull (ec=$ec): $out"
+
 # 4. Diverged checkout exits non-zero and names host and repo
 echo local_diverge >>"$repo1/file.txt"
 git -C "$repo1" commit -qam local_diverge

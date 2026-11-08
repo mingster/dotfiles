@@ -167,7 +167,7 @@ fleet_pull_local_repos() {
       echo "skip $d (on $b)" >&2
       continue
     fi
-    if [ -n "$(git -C "$d" status --porcelain)" ]; then
+    if [ -n "$(git -C "$d" status --porcelain --untracked-files=no)" ]; then
       [ "$strict" = 1 ] && die "repo $d is dirty"
       echo "skip $d (dirty)" >&2
       continue
@@ -186,7 +186,7 @@ fleet_pull_local_repos() {
 repo_ready_for_tooling() { # <repo_dir> — same bar as fleet-pull: clean checkout on main
   [ -e "$1/.git" ] || return 1
   [ "$(git -C "$1" branch --show-current)" = main ] || return 1
-  [ -z "$(git -C "$1" status --porcelain)" ] || return 1
+  [ -z "$(git -C "$1" status --porcelain --untracked-files=no)" ] || return 1
   return 0
 }
 
