@@ -117,7 +117,7 @@ map_script_example() {
 fallback_eligible() {
   local path=$1
   case "$path" in
-    script/README*|script/*.md) return 1 ;;
+    script/README*|script/*.md|script/script-test-skip.list) return 1 ;;
     script/tests/lib/*|script/*example|script/*.example.json) return 1 ;;
     script/*) return 0 ;;
     .agents/head-checks.conf|.agents/head-checks-docs.conf) return 0 ;;
@@ -131,6 +131,8 @@ map_file() {
   MAPPING_ACTIVE=1
   PATH_MAP_HITS=0
   case "$path" in
+    script/script-test-skip.list)
+      ;;
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
