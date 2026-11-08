@@ -210,10 +210,22 @@ def load_guard_config(start_dir):
         try:
             with open(cfg_path, encoding="utf-8") as f:
                 loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    cfg = loaded
+            if isinstance(loaded, dict):
+                cfg = loaded
+            else:
+                print(f"guard-bash.py: {cfg_path}: expected JSON object, got {type(loaded).__name__}; ignoring", file=sys.stderr)
         except Exception as e:
             PRODUCTION_HOSTS_ERROR = f"{cfg_path} is unreadable ({type(e).__name__})"
+            print(f"guard-bash.py: {cfg_path}: {type(e).__name__}; ignoring", file=sys.stderr)
+
+    def cfg_expect(key, expected_types, type_label):
+        if key not in cfg or cfg[key] is None:
+            return None
+        val = cfg[key]
+        if not isinstance(val, expected_types):
+            print(f"guard-bash.py: {cfg_path}: ignoring '{key}' (expected {type_label}, got {type(val).__name__})", file=sys.stderr)
+            return None
+        return val
 
     hosts_env = os.environ.get("GUARD_PRODUCTION_HOSTS")
     if hosts_env:
@@ -226,12 +238,12 @@ def load_guard_config(start_dir):
         except Exception as e:
             PRODUCTION_HOSTS_ERROR = f"{hosts_env} is missing or unreadable ({type(e).__name__})"
 
-    for h in cfg.get("production_hosts") or []:
+    for h in cfg_expect("production_hosts", list, "list") or []:
         if isinstance(h, str) and h.strip():
             PRODUCTION_HOSTS.add(h.strip().lower())
 
     for key in ("stage_branches", "production_branches"):
-        val = cfg.get(key)
+        val = cfg_expect(key, (list, dict), "list or object")
         if isinstance(val, dict):
             for br, comp in val.items():
                 if br not in STAGE_BRANCHES:
@@ -243,13 +255,15 @@ def load_guard_config(start_dir):
                 if isinstance(br, str) and br.strip() and br.strip() not in STAGE_BRANCHES:
                     STAGE_BRANCHES.append(br.strip())
 
-    raw_promote = cfg.get("promote_scripts")
+    raw_promote = cfg_expect("promote_scripts", (list, dict), "list or object")
     if isinstance(raw_promote, dict):
         for name, rule in raw_promote.items():
             base = os.path.basename(name)
             if isinstance(rule, dict):
+                raw_free = rule.get("free_stages")
+                free_stages = {s for s in raw_free if isinstance(s, str)} if isinstance(raw_free, list) else set()
                 PROMOTE_RULES[base] = {
-                    "free_stages": set(rule.get("free_stages") or []),
+                    "free_stages": free_stages,
                     "component": rule.get("component"),
                     "sha": rule.get("sha", 0),
                 }
@@ -262,28 +276,31 @@ def load_guard_config(start_dir):
                 if base not in PROMOTE_RULES:
                     PROMOTE_RULES[base] = {"free_stages": set(), "component": None, "sha": 0}
 
-    for item in cfg.get("rollback_scripts") or []:
+    for item in cfg_expect("rollback_scripts", list, "list") or []:
         if isinstance(item, str) and item.strip():
             ROLLBACK_SCRIPTS.add(os.path.basename(item.strip()))
 
-    for item in cfg.get("apply_scripts") or []:
+    for item in cfg_expect("apply_scripts", list, "list") or []:
         if isinstance(item, str) and item.strip():
             APPLY_SCRIPTS.add(os.path.basename(item.strip()))
 
-    if isinstance(cfg.get("schema_override"), str) and cfg["schema_override"].strip():
-        SCHEMA_OVERRIDE = cfg["schema_override"].strip()
+    raw_schema = cfg_expect("schema_override", str, "string")
+    if raw_schema and raw_schema.strip():
+        SCHEMA_OVERRIDE = raw_schema.strip()
 
-    if isinstance(cfg.get("approval_namespace"), str) and cfg["approval_namespace"].strip():
-        APPROVAL_NAMESPACE = cfg["approval_namespace"].strip()
+    raw_ns = cfg_expect("approval_namespace", str, "string")
+    if raw_ns and raw_ns.strip():
+        APPROVAL_NAMESPACE = raw_ns.strip()
 
-    if isinstance(cfg.get("approval_file"), str) and cfg["approval_file"].strip():
-        APPROVAL_FILE_OVERRIDE = os.path.expanduser(cfg["approval_file"].strip())
+    raw_app_file = cfg_expect("approval_file", str, "string")
+    if raw_app_file and raw_app_file.strip():
+        APPROVAL_FILE_OVERRIDE = os.path.expanduser(raw_app_file.strip())
 
-    for item in cfg.get("blocked_scripts") or []:
+    for item in cfg_expect("blocked_scripts", list, "list") or []:
         if isinstance(item, str) and item.strip():
             BLOCKED_SCRIPTS.add(os.path.basename(item.strip()))
 
-    raw_secrets_dir = cfg.get("secrets_dir")
+    raw_secrets_dir = cfg_expect("secrets_dir", (str, list), "string or list")
     extra_dirs = []
     if isinstance(raw_secrets_dir, str) and raw_secrets_dir.strip():
         extra_dirs.append(raw_secrets_dir.strip().strip("/"))
@@ -298,17 +315,18 @@ def load_guard_config(start_dir):
         redir_union = "|".join(["secrets/"] + [rf"{e}/?" for e in escaped])
         SECRETS_WRITE_REDIRECT = re.compile(rf">>?\s*\S*(?:{redir_union})\S*")
 
-    if isinstance(cfg.get("sign_in_script"), str) and cfg["sign_in_script"].strip():
-        SIGN_IN_SCRIPT = cfg["sign_in_script"].strip()
+    raw_sign_in = cfg_expect("sign_in_script", str, "string")
+    if raw_sign_in and raw_sign_in.strip():
+        SIGN_IN_SCRIPT = raw_sign_in.strip()
 
-    for pat in cfg.get("secrets_stdin_ok") or []:
+    for pat in cfg_expect("secrets_stdin_ok", list, "list") or []:
         if isinstance(pat, str) and pat.strip():
             try:
                 SECRETS_STDIN_OK.append(re.compile(pat))
             except re.error:
                 pass
 
-    for item in cfg.get("worktree_env_allow") or []:
+    for item in cfg_expect("worktree_env_allow", list, "list") or []:
         if isinstance(item, str) and item.strip():
             WORKTREE_ENV_ALLOW.append(item.strip())
 
@@ -702,17 +720,12 @@ def deny_template_managed(rel):
     )
 
 
-def sync_enabled(segment=""):
-    if os.environ.get("AGENT_TEAM_SYNC") == "1":
-        return True
-    for tok in words(segment) if segment else []:
-        if tok == "AGENT_TEAM_SYNC=1":
-            return True
-    return False
+def sync_enabled(_segment=""):
+    return os.environ.get("AGENT_TEAM_SYNC") == "1"
 
 
 def check_template_managed_bash(segment, base, args, cwd=None):
-    if sync_enabled(segment):
+    if sync_enabled():
         return
     eff_cwd = cwd or GATE_CWD or os.getcwd()
     candidates = list(extract_redirect_targets(segment))
@@ -931,7 +944,7 @@ def check_git_push(args, cdir):
             if not ok:
                 what = f"Force pushing (rollback) to `{branch}`" if forced else f"Pushing to `{branch}`"
                 owner_go(what, f"{APPROVE} {scope} {sha}", why)
-        elif forced:
+        elif forced and branch == "main":
             ok, why = approval_for({"force-push"}, lambda t: t == branch)
             if not ok:
                 owner_go(f"A force push to `{branch}`", f"{APPROVE} force-push {branch}", why)
@@ -1916,17 +1929,24 @@ def main():
         data = json.load(sys.stdin)
     except Exception:
         return
+    if not isinstance(data, dict):
+        return
     tool = data.get("tool_name")
-    tool_input = data.get("tool_input") or {}
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
     global GATE_CWD, RAW_COMMAND
-    GATE_CWD = data.get("cwd") or os.getcwd()
+    raw_cwd = data.get("cwd")
+    GATE_CWD = raw_cwd if isinstance(raw_cwd, str) and raw_cwd else os.getcwd()
     load_guard_config(GATE_CWD)
     if tool in EDIT_TOOLS:
-        check_edit(tool, tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        check_edit(tool, path if isinstance(path, str) else "")
         return
     if tool != "Bash":
         return
-    command = tool_input.get("command") or ""
+    raw_cmd = tool_input.get("command")
+    command = raw_cmd if isinstance(raw_cmd, str) else ""
     RAW_COMMAND = command
     check_background_wait(command)
     try:

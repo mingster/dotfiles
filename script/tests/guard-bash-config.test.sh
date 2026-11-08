@@ -133,6 +133,8 @@ check_bash "stage_branches blocks direct push to production" "$PROJ" "git push o
 check_bash "stage_branches blocks direct push to component staging" "$PROJ" "git push origin HEAD:web2/staging" deny "owner-approve.sh"
 check_bash "stage_branches blocks direct push to wildcard branch" "$PROJ" "git push origin HEAD:streaminator/staging" deny "owner-approve.sh"
 check_bash "stage_branches allows push to feature branch" "$PROJ" "git push origin feat/branch" allow
+check_bash "force push allowed on feature branch" "$PROJ" "git push --force-with-lease origin feat/branch" allow
+check_bash "force push gated on main" "$PROJ" "git push --force origin main" deny "owner-approve.sh"
 
 write_approval "promote" "$SHA" 1800
 check_bash "stage_branches allows push with matching promote approval" "$PROJ" "git push origin $SHA:production" allow
@@ -201,6 +203,7 @@ check_edit "Edit denied on template-managed role names team-facts.md" "$PROJ" "E
 check_edit "MultiEdit denied on template-managed hook names templates/agent-team/" "$PROJ" "MultiEdit" "$PROJ/.claude/hooks/guard-bash.py" deny "dotfiles/templates/agent-team/"
 check_edit "AGENT_TEAM_SYNC=1 allows Write on template-managed path" "$PROJ" "Write" "$PROJ/.claude/settings.json" allow "" "1"
 check_bash "AGENT_TEAM_SYNC=1 allows Bash write on template-managed path" "$PROJ" "cp /tmp/x .claude/settings.json" allow "" "1"
+check_bash "inline AGENT_TEAM_SYNC=1 prefix denied on template-managed path" "$PROJ" "AGENT_TEAM_SYNC=1 cp /tmp/x .claude/settings.json" deny "guard-config.json"
 
 # Project-owned extension paths remain allowed without AGENT_TEAM_SYNC=1
 for rel in \
@@ -241,6 +244,32 @@ if grep -qE '^## Role facts$' "$TEAM_FACTS" && grep -qE '^### support-csm$' "$TE
   ok "team-facts.md defines ## Role facts and ### support-csm"
 else
   bad "team-facts.md missing ## Role facts or ### support-csm"
+fi
+
+# 5. Wrong-typed guard-config.json values and non-object config file do not crash, ignore bad key, and log one stderr line
+cat > "$PROJ/.claude/hooks/guard-config.json" <<'JSON'
+{
+  "production_hosts": "prod.example.invalid",
+  "blocked_scripts": ["deploy-raw.sh"]
+}
+JSON
+err_str="$TMP/err-str"
+out_str="$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"tool_input":{"command":sys.argv[2]}}))' "$PROJ" "ssh root@p 'systemctl restart app'" | HOME="$HOME_DIR" python3 "$HOOK" 2>"$err_str")"
+rc_str=$?
+if [ "$rc_str" -eq 0 ] && [ "$(decision "$out_str")" = "allow" ] && [ "$(wc -l < "$err_str" | tr -d ' ')" -eq 1 ]; then
+  ok "wrong-typed string production_hosts ignored with 1 stderr line and no char-iteration"
+else
+  bad "wrong-typed string production_hosts failed (rc=$rc_str dec=$(decision "$out_str") stderr_lines=$(wc -l < "$err_str" | tr -d ' ') stderr=$(cat "$err_str"))"
+fi
+
+echo '["not-an-object"]' > "$PROJ/.claude/hooks/guard-config.json"
+err_arr="$TMP/err-arr"
+out_arr="$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"tool_input":{"command":sys.argv[2]}}))' "$PROJ" "git status" | HOME="$HOME_DIR" python3 "$HOOK" 2>"$err_arr")"
+rc_arr=$?
+if [ "$rc_arr" -eq 0 ] && [ "$(decision "$out_arr")" = "allow" ] && [ "$(wc -l < "$err_arr" | tr -d ' ')" -eq 1 ]; then
+  ok "non-object guard-config.json ignored with 1 stderr line"
+else
+  bad "non-object guard-config.json failed (rc=$rc_arr dec=$(decision "$out_arr") stderr_lines=$(wc -l < "$err_arr" | tr -d ' ') stderr=$(cat "$err_arr"))"
 fi
 
 echo "pass=$pass fail=$fail"

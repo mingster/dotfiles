@@ -19,16 +19,19 @@ LEAD_WT="$TMP/orca/workspaces/proj/lead-elon"
 mkdir -p "$WORKTREE" "$LEAD_WT"
 
 run_hook() {
-  local cwd="$1" session="$2" transcript="$3" event="$4" tool="$5" cmd="${6:-}"
+  local cwd="$1" session="$2" transcript="$3" event="$4" tool="$5" cmd="${6:-}" resp="${7:-}"
   python3 -c 'import json,sys
-print(json.dumps({
+payload = {
   "cwd": sys.argv[1],
   "session_id": sys.argv[2],
   "transcript_path": sys.argv[3],
   "hook_event_name": sys.argv[4],
   "tool_name": sys.argv[5],
   "tool_input": {"command": sys.argv[6]} if sys.argv[6] else {}
-}))' "$cwd" "$session" "$transcript" "$event" "$tool" "$cmd" | HOME="$TMP" python3 "$HOOK"
+}
+if sys.argv[7]:
+  payload["tool_response"] = {"stdout": sys.argv[7]}
+print(json.dumps(payload))' "$cwd" "$session" "$transcript" "$event" "$tool" "$cmd" "$resp" | HOME="$TMP" python3 "$HOOK"
 }
 
 decision() {
@@ -93,7 +96,8 @@ fi
 # Record worker_done in the transcript for ctx_first
 python3 -I -c 'import json,sys
 with open(sys.argv[1],"a") as f:
-    f.write(json.dumps({"type":"assistant","message":{"id":"msg_2","content":[{"type":"tool_use","name":"Bash","input":{"command":"orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_1 --dispatch-id ctx_first --outcome succeeded"}}]}})+"\n")
+    f.write(json.dumps({"type":"assistant","message":{"id":"msg_2","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_1 --dispatch-id ctx_first --outcome succeeded"}}]}})+"\n")
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"{\"ok\":true}"}]}})+"\n")
 ' "$T2"
 
 after_edit="$(run_hook "$WORKTREE" "s-done" "$T2" "PreToolUse" "Edit")"
@@ -133,13 +137,72 @@ fi
 
 # Sending worker_done for ctx_second re-engages the block for ctx_second
 run_hook "$WORKTREE" "s-done" "$T2" "PostToolUse" "Bash" \
-  "orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_2 --dispatch-id ctx_second --outcome succeeded" >/dev/null
+  "orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_2 --dispatch-id ctx_second --outcome succeeded" \
+  '{"ok":true}' >/dev/null
 
 second_done_bash="$(run_hook "$WORKTREE" "s-done" "$T2" "PreToolUse" "Bash" "echo more work")"
 if [ "$(decision "$second_done_bash")" = "deny" ]; then
   ok "PostToolUse worker_done for ctx_second denies subsequent Bash PreToolUse"
 else
   bad "PostToolUse worker_done for ctx_second did not deny subsequent Bash ($second_done_bash)"
+fi
+
+# 3. Prose, failed worker_done, worker_done send/retry allowed, and tool_result ctx_ does not unlock
+T3="$TMP/t3.jsonl"
+WD_CMD="orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_3 --dispatch-id ctx_p1 --outcome succeeded"
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"w") as f:
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":"You are a dispatched worker.\nSend: "+sys.argv[2]}})+"\n")
+    f.write(json.dumps({"type":"assistant","message":{"id":"msg_p1","content":[{"type":"text","text":"I will run: "+sys.argv[2]}]}})+"\n")
+' "$T3" "$WD_CMD"
+
+prose_edit="$(run_hook "$WORKTREE" "s-p1" "$T3" "PreToolUse" "Edit")"
+if [ "$(decision "$prose_edit")" = "allow" ]; then
+  ok "assistant prose quoting worker_done does not lock session"
+else
+  bad "assistant prose quoting worker_done locked session ($prose_edit)"
+fi
+
+# Flush Bash tool_use for worker_done (before tool_result) and verify the send itself is allowed, then fail with worker_identity_changed
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"a") as f:
+    f.write(json.dumps({"type":"assistant","message":{"id":"msg_p2","content":[{"type":"tool_use","id":"tu_fail","name":"Bash","input":{"command":sys.argv[2]}}]}})+"\n")
+' "$T3" "$WD_CMD"
+
+self_send="$(run_hook "$WORKTREE" "s-p1" "$T3" "PreToolUse" "Bash" "$WD_CMD")"
+if [ "$(decision "$self_send")" = "allow" ]; then
+  ok "PreToolUse never denies the worker_done send itself"
+else
+  bad "PreToolUse denied the worker_done send itself ($self_send)"
+fi
+
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"a") as f:
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_fail","content":"{\"ok\":false,\"error\":\"worker_identity_changed\"}"}]}})+"\n")
+' "$T3"
+run_hook "$WORKTREE" "s-p1" "$T3" "PostToolUse" "Bash" "$WD_CMD" '{"ok":false,"error":"worker_identity_changed"}' >/dev/null
+
+after_fail_bash="$(run_hook "$WORKTREE" "s-p1" "$T3" "PreToolUse" "Bash" "orca orchestration send --from term_1 --type status --subject s --body b")"
+if [ "$(decision "$after_fail_bash")" = "allow" ]; then
+  ok "failed worker_done (worker_identity_changed) does not lock session"
+else
+  bad "failed worker_done locked session ($after_fail_bash)"
+fi
+
+# Successful worker_done locks non-read tools, allows worker_done retry, and is not unlocked by a tool_result mentioning another --dispatch-id
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"a") as f:
+    f.write(json.dumps({"type":"assistant","message":{"id":"msg_p3","content":[{"type":"tool_use","id":"tu_ok","name":"Bash","input":{"command":sys.argv[2]}}]}})+"\n")
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_ok","content":"{\"ok\":true}"}]}})+"\n")
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_other","content":"printed --dispatch-id ctx_from_tool_result"}]}})+"\n")
+' "$T3" "$WD_CMD"
+
+retry_send="$(run_hook "$WORKTREE" "s-p1" "$T3" "PreToolUse" "Bash" "$WD_CMD")"
+tr_unlock_edit="$(run_hook "$WORKTREE" "s-p1" "$T3" "PreToolUse" "Edit")"
+if [ "$(decision "$retry_send")" = "allow" ] && [ "$(decision "$tr_unlock_edit")" = "deny" ]; then
+  ok "allows worker_done retry and tool_result with --dispatch-id ctx_ does not unlock"
+else
+  bad "retry_send=$(decision "$retry_send") tr_unlock_edit=$(decision "$tr_unlock_edit")"
 fi
 
 echo "pass=$pass fail=$fail"
