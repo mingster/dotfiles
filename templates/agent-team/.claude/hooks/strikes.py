@@ -8,11 +8,11 @@ in this session; when it passes, reset the count.
 PreToolUse: after 3 failures in a row of the same command in this session, deny
 the 4th run and tell the agent to stop and report.
 
-Counted commands: `bun test`, `bun run test*`, `playwright test`, `bun run build`.
+Counted commands: `bun test`, `bun run test*`, `vitest`, `playwright test`, `bun run build`, `mvn test|verify|package`, `gradle/gradlew test|check|build`.
 The key is the command with `cd ... &&`, `2>&1` and trailing pipes removed, so
 `bun test a.test.ts | tail -40` and `bun test a.test.ts` count together.
 
-State lives in `.claude/state/strikes-<session>.json` (git ignored). The owner
+State lives in `~/.claude/state/strikes/strikes-<session>.json` (git ignored). The owner
 resets a session by deleting that file. Anything unexpected exits 0 and lets
 the command through: this is a seatbelt, not a gate.
 """
@@ -24,11 +24,15 @@ import sys
 LIMIT = 3
 
 COUNTED = re.compile(
-    r"(^|\s)(bun\s+test\b|bun\s+run\s+test[\w:-]*|(bunx|npx)\s+playwright\s+test\b|bun\s+run\s+build\b)"
+    r"(^|\s)(bun\s+test\b|bun\s+run\s+test[\w:-]*|((bunx|npx|pnpm(\s+exec)?)\s+)?(playwright\s+test|vitest)\b|bun\s+run\s+build\b"
+    r"|(\./)?mvnw?\s+(\S+\s+)*(test|verify|package|compile|integration-test)\b"
+    r"|(\./)?gradlew?\s+(\S+\s+)*(\S*[Tt]est\S*|check|build|assemble)\b)"
 )
 FAILED = re.compile(
     r"\b[1-9]\d*\s+fail\b"            # bun test summary
-    r"|\b[1-9]\d*\s+failed\b"         # playwright summary
+    r"|\bTests run:.*(Failures|Errors):\s*[1-9]|BUILD FAILURE|FAILURE: Build failed|BUILD FAILED"  # maven, gradle
+    r"|\b[1-9]\d*\s+failed\b"         # playwright, vitest summary
+    r"|\bFAIL\s+\S+"                  # vitest file failure
     r"|exited with code [1-9]"        # bun run <script> failing
     r"|Failed to compile"
     r"|Build error occurred"
@@ -43,7 +47,7 @@ TOOLING = re.compile(
     r"|heavy-gate: hardware fingerprint changed",
     re.I,
 )
-PASSED = re.compile(r"\b0\s+fail\b|\b\d+\s+passed\b|Compiled successfully")
+PASSED = re.compile(r"\b0\s+fail\b|\b\d+\s+passed\b|Compiled successfully|BUILD SUCCESS(FUL)?")
 
 
 def key_of(command):
