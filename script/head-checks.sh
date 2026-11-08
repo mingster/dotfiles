@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
 set -euo pipefail
-# Claim the machine budget for the whole checklist, across repositories and tools.
-# The marker is consumed here so a nested head-checks invocation gates normally.
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
-  [ -z "${HEAD_CHECKS_SLOTS:-}" ] || [[ "$HEAD_CHECKS_SLOTS" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_SLOTS must be a positive number' >&2; exit 1; }
-  # The type check can grow to 9 GB, so the whole run declares that much (MiB) unless told otherwise.
-  [ -z "${HEAD_CHECKS_MEMORY_MB:-}" ] || [[ "$HEAD_CHECKS_MEMORY_MB" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_MEMORY_MB must be a positive number' >&2; exit 1; }
-  exec python3 "$script_dir/heavy-gate.py" gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}" -- \
-    env HEAD_CHECKS_GATE_HELD=1 bash "$0" "$@"
-fi
-unset HEAD_CHECKS_GATE_HELD
+
+head_checks_gate_wrap() {
+  local command="$1"
+  case "$command" in
+    *playwright*|*'next build'|*'run build'|*test:regression*)
+      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 2 --
+      ;;
+    *head-checks-tsc*|*tsc\ *|*tsc.js*)
+      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --measure --
+      ;;
+  esac
+}
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
@@ -202,7 +204,7 @@ fi
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
-slots="$HEAD_CHECKS_SLOTS"
+slots="${HEAD_CHECKS_SLOTS:-2}"
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
 wait_seconds="${HEAD_CHECKS_WAIT_SECONDS:-600}"
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_WAIT_SECONDS must be a whole number"
@@ -336,8 +338,18 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
-  if (cd "$worktree" && env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info" \
-      bash -euo pipefail -c "$expanded") > "$output" 2>&1; then
+  run=(env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info" \
+      bash -euo pipefail -c "$expanded")
+  gate_prefix=()
+  while IFS= read -r token || [ -n "${token:-}" ]; do
+    [ -n "${token:-}" ] && gate_prefix+=("$token")
+  done < <(head_checks_gate_wrap "$expanded" || true)
+  if [ ${#gate_prefix[@]} -gt 0 ]; then
+    runner=( "${gate_prefix[@]}" "${run[@]}" )
+  else
+    runner=( "${run[@]}" )
+  fi
+  if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
     sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
     summary=$(test_summary "$output")

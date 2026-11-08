@@ -158,7 +158,7 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | Orca automation | Starts every scheduled script. A script only job uses a precheck, so it spends no AI quota | On schedule |
 | [`fleet-watch.py`](script/fleet-watch.py) | The 5 minute run: copies usage readings, reruns failed workflows once, finds stuck workers, checks backups, starts ready issues | Every 5 minutes on the coordinator |
 | [`usage-gate.py`](script/usage-gate.py) | Blocks a worker start at 95% of a weekly limit or with no fresh reading. Paid overage needs the owner's approval with an amount and an expiry | Every worker start |
-| [`heavy-gate.py`](script/heavy-gate.py) | Holds heavy jobs while a host is over its limit, and logs each wait | Every heavy job |
+| [`heavy-gate.py`](script/heavy-gate.py) | Holds Playwright and production builds on each host; type checks use measure mode with no slot | Every Playwright run, build and full `tsc` |
 | `worker-startup` | Brings a host and worktree up to date, then starts the worker. A host that cannot be fixed takes no work | Daily, and before each worker |
 | [`head-checks.sh`](script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with main | Every PR push |
 | Review | The three question review above. Posts the `review` status | After Checks pass |

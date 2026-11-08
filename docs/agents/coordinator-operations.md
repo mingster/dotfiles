@@ -69,7 +69,7 @@ Check fleet load before dispatch with `~/.claude/state/fleet-load.sh`:
 - **Admission rule (owner 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`).
 - **Load band target:** host caps are a ceiling, never a target. Fill an idle host up to its cap before any host with queued work waits, and keep each active host between `0.4` and `0.7` load per core.
 - **Counted slots:** count builders, reviewers, child dispatches and finished committers still holding a pending-push slot (`crew/OPERATIONS.md`).
-- **Heavy job gate (`script/heavy-gate.sh` and `script/heavy-gate.py`):** at most 2 heavy jobs run on a host at once (or the host's calibrated limit in `~/.config/heavy-gate/slots.conf` from `script/hw-probe.sh --calibrate`), waiting until 1-minute load is below the ceiling (default 12) and free RAM is at least 20%. `tsc` and `bun test` take `--weight 1`; `next build`, Playwright and regressions take `--weight 2`; `HEAVY_GATE_CLASS=long` leaves 1 slot free for short checks.
+- **Heavy job gate (`script/heavy-gate.sh` and `script/heavy-gate.py`):** Playwright and production builds wait on slots (weight 2, at most 2 per host unless calibrated). Full `tsc` uses `--measure` with no slot. Unit tests and lint do not use the gate. Load and free memory rules unchanged; `HEAVY_GATE_CLASS=long` leaves 1 slot free.
 - **Quota publication across hosts (`script/usage-gate.py --publish`):** the coordinator refreshes provider usage readings (`claude`, `cursor`, `antigravity`) and publishes `~/.claude/state/usage-gate.json` to runner hosts so local and remote hooks enforce the same 95% weekly ceiling.
 
 ## Taking over the coordinator

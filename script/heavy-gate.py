@@ -12,12 +12,11 @@ Timeouts terminate the process group, force-kill after a 3-second grace, release
 slots only after proving no live group members, and exit 124.
 HEAVY_GATE_CLASS=long marks a long job (full regression, build). A long job is
 admitted only while the slots in use, itself included, stay at or under slots
-minus 1, so one slot stays free for short scoped jobs. Its weight is capped at
+minus 1, so one slot stays free for other heavy jobs. Its weight is capped at
 slots minus 1. With a single slot there is nothing to reserve.
-A short job (HEAVY_GATE_CLASS=short, or unmarked with weight 1) skips the load
-sensor when only long jobs hold slots, so it can take the reserved slot while a
-long job keeps the machine hot. The free-memory floor always applies, and long
-jobs always wait on the load sensor.
+``--measure`` runs type checks without taking a slot: it logs wall time, the
+1-minute load average and free-memory percent to ``~/.orca/logs/heavy-gate-measure.log``.
+Heavy jobs (Playwright and production builds) still wait on slots, load and memory.
 New slots carry an unknown group ledger initialized before atomic publication.
 Running authorization requires an owner-held kernel lock, closed before any
 filesystem revocation or cleanup signal. Failed rename holds capacity but cannot
@@ -356,7 +355,7 @@ class Slots:
                 total += int((path / 'memory').read_text())
         return total
 
-    def claim(self, weight, exclusive=False, reserve=0, long_job=False, only_long=False,
+    def claim(self, weight, exclusive=False, reserve=0, long_job=False,
               memory=0, host_memory=0):
         with self.allocation():
             self.reclaim()
@@ -364,8 +363,6 @@ class Slots:
                 return False
             occupied = list(self.root.glob('slot-*'))
             if any((p / 'exclusive').exists() for p in occupied) or (exclusive and occupied):
-                return False
-            if only_long and (not occupied or not all((p / 'long').exists() for p in occupied)):
                 return False
             # Count even slots above a lowered configuration or a caller override.
             if len(occupied) + weight > self.count - reserve:
@@ -738,6 +735,27 @@ def heavy_gate_host():
         return 'unknown'
 
 
+def heavy_gate_measure_log_path():
+    override = (os.environ.get('HEAVY_GATE_MEASURE_LOG') or '').strip()
+    if override:
+        return Path(override)
+    return Path.home() / '.orca' / 'logs' / 'heavy-gate-measure.log'
+
+
+def log_heavy_gate_measure(duration, load, free):
+    try:
+        path = heavy_gate_measure_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        line = (f'{stamp} host={heavy_gate_host()} duration_s={duration:.3f} '
+                f'load_1m={load:.2f} free_pct={free:.1f}\n')
+        with heavy_gate_wait_log_lock(path):
+            with path.open('a', encoding='utf-8') as stream:
+                stream.write(line)
+    except (OSError, ValueError, UnicodeError):
+        pass
+
+
 def log_heavy_gate_wait(seconds):
     if not math.isfinite(seconds) or seconds < 0:
         return
@@ -755,8 +773,8 @@ def log_heavy_gate_wait(seconds):
 
 def job_class():
     value = os.environ.get('HEAVY_GATE_CLASS', '')
-    if value not in ('', 'short', 'long'):
-        raise ValueError('HEAVY_GATE_CLASS must be "long" or "short"')
+    if value not in ('', 'long'):
+        raise ValueError('HEAVY_GATE_CLASS must be "long" or unset')
     return value
 
 
@@ -780,7 +798,29 @@ def declared_memory(args):
     return memory
 
 
+def measure_gate(args):
+    if not args.command or args.command[0] != '--' or len(args.command) < 2:
+        raise ValueError('usage: heavy-gate.sh --measure -- <cmd...>')
+    config()
+    timeout = command_timeout()
+    load, free = sample()
+    begin = time.monotonic()
+    proc = subprocess.Popen(args.command[1:])
+    try:
+        status = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        command = shlex.join(args.command[1:]).replace('\n', r'\n').replace('\r', r'\r')
+        print(f'heavy-gate: timed out after {timeout:g}s: {command}',
+              file=sys.stderr, flush=True)
+        return 124
+    log_heavy_gate_measure(time.monotonic() - begin, load, free)
+    print(f'heavy-gate: child exited with status {status}', file=sys.stderr, flush=True)
+    return status if status >= 0 else 128 - status
+
+
 def gate(args):
+    if args.measure:
+        return measure_gate(args)
     timeout = command_timeout()
     memory = declared_memory(args)
     host_memory = hardware()[2] // (1024 * 1024) if memory else 0
@@ -789,15 +829,12 @@ def gate(args):
               'it will run alone among jobs that declare memory', file=sys.stderr, flush=True)
     settings = config()
     count = settings['slots']
-    if args.head_checks and os.environ.get('HEAD_CHECKS_SLOTS'):
-        count = int(os.environ['HEAD_CHECKS_SLOTS'])
     if count < 1 or args.weight < 1 or args.weight > count:
         raise ValueError('weight must be positive and no greater than slots')
     if not args.command or args.command[0] != '--' or len(args.command) < 2:
         raise ValueError('usage: heavy-gate.sh [--weight N] -- <cmd...>')
     long_job = job_class() == 'long' and count > 1
     weight = min(args.weight, count - 1) if long_job else args.weight
-    short_job = job_class() != 'long' and weight == 1
     slots = Slots(count)
     last_notice = -math.inf
     nested = holds_slot()
@@ -809,9 +846,6 @@ def gate(args):
             reason = (f'free memory {free:.1f}% is below 20%' if free < 20
                       else f'load {load:.2f} exceeds {settings["load_max"]:g}' if hot
                       else '')
-            if hot and free >= 20 and short_job and slots.claim(
-                    weight, only_long=True, memory=memory, host_memory=host_memory):
-                break
             if not reason:
                 if slots.claim(weight, reserve=int(long_job), long_job=long_job,
                                memory=memory, host_memory=host_memory):
@@ -839,8 +873,6 @@ def gate(args):
             env = dict(os.environ)
             if not nested:
                 env['HEAVY_GATE_TOKEN'] = slots.token
-            if args.head_checks:
-                env['HEAD_CHECKS_SLOTS'] = str(count)
             if nested:
                 proc = subprocess.Popen(args.command[1:], env=env)
                 processes.append(proc)
@@ -957,7 +989,8 @@ def main():
         '3-second grace), releases slots, and exits 124.'))
     run.add_argument('--weight', type=int, default=1)
     run.add_argument('--memory-mb', metavar='MIB', help='memory the job expects to use, counted while it runs')
-    run.add_argument('--head-checks', action='store_true', help=argparse.SUPPRESS)
+    run.add_argument('--measure', action='store_true',
+                     help='run without a slot; log duration, load and free memory')
     run.add_argument('command', nargs=argparse.REMAINDER)
     inspect = commands.add_parser('probe')
     inspect.add_argument('--calibrate', nargs='?', const='', metavar='CMD')
