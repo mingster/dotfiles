@@ -1,0 +1,1 @@
+Register `weekly-update` fleet Orca automation, canonicalize dotfiles repo path when `~/dotfiles` is a symlink, and extend the automation scan doc. Proof: `bash script/tests/install-fleet-automations.test.sh`.

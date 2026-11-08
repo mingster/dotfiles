@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install Orca automations: fleet-watch (5 min), wrap-up-scheduled (2 h), sync drift (daily),
-# team-audit-weekly (Monday). Enabled only on the coordinator named in agent-state/coordinator.conf.
+# team-audit-weekly and weekly-update (Monday). Enabled only on the coordinator in agent-state/coordinator.conf.
 # Private paths: env vars or ~/.config/fleet-watch/automations.env (no secrets in this repo).
 #
 # Usage: install-fleet-automations.sh --status
@@ -50,6 +50,9 @@ if [ -f "$env_file" ]; then
 fi
 
 DOTFILES_DIR=${DOTFILES_DIR:-$dotfiles}
+if [ -d "$DOTFILES_DIR" ]; then
+  DOTFILES_DIR=$(cd "$DOTFILES_DIR" && pwd -P)
+fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}
 FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
@@ -63,7 +66,9 @@ SYNC_DRIFT_LOG=${SYNC_DRIFT_LOG:-$HOME/.local/state/agent-team/sync-team-skills-
 TEAM_AUDIT_WEEKLY_LOG=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/team-audit-weekly.log}
 SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
 TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT=${TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT:-600}
-FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly'
+WEEKLY_UPDATE_LOG=${WEEKLY_UPDATE_LOG:-$HOME/.local/state/agent-team/weekly-update.log}
+WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-3600}
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update'
 
 precheck_path() {
   local p="$HOME/.local/bin"
@@ -116,6 +121,14 @@ team_audit_weekly_precheck() {
   shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
   printf "PATH='%s' DOTFILES='%s' TEAM_AUDIT_WEEKLY_LOG='%s' bash '%s/script/automation-precheck-team-audit-weekly.sh'; exit 1" \
     "$shell_pw" "$DOTFILES_DIR" "$TEAM_AUDIT_WEEKLY_LOG" "$DOTFILES_DIR"
+}
+
+weekly_update_precheck() {
+  local path shell_pw
+  path=$(precheck_path)
+  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
+  printf "PATH='%s' DOTFILES='%s' WEEKLY_UPDATE_LOG='%s' bash '%s/script/automation-precheck-weekly-update.sh'; exit 1" \
+    "$shell_pw" "$DOTFILES_DIR" "$WEEKLY_UPDATE_LOG" "$DOTFILES_DIR"
 }
 
 list_json() {
@@ -291,6 +304,7 @@ case "$action" in
     ensure_automation wrap-up-scheduled '0 */2 * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" "$enabled"
     ;;
   uninstall)
     for name in $FLEET_AUTOMATION_NAMES; do
