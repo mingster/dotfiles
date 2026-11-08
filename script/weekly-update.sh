@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # weekly-update.sh: Matt Pocock and pstack upstream, bun and Node LTS, on three tested PRs and one summary.
-# Absorbs sync-mattpocock-skills.sh, sync-team-skills.sh, adopt-agent-team.sh and check-skill-collisions.sh.
-# Never merges; merging waits on the owner. Weekly only (not scheduled here).
+# Preflight on configured projects: check-skill-collisions.sh, sync-team-skills.sh --check, adopt-agent-team.sh
+# --check-paths. Optional sync-team-skills.sh apply only when WEEKLY_UPDATE_SYNC_PROJECTS=1.
+# Never merges, deploys, runs secrets-*, fleet-pull, or production hooks unattended.
+# Never edits role or team agent files; skill-impact output is report-only under docs/agents/drafts/.
+# Brew and agent CLIs are report-only in the stdout summary (no brew upgrade here).
 #
 # Usage: ~/dotfiles/script/weekly-update.sh [--dry-run]
 #
@@ -10,7 +13,8 @@
 #      WEEKLY_UPDATE_TESTS_<id> (override per-PR test command), WEEKLY_UPDATE_SKIP_APPLY=1,
 #      WEEKLY_UPDATE_NO_PUSH=1, PLUGINS_REPO, MP_REPO, WEEKLY_UPDATE_NODE_LTS (test override),
 #      WEEKLY_UPDATE_NODE_INDEX (index.json URL or absolute fixture path; default nodejs.org dist index),
-#      WEEKLY_UPDATE_BUN_UPGRADE, WEEKLY_UPDATE_BUN_UPDATE (shell commands; default bun upgrade / bun update).
+#      WEEKLY_UPDATE_BUN_UPGRADE, WEEKLY_UPDATE_BUN_UPDATE (shell commands; default bun upgrade / bun update),
+#      WEEKLY_UPDATE_SYNC_PROJECTS=1 (apply sync-team-skills.sh after gates; default check-only).
 set -euo pipefail
 
 declare -a TOOLCHAIN_SUMMARY_LINES=()
@@ -145,13 +149,16 @@ project_gates() {
   for p in "${PROJECTS[@]}"; do
     "$DOTFILES/script/adopt-agent-team.sh" --check-paths "$p"
   done
+  if [ "${WEEKLY_UPDATE_SYNC_PROJECTS:-0}" = 1 ]; then
+    "$DOTFILES/script/sync-team-skills.sh" "${PROJECTS[@]}"
+  fi
 }
 
 default_tests() {
   case "$1" in
     mattpocock) printf '%s\n' 'bash script/tests/sync-mattpocock-skills.test.sh' ;;
-    pstack) printf '%s\n' 'true' ;;
-    toolchain) printf '%s\n' 'bash -n script/install_node.sh' ;;
+    pstack) printf '%s\n' 'bash script/tests/sync-pstack-template-skills.test.sh' ;;
+    toolchain) printf '%s\n' 'bash script/tests/install_node.test.sh && bash -n script/install_node.sh' ;;
     *) die "unknown PR id $1" ;;
   esac
 }
@@ -188,32 +195,43 @@ apply_mattpocock() {
 apply_pstack() {
   [ "${WEEKLY_UPDATE_SKIP_APPLY:-0}" = 1 ] && return 0
   [ "$DRY" -eq 1 ] && return 0
-  [ -f "$PSTACK_STATE" ] || { apply_fail "missing $PSTACK_STATE"; return 1; }
-  local subpath names new tmp src
-  subpath=$(sed -n 's/^subpath=//p' "$PSTACK_STATE")
-  names=$(sed -n 's/^skills=//p' "$PSTACK_STATE")
-  [ -n "$subpath" ] || { apply_fail "pstack state has no subpath"; return 1; }
-  tmp=$(mktemp -d)
-  git clone -q --depth 1 "$PLUGINS_REPO" "$tmp/up" || { rm -rf "$tmp"; return 1; }
-  new=$(git -C "$tmp/up" rev-parse HEAD)
-  src="$tmp/up/$subpath/skills"
-  if [ ! -d "$src" ]; then
-    rm -rf "$tmp"
-    apply_fail "upstream missing $subpath/skills"
-    return 1
+  local log
+  log=$(DOTFILES="$DOTFILES" PLUGINS_REPO="$PLUGINS_REPO" \
+    "$DOTFILES/script/sync-pstack-template-skills.sh") || return 1
+  printf '%s\n' "$log"
+  echo "weekly-update: pstack upstream $(sed -n 's/^sha=//p' "$PSTACK_STATE")"
+}
+
+write_skill_impact() {
+  local id="$1"
+  case "$id" in
+    mattpocock|pstack) ;;
+    *) return 0 ;;
+  esac
+  [ "$DRY" -eq 1 ] && return 0
+  [ "${WEEKLY_UPDATE_SKIP_APPLY:-0}" = 1 ] && return 0
+  DATE_TAG="$DATE_TAG" DOTFILES="$DOTFILES" WEEKLY_SKILL_IMPACT_SLICE="$id" \
+    bash "$DOTFILES/script/weekly-skill-impact.sh"
+}
+
+append_toolchain_report_lines() {
+  [ "$DRY" -eq 1 ] && return 0
+  if command -v bun >/dev/null 2>&1; then
+    TOOLCHAIN_SUMMARY_LINES+=("toolchain report: bun $(bun --version 2>/dev/null || echo unknown)")
   fi
-  local n from to
-  for n in $names; do
-    from="$src/$n"
-    to="$TEMPLATE_SKILLS/$n"
-    [ -d "$from" ] || { echo "weekly-update: WARN $n not in upstream, left as is"; continue; }
-    mkdir -p "$to"
-    rsync -a --delete --exclude ORCA-ADAPTER.md "$from/" "$to/"
+  if command -v brew >/dev/null 2>&1; then
+    local brew_sample
+    brew_sample=$(brew outdated --greedy 2>/dev/null | head -5 | paste -sd '; ' - || true)
+    if [ -n "$brew_sample" ]; then
+      TOOLCHAIN_SUMMARY_LINES+=("toolchain report: brew outdated sample: $brew_sample")
+    fi
+  fi
+  local cli
+  for cli in gh claude orca cursor-agent codex; do
+    if command -v "$cli" >/dev/null 2>&1; then
+      TOOLCHAIN_SUMMARY_LINES+=("toolchain report: $cli $( ($cli --version 2>/dev/null || true) | head -1)")
+    fi
   done
-  sed -i.bak "s/^sha=.*/sha=$new/" "$PSTACK_STATE"
-  rm -f "$PSTACK_STATE.bak"
-  rm -rf "$tmp"
-  echo "weekly-update: pstack upstream $new"
 }
 
 apply_toolchain() {
@@ -243,12 +261,6 @@ apply_toolchain() {
     else
       printf 'nodejs %s\n' "$lts" >>"$pin_file"
     fi
-  fi
-  if [ -f "$DOTFILES/script/install_node.sh" ]; then
-    sed -i.bak -E "s/asdf install nodejs [0-9.]+/asdf install nodejs $lts/" "$DOTFILES/script/install_node.sh"
-    sed -i.bak -E "s/asdf set -u nodejs [0-9.]+/asdf set -u nodejs $lts/" "$DOTFILES/script/install_node.sh"
-    sed -i.bak -E "s/grep -q '[0-9.]+'/grep -q '$lts'/" "$DOTFILES/script/install_node.sh"
-    rm -f "$DOTFILES/script/install_node.sh.bak"
   fi
   local bun_up="${WEEKLY_UPDATE_BUN_UPGRADE:-bun upgrade}"
   local bun_upd="${WEEKLY_UPDATE_BUN_UPDATE:-bun update}"
@@ -331,12 +343,21 @@ slice_abort_branch() {
   git -C "$DOTFILES" branch -D "$branch" >/dev/null 2>&1 || true
 }
 
+impact_draft_glob() {
+  printf 'docs/agents/drafts/weekly-skill-impact-%s.md' "$DATE_TAG"
+}
+
 stage_slice_changes() {
-  local id="$1"
+  local id="$1" draft
+  draft=$(impact_draft_glob)
   case "$id" in
-    mattpocock) git -C "$DOTFILES" add -- .agents/skills ;;
+    mattpocock)
+      git -C "$DOTFILES" add -- .agents/skills
+      [ -f "$DOTFILES/$draft" ] && git -C "$DOTFILES" add -- "$draft"
+      ;;
     pstack)
       git -C "$DOTFILES" add -- templates/agent-team/.agents/skills script/.pstack-template-upstream
+      [ -f "$DOTFILES/$draft" ] && git -C "$DOTFILES" add -- "$draft"
       ;;
     toolchain)
       git -C "$DOTFILES" add -- .tool-versions script/install_node.sh 2>/dev/null || true
@@ -379,7 +400,17 @@ run_slice() {
     rm -f "$body"
     return 0
   fi
-  if git -C "$DOTFILES" diff --quiet && git -C "$DOTFILES" diff --cached --quiet; then
+  write_skill_impact "$id" || true
+  local draft_rel
+  draft_rel=$(impact_draft_glob)
+  if [ -f "$DOTFILES/$draft_rel" ]; then
+    git -C "$DOTFILES" add -- "$draft_rel"
+  fi
+  local has_tree=0
+  if ! git -C "$DOTFILES" diff --quiet || ! git -C "$DOTFILES" diff --cached --quiet; then
+    has_tree=1
+  fi
+  if [ "$has_tree" = 0 ]; then
     if ! git -C "$DOTFILES" commit --allow-empty -qm "weekly-update: $title"; then
       SUMMARY+=("PR $id: failed (commit)")
       rm -f "$body"
@@ -437,6 +468,7 @@ while [ "$idx" -lt ${#PR_ID[@]} ]; do
   idx=$((idx + 1))
 done
 
+append_toolchain_report_lines
 if [ ${#TOOLCHAIN_SUMMARY_LINES[@]} -gt 0 ]; then
   for line in "${TOOLCHAIN_SUMMARY_LINES[@]}"; do
     SUMMARY+=("$line")
