@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # weekly-update.sh: Matt Pocock and pstack upstream, bun and Node LTS, on three tested PRs and one summary.
-# Preflight on configured projects: check-skill-collisions.sh, sync-team-skills.sh --check, adopt-agent-team.sh
-# --check-paths. Optional sync-team-skills.sh apply only when WEEKLY_UPDATE_SYNC_PROJECTS=1.
+# Preflight on configured projects: agent-team.sh check (drift, managed paths, skill collisions).
+# Read only: it never writes into a project, and never runs agent-team.sh project or sync (full adoption).
 # Never merges, deploys, runs secrets-*, fleet-pull, or production hooks unattended.
 # Never edits role or team agent files; skill-impact output is report-only under docs/agents/drafts/.
 # Brew and agent CLIs are report-only in the stdout summary (no brew upgrade here).
@@ -14,7 +14,6 @@
 #      WEEKLY_UPDATE_NO_PUSH=1, PLUGINS_REPO, MP_REPO, WEEKLY_UPDATE_NODE_LTS (test override),
 #      WEEKLY_UPDATE_NODE_INDEX (index.json URL or absolute fixture path; default nodejs.org dist index),
 #      WEEKLY_UPDATE_BUN_UPGRADE, WEEKLY_UPDATE_BUN_UPDATE (shell commands; default bun upgrade / bun update),
-#      WEEKLY_UPDATE_SYNC_PROJECTS=1 (apply sync-team-skills.sh after gates; default check-only).
 set -euo pipefail
 
 declare -a TOOLCHAIN_SUMMARY_LINES=()
@@ -143,15 +142,7 @@ read_projects() {
 project_gates() {
   [ "$DRY" -eq 1 ] && return 0
   [ ${#PROJECTS[@]} -eq 0 ] && return 0
-  "$DOTFILES/script/check-skill-collisions.sh" "${PROJECTS[@]}"
-  "$DOTFILES/script/sync-team-skills.sh" --check "${PROJECTS[@]}"
-  local p
-  for p in "${PROJECTS[@]}"; do
-    "$DOTFILES/script/adopt-agent-team.sh" --check-paths "$p"
-  done
-  if [ "${WEEKLY_UPDATE_SYNC_PROJECTS:-0}" = 1 ]; then
-    "$DOTFILES/script/sync-team-skills.sh" "${PROJECTS[@]}"
-  fi
+  "$DOTFILES/script/agent-team.sh" check "${PROJECTS[@]}"
 }
 
 default_tests() {
