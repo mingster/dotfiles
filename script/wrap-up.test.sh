@@ -407,7 +407,8 @@ while [ "${1:-}" = -o ]; do shift 2; done
 host=$1; shift
 echo "$host" >> "$FAKE_SSH_LOG"
 [ "$host" != down ] || { echo 'ssh: connect to host down: No route to host' >&2; exit 255; }
-# ssh joins its words and the remote login shell parses them.
+# ssh joins its words and the remote login shell parses them. A real remote host has its own lock state.
+export WRAP_UP_STATE_DIR="${WRAP_UP_STATE_DIR:-$HOME/.local/state/agent-team}-remote"
 exec sh -c "$*"
 FAKE
 chmod +x "$tmp/bin/fake-ssh"
@@ -442,6 +443,7 @@ cat > "$tmp/bin/fake-ssh-old" <<'FAKE'
 #!/usr/bin/env bash
 while [ "${1:-}" = -o ]; do shift 2; done
 shift
+export WRAP_UP_STATE_DIR="${WRAP_UP_STATE_DIR:-$HOME/.local/state/agent-team}-remote"
 sh -c "$*" | sed 's/ orca records=[0-9][0-9]*//'
 FAKE
 chmod +x "$tmp/bin/fake-ssh-old"
@@ -920,7 +922,7 @@ retry_kept() {
 fcheck 'a remote branch checked out during a failed batch push is kept by the fallback retry' retry_kept
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
 # 9. Lint: every destructive command in wrap-up.sh sits inside a guarded_* function; only the mktemp EXIT trap is exempt.
-lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"' EXIT" '
+lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"; release_apply_lock' EXIT" '
   /^guarded_[a-z_]*\(\) *\{/ { inside = 1 }
   inside { if ($0 ~ /^\}/) inside = 0; next }
   /^[[:space:]]*#/ || $0 == allow { next }
