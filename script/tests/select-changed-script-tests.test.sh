@@ -126,16 +126,14 @@ case7_lead_merge_prefix() {
 case9_sync_team_skills_agent_team() {
   local out count
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
-    bash "$root/script/select-changed-script-tests.sh" --list-only script/sync-team-skills.sh 2>&1)
-  grep -Fq 'Selected: script/tests/sync-team-skills.test.sh' <<<"$out" \
-    || fail "case9 must select script/tests/sync-team-skills.test.sh for sync-team-skills.sh"
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/agent-team.sh 2>&1)
   grep -Fq 'Selected: script/agent-team.test.sh' <<<"$out" \
-    || fail "case9 must select agent-team.test.sh for sync-team-skills.sh"
+    || fail "case9 must select agent-team.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/release-guard-rules.test.sh' <<<"$out" \
-    || fail "case9 must select release-guard-rules.test.sh for sync-team-skills.sh"
+    || fail "case9 must select release-guard-rules.test.sh for agent-team.sh"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 3 ] || fail "case9 want Script tests: 3 got ${count:-0}"
-  ok "case9 sync-team-skills maps base test plus agent-team and release-guard-rules"
+  [ "${count:-0}" -eq 2 ] || fail "case9 want Script tests: 2 got ${count:-0}"
+  ok "case9 agent-team maps agent-team and release-guard-rules"
 }
 
 case10_script_plus_already_selected_test() {
@@ -190,7 +188,7 @@ case11_table_driven_mapped_paths() {
   local path rel out alone combo count partner other
   local -a mapped_paths=()
   local -a candidates=()
-  partner='script/sync-team-skills.sh'
+  partner='script/agent-team.sh'
   other='templates/agent-team/changelog.d/README.md'
 
   while IFS= read -r rel; do
