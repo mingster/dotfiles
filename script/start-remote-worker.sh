@@ -2,6 +2,9 @@
 # Same arguments as Orca worker-start, requiring --on and --agent.
 # Probe the execution environment's login-shell PATH before creating a worker.
 set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$here/lib/pr-review-gates.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 args=("$@")
 environment='' agent='' worktree='' model=''
@@ -101,4 +104,13 @@ sys.exit(0 if w.get("satisfied") is True and w.get("status") == "exited" and w.g
   exit 1
 fi
 "$orca" terminal close --environment "$environment" --terminal "$terminal" --json >/dev/null
-exec "$orca" orchestration worker-start "${args[@]}"
+wt_path=""
+for i in "${!args[@]}"; do
+  if [ "${args[$i]}" = --worktree ] && [ $((i + 1)) -lt ${#args[@]} ]; then
+    case "${args[$((i + 1))]}" in
+      path:*) wt_path="${args[$((i + 1))]#path:}" ;;
+    esac
+    break
+  fi
+done
+pr_review_gates_orchestration_worker_start "$agent" "${model:-}" "$wt_path" -- "${args[@]}"

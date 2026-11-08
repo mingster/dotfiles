@@ -416,7 +416,8 @@ Unrelated files.
 Run tests.
 
 ## Finish
-Send worker_done.
+1. Self-review: read code-review skill and fix findings.
+2. Send worker_done.
 EOS
 
 # Bad brief: refused by brief-lint before any start
@@ -439,14 +440,22 @@ grep -q 'orchestration worker-start' "$tmp/orca-lint.log" && bad "orca should no
 # Non-cursor: after host-check, worktree create + worker-start
 set +e
 unset -f python3 2>/dev/null || true
+launch_state="$tmp/ws-launch-state"
+mkdir -p "$launch_state/launches"
 env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  WORKER_STARTUP_STATE="$launch_state" \
   bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run.err"
 ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "run claude exits 0 ($ec) $(cat "$tmp/run.err")"
+# shellcheck disable=SC1091
+. "$here/../lib/pr-review-gates.sh"
+export WORKER_STARTUP_STATE="$launch_state"
+pair=$(pr_review_gates_worker_agent_model ctx_9495d9c62de4) || true
+[ "$pair" = $'claude\tclaude-sonnet-5-5-medium' ] && ok || bad "claude --run writes dispatch launch record ($pair)"
 grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
@@ -491,8 +500,9 @@ grep -q 'orchestration worker-start' "$tmp/orca-bad.log" && bad "orca should not
 
 # Cursor: copy script next to stub start-cursor-worker so exec hits the stub
 helper_dir="$tmp/helpers"
-mkdir -p "$helper_dir"
+mkdir -p "$helper_dir/lib"
 cp "$script" "$helper_dir/worker-startup.sh"
+cp "$here/../lib/pr-review-gates.sh" "$helper_dir/lib/pr-review-gates.sh"
 [ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 chmod +x "$helper_dir/worker-startup.sh"
 cat >"$helper_dir/start-cursor-worker.sh" <<EOS

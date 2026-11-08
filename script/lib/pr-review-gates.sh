@@ -33,6 +33,58 @@ pr_review_gates_launch_record_dispatch() { # <dispatch> <agent> <model> [worktre
   fi
 }
 
+pr_review_gates_missing_agent_model_refuse() { # <refuse_fn> <role> <dispatch_id>
+  local refuse=$1 role=$2 id=$3
+  $refuse "cannot resolve $role agent/model for $id; start the reviewer with script/worker-startup.sh, which writes the launch record"
+  return 1
+}
+
+# Runs worker-start --json, persists agent/model for the new dispatchId, prints JSON (replaces exec).
+pr_review_gates_orchestration_worker_start() { # <agent> <model> [worktree] -- worker-start args…
+  local agent=$1 model=$2 wt=${3:-} orca out dispatch resolved_model
+  shift 3
+  [ $# -gt 0 ] && [ "$1" = -- ] && shift
+  [ -n "$agent" ] || return 1
+  orca=$(pr_review_gates_orca)
+  out=$("$orca" orchestration worker-start "$@" --json) || return $?
+  dispatch=$(jq -r '.result.dispatchId // empty' <<<"$out" 2>/dev/null || true)
+  resolved_model=$model
+  if [ -z "$resolved_model" ] || [ "$resolved_model" = unknown ]; then
+    resolved_model=$(jq -r '.result.model // empty' <<<"$out" 2>/dev/null || true)
+  fi
+  if [ -n "$dispatch" ] && [ -n "$agent" ] && [ -n "$resolved_model" ] && [ "$resolved_model" != unknown ]; then
+    pr_review_gates_launch_record_dispatch "$dispatch" "$agent" "$resolved_model" ${wt:+"$wt"}
+  fi
+  printf '%s' "$out"
+  return 0
+}
+
+pr_review_gates_head_branch_slug() { # <branch>
+  local branch=$1
+  case "$branch" in */*) printf '%s\n' "${branch##*/}" ;; *) printf '%s\n' "$branch" ;; esac
+}
+
+pr_review_gates_worktree_checked_out_branch() { # <absolute worktree>
+  local wt=$1
+  [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || return 1
+  git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null \
+    || git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null \
+    || return 1
+}
+
+pr_review_gates_worktree_matches_branch() { # <worktree_path> <head_branch>
+  local wt=$1 branch=$2 slug path checked
+  slug=$(pr_review_gates_head_branch_slug "$branch")
+  path=$(basename "$wt")
+  [ "$path" = "$branch" ] && return 0
+  [ "$path" = "$slug" ] && return 0
+  [[ "$wt" == */"$branch" ]] && return 0
+  [[ "$wt" == */"$slug" ]] && return 0
+  checked=$(pr_review_gates_worktree_checked_out_branch "$wt" 2>/dev/null || true)
+  [ -n "$checked" ] && [ "$checked" = "$branch" ] && return 0
+  return 1
+}
+
 pr_review_gates_load_coordinators() {
   [ "${PRG_COORD_LOADED:-0}" = 1 ] && return 0
   local dir cfg
@@ -132,6 +184,10 @@ pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <r
     return 0
   fi
   if [ "$author" != unknown ]; then
+    if pr_review_gates_is_coordinator_id "$author"; then
+      PRG_BUILDER_DISPATCH=""
+      return 0
+    fi
     $refuse "verdict author $author is not a builder dispatch"
     return 1
   fi
@@ -143,8 +199,7 @@ pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <r
     while IFS= read -r row; do
       [ -n "$row" ] || continue
       wt=$(pr_review_gates_workspace_path "$(jq -r '.workspace // empty' <<<"$row")")
-      path=$(basename "$wt")
-      if [ "$path" = "$branch" ] || [[ "$wt" == */"$branch" ]]; then
+      if pr_review_gates_worktree_matches_branch "$wt" "$branch"; then
         id=$(jq -r '.dispatchId // empty' <<<"$row")
         [ -n "$id" ] && break
       fi
@@ -201,9 +256,13 @@ pr_review_gate_verifier_known() { # <verifier_id> <builder_dispatch> <known_disp
 
 pr_review_gate_coordinator_verdict() { # <verifier> <author> <builder_dispatch> <refuse_fn>
   local verifier=$1 author=$2 builder=$3 refuse=$4 pair agent
-  [ -n "$builder" ] || { $refuse "missing builder dispatch for coordinator verdict check"; return 1; }
+  if [ -z "$builder" ]; then
+    pr_review_gates_is_coordinator_id "$author" && return 0
+    $refuse "missing builder dispatch for coordinator verdict check"
+    return 1
+  fi
   pair=$(pr_review_gates_worker_agent_model "$builder" 2>/dev/null) || {
-    $refuse "cannot resolve builder agent/model for $builder"
+    pr_review_gates_missing_agent_model_refuse "$refuse" builder "$builder"
     return 1
   }
   agent=${pair%%$'\t'*}
@@ -219,15 +278,15 @@ pr_review_gate_coordinator_verdict() { # <verifier> <author> <builder_dispatch> 
 pr_review_gate_same_agent_model() { # <verifier> <builder_dispatch> <refuse_fn>
   local verifier=$1 builder=$2 refuse=$3 pair v_agent v_model b_agent b_model
   pr_review_gates_is_coordinator_id "$verifier" && return 0
-  [ -n "$builder" ] || { $refuse "missing builder dispatch for cross-model review check"; return 1; }
+  [ -n "$builder" ] || return 0
   pair=$(pr_review_gates_worker_agent_model "$verifier" 2>/dev/null) || {
-    $refuse "cannot resolve verifier agent/model for $verifier"
+    pr_review_gates_missing_agent_model_refuse "$refuse" verifier "$verifier"
     return 1
   }
   v_agent=${pair%%$'\t'*}
   v_model=${pair#*$'\t'}
   pair=$(pr_review_gates_worker_agent_model "$builder" 2>/dev/null) || {
-    $refuse "cannot resolve builder agent/model for $builder"
+    pr_review_gates_missing_agent_model_refuse "$refuse" builder "$builder"
     return 1
   }
   b_agent=${pair%%$'\t'*}

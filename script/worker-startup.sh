@@ -264,11 +264,19 @@ run_mode() {
     host_check >&2
     "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
       || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
+    local wt_retry=""
     case "$worktree_sel" in
-      path:*) pr_review_gates_launch_record_worktree "${worktree_sel#path:}" "$agent" "${model:-unknown}" ;;
+      path:*)
+        wt_retry="${worktree_sel#path:}"
+        if [ -n "$model" ]; then
+          pr_review_gates_launch_record_worktree "$wt_retry" "$agent" "$model"
+        fi
+        ;;
     esac
-    exec "$orca" orchestration worker-start --run "$run" --task "$task" --retry-of "$retry_of" \
-      --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"} --json
+    pr_review_gates_orchestration_worker_start "$agent" "${model:-}" "$wt_retry" -- \
+      --run "$run" --task "$task" --retry-of "$retry_of" \
+      --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"}
+    return 0
   fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
   [ -f "$spec" ] || die "spec file not found: $spec"
@@ -328,8 +336,10 @@ run_mode() {
     exec bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
       --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json
   fi
-  exec "$orca" orchestration worker-start --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-    --worktree "path:$wt" --task-title "$title" --from "$from" --json
+  pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
+    --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
+    --worktree "path:$wt" --task-title "$title" --from "$from"
+  return 0
 }
 
 case "${1:-}" in

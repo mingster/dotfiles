@@ -133,5 +133,6 @@ with (directory / '.workspace-trusted').open('w') as f:
 PY
 fi
 pr_review_gates_launch_record_worktree "$wt" cursor "$model"
-exec "$orca" orchestration worker-start --run "$run" --spec "$brief" --agent cursor --model "$model" \
-  --worktree "path:$wt" --task-title "$title" --from "$from" --json
+pr_review_gates_orchestration_worker_start cursor "$model" "$wt" -- \
+  --run "$run" --spec "$brief" --agent cursor --model "$model" \
+  --worktree "path:$wt" --task-title "$title" --from "$from"
