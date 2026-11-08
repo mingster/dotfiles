@@ -141,7 +141,7 @@ run_pr() {
     FAKE_PATCH_ID="${FAKE_PATCH_ID:-}" \
     FAKE_DUAL_DISAGREE="${FAKE_DUAL_DISAGREE:-}" \
     FAKE_PR_STATE="${FAKE_PR_STATE:-}" \
-    bash "$root/script/pr-review.sh" "$pr_num" "$pr_head" >/dev/null 2>&1
+    bash "$root/script/pr-review.sh" "$pr_num" "$pr_head"
 }
 fail() { echo "FAIL: $1"; exit 1; }
 issue_comments_set
