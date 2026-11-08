@@ -131,9 +131,11 @@ case9_sync_team_skills_agent_team() {
     || fail "case9 must select agent-team.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/release-guard-rules.test.sh' <<<"$out" \
     || fail "case9 must select release-guard-rules.test.sh for agent-team.sh"
+  grep -Fq 'Selected: script/tests/agent-team-guard-migration.test.sh' <<<"$out" \
+    || fail "case9 must select agent-team-guard-migration.test.sh for agent-team.sh"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 2 ] || fail "case9 want Script tests: 2 got ${count:-0}"
-  ok "case9 agent-team maps agent-team and release-guard-rules"
+  [ "${count:-0}" -eq 3 ] || fail "case9 want Script tests: 3 got ${count:-0}"
+  ok "case9 agent-team maps agent-team, release-guard-rules and guard-migration"
 }
 
 case10_script_plus_already_selected_test() {
