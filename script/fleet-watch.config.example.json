@@ -1,6 +1,25 @@
 {
   "runs": [],
-  "host_caps": {},
+  "host_caps": {
+    "primary-code-host": 4,
+    "overflow-host-a": 4,
+    "overflow-host-b": 4
+  },
+  "host_load_ceilings": {
+    "primary-code-host": 12,
+    "overflow-host-a": 8,
+    "overflow-host-b": 12
+  },
+  "local_host": "primary-code-host",
+  "worker_placement": {
+    "load_sensor": "~/.claude/state/fleet-load.sh",
+    "order": ["primary-code-host", "overflow-host-a", "overflow-host-b"],
+    "roles": {
+      "browser-secrets-host": "browser",
+      "database-heavy-host": "heavy",
+      "release-host": "release"
+    }
+  },
   "leads": [],
   "pr_watch": {
     "repos": ["mingster/dotfiles", "mingster/project-a"],

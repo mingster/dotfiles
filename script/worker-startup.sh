@@ -3,6 +3,7 @@
 # Config: FLEET_PULL_CONFIG or script/fleet-pull.config.json (copy from fleet-pull.config.example.json).
 # Usage:
 #   worker-startup.sh --host-check
+#   worker-startup.sh --pick-host-only --spec FILE
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
 set -euo pipefail
@@ -190,6 +191,81 @@ repo_ready_for_tooling() { # <repo_dir> — same bar as fleet-pull: clean checko
   return 0
 }
 
+resolve_placement_config() {
+  if [ -n "${FLEET_WATCH_CONFIG:-}" ]; then
+    printf '%s\n' "${FLEET_WATCH_CONFIG/#\~/$HOME}"
+    return
+  fi
+  if [ -n "${FLEET_PLACEMENT_CONFIG:-}" ]; then
+    printf '%s\n' "${FLEET_PLACEMENT_CONFIG/#\~/$HOME}"
+    return
+  fi
+  printf '%s\n' "${HOME}/.config/fleet-watch/config.json"
+}
+
+placement_line_from_json() { # <json>
+  "$python3" -c '
+import json, sys
+r = json.load(sys.stdin)
+if r.get("ok"):
+    print("worker-placement: host=%s load_1m=%s" % (r["host"], r["load_1m"]))
+else:
+    loads = r.get("loads") or {}
+    if loads:
+        parts = " ".join("%s=%s" % (h, loads[h]) for h in sorted(loads))
+        print("worker-placement: refused %s" % parts)
+    else:
+        print("worker-placement: refused (%s)" % (r.get("reason") or "unknown"))
+' <<<"$1"
+}
+
+apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACED_ENV, WORKER_STARTUP_PLACED_REPO
+  local spec_file=$1 repo_sel=${2:-} json line env_name placed_repo pick_args=() cfg
+  WORKER_STARTUP_PLACED_ENV=
+  WORKER_STARTUP_PLACED_REPO=
+  cfg=$(resolve_placement_config)
+  if [ ! -f "$cfg" ]; then
+    echo 'worker-placement: skipped (no fleet config)' >&2
+    return 0
+  fi
+  pick_args=(pick --spec "$spec_file" --json --config "$cfg")
+  [ -z "$repo_sel" ] || pick_args+=(--repo "$repo_sel")
+  set +e
+  json=$("$python3" "$here/worker-placement.py" "${pick_args[@]}")
+  local ec=$?
+  set -e
+  [ "$ec" -eq 2 ] && die "worker-placement failed (fleet config unreadable or malformed)"
+  [ -n "$json" ] || die "worker-placement failed"
+  if [ "$(printf '%s' "$json" | jq -r '.skipped // false')" = true ]; then
+    return 0
+  fi
+  line=$(placement_line_from_json "$json")
+  if [ "$(printf '%s' "$json" | jq -r '.ok')" != true ]; then
+    echo "$line" >&2
+    exit 4
+  fi
+  printf '%s\n' "$line"
+  env_name=$(printf '%s' "$json" | jq -r '.environment // empty')
+  WORKER_STARTUP_PLACED_ENV=$env_name
+  placed_repo=$(printf '%s' "$json" | jq -r '.repo // empty')
+  WORKER_STARTUP_PLACED_REPO=$placed_repo
+}
+
+pick_host_only() {
+  local spec=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --spec)
+        [ $# -ge 2 ] || die "need --spec FILE"
+        spec=$2
+        shift 2 ;;
+      *) die "usage: worker-startup.sh --pick-host-only --spec FILE" ;;
+    esac
+  done
+  [ -f "$spec" ] || die "spec file not found: $spec"
+  apply_worker_placement "$spec"
+}
+
 host_check() {
   need_cmd jq
   if { [ -z "${FLEET_PULL_CONFIG:-}" ] || [ -n "${AGENT_STATE_DIR:-}" ]; } && [ -e "$agent_state_dir/.git" ]; then
@@ -274,6 +350,11 @@ run_mode() {
 
   host_check
 
+  if [ -z "$environment" ]; then
+    apply_worker_placement "$spec" "$repo"
+    [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
+  fi
+
   if [ -n "$repo" ]; then
     case "$repo" in
       id:*) ;;
@@ -297,6 +378,9 @@ run_mode() {
       id:*|path:*) repo_selector=$repo ;;
       *) repo_selector="path:$repo" ;;
     esac
+    if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
+      repo_selector=$WORKER_STARTUP_PLACED_REPO
+    fi
     if [ -z "$base" ] && [ -z "$environment" ] && [[ "$repo_selector" == path:* ]]; then
       base=$(git -C "${repo_selector#path:}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
     fi
@@ -329,6 +413,10 @@ run_mode() {
 case "${1:-}" in
   --host-check)
     host_check
+    ;;
+  --pick-host-only)
+    shift
+    pick_host_only "$@"
     ;;
   --run)
     run_mode "$@"
