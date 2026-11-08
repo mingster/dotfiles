@@ -53,12 +53,13 @@ esac
         temporary.write_text(value)
         temporary.replace(self.reading)
 
-    def run_gate(self, command, weight=1, gate_class=None, memory=None, env_memory=None):
+    def run_gate(self, command, weight=1, gate_class=None, memory=None, env_memory=None, measure=False):
         env = dict(self.env, HEAVY_GATE_CLASS=gate_class) if gate_class else dict(self.env)
         if env_memory is not None:
             env['HEAVY_GATE_MEMORY_MB'] = str(env_memory)
         flag = ['--memory-mb', str(memory)] if memory is not None else []
-        p = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), '--weight', str(weight), *flag, '--', *command],
+        admission = ['--measure'] if measure else ['--weight', str(weight)]
+        p = subprocess.Popen(['bash', str(scripts/'heavy-gate.sh'), *admission, *flag, '--', *command],
                              env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.processes.append(p)
         return p
@@ -655,7 +656,7 @@ child.wait()
 
     def test_without_long_job_admission_is_unchanged(self):
         self.config(2)
-        jobs = [self.job(str(i), 0.3, gate_class=c) for i, c in enumerate(('short', None, 'short', None))]
+        jobs = [self.job(str(i), 0.3, gate_class=c) for i, c in enumerate((None, None, None, None))]
         for p in jobs:
             self.finish(p)
         self.assert_overlap({str(i): 1 for i in range(4)}, 2)
@@ -668,47 +669,41 @@ child.wait()
         self.assertEqual(len(list((self.root/'.cache/heavy-gate').glob('slot-*'))), 1)
         self.finish(long)
 
-    def test_short_job_bypasses_load_sensor_while_only_long_jobs_hold_slots(self):
+    def test_measure_runs_without_slots(self):
         self.config(2)
-        long = self.job('long', 1.5, gate_class='long')
-        self.wait_for(lambda: self.started('long'))
-        self.set_reading('13 90')
-        for label, gate_class in (('short', 'short'), ('unmarked', None)):
-            self.finish(self.job(label, 0.1, gate_class=gate_class))
-            self.assertTrue(self.started(label))
-        self.finish(long)
+        heavy = self.job('heavy', 0.3, weight=2)
+        self.wait_for(lambda: self.started('heavy'))
+        out, err = self.finish(self.run_gate(['true'], measure=True))
+        self.assertEqual(err, 'heavy-gate: child exited with status 0\n')
+        measure_log = self.root / '.orca' / 'logs' / 'heavy-gate-measure.log'
+        self.assertTrue(measure_log.exists())
+        self.assertIn('duration_s=', measure_log.read_text())
+        self.assertEqual(len(list((self.root/'.cache/heavy-gate').glob('slot-*'))), 2)
+        self.finish(heavy)
 
-    def test_short_job_only_long_path_holds_declared_memory(self):
-        self.host_memory(3000)
-        self.config(2)
-        long = self.job('long', 2.5, gate_class='long')
-        self.wait_for(lambda: self.started('long'))
-        self.set_reading('13 90')
-        short = self.job('short', hold=True, gate_class='short', memory=2000)
-        self.wait_for(lambda: self.started('short'))
-        self.assertEqual(self.memory_files(), ['2000'])
-        blocked = self.job('blocked', 0.1, memory=2000)
-        time.sleep(0.5)
-        self.assertFalse(self.started('blocked'))
-        self.release('short')
-        self.finish(short)
-        self.finish(blocked)
-        self.finish(long)
-
-    def test_short_job_held_at_high_load_when_short_job_holds_reserve(self):
-        self.config(2)
-        long = self.job('long', 2.5, gate_class='long')
-        self.wait_for(lambda: self.started('long'))
-        self.set_reading('13 90')
-        first = self.job('short1', 1.0)
-        self.wait_for(lambda: self.started('short1'))
-        second = self.job('short2', 0.1)
-        time.sleep(0.5)
-        self.assertFalse(self.started('short2'))
-        self.set_reading('0 90')
-        self.finish(second)
-        self.finish(first)
-        self.finish(long)
+    def test_measure_timeout_stops_child_and_logs(self):
+        self.config()
+        self.env['HEAVY_GATE_TIMEOUT_SECONDS'] = '0.2'
+        pid_file = self.root / 'measure-pid'
+        code = '''import os, pathlib, sys, time
+pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+os.close(1)
+os.close(2)
+time.sleep(30)
+'''
+        p = self.run_gate([sys.executable, '-c', code, str(pid_file)], measure=True)
+        self.wait_for(pid_file.exists)
+        pid = int(pid_file.read_text())
+        def cleanup_pid():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        self.addCleanup(cleanup_pid)
+        self.finish(p, 124)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        measure_log = self.root / '.orca' / 'logs' / 'heavy-gate-measure.log'
+        self.assertTrue(measure_log.exists())
+        self.assertIn('duration_s=', measure_log.read_text())
 
     def host_memory(self, mib):
         self.env['HEAVY_GATE_HARDWARE'] = f'12 8 {mib * 1024 * 1024}'
@@ -1209,7 +1204,7 @@ time.sleep(1.5 if invocation == 1 else 0.15 if invocation == 2 else 0.6)
     def nested(self, inner_count):
         # Every inner gate call runs inside the one slot the outer call holds.
         gate = str(scripts/'heavy-gate.sh')
-        inner = f'for i in $(seq 1 {inner_count}); do bash {gate} --head-checks -- sh -c \'echo "n$i slots=$HEAD_CHECKS_SLOTS"\' & done; wait'
+        inner = f'for i in $(seq 1 {inner_count}); do bash {gate} -- sh -c \'echo "n$i slots=$(ls -d "$HOME"/.cache/heavy-gate/slot-* | wc -l | tr -d " ")"\' & done; wait'
         return subprocess.run(['bash', gate, '--', 'bash', '-c', inner], env=self.env, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
 

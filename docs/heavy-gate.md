@@ -1,4 +1,21 @@
-# Heavy-gate cleanup and retained capacity
+# Heavy gate
+
+**Heavy jobs** are Playwright (any playwright test or e2e run) and a production
+build (`bun run build`, `next build`). They run through `heavy-gate.sh
+--weight 2` and wait on host slots, 1 minute load and free memory.
+
+**Measure mode** (`--measure`) is for full project type checks during a one week
+owner trial. It never waits for a slot; it logs wall time, 1 minute load and
+free memory percent per run to `~/.orca/logs/heavy-gate-measure.log`.
+
+Unit tests, lint and review scripts are not heavy and do not use the gate.
+`head-checks.sh` wraps only Playwright and build checklist steps; the type
+check step uses measure mode.
+
+Slot waits still log `stamp host=H wait_s=S` lines to
+`~/.orca/logs/heavy-gate-wait.log` for `fleet-watch.py` and team audit metrics.
+
+## Cleanup and retained capacity
 
 The gate keeps every claimed slot until complete process inspection proves its
 registered groups contain no live members. Failed or malformed inspection retains
@@ -60,9 +77,7 @@ document grants no manual capacity release authority.
 A job that cannot get its slots publishes a waiter record under
 `~/.cache/heavy-gate/waiting/`. Once a waiter has waited
 `HEAVY_GATE_MAX_WAIT_SECONDS` (default 300), jobs that need fewer slots than it
-stop taking slots until it has run. Without this, a steady stream of weight 1
-jobs could keep a weight 2 job waiting forever, because the two slots it needs
-are never free at the same moment.
+stop taking slots until it has run.
 
 Before that bound passes, lighter jobs run as usual. Only waits for slots count,
 not waits on the load or free memory checks. Records of dead owners are ignored.

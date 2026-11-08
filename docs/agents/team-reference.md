@@ -76,7 +76,7 @@ The team runs across a fleet of Macs paired in Orca ADE (`orca environment list`
    - **Database and heavy host:** runs the dev database and remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers.
    - **QA placement (`script/qa-admission.py`, owner 2026-11-06):** `qa-sdet` runs on any host except Elon's host, picking the lightest host first.
 3. **Worker admission and load targets (owner 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`). Caps are a ceiling, never a target: fill an idle host up to its cap before any host with queued work waits, and keep each active host between `0.4` and `0.7` load per core. Count builders, reviewers, child dispatches and finished committers still holding a pending-push slot.
-4. **Per-host heavy job admission (`script/heavy-gate.sh` and `script/heavy-gate.py`):** at most 2 heavy jobs run on a machine at once (unless calibrated higher by `script/hw-probe.sh --calibrate` into `~/.config/heavy-gate/slots.conf`), waiting until 1-minute load is below the host limit (default 12) and free RAM is at least 20%. `tsc` and `bun test` take `--weight 1`; `next build`, Playwright and regressions take `--weight 2`; `HEAVY_GATE_CLASS=long` leaves 1 slot free for short checks.
+4. **Per-host heavy job admission (`script/heavy-gate.sh` and `script/heavy-gate.py`):** Playwright and production builds are heavy: at most 2 per host (unless calibrated higher), waiting until 1-minute load is below the host limit (default 12) and free RAM is at least 20%. They use `--weight 2`; `HEAVY_GATE_CLASS=long` leaves 1 slot free. Full `tsc` uses `--measure` (no slot, logs metrics for the owner trial week). Unit tests and lint skip the gate.
 5. **Provider quota distribution (`script/usage-gate.py` and `script/usage-gate-hook.py`):** every worker launch checks real weekly quota across Claude, Cursor and Antigravity, reserving 2% per running worker on that provider and refusing dispatch at the 95% weekly ceiling (exit 3) or when readings are stale beyond 5 minutes and cannot refresh (exit 4).
 
 See [Agent team architecture](agent-team-architecture.md) and [Coordinator operations](coordinator-operations.md) for full details.
@@ -130,8 +130,8 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/worktree-setup.sh` | Orca worktree setup hook: fetches and fast-forwards `origin/main` and runs `bun install --frozen-lockfile` when `node_modules` is missing. |
 | `script/usage-gate.py` | Reads real Claude, Cursor and Antigravity quota, publishes readings to runner hosts (`--publish`), checks the 95% weekly ceiling (`check`), and ranks candidates (`pick`). |
 | `script/usage-gate-hook.py` | Fail-closed Claude `PreToolUse` hook blocking any `worker-start` that bypasses `usage-gate.py`, lacks fresh readings, or calls `--on` directly. |
-| `script/heavy-gate.sh` | Shell wrapper around `heavy-gate.py` that serializes heavy jobs (`tsc`, `bun test`, `next build`, Playwright) per host. |
-| `script/heavy-gate.py` | Enforces per-host heavy job slot limits, 1-minute load ceiling, 20% minimum free memory, and `HEAVY_GATE_CLASS=long` slot reservation, logging wait times. |
+| `script/heavy-gate.sh` | Shell wrapper around `heavy-gate.py` for Playwright and production builds (`--weight 2`), plus `--measure` type checks without a slot. |
+| `script/heavy-gate.py` | Enforces per-host slot limits, load ceiling, free memory floor, and `HEAVY_GATE_CLASS=long` reservation; logs slot waits and measure runs. |
 | `script/hw-probe.sh` | Probes host CPU cores and RAM and calibrates per-host `heavy-gate` slots and load limits into `~/.config/heavy-gate/slots.conf`. |
 | `script/remote-heavy.sh` | Syncs a commit to a remote fleet host, runs a heavy command there under that host's `heavy-gate.sh`, and copies artifacts back. |
 | `script/remote-shot.sh` | Captures browser screenshots via a remote fleet host and returns the image paths. |
@@ -144,7 +144,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/on-worker-done.sh` | Handles a builder's `worker_done`: publishes the branch via `coordinator-publication.sh`, starts `head-checks.sh`, and triggers `qa-admission.py`. |
 | `script/worker-done-relay.sh` | Relays a builder's `worker_done` receipt to the owning coordinator terminal and releases the committer once. |
 | `script/coordinator-publication.sh` | Pushes an explicit engineering branch (`--branch <branch> --worktree <path>`) and opens or updates its PR after validating `Closes #<n>`, 3 `## Verification` bullets, and zero `.env` secrets. |
-| `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree under `heavy-gate.sh`, posting the `Checks` receipt. |
+| `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree; only Playwright and build steps wait on `heavy-gate.sh`. |
 | `script/head-checks-tsc.sh` | TypeScript check helper invoked by `head-checks.sh` profiles. |
 | `script/qa-admission.py` | Admits and dispatches an independent cross-family `qa-sdet` reviewer on the lightest fleet host other than Elon's. |
 | `script/post-verdict.sh` | Validates and posts a canonical `Verdict: PASS|PASS+NOTES|FAIL head=<sha> verifier=<id> author=<id>` comment on a PR, refusing self-review. |

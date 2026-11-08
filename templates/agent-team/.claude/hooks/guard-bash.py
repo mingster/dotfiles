@@ -11,7 +11,7 @@ Blocks these kinds of accident:
    files, or echoing secret environment variables. Use `.claude/bin/env-peek.py`
    to check a value without printing it.
 3. A PayPal API call other than GET and the token request.
-4. Running tests, type checks or builds outside the shared heavy job gate.
+4. Running Playwright or production builds outside the shared heavy job gate, or type checks outside measure mode.
    Gate wrappers execute their children outside PreToolUse, so no environment
    escape hatch is needed.
 
@@ -374,28 +374,28 @@ def check_segment(segment, depth=0):
             heavy_args = heavy_args[2 if takes_value else 1:]
         if heavy_args[:1] == ["x"]:
             heavy_base, heavy_args = "bunx", heavy_args[1:]
+    measure = heavy_base == "tsc"
     weight = None
-    if heavy_base in {"tsc", "playwright"}:
-        weight = 2 if heavy_base == "playwright" else 1
+    if heavy_base == "playwright":
+        weight = 2
     elif heavy_base == "next" and heavy_args[:1] == ["build"]:
         weight = 2
     elif heavy_base == "bun":
-        if heavy_args[:1] == ["test"]:
-            # One *.test.ts(x) file is a cheap red run; a second path, a directory or a bare run stays gated.
-            operands = [a for a in heavy_args[1:] if not a.startswith("-")]
-            if not (len(operands) == 1 and re.search(r"\.test\.tsx?$", operands[0])):
-                weight = 1
-        elif heavy_args[:2] in (["run", "test"], ["run", "tsc"]):
-            weight = 1
-        elif heavy_args[:2] == ["run", "build"] or (
-                len(heavy_args) > 1 and heavy_args[0] == "run" and heavy_args[1].startswith("test:regression")):
+        if heavy_args[:2] == ["run", "build"]:
             weight = 2
+        elif len(heavy_args) > 1 and heavy_args[0] == "run" and heavy_args[1].startswith("test:regression"):
+            weight = 2
+        elif heavy_args[:2] == ["run", "tsc"]:
+            measure = True
     elif heavy_base in {"bunx", "npx"}:
         if heavy_args[:1] == ["tsc"]:
-            weight = 1
+            measure = True
         elif heavy_args[:1] == ["playwright"] or heavy_args[:2] == ["next", "build"]:
             weight = 2
-    if weight:
+    if measure:
+        deny("Type checks must run through the shared gate in measure mode (no slot wait). "
+             f"Run: ~/dotfiles/script/heavy-gate.sh --measure -- {segment}")
+    elif weight:
         deny("Heavy jobs must run through the shared machine gate. "
              f"Run: ~/dotfiles/script/heavy-gate.sh --weight {weight} -- {segment}")
 

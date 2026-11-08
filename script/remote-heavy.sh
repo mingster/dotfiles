@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run a heavy job (tsc, bun test, Playwright) for the current commit on a remote host.
+# Run a heavy job (Playwright or production build) for the current commit on a remote host.
 #
 #   remote-heavy.sh --host <ssh host> --repo-dir <remote checkout> --dir <remote worktree>
 #                   [--sub <subdir>] [--weight N] [--memory-mb MIB] [--gate <remote heavy-gate.sh>]

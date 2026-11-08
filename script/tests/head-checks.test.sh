@@ -79,16 +79,10 @@ else: sys.exit(1)
     if 'Result: exit 9; remaining checks stopped\n' in comments.read_text() and 'kill signal' not in comments.read_text():
         passed+=1; print('ok   other exit codes keep their result line')
     else: failed+=1; print('FAIL exit 9 receipt',comments.read_text())
-    # The whole run holds one gate entry that declares the type check's memory.
-    memline="cat \"$HOME\"/.cache/heavy-gate/slot-*/memory >> '"+str(order)+"'"
-    run('declares default memory',memline,0)
-    default_memory=order.read_text()
-    env['HEAD_CHECKS_MEMORY_MB']='400'
-    run('declares chosen memory',memline,0)
-    chosen_memory=order.read_text()
-    env.pop('HEAD_CHECKS_MEMORY_MB')
-    if default_memory=='9216' and chosen_memory=='400': passed+=1; print('ok   head-checks declares memory, HEAD_CHECKS_MEMORY_MB overrides')
-    else: failed+=1; print('FAIL declared memory',default_memory,chosen_memory)
+    run('tsc step uses measure without slots',
+        "printf 'tsc --noEmit\\n'; test ! -d \"$HOME/.cache/heavy-gate/slot-1\"",0)
+    run('build step claims weight 2 gate slots',
+        "printf 'run build\\n'; test -d \"$HOME/.cache/heavy-gate/slot-1\" -a -d \"$HOME/.cache/heavy-gate/slot-2\"",0)
     run('ref checks do not post',line('ref'),0,False)
     train_heads=base+','+env['GH_HEAD']
     train=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf),'--train-heads',train_heads],env=env,text=True,capture_output=True)
@@ -220,32 +214,16 @@ else: sys.exit(1)
         passed+=1; print('ok   calibrated third slot can select third worktree')
     else: failed+=1; print('FAIL calibrated third slot',third.stdout,third.stderr)
     shutil.rmtree(lock); shutil.rmtree(lock2)
-    # A direct heavy-gate job occupies the same budget as a real head-checks run.
-    heavy=subprocess.Popen(['bash',str(pathlib.Path(runner).with_name('heavy-gate.sh')),'--weight','3','--','sleep','30'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    pending=None
-    try:
-        deadline=time.time()+10
-        while len(list((root/'home/.cache/heavy-gate').glob('slot-*')))!=3 and time.time()<deadline:
-            time.sleep(0.02)
-        order.unlink(missing_ok=True)
-        pending=subprocess.Popen(['bash',runner,'--repo',str(repo),'--ref',git('rev-parse','HEAD'),'--base',base,'--config',str(conf)],env={**env,'HEAD_CHECKS_MEMORY_MB':'100'},stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-        ready=select.select([pending.stderr],[],[],10)[0]
-        notice=pending.stderr.readline() if ready else ''
-        held=not order.exists() and pending.poll() is None and 'slots' in notice
-        heavy.terminate(); heavy.communicate(timeout=10)
-        out,err=pending.communicate(timeout=30)
-        if held and pending.returncode==0 and order.exists():
-            passed+=1; print('ok   direct heavy jobs and head-checks share slots')
-        else: failed+=1; print('FAIL shared slots',notice,out,err)
-    finally:
-        for process in (heavy,pending):
-            if process is not None:
-                if process.poll() is None: process.terminate()
-                process.communicate(timeout=10)
+    order.unlink(missing_ok=True)
+    ungated=invoke()
+    if ungated.returncode==0 and order.exists():
+        passed+=1; print('ok   head-checks runs without a whole-run gate slot')
+    else: failed+=1; print('FAIL ungated head-checks',ungated.stdout,ungated.stderr)
     settings.write_text(settings.read_text().replace('# fingerprint=','# old='))
-    mismatch=invoke()
+    gate=str(pathlib.Path(runner).with_name('heavy-gate.sh'))
+    mismatch=subprocess.run(['bash',gate,'--measure','--','true'],env=env,text=True,capture_output=True)
     if mismatch.returncode==0 and mismatch.stderr.count('recalibrate')==1:
-        passed+=1; print('ok   head-checks warns once on hardware mismatch and falls back')
+        passed+=1; print('ok   measure mode warns once on hardware mismatch and falls back')
     else: failed+=1; print('FAIL fingerprint fallback',mismatch.stdout,mismatch.stderr)
     # dotfiles runs without heavy-gate.py even when every heavy-gate slot is held.
     limits(3)
@@ -254,7 +232,7 @@ else: sys.exit(1)
     subprocess.run(['git','-C',str(dotrepo),'config','user.name','Fixture'],check=True)
     subprocess.run(['git','-C',str(dotrepo),'config','user.email','fixture@example.invalid'],check=True)
     (dotrepo/'.agents').mkdir()
-    (dotrepo/'.agents/head-checks.conf').write_text("ls -d \"$HOME\"/.cache/heavy-gate/slot-* 2>/dev/null | wc -l | tr -d ' ' > '"+str(order)+"'\n")
+    (dotrepo/'.agents/head-checks.conf').write_text("printf 'playwright\\n' >/dev/null; ls -d \"$HOME\"/.cache/heavy-gate/slot-* 2>/dev/null | wc -l | tr -d ' ' > '"+str(order)+"'\n")
     (dotrepo/'README.md').write_text('base\n')
     subprocess.run(['git','-C',str(dotrepo),'add','.'],check=True)
     subprocess.run(['git','-C',str(dotrepo),'commit','-qm','base'],check=True)
