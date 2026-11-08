@@ -111,6 +111,16 @@ else: sys.exit(99)
         self.assertIn('pull', (self.home / 'git-calls').read_text())
         self.assertTrue((self.home / 'preset-linked').exists())
 
+    def test_failed_dotfiles_pull_refuses_dispatch(self):
+        (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'agy').chmod(0o700)
+        (self.bin / 'git').write_text('#!/bin/sh\nexit 1\n')
+        (self.bin / 'git').chmod(0o700)
+        (self.home / 'dotfiles').mkdir(parents=True)
+        result = self.launch()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('worker-start', self.log.read_text())
+
     def test_new_top_level_preflights_in_the_main_remote_worktree(self):
         (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
         (self.bin / 'agy').chmod(0o700)

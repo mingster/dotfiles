@@ -159,10 +159,17 @@ def _receipt_denies_terminal_show(args_tuple, receipt):
 
 
 def rpc(*args):
-    command = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca'))
+    is_direct_script = bool(args) and (args[0] == 'bash' or str(args[0]).endswith('worker-startup.sh'))
+    if is_direct_script:
+        cmd = list(args)
+        timeout = 180
+    else:
+        command = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca'))
+        cmd = command + list(args) + ['--json']
+        timeout = 15
     try:
         output = subprocess.run(
-            command + list(args) + ['--json'], capture_output=True, text=True, timeout=15, check=False
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         raise OrcaReadError('orca CLI failed') from e
@@ -171,19 +178,21 @@ def rpc(*args):
         receipt = _json_object_from_orca_process(output)
         if isinstance(receipt, dict) and _receipt_denies_terminal_show(args, receipt):
             raise TerminalNotFound('terminal_not_found') from subprocess.CalledProcessError(
-                output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+                output.returncode, cmd, output.stdout, output.stderr
             )
         code = _orca_failed_reply_error_code(receipt) if isinstance(receipt, dict) else None
         err = OrcaReadError(code or 'orca CLI failed')
         err.orca_error_code = code
         raise err from subprocess.CalledProcessError(
-            output.returncode, command + list(args) + ['--json'], output.stdout, output.stderr
+            output.returncode, cmd, output.stdout, output.stderr
         )
 
     try:
         receipt = json.loads(output.stdout)
     except json.JSONDecodeError as e:
-        raise OrcaReadError('invalid JSON from orca') from e
+        receipt = _json_object_from_orca_process(output)
+        if not isinstance(receipt, dict):
+            raise OrcaReadError('invalid JSON from orca') from e
     if not isinstance(receipt, dict):
         raise OrcaReadError('orca body is not a JSON object')
     if receipt.get('ok') is False:
@@ -1290,7 +1299,7 @@ def worker_stall_restart_start_args(w, old_dispatch_id, run_id, config):
     if term_from is None:
         return None
     args = [
-        'orchestration', 'worker-start', '--run', rid, '--task', tid,
+        'bash', _issue_scan_startup_script(config or {}), '--run', rid, '--task', tid,
         '--retry-of', old_dispatch_id, '--worktree', wt, '--agent', agent,
         '--from', term_from,
     ]

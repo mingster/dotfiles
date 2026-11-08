@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2001,SC2015,SC2016,SC2086,SC2166
 # Elon session start: bring every fleet host up to date and report what is wrong. Read only except
 # fleet-pull (a fast-forward of clean main checkouts). It never installs or deletes anything.
 # Usage: elon-startup.sh [--no-pull]
 # Hosts and repos come from fleet-pull.config.json (untracked). Needs jq.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
-cfg=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
+state=${AGENT_STATE_DIR:-$HOME/agent-state}
 command -v jq >/dev/null || { echo 'elon-startup requires jq' >&2; exit 1; }
+if [ -n "${FLEET_PULL_CONFIG:-}" ]; then
+  cfg=$FLEET_PULL_CONFIG
+elif [ -f "$state/fleet-pull.json" ]; then
+  cfg="$state/fleet-pull.json"
+elif [ -f "$state/fleet-config.json" ] && jq -e 'has("repos") or has("hosts")' "$state/fleet-config.json" >/dev/null 2>&1; then
+  cfg="$state/fleet-config.json"
+else
+  cfg="$here/fleet-pull.config.json"
+fi
 [ -f "$cfg" ] || { echo "missing $cfg" >&2; exit 1; }
-hosts=$(jq -r '.hosts[]' "$cfg")
-repos=$(jq -r '.repos[]' "$cfg" | tr '\n' ' ')
+hosts=$(jq -r '(.hosts // [])[]' "$cfg")
+repos=$(jq -r '(.repos // [])[]' "$cfg" | tr '\n' ' ')
 problems=0
 flag() { echo "PROBLEM $*"; problems=$((problems + 1)); }
 
@@ -25,7 +35,6 @@ run_limited() {
 
 # May this host dispatch? Reports only. Every failure is a flag plus a NO DISPATCH line.
 echo "== 0 coordinator"
-state=${AGENT_STATE_DIR:-$HOME/agent-state}
 nodispatch() { flag "$1"; echo "NO DISPATCH: $1"; blocked=1; }
 blocked=0
 if ! git -C "$state" rev-parse --git-dir >/dev/null 2>&1; then
@@ -33,6 +42,9 @@ if ! git -C "$state" rev-parse --git-dir >/dev/null 2>&1; then
 else
   conf=$(cat "$state/coordinator.conf" 2>/dev/null || true)
   if GIT_TERMINAL_PROMPT=0 run_limited 10 git -C "$state" fetch -q origin main; then
+    if [ "$(git -C "$state" branch --show-current 2>/dev/null)" = main ] && [ -z "$(git -C "$state" status --porcelain 2>/dev/null)" ]; then
+      git -C "$state" merge --ff-only -q origin/main >/dev/null 2>&1 || true
+    fi
     conf=$(git -C "$state" show origin/main:coordinator.conf 2>/dev/null || true)
     behind=$(git -C "$state" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
     [ "$behind" = 0 ] || nodispatch "state repo is behind origin/main by $behind commit(s)"
@@ -59,6 +71,7 @@ echo "== 1 pull latest"
 if [ "${1:-}" != --no-pull ]; then "$here/fleet-pull.sh" 2>&1 | tail -20; fi
 
 # Runs on a host (or here): tools, the node pin of each repo, gh auth, heavy-gate slots.
+# shellcheck disable=SC2016,SC2001,SC2015,SC2086,SC2166
 check='
 export PATH=$HOME/.bun/bin:$HOME/.asdf/shims:/opt/homebrew/bin:/usr/local/bin:$PATH
 for t in git jq bun node gh python3; do command -v $t >/dev/null || echo "missing tool $t"; done

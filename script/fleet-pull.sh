@@ -1,29 +1,118 @@
 #!/usr/bin/env bash
-# Fast-forward the main checkout of each configured repo on this host and every fleet host.
-# Config (untracked, see fleet-pull.config.example.json): {"hosts": ["ssh-host"], "repos": ["~/path"]}
-# At the end it runs secrets-sync.sh, which pushes the secrets folder to the same hosts.
-# Skips a repo that is dirty or not on main. Never merges, resets or stashes.
+# Fast-forward the main checkout of the state dir and each configured repo on this host and every fleet host.
+# Reads config from $AGENT_STATE_DIR/{fleet-pull.json,fleet-config.json} (default ~/agent-state),
+# falling back to script/fleet-pull.config.json only if that is missing.
+# Exits non-zero and names the host and repo for a dirty, behind-after-pull, diverged or unreachable checkout.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
-cfg=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
+state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 command -v jq >/dev/null || { echo 'fleet-pull requires jq' >&2; exit 1; }
-[ -f "$cfg" ] || { echo "missing $cfg (copy fleet-pull.config.example.json)" >&2; exit 1; }
+
+# shellcheck disable=SC2016
 remote='
-for d in "$@"; do
-  d=${d/#\~/$HOME}
-  [ -d "$d/.git" ] || { echo "skip $d (missing)"; continue; }
-  b=$(git -C "$d" branch --show-current)
-  [ "$b" = main ] || { echo "skip $d (on $b)"; continue; }
-  [ -z "$(git -C "$d" status --porcelain)" ] || { echo "skip $d (dirty)"; continue; }
-  git -C "$d" fetch -q origin || { echo "fail $d (fetch)"; continue; }
-  git -C "$d" merge --ff-only -q origin/main >/dev/null 2>&1 && echo "ok   $d $(git -C "$d" rev-parse --short HEAD)" || echo "fail $d (not fast-forward)"
-done'
-repos=(); while IFS= read -r r; do repos+=("$r"); done < <(jq -r '.repos[]' "$cfg")
-echo "local"; bash -c "$remote" _ "${repos[@]}"
-for h in $(jq -r '.hosts[]' "$cfg"); do
+host_label=$1
+shift
+rc=0
+for raw in "$@"; do
+  d=${raw/#\~/$HOME}
+  if [ ! -e "$d/.git" ]; then
+    echo "fail $host_label $raw (unreachable checkout: missing $d)"
+    rc=1
+    continue
+  fi
+  b=$(git -C "$d" branch --show-current 2>/dev/null || true)
+  if [ "$b" != main ]; then
+    echo "fail $host_label $raw (not on main: ${b:-detached})"
+    rc=1
+    continue
+  fi
+  if [ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ]; then
+    echo "fail $host_label $raw (dirty)"
+    rc=1
+    continue
+  fi
+  if ! git -C "$d" fetch -q origin 2>/dev/null; then
+    echo "fail $host_label $raw (unreachable origin on fetch)"
+    rc=1
+    continue
+  fi
+  if ! git -C "$d" merge --ff-only -q origin/main >/dev/null 2>&1; then
+    echo "fail $host_label $raw (diverged: not fast-forward)"
+    rc=1
+    continue
+  fi
+  behind=$(git -C "$d" rev-list --count HEAD..origin/main 2>/dev/null || echo 1)
+  if [ "${behind:-1}" != 0 ]; then
+    echo "fail $host_label $raw (behind after pull: $behind commits behind origin/main)"
+    rc=1
+    continue
+  fi
+  echo "ok   $host_label $d $(git -C "$d" rev-parse --short HEAD)"
+done
+exit "$rc"
+'
+
+status=0
+echo "local"
+if [ -e "$state_dir/.git" ]; then
+  bash -c "$remote" _ local "$state_dir" || status=1
+fi
+
+resolve_fleet_pull_config() {
+  if [ -n "${FLEET_PULL_CONFIG:-}" ]; then
+    printf '%s\n' "$FLEET_PULL_CONFIG"
+    return
+  fi
+  if [ -f "$state_dir/fleet-pull.json" ]; then
+    printf '%s\n' "$state_dir/fleet-pull.json"
+    return
+  fi
+  if [ -f "$state_dir/fleet-config.json" ] && jq -e 'has("repos") or has("hosts")' "$state_dir/fleet-config.json" >/dev/null 2>&1; then
+    printf '%s\n' "$state_dir/fleet-config.json"
+    return
+  fi
+  if [ -f "$here/fleet-pull.config.json" ]; then
+    printf '%s\n' "$here/fleet-pull.config.json"
+    return
+  fi
+  if [ -f "$state_dir/fleet-config.json" ]; then
+    printf '%s\n' "$state_dir/fleet-config.json"
+    return
+  fi
+  printf '%s\n' "$here/fleet-pull.config.json"
+}
+
+cfg=$(resolve_fleet_pull_config)
+[ -f "$cfg" ] || { echo "missing $cfg (copy fleet-pull.config.example.json)" >&2; exit 1; }
+
+repos=()
+while IFS= read -r r; do
+  [ -n "$r" ] && repos+=("$r")
+done < <(jq -r '(.repos // [])[]' "$cfg")
+
+if [ "${#repos[@]}" -gt 0 ]; then
+  bash -c "$remote" _ local "${repos[@]}" || status=1
+fi
+
+for h in $(jq -r '(.hosts // [])[]' "$cfg"); do
+  [ -n "$h" ] || continue
   echo "$h"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "${repos[@]}" <<<"$remote" 2>&1 || echo "warn unreachable $h"
+  if ! out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "${repos[@]}" <<<"$remote" 2>&1); then
+    status=1
+    [ -n "$out" ] && printf '%s\n' "$out"
+    for r in "${repos[@]}"; do
+      case "$out" in
+        *" $h $r "*) ;;
+        *) echo "fail $h $r (unreachable host)" ;;
+      esac
+    done
+  else
+    [ -n "$out" ] && printf '%s\n' "$out"
+  fi
 done
 
 # Then push the secrets folder to the same hosts (skipped without script/secrets-sync.config.json).
-[ -x "$here/secrets-sync.sh" ] && "$here/secrets-sync.sh"
+if [ -x "$here/secrets-sync.sh" ]; then
+   "$here/secrets-sync.sh" || status=1
+fi
+exit "$status"

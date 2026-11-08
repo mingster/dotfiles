@@ -4,7 +4,7 @@
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
 args=("$@")
-environment= agent= worktree= model=
+environment='' agent='' worktree='' model=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --on|--agent|--worktree|--model)
@@ -47,9 +47,40 @@ print("path:" + rows[0]["path"] if rows else "")
   current|active|new-child) echo 'start-remote-worker: need an exact remote worktree or new-top-level' >&2; exit 2 ;;
   *) terminal_args+=(--worktree "$worktree") ;;
 esac
-# The target host reads its own dotfiles, so bring them and the preset link up to date first.
-# A failed update must not stop a worker: the CLI probe alone decides.
-refresh='git -C "$HOME/dotfiles" pull -q --ff-only origin main; [ ! -f "$HOME/dotfiles/script/setup-orca.sh" ] || bash "$HOME/dotfiles/script/setup-orca.sh" >/dev/null;'
+# The target host must have clean, fast-forwarded checkouts of dotfiles, state dir, and the app repo,
+# and pass host_check on the target host before starting a worker.
+remote_repo=${REMOTE_REPO:-}
+# shellcheck disable=SC2016
+refresh='
+check_remote_repo() {
+  local d=${1/#\~/$HOME}
+  if [ -e "$d/.git" ]; then
+    [ "$(git -C "$d" branch --show-current 2>/dev/null)" = main ] || exit 1
+    [ -z "$(git -C "$d" status --porcelain 2>/dev/null)" ] || exit 1
+    git -C "$d" pull -q --ff-only origin main || exit 1
+  elif [ -d "$d" ]; then
+    git -C "$d" pull -q --ff-only origin main || exit 1
+  fi
+}
+if [ -d "$HOME/dotfiles" ]; then
+  check_remote_repo "$HOME/dotfiles"
+fi
+if [ -f "$HOME/dotfiles/script/setup-orca.sh" ]; then
+  bash "$HOME/dotfiles/script/setup-orca.sh" >/dev/null || exit 1
+fi
+state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
+if [ -e "$state_dir/.git" ]; then
+  check_remote_repo "$state_dir"
+fi
+if [ -n "'"$remote_repo"'" ] && [ -e "'"$remote_repo"'/.git" ]; then
+  check_remote_repo "'"$remote_repo"'"
+fi
+if [ -f "$state_dir/fleet-pull.json" ] && command -v jq >/dev/null 2>&1; then
+  for r in $(jq -r "(.repos // [])[]" "$state_dir/fleet-pull.json" 2>/dev/null); do
+    check_remote_repo "$r"
+  done
+fi
+'
 preflight_failed() {
   echo "start-remote-worker: preflight failed on $environment: $1" >&2
   exit 1

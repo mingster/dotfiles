@@ -10,9 +10,25 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 orca=${ORCA_CLI_COMMAND:-orca}
 python3=${PYTHON:-python3}
-cfg=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
+agent_state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 state_dir=${WORKER_STARTUP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/worker-startup}
 mkdir -p "$state_dir"
+
+resolve_fleet_pull_config() {
+  if [ -n "${FLEET_PULL_CONFIG:-}" ]; then
+    printf '%s\n' "$FLEET_PULL_CONFIG"
+    return
+  fi
+  if [ -f "$agent_state_dir/fleet-pull.json" ]; then
+    printf '%s\n' "$agent_state_dir/fleet-pull.json"
+    return
+  fi
+  if [ -f "$agent_state_dir/fleet-config.json" ] && jq -e 'has("repos") or has("hosts")' "$agent_state_dir/fleet-config.json" >/dev/null 2>&1; then
+    printf '%s\n' "$agent_state_dir/fleet-config.json"
+    return
+  fi
+  printf '%s\n' "$here/fleet-pull.config.json"
+}
 
 die() { echo "worker-startup: $*" >&2; exit 1; }
 
@@ -137,15 +153,29 @@ bun_install_if_lock_changed() { # <repo_dir>
 # --- host check: fast-forward main on configured repos (this host only) ---
 
 fleet_pull_local_repos() {
-  local d b
+  local d b strict=${WORKER_STARTUP_STRICT_PULL:-0}
   for d in "$@"; do
     d=${d/#\~/$HOME}
-    [ -e "$d/.git" ] || { echo "skip $d (missing)" >&2; continue; }
+    if [ ! -e "$d/.git" ]; then
+      [ "$strict" = 1 ] && die "missing repo $d"
+      echo "skip $d (missing)" >&2
+      continue
+    fi
     b=$(git -C "$d" branch --show-current)
-    [ "$b" = main ] || { echo "skip $d (on $b)" >&2; continue; }
-    [ -z "$(git -C "$d" status --porcelain)" ] || { echo "skip $d (dirty)" >&2; continue; }
+    if [ "$b" != main ]; then
+      [ "$strict" = 1 ] && die "repo $d not on main (on ${b:-detached})"
+      echo "skip $d (on $b)" >&2
+      continue
+    fi
+    if [ -n "$(git -C "$d" status --porcelain)" ]; then
+      [ "$strict" = 1 ] && die "repo $d is dirty"
+      echo "skip $d (dirty)" >&2
+      continue
+    fi
     git -C "$d" fetch -q origin || die "fetch failed for $d"
     if git -C "$d" merge --ff-only -q origin/main >/dev/null 2>&1; then
+      behind=$(git -C "$d" rev-list --count HEAD..origin/main 2>/dev/null || echo 1)
+      [ "${behind:-1}" = 0 ] || die "repo $d still behind origin/main after pull"
       echo "ok   $d $(git -C "$d" rev-parse --short HEAD)"
     else
       die "not fast-forward $d (fix manually; no merge/reset/stash here)"
@@ -162,9 +192,19 @@ repo_ready_for_tooling() { # <repo_dir> — same bar as fleet-pull: clean checko
 
 host_check() {
   need_cmd jq
+  if { [ -z "${FLEET_PULL_CONFIG:-}" ] || [ -n "${AGENT_STATE_DIR:-}" ]; } && [ -e "$agent_state_dir/.git" ]; then
+    fleet_pull_local_repos "$agent_state_dir"
+  fi
+  local cfg
+  cfg=$(resolve_fleet_pull_config)
   [ -f "$cfg" ] || die "missing config $cfg (copy fleet-pull.config.example.json)"
   local repos=() r
-  while IFS= read -r r; do repos+=("$r"); done < <(jq -r '.repos[]' "$cfg")
+  while IFS= read -r r; do
+    [ -n "$r" ] && repos+=("$r")
+  done < <(jq -r '(.repos // [])[]' "$cfg")
+  if [ -n "${REMOTE_REPO:-}" ] && [ -e "${REMOTE_REPO/#\~/$HOME}/.git" ]; then
+    repos+=("$REMOTE_REPO")
+  fi
   [ "${#repos[@]}" -gt 0 ] || die "no repos in $cfg"
   fleet_pull_local_repos "${repos[@]}"
   for r in "${repos[@]}"; do
@@ -181,15 +221,16 @@ host_check() {
 usage_run() {
   echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
+  echo "       worker-startup.sh --run ID --task ID --retry-of DISPATCH_ID --worktree SELECTOR --agent NAME --from HANDLE [--model ID]" >&2
   exit 2
 }
 
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
-  local wt='' name='' repo='' base=''
+  local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of=''
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--name|--repo|--base-branch)
+      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of)
         [ $# -ge 2 ] || usage_run
         case "$1" in
           --run) run=$2 ;;
@@ -200,14 +241,30 @@ run_mode() {
           --from) from=$2 ;;
           --on) environment=$2 ;;
           --worktree-path) wt=$2 ;;
+          --worktree) worktree_sel=$2 ;;
           --name) name=$2 ;;
           --repo) repo=$2 ;;
           --base-branch) base=$2 ;;
+          --task) task=$2 ;;
+          --retry-of) retry_of=$2 ;;
         esac
         shift 2 ;;
       *) usage_run ;;
     esac
   done
+  if [ -n "$task" ] || [ -n "$retry_of" ]; then
+    [ -n "$run" ] && [ -n "$task" ] && [ -n "$retry_of" ] && [ -n "$agent" ] || usage_run
+    if [ -z "$worktree_sel" ] && [ -n "$wt" ]; then
+      worktree_sel="path:$wt"
+    fi
+    [ -n "$worktree_sel" ] || usage_run
+    [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
+    host_check >&2
+    "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
+      || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
+    exec "$orca" orchestration worker-start --run "$run" --task "$task" --retry-of "$retry_of" \
+      --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"} --json
+  fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
@@ -216,6 +273,14 @@ run_mode() {
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
 
   host_check
+
+  if [ -n "$repo" ]; then
+    case "$repo" in
+      id:*) ;;
+      path:*) export REMOTE_REPO="${repo#path:}" ;;
+      *) export REMOTE_REPO="$repo" ;;
+    esac
+  fi
 
   if [ "$agent" = cursor ]; then
     exec bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
