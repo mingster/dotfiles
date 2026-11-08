@@ -574,6 +574,7 @@ GUARD_DEFAULT_PROMOTE = {
 
 GUARD_DEFAULTS = {
     "production_hosts": [],
+    "backstop_hosts": [],
     "stage_branches": [],
     "promote_scripts": GUARD_DEFAULT_PROMOTE,
     "rollback_scripts": ["rollback-production.sh"],
@@ -836,7 +837,7 @@ def normalize_guard_value(key, raw, errors, ctx):
         return raw
     if key == "promote_scripts":
         return raw
-    if key in ("production_hosts", "rollback_scripts", "apply_scripts", "blocked_scripts"):
+    if key in ("production_hosts", "backstop_hosts", "rollback_scripts", "apply_scripts", "blocked_scripts"):
         if isinstance(raw, (set, tuple, list)):
             lst = sorted({str(x) for x in raw if str(x).strip()})
         else:
@@ -891,6 +892,12 @@ def normalize_guard_value(key, raw, errors, ctx):
         if not isinstance(raw, list) or not all(isinstance(p, str) and p.strip() for p in raw):
             errors.append(f"{ctx}: REMOTE_READ_ONLY must be a list of patterns")
             return None
+        for p in raw:
+            try:
+                re.compile(p)
+            except re.error as exc:
+                errors.append(f"{ctx}: REMOTE_READ_ONLY pattern {p!r} is not a valid regex ({exc})")
+                return None
         return raw or None
     if key == "worktree_env_allow":
         if isinstance(raw, (list, tuple, set)):
@@ -1015,6 +1022,13 @@ def extract_guard_config():
                         key = GUARD_CONST_MAP[cname]
                         raw_assigns.setdefault(key, []).append(val)
                     bind_guard_names(node, env)
+                    if isinstance(node, ast.FunctionDef) and node.name == "names_production_host":
+                        # Old project guards add hosts such as the artifact store to the backstop here,
+                        # outside the config block: a set, list or tuple of host strings.
+                        extra = [e.value for n in ast.walk(node) if isinstance(n, (ast.Set, ast.List, ast.Tuple))
+                                 for e in n.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+                        if extra:
+                            raw_assigns.setdefault("backstop_hosts", []).append(extra)
                 if errors:
                     for err in errors:
                         sys.stderr.write(f"agent-team: guard config: {err}\n")

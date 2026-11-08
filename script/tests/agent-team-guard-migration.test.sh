@@ -52,6 +52,19 @@ else
   bad "unsupported call still fails closed (out: $(tail -3 <<<"$out"))"
 fi
 
+# An invalid REMOTE_READ_ONLY regex refuses the migration instead of being dropped.
+BADRE="$TMP/badre"
+mkdir -p "$BADRE/.claude/hooks"
+printf 'import re\nREMOTE_READ_ONLY = [re.compile(p) for p in ("uptime", "df(")]\n' > "$BADRE/.claude/hooks/guard-bash.py"
+git -C "$BADRE" init -q -b main
+if out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$BADRE" --project-name x --dry-run 2>&1)"; then
+  bad "invalid remote_read_only regex fails closed"
+elif grep -qF "is not a valid regex" <<<"$out"; then
+  ok "invalid remote_read_only regex fails closed"
+else
+  bad "invalid remote_read_only regex fails closed (out: $(tail -3 <<<"$out"))"
+fi
+
 # 2. The real run writes every production guard fact into guard-config.json.
 if out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$PROJ" --project-name x 2>&1)"; then
   ok "migration runs"
@@ -70,6 +83,7 @@ want = {
         f"git -C {app} fetch --quiet origin && git -C {app} checkout --quiet --detach SHA40",
         bundle, f"SKIP_DB_PUSH=1 {bundle}"]},
     "production_hosts": ["prod", "prod.example.net", "192.0.2.10", "store.example.app", "pay.example.app"],
+    "backstop_hosts": ["build-artifacts"],
     "production_branches": ["production"],
     "approval_namespace": "exampleapp",
     "approval_file": "~/.config/exampleapp/approval.json",
@@ -142,6 +156,10 @@ none||allow|ssh prod.example.net 'df -h | grep root'
 none||deny|ssh prod.example.net 'rm -rf /tmp/x'
 none||allow|ssh build.example.net 'rm -rf /tmp/x'
 none||deny|scp notes.txt prod.example.net:/tmp/
+none||deny|rsync -a build/ build-artifacts:/
+none||deny|ssh build-artifacts ls
+none||deny|scp x build-artifacts:/tmp/
+none||deny|git remote add build-artifacts x
 none||allow|bin/ensure-production-sysadmin.sh $SHA < ${PW}production
 none||deny|bin/ensure-production-sysadmin.sh $SHA extra < ${PW}production
 none||allow|ssh root@build.example.net '/var/www/sandbox.example.app/bin/deploy-playground.sh $SHA --sysadmin-account' < ${PW}playground

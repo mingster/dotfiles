@@ -41,6 +41,7 @@ import time
 # Project configuration loaded at startup from <project>/.claude/hooks/guard-config.json.
 BLOCKED_SCRIPTS: set[str] = set()
 PRODUCTION_HOSTS: set[str] = set()
+BACKSTOP_HOSTS: set[str] = set()
 PRODUCTION_HOSTS_ERROR: str | None = None
 STAGE_BRANCHES: list[str] = []
 STAGE_BRANCH_COMPONENTS: dict[str, str] = {}
@@ -179,7 +180,7 @@ def find_guard_config(start_dir):
 
 
 def load_guard_config(start_dir):
-    global BLOCKED_SCRIPTS, PRODUCTION_HOSTS, PRODUCTION_HOSTS_ERROR
+    global BLOCKED_SCRIPTS, PRODUCTION_HOSTS, PRODUCTION_HOSTS_ERROR, BACKSTOP_HOSTS
     global STAGE_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
@@ -187,6 +188,7 @@ def load_guard_config(start_dir):
 
     BLOCKED_SCRIPTS = set()
     PRODUCTION_HOSTS = set()
+    BACKSTOP_HOSTS = set()
     PRODUCTION_HOSTS_ERROR = None
     STAGE_BRANCHES = []
     STAGE_BRANCH_COMPONENTS = {}
@@ -245,6 +247,12 @@ def load_guard_config(start_dir):
     for h in cfg_expect("production_hosts", list, "list") or []:
         if isinstance(h, str) and h.strip():
             PRODUCTION_HOSTS.add(h.strip().lower())
+
+    # Hosts that are not ssh destinations the guard reads as production, but that a command naming them
+    # (the backstop below) still needs `host` for, such as an artifact store the deploy pulls from.
+    for h in cfg_expect("backstop_hosts", list, "list") or []:
+        if isinstance(h, str) and h.strip():
+            BACKSTOP_HOSTS.add(h.strip().lower())
 
     for key in ("stage_branches", "production_branches"):
         val = cfg_expect(key, (list, dict), "list or object")
@@ -1235,9 +1243,9 @@ NETWORK_PROGRAMS = {"scp", "sftp", "rsync", "nc", "ncat", "netcat", "eval"}
 
 
 def names_production_host(segment):
-    if not PRODUCTION_HOSTS:
+    if not PRODUCTION_HOSTS and not BACKSTOP_HOSTS:
         return False
-    tokens = sorted(PRODUCTION_HOSTS, key=len, reverse=True)
+    tokens = sorted(PRODUCTION_HOSTS | BACKSTOP_HOSTS, key=len, reverse=True)
     pattern = r"(?i)(?<![a-zA-Z0-9.-])(?:%s)\.?(?![a-zA-Z0-9.-])" % "|".join(map(re.escape, tokens))
     return re.search(pattern, segment) is not None
 
