@@ -322,6 +322,13 @@ post_push_stamp_path() {
   post_push_stamp="$state_dir/post-push/$slug/$head_sha.env"
 }
 
+checks_receipt_at_pr_head() {
+  local json
+  json=$(gh pr view "$pr_number" --repo "$want_repo" --json comments,headRefOid 2>/dev/null) \
+    || return 1
+  printf '%s' "$json" | python3 "$_script_dir/receipt-state.py" checks-receipt-at-head
+}
+
 head_checks_lock_held() {
   local repo_root=$1 remote name lock holder
   repo_root=$(cd "$repo_root" && pwd) || return 1
@@ -386,10 +393,8 @@ start_post_publication_jobs() {
   fi
   local head_checks=${COORDINATOR_PUBLICATION_HEAD_CHECKS:-$_script_dir/head-checks.sh}
   local on_done=${COORDINATOR_PUBLICATION_ON_WORKER_DONE:-$_script_dir/on-worker-done.sh}
-  if [ "$post_checks_started" != 1 ] && ! head_checks_lock_held "$repo_root"; then
+  if ! head_checks_lock_held "$repo_root" && ! checks_receipt_at_pr_head; then
     (bash "$head_checks" --repo "$repo_root" --pr "$pr_number" >/dev/null 2>&1 &) || true
-    post_checks_started=1
-    write_post_push_stamp
   fi
   if [ -n "$pub_run" ] && { [ -n "$pub_author_family" ] || { [ -n "$pub_author_provider" ] && [ -n "$pub_author_model" ]; }; } \
     && [ "$post_reviewer_started" != 1 ]; then

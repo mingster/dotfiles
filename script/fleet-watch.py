@@ -2183,7 +2183,12 @@ def issue_scan_pass(
                 continue
             meta = pr_author_worker_metadata(workers, pr_row)
             stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
-            if stamp_checks:
+            # A publication stamp only means a spawn was attempted. Retry until a
+            # Checks receipt exists or a live head-checks lock holds the worktree.
+            if stamp_checks and (
+                checks_receipt_at_head(pr_row)
+                or head_checks_lock_live(root, lock_live=checks_lock_live)
+            ):
                 checks_seen[head] = True
             if stamp_reviewer:
                 review_seen[head] = True
@@ -2191,9 +2196,7 @@ def issue_scan_pass(
                 if not checks_seen.get(head) and not head_checks_lock_live(root, lock_live=checks_lock_live):
                     command = build_head_checks_command(config, repo, pr_row)
                     if command and start_detached(command) == 0:
-                        checks_seen[head] = True
                         log_bits.append('head_checks_start=%s' % head[:8])
-                        write_post_push_stamp(repo, head, checks_started=True)
                         if persist_state:
                             persist_state()
             if not review_verdict_at_head(pr_row) and not review_seen.get(head):

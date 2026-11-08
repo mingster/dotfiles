@@ -463,7 +463,7 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertIn('rework_start=', ','.join(log))
 
-    def test_publication_stamp_then_issue_scan_starts_nothing(self):
+    def test_publication_stamp_without_receipt_still_starts_checks(self):
         with tempfile.TemporaryDirectory() as td:
             wt = os.path.join(td, 'wt')
             subprocess.run(['git', 'init', '-q', wt], check=True)
@@ -493,8 +493,9 @@ class IssueScanPass(unittest.TestCase):
                 _, log, starts, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
                 )
-                self.assertEqual(starts, [])
-                self.assertNotIn('head_checks_start=' + head[:8], ','.join(log))
+                self.assertEqual(len(starts), 1)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
+                self.assertIn('head_checks_start=' + head[:8], ','.join(log))
                 self.assertNotIn('reviewer_start=' + head[:8], ','.join(log))
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
@@ -529,7 +530,8 @@ class IssueScanPass(unittest.TestCase):
                 _, log, starts, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
                 )
-                self.assertEqual(starts, [], log)
+                self.assertEqual(len(starts), 1, log)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
@@ -562,7 +564,8 @@ class IssueScanPass(unittest.TestCase):
                 _, _, starts2, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True, config=cfg,
                 )
-                self.assertEqual(starts2, [])
+                self.assertEqual(len(starts2), 1)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts2))
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 
@@ -586,7 +589,8 @@ class IssueScanPass(unittest.TestCase):
                 _, _, starts2, _ = self.run_pass(
                     state, prs_by_repo=prs, workers=workers, detached=True,
                 )
-                self.assertEqual(starts2, [])
+                self.assertEqual(len(starts2), 1)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts2))
             finally:
                 os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
 

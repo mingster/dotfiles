@@ -1,0 +1,2 @@
+- `fleet-watch.py` and `coordinator-publication.sh` retry `head-checks.sh` until a Checks receipt exists at the PR head; a spawn stamp or detached start alone no longer blocks later passes.
+- `receipt-state.py` adds `checks-receipt-at-head` for publication gating.

@@ -40,6 +40,11 @@ def comment(body, at):
 
 
 class ReceiptStateCross(unittest.TestCase):
+    def test_checks_receipt_at_head_cli(self):
+        present = pr(HEAD, [comment('Checks: PASS head=%s main=%s' % (HEAD, MAIN), '2026-11-08T00:00:00Z')])
+        self.assertEqual(0, cli('checks-receipt-at-head', pr_obj=present))
+        self.assertEqual(1, cli('checks-receipt-at-head', pr_obj=pr(HEAD, [])))
+
     def assert_same_verdict(self, pr_obj, merge_refuse, review_failed, rollup_fail=None):
         self.assertEqual(merge_refuse, cli('--head', HEAD, 'merge-refuse-review', pr_obj=pr_obj) == 0)
         self.assertEqual(review_failed, cli('review-failed', pr_obj=pr_obj) == 0)
