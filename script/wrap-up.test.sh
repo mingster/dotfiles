@@ -30,7 +30,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/gh" "$tmp/bin/orca"
 export ORCA_CLI_COMMAND="$tmp/bin/orca"
-export WRAP_UP_CLONE_ROOT="$tmp/no-clones"
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones" WRAP_UP_ORCA_APP_BIN="$tmp/no-app"
 export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
 # Fixture worktrees are all new; 0 turns the recent-activity guard off except in its own case.
 export WRAP_UP_RECENT_MIN=0
@@ -73,10 +73,9 @@ git worktree add -qb dirty "$tmp/dirty worktree"
 git push -q origin dirty
 echo dirty > "$tmp/dirty worktree/untracked"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
-test -f "$tmp/dirty worktree/untracked"
-git show-ref --verify --quiet refs/heads/dirty
-git --git-dir="$tmp/origin" show-ref --verify --quiet refs/heads/dirty
-echo 'ok dirty worktree and both branches kept'
+test ! -d "$tmp/dirty worktree"
+tar -xOf "$HOME/.claude/state/wt-archive/repo_dirty worktree/scratch.tgz" untracked | grep -Fxq dirty
+echo 'ok dirty worktree on a remote branch is archived and removed'
 git worktree add -qb stamped "$tmp/stamped worktree"
 mkdir "$tmp/stamped worktree/web"
 echo sum > "$tmp/stamped worktree/web/.remote-heavy-lock-sha"
@@ -227,8 +226,9 @@ test ! -d "$tmp/review"
 echo 'ok clean detached worktree at a merged commit removed'
 test -d "$tmp/_checks"
 echo 'ok script-owned _ worktree kept'
-test -d "$tmp/detached-dirty"
-echo 'ok dirty detached worktree kept'
+test ! -d "$tmp/detached-dirty"
+test -f "$HOME/.claude/state/wt-archive/repo_detached-dirty/scratch.tgz"
+echo 'ok dirty detached worktree at merged commit archived and removed'
 test -d "$tmp/detached-ahead"
 echo 'ok detached worktree with unmerged commits kept'
 # Finished terminals close on the local host and every listed environment. The stub never touches a real terminal.
@@ -414,7 +414,8 @@ cd "$tmp/repo"
 bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 grep -Fxq '== Fleet host alpha ==' "$tmp/output"
 grep -Fq "Remove worktree $real/rwt " "$tmp/output" || { echo 'fleet preview did not propose the remote worktree'; exit 1; }
-grep -Fq "Kept worktree $real/rwt-dirty (dirty)" "$tmp/output"
+grep -Fq "Archive worktree $real/rwt-dirty" "$tmp/output"
+grep -Fq "Remove worktree $real/rwt-dirty (archived scratch)" "$tmp/output"
 test -d "$tmp/rwt"
 echo 'ok fleet preview runs per host and changes nothing'
 grep -Fq 'Warning: fleet host down unreachable or incomplete' "$tmp/stderr"
@@ -424,10 +425,10 @@ echo 'ok unreachable host only warns and is skipped'
 bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
 test ! -d "$tmp/rwt"
 if git -C "$tmp/rrepo" show-ref --verify --quiet refs/heads/rdone; then echo 'remote host kept a merged local branch'; exit 1; fi
-test -d "$tmp/rwt-dirty"
-echo 'ok fleet apply removes the host worktree and local branch, keeps the dirty one'
+test ! -d "$tmp/rwt-dirty"
+echo 'ok fleet apply removes the host worktree and local branch, archiving dirty scratch'
 git --git-dir="$tmp/origin2" show-ref --verify --quiet refs/heads/rdone || { echo 'fleet host deleted a remote branch'; exit 1; }
-grep -Fq 'removed worktrees=1 deleted local=1 deleted remote=0' "$tmp/output"
+grep -Fq 'removed worktrees=2 deleted local=2 deleted remote=0' "$tmp/output"
 echo 'ok fleet host never deletes remote branches'
 grep -Fq 'Fleet total' "$tmp/output"
 # Issue 548: each fleet host also fast forwards its clean main checkout and installs the merged preset; a dirty one is kept.
@@ -762,7 +763,7 @@ tcheck() { # <mode> <path> <command...>
 }
 has() { grep -Fq -- "$1" "$tmp/output"; }
 kept_wt() { test -d "$tmp/$1" && has "Kept worktree $real/$1 (" && has 'removed worktrees=0 '; }
-kept_stale() { test -d "$tmp/t-stale" && git show-ref --verify --quiet refs/heads/t-stale && has 'Kept stale t-stale (' && has 'stale deleted=0'; }
+kept_stale() { test -d "$tmp/t-stale" && git show-ref --verify --quiet refs/heads/t-stale && has "Kept worktree $real/t-stale (" && has 'stale deleted=0'; }
 kept_cache() { test -d "$tmp/t-cache/.next" && has 'build caches removed=0 kept=1 '; }
 kept_clone() { test -d "$tclone" && has 'chrome clones removed=0 kept=1'; }
 kept_temp() { test -f "$ttemp" && has 'temp removed=0 kept=1 '; }
@@ -868,12 +869,12 @@ for mode in lsof-status-stderr ps-status ps-stderr lsof-holder; do
   git push -q -f origin "$fold:refs/heads/f-stale"
   fprobe "$tmp/bin" 'exit 1' 'echo init'
   rm -rf "$tmp/flip"; fprobe "$tmp/flip" "$busy_lsof" "$busy_ps"
-  PATH="$tmp/gitshim:$PATH" FAKE_FLIP_DIR="$tmp/flip" FAKE_FLIP_BIN="$tmp/bin" FAKE_FLIP_ARM='log --reverse*' FAKE_FLIP_ON='worktree list*' \
+  PATH="$tmp/gitshim:$PATH" FAKE_FLIP_DIR="$tmp/flip" FAKE_FLIP_BIN="$tmp/bin" FAKE_FLIP_ARM='rev-list --count*' FAKE_FLIP_ON='worktree list*' \
     bash "$here/wrap-up.sh" --apply --stale > "$tmp/output" 2> "$tmp/stderr" || true
   stale_wt_kept() {
     test -e "$tmp/flip/flipped" && test -d "$tmp/f-stale" && git show-ref --verify --quiet refs/heads/f-stale \
       && git --git-dir="$tmp/origin5" show-ref --verify --quiet refs/heads/f-stale \
-      && has "Kept stale f-stale ($want)" && has 'stale deleted=0'
+      && has "Kept worktree $real/f-stale ($want)" && has 'stale deleted=0'
   }
   fcheck "$mode turning busy after selection keeps the stale worktree and its refs" stale_wt_kept
 done

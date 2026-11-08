@@ -23,9 +23,13 @@ FAKE
 cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
-  'terminal list --json') echo '{"ok":true,"result":{"terminals":[]}}' ;;
-  'orchestration worker-list --json') echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
-  *) exit 1 ;;
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  'orchestration run-list'*) echo '{"ok":true,"result":{"runs":[],"page":{"hasMore":false}}}' ;;
+  *'terminal list'*) echo '{"ok":true,"result":{"terminals":[]}}' ;;
+  *'worker-list'*) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
+  *'worker-show'*) echo '{"ok":true,"result":{"state":"released","liveness":"exited"}}' ;;
+  *'worktree rm'*) exit 0 ;;
+  *) echo '{"ok":true,"result":{}}' ;;
 esac
 FAKE
 # Fake lsof: no holders. wrap-up keeps a stale worktree when lsof is missing, and Linux hosts may not ship it.
@@ -149,14 +153,14 @@ check 'worktree whose only change is an untracked continual-learning.json remove
 check 'worktree with untracked continual-learning.json and an image removed' test ! -d "$tmp/wt-cl-image"
 check 'worktree with modified continual-learning.json alone removed' test ! -d "$tmp/wt-cl-mod"
 check 'worktree with modified continual-learning.json and an image removed' test ! -d "$tmp/wt-cl-mod-image"
-check 'untracked continual-learning.json plus another file stays dirty' test -d "$tmp/wt-cl-untracked-other"
-check 'modified continual-learning.json plus another file stays dirty' test -d "$tmp/wt-cl-mod-other"
+check 'untracked continual-learning.json plus another file is archived and removed' test ! -d "$tmp/wt-cl-untracked-other"
+check 'modified continual-learning.json plus another file is archived and removed' test ! -d "$tmp/wt-cl-mod-other"
 check 'unmerged old branch: local copy deleted by --apply, origin copy kept as the last copy' local_gone_origin_kept stale-old
 check 'stale section printed' grep -Fxq 'Stale (eligible for cleanup)' "$tmp/out1"
 check 'stale line has branch, age and subject' grep -Eq '^  stale-old, [0-9]+h old, work on stale-old$' "$tmp/out1"
 check 'open PR branch not listed as stale' bash -c "! grep -q 'open-pr, ' '$tmp/out1'"
 check 'fresh unmerged branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/fresh && ! grep -q 'fresh, ' '$tmp/out1'"
-check 'dirty worktree branch kept and not stale' bash -c "git show-ref --verify --quiet refs/heads/stale-dirty && test -d '$tmp/wt-stale-dirty' && ! grep -q 'stale-dirty, ' '$tmp/out1'"
+check 'dirty worktree removed once scratch is archived and stale local branch deleted' bash -c "test ! -d '$tmp/wt-stale-dirty' && ! git show-ref --verify --quiet refs/heads/stale-dirty && git ls-remote --exit-code --heads origin stale-dirty >/dev/null"
 check 'stale branch with screenshot-only worktree listed' grep -Eq '^  stale-shot, ' "$tmp/out1"
 check 'archive branch kept on apply' kept 'archive/2026-11-07/snapshot'
 check 'archive branch not listed stale on apply' bash -c "! grep -Eq '^  archive/2026-11-07/snapshot,' '$tmp/out1'"
@@ -170,7 +174,7 @@ bash "$root/script/wrap-up.sh" --repo "$tmp/repo" --apply --stale > "$tmp/out2" 
 check 'legacy --stale flag still accepts apply and deletes the stale local branch, keeping the origin copy' local_gone_origin_kept legacy-old
 check '--stale keeps open PR branch' kept open-pr
 check '--stale keeps fresh branch' kept fresh
-check '--stale keeps dirty worktree branch' kept stale-dirty
+check '--stale keeps dirty worktree remote branch after archiving worktree' local_gone_origin_kept stale-dirty
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

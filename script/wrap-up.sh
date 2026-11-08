@@ -1009,6 +1009,20 @@ last_copy() { # <sha> <branch>
 only_ignorable_changes() {
   ! grep -qviE '^\?\? .*\.(png|jpe?g|gif|webp)"?$|^\?\? (.*/)?\.remote-heavy-lock-sha$|^.. \.cursor/hooks/state/continual-learning\.json$' "$1"
 }
+# A worktree HEAD is safe to drop when it is already in origin/main or named by a remote tracking branch.
+head_on_origin() {
+  git merge-base --is-ancestor "$1" origin/main 2>/dev/null && return 0
+  git branch -r --contains "$1" 2>/dev/null | grep -q .
+}
+archive_worktree_changes() { # <worktree-path> <archive-dir>
+  local wt=$1 dest=$2 untracked
+  mkdir -p "$dest" || return 1
+  if ! git -C "$wt" diff HEAD > "$dest/changes.patch" 2>/dev/null; then : > "$dest/changes.patch"; fi
+  git -C "$wt" diff --cached HEAD >> "$dest/changes.patch" 2>/dev/null || true
+  untracked=$(git -C "$wt" ls-files -o --exclude-standard 2>/dev/null) || return 1
+  if [ -n "$untracked" ]; then tar -czf "$dest/scratch.tgz" -C "$wt" $untracked 2>/dev/null || return 1; fi
+  return 0
+}
 # Holder checks return true for busy OR unknown, with the reason in $busy.
 # fuser checks inodes, not directory trees: enumerate descendants as well as the
 # target so a nested cwd or open file cannot be mistaken for an idle directory.
@@ -1183,9 +1197,19 @@ branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the i
   return 1
 }
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
+  local rc=0 orca_rm
   guard_paths "$1" "$2" "$3" || return
-  git worktree remove ${4:+"$4"} -- "$3" && return 0
-  echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
+  git worktree remove ${4:+"$4"} -- "$3" || {
+    echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
+  }
+  git worktree prune
+  if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
+    orca_rm=(worktree rm --worktree "path:$3")
+    [ "${4:-}" = --force ] && orca_rm+=(--force)
+    bounded "$orca_bin" "${orca_rm[@]}" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || echo "Warning: orca worktree rm failed for $3; git worktree is already gone." >&2
+  fi
+  return 0
 }
 # A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
 # whatever made it eligible, and an unreadable count keeps it too.
@@ -1293,7 +1317,8 @@ recent_worktree() {
   [ -n "$(find "$1" \( -name node_modules -o -name .next -o -name .git \) -prune -o -type f -mmin -"$min" -print -quit 2>/dev/null)" ]
 }
 process_worktree() {
-  local why='' force=''
+  local why='' force='' dest=''
+  reason='on a remote branch'
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why=$protected_reason
@@ -1301,25 +1326,21 @@ process_worktree() {
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
-  elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
-  elif [ -z "$branch" ] && [ "$pr_ok" -ne 1 ]; then why='PR lookup unavailable'
-  elif [ -z "$branch" ] && grep -Fxq -- "$head" "$tmp/open-heads"; then why='open PR head'
-  elif [ -z "$branch" ]; then
-    # A PR match alone must never discard a commit absent from all remote branches.
-    git for-each-ref --contains "$head" --format='%(refname)' refs/remotes > "$tmp/containing-remotes"
-    if [ ! -s "$tmp/containing-remotes" ]; then why='detached with unmerged commits'
-    elif git merge-base --is-ancestor "$head" origin/main; then reason='detached at merged commit'
-    elif grep -Fxq -- "$head" "$tmp/closed-heads"; then reason='detached at closed PR head'
-    else why='detached with unmerged commits'
+  elif ! head_on_origin "$head"; then why='commits not on any remote (last copy)'
+  elif [ -n "$branch" ] && local_unpushed "$branch"; then why='unpushed commits (or count unreadable)'
+  elif in_use "$path"; then why=$busy
+  elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then
+    dest=${WRAP_UP_WT_ARCHIVE_ROOT:-$HOME/.claude/state/wt-archive}/$(basename "$repo")_${path##*/}
+    printf 'Archive worktree %s to %s\n' "$path" "$dest"
+    if [ "$apply" -eq 1 ] && ! archive_worktree_changes "$path" "$dest"; then why='dirty, archive failed'
+    else reason='archived scratch'
     fi
-  elif ! eligible "refs/heads/$branch" "$branch"; then
-    why=$reason
-    [ "$reason" = 'open PR' ] || printf '%s\t%s\n' "$branch" "$path" >> "$tmp/stale-ok"
-  elif local_unpushed "$branch"; then why='unpushed commits (or count unreadable)'
+  elif git merge-base --is-ancestor "$head" origin/main 2>/dev/null; then
+    if [ -z "$branch" ]; then reason='detached at merged commit'; else reason=ancestor; fi
+  elif [ -z "$branch" ]; then reason='detached at published commit'
   fi
-  if [ -z "$why" ] && in_use "$path"; then why=$busy; fi
   [ ! -s "$tmp/status" ] || force=--force
   if [ -n "$why" ]; then
     keep "worktree $path" "$why"

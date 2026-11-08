@@ -31,6 +31,7 @@ case "$*" in
   *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"dispatched"},"terminal":{"cwd":"%s"}}}\n' "$FAKE_LIVE_CWD" ;;
   *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *worker-list*) printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false,"nextCursor":null}}}\n' "$(cat "$FAKE_DIR/workers")" ;;
+  *'worktree rm'*) exit 0 ;;
 esac
 FAKE
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"
@@ -38,7 +39,7 @@ printf '#!/usr/bin/env bash\necho init\n' > "$tmp/bin/ps"
 chmod +x "$tmp/bin/"*
 export PATH="$tmp/bin:$PATH" HOME="$tmp/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export ORCA_CLI_COMMAND="$tmp/bin/orca" FAKE_DIR="$tmp/fake" ORCA_TERMINAL_HANDLE=t-own
-export WRAP_UP_CLONE_ROOT="$tmp/no-clones" WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones" WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose" WRAP_UP_WT_ARCHIVE_ROOT="$tmp/wt-archive" WRAP_UP_RECENT_MIN=0
 export WRAP_UP_STATE_DIR="$tmp/no-state" WRAP_UP_RECENT_MIN=0
 
 git init -q --bare "$tmp/origin"
@@ -70,13 +71,13 @@ sort "$FAKE_DIR/closed.log" | cmp - <(printf '%s\n' t-dirty t-shell) || fail "wr
 [ ! -d "$tmp/w-shell" ] || fail 'worktree with only an unowned shell survived'
 echo 'ok fleet host closes a terminal with no dispatch and no agent, then removes its worktree'
 
-for keep in w-agent w-live w-dirty w-recent lead-x w-own; do
+for keep in w-agent w-live w-recent lead-x w-own; do
   [ -d "$tmp/$keep" ] || fail "$keep was removed"
 done
-[ -f "$tmp/w-dirty/untracked" ] || fail 'uncommitted work lost'
+[ ! -d "$tmp/w-dirty" ] || fail 'dirty published worktree survived apply'
+grep -Fq "Archive worktree $tmp/w-dirty" "$tmp/output" || fail 'dirty worktree archive missing'
 for pair in 't-agent:running agent' 't-live:live dispatch' 't-recent:recent output' 't-lead:lead worktree' 't-own:own terminal' 't-main:main checkout'; do
   grep -Fq "Kept terminal ${pair%%:*} (local, ${pair#*:})" "$tmp/output" || fail "no kept reason for ${pair%%:*}"
 done
 grep -Fq "Kept worktree $tmp/w-agent (active or unknown Orca terminal)" "$tmp/output" || fail 'agent worktree reason missing'
-grep -Fq "Kept worktree $tmp/w-dirty (dirty)" "$tmp/output" || fail 'dirty worktree reason missing'
-echo 'ok running agent, live dispatch, recent output, lead, own, main checkout and uncommitted work all kept with a reason'
+echo 'ok running agent, live dispatch, recent output, lead, own, main checkout kept; dirty scratch archived off a published head'
