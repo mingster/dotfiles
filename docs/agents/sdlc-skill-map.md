@@ -25,7 +25,7 @@ Which role owns each SDLC stage and recurring job, which Matt Pocock or team ski
 | Session handoff and startup | Worker at budget or Elon at session start | `handoff`, `recall`, `ketchup` | Workers at 80% context or 120 turns write a `handoff` artifact; Elon runs `recall` then `ketchup` at session start. |
 | Deploy and staging review | `release-manager`, `qa-sdet` | `deploy`, `staging-review` | Staging deploys daily at 19:00 Taiwan time, followed immediately by `/staging-review` and full regression; page-by-page review runs weekly; production deploys on the owner's explicit go. |
 | Wrap-up | Elon / host schedule | `wrap-up` (`script/wrap-up.sh`) | Scheduled every 10 minutes on each host (`--scheduled`) and run after merges to clear finished worktrees, branches, terminals and temp files. |
-| Team audit and weekly update | Orca schedule / `architect-pm` | `team-audit` (`script/team-audit.sh`, `bin/team-audit-metrics.ts`), `script/weekly-update.sh` | Orca runs the audit script and five metrics weekly for one line; `architect-pm` runs the full `/team-audit` skill on the owner's word; `weekly-update.sh` opens three upstream update PRs for owner review. |
+| Team audit and weekly update | Orca schedule / `architect-pm` | `team-audit` (`script/team-audit.sh`, `script/team-audit-metrics.ts`), `script/weekly-update.sh` | Orca runs the audit script and five metrics weekly for one line; `architect-pm` runs the full `/team-audit` skill on the owner's word; `weekly-update.sh` opens three upstream update PRs for owner review. |
 
 ## Pre-build grill gate (owner rule 2026-11-06)
 

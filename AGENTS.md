@@ -62,7 +62,8 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 | `script/setup-antigravity.sh` | Links Antigravity IDE settings and keybindings |
 | `script/setup-obsidian.sh` | Installs Obsidian + MEGAcmd; creates vault; configures sync; writes obsidian MCP to `~/.claude/settings.local.json` |
 | `script/init-agent-project.sh` | Not called from `install.sh`. Run per project to scaffold `docs/agents/` for the engineering skills |
-| `script/sync-team-skills.sh` | Not called from `install.sh`. Writes the team skills (elon, ceo, crew, tl, deploy) from `templates/agent-team` into a project as committed generated copies; `--check` fails on drift. See `docs/agents/skills-inventory.md` |
+| `script/agent-team.sh` | Not called from `install.sh`. `machine` sets up a host, `project <dir>` adopts a project and writes the team skills from `templates/agent-team` as committed generated copies, `check <dir>` fails on drift. See `docs/agents/team-reference.md` |
+| `script/team-audit-metrics.ts` | Not called from `install.sh`. `bun script/team-audit-metrics.ts --repo <owner/name>` prints the weekly team audit metrics; `script/team-audit.sh` runs it with `TEAM_AUDIT_RUN_METRICS=1` |
 | `script/new-coordinator.sh` | Not called from `install.sh`. Sets up a Mac as the coordinator: brew bundle, clones, state restore, LaunchAgents, Orca data restore, health checks, then prints the owner only steps. Repo and host list come from the private `agent-state` repo. `--dry-run` first |
 | `script/secrets-pack.sh`, `script/secrets-unpack.sh` | Not called from `install.sh`. Move secrets between Macs in an AES-256 `hdiutil` image. Passphrase typed at a prompt, never an argument |
 
