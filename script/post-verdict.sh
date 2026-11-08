@@ -48,4 +48,9 @@ body="Verdict: $result head=$head verifier=$verifier author=$author"
 
 if [ "$print_only" = true ]; then printf '%s\n' "$body"; exit 0; fi
 printf '%s\n' "$body" | gh pr comment "$pr" --repo "$repo" --body-file - >/dev/null
+status_state=failure; [ "$result" = FAIL ] || status_state=success
+gh api -X POST "repos/$repo/statuses/$head" -f state="$status_state" -f context=review -f description="Verdict: $result ($verifier)" >/dev/null
+if [ "$status_state" = success ] && [ "${repo##*/}" = dotfiles ]; then
+  gh pr merge "$pr" --repo "$repo" --auto --merge --match-head-commit "$head" >/dev/null 2>&1 || true
+fi
 echo "post-verdict: posted $result for PR $pr at ${head:0:12}"

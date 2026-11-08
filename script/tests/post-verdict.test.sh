@@ -32,6 +32,7 @@ h=$(new_pr 41); post_checks 41 "$h"
 out=$(verdict 41 --result PASS --head "$h" --verifier ctx_verify --author ctx_author); code=$?
 say "$code" "PASS: helper posts" "$out"
 [ "$(first_line 41)" = "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author" ] && ok "PASS: first line is exactly the parsed form" || bad "PASS line: $(first_line 41)"
+grep -Fq "gh api -X POST repos/example/repo/statuses/$h -f state=success -f context=review" "$MF_GH_LOG" && ok "PASS: posts review success commit status" || bad "PASS review status missing"
 out=$(merge 41 "$h"); code=$?
 [ "$code" -eq 0 ] && grep -q '^MERGED' <<<"$out" && ok "PASS: lead-merge accepts it" || bad "PASS merge: $out"
 
@@ -46,6 +47,7 @@ out=$(merge 42 "$h" --verify-command "bun test a.test.ts"); code=$?
 # FAIL is read as a FAIL: next to a later PASS it conflicts instead of being ignored
 h=$(new_pr 43); post_checks 43 "$h"
 verdict 43 --result FAIL --head "$h" --verifier ctx_other --author ctx_author >/dev/null
+grep -Fq "gh api -X POST repos/example/repo/statuses/$h -f state=failure -f context=review" "$MF_GH_LOG" && ok "FAIL: posts review failure commit status" || bad "FAIL review status missing"
 mf_orca_add_worker run_a ctx_other completed /w/o
 out=$(merge 43 "$h"); code=$?
 [ "$code" -eq 1 ] && ! grep -q 'ignored Verdict' <<<"$out" && ok "FAIL: parsed, not named as ignored" || bad "FAIL alone: $out"
@@ -93,6 +95,12 @@ out=$(bash "$cfg/post-verdict.sh" --repo example/repo --pr 49 --result PASS --he
 printf '{"coordinator_ids":["term_coord"]}\n' > "$cfg/lead-merge.local.json"
 out=$(bash "$cfg/post-verdict.sh" --repo example/repo --pr 49 --result PASS --head "$h" --verifier ctx_verify --author term_coord 2>&1); code=$?
 say "$code" "T544: a configured coordinator id is accepted" "$out"
+
+# #717: PASS on dotfiles posts review success status and arms gh pr merge --auto
+h=$(new_pr 50)
+out=$(bash "$here/post-verdict.sh" --repo example/dotfiles --pr 50 --result PASS --head "$h" --verifier ctx_verify --author ctx_author 2>&1); code=$?
+say "$code" "dotfiles PASS: posts verdict" "$out"
+grep -Fq "gh pr merge 50 --repo example/dotfiles --auto --merge --match-head-commit $h" "$MF_GH_LOG" && ok "dotfiles PASS: arms auto-merge at head" || bad "dotfiles auto-merge missing"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

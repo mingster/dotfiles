@@ -393,7 +393,7 @@ start_post_publication_jobs() {
   fi
   local head_checks=${COORDINATOR_PUBLICATION_HEAD_CHECKS:-$_script_dir/head-checks.sh}
   local on_done=${COORDINATOR_PUBLICATION_ON_WORKER_DONE:-$_script_dir/on-worker-done.sh}
-  if ! head_checks_lock_held "$repo_root" && ! checks_receipt_at_pr_head; then
+  if [ "${want_repo##*/}" != dotfiles ] && ! head_checks_lock_held "$repo_root" && ! checks_receipt_at_pr_head; then
     (bash "$head_checks" --repo "$repo_root" --pr "$pr_number" >/dev/null 2>&1 &) || true
   fi
   if [ -n "$pub_run" ] && { [ -n "$pub_author_family" ] || { [ -n "$pub_author_provider" ] && [ -n "$pub_author_model" ]; }; } \

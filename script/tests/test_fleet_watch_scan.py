@@ -884,6 +884,20 @@ class IssueScanPass(unittest.TestCase):
         _, _, starts, _ = self.run_pass(state, prs_by_repo=prs, workflow_watch_prior=prior)
         self.assertEqual(len(starts), 1)
 
+    def test_dotfiles_skips_head_checks_and_reworks_on_actions_plus_review_fail(self):
+        head = '9' * 40
+        row = pr(21, head=head, checks=[
+            {'context': 'script-tests', 'conclusion': 'SUCCESS'},
+            {'context': 'shellcheck', 'conclusion': 'SUCCESS'},
+            {'context': 'review', 'conclusion': 'FAILURE'},
+        ])
+        self.assertIsNone(fw.build_head_checks_command(
+            {'issue_scan': {'repo_roots': {'owner/dotfiles': '/tmp/dotfiles'}}},
+            'owner/dotfiles', row,
+        ))
+        self.assertTrue(fw.checks_pass_at_head(row))
+        self.assertTrue(fw.rework_needed_at_head(row, {}, 'owner/dotfiles'))
+
 
 if __name__ == '__main__':
     unittest.main()

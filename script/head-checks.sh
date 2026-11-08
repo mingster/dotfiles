@@ -4,14 +4,7 @@ set -euo pipefail
 # Claim the machine budget for the whole checklist, across repositories and tools.
 # The marker is consumed here so a nested head-checks invocation gates normally.
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
-  [ -z "${HEAD_CHECKS_SLOTS:-}" ] || [[ "$HEAD_CHECKS_SLOTS" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_SLOTS must be a positive number' >&2; exit 1; }
-  # The type check can grow to 9 GB, so the whole run declares that much (MiB) unless told otherwise.
-  [ -z "${HEAD_CHECKS_MEMORY_MB:-}" ] || [[ "$HEAD_CHECKS_MEMORY_MB" =~ ^[1-9][0-9]*$ ]] || { echo 'head-checks: HEAD_CHECKS_MEMORY_MB must be a positive number' >&2; exit 1; }
-  exec python3 "$script_dir/heavy-gate.py" gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}" -- \
-    env HEAD_CHECKS_GATE_HELD=1 bash "$0" "$@"
-fi
-unset HEAD_CHECKS_GATE_HELD
+orig_args=("$@")
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
@@ -38,6 +31,19 @@ done
 [ -z "$override" ] || override=$(cd "$(dirname "$override")" && printf "%s/%s" "$PWD" "$(basename "$override")")
 case "$pr" in *[!0-9]*) usage "--pr must be numeric" ;; esac
 repo=$(cd "$repo" && git rev-parse --show-toplevel)
+remote=$(git -C "$repo" config --get remote.origin.url || true)
+name=$(basename "${remote:-$repo}" .git)
+[[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
+if [ "$name" != dotfiles ] && [ "${HEAD_CHECKS_GATE_HELD:-}" != 1 ]; then
+  [ -z "${HEAD_CHECKS_SLOTS:-}" ] || [[ "$HEAD_CHECKS_SLOTS" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
+  # The type check can grow to 9 GB, so the whole run declares that much (MiB) unless told otherwise.
+  [ -z "${HEAD_CHECKS_MEMORY_MB:-}" ] || [[ "$HEAD_CHECKS_MEMORY_MB" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_MEMORY_MB must be a positive number"
+  exec python3 "$script_dir/heavy-gate.py" gate --head-checks --memory-mb "${HEAD_CHECKS_MEMORY_MB:-9216}" -- \
+    env HEAD_CHECKS_GATE_HELD=1 bash "$0" "${orig_args[@]}"
+fi
+unset HEAD_CHECKS_GATE_HELD
+slots="${HEAD_CHECKS_SLOTS:-2}"
+[[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
 log=$(mktemp); receipt=$(mktemp)
 # Fixed cap on the posted receipt; GitHub rejects a comment body over 65536 characters.
 receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
@@ -199,11 +205,6 @@ if [ -z "$explicit_base" ] && git -C "$repo" remote get-url origin >/dev/null 2>
   git -C "$repo" fetch -q origin main >> "$log" 2>&1 || true
   main_sha=$(git -C "$repo" rev-parse --verify -q "origin/main^{commit}" || printf '%s' "$pr_base")
 fi
-remote=$(git -C "$repo" config --get remote.origin.url || true)
-name=$(basename "${remote:-$repo}" .git)
-[[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"
-slots="$HEAD_CHECKS_SLOTS"
-[[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
 wait_seconds="${HEAD_CHECKS_WAIT_SECONDS:-600}"
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_WAIT_SECONDS must be a whole number"
 mkdir -p "$HOME/orca/workspaces/$name"
@@ -257,49 +258,18 @@ if ! merge_out=$(git -C "$worktree" -c user.name=head-checks -c user.email=head-
   exit 1
 fi
 printf 'Trial merge: head %s with main %s\n' "$sha" "$main_sha" >> "$log"
+config="${override:-$worktree/.agents/head-checks.conf}"
+[ -f "$config" ] || usage "missing .agents/head-checks.conf"
+if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
+printf "Checklist: %s\n" "$checklist_sum" >> "$log"
 changed=$(mktemp)
 : > "$changed.unchecked"
 git -C "$worktree" diff --no-renames --name-only -z "$base...$sha" -- > "$changed" 2>> "$log" || usage "cannot determine changed paths"
 files=""
-file_count=0
 while IFS= read -r -d '' file; do
-  file_count=$((file_count+1))
   printf -v quoted '%q' "$file"
   files="$files $quoted"
 done < "$changed"
-is_doc_path() {
-  case "$1" in
-    *.md) ;;
-    *) return 1 ;;
-  esac
-  case "$1" in
-    .claude/*|*/.claude/*|.agents/*|*/.agents/*|templates/*|script/*|.github/*)
-      return 1 ;;
-  esac
-  case "$1" in
-    AGENTS.md|*/AGENTS.md|CLAUDE.md|*/CLAUDE.md|docs/agents/agent-team-architecture.md)
-      return 1 ;;
-  esac
-  [ "${1#docs/intent/}" != "$1" ] && return 1
-  return 0
-}
-docs_lane=0
-if [ -z "$override" ] && [ "$file_count" -gt 0 ] && [ -f "$worktree/.agents/head-checks-docs.conf" ]; then
-  docs_lane=1
-  while IFS= read -r -d '' file; do
-    is_doc_path "$file" || { docs_lane=0; break; }
-  done < "$changed"
-fi
-if [ -n "$override" ]; then
-  config="$override"
-elif [ "$docs_lane" = 1 ]; then
-  config="$worktree/.agents/head-checks-docs.conf"
-else
-  config="$worktree/.agents/head-checks.conf"
-fi
-[ -f "$config" ] || usage "missing .agents/head-checks.conf"
-if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
-printf "Checklist: %s\n" "$checklist_sum" >> "$log"
 # The base commit's .claude/deploy-guard-paths (one glob per line) lists paths a deploy refuses; a PR cannot add one.
 if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/null); then
   while IFS= read -r -d '' file; do
