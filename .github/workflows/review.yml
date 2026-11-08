@@ -1,0 +1,27 @@
+name: Review
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+concurrency:
+  group: review-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+jobs:
+  cold-review:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    runs-on: [self-hosted, review]
+    timeout-minutes: 30
+    steps:
+      # A workflow_run checks out main, so a PR cannot change its own reviewer.
+      - uses: actions/checkout@v4
+      - name: Review the PR through the usage and heavy gates
+        env:
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GITHUB_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
+          REVIEW_POST_STATUS: "1"
+        run: |
+          export PATH="$HOME/.node_modules/bin:$PATH"
+          python3 "$HOME/dotfiles/script/usage-gate.py" --provider claude check
+          bash "$HOME/dotfiles/script/heavy-gate.sh" --memory-mb 1024 -- \
+            bash "$HOME/dotfiles/script/pr-review.sh" "$PR" "$HEAD_SHA"

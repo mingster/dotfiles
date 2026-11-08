@@ -26,10 +26,12 @@ case1() {
 }
 
 case2() {
-  local wf=$root/.github/workflows/script-tests.yml
+  local wf=$root/.github/workflows/checks.yml
   grep -q 'runs-on: ubuntu-latest' "$wf" || fail "case2 missing ubuntu-latest"
   grep -Eq 'self-hosted|runs-on:.*\[.*self' "$wf" && fail "case2 must not use self-hosted runners"
-  ok "case2 workflow uses github hosted ubuntu runners only"
+  grep -q 'script-tests:' "$wf" || fail "case2 missing script-tests job"
+  grep -q 'shellcheck:' "$wf" || fail "case2 missing shellcheck job"
+  ok "case2 Checks workflow uses github hosted ubuntu runners only"
 }
 
 case3() {
@@ -101,15 +103,13 @@ case5_py_runner() {
   ok "case5 runs *.test.py files directly and maps script/*.py to them"
 }
 
-case6_on_worker_done() {
+case6_pr_review() {
   local out
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
-    bash "$root/script/select-changed-script-tests.sh" --list-only script/on-worker-done.sh 2>&1)
-  grep -Fq 'Selected: script/tests/on-worker-done.test.sh' <<<"$out" \
-    || fail "case6 must select on-worker-done.test.sh"
-  grep -Fq 'Selected: script/tests/test_on_worker_done.py' <<<"$out" \
-    || fail "case6 must select test_on_worker_done.py"
-  ok "case6 on-worker-done maps shell and python tests"
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-review.sh 2>&1)
+  grep -Fq 'Selected: script/tests/pr-review.test.sh' <<<"$out" \
+    || fail "case6 must select pr-review.test.sh"
+  ok "case6 pr-review maps its shell test"
 }
 
 case7_lead_merge_prefix() {
@@ -146,10 +146,10 @@ case10_script_plus_already_selected_test() {
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
   [ "${count:-0}" -eq 7 ] || fail "case10 want Script tests: 7 got ${count:-0}"
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
-    bash "$root/script/select-changed-script-tests.sh" --list-only script/on-worker-done.sh script/tests/test_on_worker_done.py 2>&1)
-  grep -Fq 'Fallback:' <<<"$out" && fail "case10 on-worker-done mix must not fall back"
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-review.sh script/tests/pr-review.test.sh 2>&1)
+  grep -Fq 'Fallback:' <<<"$out" && fail "case10 pr-review mix must not fall back"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 2 ] || fail "case10 on-worker-done want Script tests: 2 got ${count:-0}"
+  [ "${count:-0}" -eq 1 ] || fail "case10 pr-review want Script tests: 1 got ${count:-0}"
   ok "case10 script plus already-selected test avoids full-suite fallback"
 }
 
@@ -266,7 +266,7 @@ case3
 case3_skip_reasons
 case4_test_py
 case5_py_runner
-case6_on_worker_done
+case6_pr_review
 case7_lead_merge_prefix
 case_fleet_watch_config_example
 case8_full_suite_fallback

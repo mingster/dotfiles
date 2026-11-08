@@ -1,0 +1,1 @@
+- Review starts in GitHub Actions when the unified `Checks` workflow succeeds: merge `script-tests` and `shellcheck` into `.github/workflows/checks.yml`, add `review.yml`, and port generic `script/pr-review.sh` with `usage-gate.py` cross family pick. Remove coordinator publication reviewer dispatch and `on-worker-done.sh` (#717).

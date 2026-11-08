@@ -925,13 +925,9 @@ say "$code" "publishes with author flags" "$out"
 sleep 1
 grep -q 'head-checks --repo' "$COORDINATOR_PUBLICATION_POST_LOG" && ok "publication starts head-checks in background" \
   || bad "missing head-checks start: $(cat "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null)"
-grep -q 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" && ok "publication starts reviewer in parallel" \
-  || bad "missing on-worker-done start"
-stamp=$(find "$COORDINATOR_PUBLICATION_STATE_DIR/post-push" -name '*.env' 2>/dev/null | head -1)
-[ -n "$stamp" ] && [ -f "$stamp" ] && ok "post-push stamp lives in coordinator state" \
-  || bad "missing coordinator post-push stamp under $COORDINATOR_PUBLICATION_STATE_DIR"
+! grep -q 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" && ok "publication does not start on-worker-done reviewer" \
+  || bad "unexpected on-worker-done start"
 hc_count=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" || true)
-owd_count=$(grep -c 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" || true)
 pp_pr=$(jq -s '[.[] | select(.headRefName=="feat-post-push")][0]' "$MF_GH_DIR"/pr-*.json)
 pp_num=$(jq -r '.number' <<<"$pp_pr")
 pp_head=$(jq -r '.headRefOid' <<<"$pp_pr")
@@ -943,9 +939,7 @@ out=$(pub --keep-receipt feat-post-push --run run_x --author-family claude --fro
 say "$code" "second publication is idempotent for post-push jobs" "$out"
 sleep 1
 hc_after=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null || true)
-owd_after=$(grep -c 'on-worker-done' "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null || true)
 [ "$hc_after" -eq "$hc_count" ] && ok "Checks receipt prevents duplicate head-checks" || bad "duplicate head-checks lines"
-[ "$owd_after" -eq "$owd_count" ] && ok "post-push stamp prevents duplicate reviewer" || bad "duplicate reviewer lines"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
