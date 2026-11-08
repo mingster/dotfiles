@@ -539,6 +539,9 @@ TIER2_SKILLS = sorted(
 
 TEMPLATE_SYNC_FILES = [
     ".claude/model-routing.md",
+    "bin/changelog-compile.sh",
+    "bin/changelog-compile.test.sh",
+    "changelog.d/README.md",
 ]
 
 # Copied from the template only when missing. Once present the project owns them: a copy that
@@ -547,9 +550,6 @@ TEMPLATE_SEED_FILES = [
     "docs/agents/team.md",
     "docs/agents/elon-dispatch.md",
     "docs/agents/release-manager-work.md",
-    "bin/changelog-compile.sh",
-    "bin/changelog-compile.test.sh",
-    "changelog.d/README.md",
 ]
 
 GITIGNORE_ENTRIES = [
@@ -1183,7 +1183,7 @@ def removed_file_in_rule(rule):
     for rel in rels:
         if not os.path.lexists(os.path.join(target, rel)):
             continue
-        pattern = r"(?:^|[\s(=:'\"])(?:\./|\$CLAUDE_PROJECT_DIR/|\"\$CLAUDE_PROJECT_DIR\"/)?" + re.escape(rel)
+        pattern = r"(?:^|[\s(=:'\"])(?:\./|\$CLAUDE_PROJECT_DIR/|\$\{CLAUDE_PROJECT_DIR\}/|\"\$CLAUDE_PROJECT_DIR\"/|\"\$\{CLAUDE_PROJECT_DIR\}\"/)?" + re.escape(rel)
         if re.search(pattern, rule):
             return rel
     return None

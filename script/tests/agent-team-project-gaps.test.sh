@@ -3,7 +3,7 @@
 # 1. a forked model pin in .claude/model-routing.md moves to .orca/presets.project.json and the
 #    team-facts ## Model routing section before the file is rewritten, idempotently, while a row
 #    copied from an older template is not taken for a pin;
-# 2. template files the project owns (seeded docs, .agent/skills) print "skip (project owned)" and
+# 2. template files the project owns (team docs, .agent/skills) print "skip (project owned)" and
 #    are left alone;
 # 3. an extracted allow rule naming a file the same run removes is dropped with a printed line.
 # shellcheck source=script/tests/lib/asdf-pin.sh
@@ -127,20 +127,39 @@ fi
 
 # Gap 3: no allow rule names the removed project env-peek.py; the shared and unrelated rules stay.
 if [ ! -e "$PROJ/.claude/bin/env-peek.py" ] \
+  && grep -qF 'drop .claude/settings.project.json permissions.allow: Bash(${CLAUDE_PROJECT_DIR}/.claude/bin/env-peek.py *) (names' <<<"$out" \
+  && grep -qF 'drop .claude/settings.project.json permissions.allow: Bash($CLAUDE_PROJECT_DIR/.claude/bin/env-peek.py *) (names' <<<"$out" \
   && grep -qF 'drop .claude/settings.project.json permissions.allow: Bash(.claude/bin/env-peek.py *) (names .claude/bin/env-peek.py, which this run removes)' <<<"$out" \
   && python3 - "$PROJ/.claude/settings.project.json" "$PROJ/.claude/settings.json" <<'PY'
 import json, sys
 proj = json.load(open(sys.argv[1]))["permissions"]["allow"]
 compiled = json.load(open(sys.argv[2]))["permissions"]["allow"]
 for allow in (proj, compiled):
-    assert "Bash(.claude/bin/env-peek.py *)" not in allow, allow
+    for form in (".claude/bin", "$CLAUDE_PROJECT_DIR/.claude/bin", "${CLAUDE_PROJECT_DIR}/.claude/bin"):
+        assert f"Bash({form}/env-peek.py *)" not in allow, (form, allow)
     assert 'Bash(python3 "$HOME/.claude/bin/env-peek.py" *)' in allow, allow
     assert "Bash(./bin/project-check.sh*)" in allow, allow
 PY
 then
-  ok "gap 3: allow rule for the removed env-peek.py copy is dropped with a printed line"
+  ok "gap 3: allow rules (plain, \$CLAUDE_PROJECT_DIR, \${CLAUDE_PROJECT_DIR}) for the removed env-peek.py copy are dropped with a printed line"
 else
-  bad "gap 3: allow rule for the removed env-peek.py copy is dropped with a printed line"
+  bad "gap 3: allow rules (plain, \$CLAUDE_PROJECT_DIR, \${CLAUDE_PROJECT_DIR}) for the removed env-peek.py copy are dropped with a printed line"
+fi
+
+# The changelog scripts and README stay template managed: a stale copy is refreshed, not skipped.
+managed_ok=1
+for rel in bin/changelog-compile.sh bin/changelog-compile.test.sh changelog.d/README.md; do
+  echo "stale" >> "$PROJ/$rel"
+done
+out2="$(timeout 300 bash "$SCRIPT" project "$PROJ" --project-name gaps 2>&1)"
+for rel in bin/changelog-compile.sh bin/changelog-compile.test.sh changelog.d/README.md; do
+  cmp -s "$TPL/$rel" "$PROJ/$rel" || managed_ok=0
+  grep -qxF "skip (project owned): $rel" <<<"$out2" && managed_ok=0
+done
+if [ "$managed_ok" -eq 1 ]; then
+  ok "changelog scripts and README stay template managed, a stale copy is refreshed"
+else
+  bad "changelog scripts and README stay template managed, a stale copy is refreshed"
 fi
 
 echo "pass=$pass fail=$fail"

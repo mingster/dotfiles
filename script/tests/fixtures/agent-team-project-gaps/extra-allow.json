@@ -1,5 +1,7 @@
 [
   "Bash(.claude/bin/env-peek.py *)",
+  "Bash($CLAUDE_PROJECT_DIR/.claude/bin/env-peek.py *)",
+  "Bash(${CLAUDE_PROJECT_DIR}/.claude/bin/env-peek.py *)",
   "Bash(python3 \"$HOME/.claude/bin/env-peek.py\" *)",
   "Bash(./bin/project-check.sh*)"
 ]
