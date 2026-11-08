@@ -3,7 +3,7 @@
 ## Team
 
 - Roles, reporting and the secrets rule: `~/dotfiles/templates/agent-team/docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
-- Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Merge is GitHub auto merge (until auto merge is live, the interim merge is `lead-merge.sh` by the author worker or Elon).
+- Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Merge follows `~/dotfiles/README.md` section 3.
 - release-manager owns every release end to end (staging, gates, production after the owner go) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with owner approval on the issue.
 
 
