@@ -9,6 +9,8 @@ die() { refuse "$*"; }
 
 # shellcheck disable=SC1091
 . "$ship_dir/lib/protected-paths.sh"
+# shellcheck disable=SC1091
+. "$ship_dir/lib/pr-review-gates.sh"
 
 repo="" pr="" dry_run=false
 while [ $# -gt 0 ]; do
@@ -21,7 +23,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run]"
 
-info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefOid,baseRefOid,comments,statusCheckRollup) \
+info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
   || refuse "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
 
@@ -45,11 +47,9 @@ while IFS= read -r flagged && IFS= read -r line; do
   if [[ "$line" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=([0-9a-f]{40})\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
     if [ "$flagged" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then continue; fi
     verifier="${BASH_REMATCH[3]}"
-    [ "$verifier" != "${BASH_REMATCH[4]}" ] || refuse "author cannot supply verifier verdict"
-    if ! worker_out=$("${ORCA_CLI_COMMAND:-orca}" orchestration worker-show --dispatch "$verifier" --json 2>/dev/null) \
-      || ! jq -e '.ok == true' <<<"$worker_out" >/dev/null 2>&1; then
-      refuse "verdict verifier $verifier is not a known dispatch"
-    fi
+    author_id="${BASH_REMATCH[4]}"
+    [ "$verifier" != "$author_id" ] || refuse "author cannot supply verifier verdict"
+    pr_review_gate_verifier_known "$verifier" "" refuse
     verdict_status="${BASH_REMATCH[1]}"
     verdict_head="${BASH_REMATCH[2]}"
     break
@@ -60,6 +60,11 @@ case "$verdict_status" in
   PASS|PASS+NOTES) ;;
   *) refuse "newest Verdict on PR $pr is $verdict_status" ;;
 esac
+
+pr_body=$(field .body)
+pr_review_gate_self_review "$pr_body" "$head" refuse
+pr_review_gate_coordinator_verdict "$verifier" "$author_id" "$pr_body" refuse
+pr_review_gate_same_agent_model "$verifier" "$pr_body" refuse
 
 # 4. Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
 main_fetched=false

@@ -26,7 +26,7 @@ Docs prose and unrelated scripts.
 timeout 300 bash script/tests/brief-lint.test.sh
 
 ## Finish
-Commit locally, then send worker_done.
+Self-review against origin/main, then send worker_done.
 EOF
 }
 
@@ -52,7 +52,7 @@ Nothing else.
 Run tests.
 
 ## Finish
-Send worker_done.
+Self-review, then send worker_done.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/dash.md" 2>&1)
@@ -82,7 +82,7 @@ Unrelated files.
 Run tests.
 
 ## Finish
-Send worker_done.
+Self-review, then send worker_done.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/no-acc-item.md" 2>&1)
@@ -103,7 +103,7 @@ Refs dotfiles#717
 Run tests.
 
 ## Finish
-Send worker_done.
+Self-review, then send worker_done.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/no-oos.md" 2>&1)
@@ -124,7 +124,7 @@ Unrelated files.
 ## Verify
 
 ## Finish
-Send worker_done.
+Self-review, then send worker_done.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/no-verify.md" 2>&1)
@@ -174,7 +174,7 @@ Rewriting AGENT-BRIEF.md, team-audit.sh, docs prose, any <project-a> file, lead-
 With timeout 300 each: brief-lint.test.sh, the worker-startup test, `python3 -m pytest -q templates/agent-team/.claude/hooks/tests` (or unittest if that is what the folder uses), every script/tests/test_fleet_watch*.py, no-project-names.test.sh, shellcheck -x on the two shell scripts. Paste tails.
 
 ## Finish
-Rules: public repo, no project, host or people names; do not reformat unchanged lines; timeout on every command; set no git user config. Commit locally, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
+Self-review against origin/main, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/t8-brief.md" 2>&1)
@@ -197,7 +197,7 @@ Refs owner/app#21
 Run tests.
 
 ## Finish
-Send worker_done.
+Self-review, then send worker_done.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/bold.md" 2>&1)
@@ -215,13 +215,35 @@ Refs owner/app#21
 Run tests.
 
 ## Finish
-Send worker_done.
+Self-review, then send worker_done.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/bold-empty.md" 2>&1)
 ec=$?
 set -e
 if [ "$ec" -ne 0 ] && printf '%s' "$out" | grep -q 'missing Acceptance' && printf '%s' "$out" | grep -q 'missing Out of scope'; then ok; else bad "empty bold sections should fail (ec=$ec, out=$out)"; fi
+
+# 10. Finish without self-review step is refused
+cat >"$tmp/no-self-review.md" <<'EOF'
+Refs dotfiles#760
+
+## Acceptance
+- [ ] Gate enforces self-review.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run tests.
+
+## Finish
+Send worker_done only.
+EOF
+set +e
+out=$(bash "$lint" "$tmp/no-self-review.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Finish self-review step" ]; then ok; else bad "missing self-review in Finish (ec=$ec, out=$out)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

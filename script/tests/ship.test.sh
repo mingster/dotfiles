@@ -23,8 +23,8 @@ if [ "${1:-} ${2:-}" = "orchestration worker-show" ]; then
     esac
   done
   case "$id" in
-    ctx_verifier)
-      printf '{"ok":true,"result":{"dispatchId":"%s"}}\n' "$id"
+    ctx_verifier|ctx_author)
+      printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"sonnet"}}\n' "$id"
       exit 0 ;;
     *)
       printf '{"ok":false,"error":{"code":"dispatch_not_found","message":"Dispatch %s was not found."}}\n' "$id"
@@ -53,6 +53,12 @@ post_verdict() { # <pr> <result> <head> [verifier] [author]
   gh pr comment "$n" --repo example/repo --body "Verdict: $res head=$h verifier=$v author=$a" >/dev/null
 }
 
+mf_self_review() { # <pr> <head>
+  local pr_n=$1 head_sha=$2 f
+  f="$MF_GH_DIR/pr-${pr_n}.json"
+  jq --arg h "$head_sha" '.body = ((.body // "") + "\n\n## Self-review\n" + $h + "\n")' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
 run_ship() { # <args...>
   SHIP_OUT=$(bash "$here/ship.sh" "$@" 2>&1)
   SHIP_RC=$?
@@ -61,6 +67,7 @@ run_ship() { # <args...>
 # 1. PASS at head merges with --squash --match-head-commit and reads back MERGED
 mf_pr_add 1 feat-pass "Body"
 h1=$(jq -r .headRefOid "$MF_GH_DIR/pr-1.json")
+mf_self_review 1 "$h1"
 set_checks 1 "$green_checks"
 post_verdict 1 PASS "$h1"
 : > "$MF_GH_LOG"
@@ -90,6 +97,7 @@ new_base=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse origin/main)
 "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
 new_h2=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse feat-rebase)
 jq --arg h "$new_h2" --arg b "$new_base" '.headRefOid = $h | .baseRefOid = $b' "$MF_GH_DIR/pr-2.json" > "$MF_GH_DIR/pr-2.tmp" && mv "$MF_GH_DIR/pr-2.tmp" "$MF_GH_DIR/pr-2.json"
+mf_self_review 2 "$new_h2"
 set_checks 2 "$green_checks"
 post_verdict 2 "PASS+NOTES" "$old_h2"
 : > "$MF_GH_LOG"
@@ -111,6 +119,7 @@ echo changed >> "$MF_REPO/feat-diff.txt"
 "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
 new_h3=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse feat-diff)
 jq --arg h "$new_h3" '.headRefOid = $h' "$MF_GH_DIR/pr-3.json" > "$MF_GH_DIR/pr-3.tmp" && mv "$MF_GH_DIR/pr-3.tmp" "$MF_GH_DIR/pr-3.json"
+mf_self_review 3 "$new_h3"
 set_checks 3 "$green_checks"
 post_verdict 3 PASS "$old_h3"
 : > "$MF_GH_LOG"
@@ -166,6 +175,7 @@ fi
 # 7. Merge read-back not MERGED fails
 mf_pr_add 7 feat-readback "Body"
 h7=$(jq -r .headRefOid "$MF_GH_DIR/pr-7.json")
+mf_self_review 7 "$h7"
 set_checks 7 "$green_checks"
 post_verdict 7 PASS "$h7"
 mkdir -p "$MF_DIR/noop-merge"
@@ -191,6 +201,7 @@ fi
 # 8. Protected path without approval refuses (and with approval merges)
 mf_pr_add 8 feat-protected "Body" AGENTS.md
 h8=$(jq -r .headRefOid "$MF_GH_DIR/pr-8.json")
+mf_self_review 8 "$h8"
 set_checks 8 "$green_checks"
 post_verdict 8 PASS "$h8"
 : > "$MF_GH_LOG"
@@ -205,6 +216,7 @@ fi
 # 9. --dry-run merges nothing
 mf_pr_add 9 feat-dry "Body"
 h9=$(jq -r .headRefOid "$MF_GH_DIR/pr-9.json")
+mf_self_review 9 "$h9"
 set_checks 9 "$green_checks"
 post_verdict 9 PASS "$h9"
 : > "$MF_GH_LOG"
@@ -221,6 +233,7 @@ fi
 # 10. Unknown verifier dispatch refuses
 mf_pr_add 10 feat-forged "Body"
 h10=$(jq -r .headRefOid "$MF_GH_DIR/pr-10.json")
+mf_self_review 10 "$h10"
 set_checks 10 "$green_checks"
 post_verdict 10 PASS "$h10" ctx_forged ctx_author
 : > "$MF_GH_LOG"
@@ -263,6 +276,20 @@ if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
   ok "empty statusCheckRollup refuses"
 else
   bad "empty statusCheckRollup refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+# 13. Stale self-review refuses
+mf_pr_add 13 feat-stale-self "Body"
+h13=$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")
+mf_self_review 13 "0000000000000000000000000000000000000000"
+set_checks 13 "$green_checks"
+post_verdict 13 PASS "$h13"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 13
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "no self-review at head $h13" <<<"$SHIP_OUT"; then
+  ok "stale self-review refuses"
+else
+  bad "stale self-review refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
 echo "passed $pass, failed $fail"

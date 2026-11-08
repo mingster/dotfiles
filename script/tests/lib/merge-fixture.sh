@@ -158,6 +158,14 @@ d="$MF_ORCA_DIR"
 upd() { jq "$1" "$d/$2" > "$d/$2.tmp" && mv "$d/$2.tmp" "$d/$2"; }
 case "$1 ${2:-}" in
   "orchestration run-list") jq '. + {ok: true, result: .}' "$d/runs.json" ;;
+  "orchestration worker-show")
+    id=""; shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in --dispatch) id=${2:-}; shift 2 ;; *) shift ;; esac
+    done
+    jq -e --arg id "$id" '[.workers[]? | select(.dispatchId==$id)] | length > 0' "$d/workers.json" >/dev/null \
+      && printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"sonnet"}}\n' "$id" \
+      || { printf '{"ok":false}\n'; exit 1; } ;;
   "orchestration worker-list")
     run=""; limit=0; cursor=0; shift 2
     while [ $# -gt 0 ]; do

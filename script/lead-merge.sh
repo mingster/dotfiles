@@ -23,6 +23,8 @@ lead_merge_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 receipt_state_py="$lead_merge_dir/receipt-state.py"
 # shellcheck disable=SC1091
 . "$lead_merge_dir/lib/protected-paths.sh"
+# shellcheck disable=SC1091
+. "$lead_merge_dir/lib/pr-review-gates.sh"
 
 # Policy refusals are collected, not fatal, so one run reports every one (see refuse / flush_refusals).
 refusals=()
@@ -433,6 +435,9 @@ preflight_only=${LEAD_MERGE_PREFLIGHT_ONLY:-0}
 [ "$(field .baseRefName)" = main ] || refuse "PR $pr base is not main"
 [ "$(field .headRefOid)" = "$head" ] || refuse "PR $pr head is $(field .headRefOid), not $head"
 [ "$(field .mergeable)" = MERGEABLE ] || refuse "PR $pr is not MERGEABLE"
+if [ "$(field .headRefOid)" = "$head" ]; then
+  pr_review_gate_self_review "$(field .body)" "$head" refuse
+fi
 
 # 4. Head branch
 case "$(field .headRefName)" in main|staging|production) refuse "head branch $(field .headRefName) is not mergeable here" ;; esac
@@ -839,7 +844,9 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$text_only" 
       fi
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
-        if ! grep -Fxq -- "$verifier_id" <<<"$known_dispatches"; then bad_verdict "verdict verifier $verifier_id is not a known dispatch"; newest_seen=true; continue; fi
+        if ! pr_review_gate_verifier_known "$verifier_id" "$known_dispatches" bad_verdict; then newest_seen=true; continue; fi
+        if ! pr_review_gate_coordinator_verdict "$verifier_id" "$author_id" "$(field .body)" bad_verdict; then newest_seen=true; continue; fi
+        if ! pr_review_gate_same_agent_model "$verifier_id" "$(field .body)" bad_verdict; then newest_seen=true; continue; fi
         # author=unknown is the one literal allowed without a dispatch; any other author must be a known dispatch
         # or a configured coordinator id.
         if [ "$author_id" != unknown ] && ! grep -Fxq -- "$author_id" <<<"$known_dispatches" && ! is_coordinator "$author_id" "$verifier_id"; then

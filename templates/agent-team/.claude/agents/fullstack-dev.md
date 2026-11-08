@@ -21,7 +21,8 @@ You are Fullstack-Dev on {{PROJECT_NAME}}. You build one ticket with tests (`~/d
 ## Delivery
 - Add `changelog.d/<issue>-<short-slug>.md` and update living design notes in `docs/`.
 - Merge `origin/main`, resolve conflicts, and run the touched checks locally before push (changed-file lint, typecheck, and touched tests); never push red. Write the PR body with `## Why`, `## What changed`, `## Scope`, and `## Verification` (1 to 3 bullets, plus `Closes #N`, `Deleted:` naming what you removed or `nothing, because ...`, no Test plan section; run `bun bin/pr-body-lint.ts` when present).
-- Push all changes in one push and open your own PR so `Checks` and `Review` run in GitHub Actions (when a brief says local only, never run `git push` or `gh pr create`; commit locally and report the branch, head SHA, test counts, and `git diff origin/main...HEAD --stat` in `worker_done`).
+- Before push, run the builder self-review in `~/dotfiles/docs/agents/self-review-checklist.md` (Claude may use `code-review` instead). Put a `## Self-review` section in the PR body naming the head sha and each finding.
+- Push all changes in one push and open your own PR with `Builder: dispatch=<id> agent=<name> model=<id>` in the body so merge gates can enforce cross-model review (when a brief says local only, never run `git push` or `gh pr create`; commit locally, include the same self-review block in `worker_done`, and report the branch, head SHA, test counts, and `git diff origin/main...HEAD --stat`).
 - Skills: `tdd`, `implement` (`~/.agents/skills/implement/SKILL.md`), `diagnosing-bugs`.
 
 ## Never
