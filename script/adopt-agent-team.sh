@@ -1,29 +1,21 @@
 #!/usr/bin/env bash
 # adopt-agent-team.sh: Installs or updates the standard Agent Team in any target project repository.
-#
-# Usage:
-#   ~/dotfiles/script/adopt-agent-team.sh [--project-name <name>] [<target-dir>]
-#
+# Usage: ~/dotfiles/script/adopt-agent-team.sh [--project-name <name>] [<target-dir>]
 # Flags:
 #   --project-name   Short project identifier (defaults to directory name)
 #   --dry-run        Print actions without writing files
-#   --reset          Refresh settings and AGENTS.md policy sections; re-link roles (skips regular files)
+#   --reset          Refresh template files, preserving customized roles and product facts
 #   --check-paths    Validate managed destinations without adopting
 #
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 TEMPLATES="$DOTFILES/templates/agent-team"
-TEAM_ROLE_PATHS=(
-  .claude/agents/elon.md .claude/agents/architect-pm.md .claude/agents/fullstack-dev.md
-  .claude/agents/qa-sdet.md .claude/agents/release-manager.md .claude/agents/sales-marketing.md
-  .claude/agents/secops-finops.md .claude/agents/support-csm.md
-)
 TARGET_DIR="${1:-$PWD}"
 PROJECT_NAME=""
 DRY_RUN=0
 RESET=0
-CHECK_PATHS=0
+CHECK_PATHS=0; LINK_ROLES_ONLY=0; LINK_SKIP_REGULAR=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,6 +29,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --reset) RESET=1; shift ;;
     --check-paths) CHECK_PATHS=1; shift ;;
+    --link-roles-only) LINK_ROLES_ONLY=1; shift ;;
+    --skip-regular) LINK_SKIP_REGULAR=1; shift ;;
     -*)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -51,16 +45,39 @@ done
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
 [ "$TARGET_DIR" != "$(cd "$DOTFILES" && pwd -P)" ] && [ "$TARGET_DIR" != "$(cd "$HOME" && pwd -P)" ] \
   || { echo 'adopt-agent-team: refusing dotfiles or home as target' >&2; exit 2; }
-# Refuse redirected destinations before any mkdir/copy or skill sync. Never inspect
-# arbitrary project files: only paths these composed scripts may write.
-team_role_path() {
-  local p="$1" x
-  for x in "${TEAM_ROLE_PATHS[@]}"; do [ "$p" = "$x" ] && return 0; done
-  return 1
+
+link_team_roles() {
+  local rel dest canon resolved rc=0 gi="$TARGET_DIR/.gitignore"
+  canon="$(cd "$DOTFILES" && pwd -P)/templates/agent-team/.claude/agents"
+  [ -d "$canon" ] || { echo "adopt-agent-team: missing $canon (set DOTFILES)" >&2; return 2; }
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$TARGET_DIR/.claude/agents"
+  for src in "$canon"/*.md; do
+    rel=".claude/agents/$(basename "$src")"; dest="$TARGET_DIR/$rel"
+    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+      [ "$LINK_SKIP_REGULAR" -eq 1 ] && continue
+      echo "adopt-agent-team: refused regular file at $rel" >&2; rc=2; continue
+    fi
+    if [ -L "$dest" ]; then
+      resolved=$(readlink "$dest" || true)
+      [ "${resolved#/}" = "$resolved" ] && resolved="$(cd "$(dirname "$dest")" && pwd -P)/$resolved"
+      [ "$resolved" = "$src" ] && continue
+    fi
+    [ "$DRY_RUN" -eq 1 ] && continue
+    ln -sf "$src" "$dest"
+  done
+  [ "$DRY_RUN" -eq 1 ] || for src in "$canon"/*.md; do
+    rel=".claude/agents/$(basename "$src")"
+    [ -L "$TARGET_DIR/$rel" ] || continue
+    grep -qxF "$rel" "$gi" 2>/dev/null || { [ -f "$gi" ] || touch "$gi"; echo "$rel" >> "$gi"; }
+  done
+  return "$rc"
 }
+[ "$LINK_ROLES_ONLY" -eq 1 ] && { link_team_roles; exit $?; }
+
+# Refuse redirected destinations before any mkdir/copy or skill sync.
 safe_path() {
-  team_role_path "$1" && return 0
-  local path="$TARGET_DIR/$1"
+  local p="$1" path="$TARGET_DIR/$1"
+  case "$p" in .claude/agents/*.md) return 0 ;; esac
   while [ "$path" != "$TARGET_DIR" ]; do
     if [ -L "$path" ]; then
       echo "adopt-agent-team: refused symlinked managed destination ${path#"$TARGET_DIR/"}" >&2
@@ -110,24 +127,19 @@ copy_file() {
   fi
 }
 
-# 1. Project marker and team role symlinks (canonical content stays in dotfiles).
+[ "$DRY_RUN" -eq 1 ] || mkdir -p "$TARGET_DIR/.claude"
 if [ "$DRY_RUN" -eq 0 ]; then
-  mkdir -p "$TARGET_DIR/.claude"
   printf '%s\n' "$PROJECT_NAME" > "$TARGET_DIR/.claude/agent-team-project-name"
 fi
-link_args=("$TARGET_DIR")
-[ "$DRY_RUN" -eq 1 ] && link_args=(--dry-run "${link_args[@]}")
-bash "$DOTFILES/script/link-agent-team-roles.sh" "${link_args[@]}"
+[ "$RESET" -eq 1 ] && LINK_SKIP_REGULAR=1
+link_team_roles || exit $?
 
-# 2. Install settings.json with default sonnet/medium
 if [ "$RESET" -eq 1 ] || [ ! -f "$TARGET_DIR/.claude/settings.json" ]; then
   if [ -f "$TEMPLATES/.claude/settings.json" ]; then
     copy_file "$TEMPLATES/.claude/settings.json" "$TARGET_DIR/.claude/settings.json"
   fi
 fi
 
-# 4. Team skills (crew, tl, deploy, elon, ceo): committed, generated copies from the template.
-#    General skills (orchestration, tdd, ...) come from ~/.claude/skills, never a project copy.
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "  [dry-run] sync team skills into $TARGET_DIR/.agents/skills"
 else
@@ -135,38 +147,32 @@ else
     || { echo "  team skills not synced, see the message above" >&2; exit 1; }
 fi
 
-# 4a. Antigravity reads workspace skills from .agent/skills (singular): relative link to .agents/skills.
 if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET_DIR/.agents/skills" ] && [ ! -e "$TARGET_DIR/.agent/skills" ]; then
   mkdir -p "$TARGET_DIR/.agent"
   ln -s ../.agents/skills "$TARGET_DIR/.agent/skills"
 fi
 
-# 4b. Project team facts. Owned by the project: written only when missing. Team docs live in $TEMPLATES/docs/agents/.
 for f in team-facts.md deploy-facts.md; do
   if [ ! -f "$TARGET_DIR/docs/agents/$f" ]; then
     copy_file "$TEMPLATES/docs/agents/$f" "$TARGET_DIR/docs/agents/$f"
   fi
 done
 
-# 6. Install hooks (settings.json points at them; without them Bash calls fail)
 for src in "$TEMPLATES/.claude/hooks"/*.py; do
   copy_file "$src" "$TARGET_DIR/.claude/hooks/$(basename "$src")"
 done
 copy_file "$TEMPLATES/.claude/hooks/session-start.md" "$TARGET_DIR/.claude/hooks/session-start.md"
 
-# 6b. Install the state of play script and the model routing tiers
 for src in "$TEMPLATES/.claude/bin"/*; do
   copy_file "$src" "$TARGET_DIR/.claude/bin/$(basename "$src")"
 done
 copy_file "$TEMPLATES/.claude/model-routing.md" "$TARGET_DIR/.claude/model-routing.md"
 
-# 6d. Install the changelog fragments convention (compile script, its test, and the README)
 for f in changelog-compile.sh changelog-compile.test.sh; do
   copy_file "$TEMPLATES/bin/$f" "$TARGET_DIR/bin/$f"
 done
 copy_file "$TEMPLATES/changelog.d/README.md" "$TARGET_DIR/changelog.d/README.md"
 
-# 7. Refresh only named policy sections; other project instructions stay intact.
 if [ "$RESET" -eq 1 ] && [ -f "$TARGET_DIR/AGENTS.md" ]; then
   python3 - "$TARGET_DIR/AGENTS.md" "$TEMPLATES/AGENTS.token-budget.md" "$tmp/agents" <<'PY'
 import pathlib, re, sys
@@ -197,7 +203,6 @@ if [ "$DRY_RUN" -eq 0 ]; then
     cat "$TEMPLATES/AGENTS.token-budget.md" >> "$TARGET_DIR/AGENTS.md"
     echo "  appended Token budget to AGENTS.md"
   fi
-  # 8. Keep the ledger, hook state and release evidence out of git
   for pat in "active_run.md" ".claude/state/" ".claude/release-reports/"; do
     grep -qxF "$pat" "$TARGET_DIR/.gitignore" 2>/dev/null || echo "$pat" >> "$TARGET_DIR/.gitignore"
   done

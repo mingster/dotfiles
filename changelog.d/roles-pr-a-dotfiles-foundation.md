@@ -1,1 +1,0 @@
-Team role files in dotfiles: adopt links absolute `.claude/agents` symlinks per checkout, `team-audit` enforces tracking and symlink targets, and Orca or SessionStart hooks self-heal links when `team-facts.md` exists.

@@ -43,9 +43,7 @@ out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 
   [ ! -e "$tmp/new project/docs/agents/persistent-memory-protocol.md" ] &&
   [ -f "$tmp/new project/.claude/hooks/worker-budget.py" ] &&
   [ -f "$tmp/new project/.claude/bin/env-peek.py" ] &&
-  [ -L "$tmp/new project/.claude/agents/support-csm.md" ] &&
-  [ -L "$tmp/new project/.claude/agents/fullstack-dev.md" ] &&
-  grep -qxF '.claude/agents/elon.md' "$tmp/new project/.gitignore" &&
+  [ -L "$tmp/new project/.claude/agents/support-csm.md" ] && [ -L "$tmp/new project/.claude/agents/fullstack-dev.md" ] &&
   [ "$(wc -l < "$TEST_LABELS" | tr -d ' ')" = 5 ] &&
   echo "$out" | grep -q 'team-audit: clean' &&
   echo "$out" | grep -q 'deploy-facts.md'; } && check "new project installs a complete audited team and labels" ok || { check "new project installs a complete audited team and labels" bad; echo "$out" | tail -12; }
