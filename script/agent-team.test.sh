@@ -44,7 +44,7 @@ out=$(bash "$here/agent-team.sh" project "$tmp/new project" --project-name acme 
   [ -f "$tmp/new project/.claude/hooks/worker-budget.py" ] &&
   [ -f "$tmp/new project/.claude/bin/env-peek.py" ] &&
   [ -f "$tmp/new project/.claude/agents/support-csm.md" ] &&
-  grep -q 'on acme' "$tmp/new project/.claude/agents/fullstack-dev.md" &&
+  ! grep -q '{{' "$tmp/new project/.claude/agents/fullstack-dev.md" &&
   [ "$(wc -l < "$TEST_LABELS" | tr -d ' ')" = 5 ] &&
   echo "$out" | grep -q 'team-audit: clean' &&
   echo "$out" | grep -q 'deploy-facts.md'; } && check "new project installs a complete audited team and labels" ok || { check "new project installs a complete audited team and labels" bad; echo "$out" | tail -12; }

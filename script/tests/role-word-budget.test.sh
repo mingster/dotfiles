@@ -11,6 +11,7 @@ bad() { fail=$((fail+1)); echo "FAIL $1"; }
 for f in "$T"/.claude/agents/*.md; do
   n=$(wc -w < "$f" | tr -d ' ')
   if [ "$n" -le "$BUDGET" ]; then ok "$(basename "$f") within budget ($n)"; else bad "$(basename "$f") $n words (budget $BUDGET)"; fi
+  grep -q '{{' "$f" && bad "$(basename "$f") contains a template token"
 done
 
 # Moved detail must still be reachable: role file names the doc, the doc holds the detail.

@@ -92,6 +92,7 @@ copy_file() {
   sed "s|{{PROJECT_NAME}}|$replacement|g" "$src" > "$tmp/rendered"
   case "$rel" in
     .claude/agents/*.md)
+      cp "$src" "$tmp/rendered"
       baseline="$TARGET_DIR/.claude/agent-team-baseline/$(basename "$dest").sha256"
       if [ "$RESET" -eq 1 ] && [ -f "$dest" ] && ! cmp -s "$dest" "$tmp/rendered"; then
         if [ ! -f "$baseline" ] || [ "$(hash < "$dest")" != "$(cat "$baseline")" ]; then
