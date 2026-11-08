@@ -256,10 +256,71 @@ if bun_actually_ran and not tests:
     refuse("test command has no execution metadata")
 ' "$head") || { [ -n "$checks_state" ] && printf '%s\n' "$checks_state"; exit 1; }
 
+qa_state_root=${ON_WORKER_DONE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/on-worker-done}
+if [ "${ON_WORKER_DONE_SKIP_FENCE:-}" != 1 ]; then
+ON_WORKER_DONE_DRY=$dry python3 - "$repo" "$pr" "$head" "$qa_state_root" <<'PYFENCE' || exit 1
+import json, os, re, subprocess, sys
+repo, pr, head, root = sys.argv[1:5]
+slug = re.sub(r"[^a-zA-Z0-9._-]", "-", repo).strip("-.") or "unknown"
+head_stamp = os.path.join(root, "started", slug, head + ".env")
+if os.path.isfile(head_stamp):
+    sys.exit(f"QA start refused head={head}: reviewer dispatch already started for this head")
+pr_stamp = os.path.join(root, "started", slug, "pr-" + pr + ".env")
+held = ""
+if os.path.isfile(pr_stamp):
+    with open(pr_stamp, encoding="utf-8") as stream:
+        held = next((line.split("=", 1)[1] for line in stream if line.startswith("head_sha=")), "")
+if held and held != head:
+    orca = os.environ.get("ORCA_CLI_COMMAND", "orca")
+    title = "reviewer - PR " + pr
+    try:
+        workers = json.loads(subprocess.check_output(
+            [orca, "orchestration", "worker-list", "--include-remote", "--full", "--json"], text=True, timeout=30,
+        ))["result"]["workers"]
+    except (subprocess.SubprocessError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        workers = []
+    for w in workers:
+        if w.get("state") in ("succeeded", "completed", "failed", "cancelled", "released", "abandoned", "stopped"):
+            continue
+        task = w.get("taskTitle") or ""
+        if w.get("githubPullRequestNumber") == int(pr) or title in task:
+            sys.exit(f"QA start refused head={head}: open reviewer holds PR {pr} with a different head")
+if os.environ.get("ON_WORKER_DONE_DRY") != "1":
+    for path, body in ((head_stamp, f"repo={repo}\nhead_sha={head}\npr={pr}\n"), (pr_stamp, f"head_sha={head}\n")):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w", encoding="utf-8").write(body)
+PYFENCE
+fi
+playwright_proving=$(python3 - "$wt" "$repo" "$pr" <<'PY'
+import json, re, subprocess, sys
+wt, repo, pr = sys.argv[1:4]
+e2e = False
+try:
+    base = subprocess.check_output(["git", "-C", wt, "merge-base", "HEAD", "origin/main"], text=True, stderr=subprocess.DEVNULL).strip()
+    if base:
+        paths = subprocess.check_output(["git", "-C", wt, "diff", "--name-only", base, "HEAD"], text=True).replace("\\", "/").splitlines()
+        e2e = any("web/e2e" in p or "/e2e/" in p for p in paths)
+except (subprocess.CalledProcessError, OSError):
+    pass
+named = False
+try:
+    named = bool(re.search(r"playwright", json.loads(subprocess.check_output(
+        ["gh", "pr", "view", pr, "--repo", repo, "--json", "body"], text=True)).get("body") or "", re.I))
+except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
+    pass
+print("RUN" if e2e or named else "SKIP")
+PY
+)
+
 brief=$(mktemp "${TMPDIR:-/tmp}/reviewer-brief.XXXXXX")
 gate_footer='Look for the Checks receipt for exactly this head on this PR (a comment body starting with Checks: PASS head='"$head"' or Checks: FAIL head='"$head"'). If it is Checks: PASS, cite it for automated check outcomes. If it is Checks: FAIL, stop the review and post Verdict: FAIL. Never rerun bun test, tsc, lint, or the regression suite.'
 if [ "$checks_state" = pending ]; then
   gate_footer="Checks are pending: no Checks receipt exists for head $head yet. That is not a failure. Review the code anyway and say in your verdict that Checks were pending. $gate_footer"
+fi
+if [ "$playwright_proving" = RUN ]; then
+  proving_clause=". Run the ticket's Playwright Proving command on a host with a database"
+else
+  proving_clause="; Playwright proving runs only when the diff touches web/e2e or this PR's verification names Playwright"
 fi
 if [ "$resolution" = 1 ]; then
   cat > "$brief" <<EOF
@@ -278,7 +339,7 @@ else
 Review PR #$pr in $repo at head $head. You did not write this code, so review it cold.
 Author: provider=$author_provider family=$author_family
 Verifier: provider=$verifier_provider family=$verifier_family
-Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Prove load-bearing behaviour live and run the ticket's Playwright Proving command on a host with a database; no run means no PASS. Do not rerun bun test, tsc, lint, or regression.
+Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Prove load-bearing behaviour live$proving_clause. Do not rerun bun test, tsc, lint, or regression.
 Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
 $gate_footer
 Post exactly one PR comment whose first line is:

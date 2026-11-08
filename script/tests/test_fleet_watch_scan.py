@@ -49,9 +49,10 @@ def pr(number, head='a' * 40, checks=(), comments=(), branch='feature/pr', label
     }
 
 
-def author_worker(number, branch, worktree='/tmp/wt', dispatch='ctx_author'):
+def author_worker(number, branch, worktree='/tmp/wt', dispatch='ctx_author', terminal='term_author'):
     return {
         'dispatchId': dispatch,
+        'agentTerminalHandle': terminal,
         'githubPullRequestNumber': number,
         'headRefName': branch,
         'projection': {

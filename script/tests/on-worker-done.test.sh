@@ -9,6 +9,7 @@ export FIXTURE_ROOT="$tmp" TMPDIR="$tmp/briefs" PATH="$tmp/bin:$PATH"
 export ON_WORKER_DONE_USAGE_GATE="$tmp/gate" ON_WORKER_DONE_QA_ADMISSION="$tmp/admission.py"
 export ON_WORKER_DONE_ADMISSION_POLICY="$tmp/policy" ORCA_CLI_COMMAND="$tmp/bin/orca"
 export ON_WORKER_DONE_CURSOR_START="$tmp/cursor-stub.sh" ORCA_TERMINAL_HANDLE=term_fixture QA_WORKTREE="$tmp/wt"
+export ON_WORKER_DONE_STATE_DIR="$tmp/qa-state" ON_WORKER_DONE_SKIP_FENCE=1
 git -C "$tmp/wt" init -q
 git -C "$tmp/wt" config user.email test@example.invalid
 git -C "$tmp/wt" config user.name Test
@@ -46,6 +47,9 @@ import json, os, sys
 from pathlib import Path
 root = Path(os.environ['FIXTURE_ROOT'])
 argv = sys.argv[1:]
+if len(argv) >= 2 and argv[0:2] == ['orchestration', 'worker-list']:
+    print('{"ok":true,"result":{"workers":[]}}')
+    raise SystemExit(0)
 if len(argv) >= 2 and argv[0:2] == ['repo', 'list']:
     rc = os.environ.get('ORCA_REPO_LIST_RC', '0')
     if rc != '0':
@@ -54,7 +58,8 @@ if len(argv) >= 2 and argv[0:2] == ['repo', 'list']:
         repos_file = root / 'orca-repos.json'
         sys.stdout.write(repos_file.read_text() if repos_file.is_file() else '{"ok":true,"result":{"repos":[]}}')
         raise SystemExit(0)
-(root / 'launch.json').write_text(json.dumps(argv))
+if len(argv) >= 2 and argv[0:2] == ['orchestration', 'worker-start']:
+    (root / 'launch.json').write_text(json.dumps(argv))
 print('{"ok":true}')
 PY
 cat > "$tmp/bin/gh" <<'PY'
@@ -64,6 +69,10 @@ from pathlib import Path
 if os.environ.get('GH_RC','0')!='0': sys.exit(int(os.environ['GH_RC']))
 if len(sys.argv) >= 4 and sys.argv[1:3] == ['pr', 'view']:
     joined = ' '.join(sys.argv)
+    if 'body' in joined:
+        body=(Path(os.environ['FIXTURE_ROOT'])/'pr-body.json')
+        print(body.read_text() if body.is_file() else '{"body":""}')
+        raise SystemExit(0)
     if 'headRefName' in joined and 'comments' not in joined:
         print((Path(os.environ['FIXTURE_ROOT'])/'pr-meta.json').read_text())
         raise SystemExit(0)
@@ -74,7 +83,9 @@ head=0123456789abcdef0123456789abcdef01234567
 export QA_HEAD="$head"
 valid() {
   unset GATE_OUT GATE_RC ORCA_REPO_LIST_RC
+  rm -rf "$ON_WORKER_DONE_STATE_DIR"
   write_default_repos
+  rm -f "$FIXTURE_ROOT/pr-body.json"
   printf '%s\n' '{"environment_id":"e842b011-16a2-4b19-a845-adea377bdee5","worktree_selector":"identity:wt2:local:572c47db-7726-4298-91ee-0827c6cdf261","host":"niteking","repo_id":"fixture-main-repo-id"}' > "$tmp/admission.json"
   printf '{"comments":[{"body":"Checks: PASS head=%s\\nCommand: docs-check\\nResult: exit 0\\n"}]}\n' "$head" > "$tmp/checks.json"
   printf '%s\n' '{"headRefName":"feature/worker-pr"}' > "$tmp/pr-meta.json"
@@ -203,6 +214,8 @@ rm -f "$tmp/briefs"/reviewer-brief.*
 run --dry-run
 brief=$(ls -t "$tmp/briefs"/reviewer-brief.* | head -1)
 check 'default brief retains spec standards and receipt rule' "$(grep -q "repo's standards" "$brief" && grep -q 'Never rerun bun test' "$brief"; echo $?)"
+check 'default brief omits mandatory Playwright proving' "$(grep -qi 'Playwright Proving command' "$brief"; echo $((1-$?)))"
+check 'default brief states conditional Playwright rule' "$(grep -q 'web/e2e' "$brief"; echo $?)"
 # Retain the original author-family, argument and Verdict contract coverage.
 check 'full brief asks for Dual-Axis review' "$(grep -q 'code-review skill (Dual-Axis)' "$brief"; echo $?)"
 re='^Verdict: PASS\|PASS\+NOTES\|FAIL head=[0-9a-f]{40} verifier=<your dispatch id> author=unknown$'
