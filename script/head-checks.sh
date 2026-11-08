@@ -291,7 +291,14 @@ if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/nu
     done <<<"$guards"
   done < <(git -C "$worktree" diff --name-only --diff-filter=A -z "$base...$sha" --)
 fi
-if [ -f "$worktree/.claude/settings.project.json" ] || [ -f "$worktree/.claude/hooks/guard-config.json" ]; then
+# A PR that deletes the project team files must still pass the gate, so the base tree counts too.
+team_files=0
+for team_file in .claude/settings.project.json .claude/hooks/guard-config.json; do
+  if [ -f "$worktree/$team_file" ] || git -C "$worktree" cat-file -e "$base:$team_file" 2>/dev/null; then
+    team_files=1
+  fi
+done
+if [ "$team_files" -eq 1 ]; then
   export DOTFILES="${DOTFILES_DIR:-${DOTFILES:-$(cd "$script_dir/.." && pwd)}}"
   printf '\nCommand: bash "%s/script/agent-team.sh" check "%s"\n' "$DOTFILES" "$worktree" >> "$log"
   started=$SECONDS

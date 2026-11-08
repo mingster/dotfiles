@@ -47,15 +47,29 @@ backup_path() {
 }
 
 link_one() {
-  local src=$1 dst=$2 dry=$3
-  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+  local src=$1 dst=$2 dry=$3 abs
+  case "$src" in
+    /*) abs=$src ;;
+    *) abs="$(dirname "$dst")/$src" ;;
+  esac
+  # Already right: same text, or a link that resolves to the same file or directory.
+  if [ -L "$dst" ] && { [ "$(readlink "$dst")" = "$src" ] || [ "$dst" -ef "$abs" ]; }; then
     return 0
   fi
   if [ "$dry" -eq 1 ]; then
-    echo "would link $dst -> $src"
+    if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+      echo "would back up $dst, then link $dst -> $src"
+    else
+      echo "would link $dst -> $src"
+    fi
     return 0
   fi
-  rm -rf "$dst"
+  if [ -L "$dst" ]; then
+    rm "$dst"
+  else
+    # A real file or directory is the user's: move it aside, never delete it.
+    backup_path "$dst"
+  fi
   ln -s "$src" "$dst"
   echo "linked $dst -> $src"
 }
@@ -100,7 +114,7 @@ PY
   fi
 
   python3 - "$tpl" "$dst" "$dry" <<'PY'
-import json, re, sys
+import json, os, re, sys
 
 tpl_path, dst_path, dry = sys.argv[1], sys.argv[2], int(sys.argv[3])
 with open(tpl_path) as f:
@@ -138,13 +152,6 @@ for key in ("allow", "deny", "ask"):
     if existing or key in perms:
         perms[key] = existing
 
-denied_mcp = list(cur.get("deniedMcpServers", []))
-for srv in tpl.get("deniedMcpServers", []):
-    if srv not in denied_mcp:
-        denied_mcp.append(srv)
-if denied_mcp:
-    cur["deniedMcpServers"] = denied_mcp
-
 hooks = cur.setdefault("hooks", {})
 for event, groups in tpl.get("hooks", {}).items():
     cur_groups = list(hooks.get(event, []))
@@ -174,11 +181,22 @@ for event, groups in tpl.get("hooks", {}).items():
 if json.dumps(cur, sort_keys=True) == orig:
     sys.exit(0)
 if dry:
-    print(f"would merge {dst_path}")
+    print(f"would back up and merge {dst_path}")
     sys.exit(0)
-with open(dst_path, "w") as f:
-    json.dump(cur, f, indent=2)
+# Keep a copy of the user's file before the first change.
+import shutil, time
+stamp = time.strftime("%Y%m%dT%H%M%S")
+backup, n = f"{dst_path}.bak.{stamp}", 0
+while os.path.lexists(backup):
+    n += 1
+    backup = f"{dst_path}.bak.{stamp}.{n}"
+shutil.copy2(dst_path, backup)
+print(f"agent-team: backed up {dst_path} to {backup}")
+tmp_path = f"{dst_path}.tmp.{os.getpid()}"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    json.dump(cur, f, indent=2, ensure_ascii=False)
     f.write("\n")
+os.replace(tmp_path, dst_path)
 print(f"merged {dst_path}")
 PY
 }
@@ -462,12 +480,14 @@ run_project_engine() {
   AGENT_TEAM_SYNC=1 python3 - "$mode" "$target" "$project_name" "$dry" "$DOTFILES" "$TEMPLATE_DIR" "$SEEDS_DIR" <<'PY'
 import ast
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import shutil
 import stat
 import sys
+import time
 
 mode, target, project_name, dry_str, dotfiles, template_dir, seeds_dir = sys.argv[1:8]
 dry = int(dry_str)
@@ -1173,19 +1193,16 @@ def extract_role_facts():
         tpl_role_path = os.path.join(template_dir, ".claude/agents", role_file)
         if not os.path.isfile(tpl_role_path):
             continue
+        # Old adopt kept only <role>.md.sha256 of the role as installed. A role that still
+        # hashes to it was never customized, so none of its lines are project facts.
+        sha_path = os.path.join(target, ".claude/agent-team-baseline", role_file + ".sha256")
+        if os.path.isfile(sha_path):
+            with open(proj_role_path, "rb") as fh:
+                current_sha = hashlib.sha256(fh.read()).hexdigest()
+            if current_sha == read_text(sha_path).strip():
+                continue
         tpl_rendered = read_text(tpl_role_path).replace("{{PROJECT_NAME}}", project_name)
         tpl_norms = {norm_role_line(l) for l in strip_frontmatter(tpl_rendered) if norm_role_line(l)}
-
-        for base_rel in (
-            f".claude/agent-team-baseline/.claude/agents/{role_file}",
-            f".claude/agent-team-baseline/{role_file}",
-        ):
-            base_role_path = os.path.join(target, base_rel)
-            if os.path.isfile(base_role_path):
-                base_rendered = read_text(base_role_path).replace("{{PROJECT_NAME}}", project_name)
-                tpl_norms |= {
-                    norm_role_line(l) for l in strip_frontmatter(base_rendered) if norm_role_line(l)
-                }
 
         proj_lines = strip_frontmatter(read_text(proj_role_path))
         role_name = role_file[:-3]
@@ -1213,6 +1230,18 @@ def extract_role_facts():
         tpl_tf = read_text(os.path.join(template_dir, "docs/agents/team-facts.md"))
         content = tpl_tf.replace("{{PROJECT_NAME}}", project_name)
 
+    original_content = content if os.path.isfile(team_facts_path) else None
+    if original_content is not None:
+        tpl_tf_text = read_text(os.path.join(template_dir, "docs/agents/team-facts.md")).replace(
+            "{{PROJECT_NAME}}", project_name
+        )
+        if "# Team facts" not in content:
+            content = "# Team facts\n\n" + content.lstrip("\n")
+        for part in re.split(r"(?m)^(?=## )", tpl_tf_text):
+            heading = part.split("\n", 1)[0].strip()
+            if heading.startswith("## ") and heading != "## Role facts" and heading not in content:
+                content = content.rstrip("\n") + "\n\n" + part.rstrip("\n") + "\n"
+
     if "## Role facts" not in content:
         content = content.rstrip("\n") + "\n\n## Role facts\n"
 
@@ -1238,7 +1267,7 @@ def extract_role_facts():
             block = f"\n\n{header}\n\n" + "\n".join(new_bullets)
             content = content[:insert_pos].rstrip("\n") + block + "\n\n" + content[insert_pos:].lstrip("\n")
 
-    if extracted_by_role or not os.path.isfile(team_facts_path) or "## Role facts" not in read_text(team_facts_path):
+    if extracted_by_role or original_content is None or content != original_content:
         write_text(team_facts_rel, content.rstrip("\n") + "\n")
 
 
@@ -1254,6 +1283,51 @@ def remove_path(rel):
     else:
         os.unlink(full)
     print(f"removed {rel}")
+
+
+def remove_symlink_only(rel):
+    full = os.path.join(target, rel)
+    if os.path.islink(full):
+        remove_path(rel)
+
+
+def tier2_template_files(skill):
+    root = os.path.join(template_dir, ".agents/skills", skill)
+    found = set()
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            found.add(os.path.relpath(os.path.join(base, name), root))
+    return found
+
+
+def remove_skill_dir(rel, template_files):
+    """Remove a generated skill copy. Files that are not template files are the project's:
+    warn per path on --dry-run, and back them up before removal otherwise."""
+    full = os.path.join(target, rel)
+    if os.path.isdir(full) and not os.path.islink(full):
+        extras = []
+        for base, _dirs, files in os.walk(full):
+            for name in sorted(files):
+                path = os.path.join(base, name)
+                inner = os.path.relpath(path, full)
+                if inner not in template_files:
+                    extras.append((path, inner))
+        for path, inner in extras:
+            if dry:
+                print(f"warning: {rel}/{inner} is not a template file and would be removed (backed up first)")
+        if extras and not dry:
+            stamp = time.strftime("%Y%m%dT%H%M%S")
+            backup_root = os.path.join(target, ".claude/agent-team-backup", stamp, rel)
+            n = 0
+            while os.path.exists(backup_root):
+                n += 1
+                backup_root = os.path.join(target, ".claude/agent-team-backup", f"{stamp}.{n}", rel)
+            for path, inner in extras:
+                dest = os.path.join(backup_root, inner)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(path, dest)
+            print(f"backed up {len(extras)} non-template file(s) from {rel} to {os.path.relpath(backup_root, target)}")
+    remove_path(rel)
 
 
 def prune_empty_dir(rel):
@@ -1284,16 +1358,17 @@ def remove_legacy_copies():
     prune_empty_dir(".claude/bin")
 
     for skill in TIER2_SKILLS:
-        remove_path(f".agents/skills/{skill}")
-        remove_path(f".claude/skills/{skill}")
-        remove_path(f".cursor/skills/{skill}")
+        files = tier2_template_files(skill)
+        remove_skill_dir(f".agents/skills/{skill}", files)
+        remove_skill_dir(f".claude/skills/{skill}", files)
+        remove_skill_dir(f".cursor/skills/{skill}", files)
 
     prune_empty_dir(".claude/skills")
     prune_empty_dir(".cursor/skills")
     prune_empty_dir(".agents/skills")
     prune_empty_dir(".agents")
 
-    remove_path(".agent/skills")
+    remove_symlink_only(".agent/skills")
     prune_empty_dir(".agent")
 
     remove_path("bin/team-audit-metrics.ts")
@@ -1305,9 +1380,9 @@ def remove_legacy_copies():
                 continue
             skill_md = os.path.join(agents_skills, skill_name, "SKILL.md")
             if os.path.isfile(skill_md) and GENERATED_SKILL_STAMP in read_text(skill_md):
-                remove_path(f".agents/skills/{skill_name}")
-                remove_path(f".claude/skills/{skill_name}")
-                remove_path(f".cursor/skills/{skill_name}")
+                remove_skill_dir(f".agents/skills/{skill_name}", {"SKILL.md"})
+                remove_skill_dir(f".claude/skills/{skill_name}", {"SKILL.md"})
+                remove_skill_dir(f".cursor/skills/{skill_name}", {"SKILL.md"})
         prune_empty_dir(".claude/skills")
         prune_empty_dir(".cursor/skills")
         prune_empty_dir(".agents/skills")
@@ -1702,9 +1777,7 @@ def run_check():
                     f"stale generated Tier 2 skill copy in project: .agents/skills/{skill_name}"
                 )
 
-    if os.path.exists(os.path.join(target, ".agent/skills")) or os.path.islink(
-        os.path.join(target, ".agent/skills")
-    ):
+    if os.path.islink(os.path.join(target, ".agent/skills")):
         drifts.append("legacy symlink present: .agent/skills")
 
     guard_cfg = os.path.join(target, ".claude/hooks/guard-config.json")
