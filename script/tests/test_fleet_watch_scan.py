@@ -276,10 +276,12 @@ class IssueScanPass(unittest.TestCase):
         self, state, issues_by_repo=None, starts=None, gate_ok=True, admitted=True,
         prs_by_repo=None, inventory_ok=True, start_rc=0, workers=None, persist=None,
         admit_occupied=0, host_cap=4, detached=None, checks_locked=False, config=None,
-        workflow_watch_prior=None,
+        workflow_watch_prior=None, suppress_backlog_sweep=True,
     ):
         cfg = config or self.CONFIG
         issues_by_repo = issues_by_repo or {}
+        if suppress_backlog_sweep and 'issue_scan_backlog_sweep_at' not in state:
+            state['issue_scan_backlog_sweep_at'] = NOW
         prs_by_repo = prs_by_repo or {}
         starts = starts if starts is not None else []
         persists = persist if persist is not None else []
@@ -337,6 +339,97 @@ class IssueScanPass(unittest.TestCase):
         notices, log = fw.issue_scan_pass({}, {}, NOW, [])
         self.assertEqual(notices, [])
         self.assertEqual(log, ['issue_scan_off'])
+
+    def test_empty_queue_starts_backlog_sweep_pair(self):
+        state = {}
+        _, log, starts, _ = self.run_pass(state, {REPO: []}, suppress_backlog_sweep=False)
+        self.assertEqual(len(starts), 2)
+        joined = ' '.join(' '.join(cmd) for cmd in starts)
+        self.assertIn('architect-pm', joined)
+        self.assertIn('sales-marketing', joined)
+        self.assertIn('team-grill-backlog', Path(starts[0][starts[0].index('--spec') + 1]).read_text(encoding='utf-8'))
+        self.assertIn('backlog_sweep_start=architect-pm', ','.join(log))
+        self.assertIn('backlog_sweep_start=sales-marketing', ','.join(log))
+
+    def test_queue_of_three_skips_backlog_sweep(self):
+        state = {}
+        issues = {
+            REPO: [
+                issue(i, ['ready-for-agent'], 'no acceptance') for i in range(1, 4)
+            ],
+        }
+        _, log, starts, _ = self.run_pass(state, issues, suppress_backlog_sweep=False)
+        self.assertEqual(starts, [])
+        self.assertIn('backlog_sweep_skip_queue', ','.join(log))
+
+    def test_recent_backlog_sweep_skips_second_pair(self):
+        state = {'issue_scan_backlog_sweep_at': NOW - 3600}
+        _, log, starts, _ = self.run_pass(state, {REPO: []}, suppress_backlog_sweep=False)
+        self.assertEqual(starts, [])
+        self.assertIn('backlog_sweep_skip_recent', ','.join(log))
+
+    def test_empty_queue_lists_issues_once_for_backlog_sweep(self):
+        calls = []
+
+        def list_issues(repo):
+            calls.append(repo)
+            return []
+
+        state = {}
+        fw.issue_scan_pass(
+            self.CONFIG, state, NOW, [],
+            list_issues=list_issues,
+            gate_check=lambda _cfg: True,
+            admit_fn=lambda _host, _cfg, _workers: {'admitted': True, 'occupied': 0},
+            start_worker=lambda _cmd: 0,
+            inventory_ok=True,
+        )
+        self.assertEqual(calls, [REPO])
+
+    def test_partial_backlog_sweep_retries_missing_role_only(self):
+        state = {}
+        starts = []
+        tick = 1000.0
+        outcomes = {'architect-pm': 0, 'sales-marketing': 1}
+
+        def start_worker(command):
+            starts.append(command)
+            name_idx = command.index('--name') + 1
+            role = command[name_idx].replace('backlog-', '', 1)
+            return outcomes.get(role, 1)
+
+        def run_at(when):
+            return fw.issue_scan_pass(
+                self.CONFIG, state, when, [],
+                list_issues=lambda _repo: [],
+                gate_check=lambda _cfg: True,
+                admit_fn=lambda _host, _cfg, _workers: {'admitted': True, 'occupied': 0},
+                start_worker=start_worker,
+                inventory_ok=True,
+            )
+
+        run_at(tick)
+        self.assertEqual(state.get('issue_scan_backlog_sweep_at'), tick)
+        self.assertEqual(state.get('issue_scan_backlog_sweep_roles'), ['architect-pm'])
+        architect_starts = [
+            cmd for cmd in starts
+            if 'backlog-architect-pm' in cmd
+        ]
+        self.assertEqual(len(architect_starts), 1)
+
+        outcomes['sales-marketing'] = 0
+        run_at(tick + 300.0)
+        architect_starts = [
+            cmd for cmd in starts
+            if 'backlog-architect-pm' in cmd
+        ]
+        self.assertEqual(len(architect_starts), 1)
+        marketing_starts = [
+            cmd for cmd in starts
+            if 'backlog-sales-marketing' in cmd
+        ]
+        self.assertEqual(len(marketing_starts), 2)
+        self.assertNotIn('issue_scan_backlog_sweep_roles', state)
 
     def test_eligible_issue_starts_once(self):
         state = {}
