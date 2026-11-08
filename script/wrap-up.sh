@@ -1216,7 +1216,9 @@ branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the i
   if in_use "$wt"; then guard_keep "$1" "$2" "checked out in $wt, $busy"; else guard_keep "$1" "$2" "checked out in $wt"; fi
   return 1
 }
+worktree_orca_pin_unknown() { [ "${orca_pin_state:-}" = unknown ]; }
 worktree_pinned_in_orca() {
+  worktree_orca_pin_unknown && return 1
   [ "${orca_pins_ok:-0}" -eq 1 ] || return 1
   local p r
   p=$(real "$1")
@@ -1323,11 +1325,14 @@ active_worktree() {
 }
 removed=0; orca_removed=0; local_deleted=0; remote_deleted=0; kept=0; stale_deleted=0
 orca_pins_ok=0
+orca_pin_state=unavailable
 : > "$tmp/orca-pinned"
 if [ -n "${ORCA_CLI_COMMAND:-}" ] || command -v "${orca_bin:-orca}" >/dev/null 2>&1; then
+  orca_pin_state=unknown
   if orca_call worktree list --json > "$tmp/orca-worktrees" 2>/dev/null \
     && jq -e '.ok != false and (.result.worktrees | type == "array")' "$tmp/orca-worktrees" >/dev/null; then
     orca_pins_ok=1
+    orca_pin_state=ok
     jq -r '.result.worktrees[]? | select(.pinned == true) | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-pinned"
   fi
 fi
@@ -1356,6 +1361,7 @@ process_worktree() {
   elif archive_branch "$branch"; then why='archive branch'
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
+  elif worktree_orca_pin_unknown; then why='Orca pin lookup failed'
   elif worktree_pinned_in_orca "$path"; then why='pinned in Orca'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='dirty'
@@ -1812,7 +1818,7 @@ if [ "$pr_ok" -eq 1 ]; then
   done < "$tmp/names"
 fi
 # Drop Orca sidebar entries whose git worktree is already gone (for example a prior run removed git but not Orca).
-if [ "$apply" -eq 1 ] && [ "$orca_pins_ok" -eq 1 ]; then
+if [ "$apply" -eq 1 ] && [ "$orca_pin_state" = ok ]; then
   repo_real=$(cd "$repo" && pwd -P)
   while IFS= read -r op; do
     [ -n "$op" ] || continue

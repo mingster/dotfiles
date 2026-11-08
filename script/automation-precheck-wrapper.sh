@@ -39,6 +39,8 @@ if [ -s "$summary_file" ]; then
 fi
 
 duration=$((SECONDS - started))
+# The scheduled log path is argument 2; inner env may set WRAP_UP_SCHEDULED_LOG only for the child.
+[ "$name" = wrap-up-scheduled ] && export WRAP_UP_SCHEDULED_LOG="$log"
 summary=$(
   AUTOMATION_NAME="$name" AUTOMATION_INNER_RC="$inner_rc" python3 - <<'PY'
 import os, re, sys

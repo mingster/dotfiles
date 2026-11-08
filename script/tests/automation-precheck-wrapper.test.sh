@@ -33,5 +33,14 @@ bash "$wrapper" test-skip "$log" -- bash "$tmp/skip.sh"
 check 'skipped run has start and end' test "$(line_count)" -ge 2
 check 'skipped summary is traced' grep -q 'summary=skip: dry run only' "$log"
 
+# wrap-up-scheduled: a failed round line in the log path must reach the trace end summary even when
+# WRAP_UP_SCHEDULED_LOG is not exported on the wrapper (only on the inner env, as install-fleet does).
+: >"$log"
+printf '%s wrap-up-scheduled [999] round failed: repo /tmp/riben exit 1\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$log"
+env -u WRAP_UP_SCHEDULED_LOG bash "$wrapper" wrap-up-scheduled "$log" -- true
+check 'wrap-up-scheduled failed round in end summary' grep -q 'summary=round failed: repo /tmp/riben exit 1' "$log"
+check 'wrap-up-scheduled name in trace' grep -q 'automation=wrap-up-scheduled' "$log"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

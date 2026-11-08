@@ -92,5 +92,29 @@ bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
 grep -Fq 'orca worktree rm' "$d/err" "$d/out" && ok 'failed orca rm reported' \
   || bad 'failed orca rm reported' "$(cat "$d/out" "$d/err")"
 
+fixture
+export FAKE_ORCA_WORKTREES=''
+cat > "$tmp/bin/orca-fail-list" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$ORCA_LOG"
+case "$*" in
+  'worktree list --json') exit 1 ;;
+  'terminal list --json') printf '{"ok":true,"result":{"terminals":[]}}\n' ;;
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
+  *worker-list*) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
+  *) exit 1 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-fail-list"
+export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca-fail-list"
+out=$(bash "$here/wrap-up.sh" --repo "$d/wt" --dry-run 2>&1) || true
+echo "$out" | grep -Fq "Remove worktree $d/extra" && bad 'no removal when orca worktree list fails' "$out" \
+  || ok 'no removal when orca worktree list fails'
+echo "$out" | grep -Fq 'Orca pin lookup failed' && ok 'kept when orca pin lookup failed' \
+  || bad 'kept when orca pin lookup failed' "$out"
+echo "$out" | grep -Fq "Remove orca record $d/extra" && bad 'no orca rm preview when list fails' "$out" \
+  || ok 'no orca rm preview when list fails'
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
