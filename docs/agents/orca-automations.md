@@ -25,6 +25,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 | `sync-team-skills-drift` | `0 6 * * *` | Coordinator only | Wrapper runs `script/automation-precheck-sync-drift.sh` | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
 | `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh` | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the owner asks) | Same |
 | `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
+| `fleet-toolchain` | `0 5 * * *` | Coordinator only | Wrapper runs `script/fleet-pull.sh` then `script/fleet-toolchain-check.sh --apply` | `FLEET_TOOLCHAIN_LOG` (default `~/.local/state/agent-team/fleet-toolchain.log`) | Same |
 
 ## Traceable precheck lines
 
@@ -48,9 +49,9 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/sync-team-skills.sh --check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |
 | `script/team-audit.sh`, `bin/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics optional |
 | `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; no merge; owner reviews |
-| `script/fleet-pull.sh` | No | Coordinator wake; fast-forwards checkouts |
+| `script/fleet-pull.sh`, `script/fleet-toolchain-check.sh` | Yes (as `fleet-toolchain`) | Daily coordinator pull and toolchain check and upgrade |
 | `script/secrets-sync.sh`, `script/secrets-pack.sh`, `script/secrets-unpack.sh` | No | Secrets mutation or owner transfer |
-| `script/elon-startup.sh`, `script/fleet-toolchain-check.sh` | No | Wake-only health reports |
+| `script/elon-startup.sh` | No | Wake-only health report |
 | `script/coordinator-drain.sh`, `script/worker-watch.sh` | No | Tied to Elon session and fleet-watch, not a cron |
 | `script/worker-startup.sh --host-check` | No | Runs before each worker launch |
 | `script/head-checks.sh`, `script/pr-review.sh` | No | PR CI (`Checks`) and GitHub Actions `Review` workflow after `Checks` pass |

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015
 # Tests for install-fleet-automations.sh with a fake orca CLI (never touches live automations).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -8,7 +9,7 @@ _real_home=${DOTFILES_REAL_HOME:-${TEST_REAL_HOME:-}}
 if [ -z "$_real_home" ]; then
   _real_home=$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
 fi
-# shellcheck source=lib/asdf-pin.sh
+# shellcheck source=script/tests/lib/asdf-pin.sh disable=SC1091,SC2015
 . "$here/lib/asdf-pin.sh"
 _asdf_data=${ASDF_DATA_DIR:-$_real_home/.asdf}
 _py_ver=${ASDF_PYTHON_VERSION:-$(awk '$1 == "python" { print $2; exit }' "$root/.tool-versions")}
@@ -70,6 +71,11 @@ check() {
 shellcheck -x --severity=error "$script"
 
 export FAKE_HOSTNAME=throwaway
+missing_coord_rc=0
+missing_coord_out=$(bash "$script" --install 2>&1) || missing_coord_rc=$?
+check 'missing coordinator.conf exits non-zero' test "$missing_coord_rc" -ne 0
+echo "$missing_coord_out" | grep -q 'coordinator.conf' && check 'missing coordinator.conf names coordinator.conf' true || check 'missing coordinator.conf names coordinator.conf' false
+
 printf 'coordinator coord-host\n' >"$HOME/agent-state/coordinator.conf"
 
 dry=$(bash "$script" --dry-run --install 2>&1)
@@ -78,6 +84,7 @@ echo "$dry" | grep -q 'wrap-up-scheduled' && check 'dry-run prints wrap-up creat
 echo "$dry" | grep -q 'sync-team-skills-drift' && check 'dry-run prints sync drift create' true || check 'dry-run prints sync drift create' false
 echo "$dry" | grep -q 'team-audit-weekly' && check 'dry-run prints team audit create' true || check 'dry-run prints team audit create' false
 echo "$dry" | grep -q 'weekly-update' && check 'dry-run prints weekly-update create' true || check 'dry-run prints weekly-update create' false
+echo "$dry" | grep -q 'fleet-toolchain' && check 'dry-run prints fleet-toolchain create' true || check 'dry-run prints fleet-toolchain create' false
 echo "$dry" | grep -q 'would create' && check 'dry-run labels would-create' true || check 'dry-run labels would-create' false
 [ ! -f "$FAKE_ORCA_STORE" ] && check 'dry-run leaves store absent' true || check 'dry-run leaves store absent' false
 
@@ -87,6 +94,7 @@ echo "$first" | grep -q 'wrap-up-scheduled created' && check 'first install crea
 echo "$first" | grep -q 'sync-team-skills-drift created' && check 'first install creates sync drift' true || check 'first install creates sync drift' false
 echo "$first" | grep -q 'team-audit-weekly created' && check 'first install creates team audit weekly' true || check 'first install creates team audit weekly' false
 echo "$first" | grep -q 'weekly-update created' && check 'first install creates weekly-update' true || check 'first install creates weekly-update' false
+echo "$first" | grep -q 'fleet-toolchain created' && check 'first install creates fleet-toolchain' true || check 'first install creates fleet-toolchain' false
 
 status_off=$(bash "$script" --status)
 echo "$status_off" | grep -q 'fleet-watch: disabled' && check 'non-coordinator status disabled fleet-watch' true || check 'non-coordinator status disabled fleet-watch' false
@@ -119,6 +127,7 @@ then
   stale_fixed_ok=1
 fi
 check 're-run fixes stale 0 */2 * * * rrule and enables wrap-up while keeping fleet-watch disabled' test "$stale_fixed_ok" -eq 1
+echo "$status_off" | grep -q 'fleet-toolchain: disabled' && check 'non-coordinator status disabled fleet-toolchain' true || check 'non-coordinator status disabled fleet-toolchain' false
 
 ids=$(python3 -c 'import json, os; d=json.load(open(os.environ["FAKE_ORCA_STORE"])); print(" ".join(a["id"] for a in d["automations"]))')
 
@@ -133,8 +142,9 @@ echo "$coord" | grep -q 'updated\|unchanged' && check 'coordinator install settl
 coord_status=$(bash "$script" --status)
 echo "$coord_status" | grep -q 'fleet-watch: enabled' && check 'coordinator status enabled fleet-watch' true || check 'coordinator status enabled fleet-watch' false
 echo "$coord_status" | grep -q 'wrap-up-scheduled: enabled' && check 'coordinator status enabled wrap-up' true || check 'coordinator status enabled wrap-up' false
-[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 5 ] \
-  && check 'coordinator install has five automations' true || check 'coordinator install has five automations' false
+echo "$coord_status" | grep -q 'fleet-toolchain: enabled' && check 'coordinator status enabled fleet-toolchain' true || check 'coordinator status enabled fleet-toolchain' false
+[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 6 ] \
+  && check 'coordinator install has six automations' true || check 'coordinator install has six automations' false
 
 fw_id=$(python3 -c '
 import json, os
@@ -153,6 +163,7 @@ echo "$un" | grep -q 'wrap-up-scheduled removed' && check 'uninstall removes wra
 echo "$un" | grep -q 'sync-team-skills-drift removed' && check 'uninstall removes sync drift' true || check 'uninstall removes sync drift' false
 echo "$un" | grep -q 'team-audit-weekly removed' && check 'uninstall removes team audit weekly' true || check 'uninstall removes team audit weekly' false
 echo "$un" | grep -q 'weekly-update removed' && check 'uninstall removes weekly-update' true || check 'uninstall removes weekly-update' false
+echo "$un" | grep -q 'fleet-toolchain removed' && check 'uninstall removes fleet-toolchain' true || check 'uninstall removes fleet-toolchain' false
 [ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 0 ] \
   && check 'uninstall empties store' true || check 'uninstall empties store' false
 
@@ -246,6 +257,19 @@ for a in d["automations"]:
 echo "$weekly_pc" | grep -q 'automation-precheck-weekly-update' && check 'weekly-update precheck script' true || check 'weekly-update precheck script' false
 echo "$weekly_pc" | grep -q '0 8 \* \* 1' && check 'weekly-update schedule monday 08:00' true || check 'weekly-update schedule monday 08:00' false
 
+toolchain_pc=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a["name"] == "fleet-toolchain":
+        print(a["precheck"]["command"])
+        print(a["rrule"])
+')
+echo "$toolchain_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'fleet-toolchain precheck uses trace wrapper' true || check 'fleet-toolchain precheck uses trace wrapper' false
+echo "$toolchain_pc" | grep -q 'fleet-pull.sh' && check 'fleet-toolchain precheck runs fleet-pull.sh' true || check 'fleet-toolchain precheck runs fleet-pull.sh' false
+echo "$toolchain_pc" | grep -q 'fleet-toolchain-check.sh.*--apply' && check 'fleet-toolchain precheck runs fleet-toolchain-check.sh --apply' true || check 'fleet-toolchain precheck runs fleet-toolchain-check.sh --apply' false
+echo "$toolchain_pc" | grep -qE '0 [0-9]+ \* \* \*' && check 'fleet-toolchain schedule is daily' true || check 'fleet-toolchain schedule is daily' false
+
 symlink_dir="$tmp/dotfiles-link"
 ln -sfn "$root" "$symlink_dir"
 canonical_root=$(cd "$root" && pwd -P)
@@ -283,7 +307,7 @@ if [ -f "$FAKE_ORCA_STORE" ]; then
 import json, os, sys
 d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
 autos = d.get("automations", [])
-if len(autos) != 5:
+if len(autos) != 6:
     sys.exit(1)
 want = os.environ["CANON_HOME_DOTFILES"]
 bad = os.environ["FAKE_WT"]
