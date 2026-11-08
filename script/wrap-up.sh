@@ -1605,18 +1605,11 @@ ps_real() {
   esac
 }
 ps_do() { if [ -n "${WRAP_UP_PS_CMD:-}" ]; then "$WRAP_UP_PS_CMD" "$@"; else ps_real "$@"; fi; }
-kill_do() { if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then "$WRAP_UP_KILL_CMD" "$1"; else builtin kill -TERM "$1"; fi; }
-kill() {
-  local kbin
-  if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then
-    kbin=$(type -P kill 2>/dev/null || true)
-    if [ -n "$kbin" ] && [ "$kbin" != /bin/kill ] && [ "$kbin" != /usr/bin/kill ]; then
-      "$kbin" "$@"
-      return $?
-    fi
-    return 1
-  fi
-  builtin kill "$@"
+kill_do() { if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then "$WRAP_UP_KILL_CMD" "$1"; else kill -TERM "$1"; fi; }
+alive_do() {
+  if [ -n "${WRAP_UP_ALIVE_CMD:-}" ]; then "$WRAP_UP_ALIVE_CMD" "$1"
+  elif [ -n "${WRAP_UP_KILL_CMD:-}" ]; then return 1
+  else kill -0 "$1" 2>/dev/null; fi
 }
 squash_path() { printf '%s' "$1" | sed 's#//*#/#g; s#/$##'; }
 is_temp_path() {
@@ -1717,12 +1710,8 @@ sweep_browsers() {
       IFS=$'\t' read -r _ _ _ n_started n_cmd <<< "$now_line"
       if [ -z "$now_line" ] || [ "$n_started" != "$started" ] || [ "$n_cmd" != "$cmd" ]; then browser_keep "$pid" 'process changed since listed'; continue; fi
       if ! kill_do "$pid" >/dev/null 2>&1; then browser_keep "$pid" 'stop failed'; continue; fi
-      if [ -z "${WRAP_UP_KILL_CMD:-}" ]; then
-        for _ in 1 2 3 4 5; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-      fi
-      if ! kill -0 "$pid" 2>/dev/null; then
-        :
-      else
+      for _ in {1..25}; do alive_do "$pid" || break; sleep 0.2; done
+      if alive_do "$pid"; then
         echo "Warning: browser pid $pid still alive after kill." >&2
         fail_item "browser $pid" "browser pid $pid still alive after kill"
         browser_keep "$pid" "browser pid $pid still alive after kill"
