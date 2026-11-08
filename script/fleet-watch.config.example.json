@@ -39,7 +39,10 @@
     "from_terminal": "coordinator_terminal_handle",
     "host": "local",
     "agent": "cursor",
-    "model": "composer-2.5"
+    "model": "composer-2.5",
+    "sweep_agent": "claude",
+    "sweep_model": "sonnet",
+    "backlog_sweep_interval_seconds": 7200
   },
   "coordinator_watch": {
     "state_dir": "/path/to/private/state",
