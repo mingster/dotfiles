@@ -579,7 +579,7 @@ files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | 
 check "verdict-from refuses a diff with a non-generated file" 1 'notes.txt is not'
 # A file that merely carries the header string is not a generated copy.
 "$REAL_GIT" -C "$REAL_PATCH_REPO" reset -q --hard HEAD~1
-printf '<!-- Generated from dotfiles templates/agent-team/.agents/skills/x by script/agent-team.sh, do not edit. -->\n' > "$REAL_PATCH_REPO/spoof.md"
+printf '<!-- Generated from dotfiles templates/agent-team/.agents/skills/x by script/sync-team-skills.sh, do not edit. -->\n' > "$REAL_PATCH_REPO/spoof.md"
 "$REAL_GIT" -C "$REAL_PATCH_REPO" add . && "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm spoof
 SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA; checks="Checks: PASS head=$SHA"
 files=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff --name-only "$base_sha...$SHA" | jq -Rsc 'split("\n")[:-1] | map({path:.})'); PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")

@@ -650,7 +650,7 @@ cat > "$retired_skill/.agents/skills/beta/SKILL.md" <<'MD'
 ---
 name: beta
 ---
-<!-- Generated from dotfiles templates/agent-team/.agents/skills/beta by script/agent-team.sh, do not edit. -->
+<!-- Generated from dotfiles templates/agent-team/.agents/skills/beta by script/sync-team-skills.sh, do not edit. -->
 MD
 retired_out=$(bash "$SCRIPT" check "$retired_skill" 2>&1)
 retired_rc=$?
