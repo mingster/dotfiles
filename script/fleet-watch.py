@@ -1689,13 +1689,17 @@ def checks_pass_at_head(pr):
         return True
     if kind == 'FAIL':
         return False
-    for check in pr.get('statusCheckRollup') or []:
-        if not isinstance(check, dict):
-            continue
-        ctx = (check.get('context') or check.get('name') or '').lower()
-        if 'head-checks' in ctx or ctx == 'checks':
-            return check.get('conclusion') == 'SUCCESS'
-    return False
+    rollup = [
+        check for check in (pr.get('statusCheckRollup') or [])
+        if isinstance(check, dict)
+        and (
+            'head-checks' in (check.get('context') or check.get('name') or '').lower()
+            or (check.get('context') or check.get('name') or '').lower() in (
+                'checks', 'script-tests', 'script tests', 'shellcheck',
+            )
+        )
+    ]
+    return bool(rollup) and all(check.get('conclusion') == 'SUCCESS' for check in rollup)
 
 
 def checks_fail_at_head(pr):
@@ -1951,6 +1955,8 @@ def _author_metadata_from_worker(w):
 
 
 def build_head_checks_command(config, repo, pr_row):
+    if (repo or '').split('/')[-1] == 'dotfiles':
+        return None
     root = _issue_scan_repo_root(config, repo)
     if not root:
         return None

@@ -269,7 +269,7 @@ Verifier: provider=$verifier_provider family=$verifier_family
 Inspect only the resolution with git show --remerge-diff. Do not run a full Dual-Axis standards review of the entire PR again.
 Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
 $gate_footer
-Post exactly one PR comment whose first line is:
+Post the Verdict with ~/dotfiles/script/post-verdict.sh --repo $repo --pr $pr --result PASS|PASS+NOTES|FAIL --head $head --verifier <your dispatch id> --author $author_dispatch --notes "<findings>" (which posts the review status and one PR comment whose first line is):
 Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$author_dispatch
 Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
 EOF
@@ -281,7 +281,7 @@ Verifier: provider=$verifier_provider family=$verifier_family
 Use the code-review skill (Dual-Axis): check the diff against the PR's spec and the repo's standards. Prove load-bearing behaviour live and run the ticket's Playwright Proving command on a host with a database; no run means no PASS. Do not rerun bun test, tsc, lint, or regression.
 Lint only the PR's changed files, never a whole repo lint with autofix (it rewrites files in the author's worktree).
 $gate_footer
-Post exactly one PR comment whose first line is:
+Post the Verdict with ~/dotfiles/script/post-verdict.sh --repo $repo --pr $pr --result PASS|PASS+NOTES|FAIL --head $head --verifier <your dispatch id> --author $author_dispatch --notes "<findings>" (which posts the review status and one PR comment whose first line is):
 Verdict: PASS|PASS+NOTES|FAIL head=$head verifier=<your dispatch id> author=$author_dispatch
 Use one of PASS, PASS+NOTES or FAIL. Put findings on the lines after it. Do not edit the PR.
 EOF

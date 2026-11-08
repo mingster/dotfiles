@@ -120,7 +120,7 @@ fallback_eligible() {
     script/README*|script/*.md|script/script-test-skip.list) return 1 ;;
     script/tests/lib/*|script/*example|script/*.example.json) return 1 ;;
     script/*) return 0 ;;
-    .agents/head-checks.conf|.agents/head-checks-docs.conf) return 0 ;;
+    .agents/head-checks.conf) return 0 ;;
     templates/agent-team/*) return 0 ;;
     *) return 1 ;;
   esac

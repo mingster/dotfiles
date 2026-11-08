@@ -128,7 +128,7 @@ case "$cmd" in
       && "$MF_REAL_GIT" -C "$work" push -q origin HEAD:main || { rm -rf "$work"; exit 1; }
     sha=$("$MF_REAL_GIT" -C "$work" rev-parse HEAD); rm -rf "$work"
     save ".state = \"MERGED\" | .mergeCommit = {oid: \"$sha\"}" ;;
-  api*) jq '[.files[]]' "$file" ;;
+  api*) [ -n "$pr" ] && jq '[.files[]]' "$file" || echo '{}' ;;
   *) echo "fake gh: unsupported: $cmd" >&2; exit 1 ;;
 esac
 EOS
