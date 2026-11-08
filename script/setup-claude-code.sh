@@ -33,7 +33,8 @@ fi
 
 mkdir -p "${HOME}/.claude"
 
-DOTFILES="$DOTFILES" bash "$DOTFILES/script/setup-agent-skills.sh"
+export DOTFILES
+bash "$DOTFILES/script/setup-agent-skills.sh"
 
 # CLAUDE.md is COPIED, not linked. Cowork sessions skip a ~/.claude/CLAUDE.md that is
 # itself a symlink, and skip user-scope imports resolving outside the session working
@@ -52,6 +53,24 @@ for entry in "$CLAUDE_SRC"/*; do
   [ "$name" != settings.json ] || [ "$KEEP_SETTINGS" -eq 0 ] || continue
   ln -sfn "$entry" "${HOME}/.claude/$name"
 done
+
+TEAM_CLAUDE="$DOTFILES/templates/agent-team/.claude"
+if [ -d "$TEAM_CLAUDE/hooks" ]; then
+  [ ! -L "${HOME}/.claude/hooks" ] || rm -f "${HOME}/.claude/hooks"
+  mkdir -p "${HOME}/.claude/hooks"
+  for hook in guard-bash.py strikes.py worker-budget.py session-start.md; do
+    [ -e "$TEAM_CLAUDE/hooks/$hook" ] || continue
+    ln -sfn "$TEAM_CLAUDE/hooks/$hook" "${HOME}/.claude/hooks/$hook"
+  done
+fi
+if [ -d "$TEAM_CLAUDE/bin" ]; then
+  [ ! -L "${HOME}/.claude/bin" ] || rm -f "${HOME}/.claude/bin"
+  mkdir -p "${HOME}/.claude/bin"
+  for helper in env-peek.py state-of-play.sh; do
+    [ -e "$TEAM_CLAUDE/bin/$helper" ] || continue
+    ln -sfn "$TEAM_CLAUDE/bin/$helper" "${HOME}/.claude/bin/$helper"
+  done
+fi
 
 # Cursor discovers skills from BOTH ~/.cursor/skills/ and ~/.claude/skills/ (compatibility).
 # If both point at the same tree, each skill appears twice. Remove ~/.cursor/skills when
