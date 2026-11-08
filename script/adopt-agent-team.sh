@@ -7,7 +7,7 @@
 # Flags:
 #   --project-name   Short project identifier (defaults to directory name)
 #   --dry-run        Print actions without writing files
-#   --reset          Refresh template files, preserving customized roles and product facts
+#   --reset          Refresh settings and AGENTS.md policy sections; re-link roles (skips regular files)
 #   --check-paths    Validate managed destinations without adopting
 #
 set -euo pipefail

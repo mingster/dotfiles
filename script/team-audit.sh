@@ -261,7 +261,11 @@ role_symlink_checks() {
     rel=".claude/agents/$base"
     path="$proj/$rel"
     if [ ! -e "$path" ]; then
-      finding role-symlink "$proj: $rel missing"
+      if [ -L "$path" ]; then
+        finding role-symlink "$proj: $rel dangling"
+      else
+        finding role-symlink "$proj: $rel missing"
+      fi
       continue
     fi
     if [ ! -L "$path" ]; then

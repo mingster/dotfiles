@@ -50,6 +50,8 @@ printf 'custom\n' > "$tmp/proj/.claude/agents/fullstack-dev.md"
 out=$(run "$tmp/proj"); rc=$?
 [ "$rc" != 0 ] && echo "$out" | grep -qi 'refus' && echo "$out" | grep -q 'fullstack-dev' \
   && ok "refuses regular file" || bad "refuses regular file" "rc=$rc $out"
+[ ! -f "$tmp/proj/.gitignore" ] || ! grep -q '^\.claude/agents/' "$tmp/proj/.gitignore" 2>/dev/null \
+  && ok "refuse leaves gitignore untouched" || bad "refuse leaves gitignore untouched"
 
 seed_dotfiles
 mkdir -p "$tmp/proj/docs/agents" "$tmp/proj/.claude/agents"
@@ -73,8 +75,17 @@ printf 'facts\n' > "$tmp/proj/docs/agents/team-facts.md"
 run "$tmp/proj" >/dev/null
 rm "$tmp/proj/.claude/agents/release-manager.md"
 out=$(DOTFILES="$tmp/dotfiles" bash "$here/team-audit.sh" "$tmp/proj" 2>&1)
-echo "$out" | grep -q 'FINDING role-symlink:.*release-manager' \
+echo "$out" | grep -q 'FINDING role-symlink:.*release-manager.*missing' \
   && ok "audit missing one symlink" || bad "audit missing one symlink" "$out"
+
+seed_dotfiles
+mkdir -p "$tmp/proj/docs/agents"
+printf 'facts\n' > "$tmp/proj/docs/agents/team-facts.md"
+run "$tmp/proj" >/dev/null
+ln -sf /no/such/path "$tmp/proj/.claude/agents/release-manager.md"
+out=$(DOTFILES="$tmp/dotfiles" bash "$here/team-audit.sh" "$tmp/proj" 2>&1)
+echo "$out" | grep -q 'FINDING role-symlink:.*release-manager.*dangling' \
+  && ok "audit dangling symlink" || bad "audit dangling symlink" "$out"
 
 seed_dotfiles
 mkdir -p "$tmp/proj/docs/agents"

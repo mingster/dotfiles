@@ -81,5 +81,7 @@ link_roles() {
   return "$rc"
 }
 
-seed_gitignore
 link_roles
+lr=$?
+[ "$lr" -eq 0 ] && seed_gitignore
+exit "$lr"

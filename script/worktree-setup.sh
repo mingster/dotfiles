@@ -20,5 +20,7 @@ for pkg in package.json */package.json; do
 done
 # Agent team repos: refresh local role symlinks when team facts exist.
 if [ -f docs/agents/team-facts.md ] && [ -x "$HOME/dotfiles/script/link-agent-team-roles.sh" ]; then
-  bash "$HOME/dotfiles/script/link-agent-team-roles.sh" --quiet .
+  if ! bash "$HOME/dotfiles/script/link-agent-team-roles.sh" --quiet .; then
+    echo "worktree-setup: role links skipped (see link-agent-team-roles above)" >&2
+  fi
 fi
