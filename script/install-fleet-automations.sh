@@ -233,7 +233,29 @@ run_orca_json() {
     run_orca_with_timezone "$@"
     return 0
   fi
-  run_orca_with_timezone "$@" --json >"$orca_json_sink"
+  local out rc=0
+  out=$(run_orca_with_timezone "$@" --json) || rc=$?
+  printf '%s\n' "$out" >"$orca_json_sink"
+  [ "$rc" -eq 0 ] || echo "install-fleet-automations: orca $2 $3 failed: $out" >&2
+  return "$rc"
+}
+
+# Orca matches path: selectors as strings, so a repo registered under a
+# symlink is missed. Prefer the id of the repo whose real path is dotfiles.
+dotfiles_repo_selector() {
+  { "$orca_cli" repo list --json 2>/dev/null || true; } | WANT="$DOTFILES_DIR" python3 -c '
+import json, os, sys
+s = sys.stdin.read()
+try:
+    repos = json.loads(s[s.find("{"):s.rfind("}") + 1])["result"]["repos"]
+except Exception:
+    repos = []
+for r in repos:
+    if r.get("path") and os.path.realpath(r["path"]) == os.environ["WANT"]:
+        print("id:" + r["id"])
+        sys.exit(0)
+print("path:" + os.environ["WANT"])
+'
 }
 
 ensure_automation() {
@@ -291,7 +313,7 @@ PY
       --trigger "$trigger" \
       --prompt "$AUTOMATION_PROMPT" \
       --provider "$FLEET_AUTOMATIONS_PROVIDER" \
-      --repo "path:$DOTFILES_DIR" \
+      --repo "$repo_selector" \
       --setup skip \
       --precheck "$precheck" \
       --precheck-timeout "$timeout" \
@@ -302,7 +324,7 @@ PY
       --trigger "$trigger" \
       --prompt "$AUTOMATION_PROMPT" \
       --provider "$FLEET_AUTOMATIONS_PROVIDER" \
-      --repo "path:$DOTFILES_DIR" \
+      --repo "$repo_selector" \
       --setup skip \
       --precheck "$precheck" \
       --precheck-timeout "$timeout" \
@@ -359,6 +381,7 @@ case "$action" in
     coord_want=$(coordinator_name) || exit 1
     enabled=0
     host_is_coordinator "$coord_want" && enabled=1
+    repo_selector=$(dotfiles_repo_selector)
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" 1
     # The owner turns these three on by hand; the installer only creates them disabled.

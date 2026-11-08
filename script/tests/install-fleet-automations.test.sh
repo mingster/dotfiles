@@ -296,6 +296,15 @@ for a in d["automations"]:
 ')
 [ "$link_repo" = "path:$canonical_root" ] && check 'repo path uses canonical dotfiles' true || check 'repo path uses canonical dotfiles' false
 
+rm -f "$FAKE_ORCA_STORE"
+FAKE_ORCA_REPOS="[{\"id\":\"repo-1\",\"path\":\"$symlink_dir\"}]" bash "$script" --install >/dev/null 2>&1 || true
+id_repo=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+print(next((a.get("repo") or "") for a in d["automations"] if a.get("name") == "fleet-watch"))
+')
+[ "$id_repo" = "id:repo-1" ] && check 'repo registered under a symlink is selected by id' true || check "repo registered under a symlink is selected by id ($id_repo)" false
+
 fake_wt="$tmp/fake-worktree/script"
 mkdir -p "$fake_wt" "$HOME/dotfiles/script"
 cp "$script" "$fake_wt/install-fleet-automations.sh"

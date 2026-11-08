@@ -168,6 +168,8 @@ def main():
     argv = sys.argv[1:]
     if not argv:
         return fail("no command")
+    if argv[:2] == ["repo", "list"] and "FAKE_ORCA_REPOS" in os.environ:
+        return ok({"repos": json.loads(os.environ["FAKE_ORCA_REPOS"])})
     if argv[0] != "automations":
         return fail("unsupported command")
     return cmd_automations(argv[1:])
