@@ -33,8 +33,8 @@ Orca orchestration details, gates and failure limits are in [Coordinator operati
 ### Set up a machine
 
 ```bash
-mkdir -p ~/src && cd ~/src
-git clone <repository-url> dotfiles && cd dotfiles
+mkdir -p ~/GitHub && cd ~/GitHub
+git clone https://github.com/mingster/dotfiles.git && cd dotfiles
 sh mac/osxprep.sh   # macOS only: installs Command Line Tools
 sh install.sh
 ```
@@ -119,21 +119,23 @@ For a change in one repository, use the shared skills in order: intent, grill, s
 
 | Stage | Skill | What it does |
 | --- | --- | --- |
-| Intent | `/capture-intent` | Capture the problem and outcome (new features) |
-| Grill | `/grill-with-docs` | Interview that records decisions |
-| Spec | `/write-spec` or `/to-spec` | Agreed plan without a second interview |
+| Intent | `/capture-intent` | The problem and outcome in the owner's words. New features only |
+| Grill | `/grill-with-docs` | Interview that finds edge cases and records decisions |
+| Spec | `/write-spec` or `/to-spec` | The agreed plan, no second interview |
 | Tickets | `/to-tickets` | Small vertical slices with test cases |
-| Build | `/implement` or `/tdd` | Tests first where required, then implementation |
-| Review | `/code-review` | Standards and spec |
+| Build | `/implement` or `/tdd` | Bug fixes start with a failing test, then the fix (skip only when expensive, integration heavy or unclear). Features, scripts and refactors require tests and proof on the real artifact (test need not fail first; refactors prove behavior unchanged) |
+| Review | `/code-review` | Standards and spec, never skipped |
+
+Shortcuts: a typo or config tweak goes straight to `/tdd` or an edit. A bug starts with `/diagnosing-bugs` until a test goes red. A single slice skips `/to-tickets`.
 
 ## Shared skills
 
-All skills live in `.agents/skills/<name>/`. `install.sh` links them into Claude Code, Cursor and Antigravity.
+All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Claude Code, Cursor and Antigravity. Change one here and every tool gets it.
 
 * **Planning:** `capture-intent`, `grill-me`, `grilling`, `grill-with-docs`, `write-spec`, `to-spec`, `to-tickets`, `wayfinder`, `triage`, `domain-modeling`, `codebase-design`.
 * **Building:** `tdd`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
 * **Research and docs:** `research`, `retro`, `handoff`, `writing-for-agents`.
-* **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca bundled skills: `orca skills install --all`.
+* **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca's own skills come from `orca skills install --all`.
 
 ## Repository layout
 
@@ -144,7 +146,7 @@ All skills live in `.agents/skills/<name>/`. `install.sh` links them into Claude
 | `script/` | Setup scripts and team tools |
 | `.agents/skills/` | Shared skills |
 | `.agents/claude/` | Global Claude Code configuration |
-| `templates/agent-team/` | Roles and team skills copied or linked into projects |
-| `.config/` | Application configuration (GNU Stow) |
+| `templates/agent-team/` | Roles and team skills adopted into projects |
+| `.config/` | Application configuration, managed with GNU Stow |
 | `ide/` | Editor settings |
 | `docs/agents/` | Deeper docs: [setup](docs/agents/agent-team-setup.md), [roles](docs/agents/team-reference.md), [Orca automations](docs/agents/orca-automations.md), [settings backup](docs/agents/agent-settings-backup.md) |
