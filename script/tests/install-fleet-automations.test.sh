@@ -140,6 +140,7 @@ for a in d["automations"]:
         print(a["precheck"]["timeoutSeconds"])
         print(a["rrule"])
 ')
+echo "$fleet_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'fleet precheck uses trace wrapper' true || check 'fleet precheck uses trace wrapper' false
 echo "$fleet_pc" | grep -q 'fleet-watch.py' && check 'fleet precheck runs fleet-watch.py' true || check 'fleet precheck runs fleet-watch.py' false
 echo "$fleet_pc" | grep -q 'exit 1' && check 'fleet precheck ends with exit 1' true || check 'fleet precheck ends with exit 1' false
 echo "$fleet_pc" | grep -q "$FLEET_WATCH_CONFIG" && check 'fleet precheck uses env config path' true || check 'fleet precheck uses env config path' false
@@ -154,8 +155,9 @@ for a in d["automations"]:
         print(a["precheck"]["command"])
         print(a["rrule"])
 ')
+echo "$wrap_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'wrap precheck uses trace wrapper' true || check 'wrap precheck uses trace wrapper' false
 echo "$wrap_pc" | grep -q 'wrap-up.sh' && check 'wrap precheck runs wrap-up.sh --scheduled' true || check 'wrap precheck runs wrap-up.sh --scheduled' false
-echo "$wrap_pc" | grep -q '0 \*/2 \* \* \*' && check 'wrap-up schedule is 2 h' true || check 'wrap-up schedule is 2 h' false
+echo "$wrap_pc" | grep -q '\*/10 \* \* \* \*' && check 'wrap-up schedule is 10 min' true || check 'wrap-up schedule is 10 min' false
 
 sync_pc=$(python3 -c '
 import json, os

@@ -55,6 +55,8 @@ case "$*" in
         *) cat "$FAKE_DIR/page1" ;;
       esac
     fi ;;
+  'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  'worktree rm --worktree path:'*) exit 0 ;;
   *) exit 1 ;;
 esac
 STUB

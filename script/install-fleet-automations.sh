@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Orca automations: fleet-watch (5 min), wrap-up-scheduled (2 h), sync drift (daily),
+# Install Orca automations: fleet-watch (5 min), wrap-up-scheduled (10 min), sync drift (daily),
 # team-audit-weekly and weekly-update (Monday). Enabled only on the coordinator in agent-state/coordinator.conf.
 # Private paths: env vars or ~/.config/fleet-watch/automations.env (no secrets in this repo).
 #
@@ -56,12 +56,15 @@ fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}
 FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
-FLEET_WATCH_PRECHECK_LOG=${FLEET_WATCH_PRECHECK_LOG:-$HOME/.local/state/agent-team/fleet-watch-precheck.log}
+FLEET_WATCH_AUTOMATION_LOG=${FLEET_WATCH_AUTOMATION_LOG:-$HOME/.orca/logs/fleet-watch.log}
+FLEET_WATCH_PRECHECK_LOG=${FLEET_WATCH_PRECHECK_LOG:-$FLEET_WATCH_AUTOMATION_LOG}
 FLEET_AUTOMATIONS_TIMEZONE=${FLEET_AUTOMATIONS_TIMEZONE:-${TZ:-}}
 FLEET_AUTOMATIONS_PROVIDER=${FLEET_AUTOMATIONS_PROVIDER:-claude}
 AUTOMATION_PROMPT=${FLEET_AUTOMATIONS_PROMPT:-'Script only job, the precheck always stops it.'}
 FLEET_WATCH_PRECHECK_TIMEOUT=${FLEET_WATCH_PRECHECK_TIMEOUT:-280}
-WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-300}
+WRAP_UP_SCHEDULED_REPO_LIMIT=${WRAP_UP_SCHEDULED_REPO_LIMIT:-300}
+WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-600}
+WRAP_UP_SCHEDULED_LOG=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
 SYNC_DRIFT_LOG=${SYNC_DRIFT_LOG:-$HOME/.local/state/agent-team/sync-team-skills-drift.log}
 TEAM_AUDIT_WEEKLY_LOG=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/team-audit-weekly.log}
 SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
@@ -92,43 +95,47 @@ host_is_coordinator() {
   [ "$me" = "$want" ]
 }
 
-fleet_watch_precheck() {
-  local path shell_pw
+automation_wrap() {
+  local name=$1 log=$2
+  shift 2
+  local path shell_pw log_pw
   path=$(precheck_path)
   shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
-  printf "PATH='%s' python3 '%s/script/fleet-watch.py' --config '%s' --state '%s' >> '%s' 2>&1; exit 1" \
-    "$shell_pw" "$DOTFILES_DIR" "$FLEET_WATCH_CONFIG" "$FLEET_WATCH_STATE" "$FLEET_WATCH_PRECHECK_LOG"
+  log_pw=$(printf '%s' "$log" | sed "s/'/'\\\\''/g")
+  printf "PATH='%s' bash '%s/script/automation-precheck-wrapper.sh' '%s' '%s' --" \
+    "$shell_pw" "$DOTFILES_DIR" "$name" "$log_pw"
+  while [ $# -gt 0 ]; do
+    printf ' %q' "$1"
+    shift
+  done
+  printf '; exit 1'
+}
+
+fleet_watch_precheck() {
+  automation_wrap fleet-watch "$FLEET_WATCH_AUTOMATION_LOG" \
+    env "FLEET_WATCH_LOG_PATH=$FLEET_WATCH_AUTOMATION_LOG" \
+    python3 "$DOTFILES_DIR/script/fleet-watch.py" --config "$FLEET_WATCH_CONFIG" --state "$FLEET_WATCH_STATE"
 }
 
 wrap_up_precheck() {
-  local path shell_pw
-  path=$(precheck_path)
-  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
-  printf "PATH='%s' bash '%s/script/wrap-up.sh' --scheduled; exit 1" "$shell_pw" "$DOTFILES_DIR"
+  automation_wrap wrap-up-scheduled "$WRAP_UP_SCHEDULED_LOG" \
+    env "WRAP_UP_SCHEDULED_LOG=$WRAP_UP_SCHEDULED_LOG" "WRAP_UP_SCHEDULED_REPO_LIMIT=$WRAP_UP_SCHEDULED_REPO_LIMIT" \
+    bash "$DOTFILES_DIR/script/wrap-up.sh" --scheduled
 }
 
 sync_drift_precheck() {
-  local path shell_pw
-  path=$(precheck_path)
-  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
-  printf "PATH='%s' DOTFILES='%s' SYNC_DRIFT_LOG='%s' bash '%s/script/automation-precheck-sync-drift.sh'; exit 1" \
-    "$shell_pw" "$DOTFILES_DIR" "$SYNC_DRIFT_LOG" "$DOTFILES_DIR"
+  automation_wrap sync-team-skills-drift "$SYNC_DRIFT_LOG" \
+    env "DOTFILES=$DOTFILES_DIR" "SYNC_DRIFT_LOG=$SYNC_DRIFT_LOG" bash "$DOTFILES_DIR/script/automation-precheck-sync-drift.sh"
 }
 
 team_audit_weekly_precheck() {
-  local path shell_pw
-  path=$(precheck_path)
-  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
-  printf "PATH='%s' DOTFILES='%s' TEAM_AUDIT_WEEKLY_LOG='%s' bash '%s/script/automation-precheck-team-audit-weekly.sh'; exit 1" \
-    "$shell_pw" "$DOTFILES_DIR" "$TEAM_AUDIT_WEEKLY_LOG" "$DOTFILES_DIR"
+  automation_wrap team-audit-weekly "$TEAM_AUDIT_WEEKLY_LOG" \
+    env "DOTFILES=$DOTFILES_DIR" "TEAM_AUDIT_WEEKLY_LOG=$TEAM_AUDIT_WEEKLY_LOG" bash "$DOTFILES_DIR/script/automation-precheck-team-audit-weekly.sh"
 }
 
 weekly_update_precheck() {
-  local path shell_pw
-  path=$(precheck_path)
-  shell_pw=$(printf '%s' "$path" | sed "s/'/'\\\\''/g")
-  printf "PATH='%s' DOTFILES='%s' WEEKLY_UPDATE_LOG='%s' bash '%s/script/automation-precheck-weekly-update.sh'; exit 1" \
-    "$shell_pw" "$DOTFILES_DIR" "$WEEKLY_UPDATE_LOG" "$DOTFILES_DIR"
+  automation_wrap weekly-update "$WEEKLY_UPDATE_LOG" \
+    env "DOTFILES=$DOTFILES_DIR" "WEEKLY_UPDATE_LOG=$WEEKLY_UPDATE_LOG" bash "$DOTFILES_DIR/script/automation-precheck-weekly-update.sh"
 }
 
 list_json() {
@@ -301,7 +308,7 @@ case "$action" in
     enabled=0
     host_is_coordinator && enabled=1
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
-    ensure_automation wrap-up-scheduled '0 */2 * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" "$enabled"

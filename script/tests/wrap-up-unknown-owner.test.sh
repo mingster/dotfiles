@@ -31,6 +31,7 @@ case "$*" in
   *worker-show*) printf '{"ok":true,"result":{"dispatch":{"status":"dispatched"},"terminal":{"cwd":"%s"}}}\n' "$FAKE_LIVE_CWD" ;;
   *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
   *worker-list*) printf '{"ok":true,"result":{"workers":%s,"page":{"hasMore":false,"nextCursor":null}}}\n' "$(cat "$FAKE_DIR/workers")" ;;
+  'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
   *'worktree rm'*) exit 0 ;;
 esac
 FAKE
