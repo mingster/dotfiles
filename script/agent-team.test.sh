@@ -597,6 +597,37 @@ else
   check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills cleanup" bad
 fi
 
+claude_merge_repo="$tmp/claude-merge-repo"
+mkdir -p "$claude_merge_repo"
+git -C "$claude_merge_repo" init -q
+git -C "$claude_merge_repo" remote add origin "https://github.com/example-org/claude-merge.git"
+printf '# Root agents\n' > "$claude_merge_repo/AGENTS.md"
+printf '# Legacy instructions\n\nKeep this tribal knowledge.\n' > "$claude_merge_repo/CLAUDE.md"
+merge_out=$(bash "$SCRIPT" project "$claude_merge_repo" --project-name claude-merge 2>&1)
+if grep -q 'Keep this tribal knowledge' "$claude_merge_repo/AGENTS.md" \
+  && grep -q 'Project notes from CLAUDE.md' "$claude_merge_repo/AGENTS.md" \
+  && [ "$(cat "$claude_merge_repo/CLAUDE.md")" = "@AGENTS.md" ] \
+  && echo "$merge_out" | grep -q 'moved CLAUDE.md content into AGENTS.md'; then
+  check "finding 8: project preserves CLAUDE.md body in AGENTS.md before pointer rewrite" ok
+else
+  check "finding 8: project preserves CLAUDE.md body in AGENTS.md before pointer rewrite" bad
+fi
+
+cursor_keep_home="$tmp/cursor-keep-home"
+export HOME="$cursor_keep_home"
+mkdir -p "$HOME/.claude"
+bash "$SCRIPT" machine >/dev/null 2>&1
+mkdir -p "$HOME/.cursor/skills/elon"
+printf 'user-written cursor skill\n' > "$HOME/.cursor/skills/elon/USER.md"
+bash "$SCRIPT" machine >/dev/null 2>&1
+if [ -f "$HOME/.cursor/skills/elon/USER.md" ] \
+  && grep -q 'user-written cursor skill' "$HOME/.cursor/skills/elon/USER.md"; then
+  check "finding 9: machine keeps real ~/.cursor/skills dir when Claude has symlink" ok
+else
+  check "finding 9: machine keeps real ~/.cursor/skills dir when Claude has symlink" bad
+fi
+export HOME="$tmp/home"
+
 bash "$SCRIPT" project "$empty_repo" >/dev/null 2>&1
 rm -f "$empty_repo/docs/agents/team.md"
 if ! bash "$SCRIPT" check "$empty_repo" >/dev/null 2>&1; then

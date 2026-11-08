@@ -250,6 +250,16 @@ cmd_machine() {
           dup_only=0
           break
         fi
+        if [ ! -L "$link" ]; then
+          dup_only=0
+          break
+        fi
+        _claude_skill=$(cd "$HOME/.claude/skills/$base" 2>/dev/null && pwd -P) || _claude_skill=
+        _cursor_skill=$(cd "$link" 2>/dev/null && pwd -P) || _cursor_skill=
+        if [ -z "$_claude_skill" ] || [ "$_claude_skill" != "$_cursor_skill" ]; then
+          dup_only=0
+          break
+        fi
       done
       if [ "$dup_only" -eq 1 ] && [ -n "$(ls -A "$HOME/.cursor/skills" 2>/dev/null || true)" ]; then
         rm -rf "$HOME/.cursor/skills"
@@ -1598,6 +1608,22 @@ def seed_and_sync_project(proj_settings_mem=None):
     else:
         c_cur = read_text(claude_path)
         if "@AGENTS.md" not in c_cur:
+            c_clean = re.sub(
+                r"\n*<!-- agent-team:start -->.*?<!-- agent-team:end -->\n*",
+                "\n",
+                c_cur,
+                flags=re.DOTALL,
+            ).strip()
+            if c_clean and c_clean != "@AGENTS.md":
+                a_text = read_text(agents_path)
+                claude_lines = [ln for ln in c_clean.splitlines() if ln.strip()]
+                if claude_lines and not all(ln in a_text for ln in claude_lines):
+                    section_body = "## Project notes from CLAUDE.md\n\n" + c_clean + "\n"
+                    a_text = replace_or_append_h2(
+                        a_text, "Project notes from CLAUDE.md", section_body
+                    )
+                    write_text("AGENTS.md", a_text)
+                    print("agent-team: moved CLAUDE.md content into AGENTS.md")
             write_text("CLAUDE.md", "@AGENTS.md\n")
         elif "<!-- agent-team:start -->" in c_cur:
             c_clean = re.sub(
