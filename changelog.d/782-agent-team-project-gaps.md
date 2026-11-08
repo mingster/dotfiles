@@ -1,0 +1,4 @@
+### Fixed
+
+- `agent-team.sh project` moves a role pin forked in `.claude/model-routing.md` into `.orca/presets.project.json` and the `## Model routing` section of `docs/agents/team-facts.md` before it rewrites the file. A row that matches an older committed template is a stale copy, not a pin, and is left out. A second run changes nothing.
+- An allow rule copied from `.claude/settings.json` that runs a project file the same run removes (such as `.claude/bin/env-peek.py`) is dropped with a printed `drop` line (also in the `$CLAUDE_PROJECT_DIR` and `${CLAUDE_PROJECT_DIR}` forms), since the shared copy under `~/.claude/bin` replaces it.

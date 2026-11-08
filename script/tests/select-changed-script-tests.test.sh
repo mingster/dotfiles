@@ -124,7 +124,7 @@ case7_lead_merge_prefix() {
 }
 
 case9_sync_team_skills_agent_team() {
-  local out count
+  local out count want f
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
     bash "$root/script/select-changed-script-tests.sh" --list-only script/agent-team.sh 2>&1)
   grep -Fq 'Selected: script/agent-team.test.sh' <<<"$out" \
@@ -133,9 +133,19 @@ case9_sync_team_skills_agent_team() {
     || fail "case9 must select release-guard-rules.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/agent-team-guard-migration.test.sh' <<<"$out" \
     || fail "case9 must select agent-team-guard-migration.test.sh for agent-team.sh"
+  grep -Fq 'Selected: script/tests/agent-team-project-gaps.test.sh' <<<"$out" \
+    || fail "case9 must select agent-team-project-gaps.test.sh for agent-team.sh"
+  # agent-team.test.sh + release-guard-rules.test.sh + the agent-team-*.test.sh prefix family
+  want=2
+  for f in "$root"/script/tests/agent-team-*.test.sh; do
+    [ -e "$f" ] || continue
+    grep -Fq "Selected: script/tests/$(basename "$f")" <<<"$out" \
+      || fail "case9 must select $(basename "$f") for agent-team.sh"
+    want=$((want + 1))
+  done
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 3 ] || fail "case9 want Script tests: 3 got ${count:-0}"
-  ok "case9 agent-team maps agent-team, release-guard-rules and guard-migration"
+  [ "${count:-0}" -eq "$want" ] || fail "case9 want Script tests: $want got ${count:-0}"
+  ok "case9 agent-team maps agent-team, release-guard-rules and the agent-team-* family"
 }
 
 case10_script_plus_already_selected_test() {

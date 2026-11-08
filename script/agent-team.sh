@@ -353,6 +353,8 @@ check_safe_paths() {
     .claude/settings.json
     .claude/settings.project.json
     .claude/model-routing.md
+    .orca
+    .orca/presets.project.json
     .cursor
     .cursor/skills
     .cursor/changelog-hook.json
@@ -485,6 +487,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import stat
 import sys
 import time
@@ -1167,6 +1170,20 @@ def is_legacy_template_hook_cmd(cmd):
     return False
 
 
+def removed_file_in_rule(rule):
+    # The project path a permission rule names that remove_legacy_copies deletes in this run, or
+    # None. A shared copy under ~/.claude or $HOME/.claude is not the project file.
+    rels = [f".claude/hooks/{h}" for h in SHARED_HOOKS] + [f".claude/bin/{b}" for b in SHARED_BINS]
+    rels.append("bin/team-audit-metrics.ts")
+    for rel in rels:
+        if not os.path.lexists(os.path.join(target, rel)):
+            continue
+        pattern = r"(?:^|[\s(=:'\"])(?:\./|\$CLAUDE_PROJECT_DIR/|\$\{CLAUDE_PROJECT_DIR\}/|\"\$CLAUDE_PROJECT_DIR\"/|\"\$\{CLAUDE_PROJECT_DIR\}\"/)?" + re.escape(rel)
+        if re.search(pattern, rule):
+            return rel
+    return None
+
+
 def extract_settings_project():
     proj_settings_path = os.path.join(target, ".claude/settings.project.json")
     settings_path = os.path.join(target, ".claude/settings.json")
@@ -1197,6 +1214,10 @@ def extract_settings_project():
             cur_perms = cur.get("permissions", {})
             if isinstance(cur_perms, dict):
                 for item in cur_perms.get("allow", []):
+                    gone = removed_file_in_rule(item)
+                    if gone and item not in tpl_allow:
+                        print(f"drop .claude/settings.project.json permissions.allow: {item} (names {gone}, which this run removes)")
+                        continue
                     if item not in tpl_allow and item not in existing["permissions"]["allow"]:
                         existing["permissions"]["allow"].append(item)
                         print(f"extract .claude/settings.project.json permissions.allow: {item}")
@@ -1278,7 +1299,107 @@ def norm_role_line(line):
     return s.strip()
 
 
-def extract_role_facts():
+def routing_role_rows(text):
+    rows = {}
+    for line in text.splitlines():
+        m = re.match(r"^\|\s*([a-z][a-z-]*)\s*\|.*\|\s*$", line)
+        if m and m.group(1) + ".md" in CANONICAL_ROLES:
+            rows[m.group(1)] = line.strip()
+    return rows
+
+
+def past_template_rows(rel):
+    # Role rows of every committed version of the template file, so a stale project copy of an
+    # older template is not mistaken for a fork. Empty when dotfiles is not a git checkout.
+    tpl_rel = os.path.relpath(os.path.join(template_dir, rel), dotfiles)
+    res = subprocess.run(
+        ["git", "-C", dotfiles, "log", "--follow", "--name-only", "--format=%H", "--", tpl_rel],
+        capture_output=True,
+        text=True,
+    )
+    seen = set()
+    sha = None
+    for line in (res.stdout or "").splitlines():
+        line = line.strip()
+        if re.fullmatch(r"[0-9a-f]{40}", line):
+            sha = line
+            continue
+        if not line or sha is None:
+            continue
+        show = subprocess.run(["git", "-C", dotfiles, "show", f"{sha}:{line}"], capture_output=True, text=True)
+        sha = None
+        if show.returncode == 0:
+            seen.update(routing_role_rows(show.stdout).values())
+    return seen
+
+
+def extract_model_pins():
+    """Rows of the project's .claude/model-routing.md that differ from the template are forked
+    model pins. Move each into .orca/presets.project.json (roles.<role>) before the file is
+    rewritten, and return the team-facts bullets for ## Model routing."""
+    rel = ".claude/model-routing.md"
+    path = os.path.join(target, rel)
+    if not os.path.isfile(path) or os.path.islink(path):
+        return []
+    tpl_rows = routing_role_rows(read_text(os.path.join(template_dir, rel)))
+    old_rows = None
+    bullets = []
+    pins = {}
+    for role, row in routing_role_rows(read_text(path)).items():
+        if tpl_rows.get(role) == row:
+            continue
+        if old_rows is None:
+            old_rows = past_template_rows(rel)
+        if row in old_rows:
+            print(f"note: {rel} row for {role} matches an older template, not a pin")
+            continue
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        bullets.append(f"- `{role}`: " + "; ".join(c for c in cells[1:] if c))
+        m = re.search(r"--agent\s+([\w.-]+)\s+--model\s+([\w.-]+)(?:\s+--effort\s+(\w+))?", cells[-1])
+        if not m:
+            print(f"warning: {rel} row for {role} differs from the template but names no --agent/--model pin")
+            continue
+        pin = {"provider": m.group(1), "model": m.group(2)}
+        if m.group(3):
+            pin["effort"] = m.group(3)
+        pins[role] = pin
+    if not pins:
+        return bullets
+
+    presets_rel = ".orca/presets.project.json"
+    presets_path = os.path.join(target, presets_rel)
+    presets = {}
+    if os.path.isfile(presets_path):
+        try:
+            presets = json.loads(read_text(presets_path))
+        except Exception as exc:
+            sys.stderr.write(f"agent-team: {presets_rel} invalid JSON: {exc}\n")
+            sys.exit(1)
+        if not isinstance(presets, dict):
+            sys.stderr.write(f"agent-team: {presets_rel} root must be a JSON object\n")
+            sys.exit(1)
+    # usage-gate.py reads role entries from "roles", or from top level keys when "roles" is absent.
+    if isinstance(presets.get("roles"), dict):
+        roles = presets["roles"]
+    elif any(isinstance(v, dict) and k != "tiers" for k, v in presets.items()):
+        roles = presets
+    else:
+        roles = presets.setdefault("roles", {})
+    changed = False
+    for role, pin in pins.items():
+        if role in roles:
+            if roles[role] != pin:
+                print(f"keep {presets_rel} roles.{role}: already set, differs from the {rel} row")
+            continue
+        roles[role] = pin
+        print(f"extract {presets_rel} roles.{role}: " + " ".join(pin.values()))
+        changed = True
+    if changed:
+        write_text(presets_rel, json.dumps(presets, indent=2) + "\n")
+    return bullets
+
+
+def extract_role_facts(model_bullets=()):
     extracted_by_role = {}
     for role_file in CANONICAL_ROLES:
         proj_role_path = os.path.join(target, ".claude/agents", role_file)
@@ -1338,6 +1459,25 @@ def extract_role_facts():
 
     if "## Role facts" not in content:
         content = content.rstrip("\n") + "\n\n## Role facts\n"
+
+    new_model = [b for b in model_bullets if b not in content]
+    for b in new_model:
+        print(f"extract docs/agents/team-facts.md (## Model routing): {b}")
+    if new_model:
+        block = "\n".join(new_model)
+        mr = re.search(r"(?m)^## Model routing[ \t]*$", content)
+        if mr:
+            rest = content[mr.end():]
+            next_h2 = re.search(r"\n## ", rest)
+            pos = mr.end() + (next_h2.start() if next_h2 else len(rest))
+            content = content[:pos].rstrip("\n") + "\n" + block + "\n\n" + content[pos:].lstrip("\n")
+        else:
+            section = (
+                "## Model routing\n\nRole pins forked from `.claude/model-routing.md`. "
+                "`.orca/presets.project.json` holds the flags `usage-gate.py` reads.\n\n" + block + "\n\n"
+            )
+            pos = content.index("## Role facts")
+            content = content[:pos] + section + content[pos:]
 
     for role_name, bullets in extracted_by_role.items():
         new_bullets = [b for b in bullets if b not in content]
@@ -1993,7 +2133,8 @@ def run_check():
 if mode == "project":
     extract_guard_config()
     proj_settings_mem = extract_settings_project()
-    extract_role_facts()
+    model_bullets = extract_model_pins()
+    extract_role_facts(model_bullets)
     seed_and_sync_project(proj_settings_mem)
     remove_legacy_copies()
 elif mode == "check":
