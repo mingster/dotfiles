@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: '3.15.2'
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Run changed script tests
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
