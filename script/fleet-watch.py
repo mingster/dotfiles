@@ -1652,7 +1652,46 @@ def issue_scan_blocked(issue):
     return False
 
 
+_ISSUE_AUTOSTART_DENY_RE = re.compile(
+    r'\b(?:'
+    r'money|payments?|paid|unpaid|bills?|billing|refunds?|ledger|credits?|wallets?|'
+    r'payouts?|invoices?|stripe|checkout|subscriptions?|fees?|tax|entitlements?|'
+    r'secops|finops|prices?|pricing|discounts?|coupons?|'
+    r'features?|enhancements?|design:(?:architect|arena|review)|'
+    r'new[-\s]+(?:ui[-\s]+)?(?:pages?|screens?|routes?|views?|features?|ui)'
+    r')\b',
+    re.I,
+)
+_ISSUE_AUTOSTART_WORDING_RE = re.compile(
+    r'\b(?:wording|copy|labels?|text|strings?|i18n|locales?|translations?|typos?|messages?|toast|placeholder|tooltip)\b',
+    re.I,
+)
+
+
+def issue_scan_autostart_allowed(issue):
+    if not isinstance(issue, dict):
+        return False
+    title = issue.get('title')
+    raw_labels = issue.get('labels')
+    if not isinstance(title, str) or not title.strip():
+        return False
+    if raw_labels is not None and not isinstance(raw_labels, list):
+        return False
+    labels = [
+        entry.get('name') if isinstance(entry, dict) else entry
+        for entry in (raw_labels or [])
+    ]
+    if any(not isinstance(name, str) for name in labels if name is not None):
+        return False
+    haystack = ' '.join([title] + [name for name in labels if name])
+    if _ISSUE_AUTOSTART_DENY_RE.search(haystack):
+        return False
+    return bool(_ISSUE_AUTOSTART_WORDING_RE.search(haystack))
+
+
 def issue_scan_eligible(issue):
+    if not issue_scan_autostart_allowed(issue):
+        return False
     labels = {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
     if 'ready-for-agent' not in labels:
         return False

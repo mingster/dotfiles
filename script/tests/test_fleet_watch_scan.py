@@ -22,7 +22,7 @@ def issue(number, labels=None, body='', comments=None, created=None, blocked=Fal
     created = created or '2026-01-01T00:00:00Z'
     row = {
         'number': number,
-        'title': 'ticket %d' % number,
+        'title': 'wording ticket %d' % number,
         'body': body,
         'labels': [{'name': n} for n in labels],
         'comments': comments or [],
