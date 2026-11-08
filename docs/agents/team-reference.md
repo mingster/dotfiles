@@ -38,7 +38,7 @@ Other project files tell the team how this repo works:
 | `docs/agents/team.md` | Team roles, 2026-11-06 process, human approval for role changes, orchestration, delivery contract, handoffs, hotfix loop, rules and gated actions. |
 | `docs/agents/team-facts.md` | Repository, check commands, review rules and project shortcuts. |
 | `docs/agents/deploy-facts.md` | Components, hosts, stage commands, production approval and rollback steps. |
-| `docs/agents/coordinator-operations.md`, `elon-dispatch.md`, `engineering-integration.md` | Coordinator wake loop, failover, fleet placement, review tiers and merge rules. |
+| `docs/agents/coordinator-operations.md`, `elon-dispatch.md`, `engineering-integration.md` | Coordinator drain and tick loop, failover, fleet worker slots, merge frontier, review tiers and merge rules. |
 | `docs/agents/architect-pm-work.md`, `qa-sdet-execution.md`, `release-manager-work.md` | Role-specific work references loaded on demand to keep `.claude/agents/*.md` under the 800-word budget. |
 | `docs/agents/issue-tracker.md` | Where specs and tickets go and how to read or update them (including sub-issues and native blocking dependencies). |
 | `docs/agents/triage-labels.md` | The project's issue labels and what each means. |
@@ -59,7 +59,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | Merge and wrap-up | Elon dispatches merge workers for `lead-merge.sh` once per wake and runs `wrap-up`. | `script/coordinator-publication.sh`, `script/lead-merge.sh`, `/wrap-up` | Elon, dispatch merge on the passing branches and wrap up worktrees. |
 | Deploy and staging review | Staging deploys daily at 19:00 Taiwan time, followed by `/staging-review` and full regression; a green review leads to a one-line summary and same-day owner go for production. | `/deploy local`, `/deploy staging`, `/staging-review`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
 | Status and daily run | Get company status (**Now**, **Needs owner**, **Running**) or a recap, or run the project's daily checklist. | `/elon status`, `/elon daily run` | `/elon status Show Now, Needs owner and Running.` |
-| Audit and weekly update | Orca runs `team-audit.sh` and `team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the owner's word; `weekly-update.sh` opens three upstream PRs for owner review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
+| Audit and weekly update | Orca runs `team-audit.sh` and `team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the owner's word; `weekly-update.sh` opens three upstream PRs for owner review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and decision trail rows.` |
 | Support | Elon routes fixes and `support-csm` drafts the customer reply in the customer's language; the owner approves before sending or closing. | Ask Elon to assign `support-csm` | Elon, resolve this support ticket and bring me the reply draft for approval. |
 
 ## Fleet and load distribution

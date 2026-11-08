@@ -116,7 +116,7 @@ flowchart TD
 | Role | Job |
 | --- | --- |
 | Owner | Decides the items listed under Owner decisions |
-| Elon | The owner's window and only contact. Off the main line: the lifecycle runs without it. Answers "what now" and "recap", handles exceptions, sets priorities weekly |
+| Elon | The owner's window and only contact. Off the main line: the lifecycle runs without it. Runs `ketchup` and `recall` for status, handles exceptions, sets priorities weekly |
 | `architect-pm` | Intake, the design document, the weekly list, full audits |
 | `fullstack-dev` | Builds one ticket with tests by TDD |
 | `qa-sdet` | Playwright runs and the staging review |
