@@ -6,10 +6,9 @@
 - Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Elon never merges by hand; only a merge worker Elon dispatches runs `lead-merge.sh` from `lead-elon` (`.claude/model-routing.md`, rule 6). Docs-only PRs use the mechanical merge lane through that dispatch (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Orchestration rule 3).
 - release-manager owns every release end to end (staging, gates, production after the owner go) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with owner approval on the issue.
 
-
 ## Dispatch
 
-- **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
+- **Pre-build grill gate (owner 2026-11-08):** issues that touch only existing page wording (not money, price, a new UI page or a new feature) start a builder from `ready-for-agent` with no copy grill and no owner string approval, while everything else keeps its grill and owner approval (`~/dotfiles/templates/agent-team/docs/agents/team.md`).
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - Before framing, dispatching or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.
