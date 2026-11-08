@@ -2,6 +2,8 @@
 # Tests for worktree-setup.sh: a stale worktree reaches origin/main, the main checkout stays untouched,
 # and the install runs only when node_modules is missing.
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/lib/asdf-pin.sh"
 script="$here/../worktree-setup.sh"
 pass=0 fail=0
 ok() { pass=$((pass + 1)); }
