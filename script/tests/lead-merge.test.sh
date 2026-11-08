@@ -493,6 +493,8 @@ G commit -qam trunk-edit; M2=$(G rev-parse HEAD); set_main "$M2"
 G checkout -q pr2; G merge -q --no-edit main3 >/dev/null; Q=$(G rev-parse HEAD)
 echo more >> "$REAL_PATCH_REPO/lib/pr2.txt"; G commit -qam pr2-more; R=$(G rev-parse HEAD)
 files='[{"path":"lib/pr2.txt"}]'; PR_DIFF=""; countersign=""
+SHA=$Q; headsha=$Q; checks="Checks: PASS head=$P"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"
+check "carried Checks after clean merge of main merges" 0 '^MERGED' 1
 SHA=$Q; headsha=$Q; checks="Checks: PASS head=$Q"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"
 check "retained verdict ignores trunk already in the current head" 0 '^MERGED' 1
 SHA=$P; headsha=$P; checks="Checks: PASS head=$P"; comments="Verdict: PASS head=$P verifier=ctx_verify author=ctx_author"

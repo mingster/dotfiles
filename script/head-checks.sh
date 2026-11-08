@@ -199,6 +199,20 @@ if [ -z "$explicit_base" ] && git -C "$repo" remote get-url origin >/dev/null 2>
   git -C "$repo" fetch -q origin main >> "$log" 2>&1 || true
   main_sha=$(git -C "$repo" rev-parse --verify -q "origin/main^{commit}" || printf '%s' "$pr_base")
 fi
+if [ -n "$pr" ]; then
+  eval "$(sed -n '/^carry_why=""$/,/^verdict_carry() {/p' "$script_dir/lead-merge.sh" | sed '$d')"
+  eval "$(sed -n '/^verdict_carry() {/,/^}$/p' "$script_dir/lead-merge.sh")"
+  eval "$(sed -n "/^RECEIPT_JQ=/,/^'\$/p" "$script_dir/lead-merge.sh")"
+  eval "$(sed -n '/^checks_carry() {/,/^}$/p' "$script_dir/lead-merge.sh")"
+  if pr_info=$(cd "$repo" && gh pr view "$pr" --json comments) \
+      && carried_body=$(cd "$repo" && checks_carry "$pr_info" "$sha"); then
+    carried_head=${carried_body%%$'\n'*}
+    carried_v=$(sed -n 's/^Checks: PASS head=\([0-9a-f]\{40\}\).*/\1/p' <<<"$carried_head")
+    printf 'Checks: PASS head=%s main=%s\n\nChecks carried from %s (merge of main only, clean replay)\n' \
+      "$sha" "$main_sha" "${carried_v:0:12}" >>"$log"
+    exit 0
+  fi
+fi
 remote=$(git -C "$repo" config --get remote.origin.url || true)
 name=$(basename "${remote:-$repo}" .git)
 [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || usage "invalid repository name"

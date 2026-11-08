@@ -4,6 +4,8 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 # Verdict carry across a merge of main, in a throwaway repo with origin/main as a local ref.
 eval "$(sed -n '/^carry_why=""$/,/^verdict_carry() {/p' "$here/lead-merge.sh" | sed '$d')"
 eval "$(sed -n '/^verdict_carry() {/,/^}$/p' "$here/lead-merge.sh")"
+eval "$(sed -n "/^RECEIPT_JQ=/,/^'\$/p" "$here/lead-merge.sh")"
+eval "$(sed -n '/^checks_carry() {/,/^}$/p' "$here/lead-merge.sh")"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -94,7 +96,6 @@ git checkout -q pr
 echo 'PASS: 11 verdict carry cases'
 
 # Checks carry: a "Checks: PASS head=<V>" comment counts for head H when verdict_carry V H holds.
-eval "$(sed -n '/^RECEIPT_JQ=/,/^$/p;/^checks_carry() {/,/^}$/p' "$here/lead-merge.sh")"
 main_fetched=true
 cc() { # name expect(0|1) V H
   local rc=0 info
