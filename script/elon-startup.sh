@@ -49,7 +49,7 @@ else
   if [ ! -f "$state/.sync-ok" ]; then
     nodispatch "no .sync-ok, the last sync is unknown"
   else
-    mtime=$(stat -f %m "$state/.sync-ok" 2>/dev/null || stat -c %Y "$state/.sync-ok")
+    mtime=$(stat -c %Y "$state/.sync-ok" 2>/dev/null || stat -f %m "$state/.sync-ok")
     [ $(( $(date +%s) - mtime )) -lt 1800 ] || nodispatch ".sync-ok is older than 30 minutes"
   fi
   [ "$blocked" = 1 ] || echo "ok coordinator $want, state fresh"
