@@ -2,7 +2,7 @@
 name: elon
 description: CEO of {{PROJECT_NAME}}. The owner's window and only contact, off the main line under ~/dotfiles/README.md section 3.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
-skills: [elon, orchestration]
+skills: [elon, orchestration, team-grill-backlog]
 model: claude-opus-5-5
 effort: medium
 ---

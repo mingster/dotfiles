@@ -9,7 +9,7 @@
 
 ## Dispatch
 
-- **Pre-build grill gate (owner rule 2026-11-02):** before dispatching a builder, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
+- **Pre-build grill gate (owner rule 2026-11-06):** before dispatching a builder, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them. Money, copy, or UI waits stay `ready-for-human`, not `ready-for-agent`.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - Before framing, dispatching or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, Delivery contract. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - Before dispatching an issue, grep current main behaviour and record a premise check. A security gate brief states the threat model and first considers deleting a rule.

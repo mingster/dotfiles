@@ -13,10 +13,8 @@
 #   skill     every SKILL.md has name and description frontmatter
 #   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
 #   helpers   the orca-team helper scripts exist
-#   sdlc      every docs/intent/*/spec.md has a sibling intent.md (Plan before Design, owner rule
-#             2026-10-21); a spec first committed before SPEC_INTENT_SINCE (2026-10-21) is grandfathered
-#             and has a '## Test plan' section (owner rule 2026-10-21); a spec first committed before
-#             TEST_PLAN_SINCE (2026-10-22) is grandfathered
+#   sdlc      intent.md beside spec.md; ## Test plan in spec (grandfather dates in script)
+#   elon-skills  elon.md names team-grill-backlog only when skills: lists it
 #   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
 #             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
 #             network failure prints "WARN mp-upstream" and is not a finding.
@@ -31,13 +29,7 @@
 #             DOTFILES, .claude/agents/ in each project) carries an "Owner-approved:" trailer (owner
 #             rule 2026-11-02). Commits are checked from ROLE_RECEIPT_SINCE (pass the last audit date);
 #             commits before 2026-11-03 are grandfathered, so the date is never earlier.
-#   script-list  when TEAM_AUDIT_TOOL_LISTS is set (colon-separated absolute paths to project files),
-#             every top-level file under script/ is named in the concatenation of those readable files, as either
-#             script/<basename> or the bare basename as a whole token (not a substring such as foo.sh.bak for foo.sh).
-#             A path that is missing or not a readable regular file is a finding. When unset or empty, the check is skipped (one NOTE).
-#             Exempt apply-ide-overlay.py and apply-local-overlay.py. Skips *.test.sh and test_* (not tools), install_*, install-*,
-#             uninstall_*, setup-*, link-*, *.json, and *.test.ts (machine setup and config, not team tools). heavy-gate.sh and
-#             worker-startup.sh are still checked when unlisted.
+#   script-list  optional TEAM_AUDIT_TOOL_LISTS inventory of script/ (see script-list block below)
 #
 # Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles), TEAM_AUDIT_TOOL_LISTS.
 set -uo pipefail
@@ -99,6 +91,10 @@ for root in "${ROOTS[@]}"; do
     [ "$n" -le "$BUDGET" ] || finding budget "$f: $n words (budget $BUDGET)"
   done
 done
+
+for root in "$TEMPLATE" "${PROJECTS[@]}"; do f="$root/.claude/agents/elon.md"; [ -f "$f" ] && grep -qF team-grill-backlog "$f" || continue
+  list=$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^skills:/{print}' "$f" | sed -E 's/^skills: *\[?//; s/\] *$//; s/,/ /g')
+  case " $list " in *" team-grill-backlog "*) ;; *) finding skill "$f: skills: must list team-grill-backlog" ;; esac; done
 
 wording_files() {
   for root in "${ROOTS[@]}"; do [ -d "$root" ] && team_files "$root"; done
