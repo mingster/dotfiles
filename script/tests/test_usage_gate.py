@@ -1,6 +1,12 @@
 import contextlib, importlib.util, io, json, os, sys, tempfile, unittest
 from datetime import timezone
 from unittest import mock
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import asdf_pin  # noqa: E402
+
+asdf_pin.pin()  # before any test sets HOME
+
 spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname(__file__), "..", "usage-gate.py"))
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
 NO_CURSOR = "/nonexistent/cursor-summary.json"
