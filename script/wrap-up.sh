@@ -229,6 +229,37 @@ settled() {
   git merge-base --is-ancestor "$1" origin/main 2>/dev/null && return 0
   [ -n "${2:-}" ] && [ "$(git rev-parse --verify -q "$1^{commit}")" = "$2" ]
 }
+guarded_orca_worktree_rm() { # <counter> <label> <path> [preview]
+  local counter=$1 label=$2 path=$3 rc=0 real_path oc
+  real_path=$(real "$path")
+  if [ "${4:-}" = preview ] || { [ "${dry:-0}" = 1 ] || [ "${apply:-0}" -eq 0 ]; }; then
+    printf 'Remove orca record %s\n' "$real_path"
+    return 0
+  fi
+  oc="${orca_bin:-${orca:-orca}}"
+  if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
+    :
+  elif ! command -v "$oc" >/dev/null 2>&1; then
+    return 0
+  fi
+  if declare -f orca_call >/dev/null 2>&1; then
+    orca_call worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
+  else
+    run_limited "${call_timeout:-60}" "$oc" worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "Warning: could not deregister Orca worktree for $label." >&2
+    if declare -f fail_item >/dev/null 2>&1; then
+      fail_item "$label" "orca worktree rm failed (exit $rc)"
+      guard_keep "$counter" "$label" 'orca worktree rm failed'
+    else
+      echo "Kept worktree $path ($label, orca worktree rm failed)" >&2
+    fi
+    return 1
+  fi
+  orca_removed=$((${orca_removed:-0}+1))
+  return 0
+}
 guarded_merged_worktree_remove() { # <path> <label>: after free_worktree's checks
   local rc=0
   limited git worktree remove -- "$1" >/dev/null 2>&1 || rc=$?
@@ -1187,33 +1218,6 @@ branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the i
   echo "Warning: $2 is checked out in a worktree now; kept." >&2
   if in_use "$wt"; then guard_keep "$1" "$2" "checked out in $wt, $busy"; else guard_keep "$1" "$2" "checked out in $wt"; fi
   return 1
-}
-guarded_orca_worktree_rm() { # <counter> <label> <path> [preview]
-  local counter=$1 label=$2 path=$3 rc=0 real_path oc
-  real_path=$(real "$path")
-  if [ "${4:-}" = preview ] || { [ "${dry:-0}" = 1 ] || [ "${apply:-0}" -eq 0 ]; }; then
-    printf 'Remove orca record %s\n' "$real_path"
-    return 0
-  fi
-  if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
-    :
-  elif ! command -v "$orca_bin" >/dev/null 2>&1; then
-    return 0
-  fi
-  oc="${orca_bin:-${orca:-orca}}"
-  if declare -f orca_call >/dev/null 2>&1; then
-    orca_call worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
-  else
-    run_limited "${call_timeout:-60}" "$oc" worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
-  fi
-  if [ "$rc" -ne 0 ]; then
-    echo "Warning: could not deregister Orca worktree for $label." >&2
-    fail_item "$label" "orca worktree rm failed (exit $rc)"
-    guard_keep "$counter" "$label" 'orca worktree rm failed'
-    return 1
-  fi
-  orca_removed=$((${orca_removed:-0}+1))
-  return 0
 }
 worktree_pinned_in_orca() {
   [ "${orca_pins_ok:-0}" -eq 1 ] || return 1
