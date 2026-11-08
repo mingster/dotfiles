@@ -5,9 +5,10 @@
 #   ~/dotfiles/script/team-audit.sh [<project-root> ...]   (default: one project root per line in script/team-audit.local.conf, untracked)
 #   ~/dotfiles/script/team-audit.sh --log <finding> <evidence>
 #   ~/dotfiles/script/team-audit.sh --report [--times <file>]
+#   TEAM_AUDIT_RUN_METRICS=1 ~/dotfiles/script/team-audit.sh   (also prints script/team-audit-metrics.ts --repo <owner/name> per project)
 #
 # Checks, each printed as "FINDING <check>: <detail>":
-#   sync      sync-team-skills.sh --check passes for each project
+#   sync      agent-team.sh check passes for each project
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
 #   wording   no banned wording in team files: implementation workers and release-manager
 #             merge PRs, the phrase "open a PR and merge it",
@@ -258,7 +259,7 @@ team_files() {
 for proj in "${PROJECTS[@]}"; do
   if [ ! -d "$proj" ]; then finding sync "$proj: no such project"; continue; fi
   # shellcheck disable=SC2097,SC2098
-  out=$(DOTFILES="$DOTFILES" "$DOTFILES/script/sync-team-skills.sh" --check "$proj" 2>&1) \
+  out=$(DOTFILES="$DOTFILES" bash "$DOTFILES/script/agent-team.sh" check "$proj" 2>&1) \
     || finding sync "$proj: $(echo "$out" | head -3 | tr '\n' ' ')"
 done
 
@@ -439,6 +440,22 @@ for proj in "${PROJECTS[@]}"; do
     echo "FINDING ready-brief $repo#$num missing: $missing"; findings=$((findings + 1))
   done <<< "$rows"
 done
+
+if [ "${TEAM_AUDIT_RUN_METRICS:-0}" = "1" ]; then
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "WARN metrics: bun unavailable; skipped"
+  else
+    for proj in "${PROJECTS[@]}"; do
+      [ -d "$proj" ] || continue
+      url=$(git -C "$proj" remote get-url origin 2>/dev/null) || continue
+      repo=$(echo "$url" | sed -nE 's#^(https://([^@/]+@)?|ssh://git@|git@)github\.com[:/]([^/]+/[^/]+)$#\3#p'); repo="${repo%.git}"
+      [ -n "$repo" ] || continue
+      echo "metrics $repo:"
+      bun "$DOTFILES/script/team-audit-metrics.ts" --repo "$repo" 2>&1 | sed 's/^/  /' \
+        || echo "WARN metrics: failed for $repo"
+    done
+  fi
+fi
 
 if [ "$findings" -eq 0 ]; then echo "team-audit: clean"; exit 0; fi
 echo "team-audit: $findings finding(s)"

@@ -1,0 +1,19 @@
+{
+  "now": "2026-11-09T12:00:00Z",
+  "prs": [
+    {"number": 1, "title": "Add a", "mergedAt": "2026-11-08T12:00:00Z", "labels": [], "firstChecksConclusion": "success",
+     "closingIssue": {"number": 10, "readyAt": "2026-11-08T11:00:00Z", "reopened": false}},
+    {"number": 2, "title": "Add b", "mergedAt": "2026-11-07T12:00:00Z", "labels": [], "firstChecksConclusion": "failure",
+     "closingIssue": {"number": 11, "readyAt": "2026-11-07T08:00:00Z", "reopened": true}},
+    {"number": 3, "title": "Hotfix c", "mergedAt": "2026-11-06T12:00:00Z", "labels": [], "firstChecksConclusion": "success",
+     "closingIssue": null},
+    {"number": 4, "title": "Too old", "mergedAt": "2026-10-01T12:00:00Z", "labels": [], "firstChecksConclusion": "failure",
+     "closingIssue": {"number": 12, "readyAt": "2026-09-30T12:00:00Z", "reopened": true}}
+  ],
+  "issues": [
+    {"number": 20, "createdAt": "2026-11-02T00:00:00Z", "labels": ["P0"]},
+    {"number": 21, "createdAt": "2026-11-03T00:00:00Z", "labels": ["p1", "bug"]},
+    {"number": 22, "createdAt": "2026-11-04T00:00:00Z", "labels": ["P1"]},
+    {"number": 23, "createdAt": "2026-10-30T00:00:00Z", "labels": ["P0"]}
+  ]
+}

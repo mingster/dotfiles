@@ -6,7 +6,14 @@ Each project keeps its own facts in `docs/agents/`. Everything else is linked fr
 
 ## What an agent team is
 
-An **agent team** is a small set of AI agents that share one delivery playbook.
+An **agent team** is a small set of AI agents that share one delivery playbook. Terms used below:
+
+* **Orca:** the desktop app that starts, shows and connects the agents.
+* **Tracker:** the list of tasks (GitHub issues) the team reads and updates.
+* **Grill:** a round of pointed questions that fills the gaps in an idea before anyone builds it.
+* **Verifier:** a second AI model that checks a finished change and gives a pass or fail.
+* **Babysit:** a check every five minutes on open pull requests that starts a fix or a merge when one is due.
+* **Fleet:** the group of computers that run the agents.
 
 One **coordinator agent** holds the CEO role. It reads the issue tracker, plans work, and **dispatches** tasks. A dispatch is a single start command that gives one worker a complete assignment.
 
@@ -19,8 +26,8 @@ Full role names and boundaries live in [Agent team reference](docs/agents/team-r
 ## How one task runs
 
 1. **Issue.** Someone opens a tracker item with acceptance criteria. Intake roles may grill and slice it until it is ready.
-2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief lists `Refs`, scope, verify steps and finish steps. `script/brief-lint.sh` rejects incomplete briefs.
-3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks fleet load, usage quota and host readiness, then starts one worker in a fresh worktree.
+2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief has five parts: `Refs`, Acceptance, Out of scope, Verify and Finish. `script/brief-lint.sh` rejects a brief that lacks any of them.
+3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks that the host is ready and that the usage quota allows another worker, then starts one worker in a fresh worktree.
 4. **Build.** The worker implements the ticket, runs local checks, commits, pushes once and opens a pull request.
 5. **Checks and review.** GitHub Actions runs required checks. A read only bot review and a separate verifier model post a **Verdict** (`PASS`, `PASS+NOTES` or `FAIL`) via `script/post-verdict.sh`.
 6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` may squash merge. A periodic babysit pass can start a fix worker or a shipping run.
@@ -47,11 +54,11 @@ sh install.sh
 | `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also upgrade Homebrew packages on macOS |
 | `script/agent-team.sh machine` | Install agent CLIs, link skills and settings, report missing logins (add `--dry-run` to preview) |
 
-Fleet host registration, pull scripts, automations and the readiness checklist are in [Agent team setup](docs/agents/agent-team-setup.md#fleet-readiness).
+Fleet host registration, pull scripts, automations and the readiness checklist are in [Fleet readiness](docs/agents/team-reference.md#fleet-readiness).
 
 ### Adopt the team in a project
 
-`script/agent-team.sh` is the single entry point for machine setup and project adoption (see open pull request 756 in this repository).
+`script/agent-team.sh` is the single entry point for machine setup and project adoption.
 
 ```bash
 script/agent-team.sh machine
@@ -75,23 +82,19 @@ After adoption, fill in project facts:
 * `docs/agents/deploy-facts.md`: deploy targets, URLs and smoke commands
 * `docs/agents/domain.md`: domain context for planning skills
 
-See [Agent team setup](docs/agents/agent-team-setup.md) for backups, reset flows and owner login steps.
+`bun script/team-audit-metrics.ts --repo <owner/name>` prints the weekly delivery numbers for any project. The weekly audit runs it, and no project keeps its own copy.
+
+See [Agent team setup](docs/agents/team-reference.md#agent-team-setup) for owner login steps and [settings backup](docs/agents/agent-settings-backup.md) for backups.
 
 ## Fleet and load
 
 The **fleet** is several computers paired in Orca. One host runs the coordinator agent. Other hosts run builders, reviewers, browser work and heavy checks.
 
-Before each dispatch the coordinator reads load through `fleet-load.sh` (published under the coordinator state directory). Placement follows the order and per host limits in [Coordinator operations](docs/agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database and heavy host runs databases and remote Playwright or `head-checks.sh` jobs only, never interactive workers.
+Placement follows the order and per host limits in [Coordinator operations](docs/agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database and heavy host runs databases and remote Playwright or `head-checks.sh` jobs only, never interactive workers.
 
-The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch for a provider at its weekly quota ceiling. The **coordinator overload gate** (issue 748) refuses a new local worker when the coordinator host is over its load or memory limit on the target host. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
+The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch for a provider at its weekly quota ceiling. The **coordinator overload gate** lives in `script/fleet-watch.py` (`COORDINATOR_MAX_LOAD_PER_CORE`). When the coordinator host's load per core or free memory crosses its limit, no new local worker starts there, and the run points to an overflow host with free room. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
 
-`script/worker-startup.sh` (issue 757) chooses a host automatically when the caller passes no `--on`:
-
-1. Read load for every fleet host from the same source as `fleet-load.sh`.
-2. Walk the placement order and limits from [Coordinator operations](docs/agents/coordinator-operations.md).
-3. Start on the first host under its limit and print one line with the chosen host and load.
-4. When every host is over limit, refuse with one line listing each host's load.
-5. An explicit `--on <environment>` is honored unchanged, and the usage gate still applies there.
+`script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. An explicit `--on <environment>` starts it on that host.
 
 Host names, caps and roles come from private fleet configuration, not from hard coded values in this public repo.
 
@@ -149,4 +152,4 @@ All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Cl
 | `templates/agent-team/` | Roles and team skills adopted into projects |
 | `.config/` | Application configuration, managed with GNU Stow |
 | `ide/` | Editor settings |
-| `docs/agents/` | Deeper docs: [setup](docs/agents/agent-team-setup.md), [roles](docs/agents/team-reference.md), [Orca automations](docs/agents/orca-automations.md), [settings backup](docs/agents/agent-settings-backup.md) |
+| `docs/agents/` | Deeper docs: [setup](docs/agents/team-reference.md#agent-team-setup), [roles](docs/agents/team-reference.md), [Orca automations](docs/agents/orca-automations.md), [settings backup](docs/agents/agent-settings-backup.md) |

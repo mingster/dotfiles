@@ -1,0 +1,1 @@
+- Move `script/team-audit.test.sh` to `script/tests/team-audit-log.test.sh` so script test basenames are unique (refs #767).
