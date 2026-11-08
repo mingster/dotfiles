@@ -8,8 +8,6 @@
 #        install-fleet-automations.sh --uninstall
 set -euo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-dotfiles=$(cd "$here/.." && pwd -P)
 orca_cli=${ORCA_CLI_COMMAND:-orca}
 dry=0
 action=""
@@ -49,9 +47,13 @@ if [ -f "$env_file" ]; then
   set +a
 fi
 
-DOTFILES_DIR=${DOTFILES_DIR:-$dotfiles}
+DOTFILES_DIR=${DOTFILES_DIR:-$HOME/dotfiles}
 if [ -d "$DOTFILES_DIR" ]; then
   DOTFILES_DIR=$(cd "$DOTFILES_DIR" && pwd -P)
+fi
+if [ ! -f "$DOTFILES_DIR/script/fleet-watch.py" ]; then
+  echo "install-fleet-automations: missing $DOTFILES_DIR/script/fleet-watch.py" >&2
+  exit 1
 fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}

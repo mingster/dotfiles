@@ -213,5 +213,44 @@ for a in d["automations"]:
 ')
 [ "$link_repo" = "path:$canonical_root" ] && check 'repo path uses canonical dotfiles' true || check 'repo path uses canonical dotfiles' false
 
+fake_wt="$tmp/fake-worktree/script"
+mkdir -p "$fake_wt" "$HOME/dotfiles/script"
+cp "$script" "$fake_wt/install-fleet-automations.sh"
+touch "$HOME/dotfiles/script/fleet-watch.py"
+canonical_home_dotfiles=$(cd "$HOME/dotfiles" && pwd -P)
+unset DOTFILES_DIR
+rm -f "$FLEET_AUTOMATIONS_ENV" "$FAKE_ORCA_STORE"
+wt_install_ok=0
+bash "$fake_wt/install-fleet-automations.sh" --install >/dev/null 2>&1 && wt_install_ok=1
+check 'worktree copy install succeeds with HOME/dotfiles' test "$wt_install_ok" -eq 1
+wt_cmds_ok=0
+if [ -f "$FAKE_ORCA_STORE" ]; then
+  if CANON_HOME_DOTFILES="$canonical_home_dotfiles" FAKE_WT="$fake_wt" python3 - <<'PY'
+import json, os, sys
+d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
+autos = d.get("automations", [])
+if len(autos) != 5:
+    sys.exit(1)
+want = os.environ["CANON_HOME_DOTFILES"]
+bad = os.environ["FAKE_WT"]
+for a in autos:
+    cmd = (a.get("precheck") or {}).get("command") or ""
+    repo = a.get("repo") or ""
+    if want not in cmd or bad in cmd or repo != f"path:{want}":
+        sys.exit(1)
+PY
+  then
+    wt_cmds_ok=1
+  fi
+fi
+check 'worktree copy precheck commands reference HOME/dotfiles not worktree' test "$wt_cmds_ok" -eq 1
+
+rm -rf "$HOME/dotfiles"
+missing_rc=0
+missing_out=$(bash "$fake_wt/install-fleet-automations.sh" --install 2>&1) || missing_rc=$?
+check 'missing HOME/dotfiles exits non-zero' test "$missing_rc" -ne 0
+missing_lines=$(printf '%s\n' "$missing_out" | awk 'NF { c++ } END { print c+0 }')
+check 'missing HOME/dotfiles prints one line reason' test "$missing_lines" -eq 1
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
