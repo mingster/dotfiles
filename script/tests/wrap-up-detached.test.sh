@@ -36,7 +36,7 @@ export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
 export FAKE_PRS='[]' FAKE_TERMINALS='[]'
-export WRAP_UP_CLONE_ROOT="$tmp/no-clones"
+export WRAP_UP_CLONE_ROOT="$tmp/no-clones" WRAP_UP_STATE_DIR="$tmp/no-state"
 git init -q --bare "$tmp/origin"
 git init -q -b main "$tmp/repo"
 git -C "$tmp/repo" config user.email test@example.invalid
