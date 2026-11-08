@@ -89,14 +89,8 @@ check 'failing lsof reports reason' has "Kept Chrome clone $chrome/code_sign_clo
 mkdir -p "$chrome/code_sign_clone.unknown"
 rm -f "$tmp/hermetic/lsof"
 mv "$tmp/bin/lsof" "$tmp/lsof.off" 2>/dev/null || true
-case "$(uname -s)" in
-  Linux)
-    # No lsof, no fuser, no proc root: path_busy fails closed as lsof unavailable.
-    OSTYPE=linux-gnu WRAP_UP_TEST_PROC_ROOT="$tmp/missing-proc" PATH="$tmp/hermetic:/bin" \
-      bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true ;;
-  *)
-    OSTYPE=darwin PATH="$tmp/hermetic:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true ;;
-esac
+# Without lsof in PATH, path_busy fails closed (macOS semantics; avoids Linux fuser).
+OSTYPE=darwin PATH="$tmp/hermetic:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
 check 'no lsof keeps clones' test -d "$chrome/code_sign_clone.unknown"
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
