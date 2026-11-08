@@ -684,10 +684,60 @@ def link_presets():
     os.replace(tmp, dest)
 
 
-def role_chain(role):
+def project_presets_path(cwd=None):
+    env_path = os.environ.get("USAGE_GATE_PROJECT_PRESETS")
+    if env_path is not None:
+        return env_path if env_path and os.path.isfile(env_path) else None
+    try:
+        cur = os.path.abspath(cwd or os.getcwd())
+    except OSError:
+        return None
+    while True:
+        candidate = os.path.join(cur, ".orca", "presets.project.json")
+        if os.path.isfile(candidate):
+            return candidate
+        if os.path.exists(os.path.join(cur, ".git")):
+            return None
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def _merge_role_entry(base_entry, override_entry):
+    if not isinstance(override_entry, dict):
+        return override_entry
+    base = dict(base_entry) if isinstance(base_entry, dict) else {}
+    merged = {**base, **override_entry}
+    if "chain" not in override_entry and "provider" in override_entry and "model" in override_entry:
+        pin_item = {k: override_entry[k] for k in ("provider", "model", "effort") if k in override_entry}
+        existing_chain = [c for c in base.get("chain", []) if isinstance(c, dict) and c != pin_item]
+        merged["chain"] = [pin_item] + existing_chain
+        merged.setdefault("pin", True)
+    return merged
+
+
+def load_presets(cwd=None):
     path = os.environ.get("USAGE_GATE_PRESETS", HOME + "/.orca/presets.json")
     with open(path) as f:
         presets = json.load(f)
+    proj_path = project_presets_path(cwd=cwd)
+    if proj_path:
+        with open(proj_path) as f:
+            proj = json.load(f)
+        if isinstance(proj, dict):
+            merged_roles = dict(presets.get("roles", {}))
+            proj_roles = proj.get("roles") if isinstance(proj.get("roles"), dict) else {
+                k: v for k, v in proj.items() if isinstance(v, dict) and k not in ("tiers",)
+            }
+            for rname, rval in proj_roles.items():
+                merged_roles[rname] = _merge_role_entry(merged_roles.get(rname), rval)
+            presets = {**presets, **{k: v for k, v in proj.items() if k != "roles"}, "roles": merged_roles}
+    return presets
+
+
+def role_chain(role):
+    presets = load_presets()
     roles = presets.get("roles", {})
     if role == "reviewer" and "reviewer" not in roles:
         role = "qa-sdet"
@@ -855,7 +905,9 @@ def main(argv=None):
         return 0
     if a.provider:
         return {"allowed": 0, "blocked": 3, "unknown": 4}[out[0]["verdict"]]
-    return 0 if any(o["verdict"] != "blocked" for o in out) else 3
+    if any(o["verdict"] == "allowed" for o in out):
+        return 0
+    return 3 if out and all(o["verdict"] == "blocked" for o in out) else 4
 
 
 if __name__ == "__main__":

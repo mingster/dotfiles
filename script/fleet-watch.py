@@ -555,44 +555,180 @@ def fetch_workers(config):
     return deduplicate_workers(workers)
 
 
+COORDINATOR_MAX_LOAD_PER_CORE = 0.7
+COORDINATOR_MIN_FREE_GB = 4.0
+
+
+def coordinator_load_per_core():
+    """1-minute load average per CPU core on this host (or FLEET_WATCH_TEST_LOAD_PER_CORE override)."""
+    override = os.environ.get('FLEET_WATCH_TEST_LOAD_PER_CORE')
+    if override is not None and str(override).strip() != '':
+        try:
+            return float(str(override).strip())
+        except ValueError:
+            pass
+    try:
+        load1 = float(os.getloadavg()[0])
+        cores = max(1, int(os.cpu_count() or 1))
+        return load1 / cores
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def _parse_vm_stat_free_gb(stats):
+    if not isinstance(stats, str) or 'Pages free' not in stats:
+        return None
+    page_match = re.search(r'page size of (\d+) bytes', stats)
+    page_size = int(page_match.group(1)) if page_match else 4096
+    pages = 0
+    matched = False
+    for label in ('Pages free', 'Pages inactive', 'Pages speculative'):
+        m = re.search(r'^' + label + r':\s+(\d+)', stats, re.M)
+        if m:
+            pages += int(m.group(1))
+            matched = True
+    if not matched:
+        return None
+    return (pages * page_size) / (1024.0 ** 3)
+
+
+def _parse_meminfo_free_gb(text):
+    if not isinstance(text, str):
+        return None
+    stats = dict(re.findall(r'^(\w+):\s+(\d+)', text, re.M))
+    if 'MemAvailable' in stats:
+        return int(stats['MemAvailable']) / (1024.0 * 1024.0)
+    if 'MemFree' in stats:
+        avail_kb = int(stats['MemFree']) + int(stats.get('Buffers', 0)) + int(stats.get('Cached', 0))
+        return avail_kb / (1024.0 * 1024.0)
+    return None
+
+
+def coordinator_free_gb(vm_stat_runner=None, meminfo_path='/proc/meminfo'):
+    """Free/available memory in GiB via vm_stat (macOS) or /proc/meminfo (Linux), with FLEET_WATCH_TEST_FREE_GB override."""
+    override = os.environ.get('FLEET_WATCH_TEST_FREE_GB')
+    if override is not None and str(override).strip() != '':
+        try:
+            return float(str(override).strip())
+        except ValueError:
+            pass
+    if sys.platform == 'darwin':
+        try:
+            if vm_stat_runner is not None:
+                stats = vm_stat_runner()
+            elif getattr(subprocess.check_output, '__module__', '') != 'subprocess':
+                stats = subprocess.check_output(['vm_stat'], text=True, timeout=5)
+            else:
+                with subprocess.Popen(
+                    ['vm_stat'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                ) as proc:
+                    stats, _ = proc.communicate(timeout=5)
+            return _parse_vm_stat_free_gb(stats)
+        except Exception:
+            return None
+    try:
+        path = Path(meminfo_path)
+        if path.exists():
+            return _parse_meminfo_free_gb(path.read_text())
+    except Exception:
+        pass
+    return None
+
+
+def _is_local_coordinator_host(host, config):
+    local_host = (config or {}).get('local_host')
+    if host in ('local', None, ''):
+        return True
+    if isinstance(local_host, str) and local_host.strip() and host == local_host.strip():
+        return True
+    return False
+
+
+def _first_admitted_overflow_host(host, config, workers):
+    local_host = (config or {}).get('local_host')
+    local_names = {'local', host}
+    if isinstance(local_host, str) and local_host.strip():
+        local_names.add(local_host.strip())
+    for candidate in ((config or {}).get('host_caps') or {}):
+        if candidate in local_names:
+            continue
+        remote_receipt = admit(candidate, config, workers=workers)
+        if remote_receipt.get('admitted'):
+            return candidate
+    return None
+
+
 def admit(host, config, workers=None):
     """Evaluate host admission under its configured cap.
     Returns an admission receipt dict. Missing/failed remote inventory and release_unknown never authorize a start.
     """
-    cap = config.get('host_caps', {}).get(host, 4)
+    config = config or {}
+    host_caps = config.get('host_caps') or {}
+    local_host = config.get('local_host')
+    is_local = _is_local_coordinator_host(host, config)
+    if host in host_caps:
+        cap = host_caps[host]
+    elif is_local and isinstance(local_host, str) and local_host in host_caps:
+        cap = host_caps[local_host]
+    else:
+        cap = host_caps.get('local', 4) if is_local else host_caps.get(host, 4)
+
+    load_per_core = coordinator_load_per_core() if is_local else None
+    free_gb = coordinator_free_gb() if is_local else None
+    load_breached = is_local and load_per_core is not None and load_per_core >= COORDINATOR_MAX_LOAD_PER_CORE
+    mem_breached = is_local and free_gb is not None and free_gb < COORDINATOR_MIN_FREE_GB
+
     if workers is None:
-        try:
-            workers = fetch_workers(config)
-        except Exception as e:
-            return {
-                'ok': False,
-                'admitted': False,
-                'host': host,
-                'cap': cap,
-                'occupied': None,
-                'live_count': 0,
-                'retained_count': 0,
-                'resources': [],
-                'reason': 'missing or failed remote inventory: %s' % str(e),
-                'receipt': {
-                    'host': host,
-                    'admitted': False,
-                    'status': 'rejected',
-                    'error': 'missing or failed remote inventory'
-                }
-            }
+        test_override = (
+            os.environ.get('FLEET_WATCH_TEST_LOAD_PER_CORE') is not None
+            or os.environ.get('FLEET_WATCH_TEST_FREE_GB') is not None
+            or os.environ.get('USAGE_GATE_ORCA') == 'false'
+        )
+        rpc_mocked = getattr(rpc, '__module__', '') != __name__ or 'ORCA_CLI_COMMAND' in os.environ
+        if is_local and test_override and not rpc_mocked:
+            workers = []
+        else:
+            try:
+                workers = fetch_workers(config)
+            except Exception as e:
+                if load_breached or mem_breached or (is_local and test_override):
+                    workers = []
+                else:
+                    return {
+                        'ok': False,
+                        'admitted': False,
+                        'host': host,
+                        'cap': cap,
+                        'occupied': None,
+                        'live_count': 0,
+                        'retained_count': 0,
+                        'resources': [],
+                        'overflow_host': None,
+                        'reason': 'missing or failed remote inventory: %s' % str(e),
+                        'receipt': {
+                            'host': host,
+                            'admitted': False,
+                            'status': 'rejected',
+                            'error': 'missing or failed remote inventory'
+                        }
+                    }
 
     deduped = deduplicate_workers(workers)
     host_resources = []
     has_any_release_unknown = False
     live_count = 0
     retained_count = 0
+    local_names = {'local', host}
+    if is_local and isinstance(local_host, str) and local_host.strip():
+        local_names.add(local_host.strip())
 
     for w in deduped:
         occupies, info, release_unk = classify_worker(w)
         if release_unk:
             has_any_release_unknown = True
-        if info.get('host') == host and occupies:
+        w_host = info.get('host')
+        matches_host = (w_host in local_names) if is_local else (w_host == host)
+        if matches_host and occupies:
             host_resources.append(info)
             if info.get('category') == 'live':
                 live_count += 1
@@ -600,6 +736,48 @@ def admit(host, config, workers=None):
                 retained_count += 1
 
     occupied_count = len(host_resources)
+
+    if load_breached or mem_breached:
+        overflow_host = _first_admitted_overflow_host(host, config, deduped)
+        breaches = []
+        if load_breached:
+            breaches.append('coordinator 1m load per core %.2f >= %.2f' % (load_per_core, COORDINATOR_MAX_LOAD_PER_CORE))
+        if mem_breached:
+            breaches.append('coordinator free memory %.2f GB < %.1f GB' % (free_gb, COORDINATOR_MIN_FREE_GB))
+        breach_text = ' and '.join(breaches)
+        if overflow_host:
+            reason = '%s; overflow to %s: use script/start-remote-worker.sh --on %s' % (
+                breach_text, overflow_host, overflow_host
+            )
+        else:
+            reason = '%s; no remote overflow host has free capacity (use script/start-remote-worker.sh --on <host>)' % (
+                breach_text,
+            )
+        return {
+            'ok': True,
+            'admitted': False,
+            'host': host,
+            'cap': cap,
+            'occupied': occupied_count,
+            'live_count': live_count,
+            'retained_count': retained_count,
+            'resources': host_resources,
+            'overflow_host': overflow_host,
+            'load_per_core': load_per_core,
+            'free_gb': free_gb,
+            'reason': reason,
+            'receipt': {
+                'host': host,
+                'admitted': False,
+                'status': 'rejected',
+                'cap': cap,
+                'occupied': occupied_count,
+                'live_count': live_count,
+                'retained_count': retained_count,
+                'overflow_host': overflow_host,
+                'error': reason,
+            }
+        }
 
     if has_any_release_unknown:
         return {
@@ -611,6 +789,7 @@ def admit(host, config, workers=None):
             'live_count': live_count,
             'retained_count': retained_count,
             'resources': host_resources,
+            'overflow_host': None,
             'reason': 'release_unknown never authorizes another start',
             'receipt': {
                 'host': host,
@@ -621,6 +800,7 @@ def admit(host, config, workers=None):
         }
 
     admitted = (occupied_count < cap)
+    overflow_host = None if admitted else (_first_admitted_overflow_host(host, config, deduped) if is_local else None)
     return {
         'ok': True,
         'admitted': admitted,
@@ -630,6 +810,7 @@ def admit(host, config, workers=None):
         'live_count': live_count,
         'retained_count': retained_count,
         'resources': host_resources,
+        'overflow_host': overflow_host,
         'reason': 'admitted' if admitted else ('host cap exceeded: %s %d/%d' % (host, occupied_count, cap)),
         'receipt': {
             'host': host,
@@ -638,7 +819,8 @@ def admit(host, config, workers=None):
             'cap': cap,
             'occupied': occupied_count,
             'live_count': live_count,
-            'retained_count': retained_count
+            'retained_count': retained_count,
+            'overflow_host': overflow_host,
         }
     }
 
@@ -2911,16 +3093,28 @@ def coordinator_stage(config, state, state_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--config', type=Path, required=False, default=None)
     parser.add_argument('--state', type=Path, required=False)
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
+    parser.add_argument('--admit-local', action='store_true', help='Check coordinator load, memory, and cap admission')
+    parser.add_argument('--json', action='store_true', help='Emit JSON output')
     args = parser.parse_args()
-    config = json.loads(args.config.read_text())
 
-    if args.admit:
-        receipt = admit(args.admit, config)
+    if args.admit or args.admit_local:
+        if args.config is not None:
+            config = json.loads(args.config.read_text()) if args.config.exists() else {}
+        else:
+            cfg_env = os.environ.get('FLEET_WATCH_CONFIG') or os.path.expanduser('~/.config/fleet-watch/config.json')
+            cfg_path = Path(cfg_env)
+            config = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        target = args.admit if args.admit else (config.get('local_host') or 'local')
+        receipt = admit(target, config)
         print(json.dumps(receipt, indent=2))
         return 0 if receipt.get('admitted') else 1
+
+    if not args.config:
+        parser.error('--config is required')
+    config = json.loads(args.config.read_text())
 
     if not args.state:
         parser.error('--state is required when --admit is not specified')

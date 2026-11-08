@@ -205,6 +205,19 @@ class Main(unittest.TestCase):
                 self.assertEqual(ug.main(["check", "--provider", name]), 4)
             self.assertEqual(json.loads(out.getvalue())["verdict"], "unknown")
 
+    def test_check_without_provider_fails_closed_on_unknown_and_mixed_verdicts(self):
+        cases = [
+            ({"claude": "unknown", "cursor": "unknown", "antigravity": "unknown"}, 4),
+            ({"claude": "blocked", "cursor": "unknown", "antigravity": "unknown"}, 4),
+            ({"claude": "blocked", "cursor": "blocked", "antigravity": "blocked"}, 3),
+            ({"claude": "unknown", "cursor": "allowed", "antigravity": "blocked"}, 0),
+        ]
+        for verdicts, expected in cases:
+            with self.subTest(verdicts=verdicts), \
+                    mock.patch.object(ug, "run", side_effect=lambda name, *a, **k: {"provider": name, "verdict": verdicts[name]}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ug.main(["check"]), expected)
+
 
 class Fresh(unittest.TestCase):
     def test_old_reading_past_its_reset_is_no_reading(self):
@@ -1212,3 +1225,185 @@ class Banner(unittest.TestCase):
                 result = ug.pick("dev", None, None, 95, 1)
         self.assertIsNone(result["selected"])
         self.assertEqual(result["candidates"][0]["verdict"], "model not recognized")
+
+
+class ProjectPresetsMergeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base_presets_path = os.path.join(self.tmp.name, "presets.json")
+        with open(self.base_presets_path, "w") as f:
+            json.dump({
+                "default_chain": ["claude", "cursor", "antigravity"],
+                "roles": {
+                    "elon": {
+                        "tier": "strong",
+                        "chain": [
+                            {"provider": "antigravity", "model": "gemini-4-argon-medium"},
+                            {"provider": "claude", "model": "opus", "effort": "medium"},
+                        ],
+                    },
+                    "fullstack-dev": {
+                        "tier": "workhorse",
+                        "chain": [
+                            {"provider": "claude", "model": "sonnet", "effort": "medium"},
+                            {"provider": "cursor", "model": "composer-2.5"},
+                        ],
+                        "pin": True,
+                    },
+                },
+            }, f)
+
+    def test_role_chain_and_pick_merge_project_presets_via_env_and_git_root(self):
+        repo_dir = os.path.join(self.tmp.name, "project-a")
+        subdir = os.path.join(repo_dir, "src", "nested")
+        os.makedirs(subdir)
+        os.makedirs(os.path.join(repo_dir, ".git"))
+        os.makedirs(os.path.join(repo_dir, ".orca"))
+        proj_presets_path = os.path.join(repo_dir, ".orca", "presets.project.json")
+        with open(proj_presets_path, "w") as f:
+            json.dump({
+                "roles": {
+                    "elon": {
+                        "chain": [
+                            {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"},
+                        ],
+                        "pin": True,
+                    },
+                },
+            }, f)
+
+        # 1. Via USAGE_GATE_PROJECT_PRESETS env var
+        with mock.patch.dict(os.environ, {
+            "USAGE_GATE_PRESETS": self.base_presets_path,
+            "USAGE_GATE_PROJECT_PRESETS": proj_presets_path,
+        }):
+            chain, pinned = ug.role_chain("elon")
+            self.assertTrue(pinned)
+            self.assertEqual(chain, [{"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}])
+
+        # 2. Via git repo root discovery from a nested directory
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(subdir)
+            env = {"USAGE_GATE_PRESETS": self.base_presets_path}
+            with mock.patch.dict(os.environ, env):
+                os.environ.pop("USAGE_GATE_PROJECT_PRESETS", None)
+                with mock.patch.object(ug, "run", side_effect=lambda p, *a, **k: {
+                    "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 20,
+                }), contextlib.redirect_stdout(io.StringIO()) as out, \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    rc = ug.main(["pick", "--role", "elon"])
+                self.assertEqual(rc, 0)
+                self.assertEqual(out.getvalue().strip(), "--agent claude --model claude-opus-5-5 --effort high")
+        finally:
+            os.chdir(old_cwd)
+
+    def test_non_canonical_project_role_in_pick_and_usage_gate_hook(self):
+        import subprocess
+        repo_dir = os.path.join(self.tmp.name, "project-b")
+        os.makedirs(os.path.join(repo_dir, ".git"))
+        os.makedirs(os.path.join(repo_dir, ".orca"))
+        proj_presets_path = os.path.join(repo_dir, ".orca", "presets.project.json")
+        with open(proj_presets_path, "w") as f:
+            json.dump({
+                "roles": {
+                    "stream-health": {
+                        "tier": "workhorse",
+                        "chain": [
+                            {"provider": "claude", "model": "sonnet", "effort": "medium"},
+                            {"provider": "cursor", "model": "composer-2.5"},
+                        ],
+                    },
+                },
+            }, f)
+
+        with mock.patch.dict(os.environ, {
+            "USAGE_GATE_PRESETS": self.base_presets_path,
+            "USAGE_GATE_PROJECT_PRESETS": proj_presets_path,
+        }), mock.patch.object(ug, "run", side_effect=lambda p, *a, **k: {
+            "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10 if p == "claude" else 80,
+        }), contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            rc = ug.main(["pick", "--role", "stream-health"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(out.getvalue().strip(), "--agent claude --model sonnet --effort medium")
+
+        # Verify usage-gate-hook.py recognizes stream-health via git repo root discovery
+        state_dir = os.path.join(self.tmp.name, "state")
+        os.makedirs(state_dir)
+        now = ug.time.time() if hasattr(ug.time.time, "__call__") else 1_000_000_000.0
+        import time as real_time
+        now = real_time.time()
+        fut = now + 3 * 86400
+        with open(os.path.join(state_dir, "claude-rate-limits.json"), "w") as f:
+            json.dump({"seven_day": {"used_percentage": 20.0, "resets_at": fut}, "_written_at": now}, f)
+        summary_path = os.path.join(state_dir, "cursor-summary.json")
+        ends = ug.datetime.fromtimestamp(fut, timezone.utc).isoformat()
+        with open(summary_path, "w") as f:
+            json.dump({
+                "billingCycleStart": "2026-09-25T00:00:00+00:00",
+                "billingCycleEnd": ends,
+                "individualUsage": {"plan": {"enabled": True, "totalPercentUsed": 80, "autoPercentUsed": 80}},
+            }, f)
+        hook_path = os.path.join(os.path.dirname(__file__), "..", "usage-gate-hook.py")
+        env = dict(
+            os.environ,
+            HOME=self.tmp.name,
+            USAGE_GATE_STATE=state_dir,
+            USAGE_GATE_ORCA="false",
+            USAGE_GATE_PRESETS=self.base_presets_path,
+            USAGE_GATE_CURSOR_SUMMARY=summary_path,
+            FLEET_WATCH_TEST_LOAD_PER_CORE="0.20",
+            FLEET_WATCH_TEST_FREE_GB="12.0",
+        )
+        env.pop("USAGE_GATE_PROJECT_PRESETS", None)
+        proc = subprocess.run(
+            [sys.executable, hook_path],
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "orca orchestration worker-start --task t --agent cursor --model composer-2.5 --task-title 'stream-health - check'",
+                },
+            }),
+            capture_output=True, text=True, env=env, cwd=repo_dir, timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")
+        self.assertNotIn("no known role prefix", proc.stderr)
+        self.assertIn("Usage gate pick recommends claude for stream-health", proc.stderr)
+
+    def test_usage_gate_hook_enforces_coordinator_load_and_memory_hard_gate(self):
+        import subprocess, time as real_time
+        state_dir = os.path.join(self.tmp.name, "state-overflow")
+        os.makedirs(state_dir)
+        now = real_time.time()
+        with open(os.path.join(state_dir, "claude-rate-limits.json"), "w") as f:
+            json.dump({"seven_day": {"used_percentage": 15.0, "resets_at": now + 86400}, "_written_at": now}, f)
+        fw_cfg_path = os.path.join(self.tmp.name, "fleet-watch.json")
+        with open(fw_cfg_path, "w") as f:
+            json.dump({"host_caps": {"local": 4, "overflow-1": 2, "overflow-2": 2}}, f)
+        hook_path = os.path.join(os.path.dirname(__file__), "..", "usage-gate-hook.py")
+        env = dict(
+            os.environ,
+            HOME=self.tmp.name,
+            USAGE_GATE_STATE=state_dir,
+            USAGE_GATE_ORCA="false",
+            USAGE_GATE_PRESETS=self.base_presets_path,
+            FLEET_WATCH_CONFIG=fw_cfg_path,
+            FLEET_WATCH_TEST_LOAD_PER_CORE="0.85",
+            FLEET_WATCH_TEST_FREE_GB="12.0",
+        )
+        proc = subprocess.run(
+            [sys.executable, hook_path],
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {"command": "orca orchestration worker-start --task t --agent claude --spec ok"},
+            }),
+            capture_output=True, text=True, env=env, timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0)
+        output = json.loads(proc.stdout)["hookSpecificOutput"]
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("overflow-1", output["permissionDecisionReason"])
+        self.assertIn("script/start-remote-worker.sh --on overflow-1", output["permissionDecisionReason"])
