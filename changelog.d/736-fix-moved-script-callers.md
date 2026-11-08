@@ -1,0 +1,1 @@
+Weekly update, the sync drift precheck, skill impact report and test selection now call `agent-team.sh` instead of the retired adopt, init and sync scripts, which fixes the failing role word budget test.
