@@ -2086,6 +2086,116 @@ def build_rework_start_command(config, repo, pr_row):
     return [part for part in command if part]
 
 
+_BACKLOG_SWEEP_ROLES = ('architect-pm', 'sales-marketing')
+_BACKLOG_SWEEP_INTERVAL = 7200
+_BACKLOG_SWEEP_QUEUE_MAX = 3
+
+
+def issue_scan_ready_queue_count(repos, list_issues):
+    total = 0
+    for repo in repos:
+        rows = list_issues(repo)
+        if rows is None:
+            return None
+        total += len(rows)
+    return total
+
+
+def issue_scan_backlog_sweep_due(state, now, interval):
+    last = state.get('issue_scan_backlog_sweep_at')
+    if last is None:
+        return True
+    try:
+        return now - float(last) >= interval
+    except (TypeError, ValueError):
+        return True
+
+
+def build_backlog_sweep_command(config, repo, role):
+    scan = config['issue_scan']
+    root = _issue_scan_repo_root(config, repo)
+    if not root:
+        return None
+    spec = (
+        'Role: %s (read .claude/agents/%s.md). Read-only team-grill-backlog sweep; no code.\n'
+        % (role, role)
+    )
+    spec_path = _write_issue_scan_spec(spec)
+    agent = scan.get('sweep_agent') or scan.get('agent') or 'cursor'
+    model = scan.get('sweep_model') or scan.get('model') or ''
+    command = [
+        'bash', _issue_scan_startup_script(config),
+        '--run', scan['run'],
+        '--spec', spec_path,
+        '--title', '%s backlog-sweep' % role,
+        '--agent', agent,
+        '--model', model,
+        '--from', scan['from_terminal'],
+        '--name', 'backlog-%s' % role,
+        '--repo', 'path:' + root,
+    ]
+    return [part for part in command if part]
+
+
+def issue_scan_try_backlog_sweep(
+    config, state, now, repos, list_issues, host, admission, extra_starts,
+    start_worker, persist_state,
+):
+    log_bits = []
+    scan = config.get('issue_scan') or {}
+    if any((state.get('issue_scan_pending') or {}).values()):
+        log_bits.append('backlog_sweep_skip_issue_pending')
+        return log_bits
+    count = issue_scan_ready_queue_count(repos, list_issues)
+    if count is None:
+        log_bits.append('backlog_sweep_list_failed')
+        return log_bits
+    if count >= _BACKLOG_SWEEP_QUEUE_MAX:
+        log_bits.append('backlog_sweep_skip_queue')
+        return log_bits
+    interval = scan.get('backlog_sweep_interval_seconds', _BACKLOG_SWEEP_INTERVAL)
+    if not issue_scan_backlog_sweep_due(state, now, interval):
+        log_bits.append('backlog_sweep_skip_recent')
+        return log_bits
+    if state.get('issue_scan_backlog_sweep_pending'):
+        log_bits.append('backlog_sweep_skip_pending')
+        return log_bits
+    roles = _BACKLOG_SWEEP_ROLES
+    cap = config.get('host_caps', {}).get(host, 4)
+    occupied = admission.get('occupied') or 0
+    if extra_starts + occupied + len(roles) > cap:
+        log_bits.append('backlog_sweep_skip_load')
+        return log_bits
+    repo = None
+    for candidate in repos:
+        if _issue_scan_repo_root(config, candidate):
+            repo = candidate
+            break
+    if not repo:
+        log_bits.append('backlog_sweep_skip_root')
+        return log_bits
+    state['issue_scan_backlog_sweep_pending'] = True
+    if persist_state:
+        persist_state()
+    started = 0
+    for role in roles:
+        command = build_backlog_sweep_command(config, repo, role)
+        if command is None:
+            log_bits.append('backlog_sweep_skip=%s' % role)
+            continue
+        if start_worker(command) == 0:
+            started += 1
+            log_bits.append('backlog_sweep_start=%s' % role)
+        else:
+            log_bits.append('backlog_sweep_fail=%s' % role)
+    state.pop('issue_scan_backlog_sweep_pending', None)
+    if started == len(roles):
+        state['issue_scan_backlog_sweep_at'] = now
+    if persist_state:
+        persist_state()
+    return log_bits
+
+
 def default_issue_scan_gate(config, run=subprocess.run):
     scan = config.get('issue_scan') or {}
     agent = scan.get('agent') or 'cursor'
@@ -2284,7 +2394,12 @@ def issue_scan_pass(
             candidates.append((repo, row))
 
     if not candidates:
-        if not log_bits:
+        sweep_bits = issue_scan_try_backlog_sweep(
+            config, state, now, repos, list_issues, host, admission, extra_starts,
+            start_worker, persist_state,
+        )
+        log_bits.extend(sweep_bits)
+        if not any(bit.startswith('backlog_sweep_start=') for bit in sweep_bits):
             log_bits.append('issue_scan_none')
         return notices, log_bits
 
