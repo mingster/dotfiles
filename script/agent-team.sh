@@ -487,6 +487,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import stat
 import sys
 import time
@@ -1312,6 +1313,31 @@ def routing_role_rows(text):
     return rows
 
 
+def past_template_rows(rel):
+    # Role rows of every committed version of the template file, so a stale project copy of an
+    # older template is not mistaken for a fork. Empty when dotfiles is not a git checkout.
+    tpl_rel = os.path.relpath(os.path.join(template_dir, rel), dotfiles)
+    res = subprocess.run(
+        ["git", "-C", dotfiles, "log", "--follow", "--name-only", "--format=%H", "--", tpl_rel],
+        capture_output=True,
+        text=True,
+    )
+    seen = set()
+    sha = None
+    for line in (res.stdout or "").splitlines():
+        line = line.strip()
+        if re.fullmatch(r"[0-9a-f]{40}", line):
+            sha = line
+            continue
+        if not line or sha is None:
+            continue
+        show = subprocess.run(["git", "-C", dotfiles, "show", f"{sha}:{line}"], capture_output=True, text=True)
+        sha = None
+        if show.returncode == 0:
+            seen.update(routing_role_rows(show.stdout).values())
+    return seen
+
+
 def extract_model_pins():
     """Rows of the project's .claude/model-routing.md that differ from the template are forked
     model pins. Move each into .orca/presets.project.json (roles.<role>) before the file is
@@ -1321,10 +1347,16 @@ def extract_model_pins():
     if not os.path.isfile(path) or os.path.islink(path):
         return []
     tpl_rows = routing_role_rows(read_text(os.path.join(template_dir, rel)))
+    old_rows = None
     bullets = []
     pins = {}
     for role, row in routing_role_rows(read_text(path)).items():
         if tpl_rows.get(role) == row:
+            continue
+        if old_rows is None:
+            old_rows = past_template_rows(rel)
+        if row in old_rows:
+            print(f"note: {rel} row for {role} matches an older template, not a pin")
             continue
         cells = [c.strip() for c in row.strip("|").split("|")]
         bullets.append(f"- `{role}`: " + "; ".join(c for c in cells[1:] if c))

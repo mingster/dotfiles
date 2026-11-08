@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # agent-team.sh project closes the three gaps the #738 dry run found (#782):
 # 1. a forked model pin in .claude/model-routing.md moves to .orca/presets.project.json and the
-#    team-facts ## Model routing section before the file is rewritten, idempotently;
+#    team-facts ## Model routing section before the file is rewritten, idempotently, while a row
+#    copied from an older template is not taken for a pin;
 # 2. template files the project owns (seeded docs, .agent/skills) print "skip (project owned)" and
 #    are left alone;
 # 3. an extracted allow rule naming a file the same run removes is dropped with a printed line.
@@ -29,7 +30,8 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 make_project() {
   local p=$1 doc
   mkdir -p "$p/.claude/bin" "$p/.orca" "$p/docs/agents" "$p/.agent"
-  awk -v row="$(cat "$FIXTURE/elon-row.md")" '/^\| elon \|/ { print row; next } { print }' \
+  awk -v row="$(cat "$FIXTURE/elon-row.md")" -v old="$OLD_ROW" \
+    '/^\| elon \|/ { print row; next } /^\| fullstack-dev \|/ { print old; next } { print }' \
     "$TPL/.claude/model-routing.md" > "$p/.claude/model-routing.md"
   cp "$FIXTURE/presets.project.json" "$p/.orca/presets.project.json"
   for doc in team.md elon-dispatch.md release-manager-work.md; do
@@ -47,6 +49,12 @@ PY
   git -C "$p" init -q -b main
   git -C "$p" remote add origin "https://github.com/example-org/gaps.git"
 }
+
+# A fullstack-dev row from an older committed template: a stale copy, not a pin.
+OLD_ROW="$(git -C "$ROOT" log --format=%H -- templates/agent-team/.claude/model-routing.md | while read -r h; do
+  git -C "$ROOT" show "${h}:templates/agent-team/.claude/model-routing.md" 2>/dev/null | grep -m1 '^| fullstack-dev |'
+done | grep -vxF "$(grep -m1 '^| fullstack-dev |' "$TPL/.claude/model-routing.md")" | head -1)"
+[ -n "$OLD_ROW" ] || { echo "FAIL no older fullstack-dev template row in git history"; exit 1; }
 
 PROJ="$TMP/proj"
 make_project "$PROJ"
@@ -75,6 +83,7 @@ import json, sys
 roles = json.load(open(sys.argv[1]))["roles"]
 assert roles["elon"] == {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}, roles
 assert roles["qa-sdet"] == {"provider": "antigravity", "model": "gemini-4-argon-high"}, roles
+assert "fullstack-dev" not in roles, roles
 PY
 then
   pins_ok=1
@@ -85,9 +94,12 @@ facts="$PROJ/docs/agents/team-facts.md"
 cp "$PROJ/.orca/presets.project.json" "$TMP/presets.1"
 cp "$facts" "$TMP/facts.1"
 again="$(timeout 300 bash "$SCRIPT" project "$PROJ" --project-name gaps 2>&1)"
+# shellcheck disable=SC2016 # the backticks are literal markdown
 if [ "$pins_ok" -eq 1 ] \
   && cmp -s "$TPL/.claude/model-routing.md" "$PROJ/.claude/model-routing.md" \
   && grep -qx '## Model routing' "$facts" \
+  && grep -qxF 'note: .claude/model-routing.md row for fullstack-dev matches an older template, not a pin' <<<"$out" \
+  && ! grep -qF -- '- `fullstack-dev`' "$facts" \
   && grep -qF -- '- `elon`: Claude, pinned by this project; `--agent claude --model claude-opus-5-5 --effort high`; no fallback.' "$facts" \
   && [ "$(grep -c '^## Model routing' "$facts")" = 1 ] \
   && cmp -s "$TMP/presets.1" "$PROJ/.orca/presets.project.json" \
