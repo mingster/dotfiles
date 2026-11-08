@@ -1,6 +1,6 @@
 # Agent team
 
-{{PROJECT_NAME}} is operated by its human owner and a team of AI agents: CEO Elon and specialist roles. The owner talks to Elon, who delegates work and contacts the owner only for a decision Elon cannot make. Elon owns dispatch, merges and owner decisions. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
+{{PROJECT_NAME}} is operated by its human owner and a team of AI agents: CEO Elon and specialist roles. The owner talks to Elon, who delegates work and contacts the owner only for a decision Elon cannot make. Elon owns dispatch, owner decisions, and merge dispatch. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
 
 | Role | File | Stage | Primary output |
 | --- | --- | --- | --- |
