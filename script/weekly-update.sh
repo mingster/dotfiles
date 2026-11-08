@@ -227,7 +227,7 @@ append_toolchain_report_lines() {
     fi
   fi
   local cli
-  for cli in gh claude orca cursor-agent codex; do
+  for cli in gh claude orca cursor-agent; do
     if command -v "$cli" >/dev/null 2>&1; then
       TOOLCHAIN_SUMMARY_LINES+=("toolchain report: $cli $( ($cli --version 2>/dev/null || true) | head -1)")
     fi

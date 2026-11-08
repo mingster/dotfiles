@@ -73,7 +73,9 @@ SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
 TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT=${TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT:-600}
 WEEKLY_UPDATE_LOG=${WEEKLY_UPDATE_LOG:-$HOME/.local/state/agent-team/weekly-update.log}
 WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-3600}
-FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update'
+FLEET_TOOLCHAIN_LOG=${FLEET_TOOLCHAIN_LOG:-$HOME/.local/state/agent-team/fleet-toolchain.log}
+FLEET_TOOLCHAIN_PRECHECK_TIMEOUT=${FLEET_TOOLCHAIN_PRECHECK_TIMEOUT:-600}
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain'
 
 precheck_path() {
   local p="$HOME/.local/bin"
@@ -85,15 +87,23 @@ precheck_path() {
 
 coordinator_name() {
   local conf want
+  if [ ! -f "$state_dir/coordinator.conf" ]; then
+    echo "install-fleet-automations: missing $state_dir/coordinator.conf" >&2
+    return 1
+  fi
   conf=$(cat "$state_dir/coordinator.conf" 2>/dev/null || true)
   want=$(printf '%s\n' "$conf" | awk '$1 == "coordinator" { print $2; exit }' | tr '[:upper:]' '[:lower:]')
-  printf '%s' "${want:-mini6}"
+  if [ -z "$want" ]; then
+    echo "install-fleet-automations: missing coordinator in $state_dir/coordinator.conf" >&2
+    return 1
+  fi
+  printf '%s' "$want"
 }
 
 host_is_coordinator() {
   local me want
   me=$(hostname -s | tr '[:upper:]' '[:lower:]')
-  want=$(coordinator_name)
+  want=$1
   [ "$me" = "$want" ]
 }
 
@@ -138,6 +148,12 @@ team_audit_weekly_precheck() {
 weekly_update_precheck() {
   automation_wrap weekly-update "$WEEKLY_UPDATE_LOG" \
     env "DOTFILES=$DOTFILES_DIR" "WEEKLY_UPDATE_LOG=$WEEKLY_UPDATE_LOG" bash "$DOTFILES_DIR/script/automation-precheck-weekly-update.sh"
+}
+
+fleet_toolchain_precheck() {
+  automation_wrap fleet-toolchain "$FLEET_TOOLCHAIN_LOG" \
+    env "DOTFILES_DIR=$DOTFILES_DIR" "AGENT_STATE_DIR=$state_dir" \
+    bash -c "rc=0; bash '$DOTFILES_DIR/script/fleet-pull.sh' || rc=\$?; bash '$DOTFILES_DIR/script/fleet-toolchain-check.sh' --apply || rc=\$?; exit \$rc"
 }
 
 list_json() {
@@ -307,13 +323,15 @@ case "$action" in
     print_status
     ;;
   install)
+    coord_want=$(coordinator_name) || exit 1
     enabled=0
-    host_is_coordinator && enabled=1
+    host_is_coordinator "$coord_want" && enabled=1
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" "$enabled"
+    ensure_automation fleet-toolchain '0 5 * * *' "$(fleet_toolchain_precheck)" "$FLEET_TOOLCHAIN_PRECHECK_TIMEOUT" "$enabled"
     ;;
   uninstall)
     for name in $FLEET_AUTOMATION_NAMES; do
