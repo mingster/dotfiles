@@ -106,6 +106,9 @@ newest_head_verdict_json=$(
           end
         else
           .
+        end
+      else
+        .
       end
     )
   '

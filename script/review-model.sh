@@ -19,6 +19,7 @@ review_model_pick() {
     REVIEW_MODEL=opus
   fi
   if grep -qiE "$REVIEW_MODEL_MONEY" <<<"${REVIEW_MODEL_NAMES_MULTILINE:-}"; then
+    REVIEW_MODEL=opus
     REVIEW_MODEL_DUAL=1
   fi
 }
