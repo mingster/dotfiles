@@ -82,16 +82,33 @@ echo "$out" | grep -Fq 'pinned in Orca' && ok 'pinned Orca worktree kept' \
 [ -d "$d/extra" ] && ok 'pinned worktree not removed on dry-run preview path' || bad 'pinned kept on disk'
 
 fixture
-export FAKE_ORCA_WORKTREES="[{\"path\":\"$d/wt/orphan\",\"pinned\":false}]"
+mkdir -p "$tmp/workspaces/existing"
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false},{\"repoId\":\"repo-b\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/other-orphan\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/existing\",\"pinned\":false},{\"repoId\":\"repo-a\",\"hostId\":\"remote-1\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/remote-wt\",\"pinned\":false}]"
 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err" || true
-grep -Fq "Remove orca record $d/wt/orphan (git worktree already gone)" "$d/out" && ok 'orphan Orca record reported' \
+grep -Fq "Remove orca record $tmp/workspaces/orphan (git worktree already gone)" "$d/out" && ok 'orphan Orca record reported' \
   || bad 'orphan Orca record reported' "$(cat "$d/out")"
-grep -Fq "worktree rm --worktree path:$d/wt/orphan" "$ORCA_LOG" && ok 'orphan Orca record removed' \
+grep -Fq "worktree rm --worktree path:$tmp/workspaces/orphan" "$ORCA_LOG" && ok 'orphan Orca record removed' \
   || bad 'orphan Orca record removed' "$(cat "$ORCA_LOG")"
+grep -Fq "worktree rm --worktree path:$tmp/workspaces/other-orphan" "$ORCA_LOG" \
+  && bad 'record with another repoId kept' "$(cat "$ORCA_LOG")" || ok 'record with another repoId kept'
+grep -Fq "worktree rm --worktree path:$tmp/workspaces/existing" "$ORCA_LOG" \
+  && bad 'record with existing dir kept' "$(cat "$ORCA_LOG")" || ok 'record with existing dir kept'
+grep -Fq "worktree rm --worktree path:$tmp/workspaces/remote-wt" "$ORCA_LOG" \
+  && bad 'record on another host kept' "$(cat "$ORCA_LOG")" || ok 'record on another host kept'
+grep -Fq "worktree rm --worktree path:$d/wt" "$ORCA_LOG" \
+  && bad 'isMainWorktree record kept' "$(cat "$ORCA_LOG")" || ok 'isMainWorktree record kept'
 
 fixture
-export FAKE_ORCA_WORKTREES="[{\"path\":\"$d/wt/orphan\",\"pinned\":false}]"
-export ORCA_RM_FAIL="$d/wt/orphan"
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-other\",\"isMainWorktree\":true,\"path\":\"$tmp/other-main\",\"pinned\":false},{\"repoId\":\"repo-other\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan2\",\"pinned\":false}]"
+bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err" || true
+grep -Fq "worktree rm --worktree path:$tmp/workspaces/orphan2" "$ORCA_LOG" \
+  && bad 'orphan sweep skipped when no main record matches' "$(cat "$ORCA_LOG")" || ok 'orphan sweep skipped when no main record matches'
+grep -Fq 'Orca orphan sweep skipped' "$d/out" && ok 'orphan sweep skip prints one line' \
+  || bad 'orphan sweep skip prints one line' "$(cat "$d/out")"
+
+fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+export ORCA_RM_FAIL="$tmp/workspaces/orphan"
 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
 [ "$rc" -ne 0 ] && ok 'failed orphan orca rm fails the run' || bad 'failed orphan orca rm fails the run' "rc=$rc"
 grep -Fq 'orca worktree rm' "$d/err" "$d/out" && ok 'failed orphan orca rm reported' \

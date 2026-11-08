@@ -1822,17 +1822,29 @@ fi
 # Drop Orca sidebar entries whose git worktree is already gone (for example a prior run removed git but not Orca).
 if [ "$apply" -eq 1 ] && [ "$orca_pin_state" = ok ]; then
   repo_real=$(cd "$repo" && pwd -P)
-  while IFS= read -r op; do
-    [ -n "$op" ] || continue
-    [ -d "$op" ] && continue
-    case "$op" in "$repo_real"/*) ;; *) continue ;; esac
-    worktree_pinned_in_orca "$op" && continue
-    printf 'Remove orca record %s (git worktree already gone)\n' "$op"
-    guarded_orca_worktree_rm kept "orca record $op" "$op" || true
-  done < <(jq -r --arg root "$repo_real" '
-    .result.worktrees[]? | (.path // .workspacePath // empty) as $p
-    | select($p != "" and ($p | startswith($root)))
-    | select(.pinned != true) | $p' "$tmp/orca-worktrees")
+  orca_repo_id='' orca_host_id=''
+  while IFS=$'\t' read -r rid mp hid; do
+    [ -n "$rid" ] && [ -n "$mp" ] || continue
+    if [ "$(real "$mp" 2>/dev/null || printf '%s' "$mp")" = "$repo_real" ]; then
+      orca_repo_id=$rid orca_host_id=$hid
+      break
+    fi
+  done < <(jq -r '.result.worktrees[]? | select(.isMainWorktree == true or .git.isMainWorktree == true) | [.repoId // empty, (.path // .workspacePath // empty), (.hostId // "local")] | @tsv' "$tmp/orca-worktrees")
+  if [ -z "$orca_repo_id" ]; then
+    echo "Orca orphan sweep skipped: no main worktree record for $repo_real"
+  else
+    while IFS= read -r op; do
+      [ -n "$op" ] || continue
+      [ -d "$op" ] && continue
+      worktree_pinned_in_orca "$op" && continue
+      printf 'Remove orca record %s (git worktree already gone)\n' "$op"
+      guarded_orca_worktree_rm kept "orca record $op" "$op" || true
+    done < <(jq -r --arg rid "$orca_repo_id" --arg hid "$orca_host_id" '
+      .result.worktrees[]? | select(.repoId == $rid and (.hostId // "local") == $hid)
+      | select((.isMainWorktree == true or .git.isMainWorktree == true) | not)
+      | select(.pinned != true and .isPinned != true)
+      | (.path // .workspacePath // empty) | select(. != "")' "$tmp/orca-worktrees")
+  fi
 fi
 pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
 if [ -f "$pane_script" ]; then
@@ -1907,7 +1919,7 @@ REMOTE
       awk -v t="$ftag" '$0 == "@@begin-" t "@@" { on = 1; next } index($0, "@@end-" t "-") == 1 { on = 0; next } on' "$tmp/fleet-out" > "$tmp/fleet-body"
       cat "$tmp/fleet-body"
       if [ "$rstatus" -ne 0 ]; then echo "Warning: wrap-up failed on fleet host $fhost (status $rstatus); not counted." >&2; fail_item "fleet host $fhost" "wrap-up exited $rstatus"; continue; fi
-      counts=$(sed -n 's/^removed worktrees=\([0-9][0-9]*\) orca records=[0-9][0-9]* deleted local=\([0-9][0-9]*\) deleted remote=[0-9]* kept=\([0-9][0-9]*\) .*$/\1 \2 \3/p' "$tmp/fleet-body" | tail -n 1)
+      counts=$(sed -n 's/^removed worktrees=\([0-9][0-9]*\)\( orca records=[0-9][0-9]*\)\{0,1\} deleted local=\([0-9][0-9]*\) deleted remote=[0-9]* kept=\([0-9][0-9]*\) .*$/\1 \3 \4/p' "$tmp/fleet-body" | tail -n 1)
       if [ -z "$counts" ]; then echo "Warning: no counts line from fleet host $fhost; not counted." >&2; continue; fi
       read -r c_removed c_local c_kept <<< "$counts"
       t_up=$((t_up+1)); t_removed=$((t_removed+c_removed)); t_local=$((t_local+c_local)); t_kept=$((t_kept+c_kept))

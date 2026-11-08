@@ -437,6 +437,17 @@ grep -Fq 'removed worktrees=2 orca records=' "$tmp/output"
 grep -Fq 'deleted local=2 deleted remote=0' "$tmp/output"
 echo 'ok fleet host never deletes remote branches'
 grep -Fq 'Fleet total' "$tmp/output"
+grep -Fq 'Fleet total (local plus 1 of 2 hosts reached)' "$tmp/output" || { echo 'new fleet counts line with orca records was not counted'; exit 1; }
+cat > "$tmp/bin/fake-ssh-old" <<'FAKE'
+#!/usr/bin/env bash
+while [ "${1:-}" = -o ]; do shift 2; done
+shift
+sh -c "$*" | sed 's/ orca records=[0-9][0-9]*//'
+FAKE
+chmod +x "$tmp/bin/fake-ssh-old"
+WRAP_UP_FLEET_SSH="$tmp/bin/fake-ssh-old" bash "$here/wrap-up.sh" --dry-run --fleet > "$tmp/output" 2> "$tmp/stderr" || true
+grep -Fq 'Fleet total (local plus 1 of 2 hosts reached)' "$tmp/output" || { echo 'old fleet counts line without orca records was not counted'; exit 1; }
+echo 'ok fleet host counts accept both old and new line shapes'
 # Issue 548: each fleet host also fast forwards its clean main checkout and installs the merged preset; a dirty one is kept.
 git clone -q --branch main "$tmp/origin2" "$tmp/rupdater" 2>/dev/null
 git -C "$tmp/rupdater" config user.email test@example.invalid
