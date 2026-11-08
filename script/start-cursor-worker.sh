@@ -1,29 +1,69 @@
 #!/usr/bin/env bash
 # Create and trust a worktree on the execution environment before Cursor starts.
 # Usage: --run ID --spec FILE --title TEXT --model ID [--from HANDLE] [--on ENV]
-#        (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
+#        [--role NAME] (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
+# Refuses Strong tier roles (elon, architect-pm, secops-finops, qa-sdet); use usage-gate pick + worker-start.
 set -euo pipefail
 orca=${ORCA_CLI_COMMAND:-orca}
-run='' spec='' title='' model='' wt='' name='' repo='' base='' environment=''
+run='' spec='' title='' model='' wt='' name='' repo='' base='' environment='' role=''
 from=${ORCA_TERMINAL_HANDLE:-}
+readonly STRONG_ROLES='elon architect-pm secops-finops qa-sdet'
 usage() { echo "need --run --spec --title --model --from and --worktree-path or --name --repo" >&2; exit 2; }
+is_strong_role() {
+  local candidate=$1
+  case " $STRONG_ROLES " in
+    *" $candidate "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+refuse_strong_role() {
+  local hit=$1
+  echo "start-cursor-worker: Strong tier role '$hit' cannot run on Cursor; use usage-gate.py pick --role and orchestration worker-start instead" >&2
+  exit 1
+}
+check_role_candidate() {
+  local candidate=$1
+  [ -n "$candidate" ] || return 0
+  if is_strong_role "$candidate"; then refuse_strong_role "$candidate"; fi
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run|--spec|--title|--model|--from|--worktree-path|--name|--repo|--base-branch|--on)
+    --run|--spec|--title|--model|--from|--worktree-path|--name|--repo|--base-branch|--on|--role)
       [ $# -ge 2 ] || usage
       case "$1" in
-        --run) run=$2 ;; --spec) spec=$2 ;; --title) title=$2 ;; --model) model=$2 ;;
+        --run) run=$2 ;; --spec) spec=$2 ;; --title) title=$2 ;; --model) model=$2 ;; --role) role=$2 ;;
         --on) environment=$2; [ -n "$environment" ] || usage ;; --from) from=$2 ;; --worktree-path) wt=$2 ;; --name) name=$2 ;; --repo) repo=$2 ;; --base-branch) base=$2 ;;
       esac; shift 2 ;;
     *) usage ;;
   esac
 done
 [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$model" ] && [ -n "$from" ] || usage
-python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
-  || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
+check_role_candidate "$role"
+if [[ "$title" == *" - "* ]]; then
+  check_role_candidate "${title%% - *}"
+fi
+for strong in $STRONG_ROLES; do
+  if [ -n "$name" ] && { [ "$name" = "$strong" ] || [[ "$name" == "$strong"-* ]]; }; then
+    refuse_strong_role "$strong"
+  fi
+done
 spec_body=$(cat "$spec")
 [ -n "${spec_body//[[:space:]]/}" ] || { echo "spec file is empty: $spec" >&2; exit 2; }
+if spec_role=$(python3 - "$spec_body" <<'PY'
+import re, sys
+body = sys.argv[1]
+for role in ("elon", "architect-pm", "secops-finops", "qa-sdet"):
+    if re.search(rf"(?:\.claude/agents|/agents)/{re.escape(role)}\.md", body):
+        print(role)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+); then
+  refuse_strong_role "$spec_role"
+fi
 brief=$spec_body
+python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
+  || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
 if [ -z "$wt" ]; then
   [ -n "$name" ] && [ -n "$repo" ] || usage
   case "$repo" in
