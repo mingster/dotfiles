@@ -778,7 +778,6 @@ take_apply_lock() {
   done
   echo "wrap-up: could not take the lock $apply_lock; not starting" >&2; exit 75
 }
-[ "$apply" -eq 0 ] || take_apply_lock
 extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
 orca_dir=$(find_orca_dir) || true
 export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin"
@@ -786,6 +785,9 @@ repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"; release_apply_lock' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+[ "$apply" -eq 0 ] || take_apply_lock
 finish() { # prints every failed item with its reason; exit 1 when there is any
   local n; n=$(wc -l < "$tmp/failures" | tr -d ' ')
   if [ "$n" -gt 0 ]; then
@@ -845,14 +847,17 @@ orca=orca_call
 # any other on a path where every dispatch is settled (shells, worker-pane.sh panes, an agent idle at its prompt). Kept: our own,
 # a Run coordinator's, a live dispatch's, a lead- worktree's, one with output in the last 10 minutes (a correction pass runs on a
 # settled dispatch), a running agent, one outside a worktree, and the main checkout's. A local terminal with no dispatch and
-# no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only); on another environment
-# it stays kept as unknown owner.
+# no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only). On another environment a
+# terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
+# its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those.
 # worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
 # every Run on this Orca and on every environment, and one inventory serves all of them; if any of it is unread, nothing closes.
 # Each Orca is read directly, so no --include-remote: with it one unreachable host makes a whole Run answer ok:false.
 term_closed=0; term_kept=0
 main_path=$(git worktree list --porcelain | sed -n '1s/^worktree //p'); main_path=$(cd "$main_path" 2>/dev/null && pwd -P || printf '%s' "$main_path")
 : > "$tmp/closing"
+: > "$tmp/removed-paths"
+terminals_read=0
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
 close_terminal_err='close failed'
 close_terminal() {
@@ -929,13 +934,13 @@ terminal_dispatches() {
   done 3< <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
 }
 close_finished_terminals() {
-  local env=$1 label=${1:-local} eargs=() handle reason action
+  local env=$1 label=${1:-local} late=${2:-0} eargs=() handle reason action
   [ -z "$env" ] || eargs=(--environment "$env")
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; fail_item "terminals on $label" 'inventory incomplete; none closed'; return 0
   fi
-  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg main "$main_path" --arg local "${env:-}" '
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg main "$main_path" --arg local "${env:-}" --rawfile gone "$tmp/removed-paths" '
     def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited";
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
@@ -953,7 +958,8 @@ close_finished_terminals() {
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
       elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
       elif $local != "" and ($p == "" or $scheduled != "" or .agentIdentity != null or (.branch // "") == "refs/heads/main" or (.branch // "") == "refs/heads/master") then [$h, "unknown owner, still running", "keep"]
-      elif $local != "" then [$h, "no live worker in this worktree", "close"]
+      elif $local != "" and $p != "" and ($gone | split("\n") | index($p)) then [$h, "worktree gone in this run", "close"]
+      elif $local != "" then [$h, "unknown owner, still running", "keep"]
       elif $p == "" then [$h, "not in a worktree", "keep"]
       elif $p == $main then [$h, "main checkout", "keep"]
       elif .agentIdentity != null then [$h, "running agent", "keep"]
@@ -961,6 +967,7 @@ close_finished_terminals() {
       else [$h, "no dispatch, no agent", "close"] end
     | @tsv' "$tmp/h-workers" > "$tmp/h-plan"
   while IFS=$'\t' read -r handle reason action; do
+    if [ "$late" = 1 ] && [ "$reason" != 'worktree gone in this run' ]; then continue; fi
     if [ "$action" = keep ]; then terminal_kept "$handle" "$label" "$reason"; continue; fi
     printf 'Close terminal %s (%s, %s)\n' "$handle" "$label" "$reason"
     if [ "$apply" -eq 1 ]; then
@@ -1000,6 +1007,7 @@ release_finished_workers() {
     | unique_by([.[0], .[1]])[] | @tsv' "$tmp/h-release-rows")
 }
 if command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
+  terminals_read=1
   release_finished_workers
   close_finished_terminals ''
   while IFS= read -r env_id; do
@@ -1553,6 +1561,7 @@ process_worktree() {
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
     if [ "$apply" -eq 0 ] || guarded_worktree_remove kept "worktree $path" "$path" "$force"; then
       removed=$((removed+1))
+      printf '%s\n' "$path" >> "$tmp/removed-paths"
     else
       printf '%s\n' "$path" >> "$tmp/kept-worktrees"
       [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
@@ -1569,6 +1578,11 @@ while IFS= read -r -d '' field; do
   esac
 done < "$tmp/worktrees"
 [ "$apply" -eq 0 ] || git worktree prune || fail_item 'git worktree prune' 'failed'
+if [ "$terminals_read" -eq 1 ] && [ -s "$tmp/removed-paths" ]; then
+  while IFS= read -r env_id; do
+    [ -z "$env_id" ] || close_finished_terminals "$env_id" 1
+  done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
+fi
 while IFS= read -r branch; do
   if protected "$branch"; then
     keep "local $branch" "$protected_reason"

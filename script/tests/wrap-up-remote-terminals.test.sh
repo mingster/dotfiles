@@ -99,14 +99,13 @@ run --dry-run
 expect 'Close terminal t-path (env-a, settled dispatch on this path)'
 expect 'Close terminal t-handle (env-a, settled dispatch)'
 expect 'Close terminal t-agent (env-a, settled dispatch on this path)'
-expect 'Close terminal t-unknown (env-a, no live worker in this worktree)'
-for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree'; do
+for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-unknown|unknown owner, still running'; do
   expect "Kept terminal ${pair%|*} (env-a, ${pair#*|})"
 done
 test ! -e "$tmp/closed"
 echo 'ok coordinator dispatches classify remote handles and paths while preserving keep rules'
 run --apply
-printf '%s\n' t-agent t-handle t-path t-unknown > "$tmp/expected"
+printf '%s\n' t-agent t-handle t-path > "$tmp/expected"
 sort "$tmp/closed" | cmp - "$tmp/expected"
 echo 'ok apply closes only the eligible remote terminals through their environment'
 # Newest-first pages: the live owner is older than a settled attempt on the same path.
@@ -167,8 +166,7 @@ run --dry-run
 expect 'Close terminal t-path (env-a, settled dispatch on this path)'
 expect 'Close terminal t-handle (env-a, settled dispatch)'
 expect 'Close terminal t-agent (env-a, settled dispatch on this path)'
-expect 'Close terminal t-unknown (env-a, no live worker in this worktree)'
-for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree'; do
+for pair in 't-live|live dispatch' 't-own|own terminal' 't-lead|lead worktree' 't-unknown|unknown owner, still running'; do
   expect "Kept terminal ${pair%|*} (env-a, ${pair#*|})"
 done
 echo 'ok flat worker-list rows classify remote terminals like the old shape'
@@ -200,7 +198,7 @@ expect 'Kept terminal t-path (env-a, live dispatch)'
 expect 'Close terminal t-handle (env-a, settled dispatch)'
 test ! -e "$tmp/closed"
 run --apply
-printf '%s\n' t-handle t-live t-unknown | cmp - <(sort "$tmp/closed")
+echo t-handle | cmp - "$tmp/closed"
 echo 'ok current worker-list shape: nextCursor is followed to the last page before closing'
 rm "$tmp/closed"
 current '{"nextCursor":7}' < /dev/null > "$tmp/bad-number"

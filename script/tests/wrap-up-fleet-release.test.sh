@@ -152,21 +152,25 @@ term() { jq -n --arg h "$1" --arg p "$2" --argjson a "${3:-null}" '{handle:$h,wo
   row d-old succeeded exited released '' /fixture/finished
 } | wrap > "$tmp/workers-env"
 echo "$none" | jq . > /dev/null
-{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /fixture/removed; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
+g worktree add -q --detach "$tmp/wt-gone" main
+wt_gone=$(cd "$tmp/wt-gone" && pwd -P)
+{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone "$wt_gone"; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
 { term l-gone /fixture/removed; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-local"
 echo '{"ok":true,"result":{"workers":[]}}' > "$tmp/workers-local"
 run --dry-run
 expect 'Close terminal e-setup (env-a, settled dispatch on this path)'
-expect 'Close terminal e-gone (env-a, no live worker in this worktree)'
+expect 'Remove worktree '"$wt_gone"' (detached at merged commit)'
+expect 'Close terminal e-gone (env-a, worktree gone in this run)'
+expect 'Kept terminal e-never (env-a, unknown owner, still running)'
 expect 'Close terminal l-gone (local, no dispatch, no agent)'
-for keep in e-live e-agent e-none t-own; do
+for keep in e-live e-never e-agent e-none t-own; do
   ! grep -Fq "Close terminal $keep " "$tmp/output" || { echo "FAIL would close $keep"; exit 1; }
 done
 test ! -e "$tmp/closed"
 grep -o '^Close terminal [^ ]* ([^,]*' "$tmp/output" | sed 's/^Close terminal \([^ ]*\) (\(.*\)/\2 \1/; s/^local/local/' | sort > "$tmp/planned"
 run --apply
 sort "$tmp/closed" | cmp - "$tmp/planned" || { echo 'FAIL apply closed other than the plan'; cat "$tmp/closed"; exit 1; }
-echo 'ok 6 leftover terminals close on every environment; live, agent, no-worktree and own terminals stay'
+echo 'ok 6 leftover terminals close on every environment; live, agent, never dispatched, no-worktree and own terminals stay'
 
 # Item 7: one apply at a time, and every pane close call has its own short timeout.
 bash -c 'sleep 60; :' wrap-up.sh &
@@ -183,6 +187,23 @@ run --apply
 ! grep -q 'rc=75' "$tmp/errors" || { echo 'FAIL a dead holder blocked the run'; exit 1; }
 test ! -e "$tmp/state/wrap-up-apply.lock" || { echo 'FAIL lock left behind'; exit 1; }
 run --dry-run
+# The lock goes on every exit path: an argument error before the lock, an error after it, and SIGTERM.
+rm -f "$tmp/state/wrap-up-apply.lock"
+bash "$root/script/wrap-up.sh" --apply --repo "$tmp/does-not-exist" >/dev/null 2>&1 || true
+test ! -e "$tmp/state/wrap-up-apply.lock" || { echo 'FAIL lock left after early error'; exit 1; }
+cat > "$tmp/bin/slow-orca" <<'STUB'
+#!/usr/bin/env bash
+: > "$FAKE_DIR/slow-started"
+sleep 30
+STUB
+chmod +x "$tmp/bin/slow-orca"
+rm -f "$tmp/slow-started"
+ORCA_CLI_COMMAND="$tmp/bin/slow-orca" bash "$root/script/wrap-up.sh" --apply --repo "$tmp/repo" >/dev/null 2>&1 &
+slow=$!
+for _ in $(seq 1 100); do [ -e "$tmp/slow-started" ] && break; sleep 0.1; done
+test -e "$tmp/state/wrap-up-apply.lock" || { echo 'FAIL lock not held while running'; kill "$slow" 2>/dev/null; exit 1; }
+kill -TERM "$slow"; wait "$slow" 2>/dev/null || true
+test ! -e "$tmp/state/wrap-up-apply.lock" || { echo 'FAIL lock left after SIGTERM'; exit 1; }
 echo 'ok 7 a second apply refuses with the holder; a dead holder does not block; the lock is released'
 cat > "$tmp/pane-env.sh" <<'STUB'
 #!/usr/bin/env bash

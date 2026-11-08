@@ -78,7 +78,7 @@ Each run reads every Run on this Orca and on every environment, then does two fl
 
 Release: a worker whose state is succeeded, stopped or failed, or whose liveness is exited or sleep, and whose terminal state is not released, gets `worker-release --dispatch <id>` (with `--environment` for a remote one). A ready or in progress worker that is live is never touched, nor the caller's `$ORCA_TERMINAL_HANDLE` or a Run coordinator's terminal.
 
-Close: on a remote environment a terminal inside a worktree with no live worker is closed too (setup and plain shell panes included). Kept: a terminal outside a worktree, a running agent, a main branch terminal, and everything under a scheduled round.
+Close: on a remote environment a terminal whose worktree has only settled dispatches is closed (setup and plain shell panes included), and so is one whose worktree this run removed (a second pass after the worktree step). A terminal in a worktree with no dispatch record stays kept as unknown owner, since it may be an owner session, a dev server or another coordinator. Kept: a terminal outside a worktree, a running agent, a main branch terminal, and everything under a scheduled round.
 
 The dry run lists every `Release worker` and `Close terminal` line, and apply does exactly that list. Test: `script/tests/wrap-up-fleet-release.test.sh`.
 
