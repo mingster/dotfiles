@@ -313,7 +313,8 @@ FAIL_REPO="$repo_a" round; FAIL_REPO="$repo_a" round
 check 'an issue with another title is no duplicate' test "$(nissues)" -eq 1
 
 reset
-round
+# Headroom: the cap is round limit minus elapsed seconds, so a long enough round keeps a tick of the clock from lowering the default.
+PRECHECK_TIMEOUT=3000 round
 check 'each child gets the default per-repo budget' test "$(grep -c 'budget=900 ' "$calls")" -eq 2
 reset
 ROUND_LIMIT=10 FAKE_SLEEP=3 round; status=$?
