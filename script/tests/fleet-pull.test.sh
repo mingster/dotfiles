@@ -198,6 +198,25 @@ git -C "$repo1" checkout -q -- file.txt
   && ok "failing repo on a reachable host is not reported as unreachable" \
   || bad "reachable host with a dirty repo reported wrong (ec=$ec): $out"
 
+# 6c. Remote hosts also fast-forward their ~/agent-state
+git -C "$state1" checkout -q -- . 2>/dev/null || true
+cat >"$state1/fleet-pull.json" <<'EOF'
+{"hosts":["host-a"],"repos":[]}
+EOF
+git -C "$state1" commit -qam remote_state
+git -C "$state1" push -q origin main
+remote_home="$tmp/remote-home"
+mkdir -p "$remote_home"
+git clone -q "$(git -C "$state1" remote get-url origin)" "$remote_home/agent-state"
+git -C "$remote_home/agent-state" reset -q --hard HEAD~1
+set +e
+out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec=$?
+set -e
+[ "$(git -C "$remote_home/agent-state" rev-parse HEAD)" = "$(git -C "$state1" rev-parse HEAD)" ] && grep -q "ok   host-a .*agent-state" <<<"$out" \
+  && ok "remote host agent-state is fast-forwarded" \
+  || bad "remote agent-state not pulled (ec=$ec): $out"
+
 # 7. elon-startup.sh fast-forwards AGENT_STATE_DIR instead of only fetching it
 elon_work="$tmp/elon"
 mkdir -p "$elon_work/bin" "$elon_work/script" "$elon_work/home/.claude/state" "$elon_work/cwd"

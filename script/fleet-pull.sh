@@ -94,16 +94,19 @@ if [ "${#repos[@]}" -gt 0 ]; then
   bash -c "$remote" _ local "${repos[@]}" || status=1
 fi
 
+# The remote shell expands ~, so each host pulls its own state dir.
+# shellcheck disable=SC2088
+remote_state='~/agent-state'
 for h in $(jq -r '(.hosts // [])[]' "$cfg"); do
   [ -n "$h" ] || continue
   echo "$h"
   rc=0
-  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "${repos[@]}" <<<"$remote" 2>&1) || rc=$?
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "$remote_state" ${repos[@]+"${repos[@]}"} <<<"$remote" 2>&1) || rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || status=1
   # ssh exits 255 when it cannot reach the host; any other failure already named its repo.
   if [ "$rc" -eq 255 ]; then
-    for r in "${repos[@]}"; do echo "fail $h $r (unreachable host)"; done
+    for r in "$remote_state" ${repos[@]+"${repos[@]}"}; do echo "fail $h $r (unreachable host)"; done
   fi
 done
 

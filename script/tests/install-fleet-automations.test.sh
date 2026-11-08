@@ -143,6 +143,9 @@ coord_status=$(bash "$script" --status)
 echo "$coord_status" | grep -q 'fleet-watch: enabled' && check 'coordinator status enabled fleet-watch' true || check 'coordinator status enabled fleet-watch' false
 echo "$coord_status" | grep -q 'wrap-up-scheduled: enabled' && check 'coordinator status enabled wrap-up' true || check 'coordinator status enabled wrap-up' false
 echo "$coord_status" | grep -q 'fleet-toolchain: enabled' && check 'coordinator status enabled fleet-toolchain' true || check 'coordinator status enabled fleet-toolchain' false
+echo "$coord_status" | grep -q 'sync-team-skills-drift: disabled' && check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' true || check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' false
+echo "$coord_status" | grep -q 'team-audit-weekly: disabled' && check 'coordinator creates team-audit-weekly disabled (owner opt-in)' true || check 'coordinator creates team-audit-weekly disabled (owner opt-in)' false
+echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
 [ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 6 ] \
   && check 'coordinator install has six automations' true || check 'coordinator install has six automations' false
 

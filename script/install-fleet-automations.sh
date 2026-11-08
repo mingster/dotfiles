@@ -361,9 +361,10 @@ case "$action" in
     host_is_coordinator "$coord_want" && enabled=1
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" 1
-    ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" "$enabled"
-    ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" "$enabled"
-    ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" "$enabled"
+    # The owner turns these three on by hand; the installer only creates them disabled.
+    ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" 0
+    ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" 0
+    ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" 0
     ensure_automation fleet-toolchain '0 5 * * *' "$(fleet_toolchain_precheck)" "$FLEET_TOOLCHAIN_PRECHECK_TIMEOUT" "$enabled"
     ;;
   uninstall)
