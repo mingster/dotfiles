@@ -135,7 +135,7 @@ For each in-scope role name:
 
 Canonical roles, adopt link mode, `team-audit` checks, owner-approved trailers on dotfiles role commits only, Orca setup + SessionStart self-heal docs.
 
-### PR B+ (each agent-team project: `riben.life`, `pstv`, …)
+### PR B+ (each agent-team project checkout)
 
 Remove committed role files; add gitignore; run link script; drop baselines; move facts into `team-facts.md` / `deploy-facts.md`; `team-audit` green; smoke one worker per role.
 
