@@ -44,7 +44,9 @@ elif a[:2] == ['terminal', 'create']:
     if os.environ.get('CREATE_MODE') == 'fail':
         print('Orca server unreachable', file=sys.stderr)
         sys.exit(1)
-    code = subprocess.run(value('--command'), shell=True,
+    # The real terminal runs the command in the user's shell (bash or zsh), not POSIX sh.
+    # Hosted Linux runners have dash as /bin/sh, which rejects the ${1/#...} in the preflight.
+    code = subprocess.run(['/bin/bash', '-c', value('--command')],
                           env=dict(os.environ, HOME=str(home), PATH=str(home / 'bin'))).returncode
     (home / 'exit').write_text(str(code))
     reply({'terminal': {'handle': 'term_fixture'}})

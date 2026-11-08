@@ -136,7 +136,7 @@ map_file() {
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
-    script/agent-team.sh|script/sync-team-skills.sh|script/adopt-agent-team.sh|script/init-agent-project.sh|script/agent-project-autoinit.sh)
+    script/agent-team.sh)
       map_script_sh_base "agent-team"
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"

@@ -60,8 +60,8 @@ setup_fixture() {
   init_bare_main "$bare"
   mkdir -p "$work/script" "$work/script/tests" "$work/.agents/skills/tdd" \
     "$work/templates/agent-team/.agents/skills/benchmark-checklist"
-  for s in sync-mattpocock-skills.sh sync-pstack-template-skills.sh sync-team-skills.sh \
-    adopt-agent-team.sh check-skill-collisions.sh weekly-update.sh weekly-skill-impact.sh \
+  for s in sync-mattpocock-skills.sh sync-pstack-template-skills.sh \
+    agent-team.sh check-skill-collisions.sh weekly-update.sh weekly-skill-impact.sh \
     install_node.sh; do
     cp "$root/script/$s" "$work/script/"
   done
@@ -428,6 +428,36 @@ assert_index_apply_fail() {
 
 assert_index_apply_fail 'not-json at all' 'index bad JSON'
 assert_index_apply_fail '[]' 'index empty releases'
+
+# --- scheduled path is read only on projects (never full adoption) ---
+setup_fixture
+rm -rf "$work/templates/agent-team" && cp -R "$root/templates/agent-team" "$work/templates/agent-team"
+mkdir -p "$work/.agents/skills/setup-matt-pocock-skills"
+cp -R "$root/.agents/skills/setup-matt-pocock-skills/." "$work/.agents/skills/setup-matt-pocock-skills/"
+git -C "$work" add -A && git -C "$work" commit -qm fixtures && git -C "$work" push -q origin main
+proj="$tmp/proj"
+rm -rf "$proj"
+mkdir -p "$proj/.claude" "$proj/docs/agents"
+git -C "$proj" init -q
+git -C "$proj" remote add origin "https://github.com/example-org/proj.git"
+printf '# proj\n' >"$proj/AGENTS.md"
+printf 'local claude\n' >"$proj/CLAUDE.md"
+printf '{}\n' >"$proj/.claude/settings.json"
+printf 'local\n' >"$proj/docs/agents/issue-tracker.md"
+snap_before=$(cd "$proj" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs shasum | shasum)
+proj_out=$(run_weekly WEEKLY_UPDATE_PROJECTS="$proj" WEEKLY_UPDATE_SYNC_PROJECTS=1 \
+  WEEKLY_UPDATE_TESTS_mattpocock='true' WEEKLY_UPDATE_TESTS_pstack='true' \
+  WEEKLY_UPDATE_TESTS_toolchain='true' WEEKLY_UPDATE_NO_PUSH=1 2>&1) || true
+snap_after=$(cd "$proj" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs shasum | shasum)
+[ "$snap_before" = "$snap_after" ] \
+  && ok 'scheduled run writes nothing into a project (AGENTS.md, CLAUDE.md, settings, docs/agents)' \
+  || bad 'scheduled run changed project files' "$proj_out"
+echo "$proj_out" | grep -q 'DRIFT' \
+  && ok 'scheduled run reports drift for the project' \
+  || bad 'no agent-team check output in scheduled run' "$proj_out"
+grep -Eq 'agent-team\.sh" +(sync|project|all)' "$script" \
+  && bad 'weekly-update.sh must call only agent-team.sh check' \
+  || ok 'weekly-update.sh calls only agent-team.sh check'
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
