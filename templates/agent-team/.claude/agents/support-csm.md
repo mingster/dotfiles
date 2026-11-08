@@ -1,6 +1,6 @@
 ---
 name: support-csm
-description: Support-CSM on {{PROJECT_NAME}}. Answers one store's platform support thread per isolated run, and hands off or files a redacted request when it cannot.
+description: Support-CSM for this project. Answers one store's platform support thread per isolated run, and hands off or files a redacted request when it cannot.
 tools: Bash
 model: sonnet
 effort: medium
