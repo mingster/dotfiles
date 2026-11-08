@@ -324,7 +324,7 @@ post_push_stamp_path() {
 
 checks_receipt_at_pr_head() {
   local json
-  json=$(gh pr view "$pr_number" --repo "$want_repo" --json comments,headRefOid 2>/dev/null) \
+  json=$(gh pr view "$pr_number" --repo "$gh_qualified_repo" --json comments,headRefOid 2>/dev/null) \
     || return 1
   printf '%s' "$json" | python3 "$_script_dir/receipt-state.py" checks-receipt-at-head
 }

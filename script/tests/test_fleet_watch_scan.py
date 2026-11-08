@@ -463,6 +463,71 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertIn('rework_start=', ','.join(log))
 
+    def test_persisted_head_checks_started_does_not_block_retry_without_receipt(self):
+        head = 'd' * 40
+        state = {'head_checks_started': {REPO: {head: True}}}
+        with tempfile.TemporaryDirectory() as td:
+            wt = os.path.join(td, 'wt')
+            subprocess.run(['git', 'init', '-q', wt], check=True)
+            subprocess.run(['git', '-C', wt, 'config', 'user.email', 't@example.com'], check=True)
+            subprocess.run(['git', '-C', wt, 'config', 'user.name', 't'], check=True)
+            subprocess.run(['git', '-C', wt, 'commit', '--allow-empty', '-m', 'init', '-q'], check=True)
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
+            try:
+                self.assertTrue(fw.write_post_push_stamp(REPO, head, checks_started=True))
+                prs = {REPO: [pr(33, head=head)]}
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: wt}
+                _, log, starts, _ = self.run_pass(
+                    state, prs_by_repo=prs, detached=True, config=cfg,
+                )
+                self.assertEqual(len(starts), 1, log)
+                self.assertTrue(any('head-checks.sh' in ' '.join(cmd) for cmd in starts))
+                self.assertIn('head_checks_start=' + head[:8], ','.join(log))
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
+    def test_head_checks_retries_after_lock_dropped_without_receipt(self):
+        head = 'e' * 40
+        state = {}
+        lock_held = [True]
+        starts = []
+
+        def lock_live(_root):
+            return lock_held[0]
+
+        def start_detached(command, extra_env=None):
+            starts.append(command)
+            return 0
+
+        with tempfile.TemporaryDirectory() as td:
+            wt = os.path.join(td, 'wt')
+            subprocess.run(['git', 'init', '-q', wt], check=True)
+            subprocess.run(['git', '-C', wt, 'config', 'user.email', 't@example.com'], check=True)
+            subprocess.run(['git', '-C', wt, 'config', 'user.name', 't'], check=True)
+            subprocess.run(['git', '-C', wt, 'commit', '--allow-empty', '-m', 'init', '-q'], check=True)
+            os.environ['COORDINATOR_PUBLICATION_STATE_DIR'] = os.path.join(td, 'coord-state')
+            try:
+                self.assertTrue(fw.write_post_push_stamp(REPO, head, checks_started=True))
+                prs = {REPO: [pr(34, head=head)]}
+                cfg = json.loads(json.dumps(self.CONFIG))
+                cfg['issue_scan']['repo_roots'] = {REPO: wt}
+                common = dict(
+                    pr_fetch=lambda repo: prs.get(repo, []),
+                    gate_check=lambda _c: True,
+                    admit_fn=lambda _h, _c, _w: {'admitted': True, 'occupied': 0},
+                    start_detached=start_detached,
+                    checks_lock_live=lock_live,
+                )
+                fw.issue_scan_pass(cfg, state, NOW, [], **common)
+                self.assertEqual(starts, [])
+                lock_held[0] = False
+                _, log = fw.issue_scan_pass(cfg, state, NOW, [], **common)
+                self.assertEqual(len(starts), 1, log)
+                self.assertIn('head_checks_start=' + head[:8], ','.join(log))
+            finally:
+                os.environ.pop('COORDINATOR_PUBLICATION_STATE_DIR', None)
+
     def test_publication_stamp_without_receipt_still_starts_checks(self):
         with tempfile.TemporaryDirectory() as td:
             wt = os.path.join(td, 'wt')

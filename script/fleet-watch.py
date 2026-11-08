@@ -2155,7 +2155,6 @@ def issue_scan_pass(
         pr_fetch = fetch_prs
     pr_repos = scan.get('pr_repos') or repos
     needs_elon = (config.get('worker_stall') or {}).get('needs_elon_label', 'needs-elon')
-    head_checks_started = state.setdefault('head_checks_started', {})
     reviewer_started = state.setdefault('reviewer_started', {})
     rework_heads = state.setdefault('issue_scan_rework', {})
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
@@ -2168,7 +2167,6 @@ def issue_scan_pass(
         prs = pr_fetch(repo)
         if prs is None:
             continue
-        checks_seen = head_checks_started.setdefault(repo, {})
         review_seen = reviewer_started.setdefault(repo, {})
         for pr_row in prs:
             if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
@@ -2182,18 +2180,12 @@ def issue_scan_pass(
             if not root:
                 continue
             meta = pr_author_worker_metadata(workers, pr_row)
-            stamp_checks, stamp_reviewer = post_push_flags_for_head(repo, head)
-            # A publication stamp only means a spawn was attempted. Retry until a
-            # Checks receipt exists or a live head-checks lock holds the worktree.
-            if stamp_checks and (
-                checks_receipt_at_head(pr_row)
-                or head_checks_lock_live(root, lock_live=checks_lock_live)
-            ):
-                checks_seen[head] = True
+            _, stamp_reviewer = post_push_flags_for_head(repo, head)
             if stamp_reviewer:
                 review_seen[head] = True
+            # Retry until a Checks receipt exists or a live head-checks lock holds the worktree.
             if not checks_receipt_at_head(pr_row):
-                if not checks_seen.get(head) and not head_checks_lock_live(root, lock_live=checks_lock_live):
+                if not head_checks_lock_live(root, lock_live=checks_lock_live):
                     command = build_head_checks_command(config, repo, pr_row)
                     if command and start_detached(command) == 0:
                         log_bits.append('head_checks_start=%s' % head[:8])
