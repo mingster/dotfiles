@@ -26,9 +26,8 @@ Append to private `~/.claude/state/team-observations.md` only what would change 
 
 ## Fleet dispatch (owner 2026-11-03)
 
-- Elon starts every builder and every worker, on any fleet host, and owns ticket order and briefs.
+- Elon starts every builder on any fleet host and owns ticket order and briefs.
 - Elon places the worker: `~/.claude/state/fleet-load.sh`, then the primary code host first for code, test and review (load under 12; it also hosts the coordinators, owner 2026-11-04), the first overflow host (load under 8) then the second overflow host (load under 12), the browser host always for browser, secrets or the main checkout, release-manager only on a host the deploy facts name, the database host for dev DB and Playwright through `remote-heavy.sh` (it runs no workers). Provider by `usage-gate.py pick`. Details and caps: `.claude/model-routing.md`, Starting a worker.
-- **QA placement (owner 2026-11-06):** QA runs on any host except the one Elon is on; pick the lightest by `fleet-load.sh`.
 - **Admission rule (owner 2026-11-04):** start a worker on a host when its 1 minute load divided by cores is under 0.7 and free memory is at least 4 GB. The host caps in the project's `.claude/model-routing.md` are the ceiling, never the target: fill an idle host up to its cap before any host with queued work waits, and keep each host between 0.4 and 0.7 load per core. Read the top processes before blaming workers for a high load (Spotlight, a build or a regression run counts).
 - After the start: confirm acceptance within 2 minutes.
 - Each wake, a free lane plus a startable ticket (accepted document, grill approved where one is needed) means Elon starts it, and never holds it behind a regression or a deploy. Lane counts come from `fleet-load.sh`, never from dispatch notes.

@@ -34,7 +34,7 @@ Every change to a role definition requires human review and explicit approval of
 2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when Elon judges a full crew unnecessary.
 3. **Reports:** Every role reports to Elon. Elon dispatches fullstack-dev and takes builder and reviewer questions. Docs and changelog only PRs pass Checks and Review with no agent. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go); a failed gate is its job to diagnose and report. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
 4. **Monitor and close workers:** follow Delivery contract for the child ledger, inbox classification, read-only liveness and closure; use the official Orca guide and model-routing for lifecycle transitions.
-5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. Merge is GitHub auto merge when Checks and Review pass (until auto merge is live, the interim merge is `lead-merge.sh` by the author worker or Elon). Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
+5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. Merge is GitHub auto merge when Checks and Review pass. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
 
 Usage gate by coordinator host: `usage-gate-hook.py` gates every worker start from Claude Code (`.claude/settings.json`), Cursor (`~/.cursor/hooks.json`) and Antigravity (`~/.gemini/config/hooks.json`). The Cursor and Antigravity entries come from `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`; a coordinator that starts workers from either IDE first confirms its entry is installed, and otherwise runs in Claude Code.
 
@@ -86,7 +86,7 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 3. **Reproduce:** qa-sdet records the failing behavior and provides a failing reproduction test (a Functional test case) to fullstack-dev.
 4. **Fix:** fullstack-dev makes the test pass, adds the project's required changelog entry and reports the branch for review.
 5. **Verify:** qa-sdet and required reviewers audit the change and checks.
-6. **Ship:** merge is GitHub auto merge (until auto merge is live, `lead-merge.sh` by the author worker or Elon); release-manager owns release gates, staging and production after the owner go.
+6. **Ship:** merge is GitHub auto merge when Checks and Review pass; release-manager owns release gates, staging and production after the owner go.
 7. **Close:** support-csm drafts any customer notice. Elon obtains owner approval before sending or closing a ticket.
 
 | Severity | Meaning | Action |

@@ -33,7 +33,7 @@ Team additions to its task contract:
 
 - Name the role file by absolute path, the Token budget in `AGENTS.md`, and the skill file to read. Use `implement` for a whole ticket, `tdd` for a build slice, `diagnosing-bugs` for diagnosis, `code-review` for review and `resolving-merge-conflicts` for conflicts. Read the named `~/.agents/skills/<name>/SKILL.md` even when the harness hides it.
 - Name the ticket's test cases as the verify command: those plus touched unit tests, never the full suite (Regression).
-- State rules 1, 2 and 6 of "Commit, push and merge" in `.claude/model-routing.md`: workers commit on their own branches and worktrees, never push or open PRs; only a merge worker Elon dispatches lands PRs through `lead-merge.sh`; reviewers report locally to Elon.
+- State rules 1, 2 and 6 of "Commit, push and merge" in `.claude/model-routing.md`: workers commit on their own branches and worktrees, never push or open PRs; merge is GitHub auto merge when required Checks and Review pass; reviewers report locally to Elon.
 - Apply the usage gate before every launch and use the role's provider, model and effort from `.claude/model-routing.md`. Cap each independent wave at 3 workers. Use child worktrees and the placement flags in team facts.
 - Use the `orca-team` skill for the worker watch and start check helpers (no worker panes, owner 2026-11-03). Keep runtime lifecycle authority with `orchestration`; project routing supplies team policy, not permission to bypass Orca's recovery rules.
 
