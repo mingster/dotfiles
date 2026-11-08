@@ -1,0 +1,1 @@
+Rebuild `script/agent-team.sh` (`machine`, `project`, `sync`, `check`, and `all`) for one command project adoption and migration, wire `script/head-checks.sh` and `script/lead-merge.sh` to `script/agent-team.sh check`, and move `adopt-agent-team.sh`, `init-agent-project.sh`, `sync-team-skills.sh`, and `agent-project-autoinit.sh` to `_outdated/script/` (#736).

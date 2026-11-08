@@ -291,6 +291,18 @@ if guards=$(git -C "$worktree" show "$base:.claude/deploy-guard-paths" 2>/dev/nu
     done <<<"$guards"
   done < <(git -C "$worktree" diff --name-only --diff-filter=A -z "$base...$sha" --)
 fi
+if [ -f "$worktree/.claude/settings.project.json" ] || [ -f "$worktree/.claude/hooks/guard-config.json" ]; then
+  export DOTFILES="${DOTFILES_DIR:-${DOTFILES:-$(cd "$script_dir/.." && pwd)}}"
+  printf '\nCommand: bash "%s/script/agent-team.sh" check "%s"\n' "$DOTFILES" "$worktree" >> "$log"
+  started=$SECONDS
+  if bash "$DOTFILES/script/agent-team.sh" check "$worktree" >> "$log" 2>&1; then
+    printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+  else
+    status=$?
+    printf 'Result: exit %s; remaining checks stopped\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
+    exit 1
+  fi
+fi
 # Read the complete output before tailing it. Bun assertion diagnostics also say
 # error:, so use its unhandled-error summary rather than counting all diagnostics.
 test_summary() {
