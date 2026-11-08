@@ -417,10 +417,13 @@ check 'hung pane close records timeout exit 124 in failures' has 'worker panes: 
 # Multi-repo scheduled round stops starting new repos when its budget is spent and logs which repos it skipped.
 reset
 b_start=$SECONDS
-PRECHECK_TIMEOUT=3 KILL_GRACE=1 ROUND_LIMIT=5 FAKE_SLEEP=2 round; status=$?
+# SECONDS ticks in whole seconds, so setup before the repo loop can eat one second of the round budget at random.
+# The budget is 3s (9 - 2 * 3), so a lost second still leaves the first repo room to start; its 4s run outlasts the
+# budget and ends before the kill (child limit 2 to 3s + 3s grace), so the second repo is always the one skipped.
+PRECHECK_TIMEOUT=9 KILL_GRACE=3 ROUND_LIMIT=5 FAKE_SLEEP=4 round; status=$?
 b_elapsed=$((SECONDS - b_start))
 check 'budgeted multi-repo round exits 0' test "$status" -eq 0
-check 'budgeted multi-repo round finishes within precheck timeout' test "$b_elapsed" -le 3
+check 'budgeted multi-repo round finishes within precheck timeout' test "$b_elapsed" -le 9
 check 'budgeted multi-repo round stops starting new repos when budget is spent' test "$(ncalls)" -eq 1
 check 'budgeted multi-repo round logs skipped repo in summary log' has "skipped=$repo_b" "$log"
 check 'budgeted multi-repo round logs skipped repo in detail log' has "skip repo $repo_b" "$detail"
