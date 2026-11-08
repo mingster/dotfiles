@@ -2,6 +2,134 @@
 
 Long reference moved out of the root [README](../../README.md). Read it when you need the full role list, the project file map, the per stage command table, the fleet and load distribution rules, the full tool reference, or the skill sharing rules.
 
+
+## Team guideline
+
+### Goal
+
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A ticket goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs a green staging review and the owner's go.
+
+### Principles
+
+* Use Orca, pstack and Matt Pocock skills as they are. Customize only when we must, and record why.
+* Improve what exists before adding anything. Team rules and scripts must not grow in total.
+* Each role takes the shortest path that still reaches the targets.
+* When speed and quality conflict, quality wins for money, sign-in, database schema and hooks. Everything else takes the fast lane, and daily staging is the second line of defence.
+* State lives only in GitHub and Orca. After a restart the team carries on from there.
+
+### Targets
+
+| Measure | Target |
+| --- | --- |
+| Start to merge, median | 60 minutes or less |
+| Checks fail on first pass | 15% or less |
+| Reopened or hotfix | 2% or less |
+| P0 reaching production | 0 per month |
+| Ready to worker start | 15 minutes |
+| Build | 40 minutes |
+| Checks | 10 minutes |
+| Review | 10 minutes |
+| Daily staging tests | 15 minutes |
+| `heavy-gate` wait, median | 2 minutes or less |
+| Worktrees on a host | Running workers plus a fixed list |
+
+Missing data reads as unknown, never zero.
+
+### Lifecycle
+
+Each step is one run that does one job and ends. It never waits on a person or another agent. The next run reads GitHub.
+
+```mermaid
+flowchart TD
+    Req["Request from the owner or Elon"] --> Intake["Intake: architect-pm grills with Elon"]
+    Intake --> Design["Design, features only: one document, one owner approval"]
+    Intake & Design --> Ready["Issue is ready"]
+    Ready --> Build["Build: fullstack-dev, TDD, local checks, pushes and opens PR"]
+    Build --> Checks["Actions Checks"]
+    Checks --> Review["Actions Review and verifier Verdict (another model family)"]
+    Review --> Babysit["5 minute babysit pass"]
+    Babysit -->|"Fix needed"| Build
+    Babysit --> Ship["Shipping run (script/ship.sh): squash merge and read back"]
+    Ship --> Wrap["Wrap-up: 10 minute Orca automation"]
+    Ship --> Staging["Staging: daily at 19:00, staging review, full regression"]
+    Staging --> Go["Owner's go"] --> Prod["Production: backup, deploy, smoke"]
+```
+
+| Step | Starts when | Who | Done when |
+| --- | --- | --- | --- |
+| Intake | A request arrives | architect-pm with Elon. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
+| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and tickets | One document, one owner approval |
+| Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
+| Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
+| Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
+| Verifier Verdict | Actions Checks pass | `qa-sdet` (another model family, runs parent against head as a user would) | `Verdict: PASS` or `PASS+NOTES` posted via `script/post-verdict.sh` |
+| Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one fix worker (fixes and pushes once) or a Shipping run |
+| Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
+| Wrap-up | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
+| Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest main deployed, staging review and regression green (or issue opened) |
+| Production | Owner's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
+
+**Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one of three groups.
+
+* Ready: checks are green and a verifier PASS covers this head. It starts a Shipping run.
+* Needs a fix: a conflict with main, an unresolved review thread, a review FAIL, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
+* Anything else waits for the next pass.
+
+**Shipping run.** One run of `script/ship.sh` handles one PR. It merges only when all of these hold:
+
+* The PR is open and mergeable, and every check passed.
+* The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
+* The Verdict covers this head, or a rebase of it with the same patch id.
+* Changes to protected paths carry the owner's approval.
+
+It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
+
+**Who can send a request.** The owner and Elon. Sales and support send requests to Elon, and Elon gets the owner's approval before passing one to architect-pm.
+
+**Start rule.** An issue starts when it has `ready-for-agent`, acceptance criteria and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, acceptance criteria, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/brief-lint.sh` checks the brief at every start, and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
+
+**Failure.** A worker with no progress for 30 minutes restarts once. The same error fixed 3 times stops the work. Review sends a PR back at most 2 times. Past any limit a label goes to Elon.
+
+**Wrap-up.** A finished worker loses its terminal and worktree. A merged or closed PR loses its branches and anything left. Work that exists nowhere else is kept and listed for Elon.
+
+**Deploy safety.** Schema changes stay backward compatible. Production always backs up first, and a failed backup stops the deploy. If smoke fails, code rolls back by itself, and the database waits for the owner.
+
+### Roles
+
+| Role | Job |
+| --- | --- |
+| Owner | Decides the items listed under Owner decisions |
+| Elon | The owner's window and only contact. Off the main line: the lifecycle runs without it. Answers "what now" and "recap", handles exceptions, sets priorities weekly |
+| `architect-pm` | Intake, the design document, the weekly list, full audits |
+| `fullstack-dev` | Builds one ticket with tests by TDD |
+| `qa-sdet` | Verifier Verdict, Playwright runs and the staging review |
+| `release-manager` | Staging on schedule, production on the owner's go |
+| `secops-finops` | Its check is part of Strong review. Weekly reconciliation |
+| `sales-marketing` | Joins the grill for UI and wording. Sends requests to Elon |
+| `support-csm` | Joins the grill for support matters. Sends requests to Elon. Replies go out only after the owner approves |
+
+### Team files
+
+The team docs live once, in `~/dotfiles/templates/agent-team/`. Role files and skills read them there by path, and no project keeps a copy.
+
+A project's `docs/agents/` holds only five files, because shared skills, scripts and hooks read them by a fixed path:
+
+* `issue-tracker.md`, `triage-labels.md`, `domain.md`: read by the Matt Pocock skills and `init-agent-project.sh`.
+* `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
+* `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
+
+Anything else in a project's `docs/agents/` is a special case that needs the owner's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
+
+### Owner decisions
+
+New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the owner.
+
+### Review
+
+A builder never reviews its own PR. Review has two layers after Actions Checks pass: the read only bot review in Actions (`script/pr-review.sh`) and the verifier Verdict (`qa-sdet` from another model family running the change as a user would, parent against head, posted via `script/post-verdict.sh`). Review checks the diff against `## Scope` and answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. The first round lists every finding; later rounds check only earlier points plus the new diff. Style is never a FAIL. A flake reruns the job once, never an empty commit.
+
+Standard depth is one read. Strong depth adds a stronger model and the security check for money, sign-in, schema, hooks and workflows. A script picks the depth from the file list. Changes only to docs and changelog pass with no agent.
+
 ## Agent team template
 
 Use `script/agent-team.sh` for machine setup, new projects and safe reset previews. See [Agent team setup](agent-team-setup.md) for commands, backups and owner steps.

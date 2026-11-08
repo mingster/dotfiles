@@ -47,7 +47,7 @@ sh install.sh
 | `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also upgrade Homebrew packages on macOS |
 | `script/agent-team.sh machine` | Install agent CLIs, link skills and settings, report missing logins (add `--dry-run` to preview) |
 
-Fleet host registration, pull scripts, automations and the readiness checklist are documented in [Agent team setup](docs/agents/agent-team-setup.md).
+Fleet host registration, pull scripts, automations and the readiness checklist are in [Agent team setup](docs/agents/agent-team-setup.md#fleet-readiness).
 
 ### Adopt the team in a project
 
@@ -83,7 +83,7 @@ The **fleet** is several computers paired in Orca. One host runs the coordinator
 
 Before each dispatch the coordinator reads load through `fleet-load.sh` (published under the coordinator state directory). Placement follows the order and per host limits in [Coordinator operations](docs/agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database and heavy host runs databases and remote Playwright or `head-checks.sh` jobs only, never interactive workers.
 
-The **coordinator overload gate** (issue 748) blocks a new worker when weekly model quota is nearly exhausted or when load and memory rules fail on the target host. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
+The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch for a provider at its weekly quota ceiling. The **coordinator overload gate** (issue 748) refuses a new local worker when the coordinator host is over its load or memory limit on the target host. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
 
 `script/worker-startup.sh` (issue 757) chooses a host automatically when the caller passes no `--on`:
 
@@ -101,7 +101,7 @@ Host names, caps and roles come from private fleet configuration, not from hard 
 
 An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skill design inside Orca. A ready ticket reaches merge without message relay between agents. Staging updates on a daily schedule; production needs a green staging review and the owner's go.
 
-Principles, targets, the full lifecycle diagram, babysit and shipping rules, role table, owner decisions and review depth are in [Agent team reference](docs/agents/team-reference.md). Per project policy lives in each repo's `docs/agents/team.md`.
+Principles, targets, the full lifecycle diagram, babysit and shipping rules, role table, owner decisions and review depth are in [Agent team reference](docs/agents/team-reference.md#team-guideline). Per project policy lives in each repo's `docs/agents/team.md`.
 
 ### Team files
 

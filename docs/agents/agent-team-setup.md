@@ -17,6 +17,51 @@ skill links. Verification reports missing commands and owner login steps without
 reading credential files. Missing owner prerequisites are warnings; a failed setup
 script is an error. Use `--dry-run` to preview machine setup without running it.
 
+## Fleet readiness
+
+After `install.sh` finishes on a host, add it to the private `~/agent-state` repository and register its scheduled Orca jobs.
+
+Roles live in `~/agent-state/coordinator.conf` with one `coordinator <name>` line for the active coordinator and ordered `backup <name>` lines for backup hosts, where `<name>` matches `hostname -s`. Every host in the fleet keeps a clean `main` checkout of `~/agent-state` and the configured project repositories.
+
+```bash
+~/dotfiles/script/fleet-pull.sh
+~/dotfiles/script/fleet-toolchain-check.sh
+~/dotfiles/script/install-fleet-automations.sh --dry-run --install
+~/dotfiles/script/install-fleet-automations.sh --install
+~/dotfiles/script/install-fleet-automations.sh --status
+```
+
+| Command | Effect |
+| --- | --- |
+| `script/fleet-pull.sh` | Fast-forward `main` in `~/agent-state` and each configured repository on every host. Prints `ok` with the short commit, or exits non-zero with `fail <host> <repo>` when a checkout is `dirty`, `not on main: detached` (or on another branch), `diverged: not fast-forward`, `behind after pull`, or unreachable |
+| `script/fleet-toolchain-check.sh` | Compare CLI versions across fleet hosts against the coordinator in `coordinator.conf` and the latest release (add `--apply` to align `.tool-versions` pins and upgrade supported tools) |
+| `script/install-fleet-automations.sh --dry-run --install` | Print the planned `orca automations` commands without changing Orca |
+| `script/install-fleet-automations.sh --install` | Create or update the six fleet automations on this host (safe to run again) |
+| `script/install-fleet-automations.sh --status` | Print enabled or disabled status for each fleet automation on this host |
+| `script/worker-startup.sh --host-check` | Verify `~/dotfiles`, Orca presets, repository checkouts and runtime pins before the host takes work |
+
+Each automation runs a shell precheck that exits `1` when done, so Orca starts no agent session and spends no AI quota. Orca caps every precheck at 600 seconds (`wrap-up-scheduled` and `weekly-update` bound their timeouts so each run finishes inside the 600 second cap). When `~/dotfiles` is a symlink on a host, `install-fleet-automations.sh` resolves the canonical path and matches the checkout in Orca by repository ID. Hosts without the Orca app installed (such as a headless host) are skipped with a clear message and exit `0`.
+
+| Automation | Schedule | Enabled where |
+| --- | --- | --- |
+| `fleet-watch` | `*/5 * * * *` | Coordinator only |
+| `fleet-toolchain` | `0 5 * * *` | Coordinator only |
+| `wrap-up-scheduled` | `*/10 * * * *` | Every Orca host (skipped on a headless host without the Orca app) |
+| `sync-team-skills-drift` | `0 6 * * *` | Created disabled for the owner to turn on |
+| `team-audit-weekly` | `0 7 * * 1` | Created disabled for the owner to turn on |
+| `weekly-update` | `0 8 * * 1` | Created disabled for the owner to turn on |
+
+Readiness checklist for a fleet host:
+
+* [ ] `hostname -s` is set under `coordinator` or `backup` in `~/agent-state/coordinator.conf` and listed in the fleet pull config.
+* [ ] `~/dotfiles/script/fleet-pull.sh` prints `ok` for `~/agent-state` and every configured repository on every host, with no `dirty` or `detached` checkouts.
+* [ ] `~/dotfiles/script/fleet-toolchain-check.sh` reports all required CLIs present and aligned with the coordinator.
+* [ ] `~/dotfiles/script/install-fleet-automations.sh --status` shows `wrap-up-scheduled` enabled on every Orca host, `fleet-watch` and `fleet-toolchain` enabled on the coordinator only, and `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` created disabled for the owner to turn on (or skips cleanly on a headless host without the Orca app).
+* [ ] `~/dotfiles/script/worker-startup.sh --host-check` passes cleanly.
+
+See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [Coordinator operations](coordinator-operations.md) for full details.
+
+
 Missing provider CLIs are installed once using `install_claude.sh`, the official
 Cursor and Antigravity installers. Installer references:
 [Claude Code](https://code.claude.com/docs/en/setup),
