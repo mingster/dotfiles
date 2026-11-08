@@ -21,7 +21,13 @@ bad() { echo "FAIL $1"; fail=$((fail+1)); }
 say() { if [ "$1" = 0 ]; then ok "$2"; else bad "$2${3:+ ($3)}"; fi; }
 
 body=$'## Verification\n- Passed.'
-new_pr() { mf_pr_add "$1" "pv$1" "$body" "script/pv$1.sh"; jq -r .headRefOid "$MF_GH_DIR/pr-$1.json"; }
+new_pr() {
+  mf_pr_add "$1" "pv$1" "$body" "script/pv$1.sh"
+  local h f="$MF_GH_DIR/pr-$1.json"
+  h=$(jq -r .headRefOid "$f")
+  jq --arg h "$h" '.body += "\n\n## Self-review\n" + $h + "\n"' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  printf '%s' "$h"
+}
 post_checks() { gh pr comment "$1" --repo example/repo --body "Checks: PASS head=$2" >/dev/null; }
 verdict() { bash "$here/post-verdict.sh" --repo example/repo --pr "$@" 2>&1; }
 merge() { bash "$here/lead-merge.sh" --repo example/repo --pr "$1" --head "$2" "${@:3}" 2>&1; }
