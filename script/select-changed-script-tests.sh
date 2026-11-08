@@ -134,6 +134,12 @@ map_file() {
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
+    script/pr-review.sh|script/review-*.sh|script/review-prompt.txt)
+      add_if_exists "script/tests/pr-review.test.sh"
+      ;;
+    script/pr-review-author-family.py)
+      add_if_exists "script/tests/pr-review.test.sh"
+      ;;
     script/sync-team-skills.sh)
       map_script_sh_base "sync-team-skills"
       add_if_exists "script/agent-team.test.sh"
@@ -171,6 +177,11 @@ map_file() {
   esac
   MAPPING_ACTIVE=0
   if fallback_eligible "$path" && [ "$PATH_MAP_HITS" -eq 0 ]; then
+    case "$path" in
+      script/*)
+        [ -f "$ROOT/$path" ] || return 0
+        ;;
+    esac
     printf 'Fallback: %s -> full suite\n' "$path"
     add_full_suite
   fi
