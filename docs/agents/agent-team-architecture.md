@@ -142,7 +142,6 @@ Elon picks the target host for each task using `~/.claude/state/fleet-load.sh`:
 4. **Browser and secrets host:** always used for browser work, secrets and main-checkout operations.
 5. **Release-manager host:** runs only on a host named in the project's `docs/agents/deploy-facts.md`.
 6. **Database and heavy host:** hosts the dev database and runs remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers.
-7. **Cross-host QA placement (`script/qa-admission.py`, owner 2026-11-06):** `qa-sdet` runs on any eligible host except the one Elon is on, picking the lightest host first.
 
 ### Worker admission and load balancing
 
@@ -176,9 +175,9 @@ Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role bounda
 Every repeatable team step is backed by a script under `script/`, `.agents/skills/orca-team/`, or `bin/`:
 
 - **Setup, adoption and skill sync:** `agent-team.sh`, `adopt-agent-team.sh`, `init-agent-project.sh`, `agent-project-autoinit.sh`, `sync-team-skills.sh`, `sync-mattpocock-skills.sh`, `check-skill-collisions.sh`, `bootstrap-asdf-tools.sh`, `bun-pin-check.sh`, `switch-login-shell-zsh.sh`, `agent-settings-check.py`, `backup-claude-desktop.sh`, `contribute-to-agents.sh`.
-- **Coordinator, fleet and state sync:** `elon-startup.sh`, `new-coordinator.sh`, `take-over-coordinator.sh`, `coordinator-waiter.sh`, `orca-reply.sh`, `fleet-pull.sh`, `fleet-watch.py`, `fleet-workers.py`, `count-agents.sh`, `secrets-pack.sh`, `secrets-unpack.sh`, `secrets-sync.sh`.
-- **Worker launch, usage gate and heavy gate:** `worker-startup.sh`, `start-remote-worker.sh`, `start-cursor-worker.sh`, `worktree-setup.sh`, `usage-gate.py`, `usage-gate-hook.py`, `heavy-gate.sh`, `heavy-gate.py`, `hw-probe.sh`, `remote-heavy.sh`, `remote-shot.sh`, `run-scoped-tests.py`, and the `orca-team` helpers (`worker-start-check.sh`, `worker-watch.sh`, `worker-panes.sh`, `worker-pane.sh`, `worker-pane-close.sh`, `worker-pane-retry.sh`).
-- **Checks, review and merge:** `coordinator-publication.sh`, `head-checks.sh`, `head-checks-tsc.sh`, `pr-review.sh`, `qa-admission.py`, `post-verdict.sh`, `protected-merge-check.sh`, `ship.sh` (replacing `lead-merge.sh`).
+- **Coordinator, fleet and state sync:** `elon-startup.sh`, `new-coordinator.sh`, `take-over-coordinator.sh`, `orca-reply.sh`, `fleet-pull.sh`, `fleet-watch.py`, `fleet-workers.py`, `count-agents.sh`, `secrets-pack.sh`, `secrets-unpack.sh`, `secrets-sync.sh`.
+- **Worker launch, usage gate and heavy gate:** `worker-startup.sh`, `start-remote-worker.sh`, `start-cursor-worker.sh`, `worktree-setup.sh`, `usage-gate.py`, `usage-gate-hook.py`, `heavy-gate.sh`, `heavy-gate.py`, `hw-probe.sh`, `remote-heavy.sh`, `run-scoped-tests.py`, and the `orca-team` helpers (`worker-start-check.sh`, `worker-watch.sh`, `worker-panes.sh`, `worker-pane.sh`, `worker-pane-close.sh`, `worker-pane-retry.sh`).
+- **Checks, review and merge:** `coordinator-publication.sh`, `head-checks.sh`, `head-checks-tsc.sh`, `pr-review.sh`, `post-verdict.sh`, `ship.sh` (replacing `lead-merge.sh`).
 - **Cleanup, audits and weekly maintenance:** `wrap-up.sh`, `worktree-idle.py`, `team-audit.sh`, `bin/team-audit-metrics.ts`, `weekly-update.sh`, `prepend-recent-change.ts`, `shellcheck-dotfiles.sh`.
 
 Full per-tool reference table: [Agent team reference](team-reference.md).
