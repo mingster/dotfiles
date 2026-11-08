@@ -429,7 +429,7 @@ if git -C "$tmp/rrepo" show-ref --verify --quiet refs/heads/rdone; then echo 're
 test -d "$tmp/rwt-dirty"
 echo 'ok fleet apply removes the host worktree and local branch, keeps the dirty one'
 git --git-dir="$tmp/origin2" show-ref --verify --quiet refs/heads/rdone || { echo 'fleet host deleted a remote branch'; exit 1; }
-grep -Fq 'removed worktrees=1 deleted local=1 deleted remote=0' "$tmp/output"
+grep -Fq 'removed worktrees=1 orca records=' "$tmp/output" && grep -Fq 'deleted local=1 deleted remote=0' "$tmp/output"
 echo 'ok fleet host never deletes remote branches'
 grep -Fq 'Fleet total' "$tmp/output"
 # Issue 548: each fleet host also fast forwards its clean main checkout and installs the merged preset; a dirty one is kept.
@@ -572,7 +572,7 @@ git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/rstuck
 if git --git-dir="$tmp/origin3" show-ref --verify --quiet refs/heads/rok; then echo 'good remote branch kept after batch failure'; exit 1; fi
 grep -Fq 'Warning: could not delete remote rstuck; kept.' "$tmp/stderr"
 echo 'ok a failed remote delete warns and the rest of the batch is deleted one by one'
-grep -Fq 'removed worktrees=1 deleted local=2 deleted remote=1 ' "$tmp/output" || { echo 'counts wrong'; cat "$tmp/output"; exit 1; }
+grep -Fq 'removed worktrees=1 orca records=' "$tmp/output" && grep -Fq 'deleted local=2 deleted remote=1 ' "$tmp/output" || { echo 'counts wrong'; cat "$tmp/output"; exit 1; }
 grep -q '^temp removed=' "$tmp/output" && grep -q '^chrome clones removed=' "$tmp/output"
 echo 'ok failures count as kept and later steps still run'
 # The fleet path (--worktrees-only) takes the same failures.
@@ -582,7 +582,7 @@ PATH="$tmp/gitshim:$PATH" FAKE_GIT_FAIL="worktree*c-wt-stuck2" bash "$here/wrap-
 [ "$status" -ne 0 ] || { echo "--worktrees-only must exit non-zero on a failed delete"; exit 1; }
 test -d "$tmp/c-wt-stuck2"
 grep -Fq "Warning: could not remove worktree $real/c-wt-stuck2" "$tmp/stderr"
-grep -q '^removed worktrees=[0-9]* deleted local=' "$tmp/output"
+grep -q '^removed worktrees=[0-9]* orca records=[0-9]* deleted local=' "$tmp/output"
 echo 'ok --worktrees-only survives a failed delete'
 # #393: build caches in kept worktrees. Unmerged branches keep their worktrees. Fake lsof/ps stand in for the process checks.
 cat > "$tmp/bin/lsof" <<'FAKE'
@@ -763,7 +763,7 @@ tcheck() { # <mode> <path> <command...>
   if "$@"; then echo "ok   $mode keeps $what"; else echo "FAIL $mode deleted or did not count $what"; t_failed=$((t_failed+1)); fi
 }
 has() { grep -Fq -- "$1" "$tmp/output"; }
-kept_wt() { test -d "$tmp/$1" && has "Kept worktree $real/$1 (" && has 'removed worktrees=0 '; }
+kept_wt() { test -d "$tmp/$1" && has "Kept worktree $real/$1 (" && has 'removed worktrees=0 orca records='; }
 kept_stale() { test -d "$tmp/t-stale" && git show-ref --verify --quiet refs/heads/t-stale && has 'Kept stale t-stale (' && has 'stale deleted=0'; }
 kept_cache() { test -d "$tmp/t-cache/.next" && has 'build caches removed=0 kept=1 '; }
 kept_clone() { test -d "$tclone" && has 'chrome clones removed=0 kept=1'; }
