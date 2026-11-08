@@ -20,7 +20,7 @@ WARN, STOP = 120, 200
 WORKSPACES = os.path.realpath(os.path.expanduser("~/orca/workspaces"))
 STATE_DIR = os.path.expanduser("~/.claude/state/worker-budget")
 DISPATCH_RE = re.compile(r"--dispatch-id[=\s]+(ctx_[A-Za-z0-9_-]+)")
-WORKER_DONE_RE = re.compile(r"^\s*orca(?:-dev)?\s+orchestration\s+send\b[^\n]*--type(?:=|\s+)['\"]?worker_done\b")
+WORKER_DONE_RE = re.compile(r"(?:^|[\r\n]|&&|\|\||;)\s*orca(?:-dev)?\s+orchestration\s+send\b[^\n]*--type(?:=|\s+)['\"]?worker_done\b")
 
 
 def user_message_text(obj):
@@ -114,7 +114,7 @@ def tool_result_succeeded(res):
                 pass
     if re.search(r'"ok"\s*:\s*false\b|\bok\s*[:=]\s*false\b|\b(error|failed|fatal|exception|rejected|denied)\b', text, re.I):
         return False
-    return bool(re.search(r'"ok"\s*:\s*true\b|\bok\s*[:=]?\s*true\b', text, re.I))
+    return bool(re.search(r'"ok"\s*:\s*true\b|\bok\s*[:=]?\s*true\b|\bmessageId=msg_[A-Za-z0-9_-]+|\blifecycle=completed\b', text, re.I))
 
 
 def is_worker(transcript):

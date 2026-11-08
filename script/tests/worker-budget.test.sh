@@ -205,5 +205,74 @@ else
   bad "retry_send=$(decision "$retry_send") tr_unlock_edit=$(decision "$tr_unlock_edit")"
 fi
 
+# 4. Default non-JSON output of orca orchestration send locks on success, not on error/worker_identity_changed
+T4="$TMP/t4.jsonl"
+WD_CMD4="orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_4 --dispatch-id ctx_nonjson --outcome succeeded"
+NONJSON_OK=$'messageId=msg_abc123 lifecycle=completed autoReleaseAt=2026-11-09T01:00:00Z\nNext: Recorded. End your turn.'
+NONJSON_ERR="Error: worker_identity_changed (expected term_1)"
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"w") as f:
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":"You are a dispatched worker.\nSend: "+sys.argv[2]}})+"\n")
+    f.write(json.dumps({"type":"assistant","message":{"id":"msg_nj1","content":[{"type":"tool_use","id":"tu_nj_err","name":"Bash","input":{"command":sys.argv[2]}}]}})+"\n")
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_nj_err","content":sys.argv[3]}]}})+"\n")
+' "$T4" "$WD_CMD4" "$NONJSON_ERR"
+run_hook "$WORKTREE" "s-nj" "$T4" "PostToolUse" "Bash" "$WD_CMD4" "$NONJSON_ERR" >/dev/null
+nj_after_err="$(run_hook "$WORKTREE" "s-nj" "$T4" "PreToolUse" "Edit")"
+
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"a") as f:
+    f.write(json.dumps({"type":"assistant","message":{"id":"msg_nj2","content":[{"type":"tool_use","id":"tu_nj_ok","name":"Bash","input":{"command":sys.argv[2]}}]}})+"\n")
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_nj_ok","content":sys.argv[3]}]}})+"\n")
+' "$T4" "$WD_CMD4" "$NONJSON_OK"
+nj_after_transcript="$(run_hook "$WORKTREE" "s-nj" "$T4" "PreToolUse" "Edit")"
+
+T4B="$TMP/t4b.jsonl"
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"w") as f:
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":"You are a dispatched worker.\nSend: "+sys.argv[2]}})+"\n")
+' "$T4B" "$WD_CMD4"
+run_hook "$WORKTREE" "s-nj-post" "$T4B" "PostToolUse" "Bash" "$WD_CMD4" "$NONJSON_OK" >/dev/null
+nj_after_post="$(run_hook "$WORKTREE" "s-nj-post" "$T4B" "PreToolUse" "Edit")"
+
+if [ "$(decision "$nj_after_err")" = "allow" ] \
+  && [ "$(decision "$nj_after_transcript")" = "deny" ] \
+  && [ "$(decision "$nj_after_post")" = "deny" ]; then
+  ok "accepts default non-JSON worker_done output while rejecting non-JSON error/worker_identity_changed"
+else
+  bad "non-JSON handling failed (err=$(decision "$nj_after_err") transcript=$(decision "$nj_after_transcript") post=$(decision "$nj_after_post"))"
+fi
+
+# 5. WORKER_DONE_RE matches after newline, &&, ||, or ;
+T5="$TMP/t5.jsonl"
+WD_CMD5="orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_5 --dispatch-id ctx_chain --outcome succeeded"
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"w") as f:
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":"You are a dispatched worker.\nSend: "+sys.argv[2]}})+"\n")
+' "$T5" "$WD_CMD5"
+
+chain_ok=1
+idx=0
+for chained in \
+  "cd /tmp && $WD_CMD5" \
+  "true || $WD_CMD5" \
+  "echo hi; $WD_CMD5" \
+  $'cd /tmp\n'"$WD_CMD5"; do
+  idx=$((idx + 1))
+  s_id="s-chain-$idx"
+  pre_self="$(run_hook "$WORKTREE" "$s_id" "$T5" "PreToolUse" "Bash" "$chained")"
+  run_hook "$WORKTREE" "$s_id" "$T5" "PostToolUse" "Bash" "$chained" '{"ok":true}' >/dev/null
+  post_edit="$(run_hook "$WORKTREE" "$s_id" "$T5" "PreToolUse" "Edit")"
+  pre_retry="$(run_hook "$WORKTREE" "$s_id" "$T5" "PreToolUse" "Bash" "$chained")"
+  if [ "$(decision "$pre_self")" != "allow" ] || [ "$(decision "$post_edit")" != "deny" ] || [ "$(decision "$pre_retry")" != "allow" ]; then
+    chain_ok=0
+  fi
+done
+
+if [ "$chain_ok" -eq 1 ]; then
+  ok "matches worker_done after &&, ||, ;, and newline"
+else
+  bad "failed to match worker_done after command separators or newline"
+fi
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
