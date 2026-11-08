@@ -207,6 +207,11 @@ scheduled_round() {
     # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
     WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$child_limit run_limited "$kill_limit" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
     code=$?
+    if [ "$code" -eq 75 ]; then
+      printf '%s skip repo %s (another wrap-up run holds the lock)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
+      skipped="${skipped:+$skipped, }$repo_path"
+      continue
+    fi
     count=$((count+1))
     [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
   done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
@@ -733,7 +738,12 @@ while [ $# -gt 0 ]; do
     --worktrees-only) worktrees_only=1 ;;
     --main-update) main_update=1 ;; # With --worktrees-only: also update main and install the preset (used per fleet host).
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
-    -h|--help) echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'; exit 0 ;;
+    -h|--help)
+      echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'
+      echo 'Worst case runtime: a dry run takes about 5 minutes for one repo. --apply is bounded by WRAP_UP_TOTAL_TIMEOUT (default 900 s), then'
+      echo 'the pane close step may add up to WRAP_UP_PANE_TIMEOUT (default 1800 s), each of its calls limited to WRAP_UP_PANE_CALL_TIMEOUT (default 10 s).'
+      echo 'The summary counts print before the pane step, so a caller that times out there has them. Only one --apply runs at a time (exit 75 names the holder).'
+      exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -748,13 +758,34 @@ fi
 browser_sweep=1
 if [ -n "${ORCA_CLI_COMMAND:-}" ] && { [ -z "${WRAP_UP_PS_CMD:-}" ] || [ -z "${WRAP_UP_KILL_CMD:-}" ]; }; then browser_sweep=0; fi
 command -v jq >/dev/null || { echo 'wrap-up requires jq' >&2; exit 1; }
+# One --apply at a time on a host: a file holding the owner's pid, created exclusively. A holder counts only while its pid is
+# alive and still runs wrap-up.sh; a run that finds one prints the holder and exits 75. A dry run changes nothing and takes no lock.
+apply_lock='' apply_lock_mine=0
+guarded_lock_rm() { case "$1" in */wrap-up-apply.lock) rm -f "$1" ;; *) return 1 ;; esac; } # only this lock file
+release_apply_lock() { if [ "$apply_lock_mine" -eq 1 ] && [ "$(cat "$apply_lock" 2>/dev/null)" = "$$" ]; then guarded_lock_rm "$apply_lock"; fi; }
+take_apply_lock() {
+  local dir=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team} pid i
+  mkdir -p "$dir"; apply_lock="$dir/wrap-up-apply.lock"
+  for i in 1 2; do
+    if ( set -o noclobber; echo "$$" > "$apply_lock" ) 2>/dev/null; then apply_lock_mine=1; return 0; fi
+    pid=$(cat "$apply_lock" 2>/dev/null || true)
+    if [ -z "$pid" ] && [ -n "$(find "$apply_lock" -maxdepth 0 -mmin -1 2>/dev/null)" ]; then pid=starting; fi
+    if [ "$pid" = starting ] || { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o command= 2>/dev/null | grep -Fq wrap-up.sh; }; then
+      echo "wrap-up: another run holds the lock $apply_lock (pid $pid: $(ps -p "$pid" -o command= 2>/dev/null | cut -c1-120)); not starting" >&2
+      exit 75
+    fi
+    guarded_lock_rm "$apply_lock"
+  done
+  echo "wrap-up: could not take the lock $apply_lock; not starting" >&2; exit 75
+}
+[ "$apply" -eq 0 ] || take_apply_lock
 extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
 orca_dir=$(find_orca_dir) || true
 export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin"
 repo=$(git -C "$repo" rev-parse --show-toplevel)
 cd "$repo"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"; release_apply_lock' EXIT
 finish() { # prints every failed item with its reason; exit 1 when there is any
   local n; n=$(wc -l < "$tmp/failures" | tr -d ' ')
   if [ "$n" -gt 0 ]; then
@@ -875,6 +906,7 @@ read_dispatches() {
         echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; fail_item 'terminals' 'dispatch discovery failed; none closed'; return 1
       fi
       cat "$tmp/h-page" >> "$tmp/h-workers"
+      jq -c --arg env "$1" '.result.workers[] | {env: $env, row: .}' "$tmp/h-page" >> "$tmp/h-release-rows" 2>/dev/null || true
       if ! cursor=$(next_page_cursor "$tmp/h-page") || grep -Fxq -- "$cursor" "$tmp/h-cursors"; then
         echo 'Warning: coordinator dispatch pagination incomplete; closing no terminals.' >&2; return 1
       fi
@@ -887,6 +919,7 @@ terminal_dispatches() {
   local env_id
   : > "$tmp/h-workers"
   : > "$tmp/h-coordinators"
+  : > "$tmp/h-release-rows"
   if ! "$orca" environment list --json > "$tmp/envs" 2>/dev/null || ! jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
     echo 'Warning: Orca environment list unavailable; closing no terminals.' >&2; return 1
   fi
@@ -913,13 +946,14 @@ close_finished_terminals() {
     | if $h == $own then [$h, "own terminal", "keep"]
       elif $coordinators | split("\n") | index($h) then [$h, "coordinator", "keep"]
       elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
-      elif ($p | split("/") | last | startswith("lead-")) then [$h, "lead worktree", "keep"]
+      elif (($p | split("/") | last) // "" | startswith("lead-")) then [$h, "lead worktree", "keep"]
       elif ($exited | not) and (.lastOutputAt > now * 1000 - 600000 or (.agentIdentity != null and .lastOutputAt == null)) then [$h, "recent output", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
       elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
-      elif $local != "" then [$h, "unknown owner, still running", "keep"]
+      elif $local != "" and ($p == "" or $scheduled != "" or .agentIdentity != null or (.branch // "") == "refs/heads/main" or (.branch // "") == "refs/heads/master") then [$h, "unknown owner, still running", "keep"]
+      elif $local != "" then [$h, "no live worker in this worktree", "close"]
       elif $p == "" then [$h, "not in a worktree", "keep"]
       elif $p == $main then [$h, "main checkout", "keep"]
       elif .agentIdentity != null then [$h, "running agent", "keep"]
@@ -938,7 +972,35 @@ close_finished_terminals() {
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
+# Release finished workers on this Orca and every environment: state succeeded, stopped or failed, or liveness exited or sleep,
+# and not yet released. A ready or in_progress worker that is live is never touched, nor the caller's or a coordinator's terminal.
+released_count=0
+release_finished_workers() {
+  local env id why label
+  while IFS=$'\t' read -r env id why; do
+    [ -n "$id" ] || continue
+    [ "$env" != - ] || env=''
+    label=${env:-local}
+    printf 'Release worker %s (%s, %s)\n' "$id" "$label" "$why"
+    if [ "$apply" -eq 1 ] && ! "$orca" orchestration worker-release --dispatch "$id" ${env:+--environment "$env"} --json >/dev/null 2>&1; then
+      echo "Warning: releasing $id on $label failed." >&2; fail_item "release $id ($label)" 'worker-release failed'; continue
+    fi
+    released_count=$((released_count+1))
+  done < <(jq -r -s --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
+    def state: (.state // .dispatchStatus // "");
+    def handle: (.agentTerminalHandle // (.terminal | strings) // "");
+    [.[] | .env as $env | .row | state as $st | handle as $h | (.liveness // "") as $live
+      | select((.dispatchId // "") != "")
+      | select(.terminalState != "released" and .stage != "released")
+      | (if (["succeeded","stopped","failed"] | index($st)) != null then "state " + $st
+         elif (["exited","sleep"] | index($live)) != null then "liveness " + $live else empty end) as $why
+      | select(((["ready","in_progress"] | index($st)) != null and $live == "live") | not)
+      | select($h == "" or ($h != $own and (($coordinators | split("\n")) | index($h) | not)))
+      | [(if $env == "" then "-" else $env end), .dispatchId, $why]]
+    | unique_by([.[0], .[1]])[] | @tsv' "$tmp/h-release-rows")
+}
 if command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
+  release_finished_workers
   close_finished_terminals ''
   while IFS= read -r env_id; do
     [ -z "$env_id" ] || close_finished_terminals "$env_id"
@@ -1056,7 +1118,12 @@ protected() {
 eligible() {
   reason='unmerged without closed PR'
   if [ -n "$2" ] && grep -Fxq -- "$2" "$tmp/open"; then reason='open PR'; return 1; fi
-  if git merge-base --is-ancestor "$1" origin/main; then reason=ancestor; return 0; fi
+  if git merge-base --is-ancestor "$1" origin/main; then
+    # git branch -d also wants the branch inside its own upstream, so the plan asks the same.
+    if [ "${1#refs/heads/}" = "$1" ] || ! git show-ref --verify --quiet "refs/remotes/origin/${1#refs/heads/}" \
+      || git merge-base --is-ancestor "$1" "refs/remotes/origin/${1#refs/heads/}"; then reason=ancestor; return 0; fi
+    reason='ancestor of main but not of its own upstream'
+  fi
   if [ -n "$2" ] && grep -Fxq -- "$2" "$tmp/closed"; then reason='closed PR'; return 0; fi
   # Squash or rebase merges: every commit has a patch-equivalent on origin/main.
   if [ "$pr_ok" -eq 1 ] && [ -n "$2" ] && cherry=$(git cherry origin/main "$1") && ! grep -q '^+' <<< "$cherry"; then reason='patch-merged'; return 0; fi
@@ -1324,18 +1391,21 @@ guarded_worktree_remove() { # <counter> <label> <path> [--force]
 }
 # A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
 # whatever made it eligible, and an unreadable count keeps it too.
-local_unpushed() { # name; succeeds when the local branch has a commit on no origin ref or the count is unreadable
+unpushed_why=''
+local_unpushed() { # name; succeeds when the local branch has a commit on no origin ref or the count is unreadable; sets unpushed_why
   local n
   git show-ref --verify --quiet "refs/heads/$1" || return 1
+  unpushed_why='unpushed commits: count unreadable'
   n=$(git rev-list --count "refs/heads/$1" --not --remotes=origin 2>/dev/null) || return 0
   case "$n" in ''|*[!0-9]*) return 0 ;; esac
-  [ "$n" -gt 0 ]
+  [ "$n" -gt 0 ] || return 1
+  unpushed_why="unpushed commits: $n"
 }
 guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason]
   local del_ok=0
   fresh_inventory || { guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
   branch_free "$1" "$2" "$3" || return
-  if local_unpushed "$3"; then guard_keep "$1" "$2" 'unpushed commits (or count unreadable)'; return 1; fi
+  if local_unpushed "$3"; then guard_keep "$1" "$2" "$unpushed_why"; return 1; fi
   if [ "${4:-}" = ancestor ]; then
     # -d checks HEAD/upstream, so give it the authoritative merge target.
     git -c "branch.$3.remote=origin" -c "branch.$3.merge=refs/heads/main" branch -d -- "$3" && del_ok=1
@@ -1462,7 +1532,7 @@ process_worktree() {
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
   elif ! head_on_origin "$head"; then why='commits not on any remote (last copy)'
-  elif [ -n "$branch" ] && local_unpushed "$branch"; then why='unpushed commits (or count unreadable)'
+  elif [ -n "$branch" ] && local_unpushed "$branch"; then why="$unpushed_why"
   elif in_use "$path"; then why=$busy
   elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then
     dest=${WRAP_UP_WT_ARCHIVE_ROOT:-$HOME/.claude/state/wt-archive}/$(basename "$repo")_${path##*/}
@@ -1507,7 +1577,7 @@ while IFS= read -r branch; do
   elif grep -Fxq -- "$branch" "$tmp/kept-branches"; then
     keep "local $branch" 'checked out in kept worktree'
   elif eligible "refs/heads/$branch" "$branch" && local_unpushed "$branch"; then
-    keep "local $branch" 'unpushed commits (or count unreadable)'
+    keep "local $branch" "$unpushed_why"
     printf '%s\n' "$branch" >> "$tmp/kept-branches"
   elif eligible "refs/heads/$branch" "$branch"; then
     printf 'Delete local %s (%s)\n' "$branch" "$reason"
@@ -1571,8 +1641,15 @@ missing_lsof_summary() {
     printf 'lsof unavailable: kept all worktrees=%s and Chrome clones=%s\n' "$(wc -l < "$tmp/kept-worktrees" | tr -d ' ')" "${clone_kept:-0}"
   fi
 }
+# The main checkout counts as clean when its only changes are untracked symlinks (links a machine install wrote there).
+main_checkout_clean() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in '?? '*) [ -L "$main_checkout/${line#\?\? }" ] || return 1 ;; *) return 1 ;; esac
+  done < <(git -C "$main_checkout" status --porcelain --untracked-files=all)
+}
 update_main() {
-  if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && [ -z "$(git -C "$main_checkout" status --porcelain --untracked-files=all)" ]; then
+  if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && main_checkout_clean; then
     echo 'Fast forward main checkout'
     [ "$apply" -eq 0 ] || bounded git -C "$main_checkout" -c pull.rebase=false pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
     # The merged preset reaches Orca only through setup-orca.sh; prefer the copy from the freshly updated checkout.
@@ -1886,7 +1963,7 @@ if [ "$pr_ok" -eq 1 ]; then
     [ $((now - newest)) -ge 28800 ] || continue
     case "$name" in archive/*) keep "stale $name" 'archive branch'; continue ;; esac
     if [ -n "$wt" ] && in_use "$wt"; then keep "stale $name" "$busy"; continue; fi
-    if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
+    if local_unpushed "$name"; then keep "stale $name" "$unpushed_why"; continue; fi
     if [ "$stale_found" -eq 0 ]; then echo 'Stale (eligible for cleanup)'; fi
     stale_found=$((stale_found+1))
     subject=$(git log --reverse --format=%s "origin/main..${refs[0]}" | sed -n 1p)
@@ -1894,7 +1971,7 @@ if [ "$pr_ok" -eq 1 ]; then
     # A worker may have checked the branch out since the listing above; once the inventory fails, nothing more goes.
     if [ "$apply" -eq 1 ]; then
       if ! fresh_inventory 'deleting no more stale branches'; then keep "stale $name" 'worktree inventory unavailable'; continue; fi
-      if local_unpushed "$name"; then keep "stale $name" 'unpushed commits (or count unreadable)'; continue; fi
+      if local_unpushed "$name"; then keep "stale $name" "$unpushed_why"; continue; fi
       now_wt=$(checkout_of "$name")
       if [ -n "$now_wt" ] && [ "$now_wt" != "$wt" ]; then
         if in_use "$now_wt"; then keep "stale $name" "checked out in $now_wt, $busy"
@@ -1946,6 +2023,16 @@ if [ "$apply" -eq 1 ] && [ "$orca_pin_state" = ok ]; then
       | (.path // .workspacePath // empty) | select(. != "")' "$tmp/orca-worktrees")
   fi
 fi
+# Counts first: a caller that times out inside the pane step has still seen them.
+if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
+printf 'removed worktrees=%s orca records=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$orca_removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
+printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
+printf 'workers released=%s\n' "$released_count"
+printf 'last copies kept=%s\n' "$last_copy_kept"
+printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
+printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
+printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
+missing_lsof_summary
 pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
@@ -1958,21 +2045,13 @@ if [ -f "$pane_script" ]; then
     [ "$pane_left" -gt 0 ] || pane_left=1
     rc=0
     pane_out="$tmp/pane-close"
-    ORCA_PANE_CLOSE_TIMEOUT=$pane_left run_limited "$pane_left" bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
+    ORCA_PANE_CLOSE_TIMEOUT=$pane_left ORCA_PANE_CALL_TIMEOUT=${WRAP_UP_PANE_CALL_TIMEOUT:-10} run_limited "$pane_left" bash "$pane_script" >"$pane_out" 2>&1 || rc=$?
     sed -n '/^sweep: /p' "$pane_out"
     guarded_scratch_rm f "$pane_out"
     [ "$rc" -eq 0 ] || fail_item 'worker panes' "worker-pane-close exited $rc"
   fi
 fi
 update_main
-if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
-printf 'removed worktrees=%s orca records=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$orca_removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
-printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
-printf 'last copies kept=%s\n' "$last_copy_kept"
-printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
-printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
-printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
-missing_lsof_summary
 # --fleet: run the same cleanup on every host in the untracked fleet config (worktrees and local branches only), then
 # fast forward that host's clean main checkout and install the merged preset; a dirty or off main checkout is reported.
 # Config: {"hosts": [{"host": "<ssh host>", "repo_dir": "<checkout on that host>"}]}; see wrap-up-fleet.config.example.json.

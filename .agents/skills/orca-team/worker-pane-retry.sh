@@ -4,7 +4,8 @@
 close_rpc() {
   local remaining=$((close_deadline-SECONDS))
   [ "$remaining" -gt 0 ] || remaining=1
-  [ "$remaining" -le 20 ] || remaining=20
+  # One call never waits longer than ORCA_PANE_CALL_TIMEOUT (default 20 s), so a hung CLI cannot hold the sweep.
+  [ "$remaining" -le "${ORCA_PANE_CALL_TIMEOUT:-20}" ] || remaining=${ORCA_PANE_CALL_TIMEOUT:-20}
   python3 - "$remaining" "$orca" "$@" <<'PY'
 import subprocess,sys
 try:

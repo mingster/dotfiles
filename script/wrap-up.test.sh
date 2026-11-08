@@ -271,19 +271,19 @@ bash "$here/wrap-up.sh" --dry-run > "$tmp/output"
 test ! -e "$fake/closed.log"
 for want in 'Close terminal t-done (local, settled dispatch)' 'Close terminal t-exited (local, exited)' \
   'Close terminal e1-done (env-a, settled dispatch)' 'Close terminal e1-exited (env-a, exited)' 'Close terminal e2-gone (env-b, settled dispatch)' \
-  'Close terminal t-unknown (local, no dispatch, no agent)'; do
+  'Close terminal t-unknown (local, no dispatch, no agent)' 'Close terminal e1-unknown (env-a, no live worker in this worktree)'; do
   grep -Fxq "$want" "$tmp/output" || { echo "missing: $want"; exit 1; }
 done
-grep -q 'terminals closed=6 kept=' "$tmp/output"
+grep -q 'terminals closed=7 kept=' "$tmp/output"
 echo 'ok dry run lists finished terminals on two environments and closes nothing'
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 sort "$fake/closed.log" > "$tmp/closed"
-printf '%s\n' 'env-a e1-done' 'env-a e1-exited' 'env-b e2-gone' 'local t-done' 'local t-exited' 'local t-unknown' | cmp - "$tmp/closed"
-for kept in t-own t-live e1-unknown e2-live; do
+printf '%s\n' 'env-a e1-done' 'env-a e1-exited' 'env-a e1-unknown' 'env-b e2-gone' 'local t-done' 'local t-exited' 'local t-unknown' | cmp - "$tmp/closed"
+for kept in t-own t-live e2-live; do
   grep -q "Kept terminal $kept" "$tmp/output" || { echo "not reported kept: $kept"; exit 1; }
 done
-grep -q 'terminals closed=6 kept=4' "$tmp/output"
-echo 'ok apply closes settled, exited and unowned local terminals; own and live kept; unknown owner on another environment kept'
+grep -q 'terminals closed=7 kept=3' "$tmp/output"
+echo 'ok apply closes settled, exited and unowned terminals on every environment; own and live kept'
 # Real orca output differs from the cases above: a released dispatch has no agentTerminalHandle, its leftover terminals
 # still report connected and writable with no agent identity, and a pane from worker-pane.sh is just such a terminal.
 # So terminals are linked to dispatches by worktree path. Every worker-list page must be read.
@@ -407,7 +407,8 @@ while [ "${1:-}" = -o ]; do shift 2; done
 host=$1; shift
 echo "$host" >> "$FAKE_SSH_LOG"
 [ "$host" != down ] || { echo 'ssh: connect to host down: No route to host' >&2; exit 255; }
-# ssh joins its words and the remote login shell parses them.
+# ssh joins its words and the remote login shell parses them. A real remote host has its own lock state.
+export WRAP_UP_STATE_DIR="${WRAP_UP_STATE_DIR:-$HOME/.local/state/agent-team}-remote"
 exec sh -c "$*"
 FAKE
 chmod +x "$tmp/bin/fake-ssh"
@@ -442,6 +443,7 @@ cat > "$tmp/bin/fake-ssh-old" <<'FAKE'
 #!/usr/bin/env bash
 while [ "${1:-}" = -o ]; do shift 2; done
 shift
+export WRAP_UP_STATE_DIR="${WRAP_UP_STATE_DIR:-$HOME/.local/state/agent-team}-remote"
 sh -c "$*" | sed 's/ orca records=[0-9][0-9]*//'
 FAKE
 chmod +x "$tmp/bin/fake-ssh-old"
@@ -920,7 +922,7 @@ retry_kept() {
 fcheck 'a remote branch checked out during a failed batch push is kept by the fallback retry' retry_kept
 rm -f "$tmp/bin/lsof" "$tmp/bin/ps"
 # 9. Lint: every destructive command in wrap-up.sh sits inside a guarded_* function; only the mktemp EXIT trap is exempt.
-lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"' EXIT" '
+lint_hits=$(awk -v allow="trap 'rm -rf \"\$tmp\"; release_apply_lock' EXIT" '
   /^guarded_[a-z_]*\(\) *\{/ { inside = 1 }
   inside { if ($0 ~ /^\}/) inside = 0; next }
   /^[[:space:]]*#/ || $0 == allow { next }
