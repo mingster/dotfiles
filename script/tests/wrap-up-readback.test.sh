@@ -94,23 +94,30 @@ case "$1" in
   cwd) [ -f "$FAKE_CWDS/$2" ] || exit 1; cat "$FAKE_CWDS/$2" ;;
 esac
 FAKE
-cat > "$tmp/bin/kill" <<'FAKE'
+cat > "$tmp/kill-seam" <<'FAKE'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_KILLS"
-if [ "${1:-}" = -0 ]; then
-  [ "${FAKE_KILL_STILL_ALIVE:-0}" = 1 ] && exit 0
-  exit 1
-fi
 exit 0
 FAKE
+cat > "$tmp/alive-seam" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE_ALIVE_CHECKS"
+if [ -n "${FAKE_ALIVE_POLLS:-}" ]; then
+  n=$(wc -l < "$FAKE_ALIVE_CHECKS" | tr -d ' ')
+  [ "$n" -le "$FAKE_ALIVE_POLLS" ] && exit 0
+  exit 1
+fi
+[ "${FAKE_KILL_STILL_ALIVE:-0}" = 1 ] && exit 0
+exit 1
+FAKE
 
-chmod +x "$tmp/bin/gh" "$tmp/bin/orca" "$tmp/bin/git" "$tmp/bin/lsof" "$tmp/bin/ps" "$tmp/ps-seam" "$tmp/bin/kill"
+chmod +x "$tmp/bin/gh" "$tmp/bin/orca" "$tmp/bin/git" "$tmp/bin/lsof" "$tmp/bin/ps" "$tmp/ps-seam" "$tmp/kill-seam" "$tmp/alive-seam"
 
 export REAL_GIT="$real_git" PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca" HOME="$tmp/home"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 WRAP_UP_RECENT_MIN=0
 export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose" WRAP_UP_CLONE_ROOT="$tmp/no-clones"
 export WRAP_UP_STATE_DIR="$tmp/no-state"
-export FAKE_PS="$tmp/ps-table" FAKE_CWDS="$tmp/cwd" FAKE_KILLS="$tmp/kills"
+export FAKE_PS="$tmp/ps-table" FAKE_CWDS="$tmp/cwd" FAKE_KILLS="$tmp/kills" FAKE_ALIVE_CHECKS="$tmp/alive-checks"
 
 passed=0
 failed=0
@@ -135,9 +142,10 @@ fixture() {
   : > "$ORCA_LOG"
   : > "$FAKE_PS"
   : > "$FAKE_KILLS"
+  : > "$FAKE_ALIVE_CHECKS"
   rm -f "${FAKE_CWDS:?}"/*
   unset FAKE_GIT_NOOP_WT_REMOVE FAKE_GIT_STALE_WT_LIST FAKE_GIT_NOOP_BRANCH_DELETE
-  unset FAKE_TERM_STILL_OPEN FAKE_KILL_STILL_ALIVE FAKE_WORKERS FAKE_WORKER_SHOW
+  unset FAKE_TERM_STILL_OPEN FAKE_KILL_STILL_ALIVE FAKE_ALIVE_POLLS FAKE_WORKERS FAKE_WORKER_SHOW
   export FAKE_PRS='[]'
   export FAKE_TERMINALS='[]'
   "$real_git" init -q --bare "$d/origin"
@@ -233,15 +241,24 @@ check 'terminal still open after close: wrap-up exits non-zero' test "$(cat "$d/
 check 'terminal still open after close: records fail_item' grep -Eq 'terminal t-open.*still open after close' "$d/out"
 check 'terminal still open after close: terminals closed count is 0' grep -Fq 'terminals closed=0' "$d/out"
 
-# 4. Browser kill -TERM exits 0 but kill -0 reports the browser PID is still alive.
+# 4a. Browser exits after a few alive polls within the 5s window: wrap-up succeeds and counts it closed.
 fixture
 dev='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
+printf '900\t1\t90000\tstart-900\t%s --user-data-dir=/tmp/pw-prof-900\n' "$dev" > "$FAKE_PS"
+printf '/tmp\n' > "$FAKE_CWDS/900"
+FAKE_ALIVE_POLLS=3 WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" WRAP_UP_ALIVE_CMD="$tmp/alive-seam" run_apply
+check 'browser pid exits after 3 polls: wrap-up exits zero' test "$(cat "$d/rc")" -eq 0
+check 'browser pid exits after 3 polls: browsers closed count is 1' grep -Fq 'browsers closed=1 kept=0' "$d/out"
+
+# 4b. Browser kill -TERM exits 0 but alive seam reports the browser PID is still alive past the 5s window.
+fixture
 printf '901\t1\t90000\tstart-901\t%s --user-data-dir=/tmp/pw-prof-901\n' "$dev" > "$FAKE_PS"
 printf '/tmp\n' > "$FAKE_CWDS/901"
-FAKE_KILL_STILL_ALIVE=1 WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/bin/kill" run_apply
+FAKE_KILL_STILL_ALIVE=1 WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" WRAP_UP_ALIVE_CMD="$tmp/alive-seam" run_apply
 check 'browser pid still alive after kill: wrap-up exits non-zero' test "$(cat "$d/rc")" -ne 0
 check 'browser pid still alive after kill: records fail_item' grep -Fq 'browser pid 901 still alive after kill' "$d/out"
 check 'browser pid still alive after kill: browsers closed count is 0' grep -Fq 'browsers closed=0 kept=1' "$d/out"
+check 'browser pid still alive after kill: polled 25 times before final check' test "$(wc -l < "$FAKE_ALIVE_CHECKS" | tr -d ' ')" -eq 26
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
