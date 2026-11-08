@@ -77,7 +77,7 @@ check 'failing lsof reports reason' has "Kept Chrome clone $chrome/code_sign_clo
 # On macOS a missing lsof must keep everything.
 mkdir -p "$chrome/code_sign_clone.unknown"
 mv "$tmp/bin/lsof" "$tmp/lsof.off"
-OSTYPE=darwin PATH="/usr/bin:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
+OSTYPE=darwin PATH="$tmp/bin:/bin" bash "$root/script/wrap-up.sh" --apply > "$tmp/output" 2>&1 || true
 check 'no lsof keeps clones' test -d "$chrome/code_sign_clone.unknown"
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

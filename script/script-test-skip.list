@@ -6,3 +6,5 @@ script/tests/heavy-guard-hook.test.sh uses heavy-gate host lock; rerun on coordi
 script/tests/install-mac-server.test.sh needs macOS Homebrew dry-run paths; rerun on macOS
 script/tests/switch-login-shell-zsh.test.sh needs macOS login shell paths; rerun on macOS
 script/tests/pull-project-a-pg-backups.test.sh needs macOS stat/find shims; rerun on macOS
+script/secrets-pack.test.sh needs macOS hdiutil; rerun on macOS
+script/tests/test_head_checks_execution.py needs Bun; rerun on macOS

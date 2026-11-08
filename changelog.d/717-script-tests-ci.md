@@ -1,0 +1,2 @@
+- Skip macOS-only `secrets-pack` and Bun-only head-checks execution tests on GitHub hosted runners so Script tests stays trustworthy (#717).
+- Give scheduled wrap-up a per-repo time budget instead of a shared round cap, and align acceptance tests (#717).
