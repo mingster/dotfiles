@@ -153,6 +153,18 @@ case10_script_plus_already_selected_test() {
   ok "case10 script plus already-selected test avoids full-suite fallback"
 }
 
+case_fleet_watch_config_example() {
+  local out count
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/fleet-watch.config.example.json 2>&1)
+  grep -Fq 'Fallback:' <<<"$out" && fail "fleet-watch config example must not fall back to full suite"
+  grep -Fq 'Selected: script/tests/test_fleet_watch_scan.py' <<<"$out" \
+    || fail "fleet-watch config must select test_fleet_watch_scan.py"
+  count=$(script_tests_count_from_output <<<"$out")
+  [ "${count:-0}" -lt 50 ] || fail "fleet-watch config want scoped suite got ${count:-0}"
+  ok "fleet-watch config example maps to fleet-watch tests"
+}
+
 case8_full_suite_fallback() {
   local out count
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
@@ -256,8 +268,9 @@ case4_test_py
 case5_py_runner
 case6_on_worker_done
 case7_lead_merge_prefix
+case_fleet_watch_config_example
 case8_full_suite_fallback
 case9_sync_team_skills_agent_team
 case10_script_plus_already_selected_test
 case11_table_driven_mapped_paths
-echo 'PASS: 12 acceptance cases'
+echo 'PASS: 13 acceptance cases'
