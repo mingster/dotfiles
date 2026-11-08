@@ -62,7 +62,6 @@ Check fleet load before dispatch with `~/.claude/state/fleet-load.sh`:
 4. **Browser and secrets host:** always used for browser tasks, secrets and main-checkout operations.
 5. **Release-manager host:** runs only on a host named in the project's `docs/agents/deploy-facts.md`.
 6. **Database and heavy host:** runs the dev database and remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers. `head-checks.sh` may also run on the least loaded host that has the repository and `~/dotfiles`.
-7. **QA placement (`script/qa-admission.py`, owner 2026-11-06):** `qa-sdet` runs on any host except Elon's host, picking the lightest host first.
 
 ### Worker admission and load balancing
 
@@ -123,7 +122,6 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. |
 | `script/new-coordinator.sh` | Sets up a new Mac as the coordinator from `agent-state` (`--dry-run` first). |
 | `script/take-over-coordinator.sh` | Manual coordinator failover and handback using `coordinator.conf` (`--yes`). |
-| `script/coordinator-waiter.sh` | Drains orchestration messages, binds Run and dispatch receipts, and rearms the background inbox waiter. |
 | `script/orca-reply.sh` | Replies to a worker's orchestration message and nudges its terminal so an idle session wakes up. |
 | `script/fleet-pull.sh` | Fast-forwards clean `main` checkouts across fleet hosts and runs `secrets-sync.sh`. |
 | `script/fleet-watch.py` | 5-minute watchdog checking inbox waiters, host caps, stalled workers, backup freshness, PR checks, `heavy-gate` wait times, `wrap-up` freshness and `coordinator_watch` (see [Fleet watch](fleet-watch.md)). |
@@ -132,8 +130,7 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/start-remote-worker.sh` | Checks `usage-gate.py`, probes the remote CLI in an Orca terminal, refreshes `~/dotfiles` and presets, and calls `worker-start --on`. |
 | `script/start-cursor-worker.sh` | Creates the worktree, writes `.workspace-trusted` via Python 3, checks `usage-gate.py`, and starts a Cursor worker. |
 | `script/pr-review.sh` | Cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass; picks a cross family model via `usage-gate.py`. |
-| `script/worker-done-relay.sh` | Relays a builder's `worker_done` to the owning coordinator terminal and releases the committer once. |
-| `script/qa-admission.py`, `script/post-verdict.sh` | Dispatches an independent cross-family `qa-sdet` verifier and posts the canonical `Verdict:` comment and `review` status. |
+| `script/post-verdict.sh` | Posts the canonical `Verdict:` comment and `review` status. |
 | `script/ship.sh` | Shipping run (replacing `script/lead-merge.sh`): verifies required checks and matching `git patch-id` Verdict, squash merges, and reads back `MERGED`. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |

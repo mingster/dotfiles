@@ -74,7 +74,6 @@ The team runs across a fleet of Macs paired in Orca ADE (`orca environment list`
    - **Browser and secrets host:** always used for browser work, secrets and main-checkout operations.
    - **Release-manager host:** runs only on a host named in the project's `docs/agents/deploy-facts.md`.
    - **Database and heavy host:** runs the dev database and remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers.
-   - **QA placement (`script/qa-admission.py`, owner 2026-11-06):** `qa-sdet` runs on any host except Elon's host, picking the lightest host first.
 3. **Worker admission and load targets (owner 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`). Caps are a ceiling, never a target: fill an idle host up to its cap before any host with queued work waits, and keep each active host between `0.4` and `0.7` load per core. Count builders, reviewers, child dispatches and finished committers still holding a pending-push slot.
 4. **Per-host heavy job admission (`script/heavy-gate.sh` and `script/heavy-gate.py`):** Playwright and production builds are heavy: at most 2 per host (unless calibrated higher), waiting until 1-minute load is below the host limit (default 12) and free RAM is at least 20%. They use `--weight 2`; `HEAVY_GATE_CLASS=long` leaves 1 slot free. Full `tsc` uses `--measure` (no slot, logs metrics for the owner trial week). Unit tests and lint skip the gate.
 5. **Provider quota distribution (`script/usage-gate.py` and `script/usage-gate-hook.py`):** every worker launch checks real weekly quota across Claude, Cursor and Antigravity, reserving 2% per running worker on that provider and refusing dispatch at the 95% weekly ceiling (exit 3) or when readings are stale beyond 5 minutes and cannot refresh (exit 4).
@@ -110,7 +109,6 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/elon-startup.sh` | Coordinator session-start check: verifies `coordinator.conf` and `.sync-ok` freshness in `agent-state`, then runs `fleet-pull.sh` and reports host status. |
 | `script/new-coordinator.sh` | Bootstraps a new Mac as the coordinator from `agent-state` (Homebrew bundle, repo clones, state restore, LaunchAgents, Orca data restore and health checks). |
 | `script/take-over-coordinator.sh` | Manual coordinator failover and handback using `coordinator.conf` in `agent-state` (`--dry-run` first, `--yes` to execute). |
-| `script/coordinator-waiter.sh` | Drains orchestration deliveries, binds Run and dispatch receipts, and rearms the background inbox waiter (`--types worker_done,escalation,decision_gate,question,heartbeat,status`). |
 | `script/orca-reply.sh` | Sends `orca orchestration reply` to a worker and nudges its terminal so an idle session wakes up immediately. |
 | `script/fleet-pull.sh` | Fast-forwards clean `main` checkouts across configured fleet hosts and triggers `secrets-sync.sh`. |
 | `script/fleet-watch.py` | Independent 5-minute watchdog: monitors inbox waiters, host caps, lead panes, stalled workers (`worker_stall`), backup freshness (`backup`), failed PR checks (`pr_watch`), `heavy_gate` wait medians, `wrap_up` freshness, `coordinator_watch` on backup hosts, and opt-in `issue_scan` auto-dispatch. |
@@ -134,7 +132,6 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/heavy-gate.py` | Enforces per-host slot limits, load ceiling, free memory floor, and `HEAVY_GATE_CLASS=long` reservation; logs slot waits and measure runs. |
 | `script/hw-probe.sh` | Probes host CPU cores and RAM and calibrates per-host `heavy-gate` slots and load limits into `~/.config/heavy-gate/slots.conf`. |
 | `script/remote-heavy.sh` | Syncs a commit to a remote fleet host, runs a heavy command there under that host's `heavy-gate.sh`, and copies artifacts back. |
-| `script/remote-shot.sh` | Captures browser screenshots via a remote fleet host and returns the image paths. |
 | `script/run-scoped-tests.py` | Selects and runs unit tests scoped to changed files and their direct importers. |
 
 ### Checks, review and merge
@@ -142,13 +139,10 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | Tool | Purpose |
 | --- | --- |
 | `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (replacing `script/on-worker-done.sh`; uses `script/review-prompt.sh`, `script/review-prompt.txt`, `script/review-model.sh`, `script/review-run.sh`, `script/pr-review-author-family.py`). |
-| `script/worker-done-relay.sh` | Relays a builder's `worker_done` receipt to the owning coordinator terminal and releases the committer once. |
 | `script/coordinator-publication.sh` | Pushes an explicit engineering branch (`--branch <branch> --worktree <path>`) and opens or updates its PR after validating `Closes #<n>`, `## Verification` bullets, and zero `.env` secrets. |
 | `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree; only Playwright and build steps wait on `heavy-gate.sh`. |
 | `script/head-checks-tsc.sh` | TypeScript check helper invoked by `head-checks.sh` profiles. |
-| `script/qa-admission.py` | Admits and dispatches an independent cross-family `qa-sdet` verifier on the lightest fleet host other than Elon's. |
 | `script/post-verdict.sh` | Validates and posts a canonical `Verdict: PASS|PASS+NOTES|FAIL head=<sha> verifier=<id> author=<id>` comment and `review` status on a PR, refusing self-review. |
-| `script/protected-merge-check.sh` | Checks whether a PR touches protected paths (`.claude/agents/`, hooks, pricing, auth, migrations) requiring owner approval. |
 | `script/ship.sh` | Shipping run (replacing `script/lead-merge.sh`): verifies required checks and matching `git patch-id` Verdict, merges with `gh pr merge --squash`, and reads the PR back as `MERGED`. |
 
 ### Cleanup, audits and weekly maintenance

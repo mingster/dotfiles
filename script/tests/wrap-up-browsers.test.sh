@@ -167,7 +167,7 @@ run --apply
 check 'old browser with parent pid 1 stays during a head-checks run' has 'Kept browser 450 (a head-checks, QA or gated run is active)'
 check 'old daemon with parent pid 1 stays during a head-checks run' has 'Kept browser 451 (a head-checks, QA or gated run is active)'
 check 'a run in progress stops nothing' nokill
-for runcmd in 'python3 /repo/script/qa-admission.py admit' 'python3 /repo/script/heavy-gate.py gate -- npm test'; do
+for runcmd in 'bash /repo/script/heavy-gate.sh -- npm test' 'python3 /repo/script/heavy-gate.py gate -- npm test'; do
   reset
   proc 460 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 460 /Users/someone/work
   proc 461 900 100 "$runcmd"
@@ -181,7 +181,7 @@ run --apply
 check 'with no such run, the old browser with parent pid 1 still closes' has 'Close browser 470 (stale throwaway browser profile)'
 
 # The run check reads the command, not a substring: "wrap-up" in a path or argument does not hide a run.
-for runcmd in 'bash /work/wrap-up-fix/script/head-checks.sh --pr 1' 'python3 /repo/script/heavy-gate.py gate -- bash script/tests/wrap-up-browsers.test.sh' '/usr/bin/env python3 -I /repo/script/qa-admission.py admit wrap-up'; do
+for runcmd in 'bash /work/wrap-up-fix/script/head-checks.sh --pr 1' 'python3 /repo/script/heavy-gate.py gate -- bash script/tests/wrap-up-browsers.test.sh' '/usr/bin/env python3 -I /repo/script/heavy-gate.py status wrap-up'; do
   reset
   proc 480 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 480 /Users/someone/work
   proc 481 900 100 "$runcmd"
@@ -190,7 +190,7 @@ for runcmd in 'bash /work/wrap-up-fix/script/head-checks.sh --pr 1' 'python3 /re
 done
 
 # macOS shows /usr/bin/python3 as ".../Python.app/Contents/MacOS/Python", and a checkout path may hold a space.
-for runcmd in '/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/heavy-gate.py gate -- bun run e2e' '/opt/homebrew/Cellar/python@3.12/3.12.1/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/qa-admission.py admit x' 'bash /x/My Work/script/head-checks.sh --pr 1' 'python3 /x/My Work/script/heavy-gate.py gate -- bun run e2e'; do
+for runcmd in '/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/heavy-gate.py gate -- bun run e2e' '/opt/homebrew/Cellar/python@3.12/3.12.1/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /repo/script/heavy-gate.py status x' 'bash /x/My Work/script/head-checks.sh --pr 1' 'python3 /x/My Work/script/heavy-gate.py gate -- bun run e2e'; do
   reset
   proc 485 1 $OLD "$DEV --user-data-dir=/tmp/in-use"; cwd 485 /Users/someone/work
   proc 486 900 100 "$runcmd"

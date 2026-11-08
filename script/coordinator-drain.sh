@@ -5,8 +5,8 @@
 #   - "Worker stopped without reporting" for a lead terminal (from the fleet-watch config). Leads hold their dispatch open
 #     by design. Each one is counted per lead (a line with the lead's handle appended to COORDINATOR_DRAIN_STATE), and
 #     fleet-watch reports the counts in its digest. A worker's stop always passes.
-#   - worker_done for a dispatch whose <dispatch>.relayed marker says sent (worker-done-relay.sh sweep already routed it).
-# It writes nothing into the owner directory: worker-done-relay.sh sweep is the only writer, and it reads the inbox
+#   - worker_done for a dispatch whose <dispatch>.relayed marker says sent (the relay sweep already routed it).
+# It writes nothing into the owner directory: the relay sweep is the only writer, and it reads the inbox
 # (handled and unhandled mail), so a worker_done this check marked read is still relayed.
 # With --wait, a batch where every message was dropped is not returned (the waiter would wake for nothing): it checks again.
 # The check marks what it returns as read, so dropped messages are gone from the inbox. Dropped ones are counted on stderr.

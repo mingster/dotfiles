@@ -59,7 +59,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/agent-project-autoinit.sh` | No | IDE SessionStart hook |
 | `script/bun-pin-check.sh`, `script/count-agents.sh` | No | On-demand checks from startup or fleet-watch |
 | `script/weekly-skill-impact.sh`, `script/prepend-recent-change.ts` | No | Draft or changelog helpers on request |
-| `script/remote-heavy.sh`, `script/remote-shot.sh` | No | Per-job remote runs with admission gates |
+| `script/remote-heavy.sh` | No | Per-job remote runs with admission gates |
 | `~/.claude/skills/orca-team/worker-pane-close.sh` | No | Wrap-up and coordinator wake sweep |
 | `script/shellcheck-dotfiles.sh` | No | CI and pre push |
 | Legacy `templates/launchd/life.example.wrap-up.plist` | No | Superseded on Orca hosts by `wrap-up-scheduled` |

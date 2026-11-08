@@ -85,45 +85,10 @@ shutil.copyfile(a[0].split(':',1)[1], a[1])
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual((self.out/'root.png').read_text(),'root')
         self.assertEqual((self.out/'other file.txt').read_text(),'other')
-    def test_shot_refuses_wrong_database_without_leaking(self):
-        envfile=self.root/'private env'
-        envfile.write_text('DATABASE_URL=postgresql://fixture:secret@db.example/wrong_db?sslmode=require\n')
-        result=self.run_shot(envfile)
-        self.assertNotEqual(result.returncode,0)
-        self.assertIn('db.example',result.stdout)
-        self.assertIn('wrong_db',result.stdout)
-        self.assertNotIn('secret',result.stdout+result.stderr)
-        self.assertNotIn('postgresql://',result.stdout+result.stderr)
-        self.assertFalse((self.remote/'playwright-ran').exists())
-    def test_shot_runs_matching_database_and_fetches_failed_test_artifact(self):
-        envfile=self.root/'private env'
-        envfile.write_text('DATABASE_URL=postgresql://fixture:secret@db.example/expected_db\n')
-        result=self.run_shot(envfile)
-        self.assertEqual(result.returncode,5,result.stdout+result.stderr)
-        self.assertEqual((self.out/'shot.png').read_text(),'screenshot')
-        self.assertNotIn('secret',result.stdout+result.stderr)
-    def test_shot_invalid_url_is_redacted(self):
-        envfile=self.root/'private env'
-        envfile.write_text('DATABASE_URL=invalid-secret-url\n')
-        result=self.run_shot(envfile)
-        self.assertEqual(result.returncode,64,result.stdout+result.stderr)
-        self.assertNotIn('invalid-secret-url',result.stdout+result.stderr)
-        self.assertFalse((self.remote/'playwright-ran').exists())
-    def test_shot_requires_expected_database(self):
-        result=subprocess.run(['bash',str(scripts/'remote-shot.sh')],env=self.env,text=True,capture_output=True)
-        self.assertEqual(result.returncode,64)
-        self.assertIn('--expect-db',result.stderr)
-        self.assertFalse(self.log.exists())
     def test_copy_failure_keeps_command_status(self):
         self.stub('scp','#!/bin/sh\nexit 23\n')
         result=self.run_heavy(['--fetch','*.png','--into',str(self.out)],['sh','-c','touch shot.png; exit 6'])
         self.assertEqual(result.returncode,6,result.stderr)
         self.assertIn('artifact copy failed',result.stderr)
-    def run_shot(self, envfile, expect='expected_db'):
-        # Use the real Bun env loader and URL parser; only the Playwright boundary is stubbed.
-        import shutil
-        real_bun=shutil.which('bun')
-        self.stub('bun', '#!/bin/sh\nif [ "$3" = x ]; then touch playwright-ran; mkdir -p test-results/nested; printf screenshot > test-results/nested/shot.png; exit 5; fi\nexec '+__import__('shlex').quote(real_bun)+' "$@"\n')
-        return subprocess.run(['bash',str(scripts/'remote-shot.sh'),'--host','fixture','--repo-dir','checkout','--dir',str(self.remote),'--sub','.','--gate',self.gate,'--spec','e2e/capture spec.ts','--env-file',str(envfile),'--expect-db',expect,'--out',str(self.out)],env=self.env,text=True,capture_output=True)
 if __name__ == '__main__': unittest.main(argv=[sys.argv[0]], verbosity=2)
 PY
