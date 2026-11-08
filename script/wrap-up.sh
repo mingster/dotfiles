@@ -19,6 +19,26 @@ run_limited() {
 }
 run() { if [ "$dry" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
 real() { if [ -d "$1" ]; then (cd -P "$1" && pwd); else printf '%s\n' "$1"; fi; }
+wrap_up_failed=0
+fail_item() {
+  if [ -n "${failures_file:-}" ] && [ -f "$failures_file" ]; then
+    printf '%s\t%s\n' "$1" "$2" >> "$failures_file"
+  else
+    printf '  %s: %s\n' "$1" "$2" >&2
+    wrap_up_failed=1
+  fi
+}
+worktree_present_after_remove() { # <path>
+  local wt=$1 rwt p
+  [ ! -d "$wt" ] || return 0
+  rwt=$(real "$wt")
+  while IFS= read -r p; do
+    if [ "$p" = "$wt" ] || [ "$p" = "$rwt" ] || [ "$(real "$p")" = "$rwt" ]; then
+      return 0
+    fi
+  done < <(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+  return 1
+}
 
 # Orca worker-list rows may name the worktree in .workspace or only in .projection.workspace.id (both "id::path").
 jq_worker_row_path_expr() { printf '%s' '((.workspace // .projection.workspace.id // "") | split("::")[1] // "")'; }
@@ -251,8 +271,23 @@ guarded_merged_worktree_remove() { # <path> <label>: after free_worktree's check
   limited git worktree remove -- "$1" >/dev/null 2>&1 || rc=$?
   if [ $rc != 0 ]; then echo "Kept worktree $1 ($2, removal failed)"; return 1; fi
   git worktree prune
+  if worktree_present_after_remove "$1"; then
+    fail_item "worktree $1" "worktree still present after remove: $1"
+    echo "Kept worktree $1 ($2, worktree still present after remove: $1)"
+    return 1
+  fi
 }
-guarded_merged_local_delete() { run git branch -D -- "$1" >/dev/null; } # <branch>: after drop_branch's checks
+guarded_merged_local_delete() { # <branch>: after drop_branch's checks
+  if ! run git branch -D -- "$1" >/dev/null; then
+    fail_item "local $1" 'delete failed'
+    return 1
+  fi
+  if [ "$dry" != 1 ] && git show-ref --verify --quiet "refs/heads/$1"; then
+    fail_item "local $1" "branch ref still exists after delete: $1"
+    echo "Kept $1 (branch ref still exists after delete: $1)"
+    return 1
+  fi
+}
 guarded_merged_remote_delete() { # <branch>: after drop_branch's checks
   local rc=0
   if [ "$dry" = 1 ]; then echo "[dry-run] git push -q origin --delete $1"; return 0; fi
@@ -314,7 +349,7 @@ drop_branch() {
   fi
   if ! settled "$tip" "$sha"; then echo "Kept $b (commits not in origin/main)"; return 0; fi
   if git show-ref --verify --quiet "refs/heads/$b"; then
-    echo "Delete local $b"; guarded_merged_local_delete "$b"
+    echo "Delete local $b"; guarded_merged_local_delete "$b" || return 0
   fi
   if git show-ref --verify --quiet "refs/remotes/origin/$b" && ! settled "refs/remotes/origin/$b" "$sha"; then
     echo "Kept remote $b (commits not in origin/main)"
@@ -395,6 +430,7 @@ json.dump(rows, sys.stdout)'
     case "$handled" in *" $b "*) [ -z "$b" ] || continue ;; esac
     if [ -n "$b" ]; then drop_branch "$b"; else free_worktree "$wt" "detached head" || true; fi
   done < <(git worktree list --porcelain | awk '/^worktree /{if(p!="")print p "\t" b; p=substr($0,10); b=""} /^branch refs\/heads\//{b=substr($0,19)} END{if(p!="")print p "\t" b}')
+  [ "$wrap_up_failed" -eq 0 ] || exit 1
 }
 
 # --finish-worker: finish path for a settled worker. Verify head (when required), native worker-release, optional worktree removal.
@@ -470,6 +506,10 @@ guarded_finish_remove() { # <path>: after every check in finish_worker
     exit 1
   fi
   git worktree prune
+  if worktree_present_after_remove "$1"; then
+    fail_item "worktree $1" "worktree still present after remove: $1"
+    exit 1
+  fi
 }
 
 finish_worker() {
@@ -726,8 +766,8 @@ finish() { # prints every failed item with its reason; exit 1 when there is any
 }
 # Failure ledger. An item wrap-up could not clean is named here with its reason and printed at the end; the run exits
 # non-zero and the next run tries it again. A file, so a call made in a subshell still records.
-: > "$tmp/failures"
-fail_item() { printf '%s\t%s\n' "$1" "$2" >> "$tmp/failures"; }
+failures_file="$tmp/failures"
+: > "$failures_file"
 # Every call to git on the network, gh and orca goes through bounded: at most WRAP_UP_CALL_TIMEOUT seconds each (default 60),
 # and none starts once WRAP_UP_TOTAL_TIMEOUT seconds (default 900) have passed. Runs the call in its own process group and
 # kills the group. Exit 124 means timed out or skipped; either is recorded.
@@ -783,8 +823,18 @@ term_closed=0; term_kept=0
 main_path=$(git worktree list --porcelain | sed -n '1s/^worktree //p'); main_path=$(cd "$main_path" 2>/dev/null && pwd -P || printf '%s' "$main_path")
 : > "$tmp/closing"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; term_kept=$((term_kept+1)); }
+close_terminal_err='close failed'
 close_terminal() {
-  "$orca" terminal close "$@" >/dev/null 2>&1
+  local h='' a show
+  for a in "$@"; do h=$a; done
+  close_terminal_err='close failed'
+  "$orca" terminal close "$@" >/dev/null 2>&1 || return 1
+  show=$("$orca" terminal show "$@" --json 2>/dev/null) || return 0
+  if printf '%s' "$show" | jq -e --arg h "$h" '.ok == true and ((.result.terminal // .result) | type == "object" and .handle == $h and .state != "closed" and .status != "closed")' >/dev/null 2>&1; then
+    close_terminal_err="terminal still open after close: $h"
+    return 1
+  fi
+  return 0
 }
 # Prints the next page cursor, or nothing on the last page. Fails when a page cannot prove it is the last one.
 # Current Orca has top level nextCursor, absent on the last page; older Orca has page.hasMore; 1.4.246 has neither.
@@ -879,12 +929,12 @@ close_finished_terminals() {
   while IFS=$'\t' read -r handle reason action; do
     if [ "$action" = keep ]; then terminal_kept "$handle" "$label" "$reason"; continue; fi
     printf 'Close terminal %s (%s, %s)\n' "$handle" "$label" "$reason"
-    [ -n "$env" ] || printf '%s\n' "$handle" >> "$tmp/closing"
     if [ "$apply" -eq 1 ]; then
       if ! close_terminal ${eargs[@]+"${eargs[@]}"} --terminal "$handle"; then
-        echo "Warning: closing $handle on $label failed." >&2; fail_item "terminal $handle ($label)" 'close failed'; continue
+        echo "Warning: closing $handle on $label failed." >&2; fail_item "terminal $handle ($label)" "$close_terminal_err"; continue
       fi
     fi
+    [ -n "$env" ] || printf '%s\n' "$handle" >> "$tmp/closing"
     term_closed=$((term_closed+1))
   done < "$tmp/h-plan"
 }
@@ -1251,17 +1301,25 @@ guarded_worktree_remove() { # <counter> <label> <path> [--force]
     if bounded "$orca_bin" "${orca_rm[@]}" >/dev/null 2>&1; then
       orca_ok=1
       if [ ! -d "$3" ]; then
-        orca_removed=$((${orca_removed:-0}+1))
         git worktree prune
-        return 0
+        if ! worktree_present_after_remove "$3"; then
+          orca_removed=$((${orca_removed:-0}+1))
+          return 0
+        fi
       fi
     fi
   fi
   git worktree remove ${4:+"$4"} -- "$3" || {
     echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
   }
-  [ "$orca_ok" -eq 0 ] || orca_removed=$((${orca_removed:-0}+1))
   git worktree prune
+  if worktree_present_after_remove "$3"; then
+    echo "Warning: $2 still present after remove; kept." >&2
+    fail_item "$2" "worktree still present after remove: $3"
+    guard_keep "$1" "$2" "worktree still present after remove: $3"
+    return 1
+  fi
+  [ "$orca_ok" -eq 0 ] || orca_removed=$((${orca_removed:-0}+1))
   return 0
 }
 # A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
@@ -1274,16 +1332,26 @@ local_unpushed() { # name; succeeds when the local branch has a commit on no ori
   [ "$n" -gt 0 ]
 }
 guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason]
+  local del_ok=0
   fresh_inventory || { guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
   branch_free "$1" "$2" "$3" || return
   if local_unpushed "$3"; then guard_keep "$1" "$2" 'unpushed commits (or count unreadable)'; return 1; fi
   if [ "${4:-}" = ancestor ]; then
     # -d checks HEAD/upstream, so give it the authoritative merge target.
-    git -c "branch.$3.remote=origin" -c "branch.$3.merge=refs/heads/main" branch -d -- "$3" && return 0
+    git -c "branch.$3.remote=origin" -c "branch.$3.merge=refs/heads/main" branch -d -- "$3" && del_ok=1
   else
-    git branch -D -- "$3" && return 0
+    git branch -D -- "$3" && del_ok=1
   fi
-  echo "Warning: could not delete $2; kept." >&2; fail_item "$2" 'delete failed'; guard_keep "$1" "$2" 'delete failed'; return 1
+  if [ "$del_ok" -ne 1 ]; then
+    echo "Warning: could not delete $2; kept." >&2; fail_item "$2" 'delete failed'; guard_keep "$1" "$2" 'delete failed'; return 1
+  fi
+  if git show-ref --verify --quiet "refs/heads/$3"; then
+    echo "Warning: $2 ref still exists after delete; kept." >&2
+    fail_item "$2" "branch ref still exists after delete: $3"
+    guard_keep "$1" "$2" "branch ref still exists after delete: $3"
+    return 1
+  fi
+  return 0
 }
 guarded_remote_branch_delete() { # <name...>: sets remote_gone to how many went; kept ones count in kept
   local name status=0 live=() leases=()
@@ -1537,7 +1605,19 @@ ps_real() {
   esac
 }
 ps_do() { if [ -n "${WRAP_UP_PS_CMD:-}" ]; then "$WRAP_UP_PS_CMD" "$@"; else ps_real "$@"; fi; }
-kill_do() { if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then "$WRAP_UP_KILL_CMD" "$1"; else kill -TERM "$1"; fi; }
+kill_do() { if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then "$WRAP_UP_KILL_CMD" "$1"; else builtin kill -TERM "$1"; fi; }
+kill() {
+  local kbin
+  if [ -n "${WRAP_UP_KILL_CMD:-}" ]; then
+    kbin=$(type -P kill 2>/dev/null || true)
+    if [ -n "$kbin" ] && [ "$kbin" != /bin/kill ] && [ "$kbin" != /usr/bin/kill ]; then
+      "$kbin" "$@"
+      return $?
+    fi
+    return 1
+  fi
+  builtin kill "$@"
+}
 squash_path() { printf '%s' "$1" | sed 's#//*#/#g; s#/$##'; }
 is_temp_path() {
   local p root; p=$(squash_path "$1")
@@ -1637,6 +1717,17 @@ sweep_browsers() {
       IFS=$'\t' read -r _ _ _ n_started n_cmd <<< "$now_line"
       if [ -z "$now_line" ] || [ "$n_started" != "$started" ] || [ "$n_cmd" != "$cmd" ]; then browser_keep "$pid" 'process changed since listed'; continue; fi
       if ! kill_do "$pid" >/dev/null 2>&1; then browser_keep "$pid" 'stop failed'; continue; fi
+      if [ -z "${WRAP_UP_KILL_CMD:-}" ]; then
+        for _ in 1 2 3 4 5; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+      fi
+      if ! kill -0 "$pid" 2>/dev/null; then
+        :
+      else
+        echo "Warning: browser pid $pid still alive after kill." >&2
+        fail_item "browser $pid" "browser pid $pid still alive after kill"
+        browser_keep "$pid" "browser pid $pid still alive after kill"
+        continue
+      fi
     fi
     printf 'Close browser %s (%s)\n' "$pid" "$kind"
     browser_closed=$((browser_closed+1))
