@@ -100,7 +100,7 @@ if bash "$SCRIPT" machine >/dev/null 2>&1 \
   && [ -L "$HOME/.agents/skills/tdd" ] \
   && [ -L "$HOME/.agents/skills/elon" ] \
   && [ -L "$HOME/.claude/skills/elon" ] \
-  && [ -L "$HOME/.cursor/skills/elon" ] \
+  && [ ! -e "$HOME/.cursor/skills" ] \
   && python3 - <<'PY'
 import json, os
 s = json.load(open(os.path.expanduser("~/.claude/settings.json")))
@@ -223,18 +223,22 @@ MD
 cat > "$drifted/.claude/hooks/guard-bash.py" <<'PY'
 #!/usr/bin/env python3
 # ── PROJECT CONFIG ────────────────────────────────────────────────────────────
+import re
 PRODUCTION_HOSTS = {"prod-alpha.example.invalid"}
 STAGE_BRANCHES = ("stage", "staging", "preview")
-STAGE_BRANCH_COMPONENTS = ("web", "worker")
-PROMOTE_RULES = [
-    ("bin/promote-staging.sh", "staging", False),
-    ("bin/promote-prod.sh", "main", True),
-]
+STAGE_BRANCH_COMPONENTS = {"stage": "web", "staging": "worker"}
+PROMOTE_RULES = {
+    "deploy-stage.sh": {"free_stages": {"local", "staging"}, "component": 1, "sha": 2},
+}
+PROMOTE_SCRIPTS = ("bin/promote-prod.sh",)
 ROLLBACK_SCRIPTS = ("bin/rollback-prod.sh",)
 APPLY_SCRIPTS = ("bin/apply-sql.sh",)
+SCHEMA_OVERRIDE = "BETA_SCHEMA_OK"
 APPROVAL_NAMESPACE = "beta-service"
 APPROVAL_FILE = "/tmp/beta-service-owner-approved"
 BLOCKED_SCRIPTS = ("bin/reprovision-node.sh",)
+SECRETS_DIR = re.compile(r"(?:^|[/\s='\"<(])\.secrets(?:/|$|[\s'\"\)])")
+SECRETS_STDIN_OK = [re.compile(r"openssl.*-passin")]
 PY
 printf '# Production hosts\nprod-beta.example.invalid\n' > "$drifted/.claude/hooks/production-hosts.txt"
 cp "$real_dotfiles/templates/agent-team/.claude/hooks/strikes.py" "$drifted/.claude/hooks/strikes.py"
@@ -322,14 +326,17 @@ import json, os, sys
 root = sys.argv[1]
 g = json.load(open(os.path.join(root, ".claude/hooks/guard-config.json")))
 assert set(g["production_hosts"]) == {"prod-alpha.example.invalid", "prod-beta.example.invalid"}, g
-assert g["stage_branches"] == ["stage", "staging", "preview"], g
-assert g["stage_branch_components"] == ["web", "worker"], g
-assert len(g["promote_scripts"]) == 2, g
+assert g["stage_branches"] == {"stage": "web", "staging": "worker", "preview": "preview"}, g
+assert g["promote_scripts"]["deploy-stage.sh"]["free_stages"] == ["local", "staging"], g
+assert "bin/promote-prod.sh" in g["promote_scripts"] or "promote-prod.sh" in g["promote_scripts"], g
 assert g["rollback_scripts"] == ["bin/rollback-prod.sh"], g
 assert g["apply_scripts"] == ["bin/apply-sql.sh"], g
+assert g["schema_override"] == "BETA_SCHEMA_OK", g
 assert g["approval_namespace"] == "beta-service", g
 assert g["approval_file"] == "/tmp/beta-service-owner-approved", g
 assert g["blocked_scripts"] == ["bin/reprovision-node.sh"], g
+assert g["secrets_dir"] == ".secrets", g
+assert g["secrets_stdin_ok"] == ["openssl.*-passin"], g
 
 sp = json.load(open(os.path.join(root, ".claude/settings.project.json")))
 assert "Bash(./bin/beta-preflight.sh*)" in sp["permissions"]["allow"], sp
@@ -490,6 +497,181 @@ if ! bash "$SCRIPT" project "$sym_repo" >/dev/null 2>&1 \
   check "project refuses symlinked managed destination before writing" ok
 else
   check "project refuses symlinked managed destination before writing" bad
+fi
+
+# ── 8. Verdict FAIL regression tests (one per finding) ───────────────────────
+subdir_repo="$tmp/subdir-repo"
+mkdir -p "$subdir_repo/nested"
+git -C "$subdir_repo" init -q
+if ! bash "$SCRIPT" project "$subdir_repo/nested" >/dev/null 2>&1; then
+  check "finding 4: project refuses a git repo subdirectory" ok
+else
+  check "finding 4: project refuses a git repo subdirectory" bad
+fi
+
+if ! bash "$SCRIPT" project "$DOTFILES/templates/agent-team" >/dev/null 2>&1; then
+  check "finding 4: project refuses a path inside dotfiles" ok
+else
+  check "finding 4: project refuses a path inside dotfiles" bad
+fi
+
+guard_refuse="$tmp/guard-refuse"
+mkdir -p "$guard_refuse/.claude/hooks"
+cat > "$guard_refuse/.claude/hooks/guard-bash.py" <<'PY'
+PROMOTE_RULES = unknown_var
+PY
+git -C "$guard_refuse" init -q
+if ! bash "$SCRIPT" project "$guard_refuse" >/dev/null 2>&1 \
+  && [ -f "$guard_refuse/.claude/hooks/guard-bash.py" ]; then
+  check "finding 1: refusing unconvertible guard config keeps guard-bash.py" ok
+else
+  check "finding 1: refusing unconvertible guard config keeps guard-bash.py" bad
+fi
+
+order_repo="$tmp/order-repo"
+mkdir -p "$order_repo/.claude/hooks"
+cat > "$order_repo/.claude/hooks/guard-bash.py" <<'PY'
+BLOCKED_SCRIPTS = ("bin/x.sh",)
+PY
+cp "$real_dotfiles/templates/agent-team/.claude/hooks/strikes.py" "$order_repo/.claude/hooks/strikes.py"
+git -C "$order_repo" init -q
+git -C "$order_repo" remote add origin "https://github.com/example-org/order.git"
+cat > "$order_repo/.claude/settings.project.json" <<'JSON'
+{
+  "permissions": {
+    "allow": ["Read(.env)"],
+    "deny": []
+  },
+  "hooks": {}
+}
+JSON
+if ! bash "$SCRIPT" project "$order_repo" >/dev/null 2>&1 \
+  && [ -f "$order_repo/.claude/hooks/guard-bash.py" ] \
+  && [ -f "$order_repo/.claude/hooks/strikes.py" ]; then
+  check "finding 3: settings validation failure leaves legacy guard-bash.py in place" ok
+else
+  check "finding 3: settings validation failure leaves legacy guard-bash.py in place" bad
+fi
+
+facts_repo="$tmp/facts-repo"
+mkdir -p "$facts_repo"
+git -C "$facts_repo" init -q
+git -C "$facts_repo" remote add origin "https://github.com/example-org/facts.git"
+printf '# Repo\n\n## Project facts the roles point to\n\nCustom database: shadow-db\n' > "$facts_repo/AGENTS.md"
+bash "$SCRIPT" project "$facts_repo" --project-name facts >/dev/null 2>&1
+if grep -q 'shadow-db' "$facts_repo/AGENTS.md" \
+  && ! grep -q 'Fill these in:' "$facts_repo/AGENTS.md"; then
+  check "finding 2: sync preserves customized Project facts in AGENTS.md" ok
+else
+  check "finding 2: sync preserves customized Project facts in AGENTS.md" bad
+fi
+
+machine_skill="$tmp/machine-skill"
+mkdir -p "$machine_skill/.agents/skills/custom-local"
+printf 'keep me\n' > "$machine_skill/.agents/skills/custom-local/SKILL.md"
+export HOME="$machine_skill"
+mkdir -p "$HOME/.claude"
+bash "$SCRIPT" machine >/dev/null 2>&1
+if [ -f "$machine_skill/.agents/skills/custom-local/SKILL.md" ]; then
+  check "finding 5: machine keeps a non-dotfiles skill directory" ok
+else
+  check "finding 5: machine keeps a non-dotfiles skill directory" bad
+fi
+export HOME="$tmp/home"
+
+legacy_repo="$tmp/legacy-repo"
+mkdir -p "$legacy_repo/.claude/agent-team-baseline" "$legacy_repo/.claude/agents" \
+  "$legacy_repo/.agent" "$legacy_repo/.agents/skills"
+git -C "$legacy_repo" init -q
+git -C "$legacy_repo" remote add origin "https://github.com/example-org/legacy.git"
+printf '# old\n- legacy line only\n' > "$legacy_repo/.claude/agent-team-baseline/elon.md"
+printf '# current\n- legacy line only\n- custom elon bullet\n' > "$legacy_repo/.claude/agents/elon.md"
+ln -s ../.agents/skills "$legacy_repo/.agent/skills"
+printf '# Root\n' > "$legacy_repo/CLAUDE.md"
+bash "$SCRIPT" project "$legacy_repo" --project-name legacy >/dev/null 2>&1
+if grep -q 'custom elon bullet' "$legacy_repo/docs/agents/team-facts.md" \
+  && [ "$(cat "$legacy_repo/CLAUDE.md")" = "@AGENTS.md" ] \
+  && [ ! -e "$legacy_repo/.agent/skills" ]; then
+  check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills cleanup" ok
+else
+  check "finding 6: baseline extraction, CLAUDE.md fix, and .agent/skills cleanup" bad
+fi
+
+bash "$SCRIPT" project "$empty_repo" >/dev/null 2>&1
+rm -f "$empty_repo/docs/agents/team.md"
+if ! bash "$SCRIPT" check "$empty_repo" >/dev/null 2>&1; then
+  check "finding 7 (sync case 6): check fails on missing managed template copy" ok
+else
+  check "finding 7 (sync case 6): check fails on missing managed template copy" bad
+fi
+bash "$SCRIPT" sync "$empty_repo" >/dev/null 2>&1
+
+cp "$real_dotfiles/templates/agent-team/.claude/hooks/strikes.py" "$empty_repo/.claude/hooks/strikes.py"
+if ! bash "$SCRIPT" check "$empty_repo" >/dev/null 2>&1; then
+  check "finding 7: check fails when a shared hook copy exists in the project" ok
+else
+  check "finding 7: check fails when a shared hook copy exists in the project" bad
+fi
+rm -f "$empty_repo/.claude/hooks/strikes.py"
+
+retired_skill="$tmp/retired-skill"
+mkdir -p "$retired_skill/.agents/skills/beta"
+git -C "$retired_skill" init -q
+git -C "$retired_skill" remote add origin "https://github.com/example-org/retired.git"
+cat > "$retired_skill/.agents/skills/beta/SKILL.md" <<'MD'
+---
+name: beta
+---
+<!-- Generated from dotfiles templates/agent-team/.agents/skills/beta by script/sync-team-skills.sh, do not edit. -->
+MD
+retired_out=$(bash "$SCRIPT" check "$retired_skill" 2>&1)
+retired_rc=$?
+if [ "$retired_rc" -ne 0 ] \
+  && echo "$retired_out" | grep -q '.agents/skills/beta' \
+  && bash "$SCRIPT" project "$retired_skill" --project-name retired >/dev/null 2>&1 \
+  && [ ! -e "$retired_skill/.agents/skills/beta" ]; then
+  check "finding 7 (case 15): check flags stale generated Tier 2 skill copy" ok
+else
+  check "finding 7 (case 15): check flags stale generated Tier 2 skill copy" bad
+fi
+
+scratch="$tmp/scratch-adoption"
+mkdir -p "$scratch/.claude/hooks" "$scratch/.agents/skills/local-only" "$scratch/docs/agents"
+git -C "$scratch" init -q
+git -C "$scratch" remote add origin "https://github.com/example-org/scratch.git"
+cat > "$scratch/.claude/hooks/guard-bash.py" <<'PY'
+import re
+STAGE_BRANCHES = ("dev",)
+STAGE_BRANCH_COMPONENTS = {"dev": "web"}
+PROMOTE_RULES = {"promote.sh": {"free_stages": {"staging"}, "component": 1, "sha": 2}}
+PROMOTE_SCRIPTS = ("bin/go.sh",)
+SECRETS_DIR = re.compile(r"(?:^|[/\s='\"<(])\.secrets(?:/|$|[\s'\"\)])")
+SECRETS_STDIN_OK = [re.compile(r"pass")]
+PY
+printf '## Project facts the roles point to\n\nScratch DB: keep-me\n' > "$scratch/AGENTS.md"
+printf '---\nname: local-only\n---\n' > "$scratch/.agents/skills/local-only/SKILL.md"
+before=$(cd "$scratch" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort)
+bash "$SCRIPT" project "$scratch" --project-name scratch >/dev/null 2>&1
+bash "$SCRIPT" sync "$scratch" >/dev/null 2>&1
+bash "$SCRIPT" check "$scratch" >/dev/null 2>&1
+after=$(cd "$scratch" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort)
+if grep -q 'keep-me' "$scratch/AGENTS.md" \
+  && [ -f "$scratch/.agents/skills/local-only/SKILL.md" ] \
+  && python3 - "$scratch" <<'PY'
+import json, os, sys
+g = json.load(open(os.path.join(sys.argv[1], ".claude/hooks/guard-config.json")))
+assert g.get("secrets_dir") == ".secrets"
+assert "promote.sh" in g.get("promote_scripts", {})
+assert g.get("stage_branches") == {"dev": "web"}
+PY
+then
+  check "acceptance: scratch adoption preserves project-owned values across project, sync, check" ok
+  echo "scratch before files:" >&2
+  echo "$before" >&2
+  echo "scratch after files:" >&2
+  echo "$after" >&2
+else
+  check "acceptance: scratch adoption preserves project-owned values across project, sync, check" bad
 fi
 
 echo "$pass passed, $fail failed"

@@ -33,6 +33,19 @@ require_templates() {
   [ -d "$SEEDS_DIR" ] || die "seeds directory not found: $SEEDS_DIR" 1
 }
 
+backup_path() {
+  local dest=$1
+  local backup suffix=0
+  [ -e "$dest" ] || [ -L "$dest" ] || return 0
+  backup="$dest.bak.$(date +%Y%m%dT%H%M%S)"
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    suffix=$((suffix + 1))
+    backup="$dest.bak.$(date +%Y%m%dT%H%M%S).$suffix"
+  done
+  mv "$dest" "$backup"
+  echo "agent-team: backed up $dest to $backup"
+}
+
 link_one() {
   local src=$1 dst=$2 dry=$3
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
@@ -181,14 +194,75 @@ cmd_machine() {
   done
   require_templates
 
+  ensure_skill_link() {
+    local src=$1 s=$2
+    local agents_dst="$HOME/.agents/skills/$s"
+    local claude_dst="$HOME/.claude/skills/$s"
+    local claude_rel="../../.agents/skills/$s"
+    if [ "$dry" -eq 1 ]; then
+      if [ ! -L "$agents_dst" ] && [ -e "$agents_dst" ]; then
+        return 0
+      fi
+      echo "would link $agents_dst -> $src"
+      echo "would link $claude_dst -> $claude_rel"
+      return 0
+    fi
+  if [ -e "$agents_dst" ] && [ ! -L "$agents_dst" ]; then
+      return 0
+    fi
+    link_one "$src" "$agents_dst" "$dry"
+    ensure_dir "$HOME/.claude/skills" "$dry"
+    link_one "$claude_rel" "$claude_dst" "$dry"
+  }
+
+  if [ "$dry" -eq 0 ]; then
+    bash "$DOTFILES/script/setup-agent-skills.sh"
+  fi
+
+  for d in "$DOTFILES/.agents/skills"/*/; do
+    [ -d "$d" ] || continue
+    ensure_skill_link "${d%/}" "$(basename "$d")"
+  done
+  for d in "$TEMPLATE_DIR/.agents/skills"/*/; do
+    [ -d "$d" ] || continue
+    s=$(basename "$d")
+    if [ -d "$DOTFILES/.agents/skills/$s" ]; then
+      die "skill collision between Tier 1 and Tier 2 in dotfiles: $s" 1
+    fi
+    ensure_skill_link "${d%/}" "$s"
+  done
+
+  if [ "$dry" -eq 0 ] && [ -e "$HOME/.cursor/skills" ]; then
+    if [ -d "$HOME/.claude/skills" ] && [ -d "$HOME/.cursor/skills" ]; then
+      _c=$(cd "$HOME/.claude/skills" && pwd -P) || _c=
+      _u=$(cd "$HOME/.cursor/skills" && pwd -P) || _u=
+      if [ -n "$_c" ] && [ "$_c" = "$_u" ]; then
+        rm -rf "$HOME/.cursor/skills"
+        echo "agent-team: removed duplicate ${HOME}/.cursor/skills (same tree as ~/.claude/skills)"
+      fi
+    fi
+    if [ -d "$HOME/.cursor/skills" ]; then
+      dup_only=1
+      for link in "$HOME/.cursor/skills"/*; do
+        [ -e "$link" ] || [ -L "$link" ] || continue
+        base=$(basename "$link")
+        if [ ! -L "$HOME/.claude/skills/$base" ]; then
+          dup_only=0
+          break
+        fi
+      done
+      if [ "$dup_only" -eq 1 ] && [ -n "$(ls -A "$HOME/.cursor/skills" 2>/dev/null || true)" ]; then
+        rm -rf "$HOME/.cursor/skills"
+        echo "agent-team: removed ${HOME}/.cursor/skills (duplicate symlinks of ~/.claude/skills)"
+      fi
+    fi
+  fi
+
   ensure_dir "$HOME/.claude/agents" "$dry"
   ensure_dir "$HOME/.claude/hooks" "$dry"
   ensure_dir "$HOME/.claude/bin" "$dry"
-  ensure_dir "$HOME/.claude/skills" "$dry"
-  ensure_dir "$HOME/.agents/skills" "$dry"
-  ensure_dir "$HOME/.cursor/skills" "$dry"
 
-  local f name d s
+  local f name
   for f in "$TEMPLATE_DIR/.claude/agents/"*.md; do
     [ -f "$f" ] || continue
     link_one "$f" "$HOME/.claude/agents/$(basename "$f")" "$dry"
@@ -208,39 +282,30 @@ cmd_machine() {
     link_one "$TEMPLATE_DIR/.claude/model-routing.md" "$HOME/.claude/model-routing.md" "$dry"
   fi
 
-  for d in "$DOTFILES/.agents/skills"/*/; do
-    [ -d "$d" ] || continue
-    s=$(basename "$d")
-    link_one "${d%/}" "$HOME/.agents/skills/$s" "$dry"
-    link_one "../../.agents/skills/$s" "$HOME/.claude/skills/$s" "$dry"
-    link_one "../../.agents/skills/$s" "$HOME/.cursor/skills/$s" "$dry"
-  done
-
-  for d in "$TEMPLATE_DIR/.agents/skills"/*/; do
-    [ -d "$d" ] || continue
-    s=$(basename "$d")
-    if [ -d "$DOTFILES/.agents/skills/$s" ]; then
-      die "skill collision between Tier 1 and Tier 2 in dotfiles: $s" 1
-    fi
-    link_one "${d%/}" "$HOME/.agents/skills/$s" "$dry"
-    link_one "../../.agents/skills/$s" "$HOME/.claude/skills/$s" "$dry"
-    link_one "../../.agents/skills/$s" "$HOME/.cursor/skills/$s" "$dry"
-  done
-
   merge_machine_settings "$TEMPLATE_DIR/.claude/settings.json" "$HOME/.claude/settings.json" "$dry"
 }
 
 validate_target_dir() {
   local raw=$1
   [ -d "$raw" ] || die "target directory does not exist: $raw" 2
-  local target dotfiles_real home_real
+  local target root dotfiles_real home_real
   target=$(cd "$raw" && pwd -P)
   dotfiles_real=$(cd "$DOTFILES" && pwd -P)
   home_real=$(cd "$HOME" && pwd -P)
-  if [ "$target" = "$dotfiles_real" ] || [ "$target" = "$home_real" ]; then
-    die "refusing dotfiles or home as target: $raw" 2
+  if [ "$target" = "$home_real" ]; then
+    die "refusing home as target: $raw" 2
   fi
+  case "$target" in
+    "$dotfiles_real"|"$dotfiles_real"/*)
+      die "refusing dotfiles repo or subdirectory as target: $raw" 2
+      ;;
+  esac
   git -C "$target" rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $raw" 2
+  root=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) || die "not a git repository: $raw" 2
+  root=$(cd "$root" && pwd -P)
+  if [ "$target" != "$root" ]; then
+    die "target must be a git repository root (not a subdirectory): $raw" 2
+  fi
   printf '%s\n' "$target"
 }
 
@@ -466,23 +531,32 @@ PROTECTED_HOOK_SCRIPTS = {
     "usage-gate-hook.py",
 }
 
+DEFAULT_SECRETS_DIR_PATTERN = (
+    r"(?:^|[/\s='\"<(])secrets(?:/|$|[\s'\"\)])"
+)
+GUARD_DEFAULT_PROMOTE = {
+    "deploy-stage.sh": {
+        "free_stages": ["local", "staging", "status"],
+        "component": 1,
+        "sha": 2,
+    }
+}
+
 GUARD_DEFAULTS = {
     "production_hosts": [],
-    "stage_branches": ["stage", "staging"],
-    "stage_branch_components": [],
-    "promote_scripts": [],
-    "rollback_scripts": [],
-    "apply_scripts": [],
-    "schema_override": [
-        "--accept-data-loss",
-        "--force-reset",
-        "migrate reset",
-        "db push --force",
+    "stage_branches": [],
+    "promote_scripts": GUARD_DEFAULT_PROMOTE,
+    "rollback_scripts": ["rollback-production.sh"],
+    "apply_scripts": [
+        "apply-production-sql.sh",
+        "set-production-secret.sh",
+        "run-production-data-step.sh",
     ],
+    "schema_override": "SCHEMA_APPROVED",
     "approval_namespace": "",
     "approval_file": "",
     "blocked_scripts": [],
-    "secrets_dir": ".secrets",
+    "secrets_dir": DEFAULT_SECRETS_DIR_PATTERN,
     "sign_in_script": "",
     "secrets_stdin_ok": [],
     "worktree_env_allow": [".env.example", ".env.sample", ".env.template"],
@@ -492,19 +566,249 @@ GUARD_CONST_MAP = {
     "PRODUCTION_HOSTS": "production_hosts",
     "STAGE_BRANCHES": "stage_branches",
     "STAGE_BRANCH_COMPONENTS": "stage_branch_components",
-    "PROMOTE_RULES": "promote_scripts",
+    "PRODUCTION_BRANCHES": "production_branches",
+    "PROMOTE_RULES": "promote_rules",
     "PROMOTE_SCRIPTS": "promote_scripts",
     "ROLLBACK_SCRIPTS": "rollback_scripts",
     "APPLY_SCRIPTS": "apply_scripts",
     "SCHEMA_OVERRIDE": "schema_override",
     "APPROVAL_NAMESPACE": "approval_namespace",
     "APPROVAL_FILE": "approval_file",
+    "APPROVAL_FILE_OVERRIDE": "approval_file",
     "BLOCKED_SCRIPTS": "blocked_scripts",
     "SECRETS_DIR": "secrets_dir",
     "SIGN_IN_SCRIPT": "sign_in_script",
     "SECRETS_STDIN_OK": "secrets_stdin_ok",
     "WORKTREE_ENV_ALLOW": "worktree_env_allow",
 }
+
+MANAGED_AGENTS_SECTIONS = (
+    "Token budget",
+    "Compact instructions",
+    "Owner context commands",
+)
+
+GENERATED_SKILL_STAMP = (
+    "Generated from dotfiles templates/agent-team/.agents/skills/"
+)
+
+
+def json_equal(a, b):
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def eval_guard_ast(node, errors, ctx):
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return [eval_guard_ast(elt, errors, ctx) for elt in node.elts]
+    if isinstance(node, ast.Set):
+        return [eval_guard_ast(elt, errors, ctx) for elt in node.elts]
+    if isinstance(node, ast.Dict):
+        out = {}
+        for k_node, v_node in zip(node.keys, node.values):
+            key = eval_guard_ast(k_node, errors, ctx)
+            if not isinstance(key, str):
+                errors.append(f"non-string dict key in {ctx}")
+                return None
+            val = eval_guard_ast(v_node, errors, ctx)
+            out[key] = val
+        return out
+    if isinstance(node, ast.Call):
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "compile"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "re"
+            and node.args
+        ):
+            pat = eval_guard_ast(node.args[0], errors, ctx)
+            if isinstance(pat, str):
+                return pat
+            errors.append(f"re.compile pattern in {ctx} is not a string literal")
+            return None
+        errors.append(f"unsupported call in {ctx}")
+        return None
+    if isinstance(node, ast.Name):
+        if node.id == "True":
+            return True
+        if node.id == "False":
+            return False
+        if node.id == "None":
+            return None
+        errors.append(f"unsupported name {node.id} in {ctx}")
+        return None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
+        return -node.operand.value
+    errors.append(f"unsupported expression in {ctx}")
+    return None
+
+
+def normalize_promote_rule_entry(script, rule):
+    base = os.path.basename(str(script))
+    if isinstance(rule, dict):
+        raw_free = rule.get("free_stages")
+        if isinstance(raw_free, (list, tuple, set)):
+            free = sorted(str(s) for s in raw_free)
+        else:
+            free = []
+        return base, {
+            "free_stages": free,
+            "component": rule.get("component"),
+            "sha": rule.get("sha", 0),
+        }
+    return base, {"free_stages": [], "component": None, "sha": 0}
+
+
+def merge_promote_scripts(extracted_parts, errors):
+    promote_dict = {}
+    promote_list = []
+    for part in extracted_parts:
+        if part is None:
+            continue
+        if isinstance(part, dict):
+            for name, rule in part.items():
+                if isinstance(rule, dict) or rule is None:
+                    base, norm = normalize_promote_rule_entry(name, rule or {})
+                    promote_dict[base] = norm
+                elif isinstance(rule, (list, tuple)) and len(rule) >= 3:
+                    promote_list.append(str(rule[0]))
+                else:
+                    errors.append(f"unsupported PROMOTE_RULES entry for {name!r}")
+                    return None
+        elif isinstance(part, (list, tuple, set)):
+            for item in part:
+                if isinstance(item, str) and item.strip():
+                    promote_list.append(item.strip())
+                elif isinstance(item, (list, tuple)) and len(item) >= 1:
+                    promote_list.append(str(item[0]))
+                elif isinstance(item, dict):
+                    for name, rule in item.items():
+                        base, norm = normalize_promote_rule_entry(name, rule)
+                        promote_dict[base] = norm
+                else:
+                    errors.append(f"unsupported promote_scripts list item {item!r}")
+                    return None
+        else:
+            errors.append(f"unsupported promote_scripts value {part!r}")
+            return None
+    for script in promote_list:
+        base = os.path.basename(script)
+        promote_dict.setdefault(
+            base, {"free_stages": [], "component": None, "sha": 0}
+        )
+    if not promote_dict:
+        return None
+    if json_equal(promote_dict, GUARD_DEFAULTS["promote_scripts"]):
+        return None
+    return promote_dict
+
+
+def normalize_stage_branches(stage_list, comp_map, errors):
+    branches = []
+    if stage_list is not None:
+        if isinstance(stage_list, dict):
+            for br, comp in stage_list.items():
+                if not isinstance(br, str):
+                    errors.append("stage branch names must be strings")
+                    return None
+                branches.append(br.strip())
+                if isinstance(comp, str) and comp.strip():
+                    comp_map[br.strip()] = comp.strip()
+        elif isinstance(stage_list, (list, tuple, set)):
+            branches = [str(b).strip() for b in stage_list if str(b).strip()]
+        else:
+            errors.append(f"unsupported STAGE_BRANCHES type {type(stage_list).__name__}")
+            return None
+    if comp_map:
+        out = {}
+        for br in branches:
+            out[br] = comp_map.get(br, br)
+        for br, comp in comp_map.items():
+            if br not in out:
+                out[br] = comp
+        if not json_equal(out, {}):
+            return out
+    if branches and not json_equal(branches, GUARD_DEFAULTS["stage_branches"]):
+        return branches
+    return None
+
+
+def normalize_guard_value(key, raw, errors, ctx):
+    if raw is None:
+        return None
+    if key == "promote_rules":
+        return raw
+    if key == "promote_scripts":
+        return raw
+    if key in ("production_hosts", "rollback_scripts", "apply_scripts", "blocked_scripts"):
+        if isinstance(raw, (set, tuple, list)):
+            lst = sorted({str(x) for x in raw if str(x).strip()})
+        else:
+            errors.append(f"{ctx}: expected list/set, got {type(raw).__name__}")
+            return None
+        if not lst or json_equal(lst, GUARD_DEFAULTS.get(key, [])):
+            return None
+        return lst
+    if key in ("stage_branches", "production_branches"):
+        return normalize_stage_branches(raw, {}, errors)
+    if key == "stage_branch_components":
+        if isinstance(raw, dict):
+            return normalize_stage_branches(None, {str(k): str(v) for k, v in raw.items()}, errors)
+        if isinstance(raw, (list, tuple)):
+            return None
+        errors.append(f"{ctx}: STAGE_BRANCH_COMPONENTS must be a dict")
+        return None
+    if key == "secrets_dir":
+        if isinstance(raw, str):
+            if raw == DEFAULT_SECRETS_DIR_PATTERN or raw == GUARD_DEFAULTS["secrets_dir"]:
+                return None
+            extra = re.search(r"\\\.([A-Za-z0-9._-]+)", raw)
+            if extra:
+                return f".{extra.group(1)}"
+            alt = re.search(r"(?:^|[/\s='\"<(])([A-Za-z0-9._-]+)(?:/|$)", raw)
+            if alt and alt.group(1) != "secrets":
+                return alt.group(1)
+            errors.append(f"{ctx}: could not derive secrets_dir from SECRETS_DIR pattern")
+            return None
+        errors.append(f"{ctx}: SECRETS_DIR must be a re.compile pattern string")
+        return None
+    if key == "secrets_stdin_ok":
+        if isinstance(raw, list):
+            patterns = [str(p) for p in raw if isinstance(p, str) and p.strip()]
+        else:
+            errors.append(f"{ctx}: SECRETS_STDIN_OK must be a list")
+            return None
+        if not patterns:
+            return None
+        return patterns
+    if key == "worktree_env_allow":
+        if isinstance(raw, (list, tuple, set)):
+            lst = [str(x) for x in raw if str(x).strip()]
+        else:
+            errors.append(f"{ctx}: WORKTREE_ENV_ALLOW expected list")
+            return None
+        if json_equal(lst, GUARD_DEFAULTS["worktree_env_allow"]):
+            return None
+        return lst
+    if key in ("schema_override", "approval_namespace", "approval_file", "sign_in_script"):
+        if not isinstance(raw, str):
+            errors.append(f"{ctx}: expected string")
+            return None
+        if not raw.strip() or raw == GUARD_DEFAULTS.get(key, ""):
+            return None
+        return raw
+    return raw
+
+
+def compact_hook_cmd(cmd):
+    if not isinstance(cmd, str):
+        return False
+    if "Context was compacted" in cmd:
+        return True
+    if re.search(r"\becho\b.*\bcompact", cmd, re.I):
+        return True
+    return False
 
 
 def read_text(path):
@@ -570,6 +874,8 @@ def extract_guard_config():
             pass
 
     extracted = {}
+    raw_assigns = {}
+    errors = []
     guard_py = os.path.join(target, ".claude/hooks/guard-bash.py")
     tpl_guard_py = os.path.join(template_dir, ".claude/hooks/guard-bash.py")
 
@@ -593,37 +899,98 @@ def extract_guard_config():
                     for cname in names:
                         if cname not in GUARD_CONST_MAP:
                             continue
+                        ctx = f"{cname} in .claude/hooks/guard-bash.py"
+                        val = eval_guard_ast(val_node, errors, ctx)
+                        if errors:
+                            break
                         key = GUARD_CONST_MAP[cname]
-                        try:
-                            val = ast.literal_eval(val_node)
-                        except Exception:
-                            continue
-                        if key == "promote_scripts":
-                            norm = []
-                            for item in val or []:
-                                if isinstance(item, (list, tuple)) and len(item) >= 3:
-                                    norm.append(
-                                        {
-                                            "script": str(item[0]),
-                                            "branch": str(item[1]),
-                                            "requires_approval": bool(item[2]),
-                                        }
-                                    )
-                                elif isinstance(item, dict):
-                                    norm.append(item)
-                            if norm:
-                                extracted[key] = norm
-                        elif isinstance(val, (set, tuple, list)):
-                            lst = [str(x) for x in val]
-                            if key == "production_hosts":
-                                lst = sorted(set(lst))
-                            if lst and lst != GUARD_DEFAULTS.get(key):
-                                extracted[key] = lst
-                        elif isinstance(val, str):
-                            if val and val != GUARD_DEFAULTS.get(key):
-                                extracted[key] = val
-            except Exception:
-                pass
+                        raw_assigns.setdefault(key, []).append(val)
+                if errors:
+                    for err in errors:
+                        sys.stderr.write(f"agent-team: guard config: {err}\n")
+                    sys.stderr.write(
+                        "agent-team: refusing migration; kept .claude/hooks/guard-bash.py\n"
+                    )
+                    sys.exit(1)
+            except SyntaxError as exc:
+                sys.stderr.write(f"agent-team: guard-bash.py syntax error: {exc}\n")
+                sys.stderr.write(
+                    "agent-team: refusing migration; kept .claude/hooks/guard-bash.py\n"
+                )
+                sys.exit(1)
+
+    stage_list = None
+    comp_map = {}
+    promote_parts = []
+    for key, parts in raw_assigns.items():
+        if key == "promote_rules":
+            promote_parts.extend(parts)
+            continue
+        if key == "promote_scripts":
+            promote_parts.extend(parts)
+            continue
+        if key == "stage_branches":
+            for part in parts:
+                if isinstance(part, dict):
+                    for br, comp in part.items():
+                        if isinstance(br, str):
+                            stage_list = stage_list or []
+                            if br.strip() not in stage_list:
+                                stage_list.append(br.strip())
+                            if isinstance(comp, str) and comp.strip():
+                                comp_map[br.strip()] = comp.strip()
+                elif isinstance(part, (list, tuple, set)):
+                    stage_list = [str(b).strip() for b in part if str(b).strip()]
+                else:
+                    errors.append(f"unsupported STAGE_BRANCHES value {part!r}")
+            continue
+        if key == "stage_branch_components":
+            for part in parts:
+                if isinstance(part, dict):
+                    for k, v in part.items():
+                        comp_map[str(k).strip()] = str(v).strip()
+                else:
+                    errors.append("STAGE_BRANCH_COMPONENTS must be a dict")
+            continue
+        if key == "production_branches":
+            for part in parts:
+                norm = normalize_stage_branches(part, {}, errors)
+                if norm is not None:
+                    extracted["production_branches"] = norm
+            continue
+        for part in parts:
+            norm = normalize_guard_value(key, part, errors, key)
+            if errors:
+                for err in errors:
+                    sys.stderr.write(f"agent-team: guard config: {err}\n")
+                sys.stderr.write(
+                    "agent-team: refusing migration; kept .claude/hooks/guard-bash.py\n"
+                )
+                sys.exit(1)
+            if norm is not None:
+                extracted[key] = norm
+
+    if errors:
+        for err in errors:
+            sys.stderr.write(f"agent-team: guard config: {err}\n")
+        sys.stderr.write(
+            "agent-team: refusing migration; kept .claude/hooks/guard-bash.py\n"
+        )
+        sys.exit(1)
+
+    stage_norm = normalize_stage_branches(stage_list, comp_map, errors)
+    if stage_norm is not None:
+        extracted["stage_branches"] = stage_norm
+    promote_norm = merge_promote_scripts(promote_parts, errors)
+    if errors:
+        for err in errors:
+            sys.stderr.write(f"agent-team: guard config: {err}\n")
+        sys.stderr.write(
+            "agent-team: refusing migration; kept .claude/hooks/guard-bash.py\n"
+        )
+        sys.exit(1)
+    if promote_norm is not None:
+        extracted["promote_scripts"] = promote_norm
 
     hosts_txt = os.path.join(target, ".claude/hooks/production-hosts.txt")
     if os.path.isfile(hosts_txt) and not os.path.islink(hosts_txt):
@@ -737,7 +1104,12 @@ def extract_settings_project():
                             if not isinstance(h, dict):
                                 continue
                             cmd = h.get("command", "")
-                            if not cmd or cmd in tpl_hook_cmds or is_legacy_template_hook_cmd(cmd):
+                            if (
+                                not cmd
+                                or cmd in tpl_hook_cmds
+                                or is_legacy_template_hook_cmd(cmd)
+                                or (event == "SessionStart" and matcher == "compact" and compact_hook_cmd(cmd))
+                            ):
                                 continue
                             kept_hooks.append(dict(h))
                         if kept_hooks:
@@ -794,12 +1166,16 @@ def extract_role_facts():
         tpl_rendered = read_text(tpl_role_path).replace("{{PROJECT_NAME}}", project_name)
         tpl_norms = {norm_role_line(l) for l in strip_frontmatter(tpl_rendered) if norm_role_line(l)}
 
-        base_role_path = os.path.join(
-            target, ".claude/agent-team-baseline/.claude/agents", role_file
-        )
-        if os.path.isfile(base_role_path):
-            base_rendered = read_text(base_role_path).replace("{{PROJECT_NAME}}", project_name)
-            tpl_norms |= {norm_role_line(l) for l in strip_frontmatter(base_rendered) if norm_role_line(l)}
+        for base_rel in (
+            f".claude/agent-team-baseline/.claude/agents/{role_file}",
+            f".claude/agent-team-baseline/{role_file}",
+        ):
+            base_role_path = os.path.join(target, base_rel)
+            if os.path.isfile(base_role_path):
+                base_rendered = read_text(base_role_path).replace("{{PROJECT_NAME}}", project_name)
+                tpl_norms |= {
+                    norm_role_line(l) for l in strip_frontmatter(base_rendered) if norm_role_line(l)
+                }
 
         proj_lines = strip_frontmatter(read_text(proj_role_path))
         role_name = role_file[:-3]
@@ -907,7 +1283,24 @@ def remove_legacy_copies():
     prune_empty_dir(".agents/skills")
     prune_empty_dir(".agents")
 
+    remove_path(".agent/skills")
+    prune_empty_dir(".agent")
+
     remove_path("bin/team-audit-metrics.ts")
+
+    agents_skills = os.path.join(target, ".agents/skills")
+    if os.path.isdir(agents_skills):
+        for skill_name in sorted(os.listdir(agents_skills)):
+            if skill_name in TIER2_SKILLS:
+                continue
+            skill_md = os.path.join(agents_skills, skill_name, "SKILL.md")
+            if os.path.isfile(skill_md) and GENERATED_SKILL_STAMP in read_text(skill_md):
+                remove_path(f".agents/skills/{skill_name}")
+                remove_path(f".claude/skills/{skill_name}")
+                remove_path(f".cursor/skills/{skill_name}")
+        prune_empty_dir(".claude/skills")
+        prune_empty_dir(".cursor/skills")
+        prune_empty_dir(".agents/skills")
 
 
 def parse_perm_rule(rule):
@@ -1112,8 +1505,9 @@ def replace_or_append_h2(doc, title, section_text):
         r"(^## " + re.escape(title) + r"[ \t]*\n.*?)(?=^## |\Z)",
         re.MULTILINE | re.DOTALL,
     )
+    replacement = section_text.rstrip() + "\n\n"
     if pattern.search(doc):
-        return pattern.sub(section_text.rstrip() + "\n\n", doc, count=1)
+        return pattern.sub(lambda _m: replacement, doc, count=1)
     return doc.rstrip() + "\n\n" + section_text.rstrip() + "\n"
 
 
@@ -1127,6 +1521,8 @@ def build_agents_md(existing_content, tracker):
     )
     budget_md = read_text(os.path.join(template_dir, "AGENTS.token-budget.md"))
     for title, sec in parse_h2_sections(budget_md):
+        if title not in MANAGED_AGENTS_SECTIONS:
+            continue
         doc = replace_or_append_h2(doc, title, sec)
 
     if tracker == "github":
@@ -1201,7 +1597,9 @@ def seed_and_sync_project(proj_settings_mem=None):
         write_text("CLAUDE.md", "@AGENTS.md\n")
     else:
         c_cur = read_text(claude_path)
-        if "<!-- agent-team:start -->" in c_cur:
+        if "@AGENTS.md" not in c_cur:
+            write_text("CLAUDE.md", "@AGENTS.md\n")
+        elif "<!-- agent-team:start -->" in c_cur:
             c_clean = re.sub(
                 r"\n*<!-- agent-team:start -->.*?<!-- agent-team:end -->\n*",
                 "\n",
@@ -1269,6 +1667,20 @@ def run_check():
             if os.path.exists(full) or os.path.islink(full):
                 drifts.append(f"Tier 2 skill copy or link in project: {rel}")
 
+    agents_skills_dir = os.path.join(target, ".agents/skills")
+    if os.path.isdir(agents_skills_dir):
+        for skill_name in sorted(os.listdir(agents_skills_dir)):
+            skill_md = os.path.join(agents_skills_dir, skill_name, "SKILL.md")
+            if os.path.isfile(skill_md) and GENERATED_SKILL_STAMP in read_text(skill_md):
+                drifts.append(
+                    f"stale generated Tier 2 skill copy in project: .agents/skills/{skill_name}"
+                )
+
+    if os.path.exists(os.path.join(target, ".agent/skills")) or os.path.islink(
+        os.path.join(target, ".agent/skills")
+    ):
+        drifts.append("legacy symlink present: .agent/skills")
+
     guard_cfg = os.path.join(target, ".claude/hooks/guard-config.json")
     if not os.path.isfile(guard_cfg):
         drifts.append("missing .claude/hooks/guard-config.json")
@@ -1324,10 +1736,13 @@ def run_check():
         if not re.search(r"^## Agent skills[ \t]*$", a_text, re.MULTILINE):
             drifts.append("AGENTS.md missing '## Agent skills' section")
         a_sections = dict(parse_h2_sections(a_text))
-        for title, expected_sec in parse_h2_sections(
-            read_text(os.path.join(template_dir, "AGENTS.token-budget.md"))
-        ):
-            if a_sections.get(title) != expected_sec:
+        for title in MANAGED_AGENTS_SECTIONS:
+            expected_sec = dict(
+                parse_h2_sections(
+                    read_text(os.path.join(template_dir, "AGENTS.token-budget.md"))
+                )
+            ).get(title)
+            if expected_sec is not None and a_sections.get(title) != expected_sec:
                 drifts.append(f"AGENTS.md section '## {title}' drifted from template")
 
     required_headings = {
@@ -1386,8 +1801,8 @@ if mode == "project":
     extract_guard_config()
     proj_settings_mem = extract_settings_project()
     extract_role_facts()
-    remove_legacy_copies()
     seed_and_sync_project(proj_settings_mem)
+    remove_legacy_copies()
 elif mode == "check":
     run_check()
 else:
