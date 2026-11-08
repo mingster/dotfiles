@@ -88,7 +88,7 @@ write_pstack() {
       printf '\n### Gaps and conflicts\n\n'
       printf '  - Playbook paths may still say `pstack/skills/...`; compare with ORCA-ADAPTER.md.\n'
       printf '\n### Recommended owner actions\n\n'
-      printf '  - Run `sync-team-skills.sh` on projects after merging the pstack PR.\n'
+      printf '  - Run `agent-team.sh sync` on projects after merging the pstack PR.\n'
     } >>"$OUT"
   else
     {

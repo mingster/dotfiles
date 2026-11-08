@@ -8,7 +8,13 @@ setup() { # a clean dotfiles tree and a project synced from it
   rm -rf "$D" "$P"
   mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
            "$D/.agents/skills/orca-team" "$P/.claude/agents" "$P/docs/agents"
-  cp "$here/sync-team-skills.sh" "$D/script/"
+  # Stand-in for agent-team.sh: records its arguments, and fails ("drift") when a team skill was hand edited.
+  cat > "$D/script/agent-team.sh" <<'EOS'
+#!/usr/bin/env bash
+echo "$*" >> "${AGENT_TEAM_CALLS:-/dev/null}"
+[ "$1" = "check" ] || exit 2
+if grep -rqs 'hand edit' "$2/.agents/skills"; then echo "drift: $2/.agents/skills"; exit 1; fi
+EOS
   printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nThe Tech Lead pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
   printf -- '---\nname: orca-team\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orca-team/SKILL.md"
   for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv; do
@@ -17,7 +23,7 @@ setup() { # a clean dotfiles tree and a project synced from it
   printf '{"version": 3, "skills": {"orca-cli": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
   printf -- '---\nname: tech-lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
   printf 'The Tech Lead merges every PR.\n' > "$P/docs/agents/team.md"
-  DOTFILES="$D" "$D/script/sync-team-skills.sh" "$P" >/dev/null 2>&1
+  mkdir -p "$P/.agents/skills/crew"; cp "$D/templates/agent-team/.agents/skills/crew/SKILL.md" "$P/.agents/skills/crew/"
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
   printf 'sha=aaa1111\nskills=tdd research\n' > "$D/.agents/skills/.mattpocock-upstream"
   GH_LATEST=aaa1111 GH_FILES="" GH_FAIL="" GH_ISSUES="[]"
@@ -92,6 +98,28 @@ check "allow comment opts a line out" 0 'team-audit: clean'
 
 setup; echo 'hand edit' >> "$P/.agents/skills/crew/SKILL.md"
 check "hand edited team skill fails the sync check" 1 'FINDING sync: '
+
+setup; export AGENT_TEAM_CALLS="$tmp/calls"; : > "$AGENT_TEAM_CALLS"
+check "clean tree runs agent-team.sh check" 0 'team-audit: clean'
+if grep -qxF "check $P" "$AGENT_TEAM_CALLS"; then pass=$((pass+1)); echo "ok   sync check calls agent-team.sh check <project>"
+else fail=$((fail+1)); echo "FAIL sync check calls agent-team.sh check <project>"; fi
+unset AGENT_TEAM_CALLS
+
+# TEAM_AUDIT_RUN_METRICS=1 runs script/team-audit-metrics.ts --repo <owner/name> (fake bun, no network)
+cat > "$tmp/bin/bun" <<'EOS'
+#!/usr/bin/env bash
+echo "bun-called $*"
+EOS
+chmod +x "$tmp/bin/bun"
+setup; withremote
+mout=$(TEAM_AUDIT_RUN_METRICS=1 DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1)
+if echo "$mout" | grep -qE 'bun-called .*/script/team-audit-metrics\.ts --repo acme/project-alpha$'; then pass=$((pass+1)); echo "ok   metrics run with --repo from the origin remote"
+else fail=$((fail+1)); echo "FAIL metrics run with --repo from the origin remote"; echo "$mout"; fi
+setup; withremote
+mout=$(DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1)
+if echo "$mout" | grep -q 'bun-called'; then fail=$((fail+1)); echo "FAIL metrics are off by default"
+else pass=$((pass+1)); echo "ok   metrics are off by default"; fi
+rm -f "$tmp/bin/bun"
 
 setup; yes word | head -900 | tr '\n' ' ' >> "$P/.claude/agents/tech-lead.md"
 check "role file over budget" 1 'FINDING budget: .*tech-lead.md: 9[0-9][0-9] words'
@@ -171,7 +199,7 @@ unset GH_FAIL; export GH_ISSUES="[]"
 setup; rm "$D/.agents/skills/.mattpocock-upstream"
 check "missing upstream record" 1 'FINDING mp-upstream: missing'
 
-setup; mkdir -p "$P/docs/intent/skip-non-team"; printf 'script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/skip-non-team/spec.md"; echo intent > "$P/docs/intent/skip-non-team/intent.md"
+setup; mkdir -p "$P/docs/intent/skip-non-team"; printf 'script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/skip-non-team/spec.md"; echo intent > "$P/docs/intent/skip-non-team/intent.md"
 touch "$D/script/list-covered.sh"
 touch "$D/script/install_mac.sh" "$D/script/install-vscode.sh" "$D/script/uninstall_old.sh"
 touch "$D/script/setup-node.sh" "$D/script/link-cursor-user.sh" "$D/script/tsconfig.json" "$D/script/smoke.test.ts"
@@ -179,13 +207,13 @@ out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/skip-non-team/spec.md"
 if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   script-list skips install/setup/link/json and *.test.ts names"
 else fail=$((fail+1)); echo "FAIL script-list skips non-team script names (exit $code)"; echo "$out"; fi
 
-setup; mkdir -p "$P/docs/intent/heavy"; printf 'script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/heavy/spec.md"; echo intent > "$P/docs/intent/heavy/intent.md"
+setup; mkdir -p "$P/docs/intent/heavy"; printf 'script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/heavy/spec.md"; echo intent > "$P/docs/intent/heavy/intent.md"
 touch "$D/script/list-covered.sh"; touch "$D/script/heavy-gate.sh"
 out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/heavy/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
 if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: heavy-gate.sh'; then pass=$((pass+1)); echo "ok   heavy-gate.sh is still a script-list finding when unlisted"
 else fail=$((fail+1)); echo "FAIL heavy-gate.sh unlisted (exit $code)"; echo "$out"; fi
 
-setup; mkdir -p "$P/docs/intent/wsu"; printf 'script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/wsu/spec.md"; echo intent > "$P/docs/intent/wsu/intent.md"
+setup; mkdir -p "$P/docs/intent/wsu"; printf 'script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/wsu/spec.md"; echo intent > "$P/docs/intent/wsu/intent.md"
 touch "$D/script/list-covered.sh"; touch "$D/script/worker-startup.sh"
 out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/wsu/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
 if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: worker-startup.sh'; then pass=$((pass+1)); echo "ok   worker-startup.sh is still a script-list finding when unlisted"
@@ -197,7 +225,7 @@ out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/x/spec.md" "$here/team
 if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: planted-unlisted-team-script.sh'; then pass=$((pass+1)); echo "ok   unlisted script under script/ is a finding"
 else fail=$((fail+1)); echo "FAIL unlisted script under script/ is a finding (exit $code)"; echo "$out"; fi
 
-setup; mkdir -p "$P/docs/intent/y"; printf 'Tools: script/list-covered.sh script/sync-team-skills.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/y/spec.md"; echo intent > "$P/docs/intent/y/intent.md"
+setup; mkdir -p "$P/docs/intent/y"; printf 'Tools: script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/y/spec.md"; echo intent > "$P/docs/intent/y/intent.md"
 touch "$D/script/list-covered.sh"
 out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/y/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
 if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   listed script under script/ is not a finding"

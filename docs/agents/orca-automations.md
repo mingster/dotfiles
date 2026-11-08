@@ -22,11 +22,47 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 |------|-----------------|---------------|------------------------|----------------------|-------|
 | `fleet-watch` | `*/5 * * * *` | Coordinator only | `script/automation-precheck-wrapper.sh` runs `script/fleet-watch.py` once | `~/.orca/logs/fleet-watch.log` (override `FLEET_WATCH_AUTOMATION_LOG`) | Same |
 | `wrap-up-scheduled` | `*/10 * * * *` | Every Orca host | Wrapper runs `script/wrap-up.sh --scheduled` (per repo and round budget inside `WRAP_UP_PRECHECK_TIMEOUT`, round lock, `WRAP_UP_ISSUE_REPO` when set) | `~/.orca/logs/wrap-up-scheduled.log`; detail in `wrap-up-scheduled-detail.log` | Same |
-| `sync-team-skills-drift` | `0 6 * * *` | Coordinator only | Wrapper runs `script/automation-precheck-sync-drift.sh` | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
-| `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh` | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the owner asks) | Same |
+| `sync-team-skills-drift` | `0 6 * * *` | Coordinator only | Wrapper runs `script/automation-precheck-sync-drift.sh`, which runs `script/agent-team.sh check <project>` for each project root | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
+| `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh`: `script/team-audit.sh` (which calls `agent-team.sh check` per project) with `TEAM_AUDIT_RUN_METRICS=1`, so `script/team-audit-metrics.ts --repo <owner/name>` runs for each project's origin repo | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the owner asks) | Same |
 | `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
 | `fleet-toolchain` | `0 5 * * *` | Coordinator only | Wrapper runs `script/fleet-pull.sh` then `script/fleet-toolchain-check.sh --apply` | `FLEET_TOOLCHAIN_LOG` (default `~/.local/state/agent-team/fleet-toolchain.log`) | Same |
 | `staging-daily-1900` | `0 19 * * *` (`Asia/Taipei`) | Coordinator only | Wrapper runs `script/automation-precheck-staging-daily.sh` (skips when staging equals `origin/main`, otherwise wakes the coordinator to dispatch `release-manager` for staging deploy and `/staging-review`; production remains gated on owner approval) | `STAGING_DAILY_LOG` (default `~/.local/state/agent-team/staging-daily.log`) | Same |
+
+## Scheduled wrap-up round
+
+`script/wrap-up.sh --scheduled` runs one wrap-up round on this host. A round takes a lock (one per host,
+under `~/.local/state/agent-team/`), finds the orca CLI, checks that `orca status --json` reports ready,
+skips when the 1 minute load divided by the cores is 0.7 or more, then runs `wrap-up.sh --apply` for each
+git repo in `orca repo list`. There is no config file. A manual wrap-up run does not take the lock;
+wrap-up's own guards recheck before each delete.
+
+The schedule shell is bare, so the round looks for orca itself: the Orca app first, then `PATH`,
+`~/.local/bin`, Homebrew, and `~/.orca/cli/bin` last, because that copy can be a stale remote CLI.
+
+Each round writes one line to `~/.orca/logs/wrap-up-scheduled.log`: `round ok`, `skip:` or `round failed:`.
+Per repo output goes to `wrap-up-scheduled-detail.log` beside it. No CLI, an unreadable repo list or load,
+a repo that fails, and a round over 4 minutes all count as failed. Repos not reached in time are not started.
+Each log keeps one rotated copy (`.1`) once it passes 5 MB.
+
+Two failed rounds in a row open one GitHub issue on the repo in `WRAP_UP_ISSUE_REPO`, titled
+`wrap-up: scheduled rounds failing on <host>`, with home paths masked. While an issue with that title
+is open, no second one is opened. With the variable unset, or a repo that is not private, the round
+logs that and opens nothing, so host names stay out of public repos. A repo run hung past its budget
+plus 30 seconds is stopped with its inner calls and counts as failed. A scheduled round leaves a shell
+no dispatch owns alone; a manual run still closes it after 10 minutes without output.
+
+Install on a host:
+
+1. Copy `templates/launchd/life.example.wrap-up.plist` to
+   `~/Library/LaunchAgents/life.example.wrap-up.plist` and replace `__HOME__` with an absolute home path and `__ISSUE_REPO__` with a private `owner/repo`.
+   Do not add `ORCA_CLI_COMMAND`: the round clears it, because wrap-up refuses `--apply` when it is set.
+2. Load it: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
+
+Unload it: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/life.example.wrap-up.plist`.
+
+Proof: `launchctl print gui/$(id -u)/life.example.wrap-up` shows the job with `run interval = 600 seconds`.
+To see a round without waiting, run `launchctl kickstart gui/$(id -u)/life.example.wrap-up`, then read
+`~/.orca/logs/wrap-up-scheduled.log` for a `round ok` line.
 
 ## Traceable precheck lines
 
@@ -47,8 +83,8 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 |--------|----------|--------|
 | `script/fleet-watch.py` | Yes (as `fleet-watch`) | Five minute watchdog; append-only private state and logs; coordinator already enabled elsewhere |
 | `script/wrap-up.sh --scheduled` | Yes (as `wrap-up-scheduled`) | Enabled on every Orca host (headless host stays manual); bounded cleanup round inside `WRAP_UP_PRECHECK_TIMEOUT`, logs skipped repos and optional issue body |
-| `script/sync-team-skills.sh --check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |
-| `script/team-audit.sh`, `bin/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics optional |
+| `script/agent-team.sh check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |
+| `script/team-audit.sh`, `script/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics skipped when `bun` is missing |
 | `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; no merge; owner reviews |
 | `script/fleet-pull.sh`, `script/fleet-toolchain-check.sh` | Yes (as `fleet-toolchain`) | Daily coordinator pull and toolchain check and upgrade |
 | `script/automation-precheck-staging-daily.sh` | Yes (as `staging-daily-1900`) | Daily `0 19 * * *` (`Asia/Taipei`) coordinator check; skips when staging equals `origin/main` and otherwise wakes the coordinator for staging deploy and `/staging-review` |

@@ -55,11 +55,13 @@ fi
 # Adoption seeds only team-facts.md and deploy-facts.md under docs/agents/ (preserving existing files) and copies no team docs.
 A=$(mktemp -d); trap 'rm -rf "$A"' EXIT
 mkdir -p "$A/proj/docs/agents"; echo "# project owned" > "$A/proj/docs/agents/deploy-facts.md"
-DOTFILES="$here" bash "$here/script/adopt-agent-team.sh" --project-name acme "$A/proj" >/dev/null 2>&1
+git -C "$A/proj" init -q
+DOTFILES="$here" bash "$here/script/agent-team.sh" project "$A/proj" --project-name acme >/dev/null 2>&1
 [ -f "$A/proj/docs/agents/team-facts.md" ] && [ "$(cat "$A/proj/docs/agents/deploy-facts.md")" = "# project owned" ] \
   && ok "adoption seeds team-facts.md and preserves deploy-facts.md" \
   || bad "adoption failed to seed team-facts.md or preserve deploy-facts.md"
-for d in team.md coordinator-operations.md engineering-integration.md architect-pm-work.md elon-dispatch.md qa-sdet-execution.md release-manager-work.md persistent-memory-protocol.md pstack-attribution.md process-review.md; do
+# agent-team.sh syncs team.md, elon-dispatch.md and release-manager-work.md into projects (TEMPLATE_SYNC_FILES); the rest stay in the template.
+for d in coordinator-operations.md engineering-integration.md architect-pm-work.md qa-sdet-execution.md persistent-memory-protocol.md pstack-attribution.md process-review.md; do
   [ ! -e "$A/proj/docs/agents/$d" ] && ok "adoption does not copy $d" || bad "adoption still copies $d into project docs/agents/"
 done
 has "$T/docs/agents/coordinator-operations.md" 'Production job order' "template coordinator-operations holds the production job order"
