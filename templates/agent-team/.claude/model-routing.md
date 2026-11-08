@@ -6,6 +6,8 @@ Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for
 
 Owner rule (2026-11-06, replaces the 2026-11-01 rule): implementation tickets run on Cursor `composer-2.5`, then Claude (`--agent claude --model sonnet --effort medium`) only when that quota is out, no fleet wide lane limit (owner 2026-11-04). Host caps count every worker and alone decide how many run at once; extra ready batches queue. Every other role, reviewers included, starts on Claude, Cursor or Antigravity per the table below. Antigravity and Cursor workers run without the Claude hooks and the `settings.json` deny list; the strike rule in `AGENTS.md` is their guard.
 
+Owner rule (2026-11-09): tickets that change only docs, or one small script (about 100 changed lines or less, one script plus its test, nothing touching money, sign in, hooks, merge or deploy gates), run on the Light tier. Everything else keeps its tier.
+
 ## Coordinator effort (owner 2026-11-03)
 
 Antigravity `gemini-4-argon-medium` (`--agent antigravity --model gemini-4-argon-medium`) is the default for Elon; Claude (`--agent claude --model opus --effort medium`) is the fallback. Provider, host and usage caps still apply. Verify the effective model and effort of a running session separately from saved presets.
@@ -16,7 +18,7 @@ Antigravity `gemini-4-argon-medium` (`--agent antigravity --model gemini-4-argon
 | --- | --- | --- |
 | Strong reasoning | Ambiguous decisions, specs, security, financial and PR review | elon (`gemini-4-argon-medium` default; Claude Opus medium fallback), architect-pm, secops-finops, qa-sdet |
 | Workhorse | Implementation, coordination, QA, release, support, drafts | fullstack-dev, release-manager, sales-marketing, support-csm |
-| Light | Clerical subtasks: formatting, extraction, changelog fragment lines | none by default, chosen per task |
+| Light | Clerical subtasks (formatting, extraction, changelog fragment lines), docs only tickets, and small scripts | none by default, chosen per task |
 
 Strong tier roles (`elon`, `architect-pm`, `secops-finops`, `qa-sdet`) are never started with `~/dotfiles/script/start-cursor-worker.sh` or any Cursor model; run `python3 ~/dotfiles/script/usage-gate.py pick --role <role>` and pass its flags to `orca orchestration worker-start`. The helper is for `fullstack-dev`, `release-manager` and Light work only.
 A session is plain Claude Code until the owner calls the agent team with `/elon`, `/ceo`, `/crew` or the `team` launcher; Elon then follows `elon.md`.
@@ -46,7 +48,7 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 | --- | --- | --- | --- |
 | Strong | `--agent claude --model opus --effort high` | none (Cursor runs only `composer-2.5`, owner 2026-11-04) | `--agent antigravity --model gemini-4-argon-high` |
 | Workhorse | `--agent claude --model sonnet --effort medium` | none (Cursor runs only `composer-2.5`) | `--agent antigravity --model gemini-4-argon-medium` |
-| Light | `--agent claude --model haiku` | `--agent cursor --model composer-2.5` | `--agent antigravity --model gemini-3.8-flash` |
+| Light | `--agent claude --model haiku` | `--agent cursor --model composer-2.5` | `--agent antigravity --model gemini-3.8-flash-medium` |
 
 Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemini-3.8-flash`.
 
