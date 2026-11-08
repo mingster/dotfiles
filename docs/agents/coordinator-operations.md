@@ -54,7 +54,11 @@ The team coordinates work across a fleet of Macs paired in Orca ADE (`orca envir
 
 ### Host specialization and routing order
 
-Check fleet load before dispatch with `~/.claude/state/fleet-load.sh`:
+Host names, 1-minute load ceilings and roles live in the private fleet-watch config (`host_caps`, `host_load_ceilings`, `worker_placement.order` and `worker_placement.roles`). `~/.claude/state/fleet-load.sh` is the default load sensor.
+
+**Automatic placement (`script/worker-startup.sh`):** when `--run` has no `--on`, `script/worker-placement.py` reads the sensor and config, walks `worker_placement.order`, skips hosts tagged `heavy`, `release` or `browser` for ordinary code work (browser briefs route to the `browser` role only), skips hosts with no readable load, and picks the first host whose 1-minute load is under its ceiling. It prints one line (`worker-placement: host=<name> load_1m=<value>`), sets `--on` for a remote choice, and refuses with one line listing each considered host's load when every candidate is at or over its ceiling. Explicit `--on` skips placement; the usage gate (#748) still applies to the named host. Dry check only: `worker-startup.sh --pick-host-only --spec <brief>`.
+
+**Manual reference order** (must match `worker_placement.order` in the live config):
 
 1. **Primary code host (also hosts the coordinator):** first choice for code, test and review while 1-minute load < 12.
 2. **First overflow host:** next choice while 1-minute load < 8.
