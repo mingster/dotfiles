@@ -4,7 +4,7 @@ Long reference moved out of the root [README](../../README.md). Read it when you
 
 ## Agent team template
 
-Use `script/agent-team.sh` for machine setup, new projects and safe reset previews. See [Agent team setup](agent-team-setup.md) for commands, backups and owner steps.
+Use `script/agent-team.sh` for machine setup (`machine`), new projects (`project`) and drift checks (`check`). See [Agent team setup](#agent-team-setup) below for commands and owner steps.
 
 The team files give agents their jobs, working rules and repeatable steps. Elon is the owner's window and only contact, off the main line: he sets priorities weekly, handles `needs-elon` exceptions, dispatches ready issues within the usage and load gates, and contacts the owner only on Owner-Reserved decisions. See [Agent team architecture](agent-team-architecture.md) for the full design.
 
@@ -25,7 +25,7 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 
 The adoption script installs every role in the template, including support.
 
-Team skills come from [templates/agent-team/.agents/skills](../../templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `deploy` promotes releases, `staging-review` audits daily and weekly staging, `grill-backlog` and `team-grill-backlog` clear pre-build and owner decisions, `wrap-up` prunes finished worktrees and branches, `team-audit` checks team files and metrics, and `poteto-mode` (with `ORCA-ADAPTER.md`, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop` and the `principle-*` skills) supplies the vendored pstack playbooks and decision cues. Adoption runs `script/sync-team-skills.sh` to generate project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and sync again; do not edit generated copies.
+Team skills come from [templates/agent-team/.agents/skills](../../templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `deploy` promotes releases, `staging-review` audits daily and weekly staging, `grill-backlog` and `team-grill-backlog` clear pre-build and owner decisions, `wrap-up` prunes finished worktrees and branches, `team-audit` checks team files and metrics, and `poteto-mode` (with `ORCA-ADAPTER.md`, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop` and the `principle-*` skills) supplies the vendored pstack playbooks and decision cues. `script/agent-team.sh project` generates project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and rerun it; `script/agent-team.sh check` fails on drift. Do not edit generated copies.
 
 Team skills add project policy and call Orca and Matt Pocock skills for shared procedures. See [Skills inventory](skills-inventory.md) for the three-tier layout and upstream sync rules.
 
@@ -59,7 +59,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | Babysit, ship and wrap-up | The 5 minute pass (`fleet-watch.py`) starts one fix worker or a Shipping run (`script/ship.sh`) that squash merges and reads back as merged; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, `/wrap-up` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
 | Deploy and staging review | Staging deploys daily at 19:00 Taiwan time, followed by `/staging-review` and full regression; a green review leads to a one-line summary and same-day owner go for production. | `/deploy local`, `/deploy staging`, `/staging-review`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
 | Status and daily run | Get company status (**Now**, **Needs owner**, **Running**) or a recap, or run the project's daily checklist. | `/elon status`, `/elon daily run` | `/elon status Show Now, Needs owner and Running.` |
-| Audit and weekly update | Orca runs `team-audit.sh` and `team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the owner's word; `weekly-update.sh` opens three upstream PRs for owner review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
+| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the owner's word; `weekly-update.sh` opens three upstream PRs for owner review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
 | Support | Elon routes fixes and `support-csm` drafts the customer reply in the customer's language; the owner approves before sending or closing. | Ask Elon to assign `support-csm` | Elon, resolve this support ticket and bring me the reply draft for approval. |
 
 ## Fleet and load distribution
@@ -88,11 +88,10 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 
 | Tool | Purpose |
 | --- | --- |
-| `script/agent-team.sh` | Single entry point for `machine` setup, `project` adoption, safe `reset` (diff and backup before `--yes`) and `all`. |
+| `script/agent-team.sh` | Single entry point: `machine` setup, `project` adoption (also refreshes generated team skills), `sync`, read-only `check` for drift, and `all`. |
 | `script/adopt-agent-team.sh` | Copies the agent team template (`.claude/agents/`, hooks, `model-routing.md`, `team.md`, facts skeletons) into a project and syncs team skills. |
 | `script/init-agent-project.sh` | Seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, appends `## Agent skills` to `AGENTS.md`, and with `--labels` creates the five triage labels on GitHub. |
 | `script/agent-project-autoinit.sh` | Claude Code `SessionStart` hook that auto-runs `init-agent-project.sh --labels` for unseeded `mingster/*` repos. |
-| `script/sync-team-skills.sh` | Generates committed copies of Tier 2 skills from `templates/agent-team/.agents/skills/` into a project; `--check` fails on drift. |
 | `script/sync-mattpocock-skills.sh` | Refreshes the 22 vendored Matt Pocock skills from upstream and reapplies `CONTEXT.md` naming and `.mattpocock-local.patch`. |
 | `script/check-skill-collisions.sh` | Checks for project skills that shadow shared or Orca-bundled skills, broken symlinks, or missing `SKILL.md` files. |
 | `script/bootstrap-asdf-tools.sh` | Installs and pins `python` and `nodejs` from `.tool-versions` via `asdf`. |
@@ -151,8 +150,8 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | --- | --- |
 | `script/wrap-up.sh` | Previews and prunes finished worktrees, merged branches (protecting `archive/*` tags), ended Orca terminals/panes (25s budget), stale temp browsers, Chrome clones and agent temp files (`--fleet`, `--scheduled`). |
 | `script/worktree-idle.py` | Exits 0 only when `orca terminal list` positively confirms a worktree has zero active terminals. |
-| `script/team-audit.sh` | Deterministic audit of skill sync, 800-word role budget, banned wording, skill frontmatter/locks, helpers, SDLC rules, Matt Pocock upstream drift, ready-brief fields, `Owner-approved:` trailers, and `script-list`. |
-| `bin/team-audit-metrics.ts` | Computes the five weekly delivery metrics from GitHub PRs and issues (`median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, `reopened_or_hotfix_rate`). |
+| `script/team-audit.sh` | Deterministic audit of skill sync (`agent-team.sh check` per project), 800-word role budget, banned wording, skill frontmatter/locks, helpers, SDLC rules, Matt Pocock upstream drift, ready-brief fields, `Owner-approved:` trailers, and `script-list`. |
+| `script/team-audit-metrics.ts` | `bun script/team-audit-metrics.ts --repo <owner/name> [--days <n>] [--json] [--times <stages.tsv>]` prints the weekly delivery metrics from GitHub PRs and issues (`median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, `reopened_or_hotfix_rate`) and, with `--times`, the Orca stage medians. `--fixture <data.json>` reads a file instead of GitHub. No project keeps its own copy. |
 | `script/weekly-update.sh` | Weekly maintenance runner that updates Matt Pocock skills, pstack template skills, Bun and Node LTS across three tested PRs and one owner summary. |
 | `script/prepend-recent-change.ts` | Prepends dated change summaries to project changelog or recent-change files. |
 | `script/shellcheck-dotfiles.sh` | Runs `shellcheck --severity=error` on the repository's shell entrypoints. |
@@ -191,3 +190,81 @@ Project instructions (`AGENTS.md`) load always. Short cross-project rules live i
 ```bash
 bash script/backup-claude-desktop.sh   # Claude Desktop settings into init/
 ```
+
+## Agent team setup
+
+Use `script/agent-team.sh` as the entry point for machine setup and project adoption.
+Run `script/agent-team.sh --help` for the supported commands.
+
+```bash
+script/agent-team.sh machine
+script/agent-team.sh project /path/to/project --project-name acme
+script/agent-team.sh check /path/to/project
+script/agent-team.sh all /path/to/project
+```
+
+Machine setup configures Claude Code, Cursor, Antigravity, Orca and shared
+skill links. Verification reports missing commands and owner login steps without
+reading credential files. Missing owner prerequisites are warnings; a failed setup
+script is an error. Use `--dry-run` to preview machine setup without running it.
+
+Missing provider CLIs are installed once using `install_claude.sh`, the official
+Cursor and Antigravity installers. Installer references:
+[Claude Code](https://code.claude.com/docs/en/setup),
+[Cursor](https://cursor.com/docs/cli/installation) and
+[Antigravity](https://antigravity.google/docs/cli/install/).
+Existing differing configuration files are moved to `<file>.bak.<date>` before
+replacement. `setup-orca.sh` links `~/.orca/presets.json` to `~/dotfiles/.orca/presets.json`
+after backing up any differing file. Usage gate (`usage-gate-hook.py`) and worker budget
+(`worker-budget.py`) hooks are composed into Claude Code, Cursor and Antigravity hook
+files via `setup-agent-hooks.sh`. Logins and credentials are never migrated or inspected.
+Orca installation and sign in remain owner steps when its CLI is missing.
+
+`project` adopts a project: it installs the team files, generated team skills and tracker seeds, and
+`team-audit.sh` then reports findings. The owner or architect must review
+`docs/agents/team.md` and fill in
+`docs/agents/team-facts.md`, `docs/agents/deploy-facts.md` and
+`docs/agents/domain.md`, then establish the project's domain context and deployment
+commands. Label creation requires GitHub access. Customized role files are
+preserved and reported for manual reconciliation. Product facts, domain context, ADRs and intents
+stay project owned; never put product facts in generated team skills. `check` is read only and
+exits non zero on drift. `all` configures the machine first, then runs `project`; `all --dry-run`
+previews both stages.
+
+The commands use the vendored skills already in dotfiles. Updating that snapshot
+from upstream is a separate maintainer operation through
+`script/weekly-update.sh` (which refreshes Matt Pocock skills, pstack template skills,
+Bun and Node LTS across three tested PRs and one summary for the owner's go) or
+`script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
+changes the dotfiles checkout. No command commits or pushes the target project.
+
+### Merging through lead-merge.sh
+
+A merge worker Elon dispatches runs `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
+(or `--batch <N> <N>` once per wake from the `lead-elon` worktree, and `--mechanical`
+for docs-only PRs); Elon dispatches the worker only.
+The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
+open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
+only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
+and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
+`ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the merge check.
+
+### Interpreters (asdf)
+
+The root `.tool-versions` pins python and nodejs. Every host runs both through asdf, so
+`python3` and `node` resolve the same way everywhere. Scripts keep `#!/usr/bin/env python3`
+and never hardcode an interpreter path.
+
+The owner runs the bootstrap once per host:
+
+```bash
+bash ~/dotfiles/script/bootstrap-asdf-tools.sh
+```
+
+It installs asdf if missing, adds the plugins, installs the pinned versions, writes the same
+pins into `~/.tool-versions`, and prints the resolved `python3` and `node`. A second run
+changes nothing and says so. Pass `--dotfiles <dir>` to read the pins from another checkout.
+
+Tests that set `HOME` to a temp dir source `script/tests/lib/asdf-pin.sh` (python tests import
+`asdf_pin.py`) first. It exports the version pins and `ASDF_DATA_DIR`, since asdf looks for its
+installs under `$HOME/.asdf`. `script/tests/asdf-pin-coverage.test.sh` fails when a test skips it.
