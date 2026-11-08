@@ -4,7 +4,7 @@
 
 | Role | File | Stage | Primary output |
 | --- | --- | --- | --- |
-| Elon (CEO) | `elon.md` | Executive supervision | Priorities, labelled exceptions, owner contact, and until merge on review goes live, worker dispatch and merges |
+| Elon (CEO) | `elon.md` | Executive supervision | Priorities, labelled exceptions, owner contact, and until merge on review goes live, worker dispatch and merge-worker dispatch |
 | architect-pm | `architect-pm.md` | Plan, Design | One document per feature (intent, spec and tickets), issue triage, weekly list |
 | fullstack-dev | `fullstack-dev.md` | Build | Isolated branch, own tests by TDD, change report. Cursor Composer 2.5; Claude only when that quota is out |
 | qa-sdet | `qa-sdet.md` | Test, Maintain | Automated PR review, old QA review until merge on review goes live, weekly staging review |
@@ -34,7 +34,7 @@ Every change to a role definition requires human review and explicit approval of
 2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when Elon judges a full crew unnecessary.
 3. **Reports:** Every role reports to Elon. Elon dispatches fullstack-dev and qa-sdet, dispatches publication and merge workers for reviewed branches, and takes builder and reviewer questions. Docs-only PRs (specs, tickets, marketing copy) take the mechanical lane on checks. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go); a failed gate is its job to diagnose and report. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
 4. **Monitor and close workers:** follow Delivery contract for the child ledger, inbox classification, read-only liveness and closure; use the official Orca guide and model-routing for lifecycle transitions.
-5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. Otherwise the responsible coordinator merges passing branches under `.claude/model-routing.md` and reports to Elon. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
+5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. Otherwise Elon dispatches merge workers for passing branches under `.claude/model-routing.md` and reports progress to the owner when required. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
 
 Usage gate by coordinator host: `usage-gate-hook.py` gates every worker start from Claude Code (`.claude/settings.json`), Cursor (`~/.cursor/hooks.json`) and Antigravity (`~/.gemini/config/hooks.json`). The Cursor and Antigravity entries come from `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`; a coordinator that starts workers from either IDE first confirms its entry is installed, and otherwise runs in Claude Code.
 
