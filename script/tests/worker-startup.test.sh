@@ -513,5 +513,159 @@ set -e
 [ "$ec" = 0 ] && ok || bad "cursor run exits 0 ($ec)"
 grep -q -- '--run run_y' "$tmp/cursor.args" && grep -q composer-2.5 "$tmp/cursor.args" && ok || bad "cursor helper args"
 
+# --- AGENT_STATE_DIR config resolution + state dir fast-forward in host-check ---
+state_repo="$tmp/agent-state"
+state_bare="$tmp/agent-state.git"
+make_repo "$state_repo" "$state_bare"
+app_from_state="$tmp/app-from-state"
+app_from_state_bare="$tmp/app-from-state.git"
+make_repo "$app_from_state" "$app_from_state_bare"
+cat >"$state_repo/fleet-pull.json" <<EOF
+{"hosts":[],"repos":["$app_from_state"]}
+EOF
+git -C "$state_repo" add fleet-pull.json
+git -C "$state_repo" commit -qm state-cfg
+git -C "$state_repo" push -q origin main
+origin_commit "$state_bare"
+origin_commit "$app_from_state_bare"
+state_tip=$(git --git-dir="$state_bare" rev-parse refs/heads/main)
+app_state_tip=$(git --git-dir="$app_from_state_bare" rev-parse refs/heads/main)
+set +e
+env -u FLEET_PULL_CONFIG PATH="$bin:$PATH" AGENT_STATE_DIR="$state_repo" bash "$script" --host-check 2>"$tmp/h-state.err"
+ec=$?
+set -e
+[ "$ec" = 0 ] && ok || bad "host-check with AGENT_STATE_DIR/fleet-pull.json exits 0 ($ec) $(cat "$tmp/h-state.err")"
+[ "$(git -C "$state_repo" rev-parse HEAD)" = "$state_tip" ] && ok || bad "host-check fast-forwards AGENT_STATE_DIR"
+[ "$(git -C "$app_from_state" rev-parse HEAD)" = "$app_state_tip" ] && ok || bad "host-check fast-forwards repo from AGENT_STATE_DIR config"
+
+# --- Remote start (--on): pulls dotfiles, app checkout and state dir on target host, and refuses on failure ---
+rem_home="$tmp/rem-home"
+mkdir -p "$rem_home"
+rem_dotfiles="$rem_home/dotfiles"
+rem_dotfiles_bare="$tmp/rem-dotfiles.git"
+make_repo "$rem_dotfiles" "$rem_dotfiles_bare"
+mkdir -p "$rem_dotfiles/script"
+cp "$script" "$rem_dotfiles/script/worker-startup.sh"
+chmod +x "$rem_dotfiles/script/worker-startup.sh"
+git -C "$rem_dotfiles" add script/worker-startup.sh
+git -C "$rem_dotfiles" commit -qm add-startup
+git -C "$rem_dotfiles" push -q origin main
+
+rem_state="$rem_home/agent-state"
+rem_state_bare="$tmp/rem-state.git"
+make_repo "$rem_state" "$rem_state_bare"
+rem_app="$tmp/rem-app"
+rem_app_bare="$tmp/rem-app.git"
+make_repo "$rem_app" "$rem_app_bare"
+cat >"$rem_state/fleet-pull.json" <<EOF
+{"hosts":[],"repos":["$rem_dotfiles","$rem_app"]}
+EOF
+git -C "$rem_state" add fleet-pull.json
+git -C "$rem_state" commit -qm rem-cfg
+git -C "$rem_state" push -q origin main
+
+origin_commit "$rem_dotfiles_bare"
+origin_commit "$rem_state_bare"
+origin_commit "$rem_app_bare"
+rem_dotfiles_tip=$(git --git-dir="$rem_dotfiles_bare" rev-parse refs/heads/main)
+rem_state_tip=$(git --git-dir="$rem_state_bare" rev-parse refs/heads/main)
+rem_app_tip=$(git --git-dir="$rem_app_bare" rev-parse refs/heads/main)
+
+cat >"$bin/claude" <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+chmod +x "$bin/claude"
+
+orca_remote_stub="$tmp/orca-remote"
+cat >"$orca_remote_stub" <<EOS
+#!/usr/bin/env bash
+set -e
+log="\${ORCA_STUB_LOG:-/dev/null}"
+printf '%s\n' "\$0 \$*" >>"\$log"
+case " \$* " in
+  *" worktree create "*)
+    printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"$wt_proof\"}}}"
+    exit 0
+    ;;
+  *" terminal create "*)
+    cmd=""
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = "--command" ]; then cmd=\$2; break; fi
+      shift
+    done
+    set +e
+    HOME="$rem_home" AGENT_STATE_DIR="$rem_state" FLEET_PULL_CONFIG="" PATH="$bin:/usr/bin:/bin" bash -c "\$cmd" >"$tmp/rem-term.out" 2>&1
+    rc=\$?
+    set -e
+    printf '%s' "\$rc" >"$tmp/rem-term.rc"
+    printf '%s\n' '{"ok":true,"result":{"terminal":{"handle":"term_rem_1"}}}'
+    exit 0
+    ;;
+  *" terminal wait "*)
+    rc=\$(cat "$tmp/rem-term.rc")
+    printf '%s\n' "{\"ok\":true,\"result\":{\"wait\":{\"satisfied\":true,\"status\":\"exited\",\"exitCode\":\$rc}}}"
+    exit 0
+    ;;
+  *" terminal close "*)
+    printf '%s\n' '{"ok":true,"result":{}}'
+    exit 0
+    ;;
+  *" orchestration worker-start "*)
+    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_rem","state":"ready"}}'
+    exit 0
+    ;;
+esac
+exit 99
+EOS
+chmod +x "$orca_remote_stub"
+
+# Dirty remote app checkout -> remote start must refuse before worker-start
+echo dirty_change >>"$rem_app/README"
+: >"$tmp/orca-rem-fail.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-rem-fail.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_rem_dirty --spec "$spec_file" --title remjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --on rem-env --name n_rem --repo "path:$rem_app" 2>"$tmp/rem-dirty.err"
+ec_rem_dirty=$?
+set -e
+[ "$ec_rem_dirty" -ne 0 ] && ok || bad "remote start with dirty target app checkout should exit non-zero"
+grep -q 'orchestration worker-start' "$tmp/orca-rem-fail.log" && bad "remote start should not worker-start when target host check fails" || ok
+
+# Clean remote checkouts -> remote start pulls dotfiles, state dir, and app checkout on target host and starts worker
+git -C "$rem_app" checkout -q -- README
+: >"$tmp/orca-rem-ok.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-rem-ok.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_rem_ok --spec "$spec_file" --title remjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --on rem-env --name n_rem --repo "path:$rem_app" 2>"$tmp/rem-ok.err"
+ec_rem_ok=$?
+set -e
+[ "$ec_rem_ok" = 0 ] && ok || bad "remote start with clean target checkouts exits 0 ($ec_rem_ok) $(cat "$tmp/rem-ok.err") $(cat "$tmp/rem-term.out" 2>/dev/null)"
+[ "$(git -C "$rem_dotfiles" rev-parse HEAD)" = "$rem_dotfiles_tip" ] && ok || bad "remote dotfiles fast-forwarded"
+[ "$(git -C "$rem_state" rev-parse HEAD)" = "$rem_state_tip" ] && ok || bad "remote state dir fast-forwarded"
+[ "$(git -C "$rem_app" rev-parse HEAD)" = "$rem_app_tip" ] && ok || bad "remote app checkout fast-forwarded"
+grep -q 'orchestration worker-start' "$tmp/orca-rem-ok.log" && ok || bad "remote start dispatches after target host check"
+
+# --- Stall restart mode (--task + --retry-of + --worktree) ---
+: >"$tmp/orca-retry.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-retry.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_retry --task task_123 --retry-of disp_old --worktree "wt::/p" \
+  --agent claude --from term_coord 2>"$tmp/retry.err"
+ec_retry=$?
+set -e
+[ "$ec_retry" = 0 ] && ok || bad "stall restart via worker-startup exits 0 ($ec_retry) $(cat "$tmp/retry.err")"
+grep -q 'orchestration worker-start.*--task task_123.*--retry-of disp_old' "$tmp/orca-retry.log" && ok || bad "stall restart forwards --task and --retry-of to worker-start"
+
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -90,6 +90,9 @@ class WorkerStallHelpers(unittest.TestCase):
         w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
         args = fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg)
         self.assertIsNotNone(args)
+        self.assertEqual(args[0], 'bash')
+        self.assertTrue(str(args[1]).endswith('worker-startup.sh'))
+        self.assertNotIn('worker-start', args)
         self.assertIn('--task', args)
         self.assertIn('--run', args)
         self.assertEqual(args[args.index('--run') + 1], 'run_fixture')
@@ -248,7 +251,7 @@ class WorkerStallPass(unittest.TestCase):
 
         def rpc(*a):
             seq.append(a)
-            if a[:2] == ('orchestration', 'worker-start'):
+            if '--retry-of' in a:
                 starts.append(a)
                 nonlocal start_attempts
                 start_attempts += 1
@@ -273,6 +276,8 @@ class WorkerStallPass(unittest.TestCase):
         _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 2, [], term_times, rpc)
         self.assertIn('stall_restart=d1', bits2)
         self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][0], 'bash')
+        self.assertTrue(str(starts[0][1]).endswith('worker-startup.sh'))
         self.assertIn('--agent', starts[0])
         self.assertIn('--run', starts[0])
         self.assertEqual(starts[0][starts[0].index('--run') + 1], 'run_fixture')
@@ -310,8 +315,10 @@ class WorkerStallPass(unittest.TestCase):
         }
         _, bits = fw.worker_stall_pass(cfg, state, T0, [], {'term_fix': OLD_MS}, rpc)
         self.assertIn('stall_restart=d_old', bits)
-        starts = [a for a in seq if len(a) >= 4 and a[:2] == ('orchestration', 'worker-start')]
+        starts = [a for a in seq if len(a) >= 4 and '--retry-of' in a]
         self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][0], 'bash')
+        self.assertTrue(str(starts[0][1]).endswith('worker-startup.sh'))
         self.assertIn('--run', starts[0])
         self.assertEqual(starts[0][starts[0].index('--run') + 1], 'solo_run')
 

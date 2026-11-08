@@ -63,7 +63,13 @@ check "case difference passes" "ok coordinator coordinator-a, state fresh" "NO D
 setup
 echo more >> "$work/seed/coordinator.conf"; git -C "$work/seed" commit -qam two; git -C "$work/seed" push -q origin HEAD:main
 run coordinator-a
-check "behind origin" "NO DISPATCH: state repo is behind origin/main"
+check "clean state repo fast-forwards to origin/main" "ok coordinator coordinator-a, state fresh" "NO DISPATCH"
+
+setup
+echo more >> "$work/seed/coordinator.conf"; git -C "$work/seed" commit -qam two; git -C "$work/seed" push -q origin HEAD:main
+echo local-only >> "$work/state/local-diverge"; git -C "$work/state" add local-diverge; git -C "$work/state" commit -qm local
+run coordinator-a
+check "behind origin (diverged)" "NO DISPATCH: state repo is behind origin/main"
 
 setup; age_sync 45; run coordinator-a
 check "stale .sync-ok" "NO DISPATCH: .sync-ok is older than 30 minutes"
