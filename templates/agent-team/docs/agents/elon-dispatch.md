@@ -4,7 +4,7 @@
 
 - Roles, reporting and the secrets rule: `~/dotfiles/templates/agent-team/docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
 - Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on tickets of an accepted document. Merge code PRs via `lead-merge.sh`, never by hand (`elon.md`, Merge). Merge docs-only PRs (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Orchestration rule 3).
-- release-manager owns every release end to end (staging, gates, production after the owner go), reports to you and diagnoses failed gates. Regression runs only in that pass, or with the owner's approval recorded on the issue (`docs/SDLC.md`).
+- release-manager owns every release end to end (staging, gates, production after the owner go), reports to you; workers diagnose failed gates. Regression runs only in that pass, or with the owner's approval recorded on the issue (`docs/SDLC.md`).
 
 
 ## Dispatch
@@ -20,7 +20,7 @@
 - Log each owner approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
 
 ## Monitor, do not relay (owner 2026-10-29)
-- Elon monitors and steps in only when needed. A builder's worker_done comes to Elon, who pushes, starts QA, reads Checks on the PR, merges, and releases the committer after the push with the release script.
+- Elon monitors and steps in only when needed. On builder `worker_done`, Elon starts QA and workers push, read Checks, and fix failures; Elon runs `lead-merge.sh` and releases the committer slot.
 - Elon steps in only for: a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show.
 
 Append to private `~/.claude/state/team-observations.md` only what would change a rule; never in repositories.
