@@ -31,16 +31,13 @@ check() {
 SCRIPT="$here/agent-team.sh"
 
 # ── 1. Retired scripts moved to _outdated/ and wired callers ──────────────────
-if [ ! -e "$real_dotfiles/script/adopt-agent-team.sh" ] \
-  && [ ! -e "$real_dotfiles/script/init-agent-project.sh" ] \
-  && [ ! -e "$real_dotfiles/script/sync-team-skills.sh" ] \
-  && [ ! -e "$real_dotfiles/script/agent-project-autoinit.sh" ] \
-  && [ ! -e "$real_dotfiles/script/agent-project-autoinit.test.sh" ] \
-  && [ -f "$real_dotfiles/_outdated/script/adopt-agent-team.sh" ] \
-  && [ -f "$real_dotfiles/_outdated/script/init-agent-project.sh" ] \
-  && [ -f "$real_dotfiles/_outdated/script/sync-team-skills.sh" ] \
-  && [ -f "$real_dotfiles/_outdated/script/agent-project-autoinit.sh" ] \
-  && [ -f "$real_dotfiles/_outdated/script/agent-project-autoinit.test.sh" ]; then
+retired_ok=1
+for n in adopt-agent-team init-agent-project sync-team-skills agent-project-autoinit; do
+  [ ! -e "$real_dotfiles/script/$n.sh" ] && [ -f "$real_dotfiles/_outdated/script/$n.sh" ] || retired_ok=0
+done
+[ ! -e "$real_dotfiles/script/agent-project-autoinit.test.sh" ] \
+  && [ -f "$real_dotfiles/_outdated/script/agent-project-autoinit.test.sh" ] || retired_ok=0
+if [ "$retired_ok" -eq 1 ]; then
   check "retired adoption scripts and autoinit test moved to _outdated/" ok
 else
   check "retired adoption scripts and autoinit test moved to _outdated/" bad

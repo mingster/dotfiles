@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Append only sync-team-skills --check output for fleet automations (read-only drift report).
+# Append only agent-team.sh check output for fleet automations (read-only drift report).
 set -uo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
@@ -18,6 +18,6 @@ mkdir -p "$(dirname "$log")"
     printf 'skip: no project roots in %s\n' "$CONF"
     exit 0
   fi
-  DOTFILES="$DOTFILES" bash "$DOTFILES/script/sync-team-skills.sh" --check "${projects[@]}" \
+  DOTFILES="$DOTFILES" bash "$DOTFILES/script/agent-team.sh" check "${projects[@]}" \
     || printf 'drift or check failure (exit %s)\n' "$?"
 } >>"$log" 2>&1
