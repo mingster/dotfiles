@@ -226,11 +226,43 @@ settled() {
   git merge-base --is-ancestor "$1" origin/main 2>/dev/null && return 0
   [ -n "${2:-}" ] && [ "$(git rev-parse --verify -q "$1^{commit}")" = "$2" ]
 }
+guarded_orca_worktree_rm() { # <counter> <label> <path> [preview]
+  local counter=$1 label=$2 path=$3 rc=0 real_path oc
+  real_path=$(real "$path")
+  if [ "${4:-}" = preview ] || { [ "${dry:-0}" = 1 ] || [ "${apply:-0}" -eq 0 ]; }; then
+    printf 'Remove orca record %s\n' "$real_path"
+    return 0
+  fi
+  oc="${orca_bin:-${orca:-orca}}"
+  if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
+    :
+  elif ! command -v "$oc" >/dev/null 2>&1; then
+    return 0
+  fi
+  if declare -f orca_call >/dev/null 2>&1; then
+    orca_call worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
+  else
+    run_limited "${call_timeout:-60}" "$oc" worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "Warning: could not deregister Orca worktree for $label." >&2
+    if declare -f fail_item >/dev/null 2>&1; then
+      fail_item "$label" "orca worktree rm failed (exit $rc)"
+      guard_keep "$counter" "$label" 'orca worktree rm failed'
+    else
+      echo "Kept worktree $path ($label, orca worktree rm failed)" >&2
+    fi
+    return 1
+  fi
+  orca_removed=$((${orca_removed:-0}+1))
+  return 0
+}
 guarded_merged_worktree_remove() { # <path> <label>: after free_worktree's checks
   local rc=0
   limited git worktree remove -- "$1" >/dev/null 2>&1 || rc=$?
   if [ $rc != 0 ]; then echo "Kept worktree $1 ($2, removal failed)"; return 1; fi
   git worktree prune
+  guarded_orca_worktree_rm kept "$2" "$1" || return 1
 }
 guarded_merged_local_delete() { run git branch -D -- "$1" >/dev/null; } # <branch>: after drop_branch's checks
 guarded_merged_remote_delete() { # <branch>: after drop_branch's checks
@@ -443,6 +475,7 @@ guarded_finish_remove() { # <path>: after every check in finish_worker
   if [ "$dry" = 1 ]; then
     echo "[dry-run] git worktree remove -- $1"
     echo "[dry-run] git worktree prune"
+    guarded_orca_worktree_rm kept "worktree $1" "$1" preview
     return 0
   fi
   if ! git worktree remove -- "$1"; then
@@ -450,6 +483,7 @@ guarded_finish_remove() { # <path>: after every check in finish_worker
     exit 1
   fi
   git worktree prune
+  guarded_orca_worktree_rm kept "worktree $1" "$1" || exit 1
 }
 
 finish_worker() {
@@ -1182,10 +1216,23 @@ branch_free() { # <counter> <label> <branch>: after fresh_inventory, keeps the i
   if in_use "$wt"; then guard_keep "$1" "$2" "checked out in $wt, $busy"; else guard_keep "$1" "$2" "checked out in $wt"; fi
   return 1
 }
+worktree_pinned_in_orca() {
+  [ "${orca_pins_ok:-0}" -eq 1 ] || return 1
+  local p r
+  p=$(real "$1")
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    [ "$(real "$r" 2>/dev/null || printf '%s' "$r")" = "$p" ] && return 0
+  done < "$tmp/orca-pinned"
+  return 1
+}
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
   guard_paths "$1" "$2" "$3" || return
-  git worktree remove ${4:+"$4"} -- "$3" && return 0
-  echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
+  git worktree remove ${4:+"$4"} -- "$3" || {
+    echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
+  }
+  guarded_orca_worktree_rm "$1" "$2" "$3" || return 1
+  return 0
 }
 # A local branch with a commit on no origin ref holds work that exists only on this host: no delete path removes it,
 # whatever made it eligible, and an unreadable count keeps it too.
@@ -1274,7 +1321,16 @@ active_worktree() {
   done < "$tmp/active"
   return 1
 }
-removed=0; local_deleted=0; remote_deleted=0; kept=0; stale_deleted=0
+removed=0; orca_removed=0; local_deleted=0; remote_deleted=0; kept=0; stale_deleted=0
+orca_pins_ok=0
+: > "$tmp/orca-pinned"
+if [ -n "${ORCA_CLI_COMMAND:-}" ] || command -v "${orca_bin:-orca}" >/dev/null 2>&1; then
+  if orca_call worktree list --json > "$tmp/orca-worktrees" 2>/dev/null \
+    && jq -e '.ok != false and (.result.worktrees | type == "array")' "$tmp/orca-worktrees" >/dev/null; then
+    orca_pins_ok=1
+    jq -r '.result.worktrees[]? | select(.pinned == true) | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-pinned"
+  fi
+fi
 keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
 : > "$tmp/kept-worktrees"
@@ -1300,6 +1356,7 @@ process_worktree() {
   elif archive_branch "$branch"; then why='archive branch'
   elif case "${path##*/}" in lead-*) true ;; *) false ;; esac; then why='lead worktree'
   elif [ "$locked" -eq 1 ]; then why='locked'
+  elif worktree_pinned_in_orca "$path"; then why='pinned in Orca'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='dirty'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
@@ -1327,6 +1384,7 @@ process_worktree() {
     [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
   else
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
+    guarded_orca_worktree_rm kept "worktree $path" "$path" preview
     if [ "$apply" -eq 0 ] || guarded_worktree_remove kept "worktree $path" "$path" "$force"; then
       removed=$((removed+1))
     else
@@ -1563,7 +1621,7 @@ sweep_browsers
 if [ "$worktrees_only" -eq 1 ]; then
   [ "$main_update" -eq 0 ] || update_main
   if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
-  printf 'removed worktrees=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$local_deleted" "$kept"
+  printf 'removed worktrees=%s orca records=%s deleted local=%s deleted remote=0 kept=%s stale=0 stale deleted=0\n' "$removed" "$orca_removed" "$local_deleted" "$kept"
   printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
   missing_lsof_summary
   finish
@@ -1753,11 +1811,26 @@ if [ "$pr_ok" -eq 1 ]; then
     [ "$stale_failed" -eq 1 ] || stale_deleted=$((stale_deleted+1))
   done < "$tmp/names"
 fi
+# Drop Orca sidebar entries whose git worktree is already gone (for example a prior run removed git but not Orca).
+if [ "$apply" -eq 1 ] && [ "$orca_pins_ok" -eq 1 ]; then
+  repo_real=$(cd "$repo" && pwd -P)
+  while IFS= read -r op; do
+    [ -n "$op" ] || continue
+    [ -d "$op" ] && continue
+    case "$op" in "$repo_real"/*) ;; *) continue ;; esac
+    worktree_pinned_in_orca "$op" && continue
+    printf 'Remove orca record %s (git worktree already gone)\n' "$op"
+    guarded_orca_worktree_rm kept "orca record $op" "$op" || true
+  done < <(jq -r --arg root "$repo_real" '
+    .result.worktrees[]? | (.path // .workspacePath // empty) as $p
+    | select($p != "" and ($p | startswith($root)))
+    | select(.pinned != true) | $p' "$tmp/orca-worktrees")
+fi
 pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
   if [ "$apply" -eq 1 ]; then
-    pane_left=${WRAP_UP_PANE_TIMEOUT:-120}
+    pane_left=${WRAP_UP_PANE_TIMEOUT:-1800}
     round_left=$((deadline-SECONDS))
     if [ "$round_left" -gt 0 ] && [ "$round_left" -lt "$pane_left" ]; then
       pane_left=$round_left
@@ -1773,7 +1846,7 @@ if [ -f "$pane_script" ]; then
 fi
 update_main
 if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 'Completed counts:'; fi
-printf 'removed worktrees=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
+printf 'removed worktrees=%s orca records=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$orca_removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'last copies kept=%s\n' "$last_copy_kept"
 printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
@@ -1826,7 +1899,7 @@ REMOTE
       awk -v t="$ftag" '$0 == "@@begin-" t "@@" { on = 1; next } index($0, "@@end-" t "-") == 1 { on = 0; next } on' "$tmp/fleet-out" > "$tmp/fleet-body"
       cat "$tmp/fleet-body"
       if [ "$rstatus" -ne 0 ]; then echo "Warning: wrap-up failed on fleet host $fhost (status $rstatus); not counted." >&2; fail_item "fleet host $fhost" "wrap-up exited $rstatus"; continue; fi
-      counts=$(sed -n 's/^removed worktrees=\([0-9][0-9]*\) deleted local=\([0-9][0-9]*\) deleted remote=[0-9]* kept=\([0-9][0-9]*\) .*$/\1 \2 \3/p' "$tmp/fleet-body" | tail -n 1)
+      counts=$(sed -n 's/^removed worktrees=\([0-9][0-9]*\) orca records=[0-9][0-9]* deleted local=\([0-9][0-9]*\) deleted remote=[0-9]* kept=\([0-9][0-9]*\) .*$/\1 \2 \3/p' "$tmp/fleet-body" | tail -n 1)
       if [ -z "$counts" ]; then echo "Warning: no counts line from fleet host $fhost; not counted." >&2; continue; fi
       read -r c_removed c_local c_kept <<< "$counts"
       t_up=$((t_up+1)); t_removed=$((t_removed+c_removed)); t_local=$((t_local+c_local)); t_kept=$((t_kept+c_kept))

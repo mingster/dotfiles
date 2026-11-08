@@ -20,13 +20,24 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 
 | Name | Schedule (cron) | What the precheck does | Who reads the result | Pause |
 |------|-----------------|------------------------|----------------------|-------|
-| `fleet-watch` | `*/5 * * * *` | Runs `script/fleet-watch.py` once with private config and state; appends to `FLEET_WATCH_PRECHECK_LOG` | Elon and backup operators via `~/.orca/logs/fleet-watch.log` and orchestration digests configured in private fleet watch json | `install-fleet-automations.sh --uninstall` or `orca automations edit` on non coordinators leave it disabled |
-| `wrap-up-scheduled` | `0 */2 * * *` | Runs `script/wrap-up.sh --scheduled` one locked round on this host | Operators via `~/.orca/logs/wrap-up-scheduled.log` and optional GitHub issue from `WRAP_UP_ISSUE_REPO` | Same as other rows |
-| `sync-team-skills-drift` | `0 6 * * *` | `script/sync-team-skills.sh --check` for each root in `team-audit.local.conf`; appends to `SYNC_DRIFT_LOG` | Architect and Elon before skill edits; drift lines in the log | Same |
-| `team-audit-weekly` | `0 7 * * 1` | `script/team-audit.sh` plus `bin/team-audit-metrics.ts` when bun and the script exist; appends to `TEAM_AUDIT_WEEKLY_LOG` | Architect on the weekly line; full `/team-audit` skill still runs only when the owner asks | Same |
-| `weekly-update` | `0 8 * * 1` | `script/weekly-update.sh` via `automation-precheck-weekly-update.sh`; appends to `WEEKLY_UPDATE_LOG` | Owner reviews open upstream refresh PRs; script never merges or deploys | Same |
+| `fleet-watch` | `*/5 * * * *` | `script/automation-precheck-wrapper.sh` runs `script/fleet-watch.py` once | `~/.orca/logs/fleet-watch.log` (override `FLEET_WATCH_AUTOMATION_LOG`) | Same |
+| `wrap-up-scheduled` | `*/10 * * * *` | Wrapper runs `script/wrap-up.sh --scheduled` (per repo budget, round lock) | `~/.orca/logs/wrap-up-scheduled.log`; detail in `wrap-up-scheduled-detail.log` | Same |
+| `sync-team-skills-drift` | `0 6 * * *` | Wrapper runs `script/automation-precheck-sync-drift.sh` | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
+| `team-audit-weekly` | `0 7 * * 1` | Wrapper runs `script/automation-precheck-team-audit-weekly.sh` | `TEAM_AUDIT_WEEKLY_LOG` | Same |
+| `weekly-update` | `0 8 * * 1` | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
 
-Precheck logs default under `~/.local/state/agent-team/` unless overridden in `automations.env`.
+## Traceable precheck lines
+
+Every registered job runs its shell body through `script/automation-precheck-wrapper.sh`. Each run appends exactly one **start** and one **end** line to that job's log path (even when the inner script skips, the lock is held, or the command fails before the main script starts). Format:
+
+```text
+YYYY-MM-DDTHH:MM:SS±ZZZZ host=<short hostname> automation=<name> run=<pid> phase=start exit=- duration=0s summary=starting
+YYYY-MM-DDTHH:MM:SS±ZZZZ host=<short hostname> automation=<name> run=<pid> phase=end exit=<inner rc> duration=<seconds>s summary=<one line>
+```
+
+`hostname -s` is read at runtime. `summary` is `no change` when nothing set, `failed inner exit N` on failure, the last `wrap-up-scheduled` round line for wrap-up, or `AUTOMATION_TRACE_SUMMARY` when the inner script exports it. Test: `bash script/tests/automation-precheck-wrapper.test.sh`.
+
+Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unless overridden in `automations.env`.
 
 ## Automation scan (scripts in agent team docs and orca-team)
 

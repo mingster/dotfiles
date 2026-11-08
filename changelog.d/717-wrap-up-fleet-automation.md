@@ -1,0 +1,1 @@
+Scheduled wrap-up: per repo budget (fix riben exit 1 under shared 240s cap), */10 cron, traceable automation precheck wrapper, enable fleet hosts via installer; fold Orca `worktree rm` after git remove from #708.
