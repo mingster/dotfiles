@@ -1,0 +1,7 @@
+# Production hosts the guard treats as production (ssh, scp, rsync). One host or IPv4 per line.
+# Exact match, case-insensitive. Missing file = fail closed.
+prod
+prod.example.net
+192.0.2.10
+store.example.app
+pay.example.app

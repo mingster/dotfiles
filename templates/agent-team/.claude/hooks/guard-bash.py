@@ -55,6 +55,7 @@ APPROVAL_FILE_OVERRIDE: str = ""
 SIGN_IN_SCRIPT: str | None = None
 SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
+HOST_DEPLOY_PATTERNS: dict[str, list[re.Pattern]] = {}
 CONFIG_LOADED_FROM: str | None = None
 
 DEFAULT_SECRETS_DIR_PATTERN = r"(?:^|[/\s='\"<(])secrets(?:/|$|[\s'\"\)])"
@@ -109,7 +110,8 @@ SSH_REFUSED_FLAGS = {"ssh": set("FJS"), "scp": set("FJSD"), "sftp": set("FJSD")}
 GIT_SSH_ENV = re.compile(r"^(GIT_SSH|GIT_SSH_COMMAND|GIT_PROXY_COMMAND)=")
 
 _P, _U, _N = r"/[A-Za-z0-9._/@+-]*", r"[A-Za-z0-9@._-]+", r"[0-9]+"
-REMOTE_READ_ONLY = [re.compile(p) for p in (
+# guard-config.json `remote_read_only` replaces this list.
+DEFAULT_REMOTE_READ_ONLY = REMOTE_READ_ONLY = [re.compile(p) for p in (
     "true", "uptime", "free( -[hm])?", "df( -h)?", "cat /etc/os-release", "pg_lsclusters",
     "pm2 (status|ls|list|jlist)", f"pm2 logs {_U} --nostream( --lines {_N})?",
     f"systemctl status {_U}", f"journalctl -u {_U} -n {_N} --no-pager",
@@ -181,7 +183,7 @@ def load_guard_config(start_dir):
     global STAGE_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
-    global CONFIG_LOADED_FROM
+    global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY
 
     BLOCKED_SCRIPTS = set()
     PRODUCTION_HOSTS = set()
@@ -199,6 +201,8 @@ def load_guard_config(start_dir):
     SIGN_IN_SCRIPT = None
     SECRETS_STDIN_OK = []
     WORKTREE_ENV_ALLOW = []
+    HOST_DEPLOY_PATTERNS = {}
+    REMOTE_READ_ONLY = DEFAULT_REMOTE_READ_ONLY
     SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
     SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
     CONFIG_LOADED_FROM = None
@@ -329,6 +333,24 @@ def load_guard_config(start_dir):
     for item in cfg_expect("worktree_env_allow", list, "list") or []:
         if isinstance(item, str) and item.strip():
             WORKTREE_ENV_ALLOW.append(item.strip())
+
+    # ssh target -> the exact remote commands the promote and rollback scripts send. SHA40 stands for the
+    # release sha: such a command needs `promote <sha>` or `rollback <sha>` for that sha.
+    for target, cmds in (cfg_expect("host_deploy_commands", dict, "object") or {}).items():
+        if isinstance(cmds, list):
+            HOST_DEPLOY_PATTERNS[target.strip().lower()] = [
+                re.compile(re.escape(c).replace("SHA40", "(?P<sha>[0-9a-f]{40})"))
+                for c in cmds if isinstance(c, str) and c.strip()]
+
+    raw_read_only = cfg_expect("remote_read_only", list, "list")
+    if raw_read_only is not None:
+        REMOTE_READ_ONLY = []
+        for pat in raw_read_only:
+            if isinstance(pat, str) and pat.strip():
+                try:
+                    REMOTE_READ_ONLY.append(re.compile(pat))
+                except re.error:
+                    pass
 
 
 def segments(command):
@@ -989,6 +1011,22 @@ def printable(text):
     return re.fullmatch(r"[\x20-\x7e\t]*", text) is not None
 
 
+def host_deploy_command(target, remote):
+    """None, or (the release sha or "") when the raw remote text is exactly one of the host_deploy_commands
+    for target. No comment or redirect is stripped, only runs of spaces and tabs are collapsed, and any
+    shell metacharacter outside the one `&&` of the checkout form refuses."""
+    if not printable(remote):
+        return None
+    joined = " ".join(re.split(r"[ \t]+", remote.strip(" \t")))
+    if re.search(r"[#;&|`$()<>\\'\"{}*?\[\]~]", joined.replace(" && ", " ", 1)):
+        return None
+    for pat in HOST_DEPLOY_PATTERNS.get(target.lower(), []):
+        m = pat.fullmatch(joined)
+        if m:
+            return m.groupdict().get("sha") or ""
+    return None
+
+
 def prod_host(arg):
     if PRODUCTION_HOSTS_ERROR:
         return True
@@ -1244,6 +1282,16 @@ def check_ssh(args, depth):
     if remote and not re.search(r"[>`]|\$\(", cleaned) and all(remote_read_only(s) for s in segments(cleaned)):
         for seg in segments(remote):
             check_segment(seg, depth + 1)
+        return
+    sha = None
+    if not opts and cmd == dest + 1:  # promote and rollback pass no ssh options
+        sha = host_deploy_command(args[dest], " ".join(args[dest + 1:]))
+    if sha is not None:
+        ok, _ = approval_for({"host"})
+        if not ok:
+            ok, why = approval_for({"promote", "rollback"}, lambda t: not sha or t.lower() == sha)
+        if not ok:
+            owner_go("The deploy command on the production host", f"{APPROVE} promote {sha or '<sha>'}", why)
         return
     ok, why = approval_for({"host"})
     if not ok:
