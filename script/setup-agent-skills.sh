@@ -32,8 +32,7 @@ dotfiles_skill() {
   fi
   if old_root=$(cd "$resolved/../../../../.." 2>/dev/null && pwd -P) &&
      [ -f "$old_root/install.sh" ] &&
-     { [ "$resolved" = "$old_root/templates/agent-team/.agents/skills/$name" ] ||
-       { [ "$name" = tl ] && [ "$resolved" = "$old_root/templates/agent-team/.agents/skills/crew" ]; }; }; then
+     [ "$resolved" = "$old_root/templates/agent-team/.agents/skills/$name" ]; then
     return 0
   fi
   return 1
@@ -124,6 +123,3 @@ for src_root in "$SKILLS" "$TEAM_SKILLS"; do
     link_skill "$entry" "$name"
   done
 done
-if [ ! -d "$TEAM_SKILLS/tl" ] && [ -d "$TEAM_SKILLS/crew" ] && owned crew; then
-  link_skill "$TEAM_SKILLS/crew" tl
-fi

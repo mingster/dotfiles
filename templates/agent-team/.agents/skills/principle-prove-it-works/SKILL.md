@@ -22,5 +22,3 @@ Check the real thing, not a proxy:
 The strongest proof is a deterministic script that re-runs the same comparison, not a one-time eyeball. Write the script, run it, and keep its output as an artifact a reviewer can re-run instead of trusting your word.
 
 Keep the artifact visible for the human. Commit it only for large or complex work where the trail has to be auditable later, like a big port or migration (the **show-me-your-work** skill).
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->

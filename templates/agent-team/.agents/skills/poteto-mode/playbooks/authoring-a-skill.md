@@ -10,5 +10,3 @@
 When in doubt, delete. Keep only prose that changes a decision. Tell it to do the thing and skip the reason. Explain only when the rule is confusing without one. Match tone to scope. Point at structural sources (types, READMEs, config) per the **encode-lessons-in-structure** principle skill. Delegate to other skills by path. Don't restate. A workflow you keep hitting but isn't captured → propose a new skill.
 
 **Reply:** summary of the skill, key design decisions, validation notes.
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->

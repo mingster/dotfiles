@@ -12,5 +12,3 @@ disable-model-invocation: true
 - No external users depend on backward compatibility
 - The project can absorb coordinated breaking changes
 - The new API is part of a simplification or refactor initiative
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->

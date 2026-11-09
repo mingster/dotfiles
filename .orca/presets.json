@@ -66,7 +66,7 @@
         },
         {
           "provider": "cursor",
-          "model": "composer-2.5"
+          "model": "grok-4.7-xhigh"
         }
       ],
       "pin": true
@@ -171,7 +171,7 @@
       "chain": [
         {
           "provider": "cursor",
-          "model": "composer-2.5"
+          "model": "grok-4.7-xhigh"
         },
         {
           "provider": "claude",
@@ -206,7 +206,7 @@
         "model": "haiku"
       },
       "cursor": {
-        "model": "composer-2.5"
+        "model": "grok-4.7-xhigh"
       },
       "antigravity": {
         "model": "gemini-3.8-flash"

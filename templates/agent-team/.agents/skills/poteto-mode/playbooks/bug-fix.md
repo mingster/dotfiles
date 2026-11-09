@@ -13,5 +13,3 @@ Be scientific. Every shipped line traces to runtime evidence. Belt-and-suspender
 6. Run **Opening a PR**.
 
 **Reply:** what was broken, root cause, fix, how you verified. Paste failing-then-passing repro output verbatim.
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->

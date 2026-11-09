@@ -381,7 +381,7 @@ class CompactReminder(unittest.TestCase):
     def test_checklist_replaces_the_rescan_advice(self):
         text = self.command()
         self.assertNotIn("Do not re-scan", text)
-        for needle in (".claude/agents/<role>.md", ".agents/skills/crew/OPERATIONS.md",
+        for needle in (".claude/agents/<role>.md", ".agents/skills/orca-adapter/ORCA-ADAPTER.md",
                        "Pre-build grill gate", "docs/agents/team.md",
                        "do not raise host or provider caps",
                        "do not commit or open a PR while the owner is discussing"):
@@ -390,7 +390,7 @@ class CompactReminder(unittest.TestCase):
     def test_command_runs_and_prints_the_checklist(self):
         out = subprocess.run(["sh", "-c", self.command()], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0)
-        self.assertIn("OPERATIONS.md", out.stdout)
+        self.assertIn("ORCA-ADAPTER.md", out.stdout)
 
 
 if __name__ == "__main__":

@@ -19,5 +19,3 @@
 Code-coupled work (one feature, one migration) goes to a single owner with the checkpoint inline. That owner fans out internally after the blocking phase. Parent-level fan-out is for slices that produce independent artifacts (audits, cross-subsystem investigations, competing experiments). Rewrite the checkpoint at phase boundaries. Spawn a fresh owner rather than chaining interrupts.
 
 **Reply:** what you built, what you chose and why, the throughput checkpoint, open decisions. Tables for design alternatives.
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->

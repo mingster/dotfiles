@@ -36,14 +36,14 @@ One row per deployable component. With one row, `/deploy` takes no component arg
 
 ## production
 
-* Deploy command: `<command>`. Overrides allowed only on the owner's word: `<env flags, or none>`.
+* Deploy command: `<command>`. Overrides allowed only on the user's word: `<env flags, or none>`.
 * Host check that it runs the commit: `<command>`.
 * Schema diff for the summary: `<git diff command>`.
 * What a deploy interrupts: `<downtime, restarts>`.
 
 ### Production prerequisites
 
-Release-manager applies production SQL and secrets itself, through the project's scripts, inside the owner's approval. The owner never runs SQL. Delete this block if the project has no production database.
+Release-manager applies production SQL and secrets itself, through the project's scripts, inside the user's approval. The user never runs SQL. Delete this block if the project has no production database.
 
 * Production SQL apply script: `<path and exact command, for example bin/apply-production-sql.sh <component> <sha> --dry-run <db> <files>>`. Dry run first, then the same command without `--dry-run`.
 * Production secret script: `<path and exact command, for example bin/set-production-secret.sh <component> <sha> <KEY>>`, with its allowed keys: `<list>`.
@@ -51,13 +51,13 @@ Release-manager applies production SQL and secrets itself, through the project's
 * Migration login: `<least privilege login the SQL script uses, and where its credential lives>`. Preflight that checks it before any write: `<command, or none>`.
 * Ledger: `<table or file that records applied SQL files, and how a changed file is handled>`.
 * Backup before the first write: `<how it is made and verified, and where it lands>`. A failed backup stops the run.
-* One time owner dry run: `<what the owner runs once to prove the scripts, login and backup work, and the date it passed>`.
+* One time user dry run: `<what the owner runs once to prove the scripts, login and backup work, and the date it passed>`.
 
 ## Owner approval
 
-* **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): read only the scope and expiry of the owner approval and check it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and covers the expected job length. If it is missing, expired, another scope or too short, stop before the first ssh and ask Elon for a fresh owner approval of that scope. The expiry itself stays.
-* Production needs the owner's explicit go for each release.
-* Owner approval script: `<path and exact command, for example bin/owner-approve.sh <component> <sha>, or none>`. The owner runs it; the deploy skill gives them the exact command.
+* **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): read only the scope and expiry of the user approval and check it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and covers the expected job length. If it is missing, expired, another scope or too short, stop before the first ssh and ask the coordinator for a fresh user approval of that scope. The expiry itself stays.
+* Production needs the user's explicit go for each release.
+* Owner approval script: `<path and exact command, for example bin/owner-approve.sh <component> <sha>, or none>`. The user runs it; the deploy skill gives them the exact command.
 
 ## Host status
 

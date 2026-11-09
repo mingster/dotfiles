@@ -7,12 +7,12 @@ Long reference moved out of the root [README](../../README.md). Read it when you
 
 ### Goal
 
-An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A ticket goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs a green staging review and the owner's go.
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A unit goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs green swarm live lanes and the user's go.
 
 ### Principles
 
 * Use Orca, pstack and Matt Pocock skills as they are. Customize only when we must, and record why.
-* Improve what exists before adding anything. Team rules and scripts must not grow in total.
+* Improve what exists before adding anything. rule table and scripts must not grow in total.
 * Each role takes the shortest path that still reaches the targets.
 * When speed and quality conflict, quality wins for money, sign-in, database schema and hooks. Everything else takes the fast lane, and daily staging is the second line of defence.
 * State lives only in GitHub and Orca. After a restart the team carries on from there.
@@ -57,22 +57,22 @@ flowchart TD
 
 | Step | Starts when | Who | Done when |
 | --- | --- | --- | --- |
-| Intake | A request arrives | architect-pm with Elon. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
-| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and tickets | One document, one owner approval |
+| Intake | A request arrives | architect-pm with the coordinator. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
+| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document, one owner approval |
 | Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
 | Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
 | Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
 | Verifier Verdict | Actions Checks pass | `qa-sdet` (another model family, runs parent against head as a user would) | `Verdict: PASS` or `PASS+NOTES` posted via `script/post-verdict.sh` |
 | Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one fix worker (fixes and pushes once) or a Shipping run |
 | Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
-| Wrap-up | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
-| Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest main deployed, staging review and regression green (or issue opened) |
-| Production | Owner's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
+| Worktree cleanup | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
+| Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest trunk deployed, swarm live lanes and regression green (or issue opened) |
+| Production | User's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
 
 **Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one of three groups.
 
 * Ready: checks are green and a verifier PASS covers this head. It starts a Shipping run.
-* Needs a fix: a conflict with main, an unresolved review thread, a review FAIL, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
+* Needs a fix: a conflict with trunk, an unresolved review thread, a review FAIL, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
 * Anything else waits for the next pass.
 
 **Shipping run.** One run of `script/ship.sh` handles one PR. It merges only when all of these hold:
@@ -80,33 +80,33 @@ flowchart TD
 * The PR is open and mergeable, and every check passed.
 * The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
 * The Verdict covers this head, or a rebase of it with the same patch id.
-* Changes to protected paths carry the owner's approval.
+* Changes to protected paths carry the user's approval.
 
 It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
 
-**Who can send a request.** The owner and Elon. Sales and support send requests to Elon, and Elon gets the owner's approval before passing one to architect-pm.
+**Who can send a request.** The user and the coordinator. Sales and support send requests to the coordinator, and the coordinator gets the user's approval before passing one to architect-pm.
 
-**Start rule.** An issue starts when it has `ready-for-agent`, acceptance criteria and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, acceptance criteria, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/brief-lint.sh` checks the brief at every start (Verify must call `script/checks-local.sh`, which runs the Checks workflow for the changed files), and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
+**Start rule.** An issue starts when it has `ready-for-agent`, evidence and predicate and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, evidence and predicate, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/brief-lint.sh` checks the brief at every start (Verify must call `script/checks-local.sh`, which runs the Checks workflow for the changed files), and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
 
-**Failure.** A worker with no progress for 30 minutes restarts once. The same error fixed 3 times stops the work. Review sends a PR back at most 2 times. Past any limit a label goes to Elon.
+**Failure.** A worker with no progress for 30 minutes restarts once. The same error fixed 3 times stops the work. Review sends a PR back at most 2 times. Past any limit a label goes to the coordinator.
 
-**Wrap-up.** A finished worker loses its terminal and worktree. A merged or closed PR loses its branches and anything left. Work that exists nowhere else is kept and listed for Elon.
+**Worktree cleanup.** A finished worker loses its terminal and worktree. A merged or closed PR loses its branches and anything left. Work that exists nowhere else is kept and listed for the coordinator.
 
-**Deploy safety.** Schema changes stay backward compatible. Production always backs up first, and a failed backup stops the deploy. If smoke fails, code rolls back by itself, and the database waits for the owner.
+**Deploy safety.** Schema changes stay backward compatible. Production always backs up first, and a failed backup stops the deploy. If smoke fails, code rolls back by itself, and the database waits for the user.
 
 ### Roles
 
 | Role | Job |
 | --- | --- |
-| Owner | Decides the items listed under Owner decisions |
-| Elon | The owner's window and only contact. Off the main line: the lifecycle runs without it. Answers "what now" and "recap", handles exceptions, sets priorities weekly |
+| User | Decides the items listed under User decisions |
+| The coordinator | The user's window and only contact. Off the main line: the lifecycle runs without it. Answers "what now" and "recap", handles exceptions, sets priorities weekly |
 | `architect-pm` | Intake, the design document, the weekly list, full audits |
-| `fullstack-dev` | Builds one ticket with tests by TDD |
-| `qa-sdet` | Verifier Verdict, Playwright runs and the staging review |
-| `release-manager` | Staging on schedule, production on the owner's go |
+| `fullstack-dev` | Builds one unit with tests by TDD |
+| `qa-sdet` | Verifier Verdict, Playwright runs and the swarm live lanes |
+| `release-manager` | Staging on schedule, production on the user's go |
 | `secops-finops` | Its check is part of Strong review. Weekly reconciliation |
-| `sales-marketing` | Joins the grill for UI and wording. Sends requests to Elon |
-| `support-csm` | Joins the grill for support matters. Sends requests to Elon. Replies go out only after the owner approves |
+| `sales-marketing` | Joins the grill for UI and wording. Sends requests to the coordinator |
+| `support-csm` | Joins the grill for support matters. Sends requests to the coordinator. Replies go out only after the owner approves |
 
 ### Team files
 
@@ -118,15 +118,15 @@ A project's `docs/agents/` holds only five files, because shared skills, scripts
 * `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
 * `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
 
-Anything else in a project's `docs/agents/` is a special case that needs the owner's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
+Anything else in a project's `docs/agents/` is a special case that needs the user's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
 
-### Owner decisions
+### User decisions
 
-New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the owner.
+New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the user.
 
 ### Review
 
-A builder never reviews its own PR. Review has two layers after Actions Checks pass: the read only bot review in Actions (`script/pr-review.sh`) and the verifier Verdict (`qa-sdet` from another model family running the change as a user would, parent against head, posted via `script/post-verdict.sh`). Review checks the diff against `## Scope` and answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. The first round lists every finding; later rounds check only earlier points plus the new diff. Style is never a FAIL. A flake reruns the job once, never an empty commit.
+A PR owner never reviews its own PR. Review has two layers after Actions Checks pass: the read only bot review in Actions (`script/pr-review.sh`) and the verifier Verdict (`qa-sdet` from another model family running the change as a user would, parent against head, posted via `script/post-verdict.sh`). Review checks the diff against `## Scope` and answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. The first round lists every finding; later rounds check only earlier points plus the new diff. Style is never a FAIL. A flake reruns the job once, never an empty commit.
 
 Standard depth is one read. Strong depth adds a stronger model and the security check for money, sign-in, schema, hooks and workflows. A script picks the depth from the file list. Changes only to docs and changelog pass with no agent.
 
@@ -138,28 +138,28 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | --- | --- | --- |
 | Orca automation | Starts every scheduled script. A script only job uses a precheck, so it spends no AI quota | On schedule |
 | [`fleet-watch.py`](../../script/fleet-watch.py) | The 5 minute run: copies usage readings, reruns failed workflows once, finds stuck workers, checks backups, starts ready issues, runs the babysit pass | Every 5 minutes on the coordinator |
-| [`usage-gate.py`](../../script/usage-gate.py) | Blocks a worker start at 95% of a weekly limit or with no fresh reading. Paid overage needs the owner's approval with an amount and an expiry | Every worker start |
+| [`usage-gate.py`](../../script/usage-gate.py) | Blocks a worker start at 95% of a weekly limit or with no fresh reading. Paid overage needs the user's approval with an amount and an expiry | Every worker start |
 | [`heavy-gate.py`](../../script/heavy-gate.py) | Holds Playwright and production builds on each host; type checks use measure mode with no slot | Every Playwright run, build and full `tsc` |
 | `worker-startup` | Brings a host and worktree up to date, then starts the worker. A host that cannot be fixed takes no work | Daily, and before each worker |
-| [`head-checks.sh`](../../script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with main | Every PR push |
+| [`head-checks.sh`](../../script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with trunk | Every PR push |
 | Review and Verdict | Actions Review (`script/pr-review.sh`) and verifier Verdict ([`post-verdict.sh`](../../script/post-verdict.sh)) | After Checks pass |
 | [`ship.sh`](../../script/ship.sh) | Shipping run: checks `git patch-id` against the verifier Verdict, squash merges and reads the PR back as merged | When Checks and Verdict pass |
 | [`wrap-up.sh`](../../script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Add `--apply` to run it by hand | Every 10 minutes on every host |
-| `/deploy` | Moves a commit to staging or production | Daily, or on the owner's go |
-| `/staging-review` | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
-| Test selection | Compares with the last green staging commit and follows real imports | Every staging review |
-| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the owner's yes | Weekly |
-| [`team-audit.sh`](../../script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the owner's word |
-| `/elon status` | "what now": waiting on the owner, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
+| `/deploy` | Moves a commit to staging or production | Daily, or on the user's go |
+| pstack `swarm` live lanes | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
+| Test selection | Compares with the last green staging commit and follows real imports | Every swarm live lanes run |
+| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the user's yes | Weekly |
+| [`team-audit.sh`](../../script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the user's word |
+| `/elon status` | "what now": waiting on the user, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
 | Agent state backup | Private repository with memory, schedules and host config, used to rebuild the coordinator | Every 10 minutes |
 
 Project hooks stay small: a command guard for production, secrets and destructive commands, the three strike stop and the worker turn limit.
 
 ## Agent team template
 
-Use `script/agent-team.sh` for machine setup (`machine`), new projects (`project`) and drift checks (`check`). See [Agent team setup](#agent-team-setup) below for commands and owner steps.
+Use `script/agent-team.sh` for machine setup (`machine`), new projects (`project`) and drift checks (`check`). See [Agent team setup](#agent-team-setup) below for commands and user steps.
 
-The team files give agents their jobs, working rules and repeatable steps. Elon is the owner's window and only contact, off the main line: he sets priorities weekly, handles `needs-elon` exceptions, dispatches ready issues within the usage and load gates, and contacts the owner only on Owner-Reserved decisions. See [Agent team architecture](agent-team-architecture.md) for the full design.
+The team files give agents their jobs, working rules and repeatable steps. The coordinator is the user's window and only contact, off the main line: he sets priorities weekly, handles `needs-elon` exceptions, dispatches ready issues within the usage and load gates, and contacts the user only on user decisions. See [Agent team architecture](agent-team-architecture.md) for the full design.
 
 `script/adopt-agent-team.sh [--project-name <name>] <dir>` installs from [templates/agent-team](../../templates/agent-team/): roles, generated team skills, facts file skeletons, role reference docs, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
 
@@ -167,18 +167,18 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 
 | Role | Owns |
 | --- | --- |
-| `elon` | Owner's window and only contact, weekly priorities, `needs-elon` exceptions, ready issue dispatch, and Owner-Reserved decisions. |
-| `architect-pm` | Intake, one design document per feature (intent, spec and tickets), issue triage, the weekly non-blocker list and full `/team-audit` runs. |
-| `fullstack-dev` | Features and fixes built with tests first by TDD (Cursor `composer-2.5` first, then Claude when quota is out), running touched checks locally before pushing once and opening its PR. |
-| `qa-sdet` | Cross-family verifier Verdict (`script/post-verdict.sh`, running parent against head as a user would), Playwright proving runs and daily/weekly `/staging-review`. |
-| `release-manager` | Daily 19:00 Taiwan time staging deploy, production deploy on the owner's explicit go, release evidence and rollback plans. |
+| `elon` | User's window and only contact, weekly priorities, `needs-elon` exceptions, ready issue dispatch, and user decisions. |
+| `architect-pm` | Intake, one design document per feature (intent, spec and units), issue triage, the weekly non-blocker list and full `/team-audit` runs. |
+| `fullstack-dev` | Features and fixes built with tests first by TDD (Cursor `grok-4.7-xhigh` first, then Claude when quota is out), running touched checks locally before pushing once and opening its PR. |
+| `qa-sdet` | Cross-family verifier Verdict (`script/post-verdict.sh`, running parent against head as a user would), Playwright proving runs and the daily/weekly pstack `swarm` live lanes. |
+| `release-manager` | Daily 19:00 Taiwan time staging deploy, production deploy on the user's explicit go, release evidence and rollback plans. |
 | `sales-marketing` | Self-serve acquisition, positioning, conversion experiments, weekly metrics (MRR, LTV, CAC, churn) and the pre-build grill for new UI pages and wording. Delegates market research and merchant lookups to a Gemini worker on Antigravity with source URLs. |
 | `secops-finops` | Security, auth, tenant isolation, money PR reviews (part of Strong review and the money pre-build grill) and weekly financial reconciliation. |
 | `support-csm` | Customer ticket triage, reply drafts (sent only after owner approval), recurring pain points and support grill input. |
 
 The adoption script installs every role in the template, including support.
 
-Team skills come from [templates/agent-team/.agents/skills](../../templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `crew` coordinates delivery, `deploy` promotes releases, `staging-review` audits daily and weekly staging, `grill-backlog` and `team-grill-backlog` clear pre-build and owner decisions, `wrap-up` prunes finished worktrees and branches, `team-audit` checks team files and metrics, and `poteto-mode` (with `ORCA-ADAPTER.md`, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop` and the `principle-*` skills) supplies the vendored pstack playbooks and decision cues. `script/agent-team.sh project` generates project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and rerun it; `script/agent-team.sh check` fails on drift. Do not edit generated copies.
+Team skills come from [templates/agent-team/.agents/skills](../../templates/agent-team/.agents/skills/): `elon` is the entry point, `ceo` is its alias, `deploy` holds the release gates, `grill-backlog` lists owner decisions and asks them one at a time, `team-audit` checks team files and metrics, and `poteto-mode` (with `ORCA-ADAPTER.md`, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop` and the `principle-*` skills) supplies the vendored pstack playbooks and decision cues. `script/agent-team.sh project` generates project `.agents/skills/` copies with links from `.claude/skills/` and `.cursor/skills/`. Edit the template source and rerun it; `script/agent-team.sh check` fails on drift. Do not edit generated copies.
 
 Team skills add project policy and call Orca and Matt Pocock skills for shared procedures. See [Skills inventory](skills-inventory.md) for the three-tier layout and upstream sync rules.
 
@@ -188,38 +188,38 @@ Other project files tell the team how this repo works:
 | --- | --- |
 | `.claude/model-routing.md` | Provider and model choices, worker launch rules, fail-closed usage gate and publication/merge authority. |
 | `.claude/settings.json`, `.claude/hooks/` | Claude session setup, Bash safeguards (`guard-bash.py`), fail-closed usage gate (`usage-gate-hook.py`), repeated test failure limits (`strikes.py`) and turn budget (`worker-budget.py`). |
-| `docs/agents/team.md` | Team roles, 2026-11-06 process, human approval for role changes, orchestration, delivery contract, handoffs, hotfix loop, rules and gated actions. |
+| `docs/agents/team.md` | Team roles, 2026-11-06 process, human approval for role changes, orchestration, the verification rule and Opening a PR, handoffs, Bug fix, urgent (fast mode), rules and gated actions. |
 | `docs/agents/team-facts.md` | Repository, check commands, review rules and project shortcuts. |
 | `docs/agents/deploy-facts.md` | Components, hosts, stage commands, production approval and rollback steps. |
 | `docs/agents/coordinator-operations.md`, `elon-dispatch.md`, `engineering-integration.md` | Coordinator wake loop, failover, fleet placement, review tiers and merge rules. |
 | `docs/agents/architect-pm-work.md`, `qa-sdet-execution.md`, `release-manager-work.md` | Role-specific work references loaded on demand to keep `.claude/agents/*.md` under the 800-word budget. |
-| `docs/agents/issue-tracker.md` | Where specs and tickets go and how to read or update them (including sub-issues and native blocking dependencies). |
+| `docs/agents/issue-tracker.md` | Where specs and units go and how to read or update them (including sub-issues and native blocking dependencies). |
 | `docs/agents/triage-labels.md` | The project's issue labels and what each means. |
 | `docs/agents/domain.md` | Where agents read domain terms (`CONTEXT.md`) and design decisions (`docs/adr/`). |
 
-Adoption creates `team.md`, `team-facts.md`, `deploy-facts.md` and the role reference docs. Create the tracker, label and domain files with `~/dotfiles/script/init-agent-project.sh --labels <dir>` (automatically run by `script/agent-team.sh project`). Configure `docs/agents/daily-run.md` in the project before asking for a daily run. Decisions belong in `docs/adr/`.
+Adoption creates `team.md`, `team-facts.md`, `deploy-facts.md` and the role reference docs. Create the tracker, label and domain files with `~/dotfiles/script/init-agent-project.sh --labels <dir>` (automatically run by `script/agent-team.sh project`). Configure `docs/agents/daily-run.md` in the project before turning on the `daily-program-1900` automation. Decisions belong in `docs/adr/`.
 
 Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt can instead name the skill's `SKILL.md` path and ask it to follow the file.
 
 | Stage | What happens | Skill or command | Example prompt |
 | --- | --- | --- | --- |
 | Adopt the team | Install the files, then fill in project facts and tracker setup. | `script/agent-team.sh project <dir> --project-name <name>` | Adopt the team into `~/projects/acme` and show me the facts I need to fill in. |
-| Start a session | Talk to Elon, who routes the work and runs `recall` and `ketchup`. | `/elon` or `/ceo` | `/elon Help me choose the next objective.` |
-| Intake and Design | For a new feature, produce one design document (intent, spec and tickets) for one owner approval. Attach phone screenshots for any new UI page. | `/capture-intent`, `/write-spec`, `/to-spec`, `/to-tickets` | `/capture-intent New users cannot tell whether setup is complete.` |
-| Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, Elon) or new UI pages (`sales-marketing`, Elon); owner approves before build. Elon decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/team-grill-backlog` | `/team-grill-backlog Run the pre-build grill on the pending money and UI issues.` |
-| Dispatch and build | Elon assigns ready tickets (`Acceptance criteria`, `Requirement owner`, `Deleted`) under the usage and host gates; workers build by TDD on touched tests in child worktrees and report `worker_done`. | `/elon <objective>`, `/crew`, `script/worker-startup.sh`, `/tdd` | `/elon Deliver the ready setup tickets.` |
+| Start a session | Talk to the coordinator, who routes the work and runs `recall` and `ketchup`. | `/elon` or `/ceo` | `/elon Help me choose the next objective.` |
+| Intake and Design | For a new feature, produce one design document (intent, spec and units) for one user approval. Attach phone screenshots for any new UI page. | `/capture-intent`, `/write-spec`, `/to-spec`, `/to-tickets` | `/capture-intent New users cannot tell whether setup is complete.` |
+| Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, the coordinator) or new UI pages (`sales-marketing`, the coordinator); owner approves before build. The coordinator decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/grill-backlog` | `/grill-backlog Run the pre-build grill on the pending money and UI issues.` |
+| Dispatch and build | The coordinator assigns ready units (`Acceptance criteria`, `Requirement owner`, `Deleted`) under the usage and host gates; workers build by TDD on touched tests in child worktrees and report `worker_done`. | `/elon <objective>` (pstack Orchestrate), `script/worker-startup.sh`, `/tdd` | `/elon Deliver the ready setup tickets.` |
 | Checks and review | Actions `Checks` (`head-checks.sh`) run on push; Actions `Review` (`script/pr-review.sh`) runs the read only bot review, and a cross-family `qa-sdet` verifier runs parent against head as a user would and posts the `Verdict` via `script/post-verdict.sh`. | `script/head-checks.sh`, `script/pr-review.sh`, `script/post-verdict.sh`, `/code-review` | `/code-review Check this branch against main and its ticket.` |
-| Babysit, ship and wrap-up | The 5 minute pass (`fleet-watch.py`) starts one fix worker or a Shipping run (`script/ship.sh`) that squash merges and reads back as merged; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, `/wrap-up` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
-| Deploy and staging review | Staging deploys daily at 19:00 Taiwan time, followed by `/staging-review` and full regression; a green review leads to a one-line summary and same-day owner go for production. | `/deploy local`, `/deploy staging`, `/staging-review`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
-| Status and daily run | Get company status (**Now**, **Needs owner**, **Running**) or a recap, or run the project's daily checklist. | `/elon status`, `/elon daily run` | `/elon status Show Now, Needs owner and Running.` |
-| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the owner's word; `weekly-update.sh` opens three upstream PRs for owner review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
-| Support | Elon routes fixes and `support-csm` drafts the customer reply in the customer's language; the owner approves before sending or closing. | Ask Elon to assign `support-csm` | Elon, resolve this support ticket and bring me the reply draft for approval. |
+| Babysit, ship and worktree cleanup | The 5 minute pass (`fleet-watch.py`) starts one fix worker or a Shipping run (`script/ship.sh`) that squash merges and reads back as merged; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, pstack `worktree-cleanup` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
+| Deploy and swarm live lanes | Staging deploys daily at 19:00 Taiwan time, followed by the pstack `swarm` live lanes and full regression; a green review leads to a one-line summary and same-day user go for production. | `/deploy local`, `/deploy staging`, pstack `swarm`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
+| Status | Get company status (**Now**, **Needs user**, **Running**) or a recap. The daily program starts from the `daily-program-1900` automation, not a command. | `/elon status` | `/elon status Show Now, Needs owner and Running.` |
+| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs for user review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
+| Support | The coordinator routes fixes and `support-csm` drafts the customer reply in the customer's language; the user approves before sending or closing. | Ask the coordinator to assign `support-csm` | The coordinator, resolve this support ticket and bring me the reply draft for approval. |
 
 ## Fleet and load distribution
 
 The team runs across a fleet of Macs paired in Orca ADE (`orca environment list`) and coordinated from a single active coordinator host named in `agent-state/coordinator.conf`.
 
-1. **Coordinator and host sync:** `script/elon-startup.sh` checks that the current machine is the named coordinator, `agent-state` is fresh (`.sync-ok` under 30 minutes), and every fleet host has fast-forwarded `main` checkouts (`script/fleet-pull.sh`) and synced secrets (`script/secrets-sync.sh`). Backup hosts watch the coordinator via `script/fleet-watch.py` (`coordinator_watch`) and take over only when the owner runs `script/take-over-coordinator.sh --yes`.
+1. **Coordinator and host sync:** `script/elon-startup.sh` checks that the current machine is the named coordinator, `agent-state` is fresh (`.sync-ok` under 30 minutes), and every fleet host has fast-forwarded `main` checkouts (`script/fleet-pull.sh`) and synced secrets (`script/secrets-sync.sh`). Backup hosts watch the coordinator via `script/fleet-watch.py` (`coordinator_watch`) and take over only when the user runs `script/take-over-coordinator.sh --yes`.
 2. **Host placement order (`~/.claude/state/fleet-load.sh`):**
    - **Primary code host (also hosts the coordinator):** first choice for code, test and review while 1-minute load < 12.
    - **First overflow host:** next choice while 1-minute load < 8.
@@ -227,8 +227,8 @@ The team runs across a fleet of Macs paired in Orca ADE (`orca environment list`
    - **Browser and secrets host:** always used for browser work, secrets and main-checkout operations.
    - **Release-manager host:** runs only on a host named in the project's `docs/agents/deploy-facts.md`.
    - **Database and heavy host:** runs the dev database and remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers.
-3. **Worker admission and load targets (owner 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`). Caps are a ceiling, never a target: fill an idle host up to its cap before any host with queued work waits, and keep each active host between `0.4` and `0.7` load per core. Count builders, reviewers, child dispatches and finished committers still holding a pending-push slot.
-4. **Per-host heavy job admission (`script/heavy-gate.sh` and `script/heavy-gate.py`):** Playwright and production builds are heavy: at most 2 per host (unless calibrated higher), waiting until 1-minute load is below the host limit (default 12) and free RAM is at least 20%. They use `--weight 2`; `HEAVY_GATE_CLASS=long` leaves 1 slot free. Full `tsc` uses `--measure` (no slot, logs metrics for the owner trial week). Unit tests and lint skip the gate.
+3. **Worker admission and load targets (user 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`). Caps are a ceiling, never a target: fill an idle host up to its cap before any host with queued work waits, and keep each active host between `0.4` and `0.7` load per core. Count PR owners, verifiers, child dispatches and finished committers still holding a pending-push slot.
+4. **Per-host heavy job admission (`script/heavy-gate.sh` and `script/heavy-gate.py`):** Playwright and production builds are heavy: at most 2 per host (unless calibrated higher), waiting until 1-minute load is below the host limit (default 12) and free RAM is at least 20%. They use `--weight 2`; `HEAVY_GATE_CLASS=long` leaves 1 slot free. Full `tsc` uses `--measure` (no slot, logs metrics for the user trial week). Unit tests and lint skip the gate.
 5. **Provider quota distribution (`script/usage-gate.py` and `script/usage-gate-hook.py`):** every worker launch checks real weekly quota across Claude, Cursor and Antigravity, reserving 2% per running worker on that provider and refusing dispatch at the 95% weekly ceiling (exit 3) or when readings are stale beyond 5 minutes and cannot refresh (exit 4).
 
 See [Agent team architecture](agent-team-architecture.md) and [Coordinator operations](coordinator-operations.md) for full details.
@@ -305,7 +305,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/worktree-idle.py` | Exits 0 only when `orca terminal list` positively confirms a worktree has zero active terminals. |
 | `script/team-audit.sh` | Six deterministic checks: skill sync (`agent-team.sh check` per project), 800-word role budget, banned wording, skills (frontmatter, lock, helpers, role `skills:` names), ready-for-agent label conflicts, and `Owner-approved:` trailers after a baseline sha. `--log` writes the observation TSV; `--report` adds the metrics. |
 | `script/team-audit-metrics.ts` | `bun script/team-audit-metrics.ts --repo <owner/name> [--days <n>] [--json] [--times <stages.tsv>]` prints the weekly delivery metrics from GitHub PRs and issues (`median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, `reopened_or_hotfix_rate`) and, with `--times`, the Orca stage medians. `--fixture <data.json>` reads a file instead of GitHub. No project keeps its own copy. |
-| `script/weekly-update.sh` | Weekly maintenance runner that updates Matt Pocock skills, pstack template skills, Bun and Node LTS across three tested PRs and one owner summary. |
+| `script/weekly-update.sh` | Weekly maintenance runner that updates Matt Pocock skills, pstack template skills, Bun and Node LTS across three tested PRs and one user summary. |
 | `script/prepend-recent-change.ts` | Prepends dated change summaries to project changelog or recent-change files. |
 | `script/shellcheck-dotfiles.sh` | Runs `shellcheck --severity=error` on the repository's shell entrypoints. |
 
@@ -357,8 +357,8 @@ script/agent-team.sh all /path/to/project
 ```
 
 Machine setup configures Claude Code, Cursor, Antigravity, Orca and shared
-skill links. Verification reports missing commands and owner login steps without
-reading credential files. Missing owner prerequisites are warnings; a failed setup
+skill links. Verification reports missing commands and user login steps without
+reading credential files. Missing user prerequisites are warnings; a failed setup
 script is an error. Use `--dry-run` to preview machine setup without running it.
 
 Missing provider CLIs are installed once using `install_claude.sh`, the official
@@ -371,16 +371,16 @@ replacement. `setup-orca.sh` links `~/.orca/presets.json` to `~/dotfiles/.orca/p
 after backing up any differing file. Usage gate (`usage-gate-hook.py`) and worker budget
 (`worker-budget.py`) hooks are composed into Claude Code, Cursor and Antigravity hook
 files via `setup-agent-hooks.sh`. Logins and credentials are never migrated or inspected.
-Orca installation and sign in remain owner steps when its CLI is missing.
+Orca installation and sign in remain user steps when its CLI is missing.
 
 `project` adopts a project: it installs the team files, generated team skills and tracker seeds, and
-`team-audit.sh` then reports findings. The owner or architect must review
+`team-audit.sh` then reports findings. The user or architect must review
 `docs/agents/team.md` and fill in
 `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md` and
 `docs/agents/domain.md`, then establish the project's domain context and deployment
 commands. Label creation requires GitHub access. Customized role files are
 preserved and reported for manual reconciliation. It also refreshes the Token budget, Compact
-instructions and Owner context commands sections in `AGENTS.md`, keeping other project
+instructions and User context commands sections in `AGENTS.md`, keeping other project
 instructions. Product facts, domain context, ADRs and intents
 stay project owned; never put product facts in generated team skills. `check` is read only and
 exits non zero on drift. `all` configures the machine first, then runs `project`; `all --dry-run`
@@ -389,7 +389,7 @@ previews both stages.
 The commands use the vendored skills already in dotfiles. Updating that snapshot
 from upstream is a separate maintainer operation through
 `script/weekly-update.sh` (which refreshes Matt Pocock skills, pstack template skills,
-Bun and Node LTS across three tested PRs and one summary for the owner's go) or
+Bun and Node LTS across three tested PRs and one summary for the user's go) or
 `script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
 changes the dotfiles checkout. No command commits or pushes the target project.
 
@@ -423,16 +423,16 @@ Each automation runs a shell precheck that exits `1` when done, so Orca starts n
 | `fleet-watch` | `*/5 * * * *` | Coordinator only |
 | `fleet-toolchain` | `0 5 * * *` | Coordinator only |
 | `wrap-up-scheduled` | `*/10 * * * *` | Every Orca host (skipped on a headless host without the Orca app) |
-| `sync-team-skills-drift` | `0 6 * * *` | Created disabled for the owner to turn on |
-| `team-audit-weekly` | `0 7 * * 1` | Created disabled for the owner to turn on |
-| `weekly-update` | `0 8 * * 1` | Created disabled for the owner to turn on |
+| `sync-team-skills-drift` | `0 6 * * *` | Created disabled for the user to turn on |
+| `team-audit-weekly` | `0 7 * * 1` | Created disabled for the user to turn on |
+| `weekly-update` | `0 8 * * 1` | Created disabled for the user to turn on |
 
 Readiness checklist for a fleet host:
 
 * [ ] `hostname -s` is set under `coordinator` or `backup` in `~/agent-state/coordinator.conf` and listed in the fleet pull config.
 * [ ] `~/dotfiles/script/fleet-pull.sh` prints `ok` for `~/agent-state` and every configured repository on every host, with no `dirty` or `detached` checkouts.
 * [ ] `~/dotfiles/script/fleet-toolchain-check.sh` reports all required CLIs present and aligned with the coordinator.
-* [ ] `~/dotfiles/script/install-fleet-automations.sh --status` shows `wrap-up-scheduled` enabled on every Orca host, `fleet-watch` and `fleet-toolchain` enabled on the coordinator only, and `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` created disabled for the owner to turn on (or skips cleanly on a headless host without the Orca app).
+* [ ] `~/dotfiles/script/install-fleet-automations.sh --status` shows `wrap-up-scheduled` enabled on every Orca host, `fleet-watch` and `fleet-toolchain` enabled on the coordinator only, and `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` created disabled for the user to turn on (or skips cleanly on a headless host without the Orca app).
 * [ ] `~/dotfiles/script/worker-startup.sh --host-check` passes cleanly.
 
 See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [Coordinator operations](coordinator-operations.md) for full details.
@@ -441,11 +441,11 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 ### Merging through lead-merge.sh
 
-A merge worker Elon dispatches runs `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
+A merge worker the coordinator dispatches runs `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
 (or `--batch <N> <N>` once per wake from the `lead-elon` worktree, and `--mechanical`
-for docs-only PRs); Elon dispatches the worker only.
+for docs-only PRs); the coordinator dispatches the worker only.
 The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
-open on `main` at exactly that head, mergeable, off the protected branches, and free of owner
+open on `main` at exactly that head, mergeable, off the protected branches, and free of user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
 and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
 `ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the merge check.
@@ -456,7 +456,7 @@ The root `.tool-versions` pins python and nodejs. Every host runs both through a
 `python3` and `node` resolve the same way everywhere. Scripts keep `#!/usr/bin/env python3`
 and never hardcode an interpreter path.
 
-The owner runs the bootstrap once per host:
+The user runs the bootstrap once per host:
 
 ```bash
 bash ~/dotfiles/script/bootstrap-asdf-tools.sh

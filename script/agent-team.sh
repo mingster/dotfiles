@@ -563,13 +563,10 @@ SHARED_BINS = [
 TIER2_SKILLS = sorted(
     {
         "ceo",
-        "crew",
         "deploy",
         "elon",
         "poteto-mode",
-        "staging-review",
         "team-audit",
-        "tl",
     }
     | (
         set(os.listdir(os.path.join(template_dir, ".agents", "skills")))

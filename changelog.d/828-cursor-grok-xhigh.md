@@ -1,0 +1,1 @@
+* Cursor builders run on `grok-4.7-xhigh` (`grok-4.7-xhigh-fast` only when urgent) instead of `composer-2.5`. `usage-gate.py` allows only the Grok models, and a Grok author always gets a Claude reviewer.

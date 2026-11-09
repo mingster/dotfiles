@@ -1,93 +1,19 @@
 # Agent team
 
-{{PROJECT_NAME}} is operated by its human owner and a team of AI agents: CEO Elon and specialist roles. The owner talks to Elon, who delegates work and contacts the owner only for a decision Elon cannot make. Elon owns dispatch and owner decisions. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
+{{PROJECT_NAME}} is operated by its human user and a team of AI agents: the coordinator (CEO) and specialist roles. The user talks to the coordinator, who delegates work and contacts the user only for a decision the coordinator cannot make. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
 
-| Role | File | Stage | Primary output |
-| --- | --- | --- | --- |
-| Elon (CEO) | `elon.md` | Executive supervision | Priorities, labelled exceptions, owner contact, and ready issue dispatch |
-| architect-pm | `architect-pm.md` | Plan, Design | One document per feature (intent, spec and tickets), issue triage, weekly list |
-| fullstack-dev | `fullstack-dev.md` | Build | Isolated branch, own tests by TDD, change report. Cursor Composer 2.5; Claude only when that quota is out |
-| qa-sdet | `qa-sdet.md` | Test, Maintain | Verifier Verdict (`script/post-verdict.sh`), Playwright runs, weekly staging review |
-| secops-finops | `secops-finops.md` | Test audit | Money and auth PR reviews, weekly reconciliation |
-| support-csm | `support-csm.md` | Maintain | Ticket triage, reply drafts and recurring pain points |
-| release-manager | `release-manager.md` | Deploy | Staging on the daily schedule, production on the owner's go; release evidence, deployment and a rollback plan (a rollback still needs the owner) |
-| sales-marketing | `sales-marketing.md` | On request | Positioning, acquisition plans, growth experiments, weekly numbers |
+Every role works through pstack `poteto-mode` and `.agents/skills/orca-adapter/ORCA-ADAPTER.md`. This file holds only facts and the rule table; it never restates a pstack principle or playbook. GitHub issues and PRs are the state of record.
 
-## Process (owner 2026-11-06)
-
-GitHub issues and PRs are the state of record. Design: {{PROJECT_NAME}} issue 7340.
-
-- **Plan:** the owner approves only new features, new UI pages, prices and money rules. Elon decides the rest and records it.
-- **Design:** intent, spec and tickets are one document with one approval.
-- **Test:** Checks start on push. A fresh agent reviews each PR after Checks pass, with a stronger model for money, auth, schema and hooks. At most 2 reworks, then the `needs-elon` label. Fix only what failed.
-- **Deploy:** staging deploys daily at 19:00 Taiwan time and is reviewed right after (full regression, smoke, changed pages). A successful review leads to a one line summary and the owner's go the same day. The page by page review is weekly.
-- **Maintain:** reviews file only release blockers; the rest goes on a weekly list. Search for duplicates before filing. Customer reports are always filed. Retro on about one session in five, failures first.
-- **Not live yet:** merge on review and start label builds are stopped by the owner (2026-11-06), so briefs, old QA and `lead-merge.sh` stay. `heavy-gate`, `usage-gate`, `fleet-watch`, load thresholds and lane caps stay.
-
-## Human approval for role changes (owner 2026-10-31)
-
-Every change to a role definition requires human review and explicit approval of the concrete diff before it takes effect or is committed, merged, published, synced or used to launch a worker. This includes `.claude/agents/`, role definitions in other provider directories, and canonical role templates. Agents may prepare an isolated proposed patch for review; preserve the approved version in active use until approval. Elon cannot approve on the human owner's behalf. A general task request, silence, QA PASS or Checks PASS is not approval of an unseen role diff. Record the approval and reviewed revision with the change: every commit touching role files carries the trailer `Owner-approved: <owner> <date> (<where approved>)`, and `team-audit.sh` flags commits from 2026-11-03 without it (owner 2026-11-02); any subsequent role edit needs renewed approval. Existing unapproved role edits remain proposals.
-
-## Orchestration and reporting
-
-1. **Task tree:** Elon builds tasks from the accepted spec. Use the project's configured workflow and add specialist slices only when the work requires them.
-2. **Fast path:** small fixes, chores and single domain tasks may go to one worker when Elon judges a full crew unnecessary.
-3. **Reports:** Every role reports to Elon. Elon dispatches fullstack-dev and takes builder and reviewer questions. Docs and changelog only PRs pass Checks and Review with no agent. release-manager owns every release end to end (staging, gates including dev/regression, production after the owner go); a failed gate is its job to diagnose and report. Any role may escalate a critical or suppressed concern to Elon and the human owner. Elon cannot suppress independent QA or security verdicts.
-4. **Monitor and close workers:** follow Delivery contract for the child ledger, inbox classification, read-only liveness and closure; use the official Orca guide and model-routing for lifecycle transitions.
-5. **Merge and queue:** role-definition changes require human review and explicit approval under Human approval for role changes above. A Shipping run (`script/ship.sh`) lands verified PRs with squash merge and read-back when Checks and Verdict pass. Continue with the next eligible task; pause when no work remains or remaining tasks require owner decisions.
-
-Usage gate by coordinator host: `usage-gate-hook.py` gates every worker start from Claude Code (`.claude/settings.json`), Cursor (`~/.cursor/hooks.json`) and Antigravity (`~/.gemini/config/hooks.json`). The Cursor and Antigravity entries come from `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`; a coordinator that starts workers from either IDE first confirms its entry is installed, and otherwise runs in Claude Code.
-
-Elon decides reversible work within standing authority and reports after acting, including metadata only fixes settled by an owner rule (permissions, ownership or gitignore entries, never secret contents or production data). Up to 2 in-scope correction passes per ticket remain subject to the strike hard stop.
-
-## Delivery contract
-
-Read this section before framing an objective, dispatching, reviewing a delivery or closing a Run. Use the current official Orca orchestration guide for lifecycle commands; `.claude/model-routing.md` remains the source for routing, quota, launch and publication policy. Official Orca lifecycle authority and this contract override model-routing idle, network and silence recovery text: idle state or absence alone never authorizes resume, retry, stop or release; recovery requires the official positive evidence and transition. An explicit owner override takes precedence. This contract grants no new external action or owner approval authority.
-
-1. **Finite objective:** record the accepted scope, countable exit predicates, verification commands, wall-clock budget and next throughput checkpoint before work starts. At each checkpoint compare completed units and remaining work with that budget; narrow or replan within authority, or report the exact blocker. An ongoing queue uses a bounded wave or time window and an explicit next actor at its boundary; continuing eligible work does not mean one Run can never end.
-2. **Complete brief:** give one owner the goal, context, allowed files, dependencies, constraints, acceptance predicates, proving commands, timebox, forbidden actions, required skill and report path. Include the worker local-commit rule and reviewer local-report rule from model-routing. Resolve empirical questions by bounded read-only checks first; ask Elon, then the owner only for a reserved decision, inaccessible fact or required physical action, with evidence and options. The proving commands include every `.agents/head-checks.conf` command that applies to the changed files, with `shellcheck --severity=error` on each changed `.sh`, once, in `head-checks.sh`, at the head (owner rule 2026-10-27). The builder runs only the test files it touches, red on main and green after; reviewers read the code and do not run tests, tsc or lint. Briefs avoid zsh parameter flags such as `${(P)v}`, which raise a permission prompt and stall the worker. A brief for gate or check code asks for an exact-by-construction comparison first, not a normalized fingerprint.
-3. **Every child:** the coordinator keeps a durable ledger for every child, including fast path work: task ID, dispatch ID, terminal, worktree, branch and full head SHA (or explicitly not applicable), state, next actor and evidence path. Keep it current at dispatch, delivery, handoff and closure; a worker's multi-slice `active_run.md` does not replace this ledger.
-4. **Deliveries and liveness:** finish the current safe critical section, then drain and classify every pending delivery as completion needing validation, failed/blocked, stale/superseded or informational; record its next action before acknowledgement. Inspect status and screens read-only; never resume an idle worker merely to check it. Missing heartbeats or unverifiable liveness alone do not authorize retry, stop or release. Follow official lifecycle transitions and preserve unmerged work. Every wait runs in the background (a foreground wait hides new messages until it ends); in Claude Code start it as its own Bash call with `run_in_background: true`, never a shell `&` (an `&` job ends without waking the session, so deliveries sit unread), and re-arm it right after acknowledging each batch, and every wait and every `orca` call (including `terminal send`) has a timeout; at each timeout, and at least every 10 minutes, read the child's real state (`worker-list`). Waiting on a child that is not active is a stall: act or escalate at once, never wait silently. Workers and child coordinators never run `orca orchestration run-use`; it moves their terminal off the parent run and hides reports. Elon, the top coordinator in Orca chat, rebinds with `run-use --id <run>` after a restart. Coordinators wait for messages only with native `orca orchestration check --run <run> --wait` in the background, then acknowledge each batch with `--ack`; never loop over the shared `orca orchestration inbox`. Any status you report comes from a check in the same turn.
-5. **Fresh rounds:** give writers a fresh bounded worker with original brief, later directives, previous findings and current branch/full head consolidated. Fresh independent reviewers receive ONLY current branch/full head, issue/spec and necessary verifiable evidence, never author history, session context or reasoning. Reuse writer sessions only for costly necessary runtime state, recording the reason and current brief. New work always uses a new official dispatch; settled dispatches receive no work.
-6. **Head and findings:** key required review and verification evidence to the full current head SHA and record author/reviewer identities. Use independent review where the risk policy requires it, under the current owner model override. Triage each finding as fix, dismiss with evidence or escalate for a decision; severity or an approval label alone is insufficient. A changed head invalidates prior approval. Reconcile late or superseded findings against the current head; salvage unique findings into a fresh scoped task, never accept an obsolete verdict or blindly integrate its branch.
-7. **Honest evidence:** report exact commands, exits, actual test counts, skips, errors, baseline failures and unverified paths. Measured claims identify actual executed work, reuse/cache and coverage; source tests do not prove browser, device, provider, database or deployment behavior. For user-facing work, the brief names real pages and subpages, affected store/user kinds and useful content (purpose, steps, a common mistake). Before reporting completion, the worker opens them as the target user and reports pages checked; before merge, the coordinator or QA opens one named page. Missing access is an explicit gate, never an inferred pass. Measure on the current tool versions in the real environment; a number from another setup is unverified.
-8. **Premise and close:** Attack the Premise at the second failure of the same check: write down the premise the failed fixes shared and test it directly before a third attempt; only behavioural failures after a production edit count toward the three-strike hard stop, while tooling or setup failures (missing dependencies, Prisma generation or typegen) do not; a hard stop allows no retry. Before closing, drain the final inbox and reconcile every ledger child. For every settled child, including FAILED, validate and accept the correct task ID, dispatch ID, explicit outcome and full report, then call official `worker-release` and close ended panes/terminals through official guidance. Never skip release because a worker is idle. Retain dirty/unmerged worktrees separately with a named owner; external-terminal retained resource state does not permit leaving a settled worker active. Name open gates and next actors; check each exit predicate against current evidence. Partial coverage never earns PASS.
-9. **New UI page (owner rule 2026-10-26):** the owner approves a new user-facing page or screen at spec time, from phone screenshots of the design or prototype attached to the spec. Elon asks the owner before the build starts; after that the build follows the normal gates and Elon links the approval on the PR. Changes to existing pages follow the normal gates. Phone screenshots for the owner go in `~/.claude/state/screenshots/<repo>/<issue>/`, never in a worktree or another folder.
-
-## Handoffs
-
-Docs-only PRs follow Orchestration rule 3.
-
-- **Copy is approved at the spec (owner rule 2026-10-23):** the spec and each ticket carry the exact new user-facing strings in tw, en and jp, and the owner's acceptance of the spec approves them. Nobody asks the owner about copy at merge. A ticket that needs copy its ticket does not list goes back to architect-pm for a spec amendment. The owner's grill decisions of 2026-10-24 changed no team rule; this rule stands.
-- A PASS Verdict comment includes a line `Command: <exact test command run>`, the same string the brief named. Never edit or minimize a Verdict; post a new one. `script/ship.sh` ignores an edited or minimized PASS and still counts an edited FAIL.
-- **Verdict carry (owner rule 2026-10-23):** a PASS Verdict survives a rebase or merge of main when the `git patch-id --stable` of `merge-base(origin/main, head)..head` matches the Verdict head (`script/ship.sh`, `verdict_carry`); an authored commit or a conflict edit that changes the patch id needs a new Verdict.
-- **WIP cap (owner rule 2026-10-23):** at most 6 open PRs per project. While 6 or more are open, start no new feature ticket; fix or merge the existing ones first. Test-fix and hotfix PRs are exempt, and so are PRs that wait only on the owner's UI look (owner rule 2026-10-26).
-- **Straight to staging (owner rule 2026-10-23):** release-manager promotes main to Playground after merges, without waiting for the queue to drain or an owner word. Production still needs the owner's go per release. Japanese homepage and main-page copy needs a native reader before launch.
-- **Native en and jp copy (owner rule 2026-10-21):** write `en` as fluent American English and `jp` as natural Japanese, natively from the intent, never a word-for-word translation of `tw`. A menu or button name quotes the real label in that locale's file. Copy reviewers reject literal translations.
-- **One PR per fix batch (owner rule 2026-10-23):** fixes from one regression run or one failing area go in one PR, never one PR per spec or symptom.
-- **Pre-build grill gate (owner rule 2026-11-06, replaces 2026-11-02):** a multi role grill runs only for money (payments, billing, refunds, ledger, credits, pricing or entitlements) with secops-finops, architect-pm and Elon, and for new UI pages with sales-marketing and Elon. The owner approves the result before build. All other work has no grill: Elon decides and records it on the issue.
-
-Handoffs use committed artifacts such as intents, specs, branches, pull requests and reviews, with `active_run.md` for long tasks. Always name the next actor by role.
-
-| Situation | Sender | Report |
+| Role | File | Primary output |
 | --- | --- | --- |
-| Branch ready | fullstack-dev | Branch, worktree, diff summary, checks and open items |
-| Review done | qa-sdet, secops-finops | Approval or blocking findings in the worker report |
-| Bug fix verified | qa-sdet | Issue and ticket references with verification evidence |
-| Waiting on gate | any role | Owner action needed and related task |
-| Deploy ready for smoke check | release-manager | Component, stage and commit for QA smoke check |
-| Smoke check finished | qa-sdet | Pass or failure with component, stage and commit |
-| Release ready for owner | release-manager | Release summary and the owner's required action |
-
-## Hotfix loop
-
-1. **Alert:** the role finding a severe bug records it without personal data and alerts Elon, who dispatches architect-pm for triage and hands engineering work to Elon.
-2. **Rate:** architect-pm sets severity; QA or SecOps may provisionally identify urgent incidents.
-3. **Reproduce:** qa-sdet records the failing behavior and provides a failing reproduction test (a Functional test case) to fullstack-dev.
-4. **Fix:** fullstack-dev makes the test pass, adds the project's required changelog entry and reports the branch for review.
-5. **Verify:** qa-sdet and required reviewers audit the change and checks.
-6. **Ship:** a Shipping run (`script/ship.sh`) squash merges and reads back as merged when Checks and Verdict pass; release-manager owns release gates, staging and production after the owner go.
-7. **Close:** support-csm drafts any customer notice. Elon obtains owner approval before sending or closing a ticket.
+| The coordinator (CEO) | `elon.md` | Priorities, user contact, dispatch |
+| architect-pm | `architect-pm.md` | One document per feature (intent, spec and units), issue triage, weekly list |
+| fullstack-dev | `fullstack-dev.md` | Isolated branch with its own tests. Cursor `grok-4.7-xhigh`; Claude only when that quota is out |
+| qa-sdet | `qa-sdet.md` | Verifier Verdict (`script/post-verdict.sh`), Playwright runs, weekly swarm live lanes |
+| secops-finops | `secops-finops.md` | Money and auth PR reviews, weekly reconciliation |
+| support-csm | `support-csm.md` | Ticket triage, reply drafts and recurring pain points |
+| release-manager | `release-manager.md` | Staging in the daily program (`daily-run.md`), production on the user's go, rollback plan (a rollback still needs the user) |
+| sales-marketing | `sales-marketing.md` | Positioning, acquisition plans, growth experiments, weekly numbers |
 
 | Severity | Meaning | Action |
 | --- | --- | --- |
@@ -96,52 +22,49 @@ Handoffs use committed artifacts such as intents, specs, branches, pull requests
 | P2 | Issue with a workaround or limited impact | Normal queue |
 | P3 | Cosmetic or wording issue | Normal queue |
 
-## Team rules
+Usage gate by coordinator host: `usage-gate-hook.py` gates every worker start from Claude Code (`.claude/settings.json`), Cursor (`~/.cursor/hooks.json`) and Antigravity (`~/.gemini/config/hooks.json`). The Cursor and Antigravity entries come from `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`; a coordinator that starts workers from either IDE first confirms its entry is installed, and otherwise runs in Claude Code.
 
-1. **Autonomy:** decide alone unless owner approval is required, an ADR or spec would be broken, or the action cannot be undone.
-2. **One ticket, one session:** report a verified branch and finish; start a fresh session for a new ticket.
-3. **Compaction:** keep `active_run.md` current for long tasks so work can resume after compaction.
-4. **Own your files:** avoid concurrent edits to the same file; use isolated branches and worktrees.
-5. **Evidence:** report diff statistics, check counts and open items. Do not paste full diffs into chat.
-6. **Zero secrets:** never print environment files, secrets or keys to terminal output or markdown. Never open a secret file with a printing command (`cat`, `awk`, `sed`, `head`, `grep`, `echo`); pass it with an env file, a pipe straight into the client, or a field fill that never reaches output.
-7. **Strikes:** follow the project's token budget and strike enforcement instructions in `AGENTS.md`.
-8. **The Algorithm (every role):** before adding or changing any step, rule, check or brief, apply in order: question the requirement (name its owner and reason), delete the step, simplify what survives, accelerate the wait points, automate last (https://github.com/cursor/plugins/blob/main/dyl-stack/skills/principle-the-algorithm/SKILL.md). The PR names the requirement questioned, its owner and what was deleted; a new hook, gate, lint or check script without that paragraph is not merged. Process findings go in the private log via `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"` (evidence, finding, fix, Algorithm step).
-9. **No is a valid outcome:** a teammate may decline a request with evidence. Owner reserved decisions (pricing, legal, production, irreversible data) are never declined by the team, only pushed back to the owner with evidence.
-10. **No substitute tooling:** never replace or bypass a standard team mechanism (Orca orchestration, GitHub Actions, hooks, gates, deploy scripts, worker lifecycle) with self-built tooling. Root-cause the standard tool first; a substitute needs the owner approval with reason and diff (owner rule 2026-10-20).
-11. **Heavy jobs (owner rule 2026-11-08):** heavy means Playwright and production builds only; run them through `~/dotfiles/script/heavy-gate.sh --weight 2`. At most 2 heavy jobs per host wait on slots while 1 minute load is under the host limit and free memory is at least 20%. The Bash hook blocks un-gated Playwright and builds. Full `tsc` uses `--measure` (no slot, logs duration and host load for one week).
-12. **Push an explicit branch (owner rule 2026-10-23):** `git push origin HEAD:refs/heads/<branch>`, never a bare `git push` or a target taken from `@{u}`, which pushed a fix straight to main once.
-13. **Close browsers when done (owner rule 2026-10-28):** a worker or coordinator that starts Chrome Dev (or any browser with its own `--remote-debugging-port` profile) stops it by PID when its browser task ends, before `worker_done`. Elon checks `pgrep -lf "Google Chrome Dev"` on each wake and stops leftovers by PID only, never by name; the owner's own CDP browser stays only while it is in use. Four finished QA browsers once held 2.4 GB on the busiest host.
+Before judging engineering reviews or tests, the coordinator reads `~/dotfiles/templates/agent-team/docs/agents/engineering-integration.md`. Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
 
-### Heavy jobs
+## Rule table
 
-Run `next build`, Playwright and regressions with `~/dotfiles/script/heavy-gate.sh --weight 2 -- <command>`. Mark a long regression with `HEAVY_GATE_CLASS=long` so one slot stays free while it runs. Run full project type checks with `~/dotfiles/script/heavy-gate.sh --measure -- <tsc command>`; measure mode never waits and logs duration, load and free memory. `bun test`, lint and review scripts do not use the gate. Only Elon runs `~/dotfiles/script/hw-probe.sh --calibrate` at a quiet time. `head-checks.sh` gates only Playwright and build steps in the checklist; other steps run free. Wait on the gate in the foreground under the tool timeout, never through a polling background shell.
+Each rule names what enforces it. "none" means only the agent's reading holds it; those rows are follow up work. Before adding a rule, step or check, apply The Algorithm (row below).
 
-## Issue budget
-
-Every role that files issues follows this; Elon enforces it in the daily run. Keep the list honest: every open issue is real, current and owned.
-
-- **No cap.** There is no limit on open issues. Search first, close duplicates and issues a merged PR fixed, and file one issue per incident.
-- **Bar for a new issue.** It names the change, the done condition as an observable result (command output, screenshot or DB row, never only "tests pass"), the requirement owner (who asked and why), a `Deleted:` line (what it removes, or "nothing, because ...") and the owner role, and a bug carries its P label.
-- **Search first.** Run `gh issue list --search` on the key terms before filing, and add to the existing issue instead of opening a duplicate.
-- **Review findings.** A finding on an open PR is fixed in that PR when it is small (about 30 lines or less). Otherwise it becomes at most one follow up issue per PR that lists every finding, never one issue per finding.
-- **State lives in labels.** `blocked` means the issue waits on something outside the team (a halt, an owner decision, a release), and its body names what and who. A `blocked` issue never also carries `ready-for-agent`. When a hold starts or ends, relabel every issue it covers in the same turn, and never say a hold is on or lifted without naming who set or lifted it and when.
-
-## Gated actions
-
-Holding back a gated action is the default. Only the owner approves actions identified by project policy, including:
-
-- Messages to customers, partners or the public, and closing customer tickets.
-- Refunds, credits, discounts, coupons and subscription changes.
-- Production data writes and direct production server access.
-- Production deployments, force pushes and rollbacks.
-- Accepting or rejecting an intent or spec.
-
-Project specific gates and deployment stages are documented in `deploy-facts.md`.
-
-## Coordinator procedures
-
-Before status or process review, Elon reads `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`. Before judging engineering reviews or tests, Elon reads `~/dotfiles/templates/agent-team/docs/agents/engineering-integration.md`. Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
-
-## Extra Strong review (owner 2026-10-31)
-
-Owner rule 2026-10-31: extra Strong / Claude Opus cross review is required only for issues involving money transactions (including payments, wallet movements and ledger postings), or when Elon or the human owner explicitly requests it for that issue. Record an explicit request and its reason on the issue or PR. Auth, schema, tenant isolation, gate scripts, diff size, uncertainty and a model fallback do not automatically require this extra review. Ordinary independent QA and exact-head Checks remain required; when both pass, the lead proceeds without waiting for an extra Strong review outside those two cases.
+| Rule | Enforcer |
+| --- | --- |
+| **The Algorithm:** apply `principle-the-algorithm` before any new rule, step or check. The PR names the requirement it questioned and what it deleted. | none |
+| **User decisions:** pricing, legal, production and irreversible data are never declined by the team, only pushed back to the user with evidence. | none |
+| **Plan approval (user 2026-11-06):** the user approves only new features, new UI pages, prices and money rules. The coordinator decides the rest and records it on the issue. | none |
+| **Pre-build grill gate (user 2026-11-06):** a multi role grill runs only for money (payments, billing, refunds, ledger, credits, pricing or entitlements) with secops-finops, architect-pm and the coordinator, and for new UI pages with sales-marketing and the coordinator. The user approves the result before build. | `.claude/hooks/guard-bash.py` (grill check on build worker starts) |
+| **Role changes (user 2026-10-31):** a change to a role definition (`.claude/agents/`, other provider role files, canonical role templates) needs the user's explicit approval of the concrete diff. The coordinator cannot approve for the user; silence, QA PASS or Checks PASS is not approval. Each commit carries `Owner-approved: <owner> <date> (<where approved>)`. | `script/team-audit.sh` (flags commits from 2026-11-03 without the trailer), `script/ship.sh` |
+| **Gated actions:** only the user approves messages to customers, partners or the public, closing customer tickets, refunds, credits, discounts, coupons, subscription changes, production data writes, direct production server access, production deploys, force pushes, rollbacks, and accepting or rejecting an intent or spec. | `.claude/hooks/guard-bash.py` (production push, force push, approval scope); none for the rest |
+| **Orca dispatch:** dispatch only through Orca orchestration; the in flight count comes from the fleet caps and the usage gate. | `script/usage-gate.py`, `usage-gate-hook.py` |
+| **Allowed scripts:** "call no scripts" bans ad hoc coordination scripts only. The usage gate, `heavy-gate.sh`, `lead-merge.sh` and worker-watch stay. | `.claude/hooks/guard-bash.py` (un-gated heavy jobs) |
+| **Publication:** the PR owner writes the branch; only the coordinator publishes and merges. | `script/lead-merge.sh`, `script/team-audit.sh` (merge wording) |
+| **Stall detection:** stays on worker-watch. | `~/dotfiles/.agents/skills/orca-team/worker-watch.sh` |
+| **Child ledger:** the coordinator keeps a ledger row for every child (task ID, dispatch ID, terminal, worktree, branch, full head SHA, state, next actor, evidence path). | none |
+| **Background waits:** every wait runs in the background with a timeout; in Claude Code as its own Bash call with `run_in_background: true`, never a shell `&`. | `.claude/hooks/guard-bash.py` (trailing `&` on `check --wait`) |
+| **No run-use for workers:** workers and child coordinators never run `orca orchestration run-use`. The coordinator rebinds with `run-use --id <run>` after a restart. | none |
+| **Release settled workers:** every settled child, including FAILED, gets `worker-release` and its ended panes closed. | `script/wrap-up.sh` |
+| **Reworks:** at most 2 reworks per PR, then the `needs-elon` label. | `script/pr-review.sh` |
+| **Extra Strong review (user 2026-10-31):** extra Strong cross review only for money transactions, or when the coordinator or the user asks for it on that issue. | `script/pr-review.sh` (money paths) |
+| **Verdict:** a PASS Verdict includes `Command: <exact test command run>`. Never edit or minimize a Verdict; post a new one. | `script/post-verdict.sh`, `script/ship.sh` |
+| **Verdict carry (user 2026-10-23):** a PASS survives a rebase when the `git patch-id --stable` of `merge-base(origin/main, head)..head` matches the Verdict head. | `script/ship.sh` (`verdict_carry`) |
+| **Head checks (user 2026-10-27):** proving commands include every `.agents/head-checks.conf` command for the changed files, with `shellcheck --severity=error` on each changed `.sh`, once, at the head. | `script/head-checks.sh` |
+| **WIP cap (user 2026-10-23):** at most 6 open PRs per project; at 6, start no new feature unit. Test fix, hotfix and user UI look PRs are exempt. | none |
+| **One PR per fix batch (user 2026-10-23):** fixes from one regression run or failing area go in one PR. | none |
+| **Copy at the spec (user 2026-10-23):** the spec and each unit carry the exact new strings in tw, en and jp; the user's spec acceptance approves them. | none |
+| **Native copy (user 2026-10-21):** `en` is fluent American English and `jp` natural Japanese, never word for word from `tw`. A menu or button name quotes the real label in that locale's file. | none |
+| **New UI page (user 2026-10-26):** the user approves a new page at spec time from phone screenshots of the design or prototype. Screenshots go in `~/.claude/state/screenshots/<repo>/<issue>/`. | none |
+| **Straight to staging (user 2026-10-23):** release-manager promotes trunk to staging after merges. Production needs the user's go per release. Japanese homepage copy needs a native reader before launch. | none |
+| **Heavy jobs (user 2026-11-08):** Playwright and production builds run through `~/dotfiles/script/heavy-gate.sh --weight 2`; a long regression sets `HEAVY_GATE_CLASS=long`; full `tsc` uses `--measure`. Only the coordinator runs `hw-probe.sh --calibrate`. | `.claude/hooks/guard-bash.py`, `script/heavy-gate.sh` |
+| **Strikes:** follow the project's token budget and strike rule in `AGENTS.md`. | `.claude/hooks/strikes.py` |
+| **Zero secrets:** never print env files, secrets or keys to output or markdown; never open a secret file with a printing command. | `.claude/hooks/guard-bash.py` (secret readers, `.env` copies) |
+| **Push an explicit branch (user 2026-10-23):** `git push origin HEAD:refs/heads/<branch>`, never a bare `git push`. | `.claude/hooks/guard-bash.py` (push to a protected branch) |
+| **Close browsers (user 2026-10-28):** a worker that starts a browser with its own debugging port stops it by PID before `worker_done`. | `script/wrap-up.sh` |
+| **No substitute tooling (user 2026-10-20):** never replace a standard team mechanism (Orca orchestration, GitHub Actions, hooks, gates, deploy scripts, worker lifecycle) with self built tooling without the user's approval. | none |
+| **One unit, one session:** start a fresh session for a new unit; keep `active_run.md` current for long tasks. | none |
+| **Own your files:** isolated branches and worktrees; no concurrent edits to one file. | none |
+| **Issue budget:** search before filing (`gh issue list --search`); an issue names the change, an observable done condition, the requirement owner, a `Deleted:` line and the owner role; a bug carries its P label. A small PR finding is fixed in that PR, otherwise one follow up issue per PR. | none |
+| **Labels:** `blocked` names what and who it waits on and never sits with `ready-for-agent`. | `script/team-audit.sh` (labels) |
+| **Process findings:** log them with `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"`. | `script/team-audit.sh` |

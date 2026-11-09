@@ -1,0 +1,1 @@
+* Rename the 19:00 Orca automation to `daily-program-1900`. Its precheck now always wakes the coordinator to run the standing program from `templates/agent-team/docs/agents/daily-run.md` and skips only the staging deploy when staging equals `origin/main`. Re-install removes the old `staging-daily-1900` entry. `/elon daily run` is gone; `/elon status` stays (#834).

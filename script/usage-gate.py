@@ -28,9 +28,10 @@ ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
-CURSOR_COMPOSER_MODEL = "composer-2.5"
-CURSOR_GROK_MODEL = "grok-4.7-high"
-CURSOR_MODELS = (CURSOR_COMPOSER_MODEL, CURSOR_GROK_MODEL)
+CURSOR_BUILD_MODEL = "grok-4.7-xhigh"
+CURSOR_URGENT_MODEL = "grok-4.7-xhigh-fast"
+CURSOR_REVIEW_MODEL = "grok-4.7-high"
+CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
 
 
 def epoch(at):
@@ -66,7 +67,7 @@ def cursor_parse(summary, now):
     Cursor's dashboard describes Auto + Composer and API as separate pools;
     Composer draws the Auto + Composer pool first, then spills into API usage.
     Neither apiPercentUsed nor aggregate totalPercentUsed measures this pool.
-    Cursor preset chains should prefer composer-2.5 (auto+composer pool), not gpt-* API-pool models.
+    Cursor preset chains list only the Grok models in CURSOR_MODELS (auto+composer pool), not gpt-* API-pool models.
     Missing Auto + Composer usage stays unknown, never an inferred zero.
     """
     try:
@@ -610,7 +611,7 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
         detail["last_reading_source"] = reading_source(provider)
     detail["reading_age_min"] = round((now - t) / 60, 1) if t is not None else None
     if not reading:
-        detail["reason"] = ("no reliable Composer 2.5 allowance reading; read the Cursor dashboard"
+        detail["reason"] = ("no reliable Cursor auto+composer allowance reading; read the Cursor dashboard"
                             if provider == "cursor" else failure)
     if reading:
         t = epoch(reading.get("observed_at"))
@@ -797,9 +798,11 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         room, fraction = headroom(row)
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
+        if avoid == "grok" and family(entry) != "claude":
+            excluded = True  # Claude always reviews Grok authored work (owner 2026-11-09)
         excluded_provider = entry["provider"] == avoid_provider
         if entry["provider"] == "cursor" and entry["model"] not in CURSOR_MODELS:
-            eligible, row = False, {**row, "verdict": "cursor runs only composer-2.5 and grok-4.7-high"}
+            eligible, row = False, {**row, "verdict": "cursor runs only grok-4.7-xhigh, grok-4.7-xhigh-fast and grok-4.7-high"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
@@ -842,7 +845,7 @@ def main(argv=None):
     ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish", "link"])
     ap.add_argument("--host", action="append", default=[])
     ap.add_argument("--provider")
-    ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for composer-2.5 allowance")
+    ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for the auto+composer allowance")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer", "grok"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])

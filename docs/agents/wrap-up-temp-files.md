@@ -1,4 +1,4 @@
-# Wrap-up: agent temp files
+# Worktree cleanup: agent temp files
 
 `script/wrap-up.sh` also clears the temp files agents leave behind. Read this before changing what it removes or where agents write.
 
@@ -29,7 +29,7 @@ Preview (the default) lists each item with its size. `--apply` removes it. An it
 
 ## Coordinator waiter location
 
-The inbox waiter script and its output file live in `~/.local/state/agent-team/` (`elon-wait.sh`, `elon-waiter.json`), not in `/tmp`. A coordinator that still uses the old `/tmp` paths keeps working because wrap-up leaves both locations alone. Switch by pointing the waiter script and its fleet-watch pattern at the new paths, then delete the old files by hand.
+The inbox waiter script and its output file live in `~/.local/state/agent-team/` (`elon-wait.sh`, `elon-waiter.json`), not in `/tmp`. A coordinator that still uses the old `/tmp` paths keeps working because worktree cleanup leaves both locations alone. Switch by pointing the waiter script and its fleet-watch pattern at the new paths, then delete the old files by hand.
 
 ## Where workers write
 
@@ -68,7 +68,7 @@ fetch/prune and deletion races, and the missing-`lsof` summary.
 
 ## Terminals and worktrees
 
-A fleet host (`--worktrees-only`) closes the terminals of its own Orca, by the same rules as the coordinator. Before this, it closed none, so every old terminal looked like an owner and kept its worktree.
+A fleet host (`--worktrees-only`) closes the terminals of its own Orca, by the same rules as the coordinator. Before this, it closed none, so every old terminal looked like a user and kept its worktree.
 
 A local terminal with no dispatch and no running agent is closed, and its worktree is then removed if it is clean and merged (untracked `.orca-install-stamp`, `.continual-learning.json` and image files do not count as dirty). Kept, with the reason printed: a running agent, an unsettled or never-settled dispatch, a `lead-` worktree, uncommitted work, the main checkout, the caller's own terminal, output in the last 10 minutes, and anything the holder check cannot clear. Ended worker panes are swept within a bounded per-round budget, pruned only when `worker-list` is complete, and removed through `pane_record_rm` only after strict terminal inventory proof confirms the pane terminal is gone. Test: `script/tests/wrap-up-unknown-owner.test.sh`.
 
@@ -78,7 +78,7 @@ Each run reads every Run on this Orca and on every environment, then does two fl
 
 Release: a worker whose state is succeeded, stopped or failed, or whose liveness is exited or sleep, and whose terminal state is not released, gets `worker-release --dispatch <id>` (with `--environment` for a remote one). A ready or in progress worker that is live is never touched, nor the caller's `$ORCA_TERMINAL_HANDLE` or a Run coordinator's terminal.
 
-Close: on a remote environment a terminal whose worktree has only settled dispatches is closed (setup and plain shell panes included), and so is one whose worktree this run removed (a second pass after the worktree step). A terminal in a worktree with no dispatch record stays kept as unknown owner, since it may be an owner session, a dev server or another coordinator. Kept: a terminal outside a worktree, a running agent, a main branch terminal, and everything under a scheduled round.
+Close: on a remote environment a terminal whose worktree has only settled dispatches is closed (setup and plain shell panes included), and so is one whose worktree this run removed (a second pass after the worktree step). A terminal in a worktree with no dispatch record stays kept as unknown user, since it may be a user session, a dev server or another coordinator. Kept: a terminal outside a worktree, a running agent, a main terminal, and everything under a scheduled round.
 
 The dry run lists every `Release worker` and `Close terminal` line, and apply does exactly that list. Test: `script/tests/wrap-up-fleet-release.test.sh`.
 
@@ -88,4 +88,4 @@ The dry run lists every `Release worker` and `Close terminal` line, and apply do
 
 ## Browser sweep
 
-After the dispatch inventory, wrap-up closes stale throwaway browsers: a main Chrome Dev or Chromium process whose `--user-data-dir` is under a temp root, and agent-browser daemons. Stable Chrome and any profile outside temp are never candidates. It keeps a browser younger than 2 hours, with a live parent that is not pid 1, in an active dispatch path, with an unreadable working directory, or when no complete dispatch inventory was read. It stops by pid with TERM after rereading the pid. Tests: `script/tests/wrap-up-browsers.test.sh` (seams `WRAP_UP_PS_CMD`, `WRAP_UP_KILL_CMD`; in test mode the sweep runs only when both are set).
+After the dispatch inventory, worktree cleanup closes stale throwaway browsers: a main Chrome Dev or Chromium process whose `--user-data-dir` is under a temp root, and agent-browser daemons. Stable Chrome and any profile outside temp are never candidates. It keeps a browser younger than 2 hours, with a live parent that is not pid 1, in an active dispatch path, with an unreadable working directory, or when no complete dispatch inventory was read. It stops by pid with TERM after rereading the pid. Tests: `script/tests/wrap-up-browsers.test.sh` (seams `WRAP_UP_PS_CMD`, `WRAP_UP_KILL_CMD`; in test mode the sweep runs only when both are set).

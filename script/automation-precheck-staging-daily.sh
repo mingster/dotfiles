@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Daily 19:00 Asia/Taipei staging precheck for Orca fleet automations.
-# Inspects configured project repositories (from FLEET_STAGING_REPOS or fleet-pull.json),
-# fetches origin, and compares origin/main with origin/staging (or configured <component>/staging
-# branches in .claude/hooks/guard-config.json). Logs "skip: staging equals main" when up to date,
-# or wakes the active coordinator run via `orca orchestration send` to dispatch release-manager
-# for staging deploy followed by /staging-review (production deploy remains gated on owner approval).
+# Daily 19:00 Asia/Taipei precheck for the daily-program-1900 Orca fleet automation.
+# Always wakes the active coordinator run via `orca orchestration send` to run the standing program
+# kickoff (templates/agent-team/docs/agents/daily-run.md). Inspects configured project repositories
+# (from FLEET_STAGING_REPOS or fleet-pull.json), fetches origin, and compares origin/main with
+# origin/staging (or configured <component>/staging branches in .claude/hooks/guard-config.json).
+# Only the staging deploy step is skipped when staging equals main; otherwise the wake asks for
+# release-manager staging deploy and the pstack swarm live lanes (production stays gated on owner approval).
 set -uo pipefail
 
 state_dir="${AGENT_STATE_DIR:-$HOME/agent-state}"
@@ -129,7 +130,7 @@ if path and os.path.isfile(path):
 PY
 }
 
-emit "$(date '+%Y-%m-%dT%H:%M:%S%z') staging-daily-1900"
+emit "$(date '+%Y-%m-%dT%H:%M:%S%z') daily-program-1900"
 
 repos=()
 while IFS= read -r line; do
@@ -137,15 +138,13 @@ while IFS= read -r line; do
 done < <(resolve_repos)
 
 if [ "${#repos[@]}" -eq 0 ]; then
-  emit "skip: staging equals main (no configured repositories)"
-  set_trace_summary "skip: staging equals main"
-  exit 0
+  emit "warn: no configured repositories"
 fi
 
 ahead_items=()
 rc=0
 
-for repo in "${repos[@]}"; do
+for repo in ${repos[@]+"${repos[@]}"}; do
   if [ ! -d "$repo" ] || ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
     emit "warn: skipping missing or non-git path $repo"
     continue
@@ -211,14 +210,17 @@ for repo in "${repos[@]}"; do
   done
 done
 
+kickoff="${DAILY_PROGRAM_KICKOFF:-$HOME/dotfiles/templates/agent-team/docs/agents/daily-run.md}"
 if [ "${#ahead_items[@]}" -eq 0 ]; then
-  emit "skip: staging equals main"
-  set_trace_summary "skip: staging equals main"
-  exit "$rc"
+  emit "skip: staging deploy, staging equals main"
+  staging_step="Staging equals main: skip the staging deploy step."
+  summary="program; staging equals main"
+else
+  ahead_summary=$(printf '%s; ' "${ahead_items[@]}")
+  ahead_summary="${ahead_summary%; }"
+  staging_step="origin/main is ahead of staging for ${ahead_summary}: dispatch release-manager for staging deploy (/deploy staging), then the pstack swarm live lanes (.agents/skills/orca-adapter/playbooks/swarm.md)."
+  summary="program; staging ahead: ${ahead_summary}"
 fi
-
-ahead_summary=$(printf '%s; ' "${ahead_items[@]}")
-ahead_summary="${ahead_summary%; }"
 
 target=$(resolve_coordinator_target)
 if [ -z "$target" ]; then
@@ -230,15 +232,15 @@ run_id="${target#run:}"
 to_arg="run:$run_id"
 run_arg=("--run" "$run_id")
 
-subject="staging-daily-1900: deploy staging and run /staging-review"
-body="Daily 19:00 Asia/Taipei staging check: origin/main is ahead of staging for ${ahead_summary}. Dispatch release-manager for staging deploy (/deploy staging) and then run /staging-review. Production deploy remains gated on owner approval."
+subject="daily-program-1900: run the standing program"
+body="Daily 19:00 Asia/Taipei: read ${kickoff} and run the standing program. ${staging_step} Production deploy remains gated on owner approval."
 
 if ! "$orca_cli" orchestration send --to "$to_arg" ${run_arg[@]+"${run_arg[@]}"} --type status --subject "$subject" --body "$body" --json >/dev/null 2>&1; then
-  emit "error: failed to send orchestration wake to $to_arg for ${ahead_summary}"
-  set_trace_summary "failed wake send for ${ahead_summary}"
+  emit "error: failed to send orchestration wake to $to_arg (${summary})"
+  set_trace_summary "failed wake send (${summary})"
   exit 1
 fi
 
-emit "wake: notified $to_arg for ${ahead_summary}"
-set_trace_summary "wake: ${ahead_summary}"
+emit "wake: notified $to_arg (${summary})"
+set_trace_summary "wake: ${summary}"
 exit "$rc"

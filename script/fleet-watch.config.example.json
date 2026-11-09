@@ -58,7 +58,7 @@
     "from_terminal": "coordinator_terminal_handle",
     "host": "local",
     "agent": "cursor",
-    "model": "composer-2.5",
+    "model": "grok-4.7-xhigh",
     "sweep_agent": "claude",
     "sweep_model": "sonnet",
     "backlog_sweep_interval_seconds": 7200

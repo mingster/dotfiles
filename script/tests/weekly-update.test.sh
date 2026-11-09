@@ -40,9 +40,12 @@ init_bare_main "$plugins_up"
 seed_upstream_repos() {
   rm -rf "$mp_tree" "$plugins_tree"
   mkdir -p "$mp_tree/skills/engineering/tdd" \
-    "$plugins_tree/harness/pstack/claude-code/skills/benchmark-checklist"
+    "$plugins_tree/harness/pstack/claude-code/skills/benchmark-checklist" \
+    "$plugins_tree/cursor-team-kit/skills/deslop" "$plugins_tree/cursor-team-kit/rules"
   printf 'upstream tdd\n' >"$mp_tree/skills/engineering/tdd/SKILL.md"
   printf 'upstream pstack\n' >"$plugins_tree/harness/pstack/claude-code/skills/benchmark-checklist/SKILL.md"
+  printf 'deslop\n' >"$plugins_tree/cursor-team-kit/skills/deslop/SKILL.md"
+  printf 'rule\n' >"$plugins_tree/cursor-team-kit/rules/no-inline-imports.mdc"
   git -C "$mp_tree" init -q -b main
   git -C "$mp_tree" add -A
   git -C "$mp_tree" commit -qm up
@@ -74,7 +77,7 @@ setup_fixture() {
   printf 'old\n' >"$work/.agents/skills/tdd/SKILL.md"
   printf 'local\n' >"$work/templates/agent-team/.agents/skills/benchmark-checklist/SKILL.md"
   printf 'sha=old\nskills=tdd\n' >"$work/.agents/skills/.mattpocock-upstream"
-  printf 'sha=old\nsubpath=harness/pstack/claude-code\nskills=benchmark-checklist\n' \
+  printf 'sha=old\ntree=harness/pstack/claude-code .agents\ntree=cursor-team-kit vendor/cursor-team-kit\nskills=benchmark-checklist\n' \
     >"$work/script/.pstack-template-upstream"
   printf 'nodejs 20.0.0\n' >"$work/.tool-versions"
   mkdir -p "$work/docs/agents/drafts"
@@ -165,6 +168,10 @@ pbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mi
 pstack_state=$(git -C "$work" show "$pbranch:script/.pstack-template-upstream" 2>/dev/null || true)
 echo "$pstack_state" | grep -q "^sha=$newsha" && ok 'apply ok writes pstack sha' \
   || bad 'pstack sha not updated' "$pstack_state"
+git -C "$work" ls-tree -r --name-only "$pbranch" | grep -qx 'templates/agent-team/vendor/cursor-team-kit/rules/no-inline-imports.mdc' \
+  && git -C "$work" ls-tree -r --name-only "$pbranch" | grep -qx 'templates/agent-team/.agents/skills/deslop/SKILL.md' \
+  && ok 'apply ok commits the cursor-team-kit tree on the pstack branch' \
+  || bad 'cursor-team-kit tree missing on pstack branch' "$(git -C "$work" ls-tree -r --name-only "$pbranch")"
 creates=$(grep -c 'pr create' "$GH_LOG" 2>/dev/null || echo 0)
 [ "${creates:-0}" = 3 ] && ok 'apply ok opens three PRs' || bad "want 3 pr creates got $creates" "$(cat "$GH_LOG")"
 mbranch=$(git -C "$work" for-each-ref --format='%(refname:short)' 'refs/heads/mingster/weekly-mattpocock-*' 2>/dev/null | head -1)
@@ -174,7 +181,7 @@ impact_file=$(git -C "$work" ls-tree -r --name-only "$mbranch" 2>/dev/null | gre
 
 # --- case: apply fails ---
 setup_fixture
-printf 'sha=old\nsubpath=missing/path\nskills=benchmark-checklist\n' >"$work/script/.pstack-template-upstream"
+printf 'sha=old\ntree=missing/path .agents\nskills=benchmark-checklist\n' >"$work/script/.pstack-template-upstream"
 git -C "$work" add script/.pstack-template-upstream
 git -C "$work" commit -qm state
 git -C "$work" push -q origin main

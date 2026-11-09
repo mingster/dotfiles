@@ -27,6 +27,6 @@ Exit 0 when clean, 1 on any finding (also for `--report`), 2 on a usage error.
 
 ## Stage times
 
-`--report` runs `script/team-audit-metrics.ts --repo <owner/name>` per project with two gh calls (one GraphQL search for merged PRs, one `gh issue list`). It reads dispatch times from `${TEAM_AUDIT_DISPATCHES:-$HOME/agent-state/team-dispatches.tsv}` (columns `issue` and `dispatched_at`, header first, the earliest row per issue counts). Queue runs from `ready-for-agent` to dispatch, build from dispatch to the first Checks result on the PR's first commit, merge from that result to merge. A PR with all four timestamps counts as fully verified.
+`--report` runs `script/team-audit-metrics.ts --repo <owner/name>` per project with two gh calls (one GraphQL search for merged PRs, one `gh issue list`). It reads dispatch times from `${TEAM_AUDIT_DISPATCHES:-$HOME/agent-state/team-dispatches.tsv}` (columns `issue` and `dispatched_at`, header first, the earliest row per issue counts). Queue runs from `ready-for-agent` to spawn, build from dispatch to the first Checks result on the PR's first commit, merge from that result to merge. A PR with all four timestamps counts as fully verified.
 
 Per host fleet metrics are out of scope for `script/team-audit-metrics.ts`.

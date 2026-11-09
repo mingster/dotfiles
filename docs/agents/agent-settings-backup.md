@@ -86,4 +86,4 @@ references for restore instead. A manifest row is not a sanitizer.
 
 This repository does not modify the private manifest or execute private backup
 or restore jobs. Host inspection, credential rotation and a real private restore
-drill remain owner tasks; temp-HOME tests prove local setup and audit behavior.
+drill remain user tasks; temp-HOME tests prove local setup and audit behavior.
