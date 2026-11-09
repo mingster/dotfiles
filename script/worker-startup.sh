@@ -363,7 +363,7 @@ run_mode() {
 
   host_check
 
-  if [ -z "$environment" ]; then
+  if [ -z "$environment" ] && [ -z "$wt" ]; then
     apply_worker_placement "$spec" "$repo"
     [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
   fi
@@ -376,14 +376,14 @@ run_mode() {
     esac
   fi
 
+  "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
+    || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
+
   if [ "$agent" = cursor ]; then
     exec bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${repo:+--repo "$repo"} ${base:+--base-branch "$base"}
   fi
-
-  "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
-    || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
 
   if [ -z "$wt" ]; then
     [ -n "$name" ] && [ -n "$repo" ] || usage_run

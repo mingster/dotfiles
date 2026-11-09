@@ -379,7 +379,9 @@ Orca installation and sign in remain owner steps when its CLI is missing.
 `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md` and
 `docs/agents/domain.md`, then establish the project's domain context and deployment
 commands. Label creation requires GitHub access. Customized role files are
-preserved and reported for manual reconciliation. Product facts, domain context, ADRs and intents
+preserved and reported for manual reconciliation. It also refreshes the Token budget, Compact
+instructions and Owner context commands sections in `AGENTS.md`, keeping other project
+instructions. Product facts, domain context, ADRs and intents
 stay project owned; never put product facts in generated team skills. `check` is read only and
 exits non zero on drift. `all` configures the machine first, then runs `project`; `all --dry-run`
 previews both stages.
