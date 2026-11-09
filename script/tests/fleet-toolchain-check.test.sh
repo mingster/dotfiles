@@ -407,4 +407,24 @@ export FLEET_ORCA_APP_BIN="$tmp/orca-app/bin"
 local_ver=$(orca_version_local | sed -E 's/.*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
 check "677 orca prefers app CLI over stale ~/.orca/cli/bin" "$([ "$local_ver" = 1.4.253 ] && echo 0 || echo 1)"
 
+# 842: run on the coordinator, the check writes its tool versions to the state dir as the fleet floor
+me_host=$(hostname -s)
+mkdir -p "$tmp/floor-state"
+printf 'coordinator %s\n' "$me_host" >"$tmp/floor-state/coordinator.conf"
+printf '{"hosts":["%s","worker-a"],"repos":[]}\n' "$me_host" >"$tmp/floor-fleet.json"
+floor_versions="{
+  \"$me_host\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+  \"worker-a\": {$base_tools, \"orca\": \"1.4.251\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}
+}"
+AGENT_STATE_DIR="$tmp/floor-state" FLEET_PULL_CONFIG="$tmp/floor-fleet.json" FLEET_TOOLCHAIN_VERSIONS="$floor_versions" \
+  "$here/fleet-toolchain-check.sh" >/dev/null 2>&1
+check "842 coordinator writes fleet-floor.json with its own versions" \
+  "$(jq -e --arg h "$me_host" '.host == $h and .tools.claude == "2.1.319" and .tools.orca == "1.4.253" and (.tools | has("git"))' \
+    "$tmp/floor-state/fleet-floor.json" >/dev/null 2>&1; echo $?)"
+mkdir -p "$tmp/peer-state"
+printf 'coordinator coord-a\n' >"$tmp/peer-state/coordinator.conf"
+AGENT_STATE_DIR="$tmp/peer-state" "$here/fleet-toolchain-check.sh" >/dev/null 2>&1
+check "842 a peer run leaves the state dir without a floor file" \
+  "$([ ! -e "$tmp/peer-state/fleet-floor.json" ] && echo 0 || echo 1)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

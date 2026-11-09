@@ -3,6 +3,8 @@
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 echo
 echo "## State of play (from .claude/bin/state-of-play.sh)"
+# Fast-forward clean main checkouts and name tools below the fleet floor before reading the branch
+[ -f "$HOME/dotfiles/script/session-sync.sh" ] && bash "$HOME/dotfiles/script/session-sync.sh" "$PWD"
 b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
 dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 ab=$(git rev-list --left-right --count "origin/$b...HEAD" 2>/dev/null | awk '{print "behind " $1 ", ahead " $2}')
