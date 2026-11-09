@@ -849,7 +849,7 @@ if [ "$mechanical" = false ] && [ "$generated_ok" = false ] && { [ "$text_only" 
       fi
       if [ "$applies" = true ]; then
         [ -n "$known_dispatches" ] || load_dispatches
-        pr_review_gates_resolve_builder_dispatch "$author_id" "$(field .headRefName)" bad_verdict || { newest_seen=true; continue; }
+        pr_review_gates_resolve_builder_dispatch "$author_id" "$(field .headRefName)" bad_verdict "$repo" || { newest_seen=true; continue; }
         builder_dispatch=${PRG_BUILDER_DISPATCH:-}
         if ! pr_review_gate_verifier_known "$verifier_id" "$builder_dispatch" "$known_dispatches" bad_verdict; then newest_seen=true; continue; fi
         if ! pr_review_gate_coordinator_verdict "$verifier_id" "$author_id" "$builder_dispatch" bad_verdict; then newest_seen=true; continue; fi

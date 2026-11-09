@@ -90,8 +90,14 @@ merge_machine_settings() {
   local tpl=$1 dst=$2 dry=$3
   if [ ! -f "$dst" ]; then
     if [ "$dry" -eq 1 ]; then
-      echo "would write $dst"
+      if [ -L "$dst" ]; then
+        echo "would back up $dst, then write $dst"
+      else
+        echo "would write $dst"
+      fi
     else
+      # A dangling link: keep the link (and where it pointed) aside, never write through it (#797).
+      [ ! -L "$dst" ] || backup_path "$dst"
       python3 - "$tpl" "$dst" <<'PY'
 import json, re, sys
 tpl_path, dst_path = sys.argv[1], sys.argv[2]

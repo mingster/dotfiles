@@ -295,5 +295,36 @@ else
   bad "stale self-review refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# 14-15. Patch-id carry refuses an empty or whitespace-only commit after the verdict head (#771)
+blank_case() { # <pr> <branch> <empty|whitespace>
+  local n=$1 b=$2 kind=$3 old new
+  mf_pr_add "$n" "$b" "Body"
+  old=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$b"
+  if [ "$kind" = empty ]; then
+    "$MF_REAL_GIT" -C "$MF_REPO" commit -q --allow-empty -m "empty"
+  else
+    printf '%s   \n' "$b" > "$MF_REPO/$b.txt"
+    "$MF_REAL_GIT" -C "$MF_REPO" commit -q -am "whitespace"
+  fi
+  "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$b"
+  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
+  new=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$b")
+  jq --arg h "$new" '.headRefOid = $h' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  mf_self_review "$n" "$new"
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$old"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "commit ${new:0:12} after verdict head ${old:0:12} is empty or whitespace only" <<<"$SHIP_OUT" \
+    && ! grep -q "pr merge" "$MF_GH_LOG"; then
+    ok "$kind commit after verdict head refuses"
+  else
+    bad "$kind commit after verdict head refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
+}
+blank_case 14 feat-empty empty
+blank_case 15 feat-ws whitespace
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
