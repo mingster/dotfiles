@@ -1576,6 +1576,84 @@ def prune_empty_dir(rel):
             pass
 
 
+FINAL_SETTINGS = None  # the settings this run ends with (compiled merge), set once it is built
+_kept_hooks_cache = None
+
+
+def kept_hooks():
+    # Managed hook files that stay, as {file: referrer}. A file stays when something this run keeps
+    # loads it by name: a project hook in .claude/hooks/ (sibling runpy.run_path(...with_name("<file>")),
+    # a path, or for a .py file `import <stem>` / `from <stem> import`), or a hook command in the
+    # settings the run ends with (the same in a dry run, so the plan matches the real run). The scan
+    # repeats over the files it keeps until nothing new is kept, so a kept guard-bash.py also keeps
+    # production-hosts.txt. .claude/hooks/tests/ is not scanned. User level references ($HOME/.claude/...,
+    # ~/.claude/...) name the shared copy, not the project file.
+    global _kept_hooks_cache
+    if _kept_hooks_cache is not None:
+        return _kept_hooks_cache
+    hooks_dir = os.path.join(target, ".claude/hooks")
+    managed = [h for h in SHARED_HOOKS if os.path.lexists(os.path.join(hooks_dir, h))]
+
+    def refs(text, hook):
+        if re.search(r"(?<![\w.-])" + re.escape(hook) + r"(?![\w-])", text):
+            return True
+        if hook.endswith(".py"):
+            stem = re.escape(hook[:-3])
+            return bool(
+                re.search(
+                    r"^[ \t]*(?:from[ \t]+" + stem + r"[ \t]+import\b"
+                    r"|import[ \t]+(?:[\w.]+(?:[ \t]+as[ \t]+\w+)?[ \t]*,[ \t]*)*" + stem + r"\b)",
+                    text,
+                    re.M,
+                )
+            )
+        return False
+
+    sources = []  # (label, text) of what this run keeps and does not manage
+    if os.path.isdir(hooks_dir):
+        for entry in sorted(os.listdir(hooks_dir)):
+            full = os.path.join(hooks_dir, entry)
+            if entry in SHARED_HOOKS or not os.path.isfile(full):
+                continue
+            try:
+                sources.append((f".claude/hooks/{entry}", read_text(full)))
+            except (OSError, UnicodeDecodeError):
+                continue
+
+    user_re = re.compile(r"(?:\$\{?HOME\}?|~)/\.claude/[\w./-]*")
+
+    def commands(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "command" and isinstance(value, str):
+                    yield value
+                else:
+                    yield from commands(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from commands(value)
+
+    if isinstance(FINAL_SETTINGS, dict):
+        for cmd in commands(FINAL_SETTINGS.get("hooks", {})):
+            sources.append((".claude/settings.json hook command", user_re.sub("", cmd)))
+
+    kept = {}
+    queue = sources
+    while queue:
+        found = []
+        for label, text in queue:
+            for hook in managed:
+                if hook not in kept and refs(text, hook):
+                    kept[hook] = label
+                    try:
+                        found.append((f".claude/hooks/{hook}", read_text(os.path.join(hooks_dir, hook))))
+                    except (OSError, UnicodeDecodeError):
+                        pass
+        queue = found
+    _kept_hooks_cache = kept
+    return kept
+
+
 def remove_legacy_copies():
     for role_file in CANONICAL_ROLES:
         remove_path(f".claude/agents/{role_file}")
@@ -1584,7 +1662,14 @@ def remove_legacy_copies():
     remove_path(".claude/agent-team-baseline")
     remove_path(".claude/agent-team-project-name")
 
+    if os.path.isdir(os.path.join(target, ".claude/hooks/tests")):
+        print("note .claude/hooks/tests/ is not scanned for hook references (tests there do not keep a hook file)")
+    kept = kept_hooks()
     for hook in SHARED_HOOKS:
+        why = kept.get(hook)
+        if why:
+            print(f"keep .claude/hooks/{hook} (loaded by {why}, which this run keeps)")
+            continue
         remove_path(f".claude/hooks/{hook}")
 
     for b in SHARED_BINS:
@@ -1956,6 +2041,8 @@ def seed_and_sync_project(proj_settings_mem=None):
         for e in errs:
             sys.stderr.write(f"agent-team: {e}\n")
         sys.exit(1)
+    global FINAL_SETTINGS
+    FINAL_SETTINGS = json.loads(compiled_settings)
     write_text(".claude/settings.json", compiled_settings)
 
     for rel in TEMPLATE_SYNC_FILES:
@@ -1978,10 +2065,15 @@ def run_check():
     ):
         drifts.append("legacy baseline directory present: .claude/agent-team-baseline")
 
+    global FINAL_SETTINGS
+    final_text, final_errs = validate_and_compile_settings()
+    if not final_errs:
+        FINAL_SETTINGS = json.loads(final_text)
+    kept = kept_hooks()
     for hook in SHARED_HOOKS:
         rel = f".claude/hooks/{hook}"
         full = os.path.join(target, rel)
-        if os.path.exists(full) or os.path.islink(full):
+        if (os.path.exists(full) or os.path.islink(full)) and hook not in kept:
             drifts.append(f"shared hook copy or link in project: {rel}")
 
     for b in SHARED_BINS:
