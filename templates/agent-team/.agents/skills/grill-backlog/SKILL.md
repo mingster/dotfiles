@@ -5,7 +5,7 @@ description: Owner entry for issues that wait on a human. List the issues labele
 
 # Grill the backlog
 
-Run by Elon. List the issues that wait on the owner, using the tracker in `docs/agents/issue-tracker.md`:
+Run by the coordinator. List the issues that wait on the user, using the tracker in `docs/agents/issue-tracker.md`:
 
 ```bash
 for l in ready-for-human needs-triage; do gh issue list --label $l --limit 50 --json number,title --jq '.[]|"\(.number) \(.title)"'; done

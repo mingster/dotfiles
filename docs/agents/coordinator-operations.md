@@ -7,7 +7,7 @@ target provider and model (exiting 3 if refused), then probes the required CLI o
 environment's login-shell PATH in an Orca terminal and refreshes `~/dotfiles` and the `~/.orca/presets.json`
 symlink (`script/setup-orca.sh`) on that host before dispatch. A missing CLI, failed probe, or
 unconfirmed exit refuses dispatch and names the required CLI. Install missing tools on that
-environment with `script/install-agent-clis.sh`; sign-in remains an owner action. `script/usage-gate-hook.py`
+environment with `script/install-agent-clis.sh`; sign-in remains a user action. `script/usage-gate-hook.py`
 blocks direct `orca orchestration worker-start --on` invocations so remote starts always pass
 this preflight. The Cursor helper below includes the same usage gate and preset refresh.
 
@@ -29,7 +29,7 @@ without reading credentials. Cursor uses `.cursor/auth.json` on macOS and
 uses the system keyring, so its sign-in file status is unavailable; see its
 [official authentication description](https://github.com/google-antigravity/antigravity-cli#authentication).
 File presence does not establish valid sign-in, and absent files can coexist
-with keyring or API-key authentication. Owner sign-in checks remain separate.
+with keyring or API-key authentication. User sign-in checks remain separate.
 
 Start Cursor through `script/start-cursor-worker.sh` so the exact worktree is trusted before the worker starts.
 
@@ -46,11 +46,11 @@ The helper creates the worktree through `orca worktree create --environment`, th
 
 Python 3 must be available locally and remotely. If the trust command fails or its exit cannot be confirmed within 60 seconds, dispatch stops and the terminal remains available for inspection. The helper closes the trust terminal after a confirmed successful exit.
 
-For an existing remote worktree, replace the creation flags with `--worktree-path <absolute-remote-path>`. If the base branch is omitted during remote creation, Orca uses the remote repository default branch. Without `--on`, local creation, trust and dispatch follow the existing behavior.
+For an existing remote worktree, replace the creation flags with `--worktree-path <absolute-remote-path>`. If the base branch is omitted during remote creation, Orca uses the remote repository default branch. Without `--on`, local creation, trust and spawn follow the existing behavior.
 
 ## Fleet and load distribution
 
-The team coordinates work across a fleet of Macs paired in Orca ADE (`orca environment list`). One host is the active coordinator (`agent-state/coordinator.conf`); the remaining hosts share builder, reviewer, browser, release and heavy-check workloads.
+The team coordinates work across a fleet of Macs paired in Orca ADE (`orca environment list`). One host is the active coordinator (`agent-state/coordinator.conf`); the remaining hosts share PR owner, verifier, browser, release and heavy-check workloads.
 
 ### Host specialization and routing order
 
@@ -63,21 +63,21 @@ Host names, 1-minute load ceilings and roles live in the private fleet-watch con
 1. **Primary code host (also hosts the coordinator):** first choice for code, test and review while 1-minute load < 12.
 2. **First overflow host:** next choice while 1-minute load < 8.
 3. **Second overflow host:** next choice while 1-minute load < 12.
-4. **Browser host:** used when the dispatch brief includes `Host role: browser` (not for ordinary code that merely mentions secrets or checkouts in prose).
+4. **Browser host:** used when the kickoff includes `Host role: browser` (not for ordinary code that merely mentions secrets or checkouts in prose).
 5. **Release-manager host:** runs only on a host named in the project's `docs/agents/deploy-facts.md`.
 6. **Database and heavy host:** runs the dev database and remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers. `head-checks.sh` may also run on the least loaded host that has the repository and `~/dotfiles`.
 
 ### Worker admission and load balancing
 
-- **Admission rule (owner 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`).
+- **Admission rule (user 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within the host's worker cap (`host_caps`).
 - **Load band target:** host caps are a ceiling, never a target. Fill an idle host up to its cap before any host with queued work waits, and keep each active host between `0.4` and `0.7` load per core.
-- **Counted slots:** count builders, reviewers, child dispatches and finished committers still holding a pending-push slot (`crew/OPERATIONS.md`).
+- **Counted slots:** count PR owners, verifiers, child dispatches and finished committers still holding a pending-push slot (`crew/OPERATIONS.md`).
 - **Heavy job gate (`script/heavy-gate.sh` and `script/heavy-gate.py`):** Playwright and production builds wait on slots (weight 2, at most 2 per host unless calibrated). Full `tsc` uses `--measure` with no slot. Unit tests and lint do not use the gate. Load and free memory rules unchanged; `HEAVY_GATE_CLASS=long` leaves 1 slot free.
 - **Quota publication across hosts (`script/usage-gate.py --publish`):** the coordinator refreshes provider usage readings (`claude`, `cursor`, `antigravity`) and publishes `~/.claude/state/usage-gate.json` to runner hosts so local and remote hooks enforce the same 95% weekly ceiling.
 
 ## Taking over the coordinator
 
-Do this only when the owner says so. Failover is never automatic and nothing schedules it. Roles live in the private agent-state repo, in `coordinator.conf`: one `coordinator <name>` line and ordered `backup <name>` lines, where each name is what `hostname -s` prints on that host.
+Do this only when the user says so. Failover is never automatic and nothing schedules it. Roles live in the private agent-state repo, in `coordinator.conf`: one `coordinator <name>` line and ordered `backup <name>` lines, where each name is what `hostname -s` prints on that host.
 
 On the host that is taking over, run:
 
@@ -97,11 +97,11 @@ It prints its plan and refuses without `--yes`. In order, it:
 
 Any failure stops at that step and prints the state and the next command. Running it again is safe. On a host that is already the coordinator it only repeats the restore, the LaunchAgent and the push.
 
-Left for the owner afterwards: pair Orca on the new host and start the coordinator agent there.
+Left for the user afterwards: pair Orca on the new host and start the coordinator agent there.
 
 ### When the old host comes back
 
-Every `sync.sh push` first fetches origin and reads the `coordinator` line. If this host is not named, it refuses with `coordinator refused: this host is not <name>`, writes `.sync-refused`, alerts the fleet terminals and exits 1, before copying, committing or pushing anything. A failed fetch refuses too. The old host's live files stay as they were and origin is unchanged. The owner decides what to keep from them.
+Every `sync.sh push` first fetches origin and reads the `coordinator` line. If this host is not named, it refuses with `coordinator refused: this host is not <name>`, writes `.sync-refused`, alerts the fleet terminals and exits 1, before copying, committing or pushing anything. A failed fetch refuses too. The old host's live files stay as they were and origin is unchanged. The user decides what to keep from them.
 
 ### Handing back
 
@@ -117,7 +117,7 @@ Run the same command on the other host: `bash script/take-over-coordinator.sh --
 
 Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missing state repo, a missing `coordinator` line and a failed fetch also print `NO DISPATCH`. When all pass it prints `ok coordinator <name>, state fresh`.
 
-`NO DISPATCH` means start no worker and ask the owner. Failover is never automatic: only the owner changes the coordinator.
+`NO DISPATCH` means start no worker and ask the user. Failover is never automatic: only the user changes the coordinator.
 
 ## Tools
 
@@ -135,7 +135,7 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/start-cursor-worker.sh` | Creates the worktree, writes `.workspace-trusted` via Python 3, checks `usage-gate.py`, and starts a Cursor worker. |
 | `script/pr-review.sh` | Cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass; picks a cross family model via `usage-gate.py`. |
 | `script/post-verdict.sh` | Posts the canonical `Verdict:` comment and `review` status. |
-| `script/doc-fact-check.sh` | Lists removed markdown lines that do not appear anywhere under `docs/` or `README.md` at head (exit 1 when any). Coordinators and reviewer briefs run it on doc rewrites. |
+| `script/doc-fact-check.sh` | Lists removed markdown lines that do not appear anywhere under `docs/` or `README.md` at head (exit 1 when any). Coordinators and verifier briefs run it on doc rewrites. |
 | `script/ship.sh` | Shipping run (replacing `script/lead-merge.sh`): verifies required checks and matching `git patch-id` Verdict, squash merges, and reads back `MERGED`. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
@@ -146,6 +146,6 @@ Full tool list across all stages: [Agent team reference](team-reference.md).
 ## Review rules (issue #760)
 
 1. **No fact lost.** On PRs that rewrite or move docs, run `script/doc-fact-check.sh` against the merge base and explain every flagged line in the Verdict notes.
-2. **Reviewer differs from builder.** `script/ship.sh` and `script/lead-merge.sh` resolve the builder from the Verdict `author=` dispatch (or the PR branch worker when `author=unknown`), read `agent` and `model` from `worker-startup` launch records and `orca orchestration worker-list` (not a self-reported `Builder:` line in the PR body), and refuse when the verifier matches the builder on both fields. When no other provider has quota, review waits instead of reusing the builder model. With `author=unknown` the builder is the worker whose worktree has the head branch checked out, in the PR's repo (its `origin`); a worktree named after the branch counts only when no worktree has it checked out, and never in another repo. Workers started before #765 have no launch record, so the gate refuses them. Every such worker has ended, so no record is backfilled; restart a worker through `script/worker-startup.sh` if one turns up.
-3. **Coordinator reviews Cursor-built PRs.** When the resolved builder `agent` is `cursor`, the passing Verdict must use a configured coordinator id (`coordinator_ids` in `script/lead-merge.local.json`) as `verifier=` and name the builder dispatch as `author=`, posted through `script/post-verdict.sh`. A worker can still paste `verifier=<coordinator id>` in a PR comment without proving they hold that terminal; merge gates only require `verifier≠builder` and membership in `coordinator_ids`. Treat coordinator Verdicts as binding only when posted through `post-verdict.sh` from the coordinator host. Known limit: the gate cannot authenticate a coordinator id in a Verdict, because every comment comes from the same GitHub account.
-4. **Builder self-review.** Every push path: role files and `script/brief-lint.sh` require a self-review step; merge gates require a `## Self-review` section naming the current head sha. `script/ship.sh` carries an older self-review or Verdict sha by `git patch-id`, but refuses the carry when a commit it carries over (after that sha, or the whole branch after a rebase) is empty or changes only whitespace, since those leave the patch-id unchanged. Plain-text steps: [self-review-checklist.md](self-review-checklist.md) (Cursor and Antigravity run it as-is).
+2. **Verifier differs from PR owner.** `script/ship.sh` and `script/lead-merge.sh` resolve the PR owner from the Verdict `author=` dispatch (or the PR branch worker when `author=unknown`), read `agent` and `model` from `worker-startup` launch records and `orca orchestration worker-list` (not a self-reported `Builder:` line in the PR body), and refuse when the verifier matches the PR owner on both fields. When no other provider has quota, review waits instead of reusing the PR owner model. With `author=unknown` the PR owner is the worker whose worktree has the head branch checked out, in the PR's repo (its `origin`); a worktree named after the branch counts only when no worktree has it checked out, and never in another repo. Workers started before #765 have no launch record, so the gate refuses them. Every such worker has ended, so no record is backfilled; restart a worker through `script/worker-startup.sh` if one turns up.
+3. **Coordinator reviews Cursor-built PRs.** When the resolved PR owner `agent` is `cursor`, the passing Verdict must use a configured coordinator id (`coordinator_ids` in `script/lead-merge.local.json`) as `verifier=` and name the PR owner dispatch as `author=`, posted through `script/post-verdict.sh`. A worker can still paste `verifier=<coordinator id>` in a PR comment without proving they hold that terminal; merge gates only require `verifier≠builder` and membership in `coordinator_ids`. Treat coordinator Verdicts as binding only when posted through `post-verdict.sh` from the coordinator host. Known limit: the gate cannot authenticate a coordinator id in a Verdict, because every comment comes from the same GitHub account.
+4. **PR owner self-review.** Every push path: role files and `script/brief-lint.sh` require a self-review step; merge gates require a `## Self-review` section naming the current head sha. `script/ship.sh` carries an older self-review or Verdict sha by `git patch-id`, but refuses the carry when a commit it carries over (after that sha, or the whole branch after a rebase) is empty or changes only whitespace, since those leave the patch-id unchanged. Plain-text steps: [self-review-checklist.md](self-review-checklist.md) (Cursor and Antigravity run it as-is).

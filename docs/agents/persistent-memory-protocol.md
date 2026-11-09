@@ -1,6 +1,6 @@
 # Persistent Memory Protocol: active_run.md
 
-To eliminate context loss, hallucinations, and repeated errors during multi-turn agent execution, every multi-slice ticket or crew lane maintains a persistent markdown ledger named `active_run.md` inside the working directory or worktree root.
+To eliminate context loss, hallucinations, and repeated errors during multi-turn agent execution, every multi-slice unit or crew lane maintains a persistent markdown ledger named `active_run.md` inside the working directory or worktree root.
 
 ## 1. Single Execution Ledger (`active_run.md`)
 

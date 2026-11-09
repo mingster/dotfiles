@@ -4,10 +4,10 @@
 Every agent and teammate pays for what it reads, on every turn after. These hold in every session.
 
 - Search, then read the part. Grep or Glob first, then Read with `offset` and `limit`.
-- Keep command output short: pipe test, build and lint output through `tail -40`. Lint only the files you edited, never a whole repo lint with autofix (it rewrites every file). Run only the ticket's listed test cases and the test files you touch, never the full suite: Regression runs only in the development pass before staging, or with the owner's approval.
+- Keep command output short: pipe test, build and lint output through `tail -40`. Lint only the files you edited, never a whole repo lint with autofix (it rewrites every file). Run only the unit's listed test cases and the test files you touch, never the full suite: Regression runs only in the development pass before staging, or with the user's approval.
 - Plan before you edit: 3 to 5 lines naming the files, the change and the test that proves it.
-- Strikes. The same test failing twice after your change means stop editing: check whether a fake is stale or the test database is wrong. The same command failing 3 times in a row is a hard stop, enforced by `.claude/hooks/strikes.py`. Report the failing output and what was ruled out, and wait for the owner. This is the only strike rule; role files point here.
-- Use `active_run.md` (git ignored) only on a ticket with more than one slice: write it at the start and when blocked.
+- Strikes. The same test failing twice after your change means stop editing: check whether a fake is stale or the test database is wrong. The same command failing 3 times in a row is a hard stop, enforced by `.claude/hooks/strikes.py`. Report the failing output and what was ruled out, and wait for the user. This is the only strike rule; role files point here.
+- Use `active_run.md` (git ignored) only on a unit with more than one slice: write it at the start and when blocked.
 - Hard limits: sessions compact at 200k tokens (`autoCompactWindow` in `.claude/settings.json`), and an Orca worker gets a warning at 120 turns and is stopped at 200 (`.claude/hooks/worker-budget.py`). A worker that hits the stop pushes and reports what is left.
 - Report with `git diff main...HEAD --stat`, the branch name, test counts and only the failing output.
 
@@ -15,9 +15,9 @@ Every agent and teammate pays for what it reads, on every turn after. These hold
 
 When the conversation is compacted, keep: your role, the task list and who acts next, the branch and worktree, the allowed files, the verify command, strike counts and the last failing output. Drop file contents and command output; they are re-read from the repo.
 
-## Owner context commands
+## User context commands
 
-- **Context commands** (you or Elon run these; agents cannot): `/clear` between tickets, `/compact` at a slice boundary, `/btw` for a side question that should not grow the session. Elon only: `/fork` copies the conversation into a new background session and `/subtask` spawns a forked subagent, both cheap because they reuse the cached context, but a fork cannot spawn further agents. A worker's prompt cache lasts about 5 minutes and the main session's about 1 hour, so give workers the full contract up front and never park one waiting on a reply.
+- **Context commands** (you or the coordinator run these; agents cannot): `/clear` between units, `/compact` at a slice boundary, `/btw` for a side question that should not grow the session. The coordinator only: `/fork` copies the conversation into a new background session and `/subtask` spawns a forked subagent, both cheap because they reuse the cached context, but a fork cannot spawn further agents. A worker's prompt cache lasts about 5 minutes and the main session's about 1 hour, so give workers the full contract up front and never park one waiting on a reply.
 
 ## Project facts the roles point to
 

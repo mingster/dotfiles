@@ -27,7 +27,7 @@ has "$T/.claude/agents/release-manager.md" 'Never invoke `bin/owner-approve.sh`'
 has "$T/.claude/agents/release-manager.md" 'Never stop a process by name' "rm keeps kill guard"
 has "$T/.claude/agents/elon.md" 'lead-merge.sh' "elon keeps lead-merge rule"
 has "$T/docs/agents/engineering-integration.md" 'One writer per branch' "merge rules keep one writer rule"
-has "$T/.claude/agents/elon.md" 'Owner-Reserved' "elon keeps owner-reserved list"
+has "$T/.claude/agents/elon.md" 'User decisions (' "elon keeps user decisions list"
 has "$T/.claude/agents/elon.md" 'Traditional Chinese' "elon keeps owner language rule"
 
 # Every docs/agents/<file>.md named in a role file exists, and team docs point at ~/dotfiles/templates/agent-team/docs/agents/.

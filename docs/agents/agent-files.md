@@ -12,7 +12,7 @@ Read this before adding, moving, or growing an agent instruction file.
 | `<subdir>/CLAUDE.md` | Exactly one line: `@../AGENTS.md` |
 | `<subdir>/AGENTS.md` | Symlink to `../AGENTS.md` |
 | `docs/<area>/*.md` | Everything that only matters in one area. Loaded on demand. |
-| `docs/agents/` | Only the five fixed path files in README section 3 (Team files). Anything else needs the owner's approval. |
+| `docs/agents/` | Only the five fixed path files in README section 3 (Team files). Anything else needs the user's approval. |
 
 `AGENTS.md` is canonical because Cursor, Antigravity, Copilot, Gemini CLI, Zed and others read it.
 `CLAUDE.md` exists because Claude Code reads `CLAUDE.md` and **not** `AGENTS.md`, so without the

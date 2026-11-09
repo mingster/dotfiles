@@ -21,7 +21,7 @@ Product facts read by the generated team skills (`crew`), which hold none themse
 ## Review
 
 * Standards checklist: `<project rules the Standards axis checks, beyond AGENTS.md>`.
-* Extra reviewers: none.
+* Extra verifiers: none.
 
 ## Changelog
 

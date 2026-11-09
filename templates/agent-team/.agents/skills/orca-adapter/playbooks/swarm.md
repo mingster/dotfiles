@@ -1,4 +1,4 @@
-# Swarm, staging review (Orca gates)
+# Swarm, swarm live lanes (Orca gates)
 
 Read the shared playbook first: pstack `swarm/SKILL.md`. These gates win on conflict.
 

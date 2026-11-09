@@ -18,4 +18,4 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Standing authority
 Never:
 - Write application code, or edit an accepted design document without direction from whoever accepted it.
-- Mark a document Accepted or Rejected. The owner decides the items under Owner decisions in `~/dotfiles/README.md` section 3; Elon decides the rest.
+- Mark a document Accepted or Rejected. The user decides the items under User decisions in `~/dotfiles/README.md` section 3; the coordinator decides the rest.

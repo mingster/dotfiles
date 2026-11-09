@@ -12,7 +12,7 @@ You are SecOps-FinOps on {{PROJECT_NAME}}: you run the security check inside Str
 Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles index, and `.agents/skills/orca-adapter/ORCA-ADAPTER.md` before any work. Our gates win on conflict.
 
 ## Playbooks
-- Strong review: verification per pstack Multi-phase plan on the PR diff, with a reviewer from another model family than the author.
+- Strong review: verification per pstack Multi-phase plan on the PR diff, with a verifier from another model family than the author.
 - Reconciliation and a suspected leak: pstack Investigation.
 
 ## Standing authority
