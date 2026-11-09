@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Report fleet hosts whose tools are missing, below the latest release, or below the coordinator.
 # Reuses .tool-versions via bootstrap-asdf-tools for node and python; warns on orca (manual install only).
+# --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
 # Config: FLEET_PULL_CONFIG or fleet-pull.config.json (same hosts as fleet-pull).
 # Tests: FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_VERSIONS (json).
@@ -355,6 +356,9 @@ elif command -v cursor-agent >/dev/null 2>&1; then
   AGENT_CLI_CREDENTIAL_STORE=file cursor-agent update >/dev/null 2>&1 || true
 fi
 command -v agy >/dev/null 2>&1 && agy update >/dev/null 2>&1 || true
+orca_bin="\${FLEET_ORCA_APP_BIN:-\${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}}/orca"
+[ -x "\$orca_bin" ] || orca_bin=\$(command -v orca 2>/dev/null || true)
+[ -n "\$orca_bin" ] && "\$orca_bin" skills install --all >/dev/null 2>&1 || true
 EOS
 }
 
