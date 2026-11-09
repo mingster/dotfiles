@@ -144,7 +144,6 @@ TEMPLATE_DOCS = {
     "qa-sdet-execution.md",
     "persistent-memory-protocol.md",
     "pstack-attribution.md",
-    "process-review.md",
 }
 TIER2_SKILLS = {"ceo", "crew", "deploy", "elon", "poteto-mode", "staging-review", "team-audit", "tl"}
 
