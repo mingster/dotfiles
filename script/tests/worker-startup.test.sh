@@ -879,6 +879,41 @@ set -e
 [ "$ec_wtpath" = 0 ] && ok || bad "--worktree-path run exits 0 ($ec_wtpath) $(cat "$tmp/wtpath.err")"
 grep -q 'worker-placement:' "$tmp/wtpath.err" && bad "--worktree-path must not run placement" || ok
 
+# #759 case: --worktree-path with no --repo also skips placement
+: >"$tmp/orca-wtpath-norepo.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-wtpath-norepo.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
+  bash --noprofile --norc "$script" --run run_wtpath2 --spec "$spec_file" --title wtjob2 --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --worktree-path "$clean" 2>"$tmp/wtpath-norepo.err"
+ec_wtpath2=$?
+set -e
+[ "$ec_wtpath2" = 0 ] && ok || bad "--worktree-path without --repo exits 0 ($ec_wtpath2) $(cat "$tmp/wtpath-norepo.err")"
+grep -q 'worker-placement:' "$tmp/wtpath-norepo.err" && bad "--worktree-path without --repo must not run placement" || ok
+
+# Load sensor failure and timeout: refusal line, exit 4, not a generic failure
+cat >"$tmp/load-fail.sh" <<'EOS'
+#!/usr/bin/env bash
+exit 7
+EOS
+cat >"$tmp/load-hang.sh" <<'EOS'
+#!/usr/bin/env bash
+sleep 30
+EOS
+chmod +x "$tmp/load-fail.sh" "$tmp/load-hang.sh"
+for sensor_case in fail hang; do
+  set +e
+  WORKER_PLACEMENT_TIMEOUT=1 FLEET_LOAD_SCRIPT="$tmp/load-$sensor_case.sh" FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+    bash "$script" --pick-host-only --spec "$spec_file" >"$tmp/sensor-$sensor_case.out" 2>"$tmp/sensor-$sensor_case.err"
+  ec_sensor=$?
+  set -e
+  [ "$ec_sensor" = 4 ] && ok || bad "load sensor $sensor_case exits 4 ($ec_sensor)"
+  grep -q '^worker-placement: refused (load sensor' "$tmp/sensor-$sensor_case.err" && ok || bad "load sensor $sensor_case refusal line ($(cat "$tmp/sensor-$sensor_case.err"))"
+done
+
 # Follow-up 2: cursor agent passes the usage gate before the helper is exec'd
 : >"$PYTHON3_RUN_ORDER_LOG"
 rm -f "$tmp/cursor.args"
