@@ -864,5 +864,67 @@ set -e
 grep -q 'worker-placement: skipped (no fleet config)' "$tmp/run-nocfg.err" && ok || bad "run skip placement stderr ($(cat "$tmp/run-nocfg.err"))"
 grep -q 'orchestration worker-start' "$tmp/orca-nocfg.log" && ok || bad "local worker-start without fleet config"
 
+# Follow-up 1: --worktree-path stays local, placement is not applied
+: >"$tmp/orca-wtpath.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-wtpath.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
+  bash --noprofile --norc "$script" --run run_wtpath --spec "$spec_file" --title wtjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --worktree-path "$clean" --repo "id:local-app-id" 2>"$tmp/wtpath.err"
+ec_wtpath=$?
+set -e
+[ "$ec_wtpath" = 0 ] && ok || bad "--worktree-path run exits 0 ($ec_wtpath) $(cat "$tmp/wtpath.err")"
+grep -q 'worker-placement:' "$tmp/wtpath.err" && bad "--worktree-path must not run placement" || ok
+
+# Follow-up 2: cursor agent passes the usage gate before the helper is exec'd
+: >"$PYTHON3_RUN_ORDER_LOG"
+rm -f "$tmp/cursor.args"
+set +e
+env -u BASH_ENV \
+  PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_gate --spec "$spec_file" --title cgate --agent cursor --model composer-2.5 \
+  --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor-gate.err"
+set -e
+grep -q 'stub-gate-ran' "$PYTHON3_RUN_ORDER_LOG" && ok || bad "cursor run must pass the usage gate before exec"
+cat >"$tmp/deny-python3" <<EOS
+#!/usr/bin/env bash
+case "\$1" in *.py) [ "\${2:-}" = check ] && exit 1 ;; esac
+exec "$PYTHON" "\$@"
+EOS
+chmod +x "$tmp/deny-python3"
+rm -f "$tmp/cursor.args"
+set +e
+env -u BASH_ENV \
+  PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$tmp/deny-python3" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_gate2 --spec "$spec_file" --title cgate2 --agent cursor --model composer-2.5 \
+  --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor-deny.err"
+ec_cdeny=$?
+set -e
+[ "$ec_cdeny" = 3 ] && ok || bad "cursor run refused by the usage gate exits 3 ($ec_cdeny)"
+[ -e "$tmp/cursor.args" ] && bad "cursor helper must not run when the gate refuses" || ok
+
+# Follow-up 3: every host skipped for a missing repo mapping says so
+cat >"$tmp/fleet-nomap.json" <<'EOF'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-remote": 4},
+  "host_load_ceilings": {"host-primary": 12, "host-remote": 12},
+  "worker_placement": {"order": ["host-remote"], "repos": {}}
+}
+EOF
+set +e
+out_nomap=$(FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" FLEET_WATCH_CONFIG="$tmp/fleet-nomap.json" \
+  "$python3_real" "$placement_py" pick --spec "$spec_file" --repo "id:local-app-id" 2>/dev/null)
+ec_nomap=$?
+set -e
+[ "$ec_nomap" -ne 0 ] && ok || bad "unmapped repo on every host refuses ($ec_nomap)"
+grep -q 'no host has a repo mapping' <<<"$out_nomap" && ok || bad "unmapped refusal names the repo mapping ($out_nomap)"
+grep -q 'no readable load' <<<"$out_nomap" && bad "unmapped refusal must not say no readable load" || ok
+
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]

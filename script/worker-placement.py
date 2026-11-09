@@ -239,8 +239,10 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
     loads = read_loads(load_sensor_path(config), float(os.environ.get('WORKER_PLACEMENT_TIMEOUT', '120')))
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     considered: dict[str, float] = {}
+    unmapped = 0
     for host in hosts:
         if not host_has_repo_mapping(config, host, local_host, repo_selector):
+            unmapped += 1
             print(
                 'worker-placement: skip %s (no repo mapping for %s)'
                 % (host, repo_map_key(repo_selector) or repo_selector),
@@ -271,6 +273,8 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
                 if mapped:
                     result['repo'] = mapped
             return result
+    if unmapped == len(hosts):
+        return {'ok': False, 'reason': 'no host has a repo mapping', 'loads': {}}
     if not considered:
         return {'ok': False, 'reason': 'no readable load for any eligible host', 'loads': {}}
     return {'ok': False, 'reason': 'all eligible hosts over load ceiling', 'loads': considered}
