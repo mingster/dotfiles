@@ -1,0 +1,1 @@
+The team rule table now holds five process gates: merge on the coordinator host, a 40 hex Self-review sha in builder briefs, database head checks on the database host, a screen read after Antigravity starts, and `orca terminal send --environment` for remote workers. lead-merge, worker-startup, brief-lint and head-checks enforce the first three.

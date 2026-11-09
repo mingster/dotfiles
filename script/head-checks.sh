@@ -325,6 +325,31 @@ if re.search(r"^bun test v", text, re.M):
     print(f"Tests executed: {executed}\nLoad errors: {errors}")
 PYTEST
 }
+# A step that needs Postgres runs against the database host (head_checks_remote), never a host without it.
+# Without the database client here and no remote host, the step is a host fault: FAIL, never a pass.
+db_step_re='(^|[^[:alnum:]_-])(createdb|dropdb|psql|pg_dump|pg_restore)([^[:alnum:]_-]|$)'
+db_remote_host="" db_remote_repo_dir="" db_remote_dir=""
+db_remote_load() {
+  local cfg dir
+  db_remote_host=${LEAD_MERGE_REMOTE_HOST:-}; db_remote_repo_dir=${LEAD_MERGE_REMOTE_REPO_DIR:-}; db_remote_dir=${LEAD_MERGE_REMOTE_DIR:-}
+  [ -z "$db_remote_host" ] || return 0
+  cfg=$(python3 "$script_dir/apply-local-overlay.py" "$script_dir/lead-merge.config.example.json" "$script_dir/lead-merge.local.json" 2>/dev/null) || return 0
+  [ "$(jq -r --arg r "$name" '(.head_checks_remote.repo // $r) | split("/") | last' <<<"$cfg")" = "$name" ] || return 0
+  db_remote_host=$(jq -r '.head_checks_remote.host // ""' <<<"$cfg")
+  db_remote_repo_dir=$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")
+  db_remote_dir=$(jq -r '.head_checks_remote.dir // ""' <<<"$cfg")
+}
+# db_step_runner <expanded command>: prints the remote-heavy argv tokens, one per line, when the step must go to the
+# database host; prints nothing when it runs here. Returns 1 (a host fault) when it can run nowhere.
+db_step_runner() {
+  [[ "$1" =~ $db_step_re ]] || return 0
+  command -v "${HEAD_CHECKS_DB_PROBE:-createdb}" >/dev/null 2>&1 && return 0
+  db_remote_load
+  if [ -z "$db_remote_host" ] || [ -z "$db_remote_repo_dir" ] || [ -z "$db_remote_dir" ]; then
+    return 1
+  fi
+  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --
+}
 count=0
 while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
@@ -342,6 +367,17 @@ while IFS= read -r command || [ -n "$command" ]; do
     runner=( "${gate_prefix[@]}" "${run[@]}" )
   else
     runner=( "${run[@]}" )
+  fi
+  db_prefix=()
+  if db_out=$(db_step_runner "$expanded"); then
+    while IFS= read -r token || [ -n "${token:-}" ]; do
+      [ -n "${token:-}" ] && db_prefix+=("$token")
+    done <<<"$db_out"
+    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" "${run[@]}" )
+  else
+    printf 'Result: host fault; this host has no Postgres (%s: command not found) and no head_checks_remote database host is configured, so the database step did not run. Not a pass; run the head checks on the database host.\nDuration: 0s\n' "${HEAD_CHECKS_DB_PROBE:-createdb}" >> "$log"
+    rm -f "$output"
+    exit 1
   fi
   if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"

@@ -15,6 +15,9 @@ awk '
 /Refs [A-Za-z0-9_.\/-]*#[0-9]+/ {
   has_refs = 1
 }
+tolower($0) ~ /fullstack-dev/ {
+  is_builder = 1
+}
 # Bold labels from the triage Agent Brief template: **Acceptance criteria:**, **Out of scope:**.
 /^\*\*[^*]+:\*\*/ {
   if ($0 ~ /^\*\*Acceptance( criteria)?:\*\*/) sec = "Acceptance"
@@ -48,6 +51,8 @@ sec == "Verify" && /[^[:space:]]/ {
 sec == "Finish" && /[^[:space:]]/ {
   has_finish = 1
   if (tolower($0) ~ /self-review|self review/) has_self_review = 1
+  if (tolower($0) ~ /40 hex/) has_full_sha = 1
+  if (tolower($0) ~ /push/) has_rewrite = 1
 }
 END {
   rc = 0
@@ -58,6 +63,8 @@ END {
   if (has_verify && !has_checks_local) { print "brief-lint: Verify must run script/checks-local.sh"; rc = 1 }
   if (!has_finish) { print "brief-lint: missing Finish"; rc = 1 }
   if (has_finish && !has_self_review) { print "brief-lint: missing Finish self-review step"; rc = 1 }
+  # A fullstack-dev Finish writes ## Self-review with the full 40 hex head sha, and rewrites it after every push.
+  if (is_builder && has_self_review && !(has_full_sha && has_rewrite)) { print "brief-lint: Finish must say the builder writes ## Self-review with the full 40 hex head sha and rewrites it after every push"; rc = 1 }
   exit rc
 }
 ' "$file"
