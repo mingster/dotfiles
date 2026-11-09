@@ -45,8 +45,8 @@ for f in "$T"/.claude/agents/*.md; do
   done
 done
 
-# Every skill in templates/agent-team/.agents/skills/ points at ~/dotfiles/templates/agent-team/docs/agents/<file> for the 10 team docs.
-if grep -rnE '(^|[^/])docs/agents/(team|coordinator-operations|engineering-integration|architect-pm-work|elon-dispatch|qa-sdet-execution|release-manager-work|persistent-memory-protocol|pstack-attribution|process-review)\.md' "$T/.agents/skills" >/dev/null; then
+# Every skill in templates/agent-team/.agents/skills/ points at ~/dotfiles/templates/agent-team/docs/agents/<file> for the 9 team docs.
+if grep -rnE '(^|[^/])docs/agents/(team|coordinator-operations|engineering-integration|architect-pm-work|elon-dispatch|qa-sdet-execution|release-manager-work|persistent-memory-protocol|pstack-attribution)\.md' "$T/.agents/skills" >/dev/null; then
   bad "template skills still point at project copies of team docs"
 else
   ok "template skills point at ~/dotfiles/templates/agent-team/docs/agents/ for team docs"
@@ -61,7 +61,7 @@ DOTFILES="$here" bash "$here/script/agent-team.sh" project "$A/proj" --project-n
   && ok "adoption seeds team-facts.md and preserves deploy-facts.md" \
   || bad "adoption failed to seed team-facts.md or preserve deploy-facts.md"
 # agent-team.sh syncs team.md, elon-dispatch.md and release-manager-work.md into projects (TEMPLATE_SYNC_FILES); the rest stay in the template.
-for d in coordinator-operations.md engineering-integration.md architect-pm-work.md qa-sdet-execution.md persistent-memory-protocol.md pstack-attribution.md process-review.md; do
+for d in coordinator-operations.md engineering-integration.md architect-pm-work.md qa-sdet-execution.md persistent-memory-protocol.md pstack-attribution.md; do
   [ ! -e "$A/proj/docs/agents/$d" ] && ok "adoption does not copy $d" || bad "adoption still copies $d into project docs/agents/"
 done
 has "$T/docs/agents/coordinator-operations.md" 'Production job order' "template coordinator-operations holds the production job order"

@@ -1,0 +1,245 @@
+{
+ "data": {
+  "search": {
+   "nodes": [
+    {
+     "number": 1,
+     "title": "Add a",
+     "mergedAt": "2026-11-08T12:00:00Z",
+     "labels": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "checkSuites": {
+          "nodes": [
+           {
+            "checkRuns": {
+             "nodes": [
+              {
+               "conclusion": "SUCCESS",
+               "completedAt": "2026-11-08T11:40:00Z"
+              },
+              {
+               "conclusion": "SUCCESS",
+               "completedAt": "2026-11-08T11:40:00Z"
+              },
+              {
+               "conclusion": null,
+               "completedAt": null
+              }
+             ]
+            }
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     "closingIssuesReferences": {
+      "nodes": [
+       {
+        "number": 10,
+        "timelineItems": {
+         "nodes": [
+          {
+           "__typename": "LabeledEvent",
+           "createdAt": "2026-01-01T00:00:00Z",
+           "label": {
+            "name": "bug"
+           }
+          },
+          {
+           "__typename": "LabeledEvent",
+           "createdAt": "2026-11-08T11:00:00Z",
+           "label": {
+            "name": "ready-for-agent"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 2,
+     "title": "Add b",
+     "mergedAt": "2026-11-07T12:00:00Z",
+     "labels": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "checkSuites": {
+          "nodes": [
+           {
+            "checkRuns": {
+             "nodes": [
+              {
+               "conclusion": "SUCCESS",
+               "completedAt": "2026-11-07T10:30:00Z"
+              },
+              {
+               "conclusion": "FAILURE",
+               "completedAt": "2026-11-07T10:00:00Z"
+              },
+              {
+               "conclusion": null,
+               "completedAt": null
+              }
+             ]
+            }
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     "closingIssuesReferences": {
+      "nodes": [
+       {
+        "number": 11,
+        "timelineItems": {
+         "nodes": [
+          {
+           "__typename": "LabeledEvent",
+           "createdAt": "2026-01-01T00:00:00Z",
+           "label": {
+            "name": "bug"
+           }
+          },
+          {
+           "__typename": "LabeledEvent",
+           "createdAt": "2026-11-07T08:00:00Z",
+           "label": {
+            "name": "ready-for-agent"
+           }
+          },
+          {
+           "__typename": "ReopenedEvent"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "number": 3,
+     "title": "Hotfix c",
+     "mergedAt": "2026-11-06T12:00:00Z",
+     "labels": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "checkSuites": {
+          "nodes": [
+           {
+            "checkRuns": {
+             "nodes": [
+              {
+               "conclusion": "SUCCESS",
+               "completedAt": "2026-11-06T11:30:00Z"
+              },
+              {
+               "conclusion": "SUCCESS",
+               "completedAt": "2026-11-06T11:00:00Z"
+              },
+              {
+               "conclusion": null,
+               "completedAt": null
+              }
+             ]
+            }
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     "closingIssuesReferences": {
+      "nodes": []
+     }
+    },
+    {
+     "number": 4,
+     "title": "Too old",
+     "mergedAt": "2026-10-01T12:00:00Z",
+     "labels": {
+      "nodes": []
+     },
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "checkSuites": {
+          "nodes": [
+           {
+            "checkRuns": {
+             "nodes": [
+              {
+               "conclusion": "SUCCESS",
+               "completedAt": "2026-10-01T11:30:00Z"
+              },
+              {
+               "conclusion": "FAILURE",
+               "completedAt": "2026-10-01T11:00:00Z"
+              },
+              {
+               "conclusion": null,
+               "completedAt": null
+              }
+             ]
+            }
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     "closingIssuesReferences": {
+      "nodes": [
+       {
+        "number": 12,
+        "timelineItems": {
+         "nodes": [
+          {
+           "__typename": "LabeledEvent",
+           "createdAt": "2026-01-01T00:00:00Z",
+           "label": {
+            "name": "bug"
+           }
+          },
+          {
+           "__typename": "LabeledEvent",
+           "createdAt": "2026-09-30T12:00:00Z",
+           "label": {
+            "name": "ready-for-agent"
+           }
+          },
+          {
+           "__typename": "ReopenedEvent"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {}
+   ]
+  }
+ }
+}

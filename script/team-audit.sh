@@ -3,47 +3,40 @@
 #
 # Usage:
 #   ~/dotfiles/script/team-audit.sh [<project-root> ...]   (default: one project root per line in script/team-audit.local.conf, untracked)
+#   ~/dotfiles/script/team-audit.sh --report [<project-root> ...]
 #   ~/dotfiles/script/team-audit.sh --log <finding> <evidence>
-#   ~/dotfiles/script/team-audit.sh --report [--times <file>]
 #   TEAM_AUDIT_RUN_METRICS=1 ~/dotfiles/script/team-audit.sh   (also prints script/team-audit-metrics.ts --repo <owner/name> per project)
 #
-# Checks, each printed as "FINDING <check>: <detail>":
+# Six checks, each printed as "FINDING <check>: <detail>":
 #   sync      agent-team.sh check passes for each project
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
 #   wording   no banned wording in team files: implementation workers and release-manager
 #             merge PRs, the phrase "open a PR and merge it",
 #             task_plan.md or progress.md ledgers, the old orca claude-teams layout, the retired
 #             gpt-6-luna model (400 since 2026-10-21), a coordinator wait whose --types omit status
-#   skill     every SKILL.md has name and description frontmatter
-#   lock      the skill lock does not track a locally customized skill (LOCAL_SKILLS, default orca-team)
-#   helpers   the orca-team helper scripts exist
-#   sdlc      every docs/intent/*/spec.md has a sibling intent.md (Plan before Design, owner rule
-#             2026-10-21); a spec first committed before SPEC_INTENT_SINCE (2026-10-21) is grandfathered
-#             and has a '## Test plan' section (owner rule 2026-10-21); a spec first committed before
-#             TEST_PLAN_SINCE (2026-10-22) is grandfathered
-#   mp-upstream  the vendored Matt Pocock skills (.agents/skills/.mattpocock-upstream) are not behind
-#             upstream main, and every role file `skills:` entry naming one of them exists. A gh or
-#             network failure prints "WARN mp-upstream" and is not a finding.
-#   ready-brief  every open GitHub issue labeled ready-for-agent (repo read from the project's origin
-#             remote) has one text, the body or a single comment, holding all three brief fields:
-#             Acceptance criteria, Requirement owner, Deleted (heading or "Field:" label,
-#             case-insensitive). Prints "FINDING ready-brief <owner/repo>#<n> missing: <fields>", the
-#             fields missing from the text with the most. Opt out with the label "team-audit: allow" or a
-#             line containing "team-audit: allow" in the body or a comment. A gh or network failure
-#             prints "WARN ready-brief" and is not a finding.
+#   skills    every SKILL.md has name and description frontmatter; the skill lock does not track a
+#             locally customized skill (LOCAL_SKILLS, default orca-team); the orca-team helper scripts
+#             exist; every role file `skills:` entry is a skill in dotfiles, the template, the project
+#             or ORCA_SKILLS (Orca bundled, default "orchestration orca-cli")
+#   labels    no open issue of a project (repo read from its origin remote) carries ready-for-agent
+#             together with a CONFLICT_LABELS label (default: blocked needs-info needs-triage
+#             ready-for-human wontfix). One gh issue list per project; a gh or network failure prints
+#             "WARN labels" and is not a finding.
 #   receipt   every non-merge commit touching role files (templates/agent-team/.claude/agents/ in
 #             DOTFILES, .claude/agents/ in each project) carries an "Owner-approved:" trailer (owner
-#             rule 2026-11-02). Commits are checked from ROLE_RECEIPT_SINCE (pass the last audit date);
-#             commits before 2026-11-03 are grandfathered, so the date is never earlier.
-#   script-list  when TEAM_AUDIT_TOOL_LISTS is set (colon-separated absolute paths to project files),
-#             every top-level file under script/ is named in the concatenation of those readable files, as either
-#             script/<basename> or the bare basename as a whole token (not a substring such as foo.sh.bak for foo.sh).
-#             A path that is missing or not a readable regular file is a finding. When unset or empty, the check is skipped (one NOTE).
-#             Exempt apply-ide-overlay.py and apply-local-overlay.py. Skips *.test.sh and test_* (not tools), install_*, install-*,
-#             uninstall_*, setup-*, link-*, *.json, and *.test.ts (machine setup and config, not team tools). heavy-gate.sh and
-#             worker-startup.sh are still checked when unlisted.
+#             rule 2026-11-02). Only commits after the baseline count: ROLE_RECEIPT_BASE holds the shas
+#             recorded at the last audit, space separated, and each repo uses the first one it contains.
+#             A repo with none falls back to commits since 2026-11-03.
 #
-# Exit 0 when clean, 1 on any finding, 2 on a usage error. Env: DOTFILES (default ~/dotfiles), TEAM_AUDIT_TOOL_LISTS.
+# --report runs the checks, then script/team-audit-metrics.ts per project (two gh calls each, stage
+# times from the dispatch log TEAM_AUDIT_DISPATCHES, default ~/agent-state/team-dispatches.tsv) and
+# prints three sections: problems with evidence (FINDING and WARN lines plus the observation log),
+# proposals with a recommended option, and stage times (median, p75, max, samples, fully verified).
+# --log appends or bumps a row of the observation log TEAM_AUDIT_LOG (default
+# ~/agent-state/team-observations.tsv: date, finding, evidence, count, fix ticket, status) and
+# prints "promote: open a fix ticket for <finding>" from count 2.
+#
+# Exit 0 when clean, 1 on any finding (also for --report), 2 on a usage error. Env: DOTFILES (default ~/dotfiles).
 set -uo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
@@ -51,6 +44,7 @@ BUDGET="${ROLE_WORD_BUDGET:-800}"
 LOCAL_SKILLS="${LOCAL_SKILLS:-orca-team}"
 HELPERS="worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv"
 TEMPLATE="$DOTFILES/templates/agent-team"
+HERE=$(cd "$(dirname "$0")" && pwd)
 
 LOG_FILE="${TEAM_AUDIT_LOG:-$HOME/agent-state/team-observations.tsv}"
 
@@ -112,115 +106,12 @@ PY
   exit $?
 fi
 
-if [ "${1:-}" = "--report" ] || [ "${1:-}" = "--times" ] || [[ "${1:-}" == --times=* ]]; then
-  report_mode=0
-  times_file=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --report) report_mode=1; shift ;;
-      --times)
-        [ $# -ge 2 ] || { echo "team-audit: --times requires a file" >&2; exit 2; }
-        times_file="$2"; shift 2 ;;
-      --times=*) times_file="${1#--times=}"; shift ;;
-      *) echo "team-audit: unknown flag $1" >&2; exit 2 ;;
-    esac
-  done
-  [ "$report_mode" -eq 1 ] || { echo "team-audit: --times requires --report" >&2; exit 2; }
-  if [ -n "$times_file" ] && { [ ! -f "$times_file" ] || [ ! -r "$times_file" ]; }; then
-    echo "team-audit: unreadable times file: $times_file" >&2
-    exit 2
-  fi
-  python3 - "$LOG_FILE" "$times_file" <<'PY'
-import math, os, statistics, sys
-
-log_path, times_path = sys.argv[1], sys.argv[2]
-obs = []
-if log_path and os.path.isfile(log_path):
-    with open(log_path, "r", encoding="utf-8") as fh:
-        for raw in fh:
-            line = raw.rstrip("\r\n")
-            if not line:
-                continue
-            parts = line.split("\t")
-            if len(parts) >= 2 and parts[0] == "date" and parts[1] == "finding":
-                continue
-            while len(parts) < 6:
-                parts.append("")
-            obs.append(parts[:6])
-
-def fmt_num(val):
-    if float(val).is_integer():
-        return str(int(val))
-    return f"{val:g}"
-
-print("## Problems with evidence")
-if obs:
-    for d, finding, evidence, count, ticket, status in obs:
-        print(f"- {finding} (date: {d}, count: {count}, evidence: {evidence}, ticket: {ticket or '-'}, status: {status or 'open'})")
-else:
-    print("- none recorded (evidence: none)")
-
-print("\n## Proposals with a recommended option")
-if obs:
-    for d, finding, evidence, count, ticket, status in obs:
-        try:
-            cnt = int(count)
-        except ValueError:
-            cnt = 1
-        if cnt >= 2:
-            print(f"- {finding}: Recommended: Option A (open a fix ticket and add a deterministic check for {finding}; evidence: {evidence}, count: {cnt}). Option B (defer to next audit).")
-        else:
-            print(f"- {finding}: Recommended: Option A (keep observing until count reaches 2; evidence: {evidence}, count: {cnt}). Option B (open a fix ticket early).")
-else:
-    print("- none: Recommended: Option A (keep current rules unchanged).")
-
-stages = []
-by_stage = {}
-total_samples = 0
-total_verified = 0
-if times_path:
-    with open(times_path, "r", encoding="utf-8") as fh:
-        for raw in fh:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split("\t")
-            if len(parts) < 3:
-                continue
-            st, mins_s, ver_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
-            if st == "stage" and mins_s == "minutes":
-                continue
-            try:
-                mins = float(mins_s)
-                ver = int(ver_s)
-            except ValueError:
-                continue
-            if st not in by_stage:
-                stages.append(st)
-                by_stage[st] = []
-            by_stage[st].append((mins, ver))
-            total_samples += 1
-            if ver == 1:
-                total_verified += 1
-
-print("\n## Stage times")
-print(f"Samples: {total_samples}, verified: {total_verified}")
-print("| stage | median | p75 | max | samples | verified |")
-print("| --- | --- | --- | --- | --- | --- |")
-for st in stages:
-    rows = by_stage[st]
-    xs = sorted(r[0] for r in rows)
-    n = len(xs)
-    v = sum(1 for r in rows if r[1] == 1)
-    med = statistics.median(xs)
-    p75 = xs[max(0, math.ceil(0.75 * n) - 1)]
-    mx = xs[-1]
-    print(f"| {st} | {fmt_num(med)} | {fmt_num(p75)} | {fmt_num(mx)} | {n} | {v} |")
-PY
-  exit $?
-fi
-
-case "${1:-}" in -h|--help) sed -n '2,42p' "$0"; exit 0 ;; -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
+report=0
+case "${1:-}" in
+  -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+  --report) report=1; shift ;;
+esac
+case "${1:-}" in -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
 PROJECTS=("$@")
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
@@ -231,6 +122,100 @@ if [ ${#PROJECTS[@]} -eq 0 ] && [ -f "$CONF" ]; then
 fi
 [ ${#PROJECTS[@]} -eq 0 ] && { echo "team-audit: pass project roots or list them in $CONF" >&2; exit 2; }
 [ -d "$TEMPLATE" ] || { echo "team-audit: missing $TEMPLATE (set DOTFILES)" >&2; exit 2; }
+
+repo_of() { # <project root>: owner/name of its GitHub origin, or nothing
+  local url repo
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0
+  repo=$(echo "$url" | sed -nE 's#^(https://([^@/]+@)?|ssh://git@|git@)github\.com[:/]([^/]+/[^/]+)$#\3#p')
+  echo "${repo%.git}"
+}
+
+if [ "$report" -eq 1 ]; then
+  checks=$(bash "$0" "${PROJECTS[@]}" 2>&1); rc=$?
+  [ "$rc" -le 1 ] || { echo "$checks" >&2; exit "$rc"; }
+  mdir=$(mktemp -d); trap 'rm -rf "$mdir"' EXIT
+  dispatches="${TEAM_AUDIT_DISPATCHES:-$HOME/agent-state/team-dispatches.tsv}"
+  i=0
+  for proj in "${PROJECTS[@]}"; do
+    repo=$(repo_of "$proj"); [ -n "$repo" ] || continue
+    i=$((i + 1)); echo "$repo" > "$mdir/$i.repo"
+    if ! command -v bun >/dev/null 2>&1; then echo "bun unavailable" > "$mdir/$i.err"; continue; fi
+    args=(--repo "$repo" --json); [ -f "$dispatches" ] && args+=(--dispatches "$dispatches")
+    bun "$HERE/team-audit-metrics.ts" "${args[@]}" > "$mdir/$i.json" 2> "$mdir/$i.err" || true
+  done
+  printf '%s\n' "$checks" > "$mdir/checks.txt"
+  python3 - "$LOG_FILE" "$mdir" <<'REPORT' || exit 2
+import glob, json, os, sys
+
+log_path, mdir = sys.argv[1], sys.argv[2]
+lines = open(os.path.join(mdir, "checks.txt"), encoding="utf-8").read().splitlines()
+found = [l[len("FINDING "):] for l in lines if l.startswith("FINDING ")]
+gaps = [l[len("WARN "):] for l in lines if l.startswith("WARN ")]
+obs = []
+if os.path.isfile(log_path):
+    for raw in open(log_path, encoding="utf-8"):
+        parts = raw.rstrip("\r\n").split("\t")
+        if len(parts) < 2 or parts[:2] == ["date", "finding"]:
+            continue
+        obs.append((parts + [""] * 6)[:6])
+
+# Recommended option A, then option B, per check.
+FIX = {
+    "sync": ("run agent-team.sh sync on the project and commit the result", "edit the dotfiles source, then sync"),
+    "budget": ("move area detail out of the role file into a docs page it points to", "raise ROLE_WORD_BUDGET with the owner's approval"),
+    "wording": ("reword the line to the current rule", "mark the line team-audit: allow when it quotes the old rule on purpose"),
+    "skills": ("fix the skill or role file named in the finding", "add the name to ORCA_SKILLS when Orca ships that skill"),
+    "labels": ("remove ready-for-agent until the conflicting label is cleared", "remove the conflicting label when the issue is ready"),
+    "receipt": ("ask the owner for an Owner-approved: trailer on the commit", "revert the role file change"),
+}
+
+print("## Problems with evidence")
+for f in found:
+    print(f"- {f}")
+for g in gaps:
+    print(f"- gap, not checked: {g}")
+for d, finding, evidence, count, ticket, status in obs:
+    print(f"- {finding} (logged {d}, count {count}, evidence {evidence}, ticket {ticket or '-'}, status {status or 'open'})")
+if not (found or gaps or obs):
+    print("- none: every check is clean and the observation log is empty")
+
+print("\n## Proposals with a recommended option")
+for f in found:
+    a, b = FIX.get(f.split(":", 1)[0], ("fix the file named in the finding", "record why it is a false positive"))
+    print(f"- {f}\n  Recommended: A, {a}. B, {b}.")
+for d, finding, evidence, count, ticket, status in obs:
+    if count.isdigit() and int(count) >= 2:
+        print(f"- {finding}: Recommended: A, open a fix ticket that adds a check or test and drops the prose rule. B, keep observing.")
+    else:
+        print(f"- {finding}: Recommended: A, keep observing until the count reaches 2. B, open a fix ticket now.")
+if not (found or obs):
+    print("- none: Recommended: A, keep the current rules. B, none.")
+
+print("\n## Stage times")
+repos = sorted(glob.glob(os.path.join(mdir, "*.repo")), key=lambda p: int(os.path.basename(p).split(".")[0]))
+if not repos:
+    print("No project with a GitHub origin. Samples: 0, fully verified: 0")
+for rp in repos:
+    base = rp[: -len(".repo")]
+    print(f"\n### {open(rp).read().strip()}")
+    try:
+        m = json.load(open(base + ".json"))
+    except (OSError, ValueError):
+        err = open(base + ".err").read().strip() if os.path.exists(base + ".err") else ""
+        print(f"Metrics unavailable ({err.splitlines()[-1] if err else 'no output'}). Samples: unknown, fully verified: unknown")
+        continue
+    print(f"Samples: {m['stage_samples']}, fully verified: {m['stage_samples_verified']}")
+    print("| stage | median | p75 | max | samples | verified |")
+    print("| --- | --- | --- | --- | --- | --- |")
+    for st in ("queue", "build", "merge"):
+        print(f"| {st} | {m[f'median_stage_{st}_minutes']} | {m[f'p75_stage_{st}_minutes']} | {m[f'max_stage_{st}_minutes']}"
+              f" | {m[f'median_stage_{st}_minutes_n']} | {m[f'stage_{st}_verified']} |")
+    keys = ("median_ticket_start_to_merge_minutes", "first_pass_checks_fail_rate", "reopened_or_hotfix_rate",
+            "p0_filed_this_month", "p1_filed_this_month")
+    print("Delivery: " + ", ".join(f"{k}={m.get(k, 'unknown')}" for k in keys))
+REPORT
+  exit "$rc"
+fi
 
 findings=0
 finding() { echo "FINDING $1: $2"; findings=$((findings + 1)); }
@@ -286,29 +271,12 @@ if [ -n "$hits" ]; then
   while IFS= read -r h; do finding wording "$h"; done <<< "$hits"
 fi
 
-SPEC_INTENT_SINCE="${SPEC_INTENT_SINCE:-2026-10-21}"
-TEST_PLAN_SINCE="${TEST_PLAN_SINCE:-2026-10-22}"
-for proj in "${PROJECTS[@]}"; do
-  for s in "$proj"/docs/intent/*/spec.md; do
-    [ -f "$s" ] && [ ! -f "$(dirname "$s")/intent.md" ] || continue
-    added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
-    [ -n "$added" ] && [[ "$added" < "$SPEC_INTENT_SINCE" ]] && continue
-    finding sdlc "$s: no intent.md beside it (intent before spec)"
-  done
-  for s in "$proj"/docs/intent/*/spec.md; do
-    if [ ! -f "$s" ] || grep -qE '^## ([0-9]+[.)] +)?Test plan([[:space:]]|$)' "$s"; then continue; fi
-    added=$(git -C "$proj" log --diff-filter=A --format=%cs -- "${s#"$proj"/}" 2>/dev/null | tail -1)
-    [ -n "$added" ] && [[ "$added" < "$TEST_PLAN_SINCE" ]] && continue
-    finding sdlc "$s: no ## Test plan section (owner rule 2026-10-21)"
-  done
-done
-
 for root in "$DOTFILES" "$TEMPLATE" "${PROJECTS[@]}"; do
   for f in "$root"/.agents/skills/*/SKILL.md; do
     [ -f "$f" ] || continue
     front=$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} NR>1{print}' "$f")
-    echo "$front" | grep -qE '^name: *[^ ]' || finding skill "$f: no name in frontmatter"
-    echo "$front" | grep -qE '^description: *[^ ]' || finding skill "$f: no description in frontmatter"
+    echo "$front" | grep -qE '^name: *[^ ]' || finding skills "$f: no name in frontmatter"
+    echo "$front" | grep -qE '^description: *[^ ]' || finding skills "$f: no description in frontmatter"
   done
 done
 
@@ -316,88 +284,37 @@ LOCK="$DOTFILES/.agents/.skill-lock.json"
 if [ -f "$LOCK" ]; then
   for s in $LOCAL_SKILLS; do
     python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1])).get("skills",{}) else 1)' "$LOCK" "$s" \
-      && finding lock "$LOCK tracks $s, so npx skills update would overwrite it (remove the entry)"
+      && finding skills "$LOCK tracks $s, so npx skills update would overwrite it (remove the entry)"
   done
 fi
 
 for h in $HELPERS; do
-  [ -f "$DOTFILES/.agents/skills/orca-team/$h" ] || finding helpers "missing $DOTFILES/.agents/skills/orca-team/$h"
+  [ -f "$DOTFILES/.agents/skills/orca-team/$h" ] || finding skills "missing $DOTFILES/.agents/skills/orca-team/$h"
 done
 
-# script-list: optional; compares script/ to paths in TEAM_AUDIT_TOOL_LISTS (project spec and intent files).
-SCRIPT_INDEX=""
-if [ -z "${TEAM_AUDIT_TOOL_LISTS:-}" ]; then
-  echo "NOTE script-list: TEAM_AUDIT_TOOL_LISTS unset; skipped"
-else
-  _sl="${TEAM_AUDIT_TOOL_LISTS}:"
-  while [ -n "$_sl" ]; do
-    _list="${_sl%%:*}"
-    _sl="${_sl#*:}"
-    [ -n "$_list" ] || continue
-    if [ ! -f "$_list" ] || [ ! -r "$_list" ]; then
-      finding script-list "TEAM_AUDIT_TOOL_LISTS path missing or unreadable: $_list"
-      continue
-    fi
-    SCRIPT_INDEX="${SCRIPT_INDEX}$(cat "$_list")"$'\n'
-  done
-  for _sf in "$DOTFILES/script"/*; do
-    [ -f "$_sf" ] || continue
-    _base=$(basename "$_sf")
-    case "$_base" in apply-ide-overlay.py|apply-local-overlay.py) continue ;; esac
-    case "$_base" in *.test.sh|test_*) continue ;; esac
-    case "$_base" in install_*|install-*|uninstall_*|setup-*|link-*|*.json|*.test.ts) continue ;; esac
-    if ! printf '%s' "$SCRIPT_INDEX" | python3 -c '
-import re, sys
-base = sys.argv[1]
-text = sys.stdin.read()
-pat = r"(^|[^A-Za-z0-9_./-])(?:script/)?" + re.escape(base) + r"([^A-Za-z0-9_./-]|$)"
-sys.exit(0 if re.search(pat, text) else 1)
-' "$_base"; then
-      finding script-list "${_base} not listed in TEAM_AUDIT_TOOL_LISTS"
-    fi
-  done
-fi
-
-MP_STATE="$DOTFILES/.agents/skills/.mattpocock-upstream"
-if [ ! -f "$MP_STATE" ]; then
-  finding mp-upstream "missing $MP_STATE (run script/sync-mattpocock-skills.sh after recording the synced sha)"
-else
-  mp_sha=$(sed -n 's/^sha=//p' "$MP_STATE"); mp_skills=$(sed -n 's/^skills=//p' "$MP_STATE")
-  latest=$(gh api repos/mattpocock/skills/commits/main --jq .sha 2>/dev/null) || latest=""
-  if [ -z "$latest" ]; then
-    echo "WARN mp-upstream: could not read the latest upstream sha (gh or network); skipped the upstream comparison"
-  elif [ "$latest" != "$mp_sha" ]; then
-    files=$(gh api "repos/mattpocock/skills/compare/$mp_sha...$latest" --jq '.files[].filename' 2>/dev/null) || files="?"
-    if [ "$files" = "?" ]; then
-      echo "WARN mp-upstream: could not compare $mp_sha with $latest; skipped"
-    else
-      changed=""
-      for n in $mp_skills; do
-        echo "$files" | grep -qE "^skills/[^/]+/$n/" && changed="$changed $n"
-      done
-      [ -n "$changed" ] && finding mp-upstream "${mp_sha:0:7} behind ${latest:0:7}:${changed}"
-    fi
-  fi
-  for root in "$TEMPLATE" "${PROJECTS[@]}"; do
-    for f in "$root"/.claude/agents/*.md; do
-      [ -f "$f" ] || continue
-      list=$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^skills:/{print}' "$f" | sed -E 's/^skills: *\[?//; s/\] *$//; s/,/ /g')
-      for n in $list; do
-        case " $mp_skills " in *" $n "*) [ -f "$DOTFILES/.agents/skills/$n/SKILL.md" ] || finding mp-upstream "$f: skills: names $n, missing from $DOTFILES/.agents/skills" ;; esac
-      done
+ORCA_SKILLS="${ORCA_SKILLS:-orchestration orca-cli}"
+for root in "$TEMPLATE" "${PROJECTS[@]}"; do
+  for f in "$root"/.claude/agents/*.md; do
+    [ -f "$f" ] || continue
+    list=$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^skills:/{print}' "$f" | sed -E 's/^skills: *\[?//; s/\] *$//; s/,/ /g')
+    for n in $list; do
+      case " $ORCA_SKILLS " in *" $n "*) continue ;; esac
+      for d in "$DOTFILES" "$TEMPLATE" "$root"; do [ -f "$d/.agents/skills/$n/SKILL.md" ] && continue 2; done
+      finding skills "$f: skills: names $n, which is not a skill in dotfiles, the template or the project"
     done
   done
-fi
+done
 
 # receipt: commits touching role files carry the Owner-approved: trailer.
-RECEIPT_GRANDFATHER=2026-11-03
-RECEIPT_SINCE="${ROLE_RECEIPT_SINCE:-$RECEIPT_GRANDFATHER}"
-[[ "$RECEIPT_SINCE" < "$RECEIPT_GRANDFATHER" ]] && RECEIPT_SINCE="$RECEIPT_GRANDFATHER"
 receipt_check() { # <repo root> <role path inside it>
-  local top rows sha receipt subject
+  local top rows sha receipt subject base range=() b
   top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 0
   [ "$(cd "$top" && pwd -P)" = "$(cd "$1" && pwd -P)" ] || return 0
-  rows=$(git -C "$1" log --no-merges --since="$RECEIPT_SINCE 00:00" \
+  for b in ${ROLE_RECEIPT_BASE:-}; do
+    base=$(git -C "$1" rev-parse -q --verify "$b^{commit}" 2>/dev/null) && { range=("$base..HEAD"); break; }
+  done
+  [ ${#range[@]} -gt 0 ] || range=(--since="2026-11-03 00:00")
+  rows=$(git -C "$1" log --no-merges "${range[@]}" \
     --format='%h%x1f%(trailers:key=Owner-approved,valueonly,separator=%x2C)%x1f%s' -- "$2" 2>/dev/null)
   while IFS=$'\x1f' read -r sha receipt subject; do
     [ -n "$sha" ] && [ -z "$receipt" ] && finding receipt "$1: $sha touches $2 without an Owner-approved: trailer ($subject)"
@@ -406,38 +323,22 @@ receipt_check() { # <repo root> <role path inside it>
 receipt_check "$DOTFILES" templates/agent-team/.claude/agents
 for proj in "${PROJECTS[@]}"; do [ -d "$proj" ] && receipt_check "$proj" .claude/agents; done
 
-# ready-brief: open ready-for-agent issues must carry the AGENT-BRIEF fields in one text.
-BRIEF_PY='
-import json, re, sys
-FIELDS = ["Acceptance criteria", "Requirement owner", "Deleted"]
-def has(text, f):
-    if f == "Acceptance criteria" and re.search(r"^## (?:[0-9]+[.)] +)?Done check\b", text, re.I | re.M): return True
-    if f == "Deleted" and re.search(r"\bDeleted:", text, re.I): return True
-    f = re.escape(f)
-    return re.search(r"^\s*#+\s*\**" + f + r"\b|^\s*(?:[-*]\s*)?\**" + f + r"(?:\**\s*:|\s*:\**)", text, re.I | re.M)
-for i in json.load(sys.stdin):
-    texts = [i.get("body") or ""] + [c.get("body") or "" for c in i.get("comments") or []]
-    if any(l.get("name") == "team-audit: allow" for l in i.get("labels") or []): continue
-    if any("team-audit: allow" in t for t in texts): continue
-    best = min(([f for f in FIELDS if not has(t, f)] for t in texts), key=len)
-    if best: print("%s\t%s" % (i["number"], ", ".join(best)))
-'
+# labels: an open ready-for-agent issue must not also carry a label that says it is not ready.
+CONFLICT_LABELS="${CONFLICT_LABELS:-blocked needs-info needs-triage ready-for-human wontfix}"
 for proj in "${PROJECTS[@]}"; do
   [ -d "$proj" ] || continue
-  url=$(git -C "$proj" remote get-url origin 2>/dev/null) || continue
-  repo=$(echo "$url" | sed -nE 's#^(https://([^@/]+@)?|ssh://git@|git@)github\.com[:/]([^/]+/[^/]+)$#\3#p'); repo="${repo%.git}"
-  [ -n "$repo" ] || continue
-  if ! issues=$(gh issue list --repo "$repo" --label ready-for-agent --state open --limit 200 --json number,body,labels,comments 2>/dev/null); then
-    echo "WARN ready-brief: could not list ready-for-agent issues for $repo (gh or network); skipped"
+  repo=$(repo_of "$proj"); [ -n "$repo" ] || continue
+  if ! rows=$(gh issue list --repo "$repo" --label ready-for-agent --state open --limit 500 --json number,labels 2>/dev/null \
+      | python3 -c 'import json, sys; [print(i["number"], *[l["name"] for l in i["labels"]], sep="\t") for i in json.load(sys.stdin)]'); then
+    echo "WARN labels: could not list ready-for-agent issues for $repo (gh or network); skipped"
     continue
   fi
-  if ! rows=$(echo "$issues" | python3 -c "$BRIEF_PY" 2>/dev/null); then
-    echo "WARN ready-brief: could not read the issue list for $repo; skipped"
-    continue
-  fi
-  while IFS=$'\t' read -r num missing; do
+  while IFS= read -r line; do
+    num="${line%%$'\t'*}"; names=" ${line//$'\t'/ } "
     [ -n "$num" ] || continue
-    echo "FINDING ready-brief $repo#$num missing: $missing"; findings=$((findings + 1))
+    hit=""
+    for l in $CONFLICT_LABELS; do case "$names" in *" $l "*) hit="$hit $l" ;; esac; done
+    [ -n "$hit" ] && finding labels "$repo#$num has ready-for-agent and$hit"
   done <<< "$rows"
 done
 
@@ -447,11 +348,9 @@ if [ "${TEAM_AUDIT_RUN_METRICS:-0}" = "1" ]; then
   else
     for proj in "${PROJECTS[@]}"; do
       [ -d "$proj" ] || continue
-      url=$(git -C "$proj" remote get-url origin 2>/dev/null) || continue
-      repo=$(echo "$url" | sed -nE 's#^(https://([^@/]+@)?|ssh://git@|git@)github\.com[:/]([^/]+/[^/]+)$#\3#p'); repo="${repo%.git}"
-      [ -n "$repo" ] || continue
+      repo=$(repo_of "$proj"); [ -n "$repo" ] || continue
       echo "metrics $repo:"
-      bun "$DOTFILES/script/team-audit-metrics.ts" --repo "$repo" 2>&1 | sed 's/^/  /' \
+      bun "$HERE/team-audit-metrics.ts" --repo "$repo" 2>&1 | sed 's/^/  /' \
         || echo "WARN metrics: failed for $repo"
     done
   fi

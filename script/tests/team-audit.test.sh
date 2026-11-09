@@ -25,27 +25,31 @@ EOS
   printf 'The Tech Lead merges every PR.\n' > "$P/docs/agents/team.md"
   mkdir -p "$P/.agents/skills/crew"; cp "$D/templates/agent-team/.agents/skills/crew/SKILL.md" "$P/.agents/skills/crew/"
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
-  printf 'sha=aaa1111\nskills=tdd research\n' > "$D/.agents/skills/.mattpocock-upstream"
-  GH_LATEST=aaa1111 GH_FILES="" GH_FAIL="" GH_ISSUES="[]"
+  GH_FAIL="" GH_READY="[]"; : > "$GH_CALLS"
 }
 
-# Fake gh on PATH: commits/main prints $GH_LATEST, compare prints $GH_FILES, GH_FAIL makes both fail.
+# Fake gh on PATH. Every call is appended to $GH_CALLS as one line. issue list --label ready-for-agent prints $GH_READY;
+# api graphql and the month's issue list print the fixtures; GH_FAIL makes every call fail.
+fx="$here/tests/fixtures"
+export GH_CALLS="$tmp/gh-calls" GH_FX="$fx"
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'EOS'
 #!/usr/bin/env bash
+echo "$*" | tr '\n' ' ' >> "$GH_CALLS"; echo >> "$GH_CALLS"
 [ -n "$GH_FAIL" ] && exit 1
-[ "$1 $2" = "issue list" ] && { printf '%s' "$GH_ISSUES"; exit 0; }
-case "$2" in
-  */commits/main) echo "$GH_LATEST" ;;
-  */compare/*) printf '%s' "$GH_FILES" ;;
+case "$1 $2" in
+  "api graphql") cat "$GH_FX/team-audit-graphql.json" ;;
+  "issue list") case " $* " in *" --label ready-for-agent "*) printf '%s' "$GH_READY" ;; *) cat "$GH_FX/team-audit-issues.json" ;; esac ;;
+  *) exit 1 ;;
 esac
 EOS
 chmod +x "$tmp/bin/gh"
 export PATH="$tmp/bin:$PATH"
 
-export GH_ISSUES="[]"
 withremote() { ( cd "$P" && git init -q && git remote add origin https://github.com/acme/project-alpha.git ); }
-BRIEF=$'## Acceptance criteria\nx\n\nRequirement owner: me\n**Done condition:** y\n- Deleted: nothing'
+commit() { # <repo> <message>: commit everything with a fixed identity
+  ( cd "$1" && git add -A && git -c user.name=t -c user.email=t@t commit -qm "$2" )
+}
 
 pass=0; fail=0
 check() { # name expected_exit output_regex
@@ -125,140 +129,103 @@ setup; yes word | head -900 | tr '\n' ' ' >> "$P/.claude/agents/tech-lead.md"
 check "role file over budget" 1 'FINDING budget: .*tech-lead.md: 9[0-9][0-9] words'
 
 setup; mkdir -p "$D/.agents/skills/bare"; printf -- '---\nname: bare\n---\n' > "$D/.agents/skills/bare/SKILL.md"
-check "skill without description" 1 'FINDING skill: .*bare/SKILL.md: no description'
+check "skill without description" 1 'FINDING skills: .*bare/SKILL.md: no description'
 
 setup; printf '{"version": 3, "skills": {"orchestration": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
 check "official orchestration may be tracked" 0 'team-audit: clean'
 
 setup; printf '{"version": 3, "skills": {"orca-team": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
-check "lock tracking our orca-team" 1 'FINDING lock: .*tracks orca-team'
+check "lock tracking our orca-team" 1 'FINDING skills: .*tracks orca-team'
 
 setup; rm "$D/.agents/skills/orca-team/worker-panes.sh"
-check "missing orca-team helper" 1 'FINDING helpers: missing .*worker-panes.sh'
+check "missing orca-team helper" 1 'FINDING skills: missing .*worker-panes.sh'
 
 setup; rm "$D/.agents/skills/orca-team/worker-pane-retry.sh"
-check "missing pane retry helper" 1 'FINDING helpers: missing .*worker-pane-retry.sh'
-
-setup; GH_LATEST=bbb2222 GH_FILES=$'skills/engineering/tdd/SKILL.md\nREADME.md\n'; export GH_LATEST GH_FILES
-check "upstream changed a vendored skill" 1 'FINDING mp-upstream: aaa1111 behind bbb2222: tdd'
-
-setup; GH_LATEST=bbb2222 GH_FILES=$'skills/engineering/triage/SKILL.md\nREADME.md\n'; export GH_LATEST GH_FILES
-check "upstream changed only other skills" 0 'team-audit: clean'
-
-setup; GH_FAIL=1; export GH_FAIL
-check "gh failure is a warning only" 0 'WARN mp-upstream'
-unset GH_FAIL GH_LATEST GH_FILES
-
-setup; rm "$D/.agents/skills/tdd/SKILL.md"; printf -- '---\nname: dev\nskills: [tdd, orchestration]\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"
-check "role names a missing Matt Pocock skill" 1 'FINDING mp-upstream: .*dev.md: skills: names tdd'
+check "missing pane retry helper" 1 'FINDING skills: missing .*worker-pane-retry.sh'
 
 setup; printf -- '---\nname: dev\nskills: [tdd, orchestration]\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"
 check "role skills all present" 0 'team-audit: clean'
 
-setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; echo spec > "$P/docs/intent/2026-10-21-tier/spec.md"
-check "spec without intent.md" 1 'FINDING sdlc: .*2026-10-21-tier/spec.md: no intent.md'
+setup; printf -- '---\nname: dev\nskills: [tdd, nosuch]\n---\nbody\n' > "$P/.claude/agents/dev.md"
+check "role names a skill that does not exist" 1 'FINDING skills: .*dev.md: skills: names nosuch'
 
-setup; mkdir -p "$P/docs/intent/2026-10-21-tier"; printf 'spec\n\n## Test plan\n1. case\n' > "$P/docs/intent/2026-10-21-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-21-tier/intent.md"
-check "spec beside its intent.md" 0 'team-audit: clean'
+setup; mkdir -p "$P/.agents/skills/local"; printf -- '---\nname: local\ndescription: x\n---\n' > "$P/.agents/skills/local/SKILL.md"
+printf -- '---\nname: dev\nskills: [local]\n---\nbody\n' > "$P/.claude/agents/dev.md"
+check "role may name a project skill" 0 'team-audit: clean'
 
-setup; mkdir -p "$P/docs/intent/2026-10-22-numbered"; printf '## 10. Test plan\n1. observable case\n' > "$P/docs/intent/2026-10-22-numbered/spec.md"; echo intent > "$P/docs/intent/2026-10-22-numbered/intent.md"
-check "numbered Test plan heading passes" 0 'team-audit: clean'
+# labels: one gh issue list per project with an origin
+setup; withremote; GH_READY='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"bug"}]}]'; export GH_READY
+check "ready issue without a conflicting label passes" 0 'team-audit: clean'
+if [ "$(grep -c '^issue list' "$GH_CALLS")" = 1 ] && ! grep -qv '^issue list' "$GH_CALLS"; then pass=$((pass+1)); echo "ok   labels check makes one gh call and no upstream polling"
+else fail=$((fail+1)); echo "FAIL labels check gh calls"; cat "$GH_CALLS"; fi
 
-setup; withremote; GH_ISSUES='[{"number":12,"body":"## Done check (functional cases)\n- observable proof\nRequirement owner: owner request\n## Blocking edges and deletions\nS1 -> S2. Deleted: old flow","labels":[],"comments":[]}]'; export GH_ISSUES
-check "functional done check and inline deletion pass without duplicate Done condition" 0 'team-audit: clean'
-
-setup; mkdir -p "$P/docs/intent/2026-10-22-tier"; echo spec > "$P/docs/intent/2026-10-22-tier/spec.md"; echo intent > "$P/docs/intent/2026-10-22-tier/intent.md"
-check "new spec without a Test plan" 1 'FINDING sdlc: .*2026-10-22-tier/spec.md: no ## Test plan'
-
-setup; mkdir -p "$P/docs/intent/2026-10-09-old"; echo spec > "$P/docs/intent/2026-10-09-old/spec.md"
-( cd "$P" && git init -q && git add -A && GIT_AUTHOR_DATE=2026-10-09T00:00:00Z GIT_COMMITTER_DATE=2026-10-09T00:00:00Z git -c user.name=t -c user.email=t@t commit -qm old )
-check "spec committed before the rule is grandfathered" 0 'team-audit: clean'
-
-setup; withremote; GH_ISSUES=$(jq -n --arg b "$BRIEF" '[{number:7,body:$b,labels:[],comments:[]}]'); export GH_ISSUES
-check "ready issue with all required fields passes" 0 'team-audit: clean'
-
-setup; withremote; GH_ISSUES='[{"number":8,"body":"Acceptance criteria: a\nDeleted: none","labels":[{"name":"ready-for-agent"}],"comments":[{"body":"Done condition: z"}]}]'; export GH_ISSUES
-check "missing fields name the best text's gaps" 1 '^FINDING ready-brief acme/project-alpha#8 missing: Requirement owner$'
-
-setup; withremote; GH_ISSUES=$(jq -n --arg b "$BRIEF" '[{number:9,body:"see comments",labels:[],comments:[{body:"thanks"},{body:$b}]}]'); export GH_ISSUES
-check "fields all in one comment pass" 0 'team-audit: clean'
-
-setup; withremote; GH_ISSUES='[{"number":12,"body":"## Done check (functional cases)\n- public outcome\n## Requirement owner\nCoordinator\nInline Deleted: obsolete bypass","labels":[],"comments":[]}]'; export GH_ISSUES
-check "Done check and inline Deleted satisfy one contract" 0 'team-audit: clean'
-
-setup; withremote; GH_ISSUES='[{"number":10,"body":"nothing","labels":[{"name":"team-audit: allow"}],"comments":[]}]'; export GH_ISSUES
-check "label opts an issue out" 0 'team-audit: clean'
-
-setup; withremote; GH_ISSUES='[{"number":11,"body":"nothing","labels":[],"comments":[{"body":"ok\nteam-audit: allow"}]}]'; export GH_ISSUES
-check "allow line in a comment opts an issue out" 0 'team-audit: clean'
+setup; withremote; GH_READY='[{"number":6,"labels":[{"name":"ready-for-agent"},{"name":"needs-info"}]}]'; export GH_READY
+check "ready-for-agent with needs-info is a label conflict" 1 '^FINDING labels: acme/project-alpha#6 has ready-for-agent and needs-info$'
 
 setup; withremote; GH_FAIL=1; export GH_FAIL
-check "gh failure on issues is a warning, not a finding" 0 'WARN ready-brief'
-unset GH_FAIL; export GH_ISSUES="[]"
+check "gh failure on labels is a warning, not a finding" 0 'WARN labels'
+unset GH_FAIL
 
-setup; rm "$D/.agents/skills/.mattpocock-upstream"
-check "missing upstream record" 1 'FINDING mp-upstream: missing'
-
-setup; mkdir -p "$P/docs/intent/skip-non-team"; printf 'script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/skip-non-team/spec.md"; echo intent > "$P/docs/intent/skip-non-team/intent.md"
-touch "$D/script/list-covered.sh"
-touch "$D/script/install_mac.sh" "$D/script/install-vscode.sh" "$D/script/uninstall_old.sh"
-touch "$D/script/setup-node.sh" "$D/script/link-cursor-user.sh" "$D/script/tsconfig.json" "$D/script/smoke.test.ts"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/skip-non-team/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   script-list skips install/setup/link/json and *.test.ts names"
-else fail=$((fail+1)); echo "FAIL script-list skips non-team script names (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/heavy"; printf 'script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/heavy/spec.md"; echo intent > "$P/docs/intent/heavy/intent.md"
-touch "$D/script/list-covered.sh"; touch "$D/script/heavy-gate.sh"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/heavy/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: heavy-gate.sh'; then pass=$((pass+1)); echo "ok   heavy-gate.sh is still a script-list finding when unlisted"
-else fail=$((fail+1)); echo "FAIL heavy-gate.sh unlisted (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/wsu"; printf 'script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/wsu/spec.md"; echo intent > "$P/docs/intent/wsu/intent.md"
-touch "$D/script/list-covered.sh"; touch "$D/script/worker-startup.sh"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/wsu/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: worker-startup.sh'; then pass=$((pass+1)); echo "ok   worker-startup.sh is still a script-list finding when unlisted"
-else fail=$((fail+1)); echo "FAIL worker-startup.sh unlisted (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/x"; printf 'script/list-covered.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/x/spec.md"; echo intent > "$P/docs/intent/x/intent.md"
-touch "$D/script/list-covered.sh"; touch "$D/script/planted-unlisted-team-script.sh"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/x/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: planted-unlisted-team-script.sh'; then pass=$((pass+1)); echo "ok   unlisted script under script/ is a finding"
-else fail=$((fail+1)); echo "FAIL unlisted script under script/ is a finding (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/y"; printf 'Tools: script/list-covered.sh script/agent-team.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/y/spec.md"; echo intent > "$P/docs/intent/y/intent.md"
-touch "$D/script/list-covered.sh"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/y/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 0 ] && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   listed script under script/ is not a finding"
-else fail=$((fail+1)); echo "FAIL listed script under script/ is not a finding (exit $code)"; echo "$out"; fi
-
-setup; missing="$tmp/missing-tool-list.txt"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$missing" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: TEAM_AUDIT_TOOL_LISTS path missing or unreadable:'; then pass=$((pass+1)); echo "ok   missing TEAM_AUDIT_TOOL_LISTS path is a finding"
-else fail=$((fail+1)); echo "FAIL missing TEAM_AUDIT_TOOL_LISTS path (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/unread"; printf 'script/x.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/unread/spec.md"; echo intent > "$P/docs/intent/unread/intent.md"
-chmod a-r "$P/docs/intent/unread/spec.md"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/unread/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-chmod u+r "$P/docs/intent/unread/spec.md" 2>/dev/null || true
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: TEAM_AUDIT_TOOL_LISTS path missing or unreadable:'; then pass=$((pass+1)); echo "ok   unreadable TEAM_AUDIT_TOOL_LISTS path is a finding"
-else fail=$((fail+1)); echo "FAIL unreadable TEAM_AUDIT_TOOL_LISTS path (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/bak"; printf 'script/foo.sh.bak\n\n## Test plan\n1. case\n' > "$P/docs/intent/bak/spec.md"; echo intent > "$P/docs/intent/bak/intent.md"
-touch "$D/script/foo.sh"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/bak/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: foo.sh not listed'; then pass=$((pass+1)); echo "ok   substring foo.sh.bak does not cover foo.sh"
-else fail=$((fail+1)); echo "FAIL foo.sh.bak must not satisfy foo.sh (exit $code)"; echo "$out"; fi
-
-setup; mkdir -p "$P/docs/intent/prefix"; printf 'script/my-foo.sh\n\n## Test plan\n1. case\n' > "$P/docs/intent/prefix/spec.md"; echo intent > "$P/docs/intent/prefix/intent.md"
-touch "$D/script/foo.sh"
-out=$(DOTFILES="$D" TEAM_AUDIT_TOOL_LISTS="$P/docs/intent/prefix/spec.md" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 1 ] && echo "$out" | grep -qE 'FINDING script-list: foo.sh not listed'; then pass=$((pass+1)); echo "ok   my-foo.sh does not cover foo.sh"
-else fail=$((fail+1)); echo "FAIL my-foo.sh must not satisfy foo.sh (exit $code)"; echo "$out"; fi
-
-setup
+# Acceptance: no drift exits 0; a role to skill mismatch plus a label conflict exits 1 naming both.
+setup; withremote
+check "fixture with no drift exits 0" 0 'team-audit: clean'
+setup; withremote; printf -- '---\nname: dev\nskills: [nosuch]\n---\nbody\n' > "$P/.claude/agents/dev.md"
+GH_READY='[{"number":7,"labels":[{"name":"ready-for-agent"},{"name":"blocked"}]}]'; export GH_READY
 out=$(DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1); code=$?
-if [ "$code" = 0 ] && echo "$out" | grep -qE 'NOTE script-list: TEAM_AUDIT_TOOL_LISTS unset' && echo "$out" | grep -qE 'team-audit: clean'; then pass=$((pass+1)); echo "ok   unset TEAM_AUDIT_TOOL_LISTS skips script-list without a finding"
-else fail=$((fail+1)); echo "FAIL unset TEAM_AUDIT_TOOL_LISTS skips script-list (exit $code)"; echo "$out"; fi
+if [ "$code" = 1 ] && echo "$out" | grep -q 'FINDING skills: .*names nosuch' && echo "$out" | grep -q 'FINDING labels: acme/project-alpha#7 has ready-for-agent and blocked' \
+   && echo "$out" | grep -q 'team-audit: 2 finding(s)'; then pass=$((pass+1)); echo "ok   mismatch and label conflict exit 1 naming both"
+else fail=$((fail+1)); echo "FAIL mismatch and label conflict (exit $code)"; echo "$out"; fi
+GH_READY="[]"
+
+# receipt: role commits need Owner-approved:, counted after the baseline sha
+setup; ( cd "$D" && git init -q ); commit "$D" base
+printf -- '---\nname: dev\n---\nbody\n' > "$D/templates/agent-team/.claude/agents/dev.md"; commit "$D" "edit dev role"
+check "role commit without a receipt is a finding" 1 'FINDING receipt: .*touches templates/agent-team/.claude/agents without an Owner-approved: trailer \(edit dev role\)'
+base=$(git -C "$D" rev-parse HEAD)
+out=$(ROLE_RECEIPT_BASE="0000000 $base" DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 0 ]; then pass=$((pass+1)); echo "ok   commits up to the baseline sha are not read"
+else fail=$((fail+1)); echo "FAIL baseline sha (exit $code)"; echo "$out"; fi
+echo more >> "$D/templates/agent-team/.claude/agents/dev.md"
+( cd "$D" && git add -A && git -c user.name=t -c user.email=t@t commit -qm "approved edit" -m "Owner-approved: yes" )
+echo again >> "$D/templates/agent-team/.claude/agents/dev.md"; commit "$D" "unapproved edit"
+out=$(ROLE_RECEIPT_BASE="$base" DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1); code=$?
+if [ "$code" = 1 ] && echo "$out" | grep -q '(unapproved edit)$' && [ "$(echo "$out" | grep -c '^FINDING receipt')" = 1 ]; then
+  pass=$((pass+1)); echo "ok   only unapproved commits after the baseline are findings"
+else fail=$((fail+1)); echo "FAIL receipt after baseline (exit $code)"; echo "$out"; fi
+
+# --report: checks plus metrics (fake gh counts the calls), real bun runs team-audit-metrics.ts
+if ! command -v bun >/dev/null 2>&1; then fail=$((fail+1)); echo "FAIL --report tests need bun on PATH"
+else
+  setup; withremote
+  printf 'date\tfinding\tevidence\tcount\tfix ticket\tstatus\n2026-11-08\tworker skipped the receipt\tPR #9, PR #12\t2\t-\topen\n' > "$tmp/obs.tsv"
+  rep=$(TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
+    DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1); code=$?
+  rcheck() { # name regex
+    if echo "$rep" | grep -qE -- "$2"; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; echo "$rep"; fi
+  }
+  if [ "$code" = 0 ]; then pass=$((pass+1)); echo "ok   --report on a clean fixture exits 0"; else fail=$((fail+1)); echo "FAIL --report exit $code"; echo "$rep"; fi
+  rcheck "--report has the problems section" '^## Problems with evidence$'
+  rcheck "--report has the proposals section" '^## Proposals with a recommended option$'
+  rcheck "--report has the stage times section" '^## Stage times$'
+  rcheck "--report lists TSV rows with evidence" '^- worker skipped the receipt \(logged 2026-11-08, count 2, evidence PR #9, PR #12'
+  rcheck "--report recommends a fix ticket at count 2" 'worker skipped the receipt: Recommended: A, open a fix ticket'
+  rcheck "--report prints sample and verified counts" '^Samples: 3, fully verified: 2$'
+  rcheck "--report queue row" '^\| queue \| 20 \| 30 \| 30 \| 2 \| 2 \|$'
+  rcheck "--report build runs from dispatch to first Checks" '^\| build \| 60 \| 90 \| 90 \| 2 \| 2 \|$'
+  rcheck "--report merge row" '^\| merge \| 60 \| 120 \| 120 \| 3 \| 2 \|$'
+  rcheck "--report delivery metrics" 'Delivery: median_ticket_start_to_merge_minutes=150, first_pass_checks_fail_rate=0.33'
+  n=$(wc -l < "$GH_CALLS" | tr -d ' ')
+  if [ "$n" -le 3 ] && grep -q '^api graphql' "$GH_CALLS" && [ "$(grep -c '^issue list' "$GH_CALLS")" = 2 ]; then
+    pass=$((pass+1)); echo "ok   --report makes $n gh calls (at most 3)"
+  else fail=$((fail+1)); echo "FAIL --report made $n gh calls"; cat "$GH_CALLS"; fi
+
+  setup; withremote; printf -- '---\nname: dev\nskills: [nosuch]\n---\nbody\n' > "$P/.claude/agents/dev.md"
+  rep=$(TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/none.tsv" DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1); code=$?
+  if [ "$code" = 1 ]; then pass=$((pass+1)); echo "ok   --report with a finding exits 1"; else fail=$((fail+1)); echo "FAIL --report finding exit $code"; fi
+  rcheck "--report lists the FINDING as a problem" '^- skills: .*names nosuch'
+  rcheck "--report gives the finding a recommended option" '^  Recommended: A, fix the skill or role file'
+  rcheck "--report without a dispatch log has no verified samples" '^Samples: 3, fully verified: 0$'
+fi
 
 setup
 out=$(DOTFILES="$D" "$here/team-audit.sh" --bogus 2>&1); code=$?

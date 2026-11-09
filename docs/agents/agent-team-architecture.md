@@ -79,7 +79,7 @@ sequenceDiagram
 
 ## 4. Ticket and review contracts
 
-Each ready GitHub issue carries in one text (body or a single comment) the three fields enforced by `script/team-audit.sh`:
+Each ready GitHub issue carries in one text (body or a single comment) these three fields:
 
 1. **`## Acceptance criteria`:** observable cases, allowed files, and the exact proving command (the ticket's listed test cases from the spec's `## Test plan` plus touched unit tests, never the full regression suite).
 2. **`Requirement owner:`** the requester and reason (per The Algorithm: question the requirement first).
@@ -103,7 +103,7 @@ Template and examples: [Persistent memory protocol](persistent-memory-protocol.m
 4. **Strikes and Attack the Premise:** at the second failure of the same check, write down and directly test the shared premise before a third attempt. Three behavioural failures of the same command after production edits trigger a hard stop (`.claude/hooks/strikes.py`); tooling or setup failures (missing dependencies, Prisma generation, typegen) do not count toward the three strikes.
 5. **On demand memory:** never load `learned.md` or `experiences/` at session start; grep them only when a domain gotcha comes up.
 6. **Worktrees and wrap-up:** child worktrees go in `~/orca/workspaces/<project>/<lane>`, never `/tmp` or `.claude/worktrees`. When a job merges or settles, release the worker with `worker-pane-close.sh --release <dispatch_id>` and let `script/wrap-up.sh` prune finished branches, worktrees, terminals and temp browsers.
-7. **Team audit:** Orca runs `script/team-audit.sh` and `script/team-audit-metrics.ts` weekly for a one-line result. When the owner says "team-audit", `architect-pm` runs the full `/team-audit` skill: deterministic checks (sync, 800-word role budget, banned wording, skill frontmatter, skill lock, helpers, SDLC intent/test-plan rules, Matt Pocock upstream drift, ready-brief fields, `Owner-approved:` role commit trailers, and tool script inventory), evidenced problem fixes from `~/.claude/state/team-observations.md`, and the five delivery metrics (`median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, `reopened_or_hotfix_rate`).
+7. **Team audit:** Orca runs `script/team-audit.sh` and `script/team-audit-metrics.ts` weekly for a one-line result. When the owner says "team-audit", `architect-pm` runs the full `/team-audit` skill: six deterministic checks (sync, 800-word role budget, banned wording, skills, ready-for-agent label conflicts, and `Owner-approved:` role commit trailers), evidenced problem fixes from the observation log `~/agent-state/team-observations.tsv`, the Orca stage times, and the five delivery metrics (`median_ticket_start_to_merge_minutes`, `first_pass_checks_fail_rate`, `p0_filed_this_month`, `p1_filed_this_month`, `reopened_or_hotfix_rate`).
 8. **Context hygiene:** one ticket per session (a worker exits once its branch is committed, verified and reported). Keep `active_run.md` current on multi-slice work so `/compact` loses no state. Elon delegates heavy reading and test sweeps to Orca workers and reads only diff stats and exit codes.
 
 ## 7. Fleet and load distribution
