@@ -82,9 +82,9 @@ else
   bad "overwrote unrelated user files or settings.json"
 fi
 
-# 2. setup-agent-skills.sh symlinks all 8 named Tier 2 skills + every Tier 2 skill in templates/agent-team/.agents/skills/
+# 2. setup-agent-skills.sh symlinks all 5 named Tier 2 skills + every Tier 2 skill in templates/agent-team/.agents/skills/
 #    into both ~/.agents/skills/<name> and ~/.claude/skills/<name> alongside Tier 1 skills
-for s in ceo crew deploy elon poteto-mode staging-review team-audit tl; do
+for s in ceo deploy elon poteto-mode team-audit; do
   if [ -L "$home1/.agents/skills/$s" ] && [ -f "$home1/.agents/skills/$s/SKILL.md" ] &&
      [ -L "$home1/.claude/skills/$s" ] && [ -f "$home1/.claude/skills/$s/SKILL.md" ]; then
     ok "linked Tier 2 skill $s in ~/.agents/skills and ~/.claude/skills"

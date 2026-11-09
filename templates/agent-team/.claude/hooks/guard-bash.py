@@ -145,7 +145,7 @@ TEMPLATE_DOCS = {
     "persistent-memory-protocol.md",
     "pstack-attribution.md",
 }
-TIER2_SKILLS = {"ceo", "crew", "deploy", "elon", "poteto-mode", "staging-review", "team-audit", "tl"}
+TIER2_SKILLS = {"ceo", "deploy", "elon", "poteto-mode", "team-audit"}
 
 GATE_CWD = None
 RAW_COMMAND = ""

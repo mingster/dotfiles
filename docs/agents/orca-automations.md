@@ -26,7 +26,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 | `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh`: `script/team-audit.sh` (which calls `agent-team.sh check` per project) with `TEAM_AUDIT_RUN_METRICS=1`, so `script/team-audit-metrics.ts --repo <owner/name>` runs for each project's origin repo | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the owner asks) | Same |
 | `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
 | `fleet-toolchain` | `0 5 * * *` | Coordinator only | Wrapper runs `script/fleet-pull.sh` then `script/fleet-toolchain-check.sh --apply` | `FLEET_TOOLCHAIN_LOG` (default `~/.local/state/agent-team/fleet-toolchain.log`) | Same |
-| `staging-daily-1900` | `0 19 * * *` (`Asia/Taipei`) | Coordinator only | Wrapper runs `script/automation-precheck-staging-daily.sh` (skips when staging equals `origin/main`, otherwise wakes the coordinator to dispatch `release-manager` for staging deploy and `/staging-review`; production remains gated on owner approval) | `STAGING_DAILY_LOG` (default `~/.local/state/agent-team/staging-daily.log`) | Same |
+| `staging-daily-1900` | `0 19 * * *` (`Asia/Taipei`) | Coordinator only | Wrapper runs `script/automation-precheck-staging-daily.sh` (skips when staging equals `origin/main`, otherwise wakes the coordinator to dispatch `release-manager` for staging deploy and the pstack `swarm` staging review; production remains gated on owner approval) | `STAGING_DAILY_LOG` (default `~/.local/state/agent-team/staging-daily.log`) | Same |
 
 ## Scheduled wrap-up round
 
@@ -87,7 +87,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/team-audit.sh`, `script/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics skipped when `bun` is missing |
 | `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; no merge; owner reviews |
 | `script/fleet-pull.sh`, `script/fleet-toolchain-check.sh` | Yes (as `fleet-toolchain`) | Daily coordinator pull and toolchain check and upgrade |
-| `script/automation-precheck-staging-daily.sh` | Yes (as `staging-daily-1900`) | Daily `0 19 * * *` (`Asia/Taipei`) coordinator check; skips when staging equals `origin/main` and otherwise wakes the coordinator for staging deploy and `/staging-review` |
+| `script/automation-precheck-staging-daily.sh` | Yes (as `staging-daily-1900`) | Daily `0 19 * * *` (`Asia/Taipei`) coordinator check; skips when staging equals `origin/main` and otherwise wakes the coordinator for staging deploy and the pstack `swarm` staging review |
 | `script/secrets-sync.sh`, `script/secrets-pack.sh`, `script/secrets-unpack.sh` | No | Secrets mutation or owner transfer |
 | `script/elon-startup.sh` | No | Wake-only health report |
 | `script/coordinator-drain.sh`, `script/worker-watch.sh` | No | Tied to Elon session and fleet-watch, not a cron |

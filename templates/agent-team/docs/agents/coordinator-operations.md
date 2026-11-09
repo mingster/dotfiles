@@ -9,7 +9,6 @@ Read before reporting status or reviewing process performance.
 ## Process improvement (owner 2026-10-19)
 
 - Any ticket over 10 minutes from start to MERGED gets a reason or structural fix logged with `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"` the same wake; finding it is Elon's job.
-- Principle: The Algorithm (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Team rules 8). Every change cites the requirement questioned, its owner, and what was deleted.
 - Measures, read weekly from GitHub and Orca, never estimated:
   1. Errors: post-merge defects (a bug or hotfix issue tied to a PR merged in the last 7 days), reverts, owner re-asks, hard stops.
   2. Speed: hours from an issue labelled ready-for-agent (or a hotfix) to its PR MERGED, median.
@@ -48,7 +47,6 @@ Elon runs this on every wake, at least every 10 minutes (owner rule 2026-10-23).
 - **GitHub budget (audit 2026-11-05):** the REST limit is 5000 calls an hour for the whole fleet, shared by every host. Before any `gh` call in a wake, read `gh api rate_limit --jq .resources.core.remaining`; below 500, use local git, `.orca` state and files only, and do not start a regression round or a status post until it recovers (`reset` is the epoch second). A script that reads commit statuses must fetch each sha once per process (memoize), never once per area.
 - `gh pr list --label needs-elon`: decide each one this wake. `Review: FAIL` beside a PASS Verdict holds the merge until Elon reads the defect and records fix or override on the PR.
 - `worker-watch.sh` on your run and on every run with a live worker (it already includes remote workers). LONG_SESSION means act at once. A reviewer at a usage limit or idle is a stalled gate: restart it on the next `usage-gate.py pick` provider in the same wake. Stalled workers and backup freshness are covered by `fleet-watch.py` on the coordinator host (`docs/agents/fleet-watch.md`), not a separate script.
-- Fewer workers than the gate allows while startable tickets exist is a bottleneck: fill the lanes that turn.
 - Owner ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its owner in the ask's ledger row this wake.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending owner asks as one numbered batch before he leaves; one answer holds at most one ticket.
 - A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.

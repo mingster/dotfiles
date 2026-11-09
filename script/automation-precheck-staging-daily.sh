@@ -4,7 +4,7 @@
 # fetches origin, and compares origin/main with origin/staging (or configured <component>/staging
 # branches in .claude/hooks/guard-config.json). Logs "skip: staging equals main" when up to date,
 # or wakes the active coordinator run via `orca orchestration send` to dispatch release-manager
-# for staging deploy followed by /staging-review (production deploy remains gated on owner approval).
+# for staging deploy followed by pstack swarm with the staging overlay (production deploy remains gated on owner approval).
 set -uo pipefail
 
 state_dir="${AGENT_STATE_DIR:-$HOME/agent-state}"
@@ -230,8 +230,8 @@ run_id="${target#run:}"
 to_arg="run:$run_id"
 run_arg=("--run" "$run_id")
 
-subject="staging-daily-1900: deploy staging and run /staging-review"
-body="Daily 19:00 Asia/Taipei staging check: origin/main is ahead of staging for ${ahead_summary}. Dispatch release-manager for staging deploy (/deploy staging) and then run /staging-review. Production deploy remains gated on owner approval."
+subject="staging-daily-1900: deploy staging and run swarm staging review"
+body="Daily 19:00 Asia/Taipei staging check: origin/main is ahead of staging for ${ahead_summary}. Dispatch release-manager for staging deploy (/deploy staging) and then run pstack swarm with the staging overlay (.agents/skills/orca-adapter/playbooks/swarm.md). Production deploy remains gated on owner approval."
 
 if ! "$orca_cli" orchestration send --to "$to_arg" ${run_arg[@]+"${run_arg[@]}"} --type status --subject "$subject" --body "$body" --json >/dev/null 2>&1; then
   emit "error: failed to send orchestration wake to $to_arg for ${ahead_summary}"

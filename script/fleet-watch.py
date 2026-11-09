@@ -2410,7 +2410,7 @@ def build_backlog_sweep_command(config, repo, role):
     if not root:
         return None
     spec = (
-        'Role: %s (read .claude/agents/%s.md). Read-only team-grill-backlog sweep; no code.\n'
+        'Role: %s (read .claude/agents/%s.md). Read-only backlog sweep of open issues not ready-for-agent; no code.\n'
         % (role, role)
     )
     spec_path = _write_issue_scan_spec(spec)

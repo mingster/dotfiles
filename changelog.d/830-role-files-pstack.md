@@ -1,0 +1,1 @@
+* Role files hold four parts in the poteto-agent style: identity, read poteto-mode and ORCA-ADAPTER.md, the pstack playbooks the role uses, and its Standing authority copied verbatim. `/elon` routes to pstack Orchestrate, and `/elon status` runs `ketchup`.

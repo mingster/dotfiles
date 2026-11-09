@@ -193,7 +193,7 @@ fi
 drifted="$tmp/drifted-repo"
 mkdir -p "$drifted/.claude/agents" "$drifted/.claude/hooks" "$drifted/.claude/bin" \
   "$drifted/.claude/agent-team-baseline" \
-  "$drifted/.agents/skills/elon" "$drifted/.agents/skills/crew" "$drifted/.agents/skills/deploy" \
+  "$drifted/.agents/skills/elon" "$drifted/.agents/skills/team-audit" "$drifted/.agents/skills/deploy" \
   "$drifted/.agents/skills/custom-tier3" \
   "$drifted/.claude/skills" "$drifted/.cursor/skills" "$drifted/bin"
 git -C "$drifted" init -q
@@ -258,11 +258,11 @@ cp "$real_dotfiles/templates/agent-team/.claude/bin/state-of-play.sh" "$drifted/
 
 # Tier 2 skill copies + links (must be removed) and Tier 3 skill (must be preserved)
 printf -- '---\nname: elon\n---\n' > "$drifted/.agents/skills/elon/SKILL.md"
-printf -- '---\nname: crew\n---\n' > "$drifted/.agents/skills/crew/SKILL.md"
+printf -- '---\nname: team-audit\n---\n' > "$drifted/.agents/skills/team-audit/SKILL.md"
 printf -- '---\nname: deploy\n---\n' > "$drifted/.agents/skills/deploy/SKILL.md"
 ln -s "../../.agents/skills/elon" "$drifted/.claude/skills/elon"
 ln -s "../../.agents/skills/elon" "$drifted/.cursor/skills/elon"
-ln -s "../../.agents/skills/crew" "$drifted/.claude/skills/crew"
+ln -s "../../.agents/skills/team-audit" "$drifted/.claude/skills/team-audit"
 ln -s "../../.agents/skills/deploy" "$drifted/.cursor/skills/deploy"
 printf -- '---\nname: custom-tier3\ndescription: Custom project skill.\n---\n# Custom Tier 3\n' \
   > "$drifted/.agents/skills/custom-tier3/SKILL.md"
@@ -366,7 +366,7 @@ if [ ! -e "$drifted/.claude/agents/elon.md" ] \
   && [ ! -e "$drifted/.claude/hooks/production-hosts.txt" ] \
   && [ ! -e "$drifted/.claude/bin" ] \
   && [ ! -e "$drifted/.agents/skills/elon" ] \
-  && [ ! -e "$drifted/.agents/skills/crew" ] \
+  && [ ! -e "$drifted/.agents/skills/team-audit" ] \
   && [ ! -e "$drifted/.agents/skills/deploy" ] \
   && [ ! -L "$drifted/.claude/skills/elon" ] \
   && [ ! -L "$drifted/.cursor/skills/elon" ] \
@@ -723,17 +723,17 @@ fi
 # 9.2 machine backs up real files and directories instead of deleting them, and a second run is a no-op.
 export HOME="$tmp/safe-home"
 export DOTFILES="$real_dotfiles"
-mkdir -p "$HOME/.claude/agents" "$HOME/.claude/skills/crew"
+mkdir -p "$HOME/.claude/agents" "$HOME/.claude/skills/team-audit"
 printf 'my elon\n' > "$HOME/.claude/agents/elon.md"
-printf 'my notes\n' > "$HOME/.claude/skills/crew/NOTES.md"
+printf 'my notes\n' > "$HOME/.claude/skills/team-audit/NOTES.md"
 bash "$SCRIPT" machine >/dev/null 2>&1
 elon_bak=$(find "$HOME/.claude/agents" -maxdepth 1 -name 'elon.md.bak.*' | head -n 1)
-crew_bak=$(find "$HOME/.claude/skills" -maxdepth 1 -name 'crew.bak.*' | head -n 1)
+ta_bak=$(find "$HOME/.claude/skills" -maxdepth 1 -name 'team-audit.bak.*' | head -n 1)
 if [ -f "$HOME/.claude/agents/elon.md" ] && [ ! -L "$HOME/.claude/agents/elon.md" ] \
   && ! grep -q 'my elon' "$HOME/.claude/agents/elon.md" \
   && [ -n "$elon_bak" ] && [ "$(cat "$elon_bak")" = "my elon" ] \
-  && [ -L "$HOME/.claude/skills/crew" ] \
-  && [ -n "$crew_bak" ] && [ "$(cat "$crew_bak/NOTES.md")" = "my notes" ]; then
+  && [ -L "$HOME/.claude/skills/team-audit" ] \
+  && [ -n "$ta_bak" ] && [ "$(cat "$ta_bak/NOTES.md")" = "my notes" ]; then
   check "round 3 item 2: machine backs up a real role file and a real skill directory" ok
 else
   check "round 3 item 2: machine backs up a real role file and a real skill directory" bad
@@ -786,20 +786,20 @@ fi
 
 # 9.6 Non-template files inside a Tier 2 skill dir: dry-run warns per path, project backs them up first.
 t2_repo="$tmp/t2-repo"
-mkdir -p "$t2_repo/.agents/skills/crew/notes"
+mkdir -p "$t2_repo/.agents/skills/team-audit/notes"
 git -C "$t2_repo" init -q
 git -C "$t2_repo" remote add origin "https://github.com/example-org/t2.git"
-printf 'custom\n' > "$t2_repo/.agents/skills/crew/CUSTOM.md"
-printf 'deep\n' > "$t2_repo/.agents/skills/crew/notes/deep.md"
+printf 'custom\n' > "$t2_repo/.agents/skills/team-audit/CUSTOM.md"
+printf 'deep\n' > "$t2_repo/.agents/skills/team-audit/notes/deep.md"
 dry_out=$(bash "$SCRIPT" project "$t2_repo" --project-name t2 --dry-run 2>&1)
 if echo "$dry_out" | grep -q 'CUSTOM.md' && echo "$dry_out" | grep -q 'notes/deep.md' \
-  && [ -f "$t2_repo/.agents/skills/crew/CUSTOM.md" ]; then
+  && [ -f "$t2_repo/.agents/skills/team-audit/CUSTOM.md" ]; then
   check "round 3 item 6: project --dry-run warns about each non-template file in a Tier 2 skill dir" ok
 else
   check "round 3 item 6: project --dry-run warns about each non-template file in a Tier 2 skill dir" bad
 fi
 bash "$SCRIPT" project "$t2_repo" --project-name t2 >/dev/null 2>&1
-if [ ! -e "$t2_repo/.agents/skills/crew" ] \
+if [ ! -e "$t2_repo/.agents/skills/team-audit" ] \
   && bash "$SCRIPT" check "$t2_repo" >/dev/null 2>&1 \
   && [ "$(find "$t2_repo" -path "$t2_repo/.git" -prune -o -type f -name CUSTOM.md -print | head -n 1 | xargs cat 2>/dev/null)" = "custom" ] \
   && [ "$(find "$t2_repo" -path "$t2_repo/.git" -prune -o -type f -name deep.md -print | head -n 1 | xargs cat 2>/dev/null)" = "deep" ]; then

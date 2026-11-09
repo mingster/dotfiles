@@ -174,10 +174,9 @@ for f in found:
     print(f"- {f}")
 for g in gaps:
     print(f"- gap, not checked: {g}")
+print("- gap, not checked: transcripts of hosts other than the coordinator (workflow-from-chats reads only this host)")
 for d, finding, evidence, count, ticket, status in obs:
     print(f"- {finding} (logged {d}, count {count}, evidence {evidence}, ticket {ticket or '-'}, status {status or 'open'})")
-if not (found or gaps or obs):
-    print("- none: every check is clean and the observation log is empty")
 
 print("\n## Proposals with a recommended option")
 for f in found:
@@ -185,7 +184,7 @@ for f in found:
     print(f"- {f}\n  Recommended: A, {a}. B, {b}.")
 for d, finding, evidence, count, ticket, status in obs:
     if count.isdigit() and int(count) >= 2:
-        print(f"- {finding}: Recommended: A, open a fix ticket that adds a check or test and drops the prose rule. B, keep observing.")
+        print(f"- {finding}: Recommended: A, open a fix ticket and hand the class to /correct. B, keep observing.")
     else:
         print(f"- {finding}: Recommended: A, keep observing until the count reaches 2. B, open a fix ticket now.")
 if not (found or obs):

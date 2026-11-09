@@ -52,7 +52,7 @@ The rule itself is in `AGENTS.md` (Token budget); this section only records the 
 
 ## 2. Alignment with SDLC
 
-- Specifications and requirements live exclusively in the project's intent and spec folders (`intent.md` and `spec.md`). `active_run.md` is strictly an ephemeral execution ledger for active multi-slice tasks and does not replace the coordinator's child ledger (`docs/agents/team.md`, Delivery contract 3).
+- Specifications and requirements live exclusively in the project's intent and spec folders (`intent.md` and `spec.md`). `active_run.md` is strictly an ephemeral execution ledger for active multi-slice tasks and does not replace the coordinator's child ledger (`docs/agents/team.md`, rule Child ledger).
 - Enforce Zero-Env Disclosure: never record `.env` secrets or keys into markdown artifacts; use `[Omitted/Configured via Env]`.
 - Once the branch is verified and merged, `active_run.md` is deleted or reset.
 

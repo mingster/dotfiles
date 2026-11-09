@@ -6,7 +6,7 @@ D="$tmp/dotfiles" P="$tmp/proj"
 
 setup() { # a clean dotfiles tree and a project synced from it
   rm -rf "$D" "$P"
-  mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/crew" \
+  mkdir -p "$D/script" "$D/templates/agent-team/.claude/agents" "$D/templates/agent-team/.agents/skills/elon" \
            "$D/.agents/skills/orca-team" "$P/.claude/agents" "$P/docs/agents"
   # Stand-in for agent-team.sh: records its arguments, and fails ("drift") when a team skill was hand edited.
   cat > "$D/script/agent-team.sh" <<'EOS'
@@ -15,7 +15,7 @@ echo "$*" >> "${AGENT_TEAM_CALLS:-/dev/null}"
 [ "$1" = "check" ] || exit 2
 if grep -rqs 'hand edit' "$2/.agents/skills"; then echo "drift: $2/.agents/skills"; exit 1; fi
 EOS
-  printf -- '---\nname: crew\ndescription: Crew protocol.\n---\n\nThe Tech Lead pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/crew/SKILL.md"
+  printf -- '---\nname: elon\ndescription: Elon protocol.\n---\n\nThe Tech Lead pushes and merges.\n' > "$D/templates/agent-team/.agents/skills/elon/SKILL.md"
   printf -- '---\nname: orca-team\ndescription: Orca workers.\n---\n' > "$D/.agents/skills/orca-team/SKILL.md"
   for h in worker-panes.sh worker-pane.sh worker-pane-close.sh worker-pane-retry.sh worker-watch.sh role-colors.tsv; do
     touch "$D/.agents/skills/orca-team/$h"
@@ -23,7 +23,7 @@ EOS
   printf '{"version": 3, "skills": {"orca-cli": {"source": "stablyai/orca"}}}\n' > "$D/.agents/.skill-lock.json"
   printf -- '---\nname: tech-lead\n---\nYou integrate branches and report to Elon.\n' > "$P/.claude/agents/tech-lead.md"
   printf 'The Tech Lead merges every PR.\n' > "$P/docs/agents/team.md"
-  mkdir -p "$P/.agents/skills/crew"; cp "$D/templates/agent-team/.agents/skills/crew/SKILL.md" "$P/.agents/skills/crew/"
+  mkdir -p "$P/.agents/skills/elon"; cp "$D/templates/agent-team/.agents/skills/elon/SKILL.md" "$P/.agents/skills/elon/"
   mkdir -p "$D/.agents/skills/tdd"; printf -- '---\nname: tdd\ndescription: Test first.\n---\n' > "$D/.agents/skills/tdd/SKILL.md"
   GH_FAIL="" GH_READY="[]"; : > "$GH_CALLS"
 }
@@ -100,7 +100,7 @@ check "a wait filter with status is allowed" 0 'team-audit: clean'
 setup; echo 'The lead merges it. <!-- team-audit: allow -->' >> "$P/docs/agents/team.md"
 check "allow comment opts a line out" 0 'team-audit: clean'
 
-setup; echo 'hand edit' >> "$P/.agents/skills/crew/SKILL.md"
+setup; echo 'hand edit' >> "$P/.agents/skills/elon/SKILL.md"
 check "hand edited team skill fails the sync check" 1 'FINDING sync: '
 
 setup; export AGENT_TEAM_CALLS="$tmp/calls"; : > "$AGENT_TEAM_CALLS"

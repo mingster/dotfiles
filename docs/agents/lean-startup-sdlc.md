@@ -4,7 +4,7 @@
 
 ## 1. 核心開發編制與角色職責
 
-全流程遵循專案 SDLC 與 `docs/agents/team.md`（2026-11-06 規範）。需求與新功能由 `architect-pm` 整合為單一設計文件並交由創辦人一次核准（涉及金流由 `secops-finops`、`architect-pm` 與 Elon 進行開工前 Grill；涉及新 UI 頁面由 `sales-marketing` 與 Elon 進行 Grill 並附上機截圖），工程派工與合併由 Elon 統籌，程式碼實作由 `fullstack-dev` 負責，品質由跨模型家族的 `qa-sdet`（及金流與權限議題的 `secops-finops`）獨立唯讀審查，每日 19:00 自動部署 Staging 並執行 `/staging-review` 與完整回歸測試，最終正式環境發布（Production Go）由人類創辦人把關。
+全流程遵循專案 SDLC 與 `docs/agents/team.md`（2026-11-06 規範）。需求與新功能由 `architect-pm` 整合為單一設計文件並交由創辦人一次核准（涉及金流由 `secops-finops`、`architect-pm` 與 Elon 進行開工前 Grill；涉及新 UI 頁面由 `sales-marketing` 與 Elon 進行 Grill 並附上機截圖），工程派工與合併由 Elon 統籌，程式碼實作由 `fullstack-dev` 負責，品質由跨模型家族的 `qa-sdet`（及金流與權限議題的 `secops-finops`）獨立唯讀審查，每日 19:00 自動部署 Staging 並執行 pstack `swarm` 線上審查與完整回歸測試，最終正式環境發布（Production Go）由人類創辦人把關。
 
 ### 需求分析師兼產品架構師 (`architect-pm`)
 

@@ -332,7 +332,7 @@ done
 for b in env-peek.py state-of-play.sh; do
   printf '# %s\n' "$b" >"$df_seed/templates/agent-team/.claude/bin/$b"
 done
-for s in ceo crew deploy elon poteto-mode staging-review team-audit tl; do
+for s in ceo deploy elon poteto-mode team-audit; do
   mkdir -p "$df_seed/templates/agent-team/.agents/skills/$s"
   printf '# %s\n' "$s" >"$df_seed/templates/agent-team/.agents/skills/$s/SKILL.md"
 done
@@ -394,7 +394,7 @@ check_host_links() {
   for b in env-peek.py state-of-play.sh; do
     [ -L "$hdir/.claude/bin/$b" ] && [ -f "$hdir/.claude/bin/$b" ] || return 1
   done
-  for s in ceo crew deploy elon poteto-mode staging-review team-audit tl; do
+  for s in ceo deploy elon poteto-mode team-audit; do
     [ -L "$hdir/.agents/skills/$s" ] && [ -L "$hdir/.claude/skills/$s" ] || return 1
   done
 }

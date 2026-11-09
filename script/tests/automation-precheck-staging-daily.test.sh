@@ -124,7 +124,7 @@ check 'ahead origin/main sends orchestration wake message' grep -q 'orchestratio
 check 'wake message targets active coordinator run' grep -q 'run:run_coord_1900' "$ORCA_LOG"
 check 'wake message names ahead repo' grep -q 'repo-a' "$ORCA_LOG"
 check 'wake message instructs coordinator to dispatch release-manager' grep -q 'release-manager' "$ORCA_LOG"
-check 'wake message instructs coordinator to run /staging-review' grep -q '/staging-review' "$ORCA_LOG"
+check 'wake message instructs coordinator to run swarm with the staging overlay' grep -q 'playbooks/swarm.md' "$ORCA_LOG"
 check 'wake message states production deploy remains gated on owner approval' grep -qi 'production.*owner' "$ORCA_LOG"
 
 # --- 3. Per-component <component>/staging branches in .claude/hooks/guard-config.json & fleet-pull.json ---

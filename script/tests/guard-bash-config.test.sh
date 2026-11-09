@@ -192,7 +192,7 @@ for rel in \
   "docs/agents/release-manager-work.md" \
   "bin/changelog-compile.sh" \
   "bin/changelog-compile.test.sh" \
-  ".agents/skills/crew/SKILL.md" \
+  ".agents/skills/elon/SKILL.md" \
   ".agents/skills/deploy/SKILL.md"
 do
   check_edit "Write denied on template-managed $rel" "$PROJ" "Write" "$PROJ/$rel" deny "guard-config.json"

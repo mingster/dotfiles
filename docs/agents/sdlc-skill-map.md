@@ -23,8 +23,8 @@ Which role owns each SDLC stage and recurring job, which Matt Pocock or team ski
 | Architecture review and prototyping | `architect-pm` | `improve-codebase-architecture`, `codebase-design`, `prototype` | Loaded on demand; competing prototypes (Exhaust the Design Space) require owner approval via Elon. |
 | Retro | Elon / `architect-pm` | `retro` | Runs on about one session in five (failures first) and after a task fails both rework rounds. |
 | Session handoff and startup | Worker at budget or Elon at session start | `handoff`, `recall`, `ketchup` | Workers at 80% context or 120 turns write a `handoff` artifact; Elon runs `recall` then `ketchup` at session start. |
-| Deploy and staging review | `release-manager`, `qa-sdet` | `deploy`, `staging-review` | Staging deploys daily at 19:00 Taiwan time, followed immediately by `/staging-review` and full regression; page-by-page review runs weekly; production deploys on the owner's explicit go. |
-| Wrap-up | Elon / host schedule | `wrap-up` (`script/wrap-up.sh`) | Scheduled every 10 minutes on each host (`--scheduled`) and run after merges to clear finished worktrees, branches, terminals and temp files. |
+| Deploy and staging review | `release-manager`, `qa-sdet` | `deploy`, `swarm` | Staging deploys daily at 19:00 Taiwan time, followed immediately by the pstack `swarm` staging review and full regression; page-by-page review runs weekly; production deploys on the owner's explicit go. |
+| Wrap-up | Elon / host schedule | pstack `worktree-cleanup` (`script/wrap-up.sh`) | Scheduled every 10 minutes on each host (`--scheduled`) and run after merges to clear finished worktrees, branches, terminals and temp files. |
 | Team audit and weekly update | Orca schedule / `architect-pm` | `team-audit` (`script/team-audit.sh`, `script/team-audit-metrics.ts`), `script/weekly-update.sh` | Orca runs the audit script and five metrics weekly for one line; `architect-pm` runs the full `/team-audit` skill on the owner's word; `weekly-update.sh` opens three upstream update PRs for owner review. |
 
 ## Pre-build grill gate (owner rule 2026-11-06)

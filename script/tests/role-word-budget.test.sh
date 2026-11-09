@@ -29,7 +29,6 @@ has "$T/.claude/agents/elon.md" 'lead-merge.sh' "elon keeps lead-merge rule"
 has "$T/docs/agents/engineering-integration.md" 'One writer per branch' "merge rules keep one writer rule"
 has "$T/.claude/agents/elon.md" 'Owner-Reserved' "elon keeps owner-reserved list"
 has "$T/.claude/agents/elon.md" 'Traditional Chinese' "elon keeps owner language rule"
-has "$T/.claude/agents/elon.md" 'team-grill-backlog' "elon keeps backlog sweep"
 
 # Every docs/agents/<file>.md named in a role file exists, and team docs point at ~/dotfiles/templates/agent-team/docs/agents/.
 for f in "$T"/.claude/agents/*.md; do

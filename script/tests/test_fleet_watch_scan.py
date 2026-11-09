@@ -353,7 +353,7 @@ class IssueScanPass(unittest.TestCase):
         joined = ' '.join(' '.join(cmd) for cmd in starts)
         self.assertIn('architect-pm', joined)
         self.assertIn('sales-marketing', joined)
-        self.assertIn('team-grill-backlog', Path(starts[0][starts[0].index('--spec') + 1]).read_text(encoding='utf-8'))
+        self.assertIn('backlog sweep', Path(starts[0][starts[0].index('--spec') + 1]).read_text(encoding='utf-8'))
         self.assertIn('backlog_sweep_start=architect-pm', ','.join(log))
         self.assertIn('backlog_sweep_start=sales-marketing', ','.join(log))
 
