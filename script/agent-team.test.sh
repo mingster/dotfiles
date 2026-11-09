@@ -89,8 +89,11 @@ cat > "$HOME/.claude/settings.json" <<'JSON'
 JSON
 
 if bash "$SCRIPT" machine >/dev/null 2>&1 \
-  && [ -L "$HOME/.claude/agents/elon.md" ] \
-  && [ -L "$HOME/.claude/agents/release-manager.md" ] \
+  && [ -f "$HOME/.claude/agents/elon.md" ] && [ ! -L "$HOME/.claude/agents/elon.md" ] \
+  && [ -f "$HOME/.claude/agents/release-manager.md" ] && [ ! -L "$HOME/.claude/agents/release-manager.md" ] \
+  && ! grep -q '{{PROJECT_NAME}}' "$HOME/.claude/agents/elon.md" \
+  && [ -f "$HOME/.claude/hooks/session-start.md" ] && [ ! -L "$HOME/.claude/hooks/session-start.md" ] \
+  && ! grep -q '{{PROJECT_NAME}}' "$HOME/.claude/hooks/session-start.md" \
   && [ -L "$HOME/.claude/hooks/guard-bash.py" ] \
   && [ -L "$HOME/.claude/bin/state-of-play.sh" ] \
   && [ -L "$HOME/.claude/model-routing.md" ] \
@@ -109,9 +112,9 @@ assert any(g.get("matcher") == "CustomMatcher" for g in s["hooks"]["PreToolUse"]
 assert any("$HOME/.claude/hooks/guard-bash.py" in h.get("command", "") for g in s["hooks"]["PreToolUse"] for h in g.get("hooks", []))
 PY
 then
-  check "machine mode links roles, hooks, bins, Tier 1+2 skills and merges settings" ok
+  check "machine mode writes rendered roles and session-start, links hooks, bins, Tier 1+2 skills and merges settings" ok
 else
-  check "machine mode links roles, hooks, bins, Tier 1+2 skills and merges settings" bad
+  check "machine mode writes rendered roles and session-start, links hooks, bins, Tier 1+2 skills and merges settings" bad
 fi
 
 printf '{broken json\n' > "$HOME/.claude/settings.json"
@@ -726,7 +729,8 @@ printf 'my notes\n' > "$HOME/.claude/skills/crew/NOTES.md"
 bash "$SCRIPT" machine >/dev/null 2>&1
 elon_bak=$(find "$HOME/.claude/agents" -maxdepth 1 -name 'elon.md.bak.*' | head -n 1)
 crew_bak=$(find "$HOME/.claude/skills" -maxdepth 1 -name 'crew.bak.*' | head -n 1)
-if [ -L "$HOME/.claude/agents/elon.md" ] \
+if [ -f "$HOME/.claude/agents/elon.md" ] && [ ! -L "$HOME/.claude/agents/elon.md" ] \
+  && ! grep -q 'my elon' "$HOME/.claude/agents/elon.md" \
   && [ -n "$elon_bak" ] && [ "$(cat "$elon_bak")" = "my elon" ] \
   && [ -L "$HOME/.claude/skills/crew" ] \
   && [ -n "$crew_bak" ] && [ "$(cat "$crew_bak/NOTES.md")" = "my notes" ]; then

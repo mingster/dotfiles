@@ -112,7 +112,7 @@ fi
 # Gap 2: the team docs and .agent/skills stay managed: restored or removed, never skipped.
 docs_ok=1
 for doc in team.md elon-dispatch.md release-manager-work.md; do
-  cmp -s "$TPL/docs/agents/$doc" "$PROJ/docs/agents/$doc" || docs_ok=0
+  sed 's/{{PROJECT_NAME}}/gaps/g' "$TPL/docs/agents/$doc" | cmp -s - "$PROJ/docs/agents/$doc" || docs_ok=0
 done
 if [ "$docs_ok" -eq 1 ] \
   && [ ! -e "$PROJ/.agent/skills" ] && [ ! -L "$PROJ/.agent/skills" ] \
