@@ -71,5 +71,24 @@ else
   check "a step with no database client stays on this host" bad
 fi
 
+# A step marked "# db" whose createdb is inside a script still counts as a database step.
+mkdir -p "$repo/bin"
+printf '#!/usr/bin/env bash\ncreatedb fixture_849\n' > "$repo/bin/head-checks-db.sh"
+printf 'bash bin/head-checks-db.sh # db\n' > "$repo/.agents/head-checks.conf"
+git -C "$repo" add -A >/dev/null
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm marked
+run_hc; rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'host fault' "$tmp/out" && [ ! -f "$tmp/remote.log" ]; then
+  check "a marked script step with no database host fails as a host fault" ok
+else
+  check "a marked script step with no database host fails as a host fault" bad
+fi
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$tmp/remote.log" 2>/dev/null)" = db-host-849 ]; then
+  check "a marked script step goes to the database host when the probe is missing" ok
+else
+  check "a marked script step goes to the database host when the probe is missing" bad
+fi
+
 echo "head-checks-db-host: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
