@@ -78,10 +78,14 @@ _mf_write_gh() {
   cat > "$MF_BIN/gh" <<'EOS'
 #!/usr/bin/env bash
 echo "gh $*" >> "$MF_GH_LOG"
+all_args=("$@")
 cmd="$1 ${2:-}"; shift 2 || true
-  pr="" body="" body_file="" json="" match="" base="" jq_expr=""
+  pr="" commit_sha="" body="" body_file="" json="" match="" base="" jq_expr=""
   case "$cmd" in
-    api*) for a in "$@"; do case "$a" in repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;; esac; done ;;
+    api*) for a in "${all_args[@]}"; do case "$a" in
+      repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;;
+      repos/*/commits/*) commit_sha=${a##*/} ;;
+    esac; done ;;
     *)
       # A missing PR number means the PR of the current branch, as with the real gh.
       case "${1:-}" in -*|"") ;; *) pr=$1; shift ;; esac
@@ -120,6 +124,9 @@ case "$cmd" in
   "pr edit") [ -n "$base" ] && save ".baseRefName = \"$base\"" ;;
   "pr list")
     jq -s --arg b "${base:-}" '[.[] | select(.state=="OPEN" and ($b=="" or .baseRefName==$b)) | {number}]' "$MF_GH_DIR"/pr-*.json ;;
+  "run list") # latest Checks run on main: $MF_GH_DIR/main-run.json holds one run object, green when absent; main-run-fails makes gh error
+    [ ! -f "$MF_GH_DIR/main-run-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+    if [ -f "$MF_GH_DIR/main-run.json" ]; then jq -s '.' "$MF_GH_DIR/main-run.json"; else echo '[{"databaseId":1,"conclusion":"success","url":"https://example.test/runs/1"}]'; fi ;;
   "pr diff") jq -r '.files[].path' "$file" ;;
   "pr merge")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
@@ -130,7 +137,11 @@ case "$cmd" in
       && "$MF_REAL_GIT" -C "$work" push -q origin HEAD:main || { rm -rf "$work"; exit 1; }
     sha=$("$MF_REAL_GIT" -C "$work" rev-parse HEAD); rm -rf "$work"
     save ".state = \"MERGED\" | .mergeCommit = {oid: \"$sha\"}" ;;
-  api*) [ -n "$pr" ] && jq '[.files[]]' "$file" || echo '{}' ;;
+  api*) # a commit's files come from $MF_GH_DIR/commit-<sha>.txt, one path per line, as --jq prints them
+    if [ -n "$commit_sha" ]; then cat "$MF_GH_DIR/commit-$commit_sha.txt"
+    elif [ -n "$pr" ] && [ -n "$jq_expr" ]; then jq -r ".files | $jq_expr" "$file"
+    elif [ -n "$pr" ]; then jq '[.files[]]' "$file"
+    else echo '{}'; fi ;;
   *) echo "fake gh: unsupported: $cmd" >&2; exit 1 ;;
 esac
 EOS

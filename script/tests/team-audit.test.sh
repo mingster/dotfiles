@@ -109,6 +109,15 @@ if grep -qxF "check $P" "$AGENT_TEAM_CALLS"; then pass=$((pass+1)); echo "ok   s
 else fail=$((fail+1)); echo "FAIL sync check calls agent-team.sh check <project>"; fi
 unset AGENT_TEAM_CALLS
 
+# a project root that resolves to DOTFILES (here via symlink) skips the sync check only
+setup; ln -s "$D" "$tmp/dotfiles-link"; export AGENT_TEAM_CALLS="$tmp/calls"; : > "$AGENT_TEAM_CALLS"
+out=$(DOTFILES="$D" "$here/team-audit.sh" "$tmp/dotfiles-link" "$P" 2>&1); rc=$?
+if [ "$rc" = 0 ] && echo "$out" | grep -q 'team-audit: clean'; then pass=$((pass+1)); echo "ok   DOTFILES project root exits clean"
+else fail=$((fail+1)); echo "FAIL DOTFILES project root exits clean"; echo "$out"; fi
+if grep -qxF "check $P" "$AGENT_TEAM_CALLS" && ! grep -qxF "check $tmp/dotfiles-link" "$AGENT_TEAM_CALLS" && ! grep -qxF "check $D" "$AGENT_TEAM_CALLS"; then pass=$((pass+1)); echo "ok   sync check skips DOTFILES, still checks other projects"
+else fail=$((fail+1)); echo "FAIL sync check skips DOTFILES, still checks other projects"; cat "$AGENT_TEAM_CALLS"; fi
+unset AGENT_TEAM_CALLS
+
 # TEAM_AUDIT_RUN_METRICS=1 runs script/team-audit-metrics.ts --repo <owner/name> (fake bun, no network)
 cat > "$tmp/bin/bun" <<'EOS'
 #!/usr/bin/env bash

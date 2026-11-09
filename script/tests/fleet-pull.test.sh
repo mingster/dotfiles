@@ -371,6 +371,11 @@ exit 0
 EOS
 chmod +x "$ssh_rem_bin/ssh" "$ssh_rem_bin/orca"
 
+for hdir in "$local_home" "$rem_home"; do
+  mkdir -p "$hdir/.claude/hooks"
+  printf 'rendered copy\n' >"$hdir/.claude/hooks/session-start.md"
+done
+
 set +e
 out8=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
 ec8=$?
@@ -380,9 +385,12 @@ check_host_links() {
   local hdir="$1"
   [ "$(git -C "$hdir/dotfiles" rev-parse HEAD)" = "$df_tip" ] || return 1
   grep -q '"keep_settings":true' "$hdir/.claude/settings.json" || return 1
-  for h in guard-bash.py strikes.py worker-budget.py session-start.md; do
+  for h in guard-bash.py strikes.py worker-budget.py; do
     [ -L "$hdir/.claude/hooks/$h" ] && [ -f "$hdir/.claude/hooks/$h" ] || return 1
   done
+  # session-start.md is a rendered copy owned by agent-team.sh machine; the refresh must leave it alone.
+  [ -f "$hdir/.claude/hooks/session-start.md" ] && [ ! -L "$hdir/.claude/hooks/session-start.md" ] &&
+    [ "$(cat "$hdir/.claude/hooks/session-start.md")" = "rendered copy" ] || return 1
   for b in env-peek.py state-of-play.sh; do
     [ -L "$hdir/.claude/bin/$b" ] && [ -f "$hdir/.claude/bin/$b" ] || return 1
   done

@@ -33,13 +33,16 @@ has "$T/.claude/agents/elon.md" 'team-grill-backlog' "elon keeps backlog sweep"
 
 # Every docs/agents/<file>.md named in a role file exists, and team docs point at ~/dotfiles/templates/agent-team/docs/agents/.
 for f in "$T"/.claude/agents/*.md; do
-  for p in $(grep -oE '(~/dotfiles/templates/agent-team/)?docs/agents/[a-z0-9-]+\.md' "$f" | sort -u); do
+  for p in $(grep -oE '(~/dotfiles/(templates/agent-team/)?)?docs/agents/[a-z0-9-]+\.md' "$f" | sort -u); do
     rel=${p#"~/dotfiles/templates/agent-team/"}
+    rel=${rel#"~/dotfiles/"}
     [ -f "$T/$rel" ] || [ -f "$here/$rel" ] || bad "$(basename "$f") names missing $rel"
     case "$rel" in
       docs/agents/issue-tracker.md|docs/agents/triage-labels.md|docs/agents/domain.md|docs/agents/team-facts.md|docs/agents/deploy-facts.md)
         [ "$p" = "$rel" ] && ok "$(basename "$f") keeps project path $rel" || bad "$(basename "$f") must keep project path $rel (got $p)" ;;
       *)
+        # Dotfiles' own docs/agents files (not part of the template) keep the ~/dotfiles/ path.
+        if [ "$p" = "~/dotfiles/$rel" ] && [ ! -f "$T/$rel" ] && [ -f "$here/$rel" ]; then ok "$(basename "$f") points at dotfiles $rel"; continue; fi
         [ "$p" = "~/dotfiles/templates/agent-team/$rel" ] && ok "$(basename "$f") points at template $rel" || bad "$(basename "$f") points at project $p instead of ~/dotfiles/templates/agent-team/$rel" ;;
     esac
   done
