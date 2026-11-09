@@ -78,13 +78,13 @@ write_pstack() {
     {
       printf '\n## pstack template skills\n\n'
       printf '### Diff stat\n\n```\n'
-      git -C "$DOTFILES" diff --stat -- templates/agent-team/.agents/skills script/.pstack-template-upstream 2>/dev/null || true
+      git -C "$DOTFILES" diff --stat -- templates/agent-team .agents/skills script/.pstack-template-upstream 2>/dev/null || true
       printf '```\n\n'
       printf '### Citation map\n\n'
       cite_skill poteto-mode
       cite_skill benchmark-checklist
-      [ -f "$DOTFILES/templates/agent-team/.agents/skills/poteto-mode/ORCA-ADAPTER.md" ] \
-        && printf '  - `templates/agent-team/.agents/skills/poteto-mode/ORCA-ADAPTER.md` (local Orca adapter)\n'
+      [ -f "$DOTFILES/templates/agent-team/.agents/skills/orca-adapter/ORCA-ADAPTER.md" ] \
+        && printf '  - `templates/agent-team/.agents/skills/orca-adapter/ORCA-ADAPTER.md` (local Orca adapter)\n'
       printf '\n### Gaps and conflicts\n\n'
       printf '  - Playbook paths may still say `pstack/skills/...`; compare with ORCA-ADAPTER.md.\n'
       printf '\n### Recommended owner actions\n\n'
@@ -96,7 +96,7 @@ write_pstack() {
       printf 'Report only. No role or team file edits by this script.\n\n'
       printf '## pstack template skills\n\n'
       printf '### Diff stat\n\n```\n'
-      git -C "$DOTFILES" diff --stat -- templates/agent-team/.agents/skills script/.pstack-template-upstream 2>/dev/null || true
+      git -C "$DOTFILES" diff --stat -- templates/agent-team .agents/skills script/.pstack-template-upstream 2>/dev/null || true
       printf '```\n\n'
       if [ -f "$state" ]; then
         printf '### Skills in state\n\n'

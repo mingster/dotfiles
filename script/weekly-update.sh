@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# weekly-update.sh: Matt Pocock and pstack upstream, bun and Node LTS, on three tested PRs and one summary.
+# weekly-update.sh: Matt Pocock and cursor/plugins upstream (pstack, cursor-team-kit, The Algorithm), bun and Node LTS,
+# on three tested PRs and one summary.
 # Preflight on configured projects: agent-team.sh check (drift, managed paths, skill collisions).
 # Read only: it never writes into a project, and never runs agent-team.sh project or sync (full adoption).
 # Never merges, deploys, runs secrets-*, fleet-pull, or production hooks unattended.
@@ -23,7 +24,7 @@ DOTFILES=$(cd "$DOTFILES" && pwd -P)
 DRY=0
 case "${1:-}" in
   --dry-run) DRY=1 ;;
-  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
   "") ;;
   *) echo "weekly-update: unknown flag $1" >&2; exit 2 ;;
 esac
@@ -267,7 +268,7 @@ apply_toolchain() {
 declare -a PR_ID=(mattpocock pstack toolchain)
 declare -a PR_TITLE=(
   'Weekly: sync Matt Pocock skills'
-  'Weekly: sync pstack template skills'
+  'Weekly: sync pstack, cursor-team-kit and The Algorithm'
   'Weekly: refresh bun and Node LTS pins'
 )
 
@@ -347,7 +348,7 @@ stage_slice_changes() {
       [ -f "$DOTFILES/$draft" ] && git -C "$DOTFILES" add -- "$draft"
       ;;
     pstack)
-      git -C "$DOTFILES" add -- templates/agent-team/.agents/skills script/.pstack-template-upstream
+      git -C "$DOTFILES" add -- templates/agent-team .agents/skills script/.pstack-template-upstream
       [ -f "$DOTFILES/$draft" ] && git -C "$DOTFILES" add -- "$draft"
       ;;
     toolchain)

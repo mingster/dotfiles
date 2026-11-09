@@ -16,5 +16,3 @@ Maintainability is the work a reader must do to understand code. Track two axes:
 - Before adding a layer or a piece of state, ask: does it reduce reader load elsewhere by at least as much?
 
 **The test:** can a new reader answer "where does X come from?" and "what can change X?" in under 30 seconds? If not, cut layers or cut state.
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->

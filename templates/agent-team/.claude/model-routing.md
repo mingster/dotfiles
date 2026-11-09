@@ -2,7 +2,7 @@
 
 Tiers, Orca worker flags, worker launch and supervision, fallback, and the commit, push and merge rule. They apply to every provider.
 
-Engineering runtime: read `.agents/skills/poteto-mode/ORCA-ADAPTER.md` first for fullstack-dev, qa-sdet and release-manager work. Provider policy lives in this file; the adapter never overrides it, and its usage, effort, token, strike, independent-review and publication gates still apply.
+Engineering runtime: read `.agents/skills/orca-adapter/ORCA-ADAPTER.md` first for fullstack-dev, qa-sdet and release-manager work. Provider policy lives in this file; the adapter never overrides it, and its usage, effort, token, strike, independent-review and publication gates still apply.
 
 Owner rule (2026-11-06, replaces the 2026-11-01 rule): implementation tickets run on Cursor `composer-2.5`, then Claude (`--agent claude --model sonnet --effort medium`) only when that quota is out, no fleet wide lane limit (owner 2026-11-04). Host caps count every worker and alone decide how many run at once; extra ready batches queue. Every other role, reviewers included, starts on Claude, Cursor or Antigravity per the table below. Antigravity and Cursor workers run without the Claude hooks and the `settings.json` deny list; the strike rule in `AGENTS.md` is their guard.
 

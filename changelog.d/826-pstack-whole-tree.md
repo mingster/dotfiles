@@ -1,0 +1,1 @@
+* `script/sync-pstack-template-skills.sh` copies whole upstream trees from cursor/plugins (pstack, cursor-team-kit and The Algorithm from dyl-stack) into the team template, prunes skills removed upstream, and replaces a same name Tier 1 skill (this sync replaced `tdd`). The Orca adapter moved to `.agents/skills/orca-adapter/`.

@@ -37,5 +37,3 @@ For a quick ballpark the user asked for, one run is enough. Still check question
 
 - Vet the **Perf issue** playbook's baseline before the playbook plans from it, and every number after that.
 - Vet the **Hillclimb** playbook's harness before it is frozen. The frozen harness then prints error and work counts, so each keep-or-revert checks questions 4 and 7 for free.
-
-<!-- Vendored from cursor/plugins harness/pstack/claude-code at 0b8e952052d482ee6de06deebf14d590d77b1b34; Copyright (c) 2026 Lauren Tan; MIT; see ~/dotfiles/templates/agent-team/docs/agents/pstack-attribution.md. -->
