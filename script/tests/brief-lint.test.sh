@@ -174,7 +174,7 @@ Rewriting AGENT-BRIEF.md, team-audit.sh, docs prose, any <project-a> file, lead-
 With timeout 300 each: bash script/checks-local.sh, brief-lint.test.sh, the worker-startup test, `python3 -m pytest -q templates/agent-team/.claude/hooks/tests` (or unittest if that is what the folder uses), every script/tests/test_fleet_watch*.py, no-project-names.test.sh, shellcheck -x on the two shell scripts. Paste tails.
 
 ## Finish
-Self-review against origin/main, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
+Write ## Self-review against origin/main with the full 40 hex head sha, rewrite it after every push, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/t8-brief.md" 2>&1)
@@ -266,6 +266,34 @@ out=$(bash "$lint" "$tmp/no-checks-local.md" 2>&1)
 ec=$?
 set -e
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "Verify without checks-local.sh (ec=$ec, out=$out)"; fi
+
+# 849. A fullstack-dev brief's Finish must name the 40 hex sha and the rewrite after every push.
+cat >"$tmp/builder-weak.md" <<'EOF'
+Refs dotfiles#849. Role: fullstack-dev.
+
+## Acceptance
+- [ ] Gates added.
+
+## Out of scope
+Other scripts.
+
+## Verify
+bash script/checks-local.sh
+
+## Finish
+Self-review, then send worker_done.
+EOF
+set +e
+out=$(bash "$lint" "$tmp/builder-weak.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [[ "$out" == *"40 hex head sha and rewrites it after every push"* ]]; then ok; else bad "builder Finish without 40 hex sha (ec=$ec, out=$out)"; fi
+sed 's/^Self-review, then send worker_done\./Write ## Self-review with the full 40 hex head sha, rewrite it after every push, then send worker_done./' "$tmp/builder-weak.md" >"$tmp/builder-ok.md"
+set +e
+out=$(bash "$lint" "$tmp/builder-ok.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with 40 hex sha passes (ec=$ec, out=$out)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

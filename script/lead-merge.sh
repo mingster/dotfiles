@@ -14,6 +14,8 @@
 # A Verdict and the Checks: PASS comment also carry across a clean merge of main (see verdict_carry).
 # --verify-command "<cmd>": the brief's test command; when a Verdict is relied on, its newest comment
 #   must carry a `Command:` line equal to it (trimmed, exact match). Without the flag nothing changes.
+# Merge host: lead-merge runs on the coordinator host only. LEAD_MERGE_COORDINATOR_HOST or coordinator_host in
+#   lead-merge.local.json names it; elsewhere an unknown Verdict verifier is refused with that cause.
 # Remote head checks (off unless a host is set): LEAD_MERGE_REMOTE_HOST, LEAD_MERGE_REMOTE_REPO_DIR and
 #   LEAD_MERGE_REMOTE_DIR, or head_checks_remote {host, repo_dir, dir, optional repo} in the untracked lead-merge.local.json,
 #   run the real head-checks.sh on that host through remote-heavy.sh, for the batch train and for a single PR
@@ -762,7 +764,7 @@ if [ -n "$verdict_from" ]; then
     if [[ "$l" =~ ^Verdict:\ (PASS\+NOTES|PASS|FAIL)\ head=$src_head\ verifier=([a-zA-Z0-9_-]+)\ author=([a-zA-Z0-9_-]+)$ ]]; then
       [ "${BASH_REMATCH[2]}" != "${BASH_REMATCH[3]}" ] || die "author cannot supply verifier verdict"
       [ -n "$known_dispatches" ] || load_dispatches
-      grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$known_dispatches" || die "verdict verifier ${BASH_REMATCH[2]} is not a known dispatch"
+      grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$known_dispatches" || die "$(pr_review_gates_unknown_verifier_msg "${BASH_REMATCH[2]}")"
       [ "${BASH_REMATCH[3]}" = unknown ] || grep -Fxq -- "${BASH_REMATCH[3]}" <<<"$known_dispatches" || die "verdict author ${BASH_REMATCH[3]} is not a known dispatch"
       # An edited or minimized PASS never counts; an edited FAIL still blocks.
       if [ "$fl" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then src_edited=$((src_edited+1)); continue; fi
