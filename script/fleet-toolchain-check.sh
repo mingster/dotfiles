@@ -335,37 +335,62 @@ elif command -v cursor-agent >/dev/null 2>&1; then
 fi
 command -v agy >/dev/null 2>&1 && try "agy update" agy update
 orca_app="\${FLEET_ORCA_APP:-/Applications/_dev/Orca.app}"
-orca_mac() { # <version>: replace Orca.app from the release zip, then reopen it if it was running
+orca_mac() { # <version>: replace Orca.app from the release zip, putting the old one back on failure, and reopen it
   case "\$(uname -m)" in arm64) asset="Orca-\$1-arm64-mac.zip" ;; *) asset="Orca-\$1-mac.zip" ;; esac
+  [ -d "\$orca_app" ] || { echo "no \$orca_app"; return 1; }
   dl=\$(mktemp -d) || return 1
   curl -fsSL -o "\$dl/orca.zip" "https://github.com/stablyai/orca/releases/download/v\$1/\$asset" &&
-    ditto -x -k "\$dl/orca.zip" "\$dl" && [ -d "\$dl/Orca.app" ] || { echo "no Orca.app in \$asset"; rm -rf "\$dl"; return 1; }
+    ditto -x -k "\$dl/orca.zip" "\$dl" || { rm -rf "\$dl"; return 1; }
+  [ -d "\$dl/Orca.app" ] || { rm -rf "\$dl"; echo "no Orca.app in \$asset"; return 1; }
   running=0
-  pkill -f "\$orca_app/Contents/MacOS/" && running=1
-  rm -rf "\$orca_app.old" && mv "\$orca_app" "\$orca_app.old" && mv "\$dl/Orca.app" "\$orca_app" &&
-    rm -rf "\$orca_app.old" "\$dl" || return 1
+  if pkill -f "\$orca_app/Contents/MacOS/"; then
+    running=1
+    n=0
+    while pgrep -f "\$orca_app/Contents/MacOS/" >/dev/null && [ "\$n" -lt 30 ]; do sleep 1; n=\$((n + 1)); done
+  fi
+  rm -rf "\$orca_app.old"
+  ok=0
+  if ! { mv "\$orca_app" "\$orca_app.old" && mv "\$dl/Orca.app" "\$orca_app"; }; then
+    [ -d "\$orca_app" ] || mv "\$orca_app.old" "\$orca_app"
+    echo "could not replace \$orca_app"
+    ok=1
+  fi
+  rm -rf "\$orca_app.old" "\$dl"
   [ "\$running" = 0 ] || open -g "\$orca_app"
+  return "\$ok"
 }
 orca_arch() { # <version>: install stably-orca-bin, only when the AUR has exactly this version
   aur=\$(yay -Si stably-orca-bin 2>/dev/null | awk -F': *' '/^Version/ { sub(/-[^-]*\$/, "", \$2); print \$2; exit }')
   [ "\$aur" = "\$1" ] || { echo "AUR has \${aur:-nothing}"; return 1; }
   yay -S --noconfirm --needed stably-orca-bin
 }
+inside_orca() { # true when this script runs under an Orca process, which the upgrade would kill
+  p=\$\$
+  while :; do
+    case "\$p" in '' | *[!0-9]* | 0 | 1) return 1 ;; esac
+    case "\$(ps -o comm= -p "\$p" 2>/dev/null)" in *[Oo]rca*) return 0 ;; esac
+    p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ')
+  done
+}
 if [ -n '$orca_to' ]; then
   # Claude renames its process to its version, so match the first word of the command line too
   live=\$({ ps -A -o comm=; ps -A -o args= | awk '{ print \$1 }'; } 2>/dev/null | sed 's#.*/##' |
     grep -xE 'claude|codex|agent|agy' | sort -u | tr '\n' ' ')
+  up=
   if [ -n "\$live" ]; then
-    echo "__orca_skipped__ \${live% }"
+    echo "__orca_skipped__ live agents: \${live% }"
+  elif inside_orca; then
+    echo "__orca_skipped__ running inside Orca"
   else
     case "\$(uname -s)" in
-      Darwin) try "orca upgrade $orca_to" orca_mac '$orca_to' && echo "__orca_upgraded__ $orca_to" ;;
-      Linux) try "orca upgrade $orca_to" orca_arch '$orca_to' && echo "__orca_upgraded__ $orca_to" ;;
-      *) echo "__apply_failed__ orca upgrade $orca_to failed: no upgrade path for \$(uname -s)" ;;
+      Darwin) up=orca_mac ;;
+      Linux) if command -v yay >/dev/null 2>&1; then up=orca_arch; else echo "__orca_skipped__ no yay on this host"; fi ;;
+      *) echo "__orca_skipped__ no upgrade path for \$(uname -s)" ;;
     esac
   fi
+  [ -n "\$up" ] && try "orca upgrade $orca_to" "\$up" '$orca_to' && echo "__orca_upgraded__ $orca_to"
 fi
-orca_bin="\${FLEET_ORCA_APP_BIN:-\${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}}/orca"
+orca_bin="\${FLEET_ORCA_APP_BIN:-\${WRAP_UP_ORCA_APP_BIN:-\$orca_app/Contents/Resources/bin}}/orca"
 [ -x "\$orca_bin" ] || orca_bin=\$(command -v orca 2>/dev/null || true)
 [ -n "\$orca_bin" ] && try "orca skills install" "\$orca_bin" skills install --all
 true
@@ -397,7 +422,7 @@ if [ "$apply" -eq 1 ]; then
           echo "fleet-toolchain-check: $h apply: ${line#__apply_failed__ }"
           rc=1
           ;;
-        __orca_skipped__\ *) echo "fleet-toolchain-check: $h apply: orca upgrade skipped, live agents: ${line#__orca_skipped__ }" ;;
+        __orca_skipped__\ *) echo "fleet-toolchain-check: $h apply: orca upgrade skipped, ${line#__orca_skipped__ }" ;;
         __orca_upgraded__\ *) echo "fleet-toolchain-check: $h apply: orca upgraded to ${line#__orca_upgraded__ }" ;;
       esac
     done <<<"$out"

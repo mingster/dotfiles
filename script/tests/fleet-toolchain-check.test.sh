@@ -229,7 +229,7 @@ check "unreachable host exits non-zero" "$([ "$down_rc" -ne 0 ] && echo 0 || ech
 check "unreachable host prints unreachable line" "$(echo "$down_out" | grep -q 'down-host unreachable'; echo $?)"
 check "unreachable host prints single line for down-host" "$([ "$down_cnt" = 1 ] && echo 0 || echo 1)"
 
-# --apply upgrades brew tools, asdf tools, CLIs and Orca skills, and reports manual for orca
+# --apply upgrades brew tools, asdf tools, CLIs and Orca skills; a live claude on the coordinator holds Orca back
 apply_log="$tmp/apply.log"
 : > "$apply_log"
 printf '#!/usr/bin/env bash\necho claude\n' > "$fake_bin/ps"; chmod +x "$fake_bin/ps"
@@ -273,7 +273,8 @@ check "--apply runs claude update" "$(grep -q '^claude update' "$apply_log"; ech
 check "--apply runs agent update" "$(grep -q '^agent update' "$apply_log"; echo $?)"
 check "--apply runs agy update" "$(grep -q '^agy update' "$apply_log"; echo $?)"
 check "--apply runs orca skills install --all" "$(grep -q '^orca skills install --all' "$apply_log"; echo $?)"
-check "--apply no longer calls orca upgrade manual" "$(echo "$apply_out" | grep -qi 'orca.*manual' && echo 1 || echo 0)"
+check "--apply skips the Orca upgrade on a coordinator with live agents" \
+  "$(echo "$apply_out" | grep -q 'coord-a apply: orca upgrade skipped, live agents: claude'; echo $?)"
 
 # 842: --apply prints a failing command, swaps Apple jq for Homebrew jq,
 # and moves a peer below the coordinator to the coordinator's claude and bun, never past it
@@ -397,7 +398,11 @@ case "\${1:-}" in -m) echo "\${FAKE_UNAME_M:-arm64}" ;; *) echo "\${FAKE_UNAME_S
 EOS
 cat > "$orca_bin_dir/ps" <<EOS
 #!/usr/bin/env bash
-printf '%s\n' "\${FAKE_PS:-/usr/sbin/sshd}"
+case "\$*" in
+  *ppid*) echo 1 ;;
+  *-p*) echo "\${FAKE_COMM:-bash}" ;;
+  *) printf '%s\n' "\${FAKE_PS:-/usr/sbin/sshd}" ;;
+esac
 EOS
 cat > "$orca_bin_dir/curl" <<EOS
 #!/usr/bin/env bash
@@ -423,8 +428,10 @@ STUB_HOST=\$host PATH="$orca_bin_dir:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$orca_
   FLEET_ORCA_APP="$tmp/apps/Orca.app" /bin/bash -c "\${*: -1}"
 EOS
 chmod +x "$tmp/orca-ssh"
-orca_apply() { # <worker orca> -> output of --apply with coord-a at 1.4.253 and latest 1.4.255
-  PATH="$fake_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" FLEET_ORCA_APP_BIN="$fake_bin" \
+mkdir -p "$tmp/coord-apps/Orca.app/Contents"
+orca_apply() { # <worker orca> -> output of --apply with coord-a (local, logged as "local") at 1.4.253 and latest 1.4.255
+  STUB_HOST=local PATH="$orca_bin_dir:$fake_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$orca_bin_dir:$fake_bin:/usr/bin:/bin" \
+    FLEET_ORCA_APP_BIN="$orca_bin_dir" FLEET_ORCA_APP="$tmp/coord-apps/Orca.app" \
     DOTFILES_DIR="$fake_dotfiles" FLEET_PULL_CONFIG="$tmp/fleet-peer.json" FLEET_TOOLCHAIN_RUN="$tmp/orca-ssh" \
     FLEET_TOOLCHAIN_LATEST_ORCA=1.4.255 \
     FLEET_TOOLCHAIN_VERSIONS="{
@@ -451,6 +458,24 @@ check "842 peer with live agents is skipped and named" \
   "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, live agents: claude codex'; echo $?)"
 check "842 peer with live agents downloads nothing" "$(grep -q '^worker-a curl' "$orca_log" && echo 1 || echo 0)"
 : > "$orca_log"
+orca_out=$(FAKE_COMM=/Applications/_dev/Orca.app/Contents/MacOS/Orca orca_apply 1.4.251)
+check "842 a run inside Orca never kills its own Orca" \
+  "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, running inside Orca'; echo $?)"
+check "842 a run inside Orca downloads nothing" "$(grep -qE '^worker-a (curl|pkill)' "$orca_log" && echo 1 || echo 0)"
+: > "$orca_log"
+echo old > "$tmp/apps/Orca.app/Contents/version"
+cat > "$orca_bin_dir/ditto.empty" <<EOS
+#!/usr/bin/env bash
+echo "\$STUB_HOST ditto" >> "$orca_log"
+EOS
+mv "$orca_bin_dir/ditto" "$orca_bin_dir/ditto.real"; mv "$orca_bin_dir/ditto.empty" "$orca_bin_dir/ditto"; chmod +x "$orca_bin_dir/ditto"
+orca_out=$(orca_apply 1.4.251)
+mv "$orca_bin_dir/ditto.real" "$orca_bin_dir/ditto"
+check "842 a bad release zip keeps the old Orca.app" "$(grep -qx old "$tmp/apps/Orca.app/Contents/version"; echo $?)"
+check "842 a bad release zip leaves Orca running" "$(grep -q '^worker-a pkill' "$orca_log" && echo 1 || echo 0)"
+check "842 a bad release zip is printed" \
+  "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade 1.4.253 failed: no Orca.app in Orca-1.4.253-arm64-mac.zip'; echo $?)"
+: > "$orca_log"
 orca_out=$(FAKE_UNAME_S=Linux orca_apply 1.4.251)
 check "842 idle Arch peer installs stably-orca-bin" \
   "$(grep -q '^worker-a yay -S .*stably-orca-bin' "$orca_log"; echo $?)"
@@ -461,8 +486,20 @@ check "842 Arch peer never installs an AUR Orca other than the coordinator's" \
 check "842 Arch AUR mismatch is printed" \
   "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade 1.4.253 failed: AUR has 1.4.255'; echo $?)"
 : > "$orca_log"
+mv "$orca_bin_dir/yay" "$orca_bin_dir/yay.off"
+orca_out=$(FAKE_UNAME_S=Linux orca_apply 1.4.251); orca_rc=$?
+mv "$orca_bin_dir/yay.off" "$orca_bin_dir/yay"
+check "842 Linux without yay is skipped, not failed" \
+  "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, no yay on this host'; echo $?)"
+check "842 Linux without yay exits 0" "$orca_rc"
+: > "$orca_log"
 orca_apply 1.4.253 >/dev/null
 check "842 peer level with the coordinator leaves Orca alone" "$(grep -qE '^worker-a (curl|yay)' "$orca_log" && echo 1 || echo 0)"
+check "842 idle coordinator below latest upgrades Orca to latest" \
+  "$(grep -q '^local curl .*releases/download/v1.4.255/' "$orca_log"; echo $?)"
+: > "$orca_log"
+orca_apply 1.4.256 >/dev/null
+check "842 peer above the coordinator is never downgraded" "$(grep -qE '^worker-a (curl|yay)' "$orca_log" && echo 1 || echo 0)"
 
 # Latest Node is the newest LTS on the pinned major, never a newer LTS major.
 pin_home="$tmp/pin-home"; mkdir -p "$pin_home"
