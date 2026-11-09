@@ -31,8 +31,16 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_BEFORE_SHA: ${{ github.event.before }}
           GITHUB_SHA: ${{ github.sha }}
+          PROJECT_NAMES_PATTERN: ${{ secrets.PROJECT_NAMES_PATTERN }}
         run: |
           set -euo pipefail
+          # Secret is empty on forks or until set: no file, so the guard test skips.
+          if [ -n "${PROJECT_NAMES_PATTERN:-}" ]; then
+            NO_PROJECT_NAMES_FILE=$(mktemp)
+            trap 'rm -f "$NO_PROJECT_NAMES_FILE"' EXIT
+            printf '%s\n' "$PROJECT_NAMES_PATTERN" >"$NO_PROJECT_NAMES_FILE"
+            export NO_PROJECT_NAMES_FILE
+          fi
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             mapfile -t changed < <(git diff --diff-filter=d --name-only "$GITHUB_SHA^1" "$GITHUB_SHA")
           else
