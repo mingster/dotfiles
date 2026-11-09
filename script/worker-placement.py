@@ -43,6 +43,10 @@ class FleetConfigMissing(FleetConfigError):
     pass
 
 
+class LoadSensorError(Exception):
+    pass
+
+
 def load_config(path: Path) -> dict:
     if not path.is_file():
         raise FleetConfigMissing(path)
@@ -71,7 +75,7 @@ def load_sensor_path(config: dict) -> Path:
 
 def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int] | None]:
     if not sensor.is_file():
-        raise SystemExit(f'worker-placement: missing load sensor {sensor}')
+        raise LoadSensorError(f'missing load sensor {sensor}')
     try:
         proc = subprocess.run(
             ['bash', str(sensor)],
@@ -81,9 +85,9 @@ def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int] | No
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise SystemExit(f'worker-placement: load sensor failed ({exc})') from exc
+        raise LoadSensorError(f'load sensor failed ({exc})') from exc
     if proc.returncode != 0:
-        raise SystemExit('worker-placement: load sensor failed')
+        raise LoadSensorError('load sensor failed')
     out: dict[str, tuple[float, int] | None] = {}
     for line in proc.stdout.splitlines():
         if UNREACHABLE.search(line):
@@ -236,7 +240,10 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
     hosts = eligible_hosts(order, config, kind, roles)
     if not hosts:
         return {'ok': False, 'reason': 'no eligible fleet hosts for this task'}
-    loads = read_loads(load_sensor_path(config), float(os.environ.get('WORKER_PLACEMENT_TIMEOUT', '120')))
+    try:
+        loads = read_loads(load_sensor_path(config), float(os.environ.get('WORKER_PLACEMENT_TIMEOUT', '120')))
+    except LoadSensorError as exc:
+        return {'ok': False, 'reason': str(exc), 'loads': {}}
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     considered: dict[str, float] = {}
     unmapped = 0
