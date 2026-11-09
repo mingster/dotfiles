@@ -214,6 +214,12 @@ for rp in repos:
             "p0_filed_this_month", "p1_filed_this_month")
     print("Delivery: " + ", ".join(f"{k}={m.get(k, 'unknown')}" for k in keys))
 REPORT
+  bases=""
+  for d in "$DOTFILES" "${PROJECTS[@]}"; do
+    sha=$(git -C "$d" rev-parse --short HEAD 2>/dev/null) || continue
+    case " $bases " in *" $sha "*) ;; *) bases="$bases $sha" ;; esac
+  done
+  echo "ROLE_RECEIPT_BASE=\"${bases# }\""
   exit "$rc"
 fi
 
