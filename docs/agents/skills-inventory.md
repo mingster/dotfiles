@@ -9,7 +9,7 @@ Skills are split into three tiers so general engineering skills load everywhere 
 | Tier | What | Canonical source | How a project sees it |
 | --- | --- | --- | --- |
 | **Tier 1: General** | 22 vendored Matt Pocock skills (`.agents/skills/.mattpocock-upstream`), dotfiles shared skills (`agent-browser`, `capture-intent`, `create-pr`, `laravel-inertia-react-structure`, `orca-team`, `write-spec`), and Orca-installed skills (`orchestration`, `orca-cli`, `orca-per-workspace-env`, `orca-computer-use`, `orca-emulator`, `orca-emulator-android`, `orca-jira`, `orca-linear`, `jira-tickets`, `linear-tickets`) | `~/dotfiles/.agents/skills/<name>/` (tracked) and `orca skills install --all` (untracked in home skill dirs) | Individual symlinks in `~/.agents/skills/<name>` and `~/.claude/skills/<name>` created by `script/setup-agent-skills.sh` (`install.sh`). No project copy. |
-| **Tier 2: Team** | Team workflow skills (`elon`, `ceo`, `crew`, `deploy`, `staging-review`, `grill-backlog`, `team-grill-backlog`, `team-audit`, `wrap-up`) and vendored pstack skills (`poteto-mode` with `ORCA-ADAPTER.md` and playbooks, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop`, `bro`, `benchmark-checklist`, and the 23 `principle-*` skills) | `~/dotfiles/templates/agent-team/.agents/skills/<name>/` | Committed generated copies in `<project>/.agents/skills/<name>/` with relative links in `<project>/.claude/skills/` and `<project>/.cursor/skills/`, written by `script/sync-team-skills.sh`. |
+| **Tier 2: Team** | Team workflow skills (`elon`, `ceo`, `crew`, `deploy`, `staging-review`, `grill-backlog`, `team-grill-backlog`, `team-audit`, `wrap-up`) and vendored pstack skills (`poteto-mode` with `ORCA-ADAPTER.md` and playbooks, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop`, `bro`, `benchmark-checklist`, and the 23 `principle-*` skills) | `~/dotfiles/templates/agent-team/.agents/skills/<name>/` | Committed generated copies in `<project>/.agents/skills/<name>/` with relative links in `<project>/.claude/skills/` and `<project>/.cursor/skills/`, written by `script/agent-team.sh sync`. |
 | **Tier 3: Project** | Product-specific skills (for example `action-scaffold`, `e2e-test-scaffold`, `i18n-sync`, `payment-plugin`, `store-admin-crud` in <project-a>; `roku-qa`, `jellyfin-web-port`, `paypal-webhooks` in <project-b>) | `<project>/.agents/skills/<name>/`, tracked in that repo | Tracked relative symlinks `.claude/skills/<name>` and `.cursor/skills/<name>` pointing to `../../.agents/skills/<name>`. |
 
 Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load into unrelated repositories on the Mac. Product facts never live inside Tier 2 skills; they live in the project's `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md` and `docs/agents/daily-run.md`.
@@ -22,15 +22,16 @@ Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load i
 | **Cursor** | `~/.claude/skills` and `~/.agents/skills` | `<repo>/.cursor/skills` | No `~/.cursor/skills` link in `$HOME` (would list every shared skill twice). |
 | **Antigravity** | `~/.gemini/antigravity/skills` and `~/.gemini/antigravity-cli/skills` (linked by `script/setup-antigravity.sh`) | `<repo>/.agent/skills` (relative link to `../.agents/skills`) | Hides `disable-model-invocation` skills until named in the prompt or via `/skill-name`. |
 
-## Syncing Tier 2 team skills (`script/sync-team-skills.sh`)
+## Syncing Tier 2 team skills (`script/agent-team.sh sync`)
 
 ```bash
-~/dotfiles/script/sync-team-skills.sh [--check] [--force] [<project-root> ...]
+~/dotfiles/script/agent-team.sh sync [<project-root>]
+~/dotfiles/script/agent-team.sh check [<project-root> ...]
 ```
 
 * Copies every directory with a `SKILL.md` under `templates/agent-team/.agents/skills/` into `<project>/.agents/skills/<name>/` and writes relative links in `.claude/skills/<name>` and `.cursor/skills/<name>`.
-* Stamps each copied `SKILL.md` immediately after its frontmatter with `<!-- Generated from dotfiles templates/agent-team/.agents/skills/<name> by script/sync-team-skills.sh, do not edit. ... source-sha256: <hash> -->`.
-* `--check` writes nothing and exits 1 when a copy is missing, a file differs, an extra file is present, a link is missing, or a retired template skill still lingers in the project. `script/team-audit.sh` runs `--check` on every audited project.
+* Stamps each copied `SKILL.md` immediately after its frontmatter with `<!-- Generated from dotfiles templates/agent-team/.agents/skills/<name> by script/agent-team.sh, do not edit. ... source-sha256: <hash> -->`.
+* `check` writes nothing and exits 1 when a copy is missing, a file differs, an extra file is present, a link is missing, or a retired template skill still lingers in the project. `script/team-audit.sh` runs `check` on every audited project.
 * Refuses to overwrite a hand-written skill directory (no stamp) without `--force`, and refuses `$HOME` or the dotfiles checkout so it can never write into the Tier 1 tree.
 
 ## Orca owns `orchestration`; dotfiles owns `orca-team`
@@ -47,7 +48,7 @@ Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load i
 * **Weekly maintenance (`script/weekly-update.sh`):**
 
   * Three PR slices from `origin/main` (at most): `mattpocock` (`sync-mattpocock-skills.sh` + `script/tests/sync-mattpocock-skills.test.sh`), `pstack` (`sync-pstack-template-skills.sh` + `script/tests/sync-pstack-template-skills.test.sh`), `toolchain` (Node LTS on the current major via `nodejs.org` index or fixture, `.tool-versions` pin, `script/tests/install_node.test.sh`). Never merges; push and `gh pr create` unless `WEEKLY_UPDATE_NO_PUSH=1`.
-  * Project roots: optional `script/weekly-update.projects.conf` (gitignored) or `WEEKLY_UPDATE_PROJECTS`. Preflight runs `check-skill-collisions.sh`, `sync-team-skills.sh --check`, and `adopt-agent-team.sh --check-paths`. Apply to projects only when `WEEKLY_UPDATE_SYNC_PROJECTS=1`.
+  * Project roots: optional `script/weekly-update.projects.conf` (gitignored) or `WEEKLY_UPDATE_PROJECTS`. Preflight runs `check-skill-collisions.sh`, `agent-team.sh check`, and `adopt-agent-team.sh --check-paths`. Apply to projects only when `WEEKLY_UPDATE_SYNC_PROJECTS=1`.
   * Commits `docs/agents/drafts/weekly-skill-impact-<date>.md` on the mattpocock or pstack branch (citation and diff report only; never edits role or team agent files).
   * Toolchain stdout summary adds report-only lines for bun, a brew outdated sample, and agent CLIs on PATH. No `brew upgrade` in this script. Node major jumps stay on the pin until you decide.
   * Post-merge on machines (not automated here): re-run `install.sh`, `bash script/setup-agent-skills.sh`, and `orca skills install --all` after merging skill PRs. Unattended fleet schedules must not run this script (it opens branches and pushes).
