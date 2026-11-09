@@ -11,13 +11,13 @@
       "description": "Chief Executive Officer and top-level orchestrator",
       "chain": [
         {
-          "provider": "antigravity",
-          "model": "gemini-4-argon-medium"
-        },
-        {
           "provider": "claude",
           "model": "opus",
           "effort": "medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-medium"
         }
       ]
     },

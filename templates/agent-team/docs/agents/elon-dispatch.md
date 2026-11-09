@@ -23,7 +23,6 @@
 - Elon steps in only for a stalled or failed worker, a host or provider cap, an owner ask, or a bottleneck the counts show. Workers push, diagnose Checks, and fix failures; Elon never patches a branch for routine CI.
 
 Log only what would change a rule with `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"` (private TSV in `~/agent-state`); never in repositories.
-Each dispatch appends `issue<TAB>dispatched_at` to `~/agent-state/team-dispatches.tsv`, so stage times have a dispatch point.
 
 ## Fleet dispatch (owner 2026-11-03)
 
