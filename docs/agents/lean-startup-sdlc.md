@@ -61,7 +61,7 @@ Agent 在執行多切片（multi-slice）複雜任務時，透過工作樹根目
 ## 4. 安全與合規護欄 (Security Guardrails)
 
 1. **環境變數零信任 (Zero-Env Disclosure)**：Agent 在任何時候更新或建立 Markdown 文件或終端輸出時，嚴禁將 `.env` 中的真實金鑰、密碼或 Token 寫入檔案或螢幕。
-2. **預留占位符 (Placeholders)**：所有涉及金流密鑰或資料庫連線字串的地方，一律使用 `[Omitted/Configured via Env]` 替代，並使用 `.claude/bin/env-peek.py` 做遮罩檢查。
+2. **預留占位符 (Placeholders)**：所有涉及金流密鑰或資料庫連線字串的地方，一律使用 `[Omitted/Configured via Env]` 替代，並使用 `python3 "$HOME/.claude/bin/env-peek.py"` 做遮罩檢查。
 3. **人類審查與合併門禁**：AI 工程師僅在專屬工作樹本地提交；the coordinator 派遣 publication 與 merge worker 執行發布與 `lead-merge.sh`。角色定義變更須附帶 `Owner-approved:` commit trailer，正式環境上線由人類創辦人逐次核准。
 
 ## 5. 對話脈絡與 Token 節省守則 (Context Hygiene & Token Conservation)

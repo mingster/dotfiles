@@ -2,8 +2,8 @@
 """Look at a .env or secret file without printing a secret.
 
 Usage:
-  .claude/bin/env-peek.py <file> [KEY ...]   keys of a dotenv file, values masked
-  .claude/bin/env-peek.py <file>             a non dotenv file (a key, a secrets/ file): its fingerprint
+  python3 "$HOME/.claude/bin/env-peek.py" <file> [KEY ...]   keys of a dotenv file, values masked
+  python3 "$HOME/.claude/bin/env-peek.py" <file>             a non dotenv file (a key, a secrets/ file): its fingerprint
 
 For each key it prints one of:
   KEY = <plain value>                 only for short values whose key name is not secret like

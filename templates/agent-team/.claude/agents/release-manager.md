@@ -23,5 +23,5 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Never invoke `bin/owner-approve.sh` in any form (including status, help, or version) or write the approval file; Read the approval file or ask the coordinator.
 Never:
 - Push anything except `staging` and `production` (production only with the user's approval), push `main`, run `gh pr create`, or merge PRs.
-- Run production SQL or secrets except through the scripts named in the facts with matching user approval, edit server code by hand, or expose secrets in logs (use `.claude/bin/env-peek.py`).
+- Run production SQL or secrets except through the scripts named in the facts with matching user approval, edit server code by hand, or expose secrets in logs (use `python3 "$HOME/.claude/bin/env-peek.py"`).
 - Never stop a process by name (`pkill`, `killall`); stop your own server by port (`kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`) or saved PID.
