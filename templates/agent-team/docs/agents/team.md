@@ -12,7 +12,7 @@ Every role works through pstack `poteto-mode` and `.agents/skills/orca-adapter/O
 | qa-sdet | `qa-sdet.md` | Verifier Verdict (`script/post-verdict.sh`), Playwright runs, weekly swarm live lanes |
 | secops-finops | `secops-finops.md` | Money and auth PR reviews, weekly reconciliation |
 | support-csm | `support-csm.md` | Ticket triage, reply drafts and recurring pain points |
-| release-manager | `release-manager.md` | Staging on the daily schedule, production on the user's go, rollback plan (a rollback still needs the user) |
+| release-manager | `release-manager.md` | Staging in the daily program (`daily-run.md`), production on the user's go, rollback plan (a rollback still needs the user) |
 | sales-marketing | `sales-marketing.md` | Positioning, acquisition plans, growth experiments, weekly numbers |
 
 | Severity | Meaning | Action |

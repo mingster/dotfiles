@@ -86,7 +86,7 @@ advance_bare_branch() {
   rm -rf "$clone"
 }
 
-# --- 1. Skip when origin/main == origin/staging ---
+# --- 1. Wake for the program but skip the staging deploy when origin/main == origin/staging ---
 repo_a_bare="$tmp/repo-a.git"
 repo_a="$tmp/repo-a"
 make_repo_with_origin "$repo_a_bare" "$repo_a"
@@ -101,16 +101,19 @@ log1="$tmp/staging-daily-1.log"
 rc1=0
 FLEET_STAGING_REPOS="$repo_a" STAGING_DAILY_LOG="$log1" bash "$script" >/dev/null 2>&1 || rc1=$?
 check 'equal main and staging exits 0' test "$rc1" -eq 0
-check 'equal main and staging logs skip: staging equals main' grep -q 'skip: staging equals main' "$log1"
-check 'equal main and staging does not call orca orchestration send' test ! -s "$ORCA_LOG"
+check 'equal main and staging logs skip of the staging deploy' grep -q 'skip: staging deploy, staging equals main' "$log1"
+check 'equal main and staging still wakes the coordinator' grep -q 'orchestration send' "$ORCA_LOG"
+check 'equal main and staging wake targets active coordinator run' grep -q 'run:run_coord_1900' "$ORCA_LOG"
+check 'equal main and staging wake names the kickoff file' grep -q 'docs/agents/daily-run.md' "$ORCA_LOG"
+check 'equal main and staging wake asks for no staging deploy' bash -c '! grep -q "/deploy staging" "$1"' _ "$ORCA_LOG"
 
-# Verify wrapper exits 1 for Orca precheck contract and traces skip summary
+# Verify wrapper exits 1 for Orca precheck contract and traces the wake summary
 log1_wrap="$tmp/staging-daily-1-wrap.log"
 wrap_rc=0
 FLEET_STAGING_REPOS="$repo_a" STAGING_DAILY_LOG="$log1_wrap" \
-  bash "$wrapper" staging-daily-1900 "$log1_wrap" -- bash "$script" || wrap_rc=$?
+  bash "$wrapper" daily-program-1900 "$log1_wrap" -- bash "$script" || wrap_rc=$?
 check 'wrapper exits 1 so Orca skips LLM run' test "$wrap_rc" -eq 1
-check 'wrapper records skip: staging equals main in summary' grep -q 'summary=skip: staging equals main' "$log1_wrap"
+check 'wrapper records the program wake in summary' grep -q 'summary=wake: program; staging equals main' "$log1_wrap"
 
 # --- 2. Wake coordinator when origin/main is ahead of origin/staging ---
 advance_bare_branch "$repo_a_bare" main "new feature on main"
@@ -123,6 +126,8 @@ check 'ahead origin/main records ahead repo name in log' grep -q 'repo-a' "$log2
 check 'ahead origin/main sends orchestration wake message' grep -q 'orchestration send' "$ORCA_LOG"
 check 'wake message targets active coordinator run' grep -q 'run:run_coord_1900' "$ORCA_LOG"
 check 'wake message names ahead repo' grep -q 'repo-a' "$ORCA_LOG"
+check 'ahead wake names the kickoff file' grep -q 'docs/agents/daily-run.md' "$ORCA_LOG"
+check 'ahead wake asks for the staging deploy' grep -q '/deploy staging' "$ORCA_LOG"
 check 'wake message instructs coordinator to dispatch release-manager' grep -q 'release-manager' "$ORCA_LOG"
 check 'wake message instructs coordinator to run swarm with the staging overlay' grep -q 'playbooks/swarm.md' "$ORCA_LOG"
 check 'wake message states production deploy remains gated on owner approval' grep -qi 'production.*owner' "$ORCA_LOG"
@@ -155,14 +160,15 @@ cat >"$tmp/state/fleet-pull.json" <<EOF
 }
 EOF
 
-# 3a. All component staging branches equal origin/main -> skip
+# 3a. All component staging branches equal origin/main -> wake without staging deploy
 log3a="$tmp/staging-daily-3a.log"
 : >"$ORCA_LOG"
 rc3a=0
 env -u FLEET_STAGING_REPOS AGENT_STATE_DIR="$tmp/state" STAGING_DAILY_LOG="$log3a" bash "$script" >/dev/null 2>&1 || rc3a=$?
 check 'component staging branches equal to main exits 0' test "$rc3a" -eq 0
-check 'component staging branches equal to main logs skip' grep -q 'skip: staging equals main' "$log3a"
-check 'component staging branches equal to main sends no wake' test ! -s "$ORCA_LOG"
+check 'component staging branches equal to main logs skip' grep -q 'skip: staging deploy, staging equals main' "$log3a"
+check 'component staging branches equal to main still wakes' grep -q 'orchestration send' "$ORCA_LOG"
+check 'component staging branches equal to main wake asks for no staging deploy' bash -c '! grep -q "/deploy staging" "$1"' _ "$ORCA_LOG"
 
 # 3b. Advance origin/main and origin/api/staging, leaving origin/web2/staging behind -> wake naming web2/staging
 advance_bare_branch "$repo_b_bare" main "web2 change on main"
@@ -181,7 +187,7 @@ else
   check 'up-to-date component api/staging is not listed as ahead' true
 fi
 
-# --- 3c. Configured staging branch missing on origin logs warn and skips without waking ---
+# --- 3c. Configured staging branch missing on origin logs warn and wakes without staging deploy ---
 repo_c_bare="$tmp/repo-c.git"
 repo_c="$tmp/repo-c"
 make_repo_with_origin "$repo_c_bare" "$repo_c"
@@ -203,8 +209,8 @@ rc3c=0
 FLEET_STAGING_REPOS="$repo_c" STAGING_DAILY_LOG="$log3c" bash "$script" >/dev/null 2>&1 || rc3c=$?
 check 'missing configured staging branch on origin exits 0' test "$rc3c" -eq 0
 check 'missing configured staging branch on origin logs warn' grep -q 'warn:.*origin/uncreated/staging' "$log3c"
-check 'missing configured staging branch on origin logs skip' grep -q 'skip: staging equals main' "$log3c"
-check 'missing configured staging branch on origin sends no wake' test ! -s "$ORCA_LOG"
+check 'missing configured staging branch on origin logs skip' grep -q 'skip: staging deploy, staging equals main' "$log3c"
+check 'missing configured staging branch on origin still wakes' grep -q 'orchestration send' "$ORCA_LOG"
 
 # --- 3d. Missing coordinator run id in fleet-watch config logs error and exits without sending ---
 empty_fw="$tmp/config/fleet-watch-empty.json"
@@ -243,11 +249,13 @@ log3e="$tmp/staging-daily-3e.log"
 rc3e=0
 env -u FLEET_STAGING_REPOS AGENT_STATE_DIR="$fallback_state" FLEET_WATCH_CONFIG="$fw_with_roots" STAGING_DAILY_LOG="$log3e" bash "$script" >/dev/null 2>&1 || rc3e=$?
 check 'ignores non-fleet-pull fallbacks exits 0' test "$rc3e" -eq 0
-check 'ignores fleet-config.json and fleet-watch repo_roots fallbacks (no wake)' test ! -s "$ORCA_LOG"
+check 'ignores fleet-config.json and fleet-watch repo_roots fallbacks (no repo-a)' bash -c '! grep -q "repo-a" "$1"' _ "$ORCA_LOG"
+check 'no configured repositories still wakes the coordinator' grep -q 'orchestration send' "$ORCA_LOG"
 check 'ignores non-fleet-pull fallbacks and logs no configured repositories' grep -q 'no configured repositories' "$log3e"
 
 # --- 4. Documentation in docs/agents/orca-automations.md ---
-check 'docs/agents/orca-automations.md documents staging-daily-1900' grep -q 'staging-daily-1900' "$doc"
+check 'docs/agents/orca-automations.md documents daily-program-1900' grep -q 'daily-program-1900' "$doc"
+check 'docs/agents/orca-automations.md drops staging-daily-1900' bash -c '! grep -q "staging-daily-1900" "$1"' _ "$doc"
 check 'docs/agents/orca-automations.md documents 0 19 * * *' grep -q '0 19 \* \* \*' "$doc"
 check 'docs/agents/orca-automations.md documents Asia/Taipei' grep -q 'Asia/Taipei' "$doc"
 

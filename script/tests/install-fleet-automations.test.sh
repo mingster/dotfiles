@@ -87,9 +87,10 @@ echo "$dry" | grep -q 'sync-team-skills-drift' && check 'dry-run prints sync dri
 echo "$dry" | grep -q 'team-audit-weekly' && check 'dry-run prints team audit create' true || check 'dry-run prints team audit create' false
 echo "$dry" | grep -q 'weekly-update' && check 'dry-run prints weekly-update create' true || check 'dry-run prints weekly-update create' false
 echo "$dry" | grep -q 'fleet-toolchain' && check 'dry-run prints fleet-toolchain create' true || check 'dry-run prints fleet-toolchain create' false
-echo "$dry" | grep -q 'staging-daily-1900' && check 'dry-run prints staging-daily-1900 create' true || check 'dry-run prints staging-daily-1900 create' false
-echo "$dry" | grep -q '0 19 \* \* \*' && check 'dry-run includes 0 19 * * * schedule for staging-daily-1900' true || check 'dry-run includes 0 19 * * * schedule for staging-daily-1900' false
-echo "$dry" | grep -q 'Asia/Taipei' && check 'dry-run includes Asia/Taipei timezone for staging-daily-1900' true || check 'dry-run includes Asia/Taipei timezone for staging-daily-1900' false
+echo "$dry" | grep -q 'daily-program-1900' && check 'dry-run prints daily-program-1900 create' true || check 'dry-run prints daily-program-1900 create' false
+echo "$dry" | grep -q 'staging-daily-1900' && check 'dry-run prints no staging-daily-1900' false || check 'dry-run prints no staging-daily-1900' true
+echo "$dry" | grep -q '0 19 \* \* \*' && check 'dry-run includes 0 19 * * * schedule for daily-program-1900' true || check 'dry-run includes 0 19 * * * schedule for daily-program-1900' false
+echo "$dry" | grep -q 'Asia/Taipei' && check 'dry-run includes Asia/Taipei timezone for daily-program-1900' true || check 'dry-run includes Asia/Taipei timezone for daily-program-1900' false
 echo "$dry" | grep -q 'would create' && check 'dry-run labels would-create' true || check 'dry-run labels would-create' false
 [ ! -f "$FAKE_ORCA_STORE" ] && check 'dry-run leaves store absent' true || check 'dry-run leaves store absent' false
 
@@ -100,12 +101,12 @@ echo "$first" | grep -q 'sync-team-skills-drift created' && check 'first install
 echo "$first" | grep -q 'team-audit-weekly created' && check 'first install creates team audit weekly' true || check 'first install creates team audit weekly' false
 echo "$first" | grep -q 'weekly-update created' && check 'first install creates weekly-update' true || check 'first install creates weekly-update' false
 echo "$first" | grep -q 'fleet-toolchain created' && check 'first install creates fleet-toolchain' true || check 'first install creates fleet-toolchain' false
-echo "$first" | grep -q 'staging-daily-1900 created' && check 'first install creates staging-daily-1900' true || check 'first install creates staging-daily-1900' false
+echo "$first" | grep -q 'daily-program-1900 created' && check 'first install creates daily-program-1900' true || check 'first install creates daily-program-1900' false
 
 status_off=$(bash "$script" --status)
 echo "$status_off" | grep -q 'fleet-watch: disabled' && check 'non-coordinator status disabled fleet-watch' true || check 'non-coordinator status disabled fleet-watch' false
 echo "$status_off" | grep -q 'wrap-up-scheduled: enabled' && check 'non-coordinator status enabled wrap-up' true || check 'non-coordinator status enabled wrap-up' false
-echo "$status_off" | grep -q 'staging-daily-1900: disabled' && check 'non-coordinator status disabled staging-daily-1900' true || check 'non-coordinator status disabled staging-daily-1900' false
+echo "$status_off" | grep -q 'daily-program-1900: disabled' && check 'non-coordinator status disabled daily-program-1900' true || check 'non-coordinator status disabled daily-program-1900' false
 
 # Re-running the installer on a non-coordinator host fixes a stale rrule (0 */2 * * *) and a disabled entry.
 python3 - <<'PY'
@@ -136,6 +137,20 @@ fi
 check 're-run fixes stale 0 */2 * * * rrule and enables wrap-up while keeping fleet-watch disabled' test "$stale_fixed_ok" -eq 1
 echo "$status_off" | grep -q 'fleet-toolchain: disabled' && check 'non-coordinator status disabled fleet-toolchain' true || check 'non-coordinator status disabled fleet-toolchain' false
 
+# A host that still has the old staging-daily-1900 entry loses it on re-install (#834).
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_ORCA_STORE"]
+d = json.load(open(p))
+old = dict(next(a for a in d["automations"] if a["name"] == "daily-program-1900"))
+old["id"] = "auto_legacy_staging"
+old["name"] = "staging-daily-1900"
+d["automations"].append(old)
+json.dump(d, open(p, "w"))
+PY
+legacy=$(bash "$script" --install 2>&1)
+echo "$legacy" | grep -q 'staging-daily-1900 removed' && check 're-install removes legacy staging-daily-1900' true || check 're-install removes legacy staging-daily-1900' false
+
 ids=$(python3 -c 'import json, os; d=json.load(open(os.environ["FAKE_ORCA_STORE"])); print(" ".join(a["id"] for a in d["automations"]))')
 
 second=$(bash "$script" --install 2>&1)
@@ -150,7 +165,7 @@ coord_status=$(bash "$script" --status)
 echo "$coord_status" | grep -q 'fleet-watch: enabled' && check 'coordinator status enabled fleet-watch' true || check 'coordinator status enabled fleet-watch' false
 echo "$coord_status" | grep -q 'wrap-up-scheduled: enabled' && check 'coordinator status enabled wrap-up' true || check 'coordinator status enabled wrap-up' false
 echo "$coord_status" | grep -q 'fleet-toolchain: enabled' && check 'coordinator status enabled fleet-toolchain' true || check 'coordinator status enabled fleet-toolchain' false
-echo "$coord_status" | grep -q 'staging-daily-1900: enabled' && check 'coordinator status enabled staging-daily-1900' true || check 'coordinator status enabled staging-daily-1900' false
+echo "$coord_status" | grep -q 'daily-program-1900: enabled' && check 'coordinator status enabled daily-program-1900' true || check 'coordinator status enabled daily-program-1900' false
 echo "$coord_status" | grep -q 'sync-team-skills-drift: disabled' && check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' true || check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' false
 echo "$coord_status" | grep -q 'team-audit-weekly: disabled' && check 'coordinator creates team-audit-weekly disabled (owner opt-in)' true || check 'coordinator creates team-audit-weekly disabled (owner opt-in)' false
 echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
@@ -175,7 +190,7 @@ echo "$un" | grep -q 'sync-team-skills-drift removed' && check 'uninstall remove
 echo "$un" | grep -q 'team-audit-weekly removed' && check 'uninstall removes team audit weekly' true || check 'uninstall removes team audit weekly' false
 echo "$un" | grep -q 'weekly-update removed' && check 'uninstall removes weekly-update' true || check 'uninstall removes weekly-update' false
 echo "$un" | grep -q 'fleet-toolchain removed' && check 'uninstall removes fleet-toolchain' true || check 'uninstall removes fleet-toolchain' false
-echo "$un" | grep -q 'staging-daily-1900 removed' && check 'uninstall removes staging-daily-1900' true || check 'uninstall removes staging-daily-1900' false
+echo "$un" | grep -q 'daily-program-1900 removed' && check 'uninstall removes daily-program-1900' true || check 'uninstall removes daily-program-1900' false
 [ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 0 ] \
   && check 'uninstall empties store' true || check 'uninstall empties store' false
 
@@ -286,16 +301,16 @@ staging_pc=$(python3 -c '
 import json, os
 d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
 for a in d["automations"]:
-    if a["name"] == "staging-daily-1900":
+    if a["name"] == "daily-program-1900":
         print(a["precheck"]["command"])
         print(a["rrule"])
         print(a.get("timezone") or "")
 ')
-echo "$staging_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'staging-daily-1900 precheck uses trace wrapper' true || check 'staging-daily-1900 precheck uses trace wrapper' false
-echo "$staging_pc" | grep -q 'automation-precheck-staging-daily.sh' && check 'staging-daily-1900 precheck runs automation-precheck-staging-daily.sh' true || check 'staging-daily-1900 precheck runs automation-precheck-staging-daily.sh' false
-echo "$staging_pc" | grep -q 'exit 1' && check 'staging-daily-1900 precheck ends with exit 1' true || check 'staging-daily-1900 precheck ends with exit 1' false
-echo "$staging_pc" | grep -q '^0 19 \* \* \*$' && check 'staging-daily-1900 schedule is 0 19 * * *' true || check 'staging-daily-1900 schedule is 0 19 * * *' false
-echo "$staging_pc" | grep -q '^Asia/Taipei$' && check 'staging-daily-1900 timezone defaults to Asia/Taipei' true || check 'staging-daily-1900 timezone defaults to Asia/Taipei' false
+echo "$staging_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'daily-program-1900 precheck uses trace wrapper' true || check 'daily-program-1900 precheck uses trace wrapper' false
+echo "$staging_pc" | grep -q 'automation-precheck-staging-daily.sh' && check 'daily-program-1900 precheck runs automation-precheck-staging-daily.sh' true || check 'daily-program-1900 precheck runs automation-precheck-staging-daily.sh' false
+echo "$staging_pc" | grep -q 'exit 1' && check 'daily-program-1900 precheck ends with exit 1' true || check 'daily-program-1900 precheck ends with exit 1' false
+echo "$staging_pc" | grep -q '^0 19 \* \* \*$' && check 'daily-program-1900 schedule is 0 19 * * *' true || check 'daily-program-1900 schedule is 0 19 * * *' false
+echo "$staging_pc" | grep -q '^Asia/Taipei$' && check 'daily-program-1900 timezone defaults to Asia/Taipei' true || check 'daily-program-1900 timezone defaults to Asia/Taipei' false
 
 symlink_dir="$tmp/dotfiles-link"
 ln -sfn "$root" "$symlink_dir"

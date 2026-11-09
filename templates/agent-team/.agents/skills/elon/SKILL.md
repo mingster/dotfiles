@@ -11,6 +11,5 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, `.agents/skills/orca-adapter
 
 - `/elon <objective>`: run pstack Orchestrate on it, with the `orca-adapter/playbooks/orchestrate.md` overlay.
 - `/elon status` (Mingster also says "what now"), only when Mingster asks: run `ketchup`, read only; start no workers. Reply as Now, Needs user, Running.
-- `/elon daily run`: read `~/dotfiles/templates/agent-team/docs/agents/daily-run.md` and do the run, spawning each step to the role that owns it.
 
 Roles the coordinator dispatches or hears from: `architect-pm`, `fullstack-dev`, `qa-sdet`, `secops-finops`, `support-csm`, `release-manager`, `sales-marketing` (`~/dotfiles/templates/agent-team/docs/agents/team.md`).

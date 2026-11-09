@@ -105,7 +105,7 @@ FLEET_TOOLCHAIN_PRECHECK_TIMEOUT=${FLEET_TOOLCHAIN_PRECHECK_TIMEOUT:-600}
 STAGING_DAILY_LOG=${STAGING_DAILY_LOG:-$HOME/.local/state/agent-team/staging-daily.log}
 STAGING_DAILY_PRECHECK_TIMEOUT=${STAGING_DAILY_PRECHECK_TIMEOUT:-300}
 FLEET_STAGING_DAILY_TIMEZONE=${FLEET_STAGING_DAILY_TIMEZONE:-Asia/Taipei}
-FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain staging-daily-1900'
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain daily-program-1900'
 
 precheck_path() {
   local p="$HOME/.local/bin"
@@ -200,7 +200,7 @@ staging_daily_precheck() {
     "STAGING_DAILY_LOG=$STAGING_DAILY_LOG"
   )
   [ -n "${FLEET_STAGING_REPOS:-}" ] && env_args+=("FLEET_STAGING_REPOS=$FLEET_STAGING_REPOS")
-  automation_wrap staging-daily-1900 "$STAGING_DAILY_LOG" \
+  automation_wrap daily-program-1900 "$STAGING_DAILY_LOG" \
     env "${env_args[@]}" \
     bash "$DOTFILES_DIR/script/automation-precheck-staging-daily.sh"
 }
@@ -408,7 +408,9 @@ case "$action" in
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" 0
     ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" 0
     ensure_automation fleet-toolchain '0 5 * * *' "$(fleet_toolchain_precheck)" "$FLEET_TOOLCHAIN_PRECHECK_TIMEOUT" "$enabled"
-    ensure_automation staging-daily-1900 '0 19 * * *' "$(staging_daily_precheck)" "$STAGING_DAILY_PRECHECK_TIMEOUT" "$enabled" "$FLEET_STAGING_DAILY_TIMEZONE"
+    # Renamed from staging-daily-1900 (#834); drop the old entry when a host still has it.
+    automation_by_name staging-daily-1900 >/dev/null 2>&1 && remove_by_name staging-daily-1900
+    ensure_automation daily-program-1900 '0 19 * * *' "$(staging_daily_precheck)" "$STAGING_DAILY_PRECHECK_TIMEOUT" "$enabled" "$FLEET_STAGING_DAILY_TIMEZONE"
     ;;
   uninstall)
     for name in $FLEET_AUTOMATION_NAMES; do

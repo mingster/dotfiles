@@ -47,6 +47,7 @@ Read a skill before using it. Anything not listed here is not available: skip it
 - `recall` then `ketchup` run at every coordinator session start and handoff, read only: no code change, dispatch or message during the catch up. A source we do not have is skipped and named.
 - `show-me-your-work`: each user approval is one row in `.scratch/decisions.tsv` (outside git) naming the exact head sha it covers. A new head needs a new row before a gated merge. Cross model review with only Claude available is reported blocked, never self reviewed.
 - `correct`: the rule table lives in `~/dotfiles/templates/agent-team/docs/agents/team.md`, never in `AGENTS.md`. A hook or protected path change needs the user's read before merge.
+- Daily program: when the `daily-program-1900` automation wakes the coordinator, run `~/dotfiles/templates/agent-team/docs/agents/daily-run.md` as the kickoff.
 - `unslop` cuts wording, never a rule, gate or number. Our doc style wins over its rule 13: parentheses are allowed and dashes are never punctuation.
 
 ## Overlays
