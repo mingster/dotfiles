@@ -201,6 +201,9 @@ for path in "${files[@]+"${files[@]}"}"; do
   map_file "$path"
 done
 
+# Always-run guards: fast checks that must see every PR, whatever it touches.
+add_if_exists "script/tests/no-project-names.test.sh"
+
 IFS=$'\n'
 sorted=$(printf '%s\n' ${selected+"${selected[@]}"} | LC_ALL=C sort -u)
 unset IFS
