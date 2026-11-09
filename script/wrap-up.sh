@@ -942,11 +942,11 @@ close_finished_terminals() {
   # A remote terminal reports its own host's path. A removed worktree is matched to the paths this environment reports
   # for the same repo and branch, never to the coordinator's local path. A path counts as gone only when a fresh
   # listing from the same environment no longer reports it: a checkout that still exists on the branch keeps its shells.
-  # An unreadable listing leaves nothing gone.
+  # An unreadable or empty listing leaves nothing gone.
   : > "$tmp/h-gone"
   if [ -n "$env" ]; then
     if ! "$orca" worktree list --environment "$env" --json > "$tmp/h-env-worktrees" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.worktrees | type == "array")' "$tmp/h-env-worktrees" >/dev/null 2>&1; then
+      || ! jq -e '.ok != false and (.result.worktrees | type == "array") and (.result.worktrees | length) > 0' "$tmp/h-env-worktrees" >/dev/null 2>&1; then
       echo "Warning: worktree list unavailable on $label; no removed worktree matched there." >&2
     else
       jq -r --rawfile gone "$tmp/removed-paths" --arg env "$env" --slurpfile fresh "$tmp/h-env-worktrees" '

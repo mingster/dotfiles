@@ -193,6 +193,12 @@ run --dry-run
 ! grep -Fq 'worktree gone in this run' "$tmp/output" || { echo 'FAIL closed on an unreadable environment worktree list'; exit 1; }
 rm -f "$tmp/env-worktrees-fail"
 echo 'ok 6 an unreadable environment worktree list closes nothing as gone'
+# An empty environment listing is not a fresh one: it must not turn every same-branch remote path into a gone one.
+echo '{"ok":true,"result":{"worktrees":[]}}' > "$tmp/env-worktrees"
+run --dry-run
+! grep -Fq 'worktree gone in this run' "$tmp/output" || { echo 'FAIL closed on an empty environment worktree list'; exit 1; }
+echo '{"ok":true,"result":{"worktrees":[{"repoId":"r1","hostId":"env-a","path":"/remote/sibling-wt","branch":"gone-br"},{"repoId":"r1","hostId":"env-a","path":"/remote/other-wt","branch":"other-br"}]}}' > "$tmp/env-worktrees"
+echo 'ok 6 an empty environment worktree list closes nothing as gone'
 { term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /remote/gone-wt; term e-sibling /remote/sibling-wt; term e-samepath "$wt_gone"; term e-other /remote/other-wt; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
 run --dry-run
 grep -o '^Close terminal [^ ]* ([^,]*' "$tmp/output" | sed 's/^Close terminal \([^ ]*\) (\(.*\)/\2 \1/; s/^local/local/' | sort > "$tmp/planned"
