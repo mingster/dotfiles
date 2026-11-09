@@ -381,14 +381,22 @@ run_mode() {
 
   # Dispatch point for team-audit-metrics.ts stage times (issue<TAB>dispatched_at<TAB>owner/repo); never blocks a start.
   dispatch_log=${TEAM_AUDIT_DISPATCHES:-$agent_state_dir/team-dispatches.tsv}
-  [ -f "$dispatch_log" ] || printf 'issue\tdispatched_at\trepo\n' 2>/dev/null >"$dispatch_log" || true
+  [ -s "$dispatch_log" ] || printf 'issue\tdispatched_at\trepo\n' 2>/dev/null >"$dispatch_log" || true
   local ref ref_issue ref_repo dir origin
   ref=$(grep -oE 'Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec" | head -1 | sed 's/^Refs //') || true
   ref_issue=${ref##*#}
   ref_repo=${ref%%#*}
   if [ -z "$ref_repo" ]; then
     dir=${wt:-}
-    [ -n "$dir" ] || case "$repo" in id:*) ;; path:*) dir=${repo#path:} ;; */*) ref_repo=$repo ;; *) dir=$repo ;; esac
+    if [ -z "$dir" ]; then
+      case "$repo" in
+        id:*) dir=$("$orca" repo list --json 2>/dev/null | jq -r --arg id "${repo#id:}" '.result.repos[]? | select(.id == $id) | .path // empty' 2>/dev/null | head -1) || dir= ;;
+        path:*) dir=${repo#path:} ;;
+        /*|.*|~*) dir=$repo ;;
+        */*) ref_repo=$repo ;;
+        *) dir=$repo ;;
+      esac
+    fi
     if [ -z "$ref_repo" ] && [ -n "$dir" ]; then
       origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || origin=
       # Only remote URLs (git@host:o/r, scheme://host/o/r) name a repo; a local path origin does not.
