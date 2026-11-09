@@ -27,7 +27,7 @@ printf '%s\n' "$*" >> "$FAKE_DIR/calls"
 env_of() { local prev=''; for a in "$@"; do [ "$prev" != --environment ] || { echo "$a"; return; }; prev=$a; done; }
 e=$(env_of "$@")
 case "$*" in
-  'environment list --json') echo '{"ok":true,"result":{"environments":[{"id":"env-a"}]}}' ;;
+  'environment list --json') if [ -e "$FAKE_DIR/envs-truncated" ]; then echo '{"ok":true,"result":{"environments":[{"id":"env-a"}],"truncated":true}}'; exit 0; fi; echo '{"ok":true,"result":{"environments":[{"id":"env-a"}]}}' ;;
   'terminal list --json') cat "$FAKE_DIR/terminals-local" ;;
   'terminal list --environment env-a --json') cat "$FAKE_DIR/terminals-env" ;;
   'terminal close --terminal '*) echo "local ${*: -1}" >> "$FAKE_DIR/closed" ;;
@@ -224,6 +224,13 @@ cp "$tmp/workers-env.bak" "$tmp/workers-env"
 ! grep -q '^Close terminal ' "$tmp/output" || { echo 'FAIL closed a terminal on a truncated worker list'; cat "$tmp/output"; exit 1; }
 grep -Fq 'closing no terminals' "$tmp/errors" || { echo 'FAIL no warning for a truncated worker list'; cat "$tmp/errors"; exit 1; }
 echo 'ok 6 a truncated worker list closes no terminals'
+# A truncated environment list may hide an environment that holds a live dispatch, so no terminal closes.
+touch "$tmp/envs-truncated"
+run --dry-run
+rm -f "$tmp/envs-truncated"
+! grep -q '^Close terminal ' "$tmp/output" || { echo 'FAIL closed a terminal on a truncated environment list'; cat "$tmp/output"; exit 1; }
+grep -Fq 'environment list unavailable' "$tmp/errors" || { echo 'FAIL no warning for a truncated environment list'; cat "$tmp/errors"; exit 1; }
+echo 'ok 6 a truncated environment list closes no terminals'
 
 # Item 8: sleep is settled for the terminal close too, so one run releases the worker and closes its terminals.
 {

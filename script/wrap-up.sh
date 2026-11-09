@@ -928,7 +928,7 @@ terminal_dispatches() {
   : > "$tmp/h-workers"
   : > "$tmp/h-coordinators"
   : > "$tmp/h-release-rows"
-  if ! "$orca" environment list --json > "$tmp/envs" 2>/dev/null || ! jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
+  if ! "$orca" environment list --json > "$tmp/envs" 2>/dev/null || ! jq -e '.ok != false and (.result.environments | type == "array") and (.result.truncated != true)' "$tmp/envs" >/dev/null 2>&1; then
     echo 'Warning: Orca environment list unavailable; closing no terminals.' >&2; return 1
   fi
   read_dispatches '' || return 1
@@ -1531,7 +1531,7 @@ orca_pin_state=unavailable
 if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
   orca_pin_state=unknown
   if orca_call worktree list --json > "$tmp/orca-worktrees" 2>/dev/null \
-    && jq -e '.ok != false and ((.result.worktrees // []) | type == "array")' "$tmp/orca-worktrees" >/dev/null 2>&1; then
+    && jq -e '.ok != false and ((.result.worktrees // []) | type == "array") and (.result.truncated != true)' "$tmp/orca-worktrees" >/dev/null 2>&1; then
     orca_pin_state=ok
     jq -r '.result.worktrees[]? | select(.pinned == true) | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-pinned"
   fi
