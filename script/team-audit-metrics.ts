@@ -3,15 +3,21 @@
 // Missing data reads "unknown", never zero.
 //
 // Usage:
-//   bun script/team-audit-metrics.ts --repo <owner/name> [--days <n>] [--json] [--times <stages.tsv>]
-//   bun script/team-audit-metrics.ts --fixture <data.json> [--times <stages.tsv>] [--json]
+//   bun script/team-audit-metrics.ts --repo <owner/name> [--days <n>] [--json] [--dispatches <tsv>]
+//   bun script/team-audit-metrics.ts --fixture <data.json> [--dispatches <tsv>] [--json]
 //
+// --repo makes two gh calls: one GraphQL search for the merged PRs (first commit GitHub Actions
+// check runs, app id 15368, and the closing issue timeline inline; at most 100 PRs) and one gh
+// issue list for the month.
 // --fixture reads the data from a JSON file instead of GitHub (offline tests):
 //   { "now": ISO, "prs": [{ "number", "title", "mergedAt", "labels": [name],
-//       "firstChecksConclusion": "success"|"failure"|null,
+//       "firstChecksConclusion": "success"|"failure"|null, "firstChecksAt": ISO|null,
 //       "closingIssue": { "number", "readyAt": ISO|null, "reopened": bool } | null }],
 //     "issues": [{ "number", "createdAt", "labels": [name] }] }
-// --times reads the Orca stage samples (stage<TAB>minutes<TAB>verified, header first).
+// --dispatches reads the worker dispatch log (issue<TAB>dispatched_at ISO, header first; the
+// earliest row per issue counts). Stages per merged PR: queue is ready-for-agent to dispatch,
+// build is dispatch to the first Checks result on the PR's first commit, merge is that result to
+// merge. A PR is fully verified when all four timestamps exist and run in order.
 import { readFileSync } from "node:fs";
 
 export type Pr = {
@@ -20,12 +26,20 @@ export type Pr = {
   mergedAt: string;
   labels: string[];
   firstChecksConclusion: string | null;
+  firstChecksAt?: string | null;
   closingIssue: { number: number; readyAt: string | null; reopened: boolean } | null;
 };
 export type Issue = { number: number; createdAt: string; labels: string[] };
 export type Data = { now: string; prs: Pr[]; issues: Issue[] };
 
 const UNKNOWN = "unknown";
+
+// Nearest rank percentile, matching the report table.
+export function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  return s[Math.max(0, Math.ceil(p * s.length) - 1)];
+}
 
 export function median(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -37,7 +51,7 @@ export function median(values: number[]): number | null {
 const num = (v: number | null): string => (v === null ? UNKNOWN : String(Math.round(v * 100) / 100));
 const rate = (hit: number, total: number): string => (total === 0 ? UNKNOWN : num(hit / total));
 
-export function computeMetrics(data: Data, days = 7, stageRows: string[][] = []): Record<string, string> {
+export function computeMetrics(data: Data, days = 7, dispatches: Map<number, string> = new Map()): Record<string, string> {
   const now = Date.parse(data.now);
   const since = now - days * 86400000;
   const prs = data.prs.filter((p) => {
@@ -71,20 +85,48 @@ export function computeMetrics(data: Data, days = 7, stageRows: string[][] = [])
   out.reopened_or_hotfix_rate = rate(bad, prs.length);
   out.reopened_or_hotfix_rate_n = String(prs.length);
 
+  const minutes = (from?: string | null, to?: string | null): number | null => {
+    if (!from || !to) return null;
+    const m = (Date.parse(to) - Date.parse(from)) / 60000;
+    return Number.isFinite(m) && m >= 0 ? m : null;
+  };
+  const samples: Record<string, { v: number; verified: boolean }[]> = { queue: [], build: [], merge: [] };
+  let verified = 0;
+  for (const p of prs) {
+    const ready = p.closingIssue?.readyAt;
+    const dispatched = p.closingIssue ? dispatches.get(p.closingIssue.number) : undefined;
+    const stage = {
+      queue: minutes(ready, dispatched),
+      build: minutes(dispatched, p.firstChecksAt),
+      merge: minutes(p.firstChecksAt, p.mergedAt),
+    };
+    const full = stage.queue !== null && stage.build !== null && stage.merge !== null;
+    if (full) verified++;
+    for (const [k, v] of Object.entries(stage)) if (v !== null) samples[k].push({ v, verified: full });
+  }
+  out.stage_samples = String(prs.length);
+  out.stage_samples_verified = String(verified);
   for (const stage of ["queue", "build", "merge"]) {
-    const v = stageRows.filter((r) => r[0] === stage).map((r) => Number(r[1])).filter((n) => Number.isFinite(n));
+    const v = samples[stage].map((x) => x.v);
     out[`median_stage_${stage}_minutes`] = num(median(v));
     out[`median_stage_${stage}_minutes_n`] = String(v.length);
+    out[`p75_stage_${stage}_minutes`] = num(percentile(v, 0.75));
+    out[`max_stage_${stage}_minutes`] = num(v.length ? Math.max(...v) : null);
+    out[`stage_${stage}_verified`] = String(samples[stage].filter((x) => x.verified).length);
   }
   return out;
 }
 
-export function parseTimes(text: string): string[][] {
-  return text
-    .split("\n")
-    .slice(1)
-    .filter((l) => l.trim())
-    .map((l) => l.split("\t"));
+export function parseDispatches(text: string): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const line of text.split("\n").slice(1)) {
+    const [issue, at] = line.split("\t").map((x) => x?.trim());
+    const n = Number(issue);
+    if (!Number.isInteger(n) || !at || !Number.isFinite(Date.parse(at))) continue;
+    const prev = out.get(n);
+    if (!prev || Date.parse(at) < Date.parse(prev)) out.set(n, at);
+  }
+  return out;
 }
 
 function gh(args: string[]): unknown {
@@ -93,61 +135,61 @@ function gh(args: string[]): unknown {
   return JSON.parse(r.stdout.toString() || "null");
 }
 
-function tryGh(args: string[]): unknown {
-  try {
-    return gh(args);
-  } catch {
-    return null;
+const PR_QUERY = `query($q: String!) {
+  search(query: $q, type: ISSUE, first: 100) {
+    nodes { ... on PullRequest {
+      number title mergedAt
+      labels(first: 10) { nodes { name } }
+      commits(first: 1) { nodes { commit { checkSuites(first: 5, filterBy: { appId: 15368 }) { nodes {
+        checkRuns(first: 20) { nodes { conclusion completedAt } } } } } } }
+      closingIssuesReferences(first: 1) { nodes { number
+        timelineItems(itemTypes: [LABELED_EVENT, REOPENED_EVENT], first: 20) { nodes {
+          __typename ... on LabeledEvent { createdAt label { name } } } } } }
+    } }
   }
-}
+}`;
 
+type Run = { conclusion: string | null; completedAt: string | null };
 type RawPr = {
   number: number;
   title: string;
   mergedAt: string;
-  labels: { name: string }[];
-  commits: { oid: string }[];
-  closingIssuesReferences: { number: number }[];
+  labels: { nodes: { name: string }[] };
+  commits: { nodes: { commit: { checkSuites: { nodes: { checkRuns: { nodes: Run[] } }[] } } }[] };
+  closingIssuesReferences: {
+    nodes: { number: number; timelineItems: { nodes: { __typename: string; createdAt?: string; label?: { name: string } }[] } }[];
+  };
 };
 
+export function toPr(p: RawPr): Pr {
+  const runs = (p.commits.nodes[0]?.commit.checkSuites.nodes ?? []).flatMap((s) => s.checkRuns.nodes);
+  const done = runs.filter((r) => r.conclusion && r.completedAt);
+  const conclusion = done.length === 0 ? null : done.some((r) => r.conclusion === "FAILURE") ? "failure" : "success";
+  const firstChecksAt = done.map((r) => r.completedAt as string).sort()[0] ?? null;
+  const issue = p.closingIssuesReferences.nodes[0];
+  const events = issue?.timelineItems.nodes ?? [];
+  const ready = events.find((e) => e.__typename === "LabeledEvent" && e.label?.name === "ready-for-agent");
+  return {
+    number: p.number,
+    title: p.title,
+    mergedAt: p.mergedAt,
+    labels: p.labels.nodes.map((l) => l.name),
+    firstChecksConclusion: conclusion,
+    firstChecksAt,
+    closingIssue: issue
+      ? { number: issue.number, readyAt: ready?.createdAt ?? null, reopened: events.some((e) => e.__typename === "ReopenedEvent") }
+      : null,
+  };
+}
+
 export function fetchData(repo: string, days: number): Data {
-  const now = new Date();
+  const now = process.env.TEAM_AUDIT_NOW ? new Date(process.env.TEAM_AUDIT_NOW) : new Date(); // fixed clock for tests
   const since = new Date(now.getTime() - days * 86400000).toISOString().slice(0, 10);
   const monthStart = now.toISOString().slice(0, 7) + "-01";
-  const raw = gh([
-    "pr", "list", "--repo", repo, "--state", "merged", "--limit", "200",
-    "--search", `merged:>=${since}`,
-    "--json", "number,title,mergedAt,labels,commits,closingIssuesReferences",
-  ]) as RawPr[];
-  const prs: Pr[] = raw.map((p) => {
-    const first = p.commits[0]?.oid;
-    const runs = first
-      ? (tryGh(["api", `repos/${repo}/commits/${first}/check-runs`]) as { check_runs: { conclusion: string | null }[] } | null)
-      : null;
-    const done = runs?.check_runs.filter((c) => c.conclusion) ?? [];
-    const conclusion = done.length === 0 ? null : done.some((c) => c.conclusion === "failure") ? "failure" : "success";
-    const n = p.closingIssuesReferences[0]?.number;
-    let closingIssue: Pr["closingIssue"] = null;
-    if (n) {
-      const events = (tryGh(["api", `repos/${repo}/issues/${n}/timeline`, "--paginate"]) as
-        | { event: string; created_at?: string; label?: { name: string } }[]
-        | null) ?? [];
-      const ready = events.find((e) => e.event === "labeled" && e.label?.name === "ready-for-agent");
-      closingIssue = {
-        number: n,
-        readyAt: ready?.created_at ?? null,
-        reopened: events.some((e) => e.event === "reopened"),
-      };
-    }
-    return {
-      number: p.number,
-      title: p.title,
-      mergedAt: p.mergedAt,
-      labels: p.labels.map((l) => l.name),
-      firstChecksConclusion: conclusion,
-      closingIssue,
-    };
-  });
+  const res = gh([
+    "api", "graphql", "-f", `query=${PR_QUERY}`, "-f", `q=repo:${repo} is:pr is:merged merged:>=${since}`,
+  ]) as { data: { search: { nodes: RawPr[] } } };
+  const prs = res.data.search.nodes.filter((p) => p && p.number).map(toPr);
   const issues = (gh([
     "issue", "list", "--repo", repo, "--state", "all", "--limit", "500",
     "--search", `created:>=${monthStart}`, "--json", "number,createdAt,labels",
@@ -168,13 +210,13 @@ function main(argv: string[]): number {
   const fixture = opt("--fixture");
   const days = Number(opt("--days") ?? 7);
   if ((!repo && !fixture) || !Number.isFinite(days) || days <= 0) {
-    console.error("usage: team-audit-metrics.ts --repo <owner/name> [--days <n>] [--json] [--times <tsv>]");
+    console.error("usage: team-audit-metrics.ts --repo <owner/name> [--days <n>] [--json] [--dispatches <tsv>]");
     return 2;
   }
   try {
     const data = fixture ? (JSON.parse(readFileSync(fixture, "utf8")) as Data) : fetchData(repo as string, days);
-    const times = opt("--times");
-    const metrics = computeMetrics(data, days, times ? parseTimes(readFileSync(times, "utf8")) : []);
+    const log = opt("--dispatches");
+    const metrics = computeMetrics(data, days, log ? parseDispatches(readFileSync(log, "utf8")) : new Map());
     if (argv.includes("--json")) console.log(JSON.stringify(metrics, null, 2));
     else for (const [k, v] of Object.entries(metrics)) console.log(`${k}=${v}`);
     return 0;
