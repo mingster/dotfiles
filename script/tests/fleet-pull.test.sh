@@ -336,6 +336,11 @@ for s in ceo deploy elon poteto-mode team-audit; do
   mkdir -p "$df_seed/templates/agent-team/.agents/skills/$s"
   printf '# %s\n' "$s" >"$df_seed/templates/agent-team/.agents/skills/$s/SKILL.md"
 done
+# A stand-in agent-team.sh records each machine render under the host's own home
+cat >"$df_seed/script/agent-team.sh" <<'EOS'
+#!/usr/bin/env bash
+echo "$*" >>"$HOME/agent-team-machine.log"
+EOS
 git -C "$df_seed" add -A
 git -C "$df_seed" commit -qm "seed dotfiles"
 git -C "$df_seed" push -q origin main
@@ -403,6 +408,31 @@ if [ "$ec8" -eq 0 ] && check_host_links "$local_home" && check_host_links "$rem_
   ok "fleet-pull refreshes user-level hooks, bin, and Tier 2 skills on local and remote hosts"
 else
   bad "fleet-pull failed to refresh user-level links on local or remote host (ec=$ec8): $out8"
+fi
+
+# 842: the pull also renders role files and session-start.md with agent-team.sh machine on every host
+if [ "$(cat "$local_home/agent-team-machine.log" 2>/dev/null)" = machine ] &&
+   [ "$(cat "$rem_home/agent-team-machine.log" 2>/dev/null)" = machine ]; then
+  ok "fleet-pull runs agent-team.sh machine once on local and remote hosts"
+else
+  bad "fleet-pull did not run agent-team.sh machine on every host: $out8"
+fi
+
+# 842: an agent host resets its checkouts instead of fast-forwarding, and still renders with machine
+cat >"$state1/fleet-pull.json" <<'EOF2'
+{"hosts":["host-a"],"repos":["~/dotfiles"],"agent_hosts":["host-a"]}
+EOF2
+git -C "$state1" commit -qam agent_host
+git -C "$state1" push -q origin main
+rm -f "$rem_home/agent-team-machine.log"
+set +e
+out9=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec9=$?
+set -e
+if [ "$ec9" -eq 0 ] && [ "$(cat "$rem_home/agent-team-machine.log" 2>/dev/null)" = machine ]; then
+  ok "fleet-pull runs agent-team.sh machine on an agent host"
+else
+  bad "fleet-pull did not run agent-team.sh machine on an agent host (ec=$ec9): $out9"
 fi
 
 echo "fleet-pull: $pass passed, $fail failed"

@@ -1,0 +1,1 @@
+`fleet-pull.sh` now runs `agent-team.sh machine` on every host after the pull, including agent hosts, so the daily `fleet-toolchain` run keeps role files in `~/.claude/agents/` and `~/.claude/hooks/session-start.md` in step with the template. A failed render prints `fail <host> <repo> (agent-team.sh machine failed)` and the run exits non-zero.
