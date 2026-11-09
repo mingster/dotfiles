@@ -856,6 +856,22 @@ if [ "$(find "$HOME/.claude" -maxdepth 1 -name 'settings.json.bak.*' | wc -l | t
 else
   check "round 3 settings: a no-op machine run makes no new settings backup" bad
 fi
+
+# 9.8 #797: a dangling settings.json link is backed up as a link, never written through.
+export HOME="$tmp/dangling-home"
+mkdir -p "$HOME/.claude" "$tmp/gone"
+ln -s "$tmp/gone/settings.json" "$HOME/.claude/settings.json"
+dry_out=$(bash "$SCRIPT" machine --dry-run 2>&1)
+bash "$SCRIPT" machine >/dev/null 2>&1
+backups=("$HOME/.claude"/settings.json.bak.*)
+if grep -q "would back up $HOME/.claude/settings.json, then write $HOME/.claude/settings.json" <<<"$dry_out" \
+  && [ ! -e "$tmp/gone/settings.json" ] \
+  && [ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" ] \
+  && [ "${#backups[@]}" = 1 ] && [ "$(readlink "${backups[0]}")" = "$tmp/gone/settings.json" ]; then
+  check "#797: machine backs up a dangling settings.json link and writes a real file" ok
+else
+  check "#797: machine backs up a dangling settings.json link and writes a real file" bad
+fi
 export HOME="$tmp/home"
 
 echo "$pass passed, $fail failed"

@@ -25,6 +25,11 @@ if [ ! -d "$AGENTS_ROOT/skills" ]; then
   exit 1
 fi
 
+# Refuse before the first write to HOME (#797).
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/lib/dotfiles-source.sh"
+require_main_dotfiles setup-claude-code "$DOTFILES"
+
 # Old layout: ~/.claude was a single symlink — replace with granular links
 if [ -L "${HOME}/.claude" ]; then
   echo "setup-claude-code: removing legacy ~/.claude symlink"
