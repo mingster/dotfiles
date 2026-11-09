@@ -1,0 +1,1 @@
+`agent-team.sh machine` and `setup-agent-skills.sh` refuse to wire the real home from a git worktree or from any path other than `~/dotfiles`, and `agent-team.sh check` fails on a machine link that points into a worktree.

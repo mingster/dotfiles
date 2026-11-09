@@ -3,6 +3,9 @@
 set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DOTFILES=$(cd "$DOTFILES" && pwd -P)
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/lib/dotfiles-source.sh"
+require_main_dotfiles agent-skills "$DOTFILES"
 SKILLS="$DOTFILES/.agents/skills"
 TEAM_SKILLS="$DOTFILES/templates/agent-team/.agents/skills"
 
