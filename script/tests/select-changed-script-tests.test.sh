@@ -135,8 +135,8 @@ case9_sync_team_skills_agent_team() {
     || fail "case9 must select agent-team-guard-migration.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/agent-team-project-gaps.test.sh' <<<"$out" \
     || fail "case9 must select agent-team-project-gaps.test.sh for agent-team.sh"
-  # agent-team.test.sh + release-guard-rules.test.sh + the agent-team-*.test.sh prefix family
-  want=2
+  # agent-team.test.sh + release-guard-rules.test.sh + the agent-team-*.test.sh prefix family + the always-run no-project-names guard
+  want=3
   for f in "$root"/script/tests/agent-team-*.test.sh; do
     [ -e "$f" ] || continue
     grep -Fq "Selected: script/tests/$(basename "$f")" <<<"$out" \
@@ -154,12 +154,12 @@ case10_script_plus_already_selected_test() {
     bash "$root/script/select-changed-script-tests.sh" --list-only script/lead-merge.sh script/tests/lead-merge.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 must not fall back when test path is already selected"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 7 ] || fail "case10 want Script tests: 7 got ${count:-0}"
+  [ "${count:-0}" -eq 8 ] || fail "case10 want Script tests: 8 got ${count:-0}"
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
     bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-review.sh script/tests/pr-review.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 pr-review mix must not fall back"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 2 ] || fail "case10 pr-review want Script tests: 2 got ${count:-0}"
+  [ "${count:-0}" -eq 3 ] || fail "case10 pr-review want Script tests: 3 got ${count:-0}"
   ok "case10 script plus already-selected test avoids full-suite fallback"
 }
 
@@ -250,12 +250,12 @@ case11_table_driven_mapped_paths() {
   out=$(list_selector_output script/usage-gate.py script/usage-gate-hook.py)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 usage-gate pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 2 ] || fail "case11 usage-gate pair want Script tests: 2 got ${count:-0}"
+  [ "${count:-0}" -eq 3 ] || fail "case11 usage-gate pair want Script tests: 3 got ${count:-0}"
 
   out=$(list_selector_output templates/agent-team/changelog.d/README.md templates/agent-team/bin/changelog-compile.sh)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 agent-team pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 2 ] || fail "case11 agent-team pair want Script tests: 2 got ${count:-0}"
+  [ "${count:-0}" -eq 3 ] || fail "case11 agent-team pair want Script tests: 3 got ${count:-0}"
 
   out=$(list_selector_output script/unmapped-helper.sh)
   grep -Fq 'Fallback: script/unmapped-helper.sh -> full suite' <<<"$out" \
@@ -268,6 +268,16 @@ case11_table_driven_mapped_paths() {
     || fail "case11c head-checks-tsc must fallback when unmapped"
 
   ok "case11 table-driven mapped paths avoid duplicate-selection fallback"
+}
+
+case12_no_project_names_always_selected() {
+  local out path
+  for path in script/tests/select-changed-script-tests.test.sh README.md; do
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" bash "$root/script/select-changed-script-tests.sh" --list-only "$path" 2>&1)
+    grep -Fxq 'Selected: script/tests/no-project-names.test.sh' <<<"$out" \
+      || fail "case12 no-project-names must be selected for $path"
+  done
+  ok "case12 no-project-names is selected for unrelated changes"
 }
 
 case1
@@ -283,4 +293,5 @@ case8_full_suite_fallback
 case9_sync_team_skills_agent_team
 case10_script_plus_already_selected_test
 case11_table_driven_mapped_paths
-echo 'PASS: 13 acceptance cases'
+case12_no_project_names_always_selected
+echo 'PASS: 14 acceptance cases'
