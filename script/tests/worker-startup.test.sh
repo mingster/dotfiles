@@ -21,7 +21,7 @@ trap 'rm -rf "$tmp"' EXIT
 unset -f python3 2>/dev/null || true
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-export WORKER_STARTUP_STATE="$tmp/state"
+export WORKER_STARTUP_STATE="$tmp/state" TEAM_AUDIT_DISPATCHES="$tmp/team-dispatches.tsv"
 mkdir -p "$WORKER_STARTUP_STATE"
 
 # --- stubs: fake jq forwards to the real binary; python3 runs USAGE_GATE_CLI or real python ---
@@ -481,6 +481,8 @@ set -e
 export WORKER_STARTUP_STATE="$launch_state"
 pair=$(pr_review_gates_worker_agent_model ctx_9495d9c62de4) || true
 [ "$pair" = $'claude\tclaude-sonnet-5-5-medium' ] && ok || bad "claude --run writes dispatch launch record ($pair)"
+grep -qE '^1'$'\t''[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$TEAM_AUDIT_DISPATCHES" && [ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at' ] \
+  && ok || bad "claude --run appends issue<TAB>dispatched_at to the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"

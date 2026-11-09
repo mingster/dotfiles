@@ -1,0 +1,1 @@
+* `script/worker-startup.sh --run` appends `issue<TAB>dispatched_at` to `~/agent-state/team-dispatches.tsv` (or `TEAM_AUDIT_DISPATCHES`), so the team audit queue and build stage times have a dispatch point. It replaces the Elon prose duty in `elon-dispatch.md`, which no dispatch had followed.

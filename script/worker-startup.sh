@@ -357,7 +357,7 @@ run_mode() {
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
-  local lint_out
+  local lint_out dispatch_log
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
 
@@ -378,6 +378,12 @@ run_mode() {
 
   "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
     || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
+
+  # Dispatch point for team-audit-metrics.ts stage times (issue<TAB>dispatched_at); never blocks a start.
+  dispatch_log=${TEAM_AUDIT_DISPATCHES:-$agent_state_dir/team-dispatches.tsv}
+  [ -f "$dispatch_log" ] || printf 'issue\tdispatched_at\n' 2>/dev/null >"$dispatch_log" || true
+  printf '%s\t%s\n' "$(grep -oE 'Refs [A-Za-z0-9_./-]*#[0-9]+' "$spec" | head -1 | sed 's/.*#//')" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>/dev/null >>"$dispatch_log" || true
 
   if [ "$agent" = cursor ]; then
     exec bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
