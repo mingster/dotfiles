@@ -467,6 +467,20 @@ set -e
 grep -q 'brief-lint: missing Refs' "$tmp/run-lint.err" && ok || bad "bad brief stderr should include brief-lint output ($(cat "$tmp/run-lint.err"))"
 grep -q 'orchestration worker-start' "$tmp/orca-lint.log" && bad "orca should not worker-start when brief-lint fails" || ok
 
+# 849: a "release-manager: merge" worker never starts on an overflow host
+: >"$tmp/orca-merge.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-merge.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_merge --spec "$spec_file" --title "release-manager: merge #849" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --on host-overflow --name n_merge --repo "path:$clean" 2>"$tmp/run-merge.err"
+ec_merge=$?
+set -e
+[ "$ec_merge" -ne 0 ] && ok || bad "merge worker --on an overflow host should exit non-zero"
+grep -q 'coordinator host only' "$tmp/run-merge.err" && ok || bad "merge worker refusal should name the coordinator host ($(cat "$tmp/run-merge.err"))"
+grep -q 'worker-start' "$tmp/orca-merge.log" && bad "orca should not start a merge worker on an overflow host" || ok
+
 # Non-cursor: after host-check, worktree create + worker-start
 set +e
 unset -f python3 2>/dev/null || true

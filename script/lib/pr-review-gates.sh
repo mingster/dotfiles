@@ -101,6 +101,24 @@ pr_review_gates_is_coordinator_id() { # <id>
   grep -Fxq -- "$id" <<<"${PRG_COORD_IDS:-}"
 }
 
+# The refusal text for a verifier Orca does not list. lead-merge reads the local Orca run list, so a host
+# other than the coordinator host (LEAD_MERGE_COORDINATOR_HOST or coordinator_host in lead-merge.local.json)
+# gets the cause named instead of a bare "not a known dispatch".
+pr_review_gates_unknown_verifier_msg() { # <verifier_id>
+  local dir cfg want
+  dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  want=${LEAD_MERGE_COORDINATOR_HOST:-}
+  if [ -z "$want" ]; then
+    cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json" 2>/dev/null) || cfg='{}'
+    want=$(jq -r '.coordinator_host // ""' <<<"$cfg" 2>/dev/null || true)
+  fi
+  if [ -n "$want" ] && [ "$(hostname -s)" != "$want" ]; then
+    printf 'verdict verifier %s is not a known dispatch: lead-merge runs on the coordinator host only (%s), and this host (%s) has no record of it. Run the merge there.' "$1" "$want" "$(hostname -s)"
+  else
+    printf 'verdict verifier %s is not a known dispatch' "$1"
+  fi
+}
+
 pr_review_gates_worker_show() { # <dispatch>
   local id=$1 orca out
   orca=$(pr_review_gates_orca)
@@ -270,11 +288,11 @@ pr_review_gate_verifier_known() { # <verifier_id> <builder_dispatch> <known_disp
   fi
   if [ -n "$known" ]; then
     grep -Fxq -- "$verifier" <<<"$known" && return 0
-    $refuse "verdict verifier $verifier is not a known dispatch"
+    $refuse "$(pr_review_gates_unknown_verifier_msg "$verifier")"
     return 1
   fi
   if ! pr_review_gates_worker_show "$verifier" >/dev/null; then
-    $refuse "verdict verifier $verifier is not a known dispatch"
+    $refuse "$(pr_review_gates_unknown_verifier_msg "$verifier")"
     return 1
   fi
   return 0
