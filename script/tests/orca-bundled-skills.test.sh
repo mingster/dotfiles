@@ -95,4 +95,19 @@ check "tree link host: repo has no untracked orca folder" test ! -e "$D/.agents/
 check "tree link host: orca skill lands in the real home folder" test -f "$HOME/.agents/skills/orca-cli/SKILL.md"
 check "tree link host: home is migrated to real directories" test ! -L "$HOME/.agents"
 
+# 9. #836: dangling links into a dotfiles checkout are relinked (moved) or removed (retired); foreign ones stay.
+export HOME="$tmp/home5"; mkdir -p "$HOME/.agents/skills" "$HOME/.claude/skills"
+for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  ln -s "$D/templates/agent-team/.agents/skills/tdd" "$dst/tdd"
+  ln -s "$D/.agents/skills/retired" "$dst/retired"
+  ln -s "$tmp/elsewhere/gone" "$dst/gone"
+done
+PATH="$tmp/bin:$base_path" DOTFILES="$D" bash "$ROOT/script/setup-agent-skills.sh" > "$tmp/setup5.out" 2>&1
+real_d=$(cd "$D" && pwd -P)
+for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  check "moved skill relinked in $dst" test "$(readlink "$dst/tdd")" = "$real_d/.agents/skills/tdd"
+  check "retired skill link removed in $dst" test ! -L "$dst/retired"
+  check "foreign dangling link kept in $dst" test -L "$dst/gone"
+done
+
 [ "$fails" -eq 0 ] && echo "PASS" || { echo "$fails failure(s)"; exit 1; }

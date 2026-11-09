@@ -38,6 +38,19 @@ dotfiles_skill() {
   return 1
 }
 
+# A broken link whose target was a skill path inside a dotfiles checkout (the skill moved or retired).
+stale_dotfiles_link() {
+  local path="$1" name="$2" target root
+  [ -L "$path" ] && [ ! -e "$path" ] || return 1
+  target=$(readlink "$path")
+  case "$target" in
+    */templates/agent-team/.agents/skills/"$name") root=${target%/templates/agent-team/.agents/skills/"$name"} ;;
+    */.agents/skills/"$name") root=${target%/.agents/skills/"$name"} ;;
+    *) return 1 ;;
+  esac
+  [ -f "$root/install.sh" ]
+}
+
 copy_skills() {
   local src="$1" dst="$2" entry name
   mkdir -p "$dst"
@@ -113,6 +126,14 @@ link_skill() {
     echo "agent-skills: linked $target -> $entry"
   done
 }
+
+for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  for target in "$dst"/*; do
+    stale_dotfiles_link "$target" "$(basename "$target")" || continue
+    rm "$target"
+    echo "agent-skills: removed stale link $target"
+  done
+done
 
 for src_root in "$SKILLS" "$TEAM_SKILLS"; do
   [ -d "$src_root" ] || continue
