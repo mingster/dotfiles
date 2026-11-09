@@ -22,3 +22,5 @@
 ## Stage times TSV format
 
 `--times <file>` reads three tab separated columns (`stage`, `minutes`, `verified` as `0` or `1`) and prints `median`, `p75`, `max`, `samples`, and `verified` counts under `## Stage times`.
+
+Per host fleet metrics are out of scope for `script/team-audit-metrics.ts`.
