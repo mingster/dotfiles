@@ -1,1 +1,1 @@
-- Add `--log <finding> <evidence>` and `--report [--times <file>]` to `script/team-audit.sh`, with tests in `script/team-audit.test.sh` and usage in `docs/agents/team-audit.md` (refs #741).
+- `script/team-audit.sh` keeps six checks (sync, budget, wording, skills, labels, receipt), drops the sdlc, script-list, ready-brief and upstream polling checks, and adds `--report` (checks plus metrics in three sections) and `--log` (the TSV observation log). `script/team-audit-metrics.ts` uses two gh calls and times builds from worker dispatch. `process-review.md` is gone (refs #741).

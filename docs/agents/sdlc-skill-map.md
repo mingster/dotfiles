@@ -11,7 +11,7 @@ Which role owns each SDLC stage and recurring job, which Matt Pocock or team ski
 
 | Job | Owner | Skill or tool | Current rule |
 | --- | --- | --- | --- |
-| Intake and triage of an issue | `architect-pm`, Elon as maintainer | `triage` (agent brief per `AGENT-BRIEF.md`) | Each `ready-for-agent` issue carries `## Acceptance criteria`, `Requirement owner` and `Deleted` in one text (enforced by `script/team-audit.sh`). |
+| Intake and triage of an issue | `architect-pm`, Elon as maintainer | `triage` (agent brief per `AGENT-BRIEF.md`) | Each `ready-for-agent` issue carries `## Acceptance criteria`, `Requirement owner` and `Deleted` in one text. |
 | Intent, Grill and Spec (Design) | `architect-pm` with Elon; `sales-marketing` for UI/wording; `secops-finops` for money | `capture-intent`, `grill-with-docs` (`grilling` and `domain-modeling`), `write-spec` (or `to-spec`) | One design document per feature (intent, spec and tickets) with one owner approval (`docs/agents/team.md`, Process 2026-11-06). Every spec committed since 2026-10-21 has a sibling `intent.md` and a `## Test plan` section. |
 | Tickets | `architect-pm` | `to-tickets` (GitHub issues with blocking edges) | Invoked by file path; slices accepted specs into GitHub issues with test cases from `## Test plan` and native GitHub sub-issue / dependency links. |
 | Implement | `fullstack-dev` | `implement` per ticket (drives `tdd`, ends with `code-review`); `tdd` on the fast path | Runs only the ticket's listed test cases and touched unit tests (red on `main`, green after) via `script/run-scoped-tests.py`; commits locally on its own branch and reports `worker_done`. |
