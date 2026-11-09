@@ -9,13 +9,20 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 fetch_timeout=${SESSION_SYNC_FETCH_TIMEOUT:-5}
-export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=$fetch_timeout"
+export GIT_TERMINAL_PROMPT=0
+
+common_of() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
 
 older() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 
 fetch_main() { # <dir>: fetch origin, giving up after the timeout so an offline host does not stall the session
-  git -C "$1" fetch -q origin main >/dev/null 2>&1 &
-  local pid=$! n=0
+  local pid n=0 batch=()
+  # Never prompt over ssh, unless the user or repo already chose their own ssh command
+  if [ -z "${GIT_SSH_COMMAND:-}" ] && ! git -C "$1" config core.sshCommand >/dev/null 2>&1; then
+    batch=(-c "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=$fetch_timeout")
+  fi
+  git ${batch[@]+"${batch[@]}"} -C "$1" fetch -q origin main >/dev/null 2>&1 &
+  pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     n=$((n + 1))
     if [ "$n" -gt $((fetch_timeout * 10)) ]; then
@@ -30,7 +37,7 @@ fetch_main() { # <dir>: fetch origin, giving up after the timeout so an offline 
 
 sync_main() { # <dir inside a checkout>
   local common d label behind ahead
-  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  common=$(common_of "$1") || return 0
   d=$(dirname "$common")
   [ -e "$d/.git" ] || return 0
   label=$(basename "$d")
@@ -74,7 +81,6 @@ check_floor() {
 project=${1:-${CLAUDE_PROJECT_DIR:-$PWD}}
 sync_main "$project"
 dotfiles=${DOTFILES_DIR:-$HOME/dotfiles}
-common_of() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
 # Skip ~/dotfiles when the project is the dotfiles repo itself
 if [ -d "$dotfiles" ] && [ "$(common_of "$dotfiles")" != "$(common_of "$project")" ]; then
   sync_main "$dotfiles"

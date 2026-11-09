@@ -25,6 +25,7 @@ make_behind() {
 tip() { git --git-dir="$tmp/$1.git" rev-parse main; }
 head_of() { git -C "$1" rev-parse HEAD; }
 
+unset DOTFILES_DIR CLAUDE_PROJECT_DIR GIT_SSH_COMMAND
 export HOME="$tmp/home"
 mkdir -p "$HOME"
 export AGENT_STATE_DIR="$tmp/state"
@@ -91,6 +92,19 @@ out=$(run "$off"); ec=$?
 check "unreachable origin leaves the checkout alone" "$([ "$(head_of "$off")" = "$before" ] && echo 0 || echo 1)"
 check "unreachable origin is reported" "$(grep -q 'session-sync: off fetch failed, skipped' <<<"$out"; echo $?)"
 check "exits 0 when offline" "$ec"
+
+# A fetch that hangs is cut off after the timeout, and the floor warning still prints
+hang=$(make_behind hang)
+before=$(head_of "$hang")
+git -C "$hang" remote set-url origin "ext::sleep 30"
+start=$(date +%s)
+out=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.ext.allow GIT_CONFIG_VALUE_0=always SESSION_SYNC_FETCH_TIMEOUT=1 run "$hang"); ec=$?
+took=$(( $(date +%s) - start ))
+check "hanging fetch is cut off within the timeout" "$([ "$took" -le 4 ] && echo 0 || echo 1)"
+check "hanging fetch leaves the checkout alone" "$([ "$(head_of "$hang")" = "$before" ] && echo 0 || echo 1)"
+check "hanging fetch is reported" "$(grep -q 'session-sync: hang fetch failed, skipped' <<<"$out"; echo $?)"
+check "floor warning prints when offline" "$(grep -q 'session-sync: claude 2.1.311 is below' <<<"$out"; echo $?)"
+check "exits 0 after a hanging fetch" "$ec"
 
 # Not a git checkout at all: quiet and 0
 mkdir -p "$tmp/plain"

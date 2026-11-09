@@ -422,8 +422,9 @@ check "842 coordinator writes fleet-floor.json with its own versions" \
   "$(jq -e --arg h "$me_host" '.host == $h and .tools.claude == "2.1.319" and .tools.orca == "1.4.253" and (.tools | has("git"))' \
     "$tmp/floor-state/fleet-floor.json" >/dev/null 2>&1; echo $?)"
 mkdir -p "$tmp/peer-state"
-printf 'coordinator coord-a\n' >"$tmp/peer-state/coordinator.conf"
-AGENT_STATE_DIR="$tmp/peer-state" "$here/fleet-toolchain-check.sh" >/dev/null 2>&1
+printf 'coordinator worker-a\n' >"$tmp/peer-state/coordinator.conf"
+AGENT_STATE_DIR="$tmp/peer-state" FLEET_PULL_CONFIG="$tmp/floor-fleet.json" FLEET_TOOLCHAIN_VERSIONS="$floor_versions" \
+  "$here/fleet-toolchain-check.sh" >/dev/null 2>&1
 check "842 a peer run leaves the state dir without a floor file" \
   "$([ ! -e "$tmp/peer-state/fleet-floor.json" ] && echo 0 || echo 1)"
 
