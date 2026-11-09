@@ -2,6 +2,8 @@
 # session-sync.sh against local bare origins, a fake tool probe and a fake fleet floor (no network).
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=script/tests/lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
