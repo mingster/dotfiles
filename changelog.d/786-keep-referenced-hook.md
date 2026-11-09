@@ -1,0 +1,1 @@
+agent-team.sh project keeps a managed hook file (such as guard-bash.py) that a kept project hook or a kept settings hook command still loads by name, and prints why. Before, the kept hook exited 1 on every Bash call (#786).

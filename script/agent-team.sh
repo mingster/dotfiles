@@ -1576,6 +1576,51 @@ def prune_empty_dir(rel):
             pass
 
 
+def hook_kept_reason(hook):
+    # Why a managed hook file stays: a hook this run keeps loads it by name (a sibling
+    # runpy.run_path(...with_name("<file>")), a path or an import), so removing it would break
+    # that hook. Returns the referencing file or settings entry, or None. User level references
+    # ($HOME/.claude/..., ~/.claude/...) name the shared copy, not the project file.
+    name_re = re.compile(r"(?<![\w.-])" + re.escape(hook) + r"(?![\w-])")
+    hooks_dir = os.path.join(target, ".claude/hooks")
+    if os.path.isdir(hooks_dir):
+        for entry in sorted(os.listdir(hooks_dir)):
+            full = os.path.join(hooks_dir, entry)
+            if entry in SHARED_HOOKS or not os.path.isfile(full):
+                continue
+            try:
+                text = read_text(full)
+            except (OSError, UnicodeDecodeError):
+                continue
+            if name_re.search(text):
+                return f".claude/hooks/{entry}"
+    user_re = re.compile(r"(?:\$\{?HOME\}?|~)/\.claude/[\w./-]*")
+
+    def commands(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "command" and isinstance(value, str):
+                    yield value
+                else:
+                    yield from commands(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from commands(value)
+
+    for rel in (".claude/settings.json", ".claude/settings.project.json"):
+        full = os.path.join(target, rel)
+        if not os.path.isfile(full):
+            continue
+        try:
+            hooks = json.loads(read_text(full)).get("hooks", {})
+        except (ValueError, AttributeError, OSError):
+            continue
+        for cmd in commands(hooks):
+            if name_re.search(user_re.sub("", cmd)):
+                return f"{rel} hook command"
+    return None
+
+
 def remove_legacy_copies():
     for role_file in CANONICAL_ROLES:
         remove_path(f".claude/agents/{role_file}")
@@ -1585,6 +1630,10 @@ def remove_legacy_copies():
     remove_path(".claude/agent-team-project-name")
 
     for hook in SHARED_HOOKS:
+        why = hook_kept_reason(hook) if os.path.lexists(os.path.join(target, f".claude/hooks/{hook}")) else None
+        if why:
+            print(f"keep .claude/hooks/{hook} (loaded by {why}, which this run keeps)")
+            continue
         remove_path(f".claude/hooks/{hook}")
 
     for b in SHARED_BINS:
@@ -1981,7 +2030,7 @@ def run_check():
     for hook in SHARED_HOOKS:
         rel = f".claude/hooks/{hook}"
         full = os.path.join(target, rel)
-        if os.path.exists(full) or os.path.islink(full):
+        if (os.path.exists(full) or os.path.islink(full)) and not hook_kept_reason(hook):
             drifts.append(f"shared hook copy or link in project: {rel}")
 
     for b in SHARED_BINS:
