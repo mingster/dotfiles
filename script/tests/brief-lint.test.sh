@@ -23,7 +23,7 @@ Refs dotfiles#717
 Docs prose and unrelated scripts.
 
 ## Verify
-timeout 300 bash script/tests/brief-lint.test.sh
+timeout 300 bash script/tests/brief-lint.test.sh and bash script/checks-local.sh
 
 ## Finish
 Self-review against origin/main, then send worker_done.
@@ -49,7 +49,7 @@ Refs #42
 Nothing else.
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 Self-review, then send worker_done.
@@ -79,7 +79,7 @@ Prose without a list item.
 Unrelated files.
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 Self-review, then send worker_done.
@@ -100,7 +100,7 @@ Refs dotfiles#717
 ## Out of scope
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 Self-review, then send worker_done.
@@ -143,7 +143,7 @@ Refs dotfiles#717
 Unrelated files.
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 EOF
@@ -171,7 +171,7 @@ No worker starts from an incomplete brief. Today worker-startup.sh only checks t
 Rewriting AGENT-BRIEF.md, team-audit.sh, docs prose, any <project-a> file, lead-merge.sh, ship.sh.
 
 ## Verify
-With timeout 300 each: brief-lint.test.sh, the worker-startup test, `python3 -m pytest -q templates/agent-team/.claude/hooks/tests` (or unittest if that is what the folder uses), every script/tests/test_fleet_watch*.py, no-project-names.test.sh, shellcheck -x on the two shell scripts. Paste tails.
+With timeout 300 each: bash script/checks-local.sh, brief-lint.test.sh, the worker-startup test, `python3 -m pytest -q templates/agent-team/.claude/hooks/tests` (or unittest if that is what the folder uses), every script/tests/test_fleet_watch*.py, no-project-names.test.sh, shellcheck -x on the two shell scripts. Paste tails.
 
 ## Finish
 Self-review against origin/main, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
@@ -194,7 +194,7 @@ Refs owner/app#21
 - other files
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 Self-review, then send worker_done.
@@ -212,7 +212,7 @@ Refs owner/app#21
 **Out of scope:**
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 Self-review, then send worker_done.
@@ -234,7 +234,7 @@ Refs dotfiles#760
 Unrelated files.
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 Send worker_done only.
@@ -244,6 +244,28 @@ out=$(bash "$lint" "$tmp/no-self-review.md" 2>&1)
 ec=$?
 set -e
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Finish self-review step" ]; then ok; else bad "missing self-review in Finish (ec=$ec, out=$out)"; fi
+
+# 11. Verify that does not run checks-local.sh is refused
+cat >"$tmp/no-checks-local.md" <<'EOF'
+Refs dotfiles#818
+
+## Acceptance
+- [ ] Verify runs the workflow's checks.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+timeout 300 bash script/tests/brief-lint.test.sh
+
+## Finish
+Self-review, then send worker_done.
+EOF
+set +e
+out=$(bash "$lint" "$tmp/no-checks-local.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "Verify without checks-local.sh (ec=$ec, out=$out)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
