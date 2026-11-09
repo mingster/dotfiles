@@ -818,6 +818,7 @@ cat > "$HOME/.claude/settings.json" <<'JSON'
   "mcpServers": {"x": {"command": "x"}},
   "includeCoAuthoredBy": false,
   "cleanupPeriodDays": 9,
+  "someKeyMachineHasNeverSeen": {"nested": [1, {"deep": null}]},
   "permissions": {
     "defaultMode": "default",
     "allow": ["Bash(mine:*)"],
