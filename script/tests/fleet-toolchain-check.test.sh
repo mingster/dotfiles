@@ -27,7 +27,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/ssh"; chmod +x "$tmp/ssh"
 export FLEET_TOOLCHAIN_RUN="$tmp/ssh"
 
 out=$("$here/fleet-toolchain-check.sh" 2>&1)
-check "older orca on worker-a is reported" "$(echo "$out" | grep -q 'worker-a orca 1.4.251 is below latest 1.4.253'; echo $?)"
+check "older orca on worker-a is reported against the coordinator" "$(echo "$out" | grep -q 'worker-a orca 1.4.251 is below coord-a 1.4.253'; echo $?)"
 check "coord-a at latest is quiet for orca" "$(echo "$out" | grep -q 'coord-a orca' && echo 1 || echo 0)"
 line_cnt=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
 check "same bun and node produce no extra lines" "$([ "$line_cnt" = 1 ] && echo 0 || echo 1)"
@@ -40,8 +40,20 @@ export FLEET_TOOLCHAIN_VERSIONS="{
 out_or=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.254 FLEET_TOOLCHAIN_VERSIONS="$FLEET_TOOLCHAIN_VERSIONS" \
   FLEET_PULL_CONFIG="$FLEET_PULL_CONFIG" FLEET_TOOLCHAIN_RUN="$FLEET_TOOLCHAIN_RUN" \
   DOTFILES_DIR="$DOTFILES_DIR" "$here/fleet-toolchain-check.sh" 2>&1)
-check "677 host below latest but not below coordinator is still reported" \
-  "$(echo "$out_or" | grep -q 'worker-a orca 1.4.253 is below latest 1.4.254'; echo $?)"
+check "842 peer level with the coordinator is quiet when both trail latest" \
+  "$(echo "$out_or" | grep -q 'worker-a orca' && echo 1 || echo 0)"
+check "842 coordinator below latest is still reported" \
+  "$(echo "$out_or" | grep -q 'coord-a orca 1.4.253 is below latest 1.4.254'; echo $?)"
+
+# 842: a peer ahead of the coordinator is drift; the coordinator is never below a peer
+ahead_out=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 FLEET_TOOLCHAIN_VERSIONS="{
+  \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+  \"worker-a\": {${base_tools/2.1.319/2.1.320}, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}
+}" "$here/fleet-toolchain-check.sh" 2>&1)
+check "842 peer ahead of the coordinator is reported as drift" \
+  "$(echo "$ahead_out" | grep -q 'worker-a claude 2.1.320 is above coord-a 2.1.319'; echo $?)"
+check "842 coordinator is not reported below a peer" \
+  "$(echo "$ahead_out" | grep -q 'coord-a claude' && echo 1 || echo 0)"
 
 export FLEET_TOOLCHAIN_LATEST_ORCA=1.4.251
 export FLEET_TOOLCHAIN_VERSIONS="{
@@ -53,6 +65,14 @@ out_floor=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.251 FLEET_TOOLCHAIN_VERSIONS="$FLEET
   DOTFILES_DIR="$DOTFILES_DIR" "$here/fleet-toolchain-check.sh" 2>&1)
 check "677 host below coordinator floor is reported" \
   "$(echo "$out_floor" | grep -q 'worker-a orca 1.4.251 is below coord-a 1.4.253'; echo $?)"
+
+# 842: with no coordinator version for a tool, a peer falls back to latest
+nofloor_out=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 FLEET_TOOLCHAIN_VERSIONS="{
+  \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"node\": \"24.22.1\"},
+  \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.3\", \"node\": \"24.22.1\"}
+}" "$here/fleet-toolchain-check.sh" 2>&1)
+check "842 peer falls back to latest when the coordinator has no version" \
+  "$(echo "$nofloor_out" | grep -q 'worker-a bun 1.4.3 is below latest 1.4.4'; echo $?)"
 
 # Missing coordinator.conf fails with a clear message instead of a built-in name
 no_conf_out=$(AGENT_STATE_DIR="$tmp/no-state" FLEET_TOOLCHAIN_BASELINE_HOST='' "$here/fleet-toolchain-check.sh" 2>&1)
@@ -263,9 +283,9 @@ node_vers() { # <coord node> <worker node>
     "$base_tools" "$1" "$base_tools" "$2"
 }
 node_out=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 FLEET_TOOLCHAIN_LATEST_NODE='' FLEET_TOOLCHAIN_NODE_INDEX="$tmp/node-index.json" \
-  FLEET_TOOLCHAIN_VERSIONS="$(node_vers 24.22.2 24.22.1)" DOTFILES_DIR="$pin_home" "$here/fleet-toolchain-check.sh" 2>&1)
+  FLEET_TOOLCHAIN_VERSIONS="$(node_vers 24.22.1 24.22.1)" DOTFILES_DIR="$pin_home" "$here/fleet-toolchain-check.sh" 2>&1)
 check "latest node stays on the pinned major" \
-  "$(echo "$node_out" | grep -q 'worker-a node 24.22.1 is below latest 24.22.2'; echo $?)"
+  "$(echo "$node_out" | grep -q 'coord-a node 24.22.1 is below latest 24.22.2'; echo $?)"
 check "a newer LTS major does not flag the pinned major" \
   "$(echo "$node_out" | grep -q '26.13.0' && echo 1 || echo 0)"
 

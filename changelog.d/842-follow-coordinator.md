@@ -1,0 +1,1 @@
+* `fleet-toolchain-check.sh` compares peers only against the coordinator: a peer below or above it is reported, and the coordinator is no longer reported below the highest version in the fleet. The coordinator alone is compared against the latest release (#842).
