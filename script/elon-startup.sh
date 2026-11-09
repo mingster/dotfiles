@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2001,SC2015,SC2016,SC2086,SC2166
 # Elon session start: bring every fleet host up to date and report what is wrong. Read only except
-# fleet-pull (a fast-forward of clean main checkouts). It never installs or deletes anything.
+# fleet-pull (a fast-forward of clean main checkouts and an agent-team.sh machine render of
+# ~/.claude role files and hooks). It never installs or deletes anything.
 # Usage: elon-startup.sh [--no-pull]
 # Hosts and repos come from fleet-pull.config.json (untracked). Needs jq.
 set -u
