@@ -1,0 +1,1 @@
+Generated `docs/agents/team.md` no longer links `coordinator-operations.md` and `engineering-integration.md`, which `agent-team.sh project` does not copy; it names them at their template path. New test `agent-team-doc-links.test.sh` checks that relative links in the generated `docs/agents/*.md` resolve (#788).
