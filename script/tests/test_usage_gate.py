@@ -19,7 +19,7 @@ NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
 REVIEWER_CHAIN = [{"provider": "other", "model": "gpt-6.1-sol", "effort": "medium"},
-                  {"provider": "cursor", "model": "composer-2.5"},
+                  {"provider": "cursor", "model": "grok-4.7-xhigh"},
                   {"provider": "antigravity", "model": "gemini-3.8-flash"}]
 
 
@@ -476,7 +476,7 @@ class Cursor(unittest.TestCase):
             ug.CURSOR_SUMMARY = path
             try:
                 for args in (["check", "--provider", "cursor"],
-                             ["check", "--provider", "cursor", "--model", "composer-2.5"]):
+                             ["check", "--provider", "cursor", "--model", "grok-4.7-xhigh"]):
                     with contextlib.redirect_stdout(io.StringIO()) as out:
                         self.assertEqual(ug.main(args), 0)
                         row = json.loads(out.getvalue())
@@ -495,7 +495,7 @@ class Cursor(unittest.TestCase):
     def test_composer_allowance_cannot_be_inferred_from_aggregate_plan_usage(self):
         status, row = self.check(100, baseline=100)
         self.assertEqual((status, row["verdict"]), (4, "unknown"))
-        self.assertIn("Composer 2.5", row["reason"])
+        self.assertIn("auto+composer", row["reason"])
         self.assertNotIn("weekly_used", row)
 
     def test_aggregate_plan_usage_never_supplies_composer_usage(self):
@@ -820,6 +820,16 @@ class Pick(unittest.TestCase):
                          ("cursor", "grok-4.7-high"))
         self.assertTrue(all(ug.family(c) != "claude" for c in [result["selected"]]))
 
+    def test_grok_authored_pr_reviewer_pick_is_claude(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+        def fake_run(provider, *a, **k):
+            return {"provider": provider, "verdict": "allowed", "ceiling": 95, "weekly_used": 10}
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            result = ug.pick("reviewer", "grok", None, 95, 1)
+        self.assertEqual(ug.family(result["selected"]), "claude")
+
     def test_cursor_composer_is_its_own_family(self):
         self.assertEqual(ug.family({"provider": "cursor", "model": "composer-2.5"}), "composer")
 
@@ -833,10 +843,10 @@ class Pick(unittest.TestCase):
 
 
 class CursorComposerOnly(unittest.TestCase):
-    """Owner 2026-11-04: Cursor runs only composer-2.5, so pick never selects another Cursor model."""
+    """Owner 2026-11-09: Cursor builds only on grok-4.7-xhigh, so pick never selects an unapproved Cursor model."""
     CHAIN = [{"provider": "cursor", "model": "gpt-5.6-sol-high"},
              {"provider": "cursor", "model": "claude-sonnet-5-5-medium"},
-             {"provider": "cursor", "model": "composer-2.5"}]
+             {"provider": "cursor", "model": "grok-4.7-xhigh"}]
 
     def test_pick_skips_other_cursor_models(self):
         def row(provider, *_, **__):
@@ -845,7 +855,7 @@ class CursorComposerOnly(unittest.TestCase):
                 mock.patch.object(ug, "run", side_effect=row), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             sel = ug.pick("fullstack-dev", None, None, 95, 0)["selected"]
-        self.assertEqual(sel["model"], "composer-2.5")
+        self.assertEqual(sel["model"], "grok-4.7-xhigh")
 
 
 class PickOrder(unittest.TestCase):
@@ -857,7 +867,7 @@ class PickOrder(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 67.4%, cursor no reliable Composer 2.5 allowance reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
+                         "pick order now: claude 67.4%, cursor no reliable Cursor auto+composer allowance reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
@@ -897,7 +907,7 @@ class RealReadingPolicy(unittest.TestCase):
                         ("cursorAuth/accessToken", "redacted-opaque-token"))
             con.commit()
             con.close()
-            self.assertEqual(gate.main(["check", "--provider", "cursor", "--model", "composer-2.5"]), 4)
+            self.assertEqual(gate.main(["check", "--provider", "cursor", "--model", "grok-4.7-xhigh"]), 4)
             row = json.loads(out.getvalue())
             self.assertEqual(row["verdict"], "unknown")
             self.assertIn("read the Cursor dashboard", row["reason"])
@@ -1253,7 +1263,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
                         "tier": "workhorse",
                         "chain": [
                             {"provider": "claude", "model": "sonnet", "effort": "medium"},
-                            {"provider": "cursor", "model": "composer-2.5"},
+                            {"provider": "cursor", "model": "grok-4.7-xhigh"},
                         ],
                         "pin": True,
                     },
@@ -1318,7 +1328,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
                         "tier": "workhorse",
                         "chain": [
                             {"provider": "claude", "model": "sonnet", "effort": "medium"},
-                            {"provider": "cursor", "model": "composer-2.5"},
+                            {"provider": "cursor", "model": "grok-4.7-xhigh"},
                         ],
                     },
                 },
@@ -1369,7 +1379,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
             input=json.dumps({
                 "tool_name": "Bash",
                 "tool_input": {
-                    "command": "orca orchestration worker-start --task t --agent cursor --model composer-2.5 --task-title 'stream-health - check'",
+                    "command": "orca orchestration worker-start --task t --agent cursor --model grok-4.7-xhigh --task-title 'stream-health - check'",
                 },
             }),
             capture_output=True, text=True, env=env, cwd=repo_dir, timeout=15,

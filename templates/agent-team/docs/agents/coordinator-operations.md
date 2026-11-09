@@ -24,7 +24,7 @@ Read this before your first dispatch.
 - At start and on every wake, run `orca orchestration worker-list --run <your run> --json` and settle each unreleased dispatch: completed, process its result now; ready, read its screen and answer open questions with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`; stopped or failed, inspect the native projection and follow the supported lifecycle transition in the official Orca orchestration guide (Delivery contract), preserving unmerged work. A new Elon session adopts every live worker this way before new work. A bare `orca orchestration reply` does not wake an idle worker session (approvals sat 10+ minutes), so never use it: `orca-reply.sh` replies and then nudges the terminal, and refuses an empty `--to`.
 - **Cursor worker trust marker:** use `~/dotfiles/script/start-cursor-worker.sh` as described in `.claude/model-routing.md`, Cursor start rule. It creates the worktree and writes `.workspace-trusted` before dispatching the worker.
 
-- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `composer-2.5` worker, merge on checks.
+- **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `grok-4.7-xhigh` worker, merge on checks.
 
 ## Independent inbox watchdog
 

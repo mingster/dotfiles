@@ -4,7 +4,7 @@ Tiers, Orca worker flags, worker launch and supervision, fallback, and the commi
 
 Engineering runtime: read `.agents/skills/orca-adapter/ORCA-ADAPTER.md` first for fullstack-dev, qa-sdet and release-manager work. Provider policy lives in this file; the adapter never overrides it, and its usage, effort, token, strike, independent-review and publication gates still apply.
 
-Owner rule (2026-11-06, replaces the 2026-11-01 rule): implementation tickets run on Cursor `composer-2.5`, then Claude (`--agent claude --model sonnet --effort medium`) only when that quota is out, no fleet wide lane limit (owner 2026-11-04). Host caps count every worker and alone decide how many run at once; extra ready batches queue. Every other role, reviewers included, starts on Claude, Cursor or Antigravity per the table below. Antigravity and Cursor workers run without the Claude hooks and the `settings.json` deny list; the strike rule in `AGENTS.md` is their guard.
+Owner rule (2026-11-09, replaces the 2026-11-06 rule): implementation tickets run on Cursor `grok-4.7-xhigh`, the pstack default, then Claude (`--agent claude --model sonnet --effort medium`) only when that quota is out, no fleet wide lane limit (owner 2026-11-04). Host caps count every worker and alone decide how many run at once; extra ready batches queue. Every other role, reviewers included, starts on Claude, Cursor or Antigravity per the table below. Antigravity and Cursor workers run without the Claude hooks and the `settings.json` deny list; the strike rule in `AGENTS.md` is their guard.
 
 Owner rule (2026-11-09): tickets that change only docs, or one small script (about 100 changed lines or less, one script plus its test, nothing touching money, sign in, hooks, merge or deploy gates), run on the Light tier. Everything else keeps its tier.
 
@@ -46,11 +46,11 @@ The owner's standing choice: pass these on every `worker-start`. Ids checked 202
 
 | Tier | Claude | Cursor | Antigravity |
 | --- | --- | --- | --- |
-| Strong | `--agent claude --model opus --effort high` | none (Cursor runs only `composer-2.5`, owner 2026-11-04) | `--agent antigravity --model gemini-4-argon-high` |
-| Workhorse | `--agent claude --model sonnet --effort medium` | none (Cursor runs only `composer-2.5`) | `--agent antigravity --model gemini-4-argon-medium` |
-| Light | `--agent claude --model haiku` | `--agent cursor --model composer-2.5` | `--agent antigravity --model gemini-3.8-flash-medium` |
+| Strong | `--agent claude --model opus --effort high` | `--agent cursor --model grok-4.7-xhigh` | `--agent antigravity --model gemini-4-argon-high` |
+| Workhorse | `--agent claude --model sonnet --effort medium` | `--agent cursor --model grok-4.7-xhigh` | `--agent antigravity --model gemini-4-argon-medium` |
+| Light | `--agent claude --model haiku` | `--agent cursor --model grok-4.7-xhigh` | `--agent antigravity --model gemini-3.8-flash-medium` |
 
-Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemini-3.8-flash`.
+Light order: Cursor `grok-4.7-xhigh`, then Claude `haiku`, then Antigravity `gemini-3.8-flash`.
 
 - Cursor and Antigravity put the effort in the model id: pass no `--effort`.
 - Cursor and Antigravity default to Claude models, so they do not give a different family when the author ran on Claude. Non Claude reviewer: `--agent antigravity --model gemini-4-argon-high` or `--agent cursor --model grok-4.7-high` (Cursor checked 2026-10-07; Antigravity checked 2026-10-17). Cursor reviewers never run tests or heavy-gate jobs (Elon 2026-10-26): they review code only, and the lead runs the tests.
@@ -62,18 +62,18 @@ Light order: Cursor `composer-2.5`, then Claude `haiku`, then Antigravity `gemin
 - Gemini 4 Argon (`--agent antigravity --model gemini-4-argon-high` or `-medium`) takes broad, multi step Worktree jobs: high throughput work, multimodal input (video, images, large documents), and wide generation of base code and unit tests.
 - Claude (Opus 5.5 for hard cases, Sonnet 5.5 otherwise) takes fine terminal debugging. When Argon has pushed code but the project stalls at `bun run build` or a CLI deploy step with hard environment or type errors, hand that same worktree to a Claude worker to fix it.
 - Handoff: Argon commits and reports the failing command and its output; the Claude worker starts in the same worktree, fixes only what blocks the build or deploy, and does not rewrite Argon's feature code.
-- Proven combo (owner 2026-11-01, 24 hour run): Elon on `--agent antigravity --model gemini-4-argon-medium` with Cursor `composer-2.5` workers for small, mechanical or bounded tickets (three files or fewer, no `"use server"`, auth, payment or schema change). Elon may run this way when Claude quota is tight. Escalate a ticket to Claude when it fails twice or touches the excluded areas.
+- Proven combo (owner 2026-11-01, 24 hour run): Elon on `--agent antigravity --model gemini-4-argon-medium` with Cursor `grok-4.7-xhigh` workers for small, mechanical or bounded tickets (three files or fewer, no `"use server"`, auth, payment or schema change). Elon may run this way when Claude quota is tight. Escalate a ticket to Claude when it fails twice or touches the excluded areas.
 - The Cursor "Trust this workspace" stall is handled under Elon's supervision: read the screen after each Cursor start and accept the prompt.
 - Debug handoff preset: `fullstack-dev-debug` (Claude `sonnet` high, then `opus` high).
-- Reviewer: never `composer-2.5`. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon). Argon is the Gemini family, so it counts as cross family for a Claude author. Cursor reviews only on `grok-4.7-high`. If none is available, report gate blocked.
-- Claude authored PRs (owner 2026-11-06, replaces the 2026-11-05 Composer exception): when Argon is out, Cursor `grok-4.7-high` reviews and its Verdict counts for merge. Composer authored PRs still go to a Claude reviewer.
-- Cursor runs only `composer-2.5` to build and `grok-4.7-high` to review (owner 2026-11-06). Never pass another Cursor model (`claude-*`, `gpt-*`, `gemini-*`); `usage-gate.py pick` skips them and `~/.orca/presets.json` lists none.
+- Reviewer: never the author's family. Use the first provider whose model family differs from the author (Argon author: Claude; Claude author: Argon; Grok author: always Claude). Argon is the Gemini family, so it counts as cross family for a Claude author. Cursor reviews only on `grok-4.7-high`. If none is available, report gate blocked.
+- Claude authored PRs (owner 2026-11-06, replaces the 2026-11-05 Composer exception): when Argon is out, Cursor `grok-4.7-high` reviews and its Verdict counts for merge. Grok authored PRs always go to a Claude reviewer (`usage-gate.py pick --avoid-family grok` offers only Claude).
+- Cursor runs only `grok-4.7-xhigh` to build and `grok-4.7-high` to review (owner 2026-11-09). Use `grok-4.7-xhigh-fast` only when urgent: CI or trunk is red, or a person is blocked on the result right now. Composer is no longer used. xhigh spends more Cursor quota per ticket than Composer did, and the fast variant spends more again, so the usage gate reaches its cap sooner. Never pass another Cursor model (`claude-*`, `gpt-*`, `gemini-*`); `usage-gate.py pick` skips them and `~/.orca/presets.json` lists none.
 - Argon workers still get the file list and i18n key audit before merge (see below).
 
 ## Saving quota (owner 2026-10-09)
 
 - A fix or chore touching 3 files or fewer runs as `fullstack-dev-small`, a Light role in `~/.orca/presets.json`, titled `fullstack-dev-small - <job>` so the usage gate picks from the Light tier. Features, schema changes, money and security stay on `fullstack-dev`.
-- Small and mechanical tickets (copy, text substitutions, one-file fixes) route to a Cursor worker (`--agent cursor --model composer-2.5`; owner 2026-10-25). Start it with `~/dotfiles/script/start-cursor-worker.sh` (Cursor start rule below); the worker then sends `worker_done` like any other.
+- Small and mechanical tickets (copy, text substitutions, one-file fixes) route to a Cursor worker (`--agent cursor --model grok-4.7-xhigh`; owner 2026-11-09). Start it with `~/dotfiles/script/start-cursor-worker.sh` (Cursor start rule below); the worker then sends `worker_done` like any other.
 - Docs, translation, deploys and Playground walkthroughs start on `--agent antigravity --model gemini-4-argon-high` (the usage gate reads Antigravity per model pool, Claude and Gemini: check with `--provider antigravity --model <id>`), which keeps Claude for code. Before merge, audit a Gemini worker's file list and new i18n keys: it reformats files and copies English into tw and jp.
 - Sales (owner 2026-10-15): sales-marketing stays on Claude Sonnet for Traditional Chinese copy, outreach, pricing strategy and data analysis. Market research, competitor price comparison and Taiwan merchant lookups go to `--agent antigravity --model gemini-4-argon-high` (Google search grounding; spares Claude quota). Gemini must give a source URL for every number and merchant fact; sales-marketing spot checks them before any decision, and a fact without a source is not used.
 - Antigravity's Claude models have their own quota that can run out for days. On a quota message in the startup screen, fall back to the next provider; do not retry.
