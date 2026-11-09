@@ -23,7 +23,7 @@ cat > "$tmp/bin/orca" <<'FAKE'
 echo "$*" >> "$ORCA_LOG"
 case "$*" in
   'worktree list --json')
-    printf '{"ok":true,"result":{"worktrees":%s}}\n' "${FAKE_ORCA_WORKTREES:-[]}"
+    printf '{"ok":true,"result":{"worktrees":%s,"truncated":%s}}\n' "${FAKE_ORCA_WORKTREES:-[]}" "${FAKE_ORCA_TRUNCATED:-false}"
     ;;
   'worktree rm --worktree path:'*)
     path=""
@@ -135,6 +135,17 @@ echo "$out" | grep -Fq "Remove worktree $d/extra" && bad 'no removal when orca w
   || ok 'no removal when orca worktree list fails'
 echo "$out" | grep -Fq 'Orca pin lookup failed' && ok 'kept when orca pin lookup failed' \
   || bad 'kept when orca pin lookup failed' "$out"
+
+# A truncated worktree list can hide a pinned worktree, so it counts as unreadable and nothing is removed.
+fixture
+export ORCA_CLI_COMMAND="$tmp/bin/orca"
+export FAKE_ORCA_WORKTREES="[{\"path\":\"$d/extra\",\"pinned\":false}]" FAKE_ORCA_TRUNCATED=true
+out=$(bash "$here/wrap-up.sh" --repo "$d/wt" --dry-run 2>&1) || true
+unset FAKE_ORCA_TRUNCATED
+echo "$out" | grep -Fq "Remove worktree $d/extra" && bad 'no removal when orca worktree list is truncated' "$out" \
+  || ok 'no removal when orca worktree list is truncated'
+echo "$out" | grep -Fq 'Orca pin lookup failed' && ok 'kept when orca pin list is truncated' \
+  || bad 'kept when orca pin list is truncated' "$out"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

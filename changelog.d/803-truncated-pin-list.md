@@ -1,0 +1,1 @@
+wrap-up treats a truncated Orca worktree list as an unreadable pin lookup, so it removes nothing that depends on it. Tests now cover the truncated pin list and the truncated worker-list page. The environment worktree list already had its truncated guard and test.

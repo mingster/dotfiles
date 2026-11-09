@@ -26,7 +26,7 @@ case "$*" in
   *'worker-show --dispatch d-remote'*) echo '{"ok":false,"error":{"code":"dispatch_not_found","message":"Remote Dispatch d-remote was not found for this Run home."}}'; exit 1 ;;
   *'worker-show --dispatch d-remote2'*) printf '{"ok":true,"result":{"dispatchId":"d-remote2","state":"ready","liveness":"live","workspace":"wt-id::%s"}}\n' "$FAKE_REMOTE_CWD" ;;
   *worker-show*) printf '{"ok":true,"result":{"dispatchId":"d-live","state":"ready","liveness":"live","workspace":"wt-id::%s"}}\n' "$FAKE_LIVE_CWD" ;;
-  *worker-list*) printf '{"ok":true,"result":{"workers":[{"dispatchId":"d-live","state":"ready","liveness":"live","workspace":"wt-id::%s"},{"dispatchId":"d-remote","state":"ready","liveness":"live","projection":{"workspace":{"id":"wt-id::%s"}}},{"dispatchId":"d-remote2","state":"ready","liveness":"live","workspace":"wt-id::%s"}],"page":{"hasMore":false}}}\n' "$FAKE_LIVE_CWD" "$FAKE_REMOTE_PROJ" "$FAKE_REMOTE_CWD" ;;
+  *worker-list*) printf '{"ok":true,"result":{"truncated":%s,"workers":[{"dispatchId":"d-live","state":"ready","liveness":"live","workspace":"wt-id::%s"},{"dispatchId":"d-remote","state":"ready","liveness":"live","projection":{"workspace":{"id":"wt-id::%s"}}},{"dispatchId":"d-remote2","state":"ready","liveness":"live","workspace":"wt-id::%s"}],"page":{"hasMore":false}}}\n' "${FAKE_TRUNCATED:-false}" "$FAKE_LIVE_CWD" "$FAKE_REMOTE_PROJ" "$FAKE_REMOTE_CWD" ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -59,3 +59,8 @@ grep -Fq "Remove worktree $tmp/w-remote" "$tmp/output" && fail 'a dispatch Orca 
 echo 'ok a dispatch homed on another host keeps the worktree its row names'
 grep -Fq "Remove worktree $tmp/w-proj" "$tmp/output" && fail 'projection-only workspace id on a Remote Dispatch row loses the worktree'
 echo 'ok projection.workspace.id alone keeps the worktree when worker-show returns Remote Dispatch'
+# A truncated worker page cannot prove which dispatches are live, so no worktree is planned for removal.
+FAKE_TRUNCATED=true bash "$here/wrap-up.sh" --worktrees-only --dry-run > "$tmp/output" 2>&1 || true
+grep -Fq "Remove worktree $tmp/w-idle" "$tmp/output" && fail 'a truncated worker-list page still plans worktree removal'
+grep -Fq 'worker-list page unreadable' "$tmp/output" || fail 'no warning for a truncated worker-list page'
+echo 'ok a truncated worker-list page keeps every worktree'
