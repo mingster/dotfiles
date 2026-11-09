@@ -379,11 +379,31 @@ run_mode() {
   "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
     || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
 
-  # Dispatch point for team-audit-metrics.ts stage times (issue<TAB>dispatched_at); never blocks a start.
+  # Dispatch point for team-audit-metrics.ts stage times (issue<TAB>dispatched_at<TAB>owner/repo); never blocks a start.
   dispatch_log=${TEAM_AUDIT_DISPATCHES:-$agent_state_dir/team-dispatches.tsv}
-  [ -f "$dispatch_log" ] || printf 'issue\tdispatched_at\n' 2>/dev/null >"$dispatch_log" || true
-  printf '%s\t%s\n' "$(grep -oE 'Refs [A-Za-z0-9_./-]*#[0-9]+' "$spec" | head -1 | sed 's/.*#//')" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>/dev/null >>"$dispatch_log" || true
+  [ -s "$dispatch_log" ] || printf 'issue\tdispatched_at\trepo\n' 2>/dev/null >"$dispatch_log" || true
+  local ref ref_issue ref_repo dir origin
+  ref=$(grep -oE 'Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec" | head -1 | sed 's/^Refs //') || true
+  ref_issue=${ref##*#}
+  ref_repo=${ref%%#*}
+  if [ -z "$ref_repo" ]; then
+    dir=${wt:-}
+    if [ -z "$dir" ]; then
+      case "$repo" in
+        id:*) dir=$("$orca" repo list --json 2>/dev/null | jq -r --arg id "${repo#id:}" '.result.repos[]? | select(.id == $id) | .path // empty' 2>/dev/null | head -1) || dir= ;;
+        path:*) dir=${repo#path:} ;;
+        /*|.*|~*) dir=$repo ;;
+        */*) ref_repo=$repo ;;
+        *) dir=$repo ;;
+      esac
+    fi
+    if [ -z "$ref_repo" ] && [ -n "$dir" ]; then
+      origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || origin=
+      # Only remote URLs (git@host:o/r, scheme://host/o/r) name a repo; a local path origin does not.
+      ref_repo=$(printf '%s' "$origin" | sed -nE 's#^(git@[^:/]+:|[A-Za-z+]+://[^/]+/)([^/]+/[^/]+)$#\2#p; ' | sed -E 's#\.git$##')
+    fi
+  fi
+  [ -z "$ref_issue" ] || printf '%s\t%s\t%s\n' "$ref_issue" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ref_repo" 2>/dev/null >>"$dispatch_log" || true
 
   if [ "$agent" = cursor ]; then
     exec bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \

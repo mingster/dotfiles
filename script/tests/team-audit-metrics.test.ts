@@ -25,6 +25,24 @@ test("dispatch log keeps the earliest valid row per issue", () => {
   expect(dispatches.has(99)).toBe(false);
 });
 
+test("dispatch log filters by repo and still accepts legacy two column rows", () => {
+  const tsv = [
+    "issue\tdispatched_at\trepo",
+    "10\t2026-11-08T11:10:00Z\tmingster/dotfiles",
+    "10\t2026-11-01T00:00:00Z\tmingster/project-a",
+    "12\t2026-11-02T00:00:00Z\tMingster/Project-A",
+    "13\t2026-11-03T00:00:00Z",
+  ].join("\n");
+  const dot = parseDispatches(tsv, "mingster/dotfiles");
+  expect(dot.get(10)).toBe("2026-11-08T11:10:00Z");
+  expect(dot.has(12)).toBe(false);
+  expect(dot.get(13)).toBe("2026-11-03T00:00:00Z");
+  const pa = parseDispatches(tsv, "mingster/project-a");
+  expect(pa.get(10)).toBe("2026-11-01T00:00:00Z");
+  expect(pa.get(12)).toBe("2026-11-02T00:00:00Z");
+  expect(parseDispatches(tsv).get(10)).toBe("2026-11-01T00:00:00Z");
+});
+
 test("delivery metrics over the 7 day window", () => {
   const m = computeMetrics(data, 7, dispatches);
   expect(m.median_ticket_start_to_merge_minutes).toBe("150"); // 60 and 240 minutes

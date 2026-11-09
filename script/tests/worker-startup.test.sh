@@ -384,11 +384,16 @@ cat >"$orca_stub" <<EOS
 #!/usr/bin/env bash
 # Minimal orca: worktree create + worker-start JSON (recorded from a live worker-start --json receipt).
 WT_PROOF="$wt_proof"
+GH_REPO_DIR="$tmp/gh-repo"
 set -e
 log="\${ORCA_STUB_LOG:-/dev/null}"
 printf '%s\n' "\$0 \$*" >>"\$log"
 printf 'orca-after-gate\n' >>"$run_order_log"
 case " \$* " in
+  *" repo list "*)
+    printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"repo_gh\",\"path\":\"\$GH_REPO_DIR\"}]}}"
+    exit 0
+    ;;
   *" worktree create "*)
     printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"\$WT_PROOF\"}}}"
     exit 0
@@ -481,8 +486,47 @@ set -e
 export WORKER_STARTUP_STATE="$launch_state"
 pair=$(pr_review_gates_worker_agent_model ctx_9495d9c62de4) || true
 [ "$pair" = $'claude\tclaude-sonnet-5-5-medium' ] && ok || bad "claude --run writes dispatch launch record ($pair)"
-grep -qE '^1'$'\t''[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$TEAM_AUDIT_DISPATCHES" && [ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at' ] \
-  && ok || bad "claude --run appends issue<TAB>dispatched_at to the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+grep -qE '^1'$'\t''[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z'$'\t''$' "$TEAM_AUDIT_DISPATCHES" && [ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo' ] \
+  && ok || bad "claude --run appends issue<TAB>dispatched_at<TAB>repo to the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+
+# Dispatch log scoping: owner/repo from the Refs line, and no blank row when no issue number parses
+dispatch_run() { # <spec_file> [repo selector]
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-dispatch.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    WORKER_STARTUP_STATE="$launch_state" \
+    bash --noprofile --norc "$script" --run run_x --spec "$1" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --name n1 --repo "${2:-path:$clean}" >/dev/null 2>&1
+  set -e
+}
+sed 's#^Refs \#1#Refs mingster/dotfiles\#816#' "$spec_file" >"$tmp/spec-repo.txt"
+dispatch_run "$tmp/spec-repo.txt"
+grep -qE '^816'$'\t''[0-9T:Z-]+'$'\t''mingster/dotfiles$' "$TEAM_AUDIT_DISPATCHES" \
+  && ok || bad "Refs owner/repo#N records owner/repo in the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+# Short Refs #N: owner/repo comes from the origin of --repo id:<id> or a bare directory path
+mkdir -p "$tmp/gh-repo"
+git -C "$tmp/gh-repo" init -q
+git -C "$tmp/gh-repo" remote add origin git@github.com:acme/widgets.git
+sed 's#^Refs \#1#Refs \#817#' "$spec_file" >"$tmp/spec-short.txt"
+dispatch_run "$tmp/spec-short.txt" id:repo_gh
+grep -qE '^817'$'\t''[0-9T:Z-]+'$'\t''acme/widgets$' "$TEAM_AUDIT_DISPATCHES" \
+  && ok || bad "short Refs #N with --repo id:<id> resolves owner/repo ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+sed 's#^Refs \#1#Refs \#818#' "$spec_file" >"$tmp/spec-short2.txt"
+dispatch_run "$tmp/spec-short2.txt" "$tmp/gh-repo"
+grep -qE '^818'$'\t''[0-9T:Z-]+'$'\t''acme/widgets$' "$TEAM_AUDIT_DISPATCHES" \
+  && ok || bad "short Refs #N with a bare directory --repo resolves owner/repo ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+# An existing zero byte log still gets the header
+: >"$TEAM_AUDIT_DISPATCHES"
+dispatch_run "$tmp/spec-repo.txt"
+[ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo' ] \
+  && ok || bad "zero byte dispatch log gets the header ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+rows_before=$(wc -l <"$TEAM_AUDIT_DISPATCHES")
+# brief-lint accepts a multi-slash ref the dispatch parser does not read: no issue number, so no row
+sed 's#^Refs \#1#Refs a/b/c\#5#' "$spec_file" >"$tmp/spec-noref.txt"
+dispatch_run "$tmp/spec-noref.txt"
+[ "$(wc -l <"$TEAM_AUDIT_DISPATCHES")" = "$rows_before" ] && ! grep -qE '^'$'\t' "$TEAM_AUDIT_DISPATCHES" \
+  && ok || bad "brief without a parsable Refs ...#N appends no row ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
