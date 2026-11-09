@@ -8,7 +8,7 @@
 #   TEAM_AUDIT_RUN_METRICS=1 ~/dotfiles/script/team-audit.sh   (also prints script/team-audit-metrics.ts --repo <owner/name> per project)
 #
 # Six checks, each printed as "FINDING <check>: <detail>":
-#   sync      agent-team.sh check passes for each project
+#   sync      agent-team.sh check passes for each project (a project that is DOTFILES itself is skipped)
 #   budget    every role file (.claude/agents/*.md, project and template) is at most ROLE_WORD_BUDGET words (800)
 #   wording   no banned wording in team files: implementation workers and release-manager
 #             merge PRs, the phrase "open a PR and merge it",
@@ -214,6 +214,12 @@ for rp in repos:
             "p0_filed_this_month", "p1_filed_this_month")
     print("Delivery: " + ", ".join(f"{k}={m.get(k, 'unknown')}" for k in keys))
 REPORT
+  bases=""
+  for d in "$DOTFILES" "${PROJECTS[@]}"; do
+    sha=$(git -C "$d" rev-parse --short HEAD 2>/dev/null) || continue
+    case " $bases " in *" $sha "*) ;; *) bases="$bases $sha" ;; esac
+  done
+  echo "ROLE_RECEIPT_BASE=\"${bases# }\""
   exit "$rc"
 fi
 
@@ -243,6 +249,8 @@ team_files() {
 
 for proj in "${PROJECTS[@]}"; do
   if [ ! -d "$proj" ]; then finding sync "$proj: no such project"; continue; fi
+  # dotfiles is the template source, not a consumer: skip the sync check, keep the other checks
+  [ "$(cd "$proj" 2>/dev/null && pwd -P)" = "$(cd "$DOTFILES" 2>/dev/null && pwd -P)" ] && continue
   # shellcheck disable=SC2097,SC2098
   out=$(DOTFILES="$DOTFILES" bash "$DOTFILES/script/agent-team.sh" check "$proj" 2>&1) \
     || finding sync "$proj: $(echo "$out" | head -3 | tr '\n' ' ')"
