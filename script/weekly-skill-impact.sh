@@ -36,7 +36,7 @@ cite_skill() {
       printf '  - `%s` cites `%s`\n' "${agent#$DOTFILES/}" "$name"
     fi
   done
-  for team in crew elon team-audit; do
+  for team in elon team-audit; do
     local sk="$DOTFILES/templates/agent-team/.agents/skills/$team/SKILL.md"
     [ -f "$sk" ] || continue
     if grep -q "$name" "$sk" 2>/dev/null; then

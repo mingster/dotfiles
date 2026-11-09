@@ -15,7 +15,7 @@ Take yesterday's state from PRs, issues and the task list, never from chat memor
 
 Run `/team-audit` only when the user says "team-audit".
 
-Never in the daily run: deploy production without the user's `bin/owner-approve.sh`, roll back, write to production data, message a customer or store, close a ticket, or close an issue as completed without a merged PR (duplicate, already fixed or backlog closures under step 3 are allowed). No personal data in the report.
+Never in the daily run: deploy production without the owner's `bin/owner-approve.sh`, roll back, write to production data, message a customer or store, close a ticket, or close an issue as completed without a merged PR (duplicate, already fixed or backlog closures under step 3 are allowed). No personal data in the report.
 
 ## Reporting
 

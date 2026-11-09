@@ -1,6 +1,6 @@
 # SDLC skill map
 
-Which role owns each SDLC stage and recurring job, which Matt Pocock or team skill it runs, and how the 2026-11-06 team guideline applies them. Read it before changing a role file, the crew or elon skill, `model-routing.md`, a project `daily-run.md` or the Engineering workflow table in `.agents/claude/CLAUDE.md`.
+Which role owns each SDLC stage and recurring job, which Matt Pocock or team skill it runs, and how the 2026-11-06 team guideline applies them. Read it before changing a role file, the elon skill, `model-routing.md`, a project `daily-run.md` or the Engineering workflow table in `.agents/claude/CLAUDE.md`.
 
 ## Two rules for invoking skills in Orca workers
 

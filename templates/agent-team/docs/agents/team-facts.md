@@ -1,6 +1,6 @@
 # Team facts
 
-Product facts read by the generated team skills (`crew`), which hold none themselves. This project owns this file, and project differences from `~/dotfiles/templates/agent-team/docs/agents/team.md` go in `docs/agents/team-facts.md` only. Keep the headings: the skills look values up by heading.
+Product facts read by the generated team skills, which hold none themselves. This project owns this file, and project differences from `~/dotfiles/templates/agent-team/docs/agents/team.md` go in `docs/agents/team-facts.md` only. Keep the headings: the skills look values up by heading.
 
 ## Repository
 
@@ -14,7 +14,7 @@ Product facts read by the generated team skills (`crew`), which hold none themse
 
 ## Checks
 
-* Fast (crew Step 0): `<lint command>` and `<single test command> <file>`.
+* Fast (first check before a PR): `<lint command>` and `<single test command> <file>`.
 * App change (workers and integration): `<lint command>` and `<test command>`, run in `<app folder>`.
 * Documentation only: links, role and branch references, `git diff --check`.
 

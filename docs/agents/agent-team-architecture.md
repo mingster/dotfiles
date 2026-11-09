@@ -147,7 +147,7 @@ The coordinator picks the target host for each task using `~/.claude/state/fleet
 
 - **Admission formula (user 2026-11-04):** admit a new worker on a host when `(1-minute load / CPU cores) < 0.7` and `free memory >= 4 GB`, within that host's worker cap (`host_caps`).
 - **Load band target:** host caps are a ceiling, never a target. Fill an idle host up to its cap before any host with queued work waits, and aim to keep each active host between `0.4` and `0.7` load per core.
-- **Counting active slots:** count PR owners, verifiers, child dispatches and finished committers still holding a pending-push slot (`crew/OPERATIONS.md`).
+- **Counting active slots:** count PR owners, verifiers, child dispatches and finished committers still holding a pending-push slot.
 - **Per-host heavy job admission (`script/heavy-gate.sh`):** Playwright and builds use weight 2 slots; full `tsc` uses measure mode. `script/fleet-watch.py` alerts when a host's 24-hour median slot wait exceeds 2 minutes.
 
 Operational details: [Coordinator operations](coordinator-operations.md) and [Fleet watch](fleet-watch.md).

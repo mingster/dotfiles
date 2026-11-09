@@ -33,46 +33,31 @@ Steps follow pstack `shipping` (with `.agents/skills/orca-adapter/playbooks/ship
 
 Release-manager applies this rule to development and release tests: a failing test counts as noise only with evidence that it passes on one isolated rerun, or fails the same on the last released SHA. Record the test, candidate and released SHAs, commands and matching failure evidence. More than 3 failures in one area blocks the release, even if individually classified as noise. Unproven failures block; never label them noise from an `origin/main` failure alone. This classification does not waive required success statuses or permit retrying a guarded or mutating deploy step.
 
-## status
+## Stage gates
 
-Read only. Per component: the commits of `origin/<dev>`, `origin/<staging branch>` and `origin/<production branch>`, their `deploy/` statuses, how far each is behind the stage before, and what the hosts run when the facts name a host status command. A host running something other than its branch is a finding for the coordinator.
+**status** is read only: per component, the commits of `origin/<dev>`, `origin/<staging branch>` and `origin/<production branch>`, their `deploy/` statuses, how far each is behind the stage before, and what the hosts run when the facts name a host status command. A host running something other than its branch is a finding for the coordinator.
 
-## local
+**local**
+- **Database guard.** Every database URL in the facts' env file must point where the facts allow for local (a local host or a `_test` database). Check with the facts' masking tool or check command; never print the file or its credentials. Anything else stops the stage.
+- A port the stage needs must be free. If the user's dev server holds it, stop and ask the coordinator; never kill it. Preserve an existing worktree with unshipped changes.
+- **Development pass.** The commit carries the facts' development pass status (for example `dev/<component>`) as `success` before any step; otherwise promotion stops and release-manager runs or diagnoses the pass in development (rule 9), first running the facts' dev schema sync preflight when they name one. Never run the unit or regression suites here. A step the facts mark advisory fails the gate only as the facts describe.
+- Local `success` only when every facts local step passed, with what ran in the description.
 
-The commit is the tip of `<dev>` unless the coordinator names another. Work in a throwaway worktree at the candidate (Orca: `orca-cli`); preserve an existing worktree with unshipped changes. Load the env file exactly as the facts say; never print it.
-
-- **Database guard.** Every database URL in that env file (checked where the steps read it) must point where the facts allow for local (a local host or a `_test` database). Check with the facts' masking tool or check command; never print the file or its credentials. Anything else stops the stage.
-- A port the stage needs must be free. If the user's dev server holds it, stop and ask the coordinator; never kill it.
-- **Development pass.** The commit must carry the facts' development pass status (for example `dev/<component>`) as `success` before any step; otherwise stop promotion: release-manager runs or diagnoses the development pass in development, first running the facts' dev schema sync preflight when they name one, and reports the result to the coordinator. The development pass is the pre staging gate of rule 9, not the full regression suite. Never run the unit or regression suites here. Then run the facts' local steps for the component, in order, in the worktree. A step the facts mark advisory fails the gate only as the facts describe.
-- Local `success` only when all passed, with what ran in the description.
-
-## staging
-
-- **Compile changelog fragments first** (by whoever runs this stage). On an up to date `<dev>`, run `bin/changelog-compile.sh`. If a `CHANGELOG.md` changed, commit `chore: compile changelog fragments` on a branch and report it to the coordinator, who publishes and merges through the docs-only mechanical lane; continue once the coordinator reports the merge sha. The compile commit touches only `CHANGELOG.md` and `changelog.d/`, so it needs no fresh local run: for each component deployed, confirm `git diff --name-only <parent>..<compile merge sha>` lists only those paths and the parent (the previous `<dev>` head) has local `success`, then set local `success` on the compile merge commit with the description `changelog compile only, inherits <parent sha>`. It is then the candidate. If the parent has no local success, run `/deploy local` on the compile commit instead.
+**staging**
+- **Changelog first.** Fragments are compiled with `bin/changelog-compile.sh` on an up to date `<dev>`; a changed `CHANGELOG.md` is committed as `chore: compile changelog fragments` and goes through the coordinator on the docs-only mechanical lane. The compile merge commit inherits local `success` (description `changelog compile only, inherits <parent sha>`) only when `git diff --name-only <parent>..<compile merge sha>` lists only `CHANGELOG.md` and `changelog.d/` and the parent has local `success`; otherwise run `/deploy local` on it.
 - The candidate is the newest commit on `<dev>` with local `success`.
-- Follow the facts' staging steps: waiting for the build, the guards, applying staging migrations, the app page that must answer 200 and `/api/build` serving the sha. A failed build or deploy leaves staging on the previous commit: set the staging context to `failure` and report. When the deploy succeeds, set the staging context to `pending` ("deployed, regression and swarm live lanes running") and, in parallel, start the full regression run in development on the same sha (the facts name the host and database). It never holds the deploy.
-- Every mandatory staging gate the facts name must pass first; a failed gate leaves the staging context unset. Send the smoke check message. Set the staging context to `success` only when all of these hold on the same sha: the smoke check passed (`Smoke passed`), the regression run passed, and the swarm live lanes (pstack `swarm` with `.agents/skills/orca-adapter/playbooks/swarm.md`) for that sha has no open P0 or P1 finding (the coordinator reports it). A failed regression or a P0/P1 finding sets `failure` with the failing spec names or issue numbers; it blocks production of that sha only, staging stays on the sha, and the fix lands on `<dev>` as a new candidate. On `success`, send the coordinator `Ready for owner to approve production: [<component>] <sha>, <N> PRs` with the summary below.
+- A failed build or deploy leaves staging on the previous commit and sets the staging context to `failure`. A successful deploy sets it to `pending` ("deployed, regression and swarm live lanes running") and starts the full regression run in development on the same sha (the facts name the host and database); it never holds the deploy.
+- Every mandatory staging gate the facts name passes first; a failed gate leaves the staging context unset.
+- Staging `success` only when all of these hold on the same sha: `Smoke passed`, the regression run passed, and the swarm live lanes (pstack `swarm` with `.agents/skills/orca-adapter/playbooks/swarm.md`) have no open P0 or P1 finding (the coordinator reports it). A failed regression or a P0/P1 finding sets `failure` with the failing spec names or issue numbers; it blocks production of that sha only, staging stays on the sha, and the fix lands on `<dev>` as a new candidate.
+- On `success`, send the coordinator `Ready for owner to approve production: [<component>] <sha>, <N> PRs` with the production summary.
 
-## production
-
-Before asking for go, build the summary for the coordinator to put in the user decision message:
-
-- The commit (`origin/<staging branch>`) and its local and staging statuses. Both must be `success`.
-- `git log --oneline origin/<production branch>..<sha>` (limited to the component folder when the facts give one) and the merged PRs in it.
-- The schema or migration change, using the diff command in the facts. Name any column that would be dropped or retyped, and any migration the user must apply first.
-- What the deploy interrupts, from the facts.
-- Checks on the commit are green (`gh api repos/<repo>/commits/<sha>/check-runs`).
-- Prerequisites: anything a PR in the range needs before or with the deploy (an env value, a secret, a cron line, a server setting). Read each PR's description and deploy notes.
-
-**User go.** Production always needs the user's explicit go for that release; no earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after the coordinator relays the go for that exact commit. When the facts name a user approval script, also give the coordinator the exact command for the user, component and commit filled in, and deploy only after it ran. A rollback needs the user's go too.
-
-**High risk release.** When the facts define a high risk release, follow their rule for it (for example: deploy it alone, user online, the named gates before and after).
-
-**Production prerequisites.** When the facts name a production SQL apply script or secret script and the user's approval covers them (scope in the facts), release-manager runs them itself before moving `<production branch>`: the SQL script dry run first, then without it, one database at a time; the secret script per required key. Only these scripts: never raw SQL or `ssh`, never `owner-approve` or the approval file. The user never runs SQL. Stop on the first failure; never retry a file or write that may have applied. If a guard denies a command, report the deny message to the coordinator; never work around it.
-
-**Host approval preflight.** Before any production host job, when the facts name a user approval, check that it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and is still valid for the expected job length (read only its scope and expiry, never other fields). If it is missing, expired, another scope or shorter than the job, stop before the first ssh and ask the coordinator for a fresh user approval of that scope. The expiry itself stays as the facts set it.
-
-**Deploy.** Only the facts' production command (with the `git push origin <sha>:<production branch>` when the facts list it) and only the overrides the facts allow, when the user said so. Confirm the host runs the commit with the facts' check. Every mandatory production gate the facts name passes before the smoke check; set the production context to `success` only on `Smoke passed`, then tell the coordinator: component, commit, PRs shipped, deploy time.
+**production**
+- **Production summary** for the user decision message: the commit (`origin/<staging branch>`) with local and staging both `success`; `git log --oneline origin/<production branch>..<sha>` (limited to the component folder when the facts give one) and its merged PRs; the schema diff from the facts' command, naming any column that would be dropped or retyped and any migration the user must apply first; what the deploy interrupts, from the facts; green checks (`gh api repos/<repo>/commits/<sha>/check-runs`); prerequisites any PR in the range needs (an env value, a secret, a cron line, a server setting), read from each PR's description and deploy notes.
+- **User go.** Production always needs the user's explicit go for that release; no earlier go, rule or passing check replaces it. Send `Ready for owner to approve production: [<component>] <sha>, <N> PRs` and deploy only after the coordinator relays the go for that exact commit. When the facts name a user approval script, also give the coordinator the exact command for the user, component and commit filled in, and deploy only after it ran. A rollback needs the user's go too.
+- **High risk release.** When the facts define a high risk release, follow their rule for it (for example: deploy it alone, user online, the named gates before and after).
+- **Production prerequisites.** When the facts name a production SQL apply script or secret script and the user's approval covers them (scope in the facts), release-manager runs them itself before moving `<production branch>`: the SQL script dry run first, then without it, one database at a time; the secret script per required key. Only these scripts: never raw SQL or `ssh`, never `owner-approve` or the approval file. The user never runs SQL. Stop on the first failure; never retry a file or write that may have applied. If a guard denies a command, report the deny message to the coordinator; never work around it.
+- **Host approval preflight.** Before any production host job, when the facts name a user approval, check that it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and is still valid for the expected job length (read only its scope and expiry, never other fields). If it is missing, expired, another scope or shorter than the job, stop before the first ssh and ask the coordinator for a fresh user approval of that scope. The expiry itself stays as the facts set it.
+- **Deploy.** Only the facts' production command (with the `git push origin <sha>:<production branch>` when the facts list it) and only the overrides the facts allow, when the user said so. Confirm the host runs the commit with the facts' check. Every mandatory production gate the facts name passes before the smoke check; set the production context to `success` only on `Smoke passed`, then tell the coordinator: component, commit, PRs shipped, deploy time.
 
 ## Release evidence
 - Raw gate logs go only in gitignored `.claude/release-reports/<release-id>/` (they can hold host or environment details); delete the folder once the release reaches production or is superseded. The durable result (summary, gate outcomes, user prerequisites) goes in the release PR or its issue.
@@ -85,13 +70,8 @@ Elon copies these into every release dispatch brief, and release-manager follows
 - Guarded commands keep the literal component and full SHA. No shell variables such as `$S`.
 - Backup and `RESTORE VERIFYONLY` before SQL, the once-only ledger, approval file integrity (record its content hash first) and the exact host SHA with HTTP and mobile evidence all stay required.
 
-## A deploy run by hand
+## Hand deploy and rollback
 
-The host deploy script is the last step of this pipeline, not a way around it; a commit the user deploys directly may have skipped stages. On a hand deploy (the user names the sha, or the host's recorded sha differs from `origin/<production branch>`), release-manager tells the coordinator, records the sha as the production context only after the smoke check passes, and asks the user to approve fast forwarding `<production branch>` to it (the push asks for approval). Until then every smoke check targets the sha that actually runs.
-
-## When production fails
-
-- **Normal:** revert the change on `<dev>` and take the revert through local, staging and production.
-- **Emergency, user approval required:** follow the rollback section of the facts (usually: move `<production branch>` back to the previous commit with a force push, which asks for approval, and redeploy). Blocked when the failed deploy changed the schema in a way the facts say does not reverse: that case goes to the coordinator, who asks the user, with the schema diff.
-
-Report every failure to the coordinator at once with the step, the error and your recommendation.
+- **Hand deploy.** When the user names the sha, or the host's recorded sha differs from `origin/<production branch>`, a stage may have been skipped: tell the coordinator, record the sha as the production context only after the smoke check passes, and ask the user to approve fast forwarding `<production branch>` to it (the push asks for approval). Until then every smoke check targets the sha that actually runs.
+- **Rollback.** Normally a revert on `<dev>` taken through every stage. An emergency rollback follows the facts' rollback section and needs the user's approval; it is blocked when the failed deploy changed the schema in a way the facts say does not reverse, and that case goes to the coordinator, who asks the user, with the schema diff.
+- Report every failure to the coordinator at once with the step, the error and your recommendation.
