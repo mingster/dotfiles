@@ -321,6 +321,8 @@ mkdir -p "$df_seed/script" "$df_seed/.agents/claude" "$df_seed/.agents/skills/td
   "$df_seed/templates/agent-team/.claude/hooks" "$df_seed/templates/agent-team/.claude/bin"
 cp "$root/script/setup-claude-code.sh" "$df_seed/script/setup-claude-code.sh"
 cp "$root/script/setup-agent-skills.sh" "$df_seed/script/setup-agent-skills.sh"
+mkdir -p "$df_seed/script/lib"
+cp "$root/script/lib/dotfiles-source.sh" "$df_seed/script/lib/dotfiles-source.sh"
 printf '# claude\n' >"$df_seed/.agents/claude/CLAUDE.md"
 printf '{"template_settings":true}\n' >"$df_seed/.agents/claude/settings.json"
 printf '# tdd\n' >"$df_seed/.agents/skills/tdd/SKILL.md"
