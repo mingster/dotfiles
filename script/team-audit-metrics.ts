@@ -117,10 +117,12 @@ export function computeMetrics(data: Data, days = 7, dispatches: Map<number, str
   return out;
 }
 
-export function parseDispatches(text: string): Map<number, string> {
+// Rows are issue<TAB>dispatched_at, optionally followed by <TAB>owner/repo (legacy rows have no repo).
+export function parseDispatches(text: string, repo?: string): Map<number, string> {
   const out = new Map<number, string>();
   for (const line of text.split("\n").slice(1)) {
-    const [issue, at] = line.split("\t").map((x) => x?.trim());
+    const [issue, at, rowRepo] = line.split("\t").map((x) => x?.trim());
+    if (repo && rowRepo && rowRepo.toLowerCase() !== repo.toLowerCase()) continue;
     const n = Number(issue);
     if (!Number.isInteger(n) || !at || !Number.isFinite(Date.parse(at))) continue;
     const prev = out.get(n);
@@ -216,7 +218,7 @@ function main(argv: string[]): number {
   try {
     const data = fixture ? (JSON.parse(readFileSync(fixture, "utf8")) as Data) : fetchData(repo as string, days);
     const log = opt("--dispatches");
-    const metrics = computeMetrics(data, days, log ? parseDispatches(readFileSync(log, "utf8")) : new Map());
+    const metrics = computeMetrics(data, days, log ? parseDispatches(readFileSync(log, "utf8"), repo) : new Map());
     if (argv.includes("--json")) console.log(JSON.stringify(metrics, null, 2));
     else for (const [k, v] of Object.entries(metrics)) console.log(`${k}=${v}`);
     return 0;
