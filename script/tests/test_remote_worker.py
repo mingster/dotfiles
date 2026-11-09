@@ -1,6 +1,7 @@
 """Remote launch boundary: execute preflight in a disposable target environment."""
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -44,9 +45,8 @@ elif a[:2] == ['terminal', 'create']:
     if os.environ.get('CREATE_MODE') == 'fail':
         print('Orca server unreachable', file=sys.stderr)
         sys.exit(1)
-    # The real terminal runs the command in the user's shell (bash or zsh), not POSIX sh.
-    # Hosted Linux runners have dash as /bin/sh, which rejects the ${1/#...} in the preflight.
-    code = subprocess.run(['/bin/bash', '-c', value('--command')],
+    # The remote user's shell is unknown (bash, zsh or dash as /bin/sh), so the preflight must be POSIX: run it under dash.
+    code = subprocess.run([os.environ['REMOTE_SHELL'], '-c', value('--command')],
                           env=dict(os.environ, HOME=str(home), PATH=str(home / 'bin'))).returncode
     (home / 'exit').write_text(str(code))
     reply({'terminal': {'handle': 'term_fixture'}})
@@ -65,7 +65,7 @@ else: sys.exit(99)
         self.gate = self.home / 'gate.py'
         self.gate.write_text('import sys\nsys.exit(0)\n')
         self.env = dict(os.environ, ORCA_CLI_COMMAND=str(stub), REMOTE_FIXTURE=str(self.home),
-                        USAGE_GATE_CLI=str(self.gate))
+                        USAGE_GATE_CLI=str(self.gate), REMOTE_SHELL=shutil.which('dash') or '/bin/sh')
 
     def launch(self, agent='antigravity', worktree='path:/srv/fixture'):
         return subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'),
@@ -112,6 +112,21 @@ else: sys.exit(99)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('pull', (self.home / 'git-calls').read_text())
         self.assertTrue((self.home / 'preset-linked').exists())
+
+    def test_tilde_remote_repo_expands_to_the_remote_home(self):
+        (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'agy').chmod(0o700)
+        (self.bin / 'git').write_text('#!/bin/sh\necho "$@" >> "$HOME/git-calls"\nexit 0\n')
+        (self.bin / 'git').chmod(0o700)
+        (self.home / 'app').mkdir()
+        # fleet-pull.json lists repos as typed, tilde included.
+        (self.bin / 'jq').write_text('#!/bin/sh\necho "~/app"\n')
+        (self.bin / 'jq').chmod(0o700)
+        (self.home / 'agent-state').mkdir()
+        (self.home / 'agent-state/fleet-pull.json').write_text('{}')
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'-C {self.home}/app pull', (self.home / 'git-calls').read_text())
 
     def test_failed_dotfiles_pull_refuses_dispatch(self):
         (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
