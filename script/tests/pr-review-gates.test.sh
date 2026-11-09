@@ -32,6 +32,7 @@ if [ "${1:-} ${2:-}" = "orchestration worker-show" ]; then
   exit 0
 fi
 if [ "${1:-} ${2:-}" = "orchestration worker-list" ]; then
+  [ -n "${PRG_FAKE_WORKERS:-}" ] && { cat "$PRG_FAKE_WORKERS"; exit 0; }
   echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_slug_builder","agent":"claude","workspace":"repo::'"$tmp"'/dot-760"}],"nextCursor":null}}'
   exit 0
 fi
@@ -156,6 +157,31 @@ if [ "$pair" = $'claude\tclaude-sonnet-5-5-medium' ]; then
   ok "worker-startup launch record resolves agent/model"
 else
   bad "startup launch record ($pair)"
+fi
+
+# 10. author=unknown: checked-out branch in the PR's repo beats a same-named worktree in another repo (#771).
+other_wt="$tmp/other/dot-771"
+right_wt="$tmp/right/wt-abc"
+mkdir -p "$other_wt" "$right_wt"
+git -C "$other_wt" init -q
+git -C "$other_wt" remote add origin git@github.com:someone/elsewhere.git
+git -C "$right_wt" init -q
+git -C "$right_wt" remote add origin https://github.com/Mingster/Dotfiles.git
+git -C "$right_wt" checkout -q -b mingster/dot-771 2>/dev/null || git -C "$right_wt" switch -q -c mingster/dot-771
+jq -n --arg o "repo::$other_wt" --arg r "repo::$right_wt" \
+  '{ok:true,result:{workers:[{dispatchId:"ctx_other_repo",workspace:$o},{dispatchId:"ctx_right_repo",workspace:$r}],nextCursor:null}}' \
+  >"$tmp/workers-771.json"
+if PRG_FAKE_WORKERS="$tmp/workers-771.json" pr_review_gates_resolve_builder_dispatch unknown mingster/dot-771 refuse mingster/dotfiles \
+  && [ "${PRG_BUILDER_DISPATCH:-}" = ctx_right_repo ]; then
+  ok "unknown author prefers checked-out branch in the PR repo"
+else
+  bad "checked-out branch in PR repo (${PRG_BUILDER_DISPATCH:-missing})"
+fi
+git -C "$right_wt" checkout -q -b other-branch
+if PRG_FAKE_WORKERS="$tmp/workers-771.json" pr_review_gates_resolve_builder_dispatch unknown mingster/dot-771 refuse mingster/dotfiles 2>/dev/null; then
+  bad "name match in another repo must not resolve (${PRG_BUILDER_DISPATCH:-})"
+else
+  ok "unknown author ignores a same-named worktree in another repo"
 fi
 
 echo "passed $pass failed $fail"

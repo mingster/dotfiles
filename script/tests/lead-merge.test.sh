@@ -11,10 +11,12 @@ LEAD="$HOME/orca/workspaces/proj/lead-x"
 
 REAL_GIT=$(command -v git); export REAL_GIT
 export GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null  # offline: local paths only
-# git stub: rev-parse --show-toplevel prints $FAKE_TOP.
+# git stub: rev-parse --show-toplevel prints $FAKE_TOP; remote get-url origin prints o/r.
 cat > "$tmp/bin/git" <<'EOS'
 #!/usr/bin/env bash
 [ "$1" = rev-parse ] && [ "${2:-}" = --show-toplevel ] && { echo "$FAKE_TOP"; exit 0; }
+# Builder worktree origin (pr-review-gates scopes author=unknown to the PR repo).
+[[ "$*" == *"remote get-url origin" ]] && { echo "https://github.com/o/r.git"; exit 0; }
 [ -z "${REAL_PATCH_REPO:-}" ] || exec "$REAL_GIT" -C "$REAL_PATCH_REPO" "$@"
 case "$1" in
   cat-file|fetch) exit 0 ;;
