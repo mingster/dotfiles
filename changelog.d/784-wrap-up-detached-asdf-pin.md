@@ -1,1 +1,1 @@
-- The wrap-up-detached test pins asdf before it changes HOME, so asdf-pin-coverage passes again (#784).
+Fix wrap-up-detached.test.sh: pin asdf before it changes HOME, so asdf-pin-coverage.test.sh passes again.
