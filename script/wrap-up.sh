@@ -928,7 +928,7 @@ terminal_dispatches() {
   : > "$tmp/h-workers"
   : > "$tmp/h-coordinators"
   : > "$tmp/h-release-rows"
-  if ! "$orca" environment list --json > "$tmp/envs" 2>/dev/null || ! jq -e '.result.environments | type == "array"' "$tmp/envs" >/dev/null 2>&1; then
+  if ! "$orca" environment list --json > "$tmp/envs" 2>/dev/null || ! jq -e '.ok != false and (.result.environments | type == "array") and (.result.truncated != true)' "$tmp/envs" >/dev/null 2>&1; then
     echo 'Warning: Orca environment list unavailable; closing no terminals.' >&2; return 1
   fi
   read_dispatches '' || return 1
