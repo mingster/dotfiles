@@ -9,7 +9,7 @@ Skills are split into three tiers so general engineering skills load everywhere 
 | Tier | What | Canonical source | How a project sees it |
 | --- | --- | --- | --- |
 | **Tier 1: General** | 22 vendored Matt Pocock skills (`.agents/skills/.mattpocock-upstream`), dotfiles shared skills (`agent-browser`, `capture-intent`, `create-pr`, `laravel-inertia-react-structure`, `orca-team`, `write-spec`), and Orca-installed skills (`orchestration`, `orca-cli`, `orca-per-workspace-env`, `orca-computer-use`, `orca-emulator`, `orca-emulator-android`, `orca-jira`, `orca-linear`, `jira-tickets`, `linear-tickets`) | `~/dotfiles/.agents/skills/<name>/` (tracked) and `orca skills install --all` (untracked in home skill dirs) | Individual symlinks in `~/.agents/skills/<name>` and `~/.claude/skills/<name>` created by `script/setup-agent-skills.sh` (`install.sh`). No project copy. |
-| **Tier 2: Team** | Team workflow skills (`elon`, `ceo`, `crew`, `deploy`, `staging-review`, `grill-backlog`, `team-grill-backlog`, `team-audit`, `wrap-up`) and vendored pstack skills (`poteto-mode` with `ORCA-ADAPTER.md` and playbooks, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop`, `bro`, `benchmark-checklist`, and the 23 `principle-*` skills) | `~/dotfiles/templates/agent-team/.agents/skills/<name>/` | Committed generated copies in `<project>/.agents/skills/<name>/` with relative links in `<project>/.claude/skills/` and `<project>/.cursor/skills/`, written by `script/agent-team.sh sync`. |
+| **Tier 2: Team** | Team workflow skills (`elon`, `ceo`, `crew`, `deploy`, `staging-review`, `grill-backlog`, `team-grill-backlog`, `team-audit`, `wrap-up`) and vendored pstack skills (`poteto-mode` with `ORCA-ADAPTER.md` and playbooks, `ketchup`, `recall`, `show-me-your-work`, `correct`, `unslop`, `bro`, `benchmark-checklist`, and the 23 `principle-*` skills) | `~/dotfiles/templates/agent-team/.agents/skills/<name>/` | Not copied into a project. Linked on each machine into `~/.claude/skills` and `~/.agents/skills` by `script/setup-agent-skills.sh`. `agent-team.sh check` reports a copy or link in a project as drift. |
 | **Tier 3: Project** | Product-specific skills (for example `action-scaffold`, `e2e-test-scaffold`, `i18n-sync`, `payment-plugin`, `store-admin-crud` in <project-a>; `roku-qa`, `jellyfin-web-port`, `paypal-webhooks` in <project-b>) | `<project>/.agents/skills/<name>/`, tracked in that repo | Tracked relative symlinks `.claude/skills/<name>` and `.cursor/skills/<name>` pointing to `../../.agents/skills/<name>`. |
 
 Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load into unrelated repositories on the Mac. Product facts never live inside Tier 2 skills; they live in the project's `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md` and `docs/agents/daily-run.md`.
@@ -22,17 +22,16 @@ Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load i
 | **Cursor** | `~/.claude/skills` and `~/.agents/skills` | `<repo>/.cursor/skills` | No `~/.cursor/skills` link in `$HOME` (would list every shared skill twice). |
 | **Antigravity** | `~/.gemini/antigravity/skills` and `~/.gemini/antigravity-cli/skills` (linked by `script/setup-antigravity.sh`) | `<repo>/.agent/skills` (relative link to `../.agents/skills`) | Hides `disable-model-invocation` skills until named in the prompt or via `/skill-name`. |
 
-## Syncing Tier 2 team skills (`script/agent-team.sh sync`)
+## Tier 2 team skills and `script/agent-team.sh`
 
 ```bash
 ~/dotfiles/script/agent-team.sh sync [<project-root>]
 ~/dotfiles/script/agent-team.sh check [<project-root> ...]
 ```
 
-* Copies every directory with a `SKILL.md` under `templates/agent-team/.agents/skills/` into `<project>/.agents/skills/<name>/` and writes relative links in `.claude/skills/<name>` and `.cursor/skills/<name>`.
-* Stamps each copied `SKILL.md` immediately after its frontmatter with `<!-- Generated from dotfiles templates/agent-team/.agents/skills/<name> by script/agent-team.sh, do not edit. ... source-sha256: <hash> -->`.
-* `check` writes nothing and exits 1 when a copy is missing, a file differs, an extra file is present, a link is missing, or a retired template skill still lingers in the project. `script/team-audit.sh` runs `check` on every audited project.
-* Refuses to overwrite a hand-written skill directory (no stamp) without `--force`, and refuses `$HOME` or the dotfiles checkout so it can never write into the Tier 1 tree.
+* `script/setup-agent-skills.sh` (`link_skill`) links each Tier 2 skill from `templates/agent-team/.agents/skills/` into `~/.claude/skills` and `~/.agents/skills`.
+* `sync` runs project mode, whose `remove_legacy_copies` removes Tier 2 skill copies and links from `<project>/.agents/skills`, `.claude/skills` and `.cursor/skills`.
+* `check` writes nothing and reports drift in `run_check`, including any Tier 2 skill copy or link in the project and any stale generated copy. `script/team-audit.sh` runs `check` on every audited project.
 
 ## Orca owns `orchestration`; dotfiles owns `orca-team`
 

@@ -168,7 +168,7 @@ Every provider is driven through Orca orchestration (`orca orchestration worker-
 | **Cursor** | Spec says read `<repo root>/.claude/agents/<role>.md` first, plus `.cursor/rules/` | Effort is in the model id (`composer-2.5`, `grok-4.7-high`). Start via `script/start-cursor-worker.sh` (or `script/worker-startup.sh`) to pre-write `.workspace-trusted`. |
 | **Antigravity** | Spec says read `<repo root>/.claude/agents/<role>.md` first, plus `AGENTS.md` and `.agents/skills/` | Effort is in the model id (`gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-3.8-flash`). Local host only until remote attach is supported. |
 
-Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role boundaries on every provider (every role change requires human owner review and an `Owner-approved:` commit trailer). Skills come in three tiers: Tier 1 general skills from `~/dotfiles/.agents/skills/`, Tier 2 generated team skills from `~/dotfiles/templates/agent-team/.agents/skills/` via `script/agent-team.sh sync`, and Tier 3 project-specific skills. Details: [Skills inventory](skills-inventory.md).
+Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role boundaries on every provider (every role change requires human owner review and an `Owner-approved:` commit trailer). Skills come in three tiers: Tier 1 general skills from `~/dotfiles/.agents/skills/`, Tier 2 team skills from `~/dotfiles/templates/agent-team/.agents/skills/` linked on each machine by `script/setup-agent-skills.sh`, and Tier 3 project-specific skills. Details: [Skills inventory](skills-inventory.md).
 
 ## 9. Tools
 
@@ -184,4 +184,4 @@ Full per-tool reference table: [Agent team reference](team-reference.md).
 
 ## 10. Shared and per project
 
-The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled-in copies (`docs/agents/team.md`, `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are generated copies: edit `templates/agent-team/.agents/skills/` and run `script/agent-team.sh sync <project>`; `check` fails on drift. `script/weekly-update.sh` keeps upstream Matt Pocock skills, pstack skills, Bun and Node LTS pins current across three tested PRs for owner review.
+The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled-in copies (`docs/agents/team.md`, `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are not copied into a project: edit `templates/agent-team/.agents/skills/`, and machines read them through links from `script/setup-agent-skills.sh`. `agent-team.sh sync <project>` removes any older copy, and `agent-team.sh check` reports one as drift. `script/weekly-update.sh` keeps upstream Matt Pocock skills, pstack skills, Bun and Node LTS pins current across three tested PRs for owner review.
