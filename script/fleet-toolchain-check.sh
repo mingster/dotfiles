@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Report fleet hosts whose tools are missing or differ from the coordinator, and the coordinator
 # when it is below the latest release. Peers follow the coordinator, never the fleet maximum.
-# Reuses .tool-versions via bootstrap-asdf-tools for node and python; warns on orca (manual install only).
+# Reuses .tool-versions via bootstrap-asdf-tools for node and python.
+# --apply upgrades Orca to the coordinator's version (latest on the coordinator) on a host with no live
+# claude, codex, agent or agy process, because the upgrade restarts Orca; a busy host is reported as skipped.
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
 # Config: FLEET_PULL_CONFIG or fleet-pull.config.json (same hosts as fleet-pull).
-# Tests: FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_NODE_INDEX (path), FLEET_TOOLCHAIN_VERSIONS (json).
+# Tests: FLEET_ORCA_APP (Orca.app path), FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_NODE_INDEX (path), FLEET_TOOLCHAIN_VERSIONS (json).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=script/lib/find-orca-dir.sh disable=SC1091
@@ -215,7 +217,6 @@ floor_for() { # <tool>
 }
 
 rc=0
-orca_gaps=0
 
 check_host() { # <host>
   local h=$1 st have need floor t
@@ -230,13 +231,11 @@ check_host() { # <host>
       missing)
         echo "fleet-toolchain-check: $h $t missing" >&2
         rc=1
-        [ "$t" = orca ] && orca_gaps=1
         continue
         ;;
       unreadable | "")
         echo "fleet-toolchain-check: $h $t version unreadable" >&2
         rc=1
-        [ "$t" = orca ] && orca_gaps=1
         continue
         ;;
       ok\ *)
@@ -255,11 +254,9 @@ check_host() { # <host>
     if same_host "$h" "$baseline_host" || [ -z "$floor" ]; then
       if [ -n "$need" ] && older "$have" "$need"; then
         echo "fleet-toolchain-check: $h $t $have is below latest $need"
-        [ "$t" = orca ] && orca_gaps=1
       fi
     elif older "$have" "$floor"; then
       echo "fleet-toolchain-check: $h $t $have is below $baseline_host $floor"
-      [ "$t" = orca ] && orca_gaps=1
     elif older "$floor" "$have"; then
       echo "fleet-toolchain-check: $h $t $have is above $baseline_host $floor"
     fi
@@ -284,8 +281,20 @@ peer_pin() { # <host> <tool> -> coordinator version for a peer below it, "keep" 
   fi
 }
 
-apply_shell() { # <claude pin> <bun pin> <dotfiles path on the target>
-  local claude_pin=$1 bun_pin=$2 dot=$3
+orca_target() { # <host> -> the Orca version to install, empty when the host is current or has no Orca
+  local h=$1 have pin
+  have=$(host_tool_ver "$h" orca)
+  [ -n "$have" ] || return 0
+  pin=$(peer_pin "$h" orca)
+  case "$pin" in
+    keep) ;;
+    '') [ -n "$want_orca" ] && older "$have" "$want_orca" && printf '%s\n' "$want_orca" ;;
+    *) printf '%s\n' "$pin" ;;
+  esac
+}
+
+apply_shell() { # <claude pin> <bun pin> <dotfiles path on the target> <orca target>
+  local claude_pin=$1 bun_pin=$2 dot=$3 orca_to=$4
   cat <<EOS
 [ -n "\${ZSH_VERSION:-}" ] && emulate -L sh
 export PATH="\${FLEET_TOOLCHAIN_PATH:-\$HOME/.local/bin:\$HOME/.bun/bin:\${ASDF_DATA_DIR:-\$HOME/.asdf}/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH}"
@@ -295,6 +304,7 @@ try() { # <label> <command...>: print the label and the last output line when th
   if ! err=\$("\$@" 2>&1); then
     last=\$(printf '%s\n' "\$err" | sed '/^[[:space:]]*\$/d' | tail -1)
     echo "__apply_failed__ \$label failed: \${last:-no output}"
+    return 1
   fi
 }
 if command -v brew >/dev/null 2>&1; then
@@ -324,7 +334,63 @@ elif command -v cursor-agent >/dev/null 2>&1; then
   try "cursor-agent update" env AGENT_CLI_CREDENTIAL_STORE=file cursor-agent update
 fi
 command -v agy >/dev/null 2>&1 && try "agy update" agy update
-orca_bin="\${FLEET_ORCA_APP_BIN:-\${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}}/orca"
+orca_app="\${FLEET_ORCA_APP:-/Applications/_dev/Orca.app}"
+orca_mac() { # <version>: replace Orca.app from the release zip, putting the old one back on failure, and reopen it
+  case "\$(uname -m)" in arm64) asset="Orca-\$1-arm64-mac.zip" ;; *) asset="Orca-\$1-mac.zip" ;; esac
+  [ -d "\$orca_app" ] || { echo "no \$orca_app"; return 1; }
+  dl=\$(mktemp -d) || return 1
+  curl -fsSL -o "\$dl/orca.zip" "https://github.com/stablyai/orca/releases/download/v\$1/\$asset" &&
+    ditto -x -k "\$dl/orca.zip" "\$dl" || { rm -rf "\$dl"; return 1; }
+  [ -d "\$dl/Orca.app" ] || { rm -rf "\$dl"; echo "no Orca.app in \$asset"; return 1; }
+  running=0
+  if pkill -f "\$orca_app/Contents/MacOS/"; then
+    running=1
+    n=0
+    while pgrep -f "\$orca_app/Contents/MacOS/" >/dev/null && [ "\$n" -lt 30 ]; do sleep 1; n=\$((n + 1)); done
+  fi
+  rm -rf "\$orca_app.old"
+  ok=0
+  if ! { mv "\$orca_app" "\$orca_app.old" && mv "\$dl/Orca.app" "\$orca_app"; }; then
+    [ -d "\$orca_app" ] || mv "\$orca_app.old" "\$orca_app"
+    echo "could not replace \$orca_app"
+    ok=1
+  fi
+  rm -rf "\$orca_app.old" "\$dl"
+  [ "\$running" = 0 ] || open -g "\$orca_app"
+  return "\$ok"
+}
+orca_arch() { # <version>: install stably-orca-bin, only when the AUR has exactly this version
+  aur=\$(yay -Si stably-orca-bin 2>/dev/null | awk -F': *' '/^Version/ { sub(/-[^-]*\$/, "", \$2); print \$2; exit }')
+  [ "\$aur" = "\$1" ] || { echo "AUR has \${aur:-nothing}"; return 1; }
+  yay -S --noconfirm --needed stably-orca-bin
+}
+inside_orca() { # true when this script runs under an Orca process, which the upgrade would kill
+  p=\$\$
+  while :; do
+    case "\$p" in '' | *[!0-9]* | 0 | 1) return 1 ;; esac
+    case "\$(ps -o comm= -p "\$p" 2>/dev/null)" in *[Oo]rca*) return 0 ;; esac
+    p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ')
+  done
+}
+if [ -n '$orca_to' ]; then
+  # Claude renames its process to its version, so match the first word of the command line too
+  live=\$({ ps -A -o comm=; ps -A -o args= | awk '{ print \$1 }'; } 2>/dev/null | sed 's#.*/##' |
+    grep -xE 'claude|codex|agent|agy' | sort -u | tr '\n' ' ')
+  up=
+  if [ -n "\$live" ]; then
+    echo "__orca_skipped__ live agents: \${live% }"
+  elif inside_orca; then
+    echo "__orca_skipped__ running inside Orca"
+  else
+    case "\$(uname -s)" in
+      Darwin) up=orca_mac ;;
+      Linux) if command -v yay >/dev/null 2>&1; then up=orca_arch; else echo "__orca_skipped__ no yay on this host"; fi ;;
+      *) echo "__orca_skipped__ no upgrade path for \$(uname -s)" ;;
+    esac
+  fi
+  [ -n "\$up" ] && try "orca upgrade $orca_to" "\$up" '$orca_to' && echo "__orca_upgraded__ $orca_to"
+fi
+orca_bin="\${FLEET_ORCA_APP_BIN:-\${WRAP_UP_ORCA_APP_BIN:-\$orca_app/Contents/Resources/bin}}/orca"
 [ -x "\$orca_bin" ] || orca_bin=\$(command -v orca 2>/dev/null || true)
 [ -n "\$orca_bin" ] && try "orca skills install" "\$orca_bin" skills install --all
 true
@@ -342,7 +408,7 @@ if [ "$apply" -eq 1 ]; then
         "$HOME"/*) dot="\$HOME${dotfiles#"$HOME"}" ;;
       esac
     fi
-    script=$(apply_shell "$(peer_pin "$h" claude)" "$(peer_pin "$h" bun)" "$dot")
+    script=$(apply_shell "$(peer_pin "$h" claude)" "$(peer_pin "$h" bun)" "$dot" "$(orca_target "$h")")
     apply_rc=0
     if same_host "$h" "$me"; then
       out=$(bash -c "$script" 2>"$probe_dir/apply-err") || apply_rc=$?
@@ -356,6 +422,8 @@ if [ "$apply" -eq 1 ]; then
           echo "fleet-toolchain-check: $h apply: ${line#__apply_failed__ }"
           rc=1
           ;;
+        __orca_skipped__\ *) echo "fleet-toolchain-check: $h apply: orca upgrade skipped, ${line#__orca_skipped__ }" ;;
+        __orca_upgraded__\ *) echo "fleet-toolchain-check: $h apply: orca upgraded to ${line#__orca_upgraded__ }" ;;
       esac
     done <<<"$out"
     if [ "$apply_rc" -ne 0 ]; then
@@ -364,11 +432,6 @@ if [ "$apply" -eq 1 ]; then
       rc=1
     fi
   done
-  if [ "$orca_gaps" -eq 1 ]; then
-    echo "fleet-toolchain-check: orca upgrade is manual"
-  else
-    echo "fleet-toolchain-check: orca is manual (no self-update CLI)"
-  fi
 fi
 
 exit "$rc"
