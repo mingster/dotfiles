@@ -1713,7 +1713,30 @@ def check_worker_start(args, script=False):
     check_brief_lint(brief)
 
 
+TEST_IDENTITY = "test@example.invalid"
+
+
+def check_test_identity(base, args):
+    """Refuse a commit or push signed as the test suites' identity outside a temp checkout (#844)."""
+    if base != "git":
+        return
+    verb, _ = git_verb(args)
+    if verb not in ("commit", "push"):
+        return
+    root = (gate_run(["git", "rev-parse", "--show-toplevel"], None) or "").strip()
+    if not root:
+        return
+    temp = os.path.realpath(tempfile.gettempdir())
+    if os.path.realpath(root).startswith(temp + os.sep):
+        return
+    idents = " ".join(gate_run(["git", "var", name], None) or "" for name in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"))
+    if TEST_IDENTITY in idents or TEST_IDENTITY in RAW_COMMAND:
+        deny(f"Git identity {TEST_IDENTITY} belongs to the test suites and is refused for real commits and pushes. "
+             "Unset GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL (and any `-c user.email=`), or fix `git config user.email`, then retry.")
+
+
 def check_team_gates(base, args):
+    check_test_identity(base, args)
     check_role_file_gate(base, args)
     if base == "orca" and args[:2] == ["orchestration", "worker-start"]:
         check_worker_start(args)

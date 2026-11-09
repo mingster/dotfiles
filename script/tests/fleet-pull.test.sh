@@ -15,8 +15,9 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
+# shellcheck source=lib/git-identity.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-identity.sh"
+use_test_git_identity "$tmp"
 
 make_repo() { # <workdir> <bare.git>
   rm -rf "$1" "$2"

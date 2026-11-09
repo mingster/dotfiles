@@ -7,8 +7,9 @@ root=$(cd "$(dirname "$0")/../.." && pwd -P)
 . "$root/script/tests/lib/asdf-pin.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# shellcheck source=lib/git-identity.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-identity.sh"
+use_test_git_identity "$work"
 pass=0 fail=0
 
 mkdir -p "$work/bin" "$work/script" "$work/home/.claude/state" "$work/cwd"

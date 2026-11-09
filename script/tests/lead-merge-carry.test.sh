@@ -6,7 +6,9 @@ eval "$(sed -n '/^carry_why=""$/,/^verdict_carry() {/p' "$here/lead-merge.sh" | 
 eval "$(sed -n '/^verdict_carry() {/,/^}$/p' "$here/lead-merge.sh")"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# shellcheck source=lib/git-identity.sh
+. "$here/tests/lib/git-identity.sh"
+use_test_git_identity "$tmp"
 git init -q -b main . && git commit -q --allow-empty -m base
 git checkout -q -b pr && echo feature > feature.txt && git add feature.txt && git commit -q -m feature
 V=$(git rev-parse HEAD)

@@ -16,7 +16,9 @@ mf_setup() {
   echo '{"terminals":[]}' > "$MF_ORCA_DIR/terminals.json"
   export MF_DIR MF_REPO MF_ORIGIN MF_BIN MF_GH_DIR MF_ORCA_DIR MF_GH_LOG MF_ORCA_LOG MF_REAL_GIT
   export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL=file
-  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  # shellcheck source=git-identity.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-identity.sh"
+  use_test_git_identity "$MF_DIR"
 
   "$MF_REAL_GIT" init -q --bare -b main "$MF_ORIGIN"
   "$MF_REAL_GIT" init -q -b main "$MF_REPO"

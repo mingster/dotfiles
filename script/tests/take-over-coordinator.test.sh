@@ -17,7 +17,9 @@ if ! grep -q 'coordinator refused' "$src/sync.sh" 2>/dev/null; then
 fi
 base=$(mktemp -d)
 trap 'rm -rf "$base"' EXIT
-export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+# shellcheck source=lib/git-identity.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-identity.sh"
+use_test_git_identity "$base"
 pass=0 fail=0
 DESC=
 check() { if "$@"; then pass=$((pass + 1)); echo "ok   $DESC"; else fail=$((fail + 1)); echo "FAIL $DESC"; fi; }
