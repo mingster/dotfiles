@@ -326,5 +326,36 @@ blank_case() { # <pr> <branch> <empty|whitespace>
 blank_case 14 feat-empty empty
 blank_case 15 feat-ws whitespace
 
+# Red main: refuses and names the run, unless the PR body says it fixes that run.
+red_main_case() { # <pr> <branch> <body-line or empty> <expect: refuse|ship>
+  local n=$1 b=$2 line=$3 expect=$4 h
+  mf_pr_add "$n" "$b" "Body"
+  if [ -n "$line" ]; then
+    jq --arg l "$line" '.body += "\n" + $l' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  fi
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$h"
+  echo '{"databaseId":777,"conclusion":"failure","url":"https://example.test/runs/777"}' > "$MF_GH_DIR/main-run.json"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  rm -f "$MF_GH_DIR/main-run.json"
+  if [ "$expect" = refuse ]; then
+    if [ "$SHIP_RC" -ne 0 ] && grep -Fq "https://example.test/runs/777" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+      ok "red main refuses and names the run"
+    else
+      bad "red main refuses and names the run" "rc=$SHIP_RC out=$SHIP_OUT"
+    fi
+  elif [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then
+    ok "PR that fixes the red main run ships"
+  else
+    bad "PR that fixes the red main run ships" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
+}
+red_main_case 16 feat-red-main "" refuse
+red_main_case 17 feat-red-wrong-run "Fixes main: 778" refuse
+red_main_case 18 feat-fix-main "Fixes main: 777" ship
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -120,6 +120,8 @@ case "$cmd" in
   "pr edit") [ -n "$base" ] && save ".baseRefName = \"$base\"" ;;
   "pr list")
     jq -s --arg b "${base:-}" '[.[] | select(.state=="OPEN" and ($b=="" or .baseRefName==$b)) | {number}]' "$MF_GH_DIR"/pr-*.json ;;
+  "run list") # latest Checks run on main: $MF_GH_DIR/main-run.json holds one run object, green when absent
+    if [ -f "$MF_GH_DIR/main-run.json" ]; then jq -s '.' "$MF_GH_DIR/main-run.json"; else echo '[{"databaseId":1,"conclusion":"success","url":"https://example.test/runs/1"}]'; fi ;;
   "pr diff") jq -r '.files[].path' "$file" ;;
   "pr merge")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }

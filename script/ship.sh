@@ -41,6 +41,16 @@ jq -e 'all((.statusCheckRollup // [])[] | select((.isRequired // true) != false)
   ((.status // "COMPLETED") == "COMPLETED") and ((.conclusion // .state // "") == "SUCCESS"))' <<<"$info" >/dev/null \
   || refuse "required checks are not all SUCCESS at head ${head:0:12}"
 
+# 2b. The latest finished Checks run on main is SUCCESS, unless this PR names that run as the one it fixes.
+main_run=$(gh run list --repo "$repo" --workflow Checks --branch main --status completed --limit 1 \
+  --json databaseId,conclusion,url) || refuse "cannot read the latest Checks run on main"
+main_run=$(jq -c '.[0] // empty' <<<"$main_run")
+if [ -n "$main_run" ] && [ "$(jq -r .conclusion <<<"$main_run")" != success ]; then
+  main_run_id=$(jq -r .databaseId <<<"$main_run")
+  grep -Eq "^Fixes main: $main_run_id\$" <<<"$(field .body)" \
+    || refuse "latest Checks run on main is $(jq -r .conclusion <<<"$main_run"): $(jq -r .url <<<"$main_run"); fix main first, or put 'Fixes main: $main_run_id' on its own line in the PR body"
+fi
+
 main_fetched=false
 patch_id() { # <sha>
   local sha=$1 base
