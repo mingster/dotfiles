@@ -84,7 +84,7 @@ keep_lines() { grep '^keep ' <<<"$1" | sort; }
 
 # 4. Dry run and real run agree: both scan the settings the run ends with, so legacy
 #    $CLAUDE_PROJECT_DIR commands the run replaces keep nothing.
-P4="$TMP/riben"
+P4="$TMP/projB"
 mkproj "$P4"
 for f in strikes.py worker-budget.py; do printf 'import sys\nsys.exit(0)\n' > "$P4/.claude/hooks/$f"; done
 printf '# Session\n' > "$P4/.claude/hooks/session-start.md"
