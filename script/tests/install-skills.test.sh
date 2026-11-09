@@ -16,7 +16,9 @@ git -C "$ROOT" worktree add -q --detach "$wt" HEAD
 cp "$ROOT/install.sh" "$wt/install.sh"
 rc=0; DOTFILES_REAL_HOME="$HOME" DOTFILES_SKIP_SYSTEM_SETUP=1 bash "$wt/install.sh" >"$TEST_ROOT/wt.log" 2>&1 || rc=$?
 git -C "$ROOT" worktree remove --force "$wt"
-[ "$rc" = 1 ] && grep -q 'linked worktree' "$TEST_ROOT/wt.log" && [ ! -e "$HOME/dotfiles" ] || { echo "FAIL: worktree install touched the real home"; cat "$TEST_ROOT/wt.log"; exit 1; }
+main_checkout=$(dirname "$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)")
+[ "$rc" = 1 ] && grep -q "linked worktree; run it from the main checkout $main_checkout," "$TEST_ROOT/wt.log" \
+  && [ -z "$(ls -A "$HOME")" ] || { echo "FAIL: worktree install touched the real home"; cat "$TEST_ROOT/wt.log"; exit 1; }
 echo 'PASS: linked worktree refuses the real home'
 # install.sh ends with setup-check.sh, which exits 1 when host tooling is missing (clean HOME).
 # Tolerate that readiness report only; any other failure still fails the test.

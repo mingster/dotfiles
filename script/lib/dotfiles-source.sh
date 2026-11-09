@@ -1,13 +1,14 @@
 # shellcheck shell=bash
 # Refuse to wire the live home from anything but the main dotfiles checkout (#761).
 
-# True when HOME sits under the temp dir, as every test HOME does.
+# True when HOME is not the account's own home, as every test HOME is. TMPDIR is no proof:
+# TMPDIR=/Users would make the real home look like a temp dir (#797).
+# DOTFILES_REAL_HOME stands in for the account home in tests.
 test_home() {
-  local home tmp
+  local home real
   home=$(cd "$HOME" && pwd -P) || return 1
-  tmp=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || return 1
-  case "$home" in "$tmp"/*) return 0 ;; esac
-  return 1
+  real=$(cd "${DOTFILES_REAL_HOME:-$(eval echo "~$(id -un)")}" 2>/dev/null && pwd -P) || return 1
+  [ "$home" != "$real" ]
 }
 
 # worktree_main <dir>: when <dir> is inside a linked git worktree, print the main checkout.
@@ -22,7 +23,7 @@ worktree_main() {
 
 # require_main_dotfiles <caller> <source dir>
 # Passes when the source is ~/dotfiles resolved and not a linked git worktree,
-# or when HOME sits under the temp dir (tests).
+# or when HOME is not the account's own home (tests).
 require_main_dotfiles() {
   local caller=$1 src main
   test_home && return 0
