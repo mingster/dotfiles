@@ -1,0 +1,1 @@
+* `script/setup-claude-code.sh` makes `~/.claude/agents` a real directory with one link per tracked agent, so the role files `agent-team.sh machine` writes there no longer land in the dotfiles checkout as untracked files.

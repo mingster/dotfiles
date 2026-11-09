@@ -50,13 +50,24 @@ bash "$DOTFILES/script/setup-agent-skills.sh"
 rm -f "${HOME}/.claude/CLAUDE.md"
 cp "$CLAUDE_SRC/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
 
-# Link every other entry in .agents/claude/ into ~/.claude/ (skip README.md and CLAUDE.md)
+# Link every other entry in .agents/claude/ into ~/.claude/ (skip README.md, CLAUDE.md and agents/)
 for entry in "$CLAUDE_SRC"/*; do
   name=$(basename "$entry")
   [ "$name" = "README.md" ] && continue
   [ "$name" = "CLAUDE.md" ] && continue
   [ "$name" != settings.json ] || [ "$KEEP_SETTINGS" -eq 0 ] || continue
+  [ "$name" = agents ] && continue
   ln -sfn "$entry" "${HOME}/.claude/$name"
+done
+
+# agents/ is a real directory: `agent-team.sh machine` writes rendered role files there,
+# and a directory link would drop them into this checkout. Link each tracked agent only.
+[ ! -L "${HOME}/.claude/agents" ] || rm -f "${HOME}/.claude/agents"
+mkdir -p "${HOME}/.claude/agents"
+for agent in "$CLAUDE_SRC/agents"/*.md; do
+  [ -e "$agent" ] || continue
+  git -C "$DOTFILES" ls-files --error-unmatch -- ".agents/claude/agents/$(basename "$agent")" >/dev/null 2>&1 || continue
+  ln -sfn "$agent" "${HOME}/.claude/agents/$(basename "$agent")"
 done
 
 TEAM_CLAUDE="$DOTFILES/templates/agent-team/.claude"
