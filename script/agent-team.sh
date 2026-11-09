@@ -77,10 +77,14 @@ link_one() {
 }
 
 # User level files have no project name, so a copy replaces {{PROJECT_NAME}} with "this project".
+render_user_level() {
+  sed -e 's/the {{PROJECT_NAME}}/this project/g' -e 's/{{PROJECT_NAME}}/this project/g' "$1"
+}
+
 render_one() {
   local src=$1 dst=$2 dry=$3 tmp
   tmp=$(mktemp) || return 1
-  sed -e 's/the {{PROJECT_NAME}}/this project/g' -e 's/{{PROJECT_NAME}}/this project/g' "$src" >"$tmp"
+  render_user_level "$src" >"$tmp"
   if [ ! -L "$dst" ] && [ -f "$dst" ] && cmp -s "$tmp" "$dst"; then
     rm -f "$tmp"
     return 0
@@ -2332,6 +2336,23 @@ check_machine_links() {
   return "$status"
 }
 
+# User level roles and session-start.md are rendered copies. A copy that differs from its
+# rendered template (or is still a link to the raw template) is stale until machine reruns.
+check_machine_copies() {
+  local src dst status=0 rel
+  for src in "$TEMPLATE_DIR/.claude/agents/"*.md "$TEMPLATE_DIR/.claude/hooks/session-start.md"; do
+    rel=${src#"$TEMPLATE_DIR/.claude/"}
+    dst="$HOME/.claude/$rel"
+    [ -f "$src" ] || continue
+    [ -e "$dst" ] || [ -L "$dst" ] || continue
+    if [ -L "$dst" ] || ! render_user_level "$src" | cmp -s - "$dst"; then
+      echo "agent-team: stale copy $dst; rerun machine" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
 cmd_check() {
   local targets=()
   while [ $# -gt 0 ]; do
@@ -2360,6 +2381,7 @@ cmd_check() {
     fi
   done
   check_machine_links || status=1
+  check_machine_copies || status=1
   return "$status"
 }
 

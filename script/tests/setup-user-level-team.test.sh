@@ -29,12 +29,13 @@ exit 0
 EOS
 chmod +x "$stub_bin/orca"
 
-# 1. setup-claude-code.sh --keep-settings links 4 hooks, 2 bin helpers, and preserves unrelated user files + settings.json
+# 1. setup-claude-code.sh --keep-settings links 3 hooks, 2 bin helpers, and preserves unrelated user files + settings.json
 home1="$tmp/home1"
 mkdir -p "$home1/.claude/hooks" "$home1/.claude/bin" "$home1/.agents/skills/orca-cli"
 printf 'custom hook\n' >"$home1/.claude/hooks/unrelated-user.py"
 printf 'custom helper\n' >"$home1/.claude/bin/unrelated-helper.sh"
 printf '{"keep_me":true}\n' >"$home1/.claude/settings.json"
+printf 'rendered copy\n' >"$home1/.claude/hooks/session-start.md"
 printf 'orca bundled\n' >"$home1/.agents/skills/orca-cli/SKILL.md"
 
 set +e
@@ -43,7 +44,7 @@ ec1=$?
 set -e
 [ "$ec1" -eq 0 ] && ok "setup-claude-code.sh --keep-settings exits 0" || bad "setup-claude-code.sh exited $ec1: $out1"
 
-for h in guard-bash.py strikes.py worker-budget.py session-start.md; do
+for h in guard-bash.py strikes.py worker-budget.py; do
   target="$home1/.claude/hooks/$h"
   expected="$root/templates/agent-team/.claude/hooks/$h"
   if [ -L "$target" ] && [ "$(readlink "$target")" = "$expected" ] && [ -f "$target" ]; then
@@ -52,6 +53,14 @@ for h in guard-bash.py strikes.py worker-budget.py session-start.md; do
     bad "missing or wrong symlink ~/.claude/hooks/$h (got $(readlink "$target" 2>/dev/null || echo none), want $expected)"
   fi
 done
+
+# session-start.md belongs to agent-team.sh machine (rendered copy); setup must leave it alone.
+if [ -f "$home1/.claude/hooks/session-start.md" ] && [ ! -L "$home1/.claude/hooks/session-start.md" ] &&
+   [ "$(cat "$home1/.claude/hooks/session-start.md")" = "rendered copy" ]; then
+  ok "setup-claude-code.sh leaves the rendered session-start.md copy alone"
+else
+  bad "setup-claude-code.sh replaced ~/.claude/hooks/session-start.md"
+fi
 
 for b in env-peek.py state-of-play.sh; do
   target="$home1/.claude/bin/$b"
