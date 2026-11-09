@@ -1294,6 +1294,7 @@ def fetch_failed_runs(repo):
 def fetch_main_checks_run(repo):
     """Latest finished Checks run on main, {} when there is none, None when gh fails."""
     command = ['gh', 'run', 'list', '--repo', repo, '--workflow', 'Checks', '--branch', 'main',
+               '--event', 'push',
                '--status', 'completed', '--limit', '1', '--json', 'databaseId,conclusion,url']
     try:
         output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)

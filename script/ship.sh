@@ -41,14 +41,42 @@ jq -e 'all((.statusCheckRollup // [])[] | select((.isRequired // true) != false)
   ((.status // "COMPLETED") == "COMPLETED") and ((.conclusion // .state // "") == "SUCCESS"))' <<<"$info" >/dev/null \
   || refuse "required checks are not all SUCCESS at head ${head:0:12}"
 
-# 2b. The latest finished Checks run on main is SUCCESS, unless this PR names that run as the one it fixes.
-main_run=$(gh run list --repo "$repo" --workflow Checks --branch main --status completed --limit 1 \
-  --json databaseId,conclusion,url) || refuse "cannot read the latest Checks run on main"
+# 2b. The latest finished push Checks run on main is SUCCESS, unless this PR names that run as the one it fixes
+# and touches what that run tested (a push to main only runs the tests for the files it changed).
+main_run=$(gh run list --repo "$repo" --workflow Checks --branch main --event push --status completed --limit 1 \
+  --json databaseId,conclusion,url,headSha) || refuse "cannot read the latest Checks run on main"
 main_run=$(jq -c '.[0] // empty' <<<"$main_run")
 if [ -n "$main_run" ] && [ "$(jq -r .conclusion <<<"$main_run")" != success ]; then
+  main_conclusion=$(jq -r .conclusion <<<"$main_run")
   main_run_id=$(jq -r .databaseId <<<"$main_run")
+  main_run_url=$(jq -r .url <<<"$main_run")
+  if [ "$main_conclusion" = cancelled ]; then
+    fix_hint="rerun or fix main first"
+  else
+    fix_hint="fix main first"
+  fi
   grep -Eq "^Fixes main: $main_run_id\$" <<<"$(field .body)" \
-    || refuse "latest Checks run on main is $(jq -r .conclusion <<<"$main_run"): $(jq -r .url <<<"$main_run"); fix main first, or put 'Fixes main: $main_run_id' on its own line in the PR body"
+    || refuse "latest Checks run on main is $main_conclusion: $main_run_url; $fix_hint, or put 'Fixes main: $main_run_id' on its own line in the PR body"
+  main_sha=$(jq -r '.headSha // empty' <<<"$main_run")
+  [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || refuse "Checks run $main_run_id on main has no valid head sha"
+  main_files=$(gh api "repos/$repo/commits/$main_sha" --jq '.files[].filename') \
+    || refuse "cannot read the files of main commit ${main_sha:0:12}"
+  fix_files=$(gh api --paginate "repos/$repo/pulls/$pr/files" --jq '.[] | (.filename // .path)') \
+    || refuse "cannot read PR $pr files"
+  # Tests a file list selects, minus the always-run guard that every PR selects.
+  selected_tests() {
+    local -a paths=()
+    local line
+    while IFS= read -r line; do [ -n "$line" ] && paths+=("$line"); done
+    bash "$ship_dir/select-changed-script-tests.sh" --list-only "${paths[@]+"${paths[@]}"}" \
+      | sed -n 's/^Selected: //p' | grep -v '^script/tests/no-project-names\.test\.sh$' | LC_ALL=C sort -u
+  }
+  main_tests=$(selected_tests <<<"$main_files") || true
+  fix_tests=$(selected_tests <<<"$fix_files") || true
+  overlap=$(comm -12 <(printf '%s\n' "$main_tests" | grep . || true) <(printf '%s\n' "$fix_tests" | grep . || true))
+  [ -n "$overlap" ] || overlap=$(comm -12 <(printf '%s\n' "$main_files" | LC_ALL=C sort -u) <(printf '%s\n' "$fix_files" | LC_ALL=C sort -u))
+  [ -n "$overlap" ] \
+    || refuse "PR $pr says 'Fixes main: $main_run_id' but touches neither the files nor the tests of failed main commit ${main_sha:0:12}: $main_run_url"
 fi
 
 main_fetched=false

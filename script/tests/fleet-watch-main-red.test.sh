@@ -9,6 +9,7 @@ PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 import importlib.util
 import pathlib
 import sys
+import types
 import unittest
 
 root = pathlib.Path(sys.argv[1])
@@ -40,6 +41,22 @@ class MainRed(unittest.TestCase):
         watch.main_red_notices(CONFIG, state, 0, fetch=lambda repo: red(7))
         self.assertEqual(watch.main_red_notices(CONFIG, state, 0, fetch=lambda repo: None), [])
         self.assertEqual(watch.main_red_notices(CONFIG, state, 0, fetch=lambda repo: red(7)), [])
+
+    def test_lookup_is_limited_to_push_events(self):
+        seen = []
+
+        def fake_run(command, **kwargs):
+            seen.append(command)
+            return types.SimpleNamespace(stdout='[]')
+
+        original = watch.subprocess.run
+        watch.subprocess.run = fake_run
+        try:
+            watch.fetch_main_checks_run('owner/repo')
+        finally:
+            watch.subprocess.run = original
+        command = seen[0]
+        self.assertEqual(command[command.index('--event') + 1], 'push')
 
 
 if __name__ == '__main__':

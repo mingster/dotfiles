@@ -326,10 +326,11 @@ blank_case() { # <pr> <branch> <empty|whitespace>
 blank_case 14 feat-empty empty
 blank_case 15 feat-ws whitespace
 
-# Red main: refuses and names the run, unless the PR body says it fixes that run.
-red_main_case() { # <pr> <branch> <body-line or empty> <expect: refuse|ship>
-  local n=$1 b=$2 line=$3 expect=$4 h
-  mf_pr_add "$n" "$b" "Body"
+# Red main: refuses and names the run, unless the PR body says it fixes that run and the PR touches what failed.
+# red_main_case <pr> <branch> <body-line or empty> <expect: refuse|ship> <pr file> <label> [conclusion] [expect text]
+red_main_case() {
+  local n=$1 b=$2 line=$3 expect=$4 file=$5 label=$6 conclusion=${7:-failure} text=${8:-https://example.test/runs/777} h
+  mf_pr_add "$n" "$b" "Body" "$file"
   if [ -n "$line" ]; then
     jq --arg l "$line" '.body += "\n" + $l' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
   fi
@@ -337,25 +338,53 @@ red_main_case() { # <pr> <branch> <body-line or empty> <expect: refuse|ship>
   mf_self_review "$n" "$h"
   set_checks "$n" "$green_checks"
   post_verdict "$n" PASS "$h"
-  echo '{"databaseId":777,"conclusion":"failure","url":"https://example.test/runs/777"}' > "$MF_GH_DIR/main-run.json"
+  jq -n --arg c "$conclusion" --arg s "$main_sha" '{databaseId:777,conclusion:$c,url:"https://example.test/runs/777",headSha:$s}' > "$MF_GH_DIR/main-run.json"
+  printf 'script/ship.sh\n' > "$MF_GH_DIR/commit-$main_sha.txt"
   : > "$MF_GH_LOG"
   run_ship --repo example/repo --pr "$n"
-  rm -f "$MF_GH_DIR/main-run.json"
+  rm -f "$MF_GH_DIR/main-run.json" "$MF_GH_DIR/main-run-fails"
   if [ "$expect" = refuse ]; then
-    if [ "$SHIP_RC" -ne 0 ] && grep -Fq "https://example.test/runs/777" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
-      ok "red main refuses and names the run"
+    if [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+      ok "$label"
     else
-      bad "red main refuses and names the run" "rc=$SHIP_RC out=$SHIP_OUT"
+      bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"
     fi
   elif [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then
-    ok "PR that fixes the red main run ships"
+    ok "$label"
   else
-    bad "PR that fixes the red main run ships" "rc=$SHIP_RC out=$SHIP_OUT"
+    bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"
   fi
 }
-red_main_case 16 feat-red-main "" refuse
-red_main_case 17 feat-red-wrong-run "Fixes main: 778" refuse
-red_main_case 18 feat-fix-main "Fixes main: 777" ship
+main_sha=$(printf 'a%.0s' {1..40})
+red_main_case 16 feat-red-main "" refuse script/ship.sh "red main refuses and names the run"
+red_main_case 17 feat-red-wrong-run "Fixes main: 778" refuse script/ship.sh "Fixes main for another run refuses"
+red_main_case 18 feat-fix-main "Fixes main: 777" ship script/ship.sh "PR that touches a file of the red main commit ships"
+red_main_case 19 feat-fix-main-test "Fixes main: 777" ship script/tests/ship.test.sh "PR that touches a test of the red main commit ships"
+red_main_case 20 feat-fix-unrelated "Fixes main: 777" refuse notes/unrelated.txt "Fixes main with unrelated files refuses" failure "touches neither the files nor the tests"
+red_main_case 21 feat-cancelled-main "" refuse script/ship.sh "cancelled main says rerun or fix main first" cancelled "rerun or fix main first"
+
+# gh failing while reading main's Checks run refuses and merges nothing.
+mf_pr_add 22 feat-main-gh-fails "Body"
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-22.json")
+mf_self_review 22 "$h"
+set_checks 22 "$green_checks"
+post_verdict 22 PASS "$h"
+: > "$MF_GH_DIR/main-run-fails"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 22
+rm -f "$MF_GH_DIR/main-run-fails"
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "cannot read the latest Checks run on main" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "gh failing on main's Checks run refuses"
+else
+  bad "gh failing on main's Checks run refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+# Only push runs count: a pull_request run from a fork's main branch must not.
+if grep -q "run list .*--event push" "$MF_GH_LOG" || { : > "$MF_GH_LOG"; run_ship --repo example/repo --pr 22 >/dev/null; grep -q "run list .*--event push" "$MF_GH_LOG"; }; then
+  ok "main run lookup is limited to push events"
+else
+  bad "main run lookup is limited to push events" "$(cat "$MF_GH_LOG")"
+fi
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
