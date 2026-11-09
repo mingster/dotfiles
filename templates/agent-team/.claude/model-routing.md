@@ -10,13 +10,13 @@ Owner rule (2026-11-09): tickets that change only docs, or one small script (abo
 
 ## Coordinator effort (owner 2026-11-03)
 
-Antigravity `gemini-4-argon-medium` (`--agent antigravity --model gemini-4-argon-medium`) is the default for Elon; Claude (`--agent claude --model opus --effort medium`) is the fallback. Provider, host and usage caps still apply. Verify the effective model and effort of a running session separately from saved presets.
+Claude (`--agent claude --model opus --effort medium`) is the default for Elon; Antigravity `gemini-4-argon-medium` (`--agent antigravity --model gemini-4-argon-medium`) is the fallback. Provider, host and usage caps still apply. Verify the effective model and effort of a running session separately from saved presets.
 
 ## Tiers
 
 | Tier | Use it for | Roles |
 | --- | --- | --- |
-| Strong reasoning | Ambiguous decisions, specs, security, financial and PR review | elon (`gemini-4-argon-medium` default; Claude Opus medium fallback), architect-pm, secops-finops, qa-sdet |
+| Strong reasoning | Ambiguous decisions, specs, security, financial and PR review | elon (Claude Opus medium default; `gemini-4-argon-medium` fallback), architect-pm, secops-finops, qa-sdet |
 | Workhorse | Implementation, coordination, QA, release, support, drafts | fullstack-dev, release-manager, sales-marketing, support-csm |
 | Light | Clerical subtasks (formatting, extraction, changelog fragment lines), docs only tickets, and small scripts | none by default, chosen per task |
 
@@ -31,7 +31,7 @@ Fallback begins at the provider after the role's default.
 
 | Role | Default provider | Flags |
 | --- | --- | --- |
-| elon | Antigravity Argon, then Claude | `--agent antigravity --model gemini-4-argon-medium` by default; fallback `--agent claude --model opus --effort medium` (`~/.orca/presets.json`). |
+| elon | Claude, then Antigravity Argon | `--agent claude --model opus --effort medium` by default; fallback `--agent antigravity --model gemini-4-argon-medium` (`~/.orca/presets.json`). |
 | fullstack-dev | Claude, then Antigravity Argon | `--agent claude --model sonnet --effort medium` (owner rule above, up to 3 lanes); then `--agent antigravity --model gemini-4-argon-medium` (small ticket trial: before merge, audit the file list and the i18n keys). The `fullstack-dev` preset chain in `~/.orca/presets.json` is the source. |
 | qa-sdet | Independent family on an available provider | Use a permitted model family different from the author, respecting provider and host caps. Opus is not mandatory for ordinary QA; extra Strong review follows the owner rule below. |
 | every other role | Claude | the Claude column for the role's tier |
