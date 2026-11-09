@@ -332,25 +332,63 @@ for h in $hosts; do
   check_host "$h"
 done
 
-apply_shell() {
+peer_pin() { # <host> <tool> -> coordinator version for a peer below it, "keep" for a peer level or above, empty to update to latest
+  local h=$1 t=$2 floor have
+  same_host "$h" "$baseline_host" && return 0
+  floor=$(floor_for "$t")
+  [ -n "$floor" ] || return 0
+  have=$(host_tool_ver "$h" "$t")
+  if [ -n "$have" ] && ! older "$have" "$floor"; then
+    echo keep
+  else
+    echo "$floor"
+  fi
+}
+
+apply_shell() { # <claude pin> <bun pin> <dotfiles path on the target>
+  local claude_pin=$1 bun_pin=$2 dot=$3
   cat <<EOS
 [ -n "\${ZSH_VERSION:-}" ] && emulate -L sh
 export PATH="\${FLEET_TOOLCHAIN_PATH:-\$HOME/.local/bin:\$HOME/.bun/bin:\${ASDF_DATA_DIR:-\$HOME/.asdf}/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH}"
+try() { # <label> <command...>: print the label and the last output line when the command fails
+  label=\$1
+  shift
+  if ! err=\$("\$@" 2>&1); then
+    last=\$(printf '%s\n' "\$err" | sed '/^[[:space:]]*\$/d' | tail -1)
+    echo "__apply_failed__ \$label failed: \${last:-no output}"
+  fi
+}
 if command -v brew >/dev/null 2>&1; then
-  brew upgrade git gh jq shellcheck >/dev/null 2>&1 || true
+  case "\$(jq --version 2>/dev/null)" in
+    *apple*) try "brew install jq" brew install jq ;;
+  esac
+  try "brew upgrade" brew upgrade git gh jq shellcheck
 fi
-bash '$dotfiles/script/bootstrap-asdf-tools.sh' --dotfiles '$dotfiles' >/dev/null 2>&1 || true
-command -v bun >/dev/null 2>&1 && bun upgrade >/dev/null 2>&1 || true
-command -v claude >/dev/null 2>&1 && claude update >/dev/null 2>&1 || true
+try bootstrap-asdf-tools bash "$dot/script/bootstrap-asdf-tools.sh" --dotfiles "$dot"
+if command -v bun >/dev/null 2>&1; then
+  case '$bun_pin' in
+    keep) ;;
+    '') try "bun upgrade" bun upgrade ;;
+    *) try "bun install $bun_pin" bash -c 'set -o pipefail; curl -fsSL https://bun.sh/install | bash -s bun-v$bun_pin' ;;
+  esac
+fi
+if command -v claude >/dev/null 2>&1; then
+  case '$claude_pin' in
+    keep) ;;
+    '') try "claude update" claude update ;;
+    *) try "claude install $claude_pin" claude install '$claude_pin' ;;
+  esac
+fi
 if command -v agent >/dev/null 2>&1; then
-  AGENT_CLI_CREDENTIAL_STORE=file agent update >/dev/null 2>&1 || true
+  try "agent update" env AGENT_CLI_CREDENTIAL_STORE=file agent update
 elif command -v cursor-agent >/dev/null 2>&1; then
-  AGENT_CLI_CREDENTIAL_STORE=file cursor-agent update >/dev/null 2>&1 || true
+  try "cursor-agent update" env AGENT_CLI_CREDENTIAL_STORE=file cursor-agent update
 fi
-command -v agy >/dev/null 2>&1 && agy update >/dev/null 2>&1 || true
+command -v agy >/dev/null 2>&1 && try "agy update" agy update
 orca_bin="\${FLEET_ORCA_APP_BIN:-\${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}}/orca"
 [ -x "\$orca_bin" ] || orca_bin=\$(command -v orca 2>/dev/null || true)
-[ -n "\$orca_bin" ] && "\$orca_bin" skills install --all >/dev/null 2>&1 || true
+[ -n "\$orca_bin" ] && try "orca skills install" "\$orca_bin" skills install --all
+true
 EOS
 }
 
@@ -358,10 +396,33 @@ if [ "$apply" -eq 1 ]; then
   for h in $hosts; do
     [ -n "$h" ] || continue
     [ "$(host_tool_state "$h" git)" = "unreachable" ] && continue
+    dot=$dotfiles
+    # A peer keeps dotfiles at the same place under its own home, which differs across macOS and Linux
+    if ! same_host "$h" "$me"; then
+      case "$dotfiles" in
+        "$HOME"/*) dot="\$HOME${dotfiles#"$HOME"}" ;;
+      esac
+    fi
+    script=$(apply_shell "$(peer_pin "$h" claude)" "$(peer_pin "$h" bun)" "$dot")
+    apply_rc=0
     if same_host "$h" "$me"; then
-      bash -c "$(apply_shell)" || true
+      out=$(bash -c "$script" 2>"$probe_dir/apply-err") || apply_rc=$?
     else
-      "$run" -o BatchMode=yes -o ConnectTimeout=8 "$h" "$(apply_shell)" >/dev/null 2>&1 || true
+      out=$("$run" -o BatchMode=yes -o ConnectTimeout=8 "$h" "$script" 2>"$probe_dir/apply-err") || apply_rc=$?
+    fi
+    # Only marked lines are failures, so a login banner on the host is not one
+    while IFS= read -r line; do
+      case "$line" in
+        __apply_failed__\ *)
+          echo "fleet-toolchain-check: $h apply: ${line#__apply_failed__ }"
+          rc=1
+          ;;
+      esac
+    done <<<"$out"
+    if [ "$apply_rc" -ne 0 ]; then
+      last=$(sed '/^[[:space:]]*$/d' "$probe_dir/apply-err" | tail -1)
+      echo "fleet-toolchain-check: $h apply: stopped with exit $apply_rc: ${last:-no output}"
+      rc=1
     fi
   done
   if [ "$orca_gaps" -eq 1 ]; then

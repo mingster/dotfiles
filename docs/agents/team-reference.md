@@ -410,7 +410,7 @@ Roles live in `~/agent-state/coordinator.conf` with one `coordinator <name>` lin
 | Command | Effect |
 | --- | --- |
 | `script/fleet-pull.sh` | Fast-forward `main` in `~/agent-state` and each configured repository on every host. Prints `ok` with the short commit, or exits non-zero with `fail <host> <repo>` when a checkout is `dirty`, `not on main: detached` (or on another branch), `diverged: not fast-forward`, `behind after pull`, or unreachable |
-| `script/fleet-toolchain-check.sh` | Compare each fleet host's CLI versions against the coordinator in `coordinator.conf`, and the coordinator against the latest release (add `--apply` to align `.tool-versions` pins and upgrade supported tools) |
+| `script/fleet-toolchain-check.sh` | Compare each fleet host's CLI versions against the coordinator in `coordinator.conf`, and the coordinator against the latest release (add `--apply` to align `.tool-versions` pins and upgrade supported tools; peers move to the coordinator's claude and bun, never past it, and each failed step prints `<host> apply: <step> failed: <error>`) |
 | `script/install-fleet-automations.sh --dry-run --install` | Print the planned `orca automations` commands without changing Orca |
 | `script/install-fleet-automations.sh --install` | Create or update the six fleet automations on this host (safe to run again) |
 | `script/install-fleet-automations.sh --status` | Print enabled or disabled status for each fleet automation on this host |

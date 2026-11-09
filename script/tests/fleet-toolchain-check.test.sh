@@ -274,6 +274,109 @@ check "--apply runs agy update" "$(grep -q '^agy update' "$apply_log"; echo $?)"
 check "--apply runs orca skills install --all" "$(grep -q '^orca skills install --all' "$apply_log"; echo $?)"
 check "--apply reports orca as manual" "$(echo "$apply_out" | grep -qi 'orca.*manual'; echo $?)"
 
+# 842: --apply prints a failing command, swaps Apple jq for Homebrew jq,
+# and moves a peer below the coordinator to the coordinator's claude and bun, never past it
+peer_bin="$tmp/peer-bin"; mkdir -p "$peer_bin"
+peer_log="$tmp/peer-apply.log"; : > "$peer_log"; : > "$apply_log"
+for cli in brew bun claude agent agy orca curl; do
+  cat > "$peer_bin/$cli" <<EOS
+#!/usr/bin/env bash
+[ "\${1:-}" = "--version" ] && { echo "1.0.0"; exit 0; }
+echo "$cli \$*" >> "$peer_log"
+[ "$cli" = curl ] && echo 'echo "bun-install \$*" >> "$peer_log"'
+exit 0
+EOS
+  chmod +x "$peer_bin/$cli"
+done
+printf '#!/usr/bin/env bash\necho "jq-1.7.1-apple"\n' > "$peer_bin/jq"; chmod +x "$peer_bin/jq"
+cat > "$fake_bin/claude" <<EOS
+#!/usr/bin/env bash
+[ "\${1:-}" = "--version" ] && { echo "1.0.0"; exit 0; }
+echo "claude \$*" >> "$apply_log"
+echo "network down" >&2
+exit 1
+EOS
+chmod +x "$fake_bin/claude"
+cat > "$tmp/peer-ssh" <<EOS
+#!/usr/bin/env bash
+while [ \$# -gt 0 ]; do case "\$1" in -o) shift 2 ;; -*) shift ;; *) shift; break ;; esac; done
+PATH="$peer_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$peer_bin:/usr/bin:/bin" FLEET_ORCA_APP_BIN="$peer_bin" /bin/bash -c "\${*: -1}"
+EOS
+chmod +x "$tmp/peer-ssh"
+printf '%s\n' '{"hosts":["worker-a"],"repos":[]}' > "$tmp/fleet-peer.json"
+peer_apply_out=$(
+  PATH="$fake_bin:/usr/bin:/bin" \
+  FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" \
+  FLEET_ORCA_APP_BIN="$fake_bin" \
+  DOTFILES_DIR="$fake_dotfiles" \
+  FLEET_PULL_CONFIG="$tmp/fleet-peer.json" \
+  FLEET_TOOLCHAIN_RUN="$tmp/peer-ssh" \
+  FLEET_TOOLCHAIN_VERSIONS="{
+    \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+    \"worker-a\": {${base_tools/2.1.319/2.1.300}, \"orca\": \"1.4.253\", \"bun\": \"1.4.2\", \"node\": \"24.22.1\"}
+  }" \
+  "$fake_dotfiles/script/fleet-toolchain-check.sh" --apply 2>&1
+)
+peer_apply_rc=$?
+check "842 --apply prints the failing command and its error" \
+  "$(echo "$peer_apply_out" | grep -q 'coord-a apply: claude update failed: network down'; echo $?)"
+check "842 --apply failure exits non-zero" "$([ "$peer_apply_rc" -ne 0 ] && echo 0 || echo 1)"
+check "842 --apply installs Homebrew jq over Apple jq" "$(grep -q '^brew install jq' "$peer_log"; echo $?)"
+check "842 peer below the coordinator installs the coordinator's claude" \
+  "$(grep -q '^claude install 2.1.319' "$peer_log"; echo $?)"
+check "842 peer below the coordinator installs the coordinator's bun" \
+  "$(grep -q 'bun-install .*bun-v1.4.4' "$peer_log"; echo $?)"
+check "842 peer never runs claude update or bun upgrade" \
+  "$(grep -qE '^(claude update|bun upgrade)' "$peer_log" && echo 1 || echo 0)"
+check "842 successful peer commands stay quiet" \
+  "$(echo "$peer_apply_out" | grep -q 'worker-a apply' && echo 1 || echo 0)"
+
+# 842: a peer level with or above the coordinator keeps its claude and bun; a login banner is not a failure
+: > "$peer_log"
+sed 's|^PATH=|echo "Welcome to worker-a"; PATH=|' "$tmp/peer-ssh" > "$tmp/peer-ssh-banner"; chmod +x "$tmp/peer-ssh-banner"
+ahead_out=$(
+  PATH="$fake_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" FLEET_ORCA_APP_BIN="$fake_bin" \
+  DOTFILES_DIR="$fake_dotfiles" FLEET_PULL_CONFIG="$tmp/fleet-peer.json" FLEET_TOOLCHAIN_RUN="$tmp/peer-ssh-banner" \
+  FLEET_TOOLCHAIN_VERSIONS="{
+    \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+    \"worker-a\": {${base_tools/2.1.319/2.1.320}, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}
+  }" \
+  "$fake_dotfiles/script/fleet-toolchain-check.sh" --apply 2>&1
+)
+check "842 peer above the coordinator keeps claude and bun" \
+  "$(grep -qE '^(claude|bun) |bun-install' "$peer_log" && echo 1 || echo 0)"
+check "842 a login banner on a peer is not an apply failure" \
+  "$(echo "$ahead_out" | grep -q 'worker-a apply' && echo 1 || echo 0)"
+
+# 842: an apply that dies on the host prints its exit and last error line
+printf '#!/usr/bin/env bash\necho "Connection reset by peer" >&2\nexit 255\n' > "$tmp/dead-ssh"; chmod +x "$tmp/dead-ssh"
+dead_out=$(
+  PATH="$fake_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" FLEET_ORCA_APP_BIN="$fake_bin" \
+  DOTFILES_DIR="$fake_dotfiles" FLEET_PULL_CONFIG="$tmp/fleet-peer.json" FLEET_TOOLCHAIN_RUN="$tmp/dead-ssh" \
+  FLEET_TOOLCHAIN_VERSIONS="{
+    \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+    \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}
+  }" \
+  "$fake_dotfiles/script/fleet-toolchain-check.sh" --apply 2>&1
+)
+check "842 a dead ssh during apply is printed" \
+  "$(echo "$dead_out" | grep -q 'worker-a apply: stopped with exit 255: Connection reset by peer'; echo $?)"
+
+# 842: a peer runs bootstrap from its own home, not the coordinator's absolute path
+home_a="$tmp/home-a"; home_b="$tmp/home-b"
+mkdir -p "$home_a/dotfiles/script/lib" "$home_b/dotfiles/script"
+cp "$fake_dotfiles/script/fleet-toolchain-check.sh" "$home_a/dotfiles/script/"
+cp "$fake_dotfiles/script/lib/find-orca-dir.sh" "$home_a/dotfiles/script/lib/"
+printf '#!/usr/bin/env bash\necho peer-bootstrap >> %q\n' "$peer_log" > "$home_b/dotfiles/script/bootstrap-asdf-tools.sh"
+sed "s|/bin/bash -c|HOME=$home_b /bin/bash -c|" "$tmp/peer-ssh" > "$tmp/peer-ssh-home"; chmod +x "$tmp/peer-ssh-home"
+: > "$peer_log"
+HOME="$home_a" PATH="$fake_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" FLEET_ORCA_APP_BIN="$fake_bin" \
+  DOTFILES_DIR="$home_a/dotfiles" FLEET_PULL_CONFIG="$tmp/fleet-peer.json" FLEET_TOOLCHAIN_RUN="$tmp/peer-ssh-home" \
+  FLEET_TOOLCHAIN_VERSIONS="{\"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+    \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}}" \
+  "$home_a/dotfiles/script/fleet-toolchain-check.sh" --apply >/dev/null 2>&1
+check "842 peer runs bootstrap from its own home" "$(grep -q '^peer-bootstrap' "$peer_log"; echo $?)"
+
 # Latest Node is the newest LTS on the pinned major, never a newer LTS major.
 pin_home="$tmp/pin-home"; mkdir -p "$pin_home"
 printf 'nodejs 24.0.0\n' > "$pin_home/.tool-versions"
