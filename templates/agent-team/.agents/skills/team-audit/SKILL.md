@@ -29,4 +29,4 @@ Orca stages, per merged PR, from the dispatch log `~/agent-state/team-dispatches
 
 ## 4. Output
 
-A `worker_done` to Elon with the script result, each problem with its file, line, fix and verification or approval gate, the metrics, and the line count change. Make agreed edits on `mingster/team-audit-<date>` in the dotfiles template and each project, keep `team-audit.sh` clean and `agent-team.sh check` passing.
+The last line of `--report` is `ROLE_RECEIPT_BASE="<head shas>"`. Record it in the report so the next audit passes it to `team-audit.sh --report`. A `worker_done` to Elon with the script result, each problem with its file, line, fix and verification or approval gate, the metrics, and the line count change. Make agreed edits on `mingster/team-audit-<date>` in the dotfiles template and each project, keep `team-audit.sh` clean and `agent-team.sh check` passing.

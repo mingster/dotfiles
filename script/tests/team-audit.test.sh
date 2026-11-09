@@ -205,7 +205,7 @@ else fail=$((fail+1)); echo "FAIL receipt after baseline (exit $code)"; echo "$o
 # --report: checks plus metrics (fake gh counts the calls), real bun runs team-audit-metrics.ts
 if ! command -v bun >/dev/null 2>&1; then fail=$((fail+1)); echo "FAIL --report tests need bun on PATH"
 else
-  setup; withremote
+  setup; withremote; for r in "$D" "$P"; do ( cd "$r" && { [ -d .git ] || git init -q; } && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base ); done
   printf 'date\tfinding\tevidence\tcount\tfix ticket\tstatus\n2026-11-08\tworker skipped the receipt\tPR #9, PR #12\t2\t-\topen\n' > "$tmp/obs.tsv"
   rep=$(TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
     DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1); code=$?
@@ -223,6 +223,7 @@ else
   rcheck "--report build runs from dispatch to first Checks" '^\| build \| 60 \| 90 \| 90 \| 2 \| 2 \|$'
   rcheck "--report merge row" '^\| merge \| 60 \| 120 \| 120 \| 3 \| 2 \|$'
   rcheck "--report delivery metrics" 'Delivery: median_ticket_start_to_merge_minutes=150, first_pass_checks_fail_rate=0.33'
+  rcheck "--report prints ROLE_RECEIPT_BASE" '^ROLE_RECEIPT_BASE="[0-9a-f]+( [0-9a-f]+)*"$'
   n=$(wc -l < "$GH_CALLS" | tr -d ' ')
   if [ "$n" -le 3 ] && grep -q '^api graphql' "$GH_CALLS" && [ "$(grep -c '^issue list' "$GH_CALLS")" = 2 ]; then
     pass=$((pass+1)); echo "ok   --report makes $n gh calls (at most 3)"
