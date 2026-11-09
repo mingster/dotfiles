@@ -65,6 +65,7 @@ setup_fixture() {
     install_node.sh; do
     cp "$root/script/$s" "$work/script/"
   done
+  cp -R "$root/script/lib" "$work/script/lib"
   for t in sync-mattpocock-skills.test.sh sync-pstack-template-skills.test.sh install_node.test.sh; do
     cp "$root/script/tests/$t" "$work/script/tests/" 2>/dev/null || true
   done

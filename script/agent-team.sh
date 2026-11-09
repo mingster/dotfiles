@@ -12,6 +12,8 @@ set -euo pipefail
 export DOTFILES="${DOTFILES:-$(cd "$(dirname "$0")/.." && pwd)}"
 TEMPLATE_DIR="$DOTFILES/templates/agent-team"
 SEEDS_DIR="$DOTFILES/.agents/skills/setup-matt-pocock-skills"
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/lib/dotfiles-source.sh"
 
 SHARED_BINS=(
   env-peek.py
@@ -210,6 +212,7 @@ cmd_machine() {
       *) die "unknown machine option: $arg" 2 ;;
     esac
   done
+  require_main_dotfiles agent-team "$DOTFILES"
   require_templates
 
   ensure_skill_link() {
@@ -2271,6 +2274,30 @@ cmd_project() {
   fi
 }
 
+# A machine link into a linked git worktree makes branch code live for every session (#761).
+check_machine_links() {
+  local link dir top main own="" status=0
+  # A test HOME links into the checkout under test, which may itself be a worktree.
+  if test_home; then
+    own=$(cd "$TEMPLATE_DIR" && cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null && pwd -P) || own=
+  fi
+  for link in "$HOME/.claude"/* "$HOME/.claude/agents"/* "$HOME/.claude/hooks"/* "$HOME/.claude/bin"/* \
+    "$HOME/.claude/skills"/* "$HOME/.agents/skills"/*; do
+    [ -L "$link" ] && [ -e "$link" ] || continue
+    if [ -d "$link" ]; then
+      dir=$(cd "$link" && pwd -P) || continue
+    else
+      dir=$(python3 -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$link") || continue
+    fi
+    main=$(worktree_main "$dir") || continue
+    top=$(cd "$dir" && cd "$(git rev-parse --show-toplevel)" && pwd -P) || continue
+    [ "$top" != "$own" ] || continue
+    echo "agent-team: machine link $link points into worktree $top; rerun machine from the main checkout $main" >&2
+    status=1
+  done
+  return "$status"
+}
+
 cmd_check() {
   local targets=()
   while [ $# -gt 0 ]; do
@@ -2298,6 +2325,7 @@ cmd_check() {
       fi
     fi
   done
+  check_machine_links || status=1
   return "$status"
 }
 
