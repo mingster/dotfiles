@@ -254,41 +254,20 @@ check "--apply runs agy update" "$(grep -q '^agy update' "$apply_log"; echo $?)"
 check "--apply runs orca skills install --all" "$(grep -q '^orca skills install --all' "$apply_log"; echo $?)"
 check "--apply reports orca as manual" "$(echo "$apply_out" | grep -qi 'orca.*manual'; echo $?)"
 
-pin_home="$tmp/pin-home"; mkdir -p "$pin_home" "$tmp/pybin"
+# Latest Node is the newest LTS on the pinned major, never a newer LTS major.
+pin_home="$tmp/pin-home"; mkdir -p "$pin_home"
 printf 'nodejs 24.0.0\n' > "$pin_home/.tool-versions"
-cat > "$tmp/pybin/python3" <<'EOS'
-#!/usr/bin/env bash
-[ "$1" = -c ] || exec /usr/bin/env python3 "$@"
-case "$2" in
-  *nodejs.org*) echo "26.13.0" ;;
-  *) exec /usr/bin/env python3 "$@" ;;
-esac
-EOS
-chmod +x "$tmp/pybin/python3"
-latest_node_out=$(
-  PATH="$tmp/pybin:$PATH" DOTFILES_DIR="$pin_home" FLEET_TOOLCHAIN_LATEST_NODE='' bash -c '
-    norm_ver() { printf "%s" "$1" | sed -E "s/^v//"; }
-    read_pin() { awk -v t="$1" '"'"'$1 == t { print $2; exit }'"'"' "$DOTFILES_DIR/.tool-versions" 2>/dev/null; }
-    latest_node() {
-      pin=$(python3 -c "
-import json, urllib.request
-try:
-    req = urllib.request.Request(\"https://nodejs.org/dist/index.json\", headers={\"User-Agent\": \"dotfiles\"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        for row in json.load(r):
-            if row.get(\"lts\"):
-                print(row[\"version\"].lstrip(\"v\")); break
-except OSError:
-    pass
-" 2>/dev/null)
-      [ -n "$pin" ] || pin=$(read_pin nodejs)
-      norm_ver "$pin"
-    }
-    latest_node
-  '
-)
-check "677 latest node prefers LTS lookup over .tool-versions pin" \
-  "$([ "$latest_node_out" = 26.13.0 ] && echo 0 || echo 1)"
+printf '%s\n' '[{"version":"v26.13.0","lts":"Wolf"},{"version":"v25.9.0","lts":false},{"version":"v24.22.2","lts":"Krypton"},{"version":"v24.22.1","lts":"Krypton"}]' > "$tmp/node-index.json"
+node_vers() { # <coord node> <worker node>
+  printf '{"coord-a": {%s, "orca": "1.4.253", "bun": "1.4.4", "node": "%s"}, "worker-a": {%s, "orca": "1.4.253", "bun": "1.4.4", "node": "%s"}}' \
+    "$base_tools" "$1" "$base_tools" "$2"
+}
+node_out=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 FLEET_TOOLCHAIN_LATEST_NODE='' FLEET_TOOLCHAIN_NODE_INDEX="$tmp/node-index.json" \
+  FLEET_TOOLCHAIN_VERSIONS="$(node_vers 24.22.2 24.22.1)" DOTFILES_DIR="$pin_home" "$here/fleet-toolchain-check.sh" 2>&1)
+check "latest node stays on the pinned major" \
+  "$(echo "$node_out" | grep -q 'worker-a node 24.22.1 is below latest 24.22.2'; echo $?)"
+check "a newer LTS major does not flag the pinned major" \
+  "$(echo "$node_out" | grep -q '26.13.0' && echo 1 || echo 0)"
 
 # shellcheck source=script/lib/find-orca-dir.sh disable=SC1091
 . "$here/lib/find-orca-dir.sh"

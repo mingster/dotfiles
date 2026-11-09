@@ -4,7 +4,7 @@
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
 # Config: FLEET_PULL_CONFIG or fleet-pull.config.json (same hosts as fleet-pull).
-# Tests: FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_VERSIONS (json).
+# Tests: FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_NODE_INDEX (path), FLEET_TOOLCHAIN_VERSIONS (json).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=script/lib/find-orca-dir.sh disable=SC1091
@@ -81,19 +81,25 @@ latest_bun() {
 
 latest_node() {
   [ -n "${FLEET_TOOLCHAIN_LATEST_NODE:-}" ] && { norm_ver "$FLEET_TOOLCHAIN_LATEST_NODE"; return; }
-  pin=$(python3 -c '
-import json, urllib.request
+  # Newest LTS on the pinned major; a newer LTS major never raises the target.
+  pin=$(read_pin nodejs)
+  latest=$(python3 -c '
+import json, sys, urllib.request
+src, major = sys.argv[1], sys.argv[2].split(".")[0]
 try:
-    req = urllib.request.Request("https://nodejs.org/dist/index.json", headers={"User-Agent": "dotfiles"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        for row in json.load(r):
-            if row.get("lts"):
-                print(row["version"].lstrip("v")); break
-except OSError:
+    if src.startswith("/"):
+        rows = json.load(open(src))
+    else:
+        req = urllib.request.Request(src, headers={"User-Agent": "dotfiles"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            rows = json.load(r)
+    for row in rows:
+        if row.get("lts") and row["version"].lstrip("v").split(".")[0] == major:
+            print(row["version"].lstrip("v")); break
+except (OSError, ValueError):
     pass
-' 2>/dev/null)
-  [ -n "$pin" ] || pin=$(read_pin nodejs)
-  norm_ver "$pin"
+' "${FLEET_TOOLCHAIN_NODE_INDEX:-https://nodejs.org/dist/index.json}" "${pin:-0}" 2>/dev/null)
+  norm_ver "${latest:-$pin}"
 }
 
 latest_python3() {
