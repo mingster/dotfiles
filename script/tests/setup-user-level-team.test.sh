@@ -161,5 +161,36 @@ else
   bad "templates/agent-team/.claude/settings.json failed hook path or matcher check"
 fi
 
+# 4. ~/.claude/agents is a real directory: agent-team.sh machine writes rendered role files there,
+#    and a link into the repo would drop them into the dotfiles checkout as untracked files.
+agents_src="$root/.agents/claude/agents"
+for case in fresh legacy rendered; do
+  home4="$tmp/home4-$case"
+  mkdir -p "$home4/.claude" "$home4/.agents/skills/orca-cli"
+  printf 'orca bundled\n' >"$home4/.agents/skills/orca-cli/SKILL.md"
+  case "$case" in
+    legacy) ln -s "$agents_src" "$home4/.claude/agents" ;;
+    rendered) mkdir -p "$home4/.claude/agents" && printf 'rendered role\n' >"$home4/.claude/agents/elon.md" ;;
+  esac
+  HOME="$home4" PATH="$stub_bin:/usr/bin:/bin" DOTFILES="$root" bash "$root/script/setup-claude-code.sh" --keep-settings >/dev/null 2>&1
+  if [ -d "$home4/.claude/agents" ] && [ ! -L "$home4/.claude/agents" ]; then
+    ok "$case: ~/.claude/agents is a real directory"
+  else
+    bad "$case: ~/.claude/agents is $(readlink "$home4/.claude/agents" 2>/dev/null || echo missing), want a real directory"
+    continue
+  fi
+  linked=1
+  while IFS= read -r f; do
+    n=$(basename "$f")
+    [ "$(readlink "$home4/.claude/agents/$n")" = "$agents_src/$n" ] || linked=0
+  done < <(git -C "$root" ls-files .agents/claude/agents)
+  [ "$linked" -eq 1 ] && ok "$case: each tracked agent is linked into ~/.claude/agents" || bad "$case: tracked agent links missing"
+done
+if [ "$(cat "$tmp/home4-rendered/.claude/agents/elon.md" 2>/dev/null)" = "rendered role" ]; then
+  ok "rendered: setup leaves a rendered role file alone"
+else
+  bad "rendered: rendered role file was replaced or removed"
+fi
+
 echo "setup-user-level-team: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
