@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Report fleet hosts whose tools are missing, below the latest release, or below the coordinator.
+# Report fleet hosts whose tools are missing or differ from the coordinator, and the coordinator
+# when it is below the latest release. Peers follow the coordinator, never the fleet maximum.
 # Reuses .tool-versions via bootstrap-asdf-tools for node and python; warns on orca (manual install only).
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
@@ -274,24 +275,11 @@ floor_for() { # <tool>
   host_tool_ver "$baseline_host" "$1"
 }
 
-max_for() { # <tool>
-  local t=$1 h v best=""
-  for h in $hosts; do
-    [ -n "$h" ] || continue
-    v=$(host_tool_ver "$h" "$t")
-    [ -n "$v" ] || continue
-    if [ -z "$best" ] || older "$best" "$v"; then
-      best="$v"
-    fi
-  done
-  printf '%s' "$best"
-}
-
 rc=0
 orca_gaps=0
 
 check_host() { # <host>
-  local h=$1 st have need floor max t
+  local h=$1 st have need floor t
   if [ "$(host_tool_state "$h" git)" = "unreachable" ]; then
     echo "fleet-toolchain-check: $h unreachable" >&2
     rc=1
@@ -323,20 +311,18 @@ check_host() { # <host>
     esac
     need=$(want_for "$t")
     floor=$(floor_for "$t")
-    max=$(max_for "$t")
-    if [ -n "$need" ] && older "$have" "$need"; then
-      echo "fleet-toolchain-check: $h $t $have is below latest $need"
-      [ "$t" = orca ] && orca_gaps=1
-    elif [ -n "$floor" ] && older "$have" "$floor"; then
-      if [ -n "$need" ]; then
-        echo "fleet-toolchain-check: $h $t $have is below $baseline_host $floor (latest $need)"
-      else
-        echo "fleet-toolchain-check: $h $t $have is below $baseline_host $floor"
+    # The coordinator is measured against latest; peers only against the coordinator,
+    # falling back to latest when the coordinator has no version for this tool.
+    if same_host "$h" "$baseline_host" || [ -z "$floor" ]; then
+      if [ -n "$need" ] && older "$have" "$need"; then
+        echo "fleet-toolchain-check: $h $t $have is below latest $need"
+        [ "$t" = orca ] && orca_gaps=1
       fi
+    elif older "$have" "$floor"; then
+      echo "fleet-toolchain-check: $h $t $have is below $baseline_host $floor"
       [ "$t" = orca ] && orca_gaps=1
-    elif [ -n "$max" ] && older "$have" "$max"; then
-      echo "fleet-toolchain-check: $h $t $have is below fleet $max"
-      [ "$t" = orca ] && orca_gaps=1
+    elif older "$floor" "$have"; then
+      echo "fleet-toolchain-check: $h $t $have is above $baseline_host $floor"
     fi
   done
 }
