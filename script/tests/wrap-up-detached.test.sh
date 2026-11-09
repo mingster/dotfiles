@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Exercise dry-run decisions through the CLI, with disposable Git repositories.
+# shellcheck source=script/tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 set -euo pipefail
 # Fixture worktrees are all new; 0 turns the recent-activity guard off.
 export WRAP_UP_RECENT_MIN=0
