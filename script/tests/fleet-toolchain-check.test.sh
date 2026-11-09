@@ -209,10 +209,10 @@ check "unreachable host exits non-zero" "$([ "$down_rc" -ne 0 ] && echo 0 || ech
 check "unreachable host prints unreachable line" "$(echo "$down_out" | grep -q 'down-host unreachable'; echo $?)"
 check "unreachable host prints single line for down-host" "$([ "$down_cnt" = 1 ] && echo 0 || echo 1)"
 
-# --apply upgrades brew tools, asdf tools, and CLIs, and reports manual for orca
+# --apply upgrades brew tools, asdf tools, CLIs and Orca skills, and reports manual for orca
 apply_log="$tmp/apply.log"
 : > "$apply_log"
-for cli in brew bun claude agent agy; do
+for cli in brew bun claude agent agy orca; do
   cat > "$fake_bin/$cli" <<EOS
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
@@ -251,6 +251,7 @@ check "--apply runs bun upgrade" "$(grep -q '^bun upgrade' "$apply_log"; echo $?
 check "--apply runs claude update" "$(grep -q '^claude update' "$apply_log"; echo $?)"
 check "--apply runs agent update" "$(grep -q '^agent update' "$apply_log"; echo $?)"
 check "--apply runs agy update" "$(grep -q '^agy update' "$apply_log"; echo $?)"
+check "--apply runs orca skills install --all" "$(grep -q '^orca skills install --all' "$apply_log"; echo $?)"
 check "--apply reports orca as manual" "$(echo "$apply_out" | grep -qi 'orca.*manual'; echo $?)"
 
 pin_home="$tmp/pin-home"; mkdir -p "$pin_home" "$tmp/pybin"
