@@ -2319,7 +2319,7 @@ def build_issue_start_command(config, repo, issue_row):
     spec_path = _write_issue_scan_spec(
         'Refs %s#%d\n\n%s\n\n'
         '## Verify\n'
-        'Run the tests the change touches and show the Done condition.\n\n'
+        'Run bash script/checks-local.sh and show the Done condition.\n\n'
         '## Finish\n'
         'Self-review, push, open the PR, then worker_done.\n'
         % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip()))
@@ -2355,7 +2355,7 @@ def build_rework_start_command(config, repo, pr_row):
         '## Out of scope\n'
         'files outside this PR\n\n'
         '## Verify\n'
-        'the failing check:\n%s\n\n'
+        'bash script/checks-local.sh, then the failing check:\n%s\n\n'
         '## Finish\n'
         'Self-review, then worker_done.\n'
         % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, excerpt))

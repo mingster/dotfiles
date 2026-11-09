@@ -76,6 +76,34 @@ link_one() {
   echo "linked $dst -> $src"
 }
 
+# User level files have no project name, so a copy replaces {{PROJECT_NAME}} with "this project".
+render_user_level() {
+  sed -e 's/the {{PROJECT_NAME}}/this project/g' -e 's/{{PROJECT_NAME}}/this project/g' "$1"
+}
+
+render_one() {
+  local src=$1 dst=$2 dry=$3 tmp
+  tmp=$(mktemp) || return 1
+  render_user_level "$src" >"$tmp"
+  if [ ! -L "$dst" ] && [ -f "$dst" ] && cmp -s "$tmp" "$dst"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  if [ "$dry" -eq 1 ]; then
+    rm -f "$tmp"
+    echo "would write $dst (rendered from $src)"
+    return 0
+  fi
+  if [ -L "$dst" ]; then
+    rm "$dst"
+  else
+    backup_path "$dst"
+  fi
+  cat "$tmp" >"$dst"
+  rm -f "$tmp"
+  echo "wrote $dst (rendered from $src)"
+}
+
 ensure_dir() {
   local dir=$1 dry=$2
   [ -d "$dir" ] && return 0
@@ -302,12 +330,16 @@ cmd_machine() {
   local f name
   for f in "$TEMPLATE_DIR/.claude/agents/"*.md; do
     [ -f "$f" ] || continue
-    link_one "$f" "$HOME/.claude/agents/$(basename "$f")" "$dry"
+    render_one "$f" "$HOME/.claude/agents/$(basename "$f")" "$dry"
   done
 
   for name in guard-bash.py strikes.py worker-budget.py session-start.md; do
     [ -f "$TEMPLATE_DIR/.claude/hooks/$name" ] || continue
-    link_one "$TEMPLATE_DIR/.claude/hooks/$name" "$HOME/.claude/hooks/$name" "$dry"
+    if [ "$name" = session-start.md ]; then
+      render_one "$TEMPLATE_DIR/.claude/hooks/$name" "$HOME/.claude/hooks/$name" "$dry"
+    else
+      link_one "$TEMPLATE_DIR/.claude/hooks/$name" "$HOME/.claude/hooks/$name" "$dry"
+    fi
   done
 
   for name in "${SHARED_BINS[@]}"; do
@@ -2057,7 +2089,7 @@ def seed_and_sync_project(proj_settings_mem=None):
     for rel in TEMPLATE_SYNC_FILES:
         src = os.path.join(template_dir, rel)
         is_exec = rel.endswith(".sh")
-        write_text(rel, read_text(src), executable=is_exec)
+        write_text(rel, read_text(src).replace("{{PROJECT_NAME}}", project_name), executable=is_exec)
 
 
 def run_check():
@@ -2148,7 +2180,7 @@ def run_check():
         if not os.path.isfile(full):
             drifts.append(f"missing template-managed file: {rel}")
         else:
-            if read_text(full) != read_text(src):
+            if read_text(full) != read_text(src).replace("{{PROJECT_NAME}}", project_name):
                 drifts.append(f"template-managed file drifted: {rel}")
             if rel.endswith(".sh") and not os.access(full, os.X_OK):
                 drifts.append(f"template-managed script not executable: {rel}")
@@ -2304,6 +2336,23 @@ check_machine_links() {
   return "$status"
 }
 
+# User level roles and session-start.md are rendered copies. A copy that differs from its
+# rendered template (or is still a link to the raw template) is stale until machine reruns.
+check_machine_copies() {
+  local src dst status=0 rel
+  for src in "$TEMPLATE_DIR/.claude/agents/"*.md "$TEMPLATE_DIR/.claude/hooks/session-start.md"; do
+    rel=${src#"$TEMPLATE_DIR/.claude/"}
+    dst="$HOME/.claude/$rel"
+    [ -f "$src" ] || continue
+    [ -e "$dst" ] || [ -L "$dst" ] || continue
+    if [ -L "$dst" ] || ! render_user_level "$src" | cmp -s - "$dst"; then
+      echo "agent-team: stale copy $dst; rerun machine" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
 cmd_check() {
   local targets=()
   while [ $# -gt 0 ]; do
@@ -2332,6 +2381,7 @@ cmd_check() {
     fi
   done
   check_machine_links || status=1
+  check_machine_copies || status=1
   return "$status"
 }
 

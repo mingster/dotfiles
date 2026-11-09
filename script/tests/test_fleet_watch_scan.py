@@ -444,7 +444,7 @@ class IssueScanPass(unittest.TestCase):
         '## Out of scope\n'
         'other files\n\n'
         '## Verify\n'
-        'run test suite\n\n'
+        'bash script/checks-local.sh\n\n'
         '## Finish\n'
         'Self-review, then worker_done.\n'
     )

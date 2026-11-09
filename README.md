@@ -52,7 +52,7 @@ sh install.sh
 | --- | --- |
 | `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Refresh links without installing system packages |
 | `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also upgrade Homebrew packages on macOS |
-| `script/agent-team.sh machine` | Link skills, roles, hooks, bins and model routing into `~/.claude`, and merge settings (add `--dry-run` to preview). CLI install is `script/install-agent-clis.sh`, Orca presets are `script/setup-orca.sh` |
+| `script/agent-team.sh machine` | Link skills, bins and model routing into `~/.claude`, write rendered copies of roles and `session-start.md`, and merge settings (add `--dry-run` to preview). CLI install is `script/install-agent-clis.sh`, Orca presets are `script/setup-orca.sh` |
 
 Fleet host registration, pull scripts, automations and the readiness checklist are in [Fleet readiness](docs/agents/team-reference.md#fleet-readiness).
 
@@ -70,7 +70,7 @@ script/agent-team.sh all     /path/to/project
 
 | Command | Effect |
 | --- | --- |
-| `machine` | Link skills, roles, hooks, bins and model routing, and merge settings on this computer |
+| `machine` | Link skills, bins and model routing, write rendered copies of roles and `session-start.md`, and merge settings on this computer |
 | `project` | Seed roles, labels, team skills and audit output on a new repository |
 | `sync` | Refresh linked roles, hooks, skills and template managed files on an existing repository |
 | `check` | Read only drift check on one or more repositories (exit non zero when something diverges) |
