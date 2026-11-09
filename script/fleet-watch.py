@@ -1291,6 +1291,18 @@ def fetch_failed_runs(repo):
         return None
 
 
+def fetch_main_checks_run(repo):
+    """Latest finished Checks run on main, {} when there is none, None when gh fails."""
+    command = ['gh', 'run', 'list', '--repo', repo, '--workflow', 'Checks', '--branch', 'main',
+               '--event', 'push',
+               '--status', 'completed', '--limit', '1', '--json', 'databaseId,conclusion,url']
+    try:
+        output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        return (json.loads(output.stdout) or [{}])[0]
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
 def run_gh(command):
     try:
         return subprocess.run(command, capture_output=True, timeout=30).returncode
@@ -2795,6 +2807,26 @@ def workflow_notices(config, state, now, fetch=None, act=None):
     return notices
 
 
+def main_red_notices(config, state, now, fetch=None):
+    """Tell the coordinator once per run id when the latest Checks run on main is not success."""
+    if fetch is None:
+        fetch = fetch_main_checks_run
+    notices = []
+    told = state.setdefault('main_red', {})
+    for repo in (config.get('pr_watch') or {}).get('repos') or []:
+        run = fetch(repo)
+        if run is None:
+            continue
+        run_id = str(run.get('databaseId') or '')
+        if not run_id or run.get('conclusion') == 'success':
+            told.pop(repo, None)
+            continue
+        if told.get(repo) != run_id:
+            told[repo] = run_id
+            notices.append(Urgent(f"{repo}: Checks on main is {run.get('conclusion')}, ship.sh refuses until fixed: {run.get('url')}"))
+    return notices
+
+
 def backup_age_seconds(config, now, stamp_time=os.path.getmtime):
     """Age of backup stamp file in seconds, or None when missing/unconfigured."""
     backup = config.get('backup')
@@ -3156,6 +3188,7 @@ def main():
     notices += usage_notices(config)
     workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
     notices += workflow_notices(config, state, now)
+    notices += main_red_notices(config, state, now)
     backup_age = backup_age_seconds(config, now)
     notices += backup_notices(config, state, now)
     heavy_extra, heavy_log = heavy_gate_notices(config, state, now)
