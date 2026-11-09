@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run]"
 
-info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
+info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
   || refuse "cannot read PR $pr"
 field() { jq -r "$1" <<<"$info"; }
 
@@ -49,11 +49,29 @@ patch_id() { # <sha>
   base=$(git merge-base origin/main "$sha" 2>/dev/null) || return 1
   git diff "$base..$sha" | git patch-id --stable | awk '{print $1}'
 }
+# Commits the carry would pass unseen: after the verdict head, or the whole branch after a rebase.
+# An empty or whitespace-only one leaves the patch-id unchanged, so it needs a new Verdict.
+blank_commit() { # <verdict_head> <current_head>; prints the first empty or whitespace-only commit
+  local from c
+  if git merge-base --is-ancestor "$1" "$2" 2>/dev/null; then
+    from=$1
+  else
+    from=$(git merge-base origin/main "$2" 2>/dev/null) || return 1
+  fi
+  for c in $(git rev-list --no-merges "$from..$2"); do
+    if git diff --quiet --ignore-all-space --ignore-blank-lines "$c^" "$c" 2>/dev/null; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
 verdict_carry() { # <verdict_head> <current_head>
   local pid_v pid_h
   pid_v=$(patch_id "$1") || return 1
   pid_h=$(patch_id "$2") || return 1
-  [ -n "$pid_v" ] && [ "$pid_v" = "$pid_h" ]
+  [ -n "$pid_v" ] && [ "$pid_v" = "$pid_h" ] || return 1
+  ! blank_commit "$1" "$2" >/dev/null
 }
 
 # 3. Newest Verdict comment (exact post-verdict.sh first-line shape) is PASS or PASS+NOTES.
@@ -76,7 +94,7 @@ case "$verdict_status" in
 esac
 
 pr_body=$(field .body)
-pr_review_gates_resolve_builder_dispatch "$author_id" "$(field .headRefName)" refuse
+pr_review_gates_resolve_builder_dispatch "$author_id" "$(field .headRefName)" refuse "$repo"
 builder_dispatch=${PRG_BUILDER_DISPATCH:-}
 pr_review_gate_verifier_known "$verifier" "$builder_dispatch" "" refuse
 pr_review_gate_self_review "$pr_body" "$head" refuse verdict_carry
@@ -84,9 +102,10 @@ pr_review_gate_coordinator_verdict "$verifier" "$author_id" "$builder_dispatch" 
 pr_review_gate_same_agent_model "$verifier" "$builder_dispatch" refuse
 
 # 4. Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
-if [ "$verdict_head" != "$head" ]; then
-  verdict_carry "$verdict_head" "$head" \
-    || refuse "verdict head ${verdict_head:0:12} patch-id does not match current head ${head:0:12}"
+if [ "$verdict_head" != "$head" ] && ! verdict_carry "$verdict_head" "$head"; then
+  blank=$(blank_commit "$verdict_head" "$head") \
+    && refuse "commit ${blank:0:12} after verdict head ${verdict_head:0:12} is empty or whitespace only; post a new Verdict"
+  refuse "verdict head ${verdict_head:0:12} patch-id does not match current head ${head:0:12}"
 fi
 
 # 5. Protected paths (shared with lead-merge.sh: owner-only, Owner-approved trailer, Countersign).

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # #761: machine and setup-agent-skills.sh wire HOME only from the main dotfiles checkout, and
 # check flags a machine link into a git worktree. Every HOME here is a temp dir; the refusal
-# cases point TMPDIR elsewhere so that HOME no longer counts as a test home.
+# cases name it the account home with DOTFILES_REAL_HOME. TMPDIR is its parent there, like
+# TMPDIR=/Users with the real home, which must not count as a test home (#797).
 # shellcheck source=script/tests/lib/asdf-pin.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 set -uo pipefail
@@ -9,6 +10,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT/script/agent-team.sh"
 SKILLS_SCRIPT="$ROOT/script/setup-agent-skills.sh"
+CLAUDE_SCRIPT="$ROOT/script/setup-claude-code.sh"
 
 TMP="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
@@ -23,23 +25,24 @@ main="$TMP/main"
 wt="$TMP/worker"
 other="$TMP/other"
 git init -q "$main"
-mkdir -p "$main/skill" "$other"
+mkdir -p "$main/skill" "$main/.agents/claude" "$main/.agents/skills" "$other/.agents/claude" "$other/.agents/skills"
 printf 'x\n' >"$main/skill/SKILL.md"
+printf 'x\n' >"$main/.agents/claude/CLAUDE.md"
+printf 'x\n' >"$main/.agents/skills/README.md"
 printf 'x\n' >"$main/hook.py"
 git -C "$main" add -A
 git -C "$main" -c user.email=t@example.com -c user.name=t commit -qm seed
 git -C "$main" worktree add -q "$wt" -b worker
 
-# Not a test home: HOME lives outside TMPDIR.
+# Not a test home: HOME is the account home, even though it sits under TMPDIR.
 real_home="$TMP/real-home"
-elsewhere="$TMP/elsewhere"
-mkdir -p "$real_home" "$elsewhere"
+mkdir -p "$real_home"
 ln -s "$main" "$real_home/dotfiles"
 
 refused() { # <label> <script> <source> [args...]
   local label=$1 script=$2 src=$3 out rc
   shift 3
-  out=$(HOME="$real_home" TMPDIR="$elsewhere" PATH=/usr/bin:/bin DOTFILES="$src" bash "$script" "$@" 2>&1)
+  out=$(HOME="$real_home" DOTFILES_REAL_HOME="$real_home" TMPDIR="$TMP" PATH=/usr/bin:/bin DOTFILES="$src" bash "$script" "$@" 2>&1)
   rc=$?
   if [ "$rc" -ne 0 ] && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 1 ] \
     && grep -q "run it from the main checkout $main\$" <<<"$out" \
@@ -55,6 +58,9 @@ refused "machine --dry-run from a worktree is refused too" "$SCRIPT" "$wt" machi
 refused "machine from a path other than ~/dotfiles is refused" "$SCRIPT" "$other" machine
 refused "setup-agent-skills.sh from a worktree with a real HOME is refused" "$SKILLS_SCRIPT" "$wt"
 refused "setup-agent-skills.sh from a path other than ~/dotfiles is refused" "$SKILLS_SCRIPT" "$other"
+# setup-claude-code.sh refuses before its own rm and mkdir in HOME (#797).
+refused "setup-claude-code.sh from a worktree is refused before it touches HOME" "$CLAUDE_SCRIPT" "$wt"
+refused "setup-claude-code.sh from a path other than ~/dotfiles is refused before it touches HOME" "$CLAUDE_SCRIPT" "$other"
 
 # ~/dotfiles itself pointing into a worktree is still a worktree.
 ln -sfn "$wt" "$real_home/dotfiles"
@@ -62,17 +68,17 @@ refused "setup-agent-skills.sh refuses when ~/dotfiles points at a worktree" "$S
 ln -sfn "$main" "$real_home/dotfiles"
 
 # The main checkout passes the guard (PATH without orca, so nothing outside HOME runs).
-if HOME="$real_home" TMPDIR="$elsewhere" PATH=/usr/bin:/bin DOTFILES="$main" bash "$SKILLS_SCRIPT" >/dev/null 2>&1 \
+if HOME="$real_home" DOTFILES_REAL_HOME="$real_home" TMPDIR="$TMP" PATH=/usr/bin:/bin DOTFILES="$main" bash "$SKILLS_SCRIPT" >/dev/null 2>&1 \
   && [ -d "$real_home/.claude/skills" ]; then
   ok "setup-agent-skills.sh runs from the main checkout"
 else
   bad "setup-agent-skills.sh runs from the main checkout"
 fi
 
-# A temp HOME is a test home: the worktree source is allowed.
+# A HOME other than the account home is a test home, wherever TMPDIR points: the worktree source is allowed.
 test_home="$TMP/test-home"
 mkdir -p "$test_home"
-if HOME="$test_home" TMPDIR="$TMP" PATH=/usr/bin:/bin DOTFILES="$wt" bash "$SKILLS_SCRIPT" >/dev/null 2>&1; then
+if HOME="$test_home" DOTFILES_REAL_HOME="$real_home" TMPDIR="$TMP/elsewhere" PATH=/usr/bin:/bin DOTFILES="$wt" bash "$SKILLS_SCRIPT" >/dev/null 2>&1; then
   ok "setup-agent-skills.sh allows a worktree source under a temp HOME"
 else
   bad "setup-agent-skills.sh allows a worktree source under a temp HOME"

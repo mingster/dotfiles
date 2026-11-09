@@ -7,10 +7,11 @@
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # A linked worktree (agent or review copy) must never repoint the account's real home at itself.
-real_home="${DOTFILES_REAL_HOME:-$(eval echo "~$(id -un)")}"
-if [ "$(git -C "$DOTFILES_ROOT" rev-parse --git-dir 2>/dev/null)" != "$(git -C "$DOTFILES_ROOT" rev-parse --git-common-dir 2>/dev/null)" ] \
-  && [ "$(cd "$HOME" && pwd -P)" = "$(cd "$real_home" && pwd -P)" ]; then
-  echo "install: error: $DOTFILES_ROOT is a linked worktree; run install.sh from the main checkout, or set HOME to a temp dir." >&2
+# Same test home rule as setup-agent-skills.sh, checked before the first write to HOME (#797).
+# shellcheck disable=SC1091
+. "$DOTFILES_ROOT/script/lib/dotfiles-source.sh"
+if ! test_home && main_checkout=$(worktree_main "$DOTFILES_ROOT"); then
+  echo "install: error: $DOTFILES_ROOT is a linked worktree; run it from the main checkout $main_checkout, or set HOME to a temp dir." >&2
   exit 1
 fi
 
