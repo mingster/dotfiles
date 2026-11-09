@@ -849,7 +849,9 @@ orca=orca_call
 # settled dispatch), a running agent, one outside a worktree, and the main checkout's. A local terminal with no dispatch and
 # no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only). On another environment a
 # terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
-# its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those.
+# its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
+# shell with no running agent, at a path the environment no longer reports; scheduled rounds close those too. A running
+# agent in a removed worktree stays open until its dispatch settles (the gap: a manual run closes it).
 # worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
 # every Run on this Orca and on every environment, and one inventory serves all of them; if any of it is unread, nothing closes.
 # Each Orca is read directly, so no --include-remote: with it one unreachable host makes a whole Run answer ok:false.
@@ -938,16 +940,27 @@ close_finished_terminals() {
   local env=$1 label=${1:-local} late=${2:-0} eargs=() handle reason action
   [ -z "$env" ] || eargs=(--environment "$env")
   # A remote terminal reports its own host's path. A removed worktree is matched to the paths this environment reports
-  # for the same repo and branch, never to the coordinator's local path.
-  cp "$tmp/removed-paths" "$tmp/h-gone"
+  # for the same repo and branch, never to the coordinator's local path. A path counts as gone only when a fresh
+  # listing from the same environment no longer reports it: a checkout that still exists on the branch keeps its shells.
+  # An unreadable listing leaves nothing gone.
+  : > "$tmp/h-gone"
   if [ -n "$env" ]; then
-    jq -r --rawfile gone "$tmp/removed-paths" --arg env "$env" '
-      def br: (.branch // "") | sub("^refs/heads/"; "");
-      def path: .path // .workspacePath // "";
-      ($gone | split("\n")) as $g
-      | [.result.worktrees[]? | select((.hostId // "local") == "local" and (path as $p | $g | index($p)) != null)] as $loc
-      | .result.worktrees[]? | select((.hostId // "local") == $env) | . as $r
-      | select(path != "" and any($loc[]; .repoId == $r.repoId and (br | length) > 0 and br == ($r | br))) | path' "$tmp/orca-worktrees" > "$tmp/h-gone" 2>/dev/null || : > "$tmp/h-gone"
+    if ! "$orca" worktree list --environment "$env" --json > "$tmp/h-env-worktrees" 2>/dev/null \
+      || ! jq -e '.ok != false and (.result.worktrees | type == "array")' "$tmp/h-env-worktrees" >/dev/null 2>&1; then
+      echo "Warning: worktree list unavailable on $label; no removed worktree matched there." >&2
+    else
+      jq -r --rawfile gone "$tmp/removed-paths" --arg env "$env" --slurpfile fresh "$tmp/h-env-worktrees" '
+        def br: (.branch // "") | sub("^refs/heads/"; "");
+        def path: .path // .workspacePath // "";
+        ($gone | split("\n")) as $g
+        | [$fresh[0].result.worktrees[] | path] as $live
+        | [.result.worktrees[]? | select((.hostId // "local") == "local" and (path as $p | $g | index($p)) != null)] as $loc
+        | .result.worktrees[]? | select((.hostId // "local") == $env) | . as $r
+        | select(path != "" and ((path as $p | $live | index($p)) == null)
+            and any($loc[]; .repoId == $r.repoId and (br | length) > 0 and br == ($r | br))) | path' "$tmp/orca-worktrees" > "$tmp/h-gone" 2>/dev/null || : > "$tmp/h-gone"
+    fi
+  else
+    cp "$tmp/removed-paths" "$tmp/h-gone"
   fi
   if ! "$orca" terminal list ${eargs[@]+"${eargs[@]}"} --json > "$tmp/h-terminals" 2>/dev/null \
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
@@ -970,8 +983,8 @@ close_finished_terminals() {
       elif $exited then [$h, "exited", "close"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
       elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
+      elif $local != "" and $p != "" and .agentIdentity == null and (.branch // "") != "refs/heads/main" and (.branch // "") != "refs/heads/master" and ($gone | split("\n") | index($p)) then [$h, "worktree gone in this run", "close"]
       elif $local != "" and ($p == "" or $scheduled != "" or .agentIdentity != null or (.branch // "") == "refs/heads/main" or (.branch // "") == "refs/heads/master") then [$h, "unknown owner, still running", "keep"]
-      elif $local != "" and $p != "" and ($gone | split("\n") | index($p)) then [$h, "worktree gone in this run", "close"]
       elif $local != "" then [$h, "unknown owner, still running", "keep"]
       elif $p == "" then [$h, "not in a worktree", "keep"]
       elif $p == $main then [$h, "main checkout", "keep"]

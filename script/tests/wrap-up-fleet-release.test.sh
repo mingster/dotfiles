@@ -42,6 +42,9 @@ case "$*" in
   'orchestration worker-release --dispatch '*)
     printf '%s %s\n' "${e:-local}" "$4" >> "$FAKE_DIR/released"
     echo '{"ok":true,"result":{"state":"released"}}' ;;
+  'worktree list --environment env-a --json')
+    if [ -e "$FAKE_DIR/env-worktrees-fail" ]; then exit 1; fi
+    if [ -f "$FAKE_DIR/env-worktrees" ]; then cat "$FAKE_DIR/env-worktrees"; else echo '{"ok":true,"result":{"worktrees":[]}}'; fi ;;
   'worktree list --json') if [ -f "$FAKE_DIR/orca-worktrees" ]; then cat "$FAKE_DIR/orca-worktrees"; else echo '{"ok":true,"result":{"worktrees":[]}}'; fi ;;
   *) exit 1 ;;
 esac
@@ -155,8 +158,10 @@ echo "$none" | jq . > /dev/null
 g worktree add -q --detach "$tmp/wt-gone" main
 wt_gone=$(cd "$tmp/wt-gone" && pwd -P)
 # The environment reports its own path for the removed worktree; a terminal at the coordinator's local path is another place.
-jq -n --arg l "$wt_gone" '{ok:true,result:{worktrees:[{repoId:"r1",hostId:"local",path:$l,branch:"refs/heads/gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/gone-wt",branch:"gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/other-wt",branch:"other-br"}]}}' > "$tmp/orca-worktrees"
-{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /remote/gone-wt; term e-samepath "$wt_gone"; term e-other /remote/other-wt; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
+jq -n --arg l "$wt_gone" '{ok:true,result:{worktrees:[{repoId:"r1",hostId:"local",path:$l,branch:"refs/heads/gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/gone-wt",branch:"gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/sibling-wt",branch:"gone-br"},{repoId:"r1",hostId:"env-a",path:"/remote/other-wt",branch:"other-br"}]}}' > "$tmp/orca-worktrees"
+# What the environment reports now: the removed checkout is absent, a second checkout on the same branch is still there.
+echo '{"ok":true,"result":{"worktrees":[{"repoId":"r1","hostId":"env-a","path":"/remote/sibling-wt","branch":"gone-br"},{"repoId":"r1","hostId":"env-a","path":"/remote/other-wt","branch":"other-br"}]}}' > "$tmp/env-worktrees"
+{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /remote/gone-wt; term e-sibling /remote/sibling-wt; term e-samepath "$wt_gone"; term e-other /remote/other-wt; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
 { term l-gone /fixture/removed; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-local"
 echo '{"ok":true,"result":{"workers":[]}}' > "$tmp/workers-local"
 run --dry-run
@@ -166,7 +171,7 @@ expect 'Close terminal e-gone (env-a, worktree gone in this run)'
 expect 'Kept terminal e-samepath (env-a, unknown owner, still running)'
 expect 'Kept terminal e-never (env-a, unknown owner, still running)'
 expect 'Close terminal l-gone (local, no dispatch, no agent)'
-for keep in e-live e-samepath e-other e-never e-agent e-none t-own; do
+for keep in e-live e-sibling e-samepath e-other e-never e-agent e-none t-own; do
   ! grep -Fq "Close terminal $keep " "$tmp/output" || { echo "FAIL would close $keep"; exit 1; }
 done
 test ! -e "$tmp/closed"
@@ -175,6 +180,21 @@ n_close=$(grep -c '^Close terminal ' "$tmp/output" || true); n_kept=$(grep -c '^
 # The Kept line for e-gone was printed before its worktree went; the summary must not count it twice.
 expect "terminals closed=$n_close kept=$((n_kept-1))"
 echo 'ok 6 a remote terminal in a removed worktree is matched by the path its environment reports and counted once'
+# A scheduled round (WRAP_UP_SCHEDULED_CHILD) closes the plain shell of a removed worktree too, never an agent's.
+{ term e-gone /remote/gone-wt; term e-gone-agent /remote/gone-wt '"agent"'; term e-sibling /remote/sibling-wt; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
+WRAP_UP_SCHEDULED_CHILD=1 run --dry-run
+expect 'Close terminal e-gone (env-a, worktree gone in this run)'
+expect 'Kept terminal e-gone-agent (env-a, unknown owner, still running)'
+! grep -Fq 'Close terminal e-sibling ' "$tmp/output" || { echo 'FAIL scheduled round closed a shell in a checkout the environment still reports'; exit 1; }
+echo 'ok 6 a scheduled round closes plain shells of a removed worktree, not agents'
+# An unreadable environment listing matches no removed worktree.
+touch "$tmp/env-worktrees-fail"
+run --dry-run
+! grep -Fq 'worktree gone in this run' "$tmp/output" || { echo 'FAIL closed on an unreadable environment worktree list'; exit 1; }
+rm -f "$tmp/env-worktrees-fail"
+echo 'ok 6 an unreadable environment worktree list closes nothing as gone'
+{ term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /remote/gone-wt; term e-sibling /remote/sibling-wt; term e-samepath "$wt_gone"; term e-other /remote/other-wt; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
+run --dry-run
 grep -o '^Close terminal [^ ]* ([^,]*' "$tmp/output" | sed 's/^Close terminal \([^ ]*\) (\(.*\)/\2 \1/; s/^local/local/' | sort > "$tmp/planned"
 run --apply
 sort "$tmp/closed" | cmp - "$tmp/planned" || { echo 'FAIL apply closed other than the plan'; cat "$tmp/closed"; exit 1; }

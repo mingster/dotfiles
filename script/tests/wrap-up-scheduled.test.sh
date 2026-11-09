@@ -317,6 +317,16 @@ reset
 PRECHECK_TIMEOUT=3000 round
 check 'each child gets the default per-repo budget' test "$(grep -c 'budget=900 ' "$calls")" -eq 2
 reset
+# No override and no time spent: the first child keeps the full default budget even though the round limit (540) is lower.
+# SECONDS can tick over before the first repo, so allow a few tries; without the exemption every try gets 540 or less.
+first_budget=0
+for _ in 1 2 3; do
+  reset; round
+  first_budget=$(sed -n '1s/.* budget=\([0-9]*\) .*/\1/p' "$calls")
+  [ "$first_budget" = 900 ] && break
+done
+check 'a fresh default round gives the first child the full default budget' test "$first_budget" = 900
+reset
 ROUND_LIMIT=10 FAKE_SLEEP=3 round; status=$?
 check 'a round with slow repos exits 0' test "$status" -eq 0
 check 'a slow first repo does not block the second' test "$(ncalls)" -eq 2

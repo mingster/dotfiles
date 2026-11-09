@@ -56,7 +56,12 @@ remote_repo=${REMOTE_REPO:-}
 # shellcheck disable=SC2016
 refresh='
 check_remote_repo() {
-  local d=${1/#\~/$HOME}
+  local d
+  case "$1" in
+    "~") d=$HOME ;;
+    "~/"*) d=$HOME/${1#"~/"} ;;
+    *) d=$1 ;;
+  esac
   if [ -e "$d/.git" ]; then
     [ "$(git -C "$d" branch --show-current 2>/dev/null)" = main ] || exit 1
     [ -z "$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ] || exit 1
