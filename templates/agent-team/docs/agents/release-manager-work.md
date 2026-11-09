@@ -2,7 +2,7 @@
 
 ## Stages
 1. **Local (`deploy/local`):** `/deploy local` against the local development database. No human approval.
-   - Run the facts' exact masked env check (`.claude/bin/env-peek.py`) as a standalone Bash command. Never prepend `ls` or another env-file read: the deny blocks the whole command.
+   - Run the facts' exact masked env check (`python3 "$HOME/.claude/bin/env-peek.py"`) as a standalone Bash command. Never prepend `ls` or another env-file read: the deny blocks the whole command.
 2. **Staging (`deploy/staging`):**
    - First run `bin/changelog-compile.sh` on an up to date `main`. If `CHANGELOG.md` changed, commit "chore: compile changelog fragments" on a branch in your worktree and report it to the coordinator for the docs-only lane before you promote.
    - `/deploy staging` for commits that passed local checks; it deploys to staging once the build gate passes. Set `deploy/staging` `pending` at the deploy and start the full Regression run on the same sha in parallel; `success` only after Regression and the swarm live lanes have no P0 or P1. A failure blocks production of that sha only.

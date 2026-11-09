@@ -8,7 +8,7 @@ Blocks these kinds of accident:
    `grep x bin/deploy-win.sh` or editing the script are allowed; `./bin/deploy-win.sh`,
    `bash bin/deploy-win.sh` or `FOO=1 sh -c "bin/deploy-win.sh"` are not.
 2. Printing a secret into the session log: reading `.env` files, `secrets/`, key
-   files, or echoing secret environment variables. Use `.claude/bin/env-peek.py`
+   files, or echoing secret environment variables. Use `python3 "$HOME/.claude/bin/env-peek.py"`
    to check a value without printing it.
 3. A PayPal API call other than GET and the token request.
 4. Risky production commands without the owner's go (`check_risky`): a push to a
@@ -88,7 +88,7 @@ SHELLS = {"bash", "sh", "zsh", "fish", "dash", "ksh"}
 WRAPPERS = {"sudo", "nohup", "time", "command", "exec", "nice", "caffeinate", "stdbuf"}
 ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-ENV_PEEK = ".claude/bin/env-peek.py <file> [KEY ...]"
+ENV_PEEK = 'python3 "$HOME/.claude/bin/env-peek.py" <file> [KEY ...]'
 
 APPROVAL_TTL = 30 * 60
 APPROVE = "bin/owner-approve.sh"

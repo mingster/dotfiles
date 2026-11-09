@@ -272,5 +272,9 @@ else
   bad "non-object guard-config.json failed (rc=$rc_arr dec=$(decision "$out_arr") stderr_lines=$(wc -l < "$err_arr" | tr -d ' ') stderr=$(cat "$err_arr"))"
 fi
 
+# env-peek lives per machine at ~/.claude/bin; the guard points there and allows that call.
+check_bash "secret read deny names the home env-peek" "$PROJ" "cat .env.local" deny 'Use python3 \"$HOME/.claude/bin/env-peek.py\"'
+check_bash "home env-peek call on .env.local is allowed" "$PROJ" 'python3 "$HOME/.claude/bin/env-peek.py" web/.env.local DATABASE_URL' allow
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
