@@ -895,7 +895,7 @@ read_dispatches() {
   while :; do
     wargs=(); [ -z "$run_cursor" ] || wargs=(--cursor "$run_cursor")
     if ! "$orca" orchestration run-list ${eargs[@]+"${eargs[@]}"} ${wargs[@]+"${wargs[@]}"} --full --json > "$tmp/h-page" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.runs | type == "array")' "$tmp/h-page" >/dev/null 2>&1 \
+      || ! jq -e '.ok != false and (.result.runs | type == "array") and (.result.truncated != true)' "$tmp/h-page" >/dev/null 2>&1 \
       || ! run_cursor=$(next_page_cursor "$tmp/h-page") || grep -Fxq -- "$run_cursor" "$tmp/h-cursors"; then
       echo "Warning: Run list incomplete on ${1:-local}; closing no terminals." >&2; return 1
     fi
@@ -910,7 +910,7 @@ read_dispatches() {
     while :; do
       wargs=(--run "$run" --limit 100); [ -z "$cursor" ] || wargs+=(--cursor "$cursor")
       if ! "$orca" orchestration worker-list ${eargs[@]+"${eargs[@]}"} "${wargs[@]}" --json > "$tmp/h-page" 2>/dev/null \
-        || ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/h-page" >/dev/null 2>&1; then
+        || ! jq -e '.ok != false and (.result.workers | type == "array") and (.result.truncated != true)' "$tmp/h-page" >/dev/null 2>&1; then
         echo 'Warning: coordinator dispatch discovery failed; closing no terminals.' >&2; fail_item 'terminals' 'dispatch discovery failed; none closed'; return 1
       fi
       cat "$tmp/h-page" >> "$tmp/h-workers"
@@ -942,11 +942,11 @@ close_finished_terminals() {
   # A remote terminal reports its own host's path. A removed worktree is matched to the paths this environment reports
   # for the same repo and branch, never to the coordinator's local path. A path counts as gone only when a fresh
   # listing from the same environment no longer reports it: a checkout that still exists on the branch keeps its shells.
-  # An unreadable or empty listing leaves nothing gone.
+  # An unreadable, empty or truncated listing leaves nothing gone.
   : > "$tmp/h-gone"
   if [ -n "$env" ]; then
     if ! "$orca" worktree list --environment "$env" --json > "$tmp/h-env-worktrees" 2>/dev/null \
-      || ! jq -e '.ok != false and (.result.worktrees | type == "array") and (.result.worktrees | length) > 0' "$tmp/h-env-worktrees" >/dev/null 2>&1; then
+      || ! jq -e '.ok != false and (.result.worktrees | type == "array") and (.result.worktrees | length) > 0 and (.result.truncated != true)' "$tmp/h-env-worktrees" >/dev/null 2>&1; then
       echo "Warning: worktree list unavailable on $label; no removed worktree matched there." >&2
     else
       jq -r --rawfile gone "$tmp/removed-paths" --arg env "$env" --slurpfile fresh "$tmp/h-env-worktrees" '
@@ -1054,7 +1054,7 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         echo 'Warning: dispatch discovery failed; retaining all worktrees.' >&2; fail_item 'worktrees' 'dispatch discovery failed; all kept'
         echo '*' >> "$tmp/active"; break
       fi
-      if ! jq -e '.ok != false and (.result.workers | type == "array")' "$tmp/workers" >/dev/null; then
+      if ! jq -e '.ok != false and (.result.workers | type == "array") and (.result.truncated != true)' "$tmp/workers" >/dev/null; then
         echo 'Warning: unexpected worker-list page shape; retaining all worktrees.' >&2; fail_item 'worktrees' 'worker-list page unreadable; all kept'
         echo '*' >> "$tmp/active"; break
       fi

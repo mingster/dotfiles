@@ -33,7 +33,7 @@ case "$*" in
   'terminal close --terminal '*) echo "local ${*: -1}" >> "$FAKE_DIR/closed" ;;
   'terminal close --environment env-a --terminal '*) echo "env-a ${*: -1}" >> "$FAKE_DIR/closed" ;;
   'terminal show'*) exit 1 ;;
-  'orchestration run-list --environment '*) echo '{"ok":true,"result":{"runs":[{"id":"run-env"}]}}' ;;
+  'orchestration run-list --environment '*) if [ -e "$FAKE_DIR/runs-truncated" ]; then echo '{"ok":true,"result":{"runs":[{"id":"run-env"}],"truncated":true}}'; exit 0; fi; echo '{"ok":true,"result":{"runs":[{"id":"run-env"}]}}' ;;
   'orchestration run-list '*) echo '{"ok":true,"result":{"runs":[{"id":"run-local"}]}}' ;;
   'orchestration worker-list --environment env-a --run run-env '*) cat "$FAKE_DIR/workers-env" ;;
   'orchestration worker-list --run run-local '*) cat "$FAKE_DIR/workers-local" ;;
@@ -197,6 +197,11 @@ echo 'ok 6 an unreadable environment worktree list closes nothing as gone'
 echo '{"ok":true,"result":{"worktrees":[]}}' > "$tmp/env-worktrees"
 run --dry-run
 ! grep -Fq 'worktree gone in this run' "$tmp/output" || { echo 'FAIL closed on an empty environment worktree list'; exit 1; }
+# A truncated environment listing is not a fresh one: the live sibling checkout it left out must not count as gone.
+echo '{"ok":true,"result":{"worktrees":[{"repoId":"r1","hostId":"env-a","path":"/remote/other-wt","branch":"other-br"}],"truncated":true}}' > "$tmp/env-worktrees"
+run --dry-run
+! grep -Fq 'worktree gone in this run' "$tmp/output" || { echo 'FAIL closed on a truncated environment worktree list'; cat "$tmp/output"; exit 1; }
+echo 'ok 6 a truncated environment worktree list closes nothing as gone'
 echo '{"ok":true,"result":{"worktrees":[{"repoId":"r1","hostId":"env-a","path":"/remote/sibling-wt","branch":"gone-br"},{"repoId":"r1","hostId":"env-a","path":"/remote/other-wt","branch":"other-br"}]}}' > "$tmp/env-worktrees"
 echo 'ok 6 an empty environment worktree list closes nothing as gone'
 { term e-live /fixture/live; term e-setup /fixture/finished; term e-gone /remote/gone-wt; term e-sibling /remote/sibling-wt; term e-samepath "$wt_gone"; term e-other /remote/other-wt; term e-never /fixture/never-dispatched; term e-agent /fixture/removed2 '"agent"'; term e-none ''; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
@@ -205,6 +210,20 @@ grep -o '^Close terminal [^ ]* ([^,]*' "$tmp/output" | sed 's/^Close terminal \(
 run --apply
 sort "$tmp/closed" | cmp - "$tmp/planned" || { echo 'FAIL apply closed other than the plan'; cat "$tmp/closed"; exit 1; }
 echo 'ok 6 leftover terminals close on every environment; live, agent, never dispatched, no-worktree and own terminals stay'
+# A truncated run list or worker page cannot prove which dispatches are live, so no terminal closes.
+touch "$tmp/runs-truncated"
+run --dry-run
+rm -f "$tmp/runs-truncated"
+! grep -q '^Close terminal ' "$tmp/output" || { echo 'FAIL closed a terminal on a truncated run list'; cat "$tmp/output"; exit 1; }
+grep -Fq 'closing no terminals' "$tmp/errors" || { echo 'FAIL no warning for a truncated run list'; cat "$tmp/errors"; exit 1; }
+echo 'ok 6 a truncated run list closes no terminals'
+cp "$tmp/workers-env" "$tmp/workers-env.bak"
+jq '.result.truncated = true' "$tmp/workers-env.bak" > "$tmp/workers-env"
+run --dry-run
+cp "$tmp/workers-env.bak" "$tmp/workers-env"
+! grep -q '^Close terminal ' "$tmp/output" || { echo 'FAIL closed a terminal on a truncated worker list'; cat "$tmp/output"; exit 1; }
+grep -Fq 'closing no terminals' "$tmp/errors" || { echo 'FAIL no warning for a truncated worker list'; cat "$tmp/errors"; exit 1; }
+echo 'ok 6 a truncated worker list closes no terminals'
 
 # Item 8: sleep is settled for the terminal close too, so one run releases the worker and closes its terminals.
 {
