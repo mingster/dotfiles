@@ -16,9 +16,10 @@ shift 2
 rc=0
 # Role files and session-start.md are rendered copies, so only agent-team.sh machine refreshes them
 render_team() {
+  local out
   [ -f "$1/script/agent-team.sh" ] || return 0
-  DOTFILES="$1" bash "$1/script/agent-team.sh" machine >/dev/null 2>&1 && return 0
-  echo "fail $host_label $raw (agent-team.sh machine failed)"
+  out=$(DOTFILES="$1" bash "$1/script/agent-team.sh" machine 2>&1) && return 0
+  echo "fail $host_label $2 (agent-team.sh machine failed: $(printf "%s\n" "$out" | tail -n 1))"
   rc=1
 }
 for raw in "$@"; do
@@ -49,7 +50,7 @@ for raw in "$@"; do
       continue
     fi
     echo "ok   $host_label $d $(git -C "$d" rev-parse --short HEAD)$reset_note"
-    render_team "$d"
+    render_team "$d" "$raw"
     continue
   fi
   b=$(git -C "$d" branch --show-current 2>/dev/null || true)
@@ -89,7 +90,7 @@ for raw in "$@"; do
       rc=1
       continue
     fi
-    render_team "$d"
+    render_team "$d" "$raw"
   fi
 done
 exit "$rc"

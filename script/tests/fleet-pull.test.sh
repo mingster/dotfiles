@@ -339,6 +339,7 @@ done
 # A stand-in agent-team.sh records each machine render under the host's own home
 cat >"$df_seed/script/agent-team.sh" <<'EOS'
 #!/usr/bin/env bash
+if [ -f "$HOME/agent-team-fail" ]; then echo "agent-team: templates missing" >&2; exit 1; fi
 echo "$*" >>"$HOME/agent-team-machine.log"
 EOS
 git -C "$df_seed" add -A
@@ -433,6 +434,19 @@ if [ "$ec9" -eq 0 ] && [ "$(cat "$rem_home/agent-team-machine.log" 2>/dev/null)"
   ok "fleet-pull runs agent-team.sh machine on an agent host"
 else
   bad "fleet-pull did not run agent-team.sh machine on an agent host (ec=$ec9): $out9"
+fi
+
+# 842: a failed render names the host and the last error line, and the run exits non-zero
+touch "$rem_home/agent-team-fail"
+set +e
+out10=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec10=$?
+set -e
+rm -f "$rem_home/agent-team-fail"
+if [ "$ec10" -ne 0 ] && grep -Eq "^fail host-a [^ ]*/dotfiles \(agent-team.sh machine failed: agent-team: templates missing\)$" <<<"$out10"; then
+  ok "fleet-pull reports a failed agent-team.sh machine with its last error line"
+else
+  bad "fleet-pull did not report the failed render with its reason (ec=$ec10): $out10"
 fi
 
 echo "fleet-pull: $pass passed, $fail failed"
