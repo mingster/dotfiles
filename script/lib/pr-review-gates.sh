@@ -176,8 +176,21 @@ pr_review_gates_worker_agent_model() { # <dispatch> -> prints "agent<TAB>model" 
   printf '%s\t%s\n' "$agent" "$model"
 }
 
-pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <refuse_fn>
-  local author=$1 branch=$2 refuse=$3 row wt path id orca cursor="" page
+pr_review_gates_worktree_repo() { # <absolute worktree> -> lowercase owner/name of origin
+  local url
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 1
+  url=${url%.git}
+  url=${url%/}
+  url=${url#*://}
+  url=${url#*@}
+  url=${url#*[:/]}
+  printf '%s\n' "$url" | tr '[:upper:]' '[:lower:]'
+}
+
+# author=unknown: a worker whose worktree has the head branch checked out wins over a name match.
+# With <repo>, only worktrees whose origin is that repo count, so a same-named worktree elsewhere is skipped.
+pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <refuse_fn> [repo]
+  local author=$1 branch=$2 refuse=$3 repo=${4:-} row wt id orca cursor="" page rows="" want checked
   PRG_BUILDER_DISPATCH=""
   if [[ "$author" == ctx_* ]]; then
     PRG_BUILDER_DISPATCH=$author
@@ -192,23 +205,36 @@ pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <r
     return 1
   fi
   [ -n "$branch" ] || { $refuse "cannot resolve builder: verdict author is unknown and head branch is missing"; return 1; }
+  want=$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')
   orca=$(pr_review_gates_orca)
-  id=""
   for _ in $(seq 1 50); do
     page=$("$orca" orchestration worker-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) || break
     while IFS= read -r row; do
       [ -n "$row" ] || continue
+      id=$(jq -r '.dispatchId // empty' <<<"$row")
       wt=$(pr_review_gates_workspace_path "$(jq -r '.workspace // empty' <<<"$row")")
-      if pr_review_gates_worktree_matches_branch "$wt" "$branch"; then
-        id=$(jq -r '.dispatchId // empty' <<<"$row")
-        [ -n "$id" ] && break
+      [ -n "$id" ] && [ -n "$wt" ] || continue
+      if [ -n "$want" ] && [ "$(pr_review_gates_worktree_repo "$wt" 2>/dev/null || true)" != "$want" ]; then
+        continue
       fi
+      rows+="$id"$'\t'"$wt"$'\n'
     done < <(jq -r '.result.workers[]? | @json' <<<"$page" 2>/dev/null)
-    [ -n "$id" ] && break
     cursor=$(jq -r '.result.nextCursor // .result.page.nextCursor // empty' <<<"$page")
     [ -n "$cursor" ] || break
   done
-  [ -n "$id" ] || { $refuse "cannot resolve builder dispatch for branch $branch"; return 1; }
+  id=""
+  while IFS=$'\t' read -r row wt; do
+    [ -n "$row" ] || continue
+    checked=$(pr_review_gates_worktree_checked_out_branch "$wt" 2>/dev/null || true)
+    [ -n "$checked" ] && [ "$checked" = "$branch" ] && { id=$row; break; }
+  done <<<"$rows"
+  if [ -z "$id" ]; then
+    while IFS=$'\t' read -r row wt; do
+      [ -n "$row" ] || continue
+      pr_review_gates_worktree_matches_branch "$wt" "$branch" && { id=$row; break; }
+    done <<<"$rows"
+  fi
+  [ -n "$id" ] || { $refuse "cannot resolve builder dispatch for branch $branch${repo:+ in $repo}"; return 1; }
   PRG_BUILDER_DISPATCH=$id
   return 0
 }

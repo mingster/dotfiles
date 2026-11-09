@@ -1,0 +1,1 @@
+With `author=unknown`, the review gates pick the worker that has the PR branch checked out in the PR's repo, so a same-named worktree in another repo no longer matches. `ship.sh` refuses a patch-id carry over an empty or whitespace-only commit. The gaps for pre-#765 workers and unauthenticated coordinator ids are documented.
