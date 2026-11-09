@@ -141,7 +141,7 @@ Project specific gates and deployment stages are documented in `deploy-facts.md`
 
 ## Coordinator procedures
 
-Before status or process review, Elon reads [Coordinator operations](coordinator-operations.md). Before judging engineering reviews or tests, Elon reads [Engineering integration](engineering-integration.md). Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
+Before status or process review, Elon reads `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`. Before judging engineering reviews or tests, Elon reads `~/dotfiles/templates/agent-team/docs/agents/engineering-integration.md`. Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
 
 ## Extra Strong review (owner 2026-10-31)
 
