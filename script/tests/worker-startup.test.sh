@@ -438,7 +438,7 @@ Refs #1
 Unrelated files.
 
 ## Verify
-Run tests.
+Run bash script/checks-local.sh.
 
 ## Finish
 1. Self-review: read code-review skill and fix findings.

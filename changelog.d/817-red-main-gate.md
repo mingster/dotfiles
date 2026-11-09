@@ -1,0 +1,1 @@
+- `ship.sh` refuses to ship while the latest Checks run on main is not success, unless the PR body has `Fixes main: <run id>`. `fleet-watch` tells the coordinator once per red run id. (#817)

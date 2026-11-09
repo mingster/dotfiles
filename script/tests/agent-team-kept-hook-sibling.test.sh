@@ -165,5 +165,35 @@ else
   bad "hooks/tests/ is not scanned and the plan says so once (out: $(tail -6 <<<"$out"))"
 fi
 
+# 8. check agrees with project (#808): the files project keeps for a kept hook are not drift,
+#    and a shared hook copy that nothing kept loads still is.
+P8="$TMP/check"
+mkproj "$P8"
+printf 'from pathlib import Path\nHOSTS = Path(__file__).with_name("production-hosts.txt")\n' > "$P8/.claude/hooks/guard-bash.py"
+printf 'example.com\n' > "$P8/.claude/hooks/production-hosts.txt"
+cat > "$P8/.claude/hooks/warn-elon-fullstack.py" <<'PY'
+import runpy
+from pathlib import Path
+
+runpy.run_path(str(Path(__file__).with_name("guard-bash.py")))
+PY
+commit_all "$P8"
+out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$P8" --project-name x 2>&1)"
+if [ -f "$P8/.claude/hooks/guard-bash.py" ] && [ -f "$P8/.claude/hooks/production-hosts.txt" ] \
+  && out="$(timeout 300 bash "$ROOT/script/agent-team.sh" check "$P8" 2>&1)"; then
+  ok "check after project passes with kept siblings"
+else
+  bad "check after project passes with kept siblings (out: $(tail -5 <<<"$out"))"
+fi
+printf 'x = 1\n' > "$P8/.claude/hooks/strikes.py"
+out="$(timeout 300 bash "$ROOT/script/agent-team.sh" check "$P8" 2>&1)"
+if grep -qF "shared hook copy or link in project: .claude/hooks/strikes.py" <<<"$out" \
+  && ! grep -qF ".claude/hooks/guard-bash.py" <<<"$out" \
+  && ! grep -qF ".claude/hooks/production-hosts.txt" <<<"$out"; then
+  ok "check still flags an unneeded shared hook copy, and only that"
+else
+  bad "check still flags an unneeded shared hook copy, and only that (out: $(tail -5 <<<"$out"))"
+fi
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
