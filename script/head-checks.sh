@@ -180,6 +180,9 @@ if [ -n "$pr" ]; then
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$base" =~ ^[0-9a-f]{40}$ ]] || usage "invalid head or base SHA from GitHub"
     [ "$pr_local_branch" -eq 0 ] && break
     [ "$sha" = "$local_pushed" ] && break
+    # A local copy that is behind the PR head is stale, not a push still in flight: use the PR head.
+    git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$repo" fetch -q origin "$sha" >> "$log" 2>&1 || true
+    git -C "$repo" merge-base --is-ancestor "$local_pushed" "$sha" 2>/dev/null && break
     gh_head_attempt=$((gh_head_attempt + 1))
     [ "$gh_head_attempt" -lt $((pr_head_wait * 2)) ] || {
       refused=1
