@@ -1,0 +1,1 @@
+* Review docs now say the coordinator never posts a Verdict or Review line, and that a code or script PR gets one verifier that runs the change (parent against head) without re-reading the diff or re-running the tests Checks already ran.
