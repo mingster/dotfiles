@@ -1,0 +1,1 @@
+The Claude usage gate now renews an expired Claude login token (one minimal Claude prompt) before reading usage on hosts without a keychain, so an idle Linux runner no longer fails with `refresh failed: HTTPError`.

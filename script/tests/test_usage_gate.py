@@ -1,4 +1,4 @@
-import contextlib, importlib.util, io, json, os, sys, tempfile, unittest
+import contextlib, importlib.util, io, json, os, sys, tempfile, time, unittest
 from datetime import timezone
 from unittest import mock
 
@@ -990,6 +990,26 @@ class RealReadingPolicy(unittest.TestCase):
                 mock.patch.object(urllib.request, 'urlopen', return_value=body) as fetch:
             gate.claude_refresh()
         self.assertEqual(fetch.call_args.args[0].get_header('Authorization'), 'Bearer fresh')
+
+    def test_claude_refresh_renews_an_expired_token_on_a_host_without_keychain(self):
+        import urllib.request
+        gate = self.gate
+        gate.HOME = self.tmp.name
+        os.makedirs(self.tmp.name + '/.claude')
+        path = self.tmp.name + '/.claude/.credentials.json'
+        with open(path, 'w') as f:
+            json.dump({'claudeAiOauth':{'accessToken':'expired', 'expiresAt':1000}}, f)
+        def renew(args, **kwargs):
+            with open(path, 'w') as f:
+                json.dump({'claudeAiOauth':{'accessToken':'renewed', 'expiresAt':(time.time() + 7200) * 1000}}, f)
+        body = io.StringIO(json.dumps({'seven_day':{'utilization':42, 'resets_at':FUT}}))
+        with mock.patch.object(gate.sys, 'platform', 'linux'), \
+                mock.patch.object(gate.subprocess, 'run', side_effect=renew) as run, \
+                mock.patch.object(urllib.request, 'urlopen', return_value=body) as fetch:
+            reading = gate.claude_refresh()
+        self.assertEqual(run.call_args.args[0][:2], ['claude', '-p'])
+        self.assertEqual(fetch.call_args.args[0].get_header('Authorization'), 'Bearer renewed')
+        self.assertEqual(reading['pct'], 42)
 
     def test_claude_refresh_uses_own_usage_response(self):
         import urllib.request
