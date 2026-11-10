@@ -1,0 +1,2 @@
+* Agent team guard: `gh pr merge --admin` runs only while the owner's `merge` approval window is live (up to 24 hours, any PR). The template settings no longer deny admin merges outright, so the hook decides.
+* Agent team guard: a command fed to a shell or interpreter where the hook cannot read it (`echo ... | sh`, `sh <<< ...`, a heredoc into a shell, `bash -c "$(...)"`, `python3 -c` or `node -e` code that starts a process) is denied, so admin merges, production pushes and host ssh cannot slip past the gates that way.

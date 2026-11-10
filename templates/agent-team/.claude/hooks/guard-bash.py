@@ -23,6 +23,9 @@ Blocks these kinds of accident:
 7. Running Playwright or production builds outside the shared heavy job gate, or type checks outside measure mode.
    Gate wrappers execute their children outside PreToolUse, so no environment
    escape hatch is needed.
+8. Feeding commands to a shell or interpreter where the guard cannot read them
+   (`check_indirection`): a shell reading a pipe, here-string or heredoc, `bash -c "$(...)"`,
+   or `python3 -c` / `perl -e` / `node -e` code that starts a process.
 
 Anything it cannot parse is let through: the deny rules in settings.json are the
 backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
@@ -96,6 +99,7 @@ ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ENV_PEEK = 'python3 "$HOME/.claude/bin/env-peek.py" <file> [KEY ...]'
 
 APPROVAL_TTL = 30 * 60
+MERGE_TTL_MAX = 24 * 60 * 60  # `merge <hours>` opens an admin merge window of up to 24 hours
 APPROVE = "bin/owner-approve.sh"
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 VIEWERS = {"cat", "less", "more", "head", "tail", "bat", "nl", "wc", "ls", "stat", "file", "diff",
@@ -855,8 +859,8 @@ def load_approval():
         if exp <= now:
             last_reason = "the last owner approval has expired"
             continue
-        if exp > now + APPROVAL_TTL + 60:
-            last_reason = f"{path} claims more than 30 minutes, so it is ignored"
+        if exp > now + (MERGE_TTL_MAX if a.get("scope") == "merge" else APPROVAL_TTL) + 60:
+            last_reason = f"{path} claims a longer window than its scope allows, so it is ignored"
             continue
         return a, ""
     return None, last_reason
@@ -1523,6 +1527,13 @@ def check_risky(segment, base, args, depth):
                     deny("Moving a stage or production branch through the GitHub API skips the deploy gate. "
                          f"Production moves only with git push or the promote script after the owner runs `{APPROVE} promote <sha>`.")
 
+    # An admin merge bypasses branch protection: only inside the owner's `merge` window.
+    if base == "gh" and any(args[i:i + 2] == ["pr", "merge"] for i in range(len(args))) \
+            and any(a.startswith("--admin") for a in args):
+        ok, why = approval_for({"merge"})
+        if not ok:
+            owner_go("An admin merge (gh pr merge --admin)", f"{APPROVE} merge [<hours>]", why)
+
     check_hidden_hosts(segment, base, args)
     if base == "ssh":
         check_ssh(args, depth)
@@ -1794,6 +1805,65 @@ def check_team_gates(base, args):
         check_worker_start(args, script=True)
 
 
+INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|php[0-9.]*)$")
+INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
+STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
+                            r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
+SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+REDIRECT = re.compile(r"^[0-9]*(<|>|&>)")
+INDIRECT = []  # set by check_indirection; main denies once no specific gate has
+
+
+def shell_reads_stdin(args):
+    """True when a shell (no -c) takes its commands from stdin: a pipe, here-string or heredoc."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in SHELL_OPTS_WITH_ARG:
+            i += 2
+            continue
+        if a.startswith("<<"):
+            return True
+        if REDIRECT.match(a):
+            if a.startswith("<"):
+                return False  # `sh < file` runs a file, like `sh file`
+            i += 2 if re.fullmatch(r"[0-9]*(>>?|&>>?|>&)", a) else 1
+            continue
+        if a == "-" or a == "-s" or (a.startswith("-") and "s" in a[1:] and not a.startswith("--")):
+            return True
+        if not a.startswith(("-", "+")):
+            return False
+        i += 1
+    return True
+
+
+def check_indirection(base, args):
+    if base in SHELLS:
+        idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
+        if idx is None:
+            if shell_reads_stdin(args):
+                INDIRECT.append(f"`{base}` reading commands from a pipe, here-string or heredoc hides them from the "
+                                "guard. Run the commands directly, or as `bash -c '<command>'`.")
+        elif idx + 1 < len(args):
+            for seg in segments(args[idx + 1]):
+                prog = program_and_args(words(seg))[0] or ""
+                if prog.startswith(("$(", "`")):
+                    INDIRECT.append(f"`{base} -c` running the output of a command substitution hides the command "
+                                    "from the guard. Run the inner command directly.")
+    elif INTERPRETERS.match(base):
+        idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
+        operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
+        if idx is not None:
+            code = " ".join(args[idx + 1:])
+        elif operand is None or "-" in args:
+            code = RAW_COMMAND
+        else:
+            return
+        if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
+            INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
+                            "hides the command from the guard. Run the command directly.")
+
+
 def check_segment(segment, depth=0, cwd=None):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
@@ -1822,6 +1892,12 @@ def check_segment(segment, depth=0, cwd=None):
     check_team_gates(base, args)
     check_approval_secret(segment, base, args)
     check_risky(segment, base, args, depth)
+    lead = 0
+    while lead < len(tokens) and tokens[lead] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
+        lead += 1
+    ind_prog, ind_args = program_and_args(tokens[lead:])
+    if ind_prog:
+        check_indirection(os.path.basename(ind_prog), ind_args)
 
     # Heavy jobs must acquire the shared machine budget.
     try:
@@ -2093,6 +2169,8 @@ def main():
                     dest = next((a for a in args if not a.startswith("-")), None)
                     if dest:
                         cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+        if INDIRECT:
+            deny(INDIRECT[0])
     except SystemExit:
         raise
     except Exception:

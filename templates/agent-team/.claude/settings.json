@@ -106,8 +106,6 @@
     "ask": [],
     "defaultMode": "bypassPermissions",
     "deny": [
-      "Bash(gh pr merge * --admin*)",
-      "Bash(gh * pr merge * --admin*)",
       "Read(**/.env)",
       "Read(**/.env.local)",
       "Read(**/.env.*.local)",

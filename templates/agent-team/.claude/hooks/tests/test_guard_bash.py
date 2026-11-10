@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "guard-bash.py")
@@ -20,7 +21,8 @@ class GuardTest(unittest.TestCase):
     def bash(self, command):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.home}
         out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True,
-                             capture_output=True, env=dict(os.environ, HOME=self.home), cwd=self.home, timeout=20)
+                             capture_output=True, env=dict(os.environ, HOME=self.home, **getattr(self, "extra_env", {})),
+                             cwd=self.home, timeout=20)
         self.assertEqual(out.returncode, 0, out.stderr)
         if not out.stdout.strip():
             return None
@@ -282,6 +284,98 @@ class ShellScriptBoundary(GuardTest):
     def test_deeply_nested_shell_script_cannot_skip_guard(self):
         self.assertDenied('sh -c \'sh -c \'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'echo "$(bunx playwright test)"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'\'')
 
+
+class AdminMerge(GuardTest):
+    """gh pr merge --admin runs only inside the owner's `merge` window (any PR, any repo)."""
+    MERGES = ("gh pr merge 12 --admin", "gh pr merge --admin --merge 12", "gh pr merge 12 --merge --admin -R a/b",
+              "gh pr merge --repo a/b 7 --admin=true", "gh -R a/b pr merge 7 --admin", "cd /tmp && gh pr merge 3 --admin")
+
+    def setUp(self):
+        super().setUp()
+        self.approval = os.path.join(self.home, "approval.json")
+        self.extra_env = {"GUARD_APPROVAL_FILE": self.approval}
+
+    def approve(self, scope, expires_in=1800):
+        now = int(time.time())
+        with open(self.approval, "w") as f:
+            json.dump({"scope": scope, "target": None, "created_at": now, "expires_at": now + expires_in}, f)
+
+    def test_no_record_denied(self):
+        for command in self.MERGES:
+            with self.subTest(command=command):
+                self.assertDenied(command, "bin/owner-approve.sh merge")
+
+    def test_expired_record_denied(self):
+        self.approve("merge", expires_in=-5)
+        for command in self.MERGES:
+            with self.subTest(command=command):
+                self.assertDenied(command, "expired")
+
+    def test_other_scope_denied(self):
+        self.approve("host")
+        self.assertDenied("gh pr merge 12 --admin", "bin/owner-approve.sh merge")
+
+    def test_live_record_allows_any_pr(self):
+        self.approve("merge")
+        for command in self.MERGES:
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_hours_window_allowed_up_to_24_hours(self):
+        self.approve("merge", expires_in=8 * 3600)
+        self.assertAllowed("gh pr merge 12 --admin")
+        self.approve("merge", expires_in=25 * 3600)
+        self.assertDenied("gh pr merge 12 --admin", "longer window")
+
+    def test_long_window_only_for_merge(self):
+        self.approve("host", expires_in=8 * 3600)
+        self.assertDenied("ssh root@prod.example uptime; gh pr merge 1 --admin", "longer window")
+
+    def test_plain_merge_needs_no_record(self):
+        for command in ("gh pr merge 12 --merge", "gh pr view 12 --json state", "gh pr merge 12 --auto --merge"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
+
+class ShellIndirection(GuardTest):
+    """A command fed to a shell or interpreter indirectly is gated like the direct command (#872)."""
+    GATED = ("gh pr merge 3 --admin", "git push origin HEAD:production", "ssh prod.example rm -rf /x")
+    SHAPES = ("echo '{c}' | sh", "echo '{c}' | bash", "echo '{c}' | zsh", "printf '{c}' | sh", "printf '%s' '{c}' | bash -s",
+              "echo '{c}' | /bin/sh -", "echo '{c}' | env sh", "echo '{c}' | bash -o pipefail", "sh <<< '{c}'", "bash <<<'{c}'",
+              "bash <<'X'\n# don't\n{c}\nX", "bash -c \"$(echo '{c}')\"", "sh -c \"`echo {c}`\"", "zsh -c \"$(printf '{c}')\"",
+              "bash -c 'echo \"{c}\" | sh'", "python3 -c \"import os; os.system('{c}')\"",
+              "python3 -c \"import subprocess; subprocess.run('{c}', shell=True)\"", "echo \"import os; os.system('{c}')\" | python3",
+              "perl -e 'system(\"{c}\")'", "node -p \"require('child_process').execSync('{c}')\"",
+              "node -e \"require('child_process').execSync('{c}')\"")
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"stage_branches": ["production"], "production_hosts": ["prod.example"]}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": os.path.join(self.home, "approval.json")}
+
+    def test_direct_commands_denied(self):
+        for command in self.GATED:
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_indirect_shapes_denied(self):
+        for gated in self.GATED:
+            for shape in self.SHAPES:
+                command = shape.format(c=gated)
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+
+    def test_normal_use_allowed(self):
+        for command in ("bash script.sh", "echo hi | bash script.sh", "sh -x script.sh < input.txt", "bash script.sh <<< data",
+                        "sh < script.sh", "bash -c 'cd $(git rev-parse --show-toplevel) && ls'", "bash -c 'echo hi'",
+                        "python3 -c 'import json; print(json.dumps({}))'", "echo '{}' | python3 -m json.tool",
+                        "python3 script.py", "echo '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin))'",
+                        "printf 'a\\nb\\n' | sort", "which sh bash", "git log --grep subprocess"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
 
 if __name__ == "__main__":
     unittest.main()
