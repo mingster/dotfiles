@@ -337,5 +337,45 @@ class AdminMerge(GuardTest):
                 self.assertAllowed(command)
 
 
+
+class ShellIndirection(GuardTest):
+    """A command fed to a shell or interpreter indirectly is gated like the direct command (#872)."""
+    GATED = ("gh pr merge 3 --admin", "git push origin HEAD:production", "ssh prod.example rm -rf /x")
+    SHAPES = ("echo '{c}' | sh", "echo '{c}' | bash", "echo '{c}' | zsh", "printf '{c}' | sh", "printf '%s' '{c}' | bash -s",
+              "echo '{c}' | /bin/sh -", "echo '{c}' | env sh", "echo '{c}' | bash -o pipefail", "sh <<< '{c}'", "bash <<<'{c}'",
+              "bash <<'X'\n# don't\n{c}\nX", "bash -c \"$(echo '{c}')\"", "sh -c \"`echo {c}`\"", "zsh -c \"$(printf '{c}')\"",
+              "bash -c 'echo \"{c}\" | sh'", "python3 -c \"import os; os.system('{c}')\"",
+              "python3 -c \"import subprocess; subprocess.run('{c}', shell=True)\"", "echo \"import os; os.system('{c}')\" | python3",
+              "perl -e 'system(\"{c}\")'", "node -p \"require('child_process').execSync('{c}')\"",
+              "node -e \"require('child_process').execSync('{c}')\"")
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"stage_branches": ["production"], "production_hosts": ["prod.example"]}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": os.path.join(self.home, "approval.json")}
+
+    def test_direct_commands_denied(self):
+        for command in self.GATED:
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_indirect_shapes_denied(self):
+        for gated in self.GATED:
+            for shape in self.SHAPES:
+                command = shape.format(c=gated)
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+
+    def test_normal_use_allowed(self):
+        for command in ("bash script.sh", "echo hi | bash script.sh", "sh -x script.sh < input.txt", "bash script.sh <<< data",
+                        "sh < script.sh", "bash -c 'cd $(git rev-parse --show-toplevel) && ls'", "bash -c 'echo hi'",
+                        "python3 -c 'import json; print(json.dumps({}))'", "echo '{}' | python3 -m json.tool",
+                        "python3 script.py", "echo '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin))'",
+                        "printf 'a\\nb\\n' | sort", "which sh bash", "git log --grep subprocess"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
 if __name__ == "__main__":
     unittest.main()
