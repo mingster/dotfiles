@@ -4,6 +4,7 @@
 # ($AGENT_STATE_DIR/fleet-floor.json, written daily on the coordinator by fleet-toolchain-check.sh).
 # Never touches a dirty or diverged checkout or a worktree branch, and always exits 0.
 # Usage: session-sync.sh [<project dir>]
+#        session-sync.sh --dotfiles-only   (only ~/dotfiles, even from the dotfiles repo; no tool floor)
 # Tests: SESSION_SYNC_PROBE (tool probe script), SESSION_SYNC_FETCH_TIMEOUT (seconds, default 5).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -78,9 +79,13 @@ check_floor() {
   done < <(jq -r '.tools // {} | to_entries[] | "\(.key) \(.value)"' "$floor" 2>/dev/null)
 }
 
+dotfiles=${DOTFILES_DIR:-$HOME/dotfiles}
+if [ "${1:-}" = --dotfiles-only ]; then
+  [ -d "$dotfiles" ] && sync_main "$dotfiles"
+  exit 0
+fi
 project=${1:-${CLAUDE_PROJECT_DIR:-$PWD}}
 sync_main "$project"
-dotfiles=${DOTFILES_DIR:-$HOME/dotfiles}
 # Skip ~/dotfiles when the project is the dotfiles repo itself
 if [ -d "$dotfiles" ] && [ "$(common_of "$dotfiles")" != "$(common_of "$project")" ]; then
   sync_main "$dotfiles"

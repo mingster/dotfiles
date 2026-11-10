@@ -1,0 +1,1 @@
+Self-hosted runner jobs now fast-forward a clean, behind ~/dotfiles before they run, through the new script/dotfiles-sync.sh (same rule as session start). The Review workflow calls it first, and project workflows are told to do the same.
