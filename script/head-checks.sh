@@ -361,8 +361,8 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
-  run=(env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info" \
-      bash -euo pipefail -c "$expanded")
+  step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info")
+  run=(env -i PATH="$PATH" HOME="$HOME" "${step_env[@]}" bash -euo pipefail -c "$expanded")
   gate_prefix=()
   while IFS= read -r token || [ -n "${token:-}" ]; do
     [ -n "${token:-}" ] && gate_prefix+=("$token")
@@ -377,7 +377,8 @@ while IFS= read -r command || [ -n "$command" ]; do
     while IFS= read -r token || [ -n "${token:-}" ]; do
       [ -n "${token:-}" ] && db_prefix+=("$token")
     done <<<"$db_out"
-    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" "${run[@]}" )
+    # The database host has its own PATH and HOME; this host's would break the step there.
+    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
   else
     printf 'Result: host fault; this host has no Postgres (%s: command not found) and no head_checks_remote database host is configured, so the database step did not run. Not a pass; run the head checks on the database host.\nDuration: 0s\n' "${HEAD_CHECKS_DB_PROBE:-createdb}" >> "$log"
     rm -f "$output"
