@@ -416,6 +416,39 @@ copy_commit() {
   checks="Checks: PASS head=$SHA"
   comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
 }
+# Intent acceptance with an owner receipt: every commit touching the file needs Owner-approved.
+intent_range() { # <trailer for commit 1 or ""> <trailer for commit 2 or "-" for none>
+  copy_setup
+  mkdir -p "$REAL_PATCH_REPO/docs/intent/a"
+  printf 'Status: Proposed 2026-10-01\n' > "$REAL_PATCH_REPO/docs/intent/a/intent.md"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" add .; "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qm base2
+  base_sha=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD)
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" update-ref refs/heads/main "$base_sha"
+  printf 'Status: Proposed 2026-10-01\nNote: edit\n' > "$REAL_PATCH_REPO/docs/intent/a/intent.md"
+  "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam edit ${1:+--trailer "Owner-approved: $1"}
+  if [ "${2:--}" != "-" ]; then
+    printf 'Status: Proposed 2026-10-01 · Accepted 2026-10-17\n' > "$REAL_PATCH_REPO/docs/intent/a/intent.md"
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam accept --trailer "Owner-approved: $2"
+  else
+    printf 'Status: Proposed 2026-10-01 · Accepted 2026-10-17\n' > "$REAL_PATCH_REPO/docs/intent/a/intent.md"
+    "$REAL_GIT" -C "$REAL_PATCH_REPO" commit -qam accept
+  fi
+  SHA=$("$REAL_GIT" -C "$REAL_PATCH_REPO" rev-parse HEAD); headsha=$SHA
+  body=$'## Verification\n- Ran script successfully.\n\n## Self-review\n'"$SHA"
+  PR_DIFF=$("$REAL_GIT" -C "$REAL_PATCH_REPO" diff "$base_sha...$SHA")
+  files='[{"path":"docs/intent/a/intent.md"}]'
+  checks="Checks: PASS head=$SHA"
+  comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_author"
+}
+unit; (
+unit_init
+intent_range owner "owner 2026-11-11 (chat)"
+check "intent accepted with Owner-approved on every commit merges" 0 '^MERGED' 1
+intent_range "" "-"
+check "intent accepted without trailer refused" 1 'Owner-approved: trailer'
+intent_range "" "owner 2026-11-11 (chat)"
+check "intent range with one commit missing the trailer refused" 1 'Owner-approved: trailer'
+) </dev/null &
 unit; (
 unit_init
 copy_setup

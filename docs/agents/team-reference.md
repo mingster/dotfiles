@@ -447,7 +447,9 @@ for docs-only PRs); the coordinator dispatches the worker only.
 The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
 open on `main` at exactly that head, mergeable, off the protected branches, and free of user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
-and intents that become Accepted). Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
+and intents that become Accepted). An Accepted intent passes when every commit in the PR that
+touches that intent file carries a non-empty `Owner-approved: <owner> <date> (<where approved>)`
+trailer, meaning the owner already accepted it in chat; one commit without it refuses the PR. Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
 `ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the merge check.
 
 ### Interpreters (asdf)

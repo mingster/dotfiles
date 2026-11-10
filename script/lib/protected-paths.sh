@@ -11,9 +11,28 @@ check_owner_only_paths() {
         refuse "PR touches $f, which waits for the owner through Elon" ;;
     esac
   done < <(jq -r '.[]' <<<"$files")
-  if awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//)} intent && /^\+Status:.*Accepted/{found=1} END{exit !found}' <<<"$diff"; then
-    refuse "PR accepts an intent under docs/intent/, which waits for the owner through Elon"
-  fi
+  intent_acceptance_receipt
+}
+
+# An intent that the diff marks Accepted passes only when every commit in the PR range that
+# touches that file carries a non-empty Owner-approved trailer (the owner accepted it in chat).
+intent_acceptance_receipt() {
+  local accepted f ancestor rows sha trailer seen
+  accepted=$(awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//); path = substr($2, 3)} intent && /^\+Status:.*Accepted/ && !(path in s){s[path]=1; print path}' <<<"$diff")
+  [ -n "$accepted" ] || return 0
+  local msg="PR accepts an intent under docs/intent/ without an Owner-approved: trailer on every commit that touches it; the owner adds the trailer once they have accepted it"
+  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || refuse "$msg"
+  ancestor=$(git merge-base "$(field .baseRefOid)" "$head" 2>/dev/null) || refuse "$msg"
+  while IFS= read -r f; do
+    rows=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "$f" 2>/dev/null) || refuse "$msg"
+    seen=0
+    while IFS=$'\x1f' read -r sha trailer; do
+      [ -n "$sha" ] || continue
+      seen=1
+      [ -n "$trailer" ] || refuse "$msg"
+    done <<<"$rows"
+    [ "$seen" = 1 ] || refuse "$msg"
+  done <<<"$accepted"
 }
 
 text_lane_role_path() { # <path>
