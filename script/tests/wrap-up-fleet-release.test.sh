@@ -122,17 +122,17 @@ echo 'ok 4 only untracked symlinks are ignored when judging the main checkout'
 
 # Item 5: release finished workers on every environment.
 {
-  row d-succ succeeded exited retained '' /fixture/a
-  row d-stop stopped live retained '' /fixture/b
-  row d-sleep in_progress sleep retained '' /fixture/c
+  row d-succ succeeded exited reclaimable '' /fixture/a
+  row d-stop stopped live reclaimable '' /fixture/b
+  row d-sleep in_progress sleep reclaimable '' /fixture/c
   row d-done succeeded exited released '' /fixture/d
-  row d-live ready live retained '' /fixture/e
-  row d-prog in_progress live retained '' /fixture/f
+  row d-live ready live reclaimable '' /fixture/e
+  row d-prog in_progress live reclaimable '' /fixture/f
   row d-own succeeded exited retained t-own /fixture/g
 } | wrap > "$tmp/workers-local"
 {
-  row d-fail failed exited retained '' /fixture/h
-  row d-envlive in_progress live retained '' /fixture/i
+  row d-fail failed exited reclaimable '' /fixture/h
+  row d-envlive in_progress live reclaimable '' /fixture/i
 } | wrap > "$tmp/workers-env"
 run --dry-run
 for want in 'local d-succ' 'local d-stop' 'local d-sleep' 'env-a d-fail'; do
@@ -234,8 +234,8 @@ echo 'ok 6 a truncated environment list closes no terminals'
 
 # Item 8: sleep is settled for the terminal close too, so one run releases the worker and closes its terminals.
 {
-  row d-nap in_progress sleep retained '' /fixture/nap
-  row d-awake in_progress live retained '' /fixture/awake
+  row d-nap in_progress sleep reclaimable '' /fixture/nap
+  row d-awake in_progress live reclaimable '' /fixture/awake
 } | wrap > "$tmp/workers-local"
 cp "$tmp/workers-local" "$tmp/workers-env"
 { term l-nap /fixture/nap; term l-awake /fixture/awake; term t-own /fixture/own; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-local"

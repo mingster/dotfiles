@@ -225,6 +225,8 @@ echo "$wrap_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'wrap preche
 echo "$wrap_pc" | grep -q 'wrap-up.sh' && check 'wrap precheck runs wrap-up.sh --scheduled' true || check 'wrap precheck runs wrap-up.sh --scheduled' false
 echo "$wrap_pc" | grep -q '\*/10 \* \* \* \*' && check 'wrap-up schedule is 10 min' true || check 'wrap-up schedule is 10 min' false
 
+echo "$wrap_pc" | grep -q 'WRAP_UP_ISSUE_REPO=mingster/agent-state' && check 'wrap precheck defaults WRAP_UP_ISSUE_REPO to the private agent-state repo' true || check 'wrap precheck defaults WRAP_UP_ISSUE_REPO to the private agent-state repo' false
+
 # WRAP_UP_ISSUE_REPO is passed from automations.env when set.
 printf '%s\n' \
   "DOTFILES_DIR=$DOTFILES_DIR" \
