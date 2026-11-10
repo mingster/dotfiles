@@ -57,6 +57,8 @@ SCHEMA_OVERRIDE: str = "SCHEMA_APPROVED"
 APPROVAL_NAMESPACE: str = ""
 APPROVAL_FILE_OVERRIDE: str = ""
 SIGN_IN_SCRIPT: str | None = None
+SECRETS_DIR_EXCEPTIONS: list[str] = []
+FORCE_PUSH_BRANCHES: list[str] = ["main"]
 SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
 HOST_DEPLOY_PATTERNS: dict[str, list[re.Pattern]] = {}
@@ -192,7 +194,7 @@ def load_guard_config(start_dir):
     global STAGE_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
-    global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY
+    global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
 
     BLOCKED_SCRIPTS = set()
     PRODUCTION_HOSTS = set()
@@ -209,6 +211,8 @@ def load_guard_config(start_dir):
     APPROVAL_NAMESPACE = ""
     APPROVAL_FILE_OVERRIDE = os.environ.get("GUARD_APPROVAL_FILE") or ""
     SIGN_IN_SCRIPT = None
+    SECRETS_DIR_EXCEPTIONS = []
+    FORCE_PUSH_BRANCHES = ["main"]
     SECRETS_STDIN_OK = []
     WORKTREE_ENV_ALLOW = []
     HOST_DEPLOY_PATTERNS = {}
@@ -338,6 +342,17 @@ def load_guard_config(start_dir):
     raw_sign_in = cfg_expect("sign_in_script", str, "string")
     if raw_sign_in and raw_sign_in.strip():
         SIGN_IN_SCRIPT = raw_sign_in.strip()
+
+    # Sentences naming the scripts that may read the secrets dir, shown in its deny in place of the sign in one.
+    for item in cfg_expect("secrets_dir_exceptions", list, "list") or []:
+        if isinstance(item, str) and item.strip():
+            SECRETS_DIR_EXCEPTIONS.append(item.strip())
+
+    # Branch globs a force push needs the owner's `force-push <branch>` for; ["*"] guards every branch.
+    # Config only adds: `main` stays guarded whatever the list says.
+    for b in cfg_expect("force_push_branches", list, "list") or []:
+        if isinstance(b, str) and b.strip() and b.strip() not in FORCE_PUSH_BRANCHES:
+            FORCE_PUSH_BRANCHES.append(b.strip())
 
     for pat in cfg_expect("secrets_stdin_ok", list, "list") or []:
         if isinstance(pat, str) and pat.strip():
@@ -502,8 +517,11 @@ def check_secrets_dir(segment, base, args, prog=None):
         sources = operands if target_dir else operands[:-1]
         if not any(SECRETS_DIR.search(a) for a in sources):
             return
-    exception = (f" The only exception is `{SIGN_IN_SCRIPT}`, which reads the file itself without printing it."
-                 if SIGN_IN_SCRIPT else "")
+    if SECRETS_DIR_EXCEPTIONS:
+        exception = " The exceptions: " + " ".join(SECRETS_DIR_EXCEPTIONS)
+    else:
+        exception = (f" The only exception is `{SIGN_IN_SCRIPT}`, which reads the file itself without printing it."
+                     if SIGN_IN_SCRIPT else "")
     deny(f"{base} would read a file under the secrets dir into the session log. Agents never read the "
          f"secrets dir.{exception} Anything else, ask Elon.")
 
@@ -853,7 +871,7 @@ def load_approval():
             last_reason = f"{path} is unreadable"
             continue
         exp = a.get("expires_at") if isinstance(a, dict) else None
-        if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        if not isinstance(exp, (int, float)) or isinstance(exp, bool) or exp != exp:  # exp != exp: NaN
             last_reason = f"{path} has no expiry"
             continue
         if exp <= now:
@@ -982,7 +1000,7 @@ def check_git_push(args, cdir):
             if not ok:
                 what = f"Force pushing (rollback) to `{branch}`" if forced else f"Pushing to `{branch}`"
                 owner_go(what, f"{APPROVE} {scope} {sha}", why)
-        elif forced and branch == "main":
+        elif forced and any(fnmatch.fnmatchcase(branch, pat) for pat in FORCE_PUSH_BRANCHES):
             ok, why = approval_for({"force-push"}, lambda t: t == branch)
             if not ok:
                 owner_go(f"A force push to `{branch}`", f"{APPROVE} force-push {branch}", why)
@@ -2029,8 +2047,11 @@ def check_edit(tool, path):
     full = os.path.normpath(os.path.join(GATE_CWD or os.getcwd(), expanded))
     real = os.path.realpath(full)
     cfg_root = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config"))
-    if (real == cfg_root or real.startswith(cfg_root + os.sep)) and os.path.basename(real) == "approval.json":
-        app_file = primary_approval_file()
+    app_file = primary_approval_file()
+    # A configured approval folder is the owner's as a whole: its secret and the file alike.
+    app_dir = os.path.realpath(os.path.dirname(app_file)) if APPROVAL_NAMESPACE or APPROVAL_FILE_OVERRIDE else None
+    if ((real == cfg_root or real.startswith(cfg_root + os.sep)) and os.path.basename(real) == "approval.json") \
+            or (app_dir and (real == app_dir or real.startswith(app_dir + os.sep))):
         deny(f"{tool} on {path} is blocked: {app_file} is the owner's approval and only {APPROVE}, run by "
              f"the owner in his own terminal, writes it. Ask the owner to run `{APPROVE} <scope>`.")
 
@@ -2097,13 +2118,18 @@ def substitutions(command):
     return out
 
 
+# A quoted heredoc that only becomes a file or a commit message: `cat > f <<'EOF'`, or
+# `git commit -F - <<'EOF'` after plain `&&` steps (those steps are still checked).
 REPORT_HEREDOC = re.compile(
-    r"^\s*cat\s+>\s*[A-Za-z0-9_./-]+\s+<<(-?)\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2\s*$"
+    r"^\s*(?:cat\s+>\s*[A-Za-z0-9_./-]+"
+    r"|(?:[A-Za-z0-9_./=-]+(?:[ \t]+[A-Za-z0-9_./=-]+)*[ \t]*&&[ \t]*)*"
+    r"git[ \t]+commit(?:[ \t]+-[A-Za-z-]+)*[ \t]+(?:-F[ \t]*-|--file[ \t=]-))"
+    r"\s+<<(-?)\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2\s*$"
 )
 
 
 def report_command_text(command):
-    """Remove literal data only for a standalone quoted cat-to-file heredoc."""
+    """Remove literal data only for a standalone quoted cat-to-file or commit message heredoc."""
     lines = command.splitlines(keepends=True)
     out, i = [], 0
     while i < len(lines):

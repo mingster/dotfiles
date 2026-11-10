@@ -377,5 +377,92 @@ class ShellIndirection(GuardTest):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
+
+class ProjectConfigRules(GuardTest):
+    """Rules a project turns on in guard-config.json, driven by a sample config."""
+    SHA = "0123456789abcdef0123456789abcdef01234567"
+    CONFIG = {
+        "approval_namespace": "sample",
+        "secrets_dir": "vault/secrets",
+        "sign_in_script": "bin/sign-in.sh",
+        "secrets_dir_exceptions": [
+            "the sign in, run `bin/sign-in.sh <url> <email>`, which types the password without printing it;",
+            "and the admin door, run `bin/admin-door.sh <action>`, which sends the key without printing it.",
+        ],
+        "force_push_branches": ["*"],
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.approval_dir = os.path.join(self.home, ".config", "sample")
+        os.makedirs(self.approval_dir)
+        self.approval = os.path.join(self.approval_dir, "approval.json")
+        self.use_config(self.CONFIG)
+
+    def use_config(self, cfg):
+        path = os.path.join(self.home, "guard-config.json")
+        with open(path, "w") as f:
+            json.dump(cfg, f)
+        self.extra_env = {"GUARD_CONFIG": path}
+
+    def approve(self, **record):
+        now = int(time.time())
+        with open(self.approval, "w") as f:
+            json.dump({"created_at": now, "expires_at": now + 1800, **record}, f)
+
+    def edit(self, path):
+        payload = {"tool_name": "Write", "tool_input": {"file_path": path, "content": "x"}, "cwd": self.home}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home, **self.extra_env), cwd=self.home, timeout=20)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def test_force_push_branches_star_guards_every_branch(self):
+        for command in ("git push --force origin feature", "git push -f origin x", "git push origin +x",
+                        "sh -c \"cd web && git push -f origin x\""):
+            with self.subTest(command=command):
+                self.assertDenied(command, "force-push")
+
+    def test_force_push_approval_covers_its_branch_only(self):
+        self.approve(scope="force-push", target="feature")
+        self.assertAllowed("git push --force origin feature")
+        self.assertDenied("git push --force origin other", "force-push other")
+
+    def test_force_push_default_guards_main_only(self):
+        self.use_config({})
+        self.assertAllowed("git push --force origin feature")
+        self.assertDenied("git push --force origin main", "force-push main")
+
+    def test_force_push_config_never_drops_main(self):
+        for cfg in ([], ["release/*"]):
+            with self.subTest(force_push_branches=cfg):
+                self.use_config({"force_push_branches": cfg})
+                self.assertDenied("git push --force origin main", "force-push main")
+                self.assertDenied("git push -f origin HEAD:main", "force-push main")
+
+    def test_secrets_deny_names_every_configured_exception(self):
+        for command in ("cat vault/secrets/admin/key", "head -c 20 vault/secrets/admin/key",
+                        "x=$(<vault/secrets/admin/key)", "cp vault/secrets/admin/key /tmp/k"):
+            with self.subTest(command=command):
+                reason = self.assertDenied(command, "bin/admin-door.sh <action>")
+                self.assertIn("bin/sign-in.sh <url> <email>", reason)
+        self.assertAllowed("bin/admin-door.sh status")
+
+    def test_nan_expiry_is_no_approval(self):
+        self.approve(scope="promote", target=self.SHA, schema=True, apply=True, expires_at=float("nan"))
+        self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
+
+    def test_commit_message_heredoc_is_data(self):
+        self.assertAllowed("bash -n x.sh && git commit -F - <<'EOF'\nadd bin/owner-approve.sh\nEOF")
+        self.assertAllowed("git commit -q -F- <<\"EOF\"\ngit push -f origin main\nEOF")
+        self.assertDenied("git commit -F - <<EOF\nbin/owner-approve.sh host\nEOF")  # unquoted: expands
+        self.assertDenied("git commit -F - <<'EOF'\nmsg\nEOF\ngit push -f origin x", "force-push")
+
+    def test_approval_folder_is_never_edited(self):
+        for name in ("approval.json", "approval-secret", "other"):
+            with self.subTest(name=name):
+                self.assertIn("owner's approval", self.edit(os.path.join(self.approval_dir, name)) or "")
+        self.assertIsNone(self.edit(os.path.join(self.home, ".config", "elsewhere", "notes")))
+
+
 if __name__ == "__main__":
     unittest.main()

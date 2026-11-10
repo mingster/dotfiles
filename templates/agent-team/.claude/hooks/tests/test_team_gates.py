@@ -180,8 +180,8 @@ class RoleFileGate(Gate):
 BRIEF_SECTIONS = (
     "\n## Acceptance\n- [ ] criterion\n"
     "## Out of scope\nunrelated files\n"
-    "## Verify\nrun tests\n"
-    "## Finish\nsend worker_done\n"
+    "## Verify\nrun script/checks-local.sh\n"
+    "## Finish\nwrite ## Self-review with the full 40 hex head sha, rewrite it after every push, send worker_done\n"
 )
 
 
