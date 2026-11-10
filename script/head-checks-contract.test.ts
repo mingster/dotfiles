@@ -54,7 +54,7 @@ function fixture() {
 		`#!/usr/bin/env python3
 import json, os, sys
 if sys.argv[2] == "view":
-    print(json.dumps({"headRefOid": os.environ["GH_HEAD"], "baseRefOid": os.environ["GH_BASE"]}))
+    print(json.dumps({"headRefOid": os.environ["GH_HEAD"], "baseRefOid": os.environ["GH_BASE"], "headRefName": os.environ.get("GH_BRANCH", "")}))
 elif sys.argv[2] == "comment":
     open(os.environ["COMMENTS"], "w").write(open(sys.argv[sys.argv.index("--body-file") + 1]).read())
 else:
@@ -323,6 +323,76 @@ test(
 			const run = runHeadChecks(fix, head, comments, fix.base, bare);
 			expect(run.code).toBe(0);
 			expect(run.receipt).toContain(join(bunBin, "bunx"));
+		} finally {
+			rmSync(fix.root, { recursive: true, force: true });
+		}
+	},
+	60_000,
+);
+
+// PR mode: the checkout may hold a local copy of the PR branch.
+function runPrChecks(fix: ReturnType<typeof fixture>, head: string, branch: string) {
+	const comments = join(fix.root, "comments");
+	const env = {
+		...process.env,
+		HOME: fix.home,
+		PATH: `/usr/bin:${fix.binpath}:${process.env.PATH ?? ""}`,
+		GH_BASE: fix.base,
+		GH_HEAD: head,
+		GH_BRANCH: branch,
+		COMMENTS: comments,
+		DOTFILES_DIR: dotfiles,
+		HEAVY_GATE_READER: join(fix.binpath, "reader"),
+		HEAVY_GATE_POLL_SECONDS: "0.02",
+		HEAD_CHECKS_WAIT_SECONDS: "0",
+		HEAD_CHECKS_PR_HEAD_WAIT_SECONDS: "1",
+		HEAD_CHECKS_GATE_HELD: "1",
+		HEAD_CHECKS_SLOTS: "1",
+		HEAD_CHECKS_LOG_DIR: join(fix.root, "logs"),
+	};
+	const result = Bun.spawnSync(
+		["bash", headChecks, "--repo", fix.repo, "--pr", "7"],
+		{ env, stdout: "pipe", stderr: "pipe" },
+	);
+	return {
+		code: result.exitCode,
+		receipt: existsSync(comments) ? readFileSync(comments, "utf8") : "",
+		stderr: result.stderr.toString(),
+	};
+}
+
+test(
+	"head-checks proceeds when the local PR branch is a stale ancestor of the PR head",
+	() => {
+		const fix = mergeFixture();
+		try {
+			const old = branchFrom(fix, fix.base, "pr", "a.txt", "a\n");
+			git(fix.repo, "checkout", "-q", "-b", "newer", old);
+			writeFileSync(join(fix.repo, "b.txt"), "b\n");
+			git(fix.repo, "add", "b.txt");
+			git(fix.repo, "commit", "-qm", "newer");
+			const head = git(fix.repo, "rev-parse", "HEAD");
+			const run = runPrChecks(fix, head, "pr");
+			expect(run.stderr).not.toContain("local pushed head");
+			expect(run.code).toBe(0);
+			expect(run.receipt).toContain(`Checks: PASS head=${head}`);
+		} finally {
+			rmSync(fix.root, { recursive: true, force: true });
+		}
+	},
+	60_000,
+);
+
+test(
+	"head-checks still refuses when the local PR branch diverged from the PR head",
+	() => {
+		const fix = mergeFixture();
+		try {
+			branchFrom(fix, fix.base, "pr", "a.txt", "a\n");
+			const head = branchFrom(fix, fix.base, "other", "b.txt", "b\n");
+			const run = runPrChecks(fix, head, "pr");
+			expect(run.code).not.toBe(0);
+			expect(run.stderr).toContain("local pushed head");
 		} finally {
 			rmSync(fix.root, { recursive: true, force: true });
 		}
