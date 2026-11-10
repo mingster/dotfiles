@@ -17,8 +17,9 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; [ $# -gt 1 ] && echo "$2"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# shellcheck source=lib/git-identity.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-identity.sh"
+use_test_git_identity "$tmp"
 
 bare="$tmp/origin.git"
 work="$tmp/dotfiles"

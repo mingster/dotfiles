@@ -14,8 +14,9 @@ expect_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: expected '$3', got
 # shellcheck source=lib/asdf-pin.sh
 . "$here/tests/lib/asdf-pin.sh"
 export HOME="$tmp/home"; mkdir -p "$HOME"
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+# shellcheck source=lib/git-identity.sh
+. "$here/tests/lib/git-identity.sh"
+use_test_git_identity "$tmp"
 export DOTFILES_DIR; DOTFILES_DIR=$(cd "$here/.." && pwd)
 
 # The readers, from lead-merge.sh itself. An empty extraction means the reader moved: fail loudly.

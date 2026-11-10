@@ -5,7 +5,9 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 eval "$(sed -n '/^locale_mergeable() {/,/^}$/p;/^trunk_check() {/,/^}$/p' "$here/lead-merge.sh")"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# shellcheck source=lib/git-identity.sh
+. "$here/tests/lib/git-identity.sh"
+use_test_git_identity "$tmp"
 refusals_file="$tmp/.refusals"
 refuse() { echo "$*" >>"$refusals_file"; }
 die() { echo "die: $*" >>"$refusals_file"; return 1; }

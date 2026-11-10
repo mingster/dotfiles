@@ -276,5 +276,24 @@ fi
 check_bash "secret read deny names the home env-peek" "$PROJ" "cat .env.local" deny 'Use python3 \"$HOME/.claude/bin/env-peek.py\"'
 check_bash "home env-peek call on .env.local is allowed" "$PROJ" 'python3 "$HOME/.claude/bin/env-peek.py" web/.env.local DATABASE_URL' allow
 
+# #844: the test suites' git identity is refused for a commit or push in a non-temporary checkout.
+# TMPDIR points elsewhere for the hook, so $PROJ counts as a real checkout; a repo under it stays exempt.
+REAL_TMP="$TMP/system-tmp"; mkdir -p "$REAL_TMP/scratch"
+git -C "$REAL_TMP/scratch" init -q -b main
+git -C "$REAL_TMP/scratch" config user.email "test@example.invalid"
+ident_hook() { python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"tool_input":{"command":sys.argv[2]}}))' "$1" "$2" | TMPDIR="$REAL_TMP" HOME="$HOME_DIR" python3 "$HOOK"; }
+out="$(ident_hook "$PROJ" "git commit -qm x")"
+if [ "$(decision "$out")" = "deny" ] && grep -qF "test@example.invalid" <<<"$out"; then ok "test identity commit refused in a real checkout"; else bad "test identity commit refused in a real checkout ($out)"; fi
+out="$(ident_hook "$PROJ" "git push origin feat/x")"
+[ "$(decision "$out")" = "deny" ] && ok "test identity push refused in a real checkout" || bad "test identity push refused ($out)"
+out="$(ident_hook "$REAL_TMP/scratch" "git commit -qm x")"
+[ "$(decision "$out")" = "allow" ] && ok "test identity commit allowed in a temp checkout" || bad "test identity commit allowed in a temp checkout ($out)"
+git -C "$PROJ" config user.email "real@example.com"
+out="$(ident_hook "$PROJ" "git commit -qm x")"
+[ "$(decision "$out")" = "allow" ] && ok "real identity commit allowed" || bad "real identity commit allowed ($out)"
+out="$(ident_hook "$PROJ" "git -c user.email=test@example.invalid commit -qm x")"
+[ "$(decision "$out")" = "deny" ] && ok "test identity via -c refused" || bad "test identity via -c refused ($out)"
+git -C "$PROJ" config user.email "test@example.invalid"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

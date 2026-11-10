@@ -1,0 +1,1 @@
+Tests no longer export a git identity. They take it from a gitconfig file in their temp dir (`script/tests/lib/git-identity.sh`), and `guard-bash.py` refuses a `git commit` or `git push` signed as `test@example.invalid` outside a temp checkout. (#844)
