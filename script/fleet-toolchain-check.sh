@@ -343,10 +343,12 @@ orca_mac() { # <version>: replace Orca.app from the release zip, putting the old
     ditto -x -k "\$dl/orca.zip" "\$dl" || { rm -rf "\$dl"; return 1; }
   [ -d "\$dl/Orca.app" ] || { rm -rf "\$dl"; echo "no Orca.app in \$asset"; return 1; }
   running=0
+  pids=\$(pgrep -f "\$orca_app/Contents/MacOS/" || true)
   if pkill -f "\$orca_app/Contents/MacOS/"; then
     running=1
     n=0
-    while pgrep -f "\$orca_app/Contents/MacOS/" >/dev/null && [ "\$n" -lt 30 ]; do sleep 1; n=\$((n + 1)); done
+    # wait by pid: a pgrep -f loop matches its own command line and never ends
+    while [ "\$n" -lt 30 ] && (for pid in \$pids; do kill -0 "\$pid" 2>/dev/null && exit 0; done; exit 1); do sleep 1; n=\$((n + 1)); done
   fi
   rm -rf "\$orca_app.old"
   ok=0
