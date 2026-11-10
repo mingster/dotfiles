@@ -37,6 +37,7 @@ while [ "$1" != -- ]; do
 done
 shift
 echo "$host" > "$REMOTE_LOG"
+printf '%s\n' "$@" > "$REMOTE_LOG.argv"
 exec true
 EOF
 chmod +x "$tmp/remote-heavy.sh"
@@ -88,6 +89,17 @@ if [ "$rc" -eq 0 ] && [ "$(cat "$tmp/remote.log" 2>/dev/null)" = db-host-849 ]; 
   check "a marked script step goes to the database host when the probe is missing" ok
 else
   check "a marked script step goes to the database host when the probe is missing" bad
+fi
+
+# The remote command keeps the caller's step variables but never this host's PATH or HOME.
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks LANG=en_US.UTF-8 DOTFILES_DIR=/caller/dotfiles; rc=$?
+argv="$tmp/remote.log.argv"
+if [ "$rc" -eq 0 ] && grep -qx 'LANG=en_US.UTF-8' "$argv" && grep -qx 'DOTFILES_DIR=/caller/dotfiles' "$argv" \
+  && grep -q '^HEAD_CHECK_SHA=' "$argv" && grep -q '^HEAD_CHECK_BASE=' "$argv" && grep -q '^HEAD_CHECKS_TSC_BUILD_INFO=' "$argv" \
+  && ! grep -q '^PATH=' "$argv" && ! grep -q '^HOME=' "$argv" && ! grep -qx -- '-i' "$argv"; then
+  check "the remote step keeps the step variables and drops this host's PATH and HOME" ok
+else
+  check "the remote step keeps the step variables and drops this host's PATH and HOME" bad
 fi
 
 echo "head-checks-db-host: $pass passed, $fail failed"
