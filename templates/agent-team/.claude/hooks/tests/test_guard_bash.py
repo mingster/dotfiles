@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "guard-bash.py")
@@ -20,7 +21,8 @@ class GuardTest(unittest.TestCase):
     def bash(self, command):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.home}
         out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True,
-                             capture_output=True, env=dict(os.environ, HOME=self.home), cwd=self.home, timeout=20)
+                             capture_output=True, env=dict(os.environ, HOME=self.home, **getattr(self, "extra_env", {})),
+                             cwd=self.home, timeout=20)
         self.assertEqual(out.returncode, 0, out.stderr)
         if not out.stdout.strip():
             return None
@@ -281,6 +283,58 @@ class ShellScriptBoundary(GuardTest):
 
     def test_deeply_nested_shell_script_cannot_skip_guard(self):
         self.assertDenied('sh -c \'sh -c \'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'echo "$(bunx playwright test)"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'\'')
+
+
+class AdminMerge(GuardTest):
+    """gh pr merge --admin runs only inside the owner's `merge` window (any PR, any repo)."""
+    MERGES = ("gh pr merge 12 --admin", "gh pr merge --admin --merge 12", "gh pr merge 12 --merge --admin -R a/b",
+              "gh pr merge --repo a/b 7 --admin=true", "gh -R a/b pr merge 7 --admin", "cd /tmp && gh pr merge 3 --admin")
+
+    def setUp(self):
+        super().setUp()
+        self.approval = os.path.join(self.home, "approval.json")
+        self.extra_env = {"GUARD_APPROVAL_FILE": self.approval}
+
+    def approve(self, scope, expires_in=1800):
+        now = int(time.time())
+        with open(self.approval, "w") as f:
+            json.dump({"scope": scope, "target": None, "created_at": now, "expires_at": now + expires_in}, f)
+
+    def test_no_record_denied(self):
+        for command in self.MERGES:
+            with self.subTest(command=command):
+                self.assertDenied(command, "bin/owner-approve.sh merge")
+
+    def test_expired_record_denied(self):
+        self.approve("merge", expires_in=-5)
+        for command in self.MERGES:
+            with self.subTest(command=command):
+                self.assertDenied(command, "expired")
+
+    def test_other_scope_denied(self):
+        self.approve("host")
+        self.assertDenied("gh pr merge 12 --admin", "bin/owner-approve.sh merge")
+
+    def test_live_record_allows_any_pr(self):
+        self.approve("merge")
+        for command in self.MERGES:
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_hours_window_allowed_up_to_24_hours(self):
+        self.approve("merge", expires_in=8 * 3600)
+        self.assertAllowed("gh pr merge 12 --admin")
+        self.approve("merge", expires_in=25 * 3600)
+        self.assertDenied("gh pr merge 12 --admin", "longer window")
+
+    def test_long_window_only_for_merge(self):
+        self.approve("host", expires_in=8 * 3600)
+        self.assertDenied("ssh root@prod.example uptime; gh pr merge 1 --admin", "longer window")
+
+    def test_plain_merge_needs_no_record(self):
+        for command in ("gh pr merge 12 --merge", "gh pr view 12 --json state", "gh pr merge 12 --auto --merge"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
 
 
 if __name__ == "__main__":

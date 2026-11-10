@@ -96,6 +96,7 @@ ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ENV_PEEK = 'python3 "$HOME/.claude/bin/env-peek.py" <file> [KEY ...]'
 
 APPROVAL_TTL = 30 * 60
+MERGE_TTL_MAX = 24 * 60 * 60  # `merge <hours>` opens an admin merge window of up to 24 hours
 APPROVE = "bin/owner-approve.sh"
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 VIEWERS = {"cat", "less", "more", "head", "tail", "bat", "nl", "wc", "ls", "stat", "file", "diff",
@@ -855,8 +856,8 @@ def load_approval():
         if exp <= now:
             last_reason = "the last owner approval has expired"
             continue
-        if exp > now + APPROVAL_TTL + 60:
-            last_reason = f"{path} claims more than 30 minutes, so it is ignored"
+        if exp > now + (MERGE_TTL_MAX if a.get("scope") == "merge" else APPROVAL_TTL) + 60:
+            last_reason = f"{path} claims a longer window than its scope allows, so it is ignored"
             continue
         return a, ""
     return None, last_reason
@@ -1522,6 +1523,13 @@ def check_risky(segment, base, args, depth):
                 if (method or ("POST" if fields else "GET")).upper() != "GET":
                     deny("Moving a stage or production branch through the GitHub API skips the deploy gate. "
                          f"Production moves only with git push or the promote script after the owner runs `{APPROVE} promote <sha>`.")
+
+    # An admin merge bypasses branch protection: only inside the owner's `merge` window.
+    if base == "gh" and any(args[i:i + 2] == ["pr", "merge"] for i in range(len(args))) \
+            and any(a.startswith("--admin") for a in args):
+        ok, why = approval_for({"merge"})
+        if not ok:
+            owner_go("An admin merge (gh pr merge --admin)", f"{APPROVE} merge [<hours>]", why)
 
     check_hidden_hosts(segment, base, args)
     if base == "ssh":

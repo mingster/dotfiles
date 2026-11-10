@@ -1,0 +1,1 @@
+* Agent team guard: `gh pr merge --admin` runs only while the owner's `merge` approval window is live (up to 24 hours, any PR). The template settings no longer deny admin merges outright, so the hook decides.
