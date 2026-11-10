@@ -338,6 +338,12 @@ def claude_refresh():
     credentials = claude_credentials()
     if credentials is None:
         return None
+    # The access token lasts hours and renews only when Claude runs. An idle host (no
+    # keychain to fall back on) holds an expired one, and the usage call answers 401.
+    expires_at = credentials["claudeAiOauth"].get("expiresAt")
+    if expires_at and expires_at / 1000 < time.time():
+        renew_claude_token()
+        credentials = claude_credentials()
     token = credentials["claudeAiOauth"]["accessToken"]
     request = urllib.request.Request("https://api.anthropic.com/api/oauth/usage", headers={
         "Authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20"})
