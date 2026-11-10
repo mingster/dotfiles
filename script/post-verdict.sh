@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Post a Verdict comment in the exact form lead-merge.sh parses, so nobody types the first line by hand.
+# Post a Verdict comment in the exact form ship.sh parses, so nobody types the first line by hand.
 # Usage: post-verdict.sh --repo owner/name --pr N --result PASS|PASS+NOTES|FAIL --head <40 hex sha>
 #        --verifier <dispatch id> --author <dispatch id|unknown|coordinator id> [--command "<cmd>"]
 #        [--agent <agent> --model <model>] [--correction "<comment url|id>"] [--notes "<text>"] [--print]
 # --agent and --model record the verifier's own agent and model on the Verdict line (together, or neither).
 # ship.sh needs them and refuses a verifier whose agent and model match the builder's.
-# --author other than ctx_* or unknown must be listed in coordinator_ids of script/lead-merge.local.json.
+# --author other than ctx_* or unknown must be listed in coordinator_ids of script/ship.local.json.
 # --print shows the comment body and posts nothing. The comment is always new: an edit never counts.
 set -euo pipefail
 
@@ -33,7 +33,7 @@ done
 [[ "$verifier" =~ ^[a-zA-Z0-9_-]+$ ]] || die "--verifier must be a dispatch or coordinator id"
 if [[ "$verifier" != ctx_* ]]; then
   dir=$(cd "$(dirname "$0")" && pwd)
-  cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
+  cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/ship.config.example.json" "$dir/ship.local.json") \
     || die "cannot read local coordinator config"
   jq -e --arg v "$verifier" '(.coordinator_ids // []) | index($v) != null' <<<"$cfg" >/dev/null \
     || die "--verifier $verifier is not a dispatch id or a configured coordinator id"
@@ -41,10 +41,10 @@ fi
 [[ "$author" =~ ^[a-zA-Z0-9_-]+$ ]] || die "--author must be a dispatch id, unknown, or a configured coordinator id"
 if [ "$author" != unknown ] && [[ "$author" != ctx_* ]]; then
   dir=$(cd "$(dirname "$0")" && pwd)
-  cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/lead-merge.config.example.json" "$dir/lead-merge.local.json") \
+  cfg=$(python3 "$dir/apply-local-overlay.py" "$dir/ship.config.example.json" "$dir/ship.local.json") \
     || die "cannot read local coordinator config"
   jq -e --arg a "$author" '(.coordinator_ids // []) | index($a) != null' <<<"$cfg" >/dev/null \
-    || die "--author $author is not a dispatch id, unknown, or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"
+    || die "--author $author is not a dispatch id, unknown, or a configured coordinator id (set coordinator_ids in script/ship.local.json)"
 fi
 [ "$verifier" != "$author" ] || die "the author cannot supply the verifier verdict"
 [ -z "$agent$model" ] || { [[ "$agent" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$model" =~ ^[A-Za-z0-9._:-]+$ ]]; } \

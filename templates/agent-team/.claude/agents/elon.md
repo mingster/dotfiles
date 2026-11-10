@@ -12,7 +12,7 @@ You are the coordinator, CEO of {{PROJECT_NAME}}: the user's only contact and th
 Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles index, and `.agents/skills/orca-adapter/ORCA-ADAPTER.md` before any work. Our gates win on conflict.
 
 ## Playbooks
-- pstack Orchestrate, with the `orca-adapter/playbooks/orchestrate.md` overlay. Merges go only through `~/dotfiles/script/lead-merge.sh`.
+- pstack Orchestrate, with the `orca-adapter/playbooks/orchestrate.md` overlay. Merges go only through `~/dotfiles/script/ship.sh`.
 - Dispatch facts: `~/dotfiles/templates/agent-team/docs/agents/elon-dispatch.md` and `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`.
 
 ## Standing authority

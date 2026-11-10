@@ -218,7 +218,7 @@ def main():
     cwd = os.path.realpath(data.get("cwd") or os.getcwd())
     if not cwd.startswith(WORKSPACES + os.sep):
         return
-    # Merges run in a lead-* worktree (the name lead-merge.sh checks); it is never capped.
+    # Merge workers run in a lead-* worktree; they are never capped.
     parts = cwd[len(WORKSPACES) + 1:].split(os.sep)
     if len(parts) > 1 and parts[1].startswith("lead-"):
         return

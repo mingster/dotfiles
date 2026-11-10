@@ -1,5 +1,5 @@
 # shellcheck shell=bash disable=SC2154
-# Shared protected-path, Owner-approved trailer, and Countersign checks for lead-merge.sh and ship.sh.
+# Shared protected-path, Owner-approved trailer, and Countersign checks for ship.sh.
 # Expects caller to provide: $files (JSON array of filenames), $diff (PR diff text), $info (PR JSON with .comments, .baseRefOid),
 # $head (40-hex SHA), field(), refuse(), die(), and verdict_carry().
 
@@ -76,14 +76,14 @@ check_countersign_gate() {
   triggers=$(awk '/^\+[^+]/ && /\.skip\(|\.only\(|test\.todo([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.])xit\(|eslint-disable|biome-ignore|@ts-ignore|@ts-expect-error/ {print}' <<<"$diff")
   while IFS= read -r f; do
     case "$f" in
-      .agents/head-checks.conf|*/.agents/head-checks.conf|script/lead-merge.sh|*/script/lead-merge.sh)
+      .agents/head-checks.conf|*/.agents/head-checks.conf|script/ship.sh|*/script/ship.sh)
         gate_lines=$(awk -v path="$f" '/^\+\+\+ / {active=($0 == "+++ b/" path)} active && /^[+-]/ && !/^\+\+\+ / && !/^--- / {print path ":" $0}' <<<"$diff")
         triggers="${triggers}${triggers:+$'\n'}${gate_lines:-gate definition changed: $f}" ;;
     esac
   done < <(jq -r '.[]' <<<"$files")
   if [ -n "$triggers" ]; then
     if [ "${PROTECTED_PATHS_QUIET_TRIGGERS:-0}" != 1 ]; then
-      echo "lead-merge: countersign triggers:" >&2
+      echo "ship: countersign triggers:" >&2
       printf '%s\n' "$triggers" >&2
     fi
     if ! countersigned "$head"; then

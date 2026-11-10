@@ -14,6 +14,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Playbooks
 - pstack Feature, Bug fix and Refactoring, with the overlays in `orca-adapter/playbooks/`.
 - Stack and standards: `AGENTS.md` and `docs/agents/team-facts.md`.
+- PR body: put a `Builder: agent=<agent> model=<model>` line in it (for example `Builder: agent=claude model=sonnet`). `ship.sh` compares it with the verifier.
 
 ## Standing authority
 Never:

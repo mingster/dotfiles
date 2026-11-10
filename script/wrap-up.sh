@@ -223,7 +223,7 @@ scheduled_round() {
   exit 0
 }
 
-# --branch: cleanup after lead-merge.sh reads MERGED. Run from a checkout of the repo.
+# --branch: cleanup after ship.sh reads MERGED. Run from a checkout of the repo.
 # Usage: wrap-up.sh --branch <pr head> [--head-sha <merged sha>] [--branch ...]    DRY_RUN=1 only prints.
 # Acts by ownership, never by branch name:
 # 1. Each merged PR head branch (remote and local). Kept when it has commits outside origin/main,

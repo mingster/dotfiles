@@ -112,15 +112,13 @@ case6_pr_review() {
   ok "case6 pr-review maps its shell test"
 }
 
-case7_lead_merge_prefix() {
+case7_ship_maps_its_test() {
   local out
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
-    bash "$root/script/select-changed-script-tests.sh" --list-only script/lead-merge.sh 2>&1)
-  grep -Fq 'Selected: script/tests/lead-merge.test.sh' <<<"$out" \
-    || fail "case7 must select lead-merge.test.sh"
-  grep -Fq 'Selected: script/tests/lead-merge-batch.test.sh' <<<"$out" \
-    || fail "case7 must select lead-merge-batch.test.sh"
-  ok "case7 lead-merge maps base and prefix family tests"
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/ship.sh 2>&1)
+  grep -Fq 'Selected: script/tests/ship.test.sh' <<<"$out" \
+    || fail "case7 must select ship.test.sh"
+  ok "case7 ship maps its test"
 }
 
 case9_sync_team_skills_agent_team() {
@@ -151,10 +149,10 @@ case9_sync_team_skills_agent_team() {
 case10_script_plus_already_selected_test() {
   local out count
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
-    bash "$root/script/select-changed-script-tests.sh" --list-only script/lead-merge.sh script/tests/lead-merge.test.sh 2>&1)
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/ship.sh script/tests/ship.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 must not fall back when test path is already selected"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 8 ] || fail "case10 want Script tests: 8 got ${count:-0}"
+  [ "${count:-0}" -eq 2 ] || fail "case10 want Script tests: 2 got ${count:-0}"
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
     bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-review.sh script/tests/pr-review.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 pr-review mix must not fall back"
@@ -287,7 +285,7 @@ case3_skip_reasons
 case4_test_py
 case5_py_runner
 case6_pr_review
-case7_lead_merge_prefix
+case7_ship_maps_its_test
 case_fleet_watch_config_example
 case8_full_suite_fallback
 case9_sync_team_skills_agent_team

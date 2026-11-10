@@ -3,7 +3,7 @@
 # The agent only reads; this script alone posts, and only a well formed answer.
 set -euo pipefail
 
-REVIEW_MODEL_STRONG='^\.github/|^\.claude/hooks/|^\.orca/|^script/usage-gate\.py|^script/heavy-gate|^script/head-checks|^script/(coordinator-publication|fleet-watch|post-verdict|lead-merge|pr-review)\.sh'
+REVIEW_MODEL_STRONG='^\.github/|^\.claude/hooks/|^\.orca/|^script/usage-gate\.py|^script/heavy-gate|^script/head-checks|^script/(coordinator-publication|fleet-watch|post-verdict|ship|pr-review)\.sh'
 REVIEW_MODEL_MONEY='(^|/)(payment|payments|stripe|wallet|ledger|billing|subscription|secrets)'
 
 review_model_pick() {

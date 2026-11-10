@@ -361,7 +361,7 @@ run_mode() {
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
 
-  # lead-merge reads the local Orca run list, so a merge worker runs on the coordinator host, never on an overflow host.
+  # A merge worker reads the local Orca run list, so it runs on the coordinator host, never on an overflow host.
   local merge_worker=''
   case "$title" in
     "release-manager: merge"*)

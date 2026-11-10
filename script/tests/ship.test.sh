@@ -364,7 +364,7 @@ red_main_case() {
   set_checks "$n" "$green_checks"
   post_verdict "$n" PASS "$h"
   jq -n --arg c "$conclusion" --arg s "$main_sha" '{databaseId:777,conclusion:$c,url:"https://example.test/runs/777",headSha:$s}' > "$MF_GH_DIR/main-run.json"
-  printf 'script/ship.sh\n' > "$MF_GH_DIR/commit-$main_sha.txt"
+  printf 'script/post-verdict.sh\n' > "$MF_GH_DIR/commit-$main_sha.txt"
   : > "$MF_GH_LOG"
   run_ship --repo example/repo --pr "$n"
   rm -f "$MF_GH_DIR/main-run.json" "$MF_GH_DIR/main-run-fails"
@@ -381,12 +381,12 @@ red_main_case() {
   fi
 }
 main_sha=$(printf 'a%.0s' {1..40})
-red_main_case 16 feat-red-main "" refuse script/ship.sh "red main refuses and names the run"
-red_main_case 17 feat-red-wrong-run "Fixes main: 778" refuse script/ship.sh "Fixes main for another run refuses"
-red_main_case 18 feat-fix-main "Fixes main: 777" ship script/ship.sh "PR that touches a file of the red main commit ships"
-red_main_case 19 feat-fix-main-test "Fixes main: 777" ship script/tests/ship.test.sh "PR that touches a test of the red main commit ships"
+red_main_case 16 feat-red-main "" refuse script/post-verdict.sh "red main refuses and names the run"
+red_main_case 17 feat-red-wrong-run "Fixes main: 778" refuse script/post-verdict.sh "Fixes main for another run refuses"
+red_main_case 18 feat-fix-main "Fixes main: 777" ship script/post-verdict.sh "PR that touches a file of the red main commit ships"
+red_main_case 19 feat-fix-main-test "Fixes main: 777" ship script/tests/post-verdict.test.sh "PR that touches a test of the red main commit ships"
 red_main_case 20 feat-fix-unrelated "Fixes main: 777" refuse notes/unrelated.txt "Fixes main with unrelated files refuses" failure "touches neither the files nor the tests"
-red_main_case 21 feat-cancelled-main "" refuse script/ship.sh "cancelled main says rerun or fix main first" cancelled "rerun or fix main first"
+red_main_case 21 feat-cancelled-main "" refuse script/post-verdict.sh "cancelled main says rerun or fix main first" cancelled "rerun or fix main first"
 
 # gh failing while reading main's Checks run refuses and merges nothing.
 mf_pr_add 22 feat-main-gh-fails "Body"
@@ -411,7 +411,7 @@ else
   bad "main run lookup is limited to push events" "$(cat "$MF_GH_LOG")"
 fi
 
-# --mechanical: pure substitution or deletion lands with no Verdict (ported from lead-merge)
+# --mechanical: pure substitution or deletion lands with no Verdict (ported from the old merge script)
 mech_case() { # <pr> <expect ship|refuse> <label> <text> <diff body>; the fake gh serves a PR diff of the file list, so fixtures use a wrapper
   local n=$1 expect=$2 label=$3 text=$4 diff=$5 h
   mf_pr_add "$n" "feat-mech-$n" "Body" "${6:-script/mech-$n.sh}"
@@ -432,7 +432,7 @@ mech_case 153 refuse "mechanical names a path with spaces" 'script/a b/c.sh: 0 r
 mech_case 154 refuse "mechanical refuses a new script" "new file" $'diff --git a/script/new.sh b/script/new.sh\nnew file mode 100755\n--- /dev/null\n+++ b/script/new.sh\n@@ -0,0 +1 @@\n+echo hi\n'
 mech_case 155 refuse "mechanical refuses a rename" "renames" $'diff --git a/a b/b\nsimilarity index 90%\nrename from a\nrename to b\n'
 mech_case 156 refuse "mechanical still refuses protected paths" "owner through Elon" "$SUBST" .claude/settings.json
-mech_case 157 refuse "mechanical gate file still needs countersign" "Countersign" "$SUBST" script/lead-merge.sh
+mech_case 157 refuse "mechanical gate file still needs countersign" "Countersign" "$SUBST" script/ship.sh
 # Without the flag the same PR needs a Verdict
 mf_pr_add 158 feat-mech-noflag "Body" script/mech-158.sh; set_checks 158 "$green_checks"
 run_ship --repo example/repo --pr 158
@@ -440,11 +440,11 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "missing Verdict comment" <<<"$SHIP_OUT"; th
 run_ship --repo example/repo --pr 158 --mechanical --verdict-from x/dotfiles#1
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdict-from and --mechanical are exclusive"; else bad "--verdict-from and --mechanical are exclusive" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
-# --verdict-from: generated team copies land on the Verdict of the matching MERGED dotfiles PR (ported from lead-merge)
+# --verdict-from: generated team copies land on the Verdict of the matching MERGED dotfiles PR (ported from the old merge script)
 {
   repo_root=$(cd "$here/.." && pwd)
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
-  cp "$here/ship.sh" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"
+  cp "$here/ship.sh" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
@@ -484,7 +484,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   }
   src MERGED "$(one "$GOOD")"
   vf "verdict-from refuses without local config" 1 "no configured verdict_from_repos"
-  printf '{"verdict_from_repos":["example/repo","acme/project-beta"]}\n' > "$fx/script/lead-merge.local.json"
+  printf '{"verdict_from_repos":["example/repo","acme/project-beta"]}\n' > "$fx/script/ship.local.json"
   vf "generated copies land on the dotfiles PR Verdict" 0 "generated team copies"
   vf "verdict-from refuses an unconfigured repo" 1 "repo is not configured" other/repo
   src OPEN "$(one "$GOOD")";  vf "verdict-from refuses an unmerged dotfiles PR" 1 "not MERGED"

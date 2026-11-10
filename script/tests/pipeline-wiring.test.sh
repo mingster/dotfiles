@@ -16,7 +16,7 @@ check_maps() {
   [ "$count" -ge "$min_count" ] || bad "$script_path maps to $count test(s), want >= $min_count"
 }
 
-check_maps script/lead-merge.sh 2
+check_maps script/ship.sh 1
 check_maps script/wrap-up.sh 1
 check_maps script/head-checks.sh 1
 check_maps script/heavy-gate.py 1
