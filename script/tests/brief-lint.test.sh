@@ -168,7 +168,7 @@ No worker starts from an incomplete brief. Today worker-startup.sh only checks t
 - [ ] Tests red first: script/tests/brief-lint.test.sh (each missing part, a full brief passes, this brief passes); worker-startup test case refusing a bad brief; hook test in templates/agent-team/.claude/hooks/tests/ for deny and allow; fleet-watch test for the needs-triage path and for rework spec passing lint.
 
 ## Out of scope
-Rewriting AGENT-BRIEF.md, team-audit.sh, docs prose, any <project-a> file, lead-merge.sh, ship.sh.
+Rewriting AGENT-BRIEF.md, team-audit.sh, docs prose, any <project-a> file, ship.sh.
 
 ## Verify
 With timeout 300 each: bash script/checks-local.sh, brief-lint.test.sh, the worker-startup test, `python3 -m pytest -q templates/agent-team/.claude/hooks/tests` (or unittest if that is what the folder uses), every script/tests/test_fleet_watch*.py, no-project-names.test.sh, shellcheck -x on the two shell scripts. Paste tails.

@@ -340,7 +340,7 @@ db_remote_load() {
   local cfg dir
   db_remote_host=${LEAD_MERGE_REMOTE_HOST:-}; db_remote_repo_dir=${LEAD_MERGE_REMOTE_REPO_DIR:-}; db_remote_dir=${LEAD_MERGE_REMOTE_DIR:-}
   [ -z "$db_remote_host" ] || return 0
-  cfg=$(python3 "$script_dir/apply-local-overlay.py" "$script_dir/lead-merge.config.example.json" "$script_dir/lead-merge.local.json" 2>/dev/null) || return 0
+  cfg=$(python3 "$script_dir/apply-local-overlay.py" "$script_dir/ship.config.example.json" "$script_dir/ship.local.json" 2>/dev/null) || return 0
   [ "$(jq -r --arg r "$name" '(.head_checks_remote.repo // $r) | split("/") | last' <<<"$cfg")" = "$name" ] || return 0
   db_remote_host=$(jq -r '.head_checks_remote.host // ""' <<<"$cfg")
   db_remote_repo_dir=$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")

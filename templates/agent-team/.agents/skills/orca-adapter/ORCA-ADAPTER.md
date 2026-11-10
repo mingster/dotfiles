@@ -21,7 +21,7 @@ Playbook `<name>` resolves to `playbooks/<name>.md` next to this adapter when it
 | Subagent, `Task`, cloud subagent, `poteto-agent` | A supervised Orca worker with a complete local brief, started per `.claude/model-routing.md`. No cloud worker. |
 | Agent prompt | Role, unit, worktree and cwd, file allowlist, evidence and predicate, exact checks, budget and escalation gates, the role's Standing authority verbatim, and absolute paths to this adapter, `poteto-mode` and the selected leaf skills. |
 | Agent result | `worker_done` with matching task and dispatch IDs, evidence, local commit and remaining gates. A terminal message alone does not settle a dispatch. |
-| PR watch, `watch-pr` | Not used. The coordinator publishes; merges go through `~/dotfiles/script/lead-merge.sh`. |
+| PR watch, `watch-pr` | Not used. The coordinator publishes; merges go through `~/dotfiles/script/ship.sh`. |
 | Stall detection | `~/dotfiles/.agents/skills/orca-team/worker-watch.sh`. |
 | Heavy or live work | `~/dotfiles/script/heavy-gate.sh`. |
 | `/visualize` | Not vendored; use Mermaid. |

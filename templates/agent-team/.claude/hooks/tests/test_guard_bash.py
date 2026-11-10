@@ -93,7 +93,7 @@ class PatternKills(GuardTest):
         for cmd in [
             'pkill -f "next dev"',
             'pkill -f "next dev" -n; pkill -f "next-server"',
-            "pkill -f lead-merge.sh; pkill -f worker-finish",
+            "pkill -f ship.sh; pkill -f worker-finish",
             "pkill -x node",
             "killall node",
             "/usr/bin/pkill next",

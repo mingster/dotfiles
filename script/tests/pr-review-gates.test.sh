@@ -75,7 +75,7 @@ else
 fi
 
 # 4. Cursor PR: coordinator verifier with builder author.
-printf '{"coordinator_ids":["term_coord"]}\n' >"$here/lead-merge.local.json"
+printf '{"coordinator_ids":["term_coord"]}\n' >"$here/ship.local.json"
 PRG_COORD_LOADED=0
 pr_review_gates_launch_record_dispatch ctx_cursor_builder cursor composer-2.5
 if pr_review_gate_coordinator_verdict term_coord ctx_cursor_builder ctx_cursor_builder refuse; then
@@ -88,7 +88,7 @@ if pr_review_gate_coordinator_verdict term_coord unknown ctx_cursor_builder refu
 else
   ok "cursor PR refuses author=unknown"
 fi
-rm -f "$here/lead-merge.local.json"
+rm -f "$here/ship.local.json"
 
 # 5. Verifier cannot be the builder dispatch.
 if pr_review_gate_verifier_known ctx_builder ctx_builder "" refuse; then
@@ -110,7 +110,7 @@ else
 fi
 
 # 7. Coordinator-authored Verdict: not refused as non-builder; skips cross-model gate.
-printf '{"coordinator_ids":["term_elon"]}\n' >"$here/lead-merge.local.json"
+printf '{"coordinator_ids":["term_elon"]}\n' >"$here/ship.local.json"
 PRG_COORD_LOADED=0
 if pr_review_gates_resolve_builder_dispatch term_elon feat-x refuse \
   && [ -z "${PRG_BUILDER_DISPATCH:-}" ]; then
@@ -129,7 +129,7 @@ if pr_review_gate_coordinator_verdict ctx_reviewer term_elon "" refuse; then
 else
   bad "coordinator-built coordinator_verdict skip"
 fi
-rm -f "$here/lead-merge.local.json"
+rm -f "$here/ship.local.json"
 
 # 8. Missing launch record: refusal names worker-startup.sh.
 pr_review_gates_resolve_builder_dispatch ctx_builder feat-x refuse

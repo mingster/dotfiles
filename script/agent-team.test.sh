@@ -44,10 +44,10 @@ else
 fi
 
 if grep -q 'script/agent-team.sh" check' "$real_dotfiles/script/head-checks.sh" \
-  && grep -q 'script/agent-team.sh" check' "$real_dotfiles/script/lead-merge.sh"; then
-  check "head-checks.sh and lead-merge.sh call script/agent-team.sh check" ok
+  && grep -q 'script/agent-team.sh" check' "$real_dotfiles/script/ship.sh"; then
+  check "head-checks.sh and ship.sh call script/agent-team.sh check" ok
 else
-  check "head-checks.sh and lead-merge.sh call script/agent-team.sh check" bad
+  check "head-checks.sh and ship.sh call script/agent-team.sh check" bad
 fi
 
 if ! bash "$SCRIPT" reset "$tmp" >/dev/null 2>&1; then

@@ -76,7 +76,7 @@ def checks_receipt_at_head(pr):
 
 
 def merge_refuse_review_fail(pr, head):
-    """Lead-merge preflight: refuse when the newest Review receipt at head is FAIL."""
+    """Ship preflight: refuse when the newest Review receipt at head is FAIL."""
     return newest_receipt_kind(pr.get('comments'), 'Review', head) == 'FAIL'
 
 

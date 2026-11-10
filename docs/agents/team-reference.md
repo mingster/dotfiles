@@ -295,7 +295,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree; only Playwright and build steps wait on `heavy-gate.sh`. |
 | `script/head-checks-tsc.sh` | TypeScript check helper invoked by `head-checks.sh` profiles. |
 | `script/post-verdict.sh` | Validates and posts a canonical `Verdict: PASS|PASS+NOTES|FAIL head=<sha> verifier=<id> author=<id>` comment and `review` status on a PR, refusing self-review. |
-| `script/ship.sh` | Shipping run (replacing `script/lead-merge.sh`): verifies required checks and matching `git patch-id` Verdict, merges with `gh pr merge --squash`, and reads the PR back as `MERGED`. |
+| `script/ship.sh` | Shipping run: verifies required checks and matching `git patch-id` Verdict, merges with `gh pr merge --squash`, and reads the PR back as `MERGED`. |
 
 ### Cleanup, audits and weekly maintenance
 
@@ -439,18 +439,18 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 
 
-### Merging through lead-merge.sh
+### Merging through ship.sh
 
-A merge worker the coordinator dispatches runs `script/lead-merge.sh --repo owner/name --pr N --head <sha>`
-(or `--batch <N> <N>` once per wake from the `lead-elon` worktree, and `--mechanical`
-for docs-only PRs); the coordinator dispatches the worker only.
-The script refuses unless the caller's worktree is `lead-*` under `~/orca/workspaces/`, the PR is
-open on `main` at exactly that head, mergeable, off the protected branches, and free of user
+The coordinator runs `script/ship.sh --repo owner/name --pr N` itself, one PR at a time, bottom up
+(add `--mechanical` for a pure substitution or deletion, `--verdict-from <owner/dotfiles#N>` for
+generated team copies). No merge worker is dispatched.
+The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
+newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
 and intents that become Accepted). An Accepted intent passes when every commit in the PR that
 touches that intent file carries a non-empty `Owner-approved: <owner> <date> (<where approved>)`
-trailer, meaning the owner already accepted it in chat; one commit without it refuses the PR. Orca sets no role variable (`ORCA_TERMINAL_HANDLE` and
-`ORCA_AGENT_SESSION_ID` exist for every agent), so the worktree name is the merge check.
+trailer, meaning the owner already accepted it in chat; one commit without it refuses the PR.
+It squash merges and reads the PR back as `MERGED`.
 
 ### Interpreters (asdf)
 

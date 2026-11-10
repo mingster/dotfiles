@@ -8,4 +8,4 @@ Run this on every push path before `worker_done` or before opening a PR. No suba
 4. Fix or explain every finding.
 5. Put a `## Self-review` section in the PR body (or in `worker_done` when the brief is local-only) naming the **exact head sha** you reviewed and one line per finding with its outcome.
 
-Cursor and Antigravity workers run this checklist as written. It is enforced again at merge: `script/ship.sh` and `script/lead-merge.sh` refuse a PR whose `## Self-review` is missing or names an older sha.
+Cursor and Antigravity workers run this checklist as written. It stays a builder duty. `ship.sh` does not gate on it.

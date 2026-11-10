@@ -129,7 +129,7 @@ on_main_clean() {
 }
 
 # --- no merge in the entry script ---
-if grep -Eiq 'gh pr merge|lead-merge\.sh|--merge' "$script"; then
+if grep -Eiq 'gh pr merge|ship\.sh|--merge' "$script"; then
   bad 'weekly-update.sh must not call merge'
 else
   ok 'no merge calls in weekly-update.sh'

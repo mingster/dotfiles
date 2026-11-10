@@ -178,14 +178,14 @@ case "$lane" in
 generated)
   config_dir=$ship_dir
   verdict_config=$(python3 "$config_dir/apply-local-overlay.py" \
-    "$config_dir/lead-merge.config.example.json" "$config_dir/lead-merge.local.json") \
+    "$config_dir/ship.config.example.json" "$config_dir/ship.local.json") \
     || refuse "--verdict-from: cannot read local repo config"
   jq -e '.verdict_from_repos | type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' \
     <<<"$verdict_config" >/dev/null || refuse "--verdict-from: invalid verdict_from_repos config"
   [ "$(jq '.verdict_from_repos | length' <<<"$verdict_config")" -gt 0 ] \
-    || refuse "--verdict-from: no configured verdict_from_repos; set $config_dir/lead-merge.local.json"
+    || refuse "--verdict-from: no configured verdict_from_repos; set $config_dir/ship.local.json"
   jq -e --arg repo "$repo" '.verdict_from_repos | index($repo) != null' \
-    <<<"$verdict_config" >/dev/null || refuse "--verdict-from: repo is not configured in lead-merge.local.json"
+    <<<"$verdict_config" >/dev/null || refuse "--verdict-from: repo is not configured in ship.local.json"
   [[ "$verdict_from" =~ ^([A-Za-z0-9_.-]+/dotfiles)#([0-9]+)$ ]] || refuse "--verdict-from must look like owner/dotfiles#N"
   src_repo="${BASH_REMATCH[1]}"; src_pr="${BASH_REMATCH[2]}"
   git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || refuse "cannot read head $head"
@@ -293,7 +293,7 @@ verdict)
   ;;
 esac
 
-# 5. Protected paths (shared with lead-merge.sh: owner-only, Owner-approved trailer, Countersign).
+# 5. Protected paths (shared lib: owner-only, Owner-approved trailer, Countersign).
 if [ "$lane" = generated ]; then
   # Generated copies of role files carry no Owner-approved trailer by design; the template PR already passed that gate.
   PROTECTED_PATHS_QUIET_TRIGGERS=1 check_owner_only_paths

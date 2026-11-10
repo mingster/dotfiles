@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Same comment fixtures through receipt-state (fleet-watch and lead-merge entry points)."""
+"""Same comment fixtures through receipt-state (fleet-watch and ship entry points)."""
 import importlib.util
 import json
 import subprocess
