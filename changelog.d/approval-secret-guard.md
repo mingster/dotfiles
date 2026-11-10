@@ -1,0 +1,1 @@
+* The agent team guard hook denies any command or `Read` that names the owner approval secret file or `AGENT_APPROVAL_SECRET`, and a glob into the approval folder. Prose mentions stay allowed. The settings hook matcher now includes `Read`. Run `agent-team.sh sync` in each adopted project to pick it up.

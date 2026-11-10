@@ -127,7 +127,7 @@ else
   bad "failed to preserve tool-owned or Orca-bundled skills (ec=$ec2)"
 fi
 
-# 4. templates/agent-team/.claude/settings.json references $HOME/.claude/ and registers guard-bash.py on Write|Edit|MultiEdit|NotebookEdit
+# 4. templates/agent-team/.claude/settings.json references $HOME/.claude/ and registers guard-bash.py on Read|Write|Edit|MultiEdit|NotebookEdit
 settings_file="$root/templates/agent-team/.claude/settings.json"
 proj_refs=$(grep -c 'CLAUDE_PROJECT_DIR/\.claude/\(hooks\|bin\)' "$settings_file" || true)
 [ "$proj_refs" -eq 0 ] && ok "no CLAUDE_PROJECT_DIR/.claude/{hooks,bin} references remain in settings.json" || bad "found $proj_refs CLAUDE_PROJECT_DIR/.claude/{hooks,bin} references in settings.json"
@@ -149,14 +149,14 @@ for r in required:
 pre = data.get("hooks", {}).get("PreToolUse", [])
 write_match = [
     g for g in pre
-    if g.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
+    if g.get("matcher") == "Read|Write|Edit|MultiEdit|NotebookEdit"
     and any(h.get("command") == 'python3 "$HOME/.claude/hooks/guard-bash.py"' for h in g.get("hooks", []))
 ]
 if not write_match:
-    sys.exit("missing PreToolUse Write|Edit|MultiEdit|NotebookEdit guard-bash.py entry")
+    sys.exit("missing PreToolUse Read|Write|Edit|MultiEdit|NotebookEdit guard-bash.py entry")
 PY
 then
-  ok "templates/agent-team/.claude/settings.json invokes \$HOME/.claude/{hooks,bin} and PreToolUse Write|Edit|MultiEdit|NotebookEdit guard-bash.py"
+  ok "templates/agent-team/.claude/settings.json invokes \$HOME/.claude/{hooks,bin} and PreToolUse Read|Write|Edit|MultiEdit|NotebookEdit guard-bash.py"
 else
   bad "templates/agent-team/.claude/settings.json failed hook path or matcher check"
 fi
