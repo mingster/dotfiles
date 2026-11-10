@@ -35,6 +35,7 @@ elif [[ "$ARCH" == "x86_64" && -x /usr/local/bin/brew ]]; then
   eval "$(/usr/local/bin/brew shellenv)"
   export PATH="/usr/local/share/google-cloud-sdk/bin:$PATH"
   export PATH="/usr/local/opt/postgresql@18/bin:$PATH"
+  export PATH="/usr/local/opt/llvm/bin:$PATH"
 fi
 
 export PATH="$HOME/.local/bin:$PATH"
