@@ -94,7 +94,7 @@ export MERGE_LOG="$tmp/merge.log"
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 setup() {
-  unset REAL_PATCH_REPO REAL_PATCH_REPO_MAIN
+  unset REAL_PATCH_REPO REAL_PATCH_REPO_MAIN LEAD_MERGE_COORDINATOR_HOST
   rm -f "$MERGE_LOG" "$MERGE_LOG.calls"
   FAKE_TOP="$LEAD"; MERGE_FAILS=0; PR_DIFF=""
   COMMENTS_JSON=""; API_OVERRIDE=""; COUNT_OVERRIDE=""; unset STATUS_ROLLUP_JSON
@@ -314,6 +314,8 @@ setup; PR_DIFF=$'+test.skip("case", () => {})'; check "test skip needs countersi
 setup; PR_DIFF=$'+// @ts-expect-error intentional'; check "suppression needs countersign" 1 'Countersign'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=ctx_author"; check "unknown verifier dispatch refused" 1 'ctx_ghost is not a known dispatch'
 setup; comments="Verdict: PASS head=$SHA verifier=ctx_verify author=ctx_ghost"; check "unknown author dispatch refused" 1 'ctx_ghost is not a known dispatch'
+setup; export LEAD_MERGE_COORDINATOR_HOST=not-this-host-849; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=ctx_author"; check "849 unknown verifier off the coordinator host names the host rule" 1 'lead-merge runs on the coordinator host only \(not-this-host-849\)'
+setup; export LEAD_MERGE_COORDINATOR_HOST="$(hostname -s)"; comments="Verdict: PASS head=$SHA verifier=ctx_ghost author=ctx_author"; check "849 unknown verifier on the coordinator host keeps the plain refusal" 1 'ctx_ghost is not a known dispatch$'
 setup; export FAKE_ORCA_FAIL=1; check "orca CLI failure refuses" 1 'cannot read orca'
 setup; FAKE_DISPATCHES="ctx_author"; export FAKE_DISPATCHES_B="ctx_verify"; check "verifier only in a non-bound run passes" 0 '^MERGED' 1
 setup; FAKE_DISPATCHES="ctx_author"; export FAKE_DISPATCHES_B="ctx_other"; check "verifier in no run refused" 1 'ctx_verify is not a known dispatch'

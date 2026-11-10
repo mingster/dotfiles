@@ -58,6 +58,15 @@ else: sys.exit(1)
     expected=env['GH_HEAD']
     run('checklist receives actual PR merge base', 'test "$HEAD_CHECK_BASE" = "'+expected+'"',0)
     env['GH_BASE']=base
+    # An asdf shim exits 126 when its HOME has no .tool-versions; a step that sets its own HOME must still get the real python3.
+    shims=root/'home/.asdf/shims'; shims.mkdir(parents=True); realbin=root/'real-python'; realbin.mkdir()
+    (realbin/'python3').symlink_to(sys.executable)
+    (shims/'python3').write_text('#!/usr/bin/env bash\n[ -f "$HOME/.tool-versions" ] || { echo "asdf: no version set for python" >&2; exit 126; }\nexec "'+str(realbin/'python3')+'" "$@"\n'); (shims/'python3').chmod(0o755)
+    (binpath/'asdf').write_text('#!/usr/bin/env bash\n[ "$1 $2" = "which python3" ] && echo "'+str(realbin/'python3')+'"\n'); (binpath/'asdf').chmod(0o755)
+    (root/'home/.tool-versions').write_text('python 3.0.0\n')
+    run('step python3 survives a test-owned HOME',"HOME=$(mktemp -d) python3 -c 'print(1)'",0)
+    (binpath/'asdf').unlink(); (root/'home/.tool-versions').unlink()
+    import shutil; shutil.rmtree(root/'home/.asdf')
     # A huge log yields a receipt at or under the cap that names the full log file.
     env['HEAD_CHECKS_LOG_DIR']=str(root/'logs'); (root/'logs').mkdir(exist_ok=True)
     big,big_head=run('large log receipt is bounded',"head -c 200000 /dev/zero | tr '\\0' x; echo",0)

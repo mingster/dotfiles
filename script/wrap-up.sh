@@ -1009,16 +1009,27 @@ close_finished_terminals() {
 }
 # Release finished workers on this Orca and every environment: state succeeded, stopped or failed, or liveness exited or sleep,
 # and not yet released. A ready or in_progress worker that is live is never touched, nor the caller's or a coordinator's terminal.
+# Issue 855: a row with no terminal and no terminal state was already released (the concise list drops both), and a retained
+# one is Orca's final answer; asking again every round spent the whole time limit, so every later step was skipped. Releases
+# also stop once half the time limit is used, so the terminal and worktree steps always get their turn. An ok:true receipt
+# (released, retained, already_released) counts as released whatever the exit code.
 released_count=0
 release_finished_workers() {
-  local env id why label
+  local env id why label receipt
   while IFS=$'\t' read -r env id why; do
     [ -n "$id" ] || continue
     [ "$env" != - ] || env=''
     label=${env:-local}
+    if [ "$apply" -eq 1 ] && [ $((deadline-SECONDS)) -lt $((total_timeout/2)) ]; then
+      echo 'Warning: releases used half the time limit; the rest wait for the next run.' >&2
+      fail_item 'releases' 'half the time limit used; the rest next run'; break
+    fi
     printf 'Release worker %s (%s, %s)\n' "$id" "$label" "$why"
-    if [ "$apply" -eq 1 ] && ! "$orca" orchestration worker-release --dispatch "$id" ${env:+--environment "$env"} --json >/dev/null 2>&1; then
-      echo "Warning: releasing $id on $label failed." >&2; fail_item "release $id ($label)" 'worker-release failed'; continue
+    if [ "$apply" -eq 1 ]; then
+      if ! receipt=$("$orca" orchestration worker-release --dispatch "$id" ${env:+--environment "$env"} --json 2>/dev/null) \
+        && ! jq -e '.ok == true' <<< "$receipt" >/dev/null 2>&1; then
+        echo "Warning: releasing $id on $label failed." >&2; fail_item "release $id ($label)" 'worker-release failed'; continue
+      fi
     fi
     released_count=$((released_count+1))
   done < <(jq -r -s --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" '
@@ -1026,7 +1037,8 @@ release_finished_workers() {
     def handle: (.agentTerminalHandle // (.terminal | strings) // "");
     [.[] | .env as $env | .row | state as $st | handle as $h | (.liveness // "") as $live
       | select((.dispatchId // "") != "")
-      | select(.terminalState != "released" and .stage != "released")
+      | select(.terminalState != "released" and .terminalState != "retained" and .stage != "released")
+      | select($h != "" or .terminalState != null)
       | (if (["succeeded","stopped","failed"] | index($st)) != null then "state " + $st
          elif (["exited","sleep"] | index($live)) != null then "liveness " + $live else empty end) as $why
       | select(((["ready","in_progress"] | index($st)) != null and $live == "live") | not)
@@ -1071,9 +1083,9 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
           echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
-        elif jq -e '.error.message | startswith("Unknown environment") or startswith("Remote Dispatch")' "$tmp/show" >/dev/null 2>&1; then
-          # Ran on a host this one no longer pairs with: its worktree and browser live there, that host's wrap-up owns them.
-          # A path its row names may still be here, so that one stays.
+        elif jq -e '.error.code == "remote_runtime_unavailable" or (.error.message | startswith("Unknown environment") or startswith("Remote Dispatch"))' "$tmp/show" >/dev/null 2>&1; then
+          # Ran on a host this one no longer pairs with, or one that is offline now (issue 855): its worktree and browser live
+          # there, that host's wrap-up owns them. A path its row names may still be here, so that one stays.
           [ -z "$row_path" ] || echo "$row_path" >> "$tmp/active"
           echo "Warning: worker-show failed for dispatch $dispatch on an unpaired host; skipped." >&2
         else

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
+# Database steps: a .agents/head-checks.conf line that needs Postgres runs on the head_checks_remote host when this
+# host has none. Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
+# for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 head_checks_gate_wrap() {
@@ -325,6 +328,38 @@ if re.search(r"^bun test v", text, re.M):
     print(f"Tests executed: {executed}\nLoad errors: {errors}")
 PYTEST
 }
+# A step that needs Postgres runs against the database host (head_checks_remote), never a host without it.
+# Without the database client here and no remote host, the step is a host fault: FAIL, never a pass.
+db_step_re='(^|[^[:alnum:]_-])(createdb|dropdb|psql|pg_dump|pg_restore)([^[:alnum:]_-]|$)'
+db_marker_re='[[:space:]]#[[:space:]]*db[[:space:]]*$'
+db_remote_host="" db_remote_repo_dir="" db_remote_dir=""
+db_remote_load() {
+  local cfg dir
+  db_remote_host=${LEAD_MERGE_REMOTE_HOST:-}; db_remote_repo_dir=${LEAD_MERGE_REMOTE_REPO_DIR:-}; db_remote_dir=${LEAD_MERGE_REMOTE_DIR:-}
+  [ -z "$db_remote_host" ] || return 0
+  cfg=$(python3 "$script_dir/apply-local-overlay.py" "$script_dir/lead-merge.config.example.json" "$script_dir/lead-merge.local.json" 2>/dev/null) || return 0
+  [ "$(jq -r --arg r "$name" '(.head_checks_remote.repo // $r) | split("/") | last' <<<"$cfg")" = "$name" ] || return 0
+  db_remote_host=$(jq -r '.head_checks_remote.host // ""' <<<"$cfg")
+  db_remote_repo_dir=$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")
+  db_remote_dir=$(jq -r '.head_checks_remote.dir // ""' <<<"$cfg")
+}
+# db_step_runner <expanded command>: prints the remote-heavy argv tokens, one per line, when the step must go to the
+# database host; prints nothing when it runs here. Returns 1 (a host fault) when it can run nowhere.
+db_step_runner() {
+  [[ "$1" =~ $db_marker_re || "$1" =~ $db_step_re ]] || return 0
+  command -v "${HEAD_CHECKS_DB_PROBE:-createdb}" >/dev/null 2>&1 && return 0
+  db_remote_load
+  if [ -z "$db_remote_host" ] || [ -z "$db_remote_repo_dir" ] || [ -z "$db_remote_dir" ]; then
+    return 1
+  fi
+  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --
+}
+# An asdf shim looks for .tool-versions under the caller's HOME and exits 126 when a test sets its own, so steps get
+# the real python3 and node directories first. Resolved once, from the worktree; without asdf the PATH is unchanged.
+step_path="$PATH"
+for tool in python3 node; do
+  real=$(cd "$worktree" && asdf which "$tool" 2>/dev/null) && [ -x "$real" ] && step_path="$(dirname "$real"):$step_path"
+done
 count=0
 while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
@@ -332,8 +367,8 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
-  run=(env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info" \
-      bash -euo pipefail -c "$expanded")
+  step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info")
+  run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" bash -euo pipefail -c "$expanded")
   gate_prefix=()
   while IFS= read -r token || [ -n "${token:-}" ]; do
     [ -n "${token:-}" ] && gate_prefix+=("$token")
@@ -342,6 +377,18 @@ while IFS= read -r command || [ -n "$command" ]; do
     runner=( "${gate_prefix[@]}" "${run[@]}" )
   else
     runner=( "${run[@]}" )
+  fi
+  db_prefix=()
+  if db_out=$(db_step_runner "$expanded"); then
+    while IFS= read -r token || [ -n "${token:-}" ]; do
+      [ -n "${token:-}" ] && db_prefix+=("$token")
+    done <<<"$db_out"
+    # The database host has its own PATH and HOME; this host's would break the step there.
+    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
+  else
+    printf 'Result: host fault; this host has no Postgres (%s: command not found) and no head_checks_remote database host is configured, so the database step did not run. Not a pass; run the head checks on the database host.\nDuration: 0s\n' "${HEAD_CHECKS_DB_PROBE:-createdb}" >> "$log"
+    rm -f "$output"
+    exit 1
   fi
   if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
     sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
