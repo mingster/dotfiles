@@ -73,6 +73,11 @@ SECRET_FILE = re.compile(
     r"|id_(rsa|ed25519|ecdsa)"
     r")$"
 )
+# The owner's approval signing secret sits beside the approval file (`~/.config/<namespace>/approval-secret`).
+# Named distinctly from SECRET_FILE above, which matches env and key files.
+APPROVAL_SECRET_PATH = re.compile(r"\.config/[^/\s'\"]+/approval-secret")
+APPROVAL_SECRET_BARE = re.compile(r"(?:^|[/=])approval-secret$")
+APPROVAL_SECRET_ENV = "AGENT_APPROVAL_SECRET"
 SECRETS_NONREAD = {"ls", "stat", "test", "[", "[[", "mkdir", "chmod", "chown", "touch", "rm", "rmdir", "pwd"}
 SECRETS_COPIERS = {"cp", "mv", "ln", "rsync", "scp", "install"}
 SECRET_VAR = re.compile(r"SECRET|PASSW|TOKEN|KEY|PRIVATE|CRED|DATABASE_URL|_RO_URL|DSN|AUTH", re.I)
@@ -1382,6 +1387,51 @@ def promote_invocation(script, script_args):
     return {"component": "", "sha": sha}
 
 
+def approval_secret_file():
+    return os.path.join(os.path.dirname(primary_approval_file()), "approval-secret")
+
+
+def approval_dir_glob():
+    """A glob into the approval folder could match the secret file."""
+    ns = re.escape(APPROVAL_NAMESPACE) if APPROVAL_NAMESPACE else r"[^/\s'\"]+"
+    dirs = [r"\.config/(?:[^/\s'\"]*[*?\[][^/\s'\"]*|" + ns + ")"]
+    if APPROVAL_FILE_OVERRIDE:
+        dirs.append(re.escape(os.path.dirname(APPROVAL_FILE_OVERRIDE)))
+    return re.compile("(?:" + "|".join(dirs) + r")/?[^\s'\"]*[*?\[]")
+
+
+def names_approval_secret(text):
+    if APPROVAL_SECRET_ENV in text or APPROVAL_SECRET_PATH.search(text) or APPROVAL_SECRET_BARE.search(text):
+        return True
+    if APPROVAL_FILE_OVERRIDE and os.path.join(os.path.dirname(APPROVAL_FILE_OVERRIDE), "approval-secret") in text:
+        return True
+    return bool(approval_dir_glob().search(text))
+
+
+def deny_approval_secret():
+    deny(f"{approval_secret_file()} and {APPROVAL_SECRET_ENV} sign the owner's sysadmin approval: an agent never "
+         "reads them, with any program. Only the owner's own terminal and the server use the secret.")
+
+
+def check_approval_secret(segment, base, args):
+    """Deny a command that names the approval secret file or env name, or globs into the approval folder.
+    Prose mentions (echo, commit messages) stay allowed, as for the approval file."""
+    tokens = words(segment)
+    skip = prose_tokens(tokens) if (text_program(base, args) or base in {"echo", "printf"}) else set()
+    if any(i not in skip and names_approval_secret(t) for i, t in enumerate(tokens)):
+        deny_approval_secret()
+
+
+def check_approval_secret_read(path):
+    if not path:
+        return
+    full = os.path.normpath(os.path.join(GATE_CWD or os.getcwd(), os.path.expanduser(path)))
+    for p in {full, os.path.realpath(full)}:
+        if (os.path.basename(p) == "approval-secret" and APPROVAL_SECRET_PATH.search(p)) or (
+                APPROVAL_FILE_OVERRIDE and p == os.path.join(os.path.dirname(APPROVAL_FILE_OVERRIDE), "approval-secret")):
+            deny_approval_secret()
+
+
 def check_risky(segment, base, args, depth):
     tokens = words(segment)
     viewer = read_only_viewer(base, args)
@@ -1770,6 +1820,7 @@ def check_segment(segment, depth=0, cwd=None):
     check_template_managed_bash(segment, base, args, transfer_cwd)
     check_pattern_kill(segment, base, args)
     check_team_gates(base, args)
+    check_approval_secret(segment, base, args)
     check_risky(segment, base, args, depth)
 
     # Heavy jobs must acquire the shared machine budget.
@@ -2020,6 +2071,10 @@ def main():
     if tool in EDIT_TOOLS:
         path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
         check_edit(tool, path if isinstance(path, str) else "")
+        return
+    if tool == "Read":
+        path = tool_input.get("file_path") or ""
+        check_approval_secret_read(path if isinstance(path, str) else "")
         return
     if tool != "Bash":
         return
