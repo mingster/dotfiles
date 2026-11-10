@@ -354,6 +354,12 @@ db_step_runner() {
   fi
   printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --
 }
+# An asdf shim looks for .tool-versions under the caller's HOME and exits 126 when a test sets its own, so steps get
+# the real python3 and node directories first. Resolved once, from the worktree; without asdf the PATH is unchanged.
+step_path="$PATH"
+for tool in python3 node; do
+  real=$(cd "$worktree" && asdf which "$tool" 2>/dev/null) && [ -x "$real" ] && step_path="$(dirname "$real"):$step_path"
+done
 count=0
 while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
@@ -362,7 +368,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
   step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info")
-  run=(env -i PATH="$PATH" HOME="$HOME" "${step_env[@]}" bash -euo pipefail -c "$expanded")
+  run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" bash -euo pipefail -c "$expanded")
   gate_prefix=()
   while IFS= read -r token || [ -n "${token:-}" ]; do
     [ -n "${token:-}" ] && gate_prefix+=("$token")
