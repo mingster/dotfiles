@@ -349,9 +349,10 @@ def load_guard_config(start_dir):
             SECRETS_DIR_EXCEPTIONS.append(item.strip())
 
     # Branch globs a force push needs the owner's `force-push <branch>` for; ["*"] guards every branch.
-    raw_force = cfg_expect("force_push_branches", list, "list")
-    if raw_force is not None:
-        FORCE_PUSH_BRANCHES = [b.strip() for b in raw_force if isinstance(b, str) and b.strip()]
+    # Config only adds: `main` stays guarded whatever the list says.
+    for b in cfg_expect("force_push_branches", list, "list") or []:
+        if isinstance(b, str) and b.strip() and b.strip() not in FORCE_PUSH_BRANCHES:
+            FORCE_PUSH_BRANCHES.append(b.strip())
 
     for pat in cfg_expect("secrets_stdin_ok", list, "list") or []:
         if isinstance(pat, str) and pat.strip():

@@ -432,6 +432,13 @@ class ProjectConfigRules(GuardTest):
         self.assertAllowed("git push --force origin feature")
         self.assertDenied("git push --force origin main", "force-push main")
 
+    def test_force_push_config_never_drops_main(self):
+        for cfg in ([], ["release/*"]):
+            with self.subTest(force_push_branches=cfg):
+                self.use_config({"force_push_branches": cfg})
+                self.assertDenied("git push --force origin main", "force-push main")
+                self.assertDenied("git push -f origin HEAD:main", "force-push main")
+
     def test_secrets_deny_names_every_configured_exception(self):
         for command in ("cat vault/secrets/admin/key", "head -c 20 vault/secrets/admin/key",
                         "x=$(<vault/secrets/admin/key)", "cp vault/secrets/admin/key /tmp/k"):
