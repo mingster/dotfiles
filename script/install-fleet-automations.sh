@@ -93,7 +93,8 @@ FLEET_WATCH_PRECHECK_TIMEOUT=${FLEET_WATCH_PRECHECK_TIMEOUT:-280}
 WRAP_UP_SCHEDULED_REPO_LIMIT=${WRAP_UP_SCHEDULED_REPO_LIMIT:-300}
 WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-600}
 WRAP_UP_SCHEDULED_LOG=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
-WRAP_UP_ISSUE_REPO=${WRAP_UP_ISSUE_REPO:-}
+# Issue 855: failed rounds open an issue on the private fleet state repo. wrap-up.sh refuses a public one, since titles name hosts.
+WRAP_UP_ISSUE_REPO=${WRAP_UP_ISSUE_REPO:-mingster/agent-state}
 SYNC_DRIFT_LOG=${SYNC_DRIFT_LOG:-$HOME/.local/state/agent-team/sync-team-skills-drift.log}
 TEAM_AUDIT_WEEKLY_LOG=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/team-audit-weekly.log}
 SYNC_DRIFT_PRECHECK_TIMEOUT=${SYNC_DRIFT_PRECHECK_TIMEOUT:-300}
