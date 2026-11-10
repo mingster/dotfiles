@@ -11,32 +11,8 @@ mf_setup
 trap mf_teardown EXIT
 cd "$MF_REPO" || exit 1
 
-cat > "$MF_DIR/fake-orca" <<'EOS'
-#!/usr/bin/env bash
-if [ "${1:-} ${2:-}" = "orchestration worker-show" ]; then
-  id=""
-  shift 2
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --dispatch) id=${2:-}; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  case "$id" in
-    ctx_author)
-      printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"sonnet"}}\n' "$id"
-      exit 0 ;;
-    ctx_verifier)
-      printf '{"ok":true,"result":{"dispatchId":"%s","agent":"claude","model":"opus"}}\n' "$id"
-      exit 0 ;;
-    *)
-      printf '{"ok":false,"error":{"code":"dispatch_not_found","message":"Dispatch %s was not found."}}\n' "$id"
-      exit 1 ;;
-  esac
-fi
-echo "fake-orca: unsupported: $*" >&2
-exit 1
-EOS
+# ship.sh needs no Orca: a stub that fails loudly proves it never looks anything up.
+printf '#!/usr/bin/env bash\necho "orca called: $*" >> "%s/orca-called"\nexit 1\n' "$MF_DIR" > "$MF_DIR/fake-orca"
 chmod +x "$MF_DIR/fake-orca"
 export ORCA_CLI_COMMAND="$MF_DIR/fake-orca"
 
@@ -51,15 +27,17 @@ set_checks() { # <pr> <json array>
 
 green_checks='[{"name":"script-tests","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"shellcheck","status":"COMPLETED","conclusion":"SUCCESS"}]'
 
-post_verdict() { # <pr> <result> <head> [verifier] [author]
-  local n=$1 res=$2 h=$3 v=${4:-ctx_verifier} a=${5:-ctx_author}
-  gh pr comment "$n" --repo example/repo --body "Verdict: $res head=$h verifier=$v author=$a" >/dev/null
+post_verdict() { # <pr> <result> <head> [verifier] [author] [agent/model, default claude/opus; "none" omits it]
+  local n=$1 res=$2 h=$3 v=${4:-ctx_verifier} a=${5:-ctx_author} am=${6:-claude/opus} suffix=""
+  [ "$am" = none ] || suffix=" agent=${am%%/*} model=${am#*/}"
+  gh pr comment "$n" --repo example/repo --body "Verdict: $res head=$h verifier=$v author=$a$suffix" >/dev/null
 }
 
-mf_self_review() { # <pr> <head>
-  local pr_n=$1 head_sha=$2 f
+# The builder's own record on the PR: one body line. The head argument is unused (the old Self-review gate is gone).
+mf_self_review() { # <pr> <head> [agent/model, default claude/sonnet]
+  local pr_n=$1 am=${3:-claude/sonnet} f
   f="$MF_GH_DIR/pr-${pr_n}.json"
-  jq --arg h "$head_sha" '.body = ((.body // "") + "\n\n## Self-review\n" + $h + "\n")' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  jq --arg l "Builder: agent=${am%%/*} model=${am#*/}" '.body = ((.body // "") + "\n\n" + $l + "\n")' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 }
 
 run_ship() { # <args...>
@@ -206,7 +184,7 @@ mf_pr_add 8 feat-protected "Body" AGENTS.md
 h8=$(jq -r .headRefOid "$MF_GH_DIR/pr-8.json")
 mf_self_review 8 "$h8"
 set_checks 8 "$green_checks"
-post_verdict 8 PASS "$h8"
+gh pr comment 8 --repo example/repo --body "Review: PASS head=$h8" >/dev/null
 : > "$MF_GH_LOG"
 run_ship --repo example/repo --pr 8
 if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
@@ -233,20 +211,20 @@ else
   bad "--dry-run merges nothing" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
-# 10. Unknown verifier dispatch refuses
-mf_pr_add 10 feat-forged "Body"
+# 10. Verifier with the same agent and model as the builder refuses
+mf_pr_add 10 feat-same-pair "Body"
 h10=$(jq -r .headRefOid "$MF_GH_DIR/pr-10.json")
-mf_self_review 10 "$h10"
+mf_self_review 10 "$h10" claude/opus
 set_checks 10 "$green_checks"
-post_verdict 10 PASS "$h10" ctx_forged ctx_author
+post_verdict 10 PASS "$h10"
 : > "$MF_GH_LOG"
 run_ship --repo example/repo --pr 10
 if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
-  && grep -Fq "verdict verifier ctx_forged is not a known dispatch" <<<"$SHIP_OUT" \
+  && grep -Fq "verifier claude/opus is the same agent and model as the builder" <<<"$SHIP_OUT" \
   && ! grep -q "pr merge" "$MF_GH_LOG"; then
-  ok "unknown verifier dispatch refuses"
+  ok "same agent and model as the builder refuses"
 else
-  bad "unknown verifier dispatch refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+  bad "same agent and model as the builder refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
 # 11. Edited FAIL still blocks an older PASS
@@ -281,19 +259,66 @@ else
   bad "empty statusCheckRollup refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
-# 13. Stale self-review refuses
-mf_pr_add 13 feat-stale-self "Body"
+# 13. No Self-review needed, no builder dispatch, no Orca lookup, no cwd root check: the PR lands from any directory
+mf_pr_add 13 feat-no-self-review "Body"
 h13=$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")
-mf_self_review 13 "0000000000000000000000000000000000000000"
+mf_self_review 13 "$h13"
 set_checks 13 "$green_checks"
-post_verdict 13 PASS "$h13"
+post_verdict 13 PASS "$h13" ctx_never_seen ctx_unknown_author
 : > "$MF_GH_LOG"
-run_ship --repo example/repo --pr 13
-if [ "$SHIP_RC" -ne 0 ] && grep -Fq "no self-review at head $h13" <<<"$SHIP_OUT"; then
-  ok "stale self-review refuses"
+rm -f "$MF_DIR/orca-called"
+mkdir -p "$MF_DIR/elsewhere"
+SHIP_OUT=$(cd "$MF_DIR/elsewhere" && bash "$here/ship.sh" --repo example/repo --pr 13 2>&1); SHIP_RC=$?
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] && [ ! -e "$MF_DIR/orca-called" ] \
+  && ! grep -q "Self-review" <<<"$(jq -r .body "$MF_GH_DIR/pr-13.json")"; then
+  ok "no Self-review, dispatch lookup, Orca call or cwd check"
 else
-  bad "stale self-review refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+  bad "no Self-review, dispatch lookup, Orca call or cwd check" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
+
+# 13b. A Verdict without agent and model refuses; a PR without a Builder line refuses
+mf_pr_add 131 feat-old-verdict "Body"
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-131.json"); mf_self_review 131 "$h"; set_checks 131 "$green_checks"
+post_verdict 131 PASS "$h" ctx_verifier ctx_author none
+run_ship --repo example/repo --pr 131
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "does not record the verifier agent and model" <<<"$SHIP_OUT"; then ok "Verdict without agent and model refuses"; else bad "Verdict without agent and model refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+mf_pr_add 132 feat-no-builder "Body"
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-132.json"); set_checks 132 "$green_checks"; post_verdict 132 PASS "$h"
+run_ship --repo example/repo --pr 132
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "no 'Builder: agent=<agent> model=<model>' line" <<<"$SHIP_OUT"; then ok "PR without a Builder line refuses"; else bad "PR without a Builder line refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+# Same model, different agent, passes the pair rule.
+mf_pr_add 133 feat-other-agent "Body"
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h" claude/opus; set_checks 133 "$green_checks"; post_verdict 133 PASS "$h" ctx_verifier ctx_author codex/opus
+run_ship --repo example/repo --pr 133
+if [ "$SHIP_RC" -eq 0 ]; then ok "a different agent with the same model passes"; else bad "a different agent with the same model passes" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+
+# 13c. Docs only: a cold Review: PASS at the head lands without a Verdict; code still needs a Verdict
+docs_case() { # <pr> <branch> <file> <review line or empty> <expect ship|refuse> <label> [text] [flags]
+  local n=$1 b=$2 f=$3 line=$4 expect=$5 label=$6 text=${7:-} h
+  mf_pr_add "$n" "$b" "Body" "$f"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); set_checks "$n" "$green_checks"
+  [ -z "$line" ] || gh pr comment "$n" --repo example/repo --body "${line//@HEAD@/$h}" >/dev/null
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  if [ "$expect" = ship ]; then
+    if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+docs_case 134 feat-docs-pass notes/doc.md "Review: PASS head=@HEAD@" ship "docs only PR lands on a cold Review: PASS"
+docs_case 135 feat-docs-frag changelog.d/135-x.md "Review: PASS head=@HEAD@ main=$(printf 'b%.0s' {1..40})" ship "changelog fragment PR lands on Review: PASS with a main= tail"
+docs_case 136 feat-docs-none notes/doc2.md "" refuse "docs only PR without Review refuses" "needs a cold 'Review: PASS head="
+docs_case 137 feat-docs-stale notes/doc3.md "Review: PASS head=$(printf 'c%.0s' {1..40})" refuse "Review at another head refuses" "needs a cold 'Review: PASS head="
+docs_case 138 feat-code-review-only notes/code.sh "Review: PASS head=@HEAD@" refuse "a code PR does not land on Review: PASS" "missing Verdict comment"
+mf_pr_add 139 feat-docs-fail "Body" notes/doc4.md
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-139.json"); set_checks 139 "$green_checks"
+gh pr comment 139 --repo example/repo --body "Review: PASS head=$h" >/dev/null; gh pr comment 139 --repo example/repo --body "Review: FAIL head=$h" >/dev/null
+run_ship --repo example/repo --pr 139
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "newest Review on PR 139 is FAIL" <<<"$SHIP_OUT"; then ok "a newer Review: FAIL refuses a docs only PR"; else bad "a newer Review: FAIL refuses a docs only PR" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+mf_pr_add 140 feat-docs-edited "Body" notes/doc5.md
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-140.json"); set_checks 140 "$green_checks"
+gh pr comment 140 --repo example/repo --body "Review: PASS head=$h" >/dev/null; mf_comment_flag 140 0 edited true
+run_ship --repo example/repo --pr 140
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "needs a cold 'Review: PASS head=" <<<"$SHIP_OUT"; then ok "an edited Review: PASS does not count"; else bad "an edited Review: PASS does not count" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
 # 14-15. Patch-id carry refuses an empty or whitespace-only commit after the verdict head (#771)
 blank_case() { # <pr> <branch> <empty|whitespace>
@@ -385,6 +410,123 @@ if grep -q "run list .*--event push" "$MF_GH_LOG" || { : > "$MF_GH_LOG"; run_shi
 else
   bad "main run lookup is limited to push events" "$(cat "$MF_GH_LOG")"
 fi
+
+# --mechanical: pure substitution or deletion lands with no Verdict (ported from lead-merge)
+mech_case() { # <pr> <expect ship|refuse> <label> <text> <diff body>; the fake gh serves a PR diff of the file list, so fixtures use a wrapper
+  local n=$1 expect=$2 label=$3 text=$4 diff=$5 h
+  mf_pr_add "$n" "feat-mech-$n" "Body" "${6:-script/mech-$n.sh}"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); set_checks "$n" "$green_checks"
+  mkdir -p "$MF_DIR/mech-$n"
+  printf '#!/usr/bin/env bash\nif [ "$1 $2" = "pr diff" ]; then printf %%s "$MECH_DIFF"; exit 0; fi\nexec "%s/gh" "$@"\n' "$MF_BIN" > "$MF_DIR/mech-$n/gh"; chmod +x "$MF_DIR/mech-$n/gh"
+  : > "$MF_GH_LOG"
+  SHIP_OUT=$(MECH_DIFF="$diff" PATH="$MF_DIR/mech-$n:$PATH" bash "$here/ship.sh" --repo example/repo --pr "$n" --mechanical 2>&1); SHIP_RC=$?
+  if [ "$expect" = ship ]; then
+    if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG" && grep -Fq "mechanical lane" <<<"$SHIP_OUT"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+SUBST=$'diff --git a/script/foo.sh b/script/foo.sh\n--- a/script/foo.sh\n+++ b/script/foo.sh\n@@ -1 +1 @@\n-echo old\n+echo new\n'
+mech_case 150 ship "mechanical substitution needs no Verdict" "" "$SUBST"
+mech_case 151 ship "mechanical allows whole file deletion" "" "$SUBST"$'diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n'
+mech_case 152 refuse "mechanical refuses an added logic line" "pure substitution" $'diff --git a/script/foo.sh b/script/foo.sh\n--- a/script/foo.sh\n+++ b/script/foo.sh\n@@ -1 +1,2 @@\n echo hi\n+rm -rf "$x"\n'
+mech_case 153 refuse "mechanical names a path with spaces" 'script/a b/c.sh: 0 removed, 1 added' $'diff --git a/script/a b/c.sh b/script/a b/c.sh\n--- a/script/a b/c.sh\n+++ b/script/a b/c.sh\n@@ -1 +1,2 @@\n echo hi\n+rm -rf "$x"\n'
+mech_case 154 refuse "mechanical refuses a new script" "new file" $'diff --git a/script/new.sh b/script/new.sh\nnew file mode 100755\n--- /dev/null\n+++ b/script/new.sh\n@@ -0,0 +1 @@\n+echo hi\n'
+mech_case 155 refuse "mechanical refuses a rename" "renames" $'diff --git a/a b/b\nsimilarity index 90%\nrename from a\nrename to b\n'
+mech_case 156 refuse "mechanical still refuses protected paths" "owner through Elon" "$SUBST" .claude/settings.json
+mech_case 157 refuse "mechanical gate file still needs countersign" "Countersign" "$SUBST" script/lead-merge.sh
+# Without the flag the same PR needs a Verdict
+mf_pr_add 158 feat-mech-noflag "Body" script/mech-158.sh; set_checks 158 "$green_checks"
+run_ship --repo example/repo --pr 158
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "missing Verdict comment" <<<"$SHIP_OUT"; then ok "without --mechanical the substitution needs a Verdict"; else bad "without --mechanical the substitution needs a Verdict" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+run_ship --repo example/repo --pr 158 --mechanical --verdict-from x/dotfiles#1
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdict-from and --mechanical are exclusive"; else bad "--verdict-from and --mechanical are exclusive" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+
+# --verdict-from: generated team copies land on the Verdict of the matching MERGED dotfiles PR (ported from lead-merge)
+{
+  repo_root=$(cd "$here/.." && pwd)
+  fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
+  cp "$here/ship.sh" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/lead-merge.config.example.json" "$fx/script/"
+  cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
+  cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
+  "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
+  "$MF_REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
+  g() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
+  g fetch -q origin; g checkout -q -B main origin/main
+  DOTFILES="$repo_root" bash "$here/agent-team.sh" project "$MF_REPO" --project-name acme >/dev/null 2>&1
+  echo "# old" > "$MF_REPO/docs/agents/team.md"; echo "# old" >> "$MF_REPO/bin/changelog-compile.sh"
+  g add -A && g commit -qm seed-base && g push -q origin main && g fetch -q origin
+  base_sha=$(g rev-parse HEAD)
+  g checkout -q -B feat-gen
+  DOTFILES="$repo_root" bash "$here/agent-team.sh" sync "$MF_REPO" --project-name acme >/dev/null 2>&1
+  g add -A && g commit -qm sync && g push -q -f origin feat-gen
+  gen_head=$(g rev-parse HEAD)
+  gen_files=$(g diff --name-only "$base_sha" "$gen_head" | jq -Rsc 'split("\n")[:-1]')
+  mkpr() { # <n> <head> <files json> <body>
+    jq -n --argjson n "$1" --arg h "$2" --arg base "$base_sha" --argjson fl "$3" --arg body "$4" \
+      '{number:$n,state:"OPEN",baseRefName:"main",headRefName:"feat-gen",headRefOid:$h,baseRefOid:$base,changedFiles:($fl|length),body:$body,
+        files:($fl|map({path:., filename:.})),comments:[],closingIssuesReferences:[],mergeable:"MERGEABLE",mergeCommit:null,statusCheckRollup:[]}' > "$MF_GH_DIR/pr-$1.json"
+  }
+  mkpr 200 "$gen_head" "$gen_files" "Body"; set_checks 200 "$green_checks"
+  DH=dddddddddddddddddddddddddddddddddddddd99
+  GOOD="Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author agent=claude model=opus"
+  BADF="Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author agent=claude model=opus"
+  src() { # <state> <json comments> [builder line]
+    jq -n --arg st "$1" --arg h "$DH" --argjson c "$2" --arg b "${3:-Builder: agent=claude model=sonnet}" \
+      '{number:9,state:$st,headRefName:"src",headRefOid:$h,baseRefOid:$h,body:$b,comments:$c,files:[],changedFiles:0,mergeable:"MERGEABLE",mergeCommit:null}' > "$MF_GH_DIR/pr-9.json"
+  }
+  one() { jq -nc --arg b "$1" '[{body:$b}]'; }
+  vf() { # <label> <expect rc> <text> [repo]
+    local lbl=$1 want=$2 text=$3 r=${4:-example/repo} saved_dry=1
+    : > "$MF_GH_LOG"
+    SHIP_OUT=$(bash "$fx/script/ship.sh" --repo "$r" --pr 200 --verdict-from d/dotfiles#9 --dry-run 2>&1); SHIP_RC=$?
+    if { [ "$want" = 0 ] && [ "$SHIP_RC" -eq 0 ]; } || { [ "$want" != 0 ] && [ "$SHIP_RC" -ne 0 ]; }; then
+      if grep -Fq -- "$text" <<<"$SHIP_OUT"; then ok "$lbl"; else bad "$lbl" "missing [$text] in: $SHIP_OUT"; fi
+    else bad "$lbl" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  }
+  src MERGED "$(one "$GOOD")"
+  vf "verdict-from refuses without local config" 1 "no configured verdict_from_repos"
+  printf '{"verdict_from_repos":["example/repo","acme/project-beta"]}\n' > "$fx/script/lead-merge.local.json"
+  vf "generated copies land on the dotfiles PR Verdict" 0 "generated team copies"
+  vf "verdict-from refuses an unconfigured repo" 1 "repo is not configured" other/repo
+  src OPEN "$(one "$GOOD")";  vf "verdict-from refuses an unmerged dotfiles PR" 1 "not MERGED"
+  src MERGED "$(one "$BADF")"; vf "verdict-from refuses a FAIL Verdict" 1 "no passing Verdict"
+  src MERGED "$(one "${GOOD//$DH/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}")"; vf "verdict-from refuses a Verdict for another head" 1 "no passing Verdict"
+  src MERGED "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$g},{body:$f}]')"; vf "verdict-from: a newer FAIL beats an older PASS" 1 "FAIL Verdict"
+  src MERGED "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$f},{body:$g}]')"; vf "verdict-from: an older FAIL beside a newer PASS refuses" 1 "FAIL Verdict"
+  src MERGED "$(jq -nc --arg g "$GOOD" '[{body:$g,edited:true}]')"; vf "verdict-from: an edited Verdict is refused" 1 "edited or minimized"
+  src MERGED "$(jq -nc --arg g "$GOOD" '[{body:$g,minimized:true}]')"; vf "verdict-from: a minimized Verdict is refused" 1 "edited or minimized"
+  src MERGED "$(jq -nc --arg g "$GOOD" '[{body:$g,edited:true},{body:$g}]')"; vf "verdict-from: a fresh Verdict after an edited one lands" 0 "generated team copies"
+  src MERGED "$(jq -nc --arg g "$GOOD" --arg f "$BADF" '[{body:$f,edited:true},{body:$g}]')"; vf "verdict-from: an edited FAIL still refuses" 1 "FAIL Verdict"
+  src MERGED "$(one "Verdict: PASS head=$DH verifier=ctx_verify author=ctx_verify agent=claude model=opus")"; vf "verdict-from: author equal to verifier is refused" 1 "author cannot supply"
+  src MERGED "$(one "Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author")"; vf "verdict-from: a Verdict without agent and model is refused" 1 "does not record the verifier agent and model"
+  src MERGED "$(one "$GOOD")" "Builder: agent=claude model=opus"; vf "verdict-from: verifier with the builder's agent and model is refused" 1 "same agent and model as the builder"
+  src MERGED "$(one "$GOOD")" "no builder here"; vf "verdict-from: a source PR without a Builder line is refused" 1 "no 'Builder: agent=<agent> model=<model>' line"
+  src MERGED "$(one "$GOOD")"
+  # Same PR without the flag is a hand edit of a generated copy.
+  : > "$MF_GH_LOG"; SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 200 2>&1); SHIP_RC=$?
+  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "edits generated team copy" <<<"$SHIP_OUT"; then ok "same PR without the flag is refused as a hand edit of a generated copy"; else bad "same PR without the flag is refused as a hand edit of a generated copy" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  # Header string alone is not a generated copy
+  g checkout -q -B feat-gen "$base_sha"
+  printf '<!-- Generated from dotfiles templates/agent-team/.agents/skills/x by script/sync-team-skills.sh, do not edit. -->\n' > "$MF_REPO/spoof.md"
+  g add -A && g commit -qm spoof && sp=$(g rev-parse HEAD)
+  mkpr 200 "$sp" '["spoof.md"]' "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses a file that only carries the header string" 1 "spoof.md is not"
+  # Hand edited generated copy fails agent-team.sh check
+  g checkout -q -B feat-gen "$base_sha"; echo "hand edit" >> "$MF_REPO/docs/agents/team.md"
+  g add -A && g commit -qm edit && he=$(g rev-parse HEAD)
+  mkpr 200 "$he" '["docs/agents/team.md"]' "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses a hand edited generated copy" 1 "agent-team.sh check fails"
+  # Symlink in a managed path
+  g checkout -q -B feat-gen "$base_sha"; ln -sf /etc/passwd "$MF_REPO/docs/agents/team.md"
+  g add -A && g commit -qm link && ln_h=$(g rev-parse HEAD)
+  mkpr 200 "$ln_h" '["docs/agents/team.md"]' "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses a symlink inside a managed path" 1 "refuses symlink"
+  # Unmerged template edits must not vouch for themselves
+  echo "unmerged template edit" >> "$fx/templates/agent-team/docs/agents/team.md"
+  vf "verdict-from refuses when the dotfiles tree differs from origin/main for templates/agent-team" 1 "not at origin/main"
+  "$MF_REAL_GIT" -C "$fx" checkout -q -- templates/agent-team
+  echo untracked > "$fx/templates/agent-team/untracked-template.md"
+  vf "verdict-from refuses an untracked file under templates/agent-team" 1 "not at origin/main"
+} </dev/null
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

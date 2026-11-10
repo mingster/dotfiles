@@ -102,5 +102,14 @@ printf '{"coordinator_ids":["term_coord"]}\n' > "$cfg/lead-merge.local.json"
 out=$(bash "$cfg/post-verdict.sh" --repo example/repo --pr 49 --result PASS --head "$h" --verifier ctx_verify --author term_coord 2>&1); code=$?
 say "$code" "T544: a configured coordinator id is accepted" "$out"
 
+# Issue 866: --agent and --model record the verifier's agent and model on the Verdict line, together or not at all
+h=$(new_pr 50)
+out=$(verdict 50 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --print); code=$?
+[ "$code" -eq 0 ] && [ "$(head -1 <<<"$out")" = "Verdict: PASS head=$h verifier=ctx_verify author=ctx_author agent=claude model=opus" ] && ok "--agent and --model go on the Verdict line" || bad "agent/model line: $out"
+out=$(verdict 50 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --print); code=$?
+[ "$code" -ne 0 ] && ok "--agent without --model is refused" || bad "agent without model: $out"
+out=$(verdict 50 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent 'cl aude' --model opus --print); code=$?
+[ "$code" -ne 0 ] && ok "--agent with a space is refused" || bad "agent with space: $out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
