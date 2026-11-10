@@ -2,21 +2,23 @@
 # Post a Verdict comment in the exact form lead-merge.sh parses, so nobody types the first line by hand.
 # Usage: post-verdict.sh --repo owner/name --pr N --result PASS|PASS+NOTES|FAIL --head <40 hex sha>
 #        --verifier <dispatch id> --author <dispatch id|unknown|coordinator id> [--command "<cmd>"]
-#        [--correction "<comment url|id>"] [--notes "<text>"] [--print]
+#        [--agent <agent> --model <model>] [--correction "<comment url|id>"] [--notes "<text>"] [--print]
+# --agent and --model record the verifier's own agent and model on the Verdict line (together, or neither).
+# ship.sh needs them and refuses a verifier whose agent and model match the builder's.
 # --author other than ctx_* or unknown must be listed in coordinator_ids of script/lead-merge.local.json.
 # --print shows the comment body and posts nothing. The comment is always new: an edit never counts.
 set -euo pipefail
 
 die() { echo "post-verdict: $*" >&2; exit 1; }
 
-repo="" pr="" result="" head="" verifier="" author="" command="" notes="" correction="" print_only=false
+repo="" pr="" result="" head="" verifier="" author="" command="" notes="" correction="" agent="" model="" print_only=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo|--pr|--result|--head|--verifier|--author|--command|--notes|--correction|--corrects|--supersedes)
+    --repo|--pr|--result|--head|--verifier|--author|--command|--notes|--agent|--model|--correction|--corrects|--supersedes)
       [ $# -ge 2 ] || die "$1 needs a value"
       case "$1" in
         --repo) repo=$2 ;; --pr) pr=$2 ;; --result) result=$2 ;; --head) head=$2 ;;
-        --verifier) verifier=$2 ;; --author) author=$2 ;; --command) command=$2 ;; --notes) notes=$2 ;;
+        --verifier) verifier=$2 ;; --author) author=$2 ;; --command) command=$2 ;; --notes) notes=$2 ;; --agent) agent=$2 ;; --model) model=$2 ;;
         --correction|--corrects|--supersedes) correction=$2 ;;
       esac
       shift 2 ;;
@@ -45,10 +47,13 @@ if [ "$author" != unknown ] && [[ "$author" != ctx_* ]]; then
     || die "--author $author is not a dispatch id, unknown, or a configured coordinator id (set coordinator_ids in script/lead-merge.local.json)"
 fi
 [ "$verifier" != "$author" ] || die "the author cannot supply the verifier verdict"
+[ -z "$agent$model" ] || { [[ "$agent" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$model" =~ ^[A-Za-z0-9._:-]+$ ]]; } \
+  || die "--agent and --model go together and may hold only letters, digits and . _ : -"
 [[ "$command" != *$'\n'* ]] || die "--command must be one line"
 [[ "$correction" != *$'\n'* ]] || die "--correction must be one line"
 
 body="Verdict: $result head=$head verifier=$verifier author=$author"
+[ -z "$agent" ] || body+=" agent=$agent model=$model"
 [ -z "$command" ] || body+=$'\n'"Command: $command"
 [ -z "$correction" ] || body+=$'\n'"Correction: $correction"
 [ -z "$notes" ] || body+=$'\n\n'"$notes"
