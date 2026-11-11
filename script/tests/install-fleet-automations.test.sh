@@ -398,6 +398,11 @@ for a in d["automations"]:
 printf '%s\n' "$shim_pc" | grep -F "$shim_home/.asdf/shims" >/dev/null \
   && check 'automation PATH includes asdf shims when that directory exists' true \
   || check 'automation PATH includes asdf shims when that directory exists' false
+if [ -d /usr/sbin ]; then
+  printf '%s\n' "$shim_pc" | grep -F '/usr/sbin' >/dev/null \
+    && check 'automation PATH includes /usr/sbin when that directory exists' true \
+    || check 'automation PATH includes /usr/sbin when that directory exists' false
+fi
 plain_home="$tmp/plain-home"
 mkdir -p "$plain_home"
 rm -f "$FAKE_ORCA_STORE"
