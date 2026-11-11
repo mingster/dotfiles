@@ -444,7 +444,7 @@ class Cursor(unittest.TestCase):
                     row = json.loads(out.getvalue())
                     self.assertEqual(row["weekly_used"], pct)
                     self.assertEqual(row["resets_at"], FUT)
-                    self.assertIn("cursor auto+composer", ug.table([row]))
+                    self.assertIn("cursor included", ug.table([row]))
 
     def check(self, pct, baseline=None, ends=NOW + 10 * 86400, running=0, cap=None):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
@@ -489,6 +489,77 @@ class Cursor(unittest.TestCase):
     def test_grok_is_its_own_family(self):
         self.assertEqual(ug.family({"provider": "cursor", "model": "grok-4.7-high"}), "grok")
 
+    def test_recorded_period_usage_counts_a_non_composer_model(self):
+        """GetCurrentPeriodUsage lists grok-4.7-xhigh in autoBucketModels.
+
+        usage-summary's autoPercentUsed was 0 at the same time. The reading uses the
+        period percent that covers the listed model, never that zero.
+        """
+        # Recorded GetCurrentPeriodUsage body. autoBucketModels includes grok-4.7-xhigh.
+        payload = json.loads(r'''{
+          "billingCycleStart": "1793972416493",
+          "billingCycleEnd": "1794577216493",
+          "planUsage": {"autoPercentUsed": 47.0016708954762, "totalPercentUsed": 47.0016708954762},
+          "autoBucketModels": ["default", "composer-1.5", "composer-2", "composer-2-fast", "composer-2.5",
+            "composer-2.5-fast", "vega", "vega-medium", "vega-high", "vega-xhigh", "vega-fast-medium",
+            "vega-fast-high", "vega-fast-xhigh", "grok-4.5", "cursor-grok-4.5", "cursor-grok-4.5-low",
+            "cursor-grok-4.5-low-fast", "cursor-grok-4.5-medium", "cursor-grok-4.5-medium-fast",
+            "cursor-grok-4.5-high", "cursor-grok-4.5-high-fast", "grok-4.5-medium", "grok-4.5-fast-medium",
+            "grok-4.5-high", "grok-4.5-fast-high", "grok-4.5-xhigh", "grok-4.5-fast-xhigh", "grok-4.6",
+            "cursor-grok-4.6", "cursor-grok-4.6-low", "cursor-grok-4.6-low-fast", "cursor-grok-4.6-medium",
+            "cursor-grok-4.6-medium-fast", "cursor-grok-4.6-high", "cursor-grok-4.6-high-fast",
+            "cursor-grok-4.6-xhigh", "cursor-grok-4.6-xhigh-fast", "grok-4.7", "grok-4.7-fast", "grok-4.7-low",
+            "grok-4.7-low-fast", "grok-4.7-medium", "grok-4.7-medium-fast", "grok-4.7-high",
+            "grok-4.7-high-fast", "grok-4.7-xhigh", "grok-4.7-xhigh-fast", "composer-1"]
+        }''')
+        self.assertIn("grok-4.7-xhigh", payload["autoBucketModels"])
+        self.assertFalse(any(model.startswith("composer") for model in ("grok-4.7-xhigh",)))
+        payload["individualUsage"] = {"plan": {
+            "enabled": True, "autoPercentUsed": 0, "apiPercentUsed": 0, "totalPercentUsed": 0}}
+        reading = ug.cursor_parse(payload, NOW)
+        counted = payload["planUsage"]["autoPercentUsed"]
+        self.assertEqual(reading["pct"], counted)
+        self.assertIn("grok-4.7-xhigh", reading["models"])
+        self.assertEqual(reading["resets_at"], float(payload["billingCycleEnd"]) / 1000)
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=0):
+            path = t + "/summary.json"
+            json.dump(payload, open(path, "w"))
+            os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
+            ug.CURSOR_SUMMARY = path
+            try:
+                for model in ("grok-4.7-xhigh", "grok-4.7-high", "grok-4.7-xhigh-fast"):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        self.assertEqual(ug.main(["check", "--provider", "cursor", "--model", model]), 0)
+                    self.assertEqual(json.loads(out.getvalue())["weekly_used"], counted)
+            finally:
+                ug.CURSOR_SUMMARY = NO_CURSOR
+                os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
+
+    def test_worker_model_absent_from_the_measured_bucket_is_refused(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "running_workers", return_value=0):
+            payload = summary(10)
+            payload["individualUsage"]["plan"].update(autoPercentUsed=10, apiPercentUsed=0)
+            payload["planUsage"] = {"autoPercentUsed": 10, "totalPercentUsed": 10}
+            payload["autoBucketModels"] = ["composer-2.5", "composer-2.5-fast"]
+            path = t + "/summary.json"
+            json.dump(payload, open(path, "w"))
+            os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
+            ug.CURSOR_SUMMARY = path
+            try:
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    status = ug.main(["check", "--provider", "cursor", "--model", "grok-4.7-xhigh"])
+                    row = json.loads(out.getvalue())
+                self.assertNotEqual((status, row["verdict"]), (0, "allowed"))
+                self.assertNotIn("weekly_used", row)
+                self.assertIn("does not measure", row["reason"])
+            finally:
+                ug.CURSOR_SUMMARY = NO_CURSOR
+                os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
+
     def test_non_composer_model_never_allowed_from_auto_composer_pool(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
@@ -520,7 +591,7 @@ class Cursor(unittest.TestCase):
     def test_composer_allowance_cannot_be_inferred_from_aggregate_plan_usage(self):
         status, row = self.check(100, baseline=100)
         self.assertEqual((status, row["verdict"]), (4, "unknown"))
-        self.assertIn("auto+composer", row["reason"])
+        self.assertIn("included-usage", row["reason"])
         self.assertNotIn("weekly_used", row)
 
     def test_aggregate_plan_usage_never_supplies_composer_usage(self):
@@ -583,11 +654,13 @@ class Cursor(unittest.TestCase):
                     self.assertIsNone(reading)
                     fetch.assert_not_called()
                 else:
-                    self.assertEqual(reading, {"pct": 23.5, "resets_at": FUT, "observed_at": NOW})
+                    self.assertEqual(reading["pct"], 23.5)
+                    self.assertEqual(reading["resets_at"], FUT)
                     request = fetch.call_args.args[0]
-                    self.assertEqual(request.full_url, ug.CURSOR_URL)
-                    self.assertEqual(urllib.parse.unquote(request.get_header("Cookie")),
-                                     "WorkosCursorSessionToken=synthetic-user::" + token)
+                    self.assertEqual(request.full_url, ug.CURSOR_PERIOD_URL)
+                    self.assertEqual(request.get_header("Authorization"), "Bearer " + token)
+                    self.assertEqual(request.data, b"{}")
+                    self.assertIsNone(request.get_header("Cookie"))
                 if source == "keychain":
                     self.assertEqual(command.call_args.args[0], ["security", "find-generic-password",
                                      "-a", "cursor-user", "-s", "cursor-access-token", "-w"])
@@ -604,7 +677,7 @@ class Cursor(unittest.TestCase):
         payload = summary(100)
         payload["individualUsage"]["plan"]["autoPercentUsed"] = 7.5
         def respond(request, timeout):
-            if "stale-user" in request.get_header("Cookie"):
+            if request.get_header("Authorization") == "Bearer " + stale:
                 raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
             body = mock.MagicMock()
             body.__enter__.return_value = io.StringIO(json.dumps(payload))
@@ -621,8 +694,12 @@ class Cursor(unittest.TestCase):
             os.makedirs(t + "/.config/cursor", exist_ok=True)
             with open(t + "/.config/cursor/auth.json", "w") as f:
                 json.dump({"accessToken": live}, f)
-            self.assertEqual(ug.cursor_reading(), {"pct": 7.5, "resets_at": FUT, "observed_at": NOW})
+            reading = ug.cursor_reading()
+            self.assertEqual(reading["pct"], 7.5)
+            self.assertEqual(reading["resets_at"], FUT)
+            self.assertEqual(reading["source"], ug.CURSOR_PERIOD_URL)
             self.assertEqual(fetch.call_count, 2)
+            self.assertTrue(all(call.args[0].full_url == ug.CURSOR_PERIOD_URL for call in fetch.call_args_list))
 
 
 class AutoCap(unittest.TestCase):
@@ -892,7 +969,7 @@ class PickOrder(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 67.4%, cursor no reliable Cursor auto+composer allowance reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
+                         "pick order now: claude 67.4%, cursor no reliable Cursor included-usage reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
