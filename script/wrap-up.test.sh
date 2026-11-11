@@ -932,3 +932,63 @@ lint_clean() {
 fcheck 'every destructive command in wrap-up.sh runs through a guarded function' lint_clean
 echo "round 5 review fix cases: $f_cases cases, $f_failed failed"
 [ "$f_failed" -eq 0 ] || exit 1
+# A worker already in terminalState release_unknown has a recorded terminal that no longer resolves.
+# Asking worker-release again returns the same receipt, so the round must leave it alone and still
+# release a finished worker and close that worker's terminal. A second round must not retry it.
+unset FAKE_GIT_FAIL FAKE_GIT_LATE FAKE_GIT_LATE_PATH FAKE_GIT_LATE_ON FAKE_INV_FAIL FAKE_INV_ON FAKE_FLIP_DIR FAKE_FLIP_ARM FAKE_FLIP_ON
+git init -q --bare "$tmp/origin-ru"
+git init -q -b main "$tmp/repo-ru"
+git -C "$tmp/repo-ru" config user.email test@example.invalid
+git -C "$tmp/repo-ru" config user.name Test
+git -C "$tmp/repo-ru" commit -qm c --allow-empty
+git -C "$tmp/repo-ru" remote add origin "$tmp/origin-ru"
+git -C "$tmp/repo-ru" push -q -u origin main
+mkdir -p "$tmp/ru"
+cat > "$tmp/bin/orca-ru" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DIR/calls"
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal close'*)
+    printf '%s\n' "$*" >> "$FAKE_DIR/closed"
+    echo '{"ok":true}' ;;
+  *'terminal list'*|*'terminal show'*) printf '%s\n' "$(cat "$FAKE_DIR/terminals")" ;;
+  *worker-release*)
+    printf '%s\n' "$*" >> "$FAKE_DIR/releases"
+    echo '{"ok":true,"result":{"state":"released"}}' ;;
+  *worker-show*) echo '{"ok":true,"result":{"state":"in_progress","liveness":"sleep"}}' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1"}]}}' ;;
+  *worker-list*) printf '%s\n' "$(cat "$FAKE_DIR/workers")" ;;
+  *'worktree list'*) echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  *) echo "unexpected: $*" >> "$FAKE_DIR/unexpected"; exit 1 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-ru"
+export FAKE_DIR="$tmp/ru" ORCA_CLI_COMMAND="$tmp/bin/orca-ru" ORCA_TERMINAL_HANDLE=t-own
+cat > "$tmp/ru/workers" <<'JSON'
+{"ok":true,"result":{"workers":[
+  {"dispatchId":"d-unknown","state":"succeeded","liveness":"unverifiable","terminalState":"release_unknown","terminal":"t-stale","workspace":"repo::/nowhere/stale"},
+  {"dispatchId":"d-sleep","state":"in_progress","liveness":"sleep","terminalState":"reclaimable","terminal":"t-sleep","workspace":"repo::/nowhere/sleep"},
+  {"dispatchId":"d-live","state":"ready","liveness":"live","terminalState":"reclaimable","terminal":"t-live","workspace":"repo::/nowhere/live"}
+]}}
+JSON
+cat > "$tmp/ru/terminals" <<'JSON'
+{"ok":true,"result":{"terminals":[
+  {"handle":"t-sleep","worktreePath":"/nowhere/sleep","connected":true,"writable":true,"agentIdentity":null,"lastOutputAt":1},
+  {"handle":"t-live","worktreePath":"/nowhere/live","connected":true,"writable":true,"agentIdentity":null,"lastOutputAt":1}
+]}}
+JSON
+: > "$tmp/ru/calls"; : > "$tmp/ru/releases"; : > "$tmp/ru/closed"
+bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-ru" > "$tmp/output" 2> "$tmp/stderr" || echo "rc=$?" >> "$tmp/stderr"
+bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-ru" > "$tmp/output2" 2> "$tmp/stderr2" || echo "rc=$?" >> "$tmp/stderr2"
+ru_fail() { echo "FAIL $1"; cat "$tmp/output" "$tmp/stderr" "$tmp/ru/releases" "$tmp/ru/closed"; exit 1; }
+grep -Fq 'Release worker d-sleep (local, liveness sleep)' "$tmp/output" || ru_fail 'finished sleep worker not released'
+grep -Fq 'Close terminal t-sleep (local, settled dispatch)' "$tmp/output" || ru_fail 'finished terminal not closed'
+grep -Fq 'terminal close --terminal t-sleep' "$tmp/ru/closed" || ru_fail 'apply did not close the finished terminal'
+! grep -Fq 'Release worker d-unknown' "$tmp/output" "$tmp/output2" || ru_fail 'release_unknown worker was planned again'
+! grep -Fq 'worker-release --dispatch d-unknown' "$tmp/ru/releases" || ru_fail 'release_unknown worker was retried'
+grep -Fq 'worker-release --dispatch d-sleep' "$tmp/ru/releases" || ru_fail 'finished worker release was not called'
+! grep -Fq 'Close terminal t-live' "$tmp/output" || ru_fail 'live terminal was closed'
+grep -Fxq 'workers needing no action=1' "$tmp/output" || ru_fail 'release_unknown row was not listed once as needing no action'
+grep -Fxq 'workers needing no action=1' "$tmp/output2" || ru_fail 'second round did not list the release_unknown row once'
+echo 'ok a release_unknown worker is not retried; the finished one is released and its terminal closed'
