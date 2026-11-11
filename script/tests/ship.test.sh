@@ -501,9 +501,14 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   src MERGED "$(one "$GOOD")" "Builder: agent=claude model=opus"; vf "verdict-from: verifier with the builder's agent and model is refused" 1 "same agent and model as the builder"
   src MERGED "$(one "$GOOD")" "no builder here"; vf "verdict-from: a source PR without a Builder line is refused" 1 "no 'Builder: agent=<agent> model=<model>' line"
   src MERGED "$(one "$GOOD")"
-  # Same PR without the flag is a hand edit of a generated copy.
+  # The sync result equals the origin/main render, so the verdict lane does not call it a hand edit.
+  # The Verdict gate still applies.
   : > "$MF_GH_LOG"; SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 200 2>&1); SHIP_RC=$?
-  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "edits generated team copy" <<<"$SHIP_OUT"; then ok "same PR without the flag is refused as a hand edit of a generated copy"; else bad "same PR without the flag is refused as a hand edit of a generated copy" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "missing Verdict comment" <<<"$SHIP_OUT" && ! grep -Fq "edits generated team copy" <<<"$SHIP_OUT"; then
+    ok "render-equal generated copies pass the verdict lane and still need a Verdict"
+  else
+    bad "render-equal generated copies pass the verdict lane and still need a Verdict" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
   # Header string alone is not a generated copy
   g checkout -q -B feat-gen "$base_sha"
   printf '<!-- Generated from dotfiles templates/agent-team/.agents/skills/x by script/sync-team-skills.sh, do not edit. -->\n' > "$MF_REPO/spoof.md"
@@ -596,6 +601,87 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   base_sha=$kept_base
   mkpr 200 "$kept_head" "$kept_files" "Body"; set_checks 200 "$green_checks"
   vf "verdict-from refuses deletion of a shared hook check keeps" 1 "is not"
+
+  # Verdict lane: a generated copy whose bytes equal the origin/main render (same project name
+  # substitution as agent-team.sh) may ride with project edits and a deletion check demands.
+  # A hand edit, a render of a template that is not on origin/main, or a deletion check does
+  # not demand still uses the hand-edit refusal.
+  render_acme_from() { # <blob spec in the fixture dotfiles repo>
+    python3 - "$fx" "$1" "$MF_REPO/docs/agents/team.md" <<'PY'
+import subprocess, sys
+fx, spec, dest = sys.argv[1:]
+raw = subprocess.check_output(["git", "-C", fx, "cat-file", "blob", spec])
+with open(dest, "wb") as fh:
+    fh.write(raw.replace(b"{{PROJECT_NAME}}", b"acme"))
+PY
+  }
+  open_lane() { # <pr> <base> <head>
+    local files
+    files=$(g diff --name-only "$2" "$3" | jq -Rsc 'split("\n")[:-1]')
+    base_sha=$2
+    mkpr "$1" "$3" "$files" "Body"
+    set_checks "$1" "$green_checks"
+    mf_self_review "$1" "$3"
+    post_verdict "$1" PASS "$3"
+    : > "$MF_GH_LOG"
+    SHIP_OUT=$(bash "$fx/script/ship.sh" --repo example/repo --pr "$1" --dry-run 2>&1)
+    SHIP_RC=$?
+  }
+  g checkout -q -B main "$seed_base"
+  mkdir -p "$MF_REPO/.agents/skills/tdd"
+  printf 'stale skill copy\n' > "$MF_REPO/.agents/skills/tdd/SKILL.md"
+  g add -A && g commit -qm 'skill copy on base'
+  skill_base=$(g rev-parse HEAD)
+  g checkout -q -B feat-lane "$skill_base"
+  render_acme_from "origin/main:templates/agent-team/docs/agents/team.md"
+  printf 'project edit\n' > "$MF_REPO/notes-adoption.txt"
+  rm -f "$MF_REPO/.agents/skills/tdd/SKILL.md"
+  g add -A && g commit -q -m "adopt" -m "Owner-approved: owner 2026-11-11 (chat)"
+  lane_head=$(g rev-parse HEAD)
+  open_lane 210 "$skill_base" "$lane_head"
+  if [ "$SHIP_RC" -eq 0 ] && grep -Fq "[dry-run] would ship PR 210" <<<"$SHIP_OUT"; then
+    ok "verdict lane accepts a mixed PR whose generated copies equal the origin/main render"
+  else
+    bad "verdict lane accepts a mixed PR whose generated copies equal the origin/main render" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
+  g checkout -q -B feat-lane "$skill_base"
+  render_acme_from "origin/main:templates/agent-team/docs/agents/team.md"
+  printf '\nhand edit\n' >> "$MF_REPO/docs/agents/team.md"
+  printf 'project edit\n' > "$MF_REPO/notes-adoption.txt"
+  g add -A && g commit -q -m "hand edit" -m "Owner-approved: owner 2026-11-11 (chat)"
+  lane_head=$(g rev-parse HEAD)
+  open_lane 211 "$skill_base" "$lane_head"
+  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "edits generated team copy docs/agents/team.md" <<<"$SHIP_OUT"; then
+    ok "verdict lane refuses a hand edited generated copy"
+  else
+    bad "verdict lane refuses a hand edited generated copy" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
+  printf '\nunmerged template line\n' >> "$fx/templates/agent-team/docs/agents/team.md"
+  "$MF_REAL_GIT" -C "$fx" add templates/agent-team/docs/agents/team.md
+  "$MF_REAL_GIT" -C "$fx" commit -qm 'unmerged template'
+  g checkout -q -B feat-lane "$skill_base"
+  render_acme_from "HEAD:templates/agent-team/docs/agents/team.md"
+  printf 'project edit\n' > "$MF_REPO/notes-adoption.txt"
+  g add -A && g commit -q -m "unmerged render" -m "Owner-approved: owner 2026-11-11 (chat)"
+  lane_head=$(g rev-parse HEAD)
+  open_lane 212 "$skill_base" "$lane_head"
+  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "edits generated team copy docs/agents/team.md" <<<"$SHIP_OUT"; then
+    ok "verdict lane refuses a generated copy rendered from an unmerged template"
+  else
+    bad "verdict lane refuses a generated copy rendered from an unmerged template" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
+  "$MF_REAL_GIT" -C "$fx" checkout -q origin/main -- templates/agent-team/docs/agents/team.md
+  g checkout -q -B feat-lane "$skill_base"
+  rm -f "$MF_REPO/docs/agents/team.md"
+  printf 'project edit\n' > "$MF_REPO/notes-adoption.txt"
+  g add -A && g commit -q -m "delete template file" -m "Owner-approved: owner 2026-11-11 (chat)"
+  lane_head=$(g rev-parse HEAD)
+  open_lane 213 "$skill_base" "$lane_head"
+  if [ "$SHIP_RC" -ne 0 ] && grep -Fq "edits generated team copy docs/agents/team.md" <<<"$SHIP_OUT"; then
+    ok "verdict lane refuses deletion of a generated copy check does not demand"
+  else
+    bad "verdict lane refuses deletion of a generated copy check does not demand" "rc=$SHIP_RC out=$SHIP_OUT"
+  fi
 } </dev/null
 
 echo "passed $pass, failed $fail"

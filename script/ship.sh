@@ -5,7 +5,10 @@
 # (PR body line "Builder: agent=<a> model=<m>"); a docs only PR needs a cold "Review: PASS head=<head>";
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
 # copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
-# agent-team.sh check flags as a canonical role file or an unkept shared hook copy.
+# agent-team.sh check flags as a canonical role file or an unkept shared hook copy. The verdict lane accepts
+# a generated copy whose blob at the PR head equals the template render at dotfiles origin/main (the same
+# {{PROJECT_NAME}} substitution agent-team.sh uses), and a deletion of a generated copy that check demands.
+# Any other generated copy still needs --verdict-from.
 set -euo pipefail
 
 ship_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -145,7 +148,8 @@ same_pair_gate() { # <body> <verifier agent> <verifier model> <where>
 }
 verdict_re='^Verdict: (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40}) verifier=([a-zA-Z0-9_-]+) author=([a-zA-Z0-9_-]+)( agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+))?$'
 
-# Generated team copies change only through the dotfiles template, then land with --verdict-from.
+# Generated team copies change only through the dotfiles template. A copy that is not the origin/main
+# render, and not a deletion check demands, lands with --verdict-from.
 is_generated_copy() { # <path>
   local skill_names=$2
   case "$1" in
@@ -153,6 +157,79 @@ is_generated_copy() { # <path>
       return 0 ;;
   esac
   [[ "$1" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"
+}
+# Template path relative to templates/agent-team for a generated copy. Same files agent-team.sh syncs.
+template_rel_for() { # <path>
+  case "$1" in
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+      printf '%s\n' "$1" ;;
+    .agents/skills/*)
+      printf '%s\n' "$1" ;;
+    .claude/skills/*)
+      printf '.agents/skills/%s\n' "${1#.claude/skills/}" ;;
+    .cursor/skills/*)
+      printf '.agents/skills/%s\n' "${1#.cursor/skills/}" ;;
+    *) return 1 ;;
+  esac
+}
+# Same order as agent-team.sh detect_project_name, read from the PR head tree.
+detect_copy_project_name() { # <sha>
+  local sha=$1 name
+  if git cat-file -e "$sha:docs/agents/team-facts.md" 2>/dev/null; then
+    # shellcheck disable=SC2016 # backticks are the team-facts markup, not command substitution
+    name=$(git cat-file blob "$sha:docs/agents/team-facts.md" | sed -n 's/^\* `team \([^`]*\)`\..*/\1/p' || true)
+    name=${name%%$'\n'*}
+    name=${name%$'\r'}
+    if [ -n "$name" ] && [ "$name" != "{{PROJECT_NAME}}" ]; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  fi
+  if git cat-file -e "$sha:.claude/agent-team-project-name" 2>/dev/null; then
+    name=$(git cat-file blob "$sha:.claude/agent-team-project-name" | sed -n '1p' || true)
+    name=${name%$'\r'}
+    if [ -n "$name" ]; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  fi
+  if git cat-file -e "$sha:AGENTS.md" 2>/dev/null; then
+    name=$(git cat-file blob "$sha:AGENTS.md" | sed -n '1{s/^# //p;q}' || true)
+    name=${name%$'\r'}
+    if [ -n "$name" ]; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  fi
+  basename "$PWD"
+}
+# Blob at head equals the origin/main template after {{PROJECT_NAME}} substitution.
+# agent-team.sh project sync does that with str.replace, not the user-level "this project" render.
+render_matches_head() { # <path>
+  local rel name tmp rc=0
+  rel=$(template_rel_for "$1") || return 1
+  if [ "$copy_project_name_ready" = false ]; then
+    copy_project_name=$(detect_copy_project_name "$head") || return 1
+    copy_project_name_ready=true
+  fi
+  name=$copy_project_name
+  if ! git -C "$dotfiles_root" cat-file -e "origin/main:templates/agent-team/${rel}" 2>/dev/null; then
+    return 1
+  fi
+  tmp=$(mktemp -d)
+  git -C "$dotfiles_root" cat-file blob "origin/main:templates/agent-team/${rel}" >"$tmp/raw" || { rm -rf "$tmp"; return 1; }
+  python3 - "$name" "$tmp/raw" "$tmp/rendered" <<'PY' || { rm -rf "$tmp"; return 1; }
+import sys
+name, src, dst = sys.argv[1:]
+with open(src, encoding="utf-8") as fh:
+    data = fh.read()
+with open(dst, "w", encoding="utf-8") as fh:
+    fh.write(data.replace("{{PROJECT_NAME}}", name))
+PY
+  git cat-file blob "$head:$1" >"$tmp/head" || { rm -rf "$tmp"; return 1; }
+  cmp -s "$tmp/rendered" "$tmp/head" || rc=$?
+  rm -rf "$tmp"
+  return "$rc"
 }
 # Paths check would tell this tree to delete. Same messages run_check prints, not a second list of names.
 demanded_deletions() { # <sha>; one rel path per line
@@ -172,12 +249,90 @@ demanded_deletions() { # <sha>; one rel path per line
     { take($0, "canonical role file in project: ") || take($0, "shared hook copy or link in project: ") }
   ' <<<"$out"
 }
+# Paths check would tell this tree to remove. Broader than demanded_deletions: the verdict lane
+# also accepts deletion of a generated skill copy check flags. The generated lane keeps its own list.
+check_removal_paths() { # <sha>; one rel path per line. Returns 2 when check cannot run.
+  local sha=$1 dir out rc=0
+  dir=$(mktemp -d)
+  git archive "$sha" 2>/dev/null | tar -x -C "$dir" 2>/dev/null || true
+  git -C "$dir" init -q 2>/dev/null || true
+  out=$(DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/agent-team.sh" check "$dir" 2>&1) || rc=$?
+  rm -rf "$dir"
+  [ "$rc" -lt 2 ] || return 2
+  awk '
+    function take(line, key,    i) {
+      i = index(line, key)
+      if (i) { print substr(line, i + length(key)); return 1 }
+      return 0
+    }
+    {
+      take($0, "canonical role file in project: ") ||
+      take($0, "shared hook copy or link in project: ") ||
+      take($0, "shared bin copy or link in project: ") ||
+      take($0, "Tier 2 skill copy or link in project: ") ||
+      take($0, "stale generated Tier 2 skill copy in project: ") ||
+      take($0, "legacy baseline directory present: ") ||
+      take($0, "per-project metrics script present: ") ||
+      take($0, "legacy symlink present: ")
+    }
+  ' <<<"$out"
+}
+copy_project_name=""
+copy_project_name_ready=false
+removal_paths=""
+removal_ready=false
+pr_head_ready=false
+load_removal_paths() {
+  [ "$removal_ready" = true ] && return 0
+  local base rc=0
+  base=$(field .baseRefOid)
+  [[ "$base" =~ ^[0-9a-f]{40}$ ]] || return 2
+  if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+    git fetch origin "$base" >&2 || return 2
+  fi
+  removal_paths=$(check_removal_paths "$base") || rc=$?
+  [ "$rc" -lt 2 ] || return 2
+  removal_ready=true
+}
+path_removal_demanded() { # <path>; 0 demanded, 1 not, 2 check could not run
+  local f=$1 d rc=0
+  load_removal_paths || rc=$?
+  [ "$rc" -lt 2 ] || return 2
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    [ "$f" = "$d" ] && return 0
+    [[ "$f" == "$d"/* ]] && return 0
+  done <<<"$removal_paths"
+  return 1
+}
+# 0 when this generated copy is the origin/main render, or a deletion check demands.
+allow_generated_copy() { # <path>
+  local f=$1 rc=0
+  if [ "$pr_head_ready" = false ]; then
+    if ! git cat-file -e "$head^{commit}" 2>/dev/null; then
+      git fetch origin "$head" >&2 || refuse "cannot read head $head"
+    fi
+    pr_head_ready=true
+  fi
+  if git cat-file -e "$head:$f" 2>/dev/null; then
+    render_matches_head "$f" || rc=$?
+    return "$rc"
+  fi
+  path_removal_demanded "$f" || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    refuse "cannot read deletions agent-team.sh check demands at $(field .baseRefOid | cut -c1-12)"
+  fi
+  return "$rc"
+}
 dotfiles_root=$(cd "$ship_dir/.." && pwd)
 skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true)
 if [ -z "$verdict_from" ]; then
   while IFS= read -r f; do
-    ! is_generated_copy "$f" "$skill_names" \
-      || refuse "PR edits generated team copy $f; edit the dotfiles template, re-sync, then ship with --verdict-from"
+    [ -n "$f" ] || continue
+    if is_generated_copy "$f" "$skill_names"; then
+      allow_generated_copy "$f" \
+        || refuse "PR edits generated team copy $f; edit the dotfiles template, re-sync, then ship with --verdict-from"
+    fi
   done < <(jq -r '.[]' <<<"$files")
 fi
 

@@ -1,0 +1,1 @@
+The verdict lane of `ship.sh` accepts a generated team copy whose bytes match the template render at dotfiles `origin/main`, including the project name substitution `agent-team.sh` uses, and a deletion of a generated copy that `agent-team.sh check` demands. A copy that differs from that render is still refused.
