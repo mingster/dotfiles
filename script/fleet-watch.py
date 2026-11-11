@@ -9,7 +9,7 @@ optional wrap_up {hosts, issue_repo}
 round-log freshness, optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure.
 The same pass dispatches one verifier when head-checks succeeded and the head has no Verdict,
 once per head (babysit.per_pass_cap, default 2). Fix workers and shipping runs stay in issue_scan.
-A config with no runs is refused. When the given file has none, the pass adopts
+A config with no runs and no coordinator_watch is refused. When the given file has none, the pass adopts
 ~/.claude/state/fleet-watch-elon.json if that file has runs, and copies that run id and
 terminal onto issue_scan.
 --babysit-dry-run lists those actions and starts nothing. --state FILE persists missing-waiter timers and alerts.
@@ -3778,7 +3778,7 @@ def main():
         if not dry:
             save_state(args.state, state)
         return 0
-    if not config_runs(config):
+    if not config_runs(config) and not config.get('coordinator_watch'):
         print('fleet-watch: config has no runs; refusing this pass', file=sys.stderr)
         return 2
     coordinator, done = coordinator_stage(config, state, args.state)
