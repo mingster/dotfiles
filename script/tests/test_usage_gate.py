@@ -495,9 +495,23 @@ class Cursor(unittest.TestCase):
         usage-summary's autoPercentUsed was 0 at the same time. The reading uses the
         period percent that covers the listed model, never that zero.
         """
-        fixture = os.path.join(os.path.dirname(__file__), "fixtures", "cursor-period-usage.json")
-        with open(fixture) as f:
-            payload = json.load(f)
+        # Recorded GetCurrentPeriodUsage body. autoBucketModels includes grok-4.7-xhigh.
+        payload = json.loads(r'''{
+          "billingCycleStart": "1793972416493",
+          "billingCycleEnd": "1794577216493",
+          "planUsage": {"autoPercentUsed": 47.0016708954762, "totalPercentUsed": 47.0016708954762},
+          "autoBucketModels": ["default", "composer-1.5", "composer-2", "composer-2-fast", "composer-2.5",
+            "composer-2.5-fast", "vega", "vega-medium", "vega-high", "vega-xhigh", "vega-fast-medium",
+            "vega-fast-high", "vega-fast-xhigh", "grok-4.5", "cursor-grok-4.5", "cursor-grok-4.5-low",
+            "cursor-grok-4.5-low-fast", "cursor-grok-4.5-medium", "cursor-grok-4.5-medium-fast",
+            "cursor-grok-4.5-high", "cursor-grok-4.5-high-fast", "grok-4.5-medium", "grok-4.5-fast-medium",
+            "grok-4.5-high", "grok-4.5-fast-high", "grok-4.5-xhigh", "grok-4.5-fast-xhigh", "grok-4.6",
+            "cursor-grok-4.6", "cursor-grok-4.6-low", "cursor-grok-4.6-low-fast", "cursor-grok-4.6-medium",
+            "cursor-grok-4.6-medium-fast", "cursor-grok-4.6-high", "cursor-grok-4.6-high-fast",
+            "cursor-grok-4.6-xhigh", "cursor-grok-4.6-xhigh-fast", "grok-4.7", "grok-4.7-fast", "grok-4.7-low",
+            "grok-4.7-low-fast", "grok-4.7-medium", "grok-4.7-medium-fast", "grok-4.7-high",
+            "grok-4.7-high-fast", "grok-4.7-xhigh", "grok-4.7-xhigh-fast", "composer-1"]
+        }''')
         self.assertIn("grok-4.7-xhigh", payload["autoBucketModels"])
         self.assertFalse(any(model.startswith("composer") for model in ("grok-4.7-xhigh",)))
         payload["individualUsage"] = {"plan": {
