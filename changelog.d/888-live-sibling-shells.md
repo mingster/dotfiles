@@ -1,0 +1,1 @@
+A shell whose worktree or working directory belongs to a live dispatch stays open on a scheduled round and on a manual run. A terminal close or a worktree remove that has already finished is counted as done; a session that is still open, or a worktree that is still there, is still reported as a failure.
