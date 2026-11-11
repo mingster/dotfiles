@@ -189,6 +189,8 @@ scheduled_round() {
   fi
 
   # Per repo, each with its own budget, while keeping the multi-repo round inside WRAP_UP_PRECHECK_TIMEOUT.
+  child_mode=--apply
+  [ "${scheduled_dry:-0}" = 1 ] && child_mode=--dry-run
   while IFS= read -r repo_path; do
     [ -n "$repo_path" ] || continue
     [ -f "$repo_path/.agents/head-checks.conf" ] || continue
@@ -205,8 +207,18 @@ scheduled_round() {
     kill_limit=$((child_limit+kill_grace))
     printf '%s repo %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
     # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
-    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$child_limit run_limited "$kill_limit" bash "$wrap_up" --apply --repo "$repo_path" >> "$detail_file" 2>&1
+    # Each slow step has its own cap so one fetch, release, pane sweep or main update cannot spend the round.
+    repo_mark=$SECONDS
+    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$child_limit \
+      WRAP_UP_CALL_TIMEOUT=${WRAP_UP_SCHEDULED_CALL_TIMEOUT:-30} \
+      WRAP_UP_PANE_TIMEOUT=${WRAP_UP_SCHEDULED_PANE_TIMEOUT:-20} \
+      WRAP_UP_MAIN_TIMEOUT=${WRAP_UP_SCHEDULED_MAIN_TIMEOUT:-20} \
+      WRAP_UP_RELEASE_BUDGET=${WRAP_UP_SCHEDULED_RELEASE_BUDGET:-25} \
+      WRAP_UP_OPTIONAL_STEP=${WRAP_UP_SCHEDULED_OPTIONAL_STEP:-20} \
+      run_limited "$kill_limit" bash "$wrap_up" "$child_mode" --repo "$repo_path" >> "$detail_file" 2>&1
     code=$?
+    printf '%s repo %s seconds=%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" "$((SECONDS-repo_mark))" >> "$detail_file"
+    printf 'repo %s seconds=%s\n' "$repo_path" "$((SECONDS-repo_mark))"
     if [ "$code" -eq 75 ]; then
       printf '%s skip repo %s (another wrap-up run holds the lock)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
       skipped="${skipped:+$skipped, }$repo_path"
@@ -720,7 +732,20 @@ PY
 
 # Each mode ends the script, so what follows is the default: preview or apply a repo's finished work.
 case "${1:-}" in
-  --scheduled) scheduled_round ;;
+  --scheduled)
+    shift
+    scheduled_dry=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dry-run) scheduled_dry=1 ;;
+        --apply) scheduled_dry=0 ;;
+        -h|--help) echo 'Usage: wrap-up.sh --scheduled [--dry-run|--apply]'; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    scheduled_round
+    ;;
   --finish-worker) shift; finish_worker "$@"; exit 0 ;;
   --branch|--head-sha|--issue|--pr) after_merge "$@"; exit 0 ;;
 esac
@@ -739,7 +764,7 @@ while [ $# -gt 0 ]; do
     --main-update) main_update=1 ;; # With --worktrees-only: also update main and install the preset (used per fleet host).
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
     -h|--help)
-      echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'
+      echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled [--dry-run] | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'
       echo 'Worst case runtime: a dry run takes about 5 minutes for one repo. --apply is bounded by WRAP_UP_TOTAL_TIMEOUT (default 900 s), then'
       echo 'the pane close step may add up to WRAP_UP_PANE_TIMEOUT (default 1800 s), each of its calls limited to WRAP_UP_PANE_CALL_TIMEOUT (default 10 s).'
       echo 'The summary counts print before the pane step, so a caller that times out there has them. Only one --apply runs at a time (exit 75 names the holder).'
@@ -807,6 +832,14 @@ failures_file="$tmp/failures"
 call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
 total_timeout=${WRAP_UP_TOTAL_TIMEOUT:-900}
 deadline=$((SECONDS+total_timeout))
+optional_deadline=$deadline
+# A scheduled round gives each slow optional step its own short limit. A manual run keeps the overall deadline.
+begin_optional() {
+  local s=${1:-${WRAP_UP_OPTIONAL_STEP:-20}}
+  if [ -n "${WRAP_UP_SCHEDULED_CHILD:-}" ]; then optional_deadline=$((SECONDS + s)); else optional_deadline=$deadline; fi
+}
+optional_ok() { [ "$SECONDS" -lt "$optional_deadline" ]; }
+optional_stop() { echo "Warning: $1 stopped at its time limit; the rest waits for the next run." >&2; }
 bounded() {
   local left=$((deadline-SECONDS)) t rc=0
   if [ "$left" -le 0 ]; then
@@ -819,21 +852,31 @@ bounded() {
   return "$rc"
 }
 # Preview also refreshes tracking refs; only apply changes branches or worktrees.
-bounded git fetch --prune origin || fail_item 'git fetch' 'failed or timed out; refs may be stale, so fewer items qualify'
-git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin > "$tmp/remote-planned"
-git rev-parse --verify origin/main >/dev/null
-# One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
+# Called after terminal close so a slow fetch or PR lookup cannot spend the round before any terminal is closed.
+refresh_refs() {
+  begin_optional "${WRAP_UP_SCHEDULED_CALL_TIMEOUT:-30}"
+  bounded git fetch --prune origin || fail_item 'git fetch' 'failed or timed out; refs may be stale, so fewer items qualify'
+  git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin > "$tmp/remote-planned"
+  git rev-parse --verify origin/main >/dev/null
+  # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
+  pr_ok=1
+  if ! bounded gh pr list --state all --limit 1000 --json headRefName,headRefOid,state > "$tmp/prs"; then
+    echo 'Warning: PR lookup unavailable; using ancestry only, stale branches not listed.' >&2
+    fail_item 'PR lookup' 'unavailable; closed-PR branches not cleaned this run'
+    echo '[]' > "$tmp/prs"; pr_ok=0
+  fi
+  jq -e 'type == "array"' "$tmp/prs" >/dev/null
+  jq -r '.[] | select(.state == "OPEN") | .headRefName' "$tmp/prs" | sort -u > "$tmp/open"
+  jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
+  jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
+  jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
+}
 pr_ok=1
-if ! bounded gh pr list --state all --limit 1000 --json headRefName,headRefOid,state > "$tmp/prs"; then
-  echo 'Warning: PR lookup unavailable; using ancestry only, stale branches not listed.' >&2
-  fail_item 'PR lookup' 'unavailable; closed-PR branches not cleaned this run'
-  echo '[]' > "$tmp/prs"; pr_ok=0
-fi
-jq -e 'type == "array"' "$tmp/prs" >/dev/null
-jq -r '.[] | select(.state == "OPEN") | .headRefName' "$tmp/prs" | sort -u > "$tmp/open"
-jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
-jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
-jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
+echo '[]' > "$tmp/prs"
+: > "$tmp/open"
+: > "$tmp/closed"
+: > "$tmp/closed-heads"
+: > "$tmp/open-heads"
 : > "$tmp/active"
 inventory_read=0
 # Set when an unsettled dispatch names a head-checks, QA, browser or gated run: its process may be gone while it still needs the browser.
@@ -847,7 +890,8 @@ orca=orca_call
 # any other on a path where every dispatch is settled (shells, worker-pane.sh panes, an agent idle at its prompt). Kept: our own,
 # a Run coordinator's, a live dispatch's, a lead- worktree's, one with output in the last 10 minutes (a correction pass runs on a
 # settled dispatch), a running agent, one outside a worktree, and the main checkout's. A local terminal with no dispatch and
-# no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only). On another environment a
+# no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only). A scheduled
+# round closes that local shell once it has had no output for 60 minutes; newer output stays. On another environment a
 # terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
 # its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
 # shell with no running agent, at a path the environment no longer reports; scheduled rounds close those too. A running
@@ -966,8 +1010,19 @@ close_finished_terminals() {
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; fail_item "terminals on $label" 'inventory incomplete; none closed'; return 0
   fi
-  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg main "$main_path" --arg local "${env:-}" --rawfile gone "$tmp/h-gone" '
-    def settled: (.dispatchStatus // .state) as $s | (["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" or .liveness == "sleep";
+  jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg idle_ms "${WRAP_UP_IDLE_SHELL_MS:-3600000}" --arg main "$main_path" --arg local "${env:-}" --rawfile gone "$tmp/h-gone" '
+    def live_of:
+      if (.liveness | type) == "string" then .liveness
+      elif (.projection.liveness | type) == "string" then .projection.liveness
+      elif (.projection.liveness | type) == "object" then (.projection.liveness.verdict // .projection.liveness.state // "")
+      else "" end;
+    def outcome_of: (.outcome // .projection.outcome // "");
+    def settled:
+      ((.dispatchStatus // .state // "") as $s | ["succeeded","completed","failed","cancelled","released","stopped","done"] | index($s))
+      or ((outcome_of) as $o | ["worker_done","succeeded","completed","failed","cancelled","stopped","done"] | index($o))
+      or (.stage == "released" or .stage == "process_stopped")
+      or ((.terminalState // "") as $t | ["released","release_unknown","gone","missing","closed"] | index($t))
+      or (live_of == "exited" or live_of == "sleep");
     def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
     [.[].result.workers[]] as $w
     | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "") as $p
@@ -976,20 +1031,26 @@ close_finished_terminals() {
     | (.connected == false or .writable == false) as $exited
     | if $h == $own then [$h, "own terminal", "keep"]
       elif $coordinators | split("\n") | index($h) then [$h, "coordinator", "keep"]
-      elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
       elif (($p | split("/") | last) // "" | startswith("lead-")) then [$h, "lead worktree", "keep"]
+      elif $scheduled != "" and $local == "" and $p != "" and $p != $main and ($mine | length) == 0 and .agentIdentity == null
+        and (((.title // "") | test("worker-pane")) | not)
+        and (.lastOutputAt | type) == "number" and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))
+        then [$h, "no dispatch, no agent, idle", "close"]
+      elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
       elif ($exited | not) and (.lastOutputAt > now * 1000 - 600000 or (.agentIdentity != null and .lastOutputAt == null)) then [$h, "recent output", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]
       elif ($onpath | length) > 0 then [$h, "settled dispatch on this path", "close"]
       elif $local != "" and $p != "" and .agentIdentity == null and (.branch // "") != "refs/heads/main" and (.branch // "") != "refs/heads/master" and ($gone | split("\n") | index($p)) then [$h, "worktree gone in this run", "close"]
-      elif $local != "" and ($p == "" or $scheduled != "" or .agentIdentity != null or (.branch // "") == "refs/heads/main" or (.branch // "") == "refs/heads/master") then [$h, "unknown owner, still running", "keep"]
+      elif $local != "" and ($p == "" or .agentIdentity != null or (.branch // "") == "refs/heads/main" or (.branch // "") == "refs/heads/master") then [$h, "unknown owner, still running", "keep"]
       elif $local != "" then [$h, "unknown owner, still running", "keep"]
       elif $p == "" then [$h, "not in a worktree", "keep"]
       elif $p == $main then [$h, "main checkout", "keep"]
       elif .agentIdentity != null then [$h, "running agent", "keep"]
-      elif $scheduled != "" then [$h, "no dispatch, no agent, scheduled round leaves it", "keep"]
+      elif $scheduled != "" and ((.lastOutputAt | type) != "number") then [$h, "no dispatch, no agent, output age unknown", "keep"]
+      elif $scheduled != "" and .lastOutputAt > (now * 1000 - ($idle_ms | tonumber)) then [$h, "no dispatch, no agent, output within 60 minutes", "keep"]
+      elif $scheduled != "" then [$h, "no dispatch, no agent, idle", "close"]
       else [$h, "no dispatch, no agent", "close"] end
     | @tsv' "$tmp/h-workers" > "$tmp/h-plan"
   while IFS=$'\t' read -r handle reason action; do
@@ -1013,18 +1074,22 @@ close_finished_terminals() {
 # one is Orca's final answer; asking again every round spent the whole time limit, so every later step was skipped. Releases
 # also stop once half the time limit is used, so the terminal and worktree steps always get their turn. An ok:true receipt
 # (released, retained, already_released) counts as released whatever the exit code.
-# Issue 877: terminalState release_unknown means the recorded terminal no longer resolves. worker-release returns that
-# same receipt, so asking again every round spends the time limit and the close step never reaches finished terminals.
-# Those rows are not released and not closed here. The summary counts them once as needing no action.
+# Issue 877: a worker that has ended (worker_done sent, stopped, exited, or a gone terminal) does not keep its
+# terminal as a live dispatch when release has not finished. Terminal close runs first, so a failed or capped
+# release cannot skip it. terminalState release_unknown is not asked again; the summary counts it as no action.
 released_count=0
 no_action_count=0
 release_finished_workers() {
-  local env id why label receipt
+  local env id why label receipt release_started=$SECONDS
   while IFS=$'\t' read -r env id why; do
     [ -n "$id" ] || continue
     [ "$env" != - ] || env=''
     label=${env:-local}
     if [ "$why" = no-action ]; then no_action_count=$((no_action_count+1)); continue; fi
+    if [ "$apply" -eq 1 ] && [ -n "${WRAP_UP_RELEASE_BUDGET:-}" ] && [ $((SECONDS-release_started)) -ge "$WRAP_UP_RELEASE_BUDGET" ]; then
+      echo 'Warning: releases used their time limit; the rest wait for the next run.' >&2
+      break
+    fi
     if [ "$apply" -eq 1 ] && [ $((deadline-SECONDS)) -lt $((total_timeout/2)) ]; then
       echo 'Warning: releases used half the time limit; the rest wait for the next run.' >&2
       fail_item 'releases' 'half the time limit used; the rest next run'; break
@@ -1041,12 +1106,15 @@ release_finished_workers() {
     def state: (.state // .dispatchStatus // "");
     def handle: (.agentTerminalHandle // (.terminal | strings) // "");
     [.[] | .env as $env | .row | state as $st | handle as $h | (.liveness // "") as $live
+      | (.outcome // .projection.outcome // "") as $out
       | select((.dispatchId // "") != "")
       | select(.terminalState != "released" and .terminalState != "retained" and .stage != "released")
       | select($h != "" or .terminalState != null)
       | (if (["succeeded","stopped","failed"] | index($st)) != null then "state " + $st
-         elif (["exited","sleep"] | index($live)) != null then "liveness " + $live else empty end) as $why
-      | select(((["ready","in_progress"] | index($st)) != null and $live == "live") | not)
+         elif (["exited","sleep"] | index($live)) != null then "liveness " + $live
+         elif (["worker_done","completed","done"] | index($out)) != null then "outcome " + $out
+         else empty end) as $why
+      | select(((["ready","in_progress"] | index($st)) != null and $live == "live" and ($out == "" or $out == "in_progress")) | not)
       | select($h == "" or ($h != $own and (($coordinators | split("\n")) | index($h) | not)))
       | (if .terminalState == "release_unknown" then "no-action" else $why end) as $act
       | [(if $env == "" then "-" else $env end), .dispatchId, $act]]
@@ -1054,11 +1122,11 @@ release_finished_workers() {
 }
 if command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
   terminals_read=1
-  release_finished_workers
   close_finished_terminals ''
   while IFS= read -r env_id; do
     [ -z "$env_id" ] || close_finished_terminals "$env_id"
   done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
+  [ -z "${WRAP_UP_SCHEDULED_CHILD:-}" ] || printf 'step terminals seconds=%s\n' "$SECONDS"
 fi
 if command -v "$orca_bin" >/dev/null 2>&1; then
   if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
@@ -1558,6 +1626,7 @@ keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-branches"
 : > "$tmp/kept-worktrees"
 : > "$tmp/stale-ok"
+refresh_refs
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
 path=''; branch=''; head=''; locked=0
@@ -1629,6 +1698,9 @@ if [ "$terminals_read" -eq 1 ] && [ -s "$tmp/removed-paths" ]; then
     [ -z "$env_id" ] || close_finished_terminals "$env_id" 1
   done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
 fi
+[ -z "${WRAP_UP_SCHEDULED_CHILD:-}" ] || printf 'step worktrees seconds=%s\n' "$SECONDS"
+# Release is after terminal and worktree cleanup. A failed release is recorded and does not undo a close.
+if [ "$terminals_read" -eq 1 ]; then release_finished_workers; fi
 while IFS= read -r branch; do
   if protected "$branch"; then
     keep "local $branch" "$protected_reason"
@@ -1709,9 +1781,20 @@ main_checkout_clean() {
   done < <(git -C "$main_checkout" status --porcelain --untracked-files=all)
 }
 update_main() {
+  local main_t left
   if [ "$(git -C "$main_checkout" symbolic-ref --quiet --short HEAD || true)" = main ] && main_checkout_clean; then
     echo 'Fast forward main checkout'
-    [ "$apply" -eq 0 ] || bounded git -C "$main_checkout" -c pull.rebase=false pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
+    if [ "$apply" -eq 1 ]; then
+      if [ -n "${WRAP_UP_MAIN_TIMEOUT:-}" ]; then
+        main_t=$WRAP_UP_MAIN_TIMEOUT
+        left=$((deadline-SECONDS))
+        [ "$left" -ge "$main_t" ] || main_t=$left
+        [ "$main_t" -gt 0 ] || main_t=1
+        run_limited "$main_t" git -C "$main_checkout" -c pull.rebase=false pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
+      else
+        bounded git -C "$main_checkout" -c pull.rebase=false pull --ff-only origin main || fail_item 'main update' 'git pull failed or timed out'
+      fi
+    fi
     # The merged preset reaches Orca only through setup-orca.sh; prefer the copy from the freshly updated checkout.
     if [ -f "$main_checkout/.orca/presets.json" ]; then
       setup_orca="$main_checkout/script/setup-orca.sh"; [ -f "$setup_orca" ] || setup_orca="$here/setup-orca.sh"
@@ -1803,6 +1886,7 @@ browser_keep() { printf 'Kept browser %s (%s)\n' "$1" "$2"; browser_kept=$((brow
 sweep_browsers() {
   local pid ppid age started cmd kind profile cwdir child cppid cmdl now_line n_started n_cmd outside
   [ "$browser_sweep" -eq 1 ] || return 0
+  begin_optional
   if ! ps_do list > "$tmp/procs" 2>/dev/null; then echo 'Warning: process list unavailable; closing no browsers.' >&2; return 0; fi
   # Signs that a browser is in use: a running head-checks, QA or heavy-gate run, and a browser outside temp that
   # offers a debugging port (a daemon may be attached to it with nothing to show for it in the process table).
@@ -1815,6 +1899,7 @@ sweep_browsers() {
   done < "$tmp/procs"
   while IFS=$'\t' read -r pid ppid age started cmd; do
     [ -n "$pid" ] || continue
+    optional_ok || { optional_stop 'browser sweep'; break; }
     kind=''; profile=''
     if is_main_browser "$cmd"; then
       profile=$(browser_profile "$cmd") || continue
@@ -1880,7 +1965,9 @@ flush_remote() {
   fi
   batch=()
 }
+begin_optional
 while IFS= read -r ref; do
+  optional_ok || { optional_stop 'remote branch cleanup'; break; }
   branch=${ref#refs/remotes/origin/}
   if protected "$branch"; then
     keep "remote $branch" "$protected_reason"
@@ -1931,12 +2018,19 @@ state_dir=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
 slugify() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
 # True when some directory on disk has this slug. Walks down from / matching entries, so dashes need no guessing.
 slug_exists() {
-  local dir=$1 rest=$2 entry name s
+  local dir=$1 rest=$2 entry name s rc
+  if [ -n "${optional_deadline:-}" ] && [ "$SECONDS" -ge "$optional_deadline" ]; then return 2; fi
   for entry in "$dir"/* "$dir"/.[!.]*; do
     [ -d "$entry" ] || continue
     name=${entry##*/}; s=$(slugify "$name")
     if [ "$rest" = "$s" ]; then return 0; fi
-    case "$rest" in "$s"-*) slug_exists "$entry" "${rest#"$s"-}" && return 0 ;; esac
+    case "$rest" in
+      "$s"-*)
+        rc=0
+        slug_exists "$entry" "${rest#"$s"-}" || rc=$?
+        [ "$rc" -eq 1 ] || return "$rc"
+        ;;
+    esac
   done
   return 1
 }
@@ -1964,12 +2058,16 @@ temp_item() {
   fi
 }
 if [ -d "$scratch_root" ]; then
+  begin_optional
   for entry in "$scratch_root"/*/; do
+    optional_ok || { optional_stop 'temp cleanup'; break; }
     entry=${entry%/}; [ -d "$entry" ] || continue
     case "${entry##*/}" in
       -*)
-        slug=${entry##*/}; gone=1
-        if slug_exists '' "${slug#-}"; then gone=0; fi
+        slug=${entry##*/}; gone=1; rc=0
+        slug_exists '' "${slug#-}" || rc=$?
+        if [ "$rc" -eq 2 ]; then optional_stop 'temp cleanup'; break; fi
+        [ "$rc" -eq 0 ] && gone=0
         for session in "$entry"/*/; do
           session=${session%/}; [ -d "$session" ] || continue
           temp_item "$session" "$gone"
@@ -1999,12 +2097,14 @@ fi
 # unreadable count keeps it too. Checked again right before the delete.
 stale_found=0
 if [ "$pr_ok" -eq 1 ]; then
+  begin_optional
   now=$(date +%s)
   {
     git for-each-ref --format='%(refname:strip=2)' refs/heads
     git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin
   } | sort -u > "$tmp/names"
   while IFS= read -r name; do
+    optional_ok || { optional_stop 'stale branch cleanup'; break; }
     [ -n "$name" ] && ! protected "$name" || continue
     wt=$(awk -F'\t' -v n="$name" '$1 == n { print substr($0, length(n) + 2); exit }' "$tmp/stale-ok")
     if [ -z "$wt" ] && grep -Fxq -- "$name" "$tmp/kept-branches"; then continue; fi

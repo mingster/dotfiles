@@ -321,8 +321,10 @@ grep -Fq 'Close terminal t-pane (local, settled worker pane)' "$tmp/output"
 grep -Fq 'Close terminal t-none (local, no dispatch, no agent)' "$tmp/output"
 grep -q 'terminals closed=5 kept=3' "$tmp/output"
 WRAP_UP_SCHEDULED_CHILD=1 bash "$here/wrap-up.sh" --dry-run > "$tmp/output-child"
-grep -Fq 'Kept terminal t-none' "$tmp/output-child"
-echo 'ok a scheduled round keeps a shell nobody owns'
+grep -Fq 'Close terminal t-none (local, no dispatch, no agent, idle)' "$tmp/output-child" \
+  || { echo 'scheduled round left an idle shell'; exit 1; }
+! grep -Fq 'Kept terminal t-none' "$tmp/output-child" || { echo 'scheduled round kept an idle shell'; exit 1; }
+echo 'ok a scheduled round closes a shell nobody owns once it has been idle'
 grep -q -- '--limit 100' "$fake/list.log"
 echo 'ok released dispatch without a handle: terminals linked by path; panes and idle agents close; live, lead and unknown paths kept'
 # #386: a dry run left every worktree with a leftover terminal on a released dispatch as "active or unknown", because
@@ -992,3 +994,77 @@ grep -Fq 'worker-release --dispatch d-sleep' "$tmp/ru/releases" || ru_fail 'fini
 grep -Fxq 'workers needing no action=1' "$tmp/output" || ru_fail 'release_unknown row was not listed once as needing no action'
 grep -Fxq 'workers needing no action=1' "$tmp/output2" || ru_fail 'second round did not list the release_unknown row once'
 echo 'ok a release_unknown worker is not retried; the finished one is released and its terminal closed'
+
+# Scheduled idle shells, and a dispatch that has ended but was not released.
+# lastOutputAt is milliseconds. 1 is long idle; a fresh stamp is still inside 60 minutes.
+now_ms=$(python3 -c 'import time; print(int(time.time()*1000))')
+mid_ms=$((now_ms - 1800000))
+mkdir -p "$tmp/idle"
+cat > "$tmp/bin/orca-idle" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DIR/calls"
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal close'*) printf '%s\n' "$*" >> "$FAKE_DIR/closed"; echo '{"ok":true}' ;;
+  *'terminal list'*|*'terminal show'*) cat "$FAKE_DIR/terminals" ;;
+  *worker-release*) printf '%s\n' "$*" >> "$FAKE_DIR/releases"; echo 'release failed' >&2; exit 1 ;;
+  *worker-show*) echo '{"ok":true,"result":{"state":"in_progress","liveness":"live","outcome":"worker_done"}}' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1","coordinator_handle":"t-coord"}]}}' ;;
+  *worker-list*) cat "$FAKE_DIR/workers" ;;
+  *'worktree list'*) echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  *) echo "unexpected: $*" >> "$FAKE_DIR/unexpected"; exit 1 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-idle"
+export FAKE_DIR="$tmp/idle" ORCA_CLI_COMMAND="$tmp/bin/orca-idle" ORCA_TERMINAL_HANDLE=t-own
+jq -n --argjson now "$now_ms" '{ok:true,result:{workers:[
+  {dispatchId:"d-ended",state:"in_progress",liveness:"live",outcome:"worker_done",terminalState:"reclaimable",terminal:"t-ended",workspace:"repo::/nowhere/ended"},
+  {dispatchId:"d-gone",state:"in_progress",liveness:"live",terminalState:"release_unknown",terminal:"t-missing",workspace:"repo::/nowhere/shared"},
+  {dispatchId:"d-stopped",state:"in_progress",liveness:"exited",terminalState:"reclaimable",terminal:"t-stopped",workspace:"repo::/nowhere/stopped"},
+  {dispatchId:"d-live",state:"ready",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-live",workspace:"repo::/nowhere/live"},
+  {dispatchId:"d-rel",state:"succeeded",liveness:"exited",terminalState:"reclaimable",terminal:"t-rel",workspace:"repo::/nowhere/rel"}
+]}}' > "$tmp/idle/workers"
+jq -n --argjson now "$now_ms" --argjson mid "$mid_ms" '{ok:true,result:{terminals:[
+  {handle:"t-old",worktreePath:"/nowhere/old",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-fresh",worktreePath:"/nowhere/fresh",connected:true,writable:true,agentIdentity:null,lastOutputAt:$now,title:"shell"},
+  {handle:"t-mid",worktreePath:"/nowhere/mid",connected:true,writable:true,agentIdentity:null,lastOutputAt:$mid,title:"shell"},
+  {handle:"t-lead",worktreePath:"/nowhere/lead-keep",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-coord",worktreePath:"/nowhere/coord",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-ended",worktreePath:"/nowhere/ended",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-shared",worktreePath:"/nowhere/shared",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-stopped",worktreePath:"/nowhere/stopped",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-live",worktreePath:"/nowhere/live",connected:true,writable:true,agentIdentity:"claude",lastOutputAt:$now,title:"agent"},
+  {handle:"t-pane",worktreePath:"/nowhere/live",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"worker-pane.sh d-live"}
+]}}' > "$tmp/idle/terminals"
+: > "$tmp/idle/calls"; : > "$tmp/idle/releases"; : > "$tmp/idle/closed"
+git init -q --bare "$tmp/origin-idle"
+git init -q -b main "$tmp/repo-idle"
+git -C "$tmp/repo-idle" config user.email test@example.invalid
+git -C "$tmp/repo-idle" config user.name Test
+git -C "$tmp/repo-idle" commit -qm c --allow-empty
+git -C "$tmp/repo-idle" remote add origin "$tmp/origin-idle"
+git -C "$tmp/repo-idle" push -q -u origin main
+WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=30 WRAP_UP_RELEASE_BUDGET=5 \
+  bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-idle" > "$tmp/output" 2> "$tmp/stderr" || echo "rc=$?" >> "$tmp/stderr"
+idle_fail() { echo "FAIL $1"; cat "$tmp/output" "$tmp/stderr" "$tmp/idle/releases" "$tmp/idle/closed"; exit 1; }
+grep -Fq 'Close terminal t-old (local, no dispatch, no agent, idle)' "$tmp/output" || idle_fail 'idle shell not closed'
+grep -Fq 'Kept terminal t-fresh ' "$tmp/output" || idle_fail 'recent shell closed'
+! grep -Fq 'Close terminal t-fresh ' "$tmp/output" || idle_fail 'recent shell closed'
+grep -Fq 'Kept terminal t-mid (local, no dispatch, no agent, output within 60 minutes)' "$tmp/output" || idle_fail 'shell inside 60 minutes closed'
+grep -Fq 'Kept terminal t-lead (local, lead worktree)' "$tmp/output" || idle_fail 'lead shell closed'
+grep -Fq 'Kept terminal t-coord (local, coordinator)' "$tmp/output" || idle_fail 'coordinator closed'
+grep -Fq 'Kept terminal t-live (local, live dispatch)' "$tmp/output" || idle_fail 'live worker closed'
+grep -Fq 'Kept terminal t-pane (local, live dispatch)' "$tmp/output" || idle_fail 'live worker pane closed'
+grep -Fq 'Close terminal t-ended (local, settled dispatch)' "$tmp/output" || idle_fail 'ended dispatch still live'
+! grep -Fq 'Kept terminal t-ended (local, live dispatch)' "$tmp/output" || idle_fail 'worker_done kept the terminal'
+grep -Fq 'Close terminal t-stopped (local, settled dispatch)' "$tmp/output" || idle_fail 'exited worker kept the terminal'
+grep -Fq 'Close terminal t-shared (local, settled dispatch on this path)' "$tmp/output" \
+  || grep -Fq 'Close terminal t-shared (local, no dispatch, no agent, idle)' "$tmp/output" \
+  || idle_fail 'gone terminal still protected the shell'
+! grep -Fq 'Kept terminal t-shared (local, live dispatch)' "$tmp/output" || idle_fail 'terminal gone counted as live'
+grep -Fq 'terminal close --terminal t-ended' "$tmp/idle/closed" || idle_fail 'apply did not close the ended terminal'
+grep -Fq 'releasing d-rel on local failed' "$tmp/stderr" || idle_fail 'release failure was not recorded'
+close_at=$(grep -n 'Close terminal t-ended ' "$tmp/output" | head -n 1 | cut -d: -f1)
+rel_at=$(grep -n 'Release worker d-rel ' "$tmp/output" | head -n 1 | cut -d: -f1)
+[ -n "$close_at" ] && [ -n "$rel_at" ] && [ "$close_at" -lt "$rel_at" ] || idle_fail 'close waited for release'
+echo 'ok scheduled round closes idle shells and ended dispatches even when release fails'

@@ -76,6 +76,7 @@ lines() { [ -f "$log" ] && wc -l < "$log" | tr -d ' ' || echo 0; }
 nissues() { if [ -f "$ghlog" ]; then grep -c "^gh issue create" "$ghlog" || true; else echo 0; fi; }
 # Bare environment, as a schedule gives it. The caller's ORCA_CLI_COMMAND and WRAP_UP_FLEET_CONFIG are planted on purpose.
 round() {
+  # shellcheck disable=SC2086
   env -i HOME="$tmp/home" PATH="${ROUND_PATH:-$tmp/bin}:$tmp/tools:/usr/bin:/bin" \
     WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_SCHEDULED_LOG="$log" WRAP_UP_ORCA_APP_BIN="${APP_BIN:-$tmp/noapp}" WRAP_UP_EXTRA_BIN= \
     WRAP_UP_SCHEDULED_LOAD_CMD="${LOAD_CMD-echo ${LOAD:-1}}" WRAP_UP_SCHEDULED_CORES_CMD="${CORES_CMD-echo 4}" \
@@ -86,7 +87,7 @@ round() {
     FAKE_REPOS="${FAKE_REPOS:-ok}" FAKE_REPO_LIST="$tmp/repos.json" FAKE_SLEEP="${FAKE_SLEEP:-}" \
     FAKE_GH_LOG="$ghlog" FAKE_GH_OPEN="$tmp/gh-open.json" FAKE_GH_LIST_FAIL="${FAKE_GH_LIST_FAIL:-}" FAKE_GH_PUBLIC="${FAKE_GH_PUBLIC:-}" \
     ORCA_CLI_COMMAND=/nonexistent/orca WRAP_UP_FLEET_CONFIG=/caller/fleet.json \
-    bash "$script" --scheduled
+    bash "$script" --scheduled "$@"
 }
 # Bounded wait on a file the other side creates (no sleeps: it ends the moment the file exists, or after ~20 s of polling).
 waitfor() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 200000 ]; do i=$((i+1)); done; [ -e "$1" ]; }
@@ -438,6 +439,12 @@ check 'budgeted multi-repo round finishes within precheck timeout' test "$b_elap
 check 'budgeted multi-repo round stops starting new repos when budget is spent' test "$(ncalls)" -eq 1
 check 'budgeted multi-repo round logs skipped repo in summary log' has "skipped=$repo_b" "$log"
 check 'budgeted multi-repo round logs skipped repo in detail log' has "skip repo $repo_b" "$detail"
+
+reset
+round --dry-run
+check 'scheduled dry-run passes --dry-run to the child' has "args=--dry-run --repo $repo_a" "$calls"
+check 'scheduled dry-run does not apply' lacks 'args=--apply' "$calls"
+check 'scheduled dry-run records per-repo seconds' has "repo $repo_a seconds=" "$detail"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

@@ -1,0 +1,1 @@
+A scheduled wrap-up closes a local shell that no dispatch owns once it has had no output for 60 minutes, and it closes a terminal whose worker has already ended even when worker-release has not finished. Terminal close runs before release, and each slow step has its own short time limit so one round can finish every repo.
