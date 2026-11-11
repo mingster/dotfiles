@@ -3,6 +3,27 @@
 
 pr_review_gates_orca() { printf '%s\n' "${ORCA_CLI_COMMAND:-orca}"; }
 
+# Orca matches a registered repo by its physical path. A symlink does not match.
+pr_review_gates_canonicalize_repo() { # <selector>
+  local sel=$1 dir physical
+  case "$sel" in
+    id:*) printf '%s\n' "$sel"; return 0 ;;
+    path:*) dir=${sel#path:} ;;
+    /*|./*|../*|~*) dir=$sel; sel= ;;
+    *) printf '%s\n' "$sel"; return 0 ;;
+  esac
+  physical=$(cd "$dir" 2>/dev/null && pwd -P) || physical=
+  if [ -z "$physical" ]; then
+    if [ -n "$sel" ]; then
+      printf '%s\n' "$sel"
+    else
+      printf 'path:%s\n' "$dir"
+    fi
+    return 0
+  fi
+  printf 'path:%s\n' "$physical"
+}
+
 pr_review_gates_launch_state_dir() {
   printf '%s\n' "${WORKER_STARTUP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/worker-startup}"
 }

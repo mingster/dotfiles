@@ -150,10 +150,21 @@ def cursor_reading(path=None):
         return None
 
 
+def _tool_bin(name, fallback):
+    """Resolve a tool that a minimal automation PATH does not include."""
+    found = shutil.which(name)
+    if found:
+        return found
+    if fallback and os.access(fallback, os.X_OK):
+        return fallback
+    return name
+
+
 def antigravity_fetch():
     """Read local quota without persisting or displaying the server's CSRF token."""
     import re, ssl, urllib.request
     deadline = time.monotonic() + 7
+    lsof = _tool_bin("lsof", "/usr/sbin/lsof")
     try:
         processes = subprocess.run(["ps", "-axo", "pid,command"], capture_output=True,
                                    text=True, timeout=2).stdout
@@ -164,7 +175,7 @@ def antigravity_fetch():
             token = re.search(r"--csrf_token(?:=|\s+)(\S+)", line)
             if not token or not line.split()[0].isdigit():
                 continue
-            ports = subprocess.run(["lsof", "-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p",
+            ports = subprocess.run([lsof, "-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p",
                                     line.split()[0]], capture_output=True, text=True, timeout=2).stdout
             for port in sorted(set(re.findall(r":(\d+) \(LISTEN\)", ports))):
                 remaining = deadline - time.monotonic()

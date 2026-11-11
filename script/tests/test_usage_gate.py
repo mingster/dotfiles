@@ -110,6 +110,31 @@ class Antigravity(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ug.main(["check", "--provider", "antigravity"]), 4)
 
+    def test_lsof_falls_back_to_usr_sbin_when_missing_from_path(self):
+        import urllib.request
+        processes = mock.Mock(stdout="123 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token synthetic\n")
+        ports = mock.Mock(stdout="server 123 TCP 127.0.0.1:12345 (LISTEN)")
+        calls = []
+
+        def run(argv, **_kwargs):
+            calls.append(argv)
+            return processes if argv[0] == "ps" else ports
+
+        real_access = os.access
+
+        def access(path, mode):
+            if path == "/usr/sbin/lsof":
+                return True
+            return real_access(path, mode)
+
+        with mock.patch.object(ug.subprocess, "run", side_effect=run), \
+                mock.patch.object(ug.shutil, "which", return_value=None), \
+                mock.patch.object(ug.os, "access", side_effect=access), \
+                mock.patch.object(urllib.request, "build_opener") as build:
+            build.return_value.open.side_effect = TimeoutError()
+            self.assertIsNone(ug.antigravity_reading())
+        self.assertEqual(calls[1][0], "/usr/sbin/lsof")
+
     def test_transport_timeout_or_bad_json_produces_no_reading(self):
         import urllib.request
         processes = mock.Mock(stdout="123 language_server_macos_arm --csrf_token synthetic")

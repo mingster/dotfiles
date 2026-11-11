@@ -9,6 +9,10 @@
 #        install-fleet-automations.sh --uninstall
 set -euo pipefail
 
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/automation-path.sh
+. "$here/lib/automation-path.sh"
+
 orca_cli=${ORCA_CLI_COMMAND:-orca}
 dry=0
 action=""
@@ -111,11 +115,7 @@ FLEET_STAGING_DAILY_TIMEZONE=${FLEET_STAGING_DAILY_TIMEZONE:-Asia/Taipei}
 FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain daily-program-1900'
 
 precheck_path() {
-  local p="$HOME/.local/bin"
-  local orca_app="/Applications/_dev/Orca.app/Contents/Resources/bin"
-  [ -d "$orca_app" ] && p="$p:$orca_app"
-  p="$p:${FLEET_AUTOMATIONS_PATH_EXTRA:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}"
-  printf '%s' "$p"
+  automation_tool_path
 }
 
 coordinator_name() {

@@ -555,6 +555,53 @@ else
   ok
 fi
 
+# Automation PATH is ~/.local/bin plus system dirs, with no asdf shims. The start
+# command must still run the pinned node from ~/.asdf/shims.
+shim_home="$tmp/home-shim"
+shim_bin="$shim_home/.asdf/shims"
+mkdir -p "$shim_bin" "$shim_home/.local/bin"
+shim_log="$tmp/node-shim.log"
+: >"$shim_log"
+cat >"$shim_bin/node" <<EOS
+#!/bin/sh
+printf 'node\n' >>"$shim_log"
+echo v22.2.2
+EOS
+chmod +x "$shim_bin/node"
+auto_path=$(node_match_path "$shim_home/.local/bin")
+case ":$auto_path:" in
+  *":$shim_bin:"*) bad "automation-style PATH must not already contain the asdf shims" ;;
+  *) ok ;;
+esac
+shimrepo="$tmp/shimrepo"
+shimrepo_bare="$tmp/shimrepo.git"
+make_repo "$shimrepo" "$shimrepo_bare"
+printf 'nodejs 22.2.2\n' >"$shimrepo/.tool-versions"
+git -C "$shimrepo" add .tool-versions
+git -C "$shimrepo" commit -qm pin
+git -C "$shimrepo" push -q
+cat >"$tmp/fleet-shim.json" <<EOF
+{"hosts":[],"repos":["$shimrepo"]}
+EOF
+: >"$tmp/orca-shim.log"
+set +e
+env -u BASH_ENV -u ASDF_DATA_DIR -u AGENT_STATE_DIR -u REMOTE_REPO \
+  HOME="$shim_home" PATH="$auto_path" \
+  ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-shim.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet-shim.json" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+  FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" \
+  PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  WORKER_STARTUP_STATE="$launch_state" \
+  bash --noprofile --norc "$script" --run run_shim --spec "$spec_file" \
+  --title myjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name nshim --repo "path:$shimrepo" 2>"$tmp/run-shim.err"
+ec_shim=$?
+set -e
+[ "$ec_shim" = 0 ] && ok || bad "minimal PATH start finds pinned node ($ec_shim) $(cat "$tmp/run-shim.err")"
+grep -qx node "$shim_log" && ok || bad "pinned node shim was invoked ($(cat "$shim_log" 2>/dev/null))"
+grep -q 'orchestration worker-start' "$tmp/orca-shim.log" && ok || bad "start reached worker-start under minimal PATH"
+
 # --run with unfixable bun pin: host-check fails, no worker-start
 badbun="$tmp/badbun"
 badbun_bare="$tmp/badbun.git"
@@ -589,6 +636,7 @@ helper_dir="$tmp/helpers"
 mkdir -p "$helper_dir/lib"
 cp "$script" "$helper_dir/worker-startup.sh"
 cp "$here/../lib/pr-review-gates.sh" "$helper_dir/lib/pr-review-gates.sh"
+cp "$here/../lib/automation-path.sh" "$helper_dir/lib/automation-path.sh"
 [ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 cp "$here/../worker-placement.py" "$helper_dir/worker-placement.py"
 chmod +x "$helper_dir/worker-startup.sh" "$helper_dir/worker-placement.py"
@@ -1021,6 +1069,39 @@ set -e
 [ "$ec_nomap" -ne 0 ] && ok || bad "unmapped repo on every host refuses ($ec_nomap)"
 grep -q 'no host has a repo mapping' <<<"$out_nomap" && ok || bad "unmapped refusal names the repo mapping ($out_nomap)"
 grep -q 'no readable load' <<<"$out_nomap" && bad "unmapped refusal must not say no readable load" || ok
+
+# Orca registers the physical checkout. A symlink selector must be rewritten before worktree create.
+link_real="$tmp/link-real"
+mkdir -p "$link_real"
+git -C "$link_real" init -q
+ln -s "$link_real" "$tmp/link-repo"
+link_physical=$(cd "$tmp/link-repo" && pwd -P)
+cat >"$tmp/orca-link" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${ORCA_STUB_LOG:?}"
+case " $* " in
+  *" worktree create "*)
+    printf '%s\n' '{"ok":true,"result":{"worktree":{"path":"/tmp/wt-link"}}}'
+    exit 0 ;;
+  *" orchestration worker-start "*)
+    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_link","taskId":"task_link","runId":"run_x","state":"ready","agent":"claude","model":"sonnet"}}'
+    exit 0 ;;
+esac
+exit 99
+EOS
+chmod +x "$tmp/orca-link"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-link" ORCA_STUB_LOG="$tmp/orca-link.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  WORKER_STARTUP_STATE="$tmp/link-state" \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model sonnet \
+  --from term_coord --name nlink --repo "path:$tmp/link-repo" >"$tmp/link.out" 2>"$tmp/link.err"
+ec_link=$?
+set -e
+[ "$ec_link" = 0 ] && ok || bad "symlink repo run exits 0 ($ec_link) $(cat "$tmp/link.err")"
+grep -F "path:$link_physical" "$tmp/orca-link.log" >/dev/null && ok || bad "worktree create uses the physical repo ($link_physical) $(cat "$tmp/orca-link.log")"
+grep -F "path:$tmp/link-repo" "$tmp/orca-link.log" >/dev/null && bad "worktree create kept the symlink repo" || ok
 
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]
