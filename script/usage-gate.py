@@ -3,7 +3,9 @@
 
 check --provider NAME exits 0 allowed, 3 weekly/cycle ceiling reached, 4 unknown.
 show [--json] includes the exact source and reading age; pick --role ROLE retains
-its existing flags and ranks providers by remaining weekly/cycle headroom.
+its existing flags. fullstack-dev and light-tier roles take the first allowed of
+Cursor grok-4.7-xhigh, then that role's Claude entry, then Antigravity. Strong
+roles never select Cursor. Every other role ranks by remaining weekly/cycle headroom.
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
 endpoint; Cursor reads its Auto + Composer billing-cycle pool;
 Antigravity queries local GetUserStatus, defaulting to the Gemini Flash pool.
@@ -32,6 +34,7 @@ CURSOR_BUILD_MODEL = "grok-4.7-xhigh"
 CURSOR_URGENT_MODEL = "grok-4.7-xhigh-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
+STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops", "qa-sdet")
 
 
 def epoch(at):
@@ -784,6 +787,28 @@ def role_chain(role):
     return chain, entry.get("pin", False)
 
 
+def is_builder_role(role):
+    """Implementation and light units start on Cursor when that provider is allowed."""
+    if role == "fullstack-dev":
+        return True
+    presets = load_presets()
+    roles = presets.get("roles", {})
+    lookup = "qa-sdet" if role == "reviewer" and "reviewer" not in roles else role
+    entry = roles.get(lookup, {})
+    return isinstance(entry, dict) and entry.get("tier") == "light"
+
+
+def order_builder_chain(chain):
+    """Cursor grok-4.7-xhigh, then Claude, then Antigravity, whatever the preset text says."""
+    cursor = [entry for entry in chain
+              if entry.get("provider") == "cursor" and entry.get("model") == CURSOR_BUILD_MODEL]
+    if not cursor:
+        cursor = [{"provider": "cursor", "model": CURSOR_BUILD_MODEL}]
+    claude = [entry for entry in chain if entry.get("provider") == "claude"]
+    antigravity = [entry for entry in chain if entry.get("provider") == "antigravity"]
+    return [*cursor[:1], *claude, *antigravity]
+
+
 def family(entry):
     provider, model = entry["provider"], entry["model"]
     if provider == "claude" or (provider in ("antigravity", "cursor") and model.startswith("claude-")):
@@ -801,6 +826,9 @@ def family(entry):
 
 def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
     chain, pinned = role_chain(role)
+    builder = is_builder_role(role)
+    if builder:
+        chain = order_builder_chain(chain)
     rows = {}
     for entry in chain:
         key = (entry["provider"], entry["model"] if entry["provider"] == "antigravity" else None)
@@ -820,6 +848,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         excluded_provider = entry["provider"] == avoid_provider
         if entry["provider"] == "cursor" and entry["model"] not in CURSOR_MODELS:
             eligible, row = False, {**row, "verdict": "cursor runs only grok-4.7-xhigh, grok-4.7-xhigh-fast and grok-4.7-high"}
+        if role in STRONG_NO_CURSOR and entry["provider"] == "cursor":
+            eligible, row = False, {**row, "verdict": "strong roles never run on Cursor"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
@@ -831,7 +861,9 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
             allowed.append((index, candidate))
     chosen = None
     if allowed:
-        if (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
+        if builder:
+            chosen = allowed[0][1]
+        elif (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
             chosen = allowed[0][1]
         else:
             best = max(allowed, key=lambda pair: pair[1]["headroom_fraction"]

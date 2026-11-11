@@ -683,7 +683,7 @@ class IdleReading(unittest.TestCase):
 
 
 class Pick(unittest.TestCase):
-    def invoke(self, chain=None, role="fullstack-dev", claude=44, other=41, extra=(), pin=False,
+    def invoke(self, chain=None, role="dev", claude=44, other=41, extra=(), pin=False,
                running=0, default=False, cap=12, other_baseline=40):
         readings = {}   # "other" stands in for a second gated provider with a readable weekly percent
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
@@ -1468,3 +1468,111 @@ class ProjectPresetsMergeTests(unittest.TestCase):
         self.assertEqual(output["permissionDecision"], "deny")
         self.assertIn("overflow-1", output["permissionDecisionReason"])
         self.assertIn("script/start-remote-worker.sh --on overflow-1", output["permissionDecisionReason"])
+
+
+class BuilderCursorRoute(unittest.TestCase):
+    """Owner 2026-11-09 line 7: builders take Cursor grok-4.7-xhigh first, in code.
+
+    The preset text may still list Claude first. Strong roles never take Cursor.
+    Light is whatever role pick already stores as tier light (fullstack-dev-small).
+    """
+
+    PRESETS = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+    FS = [{"provider": "claude", "model": "sonnet", "effort": "medium"},
+          {"provider": "antigravity", "model": "gemini-4-argon-medium"},
+          {"provider": "cursor", "model": "grok-4.7-xhigh"}]
+    LIGHT = [{"provider": "claude", "model": "haiku"},
+             {"provider": "antigravity", "model": "gemini-3.8-flash"},
+             {"provider": "cursor", "model": "grok-4.7-xhigh"}]
+
+    def flags(self, role, roles, weekly):
+        path = os.path.join(self.tmp, "presets.json")
+        with open(path, "w") as handle:
+            json.dump({"roles": roles}, handle)
+
+        def fake_run(provider, *_args, **_kwargs):
+            used = weekly.get(provider, 10)
+            verdict = weekly.get(provider + ":verdict")
+            if verdict is None:
+                verdict = "blocked" if used >= 95 else "allowed"
+            return {"provider": provider, "verdict": verdict, "ceiling": 95,
+                    "weekly_used": used, "reserve": 0}
+
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "antigravity_models", return_value=None), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            status = ug.main(["pick", "--role", role])
+        return status, out.getvalue().strip()
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+
+    def test_builder_names_are_fullstack_dev_and_light_tier(self):
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}):
+            self.assertTrue(ug.is_builder_role("fullstack-dev"))
+            self.assertTrue(ug.is_builder_role("fullstack-dev-small"))
+            for role in ("elon", "architect-pm", "qa-sdet", "secops-finops", "release-manager"):
+                self.assertFalse(ug.is_builder_role(role), role)
+
+    def test_fullstack_dev_picks_cursor_when_allowed_even_if_text_lists_claude_first(self):
+        # Cursor has less headroom than Claude and Antigravity. The old pin would stay on Claude.
+        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
+        status, out = self.flags("fullstack-dev", roles, {"cursor": 80, "claude": 40, "antigravity": 5})
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+
+    def test_fullstack_dev_picks_cursor_when_the_chain_omits_it(self):
+        chain = [entry for entry in self.FS if entry["provider"] != "cursor"]
+        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": chain}}
+        status, out = self.flags("fullstack-dev", roles, {"cursor": 80, "claude": 10, "antigravity": 10})
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+
+    def test_fullstack_dev_picks_sonnet_only_when_cursor_is_blocked(self):
+        # Antigravity has more headroom. Builders still walk the chain: Claude, then Antigravity.
+        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
+        status, out = self.flags("fullstack-dev", roles, {"cursor": 96, "claude": 40, "antigravity": 5})
+        self.assertEqual((status, out), (0, "--agent claude --model sonnet --effort medium"))
+
+    def test_fullstack_dev_picks_antigravity_after_cursor_and_claude_are_blocked(self):
+        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
+        status, out = self.flags("fullstack-dev", roles, {"cursor": 96, "claude": 96, "antigravity": 5})
+        self.assertEqual((status, out), (0, "--agent antigravity --model gemini-4-argon-medium"))
+
+    def test_light_tier_picks_cursor_then_its_own_claude_then_antigravity(self):
+        roles = {"clerk": {"tier": "light", "chain": self.LIGHT},
+                 "fullstack-dev-small": {"tier": "light", "chain": self.LIGHT}}
+        status, out = self.flags("clerk", roles, {"cursor": 80, "claude": 10, "antigravity": 1})
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+        status, out = self.flags("fullstack-dev-small", roles, {"cursor": 96, "claude": 40, "antigravity": 1})
+        self.assertEqual((status, out), (0, "--agent claude --model haiku"))
+        status, out = self.flags("fullstack-dev-small", roles, {"cursor": 96, "claude": 96, "antigravity": 5})
+        self.assertEqual((status, out), (0, "--agent antigravity --model gemini-3.8-flash"))
+
+    def test_strong_roles_never_pick_cursor(self):
+        chain = [{"provider": "cursor", "model": "grok-4.7-xhigh"},
+                 {"provider": "claude", "model": "opus", "effort": "medium"},
+                 {"provider": "antigravity", "model": "gemini-4-argon-high"}]
+        roles = {role: {"tier": "strong", "chain": chain}
+                 for role in ("elon", "architect-pm", "qa-sdet", "secops-finops")}
+        for role in roles:
+            with self.subTest(role=role):
+                status, out = self.flags(role, roles, {"cursor": 1, "claude": 40, "antigravity": 40})
+                self.assertEqual((status, out), (0, "--agent claude --model opus --effort medium"))
+                self.assertNotIn("cursor", out)
+
+    def test_shipped_chains_match_the_builder_rule(self):
+        with open(self.PRESETS) as handle:
+            roles = json.load(handle)["roles"]
+        fullstack = roles["fullstack-dev"]["chain"]
+        self.assertEqual([entry["provider"] for entry in fullstack], ["cursor", "claude", "antigravity"])
+        self.assertEqual(fullstack[0]["model"], "grok-4.7-xhigh")
+        self.assertEqual((fullstack[1]["model"], fullstack[1].get("effort")), ("sonnet", "medium"))
+        light = roles["fullstack-dev-small"]
+        self.assertEqual(light["tier"], "light")
+        self.assertEqual([entry["provider"] for entry in light["chain"]], ["cursor", "claude", "antigravity"])
+        self.assertEqual(light["chain"][0]["model"], "grok-4.7-xhigh")
+        for role in ("elon", "architect-pm", "qa-sdet", "secops-finops"):
+            providers = [entry["provider"] for entry in roles[role]["chain"]]
+            self.assertNotIn("cursor", providers, role)

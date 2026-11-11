@@ -1070,6 +1070,63 @@ set -e
 grep -q 'no host has a repo mapping' <<<"$out_nomap" && ok || bad "unmapped refusal names the repo mapping ($out_nomap)"
 grep -q 'no readable load' <<<"$out_nomap" && bad "unmapped refusal must not say no readable load" || ok
 
+# Builder route: fullstack-dev and light refuse Claude while pick allows Cursor.
+cat >"$tmp/pick-stub.py" <<'EOS'
+#!/usr/bin/env python3
+import os, sys
+mode = os.environ.get("PICK_STUB_MODE", "cursor")
+role = sys.argv[sys.argv.index("--role") + 1] if "--role" in sys.argv else ""
+with open(os.environ["PICK_STUB_LOG"], "a") as handle:
+    handle.write(role + "\n")
+if mode == "cursor":
+    print("--agent cursor --model grok-4.7-xhigh")
+    raise SystemExit(0)
+if mode == "sonnet":
+    print("--agent claude --model sonnet --effort medium")
+    raise SystemExit(0)
+if mode == "haiku":
+    print("--agent claude --model haiku")
+    raise SystemExit(0)
+raise SystemExit(4)
+EOS
+route_state="$tmp/route-state"
+mkdir -p "$route_state"
+route_run() { # <title> <agent> <model> [extra args...]
+  : >"$tmp/pick-stub.log"
+  : >"$tmp/orca-route.log"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-route.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    USAGE_GATE_PICK="$tmp/pick-stub.py" USAGE_GATE_PRESETS="$root/.orca/presets.json" \
+    PICK_STUB_MODE="${PICK_STUB_MODE:-cursor}" PICK_STUB_LOG="$tmp/pick-stub.log" \
+    WORKER_STARTUP_STATE="$route_state" \
+    bash --noprofile --norc "$script" --run run_route --spec "$spec_file" --title "$1" --agent "$2" --model "$3" \
+    --from term_coord --name nroute --repo "path:$clean" "${@:4}" \
+    >"$tmp/route.out" 2>"$tmp/route.err"
+  route_ec=$?
+  set -e
+}
+PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on claude should be refused while Cursor is allowed (ec=$route_ec)"
+grep -Fq -- '--agent cursor --model grok-4.7-xhigh' "$tmp/route.err" && ok || bad "refusal should print the pick ($(cat "$tmp/route.err"))"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused builder must not reach worker-start" || ok
+PICK_STUB_MODE=cursor route_run "fullstack-dev-small - chore" claude claude-haiku
+[ "$route_ec" -ne 0 ] && ok || bad "light unit on claude should be refused while Cursor is allowed (ec=$route_ec)"
+grep -Fq -- '--agent cursor --model grok-4.7-xhigh' "$tmp/route.err" && ok || bad "light refusal should print the pick ($(cat "$tmp/route.err"))"
+rm -f "$route_state/route-override.log"
+PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium --route-override "cursor desktop trust is stuck"
+[ "$route_ec" = 0 ] && ok || bad "route override should let claude through (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fq 'cursor desktop trust is stuck' "$route_state/route-override.log" && ok || bad "route override should log the reason ($(cat "$route_state/route-override.log" 2>/dev/null))"
+grep -q 'worker-start' "$tmp/orca-route.log" && ok || bad "route override should still start the worker"
+PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "claude is allowed when pick says Cursor is blocked (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'refused' "$tmp/route.err" && bad "cursor-blocked pick must not refuse claude" || ok
+: >"$tmp/pick-stub.log"
+PICK_STUB_MODE=cursor route_run "elon - think" claude claude-opus
+[ "$route_ec" = 0 ] && ok || bad "strong role on claude must not hit the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q '^elon$' "$tmp/pick-stub.log" && bad "strong role must not be asked to yield to Cursor" || ok
+
 # Orca registers the physical checkout. A symlink selector must be rewritten before worktree create.
 link_real="$tmp/link-real"
 mkdir -p "$link_real"

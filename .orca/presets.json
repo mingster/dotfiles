@@ -56,6 +56,10 @@
       "description": "Fullstack developer implementing features test-first",
       "chain": [
         {
+          "provider": "cursor",
+          "model": "grok-4.7-xhigh"
+        },
+        {
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
@@ -63,10 +67,6 @@
         {
           "provider": "antigravity",
           "model": "gemini-4-argon-medium"
-        },
-        {
-          "provider": "cursor",
-          "model": "grok-4.7-xhigh"
         }
       ],
       "pin": true
