@@ -673,10 +673,26 @@ def json_equal(a, b):
     return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
+class CommandNameSet(list):
+    """Union of literal command name sets. Merged onto the shared read only defaults, not a regex replacement."""
+
+
+def command_names(val):
+    # A list of single token strings (a command name may be "["). A regex pattern has whitespace.
+    if isinstance(val, list) and val and all(
+        isinstance(item, str) and item.strip() and not any(ch.isspace() for ch in item) for item in val
+    ):
+        return val
+    if isinstance(val, list) and not val:
+        return val
+    return None
+
+
 def eval_guard_ast(node, errors, ctx, env=None):
     # Literal values, plus what project guards build them from: names bound earlier at module level
-    # (env), f-strings over those names, list comprehensions, re.compile, os.path.join and
-    # os.path.expanduser("~"), which stays "~" so the config does not pin the migrating machine's HOME.
+    # (env), f-strings over those names, list comprehensions, re.compile, os.path.join,
+    # os.path.expanduser("~") (stays "~" so the config does not pin the migrating machine's HOME),
+    # an empty set() call, and a | union of literal command name sets.
     env = env or {}
     if isinstance(node, ast.Constant):
         return node.value
@@ -725,6 +741,8 @@ def eval_guard_ast(node, errors, ctx, env=None):
             errors.append(f"unsupported call in {ctx}")
             return None
         args = [eval_guard_ast(a, errors, ctx, env) for a in node.args]
+        if func == "set" and not args:
+            return []
         if func == "re.compile" and args:
             if isinstance(args[0], str):
                 return args[0]
@@ -749,6 +767,13 @@ def eval_guard_ast(node, errors, ctx, env=None):
         return None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
         return -node.operand.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left = command_names(eval_guard_ast(node.left, errors, ctx, env))
+        right = command_names(eval_guard_ast(node.right, errors, ctx, env))
+        if left is None or right is None or errors:
+            errors.append(f"unsupported expression in {ctx}")
+            return None
+        return CommandNameSet([*left, *right])
     errors.append(f"unsupported expression in {ctx}")
     return None
 
@@ -922,6 +947,8 @@ def normalize_guard_value(key, raw, errors, ctx):
             return None
         return patterns
     if key == "host_deploy_commands":
+        if isinstance(raw, list) and not raw:
+            return None
         if not isinstance(raw, dict) or not all(
             isinstance(cmds, list) and all(isinstance(c, str) and c.strip() for c in cmds)
             for cmds in raw.values()
@@ -940,6 +967,19 @@ def normalize_guard_value(key, raw, errors, ctx):
                 errors.append(f"{ctx}: REMOTE_READ_ONLY pattern {p!r} is not a valid regex ({exc})")
                 return None
         return raw or None
+    if key == "remote_read_only_commands":
+        names = command_names(raw if isinstance(raw, list) else None)
+        if names is None:
+            errors.append(f"{ctx}: remote read only commands must be a list of single token names")
+            return None
+        out = []
+        seen = set()
+        for name in names:
+            token = name.strip()
+            if token not in seen:
+                seen.add(token)
+                out.append(token)
+        return out or None
     if key == "worktree_env_allow":
         if isinstance(raw, (list, tuple, set)):
             lst = [str(x) for x in raw if str(x).strip()]
@@ -1061,6 +1101,9 @@ def extract_guard_config():
                         if errors:
                             break
                         key = GUARD_CONST_MAP[cname]
+                        if cname == "REMOTE_READ_ONLY" and isinstance(val, CommandNameSet):
+                            key = "remote_read_only_commands"
+                            val = list(val)
                         raw_assigns.setdefault(key, []).append(val)
                     bind_guard_names(node, env)
                     if isinstance(node, ast.FunctionDef) and node.name == "names_production_host":

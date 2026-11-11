@@ -878,5 +878,56 @@ else
 fi
 export HOME="$tmp/home"
 
+# ── 10. An empty host deploy set is empty, and a union of command name sets is
+# extra read only commands merged with the shared defaults, never a replacement.
+union="$tmp/name-union"
+mkdir -p "$union/.claude/hooks"
+git -C "$union" init -q
+git -C "$union" config user.name "Test"
+git -C "$union" config user.email "test@example.invalid"
+cat > "$union/.claude/hooks/guard-bash.py" <<'PY'
+GREPS = {"grep", "rg"}
+HOST_DEPLOY_COMMANDS = set()
+REMOTE_READ_ONLY = {"echo", "ls", "["} | GREPS
+PY
+printf 'gate.example.invalid\n' > "$union/.claude/hooks/production-hosts.txt"
+printf '# Agents\n' > "$union/AGENTS.md"
+git -C "$union" add -A
+git -C "$union" commit -qm "fixture"
+union_out=$(bash "$SCRIPT" project "$union" --project-name fixture 2>&1) || true
+union_home="$tmp/union-home"
+mkdir -p "$union_home"
+if python3 - "$union" "$real_dotfiles/templates/agent-team/.claude/hooks/guard-bash.py" "$union_home" <<'PY'
+import json, os, subprocess, sys
+root, hook, home = sys.argv[1:]
+cfg = json.load(open(os.path.join(root, ".claude/hooks/guard-config.json")))
+assert "host_deploy_commands" not in cfg, cfg
+assert "remote_read_only" not in cfg, cfg
+assert set(cfg.get("remote_read_only_commands") or []) == {"echo", "ls", "[", "grep", "rg"}, cfg
+
+def decide(command):
+    payload = json.dumps({"tool_name": "Bash", "cwd": root, "tool_input": {"command": command}})
+    out = subprocess.run([sys.executable, hook], input=payload, text=True, capture_output=True,
+                         cwd=root, env={**os.environ, "HOME": home})
+    if out.returncode != 0:
+        raise SystemExit(out.stderr or out.stdout)
+    text = out.stdout.strip()
+    if not text:
+        return "allow"
+    return json.loads(text)["hookSpecificOutput"]["permissionDecision"]
+
+host = "root@gate.example.invalid"
+assert decide(f"ssh {host} uptime") == "allow", "shared default was replaced"
+assert decide(f"ssh {host} 'echo hi'") == "allow", "extra command was dropped"
+assert decide(f"ssh {host} 'ls /tmp'") == "allow", "extra command lost its arguments"
+assert decide(f"ssh {host} 'rm /tmp/x'") == "deny", "unlisted command was allowed"
+PY
+then
+  check "empty host deploy set and command name union merge with shared defaults" ok
+else
+  echo "$union_out" >&2
+  check "empty host deploy set and command name union merge with shared defaults" bad
+fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

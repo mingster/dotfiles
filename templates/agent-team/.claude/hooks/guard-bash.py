@@ -123,6 +123,7 @@ GIT_SSH_ENV = re.compile(r"^(GIT_SSH|GIT_SSH_COMMAND|GIT_PROXY_COMMAND)=")
 
 _P, _U, _N = r"/[A-Za-z0-9._/@+-]*", r"[A-Za-z0-9@._-]+", r"[0-9]+"
 # guard-config.json `remote_read_only` replaces this list.
+# `remote_read_only_commands` adds command names, with or without arguments, and never replaces it.
 DEFAULT_REMOTE_READ_ONLY = REMOTE_READ_ONLY = [re.compile(p) for p in (
     "true", "uptime", "free( -[hm])?", "df( -h)?", "cat /etc/os-release", "pg_lsclusters",
     "pm2 (status|ls|list|jlist)", f"pm2 logs {_U} --nostream( --lines {_N})?",
@@ -382,6 +383,11 @@ def load_guard_config(start_dir):
                     REMOTE_READ_ONLY.append(re.compile(pat))
                 except re.error:
                     pass
+    else:
+        REMOTE_READ_ONLY = list(DEFAULT_REMOTE_READ_ONLY)
+    for name in cfg_expect("remote_read_only_commands", list, "list") or []:
+        if isinstance(name, str) and name.strip() and not any(ch.isspace() for ch in name):
+            REMOTE_READ_ONLY.append(re.compile(re.escape(name.strip()) + r"(?: .*)?"))
 
 
 def segments(command):
