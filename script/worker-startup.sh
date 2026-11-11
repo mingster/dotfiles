@@ -356,6 +356,30 @@ PY
   echo "worker-startup: route override for $1: $3" >&2
 }
 
+run_captured() { # command... ; print its stdout, return its status. start_out is the caller's variable.
+  local ec=0
+  start_out=$("$@") || ec=$?
+  printf '%s\n' "$start_out"
+  return "$ec"
+}
+
+surface_antigravity_screen() { # <agent> <worker-start json>
+  local agent=$1 start_json=$2 dispatch msg ec check
+  [ "$agent" = antigravity ] || return 0
+  dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_json" 2>/dev/null || true)
+  [ -n "$dispatch" ] || die "antigravity start returned no dispatch"
+  check=$here/../.agents/skills/orca-team/worker-start-check.sh
+  [ -f "$check" ] || die "missing worker-start-check.sh"
+  set +e
+  msg=$(bash "$check" --screen-only "$dispatch" 15 2>&1)
+  ec=$?
+  set -e
+  if [ "$ec" -ne 0 ]; then
+    printf '%s\n' "$msg" >&2
+    exit "$ec"
+  fi
+}
+
 enforce_builder_cursor() { # <title> <agent> <override>
   local title=$1 agent=$2 override=$3 role kind pick_py pick_out pick_err flags
   [ "$agent" = claude ] || return 0
@@ -382,7 +406,7 @@ enforce_builder_cursor() { # <title> <agent> <override>
 
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
-  local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override=''
+  local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
   while [ $# -gt 0 ]; do
     case "$1" in
       --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override)
@@ -427,9 +451,10 @@ run_mode() {
         fi
         ;;
     esac
-    pr_review_gates_orchestration_worker_start "$agent" "${model:-}" "$wt_retry" -- \
+    run_captured pr_review_gates_orchestration_worker_start "$agent" "${model:-}" "$wt_retry" -- \
       --run "$run" --task "$task" --retry-of "$retry_of" \
-      --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"}
+      --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"} || exit $?
+    surface_antigravity_screen "$agent" "$start_out"
     return 0
   fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
@@ -531,12 +556,15 @@ run_mode() {
   brief=$(cat "$spec")
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
   if [ -n "$environment" ]; then
-    exec bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-      --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json
+    run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
+      --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || exit $?
+    surface_antigravity_screen "$agent" "$start_out"
+    return 0
   fi
-  pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
+  run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
     --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-    --worktree "path:$wt" --task-title "$title" --from "$from"
+    --worktree "path:$wt" --task-title "$title" --from "$from" || exit $?
+  surface_antigravity_screen "$agent" "$start_out"
   return 0
 }
 

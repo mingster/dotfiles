@@ -167,6 +167,9 @@ map_file() {
     script/*example|script/*.example.json)
       map_script_example "$path"
       ;;
+    .agents/skills/orca-team/worker-start-check.sh|.agents/skills/orca-team/worker-start-check.test.sh)
+      add_if_exists ".agents/skills/orca-team/worker-start-check.test.sh"
+      ;;
     .agents/skills/orca-team/*)
       add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
       ;;

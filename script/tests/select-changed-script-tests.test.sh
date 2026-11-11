@@ -307,4 +307,17 @@ case10_script_plus_already_selected_test
 case11_table_driven_mapped_paths
 case12_no_project_names_always_selected
 case13_lib_maps_referencing_tests
-echo 'PASS: 15 acceptance cases'
+
+case14_worker_start_check() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only \
+    .agents/skills/orca-team/worker-start-check.sh 2>&1)
+  grep -Fq 'Selected: .agents/skills/orca-team/worker-start-check.test.sh' <<<"$out" \
+    || fail "case14 must select worker-start-check.test.sh"
+  grep -Fq 'Fallback:' <<<"$out" && fail "case14 must not fall back to the full suite"
+  ok "case14 worker-start-check maps its test"
+}
+
+case14_worker_start_check
+echo 'PASS: 16 acceptance cases'
