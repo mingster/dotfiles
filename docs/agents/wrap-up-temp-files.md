@@ -76,7 +76,7 @@ A local terminal with no dispatch and no running agent is closed, and its worktr
 
 Each run reads every Run on this Orca and on every environment, then does two fleet wide steps before the worktree check.
 
-Release: a worker whose state is succeeded, stopped or failed, or whose liveness is exited or sleep, and whose terminal state is not released, gets `worker-release --dispatch <id>` (with `--environment` for a remote one). A ready or in progress worker that is live is never touched, nor the caller's `$ORCA_TERMINAL_HANDLE` or a Run coordinator's terminal.
+Release: a worker whose state is succeeded, stopped or failed, or whose liveness is exited or sleep, and whose terminal state is not released, retained, or `release_unknown`, gets `worker-release --dispatch <id>` (with `--environment` for a remote one). A row already in `release_unknown` has a recorded terminal that no longer resolves; it is not asked again and is counted once in the summary as needing no action. A ready or in progress worker that is live is never touched, nor the caller's `$ORCA_TERMINAL_HANDLE` or a Run coordinator's terminal.
 
 Close: on a remote environment a terminal whose worktree has only settled dispatches is closed (setup and plain shell panes included), and so is one whose worktree this run removed (a second pass after the worktree step). A terminal in a worktree with no dispatch record stays kept as unknown user, since it may be a user session, a dev server or another coordinator. Kept: a terminal outside a worktree, a running agent, a main terminal, and everything under a scheduled round.
 

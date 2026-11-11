@@ -1,0 +1,1 @@
+Wrap-up no longer calls worker-release again for a worker whose terminal state is already release_unknown. The summary counts those workers once as needing no action, so a round can release finished workers and close their terminals, including ones whose liveness is sleep.

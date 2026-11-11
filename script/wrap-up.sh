@@ -1013,13 +1013,18 @@ close_finished_terminals() {
 # one is Orca's final answer; asking again every round spent the whole time limit, so every later step was skipped. Releases
 # also stop once half the time limit is used, so the terminal and worktree steps always get their turn. An ok:true receipt
 # (released, retained, already_released) counts as released whatever the exit code.
+# Issue 877: terminalState release_unknown means the recorded terminal no longer resolves. worker-release returns that
+# same receipt, so asking again every round spends the time limit and the close step never reaches finished terminals.
+# Those rows are not released and not closed here. The summary counts them once as needing no action.
 released_count=0
+no_action_count=0
 release_finished_workers() {
   local env id why label receipt
   while IFS=$'\t' read -r env id why; do
     [ -n "$id" ] || continue
     [ "$env" != - ] || env=''
     label=${env:-local}
+    if [ "$why" = no-action ]; then no_action_count=$((no_action_count+1)); continue; fi
     if [ "$apply" -eq 1 ] && [ $((deadline-SECONDS)) -lt $((total_timeout/2)) ]; then
       echo 'Warning: releases used half the time limit; the rest wait for the next run.' >&2
       fail_item 'releases' 'half the time limit used; the rest next run'; break
@@ -1043,7 +1048,8 @@ release_finished_workers() {
          elif (["exited","sleep"] | index($live)) != null then "liveness " + $live else empty end) as $why
       | select(((["ready","in_progress"] | index($st)) != null and $live == "live") | not)
       | select($h == "" or ($h != $own and (($coordinators | split("\n")) | index($h) | not)))
-      | [(if $env == "" then "-" else $env end), .dispatchId, $why]]
+      | (if .terminalState == "release_unknown" then "no-action" else $why end) as $act
+      | [(if $env == "" then "-" else $env end), .dispatchId, $act]]
     | unique_by([.[0], .[1]])[] | @tsv' "$tmp/h-release-rows")
 }
 if command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
@@ -2082,6 +2088,7 @@ if [ "$apply" -eq 0 ]; then echo 'Planned counts (nothing deleted):'; else echo 
 printf 'removed worktrees=%s orca records=%s deleted local=%s deleted remote=%s kept=%s stale=%s stale deleted=%s\n' "$removed" "$orca_removed" "$local_deleted" "$remote_deleted" "$kept" "$stale_found" "$stale_deleted"
 printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'workers released=%s\n' "$released_count"
+printf 'workers needing no action=%s\n' "$no_action_count"
 printf 'last copies kept=%s\n' "$last_copy_kept"
 printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
