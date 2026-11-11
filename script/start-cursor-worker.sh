@@ -73,6 +73,7 @@ if [ -z "$wt" ]; then
     id:*|path:*) repo_selector=$repo ;;
     *) repo_selector="path:$repo" ;;
   esac
+  repo_selector=$(pr_review_gates_canonicalize_repo "$repo_selector")
   # An id selector has no local directory; let Orca resolve its default base.
   if [ -z "$base" ] && [ -z "$environment" ] && [[ "$repo_selector" == path:* ]]; then
     base=$(git -C "${repo_selector#path:}" symbolic-ref --quiet --short refs/remotes/origin/HEAD)

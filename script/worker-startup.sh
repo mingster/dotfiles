@@ -434,6 +434,7 @@ run_mode() {
     if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
       repo_selector=$WORKER_STARTUP_PLACED_REPO
     fi
+    repo_selector=$(pr_review_gates_canonicalize_repo "$repo_selector")
     if [ -z "$base" ] && [ -z "$environment" ] && [[ "$repo_selector" == path:* ]]; then
       base=$(git -C "${repo_selector#path:}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
     fi

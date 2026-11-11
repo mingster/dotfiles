@@ -1070,5 +1070,38 @@ set -e
 grep -q 'no host has a repo mapping' <<<"$out_nomap" && ok || bad "unmapped refusal names the repo mapping ($out_nomap)"
 grep -q 'no readable load' <<<"$out_nomap" && bad "unmapped refusal must not say no readable load" || ok
 
+# Orca registers the physical checkout. A symlink selector must be rewritten before worktree create.
+link_real="$tmp/link-real"
+mkdir -p "$link_real"
+git -C "$link_real" init -q
+ln -s "$link_real" "$tmp/link-repo"
+link_physical=$(cd "$tmp/link-repo" && pwd -P)
+cat >"$tmp/orca-link" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${ORCA_STUB_LOG:?}"
+case " $* " in
+  *" worktree create "*)
+    printf '%s\n' '{"ok":true,"result":{"worktree":{"path":"/tmp/wt-link"}}}'
+    exit 0 ;;
+  *" orchestration worker-start "*)
+    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_link","taskId":"task_link","runId":"run_x","state":"ready","agent":"claude","model":"sonnet"}}'
+    exit 0 ;;
+esac
+exit 99
+EOS
+chmod +x "$tmp/orca-link"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-link" ORCA_STUB_LOG="$tmp/orca-link.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  WORKER_STARTUP_STATE="$tmp/link-state" \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model sonnet \
+  --from term_coord --name nlink --repo "path:$tmp/link-repo" >"$tmp/link.out" 2>"$tmp/link.err"
+ec_link=$?
+set -e
+[ "$ec_link" = 0 ] && ok || bad "symlink repo run exits 0 ($ec_link) $(cat "$tmp/link.err")"
+grep -F "path:$link_physical" "$tmp/orca-link.log" >/dev/null && ok || bad "worktree create uses the physical repo ($link_physical) $(cat "$tmp/orca-link.log")"
+grep -F "path:$tmp/link-repo" "$tmp/orca-link.log" >/dev/null && bad "worktree create kept the symlink repo" || ok
+
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]
