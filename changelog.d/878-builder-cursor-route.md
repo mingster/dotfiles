@@ -1,0 +1,1 @@
+- Builders (`fullstack-dev` and light-tier roles) pick Cursor `grok-4.7-xhigh` whenever it is allowed, then that role's Claude entry, then Antigravity. `worker-startup.sh` refuses a Claude start for those roles while that pick stands, unless `--route-override` logs a reason. Strong roles never pick Cursor (#878).

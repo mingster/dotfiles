@@ -268,16 +268,18 @@ class Hook(unittest.TestCase):
 
     def test_start_must_use_pick_even_on_retry(self):
         self.claude(44, baseline=40)
-        # Cursor has less headroom than claude, so the pick lands on claude and a cursor start is flagged.
+        # Cursor has less headroom than Claude and is still allowed, so a builder pick stays on Cursor.
         self.composer_pool(90, 85)
         for retry in ("", " --retry-of dispatch_old"):
-            deny, err = self.run_hook("orca orchestration worker-start --task t --agent cursor "
+            deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude "
                                     "--task-title 'fullstack-dev - job'" + retry)
             self.assertIsNone(deny)
-            self.assertIn("pick recommends claude", err)
-            self.assertIn("claude headroom", err)
-        self.assertEqual(self.run_hook("orca orchestration worker-start --agent claude "
-                                      "--task-title 'fullstack-dev - job'"), (None, ""))
+            self.assertIn("pick recommends cursor", err)
+            self.assertIn("cursor headroom", err)
+        deny, err = self.run_hook("orca orchestration worker-start --agent cursor "
+                                  "--task-title 'fullstack-dev - job'")
+        self.assertIsNone(deny)
+        self.assertNotIn("pick recommends", err)
 
     def test_remote_start_must_use_the_start_tool(self):
         self.claude(10)
@@ -333,12 +335,12 @@ class Hook(unittest.TestCase):
     def test_override_only_applies_to_its_command_and_not_spec_text(self):
         self.composer_pool(90, 85)
         self.claude(44, baseline=40)
-        start = "orca orchestration worker-start --agent cursor --task-title 'fullstack-dev - job'"
+        start = "orca orchestration worker-start --agent claude --task-title 'fullstack-dev - job'"
         for cmd in ("USAGE_GATE_OVERRIDE=outage " + start + " && " + start,
                     start + " --spec 'USAGE_GATE_OVERRIDE=outage'",
                     "echo USAGE_GATE_OVERRIDE=outage; " + start):
             self.assertIsNone(self.run_hook(cmd)[0])
-            self.assertIn("pick recommends claude", self.run_hook(cmd)[1])
+            self.assertIn("pick recommends cursor", self.run_hook(cmd)[1])
 
     def test_unknown_role_override_is_also_logged(self):
         self.claude(44)

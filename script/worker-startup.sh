@@ -5,7 +5,10 @@
 #   worker-startup.sh --host-check
 #   worker-startup.sh --pick-host-only --spec FILE
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
+#         [--route-override REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
+# A fullstack-dev or light-tier title ("<role> - <job>") started with --agent claude is refused while
+# usage-gate.py pick still allows Cursor. --route-override REASON logs the reason and allows that start.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -303,18 +306,86 @@ host_check() {
 # --- --run: optional worktree create (non-cursor), then delegate ---
 
 usage_run() {
-  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]" >&2
+  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV] [--route-override REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
   echo "       worker-startup.sh --run ID --task ID --retry-of DISPATCH_ID --worktree SELECTOR --agent NAME --from HANDLE [--model ID]" >&2
   exit 2
 }
 
+role_from_title() { # "<role> - <job>" -> role; anything else prints nothing
+  local title=$1 role
+  case "$title" in
+    *" - "*) role=${title%% - *} ;;
+    *) return 0 ;;
+  esac
+  case "$role" in
+    *[!a-z0-9-]*) return 0 ;;
+    [a-z]*) printf '%s\n' "$role" ;;
+  esac
+}
+
+role_class() { # <role> -> builder|other; exit 2 when presets cannot be read
+  "$python3" - "$here/usage-gate.py" "$1" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("usage_gate_route", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    builder = mod.is_builder_role(sys.argv[2])
+except Exception as exc:
+    print("worker-startup: cannot classify role:", type(exc).__name__, file=sys.stderr)
+    sys.exit(2)
+print("builder" if builder else "other")
+PY
+}
+
+log_route_override() { # <role> <agent> <reason>
+  mkdir -p "$state_dir"
+  "$python3" - "$state_dir/route-override.log" "$1" "$2" "$3" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+path, role, agent, reason = sys.argv[1:]
+with open(path, "a") as handle:
+    handle.write(json.dumps({
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "role": role,
+        "agent": agent,
+        "reason": reason,
+    }) + "\n")
+PY
+  echo "worker-startup: route override for $1: $3" >&2
+}
+
+enforce_builder_cursor() { # <title> <agent> <override>
+  local title=$1 agent=$2 override=$3 role kind pick_py pick_out pick_err flags
+  [ "$agent" = claude ] || return 0
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || die "cannot classify role $role"
+  [ "$kind" = builder ] || return 0
+  if [ -n "$override" ]; then
+    log_route_override "$role" "$agent" "$override"
+    return 0
+  fi
+  pick_py=${USAGE_GATE_PICK:-${USAGE_GATE_CLI:-$here/usage-gate.py}}
+  pick_err="$state_dir/pick-route.err"
+  pick_out=$("$python3" "$pick_py" pick --role "$role" 2>"$pick_err" || true)
+  flags=$(printf '%s\n' "$pick_out" | awk '/^--agent /{line=$0} END{print line}')
+  case "$flags" in
+    "--agent cursor"*)
+      echo "worker-startup: refused $role on claude while Cursor is allowed: $flags" >&2
+      [ ! -s "$pick_err" ] || cat "$pick_err" >&2
+      exit 1
+      ;;
+  esac
+}
+
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
-  local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of=''
+  local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override=''
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of)
+      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override)
         [ $# -ge 2 ] || usage_run
         case "$1" in
           --run) run=$2 ;;
@@ -331,6 +402,7 @@ run_mode() {
           --base-branch) base=$2 ;;
           --task) task=$2 ;;
           --retry-of) retry_of=$2 ;;
+          --route-override) route_override=$2; [ -n "$route_override" ] || die "route override needs a reason" ;;
         esac
         shift 2 ;;
       *) usage_run ;;
@@ -366,6 +438,7 @@ run_mode() {
   local lint_out dispatch_log
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
+  enforce_builder_cursor "$title" "$agent" "$route_override"
 
   # A merge worker reads the local Orca run list, so it runs on the coordinator host, never on an overflow host.
   local merge_worker=''
