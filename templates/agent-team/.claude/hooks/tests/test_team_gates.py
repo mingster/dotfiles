@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import importlib.util
 
 HOOKS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(HOOKS, "guard-bash.py")
@@ -176,6 +177,57 @@ class RoleFileGate(Gate):
         self.commit_real(".claude/model-routing.md", "tweak routing" + TRAILER)
         self.assertAllowed('gh pr create --title "x" --body "y"', self.repo)
 
+    def stage(self, rel):
+        self.write(rel, "v2\n")
+        sh(self.repo, "git", "add", "-A")
+
+    def test_git_dash_c_checks_the_named_folder(self):
+        self.stage(".claude/agents/elon.md")
+        self.assertDenied(f'git -C {self.repo} commit -m "x"', "Owner-approved:", self.home)
+
+    def test_git_dash_c_elsewhere_is_not_a_false_deny(self):
+        other = os.path.join(self.home, "other")
+        os.makedirs(other)
+        sh(other, "git", "init", "-q")
+        self.stage(".claude/agents/elon.md")
+        self.assertAllowed('git -C ../other commit -m "x"', self.repo)
+
+    def test_git_dir_and_work_tree_name_the_repo(self):
+        self.stage(".claude/agents/elon.md")
+        for form in (f"--git-dir {self.repo}/.git --work-tree {self.repo}",
+                     f"--git-dir={self.repo}/.git --work-tree={self.repo}"):
+            self.assertDenied(f'git {form} commit -m "x"', "Owner-approved:", self.home)
+
+    def test_commit_file_trailer_is_read(self):
+        self.stage(".claude/agents/elon.md")
+        self.write("msg.txt", "tweak" + TRAILER + "\n")
+        self.write("bare.txt", "tweak\n")
+        for flag in ("-F msg.txt", "--file msg.txt", "--file=msg.txt"):
+            self.assertAllowed(f"git commit {flag}", self.repo)
+        self.assertAllowed(f"git -C {self.repo} commit -F msg.txt", self.home)
+        self.assertDenied("git commit -F bare.txt", "Owner-approved:", self.repo)
+
+    def test_commit_file_fifo_does_not_hang(self):
+        self.stage(".claude/agents/elon.md")
+        os.mkfifo(os.path.join(self.repo, "fifo.txt"))
+        self.assertDenied("git commit -F fifo.txt", "Owner-approved:", self.repo)
+
+
+class GateBugDoesNotSkipGuards(unittest.TestCase):
+    def test_team_gate_error_still_reaches_production_guards(self):
+        spec = importlib.util.spec_from_file_location("guard_bash", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        def boom(*_):
+            raise RuntimeError("bug in a team gate")
+
+        mod.check_team_gates = boom
+        reached = []
+        mod.check_git_ssh = lambda args: reached.append("ssh")
+        mod.check_command("git push origin main")
+        self.assertEqual(reached, ["ssh"])
+
 
 BRIEF_SECTIONS = (
     "\n## Acceptance\n- [ ] criterion\n"
@@ -307,6 +359,55 @@ class CursorWorkerScript(Gate):
         # The script reads the lead from ORCA_TERMINAL_HANDLE when --from is absent.
         self.write_brief("Refs #7114. You are qa-sdet." + BRIEF_SECTIONS)
         self.assertAllowed(f"{self.SCRIPT.replace('--from term_abc', '')} --spec brief.md --on remote-host")
+
+
+class WorkerBrief(Gate):
+    """The grill gate reads the brief the worker really gets, not the whole Bash string."""
+    START = "orca orchestration worker-start --agent claude --worktree new-child"
+    NOTES = "cat > notes.md <<'EOF'\nfullstack-dev finished #1111\nEOF\n"
+    BRIEF = "Refs acme/project-a#6936. You are fullstack-dev." + BRIEF_SECTIONS
+    REVIEW = "Refs #6936. You are qa-sdet." + BRIEF_SECTIONS
+
+    def write_brief(self, text=BRIEF):
+        with open(os.path.join(self.home, "brief.md"), "w") as f:
+            f.write(text)
+
+    def test_earlier_heredoc_does_not_make_a_reviewer_a_build_worker(self):
+        self.assertAllowed(f'{self.NOTES}{self.START} --spec "{self.REVIEW}"')
+
+    def test_earlier_heredoc_does_not_decide_the_issue(self):
+        build = "Refs #6936. You are fullstack-dev." + BRIEF_SECTIONS
+        self.assertDenied(f'{self.NOTES}{self.START} --spec "{build}"', "#6936")
+
+    def test_spec_file_in_this_commands_heredoc_is_checked(self):
+        self.assertDenied(f"cat > new.md <<'EOF'\n{self.BRIEF}EOF\n{self.START} --spec-file new.md", "#6936")
+
+    def test_spec_file_from_stdin_heredoc_is_checked(self):
+        self.assertDenied(f"{self.NOTES}{self.START} --spec-file - <<'EOF'\n{self.BRIEF}EOF", "#6936")
+
+    def test_cat_substitution_is_read(self):
+        self.write_brief()
+        self.assertDenied(f'{self.START} --spec "$(cat brief.md)"', "#6936")
+
+    def test_cat_substitution_of_a_review_brief_not_gated(self):
+        self.write_brief(self.REVIEW)
+        self.assertAllowed(f'{self.NOTES}{self.START} --spec "$(cat brief.md)"')
+
+    def test_cat_substitution_with_home_path_is_read(self):
+        self.write_brief()
+        self.assertDenied(f'{self.START} --spec "$(cat ~/brief.md)"', "#6936")
+        self.assertDenied(f'{self.START} --spec "$(cat "$HOME/brief.md")"', "#6936")
+
+    def test_redirect_substitution_is_read(self):
+        self.write_brief()
+        self.assertDenied(f'{self.START} --spec "$(< brief.md)"', "#6936")
+
+    def test_heredoc_inside_the_substitution_is_read(self):
+        self.assertDenied(f"{self.NOTES}{self.START} --spec \"$(cat <<'EOF'\n{self.BRIEF}EOF\n)\"", "#6936")
+        self.assertAllowed(f"{self.NOTES}{self.START} --spec \"$(cat <<'EOF'\n{self.REVIEW}EOF\n)\"")
+
+    def test_unreadable_brief_falls_back_to_the_whole_command(self):
+        self.assertDenied(f'echo fullstack-dev #6936; {self.START} --spec "$(cat missing.md)"', "#6936")
 
 
 class OwningLead(Gate):

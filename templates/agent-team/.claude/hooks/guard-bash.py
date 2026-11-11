@@ -1627,15 +1627,42 @@ def option_value(args, name):
 
 
 def git_verb(args):
-    i = 0
+    """(verb, its args, the -C, --git-dir and --work-tree options that name the repo)."""
+    i, repo = 0, []
     while i < len(args):
-        if args[i] in ("-C", "-c"):
+        a = args[i]
+        if a in ("-C", "--git-dir", "--work-tree") and i + 1 < len(args):
+            repo += [a, os.path.expanduser(args[i + 1])]
             i += 2
-        elif args[i].startswith("-"):
+        elif a.startswith(("--git-dir=", "--work-tree=")):
+            repo += a.split("=", 1)
+            i += 1
+        elif a in ("-c", "--namespace", "--config-env"):
+            i += 2
+        elif a.startswith("-"):
             i += 1
         else:
-            return args[i], args[i + 1:]
-    return None, []
+            return a, args[i + 1:], repo
+    return None, [], repo
+
+
+def commit_message_file(rest, repo):
+    """The text of `commit -F <file>` / `--file`, read where git reads it (after each -C). Not a FIFO."""
+    path = option_value(rest, "-F") or option_value(rest, "--file")
+    if not path or path == "-":
+        return ""
+    folder = GATE_CWD or os.getcwd()
+    for flag, value in zip(repo[::2], repo[1::2]):
+        if flag == "-C":
+            folder = os.path.join(folder, value)
+    full = os.path.join(folder, os.path.expanduser(path))
+    try:
+        if os.path.isfile(full):
+            with open(full, errors="replace") as f:
+                return f.read(65536)
+    except OSError:
+        pass
+    return ""
 
 
 def deny_role_files(files, how):
@@ -1649,18 +1676,20 @@ def deny_role_files(files, how):
 def check_role_file_gate(base, args):
     root = find_project_root(GATE_CWD or os.getcwd())
     adopted = is_adopted_project(root) and not sync_enabled(RAW_COMMAND)
+    git = ["git"]
     if base == "git":
-        verb, rest = git_verb(args)
+        verb, rest, repo = git_verb(args)
+        git += repo
         if verb == "commit":
-            staged = set((gate_run(["git", "diff", "--cached", "--name-only"], None) or "").split())
+            staged = set((gate_run([*git, "diff", "--cached", "--name-only"], None) or "").split())
             if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
-                staged |= set((gate_run(["git", "diff", "--name-only"], None) or "").split())
+                staged |= set((gate_run([*git, "diff", "--name-only"], None) or "").split())
             if adopted:
                 managed = sorted(f for f in staged if is_template_managed_rel(f))
                 if managed:
                     deny_template_managed(managed[0])
             files = {f for f in staged if is_protected(f)}
-            if files and not OWNER_TRAILER.search(RAW_COMMAND):
+            if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
                 deny_role_files(files, "This commit")
             return
         if verb != "push":
@@ -1668,11 +1697,11 @@ def check_role_file_gate(base, args):
     elif not (base == "gh" and args[:2] == ["pr", "create"]):
         return
     # Push or PR create: every commit not yet on origin/main that touches a protected path needs the trailer.
-    shas = (gate_run(["git", "rev-list", "origin/main..HEAD"], None) or "").split()
+    shas = (gate_run([*git, "rev-list", "origin/main..HEAD"], None) or "").split()
     for sha in shas:
-        changed = (gate_run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha], None) or "").split()
+        changed = (gate_run([*git, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha], None) or "").split()
         files = {f for f in changed if is_protected(f)}
-        message = gate_run(["git", "show", "-s", "--format=%B", sha], None) or ""
+        message = gate_run([*git, "show", "-s", "--format=%B", sha], None) or ""
         if files and not OWNER_TRAILER.search(message):
             deny_role_files(files, f"Commit {sha[:9]}")
 
@@ -1693,8 +1722,38 @@ def brief_lint_script():
     return os.path.join(dotfiles, "script", "brief-lint.sh")
 
 
+HEREDOC = re.compile(r"(?<!<)<<-?(?!<)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+SPEC_HEREDOC = re.compile(r"(?s)\$\(\s*cat\s*<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\n(.*?)\n[ \t]*\2[ \t]*\n?\s*\)")
+SPEC_CAT = re.compile(r"\$\(\s*(?:cat\s+|<\s*)([^\s()`]+)\s*\)|`\s*cat\s+([^\s`]+)\s*`")
+SHELL_EXPANSION = re.compile(r"\$[A-Za-z_{(]|`")
+
+
+def heredocs(command):
+    """[(the line that opens it, its body)] for each heredoc in the command."""
+    lines, out, i = command.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        for m in HEREDOC.finditer(line):
+            body = []
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            out.append((line, "\n".join(body)))
+    return out
+
+
 def brief_text(path):
-    """A brief file's text, or None when it cannot be read."""
+    """A brief's text: the heredoc in this command that writes it (for `-`, the one that feeds
+    worker-start), else the file. None when neither has it."""
+    if path == "-":
+        found = re.compile(r"\bworker-start\b")
+    else:
+        found = re.compile(r"(?<![\w./~$-])" + re.escape(path) + r"(?![\w./-])")
+    for opener, body in heredocs(RAW_COMMAND):
+        if found.search(opener):
+            return body + "\n"
     full = os.path.join(GATE_CWD or "", os.path.expanduser(os.path.expandvars(path)))
     try:
         if os.path.isfile(full):
@@ -1784,12 +1843,29 @@ def check_worker_start(args, script=False):
             if brief is None:
                 deny(f"The brief `{spec_file}` could not be read. Fix the path (or write the brief first) and start the worker again; "
                      "see ~/.agents/skills/triage/AGENT-BRIEF.md.")
-            spec = "\n".join([RAW_COMMAND, brief])
+            spec = "\n".join([" ".join(args), brief])
         else:
-            brief = option_value(args, "--spec")
-            spec = RAW_COMMAND
+            brief, spec = inline_spec_text(option_value(args, "--spec") or "", args)
     check_grill_gate(args, spec)
     check_brief_lint(brief)
+
+
+def inline_spec_text(spec, args):
+    """(the brief, the text the grill gate reads) for `--spec`. `$(cat f)`, `$(< f)` and a heredoc inside
+    `$(...)` reach the hook unexpanded, so read them here. Any other expansion, or a file the hook cannot
+    read, falls back to the whole command, so the grill check is never skipped."""
+    texts = []
+
+    def expand(m):
+        text = m.group(3) + "\n" if m.re is SPEC_HEREDOC else brief_text(m.group(1) or m.group(2))
+        texts.append(text)
+        return text or ""
+
+    brief = SPEC_CAT.sub(expand, SPEC_HEREDOC.sub(expand, spec))
+    rest = SPEC_CAT.sub("", SPEC_HEREDOC.sub("", spec))
+    if None in texts or SHELL_EXPANSION.search(rest):
+        return spec, RAW_COMMAND
+    return brief, "\n".join([" ".join(args), *texts])
 
 
 TEST_IDENTITY = "test@example.invalid"
@@ -1799,7 +1875,7 @@ def check_test_identity(base, args):
     """Refuse a commit or push signed as the test suites' identity outside a temp checkout (#844)."""
     if base != "git":
         return
-    verb, _ = git_verb(args)
+    verb = git_verb(args)[0]
     if verb not in ("commit", "push"):
         return
     root = (gate_run(["git", "rev-parse", "--show-toplevel"], None) or "").strip()
@@ -1907,7 +1983,10 @@ def check_segment(segment, depth=0, cwd=None):
     check_worktree_env(segment, base, args, transfer_cwd)
     check_template_managed_bash(segment, base, args, transfer_cwd)
     check_pattern_kill(segment, base, args)
-    check_team_gates(base, args)
+    try:
+        check_team_gates(base, args)
+    except Exception:
+        pass  # a bug in a team gate must not skip the production guards below
     check_approval_secret(segment, base, args)
     check_risky(segment, base, args, depth)
     lead = 0
@@ -2155,6 +2234,21 @@ def report_command_text(command):
     return "".join(out)
 
 
+def check_command(command):
+    command = report_command_text(command)
+    for text in [command, *substitutions(command)]:
+        cur_cwd = GATE_CWD
+        for seg in segments(text):
+            check_segment(seg, cwd=cur_cwd)
+            prog, args = program_and_args(words(seg))
+            if prog == "cd" and args:
+                dest = next((a for a in args if not a.startswith("-")), None)
+                if dest:
+                    cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+    if INDIRECT:
+        deny(INDIRECT[0])
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -2185,18 +2279,7 @@ def main():
     RAW_COMMAND = command
     check_background_wait(command)
     try:
-        command = report_command_text(command)
-        for text in [command, *substitutions(command)]:
-            cur_cwd = GATE_CWD
-            for seg in segments(text):
-                check_segment(seg, cwd=cur_cwd)
-                prog, args = program_and_args(words(seg))
-                if prog == "cd" and args:
-                    dest = next((a for a in args if not a.startswith("-")), None)
-                    if dest:
-                        cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
-        if INDIRECT:
-            deny(INDIRECT[0])
+        check_command(command)
     except SystemExit:
         raise
     except Exception:
