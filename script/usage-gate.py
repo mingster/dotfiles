@@ -7,8 +7,10 @@ its existing flags. fullstack-dev and light-tier roles take the first allowed of
 Cursor grok-4.7-xhigh, then that role's Claude entry, then Antigravity. Strong
 roles never select Cursor. Every other role ranks by remaining weekly/cycle headroom.
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
-endpoint; Cursor reads its Auto + Composer billing-cycle pool;
-Antigravity queries local GetUserStatus, defaulting to the Gemini Flash pool.
+endpoint; Cursor reads included usage from GetCurrentPeriodUsage, which names
+every model that percent covers, and falls back to the usage-summary meter only
+when that reading is missing; Antigravity queries local GetUserStatus,
+defaulting to the Gemini Flash pool.
 Missing, stale (>5 minutes), expired, invalid or future readings trigger a refresh.
 If the real source cannot supply a fresh reading, report unknown, never inferred
 zero usage or a stale ceiling verdict. Unknown does not block worker starts.
@@ -29,6 +31,7 @@ MAX_AGE = 15 * 60  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
 CURSOR_URL = "https://cursor.com/api/usage-summary"
+CURSOR_PERIOD_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
 CURSOR_BUILD_MODEL = "grok-4.7-xhigh"
 CURSOR_URGENT_MODEL = "grok-4.7-xhigh-fast"
@@ -65,19 +68,59 @@ def claude_day_start(midnight, path=None):
     return r if t is not None and t >= midnight else None
 
 
+def _usage_epoch(at):
+    """Epoch seconds from an ISO timestamp, epoch seconds, or unix milliseconds."""
+    value = epoch(at)
+    if value is not None and value > 10_000_000_000:
+        return value / 1000.0
+    return value
+
+
+def _percent_used(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not 0 <= number <= 100:
+        return None
+    return number
+
+
 def cursor_parse(summary, now):
-    """Use individualUsage.plan.autoPercentUsed and billingCycleEnd from usage-summary.
-    Cursor's dashboard describes Auto + Composer and API as separate pools;
-    Composer draws the Auto + Composer pool first, then spills into API usage.
-    Neither apiPercentUsed nor aggregate totalPercentUsed measures this pool.
-    Cursor preset chains list only the Grok models in CURSOR_MODELS (auto+composer pool), not gpt-* API-pool models.
-    Missing Auto + Composer usage stays unknown, never an inferred zero.
+    """Included-usage percent for every model named in autoBucketModels.
+
+    GetCurrentPeriodUsage puts that percent on planUsage and lists the models it
+    covers, including Composer and the Grok models a worker can start. The
+    usage-summary meter individualUsage.plan.autoPercentUsed is a different number:
+    on a weekly included plan it stays 0 while those models run, so it never
+    overrides a period reading. Without autoBucketModels, fall back to that
+    usage-summary percent. A model absent from autoBucketModels is not measured.
+    Missing usage stays unknown, never an inferred zero.
     """
+    if not isinstance(summary, dict):
+        return None
+    reset = _usage_epoch(summary.get("billingCycleEnd"))
+    began = _usage_epoch(summary.get("billingCycleStart"))
+    models = summary.get("autoBucketModels")
+    plan_usage = summary.get("planUsage") if isinstance(summary.get("planUsage"), dict) else None
+    if isinstance(models, list) and plan_usage and summary.get("enabled") is not False:
+        names = [model for model in models if isinstance(model, str) and model]
+        pct = _percent_used(plan_usage.get("autoPercentUsed"))
+        if pct is None:
+            pct = _percent_used(plan_usage.get("totalPercentUsed"))
+        if names and pct is not None and reset is not None:
+            reading = {"pct": pct, "resets_at": reset, "observed_at": now, "models": names}
+            if began is not None:
+                reading["began_at"] = began
+            return fresh(reading, now)
+        if names:
+            return None
     try:
         plan = summary["individualUsage"]["plan"]
-        pct = plan["autoPercentUsed"]
-        reset = epoch(summary["billingCycleEnd"])
-        if plan.get("enabled") is False or isinstance(pct, bool) or reset is None:
+        pct = _percent_used(plan.get("autoPercentUsed"))
+        if plan.get("enabled") is False or pct is None or reset is None:
             return None
         return fresh({"pct": pct, "resets_at": reset, "observed_at": now}, now)
     except (KeyError, TypeError, AttributeError):
@@ -129,6 +172,7 @@ def cursor_reading(path=None):
         if path:
             return cursor_parse(json.load(open(path)), time.time())
         import base64, urllib.error, urllib.parse, urllib.request
+        now = time.time()
         for token in cursor_tokens():
             # Opaque desktop tokens cannot supply the dashboard user id. Try the CLI
             # store instead; never guess a user id or send an invented credential.
@@ -140,13 +184,34 @@ def cursor_reading(path=None):
                     continue
             except (ValueError, KeyError, TypeError, AttributeError):
                 continue
-            cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
-            # A stale desktop install can hold an expired token; a 401/403 moves on to the next store.
+            # Included usage names every covered model. A 401/403 is a dead token;
+            # try the next store before the usage-summary meter, which can read 0
+            # while those models are running.
             try:
-                with urllib.request.urlopen(urllib.request.Request(CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as r:
-                    return cursor_parse(json.load(r), time.time())
-            except urllib.error.HTTPError as e:
-                if e.code in (401, 403):
+                request = urllib.request.Request(
+                    CURSOR_PERIOD_URL, data=b"{}", method="POST",
+                    headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                             "Connect-Protocol-Version": "1"})
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    reading = cursor_parse(json.load(response), now)
+                if reading:
+                    reading["source"] = CURSOR_PERIOD_URL
+                    return reading
+            except urllib.error.HTTPError as error:
+                if error.code in (401, 403):
+                    continue
+            except (OSError, ValueError, TypeError):
+                pass
+            cookie = "WorkosCursorSessionToken=" + urllib.parse.quote(f"{user}::{token}", safe="")
+            try:
+                with urllib.request.urlopen(urllib.request.Request(
+                        CURSOR_URL, headers={"Cookie": cookie}), timeout=8) as response:
+                    reading = cursor_parse(json.load(response), now)
+                if reading:
+                    reading["source"] = CURSOR_URL
+                    return reading
+            except urllib.error.HTTPError as error:
+                if error.code in (401, 403):
                     continue
                 raise
     except Exception:
@@ -327,7 +392,7 @@ def fresh(reading, now):
 def reading_source(provider, refresh=False):
     return {
         "claude": "https://api.anthropic.com/api/oauth/usage seven_day" if refresh else STATE + "/claude-rate-limits.json seven_day",
-        "cursor": CURSOR_SUMMARY or CURSOR_URL,
+        "cursor": CURSOR_SUMMARY or CURSOR_PERIOD_URL,
         "antigravity": "local Antigravity LanguageServerService/GetUserStatus quotaInfo",
     }.get(provider, "no reader for " + provider)
 
@@ -594,7 +659,7 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
     now = time.time() if live_clock else now
     previous = raw
     reading = fresh(raw, now)
-    source = reading_source(provider)
+    source = (raw or {}).get("source") or reading_source(provider)
     failure = "no fresh provider reading"
     if not reading and reader:
         try:
@@ -631,7 +696,7 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
         detail["last_reading_source"] = reading_source(provider)
     detail["reading_age_min"] = round((now - t) / 60, 1) if t is not None else None
     if not reading:
-        detail["reason"] = ("no reliable Cursor auto+composer allowance reading; read the Cursor dashboard"
+        detail["reason"] = ("no reliable Cursor included-usage reading; read the Cursor dashboard"
                             if provider == "cursor" else failure)
     if reading:
         t = epoch(reading.get("observed_at"))
@@ -642,9 +707,12 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
             until = blocked_until(detail, now)
             detail["blocked_until"], detail["blocked_until_local"] = until, local(until)
     result = {"provider": provider, "verdict": verdict, **detail}
-    if provider == "cursor" and model and model not in CURSOR_MODELS and result["verdict"] == "allowed":
+    measured = (reading or {}).get("models")
+    unmeasured = (provider == "cursor" and model and result["verdict"] == "allowed"
+                  and (model not in CURSOR_MODELS or (measured is not None and model not in measured)))
+    if unmeasured:
         result = {"provider": "cursor", "verdict": "unknown",
-                  "reason": ("auto+composer allowance does not measure Cursor model "
+                  "reason": ("Cursor included usage does not measure model "
                              + model + "; read the Cursor dashboard"),
                   "source": result.get("source"), "reading_age_min": result.get("reading_age_min")}
     return result
@@ -654,7 +722,7 @@ def table(rows):
     head = ("provider", "verdict", "week%", "today%", "cap%", "reserve%", "running", "reading", "source", "week resets", "next start")
     out = []
     for r in rows:
-        name = "cursor auto+composer" if r["provider"] == "cursor" else r["provider"]
+        name = "cursor included" if r["provider"] == "cursor" else r["provider"]
         if r["verdict"] == "unknown":
             note = "not gated" if r["provider"] in NOT_GATED else r.get("reason", "no reading")
             out.append((name, "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
@@ -824,6 +892,13 @@ def family(entry):
     return None
 
 
+def _gated_model(entry):
+    """Antigravity and Cursor readings are per model; other providers share one pool."""
+    if entry["provider"] in ("antigravity", "cursor"):
+        return entry["model"]
+    return None
+
+
 def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
     chain, pinned = role_chain(role)
     builder = is_builder_role(role)
@@ -831,7 +906,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         chain = order_builder_chain(chain)
     rows = {}
     for entry in chain:
-        key = (entry["provider"], entry["model"] if entry["provider"] == "antigravity" else None)
+        key = (entry["provider"], _gated_model(entry))
         if key not in rows:
             rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1])
     known = antigravity_models() if any(e["provider"] == "antigravity" for e in chain) else None
@@ -839,7 +914,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
     fallback = all(r["verdict"] == "blocked" for r in gated)
     candidates, allowed = [], []
     for index, entry in enumerate(chain):
-        row = rows[(entry["provider"], entry["model"] if entry["provider"] == "antigravity" else None)]
+        row = rows[(entry["provider"], _gated_model(entry))]
         room, fraction = headroom(row)
         eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
         excluded = avoid is not None and family(entry) == avoid
@@ -894,7 +969,7 @@ def main(argv=None):
     ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish", "link"])
     ap.add_argument("--host", action="append", default=[])
     ap.add_argument("--provider")
-    ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model for the auto+composer allowance")
+    ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model checked against included usage")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer", "grok"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])

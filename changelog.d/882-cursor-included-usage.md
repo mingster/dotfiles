@@ -1,0 +1,1 @@
+- The Cursor usage gate reads included usage from GetCurrentPeriodUsage, so the weekly ceiling counts every model that bucket lists, including grok-4.7-xhigh, and refuses a worker model the bucket does not list. The usage-summary auto percent no longer overrides that reading. (#882)
