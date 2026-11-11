@@ -73,7 +73,7 @@ flowchart TD
 
 * Ready: checks are green and a verifier PASS covers this head. It starts a Shipping run.
 * Missing Verdict: head-checks succeeded and this head has no Verdict. It starts one verifier (`qa-sdet` from `usage-gate.py pick`, a different agent and model from the builder) once per head.
-* Needs a fix: a conflict with trunk, an unresolved review thread, a review FAIL, a failed head-checks result, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
+* Needs a fix: a conflict with trunk, an unresolved review thread, a review FAIL, a failed head-checks result, or a red check on a file the PR changed. The existing `classify_open_pr` rework start in `issue_scan` starts one fresh fix worker, which fixes, pushes once and ends. Babysit does not start a second one. One PR never has two fix workers at once.
 * A pull request that touches an owner-only path is reported to the coordinator and not dispatched. Drafts are skipped. At most two verifier dispatches run per pass. A new push re-arms that head.
 * Anything else waits for the next pass.
 

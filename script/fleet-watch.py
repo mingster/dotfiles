@@ -2726,11 +2726,12 @@ def apply_active_run(config, pick=None):
         scan['from_terminal'] = terminal.strip()
     if not scan.get('enabled'):
         return
-    role = scan.get('role') or 'fullstack-dev'
-    data = pick(role) if pick else pick_role(role)
+    data = pick('fullstack-dev') if pick else pick_role('fullstack-dev')
     chosen = choose_pick(data)
     if chosen:
         scan['agent'], scan['model'] = chosen
+        scan.pop('rework_agent', None)
+        scan.pop('rework_model', None)
 
 
 def babysit_repos(config):
@@ -3779,8 +3780,11 @@ def main():
             save_state(args.state, state)
         return 0
     if not config_runs(config) and not config.get('coordinator_watch'):
-        print('fleet-watch: config has no runs; refusing this pass', file=sys.stderr)
-        return 2
+        watched = adopted or args.config
+        message = 'config %s has no runs; refusing this pass' % watched
+        print('fleet-watch: ' + message, file=sys.stderr)
+        log_fleet_watch(message)
+        return 1
     coordinator, done = coordinator_stage(config, state, args.state)
     if done:
         return 0

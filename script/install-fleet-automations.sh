@@ -82,23 +82,9 @@ if ! orca_cli=$(resolve_orca_cli); then
   exit 0
 fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
-# The stub at ~/.config/fleet-watch/config.json has host caps and no runs.
-# The scheduled pass has to read the coordinator file, which holds runs and issue_scan.
-if [ -z "${FLEET_WATCH_CONFIG:-}" ]; then
-  _coord_cfg=$HOME/.claude/state/fleet-watch-elon.json
-  if [ -f "$_coord_cfg" ] && python3 -c 'import json,sys
-try:
-    data=json.load(open(sys.argv[1], encoding="utf-8"))
-except Exception:
-    sys.exit(1)
-runs=data.get("runs") if isinstance(data, dict) else None
-sys.exit(0 if isinstance(runs, list) and runs else 1)' "$_coord_cfg"; then
-    FLEET_WATCH_CONFIG=$_coord_cfg
-  else
-    FLEET_WATCH_CONFIG=$HOME/.config/fleet-watch/config.json
-  fi
-  unset _coord_cfg
-fi
+# Coordinator file (runs and issue_scan). The host-caps stub at
+# ~/.config/fleet-watch/config.json has no runs and is not the scheduled config.
+FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.claude/state/fleet-watch-elon.json}
 FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
 FLEET_WATCH_AUTOMATION_LOG=${FLEET_WATCH_AUTOMATION_LOG:-$HOME/.orca/logs/fleet-watch.log}
 FLEET_WATCH_PRECHECK_LOG=${FLEET_WATCH_PRECHECK_LOG:-$FLEET_WATCH_AUTOMATION_LOG}

@@ -367,7 +367,8 @@ for a in d["automations"]:
     if a.get("name") == "fleet-watch":
         print((a.get("precheck") or {}).get("command") or "")
 ')
-echo "$stub_pc" | grep -q '/.config/fleet-watch/config.json' && check 'coordinator file without runs keeps the stub config' true || check 'coordinator file without runs keeps the stub config' false
+echo "$stub_pc" | grep -q '/.claude/state/fleet-watch-elon.json' && check 'empty coordinator file still passes the coordinator path' true || check 'empty coordinator file still passes the coordinator path' false
+echo "$stub_pc" | grep -q '/.config/fleet-watch/config.json' && check 'empty coordinator file does not fall back to the stub' false || check 'empty coordinator file does not fall back to the stub' true
 printf '%s\n' \
   "DOTFILES_DIR=$DOTFILES_DIR" \
   "FLEET_WATCH_CONFIG=$FLEET_WATCH_CONFIG" \

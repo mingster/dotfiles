@@ -540,16 +540,20 @@ else
   bad "active run refreshes issue_scan run, terminal and model"
 fi
 
-# --- a pass with no runs fails loudly ---
+# --- a pass with no runs fails loudly and the log names the file ---
 echo '{}' > "$tmp/state-noruns.json"
 printf '%s\n' '{"local_host":"h"}' > "$tmp/noruns.json"
+noruns_log=$tmp/noruns.log
+rm -f "$noruns_log"
 noruns_rc=0
-HOME="$stub_home" "$real_py" "$root/script/fleet-watch.py" \
+HOME="$stub_home" FLEET_WATCH_LOG_PATH="$noruns_log" "$real_py" "$root/script/fleet-watch.py" \
   --config "$tmp/noruns.json" --state "$tmp/state-noruns.json" >"$tmp/noruns.out" 2>"$tmp/noruns.err" || noruns_rc=$?
-if [ "$noruns_rc" -ne 0 ] && grep -q 'config has no runs; refusing this pass' "$tmp/noruns.err"; then
-  ok "missing runs refuses the pass"
+if [ "$noruns_rc" -ne 0 ] \
+  && grep -q "config $tmp/noruns.json has no runs; refusing this pass" "$tmp/noruns.err" \
+  && grep -q "config $tmp/noruns.json has no runs; refusing this pass" "$noruns_log"; then
+  ok "missing runs refuses the pass and the log names the file"
 else
-  bad "missing runs refuses the pass (rc=$noruns_rc $(cat "$tmp/noruns.err"))"
+  bad "missing runs refuses the pass and the log names the file (rc=$noruns_rc stderr=$(cat "$tmp/noruns.err") log=$(cat "$noruns_log" 2>/dev/null || true))"
 fi
 
 echo "babysit-dispatch: $pass passed, $fail failed"
