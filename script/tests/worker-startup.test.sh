@@ -1160,5 +1160,61 @@ set -e
 grep -F "path:$link_physical" "$tmp/orca-link.log" >/dev/null && ok || bad "worktree create uses the physical repo ($link_physical) $(cat "$tmp/orca-link.log")"
 grep -F "path:$tmp/link-repo" "$tmp/orca-link.log" >/dev/null && bad "worktree create kept the symlink repo" || ok
 
+# Antigravity sign-in screen: the start check fails, and startup returns that on stderr.
+# A normal Antigravity screen still exits 0.
+cat >"$tmp/orca-agy" <<'EOS'
+#!/usr/bin/env bash
+set -e
+log="${ORCA_STUB_LOG:-/dev/null}"
+printf '%s\n' "$*" >>"$log"
+case "$*" in
+  *"worktree create"*)
+    printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"${AGY_WT:?}\"}}}"
+    ;;
+  *"orchestration worker-start"*)
+    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_agy","taskId":"task_agy","runId":"run_agy","state":"ready","agent":"antigravity","model":"gemini-4-argon-medium","terminal":"term_agy"}}'
+    ;;
+  *"orchestration worker-show"*)
+    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_agy","state":"ready","liveness":"live","terminal":"term_agy"}}'
+    ;;
+  *"terminal read"*)
+    python3 -c '
+import json, os
+tail = open(os.environ["AGY_SCREEN"]).read().splitlines()
+print(json.dumps({"ok": True, "result": {"terminal": {"tail": tail}}}))
+'
+    ;;
+  *)
+    printf 'unexpected orca: %s\n' "$*" >&2
+    exit 99
+    ;;
+esac
+EOS
+chmod +x "$tmp/orca-agy"
+printf '%s\n' 'You are currently not signed in. Select login method' >"$tmp/agy-login.txt"
+printf '%s\n' 'Working on the assigned task' 'Running the checks' '>' >"$tmp/agy-ok.txt"
+agy_run() { # <screen file> <stderr>
+  : >"$tmp/orca-agy.log"
+  set +e
+  unset -f python3 2>/dev/null || true
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-agy" ORCA_STUB_LOG="$tmp/orca-agy.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" \
+    PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    AGY_WT="$wt_proof" AGY_SCREEN="$1" \
+    bash --noprofile --norc "$script" --run run_agy --spec "$spec_file" --title myjob \
+    --agent antigravity --model gemini-4-argon-medium \
+    --from term_coord --name nagy --repo "path:$clean" >"$tmp/agy.out" 2>"$2"
+  agy_ec=$?
+  set -e
+}
+agy_run "$tmp/agy-login.txt" "$tmp/agy-login.err"
+[ "$agy_ec" -ne 0 ] && ok || bad "antigravity sign-in screen should exit non-zero ($agy_ec)"
+grep -q 'sign-in step' "$tmp/agy-login.err" && ok || bad "antigravity sign-in stderr should name the sign-in step ($(cat "$tmp/agy-login.err"))"
+grep -q 'orchestration worker-start' "$tmp/orca-agy.log" && ok || bad "sign-in failure is reported after the worker starts"
+agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
+[ "$agy_ec" = 0 ] && ok || bad "normal antigravity screen should exit 0 ($agy_ec) $(cat "$tmp/agy-ok.err")"
+grep -q 'sign-in step' "$tmp/agy-ok.err" && bad "normal antigravity screen must not report sign-in" || ok
+
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]

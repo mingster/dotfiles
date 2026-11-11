@@ -1,0 +1,1 @@
+- `worker-start-check.sh` fails when an Antigravity worker is on the sign-in screen, and `worker-startup.sh` returns that failure to the caller.
