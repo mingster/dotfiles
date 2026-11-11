@@ -344,6 +344,38 @@ print(next((a.get("repo") or "") for a in d["automations"] if a.get("name") == "
 ')
 [ "$id_repo" = "id:repo-1" ] && check 'repo registered under a symlink is selected by id' true || check "repo registered under a symlink is selected by id ($id_repo)" false
 
+mkdir -p "$HOME/.claude/state"
+printf '%s\n' '{"runs":[{"id":"run_live","terminal":"term_live","waiter_pattern":"check"}]}' > "$HOME/.claude/state/fleet-watch-elon.json"
+printf '%s\n' "DOTFILES_DIR=$DOTFILES_DIR" "FLEET_WATCH_STATE=$FLEET_WATCH_STATE" >"$FLEET_AUTOMATIONS_ENV"
+rm -f "$FAKE_ORCA_STORE"
+env -u FLEET_WATCH_CONFIG bash "$script" --install >/dev/null 2>&1
+coord_pc=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a.get("name") == "fleet-watch":
+        print((a.get("precheck") or {}).get("command") or "")
+')
+echo "$coord_pc" | grep -q '/.claude/state/fleet-watch-elon.json' && check 'unset config uses the coordinator file' true || check 'unset config uses the coordinator file' false
+printf '%s\n' '{"runs":[]}' > "$HOME/.claude/state/fleet-watch-elon.json"
+rm -f "$FAKE_ORCA_STORE"
+env -u FLEET_WATCH_CONFIG bash "$script" --install >/dev/null 2>&1
+stub_pc=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a.get("name") == "fleet-watch":
+        print((a.get("precheck") or {}).get("command") or "")
+')
+echo "$stub_pc" | grep -q '/.claude/state/fleet-watch-elon.json' && check 'empty coordinator file still passes the coordinator path' true || check 'empty coordinator file still passes the coordinator path' false
+echo "$stub_pc" | grep -q '/.config/fleet-watch/config.json' && check 'empty coordinator file does not fall back to the stub' false || check 'empty coordinator file does not fall back to the stub' true
+printf '%s\n' \
+  "DOTFILES_DIR=$DOTFILES_DIR" \
+  "FLEET_WATCH_CONFIG=$FLEET_WATCH_CONFIG" \
+  "FLEET_WATCH_STATE=$FLEET_WATCH_STATE" \
+  "FLEET_WATCH_PRECHECK_LOG=$FLEET_WATCH_PRECHECK_LOG" \
+  >"$FLEET_AUTOMATIONS_ENV"
+
 fake_wt="$tmp/fake-worktree/script"
 mkdir -p "$fake_wt" "$HOME/dotfiles/script"
 cp "$script" "$fake_wt/install-fleet-automations.sh"
