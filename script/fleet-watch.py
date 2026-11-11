@@ -8,7 +8,10 @@ optional heavy_gate {hosts, slot_roots, issue_repo} wait-log median and held-slo
 optional wrap_up {hosts, issue_repo}
 round-log freshness, optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure.
 The same pass dispatches one verifier when head-checks succeeded and the head has no Verdict,
-or one fix worker when head-checks failed, once per head (babysit.per_pass_cap, default 2).
+once per head (babysit.per_pass_cap, default 2). Fix workers and shipping runs stay in issue_scan.
+A config with no runs is refused. When the given file has none, the pass adopts
+~/.claude/state/fleet-watch-elon.json if that file has runs, and copies that run id and
+terminal onto issue_scan.
 --babysit-dry-run lists those actions and starts nothing. --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
 """
@@ -2673,6 +2676,63 @@ def pr_owner_only_reason(pr, run=subprocess.run):
     return 'error'
 
 
+def config_runs(config):
+    runs = config.get('runs') if isinstance(config, dict) else None
+    if not isinstance(runs, list) or not runs:
+        return None
+    return runs
+
+
+def coordinator_config_path():
+    override = os.environ.get('FLEET_WATCH_COORDINATOR_CONFIG')
+    if override:
+        return Path(override)
+    return Path.home() / '.claude' / 'state' / 'fleet-watch-elon.json'
+
+
+def resolve_pass_config(config, config_path):
+    """Use the coordinator file when the scheduled stub config has no runs."""
+    if config_runs(config):
+        return config, None
+    stub = Path.home() / '.config' / 'fleet-watch' / 'config.json'
+    try:
+        given_is_stub = Path(config_path).resolve() == stub.resolve()
+    except OSError:
+        given_is_stub = False
+    if not given_is_stub:
+        return config, None
+    path = coordinator_config_path()
+    try:
+        loaded = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return config, None
+    if isinstance(loaded, dict) and config_runs(loaded):
+        return loaded, path
+    return config, None
+
+
+def apply_active_run(config, pick=None):
+    """Copy runs[0] onto issue_scan, and refresh agent and model from the role pick."""
+    scan = config.get('issue_scan') if isinstance(config, dict) else None
+    runs = config_runs(config)
+    if not isinstance(scan, dict) or not runs or not isinstance(runs[0], dict):
+        return
+    active = runs[0]
+    run_id = active.get('id')
+    terminal = active.get('terminal')
+    if isinstance(run_id, str) and run_id.strip():
+        scan['run'] = run_id.strip()
+    if isinstance(terminal, str) and terminal.strip():
+        scan['from_terminal'] = terminal.strip()
+    if not scan.get('enabled'):
+        return
+    role = scan.get('role') or 'fullstack-dev'
+    data = pick(role) if pick else pick_role(role)
+    chosen = choose_pick(data)
+    if chosen:
+        scan['agent'], scan['model'] = chosen
+
+
 def babysit_repos(config):
     block = config.get('babysit') or {}
     configured = block.get('repos')
@@ -3006,15 +3066,21 @@ def babysit_pass(
         root = roots.get(repo) if isinstance(roots.get(repo), str) else ''
         repo_root = root if root and os.path.isdir(root) else None
         needs_fix = rework_needed_at_head(pr_row, None, repo, repo_root=repo_root)
-        if status == 'FAILURE':
-            kind, role = 'fixer', 'fullstack-dev'
-        elif status == 'SUCCESS' and not verdict_posted_for_head(pr_row) and not needs_fix:
+        ready = (
+            status == 'SUCCESS'
+            and not needs_fix
+            and pr_row.get('mergeable') not in ('CONFLICTING', 'UNKNOWN')
+            and pr_checks_all_success(pr_row)
+            and pr_verdict_valid_for_head(pr_row, repo_root=repo_root)
+        )
+        if status == 'SUCCESS' and not verdict_posted_for_head(pr_row) and not needs_fix:
             kind, role = 'verifier', 'qa-sdet'
-        elif status == 'SUCCESS' and verdict_posted_for_head(pr_row):
-            lines.append(_babysit_line(repo, number, head, 'skip', 'has-verdict'))
-            continue
-        elif status == 'SUCCESS' and needs_fix:
+        elif needs_fix:
             lines.append(_babysit_line(repo, number, head, 'skip', 'needs-fix'))
+            continue
+        elif ready or (status == 'SUCCESS' and verdict_posted_for_head(pr_row)):
+            detail = 'ready' if ready else 'has-verdict'
+            lines.append(_babysit_line(repo, number, head, 'skip', detail))
             continue
         else:
             lines.append(_babysit_line(repo, number, head, 'skip', 'pending'))
@@ -3160,9 +3226,6 @@ def issue_scan_pass(
                     log_bits.append('ship_fail=%d' % pr_num)
                 continue
             if pr_class != 'needs_fix':
-                continue
-            if repo in babysit_owned and head_checks_status(pr_row) == 'FAILURE':
-                log_bits.append('babysit_fixer=%d' % pr_num)
                 continue
             if seen.get(head) or pending.get(head):
                 continue
@@ -3687,6 +3750,10 @@ def main():
     if not args.config:
         parser.error('--config is required')
     config = json.loads(args.config.read_text())
+    config, adopted = resolve_pass_config(config, args.config)
+    if adopted is not None:
+        print('fleet-watch: using coordinator config %s' % adopted, file=sys.stderr)
+    apply_active_run(config)
 
     if not args.state:
         parser.error('--state is required when --admit is not specified')
@@ -3711,6 +3778,9 @@ def main():
         if not dry:
             save_state(args.state, state)
         return 0
+    if not config_runs(config):
+        print('fleet-watch: config has no runs; refusing this pass', file=sys.stderr)
+        return 2
     coordinator, done = coordinator_stage(config, state, args.state)
     if done:
         return 0

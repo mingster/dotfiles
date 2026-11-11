@@ -307,7 +307,7 @@ else
   bad "Verdict with agent and model suppresses a verifier ($(cat "$tmp/verdict.out"))"
 fi
 
-# --- failing head-checks: one fixer on the fullstack-dev route ---
+# --- failing head-checks stay on the existing fixer group; this pass does not start one ---
 empty_repos
 : > "$BABYSIT_STARTS"
 python3 - "$BABYSIT_GH_DIR/owner/app.json" "$HEAD_B" <<'PY'
@@ -333,29 +333,11 @@ if run_pass "$tmp/state-fail.json" only "" "$tmp/fail.out"; then
 else
   bad "fail pass exits 0"
 fi
-if [ "$(starts)" = 1 ]; then ok "failing checks start one fixer"; else bad "failing checks start one fixer (got $(starts))"; fi
-if grep -q -- '--agent cursor' "$BABYSIT_STARTS" && grep -q -- '--model composer-2.5' "$BABYSIT_STARTS"; then
-  ok "fixer route is fullstack-dev pick"
+if [ "$(starts)" = 0 ] && ! grep -q 'action=fixer' "$tmp/fail.out"; then
+  ok "failing checks do not start a babysit fixer"
 else
-  bad "fixer route is fullstack-dev pick ($(cat "$BABYSIT_STARTS"))"
+  bad "failing checks do not start a babysit fixer ($(cat "$tmp/fail.out"))"
 fi
-spec=$(python3 -c 'import shlex,sys
-try:
-    p=shlex.split(open(sys.argv[1], encoding="utf-8").readline())
-    print(p[p.index("--spec")+1])
-except (IndexError, ValueError, OSError):
-    print("")' "$BABYSIT_STARTS" || true)
-if [ -n "$spec" ] && grep -q 'fullstack-dev' "$spec" && grep -q '40 hex' "$spec" && grep -q 'push' "$spec" && grep -q 'checks-local.sh' "$spec"; then
-  ok "fixer brief passes the builder finish rule"
-else
-  bad "fixer brief passes the builder finish rule"
-fi
-if run_pass "$tmp/state-fail.json" only "" "$tmp/fail2.out"; then
-  ok "fixer second pass exits 0"
-else
-  bad "fixer second pass exits 0"
-fi
-if [ "$(starts)" = 1 ]; then ok "fixer second pass starts nothing"; else bad "fixer second pass starts nothing (got $(starts))"; fi
 
 # --- owner-only path reports and does not dispatch, even when checks failed ---
 empty_repos
@@ -490,6 +472,84 @@ if [ "$(starts)" = 3 ] && grep -q 'owner/lib#12' "$BABYSIT_STARTS"; then
   ok "next pass dispatches the capped PR"
 else
   bad "next pass dispatches the capped PR (starts $(starts))"
+fi
+
+# --- a stub config with no runs adopts the coordinator file and refreshes issue_scan ---
+real_py=$(asdf which python3 2>/dev/null || command -v python3)
+stub_home=$tmp/stub-home
+mkdir -p "$stub_home/.config/fleet-watch" "$stub_home/.claude/state"
+printf '%s\n' '{"local_host":"h","host_caps":{"h":1}}' > "$stub_home/.config/fleet-watch/config.json"
+python3 - "$stub_home/.claude/state/fleet-watch-elon.json" "$HEAD_A" <<'PY'
+import json, sys
+path, head = sys.argv[1:]
+json.dump({
+    "runs": [{"id": "run_live", "terminal": "term_live", "waiter_pattern": "check"}],
+    "issue_scan": {
+        "enabled": False,
+        "run": "run_stale",
+        "from_terminal": "term_stale",
+        "agent": "cursor",
+        "model": "old-model",
+        "pr_repos": ["owner/app"],
+        "repo_roots": {"owner/app": "/tmp/app"},
+    },
+}, open(path, "w", encoding="utf-8"))
+PY
+empty_repos
+green 1 "$HEAD_A" owner/app
+: > "$BABYSIT_STARTS"
+echo '{}' > "$tmp/state-adopt.json"
+if HOME="$stub_home" "$real_py" "$root/script/fleet-watch.py" \
+  --config "$stub_home/.config/fleet-watch/config.json" \
+  --state "$tmp/state-adopt.json" --babysit-dry-run >"$tmp/adopt.out" 2>"$tmp/adopt.err"; then
+  ok "stub config dry-run exits 0"
+else
+  bad "stub config dry-run exits 0"
+fi
+if grep -q 'using coordinator config' "$tmp/adopt.err" && grep -q 'action=verifier' "$tmp/adopt.out"; then
+  ok "stub config adopts the coordinator file"
+else
+  bad "stub config adopts the coordinator file ($(cat "$tmp/adopt.err") $(cat "$tmp/adopt.out"))"
+fi
+if (cd "$root" && HOME="$stub_home" "$real_py" - <<'PY'
+import importlib.util
+spec = importlib.util.spec_from_file_location("fw", "script/fleet-watch.py")
+fw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fw)
+cfg = {
+    "runs": [{"id": "run_live", "terminal": "term_live", "waiter_pattern": "check"}],
+    "issue_scan": {
+        "enabled": True,
+        "run": "run_stale",
+        "from_terminal": "term_stale",
+        "role": "fullstack-dev",
+        "agent": "cursor",
+        "model": "old-model",
+    },
+}
+fw.apply_active_run(cfg, pick=lambda role: {
+    "selected": {"provider": "cursor", "model": "fresh-model", "eligible": True},
+})
+assert cfg["issue_scan"]["run"] == "run_live", cfg["issue_scan"]
+assert cfg["issue_scan"]["from_terminal"] == "term_live", cfg["issue_scan"]
+assert cfg["issue_scan"]["model"] == "fresh-model", cfg["issue_scan"]
+PY
+); then
+  ok "active run refreshes issue_scan run, terminal and model"
+else
+  bad "active run refreshes issue_scan run, terminal and model"
+fi
+
+# --- a pass with no runs fails loudly ---
+echo '{}' > "$tmp/state-noruns.json"
+printf '%s\n' '{"local_host":"h"}' > "$tmp/noruns.json"
+noruns_rc=0
+HOME="$stub_home" "$real_py" "$root/script/fleet-watch.py" \
+  --config "$tmp/noruns.json" --state "$tmp/state-noruns.json" >"$tmp/noruns.out" 2>"$tmp/noruns.err" || noruns_rc=$?
+if [ "$noruns_rc" -ne 0 ] && grep -q 'config has no runs; refusing this pass' "$tmp/noruns.err"; then
+  ok "missing runs refuses the pass"
+else
+  bad "missing runs refuses the pass (rc=$noruns_rc $(cat "$tmp/noruns.err"))"
 fi
 
 echo "babysit-dispatch: $pass passed, $fail failed"

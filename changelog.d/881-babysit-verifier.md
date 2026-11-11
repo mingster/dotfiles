@@ -1,1 +1,1 @@
-The five minute babysit pass starts one verifier when head-checks succeeded and the head has no Verdict, and one fix worker when head-checks failed, once per head. Owner-only paths are reported and not dispatched. (#881)
+The five minute babysit pass reads the coordinator config, refuses a config that has no runs, copies the active run onto issue_scan, and starts one verifier when head-checks succeeded and the head has no Verdict. Owner-only paths are reported and not dispatched. (#881)
