@@ -4,7 +4,8 @@
 # Lanes: code and script PRs need a verifier Verdict: PASS whose agent and model differ from the builder's
 # (PR body line "Builder: agent=<a> model=<m>"); a docs only PR needs a cold "Review: PASS head=<head>";
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
-# copies on the Verdict of the matching MERGED dotfiles PR.
+# copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
+# agent-team.sh check flags as a canonical role file or an unkept shared hook copy.
 set -euo pipefail
 
 ship_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -153,6 +154,24 @@ is_generated_copy() { # <path>
   esac
   [[ "$1" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"
 }
+# Paths check would tell this tree to delete. Same messages run_check prints, not a second list of names.
+demanded_deletions() { # <sha>; one rel path per line
+  local sha=$1 dir out rc=0
+  dir=$(mktemp -d)
+  git archive "$sha" 2>/dev/null | tar -x -C "$dir" 2>/dev/null || true
+  git -C "$dir" init -q 2>/dev/null || true
+  out=$(DOTFILES="$dotfiles_root" bash "$dotfiles_root/script/agent-team.sh" check "$dir" 2>&1) || rc=$?
+  rm -rf "$dir"
+  [ "$rc" -lt 2 ] || refuse "--verdict-from: cannot read deletions agent-team.sh check demands at ${sha:0:12}"
+  awk '
+    function take(line, key,    i) {
+      i = index(line, key)
+      if (i) { print substr(line, i + length(key)); return 1 }
+      return 0
+    }
+    { take($0, "canonical role file in project: ") || take($0, "shared hook copy or link in project: ") }
+  ' <<<"$out"
+}
 dotfiles_root=$(cd "$ship_dir/.." && pwd)
 skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true)
 if [ -z "$verdict_from" ]; then
@@ -163,6 +182,7 @@ if [ -z "$verdict_from" ]; then
 fi
 
 lane=verdict
+lane_deletions=""
 if [ -n "$verdict_from" ]; then
   lane=generated
 elif [ "$mechanical" = true ]; then
@@ -195,11 +215,27 @@ generated)
     || refuse "--verdict-from: dotfiles tree is not at origin/main for templates/agent-team; merge and pull dotfiles first"
   [ -z "$(git -C "$dotfiles_root" status --porcelain --ignored -- templates/agent-team)" ] \
     || refuse "--verdict-from: templates/agent-team has local changes, not at origin/main; clean or commit them first"
+  base_oid=$(field .baseRefOid)
+  [[ "$base_oid" =~ ^[0-9a-f]{40}$ ]] || refuse "--verdict-from: PR base is not a commit"
+  git cat-file -e "$base_oid^{commit}" 2>/dev/null || git fetch origin "$base_oid" >&2 \
+    || refuse "--verdict-from: cannot read base $base_oid"
+  deleted_paths=$(git diff --diff-filter=D --name-only "$base_oid" "$head")
+  demanded="" demanded_ready=false lane_deletions=""
   while IFS= read -r f; do
-    # Only paths agent-team.sh syncs from templates/agent-team count; agent-team.sh check below byte-verifies the rest.
+    # Generated copies, or a pure deletion of a path check flags on the base. check below byte-verifies the head.
     if is_generated_copy "$f" "$skill_names"; then
       mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
       [ "$mode" != 120000 ] || refuse "--verdict-from refuses symlink $f"
+    elif grep -Fxq -- "$f" <<<"$deleted_paths"; then
+      if [ "$demanded_ready" = false ]; then
+        demanded=$(demanded_deletions "$base_oid")
+        demanded_ready=true
+      fi
+      if grep -Fxq -- "$f" <<<"$demanded"; then
+        lane_deletions="${lane_deletions}${f}"$'\n'
+      else
+        refuse "--verdict-from needs every changed file to be a generated team copy; $f is not"
+      fi
     else
       refuse "--verdict-from needs every changed file to be a generated team copy; $f is not"
     fi
@@ -296,7 +332,16 @@ esac
 # 5. Protected paths (shared lib: owner-only, Owner-approved trailer, Countersign).
 if [ "$lane" = generated ]; then
   # Generated copies of role files carry no Owner-approved trailer by design; the template PR already passed that gate.
-  PROTECTED_PATHS_QUIET_TRIGGERS=1 check_owner_only_paths
+  # A pure deletion of a shared hook check flags is the removal check demands, so the owner-only hook rule skips it.
+  if [ -n "$lane_deletions" ]; then
+    files_saved=$files
+    files=$(jq -c --arg del "$lane_deletions" \
+      '($del | split("\n") | map(select(length > 0))) as $skip | map(select(. as $p | $skip | index($p) | not))' <<<"$files")
+    PROTECTED_PATHS_QUIET_TRIGGERS=1 check_owner_only_paths
+    files=$files_saved
+  else
+    PROTECTED_PATHS_QUIET_TRIGGERS=1 check_owner_only_paths
+  fi
   PROTECTED_PATHS_QUIET_TRIGGERS=1 check_countersign_gate
 else
   PROTECTED_PATHS_QUIET_TRIGGERS=1 check_protected_paths

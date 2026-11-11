@@ -1,0 +1,1 @@
+ship.sh `--verdict-from` accepts a generated team copy PR that also deletes a canonical role file or an unkept shared hook, the paths `agent-team.sh check` flags. Any other non generated path is still refused.

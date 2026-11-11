@@ -526,6 +526,76 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   "$MF_REAL_GIT" -C "$fx" checkout -q -- templates/agent-team
   echo untracked > "$fx/templates/agent-team/untracked-template.md"
   vf "verdict-from refuses an untracked file under templates/agent-team" 1 "not at origin/main"
+  rm -f "$fx/templates/agent-team/untracked-template.md"
+
+  # A generated-copy PR may also delete the paths check flags: a canonical role file, or a shared
+  # hook nothing kept loads. An add, an edit, a kept hook, or an unrelated deletion still refuses.
+  src MERGED "$(one "$GOOD")"
+  seed_base=$base_sha
+  role_rel=.claude/agents/elon.md
+  hook_rel=.claude/hooks/strikes.py
+  g checkout -q -B main "$seed_base"
+  mkdir -p "$MF_REPO/.claude/agents" "$MF_REPO/.claude/hooks"
+  printf 'canonical role\n' > "$MF_REPO/$role_rel"
+  printf 'shared hook\n' > "$MF_REPO/$hook_rel"
+  g add -A && g commit -qm legacy-copies && g push -q origin main
+  legacy_base=$(g rev-parse HEAD)
+  name_status=$(g diff --name-status "$legacy_base" "$gen_head")
+  del_files=$(g diff --name-only "$legacy_base" "$gen_head" | jq -Rsc 'split("\n")[:-1]')
+  if grep -q $'^D\t'"$role_rel" <<<"$name_status" && grep -q $'^D\t'"$hook_rel" <<<"$name_status"; then
+    base_sha=$legacy_base
+    mkpr 200 "$gen_head" "$del_files" "Body"; set_checks 200 "$green_checks"
+    vf "verdict-from accepts generated copies plus deletion of a canonical role file and an unkept shared hook" 0 "generated team copies"
+  else
+    bad "verdict-from accepts generated copies plus deletion of a canonical role file and an unkept shared hook" "fixture diff missing demanded deletions: $name_status"
+  fi
+  g checkout -q -B feat-gen "$legacy_base"
+  printf 'edited role\n' >> "$MF_REPO/$role_rel"
+  printf '\n# edited\n' >> "$MF_REPO/docs/agents/team.md"
+  g add -A && g commit -qm edit-role && g push -q -f origin feat-gen
+  edit_head=$(g rev-parse HEAD)
+  edit_files=$(g diff --name-only "$legacy_base" "$edit_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$legacy_base
+  mkpr 200 "$edit_head" "$edit_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses an edit of a canonical role file" 1 "is not"
+  g checkout -q -B feat-gen "$seed_base"
+  mkdir -p "$MF_REPO/.claude/agents"
+  printf 'added role\n' > "$MF_REPO/$role_rel"
+  printf '\n# edited\n' >> "$MF_REPO/docs/agents/team.md"
+  g add -A && g commit -qm add-role && g push -q -f origin feat-gen
+  add_head=$(g rev-parse HEAD)
+  add_files=$(g diff --name-only "$seed_base" "$add_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$seed_base
+  mkpr 200 "$add_head" "$add_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses an added canonical role file" 1 "is not"
+  g checkout -q -B main "$seed_base"
+  printf 'notes\n' > "$MF_REPO/notes.txt"
+  g add notes.txt && g commit -qm notes && g push -q -f origin main
+  notes_base=$(g rev-parse HEAD)
+  g checkout -q -B feat-gen
+  rm "$MF_REPO/notes.txt"
+  printf '\n# edited\n' >> "$MF_REPO/docs/agents/team.md"
+  g add -A && g commit -qm del-notes && g push -q -f origin feat-gen
+  notes_head=$(g rev-parse HEAD)
+  notes_files=$(g diff --name-only "$notes_base" "$notes_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$notes_base
+  mkpr 200 "$notes_head" "$notes_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses deletion of an unrelated file" 1 "is not"
+  g checkout -q -B main "$seed_base"
+  mkdir -p "$MF_REPO/.claude/hooks"
+  printf 'shared hook\n' > "$MF_REPO/$hook_rel"
+  printf 'loads strikes.py\n' > "$MF_REPO/.claude/hooks/local-keep.py"
+  g add -A && g commit -qm kept-hook && g push -q -f origin main
+  kept_base=$(g rev-parse HEAD)
+  g checkout -q -B feat-gen
+  rm "$MF_REPO/$hook_rel"
+  printf '\n# edited\n' >> "$MF_REPO/docs/agents/team.md"
+  g add -A && g commit -qm del-kept && g push -q -f origin feat-gen
+  kept_head=$(g rev-parse HEAD)
+  kept_files=$(g diff --name-only "$kept_base" "$kept_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$kept_base
+  mkpr 200 "$kept_head" "$kept_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses deletion of a shared hook check keeps" 1 "is not"
 } </dev/null
 
 echo "passed $pass, failed $fail"
