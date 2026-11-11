@@ -1,0 +1,1 @@
+The template guard now checks role file commits in the repo that `git -C`, `--git-dir` or `--work-tree` names, reads the approval trailer from a `commit -F` message file, and reads the worker brief from a heredoc, `--spec-file -`, `$(cat f)`, `$(< f)` or a heredoc inside `$(...)`. A bug in a team gate no longer skips the production guards.
