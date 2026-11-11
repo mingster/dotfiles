@@ -446,13 +446,16 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 The coordinator runs `script/ship.sh --repo owner/name --pr N` itself, one PR at a time, bottom up
 (add `--mechanical` for a pure substitution or deletion, `--verdict-from <owner/dotfiles#N>` for
-generated team copies). No merge worker is dispatched.
+generated team copies that are not the current template render). No merge worker is dispatched.
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
 and intents that become Accepted). On the generated lane, a pure deletion of a canonical
 role file or of a shared hook copy that `agent-team.sh check` flags may ride along with the
-generated copies. An Accepted intent passes when every commit
+generated copies. On the verdict lane, a generated copy is accepted when its content at the
+head equals the template render at dotfiles `origin/main`, using the same `{{PROJECT_NAME}}`
+substitution as `agent-team.sh`, or when the path is a deletion `agent-team.sh check` demands.
+A copy that differs from that render still needs `--verdict-from`. An Accepted intent passes when every commit
 in the PR that touches that intent file carries a non-empty `Owner-approved: <owner> <date>
 (<where approved>)` trailer, meaning the owner already accepted it in chat; one commit without
 it refuses the PR.
