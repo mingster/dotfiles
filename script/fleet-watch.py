@@ -6,8 +6,10 @@ pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck no
 optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo},
 optional heavy_gate {hosts, slot_roots, issue_repo} wait-log median and held-slot checks,
 optional wrap_up {hosts, issue_repo}
-round-log freshness, optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure;
---state FILE persists missing-waiter timers and alerts.
+round-log freshness, optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure.
+The same pass dispatches one verifier when head-checks succeeded and the head has no Verdict,
+or one fix worker when head-checks failed, once per head (babysit.per_pass_cap, default 2).
+--babysit-dry-run lists those actions and starts nothing. --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
 """
 import argparse
@@ -873,18 +875,35 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
     return notices
 
 
-def fetch_prs(repo):
+_PR_LIST_FIELDS = (
+    'number,state,isDraft,headRefOid,headRefName,baseRefOid,mergeable,mergeStateStatus,'
+    'reviewDecision,files,labels,comments,statusCheckRollup,mergeCommit,body'
+)
+
+
+def _fetch_pr_list(repo, state, run=None):
     """Recent PRs in one gh call, or None when gh fails."""
-    fields = (
-        'number,state,isDraft,headRefOid,headRefName,baseRefOid,mergeable,mergeStateStatus,'
-        'reviewDecision,files,labels,comments,statusCheckRollup,mergeCommit'
-    )
-    command = ['gh', 'pr', 'list', '--repo', repo, '--state', 'all', '--limit', '50', '--json', fields]
+    if run is None:
+        run = subprocess.run
+    command = [
+        'gh', 'pr', 'list', '--repo', repo, '--state', state, '--limit', '50',
+        '--json', _PR_LIST_FIELDS,
+    ]
     try:
-        output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        output = run(command, capture_output=True, text=True, timeout=30, check=True)
         return json.loads(output.stdout)
     except (subprocess.SubprocessError, OSError, ValueError):
         return None
+
+
+def fetch_prs(repo):
+    """Recent PRs in every state, for merge and Verdict notices."""
+    return _fetch_pr_list(repo, 'all')
+
+
+def fetch_open_prs(repo):
+    """Open PRs, including ones older than the newest closed PRs."""
+    return _fetch_pr_list(repo, 'open')
 
 
 newest_comment_receipt = rs.newest_comment_receipt
@@ -2536,15 +2555,525 @@ def _issue_scan_has_slot(host, config, admission, extra_starts):
     return extra_starts + occupied < cap
 
 
+_HEAD_CHECK_NAMES = ('checks', 'script-tests', 'script tests', 'shellcheck')
+_BUILDER_LINE_RE = re.compile(
+    r'^Builder: agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+)\s*$'
+)
+BABYSIT_PASS_CAP = 2
+
+
+def _is_head_check(check):
+    name = (check.get('context') or check.get('name') or '').lower()
+    if not name or name == 'review':
+        return False
+    if 'head-checks' in name:
+        return True
+    return name in _HEAD_CHECK_NAMES
+
+
+def _check_conclusion(check):
+    return (check.get('conclusion') or check.get('state') or '').upper()
+
+
+def _check_status(check):
+    return (check.get('status') or '').upper()
+
+
+def head_checks_status(pr):
+    """SUCCESS, FAILURE, or None when head-checks has not settled for this head."""
+    head = pr.get('headRefOid') or ''
+    kind = newest_checks_kind(pr.get('comments'), head)
+    if kind == 'FAIL':
+        return 'FAILURE'
+    if kind == 'PASS':
+        return 'SUCCESS'
+    relevant = [
+        check for check in (pr.get('statusCheckRollup') or [])
+        if isinstance(check, dict) and _is_head_check(check)
+    ]
+    if not relevant:
+        return None
+    pending = False
+    for check in relevant:
+        conclusion = _check_conclusion(check)
+        status = _check_status(check)
+        if conclusion in ('FAILURE', 'ERROR', 'TIMED_OUT'):
+            return 'FAILURE'
+        if conclusion == 'SUCCESS' and status in ('', 'COMPLETED'):
+            continue
+        pending = True
+    if pending:
+        return None
+    return 'SUCCESS'
+
+
+_VERDICT_FOR_HEAD_RE = re.compile(
+    r'^Verdict: (?:PASS\+NOTES|PASS|FAIL) head=(?P<head>[0-9a-f]{40})\b'
+)
+
+
+def verdict_posted_for_head(pr):
+    """True when a Verdict line names this head, including an agent= model= suffix."""
+    head = pr.get('headRefOid') or ''
+    if not re.fullmatch(r'[0-9a-f]{40}', head):
+        return False
+    for comment in pr.get('comments') or []:
+        if not isinstance(comment, dict):
+            continue
+        match = _VERDICT_FOR_HEAD_RE.match(_receipt_first_line(comment.get('body')))
+        if match and match.group('head') == head:
+            return True
+    return False
+
+
+def pr_file_paths(pr):
+    paths = []
+    for item in pr.get('files') or []:
+        if isinstance(item, str) and item:
+            paths.append(item)
+        elif isinstance(item, dict):
+            path = item.get('path') or item.get('filename') or ''
+            if path:
+                paths.append(path)
+    return paths
+
+
+def pr_owner_only_reason(pr, run=subprocess.run):
+    """Refuse text from check_owner_only_paths, None when the PR is clear, or 'error'."""
+    paths = pr_file_paths(pr)
+    if not paths:
+        return None
+    script = (
+        'files=$BABYSIT_FILES\n'
+        'refuse() { printf \'%s\\n\' "$*" >&2; exit 2; }\n'
+        'die() { printf \'%s\\n\' "$*" >&2; exit 3; }\n'
+        'field() { printf \'\\n\'; }\n'
+        'verdict_carry() { return 1; }\n'
+        'head=0000000000000000000000000000000000000000\n'
+        'diff=\n'
+        'info=\'{"comments":[]}\'\n'
+        'source "$BABYSIT_PROTECTED"\n'
+        'check_owner_only_paths\n'
+    )
+    env = os.environ.copy()
+    env['BABYSIT_FILES'] = json.dumps(paths)
+    env['BABYSIT_PROTECTED'] = str(Path(__file__).resolve().parent / 'lib' / 'protected-paths.sh')
+    try:
+        proc = run(
+            ['bash', '-c', script],
+            capture_output=True, text=True, timeout=20, env=env, check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return 'error'
+    if proc.returncode == 0:
+        return None
+    if proc.returncode == 2:
+        message = (proc.stderr or proc.stdout or '').strip()
+        return message or 'owner-only path'
+    return 'error'
+
+
+def babysit_repos(config):
+    block = config.get('babysit') or {}
+    configured = block.get('repos')
+    if configured:
+        return [repo for repo in configured if isinstance(repo, str) and repo]
+    seen = []
+    scan = config.get('issue_scan') or {}
+    watch = config.get('pr_watch') or {}
+    for repo in list(scan.get('pr_repos') or []) + list(watch.get('repos') or []):
+        if isinstance(repo, str) and repo and repo not in seen:
+            seen.append(repo)
+    if seen:
+        return seen
+    return [repo for repo in (scan.get('repos') or []) if isinstance(repo, str) and repo]
+
+
+def babysit_settings(config):
+    scan = config.get('issue_scan') or {}
+    block = config.get('babysit') or {}
+    startup = (block.get('startup') or scan.get('startup') or '').strip()
+    if not startup:
+        startup = str(Path(__file__).with_name('worker-startup.sh'))
+    run_id = (block.get('run') or scan.get('run') or '').strip()
+    from_terminal = (block.get('from_terminal') or scan.get('from_terminal') or '').strip()
+    roots = block.get('repo_roots') or scan.get('repo_roots') or {}
+    if not isinstance(roots, dict):
+        roots = {}
+    return startup, run_id, from_terminal, roots
+
+
+def babysit_cap(config):
+    raw = (config.get('babysit') or {}).get('per_pass_cap', BABYSIT_PASS_CAP)
+    try:
+        cap = int(raw)
+    except (TypeError, ValueError):
+        cap = BABYSIT_PASS_CAP
+    return cap if cap > 0 else 0
+
+
+def babysit_dispatch_repos(config):
+    """Repos that have a checkout root and a coordinator run to start from."""
+    _startup, run_id, from_terminal, roots = babysit_settings(config)
+    if not run_id or not from_terminal:
+        return []
+    ready = []
+    for repo in babysit_repos(config):
+        root = roots.get(repo)
+        if isinstance(root, str) and root:
+            ready.append(repo)
+    return ready
+
+
+def babysit_record(state, repo, number):
+    return ((state.get('babysit') or {}).get(repo) or {}).get(str(number)) or {}
+
+
+def babysit_mark(state, repo, number, head, action):
+    state.setdefault('babysit', {}).setdefault(repo, {})[str(number)] = {
+        'head': head,
+        'action': action,
+    }
+
+
+def _projection_agent_model(worker):
+    proj = worker.get('projection') or {}
+    provider = proj.get('provider') if isinstance(proj, dict) else None
+    if isinstance(provider, dict):
+        agent = provider.get('id') or provider.get('name')
+        model = provider.get('model')
+        if agent and model:
+            return str(agent), str(model)
+    agent = worker.get('agent')
+    model = worker.get('model')
+    if agent and model:
+        return str(agent), str(model)
+    return None
+
+
+def _launch_record_pair(dispatch_id):
+    if not isinstance(dispatch_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', dispatch_id):
+        return None
+    state_dir = os.environ.get('WORKER_STARTUP_STATE') or os.path.expanduser(
+        os.path.join('~', '.local', 'state', 'worker-startup')
+    )
+    path = Path(state_dir) / 'launches' / ('%s.json' % dispatch_id)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    agent, model = data.get('agent'), data.get('model')
+    if isinstance(agent, str) and agent and isinstance(model, str) and model:
+        return agent, model
+    return None
+
+
+def _worker_is_verifier(worker):
+    proj = worker.get('projection') or {}
+    role = proj.get('role') if isinstance(proj, dict) else ''
+    if not role:
+        role = worker.get('role') or ''
+    return str(role).lower() in ('qa', 'qa-sdet', 'reviewer', 'verifier')
+
+
+def builder_pair(pr, workers=None):
+    """Builder agent and model from the PR body, else a matching dispatch record."""
+    found = None
+    for line in (pr.get('body') or '').splitlines():
+        match = _BUILDER_LINE_RE.match(line.strip())
+        if match:
+            found = (match.group(1), match.group(2))
+    if found:
+        return found
+    number = pr.get('number')
+    branch = pr.get('headRefName') or ''
+    matches = []
+    for worker in workers or []:
+        if not isinstance(worker, dict):
+            continue
+        if number is not None and worker_pr_number(worker) == number:
+            matches.append(worker)
+        elif branch and worker_branch_name(worker) == branch:
+            matches.append(worker)
+    matches.sort(key=_worker_is_verifier)
+    for worker in matches:
+        pair = _projection_agent_model(worker)
+        if pair:
+            return pair
+        pair = _launch_record_pair(worker.get('dispatchId') or worker.get('dispatch_id'))
+        if pair:
+            return pair
+    return None
+
+
+def _usage_gate_argv():
+    cli = os.environ.get('USAGE_GATE_CLI') or str(Path(__file__).with_name('usage-gate.py'))
+    if cli.endswith('.py'):
+        return [sys.executable, cli]
+    return [cli]
+
+
+def pick_role(role, run=subprocess.run):
+    command = _usage_gate_argv() + ['pick', '--role', role, '--json']
+    try:
+        proc = run(command, capture_output=True, text=True, timeout=60, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    try:
+        data = json.loads(proc.stdout or '')
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _same_agent_model(agent, model, avoid):
+    if not avoid:
+        return False
+    return agent.lower() == avoid[0].lower() and model.lower() == avoid[1].lower()
+
+
+def choose_pick(data, avoid=None):
+    """First eligible pick, skipping a pair that equals the builder when avoid is set."""
+    if not isinstance(data, dict):
+        return None
+    ordered = []
+    selected = data.get('selected')
+    if isinstance(selected, dict):
+        ordered.append(selected)
+    for candidate in data.get('candidates') or []:
+        if isinstance(candidate, dict) and candidate not in ordered:
+            ordered.append(candidate)
+    for candidate in ordered:
+        if candidate.get('eligible') is False:
+            continue
+        agent = candidate.get('provider') or candidate.get('agent')
+        model = candidate.get('model')
+        if not isinstance(agent, str) or not agent or not isinstance(model, str) or not model:
+            continue
+        if _same_agent_model(agent, model, avoid):
+            continue
+        return agent, model
+    return None
+
+
+def _babysit_line(repo, number, head, action, detail=''):
+    text = 'babysit %s#%s head=%s action=%s' % (repo, number, head, action)
+    if detail:
+        text += ' ' + detail
+    return text
+
+
+def build_babysit_spec(repo, pr_row, kind, builder):
+    number = pr_row['number']
+    head = pr_row.get('headRefOid') or ''
+    if kind == 'verifier':
+        if builder:
+            who = 'The builder is agent=%s model=%s. Use a different agent and model.' % builder
+        else:
+            who = 'The builder agent and model were not recorded.'
+        text = (
+            'Refs %s#%s\n\n'
+            'Role: qa-sdet. Verify this open PR at head %s the way a user would, '
+            'and post the Verdict with script/post-verdict.sh. %s\n\n'
+            '## Acceptance\n'
+            '- [ ] a Verdict for head %s is posted\n\n'
+            '## Out of scope\n'
+            'Merging. ship.sh stays manual. Verdict format stays as it is.\n\n'
+            '## Verify\n'
+            'bash script/checks-local.sh\n\n'
+            '## Finish\n'
+            'Self-review, then worker_done.\n'
+        ) % (repo, number, head, who, head)
+    else:
+        text = (
+            'Refs %s#%s\n\n'
+            'Role: fullstack-dev. Fix this PR. head-checks failed at head %s.\n\n'
+            '## Acceptance\n'
+            '- [ ] head-checks pass for the new head\n\n'
+            '## Out of scope\n'
+            'Merging. ship.sh stays manual. Files outside this PR.\n\n'
+            '## Verify\n'
+            'bash script/checks-local.sh\n\n'
+            '## Finish\n'
+            'Write ## Self-review with the full 40 hex head sha and rewrite it after every push, then worker_done.\n'
+        ) % (repo, number, head)
+    return _write_issue_scan_spec(text)
+
+
+def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
+    startup, run_id, from_terminal, roots = babysit_settings(config)
+    root = roots.get(repo)
+    if not startup or not run_id or not from_terminal or not isinstance(root, str) or not root:
+        return None
+    if not agent or not model:
+        return None
+    if kind == 'verifier':
+        title = 'qa-sdet verify %s#%s' % (repo, pr_row['number'])
+        name = 'verify-%s' % pr_row['number']
+    else:
+        title = 'fullstack-dev fix %s#%s' % (repo, pr_row['number'])
+        name = 'fix-%s' % pr_row['number']
+    command = [
+        'bash', startup,
+        '--run', run_id,
+        '--spec', build_babysit_spec(repo, pr_row, kind, builder),
+        '--title', title,
+        '--agent', agent,
+        '--model', model,
+        '--from', from_terminal,
+        '--name', name,
+        '--repo', 'path:' + root,
+    ]
+    branch = pr_row.get('headRefName') or ''
+    if branch:
+        command += ['--base-branch', branch]
+    return command
+
+
+def babysit_pass(
+    config, state, workers=None, dry_run=False, persist_state=None,
+    pr_fetch=None, start_worker=None, pick=None, owner_check=None,
+):
+    """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
+    notices = []
+    lines = []
+    log_bits = []
+    repos = babysit_repos(config)
+    if not repos:
+        return notices, lines, log_bits
+    if start_worker is None:
+        start_worker = default_issue_scan_start
+    if pick is None:
+        pick = pick_role
+    if owner_check is None:
+        owner_check = pr_owner_only_reason
+    if pr_fetch is None:
+        pr_fetch = fetch_open_prs
+    _startup, run_id, from_terminal, roots = babysit_settings(config)
+    cap = babysit_cap(config)
+    started = 0
+    picks = {}
+
+    def cached_pick(role):
+        if role not in picks:
+            picks[role] = pick(role)
+        return picks[role]
+
+    rows = []
+    for index, repo in enumerate(repos):
+        prs = pr_fetch(repo)
+        if prs is None:
+            log_bits.append('fetch_fail')
+            continue
+        for pr_row in prs:
+            if not isinstance(pr_row, dict) or pr_row.get('state') != 'OPEN':
+                continue
+            rows.append((index, pr_row.get('number') or 0, repo, pr_row))
+    rows.sort(key=lambda item: (item[0], item[1]))
+
+    for _index, _number, repo, pr_row in rows:
+        number = pr_row.get('number')
+        head = pr_row.get('headRefOid') or ''
+        if pr_row.get('isDraft'):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'draft'))
+            continue
+        if not re.fullmatch(r'[0-9a-f]{40}', head):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'bad-head'))
+            continue
+        record = babysit_record(state, repo, number)
+        if record.get('head') == head and record.get('action'):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'already'))
+            continue
+        owner = owner_check(pr_row)
+        if owner == 'error':
+            lines.append(_babysit_line(repo, number, head, 'skip', 'owner-check-error'))
+            log_bits.append('owner_check_error=%s' % number)
+            continue
+        if owner:
+            lines.append(_babysit_line(repo, number, head, 'report', owner))
+            notices.append(Urgent(
+                'owner-only path on %s#%s (%s); not dispatched' % (repo, number, owner)
+            ))
+            log_bits.append('report=%s' % number)
+            if not dry_run:
+                babysit_mark(state, repo, number, head, 'report')
+                if persist_state:
+                    persist_state()
+            continue
+        status = head_checks_status(pr_row)
+        root = roots.get(repo) if isinstance(roots.get(repo), str) else ''
+        repo_root = root if root and os.path.isdir(root) else None
+        needs_fix = rework_needed_at_head(pr_row, None, repo, repo_root=repo_root)
+        if status == 'FAILURE':
+            kind, role = 'fixer', 'fullstack-dev'
+        elif status == 'SUCCESS' and not verdict_posted_for_head(pr_row) and not needs_fix:
+            kind, role = 'verifier', 'qa-sdet'
+        elif status == 'SUCCESS' and verdict_posted_for_head(pr_row):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'has-verdict'))
+            continue
+        elif status == 'SUCCESS' and needs_fix:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'needs-fix'))
+            continue
+        else:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'pending'))
+            continue
+        if not run_id or not from_terminal or not root:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
+            log_bits.append('skip_root=%s' % number)
+            continue
+        if started >= cap:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'cap'))
+            log_bits.append('cap')
+            continue
+        builder = builder_pair(pr_row, workers)
+        avoid = builder if kind == 'verifier' else None
+        chosen = choose_pick(cached_pick(role), avoid=avoid)
+        if not chosen:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'no-pick'))
+            log_bits.append('pick_fail=%s' % number)
+            continue
+        agent, model = chosen
+        detail = 'agent=%s model=%s' % (agent, model)
+        action = 'verifier' if kind == 'verifier' else 'fixer'
+        if dry_run:
+            lines.append(_babysit_line(repo, number, head, action, detail))
+            started += 1
+            continue
+        command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder)
+        if command is None:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
+            continue
+        spec_path = command[command.index('--spec') + 1]
+        if brief_lint_missing(spec_path):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'brief-lint'))
+            log_bits.append('lint_fail=%s' % number)
+            continue
+        if start_worker(command) != 0:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
+            log_bits.append('start_fail=%s' % number)
+            continue
+        babysit_mark(state, repo, number, head, action)
+        started += 1
+        lines.append(_babysit_line(repo, number, head, action, detail))
+        log_bits.append('%s=%s' % (action, number))
+        if persist_state:
+            persist_state()
+    return notices, lines, log_bits
+
+
 def issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
+    babysit_repos=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
     log_bits = []
+    babysit_owned = set(babysit_repos or ())
     scan = config.get('issue_scan') or {}
     if not scan.get('enabled'):
         return notices, ['issue_scan_off']
@@ -2611,6 +3140,11 @@ def issue_scan_pass(
                         log_bits.append('head_checks_start=%s' % head[:8])
                         if persist_state:
                             persist_state()
+            if repo in babysit_owned:
+                owner_reason = pr_owner_only_reason(pr_row)
+                if owner_reason and owner_reason != 'error':
+                    log_bits.append('babysit_owner_skip=%d' % pr_num)
+                    continue
             pr_class = classify_open_pr(pr_row, workflow_watch_prior, repo, repo_root=root)
             if pr_class == 'ready':
                 if shipped.get(head):
@@ -2626,6 +3160,9 @@ def issue_scan_pass(
                     log_bits.append('ship_fail=%d' % pr_num)
                 continue
             if pr_class != 'needs_fix':
+                continue
+            if repo in babysit_owned and head_checks_status(pr_row) == 'FAILURE':
+                log_bits.append('babysit_fixer=%d' % pr_num)
                 continue
             if seen.get(head) or pending.get(head):
                 continue
@@ -3130,6 +3667,9 @@ def main():
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
     parser.add_argument('--admit-local', action='store_true', help='Check coordinator load, memory, and cap admission')
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
+    parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
+    parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
+    parser.add_argument('--workers-json', type=Path, default=None, help='Worker rows used to read a builder dispatch record')
     args = parser.parse_args()
 
     if args.admit or args.admit_local:
@@ -3152,6 +3692,25 @@ def main():
         parser.error('--state is required when --admit is not specified')
 
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    if args.babysit_only or args.babysit_dry_run:
+        workers = []
+        if args.workers_json:
+            loaded = json.loads(args.workers_json.read_text())
+            workers = loaded if isinstance(loaded, list) else []
+        dry = bool(args.babysit_dry_run)
+
+        def persist_babysit():
+            save_state(args.state, state)
+
+        _babysit_notices, babysit_lines, _babysit_log = babysit_pass(
+            config, state, workers, dry_run=dry,
+            persist_state=None if dry else persist_babysit,
+        )
+        for line in babysit_lines:
+            print(line)
+        if not dry:
+            save_state(args.state, state)
+        return 0
     coordinator, done = coordinator_stage(config, state, args.state)
     if done:
         return 0
@@ -3184,7 +3743,14 @@ def main():
         term_branches = terminal_branch_map(term_out)
     except SEND_ERRORS:
         terminal_list_ok = False
-    notices += pr_notices(config, state, now)
+    pass_prs = {}
+
+    def fetch_once(repo):
+        if repo not in pass_prs:
+            pass_prs[repo] = fetch_prs(repo)
+        return pass_prs[repo]
+
+    notices += pr_notices(config, state, now, fetch=fetch_once)
     notices += usage_notices(config)
     workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
     notices += workflow_notices(config, state, now)
@@ -3198,11 +3764,19 @@ def main():
     def persist_scan_state():
         save_state(args.state, state)
 
+    babysit_notices, babysit_lines, babysit_log = babysit_pass(
+        config, state, workers, persist_state=persist_scan_state,
+    )
+    for line in babysit_lines:
+        print(line)
+    notices += babysit_notices
     scan_extra, scan_log = issue_scan_pass(
         config, state, now, workers,
+        pr_fetch=fetch_once,
         inventory_ok=inventory_ok,
         persist_state=persist_scan_state,
         workflow_watch_prior=workflow_watch_prior,
+        babysit_repos=babysit_dispatch_repos(config),
     )
     notices += scan_extra
     stall_extra, stall_log = worker_stall_pass(
@@ -3231,6 +3805,8 @@ def main():
         parts.extend(wrap_log)
     if stall_log:
         parts.append('stall ' + ','.join(stall_log))
+    if babysit_log:
+        parts.append('babysit ' + ','.join(babysit_log))
     if scan_log:
         parts.append('scan ' + ','.join(scan_log))
     log_fleet_watch('; '.join(parts))

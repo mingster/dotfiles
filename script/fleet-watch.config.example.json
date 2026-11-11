@@ -26,6 +26,9 @@
     "stuck_minutes": 30,
     "workflows": ["Checks", "Review", "ShellCheck", "Script tests"]
   },
+  "babysit": {
+    "per_pass_cap": 2
+  },
   "worker_stall": {
     "label_repo": "owner/name",
     "needs_elon_label": "needs-elon",

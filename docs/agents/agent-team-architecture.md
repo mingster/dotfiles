@@ -46,7 +46,7 @@ flowchart TD
 
 ## 3. Delivery lifecycle
 
-GitHub issues and PRs are the state of record (`README.md` section 3). After each push, GitHub Actions `Checks` run first; when they pass, Actions `Review` (`script/pr-review.sh`) and the verifier (`qa-sdet` via `script/post-verdict.sh`) run, the 5 minute babysit pass (`fleet-watch.py`) starts one fix worker or a Shipping run (`script/ship.sh`), and `wrap-up.sh` cleans up every 10 minutes. Docs and changelog only PRs pass with no agent.
+GitHub issues and PRs are the state of record (`README.md` section 3). After each push, GitHub Actions `Checks` run first; when they pass, Actions `Review` (`script/pr-review.sh`) and the verifier (`qa-sdet` via `script/post-verdict.sh`) run. The 5 minute babysit pass (`fleet-watch.py`) starts one verifier when head-checks passed and the head has no Verdict, one fix worker when head-checks failed, or a Shipping run (`script/ship.sh`) when a passing Verdict already matches the head. `wrap-up.sh` cleans up every 10 minutes. Docs and changelog only PRs pass with no agent.
 
 ```mermaid
 sequenceDiagram
@@ -67,7 +67,7 @@ sequenceDiagram
     CEO->>Dev: 5 minute run starts scoped ticket in isolated worktree
     Dev->>Dev: Bug fixes start with a failing test, features, scripts and refactors require tests and proof on the real artifact (refactors prove behavior unchanged), local checks, push once and open PR
     Dev->>QA: Actions Checks pass; Actions Review (pr-review.sh) and verifier Verdict (post-verdict.sh)
-    QA->>Ship: 5 minute babysit pass starts fix worker or Shipping run when Checks and Verdict pass
+    QA->>Ship: 5 minute babysit pass starts a verifier, a fix worker, or a Shipping run
     Ship->>Ship: Squash merge (gh pr merge --squash), read back as MERGED; 10m wrap-up cleans worktree
 
     RM->>RM: Daily 19:00 Taiwan time staging deploy

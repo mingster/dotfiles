@@ -13,7 +13,7 @@ An **agent team** is a small set of AI agents that share one delivery playbook. 
 * **Grill:** a round of pointed questions that fills the gaps in an idea before anyone builds it.
 * **Verifier:** a second AI model, from a different model family than the author, that checks a finished change and gives a pass or fail.
 * **Unit:** one ticket sized piece of work. **PR owner:** the worker that writes its branch.
-* **Babysit:** a check every five minutes on open pull requests that starts a fix or a merge when one is due.
+* **Babysit:** a check every five minutes on open pull requests. It starts one verifier when head-checks passed and that head has no Verdict, or one fix worker when head-checks failed. A head that already has a passing Verdict can still start a shipping run.
 * **Fleet:** the group of computers that run the agents.
 
 One **coordinator agent** holds the CEO role. It reads the issue tracker, plans work, and **dispatches** tasks. A dispatch is a single start command that gives one worker a complete assignment.
@@ -31,7 +31,7 @@ Full role names and boundaries live in [Agent team reference](docs/agents/team-r
 3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks that the host is ready and that the usage quota allows another worker, then starts one worker in a fresh worktree.
 4. **Build.** The worker implements the ticket, runs local checks, commits, pushes once and opens a pull request.
 5. **Checks and review.** GitHub Actions runs required checks. A read only bot review and a separate verifier model post a **Verdict** (`PASS`, `PASS+NOTES` or `FAIL`) via `script/post-verdict.sh`.
-6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` may squash merge. A periodic babysit pass can start a fix worker or a shipping run.
+6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` may squash merge. A periodic babysit pass starts a verifier when the Verdict is missing, or a fix worker when head-checks failed. `script/ship.sh` stays the shipping run for a head that already passed.
 7. **Cleanup.** `script/wrap-up.sh` removes finished worktrees and merged branches. The issue closes when the PR merges.
 
 Orca orchestration details, gates and failure limits are in [Coordinator operations](docs/agents/coordinator-operations.md) and [Agent team architecture](docs/agents/agent-team-architecture.md).

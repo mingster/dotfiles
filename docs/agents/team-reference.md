@@ -63,7 +63,7 @@ flowchart TD
 | Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
 | Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
 | Verifier Verdict | Actions Checks pass | `qa-sdet` (another model family, runs parent against head as a user would) | `Verdict: PASS` or `PASS+NOTES` posted via `script/post-verdict.sh` |
-| Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one fix worker (fixes and pushes once) or a Shipping run |
+| Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one verifier when head-checks passed and the head has no Verdict, one fix worker when head-checks failed, or a Shipping run when a passing Verdict already matches the head |
 | Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
 | Worktree cleanup | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
 | Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest trunk deployed, swarm live lanes and regression green (or issue opened) |
@@ -72,7 +72,9 @@ flowchart TD
 **Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one of three groups.
 
 * Ready: checks are green and a verifier PASS covers this head. It starts a Shipping run.
-* Needs a fix: a conflict with trunk, an unresolved review thread, a review FAIL, or a red check on a file the PR changed. It starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
+* Missing Verdict: head-checks succeeded and this head has no Verdict. It starts one verifier (`qa-sdet` from `usage-gate.py pick`, a different agent and model from the builder) once per head.
+* Head-checks failed: it starts one fix worker (`fullstack-dev` from `usage-gate.py pick`) once per head. A conflict with trunk, an unresolved review thread, or a review FAIL still starts one fresh fix worker, which fixes, pushes once and ends. One PR never has two fix workers at once.
+* A pull request that touches an owner-only path is reported to the coordinator and not dispatched. Drafts are skipped. At most two of these verifier and head-checks fixer dispatches run per pass. A new push re-arms that head.
 * Anything else waits for the next pass.
 
 **Shipping run.** One run of `script/ship.sh` handles one PR. It merges only when all of these hold:
@@ -209,7 +211,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, the coordinator) or new UI pages (`sales-marketing`, the coordinator); owner approves before build. The coordinator decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/grill-backlog` | `/grill-backlog Run the pre-build grill on the pending money and UI issues.` |
 | Dispatch and build | The coordinator assigns ready units (`Acceptance criteria`, `Requirement owner`, `Deleted`) under the usage and host gates; workers build by TDD on touched tests in child worktrees and report `worker_done`. | `/elon <objective>` (pstack Orchestrate), `script/worker-startup.sh`, `/tdd` | `/elon Deliver the ready setup tickets.` |
 | Checks and review | Actions `Checks` (`head-checks.sh`) run on push; Actions `Review` (`script/pr-review.sh`) runs the read only bot review, and a cross-family `qa-sdet` verifier runs parent against head as a user would and posts the `Verdict` via `script/post-verdict.sh`. | `script/head-checks.sh`, `script/pr-review.sh`, `script/post-verdict.sh`, `/code-review` | `/code-review Check this branch against main and its ticket.` |
-| Babysit, ship and worktree cleanup | The 5 minute pass (`fleet-watch.py`) starts one fix worker or a Shipping run (`script/ship.sh`) that squash merges and reads back as merged; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, pstack `worktree-cleanup` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
+| Babysit, ship and worktree cleanup | The 5 minute pass (`fleet-watch.py`) starts one verifier when head-checks passed and the head has no Verdict, one fix worker when head-checks failed, or a Shipping run (`script/ship.sh`) that squash merges and reads back as merged; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, pstack `worktree-cleanup` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
 | Deploy and swarm live lanes | Staging deploys daily at 19:00 Taiwan time, followed by the pstack `swarm` live lanes and full regression; a green review leads to a one-line summary and same-day user go for production. | `/deploy local`, `/deploy staging`, pstack `swarm`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
 | Status | Get company status (**Now**, **Needs user**, **Running**) or a recap. The daily program starts from the `daily-program-1900` automation, not a command. | `/elon status` | `/elon status Show Now, Needs owner and Running.` |
 | Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs for user review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |

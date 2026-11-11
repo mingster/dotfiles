@@ -1,0 +1,1 @@
+The five minute babysit pass starts one verifier when head-checks succeeded and the head has no Verdict, and one fix worker when head-checks failed, once per head. Owner-only paths are reported and not dispatched. (#881)
