@@ -555,6 +555,53 @@ else
   ok
 fi
 
+# Automation PATH is ~/.local/bin plus system dirs, with no asdf shims. The start
+# command must still run the pinned node from ~/.asdf/shims.
+shim_home="$tmp/home-shim"
+shim_bin="$shim_home/.asdf/shims"
+mkdir -p "$shim_bin" "$shim_home/.local/bin"
+shim_log="$tmp/node-shim.log"
+: >"$shim_log"
+cat >"$shim_bin/node" <<EOS
+#!/bin/sh
+printf 'node\n' >>"$shim_log"
+echo v22.2.2
+EOS
+chmod +x "$shim_bin/node"
+auto_path=$(node_match_path "$shim_home/.local/bin")
+case ":$auto_path:" in
+  *":$shim_bin:"*) bad "automation-style PATH must not already contain the asdf shims" ;;
+  *) ok ;;
+esac
+shimrepo="$tmp/shimrepo"
+shimrepo_bare="$tmp/shimrepo.git"
+make_repo "$shimrepo" "$shimrepo_bare"
+printf 'nodejs 22.2.2\n' >"$shimrepo/.tool-versions"
+git -C "$shimrepo" add .tool-versions
+git -C "$shimrepo" commit -qm pin
+git -C "$shimrepo" push -q
+cat >"$tmp/fleet-shim.json" <<EOF
+{"hosts":[],"repos":["$shimrepo"]}
+EOF
+: >"$tmp/orca-shim.log"
+set +e
+env -u BASH_ENV -u ASDF_DATA_DIR -u AGENT_STATE_DIR -u REMOTE_REPO \
+  HOME="$shim_home" PATH="$auto_path" \
+  ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-shim.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet-shim.json" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
+  FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" \
+  PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  WORKER_STARTUP_STATE="$launch_state" \
+  bash --noprofile --norc "$script" --run run_shim --spec "$spec_file" \
+  --title myjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name nshim --repo "path:$shimrepo" 2>"$tmp/run-shim.err"
+ec_shim=$?
+set -e
+[ "$ec_shim" = 0 ] && ok || bad "minimal PATH start finds pinned node ($ec_shim) $(cat "$tmp/run-shim.err")"
+grep -qx node "$shim_log" && ok || bad "pinned node shim was invoked ($(cat "$shim_log" 2>/dev/null))"
+grep -q 'orchestration worker-start' "$tmp/orca-shim.log" && ok || bad "start reached worker-start under minimal PATH"
+
 # --run with unfixable bun pin: host-check fails, no worker-start
 badbun="$tmp/badbun"
 badbun_bare="$tmp/badbun.git"
@@ -589,6 +636,7 @@ helper_dir="$tmp/helpers"
 mkdir -p "$helper_dir/lib"
 cp "$script" "$helper_dir/worker-startup.sh"
 cp "$here/../lib/pr-review-gates.sh" "$helper_dir/lib/pr-review-gates.sh"
+cp "$here/../lib/automation-path.sh" "$helper_dir/lib/automation-path.sh"
 [ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 cp "$here/../worker-placement.py" "$helper_dir/worker-placement.py"
 chmod +x "$helper_dir/worker-startup.sh" "$helper_dir/worker-placement.py"

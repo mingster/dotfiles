@@ -11,6 +11,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$here/lib/pr-review-gates.sh"
+# shellcheck source=lib/automation-path.sh
+. "$here/lib/automation-path.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 python3=${PYTHON:-python3}
 agent_state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
@@ -54,6 +56,10 @@ ensure_node_matches_pin() { # <repo_dir>
   [ -n "$tv" ] || return 0
   want=$(nodejs_pin_from_tool_versions "$tv")
   [ -n "$want" ] || return 0
+  if ! command -v node >/dev/null 2>&1; then
+    PATH="$(automation_tool_path):${PATH}"
+    export PATH
+  fi
   have=$(cd "$(dirname "$tv")" && node --version 2>/dev/null | tr -d v || true)
   have=${have:-}
   [ "$want" = "$have" ] && return 0

@@ -376,9 +376,52 @@ printf '%s\n' \
   "FLEET_WATCH_PRECHECK_LOG=$FLEET_WATCH_PRECHECK_LOG" \
   >"$FLEET_AUTOMATIONS_ENV"
 
+shim_home="$tmp/shim-home"
+mkdir -p "$shim_home/.asdf/shims" "$tmp/py-bin"
+: >"$shim_home/.asdf/shims/node"
+chmod +x "$shim_home/.asdf/shims/node"
+cat >"$tmp/py-bin/python3" <<EOS
+#!/bin/sh
+exec "$python3_bin" "\$@"
+EOS
+chmod +x "$tmp/py-bin/python3"
+rm -f "$FAKE_ORCA_STORE"
+env -u ASDF_DATA_DIR HOME="$shim_home" PATH="$tmp/py-bin:$PATH" AGENT_STATE_DIR="$HOME/agent-state" \
+  bash "$script" --install >/dev/null
+shim_pc=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a.get("name") == "fleet-watch":
+        print((a.get("precheck") or {}).get("command") or "")
+')
+printf '%s\n' "$shim_pc" | grep -F "$shim_home/.asdf/shims" >/dev/null \
+  && check 'automation PATH includes asdf shims when that directory exists' true \
+  || check 'automation PATH includes asdf shims when that directory exists' false
+plain_home="$tmp/plain-home"
+mkdir -p "$plain_home"
+rm -f "$FAKE_ORCA_STORE"
+env -u ASDF_DATA_DIR HOME="$plain_home" PATH="$tmp/py-bin:$PATH" AGENT_STATE_DIR="$HOME/agent-state" \
+  bash "$script" --install >/dev/null
+plain_pc=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a.get("name") == "fleet-watch":
+        print((a.get("precheck") or {}).get("command") or "")
+')
+printf '%s\n' "$plain_pc" | grep -F '.asdf/shims' >/dev/null \
+  && check 'automation PATH omits asdf shims when the directory is absent' false \
+  || check 'automation PATH omits asdf shims when the directory is absent' true
+grep -q 'automation_tool_path' "$root/script/install-fleet-automations.sh" \
+  && grep -q 'automation_tool_path' "$root/script/worker-startup.sh" \
+  && check 'installer and worker-startup share automation_tool_path' true \
+  || check 'installer and worker-startup share automation_tool_path' false
+
 fake_wt="$tmp/fake-worktree/script"
-mkdir -p "$fake_wt" "$HOME/dotfiles/script"
+mkdir -p "$fake_wt/lib" "$HOME/dotfiles/script"
 cp "$script" "$fake_wt/install-fleet-automations.sh"
+cp "$root/script/lib/automation-path.sh" "$fake_wt/lib/automation-path.sh"
 touch "$HOME/dotfiles/script/fleet-watch.py"
 canonical_home_dotfiles=$(cd "$HOME/dotfiles" && pwd -P)
 unset DOTFILES_DIR
