@@ -268,6 +268,20 @@ case11_table_driven_mapped_paths() {
   ok "case11 table-driven mapped paths avoid duplicate-selection fallback"
 }
 
+case13_lib_maps_referencing_tests() {
+  local out count
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/lib/automation-path.sh 2>&1)
+  grep -Fq 'Fallback:' <<<"$out" && fail "lib helper must not fall back to the full suite"
+  grep -Fq 'Selected: script/tests/worker-startup.test.sh' <<<"$out" \
+    || fail "lib helper must select worker-startup tests"
+  grep -Fq 'Selected: script/tests/install-fleet-automations.test.sh' <<<"$out" \
+    || fail "lib helper must select installer tests"
+  count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
+  [ "${count:-0}" -lt 20 ] || fail "lib helper suite too wide (${count:-0})"
+  ok "case13 script/lib maps tests that reference the helper"
+}
+
 case12_no_project_names_always_selected() {
   local out path
   for path in script/tests/select-changed-script-tests.test.sh README.md; do
@@ -292,4 +306,5 @@ case9_sync_team_skills_agent_team
 case10_script_plus_already_selected_test
 case11_table_driven_mapped_paths
 case12_no_project_names_always_selected
-echo 'PASS: 14 acceptance cases'
+case13_lib_maps_referencing_tests
+echo 'PASS: 15 acceptance cases'

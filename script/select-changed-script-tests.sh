@@ -144,6 +144,10 @@ map_file() {
     script/automation-precheck-*.sh)
       add_if_exists "script/tests/install-fleet-automations.test.sh"
       ;;
+    script/lib/*.sh)
+      map_tests_referencing "lib/$(basename "$path")"
+      map_tests_referencing "$(basename "$path")"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
