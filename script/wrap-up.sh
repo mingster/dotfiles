@@ -891,7 +891,9 @@ orca=orca_call
 # a Run coordinator's, a live dispatch's, a lead- worktree's, one with output in the last 10 minutes (a correction pass runs on a
 # settled dispatch), a running agent, one outside a worktree, and the main checkout's. A local terminal with no dispatch and
 # no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only). A scheduled
-# round closes that local shell once it has had no output for 60 minutes; newer output stays. On another environment a
+# round closes that local shell once it has had no output for 60 minutes; newer output stays. A shell whose worktree
+# path, worktree id, or cwd is a live dispatch's worktree, or a directory inside it, stays open on a scheduled round
+# and on a manual run. On another environment a
 # terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
 # its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
 # shell with no running agent, at a path the environment no longer reports; scheduled rounds close those too. A running
@@ -907,17 +909,37 @@ terminals_read=0
 : > "$tmp/kept-terminals"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; printf '%s %s\n' "$2" "$1" >> "$tmp/kept-terminals"; term_kept=$((term_kept+1)); }
 close_terminal_err='close failed'
+# terminal show keeps a closed session with no state or status field. Live means this handle is still connected.
+# A list payload, a missing handle, or connected false is not a live session.
+terminal_show_live() {
+  jq -e --arg h "$1" '
+    def term:
+      if (.result.terminal | type) == "object" then .result.terminal
+      elif (.result | type) == "object" and ((.result.handle | type) == "string") then .result
+      else {} end;
+    .ok == true and (term | .handle == $h and .connected == true and .writable != false
+      and .state != "closed" and .status != "closed" and .orphaned != true)
+  ' >/dev/null 2>&1
+}
 close_terminal() {
-  local h='' a show
+  local h='' a show rc=0
   for a in "$@"; do h=$a; done
   close_terminal_err='close failed'
-  "$orca" terminal close "$@" >/dev/null 2>&1 || return 1
-  show=$("$orca" terminal show "$@" --json 2>/dev/null) || return 0
-  if printf '%s' "$show" | jq -e --arg h "$h" '.ok == true and ((.result.terminal // .result) | type == "object" and .handle == $h and .state != "closed" and .status != "closed")' >/dev/null 2>&1; then
+  "$orca" terminal close "$@" >/dev/null 2>&1 || rc=$?
+  show=$("$orca" terminal show "$@" --json 2>/dev/null) || true
+  if printf '%s' "$show" | terminal_show_live "$h"; then
     close_terminal_err="terminal still open after close: $h"
     return 1
   fi
-  return 0
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  # The command failed. Show can still prove the session is gone.
+  printf '%s' "$show" | jq -e --arg h "$h" '
+    def term:
+      if (.result.terminal | type) == "object" then .result.terminal
+      elif (.result | type) == "object" and ((.result.handle | type) == "string") then .result
+      else {} end;
+    .ok == true and (term | .handle == $h and (.connected == false or .writable == false or .orphaned == true or .state == "closed" or .status == "closed"))
+  ' >/dev/null 2>&1
 }
 # Prints the next page cursor, or nothing on the last page. Fails when a page cannot prove it is the last one.
 # Current Orca has top level nextCursor, absent on the last page; older Orca has page.hasMore; 1.4.246 has neither.
@@ -1023,20 +1045,30 @@ close_finished_terminals() {
       or (.stage == "released" or .stage == "process_stopped")
       or ((.terminalState // "") as $t | ["released","release_unknown","gone","missing","closed"] | index($t))
       or (live_of == "exited" or live_of == "sleep");
-    def path: (.workspace // .projection.workspace.id // "") | split("::")[1] // "";
+    def clean:
+      if type != "string" or . == "" then ""
+      elif . == "/" then "/"
+      else sub("/+$"; "") end;
+    def path: ((.workspace // .projection.workspace.id // .worktreeId // "") | split("::")[1] // "" | clean);
+    def under($root): . == $root or startswith($root + "/");
     [.[].result.workers[]] as $w
-    | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "") as $p
+    | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "" | clean) as $p
     | ([$w[] | select((.agentTerminalHandle // (.terminal | strings)) == $h)]) as $mine
     | ([$w[] | select($p != "" and path == $p)]) as $onpath
+    | ([$w[] | select(settled | not) | path | select(. != "")]) as $live_paths
+    | ([ (.worktreeId // "" | if type == "string" then (split("::")[1] // "" | clean) else "" end), (.cwd // "" | clean) ]
+        | map(select(. != ""))) as $places
+    | (any($live_paths[]; . as $root | ($p != "" and ($p | under($root))))
+        or any($places[]; . as $place | any($live_paths[]; . as $root | $place | under($root)))) as $in_live
     | (.connected == false or .writable == false) as $exited
     | if $h == $own then [$h, "own terminal", "keep"]
       elif $coordinators | split("\n") | index($h) then [$h, "coordinator", "keep"]
       elif (($p | split("/") | last) // "" | startswith("lead-")) then [$h, "lead worktree", "keep"]
-      elif $scheduled != "" and $local == "" and $p != "" and $p != $main and ($mine | length) == 0 and .agentIdentity == null
+      elif any(($mine + $onpath)[]; settled | not) or $in_live then [$h, "live dispatch", "keep"]
+      elif $scheduled != "" and ($in_live | not) and $local == "" and $p != "" and $p != $main and ($mine | length) == 0 and .agentIdentity == null
         and (((.title // "") | test("worker-pane")) | not)
         and (.lastOutputAt | type) == "number" and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))
         then [$h, "no dispatch, no agent, idle", "close"]
-      elif any(($mine + $onpath)[]; settled | not) then [$h, "live dispatch", "keep"]
       elif ($exited | not) and (.lastOutputAt > now * 1000 - 600000 or (.agentIdentity != null and .lastOutputAt == null)) then [$h, "recent output", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
@@ -1482,7 +1514,7 @@ guarded_orca_worktree_rm() { # <counter> <label> <path>
   return 0
 }
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
-  local orca_rm orca_ok=0
+  local orca_rm orca_ok=0 remove_rc=0
   guard_paths "$1" "$2" "$3" || return
   if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
     orca_rm=(worktree rm --worktree "path:$3")
@@ -1498,14 +1530,17 @@ guarded_worktree_remove() { # <counter> <label> <path> [--force]
       fi
     fi
   fi
-  git worktree remove ${4:+"$4"} -- "$3" || {
-    echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'; return 1
-  }
+  # A non-zero exit after the worktree is already gone is a finished remove, not a failure.
+  git worktree remove ${4:+"$4"} -- "$3" || remove_rc=$?
   git worktree prune
   if worktree_present_after_remove "$3"; then
-    echo "Warning: $2 still present after remove; kept." >&2
-    fail_item "$2" "worktree still present after remove: $3"
-    guard_keep "$1" "$2" "worktree still present after remove: $3"
+    if [ "$remove_rc" -ne 0 ]; then
+      echo "Warning: could not remove $2; kept." >&2; fail_item "$2" 'remove failed'; guard_keep "$1" "$2" 'remove failed'
+    else
+      echo "Warning: $2 still present after remove; kept." >&2
+      fail_item "$2" "worktree still present after remove: $3"
+      guard_keep "$1" "$2" "worktree still present after remove: $3"
+    fi
     return 1
   fi
   [ "$orca_ok" -eq 0 ] || orca_removed=$((${orca_removed:-0}+1))
@@ -1593,13 +1628,14 @@ remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets ca
   return "$status"
 }
 guarded_rm() { # <counter> <label> <rf|dir> <path> [more paths to probe]
-  local counter=$1 label=$2 mode=$3 target=$4; shift 3
+  local counter=$1 label=$2 mode=$3 target=$4 rc=0; shift 3
   guard_paths "$counter" "$label" "$@" || return
   if [ "$mode" = dir ]; then
-    rmdir -- "$target" && return 0
+    rmdir -- "$target" || rc=$?
   else
-    rm -rf -- "$target" && return 0
+    rm -rf -- "$target" || rc=$?
   fi
+  if [ "$rc" -eq 0 ] || { [ ! -e "$target" ] && [ ! -L "$target" ]; }; then return 0; fi
   echo "Warning: could not remove $label; kept." >&2; fail_item "$label" 'remove failed'; guard_keep "$counter" "$label" 'remove failed'; return 1
 }
 active_worktree() {

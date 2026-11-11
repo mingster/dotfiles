@@ -49,8 +49,9 @@ Two failed rounds in a row open one GitHub issue on the repo in `WRAP_UP_ISSUE_R
 is open, no second one is opened. With the variable unset, or a repo that is not private, the round
 logs that and opens nothing, so host names stay out of public repos. A repo run hung past its budget
 plus 30 seconds is stopped with its inner calls and counts as failed. A scheduled round closes a local
-shell that no dispatch owns once it has had no output for 60 minutes. A shell with newer output, the
-coordinator, a lead worktree, and a live worker stay open. Fetch, PR lookup, worker release, remote
+shell that no dispatch owns once it has had no output for 60 minutes. A shell with newer output stays
+open, and so do the coordinator, a lead worktree, and any shell in a live dispatch's worktree. A
+manual run keeps those shells too. Fetch, PR lookup, worker release, remote
 branch checks, temp cleanup, the pane sweep, and the main update each have their own short time limit,
 and terminal close runs before those steps.
 

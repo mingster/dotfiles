@@ -1068,3 +1068,116 @@ close_at=$(grep -n 'Close terminal t-ended ' "$tmp/output" | head -n 1 | cut -d:
 rel_at=$(grep -n 'Release worker d-rel ' "$tmp/output" | head -n 1 | cut -d: -f1)
 [ -n "$close_at" ] && [ -n "$rel_at" ] && [ "$close_at" -lt "$rel_at" ] || idle_fail 'close waited for release'
 echo 'ok scheduled round closes idle shells and ended dispatches even when release fails'
+
+# An idle shell in a live dispatch's worktree stays open. A shell somewhere else still closes.
+# terminal show after a real close has no state field: connected false is closed, connected true is still open.
+mkdir -p "$tmp/sib"
+cat > "$tmp/bin/orca-sib" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DIR/calls"
+args=("$@"); h=''
+for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && h=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal close'*) printf '%s\n' "$*" >> "$FAKE_DIR/closed"; echo '{"ok":true,"result":{"close":{"ok":true}}}'; exit 0 ;;
+  *'terminal show'*)
+    if [ "$h" = t-stuck ]; then
+      printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":true,"writable":true}}}\n' "$h"
+    else
+      printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":false,"writable":false,"orphaned":true}}}\n' "$h"
+    fi ;;
+  *'terminal list'*) cat "$FAKE_DIR/terminals" ;;
+  *worker-release*) echo '{"ok":true,"result":{"state":"released"}}' ;;
+  *worker-show*) echo '{"ok":true,"result":{"state":"ready","liveness":"live","outcome":"in_progress","workspace":"repo::/live/wt","terminal":{"cwd":"/live/wt"}}}' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1","coordinator_handle":"t-coord"}]}}' ;;
+  *worker-list*) cat "$FAKE_DIR/workers" ;;
+  *'worktree list'*) echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  *) echo "unexpected: $*" >> "$FAKE_DIR/unexpected"; exit 1 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-sib"
+export FAKE_DIR="$tmp/sib" ORCA_CLI_COMMAND="$tmp/bin/orca-sib" ORCA_TERMINAL_HANDLE=t-own
+jq -n '{ok:true,result:{workers:[
+  {dispatchId:"d-live",state:"ready",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-agent",workspace:"repo::/live/wt"}
+],page:{hasMore:false}}}' > "$tmp/sib/workers"
+jq -n --argjson now "$now_ms" '{ok:true,result:{terminals:[
+  {handle:"t-agent",worktreePath:"/live/wt",connected:true,writable:true,agentIdentity:"claude",lastOutputAt:$now,title:"agent"},
+  {handle:"t-term1",worktreePath:"/live/wt",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"Terminal 1"},
+  {handle:"t-setup",worktreePath:"/live/wt",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"Setup"},
+  {handle:"t-cwd",worktreePath:"/elsewhere/idle",cwd:"/live/wt/src",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-prefix",worktreePath:"/live/wt-other",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-idle",worktreePath:"/elsewhere/other",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"},
+  {handle:"t-stuck",worktreePath:"/elsewhere/stuck",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,title:"shell"}
+]}}' > "$tmp/sib/terminals"
+git init -q --bare "$tmp/origin-sib"
+git init -q -b main "$tmp/repo-sib"
+git -C "$tmp/repo-sib" config user.email test@example.invalid
+git -C "$tmp/repo-sib" config user.name Test
+git -C "$tmp/repo-sib" commit -qm c --allow-empty
+git -C "$tmp/repo-sib" remote add origin "$tmp/origin-sib"
+git -C "$tmp/repo-sib" push -q -u origin main
+sib_fail() { echo "FAIL $1"; cat "$tmp/sib-out" "$tmp/sib-err" "$tmp/sib/closed" "$tmp/sib/unexpected" 2>/dev/null; exit 1; }
+sib_round() { # <scheduled|manual>
+  : > "$tmp/sib/calls"; : > "$tmp/sib/closed"; : > "$tmp/sib/unexpected"
+  if [ "$1" = scheduled ]; then
+    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=60 \
+      bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-sib" > "$tmp/sib-out" 2> "$tmp/sib-err" || true
+  else
+    env -u WRAP_UP_SCHEDULED_CHILD WRAP_UP_TOTAL_TIMEOUT=60 \
+      bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-sib" > "$tmp/sib-out" 2> "$tmp/sib-err" || true
+  fi
+  for keep in t-term1 t-setup t-cwd t-agent; do
+    grep -Fq "Kept terminal $keep (local, live dispatch)" "$tmp/sib-out" || sib_fail "$1 kept $keep"
+    ! grep -Fq "Close terminal $keep " "$tmp/sib-out" || sib_fail "$1 closed $keep"
+  done
+  if [ "$1" = scheduled ]; then
+    grep -Fq 'Close terminal t-idle (local, no dispatch, no agent, idle)' "$tmp/sib-out" || sib_fail 'scheduled left an idle shell elsewhere'
+    grep -Fq 'Close terminal t-prefix (local, no dispatch, no agent, idle)' "$tmp/sib-out" || sib_fail 'scheduled kept a prefix lookalike'
+  else
+    grep -Fq 'Close terminal t-idle (local, no dispatch, no agent)' "$tmp/sib-out" || sib_fail 'manual left an idle shell elsewhere'
+    ! grep -Fq 'Close terminal t-idle (local, no dispatch, no agent, idle)' "$tmp/sib-out" || sib_fail 'manual used the scheduled idle reason'
+    grep -Fq 'Close terminal t-prefix (local, no dispatch, no agent)' "$tmp/sib-out" || sib_fail 'manual kept a prefix lookalike'
+  fi
+  grep -Fq 'terminal close --terminal t-idle' "$tmp/sib/closed" || sib_fail "$1 did not close the idle shell"
+  grep -Fq 'terminal close --terminal t-stuck' "$tmp/sib/closed" || sib_fail "$1 did not try the stuck shell"
+  ! grep -Fq 'closing t-idle on local failed' "$tmp/sib-err" || sib_fail "$1 reported a finished close as failed"
+  ! grep -Fq 'terminal t-idle (local):' "$tmp/sib-out" || sib_fail "$1 recorded a failure for a finished close"
+  grep -Fq 'closing t-stuck on local failed' "$tmp/sib-err" || sib_fail "$1 hid a terminal that stayed open"
+  grep -Fq 'terminal still open after close: t-stuck' "$tmp/sib-out" || sib_fail "$1 did not record the stuck terminal"
+  grep -Fq 'terminals closed=2 kept=4' "$tmp/sib-out" || sib_fail "$1 close count"
+}
+sib_round manual
+sib_round scheduled
+echo 'ok idle shells in a live worktree stay; a finished close is closed and a live one is a failure'
+
+# git worktree remove can exit non-zero after the worktree is already gone. That is removed, not a failure.
+real_git=$(command -v git)
+cat > "$tmp/bin/git" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" worktree remove "*)
+    "$REAL_GIT" "$@"
+    rc=$?
+    [ "$rc" -eq 0 ] || exit "$rc"
+    exit 1
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+FAKE
+chmod +x "$tmp/bin/git"
+export REAL_GIT="$real_git" ORCA_CLI_COMMAND="$tmp/bin/orca"
+unset WRAP_UP_SCHEDULED_CHILD FAKE_TERMINALS FAKE_WORKERS || true
+git init -q --bare "$tmp/origin-lie"
+git init -q -b main "$tmp/repo-lie"
+git -C "$tmp/repo-lie" config user.email test@example.invalid
+git -C "$tmp/repo-lie" config user.name Test
+git -C "$tmp/repo-lie" commit -qm c --allow-empty
+git -C "$tmp/repo-lie" remote add origin "$tmp/origin-lie"
+git -C "$tmp/repo-lie" push -q -u origin main
+git -C "$tmp/repo-lie" worktree add -q "$tmp/lie-wt" -b lie
+env -u WRAP_UP_SCHEDULED_CHILD bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-lie" > "$tmp/lie-out" 2> "$tmp/lie-err" || true
+test ! -d "$tmp/lie-wt"
+! grep -Fq 'remove failed' "$tmp/lie-out" "$tmp/lie-err"
+grep -Fq 'removed worktrees=1' "$tmp/lie-out"
+rm -f "$tmp/bin/git"
+echo 'ok a worktree remove that exits non-zero after the tree is gone counts as removed'
