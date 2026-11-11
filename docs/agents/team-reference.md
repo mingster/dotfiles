@@ -450,9 +450,12 @@ generated team copies). No merge worker is dispatched.
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
-and intents that become Accepted). An Accepted intent passes when every commit in the PR that
-touches that intent file carries a non-empty `Owner-approved: <owner> <date> (<where approved>)`
-trailer, meaning the owner already accepted it in chat; one commit without it refuses the PR.
+and intents that become Accepted). On the generated lane, a pure deletion of a canonical
+role file or of a shared hook copy that `agent-team.sh check` flags may ride along with the
+generated copies. An Accepted intent passes when every commit
+in the PR that touches that intent file carries a non-empty `Owner-approved: <owner> <date>
+(<where approved>)` trailer, meaning the owner already accepted it in chat; one commit without
+it refuses the PR.
 It squash merges and reads the PR back as `MERGED`.
 
 ### Interpreters (asdf)
