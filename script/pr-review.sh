@@ -85,7 +85,7 @@ review_run_invoke() {
         --allowedTools "Read,Grep,Glob" --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch")
       ;;
     antigravity)
-      (cd "$REVIEW_RUN_WORKDIR" && agy --model "$REVIEW_RUN_MODEL" --dangerously-skip-permissions \
+      (cd "$REVIEW_RUN_WORKDIR" && "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/agy" --model "$REVIEW_RUN_MODEL" --dangerously-skip-permissions \
         -p "$REVIEW_RUN_PROMPT")
       ;;
     cursor)

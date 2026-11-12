@@ -333,7 +333,7 @@ if command -v agent >/dev/null 2>&1; then
 elif command -v cursor-agent >/dev/null 2>&1; then
   try "cursor-agent update" env AGENT_CLI_CREDENTIAL_STORE=file cursor-agent update
 fi
-command -v agy >/dev/null 2>&1 && try "agy update" agy update
+command -v agy >/dev/null 2>&1 && try "agy update" "$dot/bin/agy" update
 orca_app="\${FLEET_ORCA_APP:-/Applications/_dev/Orca.app}"
 orca_mac() { # <version>: replace Orca.app from the release zip, putting the old one back on failure, and reopen it
   case "\$(uname -m)" in arm64) asset="Orca-\$1-arm64-mac.zip" ;; *) asset="Orca-\$1-mac.zip" ;; esac

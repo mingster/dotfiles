@@ -249,6 +249,8 @@ mkdir -p "$fake_dotfiles/script"
 cp "$here/fleet-toolchain-check.sh" "$fake_dotfiles/script/"
 mkdir -p "$fake_dotfiles/script/lib"
 cp "$here/lib/find-orca-dir.sh" "$fake_dotfiles/script/lib/"
+mkdir -p "$fake_dotfiles/bin"
+cp "$here/../bin/agy" "$fake_dotfiles/bin/agy"
 cat > "$fake_dotfiles/script/bootstrap-asdf-tools.sh" <<EOS
 #!/usr/bin/env bash
 echo "bootstrap-asdf-tools \$*" >> "$apply_log"
