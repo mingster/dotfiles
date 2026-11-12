@@ -360,10 +360,14 @@ def read_banners(now, path=None):
         return {}
 
 
+# Always the wrapper: it unsets the SSH variables so agy reads the keychain, not the empty file store.
+AGY_WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "agy")
+
+
 def antigravity_models():
     """Model ids the Antigravity CLI lists, or None when it cannot say."""
     try:
-        out = subprocess.run(["agy", "models"], capture_output=True, text=True, timeout=20).stdout
+        out = subprocess.run([AGY_WRAPPER, "models"], capture_output=True, text=True, timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     ids = {line.split()[0] for line in out.splitlines() if line.strip() and not line.startswith("Fetching")}

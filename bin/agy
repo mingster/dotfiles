@@ -1,0 +1,19 @@
+#!/bin/sh
+# Run the real agy with the SSH variables removed. In an SSH session agy switches to a file
+# token store that is empty after a keychain sign-in; without them it always uses the keychain.
+unset SSH_CONNECTION SSH_TTY SSH_CLIENT
+self=$(cd "$(dirname "$0")" && pwd -P)
+real=
+old_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+  [ -n "$dir" ] || continue
+  [ "$(cd "$dir" 2>/dev/null && pwd -P)" = "$self" ] && continue
+  if [ -x "$dir/agy" ] && [ ! -d "$dir/agy" ]; then
+    real=$dir/agy
+    break
+  fi
+done
+IFS=$old_ifs
+[ -n "$real" ] || { echo 'agy wrapper: no agy found on PATH' >&2; exit 127; }
+exec "$real" "$@"
