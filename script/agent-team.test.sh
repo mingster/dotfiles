@@ -929,5 +929,105 @@ else
   check "empty host deploy set and command name union merge with shared defaults" bad
 fi
 
+# Project guard-config.json is an extension file. Sync keeps project keys and entries,
+# adds template defaults that are missing, and a second run leaves the file unchanged.
+guard_tpl="$real_dotfiles/templates/agent-team/.claude/hooks/guard-config.json"
+keep="$tmp/keep-guard"
+mkdir -p "$keep/.claude/hooks"
+git -C "$keep" init -q
+git -C "$keep" config user.email t@example.invalid
+git -C "$keep" config user.name t
+cat > "$keep/.claude/hooks/guard-config.json" <<'JSON'
+{
+  "host_deploy_commands": {
+    "root@slot.example": ["echo kept", "echo project-slot"],
+    "root@other.example": ["echo other-slot"]
+  },
+  "remote_read_only": ["uptime", "project-allow"],
+  "worktree_env_allow": [".env.local"],
+  "project_only": ["stay"]
+}
+JSON
+cat > "$keep/.claude/hooks/guard-bash.py" <<'PY'
+HOST_DEPLOY_COMMANDS = {"root@slot.example": ["echo kept"]}
+REMOTE_READ_ONLY = ["uptime"]
+PY
+printf '# Agents\n' > "$keep/AGENTS.md"
+git -C "$keep" add -A
+git -C "$keep" commit -qm init
+keep_out=$(bash "$SCRIPT" project "$keep" --project-name fixture 2>&1)
+keep_rc=$?
+if [ "$keep_rc" -eq 0 ] && python3 - "$keep" "$guard_tpl" <<'PY'
+import json, sys
+root, tpl_path = sys.argv[1:]
+cfg = json.load(open(root + "/.claude/hooks/guard-config.json"))
+tpl = json.load(open(tpl_path))
+cmds = cfg["host_deploy_commands"]["root@slot.example"]
+assert "echo project-slot" in cmds and "echo kept" in cmds, cmds
+assert cfg["host_deploy_commands"]["root@other.example"] == ["echo other-slot"]
+assert "project-allow" in cfg["remote_read_only"] and "uptime" in cfg["remote_read_only"]
+assert cfg["project_only"] == ["stay"]
+assert ".env.local" in cfg["worktree_env_allow"]
+for key, value in tpl.items():
+    assert key in cfg, key
+    if isinstance(value, list):
+        for item in value:
+            assert item in cfg[key], (key, item)
+    elif isinstance(value, dict):
+        for child, child_val in value.items():
+            assert child in cfg[key], (key, child)
+            if isinstance(child_val, list):
+                for piece in child_val:
+                    assert piece in cfg[key][child], (key, child, piece)
+            else:
+                assert cfg[key][child] == child_val
+    else:
+        assert cfg[key] == value
+PY
+then
+  check "sync keeps project guard-config entries and adds missing template defaults" ok
+else
+  echo "$keep_out" >&2
+  check "sync keeps project guard-config entries and adds missing template defaults" bad
+fi
+keep_first=$(cat "$keep/.claude/hooks/guard-config.json")
+keep_again=$(bash "$SCRIPT" sync "$keep" --project-name fixture 2>&1)
+keep_second=$(cat "$keep/.claude/hooks/guard-config.json")
+if [ -z "$keep_again" ] && [ "$keep_first" = "$keep_second" ] \
+  && python3 - "$keep/.claude/hooks/guard-config.json" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+assert "echo project-slot" in cfg["host_deploy_commands"]["root@slot.example"]
+PY
+then
+  check "second sync leaves guard-config.json unchanged" ok
+else
+  echo "$keep_again" >&2
+  check "second sync leaves guard-config.json unchanged" bad
+fi
+
+missing="$tmp/missing-guard"
+mkdir -p "$missing"
+git -C "$missing" init -q
+git -C "$missing" config user.email t@example.invalid
+git -C "$missing" config user.name t
+printf '# Agents\n' > "$missing/AGENTS.md"
+git -C "$missing" add -A
+git -C "$missing" commit -qm init
+if bash "$SCRIPT" project "$missing" --project-name fixture >/dev/null 2>&1 \
+  && cmp -s "$missing/.claude/hooks/guard-config.json" "$guard_tpl"; then
+  missing_first=$(cat "$missing/.claude/hooks/guard-config.json")
+  missing_again=$(bash "$SCRIPT" sync "$missing" --project-name fixture 2>&1)
+  missing_second=$(cat "$missing/.claude/hooks/guard-config.json")
+  if [ -z "$missing_again" ] && [ "$missing_first" = "$missing_second" ]; then
+    check "project with no guard-config.json gets the template copy" ok
+  else
+    echo "$missing_again" >&2
+    check "project with no guard-config.json gets the template copy" bad
+  fi
+else
+  check "project with no guard-config.json gets the template copy" bad
+fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
