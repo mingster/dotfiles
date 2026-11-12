@@ -77,7 +77,7 @@ for keep in w-agent w-live w-recent lead-x w-own; do
 done
 [ ! -d "$tmp/w-dirty" ] || fail 'dirty published worktree survived apply'
 grep -Fq "Archive worktree $tmp/w-dirty" "$tmp/output" || fail 'dirty worktree archive missing'
-for pair in 't-agent:running agent' 't-live:live dispatch' 't-recent:recent output' 't-lead:lead worktree' 't-own:own terminal' 't-main:main checkout'; do
+for pair in 't-agent:owner session' 't-live:live dispatch' 't-recent:recent output' 't-lead:lead worktree' 't-own:own terminal' 't-main:main checkout'; do
   grep -Fq "Kept terminal ${pair%%:*} (local, ${pair#*:})" "$tmp/output" || fail "no kept reason for ${pair%%:*}"
 done
 grep -Fq "Kept worktree $tmp/w-agent (active or unknown Orca terminal)" "$tmp/output" || fail 'agent worktree reason missing'

@@ -1182,10 +1182,10 @@ grep -Fq 'removed worktrees=1' "$tmp/lie-out"
 rm -f "$tmp/bin/git"
 echo 'ok a worktree remove that exits non-zero after the tree is gone counts as removed'
 
-# A scheduled round closes a sleep-liveness terminal, and a prompt idle for 60 minutes when
+# Every run, manual or scheduled, closes a sleep-liveness terminal, and a prompt idle for 60 minutes when
 # no unsettled dispatch owns it. A dispatch that is running, ready, pending or waiting stays,
 # at a prompt or on a working screen. A progress line, a heading and a wait are not prompts.
-# A manual run does not use the sleep or prompt rules. The agent list preview is old
+# An agent with no dispatch record is an owner session and stays. The agent list preview is old
 # scrollback; the current screen comes from terminal show.
 unset WRAP_UP_SCHEDULED_CHILD || true
 now_ms=$(python3 -c 'import time; print(int(time.time()*1000))')
@@ -1238,7 +1238,9 @@ jq -n --argjson now "$now_ms" --argjson owner "$owner_ms" --argjson quiet "$quie
   {handle:"t-scroll",worktreePath:"/nowhere/scroll",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"building\nlinking 45% complete\nrunning integration suite",title:"agent"},
   {handle:"t-hash",worktreePath:"/nowhere/hash",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"tests running\n# 3 of 40 done",title:"agent"},
   {handle:"t-wait",worktreePath:"/nowhere/wait",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,agentWait:true,preview:"still working",title:"agent"},
-  {handle:"t-prompt",worktreePath:"/nowhere/prompt",connected:true,writable:true,liveness:"live",agentIdentity:null,lastOutputAt:1,preview:"~/work $\n❯",title:"shell"}
+  {handle:"t-prompt",worktreePath:"/nowhere/prompt",connected:true,writable:true,liveness:"live",agentIdentity:null,lastOutputAt:1,preview:"~/work $\n❯",title:"shell"},
+  {handle:"t-mine",worktreePath:"/nowhere/mine",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"~/work $\n❯",title:"claude"},
+  {handle:"t-mine-asleep",worktreePath:"/nowhere/mine-asleep",connected:true,writable:true,liveness:"sleep",agentIdentity:"claude",lastOutputAt:1,preview:"~/work $\n❯",title:"claude"}
 ]}}' > "$tmp/asleep/terminals"
 jq -n '{ok:true,result:{terminal:{handle:"t-agent",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"still working\n⏵⏵ bypass permissions on (shift+tab to cycle)\n"}}}' > "$tmp/asleep/screen-t-agent.json"
 : > "$tmp/asleep/calls"; : > "$tmp/asleep/shows"; : > "$tmp/asleep/closed"; : > "$tmp/asleep/releases"; : > "$tmp/asleep/unexpected"
@@ -1252,12 +1254,13 @@ git -C "$tmp/repo-asleep" push -q -u origin main
 asleep_fail() { echo "FAIL $1"; cat "$tmp/asleep-out" "$tmp/asleep-err" "$tmp/asleep/shows" "$tmp/asleep/unexpected" 2>/dev/null; exit 1; }
 env -u WRAP_UP_SCHEDULED_CHILD WRAP_UP_TOTAL_TIMEOUT=60 \
   bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
-grep -Fq 'Kept terminal t-sleep (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed a sleep-liveness terminal'
+grep -Fq 'Close terminal t-sleep (local, sleep)' "$tmp/asleep-out" || asleep_fail 'manual kept a sleep-liveness terminal'
+grep -Fq 'Close terminal t-mine-asleep (local, sleep)' "$tmp/asleep-out" || asleep_fail 'manual kept a sleeping owner session'
+grep -Fq 'Close terminal t-prompt (local, idle at prompt)' "$tmp/asleep-out" || asleep_fail 'manual kept an idle prompt'
+grep -Fq 'Kept terminal t-mine (local, owner session)' "$tmp/asleep-out" || asleep_fail 'manual closed an owner session'
 grep -Fq 'Kept terminal t-agent (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed an idle agent'
 grep -Fq 'Kept terminal t-shell (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed an idle shell'
 grep -Fq 'Kept terminal t-run (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed a running dispatch'
-! grep -Fq 'idle at prompt' "$tmp/asleep-out" || asleep_fail 'manual used the scheduled prompt rule'
-! grep -Fq 'Close terminal t-sleep (local, sleep)' "$tmp/asleep-out" || asleep_fail 'manual used the scheduled sleep rule'
 : > "$tmp/asleep/shows"
 WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=60 \
   bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
@@ -1267,10 +1270,11 @@ grep -Fq 'Kept terminal t-shell (local, live dispatch)' "$tmp/asleep-out" || asl
 grep -Fq 'Kept terminal t-quiet (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'running dispatch idle on a progress line was closed'
 grep -Fq 'Kept terminal t-pend (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'pending dispatch was closed'
 grep -Fq 'Kept terminal t-hold (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'waiting dispatch was closed'
-grep -Fq 'Kept terminal t-scroll (local, running agent)' "$tmp/asleep-out" || asleep_fail 'progress line was closed as a prompt'
-grep -Fq 'Kept terminal t-hash (local, running agent)' "$tmp/asleep-out" || asleep_fail 'heading line was closed as a prompt'
-grep -Fq 'Kept terminal t-wait (local, running agent)' "$tmp/asleep-out" || asleep_fail 'agent wait was closed as a prompt'
+grep -Fq 'Kept terminal t-scroll (local, owner session)' "$tmp/asleep-out" || asleep_fail 'progress line was closed as a prompt'
+grep -Fq 'Kept terminal t-hash (local, owner session)' "$tmp/asleep-out" || asleep_fail 'heading line was closed as a prompt'
+grep -Fq 'Kept terminal t-wait (local, owner session)' "$tmp/asleep-out" || asleep_fail 'agent wait was closed as a prompt'
 grep -Fq 'Close terminal t-prompt (local, idle at prompt)' "$tmp/asleep-out" || asleep_fail 'idle prompt with no dispatch stayed open'
+grep -Fq 'Kept terminal t-mine (local, owner session)' "$tmp/asleep-out" || asleep_fail 'scheduled closed an owner session'
 grep -Fq 'Kept terminal t-owner (local, no dispatch, no agent, output within 60 minutes)' "$tmp/asleep-out" || asleep_fail 'recent owner shell closed'
 grep -Fq 'Kept terminal t-run (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'running dispatch closed'
 grep -Fq 'Kept terminal t-coord (local, coordinator)' "$tmp/asleep-out" || asleep_fail 'coordinator closed'
