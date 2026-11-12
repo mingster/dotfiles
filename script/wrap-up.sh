@@ -895,15 +895,17 @@ orca=orca_call
 # path, worktree id, or cwd is a live dispatch's worktree, or a directory inside it, stays open on a scheduled round
 # and on a manual run. Every run, manual or scheduled, also closes a
 # terminal that is asleep: liveness sleep or exited, or a shell at its prompt with no output for that same
-# 60 minutes when no unsettled dispatch owns it. A connected agent with no dispatch record is an owner session and stays
-# unless Orca reports it asleep. A dispatch that is running, ready, pending or waiting keeps the
-# terminal unless liveness is sleep or exited. The prompt is the last non-empty line, so a progress line, a heading
-# or a wait for a reply does not count. List preview can be scrollback from before a
-# full-screen agent started, so the round reads the current screen of idle terminals before it decides. On another environment a
-# terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
-# it is asleep or its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
-# shell with no running agent, at a path the environment no longer reports; scheduled rounds close those too. A running
-# agent in a removed worktree stays open until its dispatch settles (the gap: a manual run closes it).
+# 60 minutes when no unsettled dispatch owns it. A connected agent with no dispatch record is an owner session and stays,
+# on this host and on a fleet host, manual or scheduled, unless Orca reports it asleep. A dispatch that is running, ready,
+# pending or waiting keeps the terminal unless liveness is sleep or exited. The prompt is the last non-empty line, so a
+# progress line, a heading or a wait for a reply does not count. The same screen read keeps a terminal whose preview shows
+# an unanswered question, a pending ask, or an escalation, or whose terminal show reports agentWait, even when the dispatch
+# looks settled. List preview can be scrollback from before a full-screen agent started, so the round reads the current
+# screen of idle terminals before it decides. On another environment a terminal with no dispatch record and no running
+# agent stays kept as unknown owner (a dev server, another coordinator), unless it is asleep or its worktree was removed
+# by this run: a second pass over the environments, after the worktree step, closes those. Only a shell with no running
+# agent, at a path the environment no longer reports; scheduled rounds close those too. A running agent in a removed
+# worktree stays open until its dispatch settles (the gap: a manual run closes it).
 # worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
 # every Run on this Orca and on every environment, and one inventory serves all of them; if any of it is unread, nothing closes.
 # Each Orca is read directly, so no --include-remote: with it one unreachable host makes a whole Run answer ok:false.
@@ -1055,6 +1057,7 @@ close_finished_terminals() {
         elif (.result | type) == "object" and ((.result.handle | type) == "string") then .result
         else empty end;
       term | select(.handle == $h) | {handle, preview, liveness, agentIdentity, lastOutputAt}
+        + (if has("agentWait") then {agentWait} else {} end)
     ' >> "$tmp/h-screens" 2>/dev/null || true
   done < "$tmp/h-idle-handles"
   if [ -s "$tmp/h-screens" ] && jq -s '.' "$tmp/h-screens" > "$tmp/h-screens.json"; then
@@ -1067,6 +1070,7 @@ close_finished_terminals() {
             | .liveness = (if ($s.liveness | type) == "string" then $s.liveness else $t.liveness end)
             | .agentIdentity = (if ($s | has("agentIdentity")) then $s.agentIdentity else $t.agentIdentity end)
             | .lastOutputAt = (if ($s.lastOutputAt | type) == "number" then $s.lastOutputAt else $t.lastOutputAt end)
+            | .agentWait = (if ($s | has("agentWait")) then $s.agentWait else $t.agentWait end)
           end)
     ' "$tmp/h-terminals" > "$tmp/h-terminals-rich"; then
       mv "$tmp/h-terminals-rich" "$tmp/h-terminals"
@@ -1097,6 +1101,15 @@ close_finished_terminals() {
       and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))
       and at_prompt;
     def owner_session: .agentIdentity != null and .connected != false and .writable != false;
+    def waiting_on_human:
+      (.agentWait == true or (.agentWait | type) == "object")
+      or (
+        [.preview // "" | split("\n")[] | select(length > 0)] as $lines
+        | any($lines[]; test("\\((question|escalation)\\)[[:space:]]*─"))
+        or any($lines[]; test("^Question .+ sent\\.$"))
+        or any($lines[]; test("^Question .+ is still pending"))
+        or any($lines[]; test("^ask timeout after .+ is still pending"))
+      );
     def worker_handle: .agentTerminalHandle // (.terminal | strings) // "";
     def screen_of($h):
       if $h == "" then null
@@ -1130,7 +1143,8 @@ close_finished_terminals() {
       elif (($p | split("/") | last) // "" | startswith("lead-")) then [$h, "lead worktree", "keep"]
       elif any(($mine + $onpath)[]; blocking) or $in_live then [$h, "live dispatch", "keep"]
       elif (live_of == "sleep") or (live_of == "exited") then [$h, "sleep", "close"]
-      elif $local == "" and owner_session and ($mine | length) == 0 and ($onpath | length) == 0 then [$h, "owner session", "keep"]
+      elif owner_session and ($mine | length) == 0 and ($onpath | length) == 0 then [$h, "owner session", "keep"]
+      elif waiting_on_human then [$h, "waiting on a human", "keep"]
       elif idle_prompt then [$h, "idle at prompt", "close"]
       elif $scheduled != "" and ($in_live | not) and $local == "" and $p != "" and $p != $main and ($mine | length) == 0 and .agentIdentity == null
         and (((.title // "") | test("worker-pane")) | not)

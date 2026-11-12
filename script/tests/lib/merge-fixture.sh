@@ -228,7 +228,9 @@ mf_run_limited() {
   shift
   flag=$(mktemp -u "${MF_DIR:-/tmp}/limit.XXXXXX")
   "$@" & pid=$!
-  ( sleep "$secs"; : > "$flag"; _mf_kill_tree "$pid" ) >/dev/null 2>&1 & watcher=$!
+  # A killed sleep must not fall through: the waiter is stopped children-first, and
+  # without this the shell writes the flag and reports a timeout for a command that finished.
+  ( sleep "$secs" || exit 0; : > "$flag"; _mf_kill_tree "$pid" ) >/dev/null 2>&1 & watcher=$!
   wait "$pid" 2>/dev/null; rc=$?
   _mf_kill_tree "$watcher"
   wait "$watcher" 2>/dev/null

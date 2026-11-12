@@ -1,0 +1,1 @@
+Wrap-up keeps a connected agent with no dispatch on a fleet host, and keeps a terminal whose screen shows an unanswered question, a pending ask, or an escalation, even when its dispatch looks settled. A finished worker idle at its prompt is still closed.
