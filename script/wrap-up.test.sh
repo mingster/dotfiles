@@ -1181,3 +1181,100 @@ test ! -d "$tmp/lie-wt"
 grep -Fq 'removed worktrees=1' "$tmp/lie-out"
 rm -f "$tmp/bin/git"
 echo 'ok a worktree remove that exits non-zero after the tree is gone counts as removed'
+
+# A scheduled round closes a sleep-liveness terminal, and a prompt idle for 60 minutes when
+# no unsettled dispatch owns it. A dispatch that is running, ready, pending or waiting stays,
+# at a prompt or on a working screen. A progress line, a heading and a wait are not prompts.
+# A manual run does not use the sleep or prompt rules. The agent list preview is old
+# scrollback; the current screen comes from terminal show.
+unset WRAP_UP_SCHEDULED_CHILD || true
+now_ms=$(python3 -c 'import time; print(int(time.time()*1000))')
+owner_ms=$((now_ms - 1800000))
+quiet_ms=$((now_ms - 7200000))
+mkdir -p "$tmp/asleep"
+cat > "$tmp/bin/orca-asleep" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DIR/calls"
+args=("$@"); h=''
+for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && h=${args[$((i+1))]}; done
+case "$*" in
+  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  *'terminal close'*) printf '%s\n' "$*" >> "$FAKE_DIR/closed"; echo '{"ok":true}' ;;
+  *'terminal show'*)
+    printf '%s\n' "$h" >> "$FAKE_DIR/shows"
+    if [ -f "$FAKE_DIR/screen-$h.json" ]; then cat "$FAKE_DIR/screen-$h.json"
+    else jq -c --arg h "$h" '{ok:true, result:{terminal: (.result.terminals[] | select(.handle == $h))}}' "$FAKE_DIR/terminals"
+    fi ;;
+  *'terminal list'*) cat "$FAKE_DIR/terminals" ;;
+  *worker-release*) printf '%s\n' "$*" >> "$FAKE_DIR/releases"; echo '{"ok":true}' ;;
+  *worker-show*) echo '{"ok":true,"result":{"state":"ready","liveness":"live","outcome":"in_progress"}}' ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1","coordinator_handle":"t-coord"}]}}' ;;
+  *worker-list*) cat "$FAKE_DIR/workers" ;;
+  *'worktree list'*) echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+  *) echo "unexpected: $*" >> "$FAKE_DIR/unexpected"; echo '{"ok":true,"result":{}}' ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-asleep"
+export FAKE_DIR="$tmp/asleep" ORCA_CLI_COMMAND="$tmp/bin/orca-asleep" ORCA_TERMINAL_HANDLE=t-own
+jq -n --argjson now "$now_ms" '{ok:true,result:{workers:[
+  {dispatchId:"d-sleep",state:"ready",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-sleep",workspace:"repo::/nowhere/asleep"},
+  {dispatchId:"d-agent",state:"ready",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-agent",workspace:"repo::/nowhere/agent"},
+  {dispatchId:"d-shell",state:"ready",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-shell",workspace:"repo::/nowhere/shell"},
+  {dispatchId:"d-run",state:"ready",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-run",workspace:"repo::/nowhere/running"},
+  {dispatchId:"d-quiet",state:"in_progress",dispatchStatus:"running",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-quiet",workspace:"repo::/nowhere/quiet"},
+  {dispatchId:"d-pend",state:"in_progress",dispatchStatus:"pending",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-pend",workspace:"repo::/nowhere/pend"},
+  {dispatchId:"d-hold",state:"in_progress",dispatchStatus:"waiting",liveness:"live",outcome:"in_progress",terminalState:"active",terminal:"t-hold",workspace:"repo::/nowhere/hold"}
+]}}' > "$tmp/asleep/workers"
+jq -n --argjson now "$now_ms" --argjson owner "$owner_ms" --argjson quiet "$quiet_ms" '{ok:true,result:{terminals:[
+  {handle:"t-sleep",worktreePath:"/nowhere/asleep",connected:true,writable:true,liveness:"sleep",agentIdentity:"claude",lastOutputAt:$now,preview:"compiling objects",title:"agent"},
+  {handle:"t-agent",worktreePath:"/nowhere/agent",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"still working",title:"agent"},
+  {handle:"t-shell",worktreePath:"/nowhere/shell",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,preview:"~/work $\n❯",title:"shell"},
+  {handle:"t-run",worktreePath:"/nowhere/running",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:$now,preview:"compiling objects",title:"agent"},
+  {handle:"t-owner",worktreePath:"/nowhere/owner",connected:true,writable:true,agentIdentity:null,lastOutputAt:$owner,preview:"~/work $\n❯",title:"shell"},
+  {handle:"t-coord",worktreePath:"/nowhere/coord",connected:true,writable:true,agentIdentity:null,lastOutputAt:1,preview:"~/work $\n❯",title:"shell"},
+  {handle:"t-quiet",worktreePath:"/nowhere/quiet",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:$quiet,preview:"building\nlinking 45% complete\nrunning integration suite",title:"agent"},
+  {handle:"t-pend",worktreePath:"/nowhere/pend",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"~/work $\n❯",title:"agent"},
+  {handle:"t-hold",worktreePath:"/nowhere/hold",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"~/work $\n❯",title:"agent"},
+  {handle:"t-scroll",worktreePath:"/nowhere/scroll",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"building\nlinking 45% complete\nrunning integration suite",title:"agent"},
+  {handle:"t-hash",worktreePath:"/nowhere/hash",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"tests running\n# 3 of 40 done",title:"agent"},
+  {handle:"t-wait",worktreePath:"/nowhere/wait",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,agentWait:true,preview:"still working",title:"agent"},
+  {handle:"t-prompt",worktreePath:"/nowhere/prompt",connected:true,writable:true,liveness:"live",agentIdentity:null,lastOutputAt:1,preview:"~/work $\n❯",title:"shell"}
+]}}' > "$tmp/asleep/terminals"
+jq -n '{ok:true,result:{terminal:{handle:"t-agent",connected:true,writable:true,liveness:"live",agentIdentity:"claude",lastOutputAt:1,preview:"still working\n⏵⏵ bypass permissions on (shift+tab to cycle)\n"}}}' > "$tmp/asleep/screen-t-agent.json"
+: > "$tmp/asleep/calls"; : > "$tmp/asleep/shows"; : > "$tmp/asleep/closed"; : > "$tmp/asleep/releases"; : > "$tmp/asleep/unexpected"
+git init -q --bare "$tmp/origin-asleep"
+git init -q -b main "$tmp/repo-asleep"
+git -C "$tmp/repo-asleep" config user.email test@example.invalid
+git -C "$tmp/repo-asleep" config user.name Test
+git -C "$tmp/repo-asleep" commit -qm c --allow-empty
+git -C "$tmp/repo-asleep" remote add origin "$tmp/origin-asleep"
+git -C "$tmp/repo-asleep" push -q -u origin main
+asleep_fail() { echo "FAIL $1"; cat "$tmp/asleep-out" "$tmp/asleep-err" "$tmp/asleep/shows" "$tmp/asleep/unexpected" 2>/dev/null; exit 1; }
+env -u WRAP_UP_SCHEDULED_CHILD WRAP_UP_TOTAL_TIMEOUT=60 \
+  bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
+grep -Fq 'Kept terminal t-sleep (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed a sleep-liveness terminal'
+grep -Fq 'Kept terminal t-agent (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed an idle agent'
+grep -Fq 'Kept terminal t-shell (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed an idle shell'
+grep -Fq 'Kept terminal t-run (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'manual closed a running dispatch'
+! grep -Fq 'idle at prompt' "$tmp/asleep-out" || asleep_fail 'manual used the scheduled prompt rule'
+! grep -Fq 'Close terminal t-sleep (local, sleep)' "$tmp/asleep-out" || asleep_fail 'manual used the scheduled sleep rule'
+: > "$tmp/asleep/shows"
+WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=60 \
+  bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
+grep -Fq 'Close terminal t-sleep (local, sleep)' "$tmp/asleep-out" || asleep_fail 'sleep liveness terminal stayed open'
+grep -Fq 'Kept terminal t-agent (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'ready dispatch at a prompt was closed'
+grep -Fq 'Kept terminal t-shell (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'ready dispatch at a shell prompt was closed'
+grep -Fq 'Kept terminal t-quiet (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'running dispatch idle on a progress line was closed'
+grep -Fq 'Kept terminal t-pend (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'pending dispatch was closed'
+grep -Fq 'Kept terminal t-hold (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'waiting dispatch was closed'
+grep -Fq 'Kept terminal t-scroll (local, running agent)' "$tmp/asleep-out" || asleep_fail 'progress line was closed as a prompt'
+grep -Fq 'Kept terminal t-hash (local, running agent)' "$tmp/asleep-out" || asleep_fail 'heading line was closed as a prompt'
+grep -Fq 'Kept terminal t-wait (local, running agent)' "$tmp/asleep-out" || asleep_fail 'agent wait was closed as a prompt'
+grep -Fq 'Close terminal t-prompt (local, idle at prompt)' "$tmp/asleep-out" || asleep_fail 'idle prompt with no dispatch stayed open'
+grep -Fq 'Kept terminal t-owner (local, no dispatch, no agent, output within 60 minutes)' "$tmp/asleep-out" || asleep_fail 'recent owner shell closed'
+grep -Fq 'Kept terminal t-run (local, live dispatch)' "$tmp/asleep-out" || asleep_fail 'running dispatch closed'
+grep -Fq 'Kept terminal t-coord (local, coordinator)' "$tmp/asleep-out" || asleep_fail 'coordinator closed'
+grep -Fxq t-agent "$tmp/asleep/shows" || asleep_fail 'scheduled round did not read the agent screen'
+! grep -Fq 'Close terminal t-run ' "$tmp/asleep-out" || asleep_fail 'running dispatch closed'
+! grep -Fq 'Close terminal t-quiet ' "$tmp/asleep-out" || asleep_fail 'running dispatch idle on a progress line was closed'
+echo 'ok a scheduled round closes sleep and an idle prompt with no dispatch, and keeps an unsettled dispatch'

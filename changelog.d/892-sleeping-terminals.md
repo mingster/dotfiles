@@ -1,0 +1,1 @@
+A scheduled wrap-up closes a terminal whose liveness is sleep or exited, and a prompt with no output for 60 minutes when no unsettled dispatch owns it. A dispatch that is running, ready, pending or waiting keeps its terminal unless that liveness is sleep or exited. The prompt is the last non-empty line, so a progress line, a heading or a wait for a reply stays open.
