@@ -11,8 +11,8 @@ mf_setup
 trap mf_teardown EXIT
 cd "$MF_REPO" || exit 1
 
-# ship.sh needs no Orca: a stub that fails loudly proves it never looks anything up.
-printf '#!/usr/bin/env bash\necho "orca called: $*" >> "%s/orca-called"\nexit 1\n' "$MF_DIR" > "$MF_DIR/fake-orca"
+# ship.sh calls Orca only to set the board status after a merge: the stub logs every call and exits ORCA_FAKE_RC (default 0).
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/orca-called"\nexit "${ORCA_FAKE_RC:-0}"\n' "$MF_DIR" > "$MF_DIR/fake-orca"
 chmod +x "$MF_DIR/fake-orca"
 export ORCA_CLI_COMMAND="$MF_DIR/fake-orca"
 
@@ -159,6 +159,7 @@ h7=$(jq -r .headRefOid "$MF_GH_DIR/pr-7.json")
 mf_self_review 7 "$h7"
 set_checks 7 "$green_checks"
 post_verdict 7 PASS "$h7"
+rm -f "$MF_DIR/orca-called"
 mkdir -p "$MF_DIR/noop-merge"
 cat > "$MF_DIR/noop-merge/gh" <<EOS
 #!/usr/bin/env bash
@@ -173,10 +174,10 @@ chmod +x "$MF_DIR/noop-merge/gh"
 SHIP_OUT=$(PATH="$MF_DIR/noop-merge:$PATH" bash "$here/ship.sh" --repo example/repo --pr 7 2>&1)
 SHIP_RC=$?
 if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
-  && grep -q "not MERGED" <<<"$SHIP_OUT"; then
-  ok "merge read back not MERGED fails"
+  && grep -q "not MERGED" <<<"$SHIP_OUT" && [ ! -e "$MF_DIR/orca-called" ]; then
+  ok "merge read back not MERGED fails and leaves the board status alone"
 else
-  bad "merge read back not MERGED fails" "rc=$SHIP_RC out=$SHIP_OUT"
+  bad "merge read back not MERGED fails and leaves the board status alone" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
 # 8. Protected path without approval refuses (and with approval merges)
@@ -259,7 +260,8 @@ else
   bad "empty statusCheckRollup refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
-# 13. No Self-review needed, no builder dispatch, no Orca lookup, no cwd root check: the PR lands from any directory
+# 13. No Self-review needed, no builder dispatch, no Orca lookup, no cwd root check: the PR lands from any directory.
+# The one Orca call is the board status of the merged branch.
 mf_pr_add 13 feat-no-self-review "Body"
 h13=$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")
 mf_self_review 13 "$h13"
@@ -269,11 +271,23 @@ post_verdict 13 PASS "$h13" ctx_never_seen ctx_unknown_author
 rm -f "$MF_DIR/orca-called"
 mkdir -p "$MF_DIR/elsewhere"
 SHIP_OUT=$(cd "$MF_DIR/elsewhere" && bash "$here/ship.sh" --repo example/repo --pr 13 2>&1); SHIP_RC=$?
-if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] && [ ! -e "$MF_DIR/orca-called" ] \
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] \
+  && [ "$(cat "$MF_DIR/orca-called")" = "worktree set --worktree branch:feat-no-self-review --workspace-status completed" ] \
   && ! grep -q "Self-review" <<<"$(jq -r .body "$MF_GH_DIR/pr-13.json")"; then
-  ok "no Self-review, dispatch lookup, Orca call or cwd check"
+  ok "no Self-review, dispatch lookup or cwd check; sets the merged branch completed"
 else
-  bad "no Self-review, dispatch lookup, Orca call or cwd check" "rc=$SHIP_RC out=$SHIP_OUT"
+  bad "no Self-review, dispatch lookup or cwd check; sets the merged branch completed" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
+fi
+
+# 13a. A failing board call warns and does not undo or fail the merge
+mf_pr_add 133 feat-board-fails "Body"
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h"; set_checks 133 "$green_checks"
+post_verdict 133 PASS "$h"
+SHIP_OUT=$(ORCA_FAKE_RC=1 bash "$here/ship.sh" --repo example/repo --pr 133 2>&1); SHIP_RC=$?
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 133 ]] && grep -Fq "could not set completed on branch:feat-board-fails" <<<"$SHIP_OUT"; then
+  ok "board failure after merge only warns"
+else
+  bad "board failure after merge only warns" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
 # 13b. A Verdict without agent and model refuses; a PR without a Builder line refuses
@@ -442,7 +456,9 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
 
 # --verdict-from: generated team copies land on the Verdict of the matching MERGED dotfiles PR (ported from the old merge script)
 {
-  repo_root=$(cd "$here/.." && pwd)
+  # ship.sh renders templates from origin/main, so the fixture syncs from origin/main too: a branch that edits a template must not fail here.
+  repo_root="$MF_DIR/main-tree"; mkdir -p "$repo_root"
+  git -C "$here/.." archive origin/main | tar -x -C "$repo_root"
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
   cp "$here/ship.sh" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"

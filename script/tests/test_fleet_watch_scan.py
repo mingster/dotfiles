@@ -446,7 +446,7 @@ class IssueScanPass(unittest.TestCase):
         '## Verify\n'
         'bash script/checks-local.sh\n\n'
         '## Finish\n'
-        'Self-review, then worker_done.\n'
+        'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
     )
 
     def test_eligible_issue_starts_once(self):

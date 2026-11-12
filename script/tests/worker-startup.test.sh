@@ -403,6 +403,9 @@ case " \$* " in
     printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_9495d9c62de4","taskId":"task_bb8ffda3ea2e","runId":"run_4ab48cf93d6c","state":"ready","agent":"claude","model":"claude-sonnet-5-5-medium","mode":"terminal","terminal":"term_fixture4242","workspace":"repo::'"$wt_proof"'","next":"next"}}'
     exit 0
     ;;
+  *" worktree set "*)
+    exit 0
+    ;;
 esac
 exit 99
 EOS
@@ -447,6 +450,7 @@ Unrelated files.
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 1. Self-review: read code-review skill and fix findings.
 2. Send worker_done.
 EOS
@@ -544,6 +548,7 @@ dispatch_run "$tmp/spec-noref.txt"
   && ok || bad "brief without a parsable Refs ...#N appends no row ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
+grep -Fq "worktree set --worktree path:$wt_proof --workspace-status in-progress" "$tmp/orca.log" && ok || bad "new worktree set in-progress on the board ($(cat "$tmp/orca.log"))"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
 grep -q 'stub-gate-ran' "$run_order_log" && ok || bad "stub gate ran (logged)"
 grep 'stub-gate-ran' "$run_order_log" | head -1 >"$tmp/order.stub"
@@ -637,6 +642,7 @@ mkdir -p "$helper_dir/lib"
 cp "$script" "$helper_dir/worker-startup.sh"
 cp "$here/../lib/pr-review-gates.sh" "$helper_dir/lib/pr-review-gates.sh"
 cp "$here/../lib/automation-path.sh" "$helper_dir/lib/automation-path.sh"
+cp "$here/../lib/board-status.sh" "$helper_dir/lib/board-status.sh"
 [ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 cp "$here/../worker-placement.py" "$helper_dir/worker-placement.py"
 chmod +x "$helper_dir/worker-startup.sh" "$helper_dir/worker-placement.py"

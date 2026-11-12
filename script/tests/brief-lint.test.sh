@@ -26,6 +26,7 @@ Docs prose and unrelated scripts.
 timeout 300 bash script/tests/brief-lint.test.sh and bash script/checks-local.sh
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review against origin/main, then send worker_done.
 EOF
 }
@@ -52,6 +53,7 @@ Nothing else.
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -82,6 +84,7 @@ Unrelated files.
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -103,6 +106,7 @@ Refs dotfiles#717
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -124,6 +128,7 @@ Unrelated files.
 ## Verify
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -174,6 +179,7 @@ Rewriting AGENT-BRIEF.md, team-audit.sh, docs prose, any <project-a> file, ship.
 With timeout 300 each: bash script/checks-local.sh, brief-lint.test.sh, the worker-startup test, `python3 -m pytest -q templates/agent-team/.claude/hooks/tests` (or unittest if that is what the folder uses), every script/tests/test_fleet_watch*.py, no-project-names.test.sh, shellcheck -x on the two shell scripts. Paste tails.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Write ## Self-review against origin/main with the full 40 hex head sha, rewrite it after every push, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
 EOF
 set +e
@@ -197,6 +203,7 @@ Refs owner/app#21
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -215,6 +222,7 @@ Refs owner/app#21
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -237,6 +245,7 @@ Unrelated files.
 Run bash script/checks-local.sh.
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Send worker_done only.
 EOF
 set +e
@@ -259,6 +268,7 @@ Unrelated files.
 timeout 300 bash script/tests/brief-lint.test.sh
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -281,6 +291,7 @@ Other scripts.
 bash script/checks-local.sh
 
 ## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -294,6 +305,28 @@ out=$(bash "$lint" "$tmp/builder-ok.md" 2>&1)
 ec=$?
 set -e
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with 40 hex sha passes (ec=$ec, out=$out)"; fi
+
+# Finish without the in-review step is refused, for any role
+cat >"$tmp/no-in-review.md" <<'EOF'
+Refs dotfiles#717
+
+## Acceptance
+- [ ] Checks pass.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+
+## Finish
+Self-review, then send worker_done.
+EOF
+set +e
+out=$(bash "$lint" "$tmp/no-in-review.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Finish must run orca worktree set --worktree active --workspace-status in-review before worker_done" ]; then ok; else bad "Finish without in-review (ec=$ec, out=$out)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

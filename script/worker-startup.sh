@@ -16,6 +16,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib/pr-review-gates.sh"
 # shellcheck source=lib/automation-path.sh
 . "$here/lib/automation-path.sh"
+# shellcheck source=lib/board-status.sh
+. "$here/lib/board-status.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 python3=${PYTHON:-python3}
 agent_state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
@@ -555,6 +557,7 @@ run_mode() {
   local brief
   brief=$(cat "$spec")
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
+  board_status_set "path:$wt" in-progress "$environment"
   if [ -n "$environment" ]; then
     run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
       --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || exit $?
