@@ -1,0 +1,1 @@
+agy no longer signs out after a login shell or a scripted Orca restart. A new `.zlogin` keeps `bin/agy` first in login shells, and the Orca reopen in `mac/bin/update.sh` and `fleet-toolchain-check.sh` drops the SSH variables so Orca and its terminals do not pass them on (#911).

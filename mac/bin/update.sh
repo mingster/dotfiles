@@ -43,5 +43,5 @@ if [ "$(orca_ver)" != "$orca_before" ] && pgrep -f "^$orca_exe\$" >/dev/null; th
   echo "Restarting Orca to load $(orca_ver)"
   nohup bash -c "osascript -e 'quit app \"Orca\"'
     n=0; while pgrep -f '^$orca_exe\$' >/dev/null && [ \$n -lt 30 ]; do sleep 1; n=\$((n + 1)); done
-    pkill -f '^$orca_exe\$'; sleep 2; open -g '$orca_app'" >/dev/null 2>&1 &
+    pkill -f '^$orca_exe\$'; sleep 2; env -u SSH_CONNECTION -u SSH_TTY -u SSH_CLIENT open -g '$orca_app'" >/dev/null 2>&1 &
 fi
