@@ -1,0 +1,7 @@
+{
+  "worktree_env_allow": [
+    ".env.example",
+    ".env.sample",
+    ".env.template"
+  ]
+}

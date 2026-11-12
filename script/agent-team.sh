@@ -1060,16 +1060,61 @@ def detect_tracker_py():
     return "local"
 
 
+def template_guard_config():
+    path = os.path.join(template_dir, ".claude", "hooks", "guard-config.json")
+    if not os.path.isfile(path):
+        return {}
+    loaded = json.loads(read_text(path))
+    if not isinstance(loaded, dict):
+        sys.stderr.write("agent-team: template guard-config.json root must be a JSON object\n")
+        sys.exit(1)
+    return loaded
+
+
+def merge_fill(base, overlay):
+    """Keep every base key and list entry. Add overlay values that are absent."""
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = dict(base)
+        for key, value in overlay.items():
+            if key in merged:
+                merged[key] = merge_fill(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        merged = list(base)
+        for item in overlay:
+            if item not in merged:
+                merged.append(item)
+        return merged
+    return base
+
+
 def extract_guard_config():
-    guard_cfg_path = os.path.join(target, ".claude/hooks/guard-config.json")
+    guard_rel = ".claude/hooks/guard-config.json"
+    guard_cfg_path = os.path.join(target, guard_rel)
     existing = {}
+    config_loaded = False
     if os.path.isfile(guard_cfg_path):
         try:
             loaded = json.loads(read_text(guard_cfg_path))
-            if isinstance(loaded, dict):
-                existing = loaded
-        except Exception:
-            pass
+        except json.JSONDecodeError as exc:
+            sys.stderr.write(
+                f"agent-team: {guard_rel} is not valid JSON: {exc}; left it unchanged\n"
+            )
+            sys.exit(1)
+        except Exception as exc:
+            sys.stderr.write(
+                f"agent-team: {guard_rel} could not be read: {exc}; left it unchanged\n"
+            )
+            sys.exit(1)
+        if not isinstance(loaded, dict):
+            sys.stderr.write(
+                f"agent-team: {guard_rel} root must be a JSON object; left it unchanged\n"
+            )
+            sys.exit(1)
+        existing = loaded
+        config_loaded = True
 
     extracted = {}
     raw_assigns = {}
@@ -1214,27 +1259,21 @@ def extract_guard_config():
                     merged_hosts.append(h)
             extracted["production_hosts"] = merged_hosts
 
-    merged = dict(existing)
-    newly_extracted = {}
-    for k, v in extracted.items():
-        if isinstance(v, list) and isinstance(merged.get(k), list):
-            cur_list = list(merged[k])
-            added = []
-            for item in v:
-                if item not in cur_list:
-                    cur_list.append(item)
-                    added.append(item)
-            if added:
-                merged[k] = cur_list
-                newly_extracted[k] = added
-        elif k not in merged or merged[k] != v:
-            merged[k] = v
-            newly_extracted[k] = v
+    if config_loaded:
+        filled = merge_fill(existing, extracted)
+    else:
+        filled = extracted
+    for key, value in extracted.items():
+        if not config_loaded or filled.get(key) != existing.get(key):
+            print(f"extract .claude/hooks/guard-config.json: {key}={json.dumps(value)}")
 
-    for k, v in newly_extracted.items():
-        print(f"extract .claude/hooks/guard-config.json: {k}={json.dumps(v)}")
-
-    if newly_extracted or not os.path.isfile(guard_cfg_path):
+    template = template_guard_config()
+    if config_loaded:
+        merged = merge_fill(existing, template)
+        merged = merge_fill(merged, extracted)
+    else:
+        merged = merge_fill(extracted, template)
+    if not config_loaded or merged != existing:
         write_text(".claude/hooks/guard-config.json", json.dumps(merged, indent=2) + "\n")
 
 

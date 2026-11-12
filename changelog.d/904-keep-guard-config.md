@@ -1,0 +1,1 @@
+`agent-team.sh project` keeps every project key and entry in `.claude/hooks/guard-config.json` and adds only template defaults that are missing. A file that is not valid JSON, or whose root is not an object, is left unchanged and the sync exits non-zero (#904).
