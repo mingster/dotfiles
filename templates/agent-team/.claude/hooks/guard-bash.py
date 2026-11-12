@@ -2277,9 +2277,10 @@ def exact_only_targets():
     return {os.path.realpath(os.path.join(root, rel)) for rel in EXACT_ONLY_SCRIPTS if not os.path.isabs(rel)}
 
 
-# Programs that may name a listed script without running it. Anything else mentioning the script is denied.
-EXACT_ONLY_READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "stat", "file", "diff", "shellcheck"}
-EXACT_ONLY_GIT_READ_ONLY = {"add", "status", "diff", "log", "show", "ls-files", "blame", "rm", "mv"}
+# Programs that may name a listed script without running or moving it. Anything else mentioning the script is
+# denied. Nothing with an exec or rename option belongs here (rg --pre runs a program, git mv and git rm move it).
+EXACT_ONLY_READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "stat", "file", "diff", "shellcheck"}
+EXACT_ONLY_GIT_READ_ONLY = {"add", "status", "diff", "log", "show", "ls-files", "blame"}
 
 
 def exact_only_mentions(command, names, targets, cwd):

@@ -561,6 +561,29 @@ class ExactOnlyScripts(GuardTest):
         self.assertRuns(f"git add {self.SCRIPT}")
         self.assertRuns(f"ls -l {self.SCRIPT}")
 
+    def test_programs_with_an_exec_or_rename_option_denied(self):
+        for command in (f"rg --pre {self.SCRIPT} x .", f"rg --pre={self.SCRIPT} x .", f"rg x {self.SCRIPT}",
+                        f"git mv {self.SCRIPT} other.sh", f"git rm {self.SCRIPT}"):
+            with self.subTest(command=command):
+                self.assertBlocked(command)
+
+    def test_shell_expansion_forms_behave_as_without_the_key(self):
+        """Globs, braces, variables, case variants and find -exec build the path at run time, so the rule cannot
+        see the script name. The guard allows them with and without the key (nothing here is loosened), tracked
+        in a separate issue."""
+        keyed = {"secrets_dir": "vault/secrets", "exact_only_scripts": [self.SCRIPT]}
+        for command in ("bash .claude/bin/sample-credential-script.s?", "setsid .claude/bin/*",
+                        "bash .claude/bin/sample-credential-script.{sh,x}",
+                        "X=sh; bash .claude/bin/sample-credential-script.$X",
+                        "bash .claude/bin/SAMPLE-CREDENTIAL-SCRIPT.SH",
+                        "find .claude/bin -name 'sample-*' -exec bash {} ;"):
+            with self.subTest(command=command):
+                with_key = self.run_in(command, self.repo)
+                self.use_config({"secrets_dir": "vault/secrets"})
+                without_key = self.run_in(command, self.repo)
+                self.use_config(keyed)
+                self.assertEqual(with_key, without_key)
+
     def test_lookalike_paths_and_symlinks_denied(self):
         name = os.path.basename(self.SCRIPT)
         other = os.path.join(self.home, "elsewhere")
