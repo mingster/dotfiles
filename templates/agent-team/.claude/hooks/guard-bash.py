@@ -2277,35 +2277,40 @@ def exact_only_targets():
     return {os.path.realpath(os.path.join(root, rel)) for rel in EXACT_ONLY_SCRIPTS if not os.path.isabs(rel)}
 
 
-def exact_only_invoked(command, names, targets, cwd):
-    """True when this command would run a listed script, by name or through a symlink, directly or via a wrapper."""
+# Programs that may name a listed script without running it. Anything else mentioning the script is denied.
+EXACT_ONLY_READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "stat", "file", "diff", "shellcheck"}
+EXACT_ONLY_GIT_READ_ONLY = {"add", "status", "diff", "log", "show", "ls-files", "blame", "rm", "mv"}
+
+
+def exact_only_mentions(command, names, targets, cwd):
+    """True when the text names a listed script anywhere: in the raw text, a dequoted word, or a symlink to it."""
     def hit(token):
+        if not token:
+            return False
         if os.path.basename(token) in names:
             return True
-        if not token or token.startswith("-"):
+        if token.startswith("-"):
             return False
         try:
             return os.path.realpath(token if os.path.isabs(token) else os.path.join(cwd or os.getcwd(), token)) in targets
         except (OSError, ValueError):
             return False
 
-    for inner in substitutions(command):
-        if exact_only_invoked(inner, names, targets, cwd):
-            return True
-    wrap_names = SHELLS | {"source", ".", "eval", "env", "xargs", "sudo", "timeout", "nohup"}
-    for seg in segments(command):
-        tokens = words(seg)
-        if not tokens:
-            continue
-        prog, args = program_and_args(tokens)
-        base = os.path.basename(prog or "")
-        if prog and hit(prog):
-            return True
-        if base in SHELLS or base in {"source", ".", "eval"}:
-            if any(name in arg for arg in args for name in names) or any(hit(arg) for arg in args):
+    if any(re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", command) for name in names):
+        return True
+    for text in [command, *substitutions(command)]:
+        for seg in segments(text):
+            if any(hit(t) for t in words(seg)):
                 return True
-        if any(hit(t) for t in tokens) and any(os.path.basename(t) in wrap_names for t in tokens):
-            return True
+    return False
+
+
+def exact_only_allowed(tokens, rel_scripts, names, targets, cwd):
+    """The whole command is the script then plain arguments, or a read-only program that only names it."""
+    if exact_only_mentions(" ".join(tokens[1:]), names, targets, cwd):
+        return False
+    if any(exact_only_program(tokens[0], rel, cwd) for rel in rel_scripts):
+        return True
     return False
 
 
@@ -2314,7 +2319,8 @@ def check_exact_only_scripts(command, cwd):
     if not EXACT_ONLY_SCRIPTS:
         return
     names = {os.path.basename(rel) for rel in EXACT_ONLY_SCRIPTS}
-    if not exact_only_invoked(command, names, exact_only_targets(), cwd):
+    targets = exact_only_targets()
+    if not exact_only_mentions(command, names, targets, cwd):
         return
     text = command.strip()
     if text and not EXACT_ONLY_UNSAFE.search(text):
@@ -2322,13 +2328,18 @@ def check_exact_only_scripts(command, cwd):
             tokens = shlex.split(text)
         except ValueError:
             tokens = []
-        if tokens and any(exact_only_program(tokens[0], rel, cwd) for rel in EXACT_ONLY_SCRIPTS):
-            return
+        if tokens:
+            if exact_only_allowed(tokens, EXACT_ONLY_SCRIPTS, names, targets, cwd):
+                return
+            if tokens[0] in EXACT_ONLY_READ_ONLY:
+                return
+            if tokens[0] == "git" and len(tokens) > 1 and tokens[1] in EXACT_ONLY_GIT_READ_ONLY:
+                return
     listed = ", ".join(f"`{rel}`" for rel in EXACT_ONLY_SCRIPTS)
     deny(f"{listed} look in the secrets dir themselves, so each runs only as the whole command: the first word "
-         "is its path (from the repo root, or absolute in this repo), then plain arguments. No environment "
-         "assignment, wrapper (bash, sh, env, xargs, sudo, timeout, nohup), pipe, redirect, `;`, `&&`, `||`, "
-         "command substitution or other shell syntax.")
+         "is its path (from the repo root, or absolute in this repo), then plain arguments. The script may not "
+         "appear anywhere else, and no environment assignment, wrapper program, pipe, redirect (even glued to "
+         "the path), `;`, `&&`, `||`, command substitution or other shell syntax is allowed.")
 
 
 def check_command(command):

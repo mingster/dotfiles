@@ -538,6 +538,25 @@ class ExactOnlyScripts(GuardTest):
             with self.subTest(command=command):
                 self.assertBlocked(command)
 
+    def test_glued_redirects_and_metacharacters_denied(self):
+        for tail in (">o", "<o", ">/dev/null", "&>o", ">>o", "|cat", ";true", "&true"):
+            with self.subTest(tail=tail):
+                self.assertBlocked(f"{self.SCRIPT}{tail}")
+                self.assertBlocked(f"{self.SCRIPT} --list{tail}")
+
+    def test_wrappers_outside_the_fixed_list_denied(self):
+        for wrapper in ("setsid", "ionice", "watch", "parallel", "script -q /dev/null", "busybox", "ssh host",
+                        "python3", "perl", "unknown-wrapper --flag"):
+            with self.subTest(wrapper=wrapper):
+                self.assertBlocked(f"{wrapper} {self.SCRIPT} --list")
+
+    def test_script_only_allowed_as_the_first_word(self):
+        self.assertBlocked(f"{self.SCRIPT} {self.SCRIPT}")
+        self.assertBlocked(f"{self.SCRIPT} --list x/{os.path.basename(self.SCRIPT)}")
+        self.assertBlocked(f"git add {self.SCRIPT} ; setsid {self.SCRIPT}")
+        self.assertBlocked(f"ls {self.SCRIPT} && {self.SCRIPT}")
+        self.assertBlocked(f"/tmp/ls {self.SCRIPT}")
+
     def test_other_commands_naming_the_script_stay_allowed(self):
         self.assertRuns(f"git add {self.SCRIPT}")
         self.assertRuns(f"ls -l {self.SCRIPT}")
