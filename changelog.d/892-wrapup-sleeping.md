@@ -1,1 +1,1 @@
-- wrap-up closes sleeping terminals on every run, not only the scheduled round. A terminal Orca reports asleep, or a shell idle at its prompt for 60 minutes with no live dispatch, is closed. A connected agent with no dispatch record is kept as an owner session.
+Wrap-up closes sleeping terminals on every run, not only the scheduled round. A terminal Orca reports asleep, or a shell idle at its prompt for 60 minutes with no live dispatch, is closed. A connected agent with no dispatch record is kept as an owner session.
