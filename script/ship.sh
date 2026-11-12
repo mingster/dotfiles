@@ -2,7 +2,8 @@
 # Ship one verified PR with squash merge and read-back confirmation (pstack Shipping run).
 # Usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--mechanical | --verdict-from <owner/dotfiles#N>]
 # Lanes: code and script PRs need a verifier Verdict: PASS whose agent and model differ from the builder's
-# (PR body line "Builder: agent=<a> model=<m>"); a docs only PR needs a cold "Review: PASS head=<head>";
+# (PR body line "Builder: agent=<a> model=<m>"); a docs only PR needs a cold "Review: PASS head=<head>"
+# or a Verdict PASS or PASS+NOTES at that exact head (same author and builder checks as the verdict lane);
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
 # copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
 # agent-team.sh check flags as a canonical role file or an unkept shared hook copy. The verdict lane accepts
@@ -149,6 +150,22 @@ same_pair_gate() { # <body> <verifier agent> <verifier model> <where>
     || refuse "verifier $2/$3 is the same agent and model as the builder; verify with a different agent or model"
 }
 verdict_re='^Verdict: (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40}) verifier=([a-zA-Z0-9_-]+) author=([a-zA-Z0-9_-]+)( agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+))?$'
+
+# Newest Verdict comment (exact post-verdict.sh first-line shape) into verdict_status, verdict_head, v_agent, v_model.
+# A flagged (edited or minimized) comment counts only when it is a FAIL. Empty verdict_status means none.
+load_newest_verdict() {
+  verdict_status="" verdict_head="" v_agent="" v_model=""
+  while IFS= read -r flagged && IFS= read -r line; do
+    if [[ "$line" =~ $verdict_re ]]; then
+      if [ "$flagged" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then continue; fi
+      [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || refuse "author cannot supply verifier verdict"
+      verdict_status="${BASH_REMATCH[1]}"
+      verdict_head="${BASH_REMATCH[2]}"
+      v_agent="${BASH_REMATCH[6]}" v_model="${BASH_REMATCH[7]}"
+      break
+    fi
+  done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0])}] | reverse[] | .f, .l' <<<"$info")
+}
 
 # Generated team copies change only through the dotfiles template. A copy that is not the origin/main
 # render, and not a deletion check demands, lands with --verdict-from.
@@ -444,31 +461,32 @@ mechanical)
   echo "ship: mechanical lane, Verdict not required"
   ;;
 docs)
-  # Docs only (markdown or changelog.d): a cold "Review: PASS head=<head>" at the head. Newest Review at the head decides;
+  # Docs only (markdown or changelog.d): a cold "Review: PASS head=<head>" at the head, or a Verdict (below). Newest Review at the head decides;
   # an edited or minimized PASS never counts.
   review=$(jq -r --arg h "$head" '
     [.comments[]? | select((.body // "" | split("\n")[0]) | test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )"))
       | {r: (.body | split("\n")[0] | capture("^Review: (?<r>PASS|FAIL)").r), f: ((.includesCreatedEdit // false) or (.isMinimized // false))}
       | select(.r == "FAIL" or .f == false)] | last // {r: "none"} | .r' <<<"$info")
+  # A Verdict from post-verdict.sh at the exact head also counts, with the same author and builder checks as the verdict
+  # lane. A Verdict at another head does not count; a FAIL Review or FAIL Verdict at the head refuses.
+  load_newest_verdict
+  [ "$verdict_head" = "$head" ] || verdict_status=""
+  [ "$verdict_status" != FAIL ] || refuse "newest Verdict on PR $pr is FAIL at head ${head:0:12}"
   case "$review" in
     PASS) ;;
     FAIL) refuse "newest Review on PR $pr is FAIL at head ${head:0:12}" ;;
-    *) refuse "docs only PR $pr needs a cold 'Review: PASS head=$head' comment" ;;
+    *)
+      case "$verdict_status" in
+        PASS|PASS+NOTES)
+          [ -n "$v_agent" ] || refuse "Verdict on PR $pr does not record the verifier agent and model; post it with post-verdict.sh --agent <agent> --model <model>"
+          same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" ;;
+        *) refuse "docs only PR $pr needs a cold 'Review: PASS head=$head' comment or a Verdict: PASS at that head" ;;
+      esac ;;
   esac
   ;;
 verdict)
   # Newest Verdict comment (exact post-verdict.sh first-line shape) is PASS or PASS+NOTES.
-  verdict_status="" verdict_head="" v_agent="" v_model=""
-  while IFS= read -r flagged && IFS= read -r line; do
-    if [[ "$line" =~ $verdict_re ]]; then
-      if [ "$flagged" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then continue; fi
-      [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || refuse "author cannot supply verifier verdict"
-      verdict_status="${BASH_REMATCH[1]}"
-      verdict_head="${BASH_REMATCH[2]}"
-      v_agent="${BASH_REMATCH[6]}" v_model="${BASH_REMATCH[7]}"
-      break
-    fi
-  done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0])}] | reverse[] | .f, .l' <<<"$info")
+  load_newest_verdict
   [ -n "$verdict_status" ] || refuse "missing Verdict comment on PR $pr"
   case "$verdict_status" in
     PASS|PASS+NOTES) ;;
