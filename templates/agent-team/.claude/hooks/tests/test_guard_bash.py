@@ -464,5 +464,125 @@ class ProjectConfigRules(GuardTest):
         self.assertIsNone(self.edit(os.path.join(self.home, ".config", "elsewhere", "notes")))
 
 
+class ExactOnlyScripts(GuardTest):
+    """`exact_only_scripts` in guard-config.json: a listed script runs only as the whole command."""
+    SCRIPT = ".claude/bin/sample-credential-script.sh"
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.home, "repo")
+        os.makedirs(os.path.join(self.repo, ".claude", "bin"))
+        os.makedirs(os.path.join(self.repo, ".claude", "hooks"))
+        os.makedirs(os.path.join(self.repo, "sub", "dir"))
+        self.write_script(os.path.join(self.repo, self.SCRIPT))
+        self.use_config({"secrets_dir": "vault/secrets", "exact_only_scripts": [self.SCRIPT]})
+
+    def write_script(self, path):
+        with open(path, "w") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+        os.chmod(path, 0o755)
+
+    def use_config(self, cfg):
+        path = os.path.join(self.repo, ".claude", "hooks", "guard-config.json")
+        with open(path, "w") as handle:
+            json.dump(cfg, handle)
+        self.extra_env = {"GUARD_CONFIG": path}
+
+    def run_in(self, command, cwd):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home, **self.extra_env), cwd=self.home, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def assertRuns(self, command, cwd=None):
+        self.assertIsNone(self.run_in(command, cwd or self.repo), f"expected allow: {command}")
+
+    def assertBlocked(self, command, cwd=None):
+        reason = self.run_in(command, cwd or self.repo)
+        self.assertIsNotNone(reason, f"expected deny: {command}")
+        self.assertIn(self.SCRIPT, reason)
+
+    def test_exact_relative_and_absolute_forms_allowed(self):
+        absolute = os.path.join(self.repo, self.SCRIPT)
+        self.assertRuns(f"{self.SCRIPT} --list")
+        self.assertRuns(f"./{self.SCRIPT} --list")
+        self.assertRuns(f"{self.SCRIPT} --target https://example.invalid --store 'Some Name' a/b.env c/d")
+        self.assertRuns(f"{absolute} --list")
+        self.assertRuns(f"{absolute} --list", cwd=self.home)
+
+    def test_relative_form_resolves_against_the_cwd(self):
+        self.assertRuns("../../.claude/bin/sample-credential-script.sh --list", cwd=os.path.join(self.repo, "sub", "dir"))
+        self.assertBlocked(f"{self.SCRIPT} --list", cwd=os.path.join(self.repo, "sub"))
+        self.assertBlocked(f"{self.SCRIPT} --list", cwd=self.home)
+        fake = os.path.join(self.home, "fake")
+        os.makedirs(os.path.join(fake, ".claude", "bin"))
+        self.write_script(os.path.join(fake, self.SCRIPT))
+        self.assertBlocked(f"{self.SCRIPT} --list", cwd=fake)
+        link = os.path.join(self.home, "repo-link")
+        os.symlink(self.repo, link)
+        self.assertRuns(f"{self.SCRIPT} --list", cwd=link)
+
+    def test_each_unsafe_character_denied(self):
+        for tail in ("a\nb", "$HOME", "$(true)", "`true`", "; true", "| cat", "& true", "&& true", "|| true",
+                     "< /dev/null", "> /tmp/out", "(a)", "{a}", "x)", "x}"):
+            with self.subTest(tail=tail):
+                self.assertBlocked(f"{self.SCRIPT} {tail}")
+
+    def test_wrappers_and_prefixes_denied(self):
+        absolute = os.path.join(self.repo, self.SCRIPT)
+        for command in (f"bash {self.SCRIPT}", f"sh -c '{self.SCRIPT} x'", f"env PATH=/tmp {self.SCRIPT}",
+                        f"PATH=/tmp {self.SCRIPT}", f"timeout 5 {self.SCRIPT}", f"sudo {absolute}",
+                        f"nohup {self.SCRIPT}", f"xargs {self.SCRIPT}", f"cd sub && {self.SCRIPT}",
+                        f"echo $({self.SCRIPT})", f"source {self.SCRIPT}"):
+            with self.subTest(command=command):
+                self.assertBlocked(command)
+
+    def test_other_commands_naming_the_script_stay_allowed(self):
+        self.assertRuns(f"git add {self.SCRIPT}")
+        self.assertRuns(f"ls -l {self.SCRIPT}")
+
+    def test_lookalike_paths_and_symlinks_denied(self):
+        name = os.path.basename(self.SCRIPT)
+        other = os.path.join(self.home, "elsewhere")
+        os.makedirs(other)
+        self.write_script(os.path.join(other, name))
+        os.makedirs(os.path.join(self.repo, "other"))
+        self.write_script(os.path.join(self.repo, "other", name))
+        for command in (os.path.join(other, name), f"other/{name}", f"/tmp/{self.SCRIPT}",
+                        f"x{self.SCRIPT}"):
+            with self.subTest(command=command):
+                self.assertBlocked(command)
+        # A symlink outside the repo to the real script is not the script's path.
+        outside_link = os.path.join(other, "link.sh")
+        os.symlink(os.path.join(self.repo, self.SCRIPT), outside_link)
+        self.assertBlocked(f"{outside_link} --list")
+        self.assertBlocked(f"env PATH=/tmp {outside_link}")
+        self.assertRuns(f"{self.SCRIPT}.bak --list")
+        # A listed script that is itself a symlink to a file outside the repo does not run.
+        os.remove(os.path.join(self.repo, self.SCRIPT))
+        os.symlink(os.path.join(other, name), os.path.join(self.repo, self.SCRIPT))
+        self.assertBlocked(f"{self.SCRIPT} --list")
+        self.assertBlocked(f"{os.path.join(self.repo, self.SCRIPT)} --list")
+
+    def test_absent_key_adds_no_rule(self):
+        self.use_config({"secrets_dir": "vault/secrets"})
+        self.assertRuns(f"bash {self.SCRIPT} --list")
+        self.assertRuns(f"env PATH=/tmp {self.SCRIPT}")
+        self.use_config({"secrets_dir": "vault/secrets", "exact_only_scripts": "not-a-list"})
+        self.assertRuns(f"bash {self.SCRIPT} --list")
+
+    def test_direct_reads_of_the_credential_dir_stay_denied(self):
+        for cfg in ({"secrets_dir": "vault/secrets", "exact_only_scripts": [self.SCRIPT]},
+                    {"secrets_dir": "vault/secrets"}):
+            self.use_config(cfg)
+            for command in ("cat vault/secrets/svc/token", "grep -R x vault/secrets", "cd vault/secrets && ls",
+                            f"{self.SCRIPT} vault/secrets/svc/token", f"{self.SCRIPT} --list vault/secrets"):
+                with self.subTest(command=command, cfg=cfg):
+                    reason = self.run_in(command, self.repo)
+                    self.assertIsNotNone(reason)
+                    self.assertIn("secrets", reason)
+
+
 if __name__ == "__main__":
     unittest.main()
