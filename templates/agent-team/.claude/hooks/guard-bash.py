@@ -58,6 +58,7 @@ APPROVAL_NAMESPACE: str = ""
 APPROVAL_FILE_OVERRIDE: str = ""
 SIGN_IN_SCRIPT: str | None = None
 SECRETS_DIR_EXCEPTIONS: list[str] = []
+EXACT_ONLY_SCRIPTS: list[str] = []
 FORCE_PUSH_BRANCHES: list[str] = ["main"]
 SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
@@ -196,6 +197,7 @@ def load_guard_config(start_dir):
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
+    global EXACT_ONLY_SCRIPTS
 
     BLOCKED_SCRIPTS = set()
     PRODUCTION_HOSTS = set()
@@ -213,6 +215,7 @@ def load_guard_config(start_dir):
     APPROVAL_FILE_OVERRIDE = os.environ.get("GUARD_APPROVAL_FILE") or ""
     SIGN_IN_SCRIPT = None
     SECRETS_DIR_EXCEPTIONS = []
+    EXACT_ONLY_SCRIPTS = []
     FORCE_PUSH_BRANCHES = ["main"]
     SECRETS_STDIN_OK = []
     WORKTREE_ENV_ALLOW = []
@@ -348,6 +351,23 @@ def load_guard_config(start_dir):
     for item in cfg_expect("secrets_dir_exceptions", list, "list") or []:
         if isinstance(item, str) and item.strip():
             SECRETS_DIR_EXCEPTIONS.append(item.strip())
+
+    # Repo relative scripts that look in the secrets dir themselves and print no value. Each runs only as
+    # the whole command (check_exact_only_scripts). Drop a NUL, or any entry whose path cannot be resolved.
+    # Resolving that entry later raises, and main() then allows every Bash command.
+    for item in cfg_expect("exact_only_scripts", list, "list") or []:
+        if not isinstance(item, str):
+            continue
+        rel = item.strip()
+        if not rel or "\0" in rel:
+            continue
+        try:
+            rel = os.path.normpath(rel)
+            if CONFIG_LOADED_FROM:
+                os.path.realpath(rel if os.path.isabs(rel) else os.path.join(CONFIG_LOADED_FROM, rel))
+        except Exception:
+            continue
+        EXACT_ONLY_SCRIPTS.append(rel)
 
     # Branch globs a force push needs the owner's `force-push <branch>` for; ["*"] guards every branch.
     # Config only adds: `main` stays guarded whatever the list says.
@@ -2240,8 +2260,107 @@ def report_command_text(command):
     return "".join(out)
 
 
+# ---------------------------------------------------------------- Exact only scripts
+
+EXACT_ONLY_UNSAFE = re.compile("[\n$`;|&<>(){}]")
+
+
+def exact_only_program(token, rel, cwd):
+    """True when token names the repo's script `rel`: relative to cwd, or by its absolute path."""
+    root = CONFIG_LOADED_FROM
+    if not root or os.path.isabs(rel):
+        return False
+    joined = token if os.path.isabs(token) else os.path.join(cwd or os.getcwd(), token)
+    try:
+        real_root = os.path.realpath(root)
+        expected = os.path.realpath(os.path.join(root, rel))
+        if os.path.islink(joined) or os.path.realpath(joined) != expected:
+            return False
+        return os.path.commonpath([expected, real_root]) == real_root and os.path.isfile(expected)
+    except (OSError, ValueError):
+        return False
+
+
+def exact_only_targets():
+    root = CONFIG_LOADED_FROM
+    if not root:
+        return set()
+    return {os.path.realpath(os.path.join(root, rel)) for rel in EXACT_ONLY_SCRIPTS if not os.path.isabs(rel)}
+
+
+# Programs that may name a listed script without running or moving it. Anything else mentioning the script is
+# denied. Nothing with an exec or rename option belongs here (rg --pre runs a program, git mv and git rm move it).
+EXACT_ONLY_READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "stat", "file", "diff", "shellcheck"}
+EXACT_ONLY_GIT_READ_ONLY = {"add", "status", "diff", "log", "show", "ls-files", "blame"}
+
+
+def exact_only_mentions(command, names, targets, cwd):
+    """True when the text names a listed script anywhere: in the raw text, a dequoted word, or a symlink to it."""
+    def hit(token):
+        if not token:
+            return False
+        if os.path.basename(token) in names:
+            return True
+        if token.startswith("-"):
+            return False
+        try:
+            return os.path.realpath(token if os.path.isabs(token) else os.path.join(cwd or os.getcwd(), token)) in targets
+        except (OSError, ValueError):
+            return False
+
+    if any(re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", command) for name in names):
+        return True
+    for text in [command, *substitutions(command)]:
+        for seg in segments(text):
+            if any(hit(t) for t in words(seg)):
+                return True
+    return False
+
+
+def exact_only_allowed(tokens, rel_scripts, names, targets, cwd):
+    """The whole command is the script then plain arguments, or a read-only program that only names it."""
+    if exact_only_mentions(" ".join(tokens[1:]), names, targets, cwd):
+        return False
+    if any(exact_only_program(tokens[0], rel, cwd) for rel in rel_scripts):
+        return True
+    return False
+
+
+def check_exact_only_scripts(command, cwd):
+    """A listed script runs only as the whole command: its path, then plain arguments."""
+    try:
+        if not EXACT_ONLY_SCRIPTS:
+            return
+        names = {os.path.basename(rel) for rel in EXACT_ONLY_SCRIPTS}
+        targets = exact_only_targets()
+        if not exact_only_mentions(command, names, targets, cwd):
+            return
+        text = command.strip()
+        if text and not EXACT_ONLY_UNSAFE.search(text):
+            try:
+                tokens = shlex.split(text)
+            except ValueError:
+                tokens = []
+            if tokens:
+                if exact_only_allowed(tokens, EXACT_ONLY_SCRIPTS, names, targets, cwd):
+                    return
+                if tokens[0] in EXACT_ONLY_READ_ONLY:
+                    return
+                if tokens[0] == "git" and len(tokens) > 1 and tokens[1] in EXACT_ONLY_GIT_READ_ONLY:
+                    return
+        listed = ", ".join(f"`{rel}`" for rel in EXACT_ONLY_SCRIPTS)
+        deny(f"{listed} look in the secrets dir themselves, so each runs only as the whole command: the first word "
+             "is its path (from the repo root, or absolute in this repo), then plain arguments. The script may not "
+             "appear anywhere else, and no environment assignment, wrapper program, pipe, redirect (even glued to "
+             "the path), `;`, `&&`, `||`, command substitution or other shell syntax is allowed.")
+    except Exception:
+        # main() allows the command when this rule raises, so the error has to deny on its own.
+        deny("exact_only_scripts could not be checked, so the command is denied.")
+
+
 def check_command(command):
     command = report_command_text(command)
+    check_exact_only_scripts(command, GATE_CWD)
     for text in [command, *substitutions(command)]:
         cur_cwd = GATE_CWD
         for seg in segments(text):
