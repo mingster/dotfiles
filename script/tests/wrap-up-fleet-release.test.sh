@@ -184,7 +184,7 @@ echo 'ok 6 a remote terminal in a removed worktree is matched by the path its en
 { term e-gone /remote/gone-wt; term e-gone-agent /remote/gone-wt '"agent"'; term e-sibling /remote/sibling-wt; } | jq -s '{ok:true,result:{terminals:.}}' > "$tmp/terminals-env"
 WRAP_UP_SCHEDULED_CHILD=1 run --dry-run
 expect 'Close terminal e-gone (env-a, worktree gone in this run)'
-expect 'Kept terminal e-gone-agent (env-a, unknown owner, still running)'
+expect 'Kept terminal e-gone-agent (env-a, owner session)'
 ! grep -Fq 'Close terminal e-sibling ' "$tmp/output" || { echo 'FAIL scheduled round closed a shell in a checkout the environment still reports'; exit 1; }
 echo 'ok 6 a scheduled round closes plain shells of a removed worktree, not agents'
 # An unreadable environment listing matches no removed worktree.
