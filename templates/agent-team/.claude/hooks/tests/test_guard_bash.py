@@ -87,6 +87,13 @@ class SecretsDirReads(GuardTest):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
+    def test_expansion_that_hides_the_credential_dir_is_denied(self):
+        for command in ("ls ~/work/secrets*", "cat ~/work/secrets/svc/t*", "cat ~/work/secret?/token",
+                        "find ~/work/secrets -exec cat {} ;", "find ~/work/secrets | xargs cat"):
+            with self.subTest(command=command):
+                reason = self.assertDenied(command)
+                self.assertTrue("secret" in reason.lower() or "credential" in reason.lower(), reason)
+
     def test_stdin_redirect_denied_with_no_configured_exemption(self):
         for cmd in ("cat", "tee /tmp/x", "bash", "python3", "ssh host 'cat'"):
             with self.subTest(cmd=cmd):
@@ -570,22 +577,63 @@ class ExactOnlyScripts(GuardTest):
             with self.subTest(command=command):
                 self.assertBlocked(command)
 
-    def test_shell_expansion_forms_behave_as_without_the_key(self):
-        """Globs, braces, variables, case variants and find -exec build the path at run time, so the rule cannot
-        see the script name. The guard allows them with and without the key (nothing here is loosened), tracked
-        in a separate issue."""
-        keyed = {"secrets_dir": "vault/secrets", "exact_only_scripts": [self.SCRIPT]}
+    def test_expansion_forms_that_hide_the_script_are_denied(self):
+        """Globs, braces, variables, case variants and find or xargs must not build the script path at run time."""
+        forms = (
+            "bash .claude/bin/sample-credential-script.s?",
+            "bash .claude/bin/*",
+            "setsid .claude/bin/*",
+            "bash .claude/bin/sample-credential-script.s[h]",
+            "bash .claude/bin/sample-credential-script.{sh,x}",
+            "X=sh; bash .claude/bin/sample-credential-script.$X",
+            'bash ".claude/bin/sample-credential-script.$X"',
+            "bash .claude/bin/sample-credential-script.`echo sh`",
+            "bash .claude/bin/SAMPLE-CREDENTIAL-SCRIPT.SH",
+            "find .claude/bin -name 'sample-*' -exec bash {} ;",
+            "find .claude/bin -name 'sample-*' -execdir bash {} ;",
+            "find .claude/bin -name 'sample-*' | xargs bash",
+            "find . -name 'sample-*' -exec bash {} ;",
+            "find .claude -exec bash {} ;",
+            "cd .claude/bin && bash *.sh",
+            "bash -c 'bash .claude/bin/*'",
+            "bash -c 'find .claude/bin -name sample-* -exec bash {} ;'",
+        )
+        for command in forms:
+            with self.subTest(command=command):
+                self.assertBlocked(command)
+        self.assertBlocked(
+            "sample-credential-script.s[h]",
+            cwd=os.path.join(self.repo, ".claude", "bin"),
+        )
+
+    def test_expansion_forms_without_the_script_key_stay_allowed(self):
+        self.use_config({"secrets_dir": "vault/secrets"})
         for command in ("bash .claude/bin/sample-credential-script.s?", "setsid .claude/bin/*",
                         "bash .claude/bin/sample-credential-script.{sh,x}",
                         "X=sh; bash .claude/bin/sample-credential-script.$X",
                         "bash .claude/bin/SAMPLE-CREDENTIAL-SCRIPT.SH",
                         "find .claude/bin -name 'sample-*' -exec bash {} ;"):
             with self.subTest(command=command):
-                with_key = self.run_in(command, self.repo)
-                self.use_config({"secrets_dir": "vault/secrets"})
-                without_key = self.run_in(command, self.repo)
-                self.use_config(keyed)
-                self.assertEqual(with_key, without_key)
+                self.assertRuns(command)
+        self.use_config({"secrets_dir": "vault/secrets", "exact_only_scripts": [self.SCRIPT]})
+
+    def test_ordinary_globs_and_variables_stay_allowed(self):
+        for command in ("ls src/*.ts", "echo $HOME", 'echo "$HOME"', "git log --format=%H",
+                        "echo a b | xargs echo", "find src -name '*.py' -exec grep x {} ;",
+                        "find src | xargs echo",                         "find .claude/bin -print", "bash '.claude/bin/*'",
+                        "ls vault/*.ts", "echo ok # bash .claude/bin/*"):
+            with self.subTest(command=command):
+                self.assertRuns(command)
+
+    def test_credential_dir_expansion_is_denied(self):
+        for command in ("cat vault/secret?/token", "cat vault/secr*", "cat VAULT/SECRETS/*",
+                        "ls vault/secrets*", "find vault/secrets -name x -exec cat {} ;",
+                        "find vault/secrets -execdir cat {} ;", "find vault/secrets | xargs cat"):
+            with self.subTest(command=command):
+                reason = self.run_in(command, self.repo)
+                self.assertIsNotNone(reason, f"expected deny: {command}")
+                folded = reason.lower()
+                self.assertTrue("secret" in folded or "credential" in folded, reason)
 
     def test_lookalike_paths_and_symlinks_denied(self):
         name = os.path.basename(self.SCRIPT)
@@ -637,6 +685,28 @@ class ExactOnlyScripts(GuardTest):
         reason = self.run_in("git push --force origin main", self.repo)
         self.assertIsNotNone(reason, "expected the force-push rule to deny")
         self.assertIn("force push", reason)
+
+    def test_exception_inside_the_expansion_rule_denies(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_hidden_path_inject", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        def boom():
+            raise RuntimeError("injected")
+
+        mod.hidden_script_dirs = boom
+        for command in ("echo ok", "ls src/*.ts", "git log --format=%H"):
+            with self.subTest(command=command):
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo})
+                buf = io.StringIO()
+                with mock.patch.dict(os.environ, {"HOME": self.home, **self.extra_env}), \
+                     mock.patch("sys.stdin", io.StringIO(payload)), \
+                     mock.patch("sys.stdout", buf):
+                    with self.assertRaises(SystemExit) as caught:
+                        mod.main()
+                self.assertEqual(caught.exception.code, 0)
+                body = json.loads(buf.getvalue())
+                self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_nul_entry_does_not_disable_the_guard(self):
         for entry in ("a\x00b", self.SCRIPT + "\x00"):
