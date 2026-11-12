@@ -16,6 +16,9 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Stack and standards: `AGENTS.md` and `docs/agents/team-facts.md`.
 - PR body: put a `Builder: agent=<agent> model=<model>` line in it (for example `Builder: agent=claude model=sonnet`). `ship.sh` compares it with the verifier.
 
+## Finish
+Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. It moves the Orca board card to in-review, so wrap-up can tell finished work from running work.
+
 ## Standing authority
 Never:
 - Run raw `gh pr merge`, force push, push red checks, push an empty commit to retrigger CI, or merge manually (a Shipping run via `~/dotfiles/script/ship.sh` lands verified PRs).

@@ -16,11 +16,15 @@
 # terminals are not errors. Release closes at most the agent terminal; after a confirmed release the remaining
 # handles are closed here (never the agent terminal or the caller's own $ORCA_TERMINAL_HANDLE). State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
 # one handle per line, retained until verified gone. Failed or lingering closes retry for up to 30 minutes.
+# --release also sets the worktree board status to completed when its branch has no PR in any state (a PR sets it
+# through ship.sh). Best effort: a missing worktree, branch or gh answer leaves the status alone.
 set -u
 orca="${ORCA_CLI_COMMAND:-orca}"
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=worker-pane-retry.sh
 . "$here/worker-pane-retry.sh"
+# shellcheck source=../../../script/lib/board-status.sh
+. "$(cd "$here" && cd "$(pwd -P)/../../../script/lib" && pwd)/board-status.sh"
 state="${ORCA_PANE_STATE_DIR:-$HOME/.cache/orca-worker-panes}"
 close_deadline=$((SECONDS+${ORCA_PANE_CLOSE_TIMEOUT:-1800}))
 sweep_before_deadline() { [ "$SECONDS" -lt "$close_deadline" ]; }
@@ -88,6 +92,23 @@ if not path:
   option=(w.get("startOptions") or {}).get("worktree") or ""
   if option.startswith("path:"): path=option[len("path:"):]
 sys.exit(0 if path and not os.path.exists(path) else 1)'
+}
+complete_if_no_pr() { # $1 worker-show json -> board status completed when the worker's branch never had a PR
+  local path branch count
+  path=$(SHOW="$1" python3 -c '
+import os,json
+try: r=json.loads(os.environ["SHOW"])["result"]; w=r.get("worker") or {}
+except Exception: r={}; w={}
+path=""
+for e in w.get("effects") or []:
+  if e.get("kind")=="worktree": path=(e.get("id") or "").split("::",1)[-1]
+if not path: path=(w.get("worktreeId") or "").split("::",1)[-1]
+print(path if path and os.path.isfile(os.path.join(path,".git")) else "")') || return 0
+  [ -n "$path" ] || return 0
+  branch=$(git -C "$path" symbolic-ref --short -q HEAD) || return 0
+  count=$(cd "$path" && gh pr list --head "$branch" --state all --json number --jq length 2>/dev/null) || return 0
+  [ "$count" = 0 ] || return 0
+  board_status_set "path:$path" completed
 }
 run_coordinators() { # -> every Run's coordinator handle (the caller, leads, other Runs); rc 1 if the Run list cannot be read
   local cursor="" args runs page next
@@ -388,6 +409,7 @@ if [ "${1:-}" = --release ]; then
     case "$rel_state" in
       released|already_released)
         mkdir -p "$state/released" && : > "$state/released/$d"
+        complete_if_no_pr "$show"
         [ "$rel_action" != "none" ] || echo "worker-pane-close: $d $rel_state; native retained external terminals, closing leftovers" >&2
         close_one "$d"
         ;;

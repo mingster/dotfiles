@@ -10,6 +10,7 @@ case "$*" in
       echo '{"result":{"dispatch":{"status":"running"}}}'; exit 0
     fi
     if [ -f "$FAKE_DIR/show.$d" ]; then cat "$FAKE_DIR/show.$d"; else s=$(cat "$FAKE_DIR/status.$d" 2>/dev/null); printf '{"result":{"dispatch":{"status":"%s"}}}' "$s"; fi ;;
+  "worktree set "*) echo "$*" >> "$FAKE_DIR/board.log" ;;
   "terminal close --terminal "*)
     echo "$4" >> "$FAKE_DIR/closes.log"
     n=$(grep -cx "$4" "$FAKE_DIR/closes.log")
@@ -276,6 +277,23 @@ echo '{"result":{"terminals":[{"handle":"term_rel","worktreePath":"'"$tmp"'/link
 "$here/worker-pane-close.sh" --release drel >/dev/null
 check "--release native-clears and drops marker" "$(grep -q 'worker-release --dispatch drel' "$tmp/rpc.log" && no_generic_close && term_absent term_rel && [ ! -e "$tmp/state/released/drel" ]; echo $?)"
 rm -f "$tmp/closes.log" "$tmp/show.dlive" "$tmp/terminals.json"
+
+# --release sets completed on a worktree whose branch has no PR, and leaves one that has a PR alone.
+mkdir -p "$tmp/gitwt" && git init -q -b nopr-branch "$tmp/gitwt" && : > "$tmp/board.log"
+mv "$tmp/gitwt/.git" "$tmp/gitwt.gitdir" && printf 'gitdir: %s\n' "$tmp/gitwt.gitdir" > "$tmp/gitwt/.git"
+printf '#!/bin/sh\nprintf "%%s" "$FAKE_PR_COUNT"\n' > "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
+printf '{"result":{"dispatch":{"status":"completed"},"worker":{"effects":[{"kind":"worktree","action":"created_child","id":"wt1::%s/gitwt"}]}}}' "$tmp" > "$tmp/show.dnopr"
+echo '{"result":{"terminals":[]}}' > "$tmp/terminals.json"
+FAKE_PR_COUNT=0 "$here/worker-pane-close.sh" --release dnopr >/dev/null 2>&1
+check "--release with no PR sets completed" "$([ "$(cat "$tmp/board.log")" = "worktree set --worktree path:$tmp/gitwt --workspace-status completed" ]; echo $?)"
+: > "$tmp/board.log"
+FAKE_PR_COUNT=1 "$here/worker-pane-close.sh" --release dnopr >/dev/null 2>&1
+check "--release with a PR leaves the status alone" "$([ ! -s "$tmp/board.log" ]; echo $?)"
+: > "$tmp/board.log"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
+"$here/worker-pane-close.sh" --release dnopr >/dev/null 2>&1
+check "--release with gh failing leaves the status alone" "$([ ! -s "$tmp/board.log" ]; echo $?)"
+rm -f "$tmp/bin/gh" "$tmp/show.dnopr" "$tmp/terminals.json" "$tmp/closes.log"
 
 # Leftover terminals: a validated worker leaves its agent and setup terminals, a shell in its worktree and
 # maybe a pane whose split timed out. Close the ones still listed, never the owner's or other projects'.
