@@ -17,6 +17,8 @@ die() { refuse "$*"; }
 
 # shellcheck disable=SC1091
 . "$ship_dir/lib/protected-paths.sh"
+# shellcheck disable=SC1091
+. "$ship_dir/lib/board-status.sh"
 
 repo="" pr="" dry_run=false mechanical=false verdict_from=""
 sync_dir=""
@@ -514,3 +516,5 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit) || refuse "can
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || refuse "MERGED read-back for PR $pr has no merge commit"
 echo "shipped PR $pr as $merge_sha"
+# The merge is done; a board failure only warns. A failed merge refused above and never reaches this line.
+board_status_set "branch:$(field .headRefName)" completed

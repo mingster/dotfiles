@@ -7,6 +7,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$here/lib/pr-review-gates.sh"
+# shellcheck source=lib/board-status.sh
+. "$here/lib/board-status.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment='' role=''
 from=${ORCA_TERMINAL_HANDLE:-}
@@ -90,6 +92,7 @@ if [ -z "$wt" ]; then
   wt=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["worktree"]["path"])')
 fi
 case "$wt" in /*) ;; *) echo 'worktree path must be absolute' >&2; exit 2 ;; esac
+board_status_set "path:$wt" in-progress "$environment"
 if [ -n "$environment" ]; then
   # Quote both the Python program and path for the remote login shell. HOME is
   # deliberately read by Python there, never expanded on the coordinator.

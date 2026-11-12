@@ -146,7 +146,8 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | [`head-checks.sh`](../../script/head-checks.sh) | Runs a repository's checks on a trial merge of one head with trunk | Every PR push |
 | Review and Verdict | Actions Review (`script/pr-review.sh`) and verifier Verdict ([`post-verdict.sh`](../../script/post-verdict.sh)) | After Checks pass |
 | [`ship.sh`](../../script/ship.sh) | Shipping run: checks `git patch-id` against the verifier Verdict, squash merges and reads the PR back as merged | When Checks and Verdict pass |
-| [`wrap-up.sh`](../../script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Add `--apply` to run it by hand | Every 10 minutes on every host |
+| [`wrap-up.sh`](../../script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Removes only worktrees whose Orca board status is `completed`. Add `--apply` to run it by hand | Every 10 minutes on every host |
+| [`orca-board-backfill.sh`](../../script/orca-board-backfill.sh) | One time: sets the board status of existing worktrees from their PR (merged or closed to `completed`, open to `in-review`). Dry run by default, `--apply` to write. `--environment` for another host | By hand |
 | `/deploy` | Moves a commit to staging or production | Daily, or on the user's go |
 | pstack `swarm` live lanes | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
 | Test selection | Compares with the last green staging commit and follows real imports | Every swarm live lanes run |

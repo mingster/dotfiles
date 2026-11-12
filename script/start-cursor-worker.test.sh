@@ -27,6 +27,7 @@ case "$*" in
       exit 17
     fi
     printf '%s\n' '{"result":{"worktree":{"path":"/tmp/example.repo/work tree.v1"}}}' ;;
+  'worktree set '*) printf '%s\n' '{"ok":true,"result":{}}' ;;
   'orchestration worker-start '*)
     python3 - <<'PY'
 import json, os
@@ -70,6 +71,8 @@ grep -q -- '--model composer-2.5' "$CURSOR_TEST_LOG"
 grep -Fq 'Do the fixture task.' "$CURSOR_TEST_LOG"
 grep -q -- '--worktree path:/tmp/example.repo/work tree.v1' "$CURSOR_TEST_LOG"
 echo 'PASS: new worktree is trusted at the encoded path before dispatch'
+grep -Fxq -- 'worktree set --worktree path:/tmp/example.repo/work tree.v1 --workspace-status in-progress' "$CURSOR_TEST_LOG"
+echo 'PASS: new worktree is set in-progress on the board'
 for selector in id:abc path:/tmp/example.repo; do
   : > "$CURSOR_TEST_LOG"
   launch --name fixture --repo "$selector" --base-branch origin/main > "$tmp/result"
@@ -137,6 +140,11 @@ if args[:2] == ['worktree', 'create']:
         print('fixture create stderr', file=sys.stderr)
         sys.exit(17)
     reply({'worktree': {'path': '/srv/example.repo/work tree.v1'}})
+elif args[:2] == ['worktree', 'set']:
+    assert value('--environment') == 'fixture-environment'
+    assert value('--worktree') == 'path:/srv/example.repo/work tree.v1'
+    assert value('--workspace-status') == 'in-progress'
+    reply({})
 elif args[:2] == ['terminal', 'create']:
     assert value('--environment') == 'fixture-environment'
     assert value('--worktree') == 'path:/srv/example.repo/work tree.v1'
@@ -183,9 +191,9 @@ launch --on fixture-environment --name fixture --repo /srv/example.repo --base-b
 python3 - "$CURSOR_TEST_LOG" <<'PYTEST'
 import json, sys
 calls = [json.loads(line) for line in open(sys.argv[1])]
-assert [call[:2] for call in calls] == [['worktree', 'create'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['orchestration', 'worker-start']]
+assert [call[:2] for call in calls] == [['worktree', 'create'], ['worktree', 'set'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['terminal', 'create'], ['terminal', 'wait'], ['terminal', 'close'], ['orchestration', 'worker-start']]
 assert '--base-branch' in calls[0]
-assert '/srv/example.repo/work tree.v1' in calls[1][calls[1].index('--command') + 1]
+assert '/srv/example.repo/work tree.v1' in calls[2][calls[2].index('--command') + 1]
 PYTEST
 echo 'PASS: remote worktree is trusted in the remote HOME before dispatch'
 for selector in id:abc path:/srv/example.repo; do

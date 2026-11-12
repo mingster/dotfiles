@@ -1567,6 +1567,18 @@ worktree_pinned_in_orca() {
   done < "$tmp/orca-pinned"
   return 1
 }
+# Orca's board decides what may go: a worktree whose workspaceStatus is set and is not "completed" stays. One Orca does not
+# list (no status) falls through to the checks below.
+worktree_board_open() {
+  [ "${orca_pin_state:-}" = ok ] || return 1
+  local p r
+  p=$(real "$1")
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    [ "$(real "$r" 2>/dev/null || printf '%s' "$r")" = "$p" ] && return 0
+  done < "$tmp/orca-board-open"
+  return 1
+}
 guarded_orca_worktree_rm() { # <counter> <label> <path>
   local counter=$1 label=$2 path=$3 rc=0 real_path
   real_path=$(real "$path")
@@ -1717,12 +1729,14 @@ active_worktree() {
 removed=0; orca_removed=0; local_deleted=0; remote_deleted=0; kept=0; stale_deleted=0
 orca_pin_state=unavailable
 : > "$tmp/orca-pinned"
+: > "$tmp/orca-board-open"
 if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
   orca_pin_state=unknown
   if orca_call worktree list --json > "$tmp/orca-worktrees" 2>/dev/null \
     && jq -e '.ok != false and ((.result.worktrees // []) | type == "array") and (.result.truncated != true)' "$tmp/orca-worktrees" >/dev/null 2>&1; then
     orca_pin_state=ok
     jq -r '.result.worktrees[]? | select(.pinned == true) | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-pinned"
+    jq -r '.result.worktrees[]? | select((.workspaceStatus // "completed") != "completed") | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-board-open"
   fi
 fi
 keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
@@ -1754,6 +1768,7 @@ process_worktree() {
   elif [ "$locked" -eq 1 ]; then why='locked'
   elif worktree_orca_pin_unknown; then why='Orca pin lookup failed'
   elif worktree_pinned_in_orca "$path"; then why='pinned in Orca'
+  elif worktree_board_open "$path"; then why='Orca board status is not completed'
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
