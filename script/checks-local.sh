@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run what .github/workflows/checks.yml runs, for the files this branch changed.
 # Usage: checks-local.sh [--list-only] [--base <ref>]   (base defaults to origin/main)
-# Same file selection as the script-tests job, then the shellcheck job. A temp HOME
+# Same file selection as the script-tests job, every hook test, then the shellcheck job. A temp HOME
 # with the asdf pins keeps a test that forgets to pin asdf failing here, as it does in CI.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -26,4 +26,6 @@ export HOME
 trap 'rm -rf "$HOME"' EXIT
 bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${changed[@]+"${changed[@]}"}"
 [ "${#list_only[@]}" -eq 0 ] || exit 0
+# Hook gate tests read brief-lint and the hook files, so any change can break them. Run all of them.
+python3 -m unittest discover -s templates/agent-team/.claude/hooks/tests -p 'test_*.py'
 bash script/shellcheck-dotfiles.sh

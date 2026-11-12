@@ -51,6 +51,7 @@ jobs:
             fi
           fi
           bash script/select-changed-script-tests.sh "${changed[@]+"${changed[@]}"}"
+          python3 -m unittest discover -s templates/agent-team/.claude/hooks/tests -p 'test_*.py'
 
   shellcheck:
     runs-on: ubuntu-latest
