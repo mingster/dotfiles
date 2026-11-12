@@ -358,7 +358,7 @@ orca_mac() { # <version>: replace Orca.app from the release zip, putting the old
     ok=1
   fi
   rm -rf "\$orca_app.old" "\$dl"
-  [ "\$running" = 0 ] || open -g "\$orca_app"
+  [ "\$running" = 0 ] || env -u SSH_CONNECTION -u SSH_TTY -u SSH_CLIENT open -g "\$orca_app"
   return "\$ok"
 }
 orca_arch() { # <version>: install stably-orca-bin, only when the AUR has exactly this version

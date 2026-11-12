@@ -16,7 +16,7 @@ if [ -z "$zsh_path" ]; then
   exit 1
 fi
 
-for f in .zshenv .zshrc; do
+for f in .zshenv .zshrc .zlogin; do
   ln -sfn "$DOTFILES_ROOT/$f" "$HOME/$f"
 done
 rm -f "$HOME/.p10k.zsh"
