@@ -306,7 +306,7 @@ h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h" claude/
 run_ship --repo example/repo --pr 133
 if [ "$SHIP_RC" -eq 0 ]; then ok "a different agent with the same model passes"; else bad "a different agent with the same model passes" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
-# 13c. Docs only: a cold Review: PASS at the head lands without a Verdict; code still needs a Verdict
+# 13c. Docs only: a cold Review: PASS at the head (or a Verdict, see 13d) lands; code still needs a Verdict
 docs_case() { # <pr> <branch> <file> <review line or empty> <expect ship|refuse> <label> [text] [flags]
   local n=$1 b=$2 f=$3 line=$4 expect=$5 label=$6 text=${7:-} h
   mf_pr_add "$n" "$b" "Body" "$f"
@@ -333,6 +333,27 @@ h=$(jq -r .headRefOid "$MF_GH_DIR/pr-140.json"); set_checks 140 "$green_checks"
 gh pr comment 140 --repo example/repo --body "Review: PASS head=$h" >/dev/null; mf_comment_flag 140 0 edited true
 run_ship --repo example/repo --pr 140
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "needs a cold 'Review: PASS head=" <<<"$SHIP_OUT"; then ok "an edited Review: PASS does not count"; else bad "an edited Review: PASS does not count" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+
+# 13d. Docs only: a post-verdict.sh Verdict at the exact head also lands; FAIL or an older head refuses
+docs_verdict_case() { # <pr> <branch> <file> <result> <verdict head: @HEAD@ or sha> <expect ship|refuse> <label> [text]
+  local n=$1 b=$2 f=$3 res=$4 vh=$5 expect=$6 label=$7 text=${8:-} h
+  mf_pr_add "$n" "$b" "Body" "$f"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h" claude/sonnet; set_checks "$n" "$green_checks"
+  post_verdict "$n" "$res" "${vh//@HEAD@/$h}"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  if [ "$expect" = ship ]; then
+    if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+docs_verdict_case 141 feat-docs-vpass notes/v1.md PASS @HEAD@ ship "docs only PR lands on a Verdict: PASS at the head"
+docs_verdict_case 142 feat-docs-vnotes notes/v2.md PASS+NOTES @HEAD@ ship "docs only PR lands on a Verdict: PASS+NOTES at the head"
+docs_verdict_case 143 feat-docs-vold notes/v3.md PASS "$(printf 'c%.0s' {1..40})" refuse "a Verdict at an older head does not count" "needs a cold 'Review: PASS head="
+docs_verdict_case 144 feat-docs-vfail notes/v4.md FAIL @HEAD@ refuse "a FAIL Verdict at the head refuses a docs only PR" "newest Verdict on PR 144 is FAIL"
+mf_pr_add 145 feat-docs-vsame "Body" notes/v5.md
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-145.json"); mf_self_review 145 "$h" claude/opus; set_checks 145 "$green_checks"; post_verdict 145 PASS "$h"
+run_ship --repo example/repo --pr 145
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "is the same agent and model as the builder" <<<"$SHIP_OUT"; then ok "a docs Verdict from the builder's own agent and model refuses"; else bad "a docs Verdict from the builder's own agent and model refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
 # 14-15. Patch-id carry refuses an empty or whitespace-only commit after the verdict head (#771)
 blank_case() { # <pr> <branch> <empty|whitespace>
