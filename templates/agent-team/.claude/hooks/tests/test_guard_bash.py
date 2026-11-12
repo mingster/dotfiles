@@ -620,7 +620,7 @@ class ExactOnlyScripts(GuardTest):
     def test_ordinary_globs_and_variables_stay_allowed(self):
         for command in ("ls src/*.ts", "echo $HOME", 'echo "$HOME"', "git log --format=%H",
                         "echo a b | xargs echo", "find src -name '*.py' -exec grep x {} ;",
-                        "find src | xargs echo",                         "find .claude/bin -print", "bash '.claude/bin/*'",
+                        "find src | xargs echo", "find .claude/bin -print", "bash '.claude/bin/*'",
                         "ls vault/*.ts", "echo ok # bash .claude/bin/*"):
             with self.subTest(command=command):
                 self.assertRuns(command)
