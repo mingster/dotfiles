@@ -1,0 +1,1 @@
+fleet-watch: issue scan logs why it refused, babysit and issue scan send as the run's current coordinator handle, and a refusal or start failure for 3 passes in a row sends one notice. A running dispatch whose terminal has exited and released no longer holds a seat. (#915)
