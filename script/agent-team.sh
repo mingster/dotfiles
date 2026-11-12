@@ -1091,17 +1091,30 @@ def merge_fill(base, overlay):
 
 
 def extract_guard_config():
-    guard_cfg_path = os.path.join(target, ".claude/hooks/guard-config.json")
+    guard_rel = ".claude/hooks/guard-config.json"
+    guard_cfg_path = os.path.join(target, guard_rel)
     existing = {}
     config_loaded = False
     if os.path.isfile(guard_cfg_path):
         try:
             loaded = json.loads(read_text(guard_cfg_path))
-            if isinstance(loaded, dict):
-                existing = loaded
-                config_loaded = True
-        except Exception:
-            pass
+        except json.JSONDecodeError as exc:
+            sys.stderr.write(
+                f"agent-team: {guard_rel} is not valid JSON: {exc}; left it unchanged\n"
+            )
+            sys.exit(1)
+        except Exception as exc:
+            sys.stderr.write(
+                f"agent-team: {guard_rel} could not be read: {exc}; left it unchanged\n"
+            )
+            sys.exit(1)
+        if not isinstance(loaded, dict):
+            sys.stderr.write(
+                f"agent-team: {guard_rel} root must be a JSON object; left it unchanged\n"
+            )
+            sys.exit(1)
+        existing = loaded
+        config_loaded = True
 
     extracted = {}
     raw_assigns = {}
