@@ -1198,14 +1198,19 @@ printf '%s\n' "$*" >> "$FAKE_DIR/calls"
 args=("$@"); h=''
 for i in "${!args[@]}"; do [ "${args[$i]}" = --terminal ] && h=${args[$((i+1))]}; done
 case "$*" in
-  'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
+  'environment list'*)
+    if [ -f "$FAKE_DIR/envs" ]; then cat "$FAKE_DIR/envs"; else echo '{"ok":true,"result":{"environments":[]}}'; fi ;;
   *'terminal close'*) printf '%s\n' "$*" >> "$FAKE_DIR/closed"; echo '{"ok":true}' ;;
   *'terminal show'*)
     printf '%s\n' "$h" >> "$FAKE_DIR/shows"
     if [ -f "$FAKE_DIR/screen-$h.json" ]; then cat "$FAKE_DIR/screen-$h.json"
     else jq -c --arg h "$h" '{ok:true, result:{terminal: (.result.terminals[] | select(.handle == $h))}}' "$FAKE_DIR/terminals"
     fi ;;
-  *'terminal list'*) cat "$FAKE_DIR/terminals" ;;
+  *'terminal list'*)
+    case "$*" in
+      *'--environment '*) if [ -f "$FAKE_DIR/env-terminals" ]; then cat "$FAKE_DIR/env-terminals"; else cat "$FAKE_DIR/terminals"; fi ;;
+      *) cat "$FAKE_DIR/terminals" ;;
+    esac ;;
   *worker-release*) printf '%s\n' "$*" >> "$FAKE_DIR/releases"; echo '{"ok":true}' ;;
   *worker-show*) echo '{"ok":true,"result":{"state":"ready","liveness":"live","outcome":"in_progress"}}' ;;
   *run-list*) echo '{"ok":true,"result":{"runs":[{"id":"run-1","coordinator_handle":"t-coord"}]}}' ;;
@@ -1282,3 +1287,66 @@ grep -Fxq t-agent "$tmp/asleep/shows" || asleep_fail 'scheduled round did not re
 ! grep -Fq 'Close terminal t-run ' "$tmp/asleep-out" || asleep_fail 'running dispatch closed'
 ! grep -Fq 'Close terminal t-quiet ' "$tmp/asleep-out" || asleep_fail 'running dispatch idle on a progress line was closed'
 echo 'ok a scheduled round closes sleep and an idle prompt with no dispatch, and keeps an unsettled dispatch'
+
+# A connected agent with no dispatch stays on a fleet host too. A settled worker stays when the
+# screen already read shows a question, a pending ask, or an escalation. A bare prompt is still closed.
+echo '{"ok":true,"result":{"environments":[{"id":"env-a"}]}}' > "$tmp/asleep/envs"
+q_mail='note (question) ─
+❯'
+esc_mail='note (escalation) ─
+❯'
+ask_sent='Question msg_1 sent.
+❯'
+ask_wait='Question msg_2 is still pending after 1000.
+❯'
+ask_timeout='ask timeout after 1000ms; question msg_3 is still pending
+❯'
+prompt='~/work $
+❯'
+jq -n --arg q "$q_mail" --arg e "$esc_mail" --arg a "$ask_sent" --arg w "$ask_wait" --arg to "$ask_timeout" --arg p "$prompt" \
+  '{ok:true,result:{terminals:[
+    {handle:"t-fleet",worktreePath:"/nowhere/fleet",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$p,title:"agent"},
+    {handle:"t-question",worktreePath:"/nowhere/question",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$q,title:"agent"},
+    {handle:"t-escalation",worktreePath:"/nowhere/escalation",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$e,title:"agent"},
+    {handle:"t-ask",worktreePath:"/nowhere/ask",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$a,title:"agent"},
+    {handle:"t-ask-wait",worktreePath:"/nowhere/ask-wait",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$w,title:"agent"},
+    {handle:"t-ask-timeout",worktreePath:"/nowhere/ask-timeout",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$to,title:"agent"},
+    {handle:"t-agentwait",worktreePath:"/nowhere/agentwait",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:"still working",title:"agent"},
+    {handle:"t-idle-done",worktreePath:"/nowhere/idle-done",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$p,title:"agent"},
+    {handle:"t-null-wait",worktreePath:"/nowhere/null-wait",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,agentWait:null,preview:$p,title:"agent"},
+    {handle:"t-sleep-q",worktreePath:"/nowhere/sleep-q",connected:true,writable:true,liveness:"sleep",agentIdentity:"agent",lastOutputAt:1,preview:$q,title:"agent"}
+  ]}}' > "$tmp/asleep/env-terminals"
+jq -n '{ok:true,result:{workers:[
+  {dispatchId:"d-question",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-question",workspace:"repo::/nowhere/question"},
+  {dispatchId:"d-escalation",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-escalation",workspace:"repo::/nowhere/escalation"},
+  {dispatchId:"d-ask",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-ask",workspace:"repo::/nowhere/ask"},
+  {dispatchId:"d-ask-wait",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-ask-wait",workspace:"repo::/nowhere/ask-wait"},
+  {dispatchId:"d-ask-timeout",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-ask-timeout",workspace:"repo::/nowhere/ask-timeout"},
+  {dispatchId:"d-agentwait",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-agentwait",workspace:"repo::/nowhere/agentwait"},
+  {dispatchId:"d-idle-done",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-idle-done",workspace:"repo::/nowhere/idle-done"},
+  {dispatchId:"d-null-wait",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-null-wait",workspace:"repo::/nowhere/null-wait"},
+  {dispatchId:"d-sleep-q",state:"succeeded",outcome:"worker_done",terminalState:"released",terminal:"t-sleep-q",workspace:"repo::/nowhere/sleep-q"}
+]}}' > "$tmp/asleep/workers"
+jq -n --arg p "$prompt" '{ok:true,result:{terminal:{handle:"t-agentwait",connected:true,writable:true,liveness:"live",agentIdentity:"agent",lastOutputAt:1,preview:$p,agentWait:{reason:"prompt-text",source:"prompt-text"}}}}' > "$tmp/asleep/screen-t-agentwait.json"
+human_fail() { echo "FAIL $1"; cat "$tmp/asleep-out" "$tmp/asleep-err" 2>/dev/null; exit 1; }
+check_human() {
+  local when=$1
+  grep -Fq "Kept terminal t-fleet (env-a, owner session)" "$tmp/asleep-out" || human_fail "$when closed a fleet agent with no dispatch"
+  ! grep -Fq 'Close terminal t-fleet ' "$tmp/asleep-out" || human_fail "$when closed a fleet agent with no dispatch"
+  grep -Fq 'Kept terminal t-question (env-a, waiting on a human)' "$tmp/asleep-out" || human_fail "$when closed a question"
+  grep -Fq 'Kept terminal t-escalation (env-a, waiting on a human)' "$tmp/asleep-out" || human_fail "$when closed an escalation"
+  grep -Fq 'Kept terminal t-ask (env-a, waiting on a human)' "$tmp/asleep-out" || human_fail "$when closed an ask"
+  grep -Fq 'Kept terminal t-ask-wait (env-a, waiting on a human)' "$tmp/asleep-out" || human_fail "$when closed a pending ask"
+  grep -Fq 'Kept terminal t-ask-timeout (env-a, waiting on a human)' "$tmp/asleep-out" || human_fail "$when closed an ask that timed out"
+  grep -Fq 'Kept terminal t-agentwait (env-a, waiting on a human)' "$tmp/asleep-out" || human_fail "$when closed a screen marked waiting"
+  grep -Fq 'Close terminal t-idle-done (env-a, idle at prompt)' "$tmp/asleep-out" || human_fail "$when kept a finished worker at its prompt"
+  grep -Fq 'Close terminal t-null-wait (env-a, idle at prompt)' "$tmp/asleep-out" || human_fail "$when kept a screen that is not waiting"
+  grep -Fq 'Close terminal t-sleep-q (env-a, sleep)' "$tmp/asleep-out" || human_fail "$when kept a sleeping terminal"
+}
+env -u WRAP_UP_SCHEDULED_CHILD WRAP_UP_TOTAL_TIMEOUT=60 \
+  bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
+check_human manual
+WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=60 \
+  bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
+check_human scheduled
+echo 'ok a fleet agent with no dispatch stays, and a screen waiting on a human stays'
