@@ -3,6 +3,8 @@
 Run from the repo root: python3 -m unittest discover -s .claude/hooks/tests
 The hook runs as Claude Code does (JSON on stdin) with HOME pointed at a temporary folder.
 """
+import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -10,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "guard-bash.py")
 
@@ -624,6 +627,53 @@ class ExactOnlyScripts(GuardTest):
                     reason = self.run_in(command, self.repo)
                     self.assertIsNotNone(reason)
                     self.assertIn("secrets", reason)
+
+    def assert_other_rules_still_deny(self):
+        """A bad exact_only entry must not turn the rest of the guard off."""
+        self.assertRuns("echo ok")
+        reason = self.run_in("cat vault/secrets/svc/token", self.repo)
+        self.assertIsNotNone(reason, "expected the secrets rule to deny")
+        self.assertIn("secrets", reason)
+        reason = self.run_in("git push --force origin main", self.repo)
+        self.assertIsNotNone(reason, "expected the force-push rule to deny")
+        self.assertIn("force push", reason)
+
+    def test_nul_entry_does_not_disable_the_guard(self):
+        for entry in ("a\x00b", self.SCRIPT + "\x00"):
+            with self.subTest(entry=entry):
+                self.use_config({"secrets_dir": "vault/secrets", "exact_only_scripts": [entry]})
+                self.assert_other_rules_still_deny()
+        self.use_config({"secrets_dir": "vault/secrets", "exact_only_scripts": [self.SCRIPT, "a\x00b"]})
+        self.assertRuns(f"{self.SCRIPT} --list")
+        self.assertBlocked(f"bash {self.SCRIPT}")
+        self.assert_other_rules_still_deny()
+
+    def test_unresolvable_entry_does_not_disable_the_guard(self):
+        # U+D800 cannot be encoded as a path, so resolving the entry raises.
+        self.use_config({"secrets_dir": "vault/secrets", "exact_only_scripts": ["bin/\ud800.sh"]})
+        self.assert_other_rules_still_deny()
+
+    def test_exception_inside_the_rule_denies(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_exact_only_inject", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        def boom():
+            raise RuntimeError("injected")
+
+        mod.exact_only_targets = boom
+        for command in ("echo ok", "cat vault/secrets/svc/token", "git push --force origin main"):
+            with self.subTest(command=command):
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo})
+                buf = io.StringIO()
+                with mock.patch.dict(os.environ, {"HOME": self.home, **self.extra_env}), \
+                     mock.patch("sys.stdin", io.StringIO(payload)), \
+                     mock.patch("sys.stdout", buf):
+                    with self.assertRaises(SystemExit) as caught:
+                        mod.main()
+                self.assertEqual(caught.exception.code, 0)
+                body = json.loads(buf.getvalue())
+                self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
 if __name__ == "__main__":
