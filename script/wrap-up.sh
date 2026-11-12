@@ -895,7 +895,9 @@ orca=orca_call
 # path, worktree id, or cwd is a live dispatch's worktree, or a directory inside it, stays open on a scheduled round
 # and on a manual run. A scheduled round (WRAP_UP_SCHEDULED_CHILD, set by --scheduled for each repo) also closes a
 # terminal that is asleep: liveness sleep or exited, or a shell or agent at its prompt with no output for that same
-# 60 minutes. A ready dispatch on that terminal does not keep it. List preview can be scrollback from before a
+# 60 minutes when no unsettled dispatch owns it. A dispatch that is running, ready, pending or waiting keeps the
+# terminal unless liveness is sleep or exited. The prompt is the last non-empty line, so a progress line, a heading
+# or a wait for a reply does not count. List preview can be scrollback from before a
 # full-screen agent started, so the round reads the current screen of idle terminals before it decides. On another environment a
 # terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
 # it is asleep or its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
@@ -1052,7 +1054,7 @@ close_finished_terminals() {
           if (.result.terminal | type) == "object" then .result.terminal
           elif (.result | type) == "object" and ((.result.handle | type) == "string") then .result
           else empty end;
-        term | select(.handle == $h) | {handle, preview, liveness, agentIdentity, agentWait, lastOutputAt}
+        term | select(.handle == $h) | {handle, preview, liveness, agentIdentity, lastOutputAt}
       ' >> "$tmp/h-screens" 2>/dev/null || true
     done < "$tmp/h-idle-handles"
     if [ -s "$tmp/h-screens" ] && jq -s '.' "$tmp/h-screens" > "$tmp/h-screens.json"; then
@@ -1064,7 +1066,6 @@ close_finished_terminals() {
               | .preview = (if ($s.preview | type) == "string" and $s.preview != "" then $s.preview else $t.preview end)
               | .liveness = (if ($s.liveness | type) == "string" then $s.liveness else $t.liveness end)
               | .agentIdentity = (if ($s | has("agentIdentity")) then $s.agentIdentity else $t.agentIdentity end)
-              | .agentWait = (if ($s | has("agentWait")) then $s.agentWait else $t.agentWait end)
               | .lastOutputAt = (if ($s.lastOutputAt | type) == "number" then $s.lastOutputAt else $t.lastOutputAt end)
             end)
       ' "$tmp/h-terminals" > "$tmp/h-terminals-rich"; then
@@ -1087,22 +1088,16 @@ close_finished_terminals() {
       or (live_of == "exited" or live_of == "sleep");
     def at_prompt:
       def vis: gsub("^[[:space:]]+|[[:space:]]+$"; "");
-      ((.preview // "") | split("\n") | map(vis) | map(select(length > 0))) as $lines
-      | ($lines[-1] // "") as $last
-      | ($lines[-2] // "") as $prev
+      ((.preview // "") | split("\n") | map(vis) | map(select(length > 0)) | last // "") as $last
       | (
-          (.agentWait != null and .agentWait != false and .agentWait != "")
-          or ($last | test("^(❯|⏵|>|\\$|%|#)"))
+          ($last | test("^(❯|⏵|\\$|%)"))
           or ($last | test("bypass permissions|shift\\+tab to cycle"))
-          or ($prev | test("[$#%][[:space:]]"))
         );
     def idle_prompt:
       $scheduled != ""
       and (.lastOutputAt | type) == "number"
       and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))
       and at_prompt;
-    def screen_asleep:
-      $scheduled != "" and ((live_of == "sleep") or (live_of == "exited") or idle_prompt);
     def worker_handle: .agentTerminalHandle // (.terminal | strings) // "";
     def screen_of($h):
       if $h == "" then null
@@ -1112,7 +1107,7 @@ close_finished_terminals() {
       (settled | not) and (
         worker_handle as $wh
         | if (screen_of($wh) == null) then true
-          else (screen_of($wh) | screen_asleep | not)
+          else (screen_of($wh) | ($scheduled != "" and (live_of == "sleep" or live_of == "exited")) | not)
           end
       );
     def clean:
