@@ -893,9 +893,12 @@ orca=orca_call
 # no running agent is closed (issue 551), on the coordinator and on a fleet host (--worktrees-only). A scheduled
 # round closes that local shell once it has had no output for 60 minutes; newer output stays. A shell whose worktree
 # path, worktree id, or cwd is a live dispatch's worktree, or a directory inside it, stays open on a scheduled round
-# and on a manual run. On another environment a
+# and on a manual run. A scheduled round (WRAP_UP_SCHEDULED_CHILD, set by --scheduled for each repo) also closes a
+# terminal that is asleep: liveness sleep or exited, or a shell or agent at its prompt with no output for that same
+# 60 minutes. A ready dispatch on that terminal does not keep it. List preview can be scrollback from before a
+# full-screen agent started, so the round reads the current screen of idle terminals before it decides. On another environment a
 # terminal with no dispatch record stays kept as unknown owner (an owner session, a dev server, another coordinator), unless
-# its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
+# it is asleep or its worktree was removed by this run: a second pass over the environments, after the worktree step, closes those. Only a
 # shell with no running agent, at a path the environment no longer reports; scheduled rounds close those too. A running
 # agent in a removed worktree stays open until its dispatch settles (the gap: a manual run closes it).
 # worker-list without --run covers only the Run bound to the caller, and a Run can live on any Orca. So the inventory reads
@@ -1032,6 +1035,43 @@ close_finished_terminals() {
     || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/h-terminals" >/dev/null 2>&1; then
     echo "Warning: terminal inventory incomplete on $label; closing nothing there." >&2; fail_item "terminals on $label" 'inventory incomplete; none closed'; return 0
   fi
+  # List preview can lag a full-screen agent. Only idle terminals are worth a show; a fresh one is still working.
+  if [ -n "${WRAP_UP_SCHEDULED_CHILD:-}" ]; then
+    : > "$tmp/h-idle-handles"
+    jq -r --arg idle_ms "${WRAP_UP_IDLE_SHELL_MS:-3600000}" '
+      .result.terminals[]?
+      | select(.connected != false and .writable != false)
+      | select((.lastOutputAt | type) == "number" and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber)))
+      | .handle' "$tmp/h-terminals" > "$tmp/h-idle-handles" 2>/dev/null || :
+    : > "$tmp/h-screens"
+    while IFS= read -r handle; do
+      [ -n "$handle" ] || continue
+      show=$("$orca" terminal show ${eargs[@]+"${eargs[@]}"} --terminal "$handle" --json 2>/dev/null) || continue
+      printf '%s' "$show" | jq -c --arg h "$handle" '
+        def term:
+          if (.result.terminal | type) == "object" then .result.terminal
+          elif (.result | type) == "object" and ((.result.handle | type) == "string") then .result
+          else empty end;
+        term | select(.handle == $h) | {handle, preview, liveness, agentIdentity, agentWait, lastOutputAt}
+      ' >> "$tmp/h-screens" 2>/dev/null || true
+    done < "$tmp/h-idle-handles"
+    if [ -s "$tmp/h-screens" ] && jq -s '.' "$tmp/h-screens" > "$tmp/h-screens.json"; then
+      if jq --slurpfile screens "$tmp/h-screens.json" '
+        ($screens[0] | map(select((.handle | type) == "string" and .handle != "")) | map({(.handle): .}) | add // {}) as $by
+        | .result.terminals |= map(
+            if $by[.handle] == null then .
+            else . as $t | $by[.handle] as $s
+              | .preview = (if ($s.preview | type) == "string" and $s.preview != "" then $s.preview else $t.preview end)
+              | .liveness = (if ($s.liveness | type) == "string" then $s.liveness else $t.liveness end)
+              | .agentIdentity = (if ($s | has("agentIdentity")) then $s.agentIdentity else $t.agentIdentity end)
+              | .agentWait = (if ($s | has("agentWait")) then $s.agentWait else $t.agentWait end)
+              | .lastOutputAt = (if ($s.lastOutputAt | type) == "number" then $s.lastOutputAt else $t.lastOutputAt end)
+            end)
+      ' "$tmp/h-terminals" > "$tmp/h-terminals-rich"; then
+        mv "$tmp/h-terminals-rich" "$tmp/h-terminals"
+      fi
+    fi
+  fi
   jq -r -s --slurpfile terms "$tmp/h-terminals" --rawfile coordinators "$tmp/h-coordinators" --arg own "${ORCA_TERMINAL_HANDLE:-}" --arg scheduled "${WRAP_UP_SCHEDULED_CHILD:-}" --arg idle_ms "${WRAP_UP_IDLE_SHELL_MS:-3600000}" --arg main "$main_path" --arg local "${env:-}" --rawfile gone "$tmp/h-gone" '
     def live_of:
       if (.liveness | type) == "string" then .liveness
@@ -1045,6 +1085,36 @@ close_finished_terminals() {
       or (.stage == "released" or .stage == "process_stopped")
       or ((.terminalState // "") as $t | ["released","release_unknown","gone","missing","closed"] | index($t))
       or (live_of == "exited" or live_of == "sleep");
+    def at_prompt:
+      def vis: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+      ((.preview // "") | split("\n") | map(vis) | map(select(length > 0))) as $lines
+      | ($lines[-1] // "") as $last
+      | ($lines[-2] // "") as $prev
+      | (
+          (.agentWait != null and .agentWait != false and .agentWait != "")
+          or ($last | test("^(❯|⏵|>|\\$|%|#)"))
+          or ($last | test("bypass permissions|shift\\+tab to cycle"))
+          or ($prev | test("[$#%][[:space:]]"))
+        );
+    def idle_prompt:
+      $scheduled != ""
+      and (.lastOutputAt | type) == "number"
+      and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))
+      and at_prompt;
+    def screen_asleep:
+      $scheduled != "" and ((live_of == "sleep") or (live_of == "exited") or idle_prompt);
+    def worker_handle: .agentTerminalHandle // (.terminal | strings) // "";
+    def screen_of($h):
+      if $h == "" then null
+      else ([$terms[0].result.terminals[] | select(.handle == $h)][0] // null)
+      end;
+    def blocking:
+      (settled | not) and (
+        worker_handle as $wh
+        | if (screen_of($wh) == null) then true
+          else (screen_of($wh) | screen_asleep | not)
+          end
+      );
     def clean:
       if type != "string" or . == "" then ""
       elif . == "/" then "/"
@@ -1055,7 +1125,7 @@ close_finished_terminals() {
     | $terms[0].result.terminals[] | .handle as $h | (.worktreePath // "" | clean) as $p
     | ([$w[] | select((.agentTerminalHandle // (.terminal | strings)) == $h)]) as $mine
     | ([$w[] | select($p != "" and path == $p)]) as $onpath
-    | ([$w[] | select(settled | not) | path | select(. != "")]) as $live_paths
+    | ([$w[] | select(blocking) | path | select(. != "")]) as $live_paths
     | ([ (.worktreeId // "" | if type == "string" then (split("::")[1] // "" | clean) else "" end), (.cwd // "" | clean) ]
         | map(select(. != ""))) as $places
     | (any($live_paths[]; . as $root | ($p != "" and ($p | under($root))))
@@ -1064,7 +1134,9 @@ close_finished_terminals() {
     | if $h == $own then [$h, "own terminal", "keep"]
       elif $coordinators | split("\n") | index($h) then [$h, "coordinator", "keep"]
       elif (($p | split("/") | last) // "" | startswith("lead-")) then [$h, "lead worktree", "keep"]
-      elif any(($mine + $onpath)[]; settled | not) or $in_live then [$h, "live dispatch", "keep"]
+      elif any(($mine + $onpath)[]; blocking) or $in_live then [$h, "live dispatch", "keep"]
+      elif $scheduled != "" and ((live_of == "sleep") or (live_of == "exited")) then [$h, "sleep", "close"]
+      elif idle_prompt then [$h, "idle at prompt", "close"]
       elif $scheduled != "" and ($in_live | not) and $local == "" and $p != "" and $p != $main and ($mine | length) == 0 and .agentIdentity == null
         and (((.title // "") | test("worker-pane")) | not)
         and (.lastOutputAt | type) == "number" and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))

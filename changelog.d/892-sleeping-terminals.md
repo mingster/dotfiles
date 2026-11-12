@@ -1,0 +1,1 @@
+A scheduled wrap-up closes a terminal that is asleep: liveness sleep or exited, or a shell or agent at its prompt with no output for 60 minutes, even when a ready dispatch still names it. A running dispatch, a coordinator, and a terminal with newer output stay.
