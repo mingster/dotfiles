@@ -1029,5 +1029,44 @@ else
   check "project with no guard-config.json gets the template copy" bad
 fi
 
+assert_bad_guard_config() {
+  local label=$1 body=$2 needle=$3
+  local repo="$tmp/bad-guard-$label"
+  local before="$tmp/bad-guard-$label.before"
+  local out rc=0
+  mkdir -p "$repo/.claude/hooks"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email t@example.invalid
+  git -C "$repo" config user.name t
+  printf '%s' "$body" > "$repo/.claude/hooks/guard-config.json"
+  cp "$repo/.claude/hooks/guard-config.json" "$before"
+  printf '# Agents\n' > "$repo/AGENTS.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm init
+  out=$(bash "$SCRIPT" project "$repo" --project-name fixture 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ] \
+    && cmp -s "$before" "$repo/.claude/hooks/guard-config.json" \
+    && printf '%s\n' "$out" | grep -F ".claude/hooks/guard-config.json" >/dev/null \
+    && printf '%s\n' "$out" | grep -F "$needle" >/dev/null; then
+    check "$label" ok
+  else
+    printf '%s\n' "$out" >&2
+    echo "rc=$rc" >&2
+    check "$label" bad
+  fi
+}
+assert_bad_guard_config \
+  "invalid guard-config.json is left unchanged and sync fails" \
+  '{ "worktree_env_allow": [".env.local",, }' \
+  "not valid JSON"
+assert_bad_guard_config \
+  "array guard-config.json is left unchanged and sync fails" \
+  '["x"]' \
+  "JSON object"
+assert_bad_guard_config \
+  "string guard-config.json is left unchanged and sync fails" \
+  '"plain"' \
+  "JSON object"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
