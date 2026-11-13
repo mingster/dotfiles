@@ -387,14 +387,18 @@ blank_case 14 feat-empty empty
 blank_case 15 feat-ws whitespace
 
 # 940. A wording-only change after the Verdict head ships on green checks; code, protected paths and code fences keep the patch-id refusal
-wording_case() { # <pr> <branch> <file> <content> <expect ship|refuse> <label>
-  local n=$1 b=$2 f=$3 content=$4 expect=$5 label=$6 old new
-  mf_pr_add "$n" "$b" "Body"
+wording_case() { # <pr> <branch> <file> <content> <expect ship|refuse> <label> [rename-from: a file the PR already has, moved to <file> unchanged]
+  local n=$1 b=$2 f=$3 content=$4 expect=$5 label=$6 from=${7:-} old new
+  mf_pr_add "$n" "$b" "Body" ${from:+"$from"}
   old=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$b"
   mkdir -p "$MF_REPO/$(dirname "$f")"
-  printf '%s\n' "$content" > "$MF_REPO/$f"
-  "$MF_REAL_GIT" -C "$MF_REPO" add "$f"
+  if [ -n "$from" ]; then
+    "$MF_REAL_GIT" -C "$MF_REPO" mv "$from" "$f"
+  else
+    printf '%s\n' "$content" > "$MF_REPO/$f"
+  fi
+  "$MF_REAL_GIT" -C "$MF_REPO" add -A
   "$MF_REAL_GIT" -C "$MF_REPO" commit -q -m "after verdict"
   "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$b"
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
@@ -419,6 +423,7 @@ wording_case 66 feat-word-fence docs/fence.md '```sh
 rm -rf x
 ```' refuse "a docs change that adds a code fence is refused"
 wording_case 67 feat-word-nested notes/other.md "words" refuse "a .md outside docs and changelog.d is refused"
+wording_case 68 feat-word-rename docs/run.md "" refuse "a script renamed into docs after the Verdict is refused" script/run.sh
 
 # Red main: refuses and names the run, unless the PR body says it fixes that run and the PR touches what failed.
 # red_main_case <pr> <branch> <body-line or empty> <expect: refuse|ship> <pr file> <label> [conclusion] [expect text]

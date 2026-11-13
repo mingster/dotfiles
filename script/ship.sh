@@ -132,7 +132,7 @@ wording_only_carry() { # <verdict_head> <current_head>
   local f out
   git cat-file -e "$1^{commit}" 2>/dev/null || git fetch origin "$1" >&2 || return 1
   git merge-base --is-ancestor "$1" "$2" 2>/dev/null || return 1
-  out=$(git diff --name-only "$1" "$2") || return 1
+  out=$(git diff --no-renames --name-only "$1" "$2") || return 1
   [ -n "$out" ] || return 1
   while IFS= read -r f; do
     case "$f" in
