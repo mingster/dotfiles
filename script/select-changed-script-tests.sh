@@ -315,8 +315,9 @@ else
     n=$((n + 1))
     slot=$n
     (
-      rc=0
+      rc=0 began=$SECONDS
       run_one "$test_path" 3>&- || rc=$?
+      printf 'Timed %s: %ss, exit %s\n' "$test_path" "$((SECONDS - began))" "$rc"
       printf '%s\n' "$rc" >"$status_dir/$slot.rc"
       printf 'x\n' >&3
     ) &

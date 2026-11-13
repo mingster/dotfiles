@@ -390,6 +390,7 @@ case17_first_tests_start_first() {
   grep -Fxq 'Pool order (2 jobs): script/tests/z.test.sh script/tests/a.test.sh script/tests/b.test.sh' <<<"$out" \
     || fail "case17 z must start first: $out"
   grep -Fq 'pass-a' <<<"$out" && grep -Fq 'pass-b' <<<"$out" && grep -Fq 'pass-z' <<<"$out" || fail "case17 every test must run: $out"
+  grep -Eq '^Timed script/tests/z.test.sh: [0-9]+s, exit 0$' <<<"$out" || fail "case17 each pooled test reports its time: $out"
   ok "case17 SELECT_SCRIPT_TESTS_FIRST starts its tests first"
 }
 
