@@ -14,12 +14,12 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Playbooks
 - pstack Feature, Bug fix and Refactoring, with the overlays in `orca-adapter/playbooks/`.
 - Stack and standards: `AGENTS.md` and `docs/agents/team-facts.md`.
-- PR body: put a `Builder: agent=<agent> model=<model>` line in it (for example `Builder: agent=claude model=sonnet`). `ship.sh` compares it with the verifier.
+- PR body: put a `Builder: agent=<agent> model=<model>` line in it. `ship.sh` compares it with the verifier.
 
 ## Finish
-Before `worker_done`, copy the brief's Acceptance list into the PR body and write the proof beside each box: a file path, a command with its output line, or `n/a: <why>`. Prove a behaviour item on the real artifact (live run or screen), not only a unit test, and run a test you added or tightened across every variant it covers (locales, views). Run the project's full local check, not only the tests the brief names, and check each item yourself before calling it already done. A box without proof is not done (`~/dotfiles/templates/agent-team/docs/agents/team.md`, Acceptance checklist).
-You own the PR to merge: rebase it when main moves, take its fix rounds, and land it with `~/dotfiles/script/ship.sh` once a non-author Verdict passes at the current head.
-Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. It moves the Orca board card to in-review, so wrap-up can tell finished work from running work.
+Before `worker_done`, meet `~/dotfiles/templates/agent-team/docs/agents/team.md`, Acceptance checklist, in the PR body. Run the project's full local check, not only the tests the brief names, and check each item yourself before calling it already done.
+You own the PR to merge: rebase it when main moves, take its fix rounds, and land it per `team.md`, Publication.
+Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done` (`team.md`, Board status).
 Before `worker_done`, wait until the PR checks at your final head pass (`gh pr checks <n> --watch --fail-fast`, or `gh run list --branch <branch> --limit 3` where the token gets 403). Never hand off red or pending checks.
 Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item.
 
