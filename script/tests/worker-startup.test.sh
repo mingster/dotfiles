@@ -1345,9 +1345,9 @@ grep -q 'sign-in step' "$tmp/agy-ok.err" && bad "normal antigravity screen must 
 cat >"$bin/hostname" <<'EOS'
 #!/bin/sh
 if [ "${1:-}" = "-s" ]; then
-  printf '%s\n' mini6
+  printf '%s\n' thishost
 else
-  printf '%s\n' mini6.local
+  printf '%s\n' thishost.local
 fi
 EOS
 chmod +x "$bin/hostname"
@@ -1359,7 +1359,7 @@ env -u BASH_ENV \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
   bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
-  --from term_coord --on mini6 --name n_own --repo "path:$clean" 2>"$tmp/own-host.err"
+  --from term_coord --on thishost --name n_own --repo "path:$clean" 2>"$tmp/own-host.err"
 ec_own=$?
 set -e
 [ "$ec_own" = 0 ] && ok || bad "own-host --on exits 0 ($ec_own) $(cat "$tmp/own-host.err")"
@@ -1374,11 +1374,11 @@ env -u BASH_ENV \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
   bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
-  --from term_coord --on MINI6 --name n_own_case --repo "path:$clean" 2>"$tmp/own-host-case.err"
+  --from term_coord --on THISHOST --name n_own_case --repo "path:$clean" 2>"$tmp/own-host-case.err"
 ec_case=$?
 set -e
-[ "$ec_case" = 0 ] && ok || bad "own-host --on MINI6 exits 0 ($ec_case) $(cat "$tmp/own-host-case.err")"
-grep -q -- '--environment' "$tmp/orca-own-host-case.log" && bad "own-host MINI6 must not pass --environment ($(cat "$tmp/orca-own-host-case.log"))" || ok
+[ "$ec_case" = 0 ] && ok || bad "own-host --on THISHOST exits 0 ($ec_case) $(cat "$tmp/own-host-case.err")"
+grep -q -- '--environment' "$tmp/orca-own-host-case.log" && bad "own-host THISHOST must not pass --environment ($(cat "$tmp/orca-own-host-case.log"))" || ok
 grep -q -- '--environment rem-env' "$tmp/orca-rem-ok.log" && ok || bad "remote --on still passes --environment ($(cat "$tmp/orca-rem-ok.log"))"
 rm -f "$bin/hostname"
 

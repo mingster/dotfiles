@@ -12,8 +12,8 @@ spec.loader.exec_module(fw)
 REPO = 'owner/app'
 NOW = 1_700_000_000.0
 HEAD = 'a' * 40
-NITE = '8e49138a-dc7c-493e-b424-c608644c60f3'
-MINI6 = 'f9cb3d5e-6bc7-4d71-89de-d865d9928ca4'
+ENV_NITE = '11111111-2222-4333-8444-555555555555'
+ENV_COORD = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 VALID_BRIEF = (
     'Refs owner/app#9\n\n'
     '## Acceptance\n'
@@ -208,40 +208,40 @@ class ConflictReworkRounds(unittest.TestCase):
 
 
 class EnvironmentHostIds(unittest.TestCase):
-    """worker-list on this host reports a remote row as an environment id, not "local".
+    """A concise remote row's host string is an environment id, not "local".
 
-    Concise row ctx_908c528837ee has host f9cb3d5e-6bc7-4d71-89de-d865d9928ca4.
-    `orca environment list` names that id mini6. Full rows use projection.host
-    {kind: remote, id: <environment id>}. A missing host is the local seat.
+    environment list maps that id to the host_caps name. Full rows use
+    projection.host {kind: remote, id: <environment id>}. A missing host is
+    the local seat. The real worker-list row is in the pull request, not here.
     """
 
     def config(self):
         return {
-            'local_host': 'blueDevil',
-            'host_caps': {'blueDevil': 1, 'mini6': 1, 'miniu': 2},
+            'local_host': 'coord-box',
+            'host_caps': {'coord-box': 1, 'host-b': 1, 'host-c': 2},
         }
 
     def test_environment_list_maps_id_to_name(self):
         def call(*args):
             self.assertEqual(args, ('environment', 'list'))
             return {'environments': [
-                {'id': MINI6, 'name': 'mini6'},
+                {'id': ENV_COORD, 'name': 'host-b'},
                 {'id': '', 'name': 'skip'},
                 'not-a-row',
             ]}
 
-        self.assertEqual(fw.environment_name_by_id(call), {MINI6: 'mini6'})
+        self.assertEqual(fw.environment_name_by_id(call), {ENV_COORD: 'host-b'})
 
     def test_environment_id_counts_on_the_named_host(self):
         workers = [{
-            'dispatchId': 'ctx_908c528837ee',
+            'dispatchId': 'ctx_remote_row',
             'dispatchStatus': 'running',
-            'host': MINI6,
+            'host': ENV_COORD,
         }]
-        names = {MINI6: 'mini6', NITE: 'niteking'}
+        names = {ENV_COORD: 'host-b', ENV_NITE: 'host-d'}
         config = self.config()
         local = fw.admit('local', config, workers, env_names=names)
-        named = fw.admit('mini6', config, workers, env_names=names)
+        named = fw.admit('host-b', config, workers, env_names=names)
         self.assertEqual(local['occupied'], 0, local)
         self.assertEqual(named['occupied'], 1, named)
         self.assertFalse(named['admitted'])
@@ -250,13 +250,13 @@ class EnvironmentHostIds(unittest.TestCase):
         workers = [{
             'dispatchId': 'ctx_nite',
             'dispatchStatus': 'running',
-            'projection': {'role': 'builder', 'host': {'kind': 'remote', 'id': NITE}},
+            'projection': {'role': 'builder', 'host': {'kind': 'remote', 'id': ENV_NITE}},
         }]
         config = {
-            'local_host': 'blueDevil',
-            'host_caps': {'blueDevil': 4, 'niteking': 1, 'miniu': 2},
+            'local_host': 'coord-box',
+            'host_caps': {'coord-box': 4, 'host-d': 1, 'host-c': 2},
         }
-        names = {NITE: 'niteking'}
+        names = {ENV_NITE: 'host-d'}
         with patch.dict(os.environ, {
             'FLEET_WATCH_TEST_LOAD_PER_CORE': '0.85',
             'FLEET_WATCH_TEST_FREE_GB': '12',
@@ -264,7 +264,7 @@ class EnvironmentHostIds(unittest.TestCase):
             receipt = fw.admit('local', config, workers, env_names=names)
         self.assertFalse(receipt['admitted'], receipt)
         self.assertEqual(receipt['occupied'], 0)
-        self.assertEqual(receipt['overflow_host'], 'miniu')
+        self.assertEqual(receipt['overflow_host'], 'host-c')
 
     def test_missing_host_still_counts_on_local(self):
         workers = [{
@@ -272,7 +272,7 @@ class EnvironmentHostIds(unittest.TestCase):
             'dispatchStatus': 'running',
             'projection': {'role': 'builder'},
         }]
-        receipt = fw.admit('blueDevil', self.config(), workers, env_names={})
+        receipt = fw.admit('coord-box', self.config(), workers, env_names={})
         self.assertEqual(receipt['occupied'], 1)
 
 
@@ -294,8 +294,8 @@ class GreenSuccessRelease(unittest.TestCase):
         released = []
         state = {}
         config = {
-            'local_host': 'blueDevil',
-            'host_caps': {'blueDevil': 1},
+            'local_host': 'coord-box',
+            'host_caps': {'coord-box': 1},
             'issue_scan': {'repo_roots': {REPO: worker['projection']['workspace']['path']}},
         }
         before = fw.admit('local', config, [worker], env_names={})
