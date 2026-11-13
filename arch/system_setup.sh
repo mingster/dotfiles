@@ -56,7 +56,8 @@ simple() {
     echo -e "\033[1;35mEssentials\033[0m"
     echo ""
     sudo pacman -S --noconfirm --needed openssh rsync wget curl unzip ufw cron
-    sudo pacman -S --noconfirm --needed github-cli kdiff3 zsh starship tmux neovim lf kitty fastfetch fzf net-tools
+    # Arch has no client-only package: postgresql ships psql and createdb. The service stays disabled.
+    sudo pacman -S --noconfirm --needed github-cli kdiff3 zsh starship tmux neovim lf kitty fastfetch fzf net-tools postgresql
     sudo pacman -S --noconfirm --needed chromium firefox
 
     echo ""

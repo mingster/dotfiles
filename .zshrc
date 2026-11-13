@@ -28,13 +28,15 @@ compinit
 ARCH=$(uname -m)
 if [[ "$ARCH" == "arm64" && -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
-  export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
-  export LDFLAGS="-L/opt/homebrew/opt/postgresql@18/lib"
-  export CPPFLAGS="-I/opt/homebrew/opt/postgresql@18/include"
+  # PostgreSQL client tools (psql, createdb) come from the keg-only libpq on every host.
+  # postgresql@18 stays after it for a host that still has that formula installed.
+  export PATH="/opt/homebrew/opt/libpq/bin:/opt/homebrew/opt/postgresql@18/bin:$PATH"
+  export LDFLAGS="-L/opt/homebrew/opt/libpq/lib"
+  export CPPFLAGS="-I/opt/homebrew/opt/libpq/include"
 elif [[ "$ARCH" == "x86_64" && -x /usr/local/bin/brew ]]; then
   eval "$(/usr/local/bin/brew shellenv)"
   export PATH="/usr/local/share/google-cloud-sdk/bin:$PATH"
-  export PATH="/usr/local/opt/postgresql@18/bin:$PATH"
+  export PATH="/usr/local/opt/libpq/bin:/usr/local/opt/postgresql@18/bin:$PATH"
   export PATH="/usr/local/opt/llvm/bin:$PATH"
 fi
 
@@ -59,7 +61,10 @@ fi
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
-[ -f "$HOME/dotfiles/.env" ] && source "$HOME/dotfiles/.env"
+# API keys and tokens are never exported from startup files. A tool that needs one reads it from the
+# macOS keychain for that one command only: see bin/with-keychain and docs/agents/keys-in-keychain.md.
+# Only on macOS: other hosts have no keychain helper, so gemini runs as installed there.
+[[ "$(uname -s)" == Darwin ]] && gemini() { with-keychain GEMINI_API_KEY -- gemini "$@"; }
 
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 

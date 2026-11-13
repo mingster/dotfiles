@@ -49,7 +49,7 @@ run_hc() {
 }
 
 run_hc; rc=$?
-if [ "$rc" -ne 0 ] && grep -q 'host fault' "$tmp/out" && grep -q 'command not found' "$tmp/out"; then
+if [ "$rc" -ne 0 ] && grep -q 'host fault' "$tmp/out" && grep -q 'no reachable local Postgres' "$tmp/out"; then
   check "no Postgres and no database host fails as a host fault" ok
 else
   check "no Postgres and no database host fails as a host fault" bad
@@ -89,6 +89,34 @@ if [ "$rc" -eq 0 ] && [ "$(cat "$tmp/remote.log" 2>/dev/null)" = db-host-849 ]; 
   check "a marked script step goes to the database host when the probe is missing" ok
 else
   check "a marked script step goes to the database host when the probe is missing" bad
+fi
+
+# createdb is on every host, so it says nothing about a server: only an answering pg_isready runs the step here.
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/createdb"
+printf '#!/bin/sh\nexit 2\n' > "$tmp/bin/pg_isready"
+chmod +x "$tmp/bin/createdb" "$tmp/bin/pg_isready"
+printf 'createdb fixture_849\n' > "$repo/.agents/head-checks.conf"
+git -C "$repo" add -A >/dev/null
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm createdb-only
+run_hc HEAD_CHECKS_DB_PROBE= PATH="$tmp/bin:$PATH"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'host fault' "$tmp/out" && [ ! -f "$tmp/remote.log" ]; then
+  check "createdb present but no server is a host fault without a database host" ok
+else
+  check "createdb present but no server is a host fault without a database host" bad
+fi
+run_hc HEAD_CHECKS_DB_PROBE= PATH="$tmp/bin:$PATH" LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$tmp/remote.log" 2>/dev/null)" = db-host-849 ]; then
+  check "createdb present but no server routes to the database host" ok
+else
+  check "createdb present but no server routes to the database host" bad
+fi
+printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/pg_isready"
+run_hc HEAD_CHECKS_DB_PROBE= PATH="$tmp/bin:$PATH" LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks; rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$tmp/remote.log" ]; then
+  check "a reachable local server runs the database step here" ok
+else
+  check "a reachable local server runs the database step here" bad
 fi
 
 # The remote command keeps the caller's step variables but never this host's PATH or HOME.
