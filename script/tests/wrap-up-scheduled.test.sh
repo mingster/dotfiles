@@ -91,6 +91,8 @@ round() {
     ${BOARD_DONE_COORDINATOR_CONF:+BOARD_DONE_COORDINATOR_CONF="$BOARD_DONE_COORDINATOR_CONF"} \
     ${WRAP_UP_BOARD_DONE:+WRAP_UP_BOARD_DONE="$WRAP_UP_BOARD_DONE"} \
     ${BOARD_DONE_CALLS:+BOARD_DONE_CALLS="$BOARD_DONE_CALLS"} \
+    ${WRAP_UP_BOARD_CLEAN:+WRAP_UP_BOARD_CLEAN="$WRAP_UP_BOARD_CLEAN"} \
+    ${BOARD_CLEAN_CALLS:+BOARD_CLEAN_CALLS="$BOARD_CLEAN_CALLS"} \
     bash "$script" --scheduled "$@"
 }
 # Bounded wait on a file the other side creates (no sleeps: it ends the moment the file exists, or after ~20 s of polling).
@@ -98,7 +100,7 @@ waitfor() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 200000 ]; do i=$((i+1))
 reset() {
   rm -rf "$calls" "$log" "$detail" "$ghlog" "$tmp/gh-open.json" "$tmp/state"/* "$tmp/app"/* "$tmp/home/.local/bin"/* "$tmp/home/.orca/cli/bin"/*
   FAKE_BLOCK=; FAKE_ORCA=ready; FAKE_REPOS=ok; FAKE_SLEEP=; LOAD=1; FAIL_REPO=none; ROUND_PATH=; APP_BIN=; ROUND_LIMIT=; CALL_TIMEOUT=; FAKE_GH_LIST_FAIL=; KILL_GRACE=; FAKE_GH_PUBLIC=; PRECHECK_TIMEOUT=; unset ISSUE_REPO
-  unset LOAD_CMD CORES_CMD BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE BOARD_DONE_CALLS
+  unset LOAD_CMD CORES_CMD BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE BOARD_DONE_CALLS WRAP_UP_BOARD_CLEAN BOARD_CLEAN_CALLS
 }
 
 reset
@@ -457,25 +459,34 @@ check 'scheduled dry-run records per-repo seconds' has "repo $repo_a seconds=" "
 reset
 board_conf="$tmp/home/coordinator.conf"
 board_stub="$tmp/board-done-stub"
-export BOARD_DONE_CALLS="$tmp/board-done-calls"
+clean_stub="$tmp/board-clean-stub"
+export BOARD_DONE_CALLS="$tmp/board-done-calls" BOARD_CLEAN_CALLS="$tmp/board-clean-calls"
 printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
 cat > "$board_stub" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$BOARD_DONE_CALLS"
 exit 0
 EOS
-chmod +x "$board_stub"
-: > "$BOARD_DONE_CALLS"
-BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round
+cat > "$clean_stub" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$BOARD_CLEAN_CALLS"
+exit 0
+EOS
+chmod +x "$board_stub" "$clean_stub"
+: > "$BOARD_DONE_CALLS"; : > "$BOARD_CLEAN_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round
 check 'coordinator round runs board-done across the fleet' has '--fleet --apply' "$BOARD_DONE_CALLS"
+check 'coordinator round cleans Done cards across the fleet' has '--fleet --apply' "$BOARD_CLEAN_CALLS"
 check 'coordinator round still records round ok' has 'round ok: repos=2' "$log"
-: > "$BOARD_DONE_CALLS"
-BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round --dry-run
+: > "$BOARD_DONE_CALLS"; : > "$BOARD_CLEAN_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round --dry-run
 check 'coordinator dry run asks board-done not to set cards' has '--fleet --dry-run' "$BOARD_DONE_CALLS"
+check 'coordinator dry run asks board-clean not to delete cards' has '--fleet --dry-run' "$BOARD_CLEAN_CALLS"
 printf 'coordinator someone-else\n' > "$board_conf"
-: > "$BOARD_DONE_CALLS"
-BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round
+: > "$BOARD_DONE_CALLS"; : > "$BOARD_CLEAN_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round
 check 'a non-coordinator round leaves the board alone' test ! -s "$BOARD_DONE_CALLS"
+check 'a non-coordinator round leaves Done cards alone' test ! -s "$BOARD_CLEAN_CALLS"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

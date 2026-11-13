@@ -30,7 +30,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 
 ## Scheduled worktree cleanup round
 
-`script/wrap-up.sh --scheduled` runs one worktree cleanup round on this host. On the coordinator host it then runs `script/board-done.py --fleet`, which moves finished cards to Done on every paired Orca and skips a host it cannot reach. A round takes a lock (one per host,
+`script/wrap-up.sh --scheduled` runs one worktree cleanup round on this host. On the coordinator host it then runs `script/board-done.py --fleet`, which moves finished cards to Done on every paired Orca and skips a host it cannot reach, and `script/board-clean.py --fleet`, which removes a card that has been Done for 30 minutes on the host named by its dispatch record. A round takes a lock (one per host,
 under `~/.local/state/agent-team/`), finds the orca CLI, checks that `orca status --json` reports ready,
 skips when the 1 minute load divided by the cores is 0.7 or more, then runs `wrap-up.sh --apply` for each
 git repo in `orca repo list`. There is no config file. A manual worktree cleanup run does not take the lock;

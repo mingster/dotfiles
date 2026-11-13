@@ -1,0 +1,1 @@
+The coordinator's scheduled wrap-up removes a Done card after 30 minutes on the host that holds it, including its worktree, branches, terminals and session, and leaves a board comment when a guard keeps the card. Released verify, QA and RM branches go even with local commits.

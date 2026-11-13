@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 FINAL = frozenset({"succeeded", "completed", "failed", "cancelled", "released", "stopped"})
 FAILED = frozenset({"failed"})
@@ -315,6 +316,52 @@ def prs_for_repo(repo: str, cache: dict[str, list[dict] | None]) -> list[dict] |
     return cache[repo]
 
 
+def stamp_key(environment: str, path: str) -> str:
+    return "%s\t%s" % (environment or "local", path)
+
+
+def stamp_path() -> str:
+    override = os.environ.get("BOARD_DONE_STAMP")
+    if override:
+        return override
+    root = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(root, "agent-team", "board-done-since.json")
+
+
+def load_stamps() -> dict[str, int]:
+    try:
+        with open(stamp_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    stamps: dict[str, int] = {}
+    for key, value in data.items():
+        if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool):
+            stamps[key] = value
+    return stamps
+
+
+def remember_done(environment: str, path: str, when_ms: int) -> None:
+    """Record when a card became Done. A later cleanup uses this instead of last activity."""
+    key = stamp_key(environment, path)
+    stamps = load_stamps()
+    if key in stamps:
+        return
+    stamps[key] = when_ms
+    target = stamp_path()
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temporary = target + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(stamps, handle, sort_keys=True)
+            handle.write("\n")
+        os.replace(temporary, target)
+    except OSError as exc:
+        print("board-done: could not record Done time for %s (%s)" % (path, exc), file=sys.stderr)
+
+
 def set_completed(path: str, environment: str) -> bool:
     cmd = [orca_bin(), "worktree", "set", "--worktree", "path:%s" % path, "--workspace-status", "completed"]
     if environment:
@@ -327,6 +374,7 @@ def set_completed(path: str, environment: str) -> bool:
     if proc.returncode != 0:
         print("board-done: could not set completed on %s" % path, file=sys.stderr)
         return False
+    remember_done(environment, path, int(time.time() * 1000))
     return True
 
 

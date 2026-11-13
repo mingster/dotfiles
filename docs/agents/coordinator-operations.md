@@ -127,6 +127,8 @@ A card is Done (`workspaceStatus=completed`) when any one holds: its pull reques
 
 The coordinator's `wrap-up.sh --scheduled` round runs that check after the round's own cleanup, so the same round does not delete a card that just became Done. Only the host named in `agent-state/coordinator.conf` runs it. Fleet-watch does not: that pass is frozen and only alerts, while this round is already the one that reads the board. `script/ship.sh` still sets `completed` after a merge, on the environment that holds the worktree (`--environment`, or the dispatch record's host). A record that names no remote host sets the card on the local Orca.
 
+Once a card has been Done for 30 minutes, `script/board-clean.py` removes its worktree, local branch, remote branch, terminals and session on the host named by the dispatch record (`--environment`). Dry run is the default and names every Done card it would clean or keep. A host that cannot be reached is skipped and tried again next round. It is not treated as gone. A card that stays gets a board comment with the reason: unsaved changes, commits that are not on main and not on any remote, an unreleased worker, the coordinator's own worktree, a `lead-*` worktree, an `rm-*` worktree, the main checkout, a protected branch, or an `archive/` branch. After the worker is released, `verify-*`, `qa-*` and `rm-*` branches are deleted even when they have local commits. A failed or stopped card is cleaned under those same guards.
+
 ## Tools
 
 | Tool | Role in coordinator and fleet operations |
@@ -146,6 +148,7 @@ The coordinator's `wrap-up.sh --scheduled` round runs that check after the round
 | `script/doc-fact-check.sh` | Lists removed markdown lines that do not appear anywhere under `docs/` or `README.md` at head (exit 1 when any). Coordinators and verifier briefs run it on doc rewrites. |
 | `script/ship.sh` | Shipping run: verifies required checks and matching `git patch-id` Verdict, squash merges, reads back `MERGED`, and sets the board card to Done on the host that holds the worktree. |
 | `script/board-done.py` | Moves finished board cards to Done. Dry run by default. `--fleet` reaches every paired host; an unreachable host is skipped until the next round. |
+| `script/board-clean.py` | After 30 minutes in Done, removes the worktree, branches, terminals and session on the dispatch host. Dry run names every card it would clean or keep. A kept card gets a board comment. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
 | `script/wrap-up.sh`, `script/worktree-idle.py` | Fleet-wide cleanup of finished worktrees, merged branches, ended terminals/panes and temp files. |

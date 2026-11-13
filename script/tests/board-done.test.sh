@@ -42,6 +42,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/orca" "$tmp/bin/gh"
 export PATH="$tmp/bin:$PATH" ORCA_CLI_COMMAND="$tmp/bin/orca" ORCA_LOG="$tmp/orca.log" GH_LOG="$tmp/gh.log"
+export BOARD_DONE_STAMP="$tmp/stamps.json"
 export FAKE_ENVS="$tmp/envs.json" FAKE_LOCAL="$tmp/local.json" FAKE_UP="$tmp/up.json"
 export FAKE_WORKERS="$tmp/workers.json" FAKE_PRS="$tmp/prs.json" FAKE_ISSUES="$tmp/issues.json"
 cat > "$FAKE_ENVS" <<'JSON'
@@ -84,6 +85,7 @@ grep -Fq '[dry-run] would set /w/released completed (worker released, no PR) env
 grep -Fq '/w/open' <<<"$out" && bad 'open PR stays' "$out" || ok 'open PR stays'
 grep -Fq '/w/main' <<<"$out" && bad 'main stays' "$out" || ok 'main stays'
 grep -Fq 'dry-run: moved=2 unchanged=2 skipped_hosts=0' <<<"$out" && ok 'dry run counts' || bad 'dry run counts' "$out"
+[ ! -e "$BOARD_DONE_STAMP" ] && ok 'dry run records no Done time' || bad 'dry run records no Done time' "$(cat "$BOARD_DONE_STAMP" 2>/dev/null)"
 
 : > "$ORCA_LOG"
 out=$(python3 "$here/board-done.py" --apply 2>&1); rc=$?
@@ -91,6 +93,8 @@ out=$(python3 "$here/board-done.py" --apply 2>&1); rc=$?
 grep -Fxq 'worktree set --worktree path:/w/merged --workspace-status completed' "$ORCA_LOG" && ok 'apply sets the merged card' || bad 'apply sets the merged card' "$(cat "$ORCA_LOG")"
 grep -Fxq 'worktree set --worktree path:/w/released --workspace-status completed' "$ORCA_LOG" && ok 'apply sets the released card' || bad 'apply sets the released card' "$(cat "$ORCA_LOG")"
 grep -Fq 'applied: moved=2 unchanged=2 skipped_hosts=0' <<<"$out" && ok 'apply counts' || bad 'apply counts' "$out"
+python3 -c 'import json,sys; stamps=json.load(open(sys.argv[1])); raise SystemExit(0 if any(k.endswith("/w/merged") for k in stamps) else 1)' "$BOARD_DONE_STAMP" \
+  && ok 'apply records when the card became Done' || bad 'apply records when the card became Done' "$(cat "$BOARD_DONE_STAMP" 2>/dev/null)"
 
 : > "$ORCA_LOG"
 out=$(python3 "$here/board-done.py" --fleet --dry-run 2>&1); rc=$?
