@@ -190,10 +190,10 @@ if [ -f "$empty_repo/AGENTS.md" ] \
   && [ -f "$empty_repo/changelog.d/README.md" ] \
   && grep -q "alpha-widget" "$empty_repo/docs/agents/team-facts.md" \
   && grep -q "alpha-widget" "$empty_repo/docs/agents/deploy-facts.md" \
-  && [ "$(wc -l < "$GH_LABELS_LOG" | tr -d ' ')" -eq 5 ]; then
-  check "project on empty repo seeds layout, renders project name, compiles settings, and creates 5 labels" ok
+  && [ "$(wc -l < "$GH_LABELS_LOG" | tr -d ' ')" -eq 6 ]; then
+  check "project on empty repo seeds layout, renders project name, compiles settings, and creates 6 labels" ok
 else
-  check "project on empty repo seeds layout, renders project name, compiles settings, and creates 5 labels" bad
+  check "project on empty repo seeds layout, renders project name, compiles settings, and creates 6 labels" bad
 fi
 
 if [ ! -e "$empty_repo/.claude/agents" ] \

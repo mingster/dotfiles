@@ -861,7 +861,7 @@ class IssueScanPass(unittest.TestCase):
         _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
         self.assertEqual(len(starts), 1)
 
-    def test_rework_cap_labels_needs_elon(self):
+    def test_rework_cap_labels_needs_redesign(self):
         state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
         head = '2' * 40
         prs = {REPO: [pr(10, head=head, comments=[
@@ -883,8 +883,35 @@ class IssueScanPass(unittest.TestCase):
             act=act,
         )
         self.assertTrue(any(c[:3] == ['gh', 'pr', 'edit'] for c in edits))
-        self.assertIn('needs-elon', edits[0])
+        self.assertIn('needs-redesign', edits[0])
         self.assertTrue(any(isinstance(n, fw.Urgent) for n in notices))
+
+    def test_rework_cap_label_failure_still_escalates(self):
+        state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
+        head = '2' * 40
+        prs = {REPO: [pr(10, head=head, comments=[
+            {'body': 'Checks: PASS head=%s' % head},
+            {'body': 'Review: FAIL head=%s' % head},
+        ])]}
+        notices, _ = fw.issue_scan_pass(
+            self.CONFIG, state, NOW, [],
+            pr_fetch=lambda repo: prs.get(repo, []),
+            gate_check=lambda _c: True,
+            admit_fn=lambda _h, _c, _w: {'admitted': True, 'occupied': 0},
+            start_worker=lambda _c: 1,
+            act=lambda _c: 1,
+        )
+        self.assertTrue(any(isinstance(n, fw.Urgent) for n in notices))
+        self.assertTrue(state['issue_scan_rework_escalated'][REPO]['10'])
+
+    def test_needs_redesign_label_skips_rework(self):
+        state = {}
+        head = '3' * 40
+        prs = {REPO: [pr(11, head=head, labels=['needs-redesign'], comments=[
+            {'body': 'Checks: FAIL head=%s' % head},
+        ])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
+        self.assertEqual(starts, [])
 
     def test_needs_elon_label_skips_rework(self):
         state = {}
