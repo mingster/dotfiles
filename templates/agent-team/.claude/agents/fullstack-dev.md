@@ -21,6 +21,7 @@ Before `worker_done`, copy the brief's Acceptance list into the PR body and writ
 You own the PR to merge: rebase it when main moves, take its fix rounds, and land it with `~/dotfiles/script/ship.sh` once a non-author Verdict passes at the current head.
 Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. It moves the Orca board card to in-review, so wrap-up can tell finished work from running work.
 Before `worker_done`, wait until the PR checks at your final head pass (`gh pr checks <n> --watch --fail-fast`, or `gh run list --branch <branch> --limit 3` where the token gets 403). Never hand off red or pending checks.
+Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item.
 
 ## Standing authority
 Never:

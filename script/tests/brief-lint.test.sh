@@ -256,5 +256,271 @@ if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "brief with no Finish pas
 # 969. No Self-review section anywhere in the brief: still passes, and a PR body never needed one.
 if ! grep -qi 'self-review' "$tmp/no-finish.md"; then ok; else bad "969 fixture should have no Self-review"; fi
 
+# Type defaults to build. Wording that looks like rework or verify does not change the type.
+cat >"$tmp/implied-rework.md" <<'EOF'
+Refs owner/app#4
+Rework owner/app PR #4 head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+## Acceptance
+- [ ] the failing check passes
+
+## Out of scope
+files outside this PR
+
+## Verify
+bash script/checks-local.sh, then the failing check:
+lint broke
+EOF
+set +e
+out=$(bash "$lint" "$tmp/implied-rework.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "rework wording without Type stays build (ec=$ec, out=$out)"; fi
+
+cat >"$tmp/implied-verify.md" <<'EOF'
+Refs owner/app#4
+
+Role: qa-sdet. Verify this open PR.
+
+## Acceptance
+- [ ] a Verdict for this head is posted
+
+## Out of scope
+Merging.
+
+## Verify
+bash script/checks-local.sh
+EOF
+set +e
+out=$(bash "$lint" "$tmp/implied-verify.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "verify wording without Type stays build (ec=$ec, out=$out)"; fi
+
+lint_exact() {
+  local name=$1 file=$2 exp_ec=$3 exp_out=$4
+  set +e
+  out=$(bash "$lint" "$file" 2>&1)
+  ec=$?
+  set -e
+  if [ "$ec" -eq "$exp_ec" ] && [ "$out" = "$exp_out" ]; then ok; else bad "$name (ec=$ec, out=$out)"; fi
+}
+
+cat >"$tmp/type-build.md" <<'EOF'
+Refs dotfiles#1026
+Type: build
+
+## Acceptance
+- [ ] The script exits 0.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "Type build passes" "$tmp/type-build.md" 0 ""
+
+cat >"$tmp/type-verify.md" <<'EOF'
+Refs dotfiles#1026
+Type: verify
+
+## Acceptance
+- [ ] A Verdict is posted for the head.
+
+## Out of scope
+Merging.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "Type verify passes" "$tmp/type-verify.md" 0 ""
+
+cat >"$tmp/type-unknown.md" <<'EOF'
+Refs dotfiles#1026
+Type: script
+
+## Acceptance
+- [ ] The script exits 0.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "unknown Type is refused" "$tmp/type-unknown.md" 1 "brief-lint: unknown brief type"
+
+cat >"$tmp/type-two.md" <<'EOF'
+Refs dotfiles#1026
+Type: build
+Type: verify
+
+## Acceptance
+- [ ] The script exits 0.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "two Type lines are refused" "$tmp/type-two.md" 1 "brief-lint: brief has more than one Type"
+
+cat >"$tmp/rule.md" <<'EOF'
+Refs dotfiles#1026
+Type: rule/guide change
+
+## Acceptance
+- [ ] Builder and verifier both run `rg -n 'old wording'`.
+
+## Out of scope
+Do not run `rg -n 'somewhere else'`.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rule/guide change with one search command passes" "$tmp/rule.md" 0 ""
+
+cat >"$tmp/rule-short.md" <<'EOF'
+Refs dotfiles#1026
+Type: rule/guide
+
+## Acceptance
+- [ ] Builder runs `rg -n 'old wording'`.
+- [ ] Verifier runs `rg -n 'old wording'`.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rule/guide repeated command is one command" "$tmp/rule-short.md" 0 ""
+
+cat >"$tmp/rule-git-grep.md" <<'EOF'
+Refs dotfiles#1026
+Type: rule/guide change
+
+## Acceptance
+- [ ] The old wording is gone.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Builder and verifier both run this:
+git grep -n 'old wording'
+bash script/checks-local.sh
+EOF
+lint_exact "rule/guide bare git grep line passes" "$tmp/rule-git-grep.md" 0 ""
+
+cat >"$tmp/rule-none.md" <<'EOF'
+Refs dotfiles#1026
+Type: rule/guide change
+
+## Acceptance
+- [ ] Builder and verifier both run the search.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rule/guide without a search command" "$tmp/rule-none.md" 1 "brief-lint: rule/guide brief must name one search command for the builder and the verifier"
+
+cat >"$tmp/rule-two.md" <<'EOF'
+Refs dotfiles#1026
+Type: rule/guide change
+
+## Acceptance
+- [ ] Builder and verifier both run `rg -n 'one'` and `rg -n 'two'`.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rule/guide with two search commands" "$tmp/rule-two.md" 1 "brief-lint: rule/guide brief must name one search command for the builder and the verifier"
+
+cat >"$tmp/rule-builder.md" <<'EOF'
+Refs dotfiles#1026
+Type: rule/guide change
+
+## Acceptance
+- [ ] Builder runs `rg -n 'old wording'`.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rule/guide search command without the verifier" "$tmp/rule-builder.md" 1 "brief-lint: rule/guide brief must name one search command for the builder and the verifier"
+
+cat >"$tmp/rework.md" <<'EOF'
+Refs dotfiles#1027
+Type: rework
+
+## Acceptance
+- [ ] Apply the Verdict at https://github.com/mingster/dotfiles/pull/12#issuecomment-99
+- [ ] Put a Self-check section in the PR body with the command and its output.
+
+## Out of scope
+files outside this PR
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rework with Verdict link and Self-check passes" "$tmp/rework.md" 0 ""
+
+cat >"$tmp/rework-nolink.md" <<'EOF'
+Refs dotfiles#1027
+Type: rework
+
+## Acceptance
+- [ ] Read the Verdict and fix the listed items.
+- [ ] Put a Self-check section in the PR body with the command and its output.
+
+## Out of scope
+files outside this PR
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rework without a Verdict link" "$tmp/rework-nolink.md" 1 "brief-lint: rework brief must link the Verdict"
+
+cat >"$tmp/rework-noself.md" <<'EOF'
+Refs dotfiles#1027
+Type: rework
+
+## Acceptance
+- [ ] Apply the Verdict at https://github.com/mingster/dotfiles/pull/12#issuecomment-99
+
+## Out of scope
+files outside this PR
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rework without a Self-check" "$tmp/rework-noself.md" 1 "brief-lint: rework brief must require a Self-check"
+
+cat >"$tmp/rework-neither.md" <<'EOF'
+Refs dotfiles#1027
+Type: rework
+
+## Acceptance
+- [ ] the failing check passes
+
+## Out of scope
+files outside this PR
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "rework without Verdict link or Self-check" "$tmp/rework-neither.md" 1 $'brief-lint: rework brief must link the Verdict\nbrief-lint: rework brief must require a Self-check'
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

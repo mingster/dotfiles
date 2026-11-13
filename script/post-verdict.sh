@@ -7,6 +7,7 @@
 # ship.sh needs them and refuses a verifier whose agent and model match the builder's.
 # --author other than ctx_* or unknown must be listed in coordinator_ids of script/ship.local.json.
 # --print shows the comment body and posts nothing. The comment is always new: an edit never counts.
+# A FAIL needs --command and at least one "- [ ]" fix line in --notes. PASS does not.
 set -euo pipefail
 
 die() { echo "post-verdict: $*" >&2; exit 1; }
@@ -51,6 +52,15 @@ fi
   || die "--agent and --model go together and may hold only letters, digits and . _ : -"
 [[ "$command" != *$'\n'* ]] || die "--command must be one line"
 [[ "$correction" != *$'\n'* ]] || die "--correction must be one line"
+if [ "$result" = FAIL ]; then
+  [ -n "${command//[[:space:]]/}" ] || die "FAIL needs --command"
+  has_fix=false
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]]+[^[:space:]] ]] && has_fix=true
+  done <<<"$notes"
+  [ "$has_fix" = true ] || die "FAIL needs a - [ ] fix line"
+fi
 
 body="Verdict: $result head=$head verifier=$verifier author=$author"
 [ -z "$agent" ] || body+=" agent=$agent model=$model"

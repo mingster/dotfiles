@@ -51,7 +51,7 @@ out=$(merge 42 "$h"); code=$?
 
 # FAIL is read as a FAIL: alone it blocks, and a newer PASS decides
 h=$(new_pr 43); post_checks 43 "$h"
-verdict 43 --result FAIL --head "$h" --verifier ctx_other --author ctx_author >/dev/null
+verdict 43 --result FAIL --head "$h" --verifier ctx_other --author ctx_author --command "bash script/tests/post-verdict.test.sh" --notes "- [ ] name the failing command" >/dev/null
 grep -Fq "gh api -X POST repos/example/repo/statuses/$h -f state=failure -f context=review" "$MF_GH_LOG" && ok "FAIL: posts review failure commit status" || bad "FAIL review status missing"
 mf_orca_add_worker run_a ctx_other completed /w/o
 out=$(merge 43 "$h"); code=$?
@@ -59,6 +59,23 @@ out=$(merge 43 "$h"); code=$?
 verdict 43 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus >/dev/null
 out=$(merge 43 "$h"); code=$?
 [ "$code" -eq 0 ] && grep -q '^shipped' <<<"$out" && ok "FAIL: a newer PASS decides" || bad "FAIL+PASS: $out"
+
+# 1027: a FAIL without --command, or without a "- [ ]" fix line, posts nothing
+h=$(new_pr 54); before=$(jq '.comments|length' "$MF_GH_DIR/pr-54.json")
+out=$(verdict 54 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author); code=$?
+[ "$code" -ne 0 ] && [[ "$out" == *"FAIL needs --command"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-54.json")" = "$before" ] && ok "FAIL without --command posts nothing" || bad "FAIL no command: $out"
+out=$(verdict 54 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author --command "   " --notes "- [ ] fix it"); code=$?
+[ "$code" -ne 0 ] && [[ "$out" == *"FAIL needs --command"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-54.json")" = "$before" ] && ok "FAIL with a blank --command posts nothing" || bad "FAIL blank command: $out"
+out=$(verdict 54 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author --command "bash script/tests/post-verdict.test.sh" --notes "prose only"); code=$?
+[ "$code" -ne 0 ] && [[ "$out" == *"FAIL needs a - [ ] fix line"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-54.json")" = "$before" ] && ok "FAIL without a fix line posts nothing" || bad "FAIL no fix line: $out"
+out=$(verdict 54 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author --command "bash script/tests/post-verdict.test.sh" --notes "- [ ]" ); code=$?
+[ "$code" -ne 0 ] && [[ "$out" == *"FAIL needs a - [ ] fix line"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-54.json")" = "$before" ] && ok "FAIL with an empty checkbox posts nothing" || bad "FAIL empty box: $out"
+out=$(verdict 54 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author --command "bash script/tests/post-verdict.test.sh" --notes $'- [x] already done\n- [ ] fix the missing command' --print); code=$?
+[ "$code" -eq 0 ] && [[ "$out" == *"Command: bash script/tests/post-verdict.test.sh"* ]] && [[ "$out" == *"- [ ] fix the missing command"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-54.json")" = "$before" ] && ok "FAIL --print shows the command and the fix line and posts nothing" || bad "FAIL print: $out"
+out=$(verdict 54 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author --command "bash script/tests/post-verdict.test.sh" --notes $'- [ ] fix the missing command'); code=$?
+say "$code" "FAIL with --command and a fix line posts" "$out"
+body=$(jq -r '.comments[-1].body' "$MF_GH_DIR/pr-54.json")
+[[ "$body" == *"Command: bash script/tests/post-verdict.test.sh"* ]] && [[ "$body" == *"- [ ] fix the missing command"* ]] && ok "FAIL comment carries the command and the fix line" || bad "FAIL body: $body"
 
 # Bad flags post nothing
 h=$(new_pr 44); before=$(jq '.comments|length' "$MF_GH_DIR/pr-44.json")
