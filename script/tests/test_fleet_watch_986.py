@@ -95,19 +95,36 @@ class Notices(unittest.TestCase):
             fw.deliver_notices(config, state, [fw.Urgent('boom')], now=100.0)
         return calls, state
 
-    def test_send_names_the_sender_terminal(self):
-        """Deliver with the recorded receiver reply. The no-sender recording leaves the notice queued."""
+    def test_send_addresses_the_run_with_the_existing_sender(self):
+        """Recorded receiver reply. --to is the run and --from is the sender terminal.
+
+        The no-sender recording leaves the notice queued.
+        """
         calls, state = self.deliver('send-from-receiver')
         self.assertEqual(len(calls), 1)
         args = calls[0]
-        self.assertEqual(args[args.index('--to') + 1], 'term_live')
+        self.assertEqual(args[args.index('--to') + 1], 'run:run_x')
         self.assertEqual(args[args.index('--from') + 1], 'term_live')
-        self.assertNotIn('term_live', state.get('notice_queue', {}))
-        self.assertEqual(state['notice_sent_at']['term_live'], 100.0)
+        self.assertNotEqual(args[args.index('--from') + 1], args[args.index('--to') + 1])
+        self.assertNotIn('run:run_x', state.get('notice_queue', {}))
+        self.assertEqual(state['notice_sent_at']['run:run_x'], 100.0)
 
         _calls, refused = self.deliver('send-no-sender')
-        self.assertIn('term_live', refused['notice_queue'])
-        self.assertNotIn('term_live', refused.get('notice_sent_at', {}))
+        self.assertIn('run:run_x', refused['notice_queue'])
+        self.assertNotIn('run:run_x', refused.get('notice_sent_at', {}))
+
+    def test_verdict_goes_to_the_lead_from_the_run_terminal(self):
+        calls = []
+        config = {'runs': [{'id': 'run_x', 'terminal': 'term_live'}]}
+        verdict = fw.Verdict('Verdict: PASS')
+        verdict.author = 'ctx_a1'
+        fw.deliver_notices(
+            config, {}, [verdict], rpc_call=lambda *a: calls.append(a), now=100.0,
+            owner_of=lambda author: 'term_lead' if author == 'ctx_a1' else None,
+        )
+        args = calls[0]
+        self.assertEqual(args[args.index('--to') + 1], 'term_lead')
+        self.assertEqual(args[args.index('--from') + 1], 'term_live')
 
     def test_notices_for_terminals_not_in_runs_are_dropped(self):
         calls = []

@@ -76,7 +76,10 @@ class NoTerminalSend(unittest.TestCase):
         orch = [(c[c.index('--to') + 1], c[c.index('--body') + 1]) for c in calls if c[:2] == ('orchestration', 'send')]
         self.assertEqual(len(term_sends), 1)
         self.assertEqual(term_sends[0][term_sends[0].index('--terminal') + 1], 'term_first')
-        self.assertEqual(orch, [('term_second', 'notice line')])
+        self.assertEqual(orch, [('run:r2', 'notice line')])
+        orch_args = [c for c in calls if c[:2] == ('orchestration', 'send')][0]
+        self.assertEqual(orch_args[orch_args.index('--from') + 1], 'term_second')
+        self.assertNotEqual(orch_args[orch_args.index('--from') + 1], orch_args[orch_args.index('--to') + 1])
 
 
 def digest_rpc(calls, broken=None):
@@ -102,7 +105,10 @@ class Digest(unittest.TestCase):
         calls = []
         watch.deliver_notices(UNTYPED, {}, ['n1'], digest_rpc(calls), now=0, owner_of=NO_OWNER)
         self.assertEqual([c for c in calls if c[:2] == ('terminal', 'send')], [])
-        self.assertEqual(sent(calls), [('term_first', 'n1'), ('term_second', 'n1')])
+        self.assertEqual(sent(calls), [('run:r1', 'n1'), ('run:r2', 'n1')])
+        first = [c for c in calls if c[:2] == ('orchestration', 'send')][0]
+        self.assertEqual(first[first.index('--from') + 1], 'term_first')
+        self.assertNotEqual(first[first.index('--to') + 1], first[first.index('--from') + 1])
 
     def test_digest_goes_out_at_most_every_600_seconds_oldest_first(self):
         state, calls = {}, []
@@ -112,7 +118,7 @@ class Digest(unittest.TestCase):
             watch.deliver_notices(UNTYPED, state, [line] if line else [], rpc, now=now, owner_of=NO_OWNER)
         self.assertEqual(len(sent(calls)), 2)
         watch.deliver_notices(UNTYPED, state, [], rpc, now=600, owner_of=NO_OWNER)
-        self.assertEqual(sent(calls)[2:], [('term_first', 'n2\nn3'), ('term_second', 'n2\nn3')])
+        self.assertEqual(sent(calls)[2:], [('run:r1', 'n2\nn3'), ('run:r2', 'n2\nn3')])
         watch.deliver_notices(UNTYPED, state, [], rpc, now=1300, owner_of=NO_OWNER)
         self.assertEqual(len(sent(calls)), 4)
 
@@ -123,7 +129,7 @@ class Digest(unittest.TestCase):
         watch.deliver_notices(UNTYPED, state, ['b', 'c', 'b'], rpc, now=10, owner_of=NO_OWNER)
         watch.deliver_notices(UNTYPED, state, ['c'], rpc, now=20, owner_of=NO_OWNER)
         watch.deliver_notices(UNTYPED, state, [], rpc, now=700, owner_of=NO_OWNER)
-        self.assertEqual(sent(calls)[2], ('term_first', 'b\nc'))
+        self.assertEqual(sent(calls)[2], ('run:r1', 'b\nc'))
 
     def test_urgent_notice_skips_the_wait_and_carries_the_queue(self):
         state, calls = {}, []
@@ -131,7 +137,7 @@ class Digest(unittest.TestCase):
         watch.deliver_notices(UNTYPED, state, ['n1'], rpc, now=0, owner_of=NO_OWNER)
         watch.deliver_notices(UNTYPED, state, ['n2'], rpc, now=5, owner_of=NO_OWNER)
         watch.deliver_notices(UNTYPED, state, [watch.Urgent('lead pane gone: x')], rpc, now=10, owner_of=NO_OWNER)
-        self.assertEqual(sent(calls)[2:], [('term_first', 'n2\nlead pane gone: x'), ('term_second', 'n2\nlead pane gone: x')])
+        self.assertEqual(sent(calls)[2:], [('run:r1', 'n2\nlead pane gone: x'), ('run:r2', 'n2\nlead pane gone: x')])
 
     def test_plain_text_that_looks_urgent_still_waits(self):
         state, calls = {}, []
@@ -157,7 +163,7 @@ class Digest(unittest.TestCase):
         notice = watch.alerts({'runs': []}, {'failed': []}, 0, [], [failed('z')], {})
         watch.deliver_notices(UNTYPED, state, notice, rpc, now=10, owner_of=NO_OWNER)
         self.assertEqual([c for c in calls if c[:2] == ('terminal', 'send')], [])
-        self.assertEqual([t for t, _ in sent(calls)], ['term_first', 'term_second'])
+        self.assertEqual([t for t, _ in sent(calls)], ['run:r1', 'run:r2'])
         self.assertIn('failed dispatch z', sent(calls)[0][1])
 
     def test_no_alarm_types_into_a_terminal(self):
@@ -173,31 +179,57 @@ class Digest(unittest.TestCase):
         calls = []
         watch.deliver_notices(config, {}, notices, digest_rpc(calls), now=0, owner_of=NO_OWNER)
         self.assertEqual([c for c in calls if c[:2] == ('terminal', 'send')], [])
-        self.assertEqual(sent(calls)[0][0], 'term_first')
+        self.assertEqual(sent(calls)[0][0], 'run:r1')
         for kind in ('inbox waiter absent', 'failed dispatch', 'lead pane gone', 'host cap exceeded'):
             self.assertIn(kind, sent(calls)[0][1])
 
     def test_failed_send_retries_without_loss_or_repeat(self):
         state, calls = {}, []
         with contextlib.redirect_stderr(io.StringIO()):
-            watch.deliver_notices(UNTYPED, state, ['n1'], digest_rpc(calls, {'term_first': OSError('x')}), now=0, owner_of=NO_OWNER)
-        self.assertEqual(sent(calls), [('term_first', 'n1'), ('term_second', 'n1')])
+            watch.deliver_notices(UNTYPED, state, ['n1'], digest_rpc(calls, {'run:r1': OSError('x')}), now=0, owner_of=NO_OWNER)
+        self.assertEqual(sent(calls), [('run:r1', 'n1'), ('run:r2', 'n1')])
         calls.clear()
         watch.deliver_notices(UNTYPED, state, [], digest_rpc(calls), now=60, owner_of=NO_OWNER)
-        self.assertEqual(sent(calls), [('term_first', 'n1')])
+        self.assertEqual(sent(calls), [('run:r1', 'n1')])
         calls.clear()
         watch.deliver_notices(UNTYPED, state, [], digest_rpc(calls), now=120, owner_of=NO_OWNER)
         self.assertEqual(sent(calls), [])
 
-    def test_give_up_after_twenty_passes_prints_to_stderr(self):
+    def test_notice_stays_queued_through_many_failures_and_drops_after_twenty_four_hours(self):
         state, err = {}, io.StringIO()
+        day = 24 * 60 * 60
+        failing = digest_rpc([], {'run:r1': OSError('x')})
         with contextlib.redirect_stderr(err):
-            for i in range(20):
-                watch.deliver_notices(UNTYPED, state, ['n1'] if i == 0 else [], digest_rpc([], {'term_first': OSError('x')}), now=i, owner_of=NO_OWNER)
+            watch.deliver_notices(UNTYPED, state, ['n1'], failing, now=0, owner_of=NO_OWNER)
+            for i in range(1, 30):
+                watch.deliver_notices(UNTYPED, state, [], failing, now=i * 60, owner_of=NO_OWNER)
+            self.assertEqual([item['text'] for item in state['notice_queue'].get('run:r1', [])], ['n1'])
+            watch.deliver_notices(UNTYPED, state, [], failing, now=day - 1, owner_of=NO_OWNER)
+            self.assertEqual([item['text'] for item in state['notice_queue'].get('run:r1', [])], ['n1'])
+            watch.deliver_notices(UNTYPED, state, [], failing, now=day, owner_of=NO_OWNER)
         gave_up = [l for l in err.getvalue().splitlines() if 'giving up' in l]
         self.assertEqual(len(gave_up), 1)
         self.assertIn('n1', gave_up[0])
-        self.assertEqual(state['notice_queue'].get('term_first', []), [])
+        self.assertIn('24 hours', gave_up[0])
+        self.assertEqual(state['notice_queue'].get('run:r1', []), [])
+        self.assertIn('OSError', err.getvalue())
+
+    def test_typed_notice_survives_many_tries_and_drops_after_a_day(self):
+        config = {'runs': [{'id': 'r1', 'terminal': 'term_first', 'typed': True, 'waiter_pattern': 'w1'}]}
+        state, err = {}, io.StringIO()
+
+        def fail(*_args):
+            raise OSError('x')
+
+        day = 24 * 60 * 60
+        with contextlib.redirect_stderr(err):
+            watch.deliver_notices(config, state, ['n1'], fail, now=0, owner_of=NO_OWNER)
+            for i in range(1, 25):
+                watch.deliver_notices(config, state, [], fail, now=i, owner_of=NO_OWNER)
+            self.assertIn('n1', state.get('typed_notice_delivery', {}))
+            watch.deliver_notices(config, state, [], fail, now=day, owner_of=NO_OWNER)
+        self.assertNotIn('n1', state.get('typed_notice_delivery', {}))
+        self.assertTrue(any('giving up' in line and '24 hours' in line for line in err.getvalue().splitlines()))
 
     def test_restart_neither_floods_nor_drops(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -211,7 +243,7 @@ class Digest(unittest.TestCase):
             watch.deliver_notices(UNTYPED, state, [], digest_rpc(calls), now=90, owner_of=NO_OWNER)
             self.assertEqual(sent(calls), [])
             watch.deliver_notices(UNTYPED, state, [], digest_rpc(calls), now=600, owner_of=NO_OWNER)
-            self.assertEqual(sent(calls), [('term_first', 'n2'), ('term_second', 'n2')])
+            self.assertEqual(sent(calls), [('run:r1', 'n2'), ('run:r2', 'n2')])
 
     def test_verdict_goes_to_owning_lead_at_once_as_a_message(self):
         state, calls = {}, []
@@ -224,6 +256,9 @@ class Digest(unittest.TestCase):
         self.assertIsInstance(verdict[0], watch.Verdict)
         watch.deliver_notices(UNTYPED, state, verdict, rpc, now=5, owner_of=lambda a: 'term_lead' if a == 'ctx_a1' else None)
         self.assertEqual(sent(calls), [('term_lead', str(verdict[0]))])
+        lead_send = [c for c in calls if c[:2] == ('orchestration', 'send')][-1]
+        self.assertEqual(lead_send[lead_send.index('--from') + 1], 'term_first')
+        self.assertNotEqual(lead_send[lead_send.index('--from') + 1], 'term_lead')
         self.assertEqual([c for c in calls if c[:2] == ('terminal', 'send')], [])
 
     def test_verdict_without_owner_goes_to_the_digest(self):

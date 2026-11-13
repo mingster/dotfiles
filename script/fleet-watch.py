@@ -72,7 +72,7 @@ SEND_ERRORS = (
     KeyError,
     OrcaReadError,
 )
-NOTICE_PASS_LIMIT = 20
+NOTICE_MAX_AGE_SECONDS = 24 * 60 * 60
 STALL_RESTART_ATTEMPTS = 1  # a failed restart is parked; it is not tried again
 DIGEST_SECONDS = 600
 ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
@@ -2704,19 +2704,35 @@ def pr_base_ref(root, branch, run=subprocess.run):
     return 'origin/' + branch
 
 
+def checks_local_applies(root):
+    """True when this checkout has script/checks-local.sh."""
+    if not isinstance(root, str) or not root:
+        return False
+    return (Path(root) / 'script' / 'checks-local.sh').is_file()
+
+
+def checks_local_verify_text(root, present):
+    """Verify text. A repo without the script gets one sentence and no other command."""
+    if checks_local_applies(root):
+        return present
+    return 'checks-local.sh does not apply to this repo'
+
+
 def build_issue_start_command(config, repo, issue_row, placement=None):
     """placement is (host, repo_id) to start on a remote host instead of the local checkout."""
     scan = config['issue_scan']
     root = _issue_scan_repo_root(config, repo)
     if not root:
         return None
+    verify = checks_local_verify_text(
+        root, 'Run bash script/checks-local.sh and show the Done condition.')
     spec_path = _write_issue_scan_spec(
         'Refs %s#%d\n\n%s\n\n'
         '## Verify\n'
-        'Run bash script/checks-local.sh and show the Done condition.\n\n'
+        '%s\n\n'
         '## Finish\n'
         'Self-review, push, open the PR, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip()))
+        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip(), verify))
     role = scan.get('role') or 'builder'
     title = '%s - #%d' % (role, issue_row['number'])
     command = [
@@ -2743,6 +2759,10 @@ def build_rework_start_command(config, repo, pr_row):
         return None
     head = pr_row.get('headRefOid') or ''
     excerpt = rework_failure_excerpt(pr_row)
+    if checks_local_applies(root):
+        verify = 'bash script/checks-local.sh, then the failing check:\n' + excerpt
+    else:
+        verify = 'checks-local.sh does not apply to this repo'
     spec_path = _write_issue_scan_spec(
         'Refs %s#%d\n'
         'Rework %s PR #%d head %s\n\n'
@@ -2752,10 +2772,10 @@ def build_rework_start_command(config, repo, pr_row):
         '## Out of scope\n'
         'files outside this PR\n\n'
         '## Verify\n'
-        'bash script/checks-local.sh, then the failing check:\n%s\n\n'
+        '%s\n\n'
         '## Finish\n'
         'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, excerpt))
+        % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify))
     title = 'rework #%d' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
     model = scan.get('rework_model') or scan.get('model') or ''
@@ -3722,9 +3742,10 @@ def _babysit_line(repo, number, head, action, detail=''):
     return text
 
 
-def build_babysit_spec(repo, pr_row, kind, builder):
+def build_babysit_spec(repo, pr_row, kind, builder, root):
     number = pr_row['number']
     head = pr_row.get('headRefOid') or ''
+    verify = checks_local_verify_text(root, 'bash script/checks-local.sh')
     if kind == 'verifier':
         if builder:
             who = 'The builder is agent=%s model=%s. Use a different agent and model.' % builder
@@ -3739,10 +3760,10 @@ def build_babysit_spec(repo, pr_row, kind, builder):
             '## Out of scope\n'
             'Merging. ship.sh stays manual. Verdict format stays as it is.\n\n'
             '## Verify\n'
-            'bash script/checks-local.sh\n\n'
+            '%s\n\n'
             '## Finish\n'
             'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        ) % (repo, number, head, who, head)
+        ) % (repo, number, head, who, head, verify)
     else:
         text = (
             'Refs %s#%s\n\n'
@@ -3752,10 +3773,10 @@ def build_babysit_spec(repo, pr_row, kind, builder):
             '## Out of scope\n'
             'Merging. ship.sh stays manual. Files outside this PR.\n\n'
             '## Verify\n'
-            'bash script/checks-local.sh\n\n'
+            '%s\n\n'
             '## Finish\n'
             'Wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        ) % (repo, number, head)
+        ) % (repo, number, head, verify)
     return _write_issue_scan_spec(text)
 
 
@@ -4036,7 +4057,7 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
     command = [
         'bash', startup,
         '--run', run_id,
-        '--spec', build_babysit_spec(repo, pr_row, kind, builder),
+        '--spec', build_babysit_spec(repo, pr_row, kind, builder, root),
         '--title', title,
         '--agent', agent,
         '--model', model,
@@ -4790,47 +4811,142 @@ def owning_lead(author):
     return lines[0].strip() or None if lines else None
 
 
-def queue_notice(queue, term, text, urgent):
-    items = queue.setdefault(term, [])
+def digest_routes(runs):
+    """(run:<id>, sender terminal) for each untyped run. The sender is the identity fleet watch already uses."""
+    routes = []
+    for run in runs or []:
+        if not isinstance(run, dict) or run.get('typed'):
+            continue
+        rid = run.get('id')
+        term = run.get('terminal')
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        if not isinstance(term, str) or not term.strip():
+            continue
+        routes.append(('run:' + rid.strip(), term.strip()))
+    return routes
+
+
+def fleet_watch_sender(runs):
+    """Sender terminal fleet watch already passes as --from on worker-start."""
+    for run in runs or []:
+        if not isinstance(run, dict):
+            continue
+        term = run.get('terminal')
+        if isinstance(term, str) and term.strip():
+            return term.strip()
+    return ''
+
+
+def migrate_notice_addresses(state, runs):
+    """Digests used to be keyed by the run terminal. They are now keyed by run:<id>."""
+    terminal_to_address = {sender: address for address, sender in digest_routes(runs)}
+    queue = state.get('notice_queue')
+    if isinstance(queue, dict):
+        for term, address in terminal_to_address.items():
+            if term not in queue:
+                continue
+            items = queue.pop(term)
+            dest = queue.setdefault(address, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict):
+                    item.setdefault('sender', term)
+                    dest.append(item)
+    sent_at = state.get('notice_sent_at')
+    if isinstance(sent_at, dict):
+        for term, address in terminal_to_address.items():
+            if term in sent_at and address not in sent_at:
+                sent_at[address] = sent_at.pop(term)
+
+
+def queue_notice(queue, address, text, urgent, now, sender):
+    items = queue.setdefault(address, [])
     for item in items:
-        if item['text'] == text:
-            item['urgent'] = item['urgent'] or urgent
+        if item.get('text') == text:
+            item['urgent'] = item.get('urgent') or urgent
+            if sender and not item.get('sender'):
+                item['sender'] = sender
             return
-    items.append({'text': text, 'urgent': urgent, 'passes': 0})
+    items.append({'text': text, 'urgent': urgent, 'queued_at': now, 'sender': sender})
+
+
+def notice_expired(item, now):
+    queued_at = item.get('queued_at') if isinstance(item, dict) else None
+    if isinstance(queued_at, bool) or not isinstance(queued_at, (int, float)):
+        if isinstance(item, dict):
+            item['queued_at'] = now
+        return False
+    return now - float(queued_at) >= NOTICE_MAX_AGE_SECONDS
+
+
+def drop_expired_notices(items, now, address):
+    kept = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if notice_expired(item, now):
+            print('fleet-watch: giving up notice %r after 24 hours, missing %s' % (item.get('text'), address), file=sys.stderr)
+            continue
+        kept.append(item)
+    return kept
+
+
+def notice_sender(items):
+    for item in items:
+        sender = item.get('sender') if isinstance(item, dict) else None
+        if isinstance(sender, str) and sender.strip():
+            return sender.strip()
+    return ''
+
+
+def log_send_ok():
+    count_sent()
+    n = _PASS.sent if _PASS is not None else 1
+    log_fleet_watch('sent=%d' % n)
+
+
+def log_send_failed(address, error):
+    count_send_failed()
+    line = 'fleet-watch: send failed for %s: %s' % (address, orchestration_failure_log_code(error))
+    print(line, file=sys.stderr)
+    log_fleet_watch(line)
+
+
+def send_digest(rpc_call, address, sender, body):
+    """Address run:<id> or a lead. --from is fleet watch's sender, not a copy of the receiver."""
+    command = ['orchestration', 'send', '--to', address]
+    if sender:
+        command += ['--from', sender]
+    command += ['--subject', 'fleet-watch digest', '--body', body]
+    rpc_call(*command)
 
 
 def flush_queue(state, now, rpc_call):
-    """One orchestration send per terminal: at once when urgent, else at most every DIGEST_SECONDS."""
+    """One orchestration send per address: at once when urgent, else at most every DIGEST_SECONDS."""
     queue = state.setdefault('notice_queue', {})
     sent_at = state.setdefault('notice_sent_at', {})
-    for term in list(queue):
-        items = queue[term]
+    for address in list(queue):
+        items = queue[address]
         if not items:
-            del queue[term]
+            del queue[address]
             continue
-        if not any(item['urgent'] for item in items) and term in sent_at and now - sent_at[term] < DIGEST_SECONDS:
+        items = drop_expired_notices(items, now, address)
+        if not items:
+            del queue[address]
+            continue
+        queue[address] = items
+        if not any(item.get('urgent') for item in items) and address in sent_at and now - sent_at[address] < DIGEST_SECONDS:
             continue
         try:
-            rpc_call(
-                'orchestration', 'send', '--to', term, '--from', term,
-                '--subject', 'fleet-watch digest',
-                '--body', '\n'.join(item['text'] for item in items),
-            )
+            send_digest(rpc_call, address, notice_sender(items), '\n'.join(item['text'] for item in items))
         except SEND_ERRORS as error:
-            count_send_failed()
-            print('fleet-watch: send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
-            kept = []
-            for item in items:
-                item['passes'] += 1
-                if item['passes'] >= NOTICE_PASS_LIMIT:
-                    print('fleet-watch: giving up notice %r after %d passes, missing %s' % (item['text'], item['passes'], term), file=sys.stderr)
-                else:
-                    kept.append(item)
-            queue[term] = kept
+            log_send_failed(address, error)
             continue
-        count_sent()
-        sent_at[term] = now
-        del queue[term]
+        log_send_ok()
+        sent_at[address] = now
+        del queue[address]
 
 
 def drain_notices(config, path=None, keep=False):
@@ -4856,60 +4972,68 @@ def drain_notices(config, path=None, keep=False):
     return ['lead stops dropped from the coordinator inbox: ' + ', '.join('%s %d' % (names.get(h, h), n) for h, n in counts.items())]
 
 
-def deliver_typed_notices(typed_runs, state, new_notices, rpc_call):
+def deliver_typed_notices(typed_runs, state, new_notices, rpc_call, now):
     """Runs with ``typed``: true receive notices via terminal send (legacy path)."""
-    if not typed_runs or not new_notices:
+    if not typed_runs:
         return
     delivery = state.setdefault('typed_notice_delivery', {})
+    if not new_notices and not delivery:
+        return
     terminals = [run['terminal'] for run in typed_runs]
     texts = [str(notice) for notice in new_notices]
     failed = set()
     for line in dict.fromkeys(texts + list(delivery)):
-        entry = delivery.setdefault(line, {'sent': [], 'passes': 0})
+        entry = delivery.setdefault(line, {'sent': [], 'since': now})
+        since = entry.get('since')
+        if isinstance(since, bool) or not isinstance(since, (int, float)):
+            entry['since'] = now
+            since = now
         for term in terminals:
             if term in entry['sent'] or term in failed:
                 continue
             try:
                 rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
                 entry['sent'].append(term)
-                count_sent()
+                log_send_ok()
             except SEND_ERRORS as error:
-                count_send_failed()
+                log_send_failed(term, error)
                 failed.add(term)
-                print('fleet-watch: terminal send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
-        entry['passes'] += 1
         missing = [term for term in terminals if term not in entry['sent']]
-        if missing and entry['passes'] >= NOTICE_PASS_LIMIT:
-            print('fleet-watch: giving up notice %r after %d passes, missing %s' % (line, entry['passes'], ', '.join(missing)), file=sys.stderr)
-        if not missing or entry['passes'] >= NOTICE_PASS_LIMIT:
+        expired = now - since >= NOTICE_MAX_AGE_SECONDS
+        if missing and expired:
+            print('fleet-watch: giving up notice %r after 24 hours, missing %s' % (line, ', '.join(missing)), file=sys.stderr)
+        if not missing or expired:
             del delivery[line]
 
 
 def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of=owning_lead):
-    """Queue notices per terminal and send what is due. Typed runs still get terminal send."""
+    """Queue notices per run and send what is due. Typed runs still get terminal send."""
     now = time.time() if now is None else now
     runs = config.get('runs', [])
-    digest_terms = [run['terminal'] for run in runs if not run.get('typed')]
-    typed_runs = [run for run in runs if run.get('typed')]
+    routes = digest_routes(runs)
+    typed_runs = [run for run in runs if isinstance(run, dict) and run.get('typed')]
+    sender = fleet_watch_sender(runs)
+    migrate_notice_addresses(state, runs)
     queue = state.setdefault('notice_queue', {})
-    live = set(digest_terms) | {run['terminal'] for run in typed_runs} | {
-        lead['terminal'] for lead in config.get('leads', []) if lead.get('terminal')}
+    live = {address for address, _sender in routes}
+    live.update(run['terminal'] for run in typed_runs if run.get('terminal'))
+    live.update(lead['terminal'] for lead in config.get('leads', []) if lead.get('terminal'))
     for notice in new_notices:
-        targets, urgent = digest_terms, isinstance(notice, Urgent)
+        targets, urgent = list(routes), isinstance(notice, Urgent)
         if isinstance(notice, Verdict):
             lead = owner_of(notice.author)
             if lead:
-                targets, urgent = [lead], True
+                targets, urgent = [(lead, sender)], True
         text = str(notice)
-        live.update(targets)
-        for term in targets:
-            queue_notice(queue, term, text, urgent)
-    for term in list(queue):
-        if term not in live:
-            print('fleet-watch: dropping %d notice(s) for %s, not in runs' % (len(queue[term]), term), file=sys.stderr)
-            del queue[term]
+        for address, from_terminal in targets:
+            live.add(address)
+            queue_notice(queue, address, text, urgent, now, from_terminal)
+    for address in list(queue):
+        if address not in live:
+            print('fleet-watch: dropping %d notice(s) for %s, not in runs' % (len(queue[address]), address), file=sys.stderr)
+            del queue[address]
     flush_queue(state, now, rpc_call)
-    deliver_typed_notices(typed_runs, state, new_notices, rpc_call)
+    deliver_typed_notices(typed_runs, state, new_notices, rpc_call, now)
 
 
 def coordinator_stage(config, state, state_path):
