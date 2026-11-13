@@ -164,6 +164,13 @@ map_file() {
     script/fleet-watch.config*|script/fleet-watch*.json)
       map_script_py_base "fleet-watch"
       ;;
+    script/usage-gate*.json)
+      map_script_py_base "usage-gate"
+      map_script_py_base "fleet-watch"
+      ;;
+    script/tests/fixtures/orca-worker-list.json)
+      add_if_exists "script/tests/test_usage_gate.py"
+      ;;
     script/*example|script/*.example.json)
       map_script_example "$path"
       ;;
