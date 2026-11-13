@@ -22,7 +22,7 @@ has "$T/docs/agents/coordinator-operations.md" 'Small task method' "small task m
 has "$T/docs/agents/release-manager-work.md" 'Host preflight' "release-manager-work still names host preflight"
 
 # Rules that must survive the trim.
-has "$T/.claude/agents/release-manager.md" 'Never roll back production without owner authorization' "rm keeps rollback guard"
+has "$T/.claude/agents/release-manager.md" 'A production rollback is a production deploy' "rm keeps rollback guard"
 has "$T/.claude/agents/release-manager.md" 'Never invoke `bin/owner-approve.sh`' "rm keeps owner-approve guard"
 has "$T/.claude/agents/release-manager.md" 'Never stop a process by name' "rm keeps kill guard"
 has "$T/.claude/agents/elon.md" 'ship.sh' "elon keeps ship rule"

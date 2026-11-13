@@ -274,7 +274,7 @@ case11_table_driven_mapped_paths() {
   out=$(list_selector_output templates/agent-team/changelog.d/README.md templates/agent-team/bin/changelog-compile.sh)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 agent-team pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 3 ] || fail "case11 agent-team pair want Script tests: 3 got ${count:-0}"
+  [ "${count:-0}" -eq 4 ] || fail "case11 agent-team pair want Script tests: 4 got ${count:-0}"
 
   out=$(list_selector_output script/unmapped-helper.sh)
   grep -Fq 'Fallback: script/unmapped-helper.sh -> full suite' <<<"$out" \
@@ -343,6 +343,20 @@ case14_worker_start_check() {
 
 case14_worker_start_check
 
+# #1037: a template role file change must select role-word-budget, which checks its guard sentences.
+case16_template_role_file_selects_role_word_budget() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only \
+    templates/agent-team/.claude/agents/release-manager.md 2>&1)
+  grep -Fxq 'Selected: script/tests/role-word-budget.test.sh' <<<"$out" \
+    || fail "case16 release-manager.md must select role-word-budget.test.sh"
+  grep -Fq 'Fallback:' <<<"$out" && fail "case16 must not fall back to the full suite"
+  ok "case16 template role file selects role-word-budget"
+}
+
+case16_template_role_file_selects_role_word_budget
+
 case15_parallel_jobs() {
   local fixture=$tmp/case15 out rc
   mkdir -p "$fixture/script/tests"
@@ -364,4 +378,4 @@ case15_parallel_jobs() {
 }
 
 case15_parallel_jobs
-echo 'PASS: 18 acceptance cases'
+echo 'PASS: 19 acceptance cases'
