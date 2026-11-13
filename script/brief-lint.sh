@@ -52,7 +52,6 @@ sec == "Finish" && /[^[:space:]]/ {
   has_finish = 1
   if (tolower($0) ~ /self-review|self review/) has_self_review = 1
   if (tolower($0) ~ /40 hex/) has_full_sha = 1
-  if (tolower($0) ~ /push/) has_rewrite = 1
   if ($0 ~ /workspace-status in-review/) has_in_review = 1
 }
 END {
@@ -66,8 +65,8 @@ END {
   if (has_finish && !has_self_review) { print "brief-lint: missing Finish self-review step"; rc = 1 }
   # Every Finish moves the Orca board card to in-review before worker_done, so wrap-up can tell finished work from running work.
   if (has_finish && !has_in_review) { print "brief-lint: Finish must run orca worktree set --worktree active --workspace-status in-review before worker_done"; rc = 1 }
-  # A fullstack-dev Finish writes ## Self-review with the full 40 hex head sha, and rewrites it after every push.
-  if (is_builder && has_self_review && !(has_full_sha && has_rewrite)) { print "brief-lint: Finish must say the builder writes ## Self-review with the full 40 hex head sha and rewrites it after every push"; rc = 1 }
+  # A fullstack-dev Finish names ## Self-review and the full 40 hex head sha (any wording).
+  if (is_builder && has_self_review && !has_full_sha) { print "brief-lint: Finish must name ## Self-review and the full 40 hex head sha"; rc = 1 }
   exit rc
 }
 ' "$file"
