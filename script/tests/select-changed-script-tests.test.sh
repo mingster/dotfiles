@@ -170,6 +170,14 @@ case_fleet_watch_config_example() {
     || fail "fleet-watch config must select test_fleet_watch_scan.py"
   count=$(script_tests_count_from_output <<<"$out")
   [ "${count:-0}" -lt 50 ] || fail "fleet-watch config want scoped suite got ${count:-0}"
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
+    bash "$root/script/select-changed-script-tests.sh" --list-only \
+    script/tests/fixtures/fleet-watch/orca-1.4.258/stall-worker-start-ok.json 2>&1)
+  grep -Fq 'Fallback:' <<<"$out" && fail "fleet-watch stall fixture must not fall back to full suite"
+  grep -Fq 'Selected: script/tests/test_fleet_watch_own_workers.py' <<<"$out" \
+    || fail "fleet-watch stall fixture must select test_fleet_watch_own_workers.py"
+  count=$(script_tests_count_from_output <<<"$out")
+  [ "${count:-0}" -lt 50 ] || fail "fleet-watch stall fixture want scoped suite got ${count:-0}"
   ok "fleet-watch config example maps to fleet-watch tests"
 }
 
