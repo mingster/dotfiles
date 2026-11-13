@@ -469,6 +469,63 @@ else
   check "hand-edited template doc fails check and sync restores it" bad
 fi
 
+# 6e2. fleet-watch.md is copied on sync and check flags drift (#984).
+# The template copy is owner-owned and absent, so this case plants the dotfiles
+# doc into a scratch template tree. cp never follows a symlink into templates/.
+fleet_df="$tmp/fleet-dotfiles"
+mkdir -p "$fleet_df"
+for entry in "$real_dotfiles"/* "$real_dotfiles"/.[!.]*; do
+  [ "$(basename "$entry")" = .git ] || ln -s "$entry" "$fleet_df/"
+done
+rm "$fleet_df/templates"
+mkdir "$fleet_df/templates"
+for entry in "$real_dotfiles/templates"/*; do
+  ln -s "$entry" "$fleet_df/templates/$(basename "$entry")"
+done
+rm "$fleet_df/templates/agent-team"
+mkdir "$fleet_df/templates/agent-team"
+for entry in "$real_dotfiles/templates/agent-team"/* "$real_dotfiles/templates/agent-team"/.[!.]*; do
+  [ -e "$entry" ] || continue
+  ln -s "$entry" "$fleet_df/templates/agent-team/$(basename "$entry")"
+done
+rm "$fleet_df/templates/agent-team/docs"
+mkdir "$fleet_df/templates/agent-team/docs"
+for entry in "$real_dotfiles/templates/agent-team/docs"/*; do
+  ln -s "$entry" "$fleet_df/templates/agent-team/docs/$(basename "$entry")"
+done
+rm "$fleet_df/templates/agent-team/docs/agents"
+mkdir "$fleet_df/templates/agent-team/docs/agents"
+for entry in "$real_dotfiles/templates/agent-team/docs/agents"/*; do
+  ln -s "$entry" "$fleet_df/templates/agent-team/docs/agents/$(basename "$entry")"
+done
+fleet_tpl="$fleet_df/templates/agent-team/docs/agents/fleet-watch.md"
+if [ ! -e "$fleet_tpl" ]; then
+  cp "$real_dotfiles/docs/agents/fleet-watch.md" "$fleet_tpl"
+fi
+fleet_repo="$tmp/fleet-repo"
+mkdir -p "$fleet_repo"
+git -C "$fleet_repo" init -q
+git -C "$fleet_repo" remote add origin "https://github.com/example-org/fleet.git"
+fleet_sync=$(DOTFILES="$fleet_df" bash "$SCRIPT" sync "$fleet_repo" --project-name fleet 2>&1)
+fleet_sync_rc=$?
+if [ "$fleet_sync_rc" -eq 0 ] && cmp -s "$fleet_tpl" "$fleet_repo/docs/agents/fleet-watch.md"; then
+  check "sync copies docs/agents/fleet-watch.md into the project" ok
+else
+  echo "$fleet_sync" >&2
+  check "sync copies docs/agents/fleet-watch.md into the project" bad
+fi
+fleet_before=$(DOTFILES="$fleet_df" bash "$SCRIPT" check "$fleet_repo" 2>&1) || true
+echo "drift" >> "$fleet_repo/docs/agents/fleet-watch.md"
+fleet_drift=$(DOTFILES="$fleet_df" bash "$SCRIPT" check "$fleet_repo" 2>&1)
+fleet_drift_rc=$?
+if [ "$fleet_drift_rc" -ne 0 ] \
+  && ! echo "$fleet_before" | grep -Fq "docs/agents/fleet-watch.md" \
+  && echo "$fleet_drift" | grep -Fq "template-managed file drifted: docs/agents/fleet-watch.md"; then
+  check "check flags a drifted docs/agents/fleet-watch.md" ok
+else
+  check "check flags a drifted docs/agents/fleet-watch.md" bad
+fi
+
 # 6f. Tier 3 skill colliding with Tier 1/2 skill fails check
 mkdir -p "$empty_repo/.agents/skills/tdd"
 printf -- '---\nname: tdd\n---\n' > "$empty_repo/.agents/skills/tdd/SKILL.md"
