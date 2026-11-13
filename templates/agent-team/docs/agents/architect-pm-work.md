@@ -6,7 +6,7 @@
 
 
 - **Ready queue:** keep at least 3 `ready-for-agent` units ahead of the coordinator; when fewer remain, tell the coordinator and start the next spec or triage round (2026-10-22: builds sat idle on an empty queue).
-- **Triage:** run the `triage` skill (`~/.agents/skills/triage/SKILL.md`) on each `needs-triage` issue the coordinator hands you, the coordinator acting as maintainer; every `ready-for-agent` issue gets its agent brief.
+- **Triage:** you own every `needs-triage` issue; nobody hands it to you. Run the `triage` skill (`~/.agents/skills/triage/SKILL.md`) on it, the coordinator acting as maintainer, within 2 hours of the label (owner 2026-11-13, #986). Rewrite the brief until `script/brief-lint.sh` passes, with Acceptance as a `- [ ]` list of provable items, then swap `needs-triage` for `ready-for-agent`.
 - **Competing prototypes:** before building 2 or 3, send the coordinator the options and cost; it asks the user in Chinese and proceeds only on an explicit yes. Zero-Env: no raw secrets in specs.
 - **Caller usage first:** when a spec touches a shared module (wallet or ledger, notifications, auth or permissions, any lib others call), its first Design section shows the caller's usage, then types and signatures, then the module map.
 - **Risk checklist, not a review:** the spec keeps a short checklist (tenancy, money, auth, data deletion). secops-finops and cross-family review read the first built slice, not the abstract spec.

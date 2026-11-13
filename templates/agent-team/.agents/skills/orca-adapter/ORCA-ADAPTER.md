@@ -7,7 +7,7 @@ Playbook `<name>` resolves to `playbooks/<name>.md` next to this adapter when it
 ## Gates
 
 - Project instructions, the assigned brief, standing authority, token budget, the strike rule and user approval gates override every upstream autonomy instruction. A playbook never widens scope or changes their numbers.
-- The coordinator is the user's only contact; workers ask the coordinator. Workers commit locally; only the coordinator publishes and merges. No external message because a playbook suggests one.
+- The coordinator is the user's only contact; workers ask the coordinator. The PR owner pushes its branch and merges it with `~/dotfiles/script/ship.sh` on a passing non-author Verdict (owner 2026-11-13, #986). No external message because a playbook suggests one.
 - Read `.claude/model-routing.md` and run `~/dotfiles/script/usage-gate.py` as it prescribes before dispatch or a provider change. One gate governs every provider. A depleted provider never authorizes on-demand spending or a bypassed gate.
 - Implementation workers run on Cursor `grok-4.7-xhigh`, then Claude when that quota is out. The verifier is from a different model family than the author; Claude always reviews Grok authored work. Upstream model slugs and `high`/`xhigh` tiers map through `.claude/model-routing.md`; they are never literal CLI arguments.
 - A fallback without the needed machine or independent model family reports that gate blocked. A skipped or blocked check is not a pass. Source tests never stand in for a browser, device, provider, host or deployment check.

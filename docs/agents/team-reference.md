@@ -124,7 +124,7 @@ Anything else in a project's `docs/agents/` is a special case that needs the use
 
 ### User decisions
 
-New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the user.
+Money rules and prices, spending and contracts, customer messages, irreversible data deletion, production deploy once a real store is live, and one look at a new feature or page before production (owner grill 2026-11-13 gap 8; the Owner pauses row in `templates/agent-team/docs/agents/team.md`). Nothing else interrupts the user.
 
 ### Review
 
@@ -151,7 +151,7 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | `/deploy` | Moves a commit to staging or production | Daily, or on the user's go |
 | pstack `swarm` live lanes | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
 | Test selection | Compares with the last green staging commit and follows real imports | Every swarm live lanes run |
-| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the user's yes | Weekly |
+| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged automatically on green checks and a Verdict | Weekly |
 | [`team-audit.sh`](../../script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the user's word |
 | `/elon status` | "what now": waiting on the user, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
 | Agent state backup | Private repository with memory, schedules and host config, used to rebuild the coordinator | Every 10 minutes |
@@ -215,7 +215,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | Babysit, ship and worktree cleanup | The 5 minute pass (`fleet-watch.py`) starts one verifier when head-checks passed and the head has no Verdict. The existing fix worker and a Shipping run (`script/ship.sh`) still cover a failing head and a passing Verdict; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, pstack `worktree-cleanup` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
 | Deploy and swarm live lanes | Staging deploys daily at 19:00 Taiwan time, followed by the pstack `swarm` live lanes and full regression; a green review leads to a one-line summary and same-day user go for production. | `/deploy local`, `/deploy staging`, pstack `swarm`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
 | Status | Get company status (**Now**, **Needs user**, **Running**) or a recap. The daily program starts from the `daily-program-1900` automation, not a command. | `/elon status` | `/elon status Show Now, Needs owner and Running.` |
-| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs for user review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
+| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs that merge on green checks and a Verdict. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
 | Support | The coordinator routes fixes and `support-csm` drafts the customer reply in the customer's language; the user approves before sending or closing. | Ask the coordinator to assign `support-csm` | The coordinator, resolve this support ticket and bring me the reply draft for approval. |
 
 ## Fleet and load distribution

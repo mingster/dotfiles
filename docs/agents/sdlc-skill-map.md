@@ -25,7 +25,7 @@ Which role owns each SDLC stage and recurring job, which Matt Pocock or team ski
 | Session handoff and startup | Worker at budget or the coordinator at session start | `handoff`, `recall`, `ketchup` | Workers at 80% context or 120 turns write a `handoff` artifact; the coordinator runs `recall` then `ketchup` at session start. |
 | Deploy and swarm live lanes | `release-manager`, `qa-sdet` | `deploy`, `swarm` | Staging deploys daily at 19:00 Taiwan time, followed immediately by the pstack `swarm` live lanes and full regression; page-by-page review runs weekly; production deploys on the user's explicit go. |
 | Worktree cleanup | The coordinator / host schedule | pstack `worktree-cleanup` (`script/wrap-up.sh`) | Scheduled every 10 minutes on each host (`--scheduled`) and run after merges to clear finished worktrees, branches, terminals and temp files. |
-| Team audit and weekly update | Orca schedule / `architect-pm` | `team-audit` (`script/team-audit.sh`, `script/team-audit-metrics.ts`), `script/weekly-update.sh` | Orca runs the audit script and five metrics weekly for one line; `architect-pm` runs the full `/team-audit` skill on the user's word; `weekly-update.sh` opens three upstream update PRs for user review. |
+| Team audit and weekly update | Orca schedule / `architect-pm` | `team-audit` (`script/team-audit.sh`, `script/team-audit-metrics.ts`), `script/weekly-update.sh` | Orca runs the audit script and five metrics weekly for one line; `architect-pm` runs the full `/team-audit` skill on the user's word; `weekly-update.sh` opens three upstream update PRs that merge on green checks and a Verdict. |
 
 ## Pre-build grill gate (user rule 2026-11-06)
 
