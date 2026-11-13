@@ -1,0 +1,1 @@
+fleet-watch tests pin the coordinator wake path for a 60 minute inbox waiter: no alert on a live waiter, an alert after ten minutes on a dead one, and notices reach the run terminal as inbox mail. (#970)
