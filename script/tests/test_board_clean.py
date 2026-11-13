@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Rules for cleaning a Done card after 30 minutes."""
 import importlib.util
+import json
 import os
 import pathlib
 import subprocess
@@ -47,8 +48,11 @@ def working(path="/w/a"):
     return {"state": "ready", "outcome": "in_progress", "liveness": "live", "terminalState": "active", "workspace": "repo::" + path}
 
 
-def facts(dirty=False, unpushed=False):
-    return {"dirty": dirty, "unpushed": unpushed}
+def facts(dirty=False, unpushed=False, unmerged=False, pr=None):
+    found = {"dirty": dirty, "unpushed": unpushed, "unmerged": unmerged}
+    if pr is not None:
+        found["pr"] = pr
+    return found
 
 
 def decide(card, workers, card_facts=None, since=OLD, now=NOW):
@@ -102,6 +106,29 @@ class KeepOrClean(unittest.TestCase):
 
     def test_unreadable_commits_stay(self):
         self.assertEqual(decide(tree(), [released()], {"dirty": False, "unpushed": None}), "commit reachability unreadable")
+
+    def test_pushed_unmerged_branch_with_no_pr_stays(self):
+        for row in (released(), failed(), stopped()):
+            self.assertEqual(
+                decide(tree(), [row], facts(unmerged=True, pr="none")),
+                "pushed branch not merged and has no PR",
+            )
+
+    def test_pushed_branch_with_an_open_pr_stays(self):
+        self.assertEqual(decide(tree(), [released()], facts(unmerged=True, pr="open")), "open PR")
+
+    def test_unknown_pr_state_stays(self):
+        self.assertEqual(decide(tree(), [released()], facts(unmerged=True)), "PR state unreadable")
+
+    def test_unreadable_unmerged_stays(self):
+        self.assertEqual(
+            decide(tree(), [released()], {"dirty": False, "unpushed": False, "unmerged": None}),
+            "commit reachability unreadable",
+        )
+
+    def test_squash_merged_or_closed_pr_branch_is_cleaned(self):
+        for pr in ("merged", "closed"):
+            self.assertIsNone(decide(tree(), [released()], facts(unmerged=True, pr=pr)), pr)
 
     def test_rm_worktree_stays_until_release_of_a_throwaway_branch(self):
         self.assertEqual(
@@ -188,9 +215,27 @@ class HostAndAge(unittest.TestCase):
 
 
 class Probe(unittest.TestCase):
+    def test_text_from_a_real_terminal_read(self):
+        # Captured from `orca terminal read --json` on a paired host (mini6).
+        data = json.loads((ROOT / "script" / "tests" / "fixtures" / "orca-terminal-read-probe.json").read_text())
+        text = clean.text_from_read(data)
+        self.assertIn("dirty:1\nunpushed:1", text)
+        self.assertEqual(clean.parse_probe(text)["dirty"], True)
+        self.assertEqual(clean.parse_probe(text)["unpushed"], True)
+
     def test_parse_probe(self):
-        self.assertEqual(clean.parse_probe("dirty:0\nunpushed:4\n"), {"dirty": False, "unpushed": True})
-        self.assertEqual(clean.parse_probe("dirty:2\nunpushed:unknown\n"), {"dirty": True, "unpushed": None})
+        self.assertEqual(
+            clean.parse_probe("dirty:0\nunpushed:4\nunmerged:4\n"),
+            {"dirty": False, "unpushed": True, "unmerged": True, "done": True},
+        )
+        self.assertEqual(
+            clean.parse_probe("dirty:2\nunpushed:unknown\n"),
+            {"dirty": True, "unpushed": None, "unmerged": None, "done": False},
+        )
+        self.assertEqual(clean.parse_probe("unmerged:unknown")["done"], True)
+
+    def test_probe_command_keeps_the_shell_open(self):
+        self.assertNotIn("exit", clean.PROBE_COMMAND)
 
     def test_remote_probe_reads_and_closes_the_terminal(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -199,10 +244,16 @@ class Probe(unittest.TestCase):
             fake.write_text(textwrap.dedent("""\
                 #!/usr/bin/env bash
                 printf '%s\\n' "$*" >> "$ORCA_LOG"
+                reads="$(dirname "$ORCA_LOG")/reads"
                 case "$*" in
-                  'terminal create '*) echo '{"ok":true,"result":{"handle":"probe-1"}}' ;;
-                  'terminal wait '*) echo '{"ok":true,"result":{}}' ;;
-                  'terminal read '*) echo '{"ok":true,"result":{"output":"dirty:0\\nunpushed:2\\n"}}' ;;
+                  'terminal create '*) echo '{"ok":true,"result":{"terminal":{"handle":"probe-1"}}}' ;;
+                  'terminal read '*)
+                    if [ -f "$reads" ]; then
+                      echo '{"ok":true,"result":{"terminal":{"handle":"probe-1","status":"running","tail":["$ d=...","dirty:0","unpushed:2","unmerged:2","",">"]}}}'
+                    else
+                      touch "$reads"
+                      echo '{"ok":true,"result":{"terminal":{"handle":"probe-1","status":"running","tail":["$ d=..."]}}}'
+                    fi ;;
                   'terminal close '*) echo '{"ok":true,"result":{}}' ;;
                   *) echo "unexpected $*" >&2; exit 1 ;;
                 esac
@@ -211,16 +262,20 @@ class Probe(unittest.TestCase):
             previous = os.environ.get("ORCA_CLI_COMMAND")
             os.environ["ORCA_CLI_COMMAND"] = str(fake)
             os.environ["ORCA_LOG"] = str(log)
+            original_pause = clean.pause
+            clean.pause = lambda: None
             try:
                 found = clean.remote_facts("/remote/verify", "up")
             finally:
+                clean.pause = original_pause
                 if previous is None:
                     os.environ.pop("ORCA_CLI_COMMAND", None)
                 else:
                     os.environ["ORCA_CLI_COMMAND"] = previous
                 os.environ.pop("ORCA_LOG", None)
-            self.assertEqual(found, {"dirty": False, "unpushed": True})
+            self.assertEqual(found, {"dirty": False, "unpushed": True, "unmerged": True})
             text = log.read_text()
+            self.assertEqual(text.count("terminal read "), 2)
             self.assertIn("terminal create --worktree path:/remote/verify --command", text)
             self.assertIn("--environment up", text)
             self.assertIn("terminal close --terminal probe-1 --environment up", text)
@@ -239,12 +294,46 @@ class LocalGit(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial", "--allow-empty"], check=True)
             subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(origin)], check=True)
             subprocess.run(["git", "-C", str(repo), "push", "-q", "-u", "origin", "main"], check=True)
-            self.assertEqual(clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": False})
+            subprocess.run(["git", "-C", str(repo), "switch", "-qc", "feat"], check=True)
+            self.assertEqual(
+                clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": False, "unmerged": False},
+            )
             (repo / "note").write_text("dirty\n")
             self.assertEqual(clean.local_git_facts(str(repo))["dirty"], True)
             (repo / "note").unlink()
             subprocess.run(["git", "-C", str(repo), "commit", "-qm", "local", "--allow-empty"], check=True)
-            self.assertEqual(clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": True})
+            self.assertEqual(
+                clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": True, "unmerged": True},
+            )
+            # Pushed but never merged: on a remote ref, yet only on its own.
+            subprocess.run(["git", "-C", str(repo), "push", "-q", "-u", "origin", "feat"], check=True)
+            self.assertEqual(
+                clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": False, "unmerged": True},
+            )
+            subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", "feat:main"], check=True)
+            subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin"], check=True)
+            self.assertEqual(
+                clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": False, "unmerged": False},
+            )
+
+    def test_remote_probe_command_agrees_with_local_facts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp) / "repo"
+            origin = pathlib.Path(tmp) / "origin"
+            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "T"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial", "--allow-empty"], check=True)
+            subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(origin)], check=True)
+            subprocess.run(["git", "-C", str(repo), "push", "-q", "-u", "origin", "main"], check=True)
+            subprocess.run(["git", "-C", str(repo), "switch", "-qc", "feat"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "local", "--allow-empty"], check=True)
+            subprocess.run(["git", "-C", str(repo), "push", "-q", "-u", "origin", "feat"], check=True)
+            out = subprocess.run(
+                ["bash", "-c", clean.PROBE_COMMAND], cwd=repo, capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertEqual(out, "dirty:0\nunpushed:0\nunmerged:1\n")
 
 
 class WorkerInventory(unittest.TestCase):

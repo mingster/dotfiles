@@ -1,0 +1,30 @@
+{
+  "id": "8de8ffeb-d5ad-4a0e-a070-77494f1136fe",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_6ffbf17d-50c3-4be0-9e2d-dc4b9bb1eebc",
+      "status": "running",
+      "tail": [
+        "",
+        "░▒▓ 󰀵  …/p968   mingster/p968 $!   02:38 ",
+        "emotes=origin 2>/dev/null || echo unknown); printf 'dirty:%s\\nunpushed:%s\\n' \"$d\" \"$u\"",
+        "dirty:1",
+        "unpushed:1",
+        "",
+        "░▒▓ 󰀵  …/p968   mingster/p968 $!   02:38 ",
+        "❯                                                                                                                󰒋 mini6 "
+      ],
+      "truncated": false,
+      "limited": false,
+      "oldestCursor": "0",
+      "nextCursor": "7",
+      "latestCursor": "7",
+      "returnedLineCount": 8,
+      "source": "stream"
+    }
+  },
+  "_meta": {
+    "runtimeId": "25c45eb2-0181-4df1-a53d-effa36b9b27b"
+  }
+}

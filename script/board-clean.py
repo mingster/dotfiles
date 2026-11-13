@@ -8,7 +8,9 @@ terminals and session. A host that cannot be reached is skipped and tried again
 next round. It is not treated as gone.
 
 Guards that keep a card, with a board comment naming the reason: unsaved
-changes, commits that are not on main and not on any remote, an unreleased
+changes, commits that are not on main and not on any remote, a pushed branch
+whose commits are on no other origin ref and that has an open PR or no PR
+(cleaning deletes origin/<branch>, its only copy), an unreleased
 worker, the coordinator's own worktree, a lead-* worktree, an rm-* worktree,
 the main checkout, a protected branch, or an archive/ branch. Once its worker
 is released, a verify-*, qa-* or rm-* branch is deleted even with local
@@ -180,7 +182,20 @@ def keep_reason(
         return "commit reachability unreadable"
     if unpushed:
         return "commits not on any remote"
-    return None
+    unmerged = facts.get("unmerged")
+    if unmerged is None:
+        return "commit reachability unreadable"
+    if not unmerged:
+        return None
+    # The work lives only on origin/<branch>, which cleaning deletes.
+    pr = facts.get("pr")
+    if pr in ("merged", "closed"):
+        return None
+    if pr == "open":
+        return "open PR"
+    if pr == "none":
+        return "pushed branch not merged and has no PR"
+    return "PR state unreadable"
 
 
 def report_line(apply: bool, action: str, path: str, detail: str, environment: str) -> str:
@@ -191,21 +206,22 @@ def report_line(apply: bool, action: str, path: str, detail: str, environment: s
 
 
 def parse_probe(text: str) -> dict:
-    dirty = None
-    unpushed = None
+    """Read the probe's dirty/unpushed/unmerged lines. done: the last line arrived."""
+    found = {"dirty": None, "unpushed": None, "unmerged": None, "done": False}
     for line in text.splitlines():
         if ":" not in line:
             continue
         key, raw = line.split(":", 1)
-        raw = raw.strip()
-        if key.strip() == "dirty" and raw.isdigit():
-            dirty = int(raw) > 0
-        elif key.strip() == "unpushed":
-            if raw.isdigit():
-                unpushed = int(raw) > 0
-            elif raw == "unknown":
-                unpushed = None
-    return {"dirty": dirty, "unpushed": unpushed}
+        key, raw = key.strip(), raw.strip()
+        if key not in ("dirty", "unpushed", "unmerged"):
+            continue
+        if raw.isdigit():
+            found[key] = int(raw) > 0
+        elif raw != "unknown":
+            continue
+        if key == "unmerged":
+            found["done"] = True
+    return found
 
 
 def text_from_read(data: dict) -> str:
@@ -214,6 +230,9 @@ def text_from_read(data: dict) -> str:
         if isinstance(result.get(key), str):
             return result[key]
     terminal = result.get("terminal") if isinstance(result.get("terminal"), dict) else {}
+    tail = terminal.get("tail")
+    if isinstance(tail, list):
+        return "\n".join(str(line) for line in tail)
     for key in ("preview", "output", "text"):
         if isinstance(terminal.get(key), str):
             return terminal[key]
@@ -265,61 +284,106 @@ def load_fact_table() -> dict | None:
     return data if isinstance(data, dict) else {}
 
 
+def _git(path: str, *args: str) -> str | None:
+    try:
+        done = subprocess.run(
+            ["git", "-C", path, *args], capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _count(text: str | None) -> bool | None:
+    return int(text) > 0 if text is not None and text.isdigit() else None
+
+
 def local_git_facts(path: str) -> dict:
+    """dirty: unsaved changes. unpushed: commits on no origin ref.
+    unmerged: commits on no origin ref except the branch's own origin/<branch>."""
+    unknown = {"dirty": None, "unpushed": None, "unmerged": None}
     if not os.path.isdir(path):
-        return {"dirty": None, "unpushed": None}
-    try:
-        status = subprocess.run(
-            ["git", "-C", path, "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {"dirty": None, "unpushed": None}
-    if status.returncode != 0:
-        return {"dirty": None, "unpushed": None}
-    dirty = bool(status.stdout.strip())
-    try:
-        count = subprocess.run(
-            ["git", "-C", path, "rev-list", "--count", "HEAD", "--not", "--remotes=origin"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {"dirty": dirty, "unpushed": None}
-    text = count.stdout.strip()
-    if count.returncode != 0 or not text.isdigit():
-        return {"dirty": dirty, "unpushed": None}
-    return {"dirty": dirty, "unpushed": int(text) > 0}
+        return unknown
+    status = _git(path, "status", "--porcelain", "--untracked-files=all")
+    if status is None:
+        return unknown
+    branch = _git(path, "symbolic-ref", "--short", "-q", "HEAD") or ""
+    return {
+        "dirty": bool(status),
+        "unpushed": _count(_git(path, "rev-list", "--count", "HEAD", "--not", "--remotes=origin")),
+        "unmerged": _count(_git(
+            path, "rev-list", "--count", "HEAD", "--not",
+            "--exclude=origin/%s" % branch, "--remotes=origin",
+        )),
+    }
+
+
+def pr_state(repo: str, branch: str) -> str | None:
+    """merged, open, closed or none for the branch's PRs; None when gh cannot tell."""
+    if not repo or not branch:
+        return None
+    rows = board().gh_json(["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--json", "state"])
+    if not isinstance(rows, list):
+        return None
+    states = {str(row.get("state") or "").upper() for row in rows if isinstance(row, dict)}
+    for state in ("MERGED", "OPEN", "CLOSED"):
+        if state in states:
+            return state.lower()
+    return "none"
+
+
+PROBE_COMMAND = (
+    "d=$(git status --porcelain --untracked-files=all 2>/dev/null | wc -l | tr -d ' '); "
+    "u=$(git rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo unknown); "
+    "b=$(git symbolic-ref --short -q HEAD); "
+    "m=$(git rev-list --count HEAD --not --exclude=\"origin/$b\" --remotes=origin 2>/dev/null"
+    " || echo unknown); "
+    "printf 'dirty:%s\\nunpushed:%s\\nunmerged:%s\\n' \"$d\" \"$u\" \"$m\""
+)
+PROBE_READS = 15
+
+
+def pause() -> None:
+    import time
+    time.sleep(1)
 
 
 def remote_facts(path: str, environment: str) -> dict:
-    command = (
-        "d=$(git status --porcelain --untracked-files=all 2>/dev/null | wc -l | tr -d ' '); "
-        "u=$(git rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo unknown); "
-        "printf 'dirty:%s\\nunpushed:%s\\n' \"$d\" \"$u\"; exit"
-    )
-    data, _err = call(environment, "terminal", "create", "--worktree", "path:%s" % path, "--command", command)
+    """Run the probe in a shell on the host and read its lines back.
+
+    The shell stays open (no `exit`): an exited terminal reads back an empty
+    tail. A plain shell never reaches tui-idle, so poll the read instead.
+    """
+    unknown = {"dirty": None, "unpushed": None, "unmerged": None}
+    data, _err = call(environment, "terminal", "create", "--worktree", "path:%s" % path, "--command", PROBE_COMMAND)
     if data is None:
-        return {"dirty": None, "unpushed": None}
+        return unknown
     handle = handle_of(data)
-    text = text_from_read(data)
+    parsed = parse_probe(text_from_read(data))
     if handle:
-        call(environment, "terminal", "wait", "--terminal", handle, "--for", "tui-idle", "--timeout-ms", "15000")
-        read, _err = call(environment, "terminal", "read", "--terminal", handle)
-        if read is not None:
-            text = text_from_read(read) or text
+        for attempt in range(PROBE_READS):
+            if parsed["done"]:
+                break
+            if attempt:
+                pause()
+            read, _err = call(environment, "terminal", "read", "--terminal", handle)
+            if read is not None:
+                parsed = parse_probe(text_from_read(read))
         call(environment, "terminal", "close", "--terminal", handle)
-    parsed = parse_probe(text)
     if parsed["dirty"] is None and parsed["unpushed"] is None:
-        return {"dirty": None, "unpushed": None}
-    return parsed
+        return unknown
+    return {key: parsed[key] for key in unknown}
 
 
 def facts_for(path: str, environment: str, table: dict | None) -> dict:
     if table is not None:
         row = table.get(path)
         if not isinstance(row, dict):
-            return {"dirty": None, "unpushed": None}
-        return {"dirty": tri(row.get("dirty")), "unpushed": tri(row.get("unpushed"))}
+            return {"dirty": None, "unpushed": None, "unmerged": None}
+        found = {key: tri(row.get(key)) for key in ("dirty", "unpushed", "unmerged")}
+        if isinstance(row.get("pr"), str):
+            found["pr"] = row["pr"]
+        return found
     if normalize(environment) == "local":
         return local_git_facts(path)
     return remote_facts(path, environment)
@@ -549,7 +613,10 @@ def consider(tree: dict, listed: str, grouped: dict[str, list[dict]] | None, tre
     elif host in unreachable:
         reason = "host unreachable, retry next round"
     else:
-        reason = keep_reason(tree, workers, facts_for(path, host, table), now, since, limit)
+        card_facts = facts_for(path, host, table)
+        if card_facts.get("unmerged") and "pr" not in card_facts:
+            card_facts["pr"] = pr_state(board().github_repo(tree.get("projectId")), plain_branch(tree))
+        reason = keep_reason(tree, workers, card_facts, now, since, limit)
     if reason:
         print(report_line(apply, "keep", path, reason, host))
         if apply:

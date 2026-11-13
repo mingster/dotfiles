@@ -54,6 +54,7 @@ json.dump({"ok": True, "result": {"truncated": False, "worktrees": [
     card("/w/open", "refs/heads/feat-open", status="in-progress", activity=old),
     card("/w/failed", "refs/heads/feat-failed", activity=old),
     card("/w/failed-push", "refs/heads/feat-failed-push", activity=old),
+    card("/w/pushed", "refs/heads/feat-pushed", activity=old),
 ]}}, open(path, "w"))
 PY
 python3 - "$FAKE_UP" "$old" <<'PY'
@@ -70,7 +71,8 @@ cat > "$FAKE_WORKERS" <<'JSON'
  {"state":"succeeded","liveness":"exited","terminalState":"released","workspace":"repo::/w/dirty"},
  {"state":"succeeded","liveness":"exited","terminalState":"released","workspace":"repo::/w/young"},
  {"state":"failed","liveness":"exited","terminalState":"released","workspace":"repo::/w/failed"},
- {"state":"failed","liveness":"exited","terminalState":"released","workspace":"repo::/w/failed-push"}
+ {"state":"failed","liveness":"exited","terminalState":"released","workspace":"repo::/w/failed-push"},
+ {"state":"stopped","liveness":"exited","workspace":"repo::/w/pushed"}
 ]}}
 JSON
 cat > "$FAKE_UP_WORKERS" <<'JSON'
@@ -81,12 +83,13 @@ JSON
 python3 - "$BOARD_CLEAN_FACTS" <<'PY'
 import json, sys
 json.dump({
-    "/w/clean": {"dirty": False, "unpushed": False},
-    "/w/dirty": {"dirty": True, "unpushed": False},
-    "/w/young": {"dirty": False, "unpushed": False},
-    "/w/failed": {"dirty": False, "unpushed": False},
-    "/w/failed-push": {"dirty": False, "unpushed": True},
-    "/remote/verify": {"dirty": False, "unpushed": True},
+    "/w/clean": {"dirty": False, "unpushed": False, "unmerged": False},
+    "/w/dirty": {"dirty": True, "unpushed": False, "unmerged": False},
+    "/w/young": {"dirty": False, "unpushed": False, "unmerged": False},
+    "/w/failed": {"dirty": False, "unpushed": False, "unmerged": False},
+    "/w/failed-push": {"dirty": False, "unpushed": True, "unmerged": True},
+    "/remote/verify": {"dirty": False, "unpushed": True, "unmerged": True},
+    "/w/pushed": {"dirty": False, "unpushed": False, "unmerged": True, "pr": "none"},
 }, open(sys.argv[1], "w"))
 PY
 passed=0 failed=0
@@ -108,10 +111,12 @@ grep -Fq '[dry-run] would keep /w/failed-push (commits not on any remote) enviro
   && ok 'a failed card with unpushed commits stays' || bad 'a failed card with unpushed commits stays' "$out"
 grep -Fq '[dry-run] would clean /remote/verify (worktree, local branch, remote branch, terminals, session) environment=up' <<<"$out" \
   && ok 'names the remote throwaway card' || bad 'names the remote throwaway card' "$out"
+grep -Fq "[dry-run] would keep /w/pushed (pushed branch not merged and has no PR) environment=local" <<<"$out" \
+  && ok "a pushed, unmerged, no-PR branch stays" || bad "a pushed, unmerged, no-PR branch stays" "$out"
 grep -Fq '/w/open' <<<"$out" && bad 'an open card is not a cleanup decision' "$out" || ok 'an open card is not a cleanup decision'
 grep -Fq 'board-clean: skip down (unreachable), retry next round' <<<"$out" && ok 'unreachable host is skipped and retried' || bad 'unreachable host is skipped and retried' "$out"
 grep -Fq 'gone' <<<"$out" && bad 'unreachable host is not treated as gone' "$out" || ok 'unreachable host is not treated as gone'
-grep -Fq 'dry-run: clean=3 keep=3 skipped_hosts=1' <<<"$out" && ok 'dry run counts every named card' || bad 'dry run counts every named card' "$out"
+grep -Fq 'dry-run: clean=3 keep=4 skipped_hosts=1' <<<"$out" && ok 'dry run counts every named card' || bad 'dry run counts every named card' "$out"
 grep -Eq 'worktree (rm|set) ' "$ORCA_LOG" && bad 'dry run does not remove or comment' "$(cat "$ORCA_LOG")" || ok 'dry run does not remove or comment'
 
 : > "$ORCA_LOG"
@@ -126,6 +131,7 @@ grep -Fq "branch -D 'verify-1'" "$ORCA_LOG" && grep -Fq 'push origin --delete' "
 grep -Fxq 'worktree set --worktree path:/w/dirty --comment unsaved changes --json' "$ORCA_LOG" \
   && ok 'a kept card gets a board comment' || bad 'a kept card gets a board comment' "$(cat "$ORCA_LOG")"
 grep -Fq 'worktree rm --worktree path:/w/dirty' "$ORCA_LOG" && bad 'a dirty card is not removed' "$(cat "$ORCA_LOG")" || ok 'a dirty card is not removed'
+grep -Fq "worktree rm --worktree path:/w/pushed" "$ORCA_LOG" && bad "a pushed, unmerged, no-PR card is not removed" "$(cat "$ORCA_LOG")" || ok "a pushed, unmerged, no-PR card is not removed"
 grep -Fq 'terminal close --terminal t-del --environment up --json' "$ORCA_LOG" \
   && ok 'the branch-delete session is closed' || bad 'the branch-delete session is closed' "$(cat "$ORCA_LOG")"
 
