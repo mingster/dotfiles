@@ -32,8 +32,8 @@ def run_pass(admit_by_host, repo_ids):
         admit_calls.append(host)
         return admit_by_host[host]
 
-    def lookup(host, root):
-        assert root == '/tmp/app'
+    def lookup(host, repo):
+        assert repo == REPO
         return repo_ids.get(host)
 
     state = {'issue_scan_backlog_sweep_at': NOW}
@@ -93,18 +93,64 @@ class IssueScanRemoteHosts(unittest.TestCase):
         self.assertEqual(arg(starts[0], '--repo'), 'path:/tmp/app')
 
 
+def repo_row(rid, path, key):
+    return {'id': rid, 'path': path, 'gitRemoteIdentity': {'canonicalKey': key, 'remoteName': 'origin'}}
+
+
 class RepoIdLookup(unittest.TestCase):
-    def test_matches_path_and_ignores_other_repos(self):
-        repos = {'repos': [{'id': 'x', 'path': '/other'}, {'id': 'y', 'path': '/tmp/app'}]}
+    def test_matches_git_remote_when_the_path_differs_per_host(self):
+        # blueDevil has dotfiles at /Users/mtsai/dotfiles, mini6 at /Users/mtsai/GitHub/dotfiles
+        repos = {'repos': [
+            repo_row('rb', '/Users/mtsai/projects/riben.life', 'github.com/mingster/riben.life'),
+            repo_row('a7cf6848', '/Users/mtsai/dotfiles', 'github.com/mingster/dotfiles'),
+            {'id': 'nokey', 'path': '/x'},
+        ]}
         orig = fw.rpc
         calls = []
         fw.rpc = lambda *a: calls.append(a) or repos
         try:
-            self.assertEqual(fw.default_repo_id_lookup('miniu', '/tmp/app'), 'y')
-            self.assertIsNone(fw.default_repo_id_lookup('miniu', '/nope'))
+            self.assertEqual(fw.default_repo_id_lookup('blueDevil', 'mingster/dotfiles'), 'a7cf6848')
+            self.assertEqual(fw.default_repo_id_lookup('blueDevil', 'Mingster/Dotfiles'), 'a7cf6848')
+            self.assertIsNone(fw.default_repo_id_lookup('blueDevil', 'mingster/other'))
         finally:
             fw.rpc = orig
-        self.assertEqual(calls[0], ('repo', 'list', '--environment', 'miniu'))
+        self.assertEqual(calls[0], ('repo', 'list', '--environment', 'blueDevil'))
+
+
+class AdoptedConfigKeepsHosts(unittest.TestCase):
+    def test_coordinator_config_without_host_caps_inherits_them_from_the_stub(self):
+        import json, os, tempfile
+        stub_caps = {'mini6': 5, 'niteking': 4, 'blueDevil': 5, 'miniu': 4}
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, '.config/fleet-watch').mkdir(parents=True)
+            Path(home, '.claude/state').mkdir(parents=True)
+            stub = Path(home, '.config/fleet-watch/config.json')
+            stub.write_text(json.dumps({'local_host': 'mini6', 'host_caps': stub_caps}))
+            Path(home, '.claude/state/fleet-watch-elon.json').write_text(json.dumps(
+                {'runs': [{'id': 'run_x', 'terminal': 't'}], 'issue_scan': {'hosts': ['local', 'niteking']}}))
+            old = os.environ.get('HOME')
+            os.environ['HOME'] = home
+            try:
+                config, adopted = fw.resolve_pass_config(json.loads(stub.read_text()), str(stub))
+            finally:
+                os.environ['HOME'] = old
+        self.assertIsNotNone(adopted)
+        self.assertEqual(config['host_caps'], stub_caps)
+        self.assertEqual(config['local_host'], 'mini6')
+
+    def test_remote_hosts_exclude_the_coordinator_by_local_host_name(self):
+        config = dict(CONFIG, host_caps={'mini6': 5, 'niteking': 4, 'blueDevil': 5}, local_host='mini6')
+        starts = []
+        _, log = fw.issue_scan_pass(
+            config, {'issue_scan_backlog_sweep_at': NOW}, NOW, [],
+            list_issues=lambda _r: [ISSUE], pr_fetch=lambda _r: [],
+            gate_check=lambda _c: True,
+            admit_fn=lambda h, _c, _w: FULL if h in ('local', 'mini6') else FREE,
+            start_worker=lambda cmd: starts.append(cmd) or 0,
+            repo_id_lookup=lambda h, _r: {'niteking': '5c45d9ec', 'blueDevil': 'a7cf6848'}.get(h),
+        )
+        self.assertEqual(arg(starts[0], '--on'), 'niteking')
+        self.assertEqual(arg(starts[0], '--repo'), 'id:5c45d9ec')
 
 
 if __name__ == '__main__':

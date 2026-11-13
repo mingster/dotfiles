@@ -2354,14 +2354,18 @@ def brief_lint_missing(spec_path, run=subprocess.run):
     return missing or [out or 'brief-lint failed']
 
 
-def default_repo_id_lookup(host, root):
-    """Orca repo id for the checkout at root on an environment, or None when it is not registered there."""
+def default_repo_id_lookup(host, repo):
+    """Orca repo id of owner/name on an environment, matched by git remote since paths differ per host."""
     try:
         result = rpc('repo', 'list', '--environment', host)
     except Exception:
         return None
+    key = 'github.com/%s' % repo.lower()
     for row in (result.get('repos') if isinstance(result, dict) else None) or []:
-        if isinstance(row, dict) and row.get('path') == root and row.get('id'):
+        if not isinstance(row, dict) or not row.get('id'):
+            continue
+        identity = row.get('gitRemoteIdentity') or {}
+        if str(identity.get('canonicalKey') or '').lower() == key:
             return row['id']
     return None
 
@@ -2744,6 +2748,9 @@ def resolve_pass_config(config, config_path):
     except (OSError, ValueError):
         return config, None
     if isinstance(loaded, dict) and config_runs(loaded):
+        for key in ('host_caps', 'local_host', 'host_load_ceilings'):
+            if key in config and key not in loaded:
+                loaded[key] = config[key]
         return loaded, path
     return config, None
 
@@ -3474,7 +3481,6 @@ def issue_scan_pass(
     repo, row = candidates[0]
     placement = None
     if remote_hosts:
-        root = _issue_scan_repo_root(config, repo)
         lookup = repo_id_lookup or default_repo_id_lookup
         for candidate in remote_hosts:
             receipt = admit_fn(candidate, config, workers)
@@ -3482,7 +3488,7 @@ def issue_scan_pass(
                 why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
                 log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
                 continue
-            repo_id = lookup(candidate, root) if root else None
+            repo_id = lookup(candidate, repo)
             if not repo_id:
                 log_bits.append('issue_scan_no_repo_%s' % candidate)
                 continue
