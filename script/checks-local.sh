@@ -32,6 +32,8 @@ trap 'rm -rf "$HOME"' EXIT
 export SELECT_SCRIPT_TESTS_JOBS=${SELECT_SCRIPT_TESTS_JOBS:-4}
 # Its release budget is a few seconds and assumes a quiet machine.
 export SELECT_SCRIPT_TESTS_SERIAL=${SELECT_SCRIPT_TESTS_SERIAL:-'*wrap-up-scheduled-cleanup.test.sh'}
+# The longest tests start first; at the end of the queue wrap-up.test.sh alone added minutes.
+export SELECT_SCRIPT_TESTS_FIRST=${SELECT_SCRIPT_TESTS_FIRST:-'script/wrap-up.test.sh script/tests/ship.test.sh script/tests/wrap-up-fleet-release.test.sh script/tests/wrap-up-after-merge.test.sh'}
 bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${changed[@]+"${changed[@]}"}"
 [ "${#list_only[@]}" -eq 0 ] || { skipped_note; exit 0; }
 # Hook gate tests read brief-lint and the hook files, so any change can break them. Run all of them.

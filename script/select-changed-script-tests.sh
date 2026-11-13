@@ -279,6 +279,22 @@ else
     fi
   done
   [ "${#pool_list[@]}" -gt 0 ] || exit 0
+  # SELECT_SCRIPT_TESTS_FIRST is a space separated list of globs. Those tests start first, so
+  # the longest one (wrap-up.test.sh) is not left running alone at the end of the queue.
+  if [ -n "${SELECT_SCRIPT_TESTS_FIRST:-}" ]; then
+    first=(); rest=()
+    read -r -a first_globs <<<"$SELECT_SCRIPT_TESTS_FIRST"
+    for test_path in "${pool_list[@]}"; do
+      hit=0
+      for first_glob in "${first_globs[@]}"; do
+        # shellcheck disable=SC2053
+        [[ "$test_path" == $first_glob ]] && hit=1
+      done
+      if [ "$hit" -eq 1 ]; then first+=("$test_path"); else rest+=("$test_path"); fi
+    done
+    pool_list=(${first[@]+"${first[@]}"} ${rest[@]+"${rest[@]}"})
+  fi
+  printf 'Pool order (%s jobs): %s\n' "$jobs" "${pool_list[*]}"
   # A finished slot starts the next test. Waiting on the oldest pid would hold the
   # rest of the queue behind one long test. Bash 3.2 has no wait -n, so a fifo
   # token stands in for a free slot. macOS xargs -P also hides a failing child.
