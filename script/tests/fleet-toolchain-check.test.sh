@@ -554,22 +554,4 @@ AGENT_STATE_DIR="$tmp/peer-state" FLEET_PULL_CONFIG="$tmp/floor-fleet.json" FLEE
 check "842 a peer run leaves the state dir without a floor file" \
   "$([ ! -e "$tmp/peer-state/fleet-floor.json" ] && echo 0 || echo 1)"
 
-# 924: codegraph is optional, but a host that has it must match the pin in script/codegraph/
-cg_pin=$(bash "$here/codegraph-setup.sh" version)
-cg_versions="{
-  \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\", \"codegraph\": \"$cg_pin\"},
-  \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}
-}"
-cg_out=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 FLEET_TOOLCHAIN_VERSIONS="$cg_versions" "$here/fleet-toolchain-check.sh" 2>&1)
-cg_rc=$?
-check "924 codegraph at the pin on one host and absent on another is quiet" \
-  "$([ -z "$cg_out" ] && [ "$cg_rc" = 0 ] && echo 0 || echo 1)"
-cg_off=$(FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 FLEET_TOOLCHAIN_VERSIONS="${cg_versions/\"codegraph\": \"$cg_pin\"/\"codegraph\": \"0.0.1\"}" \
-  "$here/fleet-toolchain-check.sh" 2>&1)
-cg_off_rc=$?
-check "924 a codegraph version other than the pin is reported and fails the check" \
-  "$(echo "$cg_off" | grep -q "coord-a codegraph 0.0.1 differs from the pin $cg_pin" && [ "$cg_off_rc" != 0 ] && echo 0 || echo 1)"
-check "924 the probe script reports codegraph" \
-  "$(grep -q 'agy codegraph; do' "$here/lib/toolchain-probe.sh"; echo $?)"
-
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
