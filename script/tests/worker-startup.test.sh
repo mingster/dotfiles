@@ -1341,5 +1341,46 @@ agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
 [ "$agy_ec" = 0 ] && ok || bad "normal antigravity screen should exit 0 ($agy_ec) $(cat "$tmp/agy-ok.err")"
 grep -q 'sign-in step' "$tmp/agy-ok.err" && bad "normal antigravity screen must not report sign-in" || ok
 
+# 1019: --on this host starts locally. --on another host still passes --environment.
+cat >"$bin/hostname" <<'EOS'
+#!/bin/sh
+if [ "${1:-}" = "-s" ]; then
+  printf '%s\n' mini6
+else
+  printf '%s\n' mini6.local
+fi
+EOS
+chmod +x "$bin/hostname"
+: >"$tmp/orca-own-host.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-own-host.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
+  bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --on mini6 --name n_own --repo "path:$clean" 2>"$tmp/own-host.err"
+ec_own=$?
+set -e
+[ "$ec_own" = 0 ] && ok || bad "own-host --on exits 0 ($ec_own) $(cat "$tmp/own-host.err")"
+grep -q 'worktree create' "$tmp/orca-own-host.log" && ok || bad "own-host start creates a worktree ($(cat "$tmp/orca-own-host.log"))"
+grep -q 'orchestration worker-start' "$tmp/orca-own-host.log" && ok || bad "own-host start reaches worker-start"
+grep -q -- '--environment' "$tmp/orca-own-host.log" && bad "own-host start must not pass --environment ($(cat "$tmp/orca-own-host.log"))" || ok
+grep -q 'worker-placement:' "$tmp/own-host.err" && bad "own-host --on must not run placement" || ok
+: >"$tmp/orca-own-host-case.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-own-host-case.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
+  bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --on MINI6 --name n_own_case --repo "path:$clean" 2>"$tmp/own-host-case.err"
+ec_case=$?
+set -e
+[ "$ec_case" = 0 ] && ok || bad "own-host --on MINI6 exits 0 ($ec_case) $(cat "$tmp/own-host-case.err")"
+grep -q -- '--environment' "$tmp/orca-own-host-case.log" && bad "own-host MINI6 must not pass --environment ($(cat "$tmp/orca-own-host-case.log"))" || ok
+grep -q -- '--environment rem-env' "$tmp/orca-rem-ok.log" && ok || bad "remote --on still passes --environment ($(cat "$tmp/orca-rem-ok.log"))"
+rm -f "$bin/hostname"
+
 echo "worker-startup: $pass passed, $fail failed"
 [ "$fail" = 0 ]
