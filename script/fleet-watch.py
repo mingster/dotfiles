@@ -2875,6 +2875,22 @@ def _worker_is_verifier(worker):
     return str(role).lower() in ('qa', 'qa-sdet', 'reviewer', 'verifier')
 
 
+def live_verifier_for_pr(pr, workers):
+    """True when a live verifier worker, hand dispatched or not, is already on this PR."""
+    number = pr.get('number')
+    branch = pr.get('headRefName') or ''
+    for worker in workers or []:
+        if not isinstance(worker, dict) or not worker_row_is_live(worker):
+            continue
+        if not _worker_is_verifier(worker):
+            continue
+        if number is not None and worker_pr_number(worker) == number:
+            return True
+        if branch and worker_branch_name(worker) == branch:
+            return True
+    return False
+
+
 def builder_pair(pr, workers=None):
     """Builder agent and model from the PR body, else a matching dispatch record."""
     found = None
@@ -3126,6 +3142,9 @@ def babysit_pass(
         if not run_id or not from_terminal or not root:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             log_bits.append('skip_root=%s' % number)
+            continue
+        if kind == 'verifier' and live_verifier_for_pr(pr_row, workers):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'verifier-live'))
             continue
         if started >= cap:
             lines.append(_babysit_line(repo, number, head, 'skip', 'cap'))

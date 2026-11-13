@@ -181,5 +181,63 @@ class BabysitStartFailureNotice(unittest.TestCase):
             self.assertNotIn('babysit_start_failed', state['failure_streaks'])
 
 
+class BabysitLiveVerifier(unittest.TestCase):
+    def run_pass(self, workers, state=None):
+        starts = []
+        with tempfile.TemporaryDirectory() as root:
+            config = {
+                'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {'o/r': root}},
+                'babysit': {'repos': ['o/r'], 'startup': '/bin/true'},
+            }
+            pr = {
+                'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
+                'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
+                'comments': [], 'labels': [], 'mergeable': 'MERGEABLE',
+                'body': 'Builder: agent=claude model=sonnet',
+            }
+            state = {} if state is None else state
+            _notices, lines, _log = fw.babysit_pass(
+                config, state, workers, pr_fetch=lambda _repo: [pr],
+                start_worker=lambda command: starts.append(command) or 0,
+                pick=lambda _role: {'selected': {'provider': 'cursor', 'model': 'm', 'eligible': True}},
+                owner_check=lambda _pr: None,
+            )
+        return starts, lines, state
+
+    def live_verifier(self, **extra):
+        row = {'githubPullRequestNumber': 7, 'role': 'qa-sdet', 'state': 'running'}
+        row.update(extra)
+        return row
+
+    def test_live_hand_dispatched_verifier_blocks_a_second_one(self):
+        starts, lines, state = self.run_pass([self.live_verifier()])
+        self.assertEqual(starts, [])
+        self.assertTrue(any('verifier-live' in line for line in lines), lines)
+        self.assertNotIn('o/r', state.get('babysit', {}))
+
+    def test_live_verifier_matched_by_branch(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(githubPullRequestNumber=None, branch='b')])
+        self.assertEqual(starts, [])
+
+    def test_finished_verifier_does_not_block(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(state='completed')])
+        self.assertEqual(len(starts), 1)
+
+    def test_live_verifier_for_another_pr_does_not_block(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(githubPullRequestNumber=8)])
+        self.assertEqual(len(starts), 1)
+
+    def test_live_builder_does_not_block(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(role='fullstack-dev')])
+        self.assertEqual(len(starts), 1)
+
+    def test_verifier_skip_is_retried_once_it_finishes(self):
+        state = {}
+        starts, _lines, _ = self.run_pass([self.live_verifier()], state)
+        self.assertEqual(starts, [])
+        starts, _lines, _ = self.run_pass([], state)
+        self.assertEqual(len(starts), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
