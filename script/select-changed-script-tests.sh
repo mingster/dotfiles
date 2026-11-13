@@ -289,11 +289,21 @@ else
   exec 3>&-
   fails=0
   got=0
+  only=0
   for rcfile in "$status_dir"/*.rc; do
     [ -f "$rcfile" ] || continue
     got=$((got + 1))
-    [ "$(cat "$rcfile")" -eq 0 ] || fails=1
+    rc=$(cat "$rcfile")
+    if [ "$rc" -ne 0 ]; then
+      fails=$((fails + 1))
+      only=$rc
+    fi
   done
   rm -rf "$status_dir"
-  [ "$got" -eq "${#run_list[@]}" ] && [ "$fails" -eq 0 ]
+  [ "$got" -eq "${#run_list[@]}" ] || exit 1
+  # One failing test keeps its own status so a caller can tell exit 9 from a pool error.
+  if [ "$fails" -eq 1 ]; then
+    exit "$only"
+  fi
+  [ "$fails" -eq 0 ]
 fi
