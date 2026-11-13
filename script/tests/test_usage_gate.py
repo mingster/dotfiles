@@ -15,6 +15,14 @@ ug.antigravity_models = lambda: None  # tests never run the Antigravity CLI
 ug.BANNER_FILE = "/nonexistent/antigravity-banner.json"  # tests never read real banners
 ug.refresh_reading = lambda provider: None  # isolate provider refresh transport in legacy unit cases
 ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
+real_live_workers = ug.live_workers
+ug.live_workers = lambda provider: []  # tests never run orca; the running count cases patch this
+
+
+def rows(n, model="sonnet"):
+    """n running worker rows (None: orca could not say)."""
+    return None if n is None else [{"agent": "claude", "model": model} for _ in range(n)]
+ug.CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usage-gate.config.json")
 NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
@@ -25,7 +33,7 @@ REVIEWER_CHAIN = [{"provider": "other", "model": "gpt-6.1-sol", "effort": "mediu
 
 class Antigravity(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.object(ug, "running_workers", return_value=0)
+        patcher = mock.patch.object(ug, "live_workers", return_value=rows(0))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -178,7 +186,7 @@ class Antigravity(unittest.TestCase):
                  "gemini-flash": {"pct": 2, "resets_at": FUT, "observed_at": NOW},
                  "gemini-pro": {"pct": 100, "resets_at": FUT, "observed_at": NOW}}
         with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
-                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show", "--provider", "antigravity"]), 0)
@@ -198,31 +206,31 @@ class Decide(unittest.TestCase):
         self.assertEqual((v, d["today_used"], st["baseline"]), ("allowed", 0.0, 40))
 
     def test_daily_cap_is_only_a_pacing_hint(self):
-        v, d, _ = self.go(D(52), {"date": "d1", "baseline": 40, "resets_at": FUT})
+        v, d, _ = self.go(D(52), {"v": ug.STATE_VERSION, "date": "d1", "baseline": 40, "resets_at": FUT})
         self.assertEqual((v, d["note"]), ("allowed", "pacing: prefer a lighter model"))
 
     def test_allows_below_cap(self):
-        v, _, _ = self.go(D(51.9), {"date": "d1", "baseline": 40, "resets_at": FUT})
+        v, _, _ = self.go(D(51.9), {"v": ug.STATE_VERSION, "date": "d1", "baseline": 40, "resets_at": FUT})
         self.assertEqual(v, "allowed")
 
     def test_new_day_resets_baseline(self):
-        v, d, st = self.go(D(70), {"date": "d0", "baseline": 40, "resets_at": FUT})
+        v, d, st = self.go(D(70), {"v": ug.STATE_VERSION, "date": "d0", "baseline": 40, "resets_at": FUT})
         self.assertEqual((v, st["baseline"], st["date"]), ("allowed", 70, "d1"))
 
     def test_weekly_ceiling_blocks_even_under_cap(self):
-        v, d, _ = self.go(D(96), {"date": "d1", "baseline": 95, "resets_at": FUT})
+        v, d, _ = self.go(D(96), {"v": ug.STATE_VERSION, "date": "d1", "baseline": 95, "resets_at": FUT})
         self.assertEqual((v, d["reason"]), ("blocked", "weekly ceiling"))
 
     def test_week_rollover_counts_from_zero(self):
-        v, d, _ = self.go(D(3, FUT + 604800), {"date": "d1", "baseline": 90, "resets_at": FUT})
+        v, d, _ = self.go(D(3, FUT + 604800), {"v": ug.STATE_VERSION, "date": "d1", "baseline": 90, "resets_at": FUT})
         self.assertEqual((v, d["today_used"]), ("allowed", 3.0))
 
     def test_expired_reading_is_zero(self):
-        v, d, _ = self.go(D(99, NOW - 5), {"date": "d1", "baseline": 90, "resets_at": NOW - 5})
+        v, d, _ = self.go(D(99, NOW - 5), {"v": ug.STATE_VERSION, "date": "d1", "baseline": 90, "resets_at": NOW - 5})
         self.assertEqual((v, d["reason"]), ("unknown", "stale or expired reading"))
 
     def test_resets_at_jitter_is_the_same_week(self):
-        v, d, st = self.go(D(40, FUT + 1), {"date": "d1", "baseline": 38, "resets_at": FUT})
+        v, d, st = self.go(D(40, FUT + 1), {"v": ug.STATE_VERSION, "date": "d1", "baseline": 38, "resets_at": FUT})
         self.assertEqual((v, d["today_used"], st["baseline"]), ("allowed", 2.0, 38))
 
     def test_no_reading_is_unknown(self):
@@ -235,16 +243,28 @@ class Main(unittest.TestCase):
             self.assertEqual(ug.main(["check", "--provider", "made-up"]), 4)
         self.assertEqual(json.loads(out.getvalue())["verdict"], "unknown")
 
-    def test_antigravity_unknown_is_allowed_and_claude_unknown_is_refused(self):
-        # Owner 2026-11-12: Antigravity starts with no quota reading and stops at the first quota or sign-in error.
-        for name, expected in (("antigravity", 0), ("claude", 4)):
-            with self.subTest(name), \
-                    mock.patch.object(ug, "run", return_value={"provider": name, "verdict": "unknown", "reason": "no reading"}), \
+    def test_antigravity_with_no_reading_is_allowed_and_claude_with_none_is_refused(self):
+        # Owner 2026-11-12 and 2026-11-13: Antigravity starts with no quota reading and stops at the first
+        # quota or sign-in error. Claude with no reading and no usable last good one is blocked.
+        for name, expected, verdict in (("antigravity", 0, "allowed"), ("claude", 4, "unknown")):
+            with self.subTest(name), tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                    mock.patch.dict(ug.READERS, {"claude": lambda: None}), \
                     contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(ug.main(["check", "--provider", name]), expected)
             row = json.loads(out.getvalue())
-            self.assertEqual(row["verdict"], "unknown")
+            self.assertEqual(row["verdict"], verdict)
             self.assertEqual("note" in row, name == "antigravity")
+
+    def test_check_and_pick_agree_that_antigravity_with_no_reading_is_allowed(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            check = ug.main(["check", "--provider", "antigravity", "--model", "gemini-3.8-flash"])
+        row = ug.run("antigravity", None, None, model="gemini-3.8-flash")
+        self.assertEqual((check, row["verdict"]), (0, "allowed"))
+        with mock.patch.object(ug, "role_chain", return_value=(
+                [{"provider": "antigravity", "model": "gemini-3.8-flash"}], False)), \
+                mock.patch.object(ug, "is_builder_role", return_value=False):
+            chosen = ug.pick("qa-sdet", None, None, None, None)["selected"]
+        self.assertEqual((chosen["provider"], chosen["verdict"]), ("antigravity", "allowed"))
 
     def test_antigravity_blocked_still_exits_3(self):
         with mock.patch.object(ug, "run", return_value={"provider": "antigravity", "verdict": "blocked"}), \
@@ -322,7 +342,7 @@ class Reserve(unittest.TestCase):
     def go(self, reading, state, reserve):
         return ug.decide(reading, state, "d1", NOW, 12, 95, reserve)
 
-    ST = {"date": "d1", "baseline": 40, "resets_at": FUT}
+    ST = {"v": ug.STATE_VERSION, "date": "d1", "baseline": 40, "resets_at": FUT}
 
     def test_reserve_lowers_the_cap_for_new_starts(self):
         self.assertEqual(self.go(D(50.9), self.ST, 1)[0], "allowed")
@@ -330,7 +350,7 @@ class Reserve(unittest.TestCase):
         self.assertEqual((v, d["note"], d["reserve"]), ("allowed", "pacing: prefer a lighter model", 1))
 
     def test_reserve_lowers_the_ceiling_too(self):
-        st = {"date": "d1", "baseline": 90, "resets_at": FUT}
+        st = {"v": ug.STATE_VERSION, "date": "d1", "baseline": 90, "resets_at": FUT}
         self.assertEqual(self.go(D(93), st, 1)[0], "allowed")
         self.assertEqual(self.go(D(94), st, 1)[1]["reason"], "weekly ceiling")
 
@@ -340,9 +360,9 @@ class Reserve(unittest.TestCase):
     def run_with(self, running, per_worker=1.0, pct=50.0):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": pct, "resets_at": FUT, "observed_at": NOW}}), \
-                mock.patch.object(ug, "running_workers", return_value=running), \
+                mock.patch.object(ug, "live_workers", return_value=rows(running)), \
                 mock.patch.object(ug.time, "time", return_value=NOW):
-            ug.json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"), "baseline": 40,
+            ug.json.dump({"v": ug.STATE_VERSION, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"), "baseline": 40,
                           "resets_at": FUT}, open(t + "/claude.json", "w"))
             return ug.run("claude", 12, 95, per_worker=per_worker)
 
@@ -356,13 +376,16 @@ class Reserve(unittest.TestCase):
         self.assertEqual((r["verdict"], r["reserve"], r["running"]), ("allowed", 0.0, None))
 
     def test_running_workers_counts_active_terminals_of_one_provider(self):
-        rows = [{"projection": {"provider": {"id": p}}} for p in ("claude", "cursor", "claude")]
+        rows = [{"projection": {"provider": {"id": p}, "liveness": {"verdict": "live"}}}
+                for p in ("claude", "cursor", "claude")]
         def out(args, **kwargs):
             result = {"runs": [{"id": "run_a"}]} if "run-list" in args else {"workers": rows}
             return mock.Mock(stdout=json.dumps({"result": result}))
-        with mock.patch.object(ug.subprocess, "run", side_effect=out):
+        with mock.patch.object(ug, "live_workers", real_live_workers), \
+                mock.patch.object(ug.subprocess, "run", side_effect=out):
             self.assertEqual((ug.running_workers("claude"), ug.running_workers("cursor")), (2, 1))
-        with mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError):
+        with mock.patch.object(ug, "live_workers", real_live_workers), \
+                mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError):
             self.assertIsNone(ug.running_workers("claude"))
 
 
@@ -397,8 +420,8 @@ class DayStart(unittest.TestCase):
 
     def test_blocked_until_is_local_midnight_for_the_daily_cap_and_the_reset_for_the_ceiling(self):
         mid = ug.next_midnight(NOW)
-        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": FUT + 9 * 86400}, NOW), FUT + 9 * 86400)
-        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": NOW + 60}, NOW), NOW + 60)
+        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": FUT + 9 * 86400}, NOW), mid)
+        self.assertEqual(ug.blocked_until({"reason": "daily cap", "resets_at": NOW + 60}, NOW), mid)
         self.assertEqual(ug.blocked_until({"reason": "weekly ceiling", "resets_at": FUT}, NOW), FUT)
         self.assertGreater(mid, NOW)
         self.assertLessEqual(mid - NOW, 86400 + 3600)
@@ -417,7 +440,7 @@ class Show(unittest.TestCase):
     def test_show_lists_every_provider_in_one_table(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW}}), \
-                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
@@ -444,11 +467,11 @@ class Cursor(unittest.TestCase):
     """Only the Auto + Composer pool establishes Composer headroom."""
 
     def test_auto_composer_pool_controls_verdict_and_show(self):
-        for pct, expected in [(0, 0), (42.5, 0), (95, 3), (100, 3)]:
+        for pct, expected in [(0, 0), (42.5, 0), (95, 0), (100, 3)]:  # Cursor included ceiling is 100
             with self.subTest(pct=pct), tempfile.TemporaryDirectory() as t, \
                     mock.patch.object(ug, "STATE", t), \
                     mock.patch.object(ug.time, "time", return_value=NOW), \
-                    mock.patch.object(ug, "running_workers", return_value=0):
+                    mock.patch.object(ug, "live_workers", return_value=rows(0)):
                 payload = summary(100 if pct < 95 else 0)
                 payload["individualUsage"]["plan"].update(autoPercentUsed=pct, apiPercentUsed=100)
                 reading = ug.cursor_parse(payload, NOW)
@@ -464,7 +487,7 @@ class Cursor(unittest.TestCase):
     def check(self, pct, baseline=None, ends=NOW + 10 * 86400, running=0, cap=None):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=running):
+                mock.patch.object(ug, "live_workers", return_value=rows(running)):
             if pct is not None:
                 path = t + "/summary.json"
                 json.dump(summary(pct, ends), open(path, "w"))
@@ -473,7 +496,7 @@ class Cursor(unittest.TestCase):
             else:
                 ug.CURSOR_SUMMARY = NO_CURSOR
             if baseline is not None:
-                json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"), "baseline": baseline,
+                json.dump({"v": ug.STATE_VERSION, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"), "baseline": baseline,
                            "resets_at": ends}, open(t + "/cursor.json", "w"))
             try:
                 with contextlib.redirect_stdout(io.StringIO()) as out:
@@ -486,7 +509,7 @@ class Cursor(unittest.TestCase):
     def test_grok_reviewer_uses_the_shared_cursor_pool(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=0):
+                mock.patch.object(ug, "live_workers", return_value=rows(0)):
             path = t + "/summary.json"
             payload = summary(100)
             payload["individualUsage"]["plan"].update(autoPercentUsed=10)
@@ -538,7 +561,7 @@ class Cursor(unittest.TestCase):
         self.assertEqual(reading["resets_at"], float(payload["billingCycleEnd"]) / 1000)
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=0):
+                mock.patch.object(ug, "live_workers", return_value=rows(0)):
             path = t + "/summary.json"
             json.dump(payload, open(path, "w"))
             os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
@@ -555,7 +578,7 @@ class Cursor(unittest.TestCase):
     def test_worker_model_absent_from_the_measured_bucket_is_refused(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=0):
+                mock.patch.object(ug, "live_workers", return_value=rows(0)):
             payload = summary(10)
             payload["individualUsage"]["plan"].update(autoPercentUsed=10, apiPercentUsed=0)
             payload["planUsage"] = {"autoPercentUsed": 10, "totalPercentUsed": 10}
@@ -578,7 +601,7 @@ class Cursor(unittest.TestCase):
     def test_non_composer_model_never_allowed_from_auto_composer_pool(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=0):
+                mock.patch.object(ug, "live_workers", return_value=rows(0)):
             path = t + "/summary.json"
             payload = summary(100)
             payload["individualUsage"]["plan"].update(autoPercentUsed=10, apiPercentUsed=100)
@@ -753,7 +776,7 @@ class AutoCap(unittest.TestCase):
         reading = {"pct": 45.0, "resets_at": resets, "observed_at": NOW}
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
-                mock.patch.object(ug, "running_workers", lambda p: 0), \
+                mock.patch.object(ug, "live_workers", lambda p: []), \
                 mock.patch.object(ug, "start_of_day", lambda r, p, m: {"pct": 35.0, "resets_at": resets}), \
                 mock.patch.object(ug.time, "time", lambda: NOW):
             self.assertEqual(ug.run("claude", None, 95)["cap"], 15.0)
@@ -767,7 +790,7 @@ class IdleReading(unittest.TestCase):
         reading = {"pct": 94.0, "resets_at": FUT, "observed_at": old}
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
-                mock.patch.object(ug, "running_workers", return_value=1):
+                mock.patch.object(ug, "live_workers", return_value=rows(1)):
             self.assertEqual(ug.run("claude", 12, 95, now=NOW)["verdict"], "unknown")
             reading["resets_at"] = NOW - 1
             self.assertEqual(ug.run("claude", 12, 95, now=NOW)["verdict"], "unknown")
@@ -781,7 +804,7 @@ class Pick(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"other": lambda: readings.get("other")}), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=running), \
+                mock.patch.object(ug, "live_workers", return_value=rows(running)), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
             chain = chain or [{"provider": "claude", "model": "sonnet", "effort": "medium"},
@@ -797,7 +820,7 @@ class Pick(unittest.TestCase):
                 if pct is None:
                     continue
                 with open(t + "/" + provider + ".json", "w") as f:
-                    json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
+                    json.dump({"v": ug.STATE_VERSION, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
                                "baseline": other_baseline if provider == "other" else 40, "resets_at": FUT}, f)
                 if provider == "claude":
                     with open(t + "/claude-rate-limits.json", "w") as f:
@@ -834,7 +857,7 @@ class Pick(unittest.TestCase):
 
     def test_ties_keep_chain_order_and_reserve_can_block_all_gated_providers(self):
         self.assertIn("--agent claude", self.invoke(other=44)[1])
-        self.assertEqual(self.invoke(claude=94, other=94, running=1)[0], 4)   # cursor has no reading, which proves nothing
+        self.assertIn("--agent antigravity", self.invoke(claude=94, other=94, running=1)[1])   # no reading is allowed
 
     def test_pinned_roles_keep_first_allowed_entry(self):
         for role, pin in (("elon", False), ("release-manager", False), ("custom", True)):
@@ -857,9 +880,9 @@ class Pick(unittest.TestCase):
 
     def test_ungated_is_only_a_last_resort_and_unknown_does_not_prove_blocked(self):
         self.assertIn("--agent other", self.invoke(claude=95)[1])
-        self.assertEqual(self.invoke(claude=95, other=95)[0], 4)   # cursor has no reading, so antigravity is not a fallback yet
-        self.assertEqual(self.invoke(claude=None, other=95)[0], 4)
-        self.assertEqual(self.invoke(extra=("--avoid-family", "gpt"), claude=None)[0], 4)
+        self.assertIn("--agent antigravity", self.invoke(claude=95, other=95)[1])   # no reading is allowed
+        self.assertIn("--agent antigravity", self.invoke(claude=None, other=95)[1])
+        self.assertIn("--agent antigravity", self.invoke(extra=("--avoid-family", "gpt"), claude=None)[1])
 
     def test_unknown_role_uses_default_chain_and_models_from_file(self):
         status, out, _ = self.invoke(role="unlisted", default=True, claude=41)
@@ -888,7 +911,7 @@ class Pick(unittest.TestCase):
         pools = {"gemini-flash": {"pct": 5, "resets_at": FUT, "observed_at": NOW}}
         with tempfile.TemporaryDirectory() as t, \
                 mock.patch.dict(ug.READERS, {"antigravity": lambda: pools, "other": lambda: {"pct": 96, "resets_at": FUT, "observed_at": NOW}}), \
-                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()):
@@ -898,7 +921,7 @@ class Pick(unittest.TestCase):
                 json.dump(presets, f)
             for provider, pct in (("claude", 95), ("other", 96)):
                 with open(t + "/" + provider + ".json", "w") as f:
-                    json.dump({"date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
+                    json.dump({"v": ug.STATE_VERSION, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d"),
                                "baseline": 40, "resets_at": FUT}, f)
                 if provider == "claude":
                     with open(t + "/claude-rate-limits.json", "w") as f:
@@ -913,7 +936,7 @@ class Pick(unittest.TestCase):
     def test_reviewer_avoid_claude_nothing_when_all_cross_family_blocked(self):
         status, out, err = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, other=96,
                                        extra=("--avoid-family", "claude"))
-        self.assertEqual((status, out), (4, ""))
+        self.assertEqual((status, out), (0, "--agent antigravity --model gemini-3.8-flash\n"))  # no reading is allowed
 
     def test_reviewer_preset_chain_models(self):
         path = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
@@ -979,19 +1002,19 @@ class PickOrder(unittest.TestCase):
     def test_show_orders_by_fraction_with_unknown_providers_last(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 31.0, "resets_at": FUT, "observed_at": NOW}}), \
-                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             ug.main(["show"])
         self.assertEqual(out.getvalue().splitlines()[-1],
-                         "pick order now: claude 67.4%, cursor no reliable Cursor included-usage reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
+                         "pick order now: claude 64.0 pts/day, cursor no reliable Cursor included-usage reading; read the Cursor dashboard, antigravity/claude GetUserStatus returned no fresh valid pool quota, antigravity/gemini-flash GetUserStatus returned no fresh valid pool quota, antigravity/gemini-pro GetUserStatus returned no fresh valid pool quota")
 
     def test_show_handles_a_stale_weekly_ceiling_without_daily_numbers(self):
         reading = {"pct": 96, "resets_at": FUT, "observed_at": NOW - ug.MAX_AGE - 1}
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
-                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show"]), 0)
         self.assertIn("unknown", out.getvalue())
@@ -1038,7 +1061,7 @@ class RealReadingPolicy(unittest.TestCase):
         new = {"pct": 3, "resets_at": FUT, "observed_at": NOW}
         with mock.patch.dict(gate.READERS, {"claude": lambda: old}), \
                 mock.patch.object(gate, "refresh_reading", return_value=new) as refresh, \
-                mock.patch.object(gate, "running_workers", return_value=0):
+                mock.patch.object(gate, "live_workers", return_value=rows(0)):
             result = gate.run("claude", 1, 95, now=NOW)
         refresh.assert_called_once_with("claude")
         self.assertEqual((result["verdict"], result["weekly_used"]), ("allowed", 3))
@@ -1061,7 +1084,7 @@ class RealReadingPolicy(unittest.TestCase):
         gate = self.gate
         with mock.patch.dict(gate.READERS, {"claude": lambda: None}), \
                 mock.patch.object(gate, "refresh_reading", return_value={"pct": 93, "resets_at": FUT, "observed_at": NOW}), \
-                mock.patch.object(gate, "running_workers", return_value=2):
+                mock.patch.object(gate, "live_workers", return_value=rows(2)):
             result = gate.run("claude", .1, 95, now=NOW)
         self.assertEqual((result["verdict"], result["reserve"], result["reason"]), ("blocked", 2, "weekly ceiling"))
 
@@ -1071,7 +1094,7 @@ class RealReadingPolicy(unittest.TestCase):
             self.assertIsNone(gate.fresh({"pct": pct, "observed_at": NOW}, NOW))
         with mock.patch.dict(gate.READERS, {"claude": lambda: {"pct": 90, "observed_at": NOW, "resets_at": FUT}}), \
                 mock.patch.object(gate, "refresh_reading") as refresh, \
-                mock.patch.object(gate, "running_workers", return_value=0):
+                mock.patch.object(gate, "live_workers", return_value=rows(0)):
             result = gate.run("claude", None, 95, now=NOW)
         refresh.assert_not_called()
         self.assertEqual(result["verdict"], "allowed")
@@ -1081,7 +1104,7 @@ class RealReadingPolicy(unittest.TestCase):
         gate = self.gate
         with mock.patch.dict(gate.READERS, {"claude": mock.Mock(side_effect=ValueError("bad local data"))}), \
                 mock.patch.object(gate, "claude_refresh", return_value={"pct": 20, "observed_at": NOW}), \
-                mock.patch.object(gate, "running_workers", return_value=0):
+                mock.patch.object(gate, "live_workers", return_value=rows(0)):
             self.assertEqual(gate.run("claude", None, 95, now=NOW)["verdict"], "allowed")
 
     def test_refresh_age_uses_the_clock_after_provider_response(self):
@@ -1089,7 +1112,7 @@ class RealReadingPolicy(unittest.TestCase):
         with mock.patch.dict(gate.READERS, {"claude": lambda: None}), \
                 mock.patch.object(gate, "refresh_reading", return_value={"pct": 20, "observed_at": NOW + 10}), \
                 mock.patch.object(gate.time, "time", side_effect=[NOW, NOW, NOW + 10]), \
-                mock.patch.object(gate, "running_workers", return_value=0):
+                mock.patch.object(gate, "live_workers", return_value=rows(0)):
             result = gate.run("claude", None, 95)
         self.assertEqual((result["verdict"], result["reading_age_min"]), ("allowed", 0))
 
@@ -1312,6 +1335,204 @@ class PresetLinkTests(unittest.TestCase):
         self.assertFalse(os.path.lexists(self.dest))
 
 
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def served(stdout_for):
+    return mock.patch.object(ug.subprocess, "run", side_effect=lambda args, **kw: mock.Mock(stdout=stdout_for(args)))
+
+
+class Reserve987(unittest.TestCase):
+    """Owner decision 4 (#987): the running count works on today's worker-list shape; strong models hold 2."""
+
+    def sample(self):
+        with open(FIXTURES + "/orca-worker-list.json") as f:
+            return f.read()
+
+    def count(self, provider):
+        def stdout(args):
+            return json.dumps({"ok": True, "result": {"runs": [{"id": "run_a"}]}}) if "run-list" in args else self.sample()
+        with mock.patch.object(ug, "live_workers", real_live_workers), served(stdout):
+            return ug.running_workers(provider)
+
+    def test_counts_live_workers_in_a_real_captured_worker_list(self):
+        self.assertNotIn("projection", self.sample())  # today's shape has no projection field
+        self.assertEqual((self.count("claude"), self.count("cursor")), (3, 0))  # exited rows do not count
+
+    def test_strong_models_reserve_two_points_and_others_one(self):
+        with tempfile.TemporaryDirectory() as t:
+            for dispatch, model in (("ctx_a", "opus"), ("ctx_b", "sonnet"), ("ctx_c", "gemini-4-argon-high")):
+                with open(f"{t}/{dispatch}.json", "w") as f:
+                    json.dump({"dispatchId": dispatch, "agent": "claude", "model": model}, f)
+            workers = [{"dispatchId": d} for d in ("ctx_a", "ctx_b", "ctx_c", "ctx_unknown")]
+            with mock.patch.object(ug, "LAUNCHES", t), mock.patch.object(ug, "live_workers", return_value=workers):
+                self.assertEqual(ug.running_reserve("claude"), (4, 2 + 1 + 2 + 1))
+                self.assertEqual(ug.running_reserve("claude", 1.0), (4, 4.0))  # --reserve N is flat
+
+    def test_reserve_comes_from_the_config_file(self):
+        self.assertEqual(ug.load_config()["reserve_points"], {"strong": 2, "other": 1})
+        self.assertEqual(ug.worker_weight({"model": "opus"}), 2.0)
+        self.assertEqual(ug.worker_weight({"model": "grok-4.7-xhigh"}), 1.0)
+
+
+class Ceilings987(unittest.TestCase):
+    """Owner decision 3 (#987): one committed config, per provider ceilings."""
+
+    def test_config_holds_the_owner_ceilings(self):
+        self.assertEqual([ug.ceiling_for(p) for p in ("claude", "cursor", "antigravity")], [95, 100, 95])
+        with open(os.path.join(HERE, "..", "usage-gate.config.json")) as f:
+            self.assertEqual(json.load(f)["ceilings"], {"claude": 95, "cursor": 100, "antigravity": 95})
+
+    def test_cursor_runs_to_100_and_never_shows_negative_headroom(self):
+        row = {"verdict": "blocked", "weekly_used": 100, "ceiling": ug.ceiling_for("cursor"), "reserve": 2}
+        self.assertEqual(ug.headroom(row), (0.0, 0.0))
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"cursor": lambda: {"pct": 98, "resets_at": FUT, "observed_at": NOW}}), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            self.assertEqual(ug.run("cursor", 99, None)["verdict"], "allowed")
+            self.assertEqual(ug.run("claude", 99, None)["verdict"], "unknown")  # claude has its own ceiling, no reading
+
+    def test_check_uses_each_providers_ceiling_and_the_flag_overrides_it(self):
+        for provider, pct, ceiling_flag, expected in (("claude", 96, [], 3), ("cursor", 96, [], 0),
+                                                       ("cursor", 96, ["--ceiling", "95"], 3)):
+            with self.subTest(provider=provider, flag=ceiling_flag), tempfile.TemporaryDirectory() as t, \
+                    mock.patch.object(ug, "STATE", t), mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.dict(ug.READERS, {provider: lambda: {"pct": pct, "resets_at": FUT, "observed_at": NOW}}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ug.main(["check", "--provider", provider, *ceiling_flag]), expected)
+
+    def test_cursor_today_is_not_read_from_a_fake_midnight_baseline(self):
+        # A state file from before the baseline rules held baseline 0 for a cycle that began days ago.
+        old = {"date": "d1", "baseline": 0.0, "resets_at": FUT}
+        reading = {"pct": 100.0, "resets_at": FUT, "observed_at": NOW, "began_at": NOW - 5 * 86400}
+        _, detail, state = ug.decide(reading, old, "d1", NOW, None, 100)
+        self.assertEqual((detail["today_used"], state["baseline"]), (0.0, 100.0))
+        # A reset that moved mid day for a cycle that began before today is no zero baseline either.
+        moved = {"v": ug.STATE_VERSION, "date": "d1", "baseline": 50.0, "resets_at": FUT + 7200}
+        _, detail, _ = ug.decide({**reading, "pct": 60.0}, moved, "d1", NOW, None, 100)
+        self.assertEqual(detail["today_used"], 0.0)
+        # A cycle that began today does start from zero.
+        fresh_cycle = {**reading, "pct": 3.0, "began_at": ug.local_midnight(NOW) + 60}
+        _, detail, _ = ug.decide(fresh_cycle, moved, "d1", NOW, None, 100)
+        self.assertEqual(detail["today_used"], 3.0)
+
+
+class MissingReading987(unittest.TestCase):
+    """Owner decision 1 (#987): last good reading under 2 hours old and 10 points under the ceiling, else block."""
+
+    def check(self, last_pct, age_min, ceiling_flag=()):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: None}), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            with open(t + "/claude.last-good.json", "w") as f:
+                json.dump({"pct": last_pct, "resets_at": FUT, "observed_at": NOW - age_min * 60}, f)
+            return ug.run("claude", None, None)
+
+    def test_recent_reading_with_room_is_used_and_noted(self):
+        row = self.check(60, 119)
+        self.assertEqual((row["verdict"], row["weekly_used"], row["carried"]), ("allowed", 60, True))
+        self.assertIn("last good", row["note"])
+        self.assertEqual(row["reading_age_min"], 119)
+
+    def test_old_reading_blocks(self):
+        row = self.check(60, 121)
+        self.assertEqual(row["verdict"], "unknown")
+        self.assertIn("last good reading 121m old", row["reason"])
+        self.assertEqual(row["headroom"], 35)  # fleet-watch weighs this against its notice threshold
+
+    def test_reading_within_10_points_of_the_ceiling_blocks(self):
+        self.assertEqual(self.check(86, 5)["verdict"], "unknown")
+        self.assertEqual(self.check(85, 5)["verdict"], "allowed")
+
+    def test_a_fresh_reading_is_remembered_for_the_next_outage(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 42, "resets_at": FUT, "observed_at": NOW}}), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            ug.run("claude", None, None)
+            self.assertEqual(json.load(open(t + "/claude.last-good.json"))["pct"], 42)
+
+
+class DailyCap987(unittest.TestCase):
+    """Owner decision 2 (#987): the daily cap blocks automatic starts only."""
+    ST = {"v": ug.STATE_VERSION, "date": "d1", "baseline": 40, "resets_at": FUT}
+
+    def test_automatic_start_past_the_cap_is_blocked_until_midnight(self):
+        verdict, detail, _ = ug.decide(D(52), self.ST, "d1", NOW, 12, 95, auto=True)
+        self.assertEqual((verdict, detail["reason"]), ("blocked", "daily cap"))
+        self.assertEqual(ug.blocked_until(detail, NOW), ug.next_midnight(NOW))
+
+    def test_manual_start_past_the_cap_only_gets_a_note(self):
+        verdict, detail, _ = ug.decide(D(52), self.ST, "d1", NOW, 12, 95)
+        self.assertEqual((verdict, detail["note"]), ("allowed", "pacing: prefer a lighter model"))
+
+    def test_automatic_start_under_the_cap_is_allowed(self):
+        self.assertEqual(ug.decide(D(51), self.ST, "d1", NOW, 12, 95, auto=True)[0], "allowed")
+
+    def test_the_auto_flag_reaches_check_and_pick(self):
+        def go(*argv):
+            with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
+                    mock.patch.object(ug.time, "time", return_value=NOW), \
+                    mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 52, "resets_at": FUT, "observed_at": NOW}}), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                with open(t + "/claude.json", "w") as f:
+                    json.dump({**self.ST, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d")}, f)
+                return ug.main(list(argv)), out.getvalue()
+        self.assertEqual(go("check", "--provider", "claude", "--cap", "12")[0], 0)
+        status, out = go("check", "--provider", "claude", "--cap", "12", "--auto")
+        self.assertEqual((status, json.loads(out)["reason"]), (3, "daily cap"))
+
+    def test_pick_marks_an_automatic_start(self):
+        seen = []
+        def row(provider, cap, ceiling, **kw):
+            seen.append(kw["auto"])
+            return {"verdict": "blocked", "reason": "daily cap", "ceiling": 95, "weekly_used": 52}
+        with mock.patch.object(ug, "role_chain", return_value=([{"provider": "claude", "model": "opus"}], False)), \
+                mock.patch.object(ug, "is_builder_role", return_value=False), mock.patch.object(ug, "run", side_effect=row):
+            result = ug.pick("architect-pm", None, None, None, None, None, True)
+        self.assertEqual((seen, result["selected"], result["candidates"][0]["reason"]), ([True], None, "daily cap"))
+
+
+class Pace987(unittest.TestCase):
+    """Owner decision 6 (#987): non builder roles rank by headroom per day left; builders keep the fixed order."""
+    CHAIN = [{"provider": "claude", "model": "sonnet"}, {"provider": "cursor", "model": "grok-4.7-high"}]
+
+    def rows(self, provider, cap, ceiling, **kw):
+        # claude: 40 points for 5 days (8/day). cursor: 20 points resetting in half a day (40/day).
+        pct, resets = (55, NOW + 5 * 86400) if provider == "claude" else (80, NOW + 43200)
+        return {"verdict": "allowed", "ceiling": 95 if provider == "claude" else 100,
+                "weekly_used": pct, "resets_at": resets}
+
+    def pick(self, role, builder):
+        with mock.patch.object(ug, "role_chain", return_value=(self.CHAIN, False)), \
+                mock.patch.object(ug, "is_builder_role", return_value=builder), \
+                mock.patch.object(ug, "run", side_effect=self.rows), \
+                mock.patch.object(ug, "antigravity_models", return_value=None), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            return ug.pick(role, None, None, None, None)["selected"]["provider"]
+
+    def test_quota_about_to_reset_is_spent_first(self):
+        self.assertEqual(self.pick("qa-sdet-like", False), "cursor")
+
+    def test_builder_roles_keep_the_fixed_order_cursor_first(self):
+        self.assertEqual(self.pick("fullstack-dev", True), "cursor")
+        with mock.patch.object(ug, "run", side_effect=lambda provider, *a, **k: {
+                "verdict": "allowed", "ceiling": 95, "weekly_used": 95 - (90 if provider == "claude" else 1),
+                "resets_at": NOW + (86400 if provider == "claude" else 5 * 86400)}), \
+                mock.patch.object(ug, "role_chain", return_value=(self.CHAIN, False)), \
+                mock.patch.object(ug, "is_builder_role", return_value=True), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            # claude is far ahead on pace, but a builder still takes Cursor first
+            self.assertEqual(ug.pick("fullstack-dev", None, None, None, None)["selected"]["provider"], "cursor")
+
+    def test_pace_is_headroom_per_day_with_a_floor_on_days_left(self):
+        row = {"verdict": "allowed", "ceiling": 95, "weekly_used": 55, "resets_at": NOW + 2 * 86400}
+        self.assertEqual(ug.pace(row, NOW), 20.0)
+        soon = {**row, "resets_at": NOW + 60}
+        self.assertEqual(ug.pace(soon, NOW), 40 / ug.MIN_DAYS)
+        self.assertIsNone(ug.pace({"verdict": "allowed", "blind": True}, NOW))
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -1345,20 +1566,20 @@ class Banner(unittest.TestCase):
         self.assertIsNone(ug.parse_quota_banner("all good", NOW))
         self.assertIsNone(ug.parse_quota_banner("quota reached. Resets in 5h", NOW))  # no pool named
 
-    def test_banner_blocks_the_pool_until_reset_and_unknown_is_not_eligible(self):
+    def test_banner_blocks_the_pool_until_reset_and_other_pools_start_blind(self):
         with tempfile.TemporaryDirectory() as t:
             path = t + "/banner.json"
             self.assertEqual(ug.record_quota_banner(self.TEXT, NOW, path), "claude")
             with mock.patch.object(ug, "BANNER_FILE", path), \
                     mock.patch.object(ug, "antigravity_pools", return_value=None), \
-                    mock.patch.object(ug, "running_workers", return_value=0), \
+                    mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                     mock.patch.object(ug.time, "time", return_value=NOW + 60):
                 pools = ug.antigravity_reading()
                 self.assertEqual(set(pools), {"claude"})
                 row = ug.antigravity_result(pools, 95, NOW + 60, model="claude-sonnet-5-5-high")
                 self.assertEqual((row["verdict"], row["blocked_until"]), ("blocked", NOW + 94 * 3600 + 29 * 60))
                 self.assertEqual(ug.antigravity_result(pools, 95, NOW + 60, model="gemini-4-argon-low")["verdict"],
-                                 "unknown")
+                                 "allowed")  # no reading for that pool: allowed, as in check
             with mock.patch.object(ug, "BANNER_FILE", path), \
                     mock.patch.object(ug, "antigravity_pools", return_value=None), \
                     mock.patch.object(ug.time, "time", return_value=NOW + 95 * 3600):
@@ -1370,7 +1591,7 @@ class Banner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t, \
                 mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
                 mock.patch.object(ug, "antigravity_models", return_value={"gemini-4-argon-low"}), \
-                mock.patch.object(ug, "running_workers", return_value=0), \
+                mock.patch.object(ug, "live_workers", return_value=rows(0)), \
                 mock.patch.object(ug.time, "time", return_value=NOW):
             with open(t + "/p.json", "w") as f:
                 json.dump({"roles": {"dev": {"chain": chain}}}, f)

@@ -235,7 +235,7 @@ class Hook(unittest.TestCase):
 
     def test_cursor_non_composer_model_blocked_at_exhausted_composer_pool(self):
         cmd = "orca orchestration worker-start --task t --agent cursor --model gpt-5.6-sol-high"
-        self.composer_pool(95, 90)
+        self.composer_pool(100, 90)  # Cursor included ceiling is 100
         deny, err = self.run_hook(cmd)
         self.assertIn("blocked cursor", deny or "")
         self.assertNotIn("no usage reading for cursor", err)
