@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Record the Orca and gh replies fleet watch replays in tests.
 
-Runs as a shell with no terminal, against one run. Test sends use the subject
+Runs as a shell with no terminal. Test sends use the subject
 "fleet-watch recorder test". The worker-start call passes a repo id that does
-not exist, so a start cannot succeed.
+not exist, so a start cannot succeed. Sends go to a scratch run, never the
+coordinator Run.
 
-    python3 script/fleet-watch-record.py          # write fixtures
-    python3 script/fleet-watch-record.py --dry    # compare shapes, write nothing
+    python3 script/fleet-watch-record.py --dry
+    FLEET_WATCH_RECORD_RUN=run_<scratch> python3 script/fleet-watch-record.py
 
+`--dry` with no scratch run checks the saved files and does not call Orca.
 Fixtures go to script/tests/fixtures/fleet-watch/orca-<version>/.
 """
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +23,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'tests'))
 import fleet_watch_replies as replies  # noqa: E402
 
-RUN = 'run_2d30da234f80'
+# The coordinator Run. Recording and tests refuse it; a scratch run is the target.
+LIVE_RUN = 'run_2d30da234f80'
 SUBJECT = 'fleet-watch recorder test'
 BODY = 'fleet-watch recorder test'
 # A repo id Orca cannot resolve. Combined with a new worktree, the start fails
@@ -30,8 +34,13 @@ START = 'worker' + '-start'
 
 KEEP_ORCA = frozenset((
     'ORCA_USER_DATA_PATH', 'ORCA_CLI_BIN_DIR', 'ORCA_APP_VERSION', 'ORCA_IMAGE_PROTOCOL',
-    'ORCA_AGENT_HOOK_ENV', 'ORCA_WSL_HOSTS_GATE_STATE',
+    'ORCA_AGENT_HOOK_ENV', 'ORCA_WSL_HOSTS_GATE_STATE', 'ORCA_CLI_COMMAND',
 ))
+REQUIRED = (
+    'send-no-sender', 'send-from-receiver', 'send-to-run', 'send-from-owned-terminal',
+    'worker-list', 'worker-start-missing-repo', 'run-list', 'run-list-full', 'run-show',
+    'terminal-list', 'inbox', 'gh-pr-list',
+)
 GH_FIELDS = (
     'number,state,isDraft,headRefOid,headRefName,baseRefOid,mergeable,mergeStateStatus,'
     'reviewDecision,files,labels,comments,statusCheckRollup,mergeCommit,body'
@@ -47,8 +56,12 @@ def clean_env():
     return env
 
 
+def orca_bin(env):
+    return shlex.split(env.get('ORCA_CLI_COMMAND', 'orca'))
+
+
 def orca_version(env):
-    out = subprocess.run(['orca', '--version'], capture_output=True, text=True, env=env, timeout=15)
+    out = subprocess.run([*orca_bin(env), '--version'], capture_output=True, text=True, env=env, timeout=15)
     text = (out.stdout or out.stderr or '').strip().split()
     if not text:
         raise RuntimeError('orca --version printed nothing')
@@ -74,12 +87,12 @@ def error_code(stdout):
 
 
 def orca_json(args, env, timeout=60):
-    return run_cmd(['orca', *args, '--json'], env, timeout)
+    return run_cmd([*orca_bin(env), *args, '--json'], env, timeout)
 
 
-def coordinator_handle(env):
+def coordinator_handle(env, run):
     code, stdout, _stderr = orca_json(
-        ['orchestration', 'run-show', '--id', RUN, '--full'], env,
+        ['orchestration', 'run-show', '--id', run, '--full'], env,
     )
     if code != 0:
         raise RuntimeError('run-show failed: %s' % (error_code(stdout) or code))
@@ -106,7 +119,7 @@ def close_terminal(env, handle):
     orca_json(['terminal', 'close', '--terminal', handle], env)
 
 
-def public_argv(argv, patterns, homes):
+def public_argv(argv, patterns, homes, run):
     """Argv safe to commit. The live handles never enter the fixture."""
     keep = {
         'orca', 'gh', 'cursor', 'all', 'pr', 'list', MISSING_REPO, SUBJECT, BODY, GH_FIELDS,
@@ -114,9 +127,9 @@ def public_argv(argv, patterns, homes):
     }
     out = []
     for arg in argv:
-        if arg == RUN:
+        if arg == run:
             out.append('<run>')
-        elif arg == 'run:' + RUN:
+        elif arg == 'run:' + run:
             out.append('run:<run>')
         elif arg.startswith('--') or arg.isdigit() or arg in keep:
             out.append(arg)
@@ -127,23 +140,23 @@ def public_argv(argv, patterns, homes):
     return out
 
 
-def calls(receiver, owned):
+def calls(receiver, owned, run):
     send = ['orchestration', 'send', '--subject', SUBJECT, '--body', BODY]
     return [
         ('send-no-sender', [*send, '--to', receiver]),
         ('send-from-receiver', [*send, '--to', receiver, '--from', receiver]),
-        ('send-to-run', [*send, '--to', 'run:' + RUN]),
-        ('send-from-owned-terminal', [*send, '--to', 'run:' + RUN, '--from', owned]),
+        ('send-to-run', [*send, '--to', 'run:' + run]),
+        ('send-from-owned-terminal', [*send, '--to', 'run:' + run, '--from', owned]),
         ('worker-list', [
-            'orchestration', 'worker-list', '--run', RUN, '--include-remote', '--full',
+            'orchestration', 'worker-list', '--run', run, '--include-remote', '--full',
         ]),
         ('worker-start-missing-repo', [
-            'orchestration', START, '--spec', SUBJECT, '--agent', 'cursor', '--run', RUN,
+            'orchestration', START, '--spec', SUBJECT, '--agent', 'cursor', '--run', run,
             '--worktree', 'new-child', '--repo', MISSING_REPO,
         ]),
         ('run-list', ['orchestration', 'run-list']),
         ('run-list-full', ['orchestration', 'run-list', '--full']),
-        ('run-show', ['orchestration', 'run-show', '--id', RUN, '--full']),
+        ('run-show', ['orchestration', 'run-show', '--id', run, '--full']),
         # fleet-watch rpc() appends a second --json onto `terminal list --json`.
         ('terminal-list', ['terminal', 'list', '--json']),
         ('inbox', ['orchestration', 'inbox', '--limit', '5000']),
@@ -165,8 +178,8 @@ def gh_pr_list(env):
     }
 
 
-def clean_record(record, patterns, homes):
-    argv = public_argv(record['argv'], patterns, homes)
+def clean_record(record, patterns, homes, run):
+    argv = public_argv(record['argv'], patterns, homes, run)
     stdout = replies.redact_text(record['stdout'], patterns, homes)
     stderr = replies.redact_text(record['stderr'], patterns, homes)
     cleaned = {
@@ -186,9 +199,9 @@ def clean_record(record, patterns, homes):
     return cleaned
 
 
-def collect(env, receiver, owned):
+def collect(env, receiver, owned, run):
     records = []
-    for name, args in calls(receiver, owned):
+    for name, args in calls(receiver, owned, run):
         code, stdout, stderr = orca_json(args, env)
         if name == 'worker-start-missing-repo':
             try:
@@ -208,11 +221,53 @@ def collect(env, receiver, owned):
     return records
 
 
+def local_contract():
+    """Check the saved replies. This path never calls Orca."""
+    try:
+        directory = replies.version_dir()
+    except FileNotFoundError as exc:
+        print('fleet-watch-record: %s' % exc, file=sys.stderr)
+        return 1
+    patterns = replies.default_patterns()
+    missing = []
+    for name in REQUIRED:
+        path = directory / (name + '.json')
+        if not path.is_file():
+            missing.append(name)
+            continue
+        text = path.read_text()
+        kinds = replies.leak_kinds(text)
+        for cre in patterns:
+            if cre.search(text):
+                kinds.append('project')
+        if kinds:
+            print('fleet-watch-record: %s still has %s' % (name, ','.join(kinds)), file=sys.stderr)
+            return 1
+        replies.reply_shape(json.loads(text))
+    if missing:
+        print('missing %s' % ', '.join(missing), file=sys.stderr)
+        return 1
+    print('fleet-watch contract local %s' % directory.name, file=sys.stderr)
+    return 0
+
+
 def main(argv):
     dry = '--dry' in argv
+    run = os.environ.get('FLEET_WATCH_RECORD_RUN', '').strip()
+    if run == LIVE_RUN:
+        print('fleet-watch-record: refusing the coordinator run', file=sys.stderr)
+        return 2
+    if not run:
+        if dry:
+            return local_contract()
+        print('fleet-watch-record: set FLEET_WATCH_RECORD_RUN to a scratch run', file=sys.stderr)
+        return 2
+    if re.fullmatch(r'run_[A-Za-z0-9_-]+', run) is None:
+        print('fleet-watch-record: scratch run id is not a run id', file=sys.stderr)
+        return 2
     env = clean_env()
     version = orca_version(env)
-    # wrap-up tests put a fake orca on PATH. A real build prints a dotted version.
+    # A fake orca (wrap-up tests) does not print a dotted version. Do not send.
     if dry and re.fullmatch(r'\d+\.\d+\.\d+', version) is None:
         print('fleet-watch contract skipped', file=sys.stderr)
         return 0
@@ -224,10 +279,10 @@ def main(argv):
     homes = [str(Path.home())]
     owned = None
     try:
-        receiver = coordinator_handle(env)
+        receiver = coordinator_handle(env, run)
         owned = create_terminal(env)
-        records = collect(env, receiver, owned)
-        cleaned = [clean_record(record, patterns, homes) for record in records]
+        records = collect(env, receiver, owned, run)
+        cleaned = [clean_record(record, patterns, homes, run) for record in records]
     except RuntimeError as exc:
         print('fleet-watch-record: %s' % exc, file=sys.stderr)
         return 2

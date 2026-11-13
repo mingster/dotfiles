@@ -49,19 +49,66 @@ class Redact(unittest.TestCase):
 
 
 class ContractSkip(unittest.TestCase):
-    def test_dry_run_skips_a_fake_orca(self):
+    script = Path(__file__).resolve().parents[1] / 'fleet-watch-record.py'
+    live = 'run_2d30da234f80'
+
+    def run_recorder(self, env, *args):
+        return subprocess.run(
+            ['python3', str(self.script), *args],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+
+    def logging_orca(self, tmp, body):
+        log = Path(tmp) / 'orca.log'
+        fake = Path(tmp) / 'orca'
+        fake.write_text(
+            "#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %s\n%s" % (json.dumps(str(log)), body)
+        )
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        env = os.environ.copy()
+        env['PATH'] = tmp + os.pathsep + env.get('PATH', '')
+        env['ORCA_CLI_COMMAND'] = str(fake)
+        env.pop('FLEET_WATCH_RECORD_RUN', None)
+        return env, log
+
+    def test_dry_run_does_not_call_orca(self):
         with tempfile.TemporaryDirectory() as tmp:
-            fake = Path(tmp) / 'orca'
-            fake.write_text('#!/bin/sh\necho \'{"ok":true}\'\n')
-            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-            env = os.environ.copy()
-            env['PATH'] = tmp + os.pathsep + env.get('PATH', '')
-            proc = subprocess.run(
-                ['python3', str(Path(__file__).resolve().parents[1] / 'fleet-watch-record.py'), '--dry'],
-                capture_output=True, text=True, env=env, timeout=30,
-            )
+            env, log = self.logging_orca(tmp, 'echo \'{"ok":true}\'\n')
+            proc = self.run_recorder(env, '--dry')
+            text = log.read_text() if log.exists() else ''
         self.assertEqual(proc.returncode, 0)
-        self.assertIn('skipped', proc.stderr)
+        self.assertIn('local', proc.stderr + proc.stdout)
+        self.assertEqual(text, '')
+
+    def test_refuses_the_coordinator_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env, log = self.logging_orca(tmp, 'echo 1.4.258\n')
+            env['FLEET_WATCH_RECORD_RUN'] = self.live
+            proc = self.run_recorder(env, '--dry')
+            text = log.read_text() if log.exists() else ''
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn('refusing', proc.stderr)
+        self.assertEqual(text, '')
+        self.assertNotIn(self.live, proc.stdout)
+
+    def test_scratch_run_is_the_send_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env, log = self.logging_orca(tmp, r'''
+case "$*" in
+  *--version*) echo 1.4.258 ;;
+  *run-show*) echo '{"ok":true,"result":{"run":{"coordinator_handle":"term_placeholder"}}}' ;;
+  *terminal\ create*) echo '{"ok":true,"result":{"terminal":{"handle":"term_placeholder"}}}' ;;
+  *send*) echo '{"ok":true,"result":{"messageId":"<id>"}}' ;;
+  *) echo '{"ok":false,"error":{"code":"no_active_sender_terminal","message":"x"}}'; exit 1 ;;
+esac
+''')
+            env['FLEET_WATCH_RECORD_RUN'] = 'run_scratch'
+            proc = self.run_recorder(env, '--dry')
+            text = log.read_text() if log.exists() else ''
+        self.assertNotIn(self.live, text)
+        self.assertNotIn(self.live, proc.stdout + proc.stderr)
+        self.assertIn('run:run_scratch', text)
+        self.assertIn('send', text)
 
 
 class RecordedReplies(unittest.TestCase):

@@ -2441,7 +2441,7 @@ REMOTE
     tc=$("$here/fleet-toolchain-check.sh" 2>&1) || true
     [ -z "$tc" ] || echo "$tc"
   fi
-  # Recorded Orca reply shapes (#990). A drift fails the round; the recorder writes nothing.
+  # Saved Orca reply shapes (#990). Dry mode reads the files and does not call Orca.
   if [ -f "$here/fleet-watch-record.py" ]; then
     if ! command -v python3 >/dev/null 2>&1; then
       fail_item 'fleet-watch contract' 'python3 missing'

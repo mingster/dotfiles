@@ -49,7 +49,7 @@ The dispatcher keeps babysit, issue scan, rework and the head checks runs. Its o
 
 **Identity.** Fleet watch sends as itself, never as the receiver. PR #989 passes the receiving terminal as `--from`. Orca accepted it on the first pass after the merge (state `notice_sent_at` set at 21:46 on 2026-11-13, the first successful send this state file has recorded). It still hides who sent the mail and makes a Verdict routed to a lead look like it came from that lead, and it works only while Orca lets any process speak for any live terminal. The Orca CLI (1.4.258) says a sender in no Run must address `run:<id>` or `dispatch:<id>`.
 
-#990 recorded the replies from a shell with no terminal, Orca 1.4.258. A send with no `--from`, including a send to `run:<id>`, returns exit 1 and `no_active_sender_terminal`. A send whose `--from` is a live terminal titled `fleet-watch` and whose `--to` is `run:<id>` returns exit 0 and `{"ok": true, "result": {"messageId": "<id>"}}`. That owned terminal is the sender identity. The #989 `--from` of the coordinator terminal also returns exit 0, and it speaks as the receiver, so it stays the stopgap. Recordings are in `script/tests/fixtures/fleet-watch/orca-1.4.258/` (see Tests).
+#990 recorded the replies from a shell with no terminal, Orca 1.4.258. A send with no `--from`, including a send to `run:<id>`, returns exit 1 and `no_active_sender_terminal`. A send whose `--from` is a live terminal titled `fleet-watch` and whose `--to` is `run:<id>` returns exit 0 and `{"ok": true, "result": {"messageId": "<id>"}}`. That owned terminal is the sender identity. The #989 `--from` of the coordinator terminal also returns exit 0, and it speaks as the receiver, so it stays the stopgap. Recordings are in `script/tests/fixtures/fleet-watch/orca-1.4.258/` (see Tests). `wrap-up.sh --fleet` checks those files and does not call Orca. A fresh recording sets `FLEET_WATCH_RECORD_RUN` to a scratch run; the coordinator Run is refused.
 
 **Addressing.** Mail goes to the Run (`run:<id>`), not to a terminal handle. The Run id is read from Orca each pass (see Config). A Verdict for a dispatch with an owner record still goes to that lead.
 
@@ -124,7 +124,7 @@ New tests are named by behaviour, not by issue number (`test_fleet_watch_outbox.
 
 - A recorder script runs each call fleet watch makes (send, worker-list, worker-start failure, run-list, terminal list, inbox, `gh pr list`) against live Orca and GitHub and saves stdout, stderr and the exit code under `script/tests/fixtures/fleet-watch/orca-<version>/`, with handles and hosts replaced by placeholders.
 - The tests load replies from those files only. A test may not build an Orca reply inline.
-- A `fleet-watch-contract` check reruns the recorder in dry mode on the coordinator during `wrap-up.sh --fleet` and fails when a reply's shape (keys, error codes, exit code) differs from the recording. A new Orca version therefore fails loudly once, instead of fleet watch failing silently for days.
+- A `fleet-watch-contract` check during `wrap-up.sh --fleet` reads the saved replies and fails when one is missing or still contains a handle, host, or address. It does not call Orca, so a test never mails the coordinator Run. A fresh recording sets `FLEET_WATCH_RECORD_RUN` to a scratch run. The recorder refuses the coordinator Run.
 
 ## Tickets
 

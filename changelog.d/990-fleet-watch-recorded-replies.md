@@ -1,1 +1,1 @@
-Record the Orca and gh replies fleet watch tests replay, and the sender identity a shell with no terminal can use (#990).
+Record the Orca and gh replies fleet watch tests replay, and keep that check off the coordinator Run (#990).
