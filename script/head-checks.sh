@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
 # Database steps: a .agents/head-checks.conf line that needs Postgres runs on the head_checks_remote host when this
-# host has none. Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
+# host has no reachable local Postgres (pg_isready finds no server; having the client tools is not enough). Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
 # for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -332,7 +332,7 @@ if re.search(r"^bun test v", text, re.M):
 PYTEST
 }
 # A step that needs Postgres runs against the database host (head_checks_remote), never a host without it.
-# Without the database client here and no remote host, the step is a host fault: FAIL, never a pass.
+# Without a reachable local Postgres server and no remote host, the step is a host fault: FAIL, never a pass.
 db_step_re='(^|[^[:alnum:]_-])(createdb|dropdb|psql|pg_dump|pg_restore)([^[:alnum:]_-]|$)'
 db_marker_re='[[:space:]]#[[:space:]]*db[[:space:]]*$'
 db_remote_host="" db_remote_repo_dir="" db_remote_dir=""
@@ -350,7 +350,10 @@ db_remote_load() {
 # database host; prints nothing when it runs here. Returns 1 (a host fault) when it can run nowhere.
 db_step_runner() {
   [[ "$1" =~ $db_marker_re || "$1" =~ $db_step_re ]] || return 0
-  command -v "${HEAD_CHECKS_DB_PROBE:-createdb}" >/dev/null 2>&1 && return 0
+  # The probe is a command line (HEAD_CHECKS_DB_PROBE overrides it in tests). A missing pg_isready counts as no server.
+  local -a probe
+  read -r -a probe <<<"${HEAD_CHECKS_DB_PROBE:-pg_isready -q -t 2}"
+  "${probe[@]}" >/dev/null 2>&1 && return 0
   db_remote_load
   if [ -z "$db_remote_host" ] || [ -z "$db_remote_repo_dir" ] || [ -z "$db_remote_dir" ]; then
     return 1
@@ -389,7 +392,7 @@ while IFS= read -r command || [ -n "$command" ]; do
     # The database host has its own PATH and HOME; this host's would break the step there.
     [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
   else
-    printf 'Result: host fault; this host has no Postgres (%s: command not found) and no head_checks_remote database host is configured, so the database step did not run. Not a pass; run the head checks on the database host.\nDuration: 0s\n' "${HEAD_CHECKS_DB_PROBE:-createdb}" >> "$log"
+    printf 'Result: host fault; this host has no reachable local Postgres (probe: %s) and no head_checks_remote database host is configured, so the database step did not run. Not a pass; run the head checks on the database host.\nDuration: 0s\n' "${HEAD_CHECKS_DB_PROBE:-pg_isready -q -t 2}" >> "$log"
     rm -f "$output"
     exit 1
   fi
