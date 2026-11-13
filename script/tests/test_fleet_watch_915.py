@@ -6,6 +6,9 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fw_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fw_env)
 
 HOST_CONFIG = {'host_caps': {'local': 1}}
 
@@ -15,6 +18,9 @@ def row(dispatch, status, **extra):
 
 
 class AdmissionSeats(unittest.TestCase):
+    def setUp(self):
+        fw_env.quiet_host(self, fw)
+
     def admit(self, workers):
         return fw.admit('local', HOST_CONFIG, workers=workers)
 

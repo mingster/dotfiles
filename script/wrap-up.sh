@@ -2219,14 +2219,15 @@ scratch_root=${WRAP_UP_SCRATCH_ROOT-/tmp/claude-$(id -u)}
 loose_root=${WRAP_UP_LOOSE_ROOT-/tmp}
 state_dir=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
 # Slug of a path as the Claude Code scratch tree names it: every non alphanumeric character becomes a dash.
-slugify() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+# Pure bash, no fork: the walk below can visit tens of thousands of entries. Letters are listed, since a locale range matches é.
+slug_alnum=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 # True when some directory on disk has this slug. Walks down from / matching entries, so dashes need no guessing.
 slug_exists() {
   local dir=$1 rest=$2 entry name s rc
   if [ -n "${optional_deadline:-}" ] && [ "$SECONDS" -ge "$optional_deadline" ]; then return 2; fi
   for entry in "$dir"/* "$dir"/.[!.]*; do
     [ -d "$entry" ] || continue
-    name=${entry##*/}; s=$(slugify "$name")
+    name=${entry##*/}; s=${name//[!$slug_alnum]/-}
     if [ "$rest" = "$s" ]; then return 0; fi
     case "$rest" in
       "$s"-*)

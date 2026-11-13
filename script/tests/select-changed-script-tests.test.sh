@@ -401,4 +401,21 @@ case15_parallel_jobs() {
 }
 
 case15_parallel_jobs
-echo 'PASS: 20 acceptance cases'
+
+case18_first_tests_start_first() {
+  local fixture=$tmp/case18 out
+  mkdir -p "$fixture/script/tests"
+  for n in a b z; do printf '#!/usr/bin/env bash\necho pass-%s\n' "$n" >"$fixture/script/tests/$n.test.sh"; done
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$fixture" SELECT_SCRIPT_TESTS_SKIP=/dev/null SELECT_SCRIPT_TESTS_JOBS=2 \
+    SELECT_SCRIPT_TESTS_FIRST='script/tests/z.* script/tests/nothing.test.sh' \
+    bash "$root/script/select-changed-script-tests.sh" script/tests/a.test.sh script/tests/b.test.sh script/tests/z.test.sh 2>&1) \
+    || fail "case18 run failed: $out"
+  grep -Fxq 'Pool order (2 jobs): script/tests/z.test.sh script/tests/a.test.sh script/tests/b.test.sh' <<<"$out" \
+    || fail "case18 z must start first: $out"
+  grep -Fq 'pass-a' <<<"$out" && grep -Fq 'pass-b' <<<"$out" && grep -Fq 'pass-z' <<<"$out" || fail "case18 every test must run: $out"
+  grep -Eq '^Timed script/tests/z.test.sh: [0-9]+s, exit 0$' <<<"$out" || fail "case18 each pooled test reports its time: $out"
+  ok "case18 SELECT_SCRIPT_TESTS_FIRST starts its tests first"
+}
+
+case18_first_tests_start_first
+echo 'PASS: 21 acceptance cases'
