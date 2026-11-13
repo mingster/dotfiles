@@ -21,7 +21,7 @@ Read this before your first dispatch. Accounting for every worker follows pstack
 
 - At start and on every wake, settle each unreleased dispatch from `orca orchestration worker-list --run <your run> --json`; a stopped or failed one follows the lifecycle transition in the official Orca orchestration guide, preserving unmerged work. A new coordinator session adopts every live worker before new work.
 - Answer a worker only with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`. A bare `orca orchestration reply` does not wake an idle worker session (approvals sat 10+ minutes), so never use it: `orca-reply.sh` replies and then nudges the terminal, and refuses an empty `--to`.
-- Dispatch a verifier only after the PR checks are green at the head (`gh pr checks <n>`). A builder hands off only on green checks (its Finish waits for them), so a red or pending head is sent back to the builder, not to a verifier.
+- Never hand-dispatch a verifier: `fleet-watch.py` starts one once the PR checks are green at the head. A builder hands off only on green checks (its Finish waits for them), so a red or pending head goes back to the builder, not to a verifier.
 - **Cursor worker trust marker:** use `~/dotfiles/script/start-cursor-worker.sh` as described in `.claude/model-routing.md`, Cursor start rule. It creates the worktree and writes `.workspace-trusted` before spawning the worker.
 
 - **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `grok-4.7-xhigh` worker, merge on checks.

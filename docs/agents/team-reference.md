@@ -452,15 +452,18 @@ generated team copies that are not the current template render). No merge worker
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
-and intents that become Accepted). On the generated lane, a pure deletion of a canonical
+and intents that become Accepted) until #1018 lands. Under the pause list a role or hook change
+merges on a passing non-author Verdict with the coordinator's approval, and the owner approves
+only one that loosens a safety limit (the protected paths rule above). On the generated lane, a pure deletion of a canonical
 role file or of a shared hook copy that `agent-team.sh check` flags may ride along with the
 generated copies. On the verdict lane, a generated copy is accepted when its content at the
 head equals the template render at dotfiles `origin/main`, using the same `{{PROJECT_NAME}}`
 substitution as `agent-team.sh`, or when the path is a deletion `agent-team.sh check` demands.
 A copy that differs from that render still needs `--verdict-from`. An Accepted intent passes when every commit
 in the PR that touches that intent file carries a non-empty `Owner-approved: <owner> <date>
-(<where approved>)` trailer, meaning the owner already accepted it in chat; one commit without
-it refuses the PR.
+(<where approved>)` trailer, meaning the approver already accepted it in chat; one commit without
+it refuses the PR. In an agent team the coordinator accepts intents and specs and signs that
+trailer; the owner accepts only those that set money rules or prices (Owner pauses).
 It squash merges and reads the PR back as `MERGED`.
 
 ### Interpreters (asdf)

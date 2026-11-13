@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Prepare, commit and publish a GitHub PR using the repository checks and changelog rules. Use when asked to create a PR. In an agent team, publication belongs to Elon.
+description: Prepare, commit and publish a GitHub PR using the repository checks and changelog rules. Use when asked to create a PR. In an agent team, the PR owner pushes, opens the PR and merges it with ship.sh.
 ---
 
 # Create PR

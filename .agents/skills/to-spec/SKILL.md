@@ -42,7 +42,7 @@ This list of user stories should be extremely extensive and cover all aspects of
 
 ## User-facing copy
 
-Every new or changed string a user will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording. The owner approves this copy when he accepts the spec; there is no copy approval at merge. Write "none" when nothing user-facing changes.
+Every new or changed string a user will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording. The owner approves this copy when he accepts the spec; in an agent team the copy is reviewed with the spec and the owner sees it in the look before production (`team.md`, Owner pauses). There is no copy approval at merge. Write "none" when nothing user-facing changes.
 
 ## Implementation Decisions
 

@@ -1,7 +1,7 @@
 # Antigravity (agy) and Orca across projects
 
 1. **Project memory (`MEMORY.md`):** `agy` does not auto-load Claude Code's `MEMORY.md` at startup. When project history or past decisions matter, check `~/.claude/projects/<encoded-repo-path>/memory/MEMORY.md` (for example `-Users-example-GitHub-dotfiles`).
-2. **Local commits only:** in any agent team worktree, commit with `git -c user.email="mingster@users.noreply.github.com" commit -m "..."`. The PR owner pushes, opens the PR and merges it with `~/dotfiles/script/ship.sh` (`templates/agent-team/docs/agents/team.md`, Publication).
+2. **Commits and publication:** in any agent team worktree, commit with `git -c user.email="mingster@users.noreply.github.com" commit -m "..."`. The PR owner pushes, opens the PR and merges it with `~/dotfiles/script/ship.sh` (`templates/agent-team/docs/agents/team.md`, Publication).
 3. **Notifying the coordinator via Orca orchestration:**
    - Read the active coordinator Run ID from `~/.claude/state/fleet-watch-elon.json` (`runs[0].id` and `runs[0].terminal`) or `orca orchestration run-list --json`.
    - If the current `agy` terminal is the exact process owning an active Dispatch, report with `orca orchestration send --run <run_id> --from "$ORCA_TERMINAL_HANDLE" --type worker_done --outcome succeeded --task-id <task_id> --dispatch-id <dispatch_id> ...`.

@@ -46,7 +46,7 @@ The rule itself is in `AGENTS.md` (Token budget); this section only records the 
 
 ## 7. FinOps Cost Gate (10-Turn Checkpoint)
 - Turn Count: 2 of 10
-- Rule: After 10 autonomous turns, snapshot state and confirm with the owner before continuing.
+- Rule: After 10 autonomous turns, snapshot state to `active_run.md` and continue; never pause for the owner (`team.md`, Owner pauses). Stop only on the Three-Strike Hard Stop.
 
 ```
 

@@ -72,8 +72,8 @@ sequenceDiagram
 
     RM->>RM: Daily 19:00 Taiwan time staging deploy
     RM->>QA: swarm staging review (full regression, smoke, changed pages on phone viewport; all pages weekly)
-    CEO->>Owner: One-line staging summary for same-day production Go
-    Owner->>RM: Explicit Owner Go for exact production SHA
+    RM->>RM: Playground regression on the staging SHA while production holds only test data
+    Owner->>RM: Owner's go for the exact production SHA, only once a real store is live
     RM->>RM: Production backup, deploy and live smoke check (auto code rollback on smoke fail)
 ```
 
@@ -85,7 +85,7 @@ Each ready GitHub issue carries in one text (body or a single comment) these thr
 2. **`Requirement owner:`** the requester and reason (per The Algorithm: question the requirement first).
 3. **`Deleted:`** what requirement or step was removed, or `nothing, because ...`.
 
-Pre-build grill gate (user rule 2026-11-06): a multi-role grill runs only for **money** (payments, billing, refunds, ledger, credits, pricing or entitlements) with `secops-finops`, `architect-pm` and the coordinator, and for **new UI pages** with `sales-marketing` and the coordinator. The coordinator approves the result; for money rules and prices the build runs while the owner reviews it, and only the merge waits. All other work has no grill: the coordinator decides and records it on the issue. Exact user-facing copy in `tw`, `en` (fluent American English, written natively) and `jp` (natural Japanese, written natively) is approved at the spec.
+Pre-build grill gate (user rule 2026-11-06): a multi-role grill runs only for **money** (payments, billing, refunds, ledger, credits, pricing or entitlements) with `secops-finops`, `architect-pm` and the coordinator, and for **new UI pages** with `sales-marketing` and the coordinator. The coordinator approves the result; for money rules and prices the build runs while the owner reviews it, and only the merge waits. All other work has no grill: the coordinator decides and records it on the issue. Exact user-facing copy in `tw`, `en` (fluent American English, written natively) and `jp` (natural Japanese, written natively) is reviewed with the spec by the team, and the owner sees it in the look before production (Owner pauses); nobody asks him again at merge.
 
 Every code change passes `script/head-checks.sh` once per head and an independent cross-family review before merge. The verifier never runs unit tests, `tsc` or lint; it reads the diff and the `head-checks.sh` Checks receipt, proves load-bearing behaviour live (browser at phone viewport for UI, real API call or script run), answers the three review questions (does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix), and posts `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>` with `Command: <exact test command run>`. Extra Strong (Claude Opus) cross review is required only for money transactions or when the coordinator or the user explicitly requests it on the issue or PR. A PASS Verdict and Checks PASS carry across a clean merge of `main` (`verdict_carry`).
 
