@@ -485,6 +485,86 @@ class ProjectConfigRules(GuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command)
 
+    def test_nested_command_next_to_the_owner_files_is_denied(self):
+        """Verdict on #938: `--body-file <(bin/owner-approve.sh host)` ran the owner script. Any nested command
+        (process, command substitution, backtick) in a command that names the script or the approval file is denied."""
+        a, s = self.approval, "bin/owner-approve.sh host"
+        cases = [f"gh issue comment 5 --body-file <({s})", f"gh issue comment 5 -F <({s})",
+                 f"gh issue comment 5 --body-file=<({s})", f"gh issue comment 5 --body-file - < <({s})",
+                 f"{s} | gh issue comment 5 --body-file -", f"gh issue comment 5 --body-file <(cat {a})",
+                 f"orca orchestration reply --id 1 --body-file <({s})",
+                 f"gh issue comment 5 --body x <({s})", f"cat <(rm {a})", f"diff <({s}) /dev/null",
+                 f"cat >({s})", f"tee >(rm {a})", f"gh issue comment 5 --body \"$(cat {a})\"",
+                 f"gh issue comment 5 --body \"`cat {a}`\"", f"cat $(echo {a})", f"echo $(rm {a})",
+                 "cat <(bin/'owner-approve'.sh host)", "cat <(bin/owner-appr\"ove\".sh host)",
+                 "cat <(bin/owner-appr\\ove.sh host)", "cat <(sh bin/owner-approve.sh host)"]
+        for command in cases:
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_nested_commands_without_the_owner_files_still_pass(self):
+        for command in ("diff <(echo a) <(echo b)", "cat <(date)", "echo $(date) > /dev/null"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_single_quoted_or_escaped_nested_syntax_is_plain_text(self):
+        self.assertAllowed("gh issue comment 5 --body 'see <(x) and bin/owner-approve.sh'")
+        self.assertAllowed('gh issue comment 5 --body "see \\$(x) and bin/owner-approve.sh"')
+        self.assertAllowed(f'gh issue comment 5 --body "<(x) {self.approval}"')  # `<(` is text inside double quotes
+
+    def test_every_file_flag_spelling_is_a_read_of_that_path(self):
+        a = self.approval
+        folder_file = os.path.join(self.approval_dir, "approval-secret")
+        secret = "vault/secrets/key"
+        for path in (a, folder_file, secret, os.path.join(self.approval_dir, "other")):
+            for command in (f"gh issue comment 5 -F {path}", f"gh issue comment 5 -F{path}",
+                            f"gh issue comment 5 -F={path}", f"gh issue comment 5 --body-file {path}",
+                            f"gh issue comment 5 --body-file={path}", f"gh pr create --body-file={path}",
+                            f"gh release create v1 --notes-file {path}", f"gh api x --input {path}",
+                            f"gh api x --input={path}", f"gh api x -F body=@{path}", f"gh api x --field body=@{path}",
+                            f"gh api x --field=body=@{path}", f"orca orchestration send --body-file {path}",
+                            f"orca orchestration send --body-file={path}", f"git commit -F {path}",
+                            f"git commit --file={path}", f"env gh issue comment 5 -F {path}"):
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+
+    def test_stdin_file_flag_cannot_be_fed_the_approval_file(self):
+        a = self.approval
+        for command in (f"gh issue comment 5 --body-file - < {a}", f"gh issue comment 5 --body-file -<{a}",
+                        f"gh issue comment 5 -F - < {a}", f"gh issue comment 5 -F- <{a}",
+                        f"gh api x --input - < {a}", f"gh issue comment 5 --body-file=- < {a}",
+                        f"cat {a} | gh issue comment 5 --body-file -", f"cat {a} | gh issue comment 5 -F -",
+                        f"cat {a} | gh api x --input -", f"cat < {a} | gh issue comment 5 --body-file -",
+                        f"head -c 500 {a} | gh issue comment 5 --body-file=-",
+                        f"cat {a} | tr a b | gh issue comment 5 --body-file -",
+                        f"jq . {a} | orca orchestration send --body-file -",
+                        f"cat {a} |& gh issue comment 5 --body-file -",
+                        f"cat vault/secrets/key | gh issue comment 5 -F -"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_file_flags_on_other_paths_and_prose_pipes_pass(self):
+        msg = os.path.join(self.home, "msg.md")
+        for command in (f"gh issue comment 5 -F {msg}", f"gh issue comment 5 -F{msg}",
+                        f"gh issue comment 5 --body-file={msg}", f"gh api x --input {msg}",
+                        f"gh api x -F body=@{msg}", f"gh api x -F title=hello", f"git commit -F {msg}",
+                        f"cat {msg} | gh issue comment 5 -F -", f"gh issue comment 5 --body-file - < {msg}",
+                        f"gh issue comment 5 --body-file - < {msg} # {self.approval} in a comment",
+                        f"cat {msg}; gh issue comment 5 --body-file {msg}"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_message_written_with_the_write_tool_may_name_the_files(self):
+        msg = os.path.join(self.home, "msg.md")
+        with open(msg, "w") as handle:
+            handle.write(f"The owner runs bin/owner-approve.sh host. The file is {self.approval}.\n")
+        for command in (f"gh issue comment 5 --body-file {msg}", f"gh issue comment 5 -F {msg}",
+                        f"gh issue comment 5 --body-file={msg}", f"cat {msg} | gh issue comment 5 --body-file -",
+                        f"gh issue comment 5 --body-file - < {msg}",
+                        f"orca orchestration send --subject s --body-file {msg}"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
     def test_heredoc_message_shapes_that_hid_commands_stay_denied(self):
         """The bypasses of the two FAIL Verdicts on #932: bash 3.2 ends the heredoc early, so nothing is stripped."""
         hidden = ("bin/owner-approve.sh host", f"echo x > {self.approval}", f"rm {self.approval}",

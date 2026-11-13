@@ -1486,6 +1486,161 @@ def check_approval_secret_read(path):
             deny_approval_secret()
 
 
+def approval_markers():
+    markers = ["approval.json", "approval-secret"]
+    if APPROVAL_NAMESPACE:
+        markers.append(f".config/{APPROVAL_NAMESPACE}")
+    if APPROVAL_FILE_OVERRIDE:
+        markers.append(os.path.dirname(APPROVAL_FILE_OVERRIDE) + os.sep)
+    return markers
+
+
+def has_active_substitution(command):
+    """True when the shell would run something nested: `<(`, `>(`, `$(` or a backtick.
+    Single-quoted and escaped text is data; inside double quotes only `$(` and backticks run."""
+    quote, i = None, 0
+    while i < len(command):
+        c = command[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif c == "'" and quote is None:
+            quote = "'"
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "`" or command.startswith("$(", i):
+            return True
+        elif quote is None and c in "<>" and command.startswith("(", i + 1):
+            return True
+        i += 1
+    return False
+
+
+def check_substitution_near_owner_files(command):
+    """A nested command can run the owner script or touch the approval file with words this guard never sees
+    (a process substitution as a `--body-file` path, `cat <(...)`). So a command that has any nested command
+    and also names the owner script or the approval file is denied as a whole, whatever program it is."""
+    if not has_active_substitution(command):
+        return
+    flat = re.sub(r"[\\'\"]", "", command)
+    if SCRIPT_NAME.search(flat) or any(m in flat for m in approval_markers()):
+        deny(f"A command that names {APPROVE} or the owner's approval file cannot also contain `<(...)`, `>(...)`, "
+             "`$(...)` or backticks: the nested command runs without the guard reading it. To post text that names "
+             "them, write the text with the Write tool and pass `--body-file <path>`.")
+
+
+def is_credential_path(value, cwd=None):
+    """The owner's approval folder (file and secret) or anything under the secrets dir."""
+    if not value or value == "-":
+        return False
+    expanded = os.path.expandvars(os.path.expanduser(value))
+    if "$(" in expanded or "`" in expanded or "<(" in expanded or ">(" in expanded:
+        return True  # a nested command picks the path, so it may point anywhere
+    full = os.path.normpath(os.path.join(cwd or GATE_CWD or os.getcwd(), expanded))
+    folders = {os.path.dirname(c) for c in approval_file_candidates()}
+    if APPROVAL_FILE_OVERRIDE:
+        folders.add(os.path.dirname(APPROVAL_FILE_OVERRIDE))
+    for p in {full, os.path.realpath(full)}:
+        if os.path.basename(p) in {"approval.json", "approval-secret"}:
+            return True
+        if any(p == f or p.startswith(f.rstrip(os.sep) + os.sep) for f in folders):
+            return True
+        if APPROVAL_NAMESPACE and f".config/{APPROVAL_NAMESPACE}" in p:
+            return True
+        if SECRETS_DIR.search(p) or SECRET_FILE.search(p):
+            return True
+    return False
+
+
+# Flags by which gh, orca and git read a file. `-` means standard input.
+FILE_READ_LONG = re.compile(r"^--(?:[a-z]+-)*file$|^--input$|^--field$")
+
+
+def file_read_operands(base, args):
+    """Every path a gh, orca or git command is told to read, from `-F x`, `-Fx`, `--body-file x`,
+    `--body-file=x`, `--input x`, `--input=x` and gh api `-F key=@x`."""
+    if base not in {"gh", "orca", "git"}:
+        return []
+    out = []
+    for i, a in enumerate(args):
+        value = None
+        if a in {"-F", "--field"} or FILE_READ_LONG.match(a):
+            value = args[i + 1] if i + 1 < len(args) else None
+        elif a.startswith("--") and "=" in a and FILE_READ_LONG.match(a.split("=", 1)[0]):
+            value = a.split("=", 1)[1]
+        elif a.startswith("-F") and len(a) > 2:
+            value = a[2:].lstrip("=")
+        if value is None:
+            continue
+        out.append(value)
+        if "=@" in value:
+            out.append(value.split("=@", 1)[1])
+    return out
+
+
+def redirect_sources(tokens):
+    """Paths after `<` (not `<<`, `<<<` or `<(`) in a segment's words."""
+    out = []
+    for i, t in enumerate(tokens):
+        if t.startswith("<") and not t.startswith(("<<", "<(")):
+            path = t[1:] or (tokens[i + 1] if i + 1 < len(tokens) else "")
+            if path:
+                out.append(path)
+    return out
+
+
+def segment_names_credential(segment):
+    tokens = words(segment)
+    prog, args = program_and_args(tokens)
+    if not prog:
+        return False
+    base = os.path.basename(prog)
+    if base in {"echo", "printf"} or text_program(base, args):
+        return False
+    markers = approval_markers()
+    if any(m in t for t in tokens for m in markers) or SCRIPT_NAME.search(segment):
+        return True
+    return any(is_credential_path(t.lstrip("<>")) for t in tokens[1:] if "/" in t or t.startswith("~"))
+
+
+def check_file_reads(command):
+    """Deny gh, orca or git reading the approval file or the credential folders, by any flag spelling,
+    from standard input (`--body-file -`) fed by a redirect or by a pipe from a command that names them."""
+    segs = segments(command)
+    positions, cursor = [], 0
+    for s in segs:
+        at = command.find(s, cursor)
+        positions.append((at, at + len(s)) if at >= 0 else (cursor, cursor))
+        cursor = max(cursor, positions[-1][1])
+    for n, seg in enumerate(segs):
+        tokens = words(seg)
+        prog, args = program_and_args(tokens)
+        if not prog:
+            continue
+        base = os.path.basename(prog)
+        operands = file_read_operands(base, args)
+        for value in operands:
+            if is_credential_path(value):
+                deny(f"`{base}` would read {value}, which is the owner's approval or a credential file, and post or "
+                     "store its contents. Agents never read them. Write the message text with the Write tool and "
+                     "pass that file.")
+        if "-" not in operands:
+            continue
+        for src in redirect_sources(tokens):
+            if is_credential_path(src):
+                deny(f"`{base}` reads standard input from {src}, the owner's approval or a credential file. "
+                     "Agents never read them.")
+        k = n
+        while k > 0 and re.fullmatch(r"\s*\|&?\s*", command[positions[k - 1][1]:positions[k][0]]):
+            k -= 1
+            if segment_names_credential(segs[k]):
+                deny(f"`{base}` reads standard input from a command that names the owner's approval file or "
+                     f"{APPROVE}. Agents never post those contents. Write the message text with the Write tool "
+                     "and pass that file.")
+
+
 def check_risky(segment, base, args, depth):
     tokens = words(segment)
     viewer = read_only_viewer(base, args)
@@ -2790,8 +2945,10 @@ def check_hidden_script_paths(command, cwd):
 def check_command(command):
     command = report_command_text(command)
     check_exact_only_scripts(command, GATE_CWD)
+    check_substitution_near_owner_files(command)
     texts = [command, *substitutions(command)]
     for text in texts:
+        check_file_reads(text)
         cur_cwd = GATE_CWD
         for seg in segments(text):
             check_segment(seg, cwd=cur_cwd)
