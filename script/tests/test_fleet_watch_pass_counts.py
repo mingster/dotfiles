@@ -1,5 +1,7 @@
 """Each fleet-watch pass logs start, refusal, park, failure and send counts."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -203,26 +205,39 @@ class PassCounts(unittest.TestCase):
         def deliver(name):
             recorded = load_reply(name)
             fw.begin_pass_counts()
+            seen = []
 
             def fake_run(cmd, **kwargs):
+                seen.append(list(cmd))
                 return subprocess.CompletedProcess(
                     cmd, recorded['exit_code'], stdout=recorded['stdout'], stderr=recorded['stderr'],
                 )
 
             state = {}
-            with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            log = Path(self.tmp.name) / (name + '.log')
+            err = io.StringIO()
+            with patch.dict(os.environ, {'FLEET_WATCH_LOG_PATH': str(log)}), \
+                    patch.object(fw.subprocess, 'run', side_effect=fake_run), \
+                    contextlib.redirect_stderr(err):
                 fw.deliver_notices(config, state, [fw.Urgent('boom')], now=100.0)
-            return state
+            text = log.read_text(encoding='utf-8') if log.exists() else ''
+            return state, text, err.getvalue(), seen
 
-        sent_state = deliver('send-from-owned-terminal')
+        sent_state, sent_log, _sent_err, seen = deliver('send-from-owned-terminal')
         self.assertIn('sent=1', fw.pass_counts_line())
         self.assertIn('send_failed=0', fw.pass_counts_line())
-        self.assertNotIn('term_live', sent_state.get('notice_queue', {}))
+        self.assertIn('sent=1', sent_log)
+        self.assertNotIn('run:run_x', sent_state.get('notice_queue', {}))
+        send = [cmd for cmd in seen if 'send' in cmd][0]
+        self.assertEqual(send[send.index('--to') + 1], 'run:run_x')
+        self.assertEqual(send[send.index('--from') + 1], 'term_live')
 
-        refused_state = deliver('send-no-sender')
+        refused_state, refused_log, refused_err, _seen = deliver('send-no-sender')
         self.assertIn('sent=0', fw.pass_counts_line())
         self.assertIn('send_failed=1', fw.pass_counts_line())
-        self.assertIn('term_live', refused_state.get('notice_queue', {}))
+        self.assertIn('run:run_x', refused_state.get('notice_queue', {}))
+        self.assertIn('no_active_sender_terminal', refused_err)
+        self.assertIn('no_active_sender_terminal', refused_log)
         self.assertEqual(load_reply('send-no-sender')['exit_code'], 1)
 
     def test_wrapper_summary_carries_the_pass_counts(self):

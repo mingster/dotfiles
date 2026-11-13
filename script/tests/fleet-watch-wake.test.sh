@@ -40,13 +40,13 @@ class WakePath(unittest.TestCase):
 
     def test_urgent_notice_reaches_the_coordinator_inbox_at_once(self):
         got = self.deliver(watch.Urgent('failed dispatch d1'), {'notice_sent_at': {'term_coord': 100}}, 101)
-        self.assertEqual(got, [('term_coord', 'failed dispatch d1')])
+        self.assertEqual(got, [('run:r1', 'failed dispatch d1')])
 
     def test_ordinary_notice_reaches_the_inbox_within_one_digest_interval(self):
         state = {}
-        self.assertEqual(self.deliver('ship dotfiles #1 abc', state, 1000), [('term_coord', 'ship dotfiles #1 abc')])
+        self.assertEqual(self.deliver('ship dotfiles #1 abc', state, 1000), [('run:r1', 'ship dotfiles #1 abc')])
         self.assertEqual(self.deliver('rework dotfiles #2 def', state, 1000 + 599), [])
-        self.assertEqual(self.deliver('rework dotfiles #3 123', state, 1000 + 600)[0][0], 'term_coord')
+        self.assertEqual(self.deliver('rework dotfiles #3 123', state, 1000 + 600)[0][0], 'run:r1')
         self.assertLessEqual(watch.DIGEST_SECONDS, 10 * MINUTE)
 
 if __name__ == '__main__':
