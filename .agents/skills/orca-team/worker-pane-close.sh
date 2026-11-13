@@ -261,8 +261,11 @@ if os.environ.get("PANE_RM_WORKER_LIST_OK") != "1":
 final = os.environ.get("PANE_RM_FINAL", "")
 if final in ("list_running", "show_unknown", "none", ""):
     sys.exit(1)
-if final not in ("list_final", "show_final", "show_not_found", "explicit_final"):
+if final not in ("list_final", "show_final", "show_not_found", "explicit_final", "aged_final"):
     sys.exit(1)
+# An aged record of an ended or vanished dispatch is forgotten without the inventory: removing it closes nothing.
+if final == "aged_final":
+    sys.exit(0)
 try:
     hs = [ln.strip() for ln in open(os.environ["PANE_RM_STATE"]) if ln.strip()]
 except Exception:
@@ -380,7 +383,8 @@ except Exception: print("")' "$here")
     handles+=("$h")
   done
   if [ "${#handles[@]}" -gt 0 ]; then
-    printf '%s\n' "${handles[@]}" > "$state/.$d.$$" && mv -f "$state/.$d.$$" "$f"
+    # An unchanged record keeps its mtime, which is what ages it out.
+    printf '%s\n' "${handles[@]}" > "$state/.$d.$$" && { cmp -s "$state/.$d.$$" "$f" && rm -f "$state/.$d.$$" || mv -f "$state/.$d.$$" "$f"; }
   else
     list=$(close_rpc terminal list --json 2>/dev/null) || list=''
     pane_record_rm "$d" explicit_final "$worker_list_ok" "$list" \
@@ -450,14 +454,6 @@ try:
 except Exception: pass' "$project_root")
 # Enumerate every Run's pages so an ended dispatch without a pane record is covered on wake.
 dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done)
-if [ -n "$project" ] && found=$(each_worker_page '
-for w in r["workers"]:
-    wid=ws.workspace_id(w)
-    if wid.startswith(sys.argv[2]+"::") and w.get("dispatchId") and ws.is_final(w):
-        print(w["dispatchId"])' "$project"); then
-  dispatches="$dispatches
-$found"
-fi
 # Read each list once for the whole sweep, not once per dispatch. Any list that cannot be read closes nothing.
 sweep_ok=1; sweep_coords=''; sweep_busy=''; sweep_list=''
 sweep_rows_file=$(mktemp); sweep_rows_cleanup() { rm -f "$sweep_rows_file"; }
@@ -480,7 +476,67 @@ for w in r["workers"]:
     wid=ws.workspace_id(w)
     if wid: print(d+"\twt:"+wid.split("::",1)[-1])' "$here") || sweep_ok=0
 unset ORCA_SWEEP_ROWS_FILE
+# The same rows cover the ended dispatches of this project that have no pane record. One walk of the Runs, not two.
+found=''
+if [ -n "$project" ] && [ "$sweep_ok" -eq 1 ]; then
+  found=$(ROWS="$sweep_rows_file" HERE="$here" PROJECT="$project" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+for line in open(os.environ["ROWS"]):
+    i, _, raw = line.rstrip("\n").partition("\t")
+    try: w = json.loads(raw)
+    except Exception: continue
+    if i and ws.workspace_id(w).startswith(os.environ["PROJECT"] + "::") and ws.is_final(w): print(i)' 2>/dev/null) || found=''
+  dispatches="$dispatches
+$found"
+fi
+# A record older than ORCA_PANE_RECORD_MAX_AGE minutes (default 3 hours, past the 30 minute retry window) whose dispatch
+# ended or no longer exists is forgotten, so ended workers do not cost a worker-show and a release every round. A dispatch
+# still running keeps its record. Needs every Run and page read (sweep_ok).
+if [ "$sweep_ok" -eq 1 ]; then
+  aged=$(find "$state" -maxdepth 1 -type f -mmin "+${ORCA_PANE_RECORD_MAX_AGE:-180}" -print 2>/dev/null | sed 's|.*/||')
+  if [ -n "$aged" ]; then
+    aged_drop=$(AGED="$aged" ROWS="$sweep_rows_file" HERE="$here" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+rows = {}
+for line in open(os.environ["ROWS"]):
+    i, _, raw = line.rstrip("\n").partition("\t")
+    try: rows[i] = json.loads(raw)
+    except Exception: pass
+for d in os.environ["AGED"].split("\n"):
+    if d and (d not in rows or ws.is_final(rows[d])): print(d)' 2>/dev/null) || aged_drop=''
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      pane_record_rm "$d" aged_final "$sweep_ok" '' || :
+    done <<< "$aged_drop"
+  fi
+fi
 sweep_list=$(close_rpc terminal list --json 2>/dev/null) || sweep_list=''
+# An ended dispatch with no pane record only needs a look when a listed terminal is its own (by handle or worktree path);
+# otherwise it would cost a worker-show and a terminal list every round for nothing.
+if [ -n "$sweep_list" ] && [ -n "$found" ]; then
+  found=$(FOUND="$found" LIST="$sweep_list" ROWS="$sweep_rows_file" STATE="$state" HERE="$here" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+try: terms = json.loads(os.environ["LIST"])["result"]["terminals"]
+except Exception: terms = None
+rows = {}
+for line in open(os.environ["ROWS"]):
+    i, _, raw = line.rstrip("\n").partition("\t")
+    try: rows[i] = json.loads(raw)
+    except Exception: pass
+for d in os.environ["FOUND"].split("\n"):
+    if not d: continue
+    row = rows.get(d)
+    if terms is None or row is None or os.path.isfile(os.path.join(os.environ["STATE"], d)):
+        print(d); continue
+    wid = ws.workspace_id(row)
+    path = wid.split("::", 1)[-1] if wid else ""
+    own = {ws.terminal(row), row.get("agentTerminalHandle")}
+    if any(t.get("handle") in own or (path and t.get("worktreePath") == path) for t in terms): print(d)' 2>/dev/null) || :
+  dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "$found")
+fi
 # A pane file whose handles are all gone has nothing left to close once its dispatch ended or is unknown. Needs a complete
 # terminal inventory: an unreadable or partial list proves nothing and removes nothing.
 if [ -n "$sweep_list" ]; then
@@ -546,9 +602,22 @@ sys.exit(0 if doc.get("ok") is False and (doc.get("error") or {}).get("code")=="
   done <<< "$gone"
   dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "${found:-}")
 fi
+# A dispatch the worker-list rows show still running has nothing to close yet: skip its worker-show.
+sweep_running=$(ROWS="$sweep_rows_file" HERE="$here" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+for line in open(os.environ["ROWS"]):
+    i, _, raw = line.rstrip("\n").partition("\t")
+    try:
+        if i and not ws.is_final(json.loads(raw)): print(i)
+    except Exception: pass' 2>/dev/null) || sweep_running=''
 sweep_stopped=0
+dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "${found:-}")
 while IFS= read -r d || [ -n "$d" ]; do
   [ -z "$d" ] && continue
+  if [ "$sweep_ok" -eq 1 ]; then
+    case $'\n'"$sweep_running"$'\n' in *$'\n'"$d"$'\n'*) continue ;; esac
+  fi
   if [ "$SECONDS" -ge "$close_deadline" ]; then sweep_stopped=1; break; fi
   close_one "$d" sweep
 done < <(printf '%s\n' "$dispatches" | sort -u)
