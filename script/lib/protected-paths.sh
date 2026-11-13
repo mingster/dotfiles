@@ -7,7 +7,7 @@ check_owner_only_paths() {
   local f
   while IFS= read -r f; do
     case "$f" in
-      .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules)
+      .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|templates/agent-team/.claude/hooks/*|templates/agent-team/.claude/settings.json)
         refuse "PR touches $f, which waits for the owner through Elon" ;;
     esac
   done < <(jq -r '.[]' <<<"$files")

@@ -507,6 +507,9 @@ mech_case 154 refuse "mechanical refuses a new script" "new file" $'diff --git a
 mech_case 155 refuse "mechanical refuses a rename" "renames" $'diff --git a/a b/b\nsimilarity index 90%\nrename from a\nrename to b\n'
 mech_case 156 refuse "mechanical still refuses protected paths" "owner through Elon" "$SUBST" .claude/settings.json
 mech_case 157 refuse "mechanical gate file still needs countersign" "Countersign" "$SUBST" script/ship.sh
+# Template copies of owner only paths are gated too (issue #954)
+mech_case 159 refuse "template hook copy waits for the owner" "owner through Elon" "$SUBST" templates/agent-team/.claude/hooks/guard-bash.py
+mech_case 160 refuse "template settings copy waits for the owner" "owner through Elon" "$SUBST" templates/agent-team/.claude/settings.json
 # Without the flag the same PR needs a Verdict
 mf_pr_add 158 feat-mech-noflag "Body" script/mech-158.sh; set_checks 158 "$green_checks"
 run_ship --repo example/repo --pr 158
