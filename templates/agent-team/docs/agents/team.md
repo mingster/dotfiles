@@ -67,6 +67,7 @@ Each rule names what enforces it. "none" means only the agent's reading holds it
 | **Heavy jobs (user 2026-11-08):** Playwright and production builds run through `~/dotfiles/script/heavy-gate.sh --weight 2`; a long regression sets `HEAVY_GATE_CLASS=long`; full `tsc` uses `--measure`. Only the coordinator runs `hw-probe.sh --calibrate`. | `.claude/hooks/guard-bash.py`, `script/heavy-gate.sh` |
 | **Strikes:** follow the project's token budget and strike rule in `AGENTS.md`. | `.claude/hooks/strikes.py` |
 | **Zero secrets:** never print env files, secrets or keys to output or markdown; never open a secret file with a printing command. | `.claude/hooks/guard-bash.py` (secret readers, `.env` copies) |
+| **Messages that name the owner files (user 2026-11-13):** to mention the owner approval file or script in a GitHub or Orca message, write the message to a file with the Write tool and send it with `--body-file`. | `.claude/hooks/guard-bash.py` (text guard, a speed bump) |
 | **Push an explicit branch (user 2026-10-23):** `git push origin HEAD:refs/heads/<branch>`, never a bare `git push`. | `.claude/hooks/guard-bash.py` (push to a protected branch) |
 | **Close browsers (user 2026-10-28):** a worker that starts a browser with its own debugging port stops it by PID before `worker_done`. | `script/wrap-up.sh` |
 | **No substitute tooling (user 2026-10-20):** never replace a standard team mechanism (Orca orchestration, GitHub Actions, hooks, gates, deploy scripts, worker lifecycle) with self built tooling without the user's approval. | none |
