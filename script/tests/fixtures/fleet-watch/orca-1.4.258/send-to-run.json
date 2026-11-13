@@ -12,6 +12,7 @@
     "--json"
   ],
   "exit_code": 1,
+  "orca_version": "1.4.258",
   "stderr": "<redacted>",
   "stdout": "{\n  \"error\": {\n    \"code\": \"no_active_sender_terminal\",\n    \"message\": \"<redacted>\"\n  },\n  \"ok\": false\n}\n"
 }

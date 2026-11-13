@@ -247,6 +247,28 @@ def reply_shape(record):
     }
 
 
+def same_shape(saved, fresh):
+    """Keys, error codes and exit codes. An empty list matches a list of rows.
+
+    A scratch run has no workers. Row keys are compared only when both sides have a row.
+    """
+    if isinstance(saved, list) or isinstance(fresh, list):
+        if not isinstance(saved, list) or not isinstance(fresh, list):
+            return False
+        if not saved or not fresh:
+            return True
+        if len(saved) != len(fresh):
+            return False
+        return all(same_shape(left, right) for left, right in zip(saved, fresh))
+    if isinstance(saved, dict) or isinstance(fresh, dict):
+        if not isinstance(saved, dict) or not isinstance(fresh, dict):
+            return False
+        if set(saved) != set(fresh):
+            return False
+        return all(same_shape(saved[key], fresh[key]) for key in saved)
+    return saved == fresh
+
+
 def leak_kinds(text):
     """Structural leaks. Project-name regexes are separate so a missing pattern file still checks these."""
     found = []

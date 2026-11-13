@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from fleet_watch_replies import (
-    default_patterns, leak_kinds, load_reply, redact, reply_shape, shape, version_dir,
+    default_patterns, leak_kinds, load_reply, redact, reply_shape, same_shape, shape, version_dir,
 )
 
 
@@ -47,6 +47,15 @@ class Redact(unittest.TestCase):
         failed = {'exit_code': 1, 'stdout': '{"ok": true}\n', 'stderr': ''}
         self.assertNotEqual(reply_shape(base), reply_shape(failed))
 
+    def test_empty_list_matches_rows_and_a_new_key_does_not(self):
+        saved = {'exit_code': 0, 'stdout': {'workers': [{'id': 'str'}]}, 'stderr': ''}
+        empty = {'exit_code': 0, 'stdout': {'workers': []}, 'stderr': ''}
+        extra = {'exit_code': 0, 'stdout': {'workers': [{'id': 'str', 'extra': 'int'}]}, 'stderr': ''}
+        other = {'exit_code': 1, 'stdout': {'workers': [{'id': 'str'}]}, 'stderr': ''}
+        self.assertTrue(same_shape(saved, empty))
+        self.assertFalse(same_shape(saved, extra))
+        self.assertFalse(same_shape(saved, other))
+
 
 class ContractSkip(unittest.TestCase):
     script = Path(__file__).resolve().parents[1] / 'fleet-watch-record.py'
@@ -69,16 +78,21 @@ class ContractSkip(unittest.TestCase):
         env['PATH'] = tmp + os.pathsep + env.get('PATH', '')
         env['ORCA_CLI_COMMAND'] = str(fake)
         env.pop('FLEET_WATCH_RECORD_RUN', None)
+        gh = Path(tmp) / 'gh'
+        gh.write_text('#!/bin/sh\nprintf \'[]\\n\'\nexit 1\n')
+        gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         return env, log
 
-    def test_dry_run_does_not_call_orca(self):
+    def test_dry_run_with_a_fake_orca_does_not_send(self):
         with tempfile.TemporaryDirectory() as tmp:
             env, log = self.logging_orca(tmp, 'echo \'{"ok":true}\'\n')
             proc = self.run_recorder(env, '--dry')
             text = log.read_text() if log.exists() else ''
         self.assertEqual(proc.returncode, 0)
         self.assertIn('local', proc.stderr + proc.stdout)
-        self.assertEqual(text, '')
+        self.assertIn('--version', text)
+        self.assertNotIn('send', text)
+        self.assertNotIn('run-create', text)
 
     def test_refuses_the_coordinator_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -110,6 +124,49 @@ esac
         self.assertIn('run:run_scratch', text)
         self.assertIn('send', text)
 
+    def test_version_mismatch_is_reported_without_sending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env, log = self.logging_orca(tmp, r'''
+case "$*" in
+  *--version*) echo 9.9.9 ;;
+  *) echo '{"ok":true}'; exit 1 ;;
+esac
+''')
+            env['FLEET_WATCH_RECORD_RUN'] = 'run_scratch'
+            proc = self.run_recorder(env, '--dry')
+            text = log.read_text() if log.exists() else ''
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('version mismatch', proc.stderr)
+        self.assertIn('9.9.9', proc.stderr)
+        self.assertNotIn('send', text)
+        self.assertNotIn('run-create', text)
+        self.assertNotIn(self.live, text)
+
+    def test_fresh_shape_mismatch_fails(self):
+        """A fresh reply whose error code differs from the saved recording fails the check."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env, log = self.logging_orca(tmp, r'''
+case "$*" in
+  *--version*) echo 1.4.258 ;;
+  *run-list*) echo '{"ok":true,"result":{"runs":[]}}' ;;
+  *terminal\ create*) echo '{"ok":true,"result":{"terminal":{"handle":"term_owned"}}}' ;;
+  *run-create*) echo '{"ok":true,"result":{"run":{"id":"run_scratchtest"}}}' ;;
+  *run-use*) echo '{"ok":true,"result":{"runId":"run_scratchtest"}}' ;;
+  *terminal\ close*) echo '{"ok":true}' ;;
+  *send*) echo '{"ok":false,"error":{"code":"consumer_fenced","message":"x"}}'; exit 1 ;;
+  *) echo '{"ok":false,"error":{"code":"no_active_sender_terminal","message":"x"}}'; exit 1 ;;
+esac
+''')
+            proc = self.run_recorder(env, '--dry')
+            text = log.read_text() if log.exists() else ''
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('shape mismatch', proc.stderr)
+        self.assertIn('consumer_fenced', proc.stderr)
+        self.assertIn('run-create', text)
+        self.assertIn('fleet-watch recorder scratch', text)
+        self.assertIn('run_scratchtest', text)
+        self.assertNotIn(self.live, text + proc.stdout + proc.stderr)
+
 
 class RecordedReplies(unittest.TestCase):
     required = (
@@ -129,6 +186,13 @@ class RecordedReplies(unittest.TestCase):
             if kinds:
                 problems.append('%s:%s' % (path.name, ','.join(kinds)))
         self.assertEqual(problems, [])
+
+    def test_saved_recording_names_its_orca_version(self):
+        directory = version_dir()
+        named = directory.name[len('orca-'):]
+        for path in sorted(directory.glob('*.json')):
+            stamped = json.loads(path.read_text()).get('orca_version')
+            self.assertEqual(stamped, named, path.name)
 
     def test_each_fleet_watch_call_has_a_recording(self):
         names = {path.stem for path in version_dir().glob('*.json')}

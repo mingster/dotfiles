@@ -9,8 +9,11 @@ coordinator Run.
     python3 script/fleet-watch-record.py --dry
     FLEET_WATCH_RECORD_RUN=run_<scratch> python3 script/fleet-watch-record.py
 
-`--dry` with no scratch run checks the saved files and does not call Orca.
-Fixtures go to script/tests/fixtures/fleet-watch/orca-<version>/.
+`--dry` records against a scratch run and fails when the installed Orca
+version or a reply shape differs from
+script/tests/fixtures/fleet-watch/orca-<version>/. A fake orca, one that
+does not print a dotted version, only checks the saved files. Writing a
+new recording still requires FLEET_WATCH_RECORD_RUN.
 """
 import json
 import os
@@ -25,6 +28,8 @@ import fleet_watch_replies as replies  # noqa: E402
 
 # The coordinator Run. Recording and tests refuse it; a scratch run is the target.
 LIVE_RUN = 'run_2d30da234f80'
+# Same string as fleet-watch.RECORDER_SCRATCH_OBJECTIVE. That pass skips this run.
+SCRATCH_OBJECTIVE = 'fleet-watch recorder scratch'
 SUBJECT = 'fleet-watch recorder test'
 BODY = 'fleet-watch recorder test'
 # A repo id Orca cannot resolve. Combined with a new worktree, the start fails
@@ -88,19 +93,6 @@ def error_code(stdout):
 
 def orca_json(args, env, timeout=60):
     return run_cmd([*orca_bin(env), *args, '--json'], env, timeout)
-
-
-def coordinator_handle(env, run):
-    code, stdout, _stderr = orca_json(
-        ['orchestration', 'run-show', '--id', run, '--full'], env,
-    )
-    if code != 0:
-        raise RuntimeError('run-show failed: %s' % (error_code(stdout) or code))
-    data = json.loads(stdout)
-    handle = data['result']['run']['coordinator_handle']
-    if not isinstance(handle, str) or not handle.startswith('term_'):
-        raise RuntimeError('run-show returned no coordinator terminal')
-    return handle
 
 
 def create_terminal(env):
@@ -221,12 +213,115 @@ def collect(env, receiver, owned, run):
     return records
 
 
-def local_contract():
-    """Check the saved replies. This path never calls Orca."""
+def orca_result(stdout):
     try:
-        directory = replies.version_dir()
-    except FileNotFoundError as exc:
-        print('fleet-watch-record: %s' % exc, file=sys.stderr)
+        data = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError('orca reply is not json') from exc
+    if not isinstance(data, dict) or data.get('ok') is False:
+        raise RuntimeError(error_code(stdout) or 'orca failed')
+    result = data.get('result')
+    if not isinstance(result, dict):
+        raise RuntimeError('orca reply has no result')
+    return result
+
+
+def list_all_runs(env):
+    """Every run, following nextCursor. The scratch run may not be on the first page."""
+    runs = []
+    cursor = None
+    seen = set()
+    while True:
+        args = ['orchestration', 'run-list', '--full']
+        if cursor:
+            args.extend(('--cursor', cursor))
+        code, stdout, _stderr = orca_json(args, env)
+        if code != 0:
+            raise RuntimeError('run-list failed: %s' % (error_code(stdout) or code))
+        result = orca_result(stdout)
+        page = result.get('runs')
+        if not isinstance(page, list):
+            raise RuntimeError('run-list has no runs')
+        runs.extend(item for item in page if isinstance(item, dict))
+        cursor = result.get('nextCursor')
+        if not cursor:
+            return runs
+        if not isinstance(cursor, str) or cursor in seen:
+            raise RuntimeError('run-list repeated a cursor')
+        seen.add(cursor)
+
+
+def run_id_from_create(stdout):
+    result = orca_result(stdout)
+    run = result.get('run') if isinstance(result.get('run'), dict) else result
+    rid = None
+    if isinstance(run, dict):
+        candidate = run.get('id') or run.get('runId')
+        rid = candidate if isinstance(candidate, str) else None
+    if not isinstance(rid, str) or re.fullmatch(r'run_[A-Za-z0-9_-]+', rid) is None:
+        raise RuntimeError('run-create returned no scratch run')
+    if rid == LIVE_RUN:
+        raise RuntimeError('refusing the coordinator run')
+    return rid
+
+
+def ensure_scratch_run(env):
+    """A run this recorder owns. Never the coordinator Run. The terminal is closed by the caller."""
+    scratch = None
+    for run in list_all_runs(env):
+        rid = run.get('id')
+        objective = run.get('objective')
+        if not isinstance(rid, str) or rid == LIVE_RUN:
+            continue
+        if isinstance(objective, str) and objective.strip() == SCRATCH_OBJECTIVE:
+            scratch = rid
+            break
+    owned = create_terminal(env)
+    try:
+        if not scratch:
+            code, stdout, _stderr = orca_json(
+                ['orchestration', 'run-create', '--objective', SCRATCH_OBJECTIVE, '--from', owned],
+                env,
+            )
+            if code != 0:
+                raise RuntimeError('run-create failed: %s' % (error_code(stdout) or code))
+            scratch = run_id_from_create(stdout)
+        # The fresh terminal coordinates the scratch run, so sends are not warnings
+        # about a stranger speaking for it, and not mail to the coordinator.
+        code, stdout, _stderr = orca_json(
+            ['orchestration', 'run-use', '--id', scratch, '--from', owned], env,
+        )
+        if code != 0:
+            raise RuntimeError('run-use failed: %s' % (error_code(stdout) or code))
+        return scratch, owned
+    except Exception:
+        close_terminal(env, owned)
+        raise
+
+
+def stamp_problems(directory, version):
+    """The folder and each file name the Orca version the recording came from."""
+    named = directory.name[len('orca-'):] if directory.name.startswith('orca-') else ''
+    problems = []
+    if named != version:
+        problems.append('folder %s' % directory.name)
+    for path in sorted(directory.glob('*.json')):
+        try:
+            stamped = json.loads(path.read_text()).get('orca_version')
+        except json.JSONDecodeError:
+            problems.append('%s is not json' % path.name)
+            continue
+        if stamped != version:
+            problems.append('%s names %s' % (path.name, stamped))
+    return problems
+
+
+def saved_files_ok(directory):
+    """Saved replies exist, name their version, and contain no handles or addresses."""
+    named = directory.name[len('orca-'):] if directory.name.startswith('orca-') else ''
+    problems = stamp_problems(directory, named)
+    if problems:
+        print('version mismatch: %s' % ', '.join(problems), file=sys.stderr)
         return 1
     patterns = replies.default_patterns()
     missing = []
@@ -247,8 +342,49 @@ def local_contract():
     if missing:
         print('missing %s' % ', '.join(missing), file=sys.stderr)
         return 1
+    return 0
+
+
+def local_contract():
+    """Check the saved replies. This path does not record a fresh reply."""
+    try:
+        directory = replies.version_dir()
+    except FileNotFoundError as exc:
+        print('fleet-watch-record: %s' % exc, file=sys.stderr)
+        return 1
+    status = saved_files_ok(directory)
+    if status != 0:
+        return status
     print('fleet-watch contract local %s' % directory.name, file=sys.stderr)
     return 0
+
+
+def version_mismatch(version):
+    try:
+        saved = replies.version_dir().name
+    except FileNotFoundError:
+        saved = 'none'
+    print('version mismatch: installed orca %s, saved recording %s' % (version, saved), file=sys.stderr)
+    return 1
+
+
+def compare_shapes(directory, cleaned):
+    failed = False
+    for record in cleaned:
+        path = directory / (record['name'] + '.json')
+        if not path.is_file():
+            print('shape mismatch: missing %s' % record['name'], file=sys.stderr)
+            failed = True
+            continue
+        saved = json.loads(path.read_text())
+        fresh = replies.reply_shape(record)
+        old = replies.reply_shape(saved)
+        if replies.same_shape(old, fresh):
+            continue
+        failed = True
+        print('shape mismatch: %s' % record['name'], file=sys.stderr)
+        print(json.dumps({'saved': old, 'fresh': fresh}, sort_keys=True)[:2000], file=sys.stderr)
+    return failed
 
 
 def main(argv):
@@ -257,31 +393,42 @@ def main(argv):
     if run == LIVE_RUN:
         print('fleet-watch-record: refusing the coordinator run', file=sys.stderr)
         return 2
-    if not run:
-        if dry:
-            return local_contract()
-        print('fleet-watch-record: set FLEET_WATCH_RECORD_RUN to a scratch run', file=sys.stderr)
-        return 2
-    if re.fullmatch(r'run_[A-Za-z0-9_-]+', run) is None:
+    if run and re.fullmatch(r'run_[A-Za-z0-9_-]+', run) is None:
         print('fleet-watch-record: scratch run id is not a run id', file=sys.stderr)
         return 2
+    if not run and not dry:
+        print('fleet-watch-record: set FLEET_WATCH_RECORD_RUN to a scratch run', file=sys.stderr)
+        return 2
     env = clean_env()
-    version = orca_version(env)
+    try:
+        version = orca_version(env)
+    except (RuntimeError, OSError) as exc:
+        print('fleet-watch-record: %s' % exc, file=sys.stderr)
+        return 2
     # A fake orca (wrap-up tests) does not print a dotted version. Do not send.
     if dry and re.fullmatch(r'\d+\.\d+\.\d+', version) is None:
-        print('fleet-watch contract skipped', file=sys.stderr)
-        return 0
+        return local_contract()
     directory = replies.FIXTURES / ('orca-' + version)
     if dry and not directory.is_dir():
-        print('no recording for orca-%s' % version, file=sys.stderr)
-        return 1
+        return version_mismatch(version)
+    if dry:
+        problems = stamp_problems(directory, version)
+        if problems:
+            print('version mismatch: installed orca %s (%s)' % (version, ', '.join(problems)), file=sys.stderr)
+            return 1
+        files = saved_files_ok(directory)
+        if files != 0:
+            return files
     patterns = replies.default_patterns()
     homes = [str(Path.home())]
     owned = None
     try:
-        receiver = coordinator_handle(env, run)
-        owned = create_terminal(env)
-        records = collect(env, receiver, owned, run)
+        if not run:
+            run, owned = ensure_scratch_run(env)
+        else:
+            owned = create_terminal(env)
+        # Sends use the terminal this check just opened, not the coordinator.
+        records = collect(env, owned, owned, run)
         cleaned = [clean_record(record, patterns, homes, run) for record in records]
     except RuntimeError as exc:
         print('fleet-watch-record: %s' % exc, file=sys.stderr)
@@ -290,26 +437,13 @@ def main(argv):
         if owned:
             close_terminal(env, owned)
     if dry:
-        failed = False
-        for record in cleaned:
-            path = directory / (record['name'] + '.json')
-            if not path.is_file():
-                print('missing %s' % record['name'], file=sys.stderr)
-                failed = True
-                continue
-            saved = json.loads(path.read_text())
-            fresh = replies.reply_shape(record)
-            old = replies.reply_shape(saved)
-            if fresh != old:
-                failed = True
-                print('shape changed: %s' % record['name'], file=sys.stderr)
-                print(json.dumps({'saved': old, 'fresh': fresh}, sort_keys=True)[:2000], file=sys.stderr)
-        if failed:
+        if compare_shapes(directory, cleaned):
             return 1
         print('fleet-watch contract ok orca-%s' % version)
         return 0
     directory.mkdir(parents=True, exist_ok=True)
     for record in cleaned:
+        record['orca_version'] = version
         name = record.pop('name')
         path = directory / (name + '.json')
         path.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')

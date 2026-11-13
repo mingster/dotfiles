@@ -2983,12 +2983,22 @@ def repo_for_worker(worker, config, origin_of=None):
     return best_repo
 
 
+# The reply recorder's run. wrap-up creates it. It is never the coordinator.
+# script/fleet-watch-record.py uses this same objective string.
+RECORDER_SCRATCH_OBJECTIVE = 'fleet-watch recorder scratch'
+
+
 def select_coordinator_run(runs):
-    """Newest run that has a coordinator terminal. Equal timestamps keep the earlier row."""
+    """Newest run that has a coordinator terminal. Equal timestamps keep the earlier row.
+
+    The recorder scratch run is skipped. A fresh shape check must not become the coordinator.
+    """
     best = None
     best_rank = None
     for index, run in enumerate(runs or []):
         if not isinstance(run, dict):
+            continue
+        if (run.get('objective') or '').strip() == RECORDER_SCRATCH_OBJECTIVE:
             continue
         handle = run.get('coordinator_handle')
         rid = run.get('id')

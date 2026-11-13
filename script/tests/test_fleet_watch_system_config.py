@@ -88,6 +88,24 @@ def stall_state():
 
 
 class RecordedRun(unittest.TestCase):
+    def test_recorder_scratch_run_is_not_the_coordinator(self):
+        runs = [
+            {
+                'id': 'run_real',
+                'coordinator_handle': 'term_real',
+                'updated_at': '2026-11-01T00:00:00',
+                'objective': 'Coordinated from mini6',
+            },
+            {
+                'id': 'run_scratch',
+                'coordinator_handle': 'term_fw',
+                'updated_at': '2026-11-14T00:00:00',
+                'objective': fw.RECORDER_SCRATCH_OBJECTIVE,
+            },
+        ]
+        chosen = fw.select_coordinator_run(runs)
+        self.assertEqual(chosen['id'], 'run_real')
+
     def test_full_list_picks_a_run_with_a_coordinator_terminal(self):
         chosen = fw.select_coordinator_run(recorded_result('run-list-full')['runs'])
         self.assertIsNotNone(chosen)
