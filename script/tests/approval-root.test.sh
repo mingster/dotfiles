@@ -23,7 +23,9 @@ pass=0
 fail=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
-mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+# GNU stat reads -f as filesystem status and succeeds, so no stat flag works on both. Python does.
+mode() { python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o7777, "o"))' "$1"; }
+owner_uid() { python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_uid)' "$1"; }
 
 decision() {
   GUARD_APPROVAL_ROOT="$1" HOME="$HOME_DIR" python3 -c '
@@ -58,7 +60,7 @@ approval_json 2>/dev/null | bash "$WRITE" other 2>/dev/null && bad "helper creat
 
 # A non sudo write fails. An existing root owned file (/etc/hosts, 0644) stands in for the approval file;
 # the same mode and owner the helper gives the real one.
-if [ -f /etc/hosts ] && [ "$(id -u)" -ne 0 ] && [ "$(stat -f %u /etc/hosts 2>/dev/null || stat -c %u /etc/hosts)" = 0 ]; then
+if [ -f /etc/hosts ] && [ "$(id -u)" -ne 0 ] && [ "$(owner_uid /etc/hosts)" = 0 ]; then
   ( : >> /etc/hosts ) 2>/dev/null && bad "worker appended to a root owned 0644 file" || ok "non sudo write to a root owned 0644 file fails"
 else
   ok "root owned stand in check skipped (running as root)"
