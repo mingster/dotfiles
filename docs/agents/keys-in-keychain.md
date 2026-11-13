@@ -12,11 +12,11 @@ A tool that needs a key gets it for that one command with `bin/with-keychain`:
 with-keychain GEMINI_API_KEY -- gemini
 ```
 
-It reads each name from the login keychain (account is your user name, service is the name), exports it to that command only, and writes nothing to disk. `.zshrc` defines a `gemini` function that does this.
+It reads each name from the login keychain (account is your user name, service is the name), exports it to that command only, and writes nothing to disk. On macOS `.zshrc` defines a `gemini` function that does this. Other hosts have no keychain helper, so `gemini` runs unwrapped there.
 
 ## Where each key was set
 
-`.zshrc` sourced `~/dotfiles/.env`, a git ignored file inside the dotfiles folder. It set three names: `GEMINI_API_KEY`, `CONTEXT7_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`. No tracked startup file set any key. `~/.zshenv.local`, `~/.zprofile`, `~/.bashrc` and `~/.bash_profile` set none on blueDevil. Check the other hosts with `grep -o -E '^[[:space:]]*(export )?[A-Za-z_]*(KEY|TOKEN|SECRET)[A-Za-z_]*=' <file>` (names only).
+`.zshrc` sourced `~/dotfiles/.env`, a git ignored file inside the dotfiles folder. It set three names: `GEMINI_API_KEY`, `CONTEXT7_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`. No tracked startup file set any key. `~/.zshenv.local`, `~/.zprofile`, `~/.bashrc` and `~/.bash_profile` set none on the host checked. Check the other hosts with `grep -o -E '^[[:space:]]*(export )?[A-Za-z_]*(KEY|TOKEN|SECRET)[A-Za-z_]*=' <file>` (names only).
 
 ## Owner steps, per key
 
@@ -26,7 +26,7 @@ It reads each name from the login keychain (account is your user name, service i
 3. Delete the old line from `~/dotfiles/.env` (or delete the file).
 4. Point the tool at the wrapper:
    * Gemini CLI: already wrapped by the `gemini` function in `.zshrc`.
-   * GitHub and Context7 MCP servers: in the MCP config (`~/.claude/settings.local.json`, generated per machine) set the server `command` to `with-keychain`, with `args` of `["GITHUB_PERSONAL_ACCESS_TOKEN", "--", "<original command>", ...]`.
+   * GitHub and Context7 MCP servers: in the MCP config (`~/.claude/settings.local.json`, generated per machine) set the server `command` to `with-keychain`, with `args` of `["GITHUB_PERSONAL_ACCESS_TOKEN", "CONTEXT7_API_KEY", "--", "<original command>", ...]`. Name only the keys that server needs (GitHub: `GITHUB_PERSONAL_ACCESS_TOKEN`, Context7: `CONTEXT7_API_KEY`).
    * `gh` keeps its own token in the keychain; it needs no variable.
 5. Open a new shell and confirm `env | grep -c -E '_(KEY|TOKEN|SECRET)='` prints 0 (it prints a count, never a value).
 

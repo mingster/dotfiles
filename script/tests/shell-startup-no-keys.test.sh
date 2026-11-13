@@ -45,6 +45,19 @@ if command -v zsh >/dev/null 2>&1; then
   if [ "$leaked" = 0 ]; then check "zsh run with a dotenv in the dotfiles folder exports no key" ok; else check "zsh run with a dotenv in the dotfiles folder exports no key" bad; fi
 fi
 
+# The gemini wrapper needs the macOS keychain: defined on Darwin, absent elsewhere so gemini runs as installed.
+if command -v zsh >/dev/null 2>&1; then
+  real_uname=$(command -v uname)
+  for os in Darwin Linux; do
+    mkdir -p "$tmp/uname-$os"
+    printf '#!/bin/sh\n[ "$1" = -s ] && { echo %s; exit 0; }\nexec %s "$@"\n' "$os" "$real_uname" > "$tmp/uname-$os/uname"
+    chmod +x "$tmp/uname-$os/uname"
+  done
+  kind() { env -i HOME="$tmp/home" ZDOTDIR="$tmp/home" PATH="$tmp/uname-$1:$PATH" zsh -f -c ". '$root/.zshenv' 2>/dev/null; . '$root/.zshrc' >/dev/null 2>&1; whence -w gemini" 2>/dev/null; }
+  if [[ "$(kind Darwin)" == *function* ]]; then check "gemini wrapper is defined on macOS" ok; else check "gemini wrapper is defined on macOS" bad; fi
+  if [[ "$(kind Linux)" != *function* ]]; then check "gemini wrapper is not defined on Linux" ok; else check "gemini wrapper is not defined on Linux" bad; fi
+fi
+
 # with-keychain: refuses a missing item without printing a value, and passes a stored value to one command.
 stub="$tmp/stub"
 mkdir -p "$stub"

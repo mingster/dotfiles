@@ -63,7 +63,8 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # API keys and tokens are never exported from startup files. A tool that needs one reads it from the
 # macOS keychain for that one command only: see bin/with-keychain and docs/agents/keys-in-keychain.md.
-gemini() { with-keychain GEMINI_API_KEY -- gemini "$@"; }
+# Only on macOS: other hosts have no keychain helper, so gemini runs as installed there.
+[[ "$(uname -s)" == Darwin ]] && gemini() { with-keychain GEMINI_API_KEY -- gemini "$@"; }
 
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
