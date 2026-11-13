@@ -237,7 +237,7 @@ class BuildReworkCommand(unittest.TestCase):
         ])
         cmd = fw.build_rework_start_command(self.CONFIG, REPO, row)
         self.assertIn('--base-branch', cmd)
-        self.assertIn('mingster/issue-677', cmd)
+        self.assertIn('origin/mingster/issue-677', cmd)
         spec = cmd[cmd.index('--spec') + 1]
         text = Path(spec).read_text(encoding='utf-8')
         self.assertIn('lint broke', text)
