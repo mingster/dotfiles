@@ -1,40 +1,22 @@
 #!/usr/bin/env bash
-# Push the secrets folder from this host to every fleet host with rsync over ssh.
-# This host is the source of truth. Never prints file contents, only the names of changed files.
-# Config (untracked, see secrets-sync.config.example.json): {"dir": "~/path/to/secrets", "hosts": ["ssh-host"]}
-# "hosts" falls back to the hosts in fleet-pull.config.json.
+# Push the credential folder from this host to every fleet host. The folder is root owned, so the push runs
+# inside the root owned gate (script/secrets-gate.sh, installed by script/secrets-gate-setup.sh), which
+# prints the names of changed files and never their contents.
+# The plain call uses the one passwordless sudoers entry (`sync`). Flags need Touch ID or the password.
 # Flags: --dry-run (show what would change). --delete (also remove files the source no longer has;
 # use once after a reorg, refused when the source holds fewer than 3 files).
+# A host without the gate installed is skipped with a note, so fleet-pull keeps working until the owner sets it up.
 set -u
-here=$(cd "$(dirname "$0")" && pwd)
-cfg=${SECRETS_SYNC_CONFIG:-$here/secrets-sync.config.json}
-fleet=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
-dry=(); del=()
+gate=${SECRETS_GATE:-/opt/secrets-gate/secrets-gate}
+flags=()
 for a in "$@"; do
   case "$a" in
-    --dry-run) dry=(--dry-run) ;;
-    --delete) del=(--delete) ;;
+    --dry-run|--delete) flags+=("$a") ;;
     *) echo "unknown flag $a" >&2; exit 2 ;;
   esac
 done
-command -v jq >/dev/null || { echo 'secrets-sync requires jq' >&2; exit 1; }
-[ -f "$cfg" ] || { echo "secrets-sync: no $cfg, skipped (copy secrets-sync.config.example.json)"; exit 0; }
-dir=$(jq -r '.dir' "$cfg"); dir=${dir/#\~/$HOME}
-[ -d "$dir" ] || { echo "secrets-sync: source $dir missing" >&2; exit 1; }
-hosts=$(jq -r '(.hosts // empty)[]' "$cfg")
-[ -n "$hosts" ] || hosts=$(jq -r '.hosts[]' "$fleet" 2>/dev/null)
-count=$(find "$dir" -type f ! -name .DS_Store | wc -l | tr -d ' ')
-if [ "${#del[@]}" -gt 0 ] && [ "$count" -lt 3 ]; then
-  echo "secrets-sync: refusing --delete, source has only $count files" >&2; exit 1
+[ -x "$gate" ] || { echo "secrets-sync: no gate at $gate, skipped (owner runs script/secrets-gate-setup.sh)"; exit 0; }
+if [ "${#flags[@]}" -eq 0 ]; then
+  exec sudo -n "$gate" sync
 fi
-rel=${dir#"$HOME"/}
-for h in $hosts; do
-  echo "$h"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" "umask 077; mkdir -p ~/'$rel'; chmod 700 ~/'$rel'" 2>&1 \
-    || { echo "warn unreachable $h"; continue; }
-  # -a keeps the tree; --chmod forces owner only modes on the fleet copy; -i lists changed names only.
-  rsync -a ${dry[@]+"${dry[@]}"} ${del[@]+"${del[@]}"} -i --chmod=D700,F600 --exclude .DS_Store \
-    -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' "$dir"/ "$h":"~/$rel"/ 2>&1 \
-    | grep -v '^\.' | sed 's/^/  /' || true
-done
-echo "secrets-sync done ($count files at source)"
+exec sudo "$gate" sync "${flags[@]}"

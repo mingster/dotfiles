@@ -12,12 +12,19 @@ For each key it prints one of:
                                       a connection string, with credentials masked
   KEY = <empty> / <missing>
 
+A file in the root owned credential folder cannot be opened, so the root owned gate prints its whole file
+fingerprint instead (sudo asks Touch ID or the password): no per key lines there.
+
 The fingerprint is the first 8 hex digits of a SHA-256 of the value: enough to tell
 whether two copies match, useless for recovering the value.
 """
 import hashlib
+import os
 import re
+import subprocess
 import sys
+
+GATE = os.environ.get("SECRETS_GATE", "/opt/secrets-gate/secrets-gate")
 
 SECRET_NAME = re.compile(r"SECRET|PASSW|TOKEN|KEY|PRIVATE|CRED|AUTH|SALT|SIGNING|WEBHOOK_ID|DSN", re.I)
 URL_CREDS = re.compile(r"^([a-z][a-z0-9+.-]*://)([^:@/;]+)(:[^@/]*)?@", re.I)
@@ -61,6 +68,14 @@ def parse(text):
     return env
 
 
+def via_gate(path):
+    """The credential folder is root owned: ask the root owned gate for the fingerprint (Touch ID or password)."""
+    if not os.access(GATE, os.X_OK):
+        print(f"{path}: Permission denied")
+        return 1
+    return subprocess.run(["sudo", GATE, "fingerprint", path]).returncode
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__.strip())
@@ -68,6 +83,8 @@ def main():
     path, keys = sys.argv[1], sys.argv[2:]
     try:
         raw = open(path, "rb").read()
+    except PermissionError:
+        return via_gate(path)
     except OSError as e:
         print(f"{path}: {e.strerror}")
         return 1

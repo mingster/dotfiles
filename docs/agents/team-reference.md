@@ -272,6 +272,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/secrets-pack.sh` | Packs local secrets into an AES-256 encrypted `hdiutil` disk image for transfer between Macs. |
 | `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. |
 | `script/secrets-sync.sh` | Syncs the shared secrets directory across reachable fleet hosts. |
+| `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-refs.sh` | The root owned gate to the credential folder, the owner's once per host setup, and the file:line search that never prints text. Read `docs/agents/credential-folder.md` before changing any of them. |
 
 ### Worker launch, usage gate and heavy gate
 
