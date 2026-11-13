@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """One bounded watchdog pass; schedule every five minutes outside the coordinator.
-Config: --config FILE containing runs [{id, terminal, waiter_pattern}], optional
-host_caps {host: count}, leads [{name, terminal}] whose panes must stay alive,
-pr_watch {repos: [owner/name], stuck_minutes} for PR merge, Verdict and stuck notices,
-optional worker_stall {label_repo} for 30 minute idle restarts, optional backup {stamp, issue_repo},
-optional heavy_gate {hosts, slot_roots, issue_repo} wait-log median and held-slot checks,
-optional wrap_up {hosts, issue_repo}
-round-log freshness, optional issue_scan (disabled unless enabled) to start ready issues and rework after review failure.
+
+The private config keeps repo_roots (checkout paths), host_caps, and the per-host
+paths backup.stamp, heavy_gate.hosts and wrap_up.hosts. A backup host may also set
+coordinator_watch. The Run id and coordinator terminal come from Orca each pass
+(run-list --full, then run-show --full). Each repo owner/name comes from the origin
+remote of a repo_roots path. Issue scan is on when that Run exists. A stalled worker's
+PR is labeled in that worker's repo. A stall with no PR, and a backup alert, open in
+mingster/agent-state. A failed restart is parked once. A pass that finds no coordinator Run logs `no coordinator run`,
+leaves notices queued, and exits 0.
 The same pass dispatches one verifier when head-checks succeeded and the head has no Verdict,
 once per head (babysit.per_pass_cap, default 2). Fix workers and shipping runs stay in issue_scan.
-A config with no runs and no coordinator_watch is refused. When the given file has none, the pass adopts
-~/.claude/state/fleet-watch-elon.json if that file has runs, and copies that run id and
-terminal onto issue_scan.
 --babysit-dry-run lists those actions and starts nothing. --state FILE persists missing-waiter timers and alerts.
 Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
 """
@@ -76,6 +75,8 @@ NOTICE_PASS_LIMIT = 20
 STALL_RESTART_ATTEMPTS = 1  # a failed restart is parked; it is not tried again
 DIGEST_SECONDS = 600
 ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
+FAULT_REPO = 'mingster/agent-state'
+NO_COORDINATOR_RUN = 'no coordinator run'
 
 
 def _json_object_from_orca_process(proc):
@@ -866,10 +867,17 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
             if not baseline:
                 notices.append(Urgent('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity'))
             state['failed'].append(dispatch)
-            label_repo = (config.get('worker_stall') or {}).get('label_repo')
+            stall_cfg = config.get('worker_stall') or {}
+            fixed = stall_cfg.get('label_repo')
+            if isinstance(fixed, str) and fixed.strip():
+                fixed = fixed.strip()
+            elif stall_cfg.get('from_system'):
+                fixed = repo_for_worker(worker, config) or ''
+            else:
+                fixed = ''
             pr_num = worker_pr_number(worker)
-            if isinstance(label_repo, str) and label_repo and pr_num:
-                state.setdefault('failed_refs', {})[dispatch] = {'repo': label_repo, 'pr': pr_num}
+            if fixed and pr_num:
+                state.setdefault('failed_refs', {})[dispatch] = {'repo': fixed, 'pr': pr_num}
 
     deduped = deduplicate_workers(workers)
     for worker in deduped:
@@ -1689,9 +1697,27 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     if act is None:
         act = run_gh
     cfg = config.get('worker_stall') or {}
-    label_repo = cfg.get('label_repo')
-    if not label_repo:
+    fixed_repo = cfg.get('label_repo')
+    if not isinstance(fixed_repo, str) or not fixed_repo.strip():
+        fixed_repo = ''
+    else:
+        fixed_repo = fixed_repo.strip()
+    from_system = bool(cfg.get('from_system'))
+    if not fixed_repo and not from_system:
         return [], []
+
+    def label_target(worker):
+        if fixed_repo:
+            return fixed_repo
+        return repo_for_worker(worker, config) or ''
+
+    def fault_target():
+        # A configured label_repo is the old single-repo behavior. System passes
+        # open faults in the private fleet repo; the PR label uses the worker's repo.
+        if fixed_repo and not from_system:
+            return fixed_repo
+        return FAULT_REPO
+
     stall_limit = stall_idle_limit_seconds(config)
     label_name = cfg.get('needs_elon_label', 'needs-elon')
     cooldown = int(cfg.get('label_cooldown_seconds', 120))
@@ -1832,8 +1858,9 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                 try:
                     rpc_call('orchestration', 'worker-stop', '--dispatch', did)
                     stopped = {'dispatch': did}
-                    if isinstance(label_repo, str) and label_repo:
-                        stopped['repo'] = label_repo
+                    repo_for_stop = label_target(w)
+                    if repo_for_stop:
+                        stopped['repo'] = repo_for_stop
                     pr_num = worker_pr_number(w)
                     if pr_num:
                         stopped['pr'] = pr_num
@@ -1868,7 +1895,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                                 'started': False,
                                 'failures': 0,
                                 'reason': reason,
-                                'repo': label_repo if isinstance(label_repo, str) else '',
+                                'repo': repo_for_stop,
                                 'pr': pr_num,
                             }
                             st['restarted'] = False
@@ -1877,7 +1904,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                             key = park_id('stall', did)
                             if park_failure(
                                 state, key, reason, config, dispatch=did,
-                                repo=label_repo if isinstance(label_repo, str) else '', pr=pr_num,
+                                repo=repo_for_stop, pr=pr_num,
                             ):
                                 notices.append(park_notice('stall', did, reason))
                             log_bits.append('stall_restart_fail=%s:%s' % (
@@ -1893,7 +1920,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                         key = park_id('stall', did)
                         if park_failure(
                             state, key, reason, config, dispatch=did,
-                            repo=label_repo if isinstance(label_repo, str) else '', pr=pr_num,
+                            repo=label_target(w), pr=pr_num,
                         ):
                             notices.append(park_notice('stall', did, reason))
                         log_bits.append('stall_restart_fail=%s:%s' % (
@@ -1914,12 +1941,13 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if now - st.get('restart_at', 0) < cooldown:
             continue
 
-        pr_num, pr_status = resolve_pr_number_for_worker(w, label_repo, act, branch_hint=branches.get(term, ''))
+        repo = label_target(w)
+        pr_num, pr_status = resolve_pr_number_for_worker(w, repo, act, branch_hint=branches.get(term, ''))
         if pr_status == 'lookup_failed':
             log_bits.append('stall_pr_lookup_failed=%s' % did)
             continue
-        if pr_num:
-            code = act(['gh', 'pr', 'edit', str(pr_num), '--repo', label_repo, '--add-label', label_name])
+        if pr_num and repo:
+            code = act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', label_name])
             if code == 0:
                 st['labeled'] = True
                 log_bits.append('stall_label_pr=%s:%s' % (did, pr_num))
@@ -1929,7 +1957,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             title = 'Fleet-watch: stalled worker dispatch %s (no PR to label)' % did
             code = 1
             if title not in issue_keys:
-                code = act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
+                code = act(['gh', 'issue', 'create', '--repo', fault_target(), '--title', title,
                             '--body', 'Dispatch is stalled with no linked PR number in worker-list; assign or label manually.'])
                 if code == 0:
                     issue_keys.append(title)
@@ -2845,6 +2873,259 @@ def pr_owner_only_reason(pr, run=subprocess.run):
         message = (proc.stderr or proc.stdout or '').strip()
         return message or 'owner-only path'
     return 'error'
+
+
+def github_repo_from_url(url):
+    """owner/name from a GitHub remote URL, or None."""
+    text = (url or '').strip()
+    if text.endswith('/'):
+        text = text[:-1]
+    rest = None
+    for prefix in (
+        'git@github.com:',
+        'ssh://git@github.com/',
+        'git://github.com/',
+        'https://github.com/',
+        'http://github.com/',
+    ):
+        if text.startswith(prefix):
+            rest = text[len(prefix):]
+            break
+    if rest is None:
+        return None
+    if rest.endswith('.git'):
+        rest = rest[:-4]
+    owner, sep, name = rest.partition('/')
+    if not sep or not owner or not name or '/' in name:
+        return None
+    return owner + '/' + name
+
+
+def github_repo_from_origin(path, run=None):
+    """owner/name from git remote.origin.url at path, or None when it cannot be read."""
+    if not path or not os.path.isdir(path):
+        return None
+    if run is None:
+        run = subprocess.run
+    try:
+        proc = run(
+            ['git', '-C', path, 'config', '--get', 'remote.origin.url'],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return github_repo_from_url((proc.stdout or '').strip())
+
+
+def iter_repo_root_paths(value):
+    """Checkout paths from a list, a dict of paths, or one path string."""
+    if isinstance(value, str) and value.strip():
+        yield value.strip()
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from iter_repo_root_paths(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from iter_repo_root_paths(item)
+
+
+def repos_from_roots(value, origin_of=None):
+    """(owner/name list, owner/name -> path) from each repo_roots checkout."""
+    origin_of = origin_of or github_repo_from_origin
+    repos = []
+    mapping = {}
+    for path in iter_repo_root_paths(value):
+        repo = origin_of(path)
+        if not repo or repo in mapping:
+            continue
+        mapping[repo] = path
+        repos.append(repo)
+    return repos, mapping
+
+
+def worker_checkout_path(worker):
+    """Filesystem path of a worker checkout. A worktree id may be ``id::path``."""
+    raw = worker_worktree_selector(worker)
+    if not isinstance(raw, str) or not raw:
+        return ''
+    if '::' in raw:
+        raw = raw.split('::', 1)[1]
+    return raw
+
+
+def repo_for_worker(worker, config, origin_of=None):
+    """GitHub repo of this worker: its checkout origin, else the longest matching repo_roots path."""
+    path = worker_checkout_path(worker)
+    if path:
+        repo = (origin_of or github_repo_from_origin)(path)
+        if repo:
+            return repo
+    roots = {}
+    for block_name in ('issue_scan', 'babysit'):
+        block = (config or {}).get(block_name) or {}
+        candidate = block.get('repo_roots') or {}
+        if isinstance(candidate, dict):
+            roots.update(candidate)
+    best_repo = None
+    best_len = -1
+    for repo, root in roots.items():
+        if not isinstance(repo, str) or not isinstance(root, str) or not root:
+            continue
+        root_norm = root.rstrip('/')
+        if path and (path == root_norm or path.startswith(root_norm + '/')):
+            if len(root_norm) > best_len:
+                best_repo = repo
+                best_len = len(root_norm)
+    return best_repo
+
+
+def select_coordinator_run(runs):
+    """Newest run that has a coordinator terminal. Equal timestamps keep the earlier row."""
+    best = None
+    best_rank = None
+    for index, run in enumerate(runs or []):
+        if not isinstance(run, dict):
+            continue
+        handle = run.get('coordinator_handle')
+        rid = run.get('id')
+        if not isinstance(handle, str) or not handle.strip():
+            continue
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        stamp = run.get('updated_at')
+        stamp = stamp if isinstance(stamp, str) else ''
+        rank = (stamp, -index)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best = run
+    return best
+
+
+def coordinator_terminal_from_show(shown, fallback_handle):
+    """Coordinator terminal from a run-show result, else the run-list handle."""
+    run = None
+    if isinstance(shown, dict):
+        nested = shown.get('run')
+        run = nested if isinstance(nested, dict) else shown
+    handle = run.get('coordinator_handle') if isinstance(run, dict) else None
+    if isinstance(handle, str) and handle.strip():
+        return handle.strip()
+    if isinstance(fallback_handle, str) and fallback_handle.strip():
+        return fallback_handle.strip()
+    return ''
+
+
+def read_coordinator_run():
+    """('run', {id, terminal, waiter_pattern}), ('no-run', None), or ('unread', None).
+
+    unread means Orca did not answer. That is not an empty run list, so the caller
+    keeps the loaded file. A successful answer with no coordinator terminal is no-run.
+    """
+    try:
+        runs = []
+        for page in list_pages('orchestration', 'run-list', '--full'):
+            for run in page.get('runs') or []:
+                if isinstance(run, dict):
+                    runs.append(run)
+    except (OrcaReadError, subprocess.SubprocessError, OSError, TypeError, ValueError, KeyError):
+        return 'unread', None
+    chosen = select_coordinator_run(runs)
+    if chosen is None:
+        return 'no-run', None
+    rid = chosen['id'].strip()
+    terminal = chosen['coordinator_handle'].strip()
+    try:
+        shown = rpc('orchestration', 'run-show', '--id', rid, '--full')
+    except (OrcaReadError, subprocess.SubprocessError, OSError, TypeError, ValueError, KeyError):
+        shown = None
+    terminal = coordinator_terminal_from_show(shown, terminal) or terminal
+    if isinstance(shown, dict):
+        nested = shown.get('run') if isinstance(shown.get('run'), dict) else None
+        shown_id = nested.get('id') if isinstance(nested, dict) else None
+        if isinstance(shown_id, str) and shown_id.strip():
+            rid = shown_id.strip()
+    return 'run', {
+        'id': rid,
+        'terminal': terminal,
+        'waiter_pattern': 'orchestration check --run %s' % rid,
+    }
+
+
+def _arm_fault_repo(config, key, armed):
+    block = config.get(key)
+    if not isinstance(block, dict) or not armed(block):
+        return
+    block.pop('issue_repo', None)
+    block['issue_repo'] = FAULT_REPO
+
+
+def bind_pass_config(config, read_run=None, origin_of=None):
+    """Fill the pass from Orca and git. File runs, label_repo, issue_repo and issue_scan.enabled are ignored.
+
+    Returns 'run', 'no-run', or 'unread'. unread leaves config unchanged.
+    """
+    if not isinstance(config, dict):
+        return 'unread'
+    status, run = (read_run or read_coordinator_run)()
+    if status != 'run':
+        return status
+    config['runs'] = [{
+        'id': run['id'],
+        'terminal': run['terminal'],
+        'waiter_pattern': run.get('waiter_pattern') or ('orchestration check --run %s' % run['id']),
+    }]
+    repos, mapping = repos_from_roots(config.get('repo_roots'), origin_of=origin_of)
+    scan = config.get('issue_scan')
+    if not isinstance(scan, dict):
+        scan = {}
+    scan.pop('enabled', None)
+    scan['enabled'] = True
+    scan['run'] = run['id']
+    scan['from_terminal'] = run['terminal']
+    scan['repos'] = list(repos)
+    scan['pr_repos'] = list(repos)
+    scan['repo_roots'] = mapping
+    config['issue_scan'] = scan
+    babysit = config.get('babysit')
+    if not isinstance(babysit, dict):
+        babysit = {}
+    babysit['run'] = run['id']
+    babysit['from_terminal'] = run['terminal']
+    babysit['repos'] = list(repos)
+    babysit['repo_roots'] = dict(mapping)
+    config['babysit'] = babysit
+    watch = config.get('pr_watch')
+    if not isinstance(watch, dict):
+        watch = {}
+    watch['repos'] = list(repos)
+    config['pr_watch'] = watch
+    stall = config.get('worker_stall')
+    if not isinstance(stall, dict):
+        stall = {}
+    stall.pop('label_repo', None)
+    stall['from_system'] = True
+    config['worker_stall'] = stall
+    _arm_fault_repo(
+        config, 'backup',
+        lambda block: isinstance(block.get('stamp'), str) and bool(block.get('stamp').strip()),
+    )
+    _arm_fault_repo(
+        config, 'heavy_gate',
+        lambda block: (
+            (isinstance(block.get('hosts'), dict) and bool(block.get('hosts')))
+            or (isinstance(block.get('slot_roots'), dict) and bool(block.get('slot_roots')))
+        ),
+    )
+    _arm_fault_repo(
+        config, 'wrap_up',
+        lambda block: isinstance(block.get('hosts'), dict) and bool(block.get('hosts')),
+    )
+    log_fleet_watch('coordinator run %s terminal %s' % (run['id'], run['terminal']))
+    return 'run'
 
 
 def config_runs(config):
@@ -4352,7 +4633,6 @@ def main():
     config, adopted = resolve_pass_config(config, args.config)
     if adopted is not None:
         print('fleet-watch: using coordinator config %s' % adopted, file=sys.stderr)
-    apply_active_run(config)
     remember_config_mtime(config, adopted or args.config)
 
     if not args.state:
@@ -4360,6 +4640,7 @@ def main():
 
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
     if args.babysit_only or args.babysit_dry_run:
+        apply_active_run(config)
         workers = []
         if args.workers_json:
             loaded = json.loads(args.workers_json.read_text())
@@ -4383,6 +4664,20 @@ def main():
         if not dry:
             save_state(args.state, state)
         return 0
+    # A backup host has coordinator_watch and no runs. That path stays the one that
+    # never calls Orca, including when this machine's Orca has other Runs.
+    if config.get('coordinator_watch') and not config_runs(config):
+        _coordinator, done = coordinator_stage(config, state, args.state)
+        if done:
+            return 0
+    status = bind_pass_config(config)
+    if status == 'no-run':
+        config['runs'] = []
+        print('fleet-watch: ' + NO_COORDINATOR_RUN, file=sys.stderr)
+        log_fleet_watch(NO_COORDINATOR_RUN)
+        if not config.get('coordinator_watch'):
+            return 0
+    apply_active_run(config)
     if not config_runs(config) and not config.get('coordinator_watch'):
         watched = adopted or args.config
         message = 'config %s has no runs; refusing this pass' % watched
