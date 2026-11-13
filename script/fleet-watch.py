@@ -3032,7 +3032,7 @@ def build_babysit_spec(repo, pr_row, kind, builder):
             '## Verify\n'
             'bash script/checks-local.sh\n\n'
             '## Finish\n'
-            'Write ## Self-review with the full 40 hex head sha and rewrite it after every push, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
+            'Wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         ) % (repo, number, head)
     return _write_issue_scan_spec(text)
 

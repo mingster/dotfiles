@@ -504,7 +504,8 @@ grep -q 'orchestration worker-start' "$tmp/orca-nofin.log" && ok || bad "no-Fini
 grep -q '## Finish' "$tmp/orca-nofin.log" && ok || bad "worker spec should carry a ## Finish block"
 grep -q 'workspace-status in-review' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set in-review"
 grep -q 'to run run_nofin' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the run for worker_done"
-grep -q '40 hex head sha' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should name the 40 hex Self-review sha"
+grep -q 'Builder: agent=' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should name the Builder line"
+grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok
 grep -q 'gh pr checks' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should wait for green checks"
 grep -q '^## Finish' "$nofin_spec" && bad "the original brief file should be untouched" || ok
 

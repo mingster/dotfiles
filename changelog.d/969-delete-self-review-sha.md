@@ -1,0 +1,1 @@
+The `## Self-review` with the full head sha step is gone. worker-startup's appended Finish block and the fleet-watch rework brief no longer ask for it, `pr_review_gate_self_review` is removed from `script/lib/pr-review-gates.sh`, and the coordinator docs no longer describe it. Ship and the Verdict head match are unchanged (#969).

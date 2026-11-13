@@ -6,6 +6,6 @@ Run this on every push path before `worker_done` or before opening a PR. No suba
 2. Check each change against the issue evidence and predicate and `AGENTS.md` / repo standards.
 3. For any doc you changed, run `bash ~/dotfiles/script/doc-fact-check.sh --repo . --base origin/main --head HEAD -- <files>` and explain every flagged line (reworded, moved, or deliberate removal).
 4. Fix or explain every finding.
-5. Put a `## Self-review` section in the PR body (or in `worker_done` when the brief is local-only) naming the **exact head sha** you reviewed and one line per finding with its outcome.
+5. Name each finding and its outcome in `worker_done`. No `## Self-review` section or head sha is needed in the PR body.
 
-Cursor and Antigravity workers run this checklist as written. It stays a builder duty. `ship.sh` does not gate on it.
+Cursor and Antigravity workers run this checklist as written. It stays a builder duty. No gate reads it.
