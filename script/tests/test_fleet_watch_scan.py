@@ -549,7 +549,8 @@ class IssueScanPass(unittest.TestCase):
         issues = {REPO: [issue(1, ['ready-for-agent', 'P0'], '## Acceptance criteria\n- x')]}
         _, log, starts, _ = self.run_pass(state, issues, gate_ok=False)
         self.assertEqual(starts, [])
-        self.assertIn('issue_scan_gate', log)
+        self.assertTrue(any(str(bit).startswith('issue_scan_gate=') for bit in log), log)
+        self.assertNotIn('issue_scan_gate', log)
 
     def test_load_refusal_starts_nothing(self):
         state = {}
