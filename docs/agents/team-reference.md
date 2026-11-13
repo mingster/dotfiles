@@ -42,7 +42,7 @@ Each step is one run that does one job and ends. It never waits on a person or a
 ```mermaid
 flowchart TD
     Req["Request from the owner or Elon"] --> Intake["Intake: architect-pm grills with Elon"]
-    Intake --> Design["Design, features only: one document, one owner approval"]
+    Intake --> Design["Design, features only: one document; owner approval only for money rules and prices"]
     Intake & Design --> Ready["Issue is ready"]
     Ready --> Build["Build: fullstack-dev, TDD, local checks, pushes and opens PR"]
     Build --> Checks["Actions Checks"]
@@ -52,13 +52,13 @@ flowchart TD
     Babysit --> Ship["Shipping run (script/ship.sh): squash merge and read back"]
     Ship --> Wrap["Wrap-up: 10 minute Orca automation"]
     Ship --> Staging["Staging: daily at 19:00, staging review, full regression"]
-    Staging --> Go["Owner's go"] --> Prod["Production: backup, deploy, smoke"]
+    Staging --> Go["Playground regression, or the owner's go once a real store is live"] --> Prod["Production: backup, deploy, smoke"]
 ```
 
 | Step | Starts when | Who | Done when |
 | --- | --- | --- | --- |
 | Intake | A request arrives | architect-pm with the coordinator. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
-| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document, one owner approval |
+| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document; the owner approves only money rules and prices, and looks before production |
 | Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
 | Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
 | Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
@@ -67,7 +67,7 @@ flowchart TD
 | Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
 | Worktree cleanup | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
 | Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest trunk deployed, swarm live lanes and regression green (or issue opened) |
-| Production | User's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
+| Production | Playground regression while production holds only test data; the user's go once a real store is live | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
 
 **Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one group.
 
@@ -82,11 +82,11 @@ flowchart TD
 * The PR is open and mergeable, and every check passed.
 * The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
 * The Verdict covers this head, or a rebase of it with the same patch id.
-* Changes to protected paths carry the user's approval.
+* Changes to protected paths carry an `Owner-approved:` trailer: the coordinator's approval, or the owner's when the change loosens a safety limit.
 
 It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
 
-**Who can send a request.** The user and the coordinator. Sales and support send requests to the coordinator, and the coordinator gets the user's approval before passing one to architect-pm.
+**Who can send a request.** The user and the coordinator. Sales and support send requests to the coordinator, and the coordinator passes it to architect-pm; only an owner pause in it (money rules and prices, spending) waits on the user.
 
 **Start rule.** An issue starts when it has `ready-for-agent`, evidence and predicate and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, evidence and predicate, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/worker-startup.sh` runs `script/brief-lint.sh` once per start (Verify must call `script/checks-local.sh`, which runs the Checks workflow for the changed files) and appends the fixed Finish block; and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
 
@@ -120,7 +120,7 @@ A project's `docs/agents/` holds only five files, because shared skills, scripts
 * `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
 * `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
 
-Anything else in a project's `docs/agents/` is a special case that needs the user's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
+Anything else in a project's `docs/agents/` is a special case that needs the coordinator's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
 
 ### User decisions
 
@@ -446,7 +446,7 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 ### Merging through ship.sh
 
-The coordinator runs `script/ship.sh --repo owner/name --pr N` itself, one PR at a time, bottom up
+The PR owner runs `script/ship.sh --repo owner/name --pr N` on its own PR; a stack lands bottom up
 (add `--mechanical` for a pure substitution or deletion, `--verdict-from <owner/dotfiles#N>` for
 generated team copies that are not the current template render). No merge worker is dispatched.
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the

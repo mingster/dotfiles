@@ -26,7 +26,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 | `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh`: `script/team-audit.sh` (which calls `agent-team.sh check` per project) with `TEAM_AUDIT_RUN_METRICS=1`, so `script/team-audit-metrics.ts --repo <owner/name>` runs for each project's origin repo | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the user asks) | Same |
 | `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
 | `fleet-toolchain` | `0 5 * * *` | Coordinator only | Wrapper runs `script/fleet-pull.sh` (which also runs `agent-team.sh machine` on each host to render role files and `session-start.md`) then `script/fleet-toolchain-check.sh --apply` (which also runs `orca skills install --all` on each host) | `FLEET_TOOLCHAIN_LOG` (default `~/.local/state/agent-team/fleet-toolchain.log`) | Same |
-| `daily-program-1900` | `0 19 * * *` (`Asia/Taipei`) | Coordinator only | Wrapper runs `script/automation-precheck-staging-daily.sh`, which always wakes the coordinator to run the standing program from `templates/agent-team/docs/agents/daily-run.md`. Only the staging deploy step is skipped when staging equals `origin/main`; otherwise the wake asks for `release-manager` staging deploy and the pstack `swarm` live lanes. Production remains gated on user approval. Re-install removes the entry under its pre #834 name | `STAGING_DAILY_LOG` (default `~/.local/state/agent-team/staging-daily.log`) | Same |
+| `daily-program-1900` | `0 19 * * *` (`Asia/Taipei`) | Coordinator only | Wrapper runs `script/automation-precheck-staging-daily.sh`, which always wakes the coordinator to run the standing program from `templates/agent-team/docs/agents/daily-run.md`. Only the staging deploy step is skipped when staging equals `origin/main`; otherwise the wake asks for `release-manager` staging deploy and the pstack `swarm` live lanes. Production runs after the Playground regression while production holds only test data, and on user approval once a real store is live. Re-install removes the entry under its pre #834 name | `STAGING_DAILY_LOG` (default `~/.local/state/agent-team/staging-daily.log`) | Same |
 
 ## Scheduled worktree cleanup round
 
@@ -89,7 +89,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/wrap-up.sh --scheduled` | Yes (as `wrap-up-scheduled`) | Enabled on every Orca host (headless host stays manual); bounded cleanup round inside `WRAP_UP_PRECHECK_TIMEOUT`, logs skipped repos and optional issue body |
 | `script/agent-team.sh check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |
 | `script/team-audit.sh`, `script/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics skipped when `bun` is missing |
-| `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; no merge; user reviews |
+| `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; they merge on green checks and a Verdict |
 | `script/fleet-pull.sh`, `script/fleet-toolchain-check.sh` | Yes (as `fleet-toolchain`) | Daily coordinator pull, toolchain check and upgrade, and Orca bundled skills refresh |
 | `script/automation-precheck-staging-daily.sh` | Yes (as `daily-program-1900`) | Daily `0 19 * * *` (`Asia/Taipei`) coordinator wake for the standing program; asks for the staging deploy and the pstack `swarm` live lanes only when `origin/main` is ahead of staging |
 | `script/secrets-sync.sh`, `script/secrets-pack.sh`, `script/secrets-unpack.sh` | No | Secrets mutation or user transfer |
@@ -98,7 +98,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/coordinator-drain.sh`, `script/worker-watch.sh` | No | Tied to the coordinator session and fleet-watch, not a cron |
 | `script/worker-startup.sh --host-check` | No | Runs before each worker launch |
 | `script/head-checks.sh`, `script/pr-review.sh` | No | PR CI (`Checks`) and GitHub Actions `Review` workflow after `Checks` pass |
-| `script/ship.sh`, `script/coordinator-publication.sh` | No | Shipping run squash merge, push, and coordinator publication of user decisions |
+| `script/ship.sh`, `script/coordinator-publication.sh` | No | Shipping run squash merge; push and PR opening by the PR owner |
 | `script/new-coordinator.sh`, `script/take-over-coordinator.sh` | No | User provisioning and failover |
 | `script/agent-project-autoinit.sh` | No | IDE SessionStart hook |
 | `script/bun-pin-check.sh`, `script/count-agents.sh` | No | On-demand checks from startup or fleet-watch |

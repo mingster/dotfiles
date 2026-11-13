@@ -5,7 +5,7 @@ description: Prepare, commit and publish a GitHub PR using the repository checks
 
 # Create PR
 
-Read `AGENTS.md` and, in an agent team, "Commit, push and merge" in `.claude/model-routing.md` first. Workers prepare local commits and report to Elon; they never push, open PRs or merge PRs. Elon handles publication and merge on completion under that policy. Outside a team, an explicit request to create a PR authorizes publication.
+Read `AGENTS.md` and, in an agent team, "Commit, push and merge" in `.claude/model-routing.md` first. The PR owner pushes its branch, opens the PR and merges it with `~/dotfiles/script/ship.sh` under that policy; the coordinator does not merge by hand. Outside a team, an explicit request to create a PR authorizes publication.
 
 ## Prepare
 
@@ -25,7 +25,7 @@ Include all work belonging to the PR, including the changelog and required Recen
 
 ## Publish
 
-Only the authorized publisher performs this section. In an agent team, run `~/dotfiles/script/coordinator-publication.sh --repo owner/name --branch <branch> --body-file <path>` per `.claude/model-routing.md`.
+Only the PR owner performs this section. In an agent team, run `~/dotfiles/script/coordinator-publication.sh --repo owner/name --branch <branch> --body-file <path>` per `.claude/model-routing.md`.
 
 Prepare the title and body from the entire branch change. State the concrete outcome, link the issue or spec, and include scope, risk and validation evidence needed by the repository's review checklist. Use `Fixes #<number>` when appropriate. The owner's body rules prohibit a Test plan section, tool credit and Co-Authored-By suggestions, including on later edits.
 

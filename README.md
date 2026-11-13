@@ -20,7 +20,7 @@ One **coordinator agent** holds the CEO role. It reads the issue tracker, plans 
 
 **Worker agents** each take one task. They work in their own **worktree**, a separate git checkout so their edits never collide with other tasks. When a worker finishes, it sends **worker_done**, an orchestration message that ends its turn and reports what it did.
 
-The **user** is the human who approves money, production, irreversible data changes, and a short list of other user decisions. Agents run the rest without waiting on chat.
+The **user** is the human who approves money rules and prices, spending, customer messages, irreversible data deletion, production once a real store is live, and one look at a new feature or page before production. Agents run the rest without waiting on chat.
 
 Full role names and boundaries live in [Agent team reference](docs/agents/team-reference.md).
 
@@ -103,7 +103,7 @@ Host names, caps and roles come from private fleet configuration, not from hard 
 
 ### Goal
 
-An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skill design inside Orca. Every role works through pstack `poteto-mode` with our gates in `templates/agent-team/.agents/skills/orca-adapter/ORCA-ADAPTER.md`. A ready unit reaches merge without message relay between agents. Each day at 19:00 Taiwan time the `daily-program-1900` automation wakes the coordinator to run the standing program (`templates/agent-team/docs/agents/daily-run.md`), which deploys staging when it is behind trunk and then runs the pstack `swarm` live lanes. Production needs green live lanes and the user's go.
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skill design inside Orca. Every role works through pstack `poteto-mode` with our gates in `templates/agent-team/.agents/skills/orca-adapter/ORCA-ADAPTER.md`. A ready unit reaches merge without message relay between agents. Each day at 19:00 Taiwan time the `daily-program-1900` automation wakes the coordinator to run the standing program (`templates/agent-team/docs/agents/daily-run.md`), which deploys staging when it is behind trunk and then runs the pstack `swarm` live lanes. Production needs green live lanes, then the Playground regression while production holds only test data, or the user's go once a real store is live.
 
 Principles, targets, the full lifecycle diagram, babysit and shipping rules, role table, owner decisions and review depth are in [Agent team reference](docs/agents/team-reference.md#team-guideline). Per project policy lives in each repo's `docs/agents/team.md`.
 

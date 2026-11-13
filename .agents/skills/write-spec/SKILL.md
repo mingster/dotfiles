@@ -31,7 +31,7 @@ Deleted: the flag, step, layer or requirement this removes, or "nothing, because
 Numbered, testable statements in glossary terms. Each one says who can do what, what happens on failure, and who asked for it and why (a person, never "the ticket", "the reviewer", "the linter" or "the old code").
 
 ## User-facing copy
-Every new or changed string a store, customer or staff member will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording (`en` and `jp` written natively, never translated from `tw`). The owner approves this copy when he accepts the spec; nobody asks him again at merge (owner rule 2026-10-23). Write "none" when the spec changes no user-facing text.
+Every new or changed string a store, customer or staff member will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording (`en` and `jp` written natively, never translated from `tw`). In an agent team the copy is reviewed with the spec and the owner sees it in the look before production (`team.md`, Owner pauses); nobody asks him again at merge (owner rule 2026-10-23). Write "none" when the spec changes no user-facing text.
 
 ## Design
 When the spec touches a shared module (wallet or ledger, notifications, auth or permissions, any lib others call), open with the caller's usage, then types and signatures, then the module map. Settle any open question that running code can answer with a throwaway spike in a scratch dir and paste the result here; only product trade-offs go to the owner.

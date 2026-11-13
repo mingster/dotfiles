@@ -4,12 +4,12 @@
 
 - Roles, reporting and the secrets rule: `~/dotfiles/templates/agent-team/docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
 - Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on units of an accepted document. Merge follows `~/dotfiles/README.md` section 3 (`script/ship.sh`).
-- release-manager owns every release end to end (staging, gates, production after the user go) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with user approval on the issue.
+- release-manager owns every release end to end (staging, gates, production after the Playground regression, or after the user's go once a real store is live) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with your approval recorded on the issue.
 
 
 ## Dispatch
 
-- **Pre-build grill gate (user rule 2026-11-02):** before spawning a PR owner, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
+- **Pre-build grill gate (user rule 2026-11-02):** before spawning a PR owner, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and your approval of them; for money rules and prices the build starts while the owner reviews them, and only the merge waits (`team.md`, Pre-build grill gate).
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - Before framing, spawning or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, rule table. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - A security gate brief states the threat model.

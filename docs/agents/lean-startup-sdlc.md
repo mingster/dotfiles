@@ -4,13 +4,13 @@
 
 ## 1. 核心開發編制與角色職責
 
-全流程遵循專案 SDLC 與 `docs/agents/team.md`（2026-11-06 規範）。需求與新功能由 `architect-pm` 整合為單一設計文件並交由創辦人一次核准（涉及金流由 `secops-finops`、`architect-pm` 與 the coordinator 進行開工前 Grill；涉及新 UI 頁面由 `sales-marketing` 與 the coordinator 進行 Grill 並附上機截圖），工程派工與合併由 the coordinator 統籌，程式碼實作由 `fullstack-dev` 負責，品質由跨模型家族的 `qa-sdet`（及金流與權限議題的 `secops-finops`）獨立唯讀審查，每日 19:00 自動部署 Staging 並執行 pstack `swarm` 線上審查與完整回歸測試，最終正式環境發布（Production Go）由人類創辦人把關。
+全流程遵循專案 SDLC 與 `docs/agents/team.md`（2026-11-06 規範）。需求與新功能由 `architect-pm` 整合為單一設計文件，創辦人只核准金流規則與價格，新功能與新頁面在上正式環境前由創辦人看過一次（涉及金流由 `secops-finops`、`architect-pm` 與 the coordinator 進行開工前 Grill；涉及新 UI 頁面由 `sales-marketing` 與 the coordinator 進行 Grill 並附上機截圖），工程派工由 fleet-watch 自動啟動，合併由 PR 負責人以 `ship.sh` 執行，程式碼實作由 `fullstack-dev` 負責，品質由跨模型家族的 `qa-sdet`（及金流與權限議題的 `secops-finops`）獨立唯讀審查，每日 19:00 自動部署 Staging 並執行 pstack `swarm` 線上審查與完整回歸測試，正式環境在只有測試資料時於 Playground 回歸測試通過後發布，真實商店上線後才由創辦人逐次核准（Production Go）。
 
 ### 需求分析師兼產品架構師 (`architect-pm`)
 
 * **核心目標**：將模糊的想法收斂為明確的技術規格與可執行任務清單。
 * **交付產出**：
-  * 單一功能設計文件（整合 `intent.md`、`spec.md` 與 units，一次核准）
+  * 單一功能設計文件（整合 `intent.md`、`spec.md` 與 units；僅金流規則與價格需創辦人核准）
   * GitHub issues from `to-tickets`（可獨立驗證的任務契約，單一內文須包含 `## Acceptance criteria`、`Requirement owner` 與 `Deleted` 三項欄位，以及對應 `## Test plan` 的測試案例）
 * **規範**：規格書統一存放於專案定義的規格目錄（`docs/intent/<YYYY-MM-DD>-<slug>/`），架構決策寫入 `docs/adr/`，專有名詞收錄於 `CONTEXT.md`。
 
@@ -19,7 +19,7 @@
 * **核心目標**：在獨立 Orca 子工作樹（`~/orca/workspaces/<project>/<lane>`）迅速實作並附上測試（修 Bug 先寫失敗測試再修復，僅在測試成本過高、高度依賴整合或目標不明確時例外；新功能、腳本與重構須附測試並於真實產物驗證 Prove It Works，不強制先紅燈，重構須證明行為不變），僅執行觸及的測試檔案（嚴禁自行跑完整回歸測試）。
 * **交付產出**：
   * 符合規格的功能程式碼與測試案例
-  * 獨立分支本地提交（新增 `changelog.d/<issue>-<slug>.md` 片段，嚴禁在 PR 直接修改 `CHANGELOG.md`）與 `worker_done` 報告（the coordinator 親自執行 `coordinator-publication.sh` 與 `ship.sh`，須先通過 `head-checks.sh` 與跨家族 QA）
+  * 獨立分支本地提交（新增 `changelog.d/<issue>-<slug>.md` 片段，嚴禁在 PR 直接修改 `CHANGELOG.md`）與 `worker_done` 報告（PR 負責人自行推送、開 PR 並以 `ship.sh` 合併，須先通過 `head-checks.sh` 與跨家族 QA）
 * **成功標準**：目標測試與 `head-checks.sh` 通過，且通過獨立 QA 與安全審查門禁。
 
 ## 2. 新創專用 FinOps 與防卡死護欄 (Infinite Loop Defuser)
@@ -62,7 +62,7 @@ Agent 在執行多切片（multi-slice）複雜任務時，透過工作樹根目
 
 1. **環境變數零信任 (Zero-Env Disclosure)**：Agent 在任何時候更新或建立 Markdown 文件或終端輸出時，嚴禁將 `.env` 中的真實金鑰、密碼或 Token 寫入檔案或螢幕。
 2. **預留占位符 (Placeholders)**：所有涉及金流密鑰或資料庫連線字串的地方，一律使用 `[Omitted/Configured via Env]` 替代，並使用 `python3 "$HOME/.claude/bin/env-peek.py"` 做遮罩檢查。
-3. **人類審查與合併門禁**：AI 工程師僅在專屬工作樹本地提交；the coordinator 親自執行發布與 `ship.sh`。角色定義變更須附帶 `Owner-approved:` commit trailer，正式環境上線由人類創辦人逐次核准。
+3. **合併門禁**：PR 負責人在專屬工作樹提交、推送並以 `ship.sh` 合併，the coordinator 不親自合併。角色定義變更經非作者 Verdict 通過與 the coordinator 核准並附帶 `Owner-approved:` commit trailer，僅放寬安全限制時需創辦人核准；正式環境在只有測試資料時於 Playground 回歸測試通過後上線，真實商店上線後由創辦人逐次核准。
 
 ## 5. 對話脈絡與 Token 節省守則 (Context Hygiene & Token Conservation)
 
@@ -73,4 +73,4 @@ Agent 在執行多切片（multi-slice）複雜任務時，透過工作樹根目
 3. **Orca 隔離派工 (Supervised Orca Workers)**：
    大量檔案調查、實作與獨立審查皆由 the coordinator 透過 Orca Orchestration（`orca orchestration worker-start`，經由 `usage-gate.py` 與 `heavy-gate.sh` 管控）派發給獨立工作樹的 Worker 執行，嚴禁使用 Claude 內建 subagents。主會話僅讀取簡短統計摘要（如 `git diff --stat` 與測試計數）。
 4. **探勘沙盒 (Spike Isolation)**：
-   對於程式碼即可回答的可行性問題，在 `.scratch/` 或拋棄式分支進行輕量驗證並將結果貼入規格；若需建立 2 至 3 個競爭原型（Exhaust the Design Space），須先由 the coordinator 以中文向創辦人報價並取得明確核准。
+   對於程式碼即可回答的可行性問題，在 `.scratch/` 或拋棄式分支進行輕量驗證並將結果貼入規格；若需建立 2 至 3 個競爭原型（Exhaust the Design Space），須先取得 the coordinator 核准。
