@@ -387,9 +387,19 @@ blank_case 14 feat-empty empty
 blank_case 15 feat-ws whitespace
 
 # 940. A wording-only change after the Verdict head ships on green checks; code, protected paths and code fences keep the patch-id refusal
-wording_case() { # <pr> <branch> <file> <content> <expect ship|refuse> <label> [rename-from: a file the PR already has, moved to <file> unchanged]
-  local n=$1 b=$2 f=$3 content=$4 expect=$5 label=$6 from=${7:-} old new
+wording_case() { # <pr> <branch> <file> <content> <expect ship|refuse> <label> [rename-from: a file the PR already has, moved to <file> unchanged] [pre: content <file> has at the Verdict head]
+  local n=$1 b=$2 f=$3 content=$4 expect=$5 label=$6 from=${7:-} pre=${8:-} old new
   mf_pr_add "$n" "$b" "Body" ${from:+"$from"}
+  if [ -n "$pre" ]; then
+    "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$b"
+    mkdir -p "$MF_REPO/$(dirname "$f")"
+    printf '%s\n' "$pre" > "$MF_REPO/$f"
+    "$MF_REAL_GIT" -C "$MF_REPO" add -A
+    "$MF_REAL_GIT" -C "$MF_REPO" commit -q -m "before verdict"
+    "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$b"
+    "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
+    jq --arg h "$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$b")" '.headRefOid = $h' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  fi
   old=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$b"
   mkdir -p "$MF_REPO/$(dirname "$f")"
@@ -424,6 +434,22 @@ rm -rf x
 ```' refuse "a docs change that adds a code fence is refused"
 wording_case 67 feat-word-nested notes/other.md "words" refuse "a .md outside docs and changelog.d is refused"
 wording_case 68 feat-word-rename docs/run.md "" refuse "a script renamed into docs after the Verdict is refused" script/run.sh
+fence_doc='intro
+```sh
+rm -rf x
+```
+outro'
+wording_case 69 feat-word-infence docs/f1.md 'intro
+```sh
+rm -rf y
+```
+outro' refuse "an edit to a line inside an existing code fence is refused" "" "$fence_doc"
+wording_case 70 feat-word-outfence docs/f2.md 'intro changed
+```sh
+rm -rf x
+```
+outro' ship "a prose edit outside an existing code fence still ships" "" "$fence_doc"
+wording_case 71 feat-word-claude CLAUDE.md "@AGENTS.md" refuse "a top level CLAUDE.md change is refused"
 
 # Red main: refuses and names the run, unless the PR body says it fixes that run and the PR touches what failed.
 # red_main_case <pr> <branch> <body-line or empty> <expect: refuse|ship> <pr file> <label> [conclusion] [expect text]

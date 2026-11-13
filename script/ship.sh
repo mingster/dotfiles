@@ -126,8 +126,28 @@ verdict_carry() { # <verdict_head> <current_head>
   ! blank_commit "$1" "$2" >/dev/null
 }
 
+# True when the diff of <file> changes, deletes or inserts into a line of a code fence in the old version (delimiters included).
+edits_inside_fence() { # <old> <new> <file>
+  git cat-file -e "$1:$3" 2>/dev/null || return 1
+  awk '
+    FNR == NR {
+      n++
+      if ($0 ~ /^ *(```|~~~)/) { delim = 1; infence = !infence } else delim = 0
+      cover[n] = delim || infence
+      after[n] = infence
+      next
+    }
+    /^@@ / {
+      split($2, a, ","); s = substr(a[1], 2) + 0; c = (a[2] == "" ? 1 : a[2] + 0)
+      if (c == 0) { if (after[s]) hit = 1 }
+      else for (i = s; i < s + c; i++) if (cover[i]) hit = 1
+    }
+    END { exit hit ? 0 : 1 }
+  ' <(git show "$1:$3") <(git diff -U0 --no-renames "$1" "$2" -- "$3")
+}
+
 # Wording only since the Verdict head (#940): every changed file is .md under docs/ or changelog.d/ or at the top level,
-# the diff adds no code fence, and no changed path is protected. Such a change merges on green checks with no new Verdict.
+# the diff adds no code fence and edits no line inside an existing one (#956), no top level CLAUDE.md changes, and no changed path is protected. Such a change merges on green checks with no new Verdict.
 wording_only_carry() { # <verdict_head> <current_head>
   local f out
   git cat-file -e "$1^{commit}" 2>/dev/null || git fetch origin "$1" >&2 || return 1
@@ -136,12 +156,14 @@ wording_only_carry() { # <verdict_head> <current_head>
   [ -n "$out" ] || return 1
   while IFS= read -r f; do
     case "$f" in
+      CLAUDE.md) return 1 ;;
       docs/*.md|changelog.d/*.md) ;;
       */*) return 1 ;;
       *.md) ;;
       *) return 1 ;;
     esac
     protected_path "$f" && return 1
+    edits_inside_fence "$1" "$2" "$f" && return 1
   done <<<"$out"
   ! git diff "$1" "$2" | grep -qE '^\+.*(```|~~~)'
 }
