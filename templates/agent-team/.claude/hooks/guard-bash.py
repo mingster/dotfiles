@@ -877,6 +877,28 @@ def approval_file_candidates():
     return out
 
 
+def approval_root():
+    return os.environ.get("GUARD_APPROVAL_ROOT") or "/usr/local/etc/agent-team"
+
+
+def approval_read_paths():
+    """Where load_approval looks. When the root owned folder exists (script/approval-root-setup.sh ran), only
+    files in it count, so a file a worker writes under ~/.config never grants anything."""
+    cands = approval_file_candidates()
+    root = approval_root()
+    if APPROVAL_FILE_OVERRIDE or not os.path.isdir(root):
+        return cands
+    out = []
+    for c in cands:
+        p = os.path.join(root, os.path.basename(os.path.dirname(c)), "approval.json")
+        if p not in out:
+            out.append(p)
+    for found in sorted(glob.glob(os.path.join(root, "*", "approval.json"))):
+        if found not in out:
+            out.append(found)
+    return out
+
+
 def primary_approval_file():
     cands = approval_file_candidates()
     return cands[0] if cands else os.path.join(os.path.expanduser("~"), ".config", "agent-team", "approval.json")
@@ -893,7 +915,7 @@ def load_approval():
     """(approval, reason it is missing or invalid)."""
     last_reason = "no owner approval is on file"
     now = time.time()
-    for path in approval_file_candidates():
+    for path in approval_read_paths():
         if not os.path.exists(path):
             continue
         try:
