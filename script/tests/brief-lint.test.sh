@@ -298,13 +298,28 @@ set +e
 out=$(bash "$lint" "$tmp/builder-weak.md" 2>&1)
 ec=$?
 set -e
-if [ "$ec" -eq 1 ] && [[ "$out" == *"40 hex head sha and rewrites it after every push"* ]]; then ok; else bad "builder Finish without 40 hex sha (ec=$ec, out=$out)"; fi
+if [ "$ec" -eq 1 ] && [[ "$out" == *"Finish must name ## Self-review and the full 40 hex head sha"* ]]; then ok; else bad "builder Finish without 40 hex sha (ec=$ec, out=$out)"; fi
 sed 's/^Self-review, then send worker_done\./Write ## Self-review with the full 40 hex head sha, rewrite it after every push, then send worker_done./' "$tmp/builder-weak.md" >"$tmp/builder-ok.md"
 set +e
 out=$(bash "$lint" "$tmp/builder-ok.md" 2>&1)
 ec=$?
 set -e
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with 40 hex sha passes (ec=$ec, out=$out)"; fi
+
+# 927. Other wording passes: no "push" needed, only Self-review and the 40 hex sha.
+sed 's/^Self-review, then send worker_done\./Rewrite ## Self-review with the new full 40 hex head sha, then send worker_done./' "$tmp/builder-weak.md" >"$tmp/builder-alt.md"
+set +e
+out=$(bash "$lint" "$tmp/builder-alt.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish alt wording passes (ec=$ec, out=$out)"; fi
+# 927. Sha named but no Self-review still fails.
+sed 's/^Self-review, then send worker_done\./Record the full 40 hex head sha, then send worker_done./' "$tmp/builder-weak.md" >"$tmp/builder-nosr.md"
+set +e
+out=$(bash "$lint" "$tmp/builder-nosr.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Finish self-review step" ]; then ok; else bad "builder Finish without Self-review (ec=$ec, out=$out)"; fi
 
 # Finish without the in-review step is refused, for any role
 cat >"$tmp/no-in-review.md" <<'EOF'
