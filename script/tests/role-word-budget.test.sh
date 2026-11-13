@@ -70,6 +70,8 @@ has "$T/docs/agents/coordinator-operations.md" 'Production job order' "template 
 has "$T/docs/agents/release-manager-work.md" 'coordinator-operations.md`, Production job order' "release-manager-work points the job order at coordinator-operations"
 has "$T/.claude/agents/release-manager.md" '~/dotfiles/templates/agent-team/docs/agents/release-manager-work.md' "release-manager role file points at template release-manager-work"
 has "$T/.claude/agents/qa-sdet.md" '~/dotfiles/templates/agent-team/docs/agents/qa-sdet-execution.md' "qa-sdet role file points at template qa-sdet-execution"
+has "$T/.claude/agents/fullstack-dev.md" '## Self-check' "fullstack-dev keeps the Self-check line"
+has "$T/.claude/agents/qa-sdet.md" 'every fix as its own' "qa-sdet keeps the full FAIL list"
 has "$T/docs/agents/engineering-integration.md" 'even a new spec no worker could run' "merge rules keep rerun of a new spec"
 has "$T/docs/agents/coordinator-operations.md" '{{PROJECT_NAME}}/<lane>' "small task method keeps the project placeholder"
 has "$T/docs/agents/team.md" 'team-facts.md` only' "template team.md says project differences go in team-facts.md only"
