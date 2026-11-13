@@ -412,6 +412,65 @@ else
   bad "draft is skipped ($(cat "$tmp/draft.out"))"
 fi
 
+# --- merged, closed, and a stale open row with a merge time do not start a verifier ---
+empty_repos
+: > "$BABYSIT_STARTS"
+python3 - "$BABYSIT_GH_DIR/owner/app.json" "$HEAD_A" "$HEAD_B" "$HEAD_C" <<'PY'
+import json, sys
+path, merged_head, closed_head, stale_head = sys.argv[1:]
+checks = [{"name": "head-checks", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+json.dump([
+    {
+        "number": 1021,
+        "state": "MERGED",
+        "isDraft": False,
+        "mergedAt": "2026-11-13T20:01:52Z",
+        "headRefOid": merged_head,
+        "headRefName": "feature/pr-1021",
+        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+        "files": [{"path": "script/fleet-watch.py"}],
+        "comments": [],
+        "statusCheckRollup": checks,
+    },
+    {
+        "number": 8,
+        "state": "CLOSED",
+        "isDraft": False,
+        "closedAt": "2026-11-13T20:01:52Z",
+        "headRefOid": closed_head,
+        "headRefName": "feature/pr-8",
+        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+        "files": [{"path": "script/fleet-watch.py"}],
+        "comments": [],
+        "statusCheckRollup": checks,
+    },
+    {
+        "number": 9,
+        "state": "OPEN",
+        "isDraft": False,
+        "mergedAt": "2026-11-13T20:01:52Z",
+        "headRefOid": stale_head,
+        "headRefName": "feature/pr-9",
+        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+        "files": [{"path": "script/fleet-watch.py"}],
+        "comments": [],
+        "statusCheckRollup": checks,
+    },
+], open(path, "w", encoding="utf-8"))
+PY
+echo '{}' > "$tmp/state-closed.json"
+if run_pass "$tmp/state-closed.json" only "" "$tmp/closed.out"; then
+  ok "merged and closed pass exits 0"
+else
+  bad "merged and closed pass exits 0"
+fi
+if [ "$(starts)" = 0 ]; then ok "merged and closed do not dispatch"; else bad "merged and closed do not dispatch (got $(starts))"; fi
+if grep -q 'action=skip closed' "$tmp/closed.out" && [ "$(grep -c 'action=skip closed' "$tmp/closed.out")" -eq 3 ]; then
+  ok "merged and closed are skipped"
+else
+  bad "merged and closed are skipped ($(cat "$tmp/closed.out"))"
+fi
+
 # --- builder comes from the dispatch record when the body has no Builder line ---
 empty_repos
 : > "$BABYSIT_STARTS"

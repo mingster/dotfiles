@@ -3855,6 +3855,24 @@ def pick_failure_reason(data, avoid=None):
     return 'no-pick'
 
 
+def pr_open_for_dispatch(pr_row):
+    """An open pull request with no merge or close time. Merged and closed rows are not dispatched."""
+    if not isinstance(pr_row, dict):
+        return False
+    if str(pr_row.get('state') or '').upper() != 'OPEN':
+        return False
+    if pr_row.get('mergedAt') or pr_row.get('closedAt'):
+        return False
+    return True
+
+
+def _babysit_closed(pr_row):
+    if not isinstance(pr_row, dict):
+        return False
+    state_name = str(pr_row.get('state') or '').upper()
+    return state_name in ('MERGED', 'CLOSED') or bool(pr_row.get('mergedAt') or pr_row.get('closedAt'))
+
+
 def _babysit_line(repo, number, head, action, detail=''):
     text = 'babysit %s#%s head=%s action=%s' % (repo, number, head, action)
     if detail:
@@ -4268,7 +4286,11 @@ def babysit_pass(
             log_bits.append('fetch_fail')
             continue
         for pr_row in prs:
-            if not isinstance(pr_row, dict) or pr_row.get('state') != 'OPEN':
+            if not pr_open_for_dispatch(pr_row):
+                if _babysit_closed(pr_row):
+                    lines.append(_babysit_line(
+                        repo, pr_row.get('number') or 0, pr_row.get('headRefOid') or '', 'skip', 'closed',
+                    ))
                 continue
             rows.append((index, pr_row.get('number') or 0, repo, pr_row))
     rows.sort(key=lambda item: (item[0], item[1]))
@@ -4499,7 +4521,7 @@ def issue_scan_pass(
         rounds = rework_rounds.setdefault(repo, {})
         escalated = rework_escalated.setdefault(repo, {})
         for pr_row in prs:
-            if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
+            if not pr_open_for_dispatch(pr_row) or pr_row.get('isDraft'):
                 continue
             if pr_has_label(pr_row, needs_elon) or pr_has_label(pr_row, needs_redesign):
                 continue
