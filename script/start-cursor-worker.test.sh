@@ -44,7 +44,7 @@ STUB
 chmod +x "$ORCA_CLI_COMMAND"
 printf 'Do the fixture task.\n' > "$tmp/spec"
 launch() { bash "$root/script/start-cursor-worker.sh" --run run_fixture --spec "$tmp/spec" --title 'fullstack-dev - fixture' --model composer-2.5 --from term_fixture "$@"; }
-for strong in elon architect-pm secops-finops qa-sdet; do
+for strong in elon architect-pm secops-finops; do
   : > "$CURSOR_TEST_LOG"
   if launch --title "$strong - fixture job" --worktree-path '/tmp/example.repo/work tree.v1' >"$tmp/result" 2>&1; then
     echo "FAIL: Strong role $strong was accepted" >&2; exit 1
@@ -62,6 +62,13 @@ fi
 grep -Fq 'start-cursor-worker: Strong tier role' "$tmp/result"
 test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: Strong role named in the spec is refused before Orca'
+: > "$CURSOR_TEST_LOG"
+printf 'read /tmp/.claude/agents/qa-sdet.md first\n' > "$tmp/spec"
+launch --title 'qa-sdet - fixture job' --model grok-4.7-xhigh --worktree-path '/tmp/example.repo/work tree.v1' > "$tmp/result"
+grep -q 'orchestration worker-start' "$CURSOR_TEST_LOG" \
+  || { echo "FAIL: qa-sdet on Cursor grok did not reach Orca" >&2; cat "$tmp/result"; exit 1; }
+grep -q -- '--model grok-4.7-xhigh' "$CURSOR_TEST_LOG"
+echo 'PASS: qa-sdet on Cursor grok is accepted'
 printf 'Do the fixture task.\n' > "$tmp/spec"
 launch --name fixture --repo /tmp/example.repo --base-branch origin/main > "$tmp/result"
 grep -q 'worktree create.*--base-branch origin/main' "$CURSOR_TEST_LOG"

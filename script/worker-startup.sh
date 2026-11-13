@@ -344,6 +344,27 @@ usage_run() {
   exit 2
 }
 
+# Resolved poteto-mode, ORCA-ADAPTER, and role-file paths, ahead of the brief. Idempotent.
+prepend_role_preamble() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role out
+  role=$(role_from_title "$title" || true)
+  if [ -z "$role" ]; then
+    role=$(sed -n 's/^Role:[[:space:]]*\([a-z0-9-]*\).*/\1/p' "$spec_file" | head -n 1)
+  fi
+  [ -n "$role" ] || role=fullstack-dev
+  if grep -q 'poteto-mode/SKILL.md' "$spec_file" && grep -q 'ORCA-ADAPTER.md' "$spec_file"; then
+    printf '%s\n' "$spec_file"
+    return 0
+  fi
+  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-preamble.XXXXXX") || die "cannot write the spec copy"
+  {
+    "$python3" "$here/worker-preamble.py" --role "$role"
+    printf '\n'
+    cat "$spec_file"
+  } >"$out"
+  printf '%s\n' "$out"
+}
+
 role_from_title() { # "<role> - <job>" -> role; anything else prints nothing
   local title=$1 role
   case "$title" in
@@ -494,6 +515,7 @@ run_mode() {
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out dispatch_log
   spec=$(with_finish_block "$spec" "$run")
+  spec=$(prepend_role_preamble "$spec" "$title")
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
   enforce_builder_cursor "$title" "$agent" "$route_override"

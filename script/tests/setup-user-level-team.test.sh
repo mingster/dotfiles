@@ -103,6 +103,13 @@ for d in "$root/templates/agent-team/.agents/skills"/*/; do
 done
 [ "$missing_t2" -eq 0 ] && ok "every Tier 2 directory under templates/agent-team/.agents/skills/ is linked" || bad "$missing_t2 Tier 2 skill directories not linked"
 
+if [ -L "$home1/.agents/skills/orca-adapter" ] && [ -f "$home1/.agents/skills/orca-adapter/ORCA-ADAPTER.md" ] &&
+   [ -L "$home1/.claude/skills/orca-adapter" ] && [ -f "$home1/.claude/skills/orca-adapter/ORCA-ADAPTER.md" ]; then
+  ok "orca-adapter is linked into ~/.agents/skills and ~/.claude/skills"
+else
+  bad "orca-adapter link missing"
+fi
+
 if [ -L "$home1/.agents/skills/tdd" ] && [ -L "$home1/.claude/skills/tdd" ]; then
   ok "Tier 1 skills (tdd) remain linked alongside Tier 2 skills"
 else

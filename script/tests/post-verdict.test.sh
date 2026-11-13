@@ -24,7 +24,7 @@ new_pr() {
   mf_pr_add "$1" "pv$1" "$body" "script/pv$1.sh"
   local h f="$MF_GH_DIR/pr-$1.json"
   h=$(jq -r .headRefOid "$f")
-  jq '.body += "\n\nBuilder: agent=claude model=sonnet\n" | .statusCheckRollup = [{"name":"t","status":"COMPLETED","conclusion":"SUCCESS"}]' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  jq '.body += "\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n" | .statusCheckRollup = [{"name":"t","status":"COMPLETED","conclusion":"SUCCESS"}]' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   printf '%s' "$h"
 }
 post_checks() { gh pr comment "$1" --repo example/repo --body "Checks: PASS head=$2" >/dev/null; }

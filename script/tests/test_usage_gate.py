@@ -1868,12 +1868,43 @@ class BuilderCursorRoute(unittest.TestCase):
                  {"provider": "claude", "model": "opus", "effort": "medium"},
                  {"provider": "antigravity", "model": "gemini-4-argon-high"}]
         roles = {role: {"tier": "strong", "chain": chain}
-                 for role in ("elon", "architect-pm", "qa-sdet", "secops-finops")}
+                 for role in ("elon", "architect-pm", "secops-finops")}
         for role in roles:
             with self.subTest(role=role):
                 status, out = self.flags(role, roles, {"cursor": 1, "claude": 40, "antigravity": 40})
                 self.assertEqual((status, out), (0, "--agent claude --model opus --effort medium"))
                 self.assertNotIn("cursor", out)
+
+    def test_qa_sdet_may_pick_cursor_grok(self):
+        chain = [{"provider": "cursor", "model": "grok-4.7-xhigh"},
+                 {"provider": "claude", "model": "opus", "effort": "medium"},
+                 {"provider": "antigravity", "model": "gemini-4-argon-high"}]
+        roles = {"qa-sdet": {"tier": "strong", "chain": chain}}
+        status, out = self.flags("qa-sdet", roles, {"cursor": 1, "claude": 40, "antigravity": 40})
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+
+    def test_qa_sdet_falls_back_to_a_different_claude_model_when_other_families_are_blocked(self):
+        chain = [{"provider": "claude", "model": "opus", "effort": "high"},
+                 {"provider": "antigravity", "model": "gemini-4-argon-high"},
+                 {"provider": "cursor", "model": "grok-4.7-high"}]
+        path = os.path.join(self.tmp, "fallback.json")
+        with open(path, "w") as handle:
+            json.dump({"roles": {"qa-sdet": {"tier": "strong", "chain": chain}}}, handle)
+
+        def fake_run(provider, *_args, **_kwargs):
+            blocked = provider != "claude"
+            return {"provider": provider, "verdict": "blocked" if blocked else "allowed",
+                    "ceiling": 95, "weekly_used": 96 if blocked else 10, "reserve": 0,
+                    "blocked_until": FUT if blocked else None}
+
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            result = ug.pick("qa-sdet", "claude", None, None, None)
+        self.assertEqual(result["selected"]["provider"], "claude")
+        self.assertTrue(result["selected"].get("same_family_fallback"))
+        models = [row["model"] for row in result["candidates"] if row.get("same_family_fallback")]
+        self.assertEqual(models, ["opus", "sonnet"])
 
     def test_shipped_chains_match_the_builder_rule(self):
         with open(self.PRESETS) as handle:
@@ -1886,6 +1917,9 @@ class BuilderCursorRoute(unittest.TestCase):
         self.assertEqual(light["tier"], "light")
         self.assertEqual([entry["provider"] for entry in light["chain"]], ["cursor", "claude", "antigravity"])
         self.assertEqual(light["chain"][0]["model"], "grok-4.7-xhigh")
-        for role in ("elon", "architect-pm", "qa-sdet", "secops-finops"):
+        qa = roles["qa-sdet"]["chain"]
+        self.assertEqual([entry["provider"] for entry in qa], ["claude", "antigravity", "cursor"])
+        self.assertEqual(qa[-1]["model"], "grok-4.7-high")
+        for role in ("elon", "architect-pm", "secops-finops"):
             providers = [entry["provider"] for entry in roles[role]["chain"]]
             self.assertNotIn("cursor", providers, role)

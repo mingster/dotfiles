@@ -522,5 +522,44 @@ Run bash script/checks-local.sh.
 EOF
 lint_exact "rework without Verdict link or Self-check" "$tmp/rework-neither.md" 1 $'brief-lint: rework brief must link the Verdict\nbrief-lint: rework brief must require a Self-check'
 
+# qa-sdet with green GitHub Checks does not need checks-local.sh. A builder brief still does.
+cat >"$tmp/qa-green.md" <<'EOF'
+Refs dotfiles#1031
+Role: qa-sdet. Verify the head.
+
+## Acceptance
+- [ ] a Verdict is posted
+
+## Out of scope
+Merging.
+
+## Verify
+GitHub Checks are green at this head.
+EOF
+set +e
+out=$(bash "$lint" "$tmp/qa-green.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "qa-sdet green checks (ec=$ec, out=$out)"; fi
+
+cat >"$tmp/builder-green.md" <<'EOF'
+Refs dotfiles#1031
+Role: fullstack-dev.
+
+## Acceptance
+- [ ] the check passes
+
+## Out of scope
+Other files.
+
+## Verify
+GitHub Checks are green at this head.
+EOF
+set +e
+out=$(bash "$lint" "$tmp/builder-green.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "builder still needs checks-local.sh (ec=$ec, out=$out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

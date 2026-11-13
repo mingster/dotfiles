@@ -1,4 +1,4 @@
-"""Verifier and rework briefs name script/checks-local.sh only when the repo has it."""
+"""Rework briefs name script/checks-local.sh only when the repo has it. Verifier briefs use green GitHub Checks."""
 import importlib.util
 import subprocess
 import tempfile
@@ -73,12 +73,16 @@ class VerifyBrief(unittest.TestCase):
         path.write_text(text, encoding='utf-8')
         return str(path)
 
-    def test_verifier_names_checks_local_only_when_the_repo_has_it(self):
+    def test_verifier_uses_green_checks_and_not_checks_local(self):
         row = {'number': 4, 'headRefOid': HEAD}
-        present = Path(fw.build_babysit_spec(REPO, row, 'verifier', ('claude', 'opus'), str(self.present))).read_text(encoding='utf-8')
-        absent = Path(fw.build_babysit_spec(REPO, row, 'verifier', ('claude', 'opus'), str(self.absent))).read_text(encoding='utf-8')
-        self.assert_names_the_script(present)
-        self.assert_names_nothing_else(absent)
+        for root in (self.present, self.absent):
+            text = Path(fw.build_babysit_spec(REPO, row, 'verifier', ('claude', 'opus'), str(root))).read_text(encoding='utf-8')
+            body = verify_body(text)
+            self.assertIn('GitHub Checks are green', body)
+            self.assertNotIn('checks-local.sh', text)
+            self.assertIn('Role: qa-sdet', text)
+            lint = subprocess.run(['bash', str(LINT), self._write(text)], capture_output=True, text=True)
+            self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
 
     def test_babysit_rework_names_checks_local_only_when_the_repo_has_it(self):
         row = {'number': 4, 'headRefOid': HEAD}

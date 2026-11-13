@@ -22,7 +22,7 @@ ok() { echo "ok   $1"; pass=$((pass+1)); }
 bad() { echo "FAIL $1"; fail=$((fail+1)); }
 say() { if [ "$1" = 0 ]; then ok "$2"; else bad "$2${3:+ ($3)}"; fi; }
 
-body=$'## Verification\n- Passed.\n\nBuilder: agent=claude model=sonnet'
+body=$'## Verification\n- Passed.\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0'
 green='[{"name":"script-tests","status":"COMPLETED","conclusion":"SUCCESS"}]'
 new_pr() {
   mf_pr_add "$1" "vh$1" "$body" "script/vh$1.sh"

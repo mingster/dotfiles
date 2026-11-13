@@ -2,7 +2,9 @@
 # Ship one verified PR with squash merge and read-back confirmation (pstack Shipping run).
 # Usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]
 # Lanes: code and script PRs need a verifier Verdict: PASS whose agent and model differ from the builder's
-# (PR body line "Builder: agent=<a> model=<m>"); a docs only PR needs a cold "Review: PASS head=<head>"
+# (PR body line "Builder: agent=<a> model=<m>"). The same model family is refused unless the Verdict
+# comment is tagged same-family-different-model. The body also needs checked Acceptance and a
+# ## Self-check with a command and its output. A docs only PR needs a cold "Review: PASS head=<head>"
 # or a Verdict PASS or PASS+NOTES at that exact head (same author and builder checks as the verdict lane);
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
 # copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
@@ -89,13 +91,28 @@ done
 [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]"
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
 
-info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
-  || refuse "cannot read PR $pr"
+read_pr() {
+  info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
+    || refuse "cannot read PR $pr"
+}
+read_pr
 field() { jq -r "$1" <<<"$info"; }
 
 # 1. PR is open, not draft, mergeable (not CONFLICTING).
+# GitHub leaves mergeable UNKNOWN until it has calculated the merge. PRs 801 and 802
+# were MERGEABLE about 20s later, so reread a few times, then refuse.
 [ "$(field .state)" = OPEN ] || refuse "PR $pr is not open (state=$(field .state))"
 [ "$(field '.isDraft // false')" = false ] || refuse "PR $pr is a draft"
+mergeable_wait=${SHIP_MERGEABLE_WAIT:-20}
+mergeable_rereads=${SHIP_MERGEABLE_REREADS:-3}
+[[ "$mergeable_wait" =~ ^[0-9]+$ ]] || mergeable_wait=20
+[[ "$mergeable_rereads" =~ ^[0-9]+$ ]] || mergeable_rereads=3
+reread=0
+while [ "$(field .mergeable)" = UNKNOWN ] && [ "$reread" -lt "$mergeable_rereads" ]; do
+  reread=$((reread + 1))
+  sleep "$mergeable_wait"
+  read_pr
+done
 [ "$(field .mergeable)" = MERGEABLE ] || refuse "PR $pr is not mergeable (mergeable=$(field .mergeable))"
 head=$(field .headRefOid)
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || refuse "PR $pr has invalid headRefOid"
@@ -237,28 +254,40 @@ builder_record() { # <body>; sets builder_agent and builder_model, or leaves the
   [[ "$l" =~ ^Builder:\ agent=([A-Za-z0-9._-]+)\ model=([A-Za-z0-9._:-]+) ]] || return 0
   builder_agent=${BASH_REMATCH[1]} builder_model=${BASH_REMATCH[2]}
 }
-same_pair_gate() { # <body> <verifier agent> <verifier model> <where>
+model_family() { # <agent> <model>
+  python3 "$ship_dir/usage-gate.py" family --agent "$1" --model "$2"
+}
+same_pair_gate() { # <body> <verifier agent> <verifier model> <where> [same-family tag]
   builder_record "$1"
   [ -n "$builder_agent" ] || refuse "$4 has no 'Builder: agent=<agent> model=<model>' line, so the verifier cannot be compared with the builder"
   [ "$(tr '[:upper:]' '[:lower:]' <<<"$2/$3")" != "$(tr '[:upper:]' '[:lower:]' <<<"$builder_agent/$builder_model")" ] \
     || refuse "verifier $2/$3 is the same agent and model as the builder; verify with a different agent or model"
+  local verifier_family builder_family body_reason
+  verifier_family=$(model_family "$2" "$3")
+  builder_family=$(model_family "$builder_agent" "$builder_model")
+  if [ -n "$verifier_family" ] && [ "$verifier_family" != unknown ] && [ "$verifier_family" = "$builder_family" ] \
+      && [ "${5:-}" != same-family-different-model ]; then
+    refuse "verifier $2/$3 is the same model family as the builder; verify with a different family or tag the Verdict same-family-different-model"
+  fi
+  body_reason=$(python3 "$ship_dir/pr-body-gate.py" <<<"$1") || refuse "$4 $body_reason"
 }
 verdict_re='^Verdict: (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40}) verifier=([a-zA-Z0-9_-]+) author=([a-zA-Z0-9_-]+)( agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+))?$'
 
 # Newest Verdict comment (exact post-verdict.sh first-line shape) into verdict_status, verdict_head, v_agent, v_model.
 # A flagged (edited or minimized) comment counts only when it is a FAIL. Empty verdict_status means none.
 load_newest_verdict() {
-  verdict_status="" verdict_head="" v_agent="" v_model=""
-  while IFS= read -r flagged && IFS= read -r line; do
+  verdict_status="" verdict_head="" v_agent="" v_model="" v_tag=""
+  while IFS= read -r flagged && IFS= read -r line && IFS= read -r tag; do
     if [[ "$line" =~ $verdict_re ]]; then
       if [ "$flagged" = true ] && [ "${BASH_REMATCH[1]}" != FAIL ]; then continue; fi
       [ "${BASH_REMATCH[3]}" != "${BASH_REMATCH[4]}" ] || refuse "author cannot supply verifier verdict"
       verdict_status="${BASH_REMATCH[1]}"
       verdict_head="${BASH_REMATCH[2]}"
       v_agent="${BASH_REMATCH[6]}" v_model="${BASH_REMATCH[7]}"
+      v_tag=$tag
       break
     fi
-  done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0])}] | reverse[] | .f, .l' <<<"$info")
+  done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0]), tag: (if ((.body // "") | test("same-family-different-model")) then "same-family-different-model" else "" end)}] | reverse[] | .f, .l, .tag' <<<"$info")
 }
 
 # Generated team copies change only through the dotfiles template. A copy that is not the origin/main
@@ -516,7 +545,7 @@ generated)
   src=$(gh pr view "$src_pr" --repo "$src_repo" --json state,headRefOid,body,comments) || refuse "cannot read $verdict_from"
   [ "$(jq -r .state <<<"$src")" = MERGED ] || refuse "$verdict_from is not MERGED"
   src_head=$(jq -r .headRefOid <<<"$src")
-  src_pass_agent="" src_pass_model="" src_fail=false src_edited=0
+  src_pass_agent="" src_pass_model="" src_pass_tag="" src_fail=false src_edited=0
   while IFS= read -r row; do
     c=$(jq -r '@base64d | fromjson | .body' <<<"\"$row\""); fl=$(jq -r '@base64d | fromjson | ((.includesCreatedEdit // false) or (.isMinimized // false))' <<<"\"$row\"")
     l=${c%%$'\n'*}
@@ -528,12 +557,13 @@ generated)
       elif [ -z "$src_pass_agent" ]; then
         [ -n "${BASH_REMATCH[6]}" ] || refuse "$verdict_from Verdict does not record the verifier agent and model"
         src_pass_agent=${BASH_REMATCH[6]} src_pass_model=${BASH_REMATCH[7]}
+        case "$c" in *same-family-different-model*) src_pass_tag=same-family-different-model ;; esac
       fi
     fi
   done < <(jq -r '.comments | reverse[] | @json | @base64' <<<"$src")
   [ -n "$src_pass_agent" ] || refuse "$verdict_from has no passing Verdict for its merged head $src_head$([ "$src_edited" -eq 0 ] || echo "; $src_edited edited or minimized PASS ignored, post a fresh Verdict")"
   [ "$src_fail" = false ] || refuse "$verdict_from has a FAIL Verdict for its merged head"
-  same_pair_gate "$(jq -r .body <<<"$src")" "$src_pass_agent" "$src_pass_model" "$verdict_from"
+  same_pair_gate "$(jq -r .body <<<"$src")" "$src_pass_agent" "$src_pass_model" "$verdict_from" "$src_pass_tag"
   echo "ship: generated team copies, Verdict from $verdict_from"
   ;;
 mechanical)
@@ -573,7 +603,7 @@ docs)
       case "$verdict_status" in
         PASS|PASS+NOTES)
           [ -n "$v_agent" ] || refuse "Verdict on PR $pr does not record the verifier agent and model; post it with post-verdict.sh --agent <agent> --model <model>"
-          same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" ;;
+          same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag" ;;
         *) refuse "docs only PR $pr needs a cold 'Review: PASS head=$head' comment or a Verdict: PASS at that head" ;;
       esac ;;
   esac
@@ -587,7 +617,7 @@ verdict)
     *) refuse "newest Verdict on PR $pr is $verdict_status" ;;
   esac
   [ -n "$v_agent" ] || refuse "Verdict on PR $pr does not record the verifier agent and model; post it with post-verdict.sh --agent <agent> --model <model>"
-  same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr"
+  same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag"
 
   # Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
   if [ "$verdict_head" != "$head" ] && ! verdict_carry "$verdict_head" "$head" && ! wording_only_carry "$verdict_head" "$head"; then
