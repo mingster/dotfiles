@@ -10,6 +10,8 @@ Every multi-slice unit or crew lane keeps one markdown ledger, `active_run.md`, 
 
 ## 2. Verification criteria
 - [ ] `<command>` (<expected result>)
+- [ ] `~/dotfiles/script/heavy-gate.sh --measure -- bunx tsc --noEmit` (0 errors)
+- [ ] `bun run lint` (clean)
 
 ## 3. Milestones
 1. [ ] Red: failing reproduction or contract test.
@@ -31,7 +33,7 @@ Every multi-slice unit or crew lane keeps one markdown ledger, `active_run.md`, 
 
 ## Rules
 
-- Specs live only in `intent.md` and `spec.md`; `active_run.md` is an ephemeral ledger and does not replace the coordinator's child ledger (`docs/agents/team.md`, rule Child ledger).
+- Specs live only in `intent.md` and `spec.md`; `active_run.md` is an ephemeral ledger and does not replace the coordinator's child ledger (`team.md`, Child ledger).
 - Zero-Env Disclosure: never record `.env` secrets or keys in markdown; write `[Omitted/Configured via Env]`.
 - After compaction or a reset, re-read `active_run.md` on turn 1. Read it before every tool call to stay within the allowed files.
 - Once the branch is verified and merged, delete or reset `active_run.md`.

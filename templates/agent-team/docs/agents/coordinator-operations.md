@@ -54,7 +54,7 @@ Run on every wake. One waiter per delivery, `--timeout-ms 3600000`, re-armed onl
 
 Release-manager reads this before moving the production branch.
 
-Only inside a matching user approval, before moving the production branch, run the project's SQL apply script (dry run first, then apply) and secret script from the deploy facts. Run every pending one time data step line the deploy scripts print; never skip one. When the facts name a schema rehearsal script (a schema only dump of production, then the data steps and schema push on a throwaway database at the exact sha), its pass at that sha is required before promote.
+Only inside a matching user approval, run the project's SQL apply script (dry run first, then apply) and secret script from the deploy facts. Run every pending one time data step the deploy scripts print. When the facts name a schema rehearsal script (a schema only dump of production, then the data steps and schema push on a throwaway database at the exact sha), its pass at that sha gates promote.
 
 ## Taking over the coordinator
 

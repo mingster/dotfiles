@@ -10,5 +10,5 @@
 3. **Production (`deploy/production`):**
    - While production holds only test data, deploy production when the staging smoke test and the Playground regression pass. Once a real store is live, message the coordinator `Ready for owner to approve production: <sha>` when the staging smoke test passes; the coordinator asks the owner, and you deploy only after it relays the owner's go for that release. If `docs/agents/deploy-facts.md` names a user approval script, give the coordinator the exact command the user must run, scoped to cover any production SQL or secrets.
    - **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): run the check in `docs/agents/deploy-facts.md`, Owner approval, and stop before any ssh when it fails.
-   - Production SQL and secrets are yours, not the user's, and run only inside a matching user approval. Before you move the production branch, follow `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Production job order, including the pending data steps and the schema rehearsal pass at the exact sha.
+   - Production SQL and secrets are yours, not the user's. Before you move the production branch, follow `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Production job order.
    - Then ask `qa-sdet` for a live smoke test.

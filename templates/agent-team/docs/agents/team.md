@@ -1,6 +1,6 @@
 # Agent team
 
-{{PROJECT_NAME}} is operated by its human user and a team of AI agents: the coordinator (CEO) and specialist roles. The user talks to the coordinator, who delegates and contacts the user only for a decision it cannot make. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
+{{PROJECT_NAME}} is run by its user and an AI team: the coordinator (CEO) and specialist roles. The user talks to the coordinator, who delegates and contacts the user only for decisions it cannot make. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
 
 This file holds only facts and the rule table. GitHub issues and PRs are the state of record.
 
@@ -22,7 +22,7 @@ This file holds only facts and the rule table. GitHub issues and PRs are the sta
 | P2 | Issue with a workaround or limited impact | Normal queue |
 | P3 | Cosmetic or wording issue | Normal queue |
 
-Usage gate: `usage-gate-hook.py` gates every worker start from Claude Code, Cursor and Antigravity (the last two installed by `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`). A coordinator starting workers from either IDE first confirms its entry is installed, otherwise it runs in Claude Code.
+Usage gate: `usage-gate-hook.py` gates every worker start from Claude Code, Cursor and Antigravity (the last two installed by `~/dotfiles/script/setup-cursor.sh` and `setup-antigravity.sh`). A coordinator starting workers from either IDE first confirms its entry is installed, else runs in Claude Code.
 
 Before judging engineering reviews or tests, the coordinator reads `~/dotfiles/templates/agent-team/docs/agents/engineering-integration.md`. Release failure classification follows `.agents/skills/deploy/SKILL.md`, Test noise.
 
@@ -32,7 +32,7 @@ Enforcer "none" means only the agent's reading holds the rule.
 
 | Rule | Enforcer |
 | --- | --- |
-| **No bottleneck:** nothing waits on the coordinator or the user. Each step (labeling, dispatch, verifier, rebase, merge, worker release) runs automatically or by its owning role, with a written default when a person does not answer. Only Owner pauses wait on the owner, and only at their merge, send or deploy step; the coordinator sends the owner one batched list. A worker never ends its turn waiting: it asks, names its default and proceeds on it. A step that still needs the coordinator is a bug: file it. | none (code gaps: #1016, #1017) |
+| **No bottleneck:** nothing waits on the coordinator or the user. Each step (labeling, dispatch, verifier, rebase, merge, worker release) runs automatically or by its owning role, with a written default if nobody answers. Only Owner pauses wait on the owner, and only at their merge, send or deploy step; the coordinator sends the owner one batched list. A worker never ends its turn waiting: it asks, names its default and proceeds on it. A step that still needs the coordinator is a bug: file it. | none (code gaps: #1016, #1017) |
 | **Owner pauses:** exactly these wait on the owner ("owner-reserved"): money rules and prices; spending and contracts (paid overage, new paid services, budget, legal); each customer message draft; irreversible data deletion; production deploy once a real store is live; one look at a new feature or page (screen or screenshot) before production, which the owner can stop. Role file and hook changes, weekly update PRs and new feature builds need no owner approval unless they loosen a safety limit (production access, data deletion, secrets, payment). | none |
 | **The Algorithm:** apply `principle-the-algorithm` before any new rule, step or check. The PR names the requirement it questioned and what it deleted. | none |
 | **User decisions:** pricing, legal, production and irreversible data are never declined by the team, only pushed back to the user with evidence. | none |
@@ -48,7 +48,7 @@ Enforcer "none" means only the agent's reading holds the rule.
 | **Background waits:** every wait runs in the background with a timeout; in Claude Code as its own Bash call with `run_in_background: true`, never a shell `&`. | `.claude/hooks/guard-bash.py` |
 | **No run-use for workers:** workers and child coordinators never run `orca orchestration run-use`. The coordinator rebinds with `run-use --id <run>` after a restart. | none |
 | **Release settled workers:** every settled child, including FAILED, gets `worker-release` and its ended panes closed. | `script/wrap-up.sh` |
-| **Redesign:** a PR whose Verdict or Review failed twice gets `needs-redesign` and no third patch. The coordinator closes it with a comment naming what both failures showed and dispatches a fresh worker on a new brief that restates the goal from first principles and names both lessons. The owner is asked only if the redesign also dead ends. | `script/pr-review.sh` |
+| **Redesign:** a PR whose Verdict or Review failed twice gets `needs-redesign` and no third patch. The coordinator closes it, commenting what both failures showed, and dispatches a fresh worker whose new brief restates the goal from first principles and names both lessons. The owner is asked only if the redesign also dead ends. | `script/pr-review.sh` |
 | **Extra Strong review:** extra Strong cross review only for money transactions, or when the coordinator or the user asks for it on that issue. | `script/pr-review.sh` (money paths) |
 | **Merge host:** `ship.sh` runs on the coordinator's host; a PR owner on another host leaves its verified PR to fleet-watch auto-ship. | `script/worker-startup.sh` |
 | **Board status:** every worker's Finish runs `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. A release with no PR sets `completed`, and `ship.sh` sets it after a merge. | `script/brief-lint.sh` (Finish must say so), `.agents/skills/orca-team/worker-pane-close.sh`, `script/ship.sh` |

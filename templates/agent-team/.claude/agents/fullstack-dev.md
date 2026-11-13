@@ -18,7 +18,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 
 ## Finish
 Before `worker_done`, meet `~/dotfiles/templates/agent-team/docs/agents/team.md`, Acceptance checklist, in the PR body. Run the project's full local check, not only the tests the brief names, and check each item yourself before calling it already done.
-You own the PR to merge: rebase it when main moves, take its fix rounds, and land it with `~/dotfiles/script/ship.sh` once a non-author Verdict passes at the current head.
+You own the PR to merge: rebase it when main moves, take its fix rounds, and land it per `team.md`, Publication.
 Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done` (`team.md`, Board status).
 Before `worker_done`, wait until the PR checks at your final head pass (`gh pr checks <n> --watch --fail-fast`, or `gh run list --branch <branch> --limit 3` where the token gets 403). Never hand off red or pending checks.
 Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item.
