@@ -909,5 +909,65 @@ PY
   fi
 } </dev/null
 
+# GitHub reports mergeable UNKNOWN until it has calculated the merge. ship.sh rereads, then refuses.
+mergeable_pr() { # <number> <branch>
+  mf_pr_add "$1" "$2" "Body"
+  local h
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$1.json")
+  mf_self_review "$1" "$h"
+  set_checks "$1" "$green_checks"
+  post_verdict "$1" PASS "$h"
+  jq '.mergeable = "UNKNOWN"' "$MF_GH_DIR/pr-$1.json" > "$MF_GH_DIR/pr-$1.json.tmp" && mv "$MF_GH_DIR/pr-$1.json.tmp" "$MF_GH_DIR/pr-$1.json"
+}
+
+mkdir -p "$MF_DIR/flipbin"
+cat > "$MF_DIR/gh-flip" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-} ${2:-}" = "pr view" ]; then
+  n=0
+  [ -f "$MERGEABLE_VIEWS" ] && n=$(cat "$MERGEABLE_VIEWS")
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$MERGEABLE_VIEWS"
+  if [ "$n" -ge 2 ] && [ -n "${MERGEABLE_FLIP_PR:-}" ]; then
+    f="$MF_GH_DIR/pr-${MERGEABLE_FLIP_PR}.json"
+    jq '.mergeable = "MERGEABLE"' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  fi
+fi
+exec "$MF_BIN/gh" "$@"
+EOF
+chmod +x "$MF_DIR/gh-flip"
+ln -sf "$MF_DIR/gh-flip" "$MF_DIR/flipbin/gh"
+
+mergeable_pr 3019 feat-unknown-then-mergeable
+: > "$MF_GH_LOG"
+: > "$MF_DIR/mergeable-views"
+SHIP_OUT=$(
+  SHIP_MERGEABLE_WAIT=0 SHIP_MERGEABLE_REREADS=3 \
+  MERGEABLE_VIEWS="$MF_DIR/mergeable-views" MERGEABLE_FLIP_PR=3019 \
+  PATH="$MF_DIR/flipbin:$PATH" \
+  bash "$here/ship.sh" --repo example/repo --pr 3019 2>&1
+)
+SHIP_RC=$?
+views_before_merge=$(awk '/gh pr view / { n++ } /gh pr merge / { print n; exit }' "$MF_GH_LOG")
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 3019\ as\ [0-9a-f]{40}$ ]] \
+  && [ "${views_before_merge:-0}" -ge 2 ] \
+  && grep -q "gh pr merge 3019 --repo example/repo --squash --match-head-commit" "$MF_GH_LOG"; then
+  ok "UNKNOWN mergeable rereads and then merges"
+else
+  bad "UNKNOWN mergeable rereads and then merges" "rc=$SHIP_RC views=${views_before_merge:-0} out=$SHIP_OUT"
+fi
+
+mergeable_pr 3020 feat-unknown-stays
+: > "$MF_GH_LOG"
+SHIP_OUT=$(SHIP_MERGEABLE_WAIT=0 SHIP_MERGEABLE_REREADS=3 bash "$here/ship.sh" --repo example/repo --pr 3020 2>&1)
+SHIP_RC=$?
+unknown_views=$(grep -c 'gh pr view 3020 ' "$MF_GH_LOG" || true)
+if [ "$SHIP_RC" -ne 0 ] && [ "$unknown_views" -ge 2 ] && [ "$unknown_views" -le 5 ] \
+  && grep -Fq "mergeable=UNKNOWN" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "UNKNOWN mergeable rereads a few times and then refuses"
+else
+  bad "UNKNOWN mergeable rereads a few times and then refuses" "rc=$SHIP_RC views=$unknown_views out=$SHIP_OUT"
+fi
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

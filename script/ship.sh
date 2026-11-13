@@ -91,13 +91,28 @@ done
 [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]"
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
 
-info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
-  || refuse "cannot read PR $pr"
+read_pr() {
+  info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
+    || refuse "cannot read PR $pr"
+}
+read_pr
 field() { jq -r "$1" <<<"$info"; }
 
 # 1. PR is open, not draft, mergeable (not CONFLICTING).
+# GitHub leaves mergeable UNKNOWN until it has calculated the merge. PRs 801 and 802
+# were MERGEABLE about 20s later, so reread a few times, then refuse.
 [ "$(field .state)" = OPEN ] || refuse "PR $pr is not open (state=$(field .state))"
 [ "$(field '.isDraft // false')" = false ] || refuse "PR $pr is a draft"
+mergeable_wait=${SHIP_MERGEABLE_WAIT:-20}
+mergeable_rereads=${SHIP_MERGEABLE_REREADS:-3}
+[[ "$mergeable_wait" =~ ^[0-9]+$ ]] || mergeable_wait=20
+[[ "$mergeable_rereads" =~ ^[0-9]+$ ]] || mergeable_rereads=3
+reread=0
+while [ "$(field .mergeable)" = UNKNOWN ] && [ "$reread" -lt "$mergeable_rereads" ]; do
+  reread=$((reread + 1))
+  sleep "$mergeable_wait"
+  read_pr
+done
 [ "$(field .mergeable)" = MERGEABLE ] || refuse "PR $pr is not mergeable (mergeable=$(field .mergeable))"
 head=$(field .headRefOid)
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || refuse "PR $pr has invalid headRefOid"
