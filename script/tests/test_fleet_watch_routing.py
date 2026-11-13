@@ -243,6 +243,51 @@ class Sticky(unittest.TestCase):
         self.assertEqual(starts, [])
         self.assertIn(NEW, notes[0][1])
 
+    def test_merged_or_closed_releases_the_live_verifier(self):
+        now = 1_700_000_000
+        rows = [
+            ('MERGED', {'mergedAt': '2026-11-13T20:01:52Z'}),
+            ('CLOSED', {'closedAt': '2026-11-13T20:01:52Z'}),
+            ('OPEN', {'mergedAt': '2026-11-13T20:01:52Z'}),
+        ]
+        for state_name, extra in rows:
+            pr = self.pr()
+            pr['state'] = state_name
+            pr.update(extra)
+            notes, released, starts = self.run_pass(pr, {}, now, now)
+            self.assertEqual(starts, [], state_name)
+            self.assertEqual(released, ['ctx_v'], state_name)
+            self.assertEqual(notes, [], state_name)
+
+    def test_closed_list_releases_a_verifier_the_open_list_omits(self):
+        now = 1_700_000_000
+        merged = self.pr()
+        merged['state'] = 'MERGED'
+        merged['mergedAt'] = '2026-11-13T20:01:52Z'
+        released = []
+        starts = []
+        with tempfile.TemporaryDirectory() as root:
+            config = {
+                'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
+                'babysit': {'repos': [REPO], 'startup': '/bin/true'},
+            }
+            fw.babysit_pass(
+                config, {}, [self.worker()],
+                pr_fetch=lambda _repo: [],
+                closed_fetch=lambda _repo: [merged],
+                start_worker=lambda command: starts.append(command) or 0,
+                pick=lambda role, avoid_family=None: {
+                    'selected': {'provider': 'cursor', 'model': 'grok-4.7-high', 'eligible': True},
+                },
+                owner_check=lambda _pr: None,
+                release_worker=lambda dispatch: released.append(dispatch),
+                notify_worker=lambda _terminal, _text: None,
+                now=now,
+                term_times={'term_v': now},
+            )
+        self.assertEqual(starts, [])
+        self.assertEqual(released, ['ctx_v'])
+
 
 class Bounce(unittest.TestCase):
     def worker(self, title='fullstack-dev - build the thing', number=8):

@@ -3663,6 +3663,16 @@ def _verifier_head_bucket(state, repo):
     return state.setdefault('verifier_head', {}).setdefault(repo, {})
 
 
+def release_closed_verifier(pr, workers, state, repo, release):
+    """Release a live verifier on a merged or closed pull request. True when released."""
+    worker = live_verifier_worker(pr, workers)
+    if worker is None:
+        return False
+    release(worker.get('dispatchId') or '')
+    _verifier_head_bucket(state, repo).pop(str(pr.get('number')), None)
+    return True
+
+
 def release_idle_rework_verifier(pr, workers, state, repo, now, term_times, release):
     """Release a verifier that has waited out a rework for an hour. True when released."""
     worker = live_verifier_worker(pr, workers)
@@ -4238,6 +4248,7 @@ def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
     release_worker=None, notify_worker=None, now=None, term_times=None,
+    closed_fetch=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -4262,6 +4273,9 @@ def babysit_pass(
         term_times = {}
     if pr_fetch is None:
         pr_fetch = fetch_open_prs
+    if closed_fetch is None:
+        # The open list drops a pull request the moment it merges. The full list is how a live verifier is released.
+        closed_fetch = fetch_prs if pr_fetch is fetch_open_prs else (lambda _repo: None)
     _startup, run_id, from_terminal, roots = babysit_settings(config)
     cap = babysit_cap(config)
     started = 0
@@ -4284,15 +4298,39 @@ def babysit_pass(
         prs = pr_fetch(repo)
         if prs is None:
             log_bits.append('fetch_fail')
-            continue
+            prs = []
+        seen = set()
+
+        def note_closed(pr_row, repo_name=repo):
+            number = pr_row.get('number')
+            if number in seen:
+                return
+            seen.add(number)
+            detail = 'closed'
+            if not dry_run and release_closed_verifier(
+                pr_row, workers, state, repo_name, release_worker,
+            ):
+                detail = 'verifier-released'
+                if persist_state:
+                    persist_state()
+            lines.append(_babysit_line(
+                repo_name, number or 0, pr_row.get('headRefOid') or '', 'skip', detail,
+            ))
+
         for pr_row in prs:
+            if not isinstance(pr_row, dict):
+                continue
             if not pr_open_for_dispatch(pr_row):
                 if _babysit_closed(pr_row):
-                    lines.append(_babysit_line(
-                        repo, pr_row.get('number') or 0, pr_row.get('headRefOid') or '', 'skip', 'closed',
-                    ))
+                    note_closed(pr_row)
                 continue
+            seen.add(pr_row.get('number'))
             rows.append((index, pr_row.get('number') or 0, repo, pr_row))
+        closed_rows = closed_fetch(repo)
+        if isinstance(closed_rows, list):
+            for pr_row in closed_rows:
+                if isinstance(pr_row, dict) and _babysit_closed(pr_row):
+                    note_closed(pr_row)
     rows.sort(key=lambda item: (item[0], item[1]))
 
     for _index, _number, repo, pr_row in rows:
