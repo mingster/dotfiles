@@ -490,29 +490,51 @@ for line in open(os.environ["ROWS"]):
   dispatches="$dispatches
 $found"
 fi
-# A record older than ORCA_PANE_RECORD_MAX_AGE minutes (default 3 hours, past the 30 minute retry window) whose dispatch
-# ended or no longer exists is forgotten, so ended workers do not cost a worker-show and a release every round. A dispatch
-# still running keeps its record. Needs every Run and page read (sweep_ok).
-if [ "$sweep_ok" -eq 1 ]; then
-  aged=$(find "$state" -maxdepth 1 -type f -mmin "+${ORCA_PANE_RECORD_MAX_AGE:-180}" -print 2>/dev/null | sed 's|.*/||')
-  if [ -n "$aged" ]; then
-    aged_drop=$(AGED="$aged" ROWS="$sweep_rows_file" HERE="$here" python3 -c '
+# A dispatch the worker-list rows show still running has nothing to close yet: skip its worker-show.
+sweep_running=$(ROWS="$sweep_rows_file" HERE="$here" python3 -c '
 import json, os, sys
 sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+for line in open(os.environ["ROWS"]):
+    i, _, raw = line.rstrip("\n").partition("\t")
+    try:
+        if i and not ws.is_final(json.loads(raw)): print(i)
+    except Exception: pass' 2>/dev/null) || sweep_running=''
+# A record ages from the last sweep that saw its dispatch running (about when it ended), not from when it opened, so a
+# long running worker keeps its record. Touch the records of running dispatches.
+if [ "$sweep_ok" -eq 1 ]; then
+  while IFS= read -r d; do
+    [ -z "$d" ] || [ ! -f "$state/$d" ] || touch "$state/$d"
+  done <<< "$sweep_running"
+fi
+sweep_list=$(close_rpc terminal list --json 2>/dev/null) || sweep_list=''
+# A record older than ORCA_PANE_RECORD_MAX_AGE minutes (default 3 hours, past the 30 minute retry window) whose dispatch
+# ended or no longer exists is forgotten, so ended workers do not cost a worker-show and a release every round. A dispatch
+# still running keeps its record, and so does a record with a pane still listed: that pane is closed first, then the
+# record goes. Needs every Run and page and the terminal list read.
+if [ "$sweep_ok" -eq 1 ] && [ -n "$sweep_list" ]; then
+  aged=$(find "$state" -maxdepth 1 -type f -mmin "+${ORCA_PANE_RECORD_MAX_AGE:-180}" -print 2>/dev/null | sed 's|.*/||')
+  if [ -n "$aged" ]; then
+    aged_drop=$(AGED="$aged" ROWS="$sweep_rows_file" LIST="$sweep_list" STATE="$state" HERE="$here" python3 -c '
+import json, os, sys
+sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
+try: open_handles = {t.get("handle") for t in json.loads(os.environ["LIST"])["result"]["terminals"]}
+except Exception: sys.exit(1)
 rows = {}
 for line in open(os.environ["ROWS"]):
     i, _, raw = line.rstrip("\n").partition("\t")
     try: rows[i] = json.loads(raw)
     except Exception: pass
 for d in os.environ["AGED"].split("\n"):
-    if d and (d not in rows or ws.is_final(rows[d])): print(d)' 2>/dev/null) || aged_drop=''
+    if not d or (d in rows and not ws.is_final(rows[d])): continue
+    try: hs = [ln.strip() for ln in open(os.path.join(os.environ["STATE"], d)) if ln.strip()]
+    except Exception: continue
+    if not any(h in open_handles for h in hs): print(d)' 2>/dev/null) || aged_drop=''
     while IFS= read -r d; do
       [ -n "$d" ] || continue
       pane_record_rm "$d" aged_final "$sweep_ok" '' || :
     done <<< "$aged_drop"
   fi
 fi
-sweep_list=$(close_rpc terminal list --json 2>/dev/null) || sweep_list=''
 # An ended dispatch with no pane record only needs a look when a listed terminal is its own (by handle or worktree path);
 # otherwise it would cost a worker-show and a terminal list every round for nothing.
 if [ -n "$sweep_list" ] && [ -n "$found" ]; then
@@ -602,15 +624,6 @@ sys.exit(0 if doc.get("ok") is False and (doc.get("error") or {}).get("code")=="
   done <<< "$gone"
   dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "${found:-}")
 fi
-# A dispatch the worker-list rows show still running has nothing to close yet: skip its worker-show.
-sweep_running=$(ROWS="$sweep_rows_file" HERE="$here" python3 -c '
-import json, os, sys
-sys.path.insert(0, os.environ["HERE"]); import worker_state as ws
-for line in open(os.environ["ROWS"]):
-    i, _, raw = line.rstrip("\n").partition("\t")
-    try:
-        if i and not ws.is_final(json.loads(raw)): print(i)
-    except Exception: pass' 2>/dev/null) || sweep_running=''
 sweep_stopped=0
 dispatches=$(for f in "$state"/*; do [ ! -f "$f" ] || basename "$f"; done; printf '%s\n' "${found:-}")
 while IFS= read -r d || [ -n "$d" ]; do
