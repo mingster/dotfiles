@@ -81,7 +81,7 @@ Undo on a host: `sudo chown -R "$USER" <folder> && sudo chmod -R u+rwX,go-rwx <f
 
 ## Searching for who uses the folder
 
-`script/secrets-refs.sh <dir> <pattern>` lists `file:line` for every match under `<dir>` and never prints the matched text. It skips any directory named `secrets`. The Bash guard lets this one script, called directly, take the folder name as its pattern. Everything else that names the folder stays denied. Use it to survey the riben.life deploy and host scripts.
+`script/secrets-refs.sh <dir> <pattern>` lists `file:line` for every match under `<dir>` and never prints the matched text. It skips any directory named `secrets`. The Bash guard lets this one script, called directly, take the folder name as its pattern. Everything else that names the folder stays denied. Use it to survey the deploy and host scripts of a project.
 
 ## Tests
 
