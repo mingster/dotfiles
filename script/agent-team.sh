@@ -518,6 +518,7 @@ needs-info|fef2c0|Waiting on reporter for reproduction or detail
 ready-for-agent|0e8a16|Scoped and ready for an autonomous agent
 ready-for-human|1d76db|Needs a human decision or change
 wontfix|ffffff|Out of scope or declined
+needs-redesign|b60205|Failed twice, no third patch, coordinator redesigns
 EOF
 }
 

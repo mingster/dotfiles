@@ -416,6 +416,10 @@ else
     jq '[.[] | (.body // "" | split("\n")[0]) | select(test("^Review: FAIL\\s|^Verdict: FAIL\\s"))] | length' \
       <<<"$issue_comments_json"
   )
-  if [ "${failed:-0}" -ge 2 ]; then gh pr edit "$pr" --repo "$repo" --add-label needs-elon; fi
+  if [ "${failed:-0}" -ge 1 ]; then
+    gh pr edit "$pr" --repo "$repo" --add-label needs-redesign ||
+      echo "pr-review: could not add needs-redesign to $repo#$pr; posting the Review anyway" >&2
+    printf '\nRedesign due: two failed Verdicts or Reviews. No third patch. The coordinator closes this PR with the lesson and dispatches a redesign.\n' >>"$work/review.md"
+  fi
 fi
 gh pr comment "$pr" --repo "$repo" --body-file "$work/review.md"

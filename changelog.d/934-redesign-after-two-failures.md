@@ -1,0 +1,1 @@
+After two failed Verdicts or Reviews a PR gets the `needs-redesign` label and a redesign message instead of `needs-elon` and a third patch; the coordinator closes it and dispatches a fresh worker on a new brief.
