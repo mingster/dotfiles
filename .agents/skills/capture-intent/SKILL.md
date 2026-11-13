@@ -45,7 +45,7 @@ What the owner does not know yet. The riskiest assumption goes first.
 
 ## Status
 
-The header keeps the history on one line: `Status: Proposed 2026-09-28 · Accepted 2026-09-30 · Shipped 2026-10-12 (#1234)`. The owner is the only approver. Rejected intents stay in place as the record. After the spec is accepted, the intent is frozen.
+The header keeps the history on one line: `Status: Proposed 2026-09-28 · Accepted 2026-09-30 · Shipped 2026-10-12 (#1234)`. Outside a team the owner is the only approver; in an agent team the coordinator accepts intents, and the owner only those that set money rules or prices (`team.md`, Owner pauses). Rejected intents stay in place as the record. After the spec is accepted, the intent is frozen.
 
 ## Writing rules
 

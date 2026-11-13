@@ -7,7 +7,7 @@ Long reference moved out of the root [README](../../README.md). Read it when you
 
 ### Goal
 
-An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A unit goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs green swarm live lanes and the user's go.
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skills and their design, in Orca ADE. A unit goes from ready to merged with no agent relaying a message and no human in the loop. Main reaches staging every day by itself. Production needs green swarm live lanes, then the Playground regression while production holds only test data, or the owner's go once a real store is live.
 
 ### Principles
 
@@ -42,7 +42,7 @@ Each step is one run that does one job and ends. It never waits on a person or a
 ```mermaid
 flowchart TD
     Req["Request from the owner or Elon"] --> Intake["Intake: architect-pm grills with Elon"]
-    Intake --> Design["Design, features only: one document, one owner approval"]
+    Intake --> Design["Design, features only: one document; owner approval only for money rules and prices"]
     Intake & Design --> Ready["Issue is ready"]
     Ready --> Build["Build: fullstack-dev, TDD, local checks, pushes and opens PR"]
     Build --> Checks["Actions Checks"]
@@ -52,13 +52,13 @@ flowchart TD
     Babysit --> Ship["Shipping run (script/ship.sh): squash merge and read back"]
     Ship --> Wrap["Wrap-up: 10 minute Orca automation"]
     Ship --> Staging["Staging: daily at 19:00, staging review, full regression"]
-    Staging --> Go["Owner's go"] --> Prod["Production: backup, deploy, smoke"]
+    Staging --> Go["Playground regression, or the owner's go once a real store is live"] --> Prod["Production: backup, deploy, smoke"]
 ```
 
 | Step | Starts when | Who | Done when |
 | --- | --- | --- | --- |
 | Intake | A request arrives | architect-pm with the coordinator. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
-| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document, one owner approval |
+| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document; the owner approves only money rules and prices, and looks before production |
 | Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
 | Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
 | Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
@@ -67,7 +67,7 @@ flowchart TD
 | Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
 | Worktree cleanup | Every 10 minutes on each host | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
 | Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest trunk deployed, swarm live lanes and regression green (or issue opened) |
-| Production | User's go | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
+| Production | Playground regression while production holds only test data; the user's go once a real store is live | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
 
 **Babysit.** Every 5 minutes fleet-watch looks at each open PR once and puts it in one group.
 
@@ -82,11 +82,11 @@ flowchart TD
 * The PR is open and mergeable, and every check passed.
 * The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
 * The Verdict covers this head, or a rebase of it with the same patch id.
-* Changes to protected paths carry the user's approval.
+* Changes to protected paths carry an `Owner-approved:` trailer: the coordinator's approval, or the owner's when the change loosens a safety limit.
 
 It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
 
-**Who can send a request.** The user and the coordinator. Sales and support send requests to the coordinator, and the coordinator gets the user's approval before passing one to architect-pm.
+**Who can send a request.** The user and the coordinator. Sales and support send requests to the coordinator, and the coordinator passes it to architect-pm; only an owner pause in it (money rules and prices, spending) waits on the user.
 
 **Start rule.** An issue starts when it has `ready-for-agent`, evidence and predicate and no blocker, and the usage and load gates pass. `P0` and `P1` go first, then first in, first out. A worker starts only from a complete brief: `Refs` to the issue, evidence and predicate, out of scope, verify and finish. The issue scan takes the newest Agent Brief comment (else the issue body) and adds `Refs`, verify and finish itself. `script/worker-startup.sh` runs `script/brief-lint.sh` once per start (Verify must call `script/checks-local.sh`, which runs the Checks workflow for the changed files) and appends the fixed Finish block; and an issue that fails gets `needs-triage` instead of a worker. A change to the brief goes to the issue, never in a message after the worker is done.
 
@@ -105,7 +105,7 @@ It squash merges, reads the PR back as merged and ends. If any condition fails, 
 | `architect-pm` | Intake, the design document, the weekly list, full audits |
 | `fullstack-dev` | Builds one unit with tests by TDD |
 | `qa-sdet` | Verifier Verdict, Playwright runs and the swarm live lanes |
-| `release-manager` | Staging on schedule, production on the user's go |
+| `release-manager` | Staging on schedule, production after the Playground regression, or on the owner's go once a real store is live |
 | `secops-finops` | Its check is part of Strong review. Weekly reconciliation |
 | `sales-marketing` | Joins the grill for UI and wording. Sends requests to the coordinator |
 | `support-csm` | Joins the grill for support matters. Sends requests to the coordinator. Replies go out only after the owner approves |
@@ -120,11 +120,11 @@ A project's `docs/agents/` holds only five files, because shared skills, scripts
 * `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
 * `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
 
-Anything else in a project's `docs/agents/` is a special case that needs the user's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
+Anything else in a project's `docs/agents/` is a special case that needs the coordinator's approval, recorded in an ADR. Area notes go in `docs/<area>/`, history stays in git and GitHub, and learnings go to auto memory.
 
 ### User decisions
 
-New features and pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, and role file and hook changes. Nothing else interrupts the user.
+Money rules and prices, spending and contracts, customer messages, irreversible data deletion, production deploy once a real store is live, and one look at a new feature or page before production (owner, coordinator chat 2026-11-13; the Owner pauses row in `templates/agent-team/docs/agents/team.md`). Nothing else interrupts the user.
 
 ### Review
 
@@ -148,10 +148,10 @@ These are the only team tools we keep or build. Full contracts live in each proj
 | [`ship.sh`](../../script/ship.sh) | Shipping run: checks `git patch-id` against the verifier Verdict, squash merges and reads the PR back as merged | When Checks and Verdict pass |
 | [`wrap-up.sh`](../../script/wrap-up.sh) | Clears finished work. Never deletes the last copy. Removes only worktrees whose Orca board status is `completed`. Add `--apply` to run it by hand | Every 10 minutes on every host |
 | [`orca-board-backfill.sh`](../../script/orca-board-backfill.sh) | One time: sets the board status of existing worktrees from their PR (merged or closed to `completed`, open to `in-review`). Dry run by default, `--apply` to write. `--environment` for another host | By hand |
-| `/deploy` | Moves a commit to staging or production | Daily, or on the user's go |
+| `/deploy` | Moves a commit to staging or production | Daily; production after the Playground regression, or on the owner's go once a real store is live |
 | pstack `swarm` live lanes | Smoke, tests for what changed, changed pages on phone size. Every page weekly | After each staging deploy |
 | Test selection | Compares with the last green staging commit and follows real imports | Every swarm live lanes run |
-| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged only on the user's yes | Weekly |
+| Weekly update | Matt Pocock and pstack upstream, bun and Node. Three tested PRs, a skill-impact draft on the skill PR branches, and report-only software lines in the stdout summary. Merged automatically on green checks and a Verdict | Weekly |
 | [`team-audit.sh`](../../script/team-audit.sh) | Checks team files and reports the target numbers | Weekly one line result, full audit on the user's word |
 | `/elon status` | "what now": waiting on the user, running, problems. "recap": merged, deployed, problems and numbers | Only on request |
 | Agent state backup | Private repository with memory, schedules and host config, used to rebuild the coordinator | Every 10 minutes |
@@ -166,7 +166,7 @@ The team files give agents their jobs, working rules and repeatable steps. The c
 
 `script/adopt-agent-team.sh [--project-name <name>] <dir>` installs from [templates/agent-team](../../templates/agent-team/): roles, generated team skills, facts file skeletons, role reference docs, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
 
-Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers their role file path in the task prompt (using the main checkout's absolute path so a branch worktree never reads a stale copy), including workers on other providers. Every role edit requires human review and an `Owner-approved: <owner> <date> (<where approved>)` commit trailer.
+Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers their role file path in the task prompt (using the main checkout's absolute path so a branch worktree never reads a stale copy), including workers on other providers. Every role edit merges on a passing non-author Verdict with the coordinator's approval; only a change that loosens a safety limit needs the owner (`team.md`, Role changes). Each carries an `Owner-approved: <owner> <date> (<where approved>)` commit trailer.
 
 | Role | Owns |
 | --- | --- |
@@ -174,7 +174,7 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 | `architect-pm` | Intake, one design document per feature (intent, spec and units), issue triage, the weekly non-blocker list and full `/team-audit` runs. |
 | `fullstack-dev` | Features and fixes built with tests first by TDD (Cursor `grok-4.7-xhigh` first, then Claude when quota is out), running touched checks locally before pushing once and opening its PR. |
 | `qa-sdet` | Cross-family verifier Verdict (`script/post-verdict.sh`, running parent against head as a user would), Playwright proving runs and the daily/weekly pstack `swarm` live lanes. |
-| `release-manager` | Daily 19:00 Taiwan time staging deploy, production deploy on the user's explicit go, release evidence and rollback plans. |
+| `release-manager` | Daily 19:00 Taiwan time staging deploy, production deploy after the Playground regression (owner's go once a real store is live), release evidence and rollback plans. |
 | `sales-marketing` | Self-serve acquisition, positioning, conversion experiments, weekly metrics (MRR, LTV, CAC, churn) and the pre-build grill for new UI pages and wording. Delegates market research and merchant lookups to a Gemini worker on Antigravity with source URLs. |
 | `secops-finops` | Security, auth, tenant isolation, money PR reviews (part of Strong review and the money pre-build grill) and weekly financial reconciliation. |
 | `support-csm` | Customer ticket triage, reply drafts (sent only after owner approval), recurring pain points and support grill input. |
@@ -191,7 +191,7 @@ Other project files tell the team how this repo works:
 | --- | --- |
 | `.claude/model-routing.md` | Provider and model choices, worker launch rules, fail-closed usage gate and publication/merge authority. |
 | `.claude/settings.json`, `.claude/hooks/` | Claude session setup, Bash safeguards (`guard-bash.py`), fail-closed usage gate (`usage-gate-hook.py`), repeated test failure limits (`strikes.py`) and turn budget (`worker-budget.py`). |
-| `docs/agents/team.md` | Team roles, 2026-11-06 process, human approval for role changes, orchestration, the verification rule and Opening a PR, handoffs, Bug fix, urgent (fast mode), rules and gated actions. |
+| `docs/agents/team.md` | Team roles, 2026-11-06 process, role changes (owner only when a safety limit loosens), orchestration, the verification rule and Opening a PR, handoffs, Bug fix, urgent (fast mode), rules and gated actions. |
 | `docs/agents/team-facts.md` | Repository, check commands, review rules and project shortcuts. |
 | `docs/agents/deploy-facts.md` | Components, hosts, stage commands, production approval and rollback steps. |
 | `docs/agents/coordinator-operations.md`, `elon-dispatch.md`, `engineering-integration.md` | Coordinator wake loop, failover, fleet placement, review tiers and merge rules. |
@@ -208,14 +208,14 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | --- | --- | --- | --- |
 | Adopt the team | Install the files, then fill in project facts and tracker setup. | `script/agent-team.sh project <dir> --project-name <name>` | Adopt the team into `~/projects/acme` and show me the facts I need to fill in. |
 | Start a session | Talk to the coordinator, who routes the work and runs `recall` and `ketchup`. | `/elon` or `/ceo` | `/elon Help me choose the next objective.` |
-| Intake and Design | For a new feature, produce one design document (intent, spec and units) for one user approval. Attach phone screenshots for any new UI page. | `/capture-intent`, `/write-spec`, `/to-spec`, `/to-tickets` | `/capture-intent New users cannot tell whether setup is complete.` |
-| Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, the coordinator) or new UI pages (`sales-marketing`, the coordinator); owner approves before build. The coordinator decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/grill-backlog` | `/grill-backlog Run the pre-build grill on the pending money and UI issues.` |
+| Intake and Design | For a new feature, produce one design document (intent, spec and units). The owner approves it only for money rules and prices; a new feature or page builds and gets the owner's look before production. Attach phone screenshots for any new UI page. | `/capture-intent`, `/write-spec`, `/to-spec`, `/to-tickets` | `/capture-intent New users cannot tell whether setup is complete.` |
+| Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, the coordinator) or new UI pages (`sales-marketing`, the coordinator). The owner reviews money results while the build runs, and only the merge waits; a new page gets the owner's look before production. The coordinator decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/grill-backlog` | `/grill-backlog Run the pre-build grill on the pending money and UI issues.` |
 | Dispatch and build | The coordinator assigns ready units (`Acceptance criteria`, `Requirement owner`, `Deleted`) under the usage and host gates; workers build by TDD on touched tests in child worktrees and report `worker_done`. | `/elon <objective>` (pstack Orchestrate), `script/worker-startup.sh`, `/tdd` | `/elon Deliver the ready setup tickets.` |
 | Checks and review | Actions `Checks` (`head-checks.sh`) run on push; Actions `Review` (`script/pr-review.sh`) runs the read only bot review, and a cross-family `qa-sdet` verifier runs parent against head as a user would and posts the `Verdict` via `script/post-verdict.sh`. | `script/head-checks.sh`, `script/pr-review.sh`, `script/post-verdict.sh`, `/code-review` | `/code-review Check this branch against main and its ticket.` |
 | Babysit, ship and worktree cleanup | The 5 minute pass (`fleet-watch.py`) starts one verifier when head-checks passed and the head has no Verdict. The existing fix worker and a Shipping run (`script/ship.sh`) still cover a failing head and a passing Verdict; `wrap-up.sh` runs every 10 minutes. | `script/ship.sh`, `script/wrap-up.sh`, pstack `worktree-cleanup` | Run a Shipping pass on the verified PR and wrap up finished worktrees. |
-| Deploy and swarm live lanes | Staging deploys daily at 19:00 Taiwan time, followed by the pstack `swarm` live lanes and full regression; a green review leads to a one-line summary and same-day user go for production. | `/deploy local`, `/deploy staging`, pstack `swarm`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
+| Deploy and swarm live lanes | Staging deploys daily at 19:00 Taiwan time, followed by the pstack `swarm` live lanes and full regression; a green review leads to production after the Playground regression, or once a real store is live to a one-line summary and same-day owner go. | `/deploy local`, `/deploy staging`, pstack `swarm`, `/deploy production` | `/deploy staging Promote main and start the daily staging review.` |
 | Status | Get company status (**Now**, **Needs user**, **Running**) or a recap. The daily program starts from the `daily-program-1900` automation, not a command. | `/elon status` | `/elon status Show Now, Needs owner and Running.` |
-| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs for user review. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
+| Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs that merge on green checks and a Verdict. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
 | Support | The coordinator routes fixes and `support-csm` drafts the customer reply in the customer's language; the user approves before sending or closing. | Ask the coordinator to assign `support-csm` | The coordinator, resolve this support ticket and bring me the reply draft for approval. |
 
 ## Fleet and load distribution
@@ -394,7 +394,7 @@ previews both stages.
 The commands use the vendored skills already in dotfiles. Updating that snapshot
 from upstream is a separate maintainer operation through
 `script/weekly-update.sh` (which refreshes Matt Pocock skills, pstack template skills,
-Bun and Node LTS across three tested PRs and one summary for the user's go) or
+Bun and Node LTS across three tested PRs that merge on green checks and a Verdict, with one summary for the owner) or
 `script/sync-mattpocock-skills.sh`; project setup never refreshes upstream or
 changes the dotfiles checkout. No command commits or pushes the target project.
 
@@ -446,21 +446,24 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 ### Merging through ship.sh
 
-The coordinator runs `script/ship.sh --repo owner/name --pr N` itself, one PR at a time, bottom up
+The PR owner runs `script/ship.sh --repo owner/name --pr N` on its own PR; a stack lands bottom up
 (add `--mechanical` for a pure substitution or deletion, `--verdict-from <owner/dotfiles#N>` for
 generated team copies that are not the current template render). No merge worker is dispatched.
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
-and intents that become Accepted). On the generated lane, a pure deletion of a canonical
+and intents that become Accepted) until #1018 lands. Under the pause list a role or hook change
+merges on a passing non-author Verdict with the coordinator's approval, and the owner approves
+only one that loosens a safety limit (the protected paths rule above). On the generated lane, a pure deletion of a canonical
 role file or of a shared hook copy that `agent-team.sh check` flags may ride along with the
 generated copies. On the verdict lane, a generated copy is accepted when its content at the
 head equals the template render at dotfiles `origin/main`, using the same `{{PROJECT_NAME}}`
 substitution as `agent-team.sh`, or when the path is a deletion `agent-team.sh check` demands.
 A copy that differs from that render still needs `--verdict-from`. An Accepted intent passes when every commit
 in the PR that touches that intent file carries a non-empty `Owner-approved: <owner> <date>
-(<where approved>)` trailer, meaning the owner already accepted it in chat; one commit without
-it refuses the PR.
+(<where approved>)` trailer, meaning the approver already accepted it in chat; one commit without
+it refuses the PR. In an agent team the coordinator accepts intents and specs and signs that
+trailer; the owner accepts only those that set money rules or prices (Owner pauses).
 It squash merges and reads the PR back as `MERGED`.
 
 ### Interpreters (asdf)

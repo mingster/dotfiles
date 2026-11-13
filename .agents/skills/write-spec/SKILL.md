@@ -10,7 +10,7 @@ The spec answers the intent: what exactly will be built in this codebase and why
 ## Before writing
 
 1. Read `docs/SDLC.md` if it exists; it overrides these defaults.
-2. Read the intent. Its Status must include `Accepted`; if not, ask the owner to accept or edit it first.
+2. Read the intent. Its Status must include `Accepted`; if not, ask the owner to accept or edit it first (in an agent team, the coordinator accepts it unless it sets money rules or prices; `team.md`, Owner pauses).
 3. Read `CONTEXT.md`, the ADRs that touch the area, the area's living design notes (`docs/<AREA>/_INDEX.md`) and the code paths involved. Find facts yourself.
 4. Use the `grill-with-docs` skill for unresolved decisions and domain records: read `~/.agents/skills/grill-with-docs/SKILL.md` and follow it.
 
@@ -31,7 +31,7 @@ Deleted: the flag, step, layer or requirement this removes, or "nothing, because
 Numbered, testable statements in glossary terms. Each one says who can do what, what happens on failure, and who asked for it and why (a person, never "the ticket", "the reviewer", "the linter" or "the old code").
 
 ## User-facing copy
-Every new or changed string a store, customer or staff member will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording (`en` and `jp` written natively, never translated from `tw`). The owner approves this copy when he accepts the spec; nobody asks him again at merge (owner rule 2026-10-23). Write "none" when the spec changes no user-facing text.
+Every new or changed string a store, customer or staff member will read, as a table: i18n key, `tw`, `en`, `jp`, exact final wording (`en` and `jp` written natively, never translated from `tw`). In an agent team the copy is reviewed with the spec and the owner sees it in the look before production (`team.md`, Owner pauses); nobody asks him again at merge (owner rule 2026-10-23). Write "none" when the spec changes no user-facing text.
 
 ## Design
 When the spec touches a shared module (wallet or ledger, notifications, auth or permissions, any lib others call), open with the caller's usage, then types and signatures, then the module map. Settle any open question that running code can answer with a throwaway spike in a scratch dir and paste the result here; only product trade-offs go to the owner.
@@ -48,7 +48,7 @@ What this spec deliberately leaves out.
 One line each: tenancy, money, auth, data deletion. Security and cross-family review run on the first built slice, not on this spec.
 
 ## Test plan
-The Functional tests that prove each requirement (owner rule 2026-10-21): numbered test cases, each naming the requirement it proves, the test file or command, and the observable result (command output, screenshot, DB row), never only "tests pass". Every requirement maps to at least one case. Each ticket later lists the cases it owns; passing them is the ticket's definition of done. Do not list Regression (the full suite) here: it runs only in the development pass before staging, or for a very large update with owner approval.
+The Functional tests that prove each requirement (owner rule 2026-10-21): numbered test cases, each naming the requirement it proves, the test file or command, and the observable result (command output, screenshot, DB row), never only "tests pass". Every requirement maps to at least one case. Each ticket later lists the cases it owns; passing them is the ticket's definition of done. Do not list Regression (the full suite) here: it runs only in the development pass before staging, or for a very large update with owner approval (in an agent team, the coordinator's approval recorded on the issue).
 
 ## Rollout
 Migrations, backfills, flags, environments, anything the deploy needs.
@@ -56,7 +56,7 @@ Migrations, backfills, flags, environments, anything the deploy needs.
 
 ## After writing
 
-Show the draft, apply corrections, and when the owner accepts it set `Status: Proposed ... · Accepted <date>` in both files' history as appropriate, then commit (`docs: spec <slug>`). Next: break it into issues (`to-tickets`); each ticket copies the Test plan cases and the User-facing copy rows it owns. If the plan changes during Build, record the change in the PR or a new ADR; do not edit the frozen pair.
+Show the draft, apply corrections, and when the owner accepts it (in an agent team, the coordinator, unless it sets money rules or prices) set `Status: Proposed ... · Accepted <date>` in both files' history as appropriate, then commit (`docs: spec <slug>`). Next: break it into issues (`to-tickets`); each ticket copies the Test plan cases and the User-facing copy rows it owns. If the plan changes during Build, record the change in the PR or a new ADR; do not edit the frozen pair.
 
 ## Writing rules
 

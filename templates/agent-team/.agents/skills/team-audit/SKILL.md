@@ -5,7 +5,7 @@ description: Audit agent roles, team skills, model-routing.md and team docs when
 
 # Team audit
 
-Orca runs the script and the metrics weekly and reports one line; that run fixes nothing. The full audit runs only on the user's word, by architect-pm. Edits only on a branch in your own worktree; the coordinator publishes and merges it.
+Orca runs the script and the metrics weekly and reports one line; that run fixes nothing. The full audit runs only on the user's word, by architect-pm. Edits only on a branch in your own worktree; you own the PR and merge it with `ship.sh` (`team.md`, Publication).
 
 ## 1. Find
 

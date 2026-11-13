@@ -8,7 +8,7 @@ Mingster talks only to **The coordinator (`elon`)**, the shared CEO and single f
 
 ```mermaid
 flowchart TD
-    Board["Mingster (Human Owner / Board)\nHolds final approval gates: Features, UI Pages, Money, Prod Go, Role/Hook Diffs"]
+    Board["Mingster (Human Owner / Board)\nOwner pauses: Money rules and prices, Spending, Customer messages, Data deletion, Prod Go once a real store is live, one look before production"]
     CEO["Elon (shared CEO)\nSingle front door for <project-a> and <project-b>, dispatches with Orca orchestration"]
 
     subgraph Direct_Reports["Product, Commercial & Customer Specialists"]
@@ -21,7 +21,7 @@ flowchart TD
         Dev["Fullstack-Dev\n(fullstack-dev)\nTDD implementation in isolated worktrees"]
         QA["QA-SDET\n(qa-sdet)\nCross-family PR review, Playwright proofs & daily staging review"]
         SecOps["SecOps-FinOps\n(secops-finops)\nSecurity, auth, tenancy & money reconciliation audits"]
-        RM["Release-Manager\n(release-manager)\nDaily 19:00 staging deploy & production on owner's go"]
+        RM["Release-Manager\n(release-manager)\nDaily 19:00 staging deploy & production after Playground regression, owner's go once a real store is live"]
     end
 
     Board --> CEO
@@ -38,10 +38,10 @@ flowchart TD
 
 ## 2. Responsibilities and decision boundaries
 
-- **Mingster (user / board).** Talks to the coordinator (`/elon` or `/ceo`) as executive peer. Decides only new features, new UI pages, prices and money rules, production go, irreversible data changes, budget and legal commitments, paid usage overage, the weekly update PRs, sending customer replies, and role file and hook changes. Nothing else interrupts the user.
+- **Mingster (user / board).** Talks to the coordinator (`/elon` or `/ceo`) as executive peer. Decides only money rules and prices, spending and contracts, sending customer replies, irreversible data deletion, production deploy once a real store is live, and a look at each new feature or page before production (owner, coordinator chat 2026-11-13). Nothing else interrupts the user.
 - **The coordinator.** Critical, program driven partner without flattery. The user's window and only contact, off the main line (`README.md` section 3). Turns vision into commercial experiments (Sales), requirements (BA) and delivery (workers), sets priorities weekly, handles `needs-elon` exceptions, dispatches ready issues within `usage-gate.py` and `heavy-gate.py`, and contacts the user only for a user decision. Never uses Claude subagents. Commands: `/elon <goal>` or `/ceo <goal>`. Unprompted messages carry a decision, options, a recommendation and any exact command; routine progress, merges, reviews and staging deploys are not reported. On `/elon status` ("what now") the format is **Now**, **Needs user**, **Running**; on "recap" it reports merged, deployed, problems and numbers.
 - **Sales and Marketing (`sales-marketing`).** Owns self-serve acquisition, positioning, conversion experiments and metric definitions (MRR, LTV, CAC, churn, 14 day activation), and joins the pre-build grill for new UI pages and wording. Delegates market research, competitor price comparison and Taiwan merchant lookups to a Gemini worker on Antigravity (requiring a source URL for every number and merchant fact, spot-checked before use). Never plans manual outbound sales, sends unapproved emails, touches production tables or alters live pricing.
-- **BA (`architect-pm` / 需求分析師).** Runs intake, writes one design document per feature (intent, spec and units with one user approval), slices specs into machine-checkable GitHub issues with `to-tickets`, maintains the weekly list of non-blocker findings, and runs full `/team-audit` reviews on the user's word. Never writes application code.
+- **BA (`architect-pm` / 需求分析師).** Runs intake, writes one design document per feature (intent, spec and units; the owner approves only money rules and prices, and looks at a new feature or page before production), slices specs into machine-checkable GitHub issues with `to-tickets`, maintains the weekly list of non-blocker findings, and runs full `/team-audit` reviews on the user's word. Never writes application code.
 - **Support tickets (`support-csm`, user rule 2026-10-12).** When a ticket or support email arrives, the underlying problem is resolved first when it needs a fix, `support-csm` drafts the reply in the customer's language, and the coordinator notifies Mingster the same day with the ticket, what was done and the draft. Nothing is sent or closed before the user approves.
 
 ## 3. Delivery lifecycle
@@ -61,7 +61,7 @@ sequenceDiagram
 
     Owner->>CEO: Product Vision / Feature Goal
     CEO->>BA: Intake, pre-build grill (money or new UI page), one design doc (intent, spec, tickets)
-    BA->>Owner: One approval for new feature, new UI page (with phone screenshots), price or money rule
+    BA->>Owner: Approval only for a price or money rule; a new feature or UI page builds and gets one look before production
     BA->>CEO: Ready GitHub issue tickets (Machine-checkable contracts)
 
     CEO->>Dev: 5 minute run starts scoped ticket in isolated worktree
@@ -72,8 +72,8 @@ sequenceDiagram
 
     RM->>RM: Daily 19:00 Taiwan time staging deploy
     RM->>QA: swarm staging review (full regression, smoke, changed pages on phone viewport; all pages weekly)
-    CEO->>Owner: One-line staging summary for same-day production Go
-    Owner->>RM: Explicit Owner Go for exact production SHA
+    RM->>RM: Playground regression on the staging SHA while production holds only test data
+    Owner->>RM: Owner's go for the exact production SHA, only once a real store is live
     RM->>RM: Production backup, deploy and live smoke check (auto code rollback on smoke fail)
 ```
 
@@ -85,7 +85,7 @@ Each ready GitHub issue carries in one text (body or a single comment) these thr
 2. **`Requirement owner:`** the requester and reason (per The Algorithm: question the requirement first).
 3. **`Deleted:`** what requirement or step was removed, or `nothing, because ...`.
 
-Pre-build grill gate (user rule 2026-11-06): a multi-role grill runs only for **money** (payments, billing, refunds, ledger, credits, pricing or entitlements) with `secops-finops`, `architect-pm` and the coordinator, and for **new UI pages** with `sales-marketing` and the coordinator. The user approves the result before build. All other work has no grill: the coordinator decides and records it on the issue. Exact user-facing copy in `tw`, `en` (fluent American English, written natively) and `jp` (natural Japanese, written natively) is approved at the spec.
+Pre-build grill gate (user rule 2026-11-06): a multi-role grill runs only for **money** (payments, billing, refunds, ledger, credits, pricing or entitlements) with `secops-finops`, `architect-pm` and the coordinator, and for **new UI pages** with `sales-marketing` and the coordinator. The coordinator approves the result; for money rules and prices the build runs while the owner reviews it, and only the merge waits. All other work has no grill: the coordinator decides and records it on the issue. Exact user-facing copy in `tw`, `en` (fluent American English, written natively) and `jp` (natural Japanese, written natively) is reviewed with the spec by the team, and the owner sees it in the look before production (Owner pauses); nobody asks him again at merge.
 
 Every code change passes `script/head-checks.sh` once per head and an independent cross-family review before merge. The verifier never runs unit tests, `tsc` or lint; it reads the diff and the `head-checks.sh` Checks receipt, proves load-bearing behaviour live (browser at phone viewport for UI, real API call or script run), answers the three review questions (does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix), and posts `Verdict: PASS|PASS+NOTES|FAIL head=<full sha> verifier=<dispatch id> author=<dispatch id>` with `Command: <exact test command run>`. Extra Strong (Claude Opus) cross review is required only for money transactions or when the coordinator or the user explicitly requests it on the issue or PR. A PASS Verdict and Checks PASS carry across a clean merge of `main` (`verdict_carry`).
 
@@ -168,7 +168,7 @@ Every provider is driven through Orca orchestration (`orca orchestration worker-
 | **Cursor** | Spec says read `<repo root>/.claude/agents/<role>.md` first, plus `.cursor/rules/` | Effort is in the model id (`grok-4.7-xhigh`, `grok-4.7-high`). Start via `script/start-cursor-worker.sh` (or `script/worker-startup.sh`) to pre-write `.workspace-trusted`. |
 | **Antigravity** | Spec says read `<repo root>/.claude/agents/<role>.md` first, plus `AGENTS.md` and `.agents/skills/` | Effort is in the model id (`gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-3.8-flash`). Local host only until remote attach is supported. |
 
-Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role boundaries on every provider (every role change requires human user review and an `Owner-approved:` commit trailer). Skills come in three tiers: Tier 1 general skills from `~/dotfiles/.agents/skills/`, Tier 2 team skills from `~/dotfiles/templates/agent-team/.agents/skills/` linked on each machine by `script/setup-agent-skills.sh`, and Tier 3 project-specific skills. Details: [Skills inventory](skills-inventory.md).
+Sources of truth: `AGENTS.md` for conventions; `.claude/agents/` for role boundaries on every provider (a role change merges on a passing non-author Verdict with the coordinator's approval and an `Owner-approved:` commit trailer; the owner approves only a change that loosens a safety limit). Skills come in three tiers: Tier 1 general skills from `~/dotfiles/.agents/skills/`, Tier 2 team skills from `~/dotfiles/templates/agent-team/.agents/skills/` linked on each machine by `script/setup-agent-skills.sh`, and Tier 3 project-specific skills. Details: [Skills inventory](skills-inventory.md).
 
 ## 9. Tools
 
@@ -184,4 +184,4 @@ Full per-tool reference table: [Agent team reference](team-reference.md).
 
 ## 10. Shared and per project
 
-The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled-in copies (`docs/agents/team.md`, `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are not copied into a project: edit `templates/agent-team/.agents/skills/`, and machines read them through links from `script/setup-agent-skills.sh`. `agent-team.sh sync <project>` removes any older copy, and `agent-team.sh check` reports one as drift. `script/weekly-update.sh` keeps upstream Matt Pocock skills, pstack skills, Bun and Node LTS pins current across three tested PRs for user review.
+The generic source is `~/dotfiles/templates/agent-team/`. Each project holds filled-in copies (`docs/agents/team.md`, `docs/agents/team-facts.md`, `docs/agents/deploy-facts.md`, `.claude/agents/`, `.claude/model-routing.md`), and its agents follow those. Team skills are not copied into a project: edit `templates/agent-team/.agents/skills/`, and machines read them through links from `script/setup-agent-skills.sh`. `agent-team.sh sync <project>` removes any older copy, and `agent-team.sh check` reports one as drift. `script/weekly-update.sh` keeps upstream Matt Pocock skills, pstack skills, Bun and Node LTS pins current across three tested PRs that merge on green checks and a Verdict.

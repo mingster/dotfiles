@@ -46,15 +46,15 @@ The rule itself is in `AGENTS.md` (Token budget); this section only records the 
 
 ## 7. FinOps Cost Gate (10-Turn Checkpoint)
 - Turn Count: 2 of 10
-- Rule: After 10 autonomous turns, snapshot state and confirm with the owner before continuing.
+- Rule: After 10 autonomous turns, snapshot state to `active_run.md` and continue; never pause for the owner (`team.md`, Owner pauses). Stop only on the Three-Strike Hard Stop.
 
 ```
 
 ## 2. Alignment with SDLC
 
-- Specifications and requirements live exclusively in `docs/intent/<YYYY-MM-DD>-<slug>/` (`intent.md` and `spec.md`). `active_run.md` is strictly an ephemeral execution ledger for active tasks.
+- Specifications and requirements live exclusively in the project's intent and spec folders (`intent.md` and `spec.md`). `active_run.md` is strictly an ephemeral execution ledger for active multi-slice tasks and does not replace the coordinator's child ledger (`docs/agents/team.md`, rule Child ledger).
 - Enforce Zero-Env Disclosure: never record `.env` secrets or keys into markdown artifacts; use `[Omitted/Configured via Env]`.
-- Once the PR is opened and verified, `active_run.md` can be deleted or reset.
+- Once the branch is verified and merged, `active_run.md` is deleted or reset.
 
 ## 3. Why This Prevents Amnesia and Hallucination
 

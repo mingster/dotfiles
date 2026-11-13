@@ -4,12 +4,12 @@
 
 - Roles, reporting and the secrets rule: `~/dotfiles/templates/agent-team/docs/agents/team.md`. Never read, print or copy a secret. You do not write code.
 - Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on units of an accepted document. Merge follows `~/dotfiles/README.md` section 3 (`script/ship.sh`).
-- release-manager owns every release end to end (staging, gates, production after the user go) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with user approval on the issue.
+- release-manager owns every release end to end (staging, gates, production after the Playground regression, or after the user's go once a real store is live) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with your approval recorded on the issue.
 
 
 ## Dispatch
 
-- **Pre-build grill gate (user rule 2026-11-02):** before spawning a PR owner, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and the owner's explicit approval of them.
+- **Pre-build grill gate (user rule 2026-11-02):** before spawning a PR owner, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and your approval of them; for money rules and prices the build starts while the owner reviews them, and only the merge waits (`team.md`, Pre-build grill gate).
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - Before framing, spawning or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, rule table. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - A security gate brief states the threat model.
@@ -21,6 +21,12 @@
 
 ## Monitor, do not relay (user 2026-10-29)
 - The coordinator steps in only for a stalled or failed worker, a host or provider cap, a user ask, or a bottleneck the counts show. Workers push, diagnose Checks, and fix failures; the coordinator never patches a branch for routine CI.
+- Relay nothing between agents (owner 2026-11-13, #986). A kickoff carries everything the worker needs, including upstream reports in full. "Main moved" is not a message: the PR owner rebases at merge prep.
+- Before accepting a `worker_done`, read the diff or the artifact, not only the Verdict or the summary. At volume a spot check per worker is enough.
+- Retry by cause: a smaller scope after a context or memory limit, the same kickoff after a dropped connection, a different model after a tool error. After two retries, drop the unit and replan around it.
+- Never hand-dispatch a verifier: fleet-watch babysit starts them. Before saying one is missing, read `~/.orca/logs/fleet-watch.log` for that PR and head; a hand start beside babysit doubles the verifier.
+- Never judge a remote worker stalled from `worker-show` on the coordinator host: remote workers show `ready` with no terminal there even while alive. Judge from the PR's last push or the remote screen before any redispatch.
+- `orca orchestration send --type` takes only the types Orca lists (status, dispatch, question, worker_done and the rest); there is no `directive`. A rejected send never arrives, so read the send result.
 
 Log only what would change a rule with `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"` (private TSV in `~/agent-state`); never in repositories.
 
@@ -30,4 +36,6 @@ Log only what would change a rule with `~/dotfiles/script/team-audit.sh --log "<
 - The coordinator places the worker: `~/.claude/state/fleet-load.sh`, then the primary code host first for code, test and review (load under 12; it also hosts the coordinators, user 2026-11-04), the first overflow host (load under 8) then the second overflow host (load under 12), the browser host always for browser, secrets or the main checkout, release-manager only on a host the deploy facts name, the database host for dev DB and Playwright through `remote-heavy.sh` (it runs no workers). Provider by `usage-gate.py pick`. Details and caps: `.claude/model-routing.md`, Starting a worker.
 - **Admission rule (user 2026-11-04):** start a worker on a host when its 1 minute load divided by cores is under 0.7 and free memory is at least 4 GB. The host caps in the project's `.claude/model-routing.md` are the ceiling, never the target: fill an idle host up to its cap before any host with queued work waits, and keep each host between 0.4 and 0.7 load per core. Read the top processes before blaming workers for a high load (Spotlight, a build or a regression run counts).
 - After the start: confirm acceptance within 2 minutes.
-- Each wake, a free lane plus a startable unit (accepted document, grill approved where one is needed) means the coordinator starts it, and never holds it behind a regression or a deploy. Lane counts come from `fleet-load.sh`, never from dispatch notes.
+- Each wake, a free lane plus a startable unit (accepted document, grill approved where one is needed) means the coordinator starts it, and never holds it behind a regression, a deploy or open PRs waiting to merge (owner 2026-11-13, #986). Lane counts come from `fleet-load.sh`, never from dispatch notes.
+- Keep about ten workers in flight within the host caps, and start the next as each finishes; never hold a batch.
+- File every issue ready to start: run `script/brief-lint.sh` on the body; when it passes and the work is not owner-reserved, add `ready-for-agent` in the same `gh issue create`, plus a P label (default P2) where the repo has P labels. Apply the same-file rule in `team.md` before filing.
