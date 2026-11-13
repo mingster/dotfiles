@@ -91,7 +91,9 @@ sec == "Out of scope" && /[^[:space:]]/ {
 sec == "Verify" && /[^[:space:]]/ {
   has_verify = 1
   if ($0 ~ /checks-local\.sh/) has_checks_local = 1
+  if ($0 ~ /GitHub Checks are green/) github_green = 1
 }
+/^Role: qa-sdet([^[:alnum:]-]|$)/ { qa_sdet = 1 }
 END {
   rc = 0
   nsearch = 0
@@ -100,7 +102,7 @@ END {
   if (!has_acceptance) { print "brief-lint: missing Acceptance"; rc = 1 }
   if (!has_out_of_scope) { print "brief-lint: missing Out of scope"; rc = 1 }
   if (!has_verify) { print "brief-lint: missing Verify"; rc = 1 }
-  if (has_verify && !has_checks_local) { print "brief-lint: Verify must run script/checks-local.sh"; rc = 1 }
+  if (has_verify && !has_checks_local && !(qa_sdet && github_green)) { print "brief-lint: Verify must run script/checks-local.sh"; rc = 1 }
   if (type_count > 1) {
     print "brief-lint: brief has more than one Type"; rc = 1
   } else if (type_count == 1 && brief_type != "build" && brief_type != "rework" && brief_type != "verify" && brief_type != "rule/guide" && brief_type != "rule/guide change") {

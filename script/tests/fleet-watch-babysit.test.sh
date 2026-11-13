@@ -223,10 +223,10 @@ try:
     print(p[p.index("--spec")+1])
 except (IndexError, ValueError, OSError):
     print("")' "$BABYSIT_STARTS" || true)
-if [ -n "$spec" ] && grep -q 'Refs owner/app#1' "$spec" && grep -q 'qa-sdet' "$spec" && grep -q 'checks-local.sh' "$spec"; then
-  ok "verifier brief has refs, role and checks"
+if [ -n "$spec" ] && grep -q 'Refs owner/app#1' "$spec" && grep -q 'qa-sdet' "$spec" && grep -q 'GitHub Checks are green' "$spec" && ! grep -q 'checks-local.sh' "$spec"; then
+  ok "verifier brief has refs, role and green checks"
 else
-  bad "verifier brief has refs, role and checks"
+  bad "verifier brief has refs, role and green checks"
 fi
 if [ -n "$spec" ] && grep -q 'fullstack-dev' "$spec"; then
   bad "verifier brief must not be a builder brief"

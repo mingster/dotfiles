@@ -45,6 +45,27 @@ def _load_receipt_state():
 
 rs = _load_receipt_state()
 
+_SIBLINGS = {}
+
+
+def _sibling(name, filename):
+    module = _SIBLINGS.get(name)
+    if module is not None:
+        return module
+    path = Path(__file__).resolve().parent / filename
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError('%s missing beside fleet-watch.py' % filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _SIBLINGS[name] = module
+    return module
+
+
+def _with_preamble(text, role):
+    brief_role = 'fullstack-dev' if role in (None, '', 'builder') else role
+    return _sibling('worker_preamble', 'worker-preamble.py').prepend(text, brief_role)
+
 
 class Urgent(str):
     """A notice that skips the digest wait. alerts() returns this type, so routing never reads the text."""
@@ -1026,6 +1047,8 @@ HEAVY_GATE_WAIT_MEDIAN_DEFAULT_MAX_AGE_SECONDS = 24 * 3600
 WRAP_UP_STALE_LIMIT = 20 * 60
 WRAP_UP_STALE_LOG = 10 * 60
 STALL_IDLE_LIMIT_DEFAULT = 30 * 60
+VERIFIER_REWORK_IDLE_SECONDS = 60 * 60
+_AVOID_FAMILIES = {'claude', 'gpt', 'gemini', 'composer', 'grok'}
 STALL_RESTART_RECORD_TTL_DEFAULT = 24 * 3600
 PASS_FAIL_LIMIT = 4 * 60
 
@@ -2726,14 +2749,15 @@ def build_issue_start_command(config, repo, issue_row, placement=None):
         return None
     verify = checks_local_verify_text(
         root, 'Run bash script/checks-local.sh and show the Done condition.')
-    spec_path = _write_issue_scan_spec(
+    role = scan.get('role') or 'builder'
+    spec_path = _write_issue_scan_spec(_with_preamble(
         'Refs %s#%d\n\n%s\n\n'
         '## Verify\n'
         '%s\n\n'
         '## Finish\n'
         'Self-review, push, open the PR, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip(), verify))
-    role = scan.get('role') or 'builder'
+        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip(), verify),
+        role))
     title = '%s - #%d' % (role, issue_row['number'])
     command = [
         'bash', _issue_scan_startup_script(config),
@@ -2763,7 +2787,7 @@ def build_rework_start_command(config, repo, pr_row):
         verify = 'bash script/checks-local.sh, then the failing check:\n' + excerpt
     else:
         verify = 'checks-local.sh does not apply to this repo'
-    spec_path = _write_issue_scan_spec(
+    spec_path = _write_issue_scan_spec(_with_preamble(
         'Refs %s#%d\n'
         'Rework %s PR #%d head %s\n\n'
         '## Acceptance\n'
@@ -2775,7 +2799,8 @@ def build_rework_start_command(config, repo, pr_row):
         '%s\n\n'
         '## Finish\n'
         'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify))
+        % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify),
+        'fullstack-dev'))
     title = 'rework #%d' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
     model = scan.get('rework_model') or scan.get('model') or ''
@@ -2827,10 +2852,10 @@ def build_backlog_sweep_command(config, repo, role):
     if not root:
         return None
     spec = (
-        'Role: %s (read .claude/agents/%s.md). Read-only backlog sweep of open issues not ready-for-agent; no code.\n'
-        % (role, role)
+        'Role: %s. Read-only backlog sweep of open issues not ready-for-agent; no code.\n'
+        % role
     )
-    spec_path = _write_issue_scan_spec(spec)
+    spec_path = _write_issue_scan_spec(_with_preamble(spec, role))
     agent = scan.get('sweep_agent') or scan.get('agent') or 'cursor'
     model = scan.get('sweep_model') or scan.get('model') or ''
     command = [
@@ -3484,7 +3509,7 @@ def apply_active_run(config, pick=None, resolve_handle=None):
     data = pick('fullstack-dev') if pick else pick_role('fullstack-dev')
     chosen = choose_pick(data)
     if chosen:
-        scan['agent'], scan['model'] = chosen
+        scan['agent'], scan['model'] = chosen[0], chosen[1]
         scan.pop('rework_agent', None)
         scan.pop('rework_model', None)
 
@@ -3608,15 +3633,77 @@ def verifier_title_pr(worker):
     return int(found.group(1)) if found else None
 
 
-def live_verifier_for_pr(pr, workers):
-    """True when a live verifier worker, hand dispatched or not, is already on this PR."""
+def live_verifier_worker(pr, workers):
+    """The live verifier worker on this PR, hand dispatched or not, else None."""
     number = pr.get('number')
     for worker in workers or []:
         if not isinstance(worker, dict) or not worker_row_is_live(worker):
             continue
         if number is not None and verifier_title_pr(worker) == number:
-            return True
-    return False
+            return worker
+    return None
+
+
+def live_verifier_for_pr(pr, workers):
+    """True when a live verifier worker, hand dispatched or not, is already on this PR."""
+    return live_verifier_worker(pr, workers) is not None
+
+
+def verifier_idle_seconds(worker, term_times, now):
+    handle = worker_terminal_handle(worker)
+    if not handle or not term_times:
+        return 0
+    last = _normalize_terminal_time_ms(term_times.get(handle))
+    if last is None:
+        return 0
+    return max(0, now - last)
+
+
+def _verifier_head_bucket(state, repo):
+    return state.setdefault('verifier_head', {}).setdefault(repo, {})
+
+
+def release_idle_rework_verifier(pr, workers, state, repo, now, term_times, release):
+    """Release a verifier that has waited out a rework for an hour. True when released."""
+    worker = live_verifier_worker(pr, workers)
+    if worker is None or not rework_needed_at_head(pr):
+        return False
+    if verifier_idle_seconds(worker, term_times, now) < VERIFIER_REWORK_IDLE_SECONDS:
+        return False
+    release(worker.get('dispatchId') or '')
+    _verifier_head_bucket(state, repo).pop(str(pr.get('number')), None)
+    return True
+
+
+def route_rework_head(pr, workers, state, repo, now, term_times, release, notify):
+    """Send a new green head to the live verifier, or release that verifier after an hour idle.
+
+    Returns 'sticky', 'released', 'live', or 'none'.
+    """
+    worker = live_verifier_worker(pr, workers)
+    if worker is None:
+        return 'none'
+    number = pr.get('number')
+    head = pr.get('headRefOid') or ''
+    bucket = _verifier_head_bucket(state, repo)
+    tracked = bucket.get(str(number)) or ''
+    idle = verifier_idle_seconds(worker, term_times, now)
+    if tracked and tracked != head:
+        if idle >= VERIFIER_REWORK_IDLE_SECONDS:
+            release(worker.get('dispatchId') or '')
+            bucket.pop(str(number), None)
+            return 'released'
+        notify(
+            worker_terminal_handle(worker),
+            'Rework head %s is on %s#%s. Recheck only your fix list and the brief search command.'
+            % (head, repo, number),
+        )
+        bucket[str(number)] = head
+        return 'sticky'
+    if not tracked:
+        bucket[str(number)] = head
+        return 'recorded'
+    return 'live'
 
 
 def builder_pair(pr, workers=None):
@@ -3656,8 +3743,10 @@ def _usage_gate_argv():
     return [cli]
 
 
-def pick_role(role, run=subprocess.run):
+def pick_role(role, run=subprocess.run, avoid_family=None):
     command = _usage_gate_argv() + ['pick', '--role', role, '--json', '--auto']
+    if avoid_family:
+        command += ['--avoid-family', avoid_family]
     USAGE_GATE_CALLS[0] += 1
     try:
         proc = run(command, capture_output=True, text=True, timeout=60, check=False)
@@ -3679,14 +3768,36 @@ def pick_role(role, run=subprocess.run):
     return data
 
 
-def _same_agent_model(agent, model, avoid):
+def _exact_pair(agent, model, avoid):
     if not avoid:
         return False
     return agent.lower() == avoid[0].lower() and model.lower() == avoid[1].lower()
 
 
+def _avoid_family(pair):
+    if not pair:
+        return None
+    family = _sibling('usage_gate_family', 'usage-gate.py').model_family(pair[0], pair[1])
+    return family if family in _AVOID_FAMILIES else None
+
+
+def _same_agent_model(agent, model, avoid):
+    """True for the builder pair, or for the same model family from the shared map."""
+    if not avoid:
+        return False
+    if _exact_pair(agent, model, avoid):
+        return True
+    gate = _sibling('usage_gate_family', 'usage-gate.py')
+    left = gate.model_family(agent, model)
+    right = gate.model_family(avoid[0], avoid[1])
+    return bool(left and right and left == right)
+
+
 def choose_pick(data, avoid=None):
-    """First eligible pick, skipping a pair that equals the builder when avoid is set."""
+    """First eligible pick. Same family is skipped unless it is the quota fallback, and the exact pair never wins.
+
+    Returns (agent, model, tag). tag is same-family-different-model or ''.
+    """
     if not isinstance(data, dict):
         return None
     ordered = []
@@ -3696,16 +3807,25 @@ def choose_pick(data, avoid=None):
     for candidate in data.get('candidates') or []:
         if isinstance(candidate, dict) and candidate not in ordered:
             ordered.append(candidate)
+    fallback = None
     for candidate in ordered:
-        if candidate.get('eligible') is False:
-            continue
         agent = candidate.get('provider') or candidate.get('agent')
         model = candidate.get('model')
         if not isinstance(agent, str) or not agent or not isinstance(model, str) or not model:
             continue
+        if _exact_pair(agent, model, avoid):
+            continue
+        if candidate.get('same_family_fallback'):
+            if fallback is None:
+                fallback = (agent, model)
+            continue
+        if candidate.get('eligible') is False:
+            continue
         if _same_agent_model(agent, model, avoid):
             continue
-        return agent, model
+        return agent, model, ''
+    if fallback:
+        return fallback[0], fallback[1], 'same-family-different-model'
     return None
 
 
@@ -3742,7 +3862,7 @@ def _babysit_line(repo, number, head, action, detail=''):
     return text
 
 
-def build_babysit_spec(repo, pr_row, kind, builder, root):
+def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
     number = pr_row['number']
     head = pr_row.get('headRefOid') or ''
     verify = checks_local_verify_text(root, 'bash script/checks-local.sh')
@@ -3751,6 +3871,12 @@ def build_babysit_spec(repo, pr_row, kind, builder, root):
             who = 'The builder is agent=%s model=%s. Use a different agent and model.' % builder
         else:
             who = 'The builder agent and model were not recorded.'
+        if verdict_tag:
+            who += ' No other family has quota. Tag the Verdict %s.' % verdict_tag
+        verify = (
+            'GitHub Checks are green at head %s. Review the diff and run the live checks this brief names.'
+            % head
+        )
         text = (
             'Refs %s#%s\n\n'
             'Role: qa-sdet. Verify this open PR at head %s the way a user would, '
@@ -3764,6 +3890,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root):
             '## Finish\n'
             'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         ) % (repo, number, head, who, head, verify)
+        return _write_issue_scan_spec(_with_preamble(text, 'qa-sdet'))
     else:
         text = (
             'Refs %s#%s\n\n'
@@ -3777,7 +3904,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root):
             '## Finish\n'
             'Wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         ) % (repo, number, head, verify)
-    return _write_issue_scan_spec(text)
+        return _write_issue_scan_spec(_with_preamble(text, 'fullstack-dev'))
 
 
 class BabysitStartResult(int):
@@ -4041,7 +4168,7 @@ def default_babysit_start(command, run=subprocess.run):
     )
 
 
-def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
+def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, verdict_tag=''):
     startup, run_id, from_terminal, roots = babysit_settings(config)
     root = roots.get(repo)
     if not startup or not run_id or not from_terminal or not isinstance(root, str) or not root:
@@ -4057,7 +4184,7 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
     command = [
         'bash', startup,
         '--run', run_id,
-        '--spec', build_babysit_spec(repo, pr_row, kind, builder, root),
+        '--spec', build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag),
         '--title', title,
         '--agent', agent,
         '--model', model,
@@ -4071,9 +4198,28 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
     return command
 
 
+def _default_release_worker(dispatch_id):
+    if not dispatch_id:
+        return
+    try:
+        rpc('orchestration', 'worker-release', '--dispatch', dispatch_id)
+    except SEND_ERRORS:
+        return
+
+
+def _default_notify_worker(terminal, text):
+    if not terminal or not text:
+        return
+    try:
+        rpc('terminal', 'send', '--terminal', terminal, '--text', text, '--enter')
+    except SEND_ERRORS as error:
+        log_send_failed(terminal, error)
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
+    release_worker=None, notify_worker=None, now=None, term_times=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -4088,6 +4234,14 @@ def babysit_pass(
         pick = pick_role
     if owner_check is None:
         owner_check = pr_owner_only_reason
+    if release_worker is None:
+        release_worker = _default_release_worker
+    if notify_worker is None:
+        notify_worker = _default_notify_worker
+    if now is None:
+        now = time.time()
+    if term_times is None:
+        term_times = {}
     if pr_fetch is None:
         pr_fetch = fetch_open_prs
     _startup, run_id, from_terminal, roots = babysit_settings(config)
@@ -4095,10 +4249,17 @@ def babysit_pass(
     started = 0
     picks = {}
 
-    def cached_pick(role):
-        if role not in picks:
-            picks[role] = pick(role)
-        return picks[role]
+    def cached_pick(role, avoid_family=None):
+        key = (role, avoid_family or '')
+        if key not in picks:
+            if avoid_family:
+                try:
+                    picks[key] = pick(role, avoid_family=avoid_family)
+                except TypeError:
+                    picks[key] = pick(role)
+            else:
+                picks[key] = pick(role)
+        return picks[key]
 
     rows = []
     for index, repo in enumerate(repos):
@@ -4155,7 +4316,14 @@ def babysit_pass(
         if status == 'SUCCESS' and not verdict_posted_for_head(pr_row) and not needs_fix:
             kind, role = 'verifier', 'qa-sdet'
         elif needs_fix:
-            lines.append(_babysit_line(repo, number, head, 'skip', 'needs-fix'))
+            if release_idle_rework_verifier(
+                pr_row, workers, state, repo, now, term_times, release_worker,
+            ):
+                lines.append(_babysit_line(repo, number, head, 'skip', 'verifier-released'))
+                if not dry_run and persist_state:
+                    persist_state()
+            else:
+                lines.append(_babysit_line(repo, number, head, 'skip', 'needs-fix'))
             continue
         elif ready or (status == 'SUCCESS' and verdict_posted_for_head(pr_row)):
             detail = 'ready' if ready else 'has-verdict'
@@ -4169,7 +4337,13 @@ def babysit_pass(
             log_bits.append('skip_root=%s' % number)
             continue
         if kind == 'verifier' and live_verifier_for_pr(pr_row, workers):
-            lines.append(_babysit_line(repo, number, head, 'skip', 'verifier-live'))
+            route = route_rework_head(
+                pr_row, workers, state, repo, now, term_times, release_worker, notify_worker,
+            )
+            detail = {'sticky': 'verifier-sticky', 'released': 'verifier-released'}.get(route, 'verifier-live')
+            lines.append(_babysit_line(repo, number, head, 'skip', detail))
+            if route in ('sticky', 'released', 'recorded') and not dry_run and persist_state:
+                persist_state()
             continue
         park_key = park_id('verifier', repo, number, head)
         if park_is_active(state, park_key, config):
@@ -4182,7 +4356,7 @@ def babysit_pass(
             continue
         builder = builder_pair(pr_row, workers)
         avoid = builder if kind == 'verifier' else None
-        picked = cached_pick(role)
+        picked = cached_pick(role, _avoid_family(avoid) if avoid else None)
         chosen = choose_pick(picked, avoid=avoid)
         if not chosen:
             why = pick_failure_reason(picked, avoid)
@@ -4190,14 +4364,16 @@ def babysit_pass(
             log_bits.append('pick_fail=%s:%s' % (number, why))
             count_refused('builder' if why == 'builder' else 'usage_gate')
             continue
-        agent, model = chosen
+        agent, model, tag = chosen
         detail = 'agent=%s model=%s' % (agent, model)
+        if tag:
+            detail = '%s %s' % (detail, tag)
         action = 'verifier' if kind == 'verifier' else 'fixer'
         if dry_run:
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += 1
             continue
-        command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder)
+        command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder, tag)
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
@@ -4218,6 +4394,7 @@ def babysit_pass(
         babysit_mark(state, repo, number, head, action)
         if action == 'verifier':
             remember_started_dispatch(state, started_worker, 'verifier')
+            _verifier_head_bucket(state, repo)[str(number)] = head
         started += 1
         count_started()
         lines.append(_babysit_line(repo, number, head, action, detail))
@@ -5049,6 +5226,98 @@ def coordinator_stage(config, state, state_path):
     return notices, True
 
 
+def _message_payload(message):
+    value = message.get('payload') if isinstance(message, dict) else None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _message_outcome(message, payload):
+    for source in (message, payload):
+        if not isinstance(source, dict):
+            continue
+        outcome = source.get('outcome')
+        if isinstance(outcome, str) and outcome.strip():
+            return outcome.strip().lower()
+    return ''
+
+
+def _builder_role(worker):
+    title = str(worker.get('_task_title') or worker.get('title') or '').strip()
+    if ' - ' in title:
+        return title.split(' - ', 1)[0].strip().lower()
+    proj = worker.get('projection') or {}
+    return str((proj.get('role') if isinstance(proj, dict) else '') or worker.get('role') or '').strip().lower()
+
+
+def fetch_pr_body(repo, number, run=subprocess.run):
+    try:
+        output = run(
+            ['gh', 'pr', 'view', str(number), '--repo', repo, '--json', 'body'],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        data = json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    body = data.get('body')
+    return body if isinstance(body, str) else ''
+
+
+def bounce_builder_dones(messages, workers, body_of, notify, state, config):
+    """Tell a builder its worker_done does not count when the PR body fails the finish gate."""
+    lines = []
+    bounced = state.setdefault('bounced_done', [])
+    if not isinstance(bounced, list):
+        bounced = []
+        state['bounced_done'] = bounced
+    seen = set(bounced)
+    by_dispatch = {}
+    for worker in workers or []:
+        if not isinstance(worker, dict):
+            continue
+        dispatch = worker.get('dispatchId') or worker.get('dispatch_id')
+        if isinstance(dispatch, str) and dispatch:
+            by_dispatch[dispatch] = worker
+    gate = _sibling('pr_body_gate', 'pr-body-gate.py')
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('type') != 'worker_done':
+            continue
+        message_id = message.get('id')
+        if not isinstance(message_id, str) or not message_id or message_id in seen:
+            continue
+        payload = _message_payload(message)
+        if _message_outcome(message, payload) in ('failed', 'failure'):
+            continue
+        dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
+        if not isinstance(dispatch, str) or dispatch not in by_dispatch:
+            continue
+        worker = by_dispatch[dispatch]
+        role = _builder_role(worker)
+        if role in ('qa', 'qa-sdet', 'reviewer', 'verifier') or _worker_is_verifier(worker):
+            continue
+        number = worker_pr_number(worker)
+        repo = repo_for_worker(worker, config)
+        if not number or not repo:
+            continue
+        body = body_of(repo, number)
+        if body is None:
+            continue
+        reason = gate.finish_block_reason(body)
+        if not reason:
+            continue
+        notify(worker_terminal_handle(worker), 'worker_done bounced: ' + reason)
+        bounced.append(message_id)
+        seen.add(message_id)
+        lines.append('bounce %s#%s %s' % (repo, number, reason))
+    return lines
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=False, default=None)
@@ -5156,6 +5425,22 @@ def main():
         if not state.get('orca_inventory_skip_latched'):
             notices.append(ORCA_SKIP_NOTICE)
             state['orca_inventory_skip_latched'] = True
+    if inventory_ok:
+        def _notify_bounce(terminal, text):
+            if not terminal:
+                return
+            try:
+                rpc('terminal', 'send', '--terminal', terminal, '--text', text, '--enter')
+            except SEND_ERRORS as error:
+                log_send_failed(terminal, error)
+
+        try:
+            for line in bounce_builder_dones(
+                inv['messages'], workers, fetch_pr_body, _notify_bounce, state, config,
+            ):
+                print('fleet-watch: ' + line)
+        except Exception as error:
+            print('fleet-watch: builder bounce skipped: %s' % (repr(error),), file=sys.stderr)
     term_times = {}
     term_branches = {}
     terminal_list_ok = True
@@ -5188,6 +5473,7 @@ def main():
 
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
+        now=now, term_times=term_times,
     )
     for line in babysit_lines:
         print(line)

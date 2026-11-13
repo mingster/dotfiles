@@ -690,6 +690,7 @@ grep -q 'orchestration worker-start' "$tmp/orca-bad.log" && bad "orca should not
 helper_dir="$tmp/helpers"
 mkdir -p "$helper_dir/lib"
 cp "$script" "$helper_dir/worker-startup.sh"
+cp "$here/../worker-preamble.py" "$helper_dir/worker-preamble.py"
 cp "$here/../lib/pr-review-gates.sh" "$helper_dir/lib/pr-review-gates.sh"
 cp "$here/../lib/automation-path.sh" "$helper_dir/lib/automation-path.sh"
 cp "$here/../lib/board-status.sh" "$helper_dir/lib/board-status.sh"
@@ -727,6 +728,7 @@ set -e
 [ "$ec_cfin" = 0 ] && ok || bad "cursor no-Finish brief exits 0 ($ec_cfin) $(cat "$tmp/cursor-fin.err")"
 cursor_spec=$(awk '{for (i = 1; i <= NF; i++) if ($i == "--spec") print $(i + 1)}' "$tmp/cursor.args")
 grep -q 'workspace-status in-review' "$cursor_spec" && ok || bad "cursor Finish should set in-review when there is a PR ($(cat "$cursor_spec" 2>/dev/null))"
+grep -q 'Read these files before any work' "$cursor_spec" && ok || bad "cursor spec should carry the role preamble"
 grep -q 'workspace-status completed' "$cursor_spec" && ok || bad "cursor Finish should set completed when there is no PR"
 grep -q 'no pull request' "$cursor_spec" && ok || bad "cursor Finish should name the no-PR case"
 
@@ -763,8 +765,9 @@ rem_dotfiles_bare="$tmp/rem-dotfiles.git"
 make_repo "$rem_dotfiles" "$rem_dotfiles_bare"
 mkdir -p "$rem_dotfiles/script"
 cp "$script" "$rem_dotfiles/script/worker-startup.sh"
+cp "$here/../worker-preamble.py" "$rem_dotfiles/script/worker-preamble.py"
 chmod +x "$rem_dotfiles/script/worker-startup.sh"
-git -C "$rem_dotfiles" add script/worker-startup.sh
+git -C "$rem_dotfiles" add script/worker-startup.sh script/worker-preamble.py
 git -C "$rem_dotfiles" commit -qm add-startup
 git -C "$rem_dotfiles" push -q origin main
 

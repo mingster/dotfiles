@@ -515,7 +515,9 @@ class IssueScanPass(unittest.TestCase):
         _, _, starts, _ = self.run_pass(state, issues)
         self.assertEqual(len(starts), 1)
         spec = Path(starts[0][starts[0].index('--spec') + 1]).read_text(encoding='utf-8')
-        self.assertTrue(spec.startswith('Refs %s#21\n' % REPO), spec)
+        self.assertTrue(spec.startswith('Read these files before any work:\n'), spec)
+        self.assertIn('Refs %s#21\n' % REPO, spec)
+        self.assertLess(spec.find('Read these files'), spec.find('Refs %s#21' % REPO))
         self.assertIn('## Verify\n', spec)
         self.assertIn('## Finish\n', spec)
 

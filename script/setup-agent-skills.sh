@@ -144,3 +144,26 @@ for src_root in "$SKILLS" "$TEAM_SKILLS"; do
     link_skill "$entry" "$name"
   done
 done
+
+# orca-adapter has ORCA-ADAPTER.md and no SKILL.md, so the owned() loop skips it.
+if [ -f "$TEAM_SKILLS/orca-adapter/ORCA-ADAPTER.md" ]; then
+  for dst in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+    mkdir -p "$dst"
+    target="$dst/orca-adapter"
+    entry="$TEAM_SKILLS/orca-adapter"
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$entry" ]; then
+      continue
+    fi
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      case "$(readlink "$target" 2>/dev/null || true)" in
+        */templates/agent-team/.agents/skills/orca-adapter) rm "$target" ;;
+        *)
+          echo "agent-skills: kept existing $target (not a dotfiles orca-adapter link)"
+          continue
+          ;;
+      esac
+    fi
+    ln -s "$entry" "$target"
+    echo "agent-skills: linked $target -> $entry"
+  done
+fi
