@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "orca",
+    "orchestration",
+    "worker-list",
+    "--run",
+    "<run>",
+    "--include-remote",
+    "--full",
+    "--json"
+  ],
+  "exit_code": 0,
+  "orca_version": "1.4.258",
+  "stderr": "",
+  "stdout": "{\n  \"_meta\": {\n    \"runtimeId\": \"<id>\"\n  },\n  \"id\": \"<id>\",\n  \"ok\": true,\n  \"result\": {\n    \"counts\": {},\n    \"page\": {\n      \"hasMore\": false,\n      \"limit\": 100,\n      \"nextCursor\": null,\n      \"total\": 0\n    },\n    \"scope\": {\n      \"run\": \"run_placeholder\",\n      \"source\": \"flag\"\n    },\n    \"workers\": []\n  }\n}\n"
+}

@@ -9,6 +9,7 @@
     "--json"
   ],
   "exit_code": 0,
+  "orca_version": "1.4.258",
   "stderr": "",
   "stdout": "{\n  \"_meta\": {\n    \"runtimeId\": \"<id>\"\n  },\n  \"id\": \"<id>\",\n  \"ok\": true,\n  \"result\": {\n    \"removedWork\": {\n      \"activeWorkersAtRemoval\": 0,\n      \"coverage\": \"complete\",\n      \"dispatches\": 0,\n      \"lastRemovedAt\": null,\n      \"recordedSince\": \"<redacted>\",\n      \"tasks\": 0,\n      \"terminals\": 0,\n      \"workers\": 0\n    },\n    \"run\": {\n      \"consumer_generation\": 6,\n      \"coordinator_handle\": \"term_placeholder\",\n      \"created_at\": \"<redacted>\",\n      \"id\": \"run_placeholder\",\n      \"legacy\": 0,\n      \"objective\": \"<redacted>\",\n      \"updated_at\": \"<redacted>\"\n    }\n  }\n}\n"
 }

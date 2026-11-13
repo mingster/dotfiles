@@ -4,6 +4,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from fleet_watch_replies import load_reply
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
@@ -75,16 +78,40 @@ class StartReason(unittest.TestCase):
 
 
 class Notices(unittest.TestCase):
-    def test_send_addresses_the_run_with_the_existing_sender(self):
+    def deliver(self, reply_name):
+        """Run the real send path against one recorded Orca reply."""
+        recorded = load_reply(reply_name)
         calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(
+                cmd, recorded['exit_code'], stdout=recorded['stdout'], stderr=recorded['stderr'],
+            )
+
         config = {'runs': [{'id': 'run_x', 'terminal': 'term_live'}]}
         state = {}
-        fw.deliver_notices(config, state, [fw.Urgent('boom')], rpc_call=lambda *a: calls.append(a), now=100.0)
+        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
+            fw.deliver_notices(config, state, [fw.Urgent('boom')], now=100.0)
+        return calls, state
+
+    def test_send_addresses_the_run_with_the_existing_sender(self):
+        """Recorded receiver reply. --to is the run and --from is the sender terminal.
+
+        The no-sender recording leaves the notice queued.
+        """
+        calls, state = self.deliver('send-from-receiver')
         self.assertEqual(len(calls), 1)
         args = calls[0]
         self.assertEqual(args[args.index('--to') + 1], 'run:run_x')
         self.assertEqual(args[args.index('--from') + 1], 'term_live')
         self.assertNotEqual(args[args.index('--from') + 1], args[args.index('--to') + 1])
+        self.assertNotIn('run:run_x', state.get('notice_queue', {}))
+        self.assertEqual(state['notice_sent_at']['run:run_x'], 100.0)
+
+        _calls, refused = self.deliver('send-no-sender')
+        self.assertIn('run:run_x', refused['notice_queue'])
+        self.assertNotIn('run:run_x', refused.get('notice_sent_at', {}))
 
     def test_verdict_goes_to_the_lead_from_the_run_terminal(self):
         calls = []

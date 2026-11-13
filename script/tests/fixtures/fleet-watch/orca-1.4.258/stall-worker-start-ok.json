@@ -1,5 +1,6 @@
 {
-  "stdout": "{\"ok\": true, \"result\": {\"dispatchId\": \"ctx_retry_recorded\", \"taskId\": \"task_recorded\", \"state\": \"ready\"}}\n",
+  "stdout": "{\"ok\": true, \"result\": {\"dispatchId\": \"ctx_placeholder\", \"taskId\": \"task_placeholder\", \"state\": \"ready\"}}\n",
   "stderr": "",
-  "exit": 0
+  "exit": 0,
+  "orca_version": "1.4.258"
 }
