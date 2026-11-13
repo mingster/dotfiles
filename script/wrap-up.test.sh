@@ -1361,3 +1361,73 @@ WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=60 \
   bash "$here/wrap-up.sh" --dry-run --repo "$tmp/repo-asleep" > "$tmp/asleep-out" 2> "$tmp/asleep-err" || true
 check_human scheduled
 echo 'ok a fleet agent with no dispatch stays, and a screen waiting on a human stays'
+# Issue 953: --apply removes every non-main Orca worktree with no terminal; branches stay, dirty ones are reported.
+idle="$tmp/idle953"; mkdir -p "$idle"
+git init -q -b main "$idle/repo"
+git -C "$idle/repo" config user.email test@example.invalid
+git -C "$idle/repo" config user.name Test
+echo i > "$idle/repo/file"; git -C "$idle/repo" add file; git -C "$idle/repo" commit -qm initial
+git init -q --bare "$idle/origin"
+git -C "$idle/repo" remote add origin "$idle/origin"
+git -C "$idle/repo" push -q -u origin main
+for n in gone live dirty; do
+  git -C "$idle/repo" worktree add -qb "i-$n" "$idle/i-$n"
+  echo "$n" > "$idle/i-$n/$n.txt"; git -C "$idle/i-$n" add "$n.txt"; git -C "$idle/i-$n" commit -qm "$n"
+done
+echo changed >> "$idle/i-dirty/dirty.txt"
+irepo=$(cd "$idle/repo" && pwd -P); igone=$(cd "$idle/i-gone" && pwd -P); ilive=$(cd "$idle/i-live" && pwd -P); idirty=$(cd "$idle/i-dirty" && pwd -P)
+cat > "$tmp/bin/orca-idle953" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  'worktree list --json') cat "$FAKE_DIR/wts.json" ;;
+  'terminal list --json')
+    if [ -n "${FAKE_TRUNC_HOST:-}" ] && [ "$(tail -1 "$FAKE_SSH_LOG" 2>/dev/null)" = "$FAKE_TRUNC_HOST" ]; then
+      printf '{"ok":true,"result":{"terminals":[],"truncated":true}}\n'
+    else cat "$FAKE_DIR/terms.json"; fi ;;
+  'worktree rm --worktree '*) echo "$*" >> "$FAKE_DIR/rm.log"; tail -1 "$FAKE_SSH_LOG" >> "$FAKE_DIR/rm-host.log" 2>/dev/null; case "$*" in *"id:${FAKE_RM_FAIL:-none}"*) exit 1 ;; esac ;;
+  *) printf '{"ok":true,"result":{"workers":[],"terminals":[],"runs":[],"page":{"hasMore":false}}}\n' ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-idle953"
+export FAKE_DIR="$idle" ORCA_CLI_COMMAND="$tmp/bin/orca-idle953"
+printf '{"ok":true,"result":{"worktrees":[{"id":"w-main","path":"%s","isMainWorktree":true},{"id":"w-gone","path":"%s"},{"id":"w-live","path":"%s"},{"id":"w-dirty","path":"%s"}]}}\n' \
+  "$irepo" "$igone" "$ilive" "$idirty" > "$idle/wts.json"
+printf '{"ok":true,"result":{"terminals":[{"handle":"t1","worktreePath":"%s"},{"handle":"t2","worktreePath":"%s"}]}}\n' "$ilive" "$irepo" > "$idle/terms.json"
+idle_fail() { echo "FAIL idle worktree sweep: $1"; tail -15 "$tmp/output" "$tmp/stderr" 2>/dev/null; exit 1; }
+: > "$idle/rm.log"
+bash "$here/wrap-up.sh" --dry-run --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+[ ! -s "$idle/rm.log" ] || idle_fail 'a dry run removed something'
+has "Remove idle worktree $igone" || idle_fail 'a dry run did not list the idle worktree'
+bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+grep -Fxq 'worktree rm --worktree id:w-gone --force' "$idle/rm.log" || idle_fail 'the no terminal worktree was not removed with --force'
+[ "$(wc -l < "$idle/rm.log" | tr -d ' ')" = 1 ] || idle_fail "only the no terminal worktree may go: $(cat "$idle/rm.log")"
+! grep -Fq 'delete-branch' "$idle/rm.log" || idle_fail 'a branch was deleted'
+has "Kept idle worktree $idirty (uncommitted changes)" || idle_fail 'the dirty worktree is not named in the report'
+echo 'ok idle worktrees go, a terminal, main and dirty ones stay, and a dry run removes nothing'
+# One host failing must not stop the next.
+printf '{"hosts":[{"host":"down","repo_dir":"%s"},{"host":"alpha","repo_dir":"%s"}]}\n' "$irepo" "$irepo" > "$tmp/fleet.json"
+: > "$idle/rm.log"; : > "$FAKE_SSH_LOG"
+bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
+grep -Fxq alpha "$FAKE_SSH_LOG" || idle_fail 'the host after a failing one was not reached'
+grep -Fxq 'worktree rm --worktree id:w-gone --force' "$idle/rm.log" || idle_fail 'the host after a failing one was not swept'
+echo 'ok a failing host does not stop the sweep on the next'
+# A failing remove is reported and does not stop the rest.
+printf '{"ok":true,"result":{"worktrees":[{"id":"w-main","path":"%s","isMainWorktree":true},{"id":"w-bad","path":"%s/nope1"},{"id":"w-gone","path":"%s"}]}}\n' "$irepo" "$idle" "$igone" > "$idle/wts.json"
+: > "$idle/rm.log"
+FAKE_RM_FAIL=w-bad bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+grep -Fxq 'worktree rm --worktree id:w-gone --force' "$idle/rm.log" || idle_fail 'a failed remove stopped the next one'
+grep -Fq 'idle worktree' "$tmp/stderr" || idle_fail 'a failed remove was not reported'
+echo 'ok a failed remove is reported and the next worktree still goes'
+# A truncated terminal list proves nothing, so that host removes nothing and the next host still runs.
+printf '{"hosts":[{"host":"short","repo_dir":"%s"},{"host":"alpha","repo_dir":"%s"}]}\n' "$irepo" "$irepo" > "$tmp/fleet.json"
+printf '{"ok":true,"result":{"worktrees":[{"id":"w-main","path":"%s","isMainWorktree":true},{"id":"w-gone","path":"%s"}]}}\n' "$irepo" "$igone" > "$idle/wts.json"
+: > "$idle/rm.log"; : > "$idle/rm-host.log"; : > "$FAKE_SSH_LOG"
+FAKE_TRUNC_HOST=short bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
+grep -Fxq alpha "$FAKE_SSH_LOG" || idle_fail 'the host after a truncated one was not reached'
+! grep -Fxq short "$idle/rm-host.log" || idle_fail 'the host with a truncated terminal list removed a worktree'
+grep -Fxq alpha "$idle/rm-host.log" || idle_fail 'the host after a truncated one did not sweep'
+grep -Fq 'cannot read the terminal list' "$tmp/output" "$tmp/stderr" || idle_fail 'the truncated list was not reported'
+: > "$idle/rm.log"; : > "$FAKE_SSH_LOG"; echo local >> "$FAKE_SSH_LOG"
+FAKE_TRUNC_HOST=local bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+[ ! -s "$idle/rm.log" ] || idle_fail 'a truncated terminal list still removed a worktree'
+echo 'ok a truncated terminal list removes nothing on that host and the next host still runs'
