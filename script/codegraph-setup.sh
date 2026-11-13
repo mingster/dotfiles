@@ -135,11 +135,17 @@ PY
   fi
 }
 
+# Antigravity reads ~/.gemini/config once migrated (marker .migrated), else ~/.gemini/antigravity.
+agy_mcp() {
+  if [ -e "$HOME/.gemini/config/.migrated" ]; then echo "$HOME/.gemini/config/mcp_config.json"
+  else echo "$HOME/.gemini/antigravity/mcp_config.json"; fi
+}
+
 wire_agents() { # <dry>
   local dry=$1 targets=() t
   has_mcp "$HOME/.claude.json" || targets+=(claude)
   has_mcp "$HOME/.cursor/mcp.json" || targets+=(cursor)
-  has_mcp "$HOME/.gemini/config/mcp_config.json" || targets+=(antigravity)
+  has_mcp "$(agy_mcp)" || targets+=(antigravity)
   [ "${#targets[@]}" -gt 0 ] || return 0
   t=$(IFS=,; echo "${targets[*]}")
   if [ "$dry" -eq 1 ]; then echo "would run codegraph install --target=$t --location=global (then drop its CLAUDE.md section)"; return 0; fi
@@ -177,7 +183,7 @@ cmd_uninstall() {
   done
   if [ "$dry" -eq 1 ]; then echo "would remove the codegraph hook, MCP entries, permission and $bin_dir/codegraph"; return 0; fi
   set_hook remove
-  for f in "$HOME/.claude.json" "$HOME/.cursor/mcp.json" "$HOME/.gemini/config/mcp_config.json"; do
+  for f in "$HOME/.claude.json" "$HOME/.cursor/mcp.json" "$HOME/.gemini/config/mcp_config.json" "$HOME/.gemini/antigravity/mcp_config.json"; do
     [ -f "$f" ] || continue
     python3 -I - "$f" <<'PY'
 import json, sys
