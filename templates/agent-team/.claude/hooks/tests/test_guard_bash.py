@@ -339,6 +339,12 @@ class OwnerApprovalMentions(GuardTest):
                 # the first EOF ends the heredoc, so the script line after it really runs
                 'gh issue comment 5 --body "$(cat <<\'EOF\'\nhi\nEOF\nbin/owner-approve.sh host\ncat <<\'EOF\'\nEOF\n)"',
                 f"cat > {self.FILE} <<'EOF'\nhi\nEOF",
+                # bash 3.2 ends the heredoc at a body line that starts with the delimiter (`EOF)`), so the next line runs
+                *(f'gh issue comment 5 --body "$(cat <<\'EOF\'\nhi\nEOF)"\n{hidden}\n: "$(cat <<\'EOF\'\nEOF\n)"'
+                  for hidden in ("bin/owner-approve.sh host", f"echo x > {self.FILE}", f"rm {self.FILE}",
+                                 "orca orchestration reply --id m1 --body \"$(bin/owner-approve.sh host)\"")),
+                'gh issue comment 5 --body "$(cat <<-\'EOF\'\nhi\n\tEOF)"\nbin/owner-approve.sh host\n: "$(cat <<\'EOF\'\nEOF\n)"',
+                'gh issue comment 5 --body "$(cat <<\'EOF\'\nhi\nEOF) x\n)"\nbin/owner-approve.sh host',
                 f"gh issue comment 5 --body-file - <<'EOF' > {self.FILE}\nhi\nEOF"):
             with self.subTest(command=command):
                 self.assertDenied(command, "owner")

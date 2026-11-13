@@ -2258,8 +2258,10 @@ def message_heredoc_text(command):
     """The command without the body of a quoted message heredoc; the program and its words are still checked."""
     for pattern in MESSAGE_HEREDOC:
         m = pattern.match(command)
-        if not m or any(line.strip() == m.group("d") for line in m.group("body").split("\n")):
-            continue  # the delimiter inside the body would end the heredoc early, leaving real commands after it
+        if not m or any(line.lstrip().startswith(m.group("d")) for line in m.group("body").split("\n")):
+            # a body line that starts with the delimiter (`EOF)` too) ends the heredoc early in bash 3.2,
+            # leaving real commands after it
+            continue
         prog, args = program_and_args(words(m.group("head")))
         if text_program(os.path.basename(prog or ""), args):
             return m.group("pre") + m.group("end")
