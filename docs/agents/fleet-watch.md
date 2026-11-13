@@ -1,5 +1,7 @@
 # Fleet watchdog
 
+This page describes the current single pass. The target design, and the feature freeze until it lands, is in [Fleet watch design](fleet-watch-design.md). Read it before changing fleet watch.
+
 Orca registration for scheduled fleet jobs (including this pass) lives in [Orca automations](orca-automations.md).
 
 Run `python3 script/fleet-watch.py --config <private-json> --state <private-state>` every 5 minutes from a supervisor independent of the coordinator's inbox waiter. Configure `runs` with each run's `id`, `terminal` (coordinator handle) and `waiter_pattern` (a process pattern unique to that run); configure `host_caps` using the host IDs returned by worker-list. Optional `leads` lists each lead's `name` and `terminal`; a lead whose `orca terminal show` fails gets one alert, rearmed when it answers again. Keep handles and machine names in the private config, never in this repository.
