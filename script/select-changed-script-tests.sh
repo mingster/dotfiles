@@ -186,6 +186,7 @@ map_file() {
     templates/agent-team/*)
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
+      add_if_exists "script/tests/role-word-budget.test.sh"
       ;;
   esac
   MAPPING_ACTIVE=0
