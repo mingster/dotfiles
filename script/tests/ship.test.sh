@@ -260,8 +260,8 @@ else
   bad "empty statusCheckRollup refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
-# 13. No Self-review needed, no builder dispatch, no Orca lookup, no cwd root check: the PR lands from any directory.
-# The one Orca call is the board status of the merged branch.
+# 13. No Self-review needed, no builder dispatch required, no cwd root check: the PR lands from any directory.
+# The board call stays on the local Orca when the dispatch record names no remote host.
 mf_pr_add 13 feat-no-self-review "Body"
 h13=$(jq -r .headRefOid "$MF_GH_DIR/pr-13.json")
 mf_self_review 13 "$h13"
@@ -272,11 +272,12 @@ rm -f "$MF_DIR/orca-called"
 mkdir -p "$MF_DIR/elsewhere"
 SHIP_OUT=$(cd "$MF_DIR/elsewhere" && bash "$here/ship.sh" --repo example/repo --pr 13 2>&1); SHIP_RC=$?
 if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] \
-  && [ "$(cat "$MF_DIR/orca-called")" = "worktree set --worktree branch:feat-no-self-review --workspace-status completed" ] \
+  && grep -Fxq 'worktree set --worktree branch:feat-no-self-review --workspace-status completed' "$MF_DIR/orca-called" \
+  && ! grep -q -- '--environment' "$MF_DIR/orca-called" \
   && ! grep -q "Self-review" <<<"$(jq -r .body "$MF_GH_DIR/pr-13.json")"; then
-  ok "no Self-review, dispatch lookup or cwd check; sets the merged branch completed"
+  ok "no Self-review or cwd check; sets the merged branch completed on the local Orca"
 else
-  bad "no Self-review, dispatch lookup or cwd check; sets the merged branch completed" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
+  bad "no Self-review or cwd check; sets the merged branch completed on the local Orca" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
 fi
 
 # 13a. A failing board call warns and does not undo or fail the merge
@@ -288,6 +289,61 @@ if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 133 ]] && grep -Fq "c
   ok "board failure after merge only warns"
 else
   bad "board failure after merge only warns" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+# 988. The worktree is on another host. A local set answers selector_not_found; the dispatch record names the host.
+mf_pr_add 988 feat-988 "Body"
+h988=$(jq -r .headRefOid "$MF_GH_DIR/pr-988.json")
+mf_self_review 988 "$h988"
+set_checks 988 "$green_checks"
+post_verdict 988 PASS "$h988"
+cat > "$MF_DIR/fake-orca-988" <<'EOS'
+#!/usr/bin/env bash
+echo "$*" >> "$ORCA_LOG"
+case "$*" in
+  orchestration\ worker-list\ *)
+    printf '%s\n' '{"ok":true,"result":{"workers":[{"host":"blueDevil","projection":{"host":{"id":"blueDevil"}},"workspace":"repo::/remote/feat-988"}]}}'
+    ;;
+  'worktree list --json')
+    printf '%s\n' '{"ok":true,"result":{"truncated":false,"worktrees":[]}}'
+    ;;
+  'worktree list --environment blueDevil --json')
+    printf '%s\n' '{"ok":true,"result":{"truncated":false,"worktrees":[{"path":"/remote/feat-988","branch":"refs/heads/feat-988"}]}}'
+    ;;
+  *'--environment blueDevil'*)
+    exit 0
+    ;;
+  'worktree set '*)
+    echo 'selector_not_found' >&2
+    exit 1
+    ;;
+  *) echo "unexpected orca: $*" >&2; exit 1 ;;
+esac
+EOS
+chmod +x "$MF_DIR/fake-orca-988"
+: > "$MF_DIR/orca-called"
+SHIP_OUT=$(ORCA_LOG="$MF_DIR/orca-called" ORCA_CLI_COMMAND="$MF_DIR/fake-orca-988" bash "$here/ship.sh" --repo example/repo --pr 988 2>&1); SHIP_RC=$?
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 988 ]] \
+  && grep -Fxq 'worktree set --worktree branch:feat-988 --workspace-status completed --environment blueDevil' "$MF_DIR/orca-called" \
+  && ! grep -Fq 'selector_not_found' <<<"$SHIP_OUT"; then
+  ok "board status is set on the host from the dispatch record"
+else
+  bad "board status is set on the host from the dispatch record" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
+fi
+
+# --environment skips the lookup and is the host the card is set on.
+mf_pr_add 989 feat-989 "Body"
+h989=$(jq -r .headRefOid "$MF_GH_DIR/pr-989.json")
+mf_self_review 989 "$h989"
+set_checks 989 "$green_checks"
+post_verdict 989 PASS "$h989"
+: > "$MF_DIR/orca-called"
+SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 989 --environment other-host 2>&1); SHIP_RC=$?
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 989 ]] \
+  && [ "$(cat "$MF_DIR/orca-called")" = "worktree set --worktree branch:feat-989 --workspace-status completed --environment other-host" ]; then
+  ok "--environment sets the card on that host without a lookup"
+else
+  bad "--environment sets the card on that host without a lookup" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
 fi
 
 # 13b. A Verdict without agent and model refuses; a PR without a Builder line refuses

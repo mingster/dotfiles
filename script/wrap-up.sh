@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Preview finished work cleanup; --apply performs the proposed changes.
-# Other modes: --scheduled (one round on this host), --branch (after a merge), --finish-worker (a settled worker).
+# Other modes: --scheduled (one round on this host; the coordinator also moves fleet board cards to Done),
+# --branch (after a merge), --finish-worker (a settled worker).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Runs a command for at most $1 seconds in its own process group, stdin closed; exit 124 on timeout. Stock macOS has no
@@ -231,8 +232,34 @@ scheduled_round() {
   seconds=$((SECONDS-started))
   if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
   guarded_round_rm f "$streak"
+  # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this
+  # round is already the one that reads workspaceStatus. Only the coordinator runs it, after cleanup,
+  # so this round does not delete a card that just became Done. Each paired host is reached with
+  # --environment; an unreachable host is skipped and tried again next round.
+  if coordinator_runs_board_done; then
+    local board_bin board_mode board_limit board_code
+    board_bin=${WRAP_UP_BOARD_DONE:-$here/board-done.py}
+    board_mode=--apply
+    [ "${scheduled_dry:-0}" = 1 ] && board_mode=--dry-run
+    board_limit=${WRAP_UP_SCHEDULED_BOARD_TIMEOUT:-120}
+    if [[ "$board_bin" == *.py ]]; then
+      run_limited "$board_limit" python3 "$board_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+    else
+      run_limited "$board_limit" bash "$board_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+    fi
+    board_code=$?
+    [ "$board_code" -eq 0 ] || round_log "board-done exit $board_code"
+  fi
   round_log "round ok: repos=$count seconds=$seconds${skipped:+ skipped=$skipped}"
   exit 0
+}
+coordinator_runs_board_done() {
+  local conf name here_name
+  conf=${BOARD_DONE_COORDINATOR_CONF:-${AGENT_STATE_DIR:-$HOME/agent-state}/coordinator.conf}
+  [ -f "$conf" ] || return 1
+  name=$(awk '$1 == "coordinator" { print $2; exit }' "$conf")
+  here_name=$(hostname -s 2>/dev/null || true)
+  [ -n "$name" ] && [ "$name" = "$here_name" ]
 }
 
 # --branch: cleanup after ship.sh reads MERGED. Run from a checkout of the repo.
