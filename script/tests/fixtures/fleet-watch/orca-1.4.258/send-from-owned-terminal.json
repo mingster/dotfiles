@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "orca",
+    "orchestration",
+    "send",
+    "--subject",
+    "fleet-watch recorder test",
+    "--body",
+    "fleet-watch recorder test",
+    "--to",
+    "run:<run>",
+    "--from",
+    "term_placeholder",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"result\": {\n    \"messageId\": \"<id>\"\n  }\n}\n"
+}

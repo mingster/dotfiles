@@ -1386,6 +1386,113 @@ def log_fleet_watch(message):
         pass
 
 
+class PassCounts:
+    """One pass: six counters plus a refusal histogram. Zero stays on the line."""
+
+    def __init__(self):
+        self.started = 0
+        self.refused = 0
+        self.parked = 0
+        self.failed = 0
+        self.sent = 0
+        self.send_failed = 0
+        self.reasons = {}
+
+    def line(self):
+        fields = ' '.join('%s=%d' % (name, getattr(self, name)) for name in (
+            'started', 'refused', 'parked', 'failed', 'sent', 'send_failed'))
+        reasons = ','.join('%s:%d' % (key, self.reasons[key]) for key in sorted(self.reasons))
+        return '%s refused_reasons=%s' % (fields, reasons)
+
+
+_PASS = None
+
+
+def begin_pass_counts():
+    """Start a new pass. Counts from the previous pass are dropped."""
+    global _PASS
+    _PASS = PassCounts()
+    return _PASS
+
+
+def pass_counts_line():
+    counts = _PASS if _PASS is not None else PassCounts()
+    return counts.line()
+
+
+def _pass_note(field):
+    if _PASS is not None:
+        setattr(_PASS, field, getattr(_PASS, field) + 1)
+
+
+def count_started():
+    _pass_note('started')
+
+
+def count_failed():
+    _pass_note('failed')
+
+
+def count_parked():
+    _pass_note('parked')
+
+
+def count_sent():
+    _pass_note('sent')
+
+
+def count_send_failed():
+    _pass_note('send_failed')
+
+
+def reason_token(reason):
+    text = re.sub(r'[^a-z0-9]+', '_', str(reason or '').lower()).strip('_')
+    return text or 'unknown'
+
+
+def refusal_token(reason):
+    text = str(reason or '').lower()
+    if 'usage gate' in text or 'usage_gate' in text:
+        return 'usage_gate'
+    if 'cap' in text:
+        return 'host_cap'
+    return reason_token(reason)
+
+
+def count_refused(token):
+    if _PASS is None:
+        return
+    token = reason_token(token)
+    _PASS.refused += 1
+    _PASS.reasons[token] = _PASS.reasons.get(token, 0) + 1
+
+
+def one_line_reason(text):
+    cleaned = re.sub(r'[\s,;]+', ' ', str(text or '')).strip()
+    return cleaned or 'unknown'
+
+
+def write_automation_summary(text):
+    path = (os.environ.get('AUTOMATION_TRACE_SUMMARY_FILE') or '').strip()
+    if not path:
+        return
+    try:
+        Path(path).write_text(text + '\n', encoding='utf-8')
+    except OSError:
+        pass
+
+
+def finish_pass(message):
+    """Append the pass line and give the wrapper the same counts."""
+    counts = pass_counts_line()
+    line = (message or '').strip()
+    if counts not in line:
+        line = (line + ' ' + counts).strip() if line else counts
+    log_fleet_watch(line)
+    write_automation_summary(counts)
+    return counts
+
+
 def _normalize_terminal_time_ms(value):
     """lastOutputAt may be ms since epoch or seconds; return seconds since epoch or None."""
     if value is None:
@@ -2653,8 +2760,10 @@ def issue_scan_try_backlog_sweep(
         if start_worker(command) == 0:
             started += 1
             log_bits.append('backlog_sweep_start=%s' % role)
+            count_started()
         else:
             log_bits.append('backlog_sweep_fail=%s' % role)
+            count_failed()
             continue
         started_list = state.setdefault('issue_scan_backlog_sweep_roles', [])
         if role not in started_list:
@@ -3437,6 +3546,32 @@ def choose_pick(data, avoid=None):
     return None
 
 
+def pick_failure_reason(data, avoid=None):
+    """Why choose_pick returned nothing. The pick_fail line carries this text."""
+    if not isinstance(data, dict):
+        return 'no-pick'
+    rows = []
+    selected = data.get('selected')
+    if isinstance(selected, dict):
+        rows.append(selected)
+    for candidate in data.get('candidates') or []:
+        if isinstance(candidate, dict) and candidate not in rows:
+            rows.append(candidate)
+    builder = False
+    for candidate in rows:
+        agent = candidate.get('provider') or candidate.get('agent')
+        model = candidate.get('model')
+        if isinstance(agent, str) and isinstance(model, str) and _same_agent_model(agent, model, avoid):
+            builder = True
+            continue
+        reason = candidate.get('reason')
+        if isinstance(reason, str) and reason.strip():
+            return one_line_reason(reason)
+    if builder:
+        return 'builder'
+    return 'no-pick'
+
+
 def _babysit_line(repo, number, head, action, detail=''):
     text = 'babysit %s#%s head=%s action=%s' % (repo, number, head, action)
     if detail:
@@ -3563,6 +3698,8 @@ def park_failure(state, key, reason, config, **meta):
             continue
         record[name] = value
     state.setdefault('parked', {})[key] = record
+    count_failed()
+    count_parked()
     return True
 
 
@@ -3872,13 +4009,17 @@ def babysit_pass(
         if started >= cap:
             lines.append(_babysit_line(repo, number, head, 'skip', 'cap'))
             log_bits.append('cap')
+            count_refused('host_cap')
             continue
         builder = builder_pair(pr_row, workers)
         avoid = builder if kind == 'verifier' else None
-        chosen = choose_pick(cached_pick(role), avoid=avoid)
+        picked = cached_pick(role)
+        chosen = choose_pick(picked, avoid=avoid)
         if not chosen:
+            why = pick_failure_reason(picked, avoid)
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-pick'))
-            log_bits.append('pick_fail=%s' % number)
+            log_bits.append('pick_fail=%s:%s' % (number, why))
+            count_refused('builder' if why == 'builder' else 'usage_gate')
             continue
         agent, model = chosen
         detail = 'agent=%s model=%s' % (agent, model)
@@ -3906,6 +4047,7 @@ def babysit_pass(
             continue
         babysit_mark(state, repo, number, head, action)
         started += 1
+        count_started()
         lines.append(_babysit_line(repo, number, head, action, detail))
         log_bits.append('%s=%s' % (action, number))
         if persist_state:
@@ -3961,8 +4103,12 @@ def issue_scan_pass(
         start_detached = default_detached_start
 
     host = scan.get('host') or 'local'
+    seen_refusals = len(USAGE_GATE_REFUSALS)
     if not gate_check(config):
-        return notices, ['issue_scan_gate']
+        fresh = USAGE_GATE_REFUSALS[seen_refusals:]
+        reason = one_line_reason(fresh[-1].get('reason') if fresh else 'unknown')
+        count_refused('usage_gate')
+        return notices, ['issue_scan_gate=%s' % reason]
     admission = admit_fn(host, config, workers)
     refused = not admission.get('admitted')
     reason = re.sub(r'[,;\s]+', ' ', str(admission.get('reason') or 'unknown')).strip()
@@ -3971,6 +4117,7 @@ def issue_scan_pass(
     remote_hosts = []
     if refused:
         log_bits = ['issue_scan_load', 'issue_scan_refused=%s' % reason]
+        count_refused(refusal_token(reason))
         remote_hosts = [h for h in (config.get('host_caps') or {}) if not _is_local_coordinator_host(h, config)]
         remote_hosts = [h for h in remote_hosts if h != host]
         if not remote_hosts:
@@ -4021,6 +4168,7 @@ def issue_scan_pass(
                         code, reason = start_result_parts(start_detached(command))
                         if code == 0:
                             log_bits.append('head_checks_start=%s' % head[:8])
+                            count_started()
                             if persist_state:
                                 persist_state()
                         else:
@@ -4046,8 +4194,10 @@ def issue_scan_pass(
                 if start_worker(command) == 0:
                     notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
                     log_bits.append('ship_start=%s' % head[:8])
+                    count_started()
                 else:
                     log_bits.append('ship_fail=%d' % pr_num)
+                    count_failed()
                 continue
             if pr_class != 'needs_fix':
                 continue
@@ -4073,6 +4223,7 @@ def issue_scan_pass(
                 log_bits.append('rework_parked=%d' % pr_num)
                 continue
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
+                count_refused('host_cap')
                 continue
             command = build_rework_start_command(config, repo, pr_row)
             if command is None:
@@ -4096,6 +4247,7 @@ def issue_scan_pass(
                 extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_num, head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
+                count_started()
                 if persist_state:
                     persist_state()
             else:
@@ -4157,6 +4309,7 @@ def issue_scan_pass(
         return notices, log_bits
 
     if not _issue_scan_has_slot(host, config, admission, extra_starts):
+        count_refused('host_cap')
         return notices, log_bits
 
     candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
@@ -4169,6 +4322,7 @@ def issue_scan_pass(
             if not receipt.get('admitted'):
                 why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
                 log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
+                count_refused(refusal_token(why))
                 continue
             repo_id = lookup(candidate, repo)
             if not repo_id:
@@ -4220,6 +4374,7 @@ def issue_scan_pass(
         started.setdefault(repo, []).append(row['number'])
         notices.append('issue %s #%d' % (repo, row['number']))
         log_bits.append('issue_start=%d' % row['number'])
+        count_started()
         if persist_state:
             persist_state()
     else:
@@ -4499,6 +4654,7 @@ def flush_queue(state, now, rpc_call):
                 '--body', '\n'.join(item['text'] for item in items),
             )
         except SEND_ERRORS as error:
+            count_send_failed()
             print('fleet-watch: send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
             kept = []
             for item in items:
@@ -4509,6 +4665,7 @@ def flush_queue(state, now, rpc_call):
                     kept.append(item)
             queue[term] = kept
             continue
+        count_sent()
         sent_at[term] = now
         del queue[term]
 
@@ -4552,7 +4709,9 @@ def deliver_typed_notices(typed_runs, state, new_notices, rpc_call):
             try:
                 rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
                 entry['sent'].append(term)
+                count_sent()
             except SEND_ERRORS as error:
+                count_send_failed()
                 failed.add(term)
                 print('fleet-watch: terminal send failed for %s: %s' % (term, (getattr(error, 'stderr', None) or '').strip() or repr(error)), file=sys.stderr)
         entry['passes'] += 1
@@ -4664,17 +4823,19 @@ def main():
         if not dry:
             save_state(args.state, state)
         return 0
+    begin_pass_counts()
     # A backup host has coordinator_watch and no runs. That path stays the one that
     # never calls Orca, including when this machine's Orca has other Runs.
     if config.get('coordinator_watch') and not config_runs(config):
         _coordinator, done = coordinator_stage(config, state, args.state)
         if done:
+            finish_pass('coordinator watch')
             return 0
     status = bind_pass_config(config)
     if status == 'no-run':
         config['runs'] = []
         print('fleet-watch: ' + NO_COORDINATOR_RUN, file=sys.stderr)
-        log_fleet_watch(NO_COORDINATOR_RUN)
+        finish_pass(NO_COORDINATOR_RUN)
         if not config.get('coordinator_watch'):
             return 0
     apply_active_run(config)
@@ -4682,10 +4843,11 @@ def main():
         watched = adopted or args.config
         message = 'config %s has no runs; refusing this pass' % watched
         print('fleet-watch: ' + message, file=sys.stderr)
-        log_fleet_watch(message)
+        finish_pass(message)
         return 1
     coordinator, done = coordinator_stage(config, state, args.state)
     if done:
+        finish_pass('coordinator watch')
         return 0
     pass_start = time.time()
     now = pass_start
@@ -4783,18 +4945,18 @@ def main():
         parts.append('babysit ' + ','.join(babysit_log))
     if scan_log:
         parts.append('scan ' + ','.join(scan_log))
-    log_fleet_watch('; '.join(parts))
-
-    for repo in babysit_repos(config):
-        if repo not in pass_prs and _state_tracks_repo(state, repo):
-            pass_prs[repo] = fetch_prs(repo)
-    prune_closed_maps(state, pass_prs, {})
-    prune_closed_issues(state, fetch_closed_issue_rows)
-
-    deliver_notices(config, state, notices, rpc, pass_start)
-    if notices:
-        print('fleet-watch: ' + '; '.join(str(notice) for notice in notices))
-    save_state(args.state, state)
+    try:
+        for repo in babysit_repos(config):
+            if repo not in pass_prs and _state_tracks_repo(state, repo):
+                pass_prs[repo] = fetch_prs(repo)
+        prune_closed_maps(state, pass_prs, {})
+        prune_closed_issues(state, fetch_closed_issue_rows)
+        deliver_notices(config, state, notices, rpc, pass_start)
+        if notices:
+            print('fleet-watch: ' + '; '.join(str(notice) for notice in notices))
+        save_state(args.state, state)
+    finally:
+        finish_pass('; '.join(parts))
     return 0
 
 
