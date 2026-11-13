@@ -34,10 +34,11 @@ post_verdict() { # <pr> <result> <head> [verifier] [author] [agent/model, defaul
 }
 
 # The builder's own record on the PR: one body line. The head argument is unused (the old Self-review gate is gone).
-mf_self_review() { # <pr> <head> [agent/model, default claude/sonnet]
-  local pr_n=$1 am=${3:-claude/sonnet} f
+mf_self_review() { # <pr> <head> [agent/model, default cursor/grok-4.7-xhigh]
+  local pr_n=$1 am=${3:-cursor/grok-4.7-xhigh} f block
   f="$MF_GH_DIR/pr-${pr_n}.json"
-  jq --arg l "Builder: agent=${am%%/*} model=${am#*/}" '.body = ((.body // "") + "\n\n" + $l + "\n")' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  block=$(printf 'Builder: agent=%s model=%s\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0' "${am%%/*}" "${am#*/}")
+  jq --arg l "$block" '.body = ((.body // "") + "\n\n" + $l + "\n")' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 }
 
 run_ship() { # <args...>
@@ -228,6 +229,68 @@ else
   bad "same agent and model as the builder refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# Same family without the Verdict tag refuses. The tag plus a different model ships. Exact pair still refuses with the tag.
+mf_pr_add 3018 feat-same-family "Body"
+h3018=$(jq -r .headRefOid "$MF_GH_DIR/pr-3018.json")
+mf_self_review 3018 "$h3018" claude/sonnet
+set_checks 3018 "$green_checks"
+post_verdict 3018 PASS "$h3018"
+run_ship --repo example/repo --pr 3018
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "same model family" <<<"$SHIP_OUT" && ! grep -Fq "same agent and model" <<<"$SHIP_OUT"; then
+  ok "same model family without the tag refuses"
+else
+  bad "same model family without the tag refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+mf_pr_add 3030 feat-family-tag "Body"
+h3030=$(jq -r .headRefOid "$MF_GH_DIR/pr-3030.json")
+mf_self_review 3030 "$h3030" claude/sonnet
+set_checks 3030 "$green_checks"
+gh pr comment 3030 --repo example/repo --body "$(printf 'Verdict: PASS head=%s verifier=ctx_verifier author=ctx_author agent=claude model=opus\nsame-family-different-model\n' "$h3030")" >/dev/null
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 3030
+if [ "$SHIP_RC" -eq 0 ] && grep -q '^shipped PR' <<<"$SHIP_OUT"; then
+  ok "tagged same-family different model ships"
+else
+  bad "tagged same-family different model ships" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+mf_pr_add 3028 feat-tagged-same "Body"
+h3028=$(jq -r .headRefOid "$MF_GH_DIR/pr-3028.json")
+mf_self_review 3028 "$h3028" claude/opus
+set_checks 3028 "$green_checks"
+gh pr comment 3028 --repo example/repo --body "$(printf 'Verdict: PASS head=%s verifier=ctx_verifier author=ctx_author agent=claude model=opus\nsame-family-different-model\n' "$h3028")" >/dev/null
+run_ship --repo example/repo --pr 3028
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "same agent and model" <<<"$SHIP_OUT"; then
+  ok "exact pair still refuses when the Verdict is tagged"
+else
+  bad "exact pair still refuses when the Verdict is tagged" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+mf_pr_add 3031 feat-unchecked $'## Acceptance\n- [ ] still open\n'
+h3031=$(jq -r .headRefOid "$MF_GH_DIR/pr-3031.json")
+mf_self_review 3031 "$h3031"
+set_checks 3031 "$green_checks"
+post_verdict 3031 PASS "$h3031"
+run_ship --repo example/repo --pr 3031
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "unchecked Acceptance items" <<<"$SHIP_OUT"; then
+  ok "unchecked Acceptance refuses"
+else
+  bad "unchecked Acceptance refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+mf_pr_add 3027 feat-no-self "Body"
+h3027=$(jq -r .headRefOid "$MF_GH_DIR/pr-3027.json")
+jq --arg l "Builder: agent=cursor model=grok-4.7-xhigh" '.body = $l' "$MF_GH_DIR/pr-3027.json" > "$MF_GH_DIR/pr-3027.tmp" && mv "$MF_GH_DIR/pr-3027.tmp" "$MF_GH_DIR/pr-3027.json"
+set_checks 3027 "$green_checks"
+post_verdict 3027 PASS "$h3027"
+run_ship --repo example/repo --pr 3027
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "PR body needs ## Self-check" <<<"$SHIP_OUT"; then
+  ok "missing Self-check refuses"
+else
+  bad "missing Self-check refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 # 11. Edited FAIL still blocks an older PASS
 mf_pr_add 11 feat-edited-fail "Body"
 h11=$(jq -r .headRefOid "$MF_GH_DIR/pr-11.json")
@@ -394,7 +457,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "needs a cold 'Review: PASS head=" <<<"$SHIP
 docs_verdict_case() { # <pr> <branch> <file> <result> <verdict head: @HEAD@ or sha> <expect ship|refuse> <label> [text]
   local n=$1 b=$2 f=$3 res=$4 vh=$5 expect=$6 label=$7 text=${8:-} h
   mf_pr_add "$n" "$b" "Body" "$f"
-  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h" claude/sonnet; set_checks "$n" "$green_checks"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h" cursor/grok-4.7-xhigh; set_checks "$n" "$green_checks"
   post_verdict "$n" "$res" "${vh//@HEAD@/$h}"
   : > "$MF_GH_LOG"
   run_ship --repo example/repo --pr "$n"
@@ -605,7 +668,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   repo_root="$MF_DIR/main-tree"; mkdir -p "$repo_root"
   git -C "$here/.." archive origin/main | tar -x -C "$repo_root"
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
-  cp "$here/ship.sh" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
+  cp "$here/ship.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
@@ -631,7 +694,8 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   GOOD="Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author agent=claude model=opus"
   BADF="Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author agent=claude model=opus"
   src() { # <state> <json comments> [builder line]
-    jq -n --arg st "$1" --arg h "$DH" --argjson c "$2" --arg b "${3:-Builder: agent=claude model=sonnet}" \
+    local default=$'Builder: agent=cursor model=grok-4.7-xhigh\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0'
+    jq -n --arg st "$1" --arg h "$DH" --argjson c "$2" --arg b "${3:-$default}" \
       '{number:9,state:$st,headRefName:"src",headRefOid:$h,baseRefOid:$h,body:$b,comments:$c,files:[],changedFiles:0,mergeable:"MERGEABLE",mergeCommit:null}' > "$MF_GH_DIR/pr-9.json"
   }
   one() { jq -nc --arg b "$1" '[{body:$b}]'; }

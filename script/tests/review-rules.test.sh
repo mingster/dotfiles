@@ -17,7 +17,7 @@ bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 new_pr() { # <n> <branch> <agent> <model>
   mf_pr_add "$1" "$2" "Body"
   local f="$MF_GH_DIR/pr-$1.json"
-  jq --arg l "Builder: agent=$3 model=$4" '.body = ("## Why\nx\n\n" + $l + "\n") | .statusCheckRollup = [{"name":"script-tests","status":"COMPLETED","conclusion":"SUCCESS"}]' \
+  jq --arg l "Builder: agent=$3 model=$4" '.body = ("## Why\nx\n\n" + $l + "\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n") | .statusCheckRollup = [{"name":"script-tests","status":"COMPLETED","conclusion":"SUCCESS"}]' \
     "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   jq -r .headRefOid "$f"
 }
