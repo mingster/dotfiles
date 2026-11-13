@@ -417,6 +417,7 @@ check_safe_paths() {
     docs/agents/deploy-facts.md
     docs/agents/elon-dispatch.md
     docs/agents/release-manager-work.md
+    docs/agents/fleet-watch.md
     bin
     bin/changelog-compile.sh
     bin/changelog-compile.test.sh
@@ -587,6 +588,7 @@ TEMPLATE_SYNC_FILES = [
     "docs/agents/team.md",
     "docs/agents/elon-dispatch.md",
     "docs/agents/release-manager-work.md",
+    "docs/agents/fleet-watch.md",
     "bin/changelog-compile.sh",
     "bin/changelog-compile.test.sh",
     "changelog.d/README.md",
@@ -1019,6 +1021,15 @@ def compact_hook_cmd(cmd):
 def read_text(path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def template_sync_body(rel):
+    src = os.path.join(template_dir, rel)
+    # Owner adds templates/agent-team/docs/agents/fleet-watch.md. Until that copy
+    # exists, sync and check leave projects alone instead of failing every run.
+    if rel == "docs/agents/fleet-watch.md" and not os.path.isfile(src):
+        return None
+    return read_text(src).replace("{{PROJECT_NAME}}", project_name)
 
 
 def write_text(rel, content, executable=False):
@@ -2173,9 +2184,10 @@ def seed_and_sync_project(proj_settings_mem=None):
     write_text(".claude/settings.json", compiled_settings)
 
     for rel in TEMPLATE_SYNC_FILES:
-        src = os.path.join(template_dir, rel)
-        is_exec = rel.endswith(".sh")
-        write_text(rel, read_text(src).replace("{{PROJECT_NAME}}", project_name), executable=is_exec)
+        body = template_sync_body(rel)
+        if body is None:
+            continue
+        write_text(rel, body, executable=rel.endswith(".sh"))
 
 
 def run_check():
@@ -2261,12 +2273,14 @@ def run_check():
                 drifts.append(".claude/settings.json differs from compiled merge")
 
     for rel in TEMPLATE_SYNC_FILES:
+        body = template_sync_body(rel)
+        if body is None:
+            continue
         full = os.path.join(target, rel)
-        src = os.path.join(template_dir, rel)
         if not os.path.isfile(full):
             drifts.append(f"missing template-managed file: {rel}")
         else:
-            if read_text(full) != read_text(src).replace("{{PROJECT_NAME}}", project_name):
+            if read_text(full) != body:
                 drifts.append(f"template-managed file drifted: {rel}")
             if rel.endswith(".sh") and not os.access(full, os.X_OK):
                 drifts.append(f"template-managed script not executable: {rel}")

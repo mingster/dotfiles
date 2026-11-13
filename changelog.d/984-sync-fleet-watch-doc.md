@@ -1,0 +1,1 @@
+* `script/agent-team.sh` sync and check manage `docs/agents/fleet-watch.md` once `templates/agent-team/docs/agents/fleet-watch.md` exists, so the elon-dispatch pointer resolves in a synced project (#984).
