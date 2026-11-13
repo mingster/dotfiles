@@ -275,3 +275,65 @@ class BabysitLiveVerifier(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FakeRun:
+    def __init__(self, returncode, stderr):
+        self.returncode = returncode
+        self.stderr = stderr
+
+    def __call__(self, command, **_kwargs):
+        return self
+
+
+class BabysitStartReason(unittest.TestCase):
+    def pass_with(self, state, code, reason, root):
+        result = fw.BabysitStartResult(code, reason)
+        config = {
+            'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {'o/r': root}},
+            'babysit': {'repos': ['o/r'], 'startup': '/bin/true'},
+        }
+        pr = {
+            'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
+            'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
+            'comments': [], 'labels': [], 'mergeable': 'MERGEABLE',
+            'body': 'Builder: agent=claude model=sonnet',
+        }
+        return fw.babysit_pass(
+            config, state, [], pr_fetch=lambda _repo: [pr],
+            start_worker=lambda _command: result,
+            pick=lambda _role: {'selected': {'provider': 'cursor', 'model': 'm', 'eligible': True}},
+            owner_check=lambda _pr: None,
+        )
+
+    def test_default_start_keeps_last_stderr_line(self):
+        run = FakeRun(1, 'noise\norca worktree create failed (exit 1)\nbase ref, not found\n\n')
+        result = fw.default_babysit_start(['bash', 'x'], run=run)
+        self.assertEqual(result, 1)
+        self.assertEqual(result.reason, 'base ref not found')
+
+    def test_start_failure_logs_the_reason_and_names_it_in_the_notice(self):
+        with tempfile.TemporaryDirectory() as root:
+            state = {}
+            sent = []
+            for _ in range(3):
+                notices, _lines, log = self.pass_with(state, 1, 'bun install failed in /x', root)
+                sent += notices
+            self.assertIn('start_fail=7:bun install failed in /x', log)
+            self.assertEqual(len(sent), 1)
+            self.assertIn('bun install failed in /x', sent[0])
+
+    def test_placement_and_usage_gate_refusals_defer_without_a_failure_streak(self):
+        with tempfile.TemporaryDirectory() as root:
+            for code in (3, 4):
+                state = {}
+                sent = []
+                for _ in range(4):
+                    notices, lines, log = self.pass_with(
+                        state, code, 'worker-placement: refused local=6/4', root)
+                    sent += notices
+                    self.assertTrue(any('start-deferred' in line for line in lines), lines)
+                    self.assertIn('start_deferred=7:worker-placement: refused local=6/4', log)
+                    self.assertFalse(any(bit.startswith('start_fail=') for bit in log), log)
+                self.assertEqual(sent, [])
+                self.assertNotIn('babysit', state)

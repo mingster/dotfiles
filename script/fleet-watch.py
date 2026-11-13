@@ -3037,6 +3037,33 @@ def build_babysit_spec(repo, pr_row, kind, builder):
     return _write_issue_scan_spec(text)
 
 
+class BabysitStartResult(int):
+    """A start exit code that also carries the failing command's last stderr line."""
+
+    def __new__(cls, code, reason=''):
+        self = super().__new__(cls, code)
+        self.reason = reason
+        return self
+
+
+BABYSIT_DEFERRED_EXITS = (3, 4)  # worker-startup.sh: usage gate refused, host placement refused
+
+
+def _start_reason(stderr):
+    lines = [line.strip() for line in (stderr or '').splitlines() if line.strip()]
+    return re.sub(r'[,;\s]+', ' ', lines[-1]).strip()[:160] if lines else ''
+
+
+def default_babysit_start(command, run=subprocess.run):
+    try:
+        done = run(command, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return BabysitStartResult(1, 'timed out after 180s')
+    except (subprocess.SubprocessError, OSError) as exc:
+        return BabysitStartResult(1, _start_reason(str(exc)))
+    return BabysitStartResult(done.returncode, _start_reason(done.stderr))
+
+
 def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
     startup, run_id, from_terminal, roots = babysit_settings(config)
     root = roots.get(repo)
@@ -3079,7 +3106,7 @@ def babysit_pass(
     if not repos:
         return notices, lines, log_bits
     if start_worker is None:
-        start_worker = default_issue_scan_start
+        start_worker = default_babysit_start
     if pick is None:
         pick = pick_role
     if owner_check is None:
@@ -3190,10 +3217,18 @@ def babysit_pass(
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
-        if start_worker(command) != 0:
+        code = start_worker(command)
+        if code != 0:
+            reason = getattr(code, 'reason', '')
+            suffix = ':' + reason if reason else ''
+            if code in BABYSIT_DEFERRED_EXITS:
+                # The usage gate or host placement said wait; the next pass retries, so no failure streak.
+                lines.append(_babysit_line(repo, number, head, 'skip', 'start-deferred'))
+                log_bits.append('start_deferred=%s%s' % (number, suffix))
+                continue
             lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
-            log_bits.append('start_fail=%s' % number)
-            start_failures.append('%s#%s' % (repo, number))
+            log_bits.append('start_fail=%s%s' % (number, suffix))
+            start_failures.append('%s#%s%s' % (repo, number, ' (%s)' % reason if reason else ''))
             continue
         babysit_mark(state, repo, number, head, action)
         started += 1
