@@ -5517,6 +5517,12 @@ def main():
             pass_prs[repo] = fetch_prs(repo)
         return pass_prs[repo]
 
+    def closed_from_pass(repo):
+        rows = fetch_once(repo)
+        if not isinstance(rows, list):
+            return None
+        return [row for row in rows if _babysit_closed(row)]
+
     notices += pr_notices(config, state, now, fetch=fetch_once)
     notices += usage_notices(config)
     workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
@@ -5533,7 +5539,7 @@ def main():
 
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
-        now=now, term_times=term_times,
+        now=now, term_times=term_times, closed_fetch=closed_from_pass,
     )
     for line in babysit_lines:
         print(line)
