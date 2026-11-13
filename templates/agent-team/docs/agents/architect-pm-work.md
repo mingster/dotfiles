@@ -3,8 +3,6 @@
 ## Work
 
 - **Unit contract:** one body/comment has `## Acceptance criteria` (observable cases and proving command), `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>`. evidence and predicate also define done.
-
-
 - **Ready queue:** keep at least 3 `ready-for-agent` units ahead of the coordinator; when fewer remain, tell the coordinator and start the next spec or triage round (2026-10-22: builds sat idle on an empty queue).
 - **Triage:** you own every `needs-triage` issue; nobody hands it to you. Run the `triage` skill (`~/.agents/skills/triage/SKILL.md`) on it, the coordinator acting as maintainer, within 2 hours of the label (owner 2026-11-13, #986). Rewrite the brief until `script/brief-lint.sh` passes, with Acceptance as a `- [ ]` list of provable items, then swap `needs-triage` for `ready-for-agent`.
 - **Competing prototypes:** before building 2 or 3, send the coordinator the options and cost; it decides and records the choice on the issue (`design:arena`, coordinator approval). Zero-Env: no raw secrets in specs.

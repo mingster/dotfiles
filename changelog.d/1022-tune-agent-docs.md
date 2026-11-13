@@ -1,0 +1,1 @@
+New `tune-agent-docs` skill cuts words from agent guide files without changing a rule. It lists the strings scripts and tests parse, keeps them byte identical, and maps every old rule to its new place. First run trims the agent team role files and team docs from 12750 to 12654 words.

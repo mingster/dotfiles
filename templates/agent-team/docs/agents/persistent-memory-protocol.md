@@ -1,6 +1,6 @@
 # Persistent Memory Protocol: active_run.md
 
-To eliminate context loss, hallucinations, and repeated errors during multi-turn agent execution, every multi-slice unit or crew lane maintains a persistent markdown ledger named `active_run.md` inside the working directory or worktree root.
+Against context loss, hallucinations and repeated errors, every multi-slice unit or crew lane keeps a markdown ledger, `active_run.md`, in the working directory or worktree root.
 
 ## 1. Single Execution Ledger (`active_run.md`)
 
@@ -58,6 +58,6 @@ The rule itself is in `AGENTS.md` (Token budget); this section only records the 
 
 ## 3. Why This Prevents Amnesia and Hallucination
 
-1. **Context Compaction Resilience**: When the context window is compacted or reset, the agent re-reads `active_run.md` on turn 1 to resume instantly with zero memory drift.
-2. **Anchor Against Scope Creep**: Reading `active_run.md` before every tool call forces the agent to stay within the allowlisted files.
-3. **Loop Breaker and FinOps Gate**: Tracking strikes and turns prevents the model from attempting the same failing fix repeatedly or burning tokens uncontrollably. The strike rule lives in `AGENTS.md`.
+1. **Context Compaction Resilience**: after compaction or a reset, re-read `active_run.md` on turn 1 to resume.
+2. **Anchor Against Scope Creep**: read `active_run.md` before every tool call to stay within the allowlisted files.
+3. **Loop Breaker and FinOps Gate**: strike and turn counts stop repeated failing fixes and runaway token use. The strike rule lives in `AGENTS.md`.

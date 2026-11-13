@@ -2,7 +2,7 @@
 
 {{PROJECT_NAME}} is operated by its human user and a team of AI agents: the coordinator (CEO) and specialist roles. The user talks to the coordinator, who delegates work and contacts the user only for a decision the coordinator cannot make. Role files live in `.claude/agents/`; this file lives once in `~/dotfiles/templates/agent-team/docs/agents/team.md`, and project differences go in `docs/agents/team-facts.md` only (deploy facts in `docs/agents/deploy-facts.md`).
 
-Every role works through pstack `poteto-mode` and `.agents/skills/orca-adapter/ORCA-ADAPTER.md`. This file holds only facts and the rule table; it never restates a pstack principle or playbook. GitHub issues and PRs are the state of record.
+Every role works through pstack `poteto-mode` and `.agents/skills/orca-adapter/ORCA-ADAPTER.md`. This file holds only facts and the rule table, never a pstack principle or playbook. GitHub issues and PRs are the state of record.
 
 | Role | File | Primary output |
 | --- | --- | --- |

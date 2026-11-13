@@ -13,14 +13,14 @@ Read before reporting status or reviewing process performance.
   1. Errors: post-merge defects (a bug or hotfix issue tied to a PR merged in the last 7 days), reverts, user re-asks, hard stops.
   2. Speed: hours from an issue labelled ready-for-agent (or a hotfix) to its PR MERGED, median.
   3. Throughput: PRs merged per working day that close an issue or ship a reviewed change.
-- Log each finding with `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"`; a finding seen twice prints a promote line, so open its fix ticket. Apply changes inside the coordinator's authority at once; protected files and user decisions go to the user with the diff.
+- Log each finding the same way; a finding seen twice prints a promote line, so open its fix ticket. Apply changes inside the coordinator's authority at once; protected files and user decisions go to the user with the diff.
 
 ## Worker run
 
 Read this before your first dispatch. Accounting for every worker follows pstack Orchestrate, Supervision; these are the Orca gates.
 
 - At start and on every wake, settle each unreleased dispatch from `orca orchestration worker-list --run <your run> --json`; a stopped or failed one follows the lifecycle transition in the official Orca orchestration guide, preserving unmerged work. A new coordinator session adopts every live worker before new work.
-- Answer a worker only with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`. A bare `orca orchestration reply` does not wake an idle worker session (approvals sat 10+ minutes), so never use it: `orca-reply.sh` replies and then nudges the terminal, and refuses an empty `--to`.
+- Answer a worker only with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`. Never a bare `orca orchestration reply`: it does not wake an idle worker (approvals sat 10+ minutes). `orca-reply.sh` replies, nudges the terminal and refuses an empty `--to`.
 - Never hand-dispatch a verifier: `fleet-watch.py` starts one once the PR checks are green at the head. A builder hands off only on green checks (its Finish waits for them), so a red or pending head goes back to the builder, not to a verifier.
 - **Cursor worker trust marker:** use `~/dotfiles/script/start-cursor-worker.sh` as described in `.claude/model-routing.md`, Cursor start rule. It creates the worktree and writes `.workspace-trusted` before spawning the worker.
 
@@ -52,7 +52,7 @@ The coordinator runs this on every wake. One waiter per delivery, `--timeout-ms 
 - User ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its user in the ask's ledger row this wake.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending user asks as one numbered batch before he leaves; one answer holds at most one unit.
 - A screen sitting on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate in the same wake.
-- **Sweep finished workers (user 2026-11-04).** A worker is finished when its PR is merged, when it has sent `worker_done` for a settled task, or when it has run over 8 hours. Each wake, list the agent processes on every fleet host (`ps`, and `lsof` for the working folder) and match them to dispatches and merged PRs. For each finished one, in the same wake: `worker-release` the dispatch, `kill <pid>` read from `ps` (never `pkill`), and remove its worktree when nothing is uncommitted and nothing is unmerged. A process with no dispatch and no PR that is under 8 hours is not finished: report it and ask the user. Closing a worker right after its report is already required by `.claude/model-routing.md`, Starting a worker, step 5. This bullet is the check that it happened. Finished workers left running count against the host caps and inflate Orca's active worker count.
+- **Sweep finished workers (user 2026-11-04).** A worker is finished when its PR is merged, when it has sent `worker_done` for a settled task, or when it has run over 8 hours. Each wake, list the agent processes on every fleet host (`ps`, and `lsof` for the working folder) and match them to dispatches and merged PRs. For each finished one, in the same wake: `worker-release` the dispatch, `kill <pid>` read from `ps` (never `pkill`), and remove its worktree when nothing is uncommitted and nothing is unmerged. A process with no dispatch and no PR that is under 8 hours is not finished: report it and ask the user. This checks `.claude/model-routing.md`, Starting a worker, step 5 (close a worker right after its report); finished workers left running count against the host caps.
 
 ## Production job order
 

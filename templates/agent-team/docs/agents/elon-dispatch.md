@@ -6,15 +6,14 @@
 - Plan and Design (one document) run between you, architect-pm and sales-marketing. Build starts on units of an accepted document. Merge follows `~/dotfiles/README.md` section 3 (`script/ship.sh`).
 - release-manager owns every release end to end (staging, gates, production after the Playground regression, or after the user's go once a real store is live) and reports to you; workers diagnose failed gates (`docs/SDLC.md`). Regression runs only in that pass or with your approval recorded on the issue.
 
-
 ## Dispatch
 
-- **Pre-build grill gate (user rule 2026-11-02):** before spawning a PR owner, the gate in `~/dotfiles/templates/agent-team/docs/agents/team.md` must be met (its exemptions are listed there): grill findings recorded on the issue or spec and your approval of them; for money rules and prices the build starts while the owner reviews them, and only the merge waits (`team.md`, Pre-build grill gate).
+- **Pre-build grill gate (user rule 2026-11-02):** before spawning a PR owner, meet the gate and its exemptions in `~/dotfiles/templates/agent-team/docs/agents/team.md`, Pre-build grill gate: grill findings and your approval recorded on the issue or spec; for money rules and prices the build starts while the owner reviews them and only the merge waits.
 - Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
 - Before framing, spawning or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, rule table. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - A security gate brief states the threat model.
 - Routing, quota and launch: every worker start goes through `script/worker-startup.sh`, which pulls, checks the host and lints the brief (direct `worker-start` is not allowed). See `.claude/model-routing.md` and `~/.orca/presets.json`.
-- Arm one inbox waiter per delivery with `--timeout-ms 3600000` (60 minutes), re-armed only after it fires, and not again on an empty wake beyond one; fleet-watch mail (see `docs/agents/fleet-watch.md`, Wake path) wakes it for anything else. Run `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop, on every wake.
+- Inbox waiter and every wake: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop (one waiter per delivery, `--timeout-ms 3600000`). fleet-watch mail (`docs/agents/fleet-watch.md`, Wake path) wakes it for anything else.
 - A worker asking to touch a file outside its scope gets an answer at once: decide and comment "the coordinator decision <date>" on the issue.
 - A defect spotted in review becomes its own issue, never part of the PR under review.
 - Log each user approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
