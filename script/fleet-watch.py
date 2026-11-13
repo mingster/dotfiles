@@ -2589,17 +2589,74 @@ def issue_scan_try_backlog_sweep(
     return log_bits
 
 
+USAGE_GATE_REFUSALS = []  # refusals seen this pass, drained by usage_gate_notices
+USAGE_GATE_CALLS = [0]  # gate calls this pass
+
+
+def usage_gate_settings():
+    """(minutes of refusals, headroom points) before the coordinator hears of it, from usage-gate.config.json."""
+    path = os.environ.get('USAGE_GATE_CONFIG') or str(Path(__file__).with_name('usage-gate.config.json'))
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        data = {}
+    return float(data.get('notice_after_min', 30)), float(data.get('notice_headroom_points', 20))
+
+
+def record_gate_refusal(provider, verdict, reason, age, headroom):
+    """One fleet-watch.log line per refused provider per pass, and a record for the notice."""
+    reason = re.sub(r'\s+', ' ', str(reason or 'unknown')).strip()
+    entry = {'provider': provider, 'verdict': verdict, 'reason': reason, 'age': age, 'headroom': headroom}
+    if any(all(seen[k] == entry[k] for k in ('provider', 'verdict', 'reason')) for seen in USAGE_GATE_REFUSALS):
+        return
+    USAGE_GATE_REFUSALS.append(entry)
+    log_fleet_watch('usage_gate_refused provider=%s verdict=%s reason="%s" reading_age_min=%s' % (
+        provider, verdict, reason, '-' if age is None else age))
+
+
+def usage_gate_notices(state, now):
+    """One notice when refusals last the configured minutes while headroom is over the configured points."""
+    after_min, over = usage_gate_settings()
+    refusals, calls = list(USAGE_GATE_REFUSALS), USAGE_GATE_CALLS[0]
+    USAGE_GATE_REFUSALS.clear()
+    USAGE_GATE_CALLS[0] = 0
+    active = [r for r in refusals if isinstance(r['headroom'], (int, float)) and r['headroom'] > over]
+    if not active:
+        if calls:
+            state.pop('usage_gate_refusal', None)
+        return []
+    entry = state.setdefault('usage_gate_refusal', {'since': now, 'notified': False})
+    if entry['notified'] or now - entry['since'] < after_min * 60:
+        return []
+    entry['notified'] = True
+    first = active[0]
+    return [Urgent('usage gate has refused starts for %d minutes with %.0f points of headroom: %s %s, %s' % (
+        (now - entry['since']) / 60, first['headroom'], first['provider'], first['verdict'], first['reason']))]
+
+
 def default_issue_scan_gate(config, run=subprocess.run):
     scan = config.get('issue_scan') or {}
     agent = scan.get('agent') or 'cursor'
-    command = [sys.executable, str(Path(__file__).with_name('usage-gate.py')), 'check', '--provider', agent]
+    command = [sys.executable, str(Path(__file__).with_name('usage-gate.py')), 'check', '--provider', agent, '--auto']
     model = scan.get('model')
     if model:
         command += ['--model', model]
+    USAGE_GATE_CALLS[0] += 1
     try:
-        return run(command, capture_output=True, timeout=60).returncode == 0
+        proc = run(command, capture_output=True, text=True, timeout=60)
     except (subprocess.SubprocessError, OSError):
         return False
+    if proc.returncode == 0:
+        return True
+    try:
+        detail = json.loads(proc.stdout or '{}')
+    except (ValueError, TypeError):
+        detail = {}
+    detail = detail if isinstance(detail, dict) else {}
+    record_gate_refusal(detail.get('provider') or agent, detail.get('verdict') or 'error',
+                        detail.get('reason') or 'gate exit %s' % proc.returncode,
+                        detail.get('reading_age_min'), detail.get('headroom'))
+    return False
 
 
 def default_issue_scan_start(command, run=subprocess.run):
@@ -2992,7 +3049,8 @@ def _usage_gate_argv():
 
 
 def pick_role(role, run=subprocess.run):
-    command = _usage_gate_argv() + ['pick', '--role', role, '--json']
+    command = _usage_gate_argv() + ['pick', '--role', role, '--json', '--auto']
+    USAGE_GATE_CALLS[0] += 1
     try:
         proc = run(command, capture_output=True, text=True, timeout=60, check=False)
     except (subprocess.SubprocessError, OSError):
@@ -3001,7 +3059,16 @@ def pick_role(role, run=subprocess.run):
         data = json.loads(proc.stdout or '')
     except json.JSONDecodeError:
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if not data.get('selected'):
+        for candidate in data.get('candidates') or []:
+            if isinstance(candidate, dict) and candidate.get('verdict') in ('blocked', 'unknown'):
+                headroom = candidate.get('headroom')
+                record_gate_refusal(candidate.get('provider'), candidate['verdict'], candidate.get('reason'),
+                                    candidate.get('reading_age_min'),
+                                    candidate.get('last_headroom') if headroom is None else headroom)
+    return data
 
 
 def _same_agent_model(agent, model, avoid):
@@ -4076,6 +4143,7 @@ def main():
         babysit_repos=babysit_dispatch_repos(config),
     )
     notices += scan_extra
+    notices += usage_gate_notices(state, now)
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
