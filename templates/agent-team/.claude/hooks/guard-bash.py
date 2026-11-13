@@ -26,6 +26,9 @@ Blocks these kinds of accident:
 8. Feeding commands to a shell or interpreter where the guard cannot read them
    (`check_indirection`): a shell reading a pipe, here-string or heredoc, `bash -c "$(...)"`,
    or `python3 -c` / `perl -e` / `node -e` code that starts a process.
+9. A glob, brace, variable or substitution that can build a path under an exact_only script
+   directory or a credential directory, and `find -exec`, `find -execdir` or `xargs` that
+   search one of those directories (`check_hidden_script_paths`).
 
 Anything it cannot parse is let through: the deny rules in settings.json are the
 backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
@@ -59,6 +62,7 @@ APPROVAL_FILE_OVERRIDE: str = ""
 SIGN_IN_SCRIPT: str | None = None
 SECRETS_DIR_EXCEPTIONS: list[str] = []
 EXACT_ONLY_SCRIPTS: list[str] = []
+SECRETS_DIR_RELPATHS: list[str] = []
 FORCE_PUSH_BRANCHES: list[str] = ["main"]
 SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
@@ -197,7 +201,7 @@ def load_guard_config(start_dir):
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
-    global EXACT_ONLY_SCRIPTS
+    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS
 
     BLOCKED_SCRIPTS = set()
     PRODUCTION_HOSTS = set()
@@ -216,6 +220,7 @@ def load_guard_config(start_dir):
     SIGN_IN_SCRIPT = None
     SECRETS_DIR_EXCEPTIONS = []
     EXACT_ONLY_SCRIPTS = []
+    SECRETS_DIR_RELPATHS = []
     FORCE_PUSH_BRANCHES = ["main"]
     SECRETS_STDIN_OK = []
     WORKTREE_ENV_ALLOW = []
@@ -336,6 +341,7 @@ def load_guard_config(start_dir):
         for d in raw_secrets_dir:
             if isinstance(d, str) and d.strip():
                 extra_dirs.append(d.strip().strip("/"))
+    SECRETS_DIR_RELPATHS = list(extra_dirs)
     if extra_dirs:
         escaped = [re.escape(d) for d in extra_dirs]
         dir_union = "|".join([DEFAULT_SECRETS_DIR_PATTERN] + [rf"(?:^|[/\s='\"<(])(?:{e})(?:/|$|[\s'\"\)])" for e in escaped])
@@ -2069,6 +2075,7 @@ def check_segment(segment, depth=0, cwd=None):
              "Reading, grepping, editing or committing the file is fine; running it is not.")
     if base == "eval":
         for text in [" ".join(args), *substitutions(" ".join(args))]:
+            check_hidden_script_paths(text, transfer_cwd)
             for seg in segments(text):
                 check_segment(seg, depth + 1, cwd=transfer_cwd)
     if base in SHELLS or base in {"source", "."}:
@@ -2085,6 +2092,7 @@ def check_segment(segment, depth=0, cwd=None):
                         script,
                     )
                 for text in [script, *substitutions(script)]:
+                    check_hidden_script_paths(text, transfer_cwd)
                     cur_cwd = transfer_cwd
                     for seg in segments(text):
                         check_segment(seg, depth + 1, cwd=cur_cwd)
@@ -2295,20 +2303,27 @@ EXACT_ONLY_GIT_READ_ONLY = {"add", "status", "diff", "log", "show", "ls-files", 
 
 
 def exact_only_mentions(command, names, targets, cwd):
-    """True when the text names a listed script anywhere: in the raw text, a dequoted word, or a symlink to it."""
+    """True when the text names a listed script anywhere: in the raw text, a dequoted word, or a symlink to it.
+
+    Real paths and basenames compare case-insensitively, so a different case cannot hide the file.
+    """
+    folded_names = {name.lower() for name in names}
+    folded_targets = {target.lower() for target in targets}
+
     def hit(token):
         if not token:
             return False
-        if os.path.basename(token) in names:
+        if os.path.basename(token).lower() in folded_names:
             return True
         if token.startswith("-"):
             return False
         try:
-            return os.path.realpath(token if os.path.isabs(token) else os.path.join(cwd or os.getcwd(), token)) in targets
+            real = os.path.realpath(token if os.path.isabs(token) else os.path.join(cwd or os.getcwd(), token))
+            return real.lower() in folded_targets
         except (OSError, ValueError):
             return False
 
-    if any(re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", command) for name in names):
+    if any(re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", command, re.IGNORECASE) for name in names):
         return True
     for text in [command, *substitutions(command)]:
         for seg in segments(text):
@@ -2358,10 +2373,425 @@ def check_exact_only_scripts(command, cwd):
         deny("exact_only_scripts could not be checked, so the command is denied.")
 
 
+# Active only outside single quotes. Double quotes still expand $ and backticks.
+# A bare $HOME or $(...) has an empty prefix and stays allowed; a prefix under a
+# protected directory does not, because the shell can turn it into that path.
+_EXPANSION_META = set("*?[{$`")
+_SHELL_OPERATORS = {";", "&&", "||", "|", "&"}
+
+
+def hidden_script_dirs():
+    """Absolute directories and repo-relative part tuples for exact_only scripts and credential dirs."""
+    root = CONFIG_LOADED_FROM
+    absolute = []
+    relative = []
+    if root:
+        for rel in EXACT_ONLY_SCRIPTS:
+            if not rel or os.path.isabs(rel):
+                continue
+            script = os.path.realpath(os.path.join(root, rel))
+            absolute.append(os.path.dirname(script))
+            parent = os.path.dirname(rel.replace("\\", "/"))
+            parts = tuple(part.lower() for part in _path_parts(parent))
+            if parts:
+                relative.append(parts)
+        for rel in SECRETS_DIR_RELPATHS:
+            path = rel if os.path.isabs(rel) else os.path.join(root, rel)
+            absolute.append(os.path.realpath(path))
+            parts = tuple(part.lower() for part in _path_parts(rel))
+            if parts:
+                relative.append(parts)
+    return absolute, relative
+
+
+def _path_parts(path):
+    path = os.path.expanduser(path).replace("\\", "/")
+    out = []
+    for piece in path.split("/"):
+        if piece in ("", "."):
+            continue
+        if piece == "..":
+            if out:
+                out.pop()
+            continue
+        out.append(piece)
+    return out
+
+
+def _resolve_fold(path, cwd):
+    path = os.path.expanduser(path or ".")
+    if not os.path.isabs(path):
+        path = os.path.join(cwd or os.getcwd(), path)
+    try:
+        return os.path.realpath(path).lower()
+    except (OSError, ValueError):
+        return os.path.normpath(path).lower()
+
+
+def _expand_braces(text):
+    match = re.search(r"\{([^{}]*)\}", text)
+    if not match:
+        return [text]
+    pre, body, post = text[:match.start()], match.group(1), text[match.end():]
+    choices = body.split(",") if body else [""]
+    out = []
+    for choice in choices:
+        out.extend(_expand_braces(pre + choice + post))
+    return out
+
+
+def _at_or_inside(parts, pref):
+    if not pref or len(parts) < len(pref):
+        return False
+    if tuple(parts[:len(pref)]) == pref:
+        return True
+    width = len(pref)
+    return any(tuple(parts[i:i + width]) == pref for i in range(1, len(parts) - width + 1))
+
+
+def _is_ancestor(parts, pref):
+    return bool(parts) and len(parts) < len(pref) and tuple(pref[:len(parts)]) == tuple(parts)
+
+
+def _directory_hit(path, cwd, absolute, relative, ancestor=False):
+    """True when path is a protected directory, is inside one, or (find only) is an ancestor of one."""
+    if path in ("", ".", "./"):
+        folded = _resolve_fold(".", cwd)
+        parts = ()
+    else:
+        folded = _resolve_fold(path, cwd)
+        parts = tuple(part.lower() for part in _path_parts(path))
+    for directory in absolute:
+        other = directory.lower()
+        if folded == other or folded.startswith(other + os.sep):
+            return True
+        if ancestor and other.startswith(folded + os.sep):
+            return True
+    if any(part == "secrets" for part in parts):
+        return True
+    for pref in relative:
+        if _at_or_inside(parts, pref):
+            return True
+        if ancestor and _is_ancestor(parts, pref):
+            return True
+    return False
+
+
+def _component_patterns(partial, suffix):
+    head = suffix.split("/", 1)[0]
+    if any(ch in head for ch in "$`"):
+        return ["*"]
+    return _expand_braces(partial + head)
+
+
+def _pattern_hits_name(patterns, name):
+    folded = name.lower()
+    return any(fnmatch.fnmatch(folded, pattern.lower()) for pattern in patterns)
+
+
+def _generic_secrets(partial, suffix):
+    """A component that can become a directory named secrets. Short globs such as s* stay allowed."""
+    comp = partial + suffix.split("/", 1)[0]
+    for alt in _expand_braces(comp):
+        literal = []
+        for ch in alt:
+            if ch in _EXPANSION_META:
+                break
+            literal.append(ch)
+        text = "".join(literal).lower()
+        if text == "secrets" or text.startswith("secrets"):
+            return True
+        if len(text) >= 4 and "secrets".startswith(text) and "/" in suffix:
+            return True
+    return False
+
+
+def _expansion_hits(literal, decoded, kinds, cwd, absolute, relative):
+    if not kinds:
+        return False
+    if literal == "" and kinds <= {"$", "`"}:
+        return False
+    suffix = decoded[len(literal):]
+    if literal == "":
+        if "/" not in decoded and "**" not in decoded:
+            return _directory_hit(".", cwd, absolute, relative)
+        folded = decoded.lower()
+        if any("/".join(pref) in folded for pref in relative if pref):
+            return True
+        # A slash after the meta can walk from the working directory into the protected one.
+        return _directory_hit(".", cwd, absolute, relative, ancestor=True)
+    anchor, partial = (literal[:-1], "") if literal.endswith("/") else literal.rpartition("/")[::2]
+    if _directory_hit(anchor or ".", cwd, absolute, relative):
+        return True
+    anchor_parts = tuple(part.lower() for part in _path_parts(anchor)) if anchor else ()
+    if any(part == "secrets" for part in anchor_parts):
+        return True
+    patterns = _component_patterns(partial, suffix)
+    if _generic_secrets(partial, suffix):
+        return True
+    for pref in relative:
+        if len(anchor_parts) >= len(pref) or tuple(pref[:len(anchor_parts)]) != anchor_parts:
+            continue
+        if _pattern_hits_name(patterns, pref[len(anchor_parts)]):
+            return True
+    return False
+
+
+def _without_comments(command):
+    """Drop unquoted comments through the end of the line. Quoted # stays data."""
+    out = []
+    quote = None
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(command):
+                out.append(command[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+        elif ch == "\\" and i + 1 < len(command):
+            out.append(ch)
+            out.append(command[i + 1])
+            i += 2
+            continue
+        elif ch == "#" and (not out or out[-1] in " \t\n;&|()<>"):
+            while i < len(command) and command[i] != "\n":
+                i += 1
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _command_words(command):
+    """Quote-aware words: decoded text, literal prefix, and active expansion characters."""
+    command = _without_comments(command)
+    words = []
+    buf, literal, metas = [], [], set()
+    seen = False
+    quote = None
+    i, n = 0, len(command)
+
+    def finish():
+        nonlocal buf, literal, metas, seen
+        if buf or literal or metas:
+            words.append(("".join(buf), "".join(literal), set(metas)))
+        buf, literal, metas, seen = [], [], set(), False
+
+    def take(ch, active=False):
+        nonlocal seen
+        buf.append(ch)
+        if active:
+            metas.add(ch)
+            seen = True
+        elif not seen:
+            literal.append(ch)
+
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            else:
+                take(ch)
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n and command[i + 1] in "$`\"\\\n":
+                nxt = command[i + 1]
+                i += 2
+                if nxt != "\n":
+                    take(nxt)
+                continue
+            if ch == '"':
+                quote = None
+            elif ch in "$`":
+                take(ch, active=True)
+            else:
+                take(ch)
+            i += 1
+            continue
+        if quote == "`":
+            if ch == "`":
+                quote = None
+            else:
+                take(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            nxt = command[i + 1]
+            i += 2
+            if nxt != "\n":
+                take(nxt)
+            continue
+        if ch == "'":
+            quote = "'"
+            i += 1
+            continue
+        if ch == '"':
+            quote = '"'
+            i += 1
+            continue
+        if ch == "`":
+            take(ch, active=True)
+            quote = "`"
+            i += 1
+            continue
+        if ch in " \t\r\n":
+            finish()
+            i += 1
+            continue
+        if ch in ";|&":
+            finish()
+            op = ch
+            if ch in "|&" and i + 1 < n and command[i + 1] == ch:
+                op += ch
+                i += 1
+            words.append((op, op, set()))
+            i += 1
+            continue
+        take(ch, active=ch in _EXPANSION_META)
+        i += 1
+    finish()
+    return words
+
+
+def _annotate_cwd(words, cwd):
+    cwd = cwd or os.getcwd()
+    noted = []
+    for i, word in enumerate(words):
+        noted.append((*word, cwd))
+        text, _literal, metas = word
+        if text != "cd" or metas or not _at_command(words, i):
+            continue
+        j = i + 1
+        while j < len(words) and words[j][0] not in _SHELL_OPERATORS and words[j][0].startswith("-"):
+            j += 1
+        if j < len(words) and words[j][0] not in _SHELL_OPERATORS and not words[j][2]:
+            dest = words[j][0]
+            if dest != "-":
+                cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(dest)))
+    return noted
+
+
+def _at_command(words, index):
+    j = index - 1
+    while j >= 0 and words[j][0] not in _SHELL_OPERATORS and (
+            ENV_ASSIGN.match(words[j][0]) or os.path.basename(words[j][0]) in WRAPPERS
+            or os.path.basename(words[j][0]) == "env"):
+        j -= 1
+    return j < 0 or words[j][0] in _SHELL_OPERATORS
+
+
+def _programs(words):
+    indexes = []
+    for i, word in enumerate(words):
+        if word[0] in _SHELL_OPERATORS or word[0].startswith("-"):
+            continue
+        if _at_command(words, i):
+            indexes.append(i)
+    return indexes
+
+
+def _find_reaches(words, start, absolute, relative):
+    i = start + 1
+    while i < len(words) and words[i][0] in ("-L", "-P", "-H"):
+        i += 1
+    paths = []
+    while i < len(words) and words[i][0] not in _SHELL_OPERATORS | {"(", "!"} and not words[i][0].startswith("-"):
+        paths.append(words[i])
+        i += 1
+    if not paths:
+        paths = [("", "", set(), words[start][3])]
+    for path in paths:
+        text, _lit, _metas, path_cwd = path
+        if _directory_hit(text or ".", path_cwd, absolute, relative, ancestor=True):
+            return True
+    return False
+
+
+def _has_exec(words, start):
+    for word in words[start + 1:]:
+        if word[0] in _SHELL_OPERATORS:
+            break
+        if word[0] in ("-exec", "-execdir"):
+            return True
+    return False
+
+
+def _path_like(text):
+    return text in (".", "..") or text.startswith("~") or "/" in text or text.startswith(".")
+
+
+def _xargs_reaches(words, absolute, relative):
+    for word in words:
+        text, _lit, metas, path_cwd = word
+        if text in _SHELL_OPERATORS or text.startswith("-") or metas or not _path_like(text):
+            continue
+        if _directory_hit(text, path_cwd, absolute, relative):
+            return True
+    return False
+
+
+def _hidden_script_paths(command, cwd, absolute, relative):
+    words = _annotate_cwd(_command_words(command), cwd)
+    for text, literal, metas, path_cwd in words:
+        if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
+            _deny_hidden()
+    programs = _programs(words)
+    find_hits = False
+    xargs = False
+    for index in programs:
+        base = os.path.basename(words[index][0])
+        if base == "find" and _has_exec(words, index) and _find_reaches(words, index, absolute, relative):
+            _deny_hidden()
+        if base == "find" and _find_reaches(words, index, absolute, relative):
+            find_hits = True
+        if base == "xargs":
+            xargs = True
+            if _directory_hit(".", words[index][3], absolute, relative):
+                _deny_hidden()
+    if xargs and (find_hits or _xargs_reaches(words, absolute, relative)):
+        _deny_hidden()
+
+
+def _deny_hidden():
+    listed = [f"`{rel}`" for rel in EXACT_ONLY_SCRIPTS]
+    listed.extend(f"`{rel}`" for rel in SECRETS_DIR_RELPATHS)
+    if not listed:
+        listed.append("the credential directory")
+    deny("A glob, brace, variable, substitution, find -exec, find -execdir or xargs could build a path under "
+         + ", ".join(listed)
+         + " without that path appearing as text. The guard cannot see the path the shell would produce, "
+         "so the command is denied.")
+
+
+def check_hidden_script_paths(command, cwd):
+    """Deny expansion and find/xargs that can name a restricted script or credential path."""
+    try:
+        absolute, relative = hidden_script_dirs()
+        _hidden_script_paths(command, cwd, absolute, relative)
+    except SystemExit:
+        raise
+    except Exception:
+        deny("A path that could name a restricted script or the credential directory could not be checked, "
+             "so the command is denied.")
+
+
 def check_command(command):
     command = report_command_text(command)
     check_exact_only_scripts(command, GATE_CWD)
-    for text in [command, *substitutions(command)]:
+    texts = [command, *substitutions(command)]
+    for text in texts:
         cur_cwd = GATE_CWD
         for seg in segments(text):
             check_segment(seg, cwd=cur_cwd)
@@ -2370,6 +2800,9 @@ def check_command(command):
                 dest = next((a for a in args if not a.startswith("-")), None)
                 if dest:
                     cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+    # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
+    for text in texts:
+        check_hidden_script_paths(text, GATE_CWD)
     if INDIRECT:
         deny(INDIRECT[0])
 
