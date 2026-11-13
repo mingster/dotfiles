@@ -17,6 +17,24 @@ head_checks_gate_wrap() {
       ;;
   esac
 }
+orphan_check_worktree() {
+  local gitfile gitdir_line gitdir
+  gitfile="$1/.git"
+  [ -f "$gitfile" ] || return 1
+  gitdir_line=""
+  IFS= read -r gitdir_line < "$gitfile" || true
+  case "$gitdir_line" in
+    "gitdir: "*) ;;
+    *) return 1 ;;
+  esac
+  gitdir=${gitdir_line#"gitdir: "}
+  gitdir=${gitdir%$'\r'}
+  case "$gitdir" in
+    /*) ;;
+    *) gitdir="$1/$gitdir" ;;
+  esac
+  [ -n "$gitdir" ] && [ ! -e "$gitdir" ]
+}
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
@@ -256,7 +274,17 @@ if [ -e "$worktree" ] && [ "$(git -C "$worktree" rev-parse --path-format=absolut
   git -C "$worktree" clean -fdq -e node_modules >> "$log" 2>&1
 else
   if [ -e "$worktree" ]; then
-    git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1 || usage "cannot replace unusable check worktree: $worktree"
+    # A gitfile whose gitdir is gone belongs to a deleted repo. This folder is head-checks' own
+    # path, so delete it and create the worktree again. Anything still unusable checked nothing.
+    if ! git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1; then
+      if orphan_check_worktree "$worktree"; then
+        rm -rf "$worktree" || true
+      fi
+      if [ -e "$worktree" ]; then
+        refused=1
+        usage "cannot replace unusable check worktree: $worktree"
+      fi
+    fi
   fi
   git -C "$repo" worktree prune
   git -C "$repo" worktree add --detach "$worktree" "$sha" >> "$log" 2>&1
