@@ -2091,7 +2091,7 @@ sweep_idle_worktrees() {
   local term_json="$tmp/sweep-terminals" wt_json="$tmp/sweep-worktrees" id path rc gone=0 dirty=0 status_out
   [ -n "${orca_bin:-}" ] && command -v "$orca_bin" >/dev/null 2>&1 || { echo 'Idle worktree sweep skipped: Orca unavailable'; return 0; }
   if ! orca_call terminal list --json > "$term_json" 2>/dev/null \
-    || ! jq -e '.ok != false and ((.result.terminals // []) | type == "array")' "$term_json" >/dev/null 2>&1; then
+    || ! jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$term_json" >/dev/null 2>&1; then
     echo 'Idle worktree sweep skipped: cannot read the terminal list'; fail_item 'idle worktrees' 'terminal list unreadable; all kept'; return 0
   fi
   if ! orca_call worktree list --json > "$wt_json" 2>/dev/null \

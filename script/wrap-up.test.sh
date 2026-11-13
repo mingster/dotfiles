@@ -1380,8 +1380,11 @@ cat > "$tmp/bin/orca-idle953" <<'FAKE'
 #!/usr/bin/env bash
 case "$*" in
   'worktree list --json') cat "$FAKE_DIR/wts.json" ;;
-  'terminal list --json') cat "$FAKE_DIR/terms.json" ;;
-  'worktree rm --worktree '*) echo "$*" >> "$FAKE_DIR/rm.log"; case "$*" in *"id:${FAKE_RM_FAIL:-none}"*) exit 1 ;; esac ;;
+  'terminal list --json')
+    if [ -n "${FAKE_TRUNC_HOST:-}" ] && [ "$(tail -1 "$FAKE_SSH_LOG" 2>/dev/null)" = "$FAKE_TRUNC_HOST" ]; then
+      printf '{"ok":true,"result":{"terminals":[],"truncated":true}}\n'
+    else cat "$FAKE_DIR/terms.json"; fi ;;
+  'worktree rm --worktree '*) echo "$*" >> "$FAKE_DIR/rm.log"; tail -1 "$FAKE_SSH_LOG" >> "$FAKE_DIR/rm-host.log" 2>/dev/null; case "$*" in *"id:${FAKE_RM_FAIL:-none}"*) exit 1 ;; esac ;;
   *) printf '{"ok":true,"result":{"workers":[],"terminals":[],"runs":[],"page":{"hasMore":false}}}\n' ;;
 esac
 FAKE
@@ -1415,3 +1418,16 @@ FAKE_RM_FAIL=w-bad bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$ire
 grep -Fxq 'worktree rm --worktree id:w-gone --force' "$idle/rm.log" || idle_fail 'a failed remove stopped the next one'
 grep -Fq 'idle worktree' "$tmp/stderr" || idle_fail 'a failed remove was not reported'
 echo 'ok a failed remove is reported and the next worktree still goes'
+# A truncated terminal list proves nothing, so that host removes nothing and the next host still runs.
+printf '{"hosts":[{"host":"short","repo_dir":"%s"},{"host":"alpha","repo_dir":"%s"}]}\n' "$irepo" "$irepo" > "$tmp/fleet.json"
+printf '{"ok":true,"result":{"worktrees":[{"id":"w-main","path":"%s","isMainWorktree":true},{"id":"w-gone","path":"%s"}]}}\n' "$irepo" "$igone" > "$idle/wts.json"
+: > "$idle/rm.log"; : > "$idle/rm-host.log"; : > "$FAKE_SSH_LOG"
+FAKE_TRUNC_HOST=short bash "$here/wrap-up.sh" --apply --fleet > "$tmp/output" 2> "$tmp/stderr" || true
+grep -Fxq alpha "$FAKE_SSH_LOG" || idle_fail 'the host after a truncated one was not reached'
+! grep -Fxq short "$idle/rm-host.log" || idle_fail 'the host with a truncated terminal list removed a worktree'
+grep -Fxq alpha "$idle/rm-host.log" || idle_fail 'the host after a truncated one did not sweep'
+grep -Fq 'cannot read the terminal list' "$tmp/output" "$tmp/stderr" || idle_fail 'the truncated list was not reported'
+: > "$idle/rm.log"; : > "$FAKE_SSH_LOG"; echo local >> "$FAKE_SSH_LOG"
+FAKE_TRUNC_HOST=local bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+[ ! -s "$idle/rm.log" ] || idle_fail 'a truncated terminal list still removed a worktree'
+echo 'ok a truncated terminal list removes nothing on that host and the next host still runs'
