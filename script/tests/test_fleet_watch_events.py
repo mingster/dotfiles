@@ -184,29 +184,28 @@ class WorkflowNotices(unittest.TestCase):
         self.notices(state, self.run_row())
         self.assertEqual(self.verbs(), [['run', 'rerun']])
 
-    def test_second_failure_opens_one_issue(self):
+    def test_second_failure_opens_no_issue(self):
         state = {}
         self.notices(state, self.run_row())
-        notice = self.notices(state, self.run_row(attempt=2))[0]
-        self.assertIn('failed twice', notice)
-        self.assertIsInstance(notice, fw.Urgent)
+        self.assertEqual(self.notices(state, self.run_row(attempt=2)), [])
         self.notices(state, self.run_row(attempt=2))
-        self.assertEqual(self.verbs(), [['run', 'rerun'], ['issue', 'create']])
-        self.assertIn('needs-elon', self.commands[1])
+        self.assertEqual(self.verbs(), [['run', 'rerun']])
+        self.assertNotIn('needs-elon', [part for command in self.commands for part in command])
 
-    def test_refused_rerun_opens_an_issue(self):
+    def test_refused_rerun_opens_no_issue(self):
         self.code = 1
-        self.notices({}, self.run_row())
-        self.assertEqual(self.commands[0][1:3], ['run', 'rerun'])
-        self.assertEqual(self.commands[1][1:3], ['issue', 'create'])
+        state = {}
+        self.assertEqual(self.notices(state, self.run_row()), [])
+        self.assertEqual(self.notices(state, self.run_row()), [])
+        self.assertEqual(self.verbs(), [['run', 'rerun']])
 
-    def test_failed_workflow_issue_is_reported_and_retried(self):
+    def test_second_attempt_without_a_prior_rerun_opens_no_issue(self):
         state = {}
         self.code = 1
-        self.assertIn('issue not opened', self.notices(state, self.run_row(attempt=2))[0])
+        self.assertEqual(self.notices(state, self.run_row(attempt=2)), [])
         self.code = 0
-        self.notices(state, self.run_row(attempt=2))
-        self.assertEqual(self.verbs(), [['issue', 'create'], ['issue', 'create']])
+        self.assertEqual(self.notices(state, self.run_row(attempt=2)), [])
+        self.assertEqual(self.commands, [])
 
     def test_ignores_other_workflows_and_old_runs(self):
         self.notices({}, self.run_row(name='CodeQL'), self.run_row(id=2, age=3 * 3600))

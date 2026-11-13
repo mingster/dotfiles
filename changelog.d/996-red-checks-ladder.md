@@ -1,0 +1,1 @@
+- Fleet watch reruns one failed workflow once per head, reworks a pull request that stays red, and labels `needs-redesign` after two rounds. It no longer opens a `needs-elon` issue when a workflow fails twice. A red Checks run on main still sends one notice. (#996)
