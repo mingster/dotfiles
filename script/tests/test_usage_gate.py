@@ -89,7 +89,7 @@ class Antigravity(unittest.TestCase):
         with mock.patch.dict(ug.READERS, {"antigravity": lambda: pools}), \
                 mock.patch.object(ug.time, "time", return_value=NOW):
             for model, status in [("claude-sonnet", 3), ("gpt-oss-120b", 3),
-                                  ("gemini-flash", 0), (None, 0), ("unknown", 4)]:
+                                  ("gemini-flash", 0), (None, 0), ("unknown", 0)]:
                 with self.subTest(model=model), contextlib.redirect_stdout(io.StringIO()) as out:
                     args = ["check", "--provider", "antigravity"]
                     self.assertEqual(ug.main(args + (["--model", model] if model else [])), status)
@@ -108,7 +108,7 @@ class Antigravity(unittest.TestCase):
         self.assertIsNone(ug.antigravity_reading(fetch=timeout))
         with mock.patch.dict(ug.READERS, {"antigravity": lambda: None}), \
                 contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(ug.main(["check", "--provider", "antigravity"]), 4)
+            self.assertEqual(ug.main(["check", "--provider", "antigravity"]), 0)
 
     def test_lsof_falls_back_to_usr_sbin_when_missing_from_path(self):
         import urllib.request
@@ -231,10 +231,25 @@ class Decide(unittest.TestCase):
 
 class Main(unittest.TestCase):
     def test_unreadable_provider_is_no_reading_not_a_usage_error(self):
-        for name in ("antigravity", "made-up"):
-            with self.subTest(name), contextlib.redirect_stdout(io.StringIO()) as out:
-                self.assertEqual(ug.main(["check", "--provider", name]), 4)
-            self.assertEqual(json.loads(out.getvalue())["verdict"], "unknown")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ug.main(["check", "--provider", "made-up"]), 4)
+        self.assertEqual(json.loads(out.getvalue())["verdict"], "unknown")
+
+    def test_antigravity_unknown_is_allowed_and_claude_unknown_is_refused(self):
+        # Owner 2026-11-12: Antigravity starts with no quota reading and stops at the first quota or sign-in error.
+        for name, expected in (("antigravity", 0), ("claude", 4)):
+            with self.subTest(name), \
+                    mock.patch.object(ug, "run", return_value={"provider": name, "verdict": "unknown", "reason": "no reading"}), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(ug.main(["check", "--provider", name]), expected)
+            row = json.loads(out.getvalue())
+            self.assertEqual(row["verdict"], "unknown")
+            self.assertEqual("note" in row, name == "antigravity")
+
+    def test_antigravity_blocked_still_exits_3(self):
+        with mock.patch.object(ug, "run", return_value={"provider": "antigravity", "verdict": "blocked"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ug.main(["check", "--provider", "antigravity"]), 3)
 
     def test_check_without_provider_fails_closed_on_unknown_and_mixed_verdicts(self):
         cases = [

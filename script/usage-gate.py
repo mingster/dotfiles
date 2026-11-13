@@ -2,6 +2,8 @@
 """Provider usage gate: only fresh real usage plus running worker reserve can block.
 
 check --provider NAME exits 0 allowed, 3 weekly/cycle ceiling reached, 4 unknown.
+Antigravity is the one exception (owner 2026-11-12): an unknown reading exits 0 with a note,
+and the worker stops at its first quota or sign-in error. worker-startup.sh and the hook follow the exit code.
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags. fullstack-dev and light-tier roles take the first allowed of
 Cursor grok-4.7-xhigh, then that role's Claude entry, then Antigravity. Strong
@@ -13,7 +15,7 @@ when that reading is missing; Antigravity queries local GetUserStatus,
 defaulting to the Gemini Flash pool.
 Missing, stale (>5 minutes), expired, invalid or future readings trigger a refresh.
 If the real source cannot supply a fresh reading, report unknown, never inferred
-zero usage or a stale ceiling verdict. Unknown does not block worker starts.
+zero usage or a stale ceiling verdict. Unknown blocks every provider except Antigravity.
 Daily caps and owner cap overrides remain pacing hints only: at the hint, allow
 with note "pacing: prefer a lighter model". --reserve (default 1) holds weekly
 percentage points per running worker; --ceiling defaults to 95. Cursor uses its
@@ -30,6 +32,7 @@ TIE_POINTS = 2.0  # headroom points within which the preset provider keeps the p
 MAX_AGE = 15 * 60  # seconds; an older reading is no reading
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
+UNKNOWN_ALLOWED = ("antigravity",)  # owner 2026-11-12: these start with no quota reading
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_PERIOD_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
@@ -1028,6 +1031,8 @@ def main(argv=None):
                        for pool in ("claude", "gemini-flash", "gemini-pro"))
         else:
             out.append(run(name, a.cap, a.ceiling, per_worker=a.reserve, model=a.model))
+    if a.cmd == "check" and a.provider in UNKNOWN_ALLOWED and out[0]["verdict"] == "unknown":
+        out[0] = {**out[0], "note": "no quota reading: starting anyway, stop at the first quota or sign-in error"}
     if a.cmd == "show" and not a.json:
         print(table(out))
     else:
@@ -1035,6 +1040,8 @@ def main(argv=None):
     if a.cmd == "show":
         return 0
     if a.provider:
+        if "note" in out[0] and out[0]["verdict"] == "unknown":
+            return 0
         return {"allowed": 0, "blocked": 3, "unknown": 4}[out[0]["verdict"]]
     if any(o["verdict"] == "allowed" for o in out):
         return 0
