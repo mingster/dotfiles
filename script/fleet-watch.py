@@ -343,18 +343,6 @@ def classify_worker(worker):
         }
         return True, info, True
 
-    if status in ('dispatched', 'running', 'pending', 'active'):
-        category = 'live_child' if is_child else ('live_qa' if is_qa else 'live_builder')
-        info = {
-            'dispatchId': dispatch_id,
-            'host': host,
-            'category': 'live',
-            'role': 'child' if is_child else ('qa' if is_qa else 'builder'),
-            'live_type': category,
-            'evidence': {'status': status, 'role': role, 'live': True}
-        }
-        return True, info, False
-
     if worker_freed_by_terminal_exit(worker):
         info = {
             'dispatchId': dispatch_id,
@@ -370,6 +358,18 @@ def classify_worker(worker):
             }
         }
         return False, info, False
+
+    if status in ('dispatched', 'running', 'pending', 'active'):
+        category = 'live_child' if is_child else ('live_qa' if is_qa else 'live_builder')
+        info = {
+            'dispatchId': dispatch_id,
+            'host': host,
+            'category': 'live',
+            'role': 'child' if is_child else ('qa' if is_qa else 'builder'),
+            'live_type': category,
+            'evidence': {'status': status, 'role': role, 'live': True}
+        }
+        return True, info, False
 
     if status == 'completed':
         if pushed and released:
@@ -2711,8 +2711,29 @@ def resolve_pass_config(config, config_path):
     return config, None
 
 
-def apply_active_run(config, pick=None):
-    """Copy runs[0] onto issue_scan, and refresh agent and model from the role pick."""
+def current_coordinator_handle(run_id):
+    """Coordinator terminal Orca holds for this run now, or None when it cannot be read.
+
+    The handle saved in the coordinator file goes stale when the coordinator terminal restarts.
+    """
+    try:
+        for page in list_pages('orchestration', 'run-list', '--full'):
+            for run in page['runs']:
+                if isinstance(run, dict) and run.get('id') == run_id:
+                    handle = run.get('coordinator_handle')
+                    if isinstance(handle, str) and handle.strip():
+                        return handle.strip()
+                    return None
+    except Exception:
+        return None
+    return None
+
+
+def apply_active_run(config, pick=None, resolve_handle=None):
+    """Copy runs[0] onto issue_scan, and refresh agent and model from the role pick.
+
+    The sender terminal is the run's current coordinator handle; the saved one is the fallback.
+    """
     scan = config.get('issue_scan') if isinstance(config, dict) else None
     runs = config_runs(config)
     if not isinstance(scan, dict) or not runs or not isinstance(runs[0], dict):
@@ -2724,6 +2745,13 @@ def apply_active_run(config, pick=None):
         scan['run'] = run_id.strip()
     if isinstance(terminal, str) and terminal.strip():
         scan['from_terminal'] = terminal.strip()
+    if isinstance(run_id, str) and run_id.strip():
+        current = (resolve_handle or current_coordinator_handle)(run_id.strip())
+        if current:
+            scan['from_terminal'] = current
+            active['terminal'] = current
+            if isinstance(config.get('babysit'), dict) and config['babysit'].get('from_terminal'):
+                config['babysit']['from_terminal'] = current
     if not scan.get('enabled'):
         return
     data = pick('fullstack-dev') if pick else pick_role('fullstack-dev')
@@ -3016,6 +3044,7 @@ def babysit_pass(
     cap = babysit_cap(config)
     started = 0
     picks = {}
+    start_failures = []
 
     def cached_pick(role):
         if role not in picks:
@@ -3120,6 +3149,7 @@ def babysit_pass(
         if start_worker(command) != 0:
             lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
             log_bits.append('start_fail=%s' % number)
+            start_failures.append('%s#%s' % (repo, number))
             continue
         babysit_mark(state, repo, number, head, action)
         started += 1
@@ -3127,7 +3157,28 @@ def babysit_pass(
         log_bits.append('%s=%s' % (action, number))
         if persist_state:
             persist_state()
+    if not dry_run:
+        notices += failure_streak_notices(
+            state, 'babysit_start_failed', bool(start_failures),
+            'babysit could not start a worker for %s' % ', '.join(start_failures))
     return notices, lines, log_bits
+
+
+FAILURE_STREAK_PASSES = 3
+
+
+def failure_streak_notices(state, key, failing, text):
+    """One notice when `key` fails for 3 passes in a row; none again until a pass clears it."""
+    streaks = state.setdefault('failure_streaks', {})
+    if not failing:
+        streaks.pop(key, None)
+        return []
+    entry = streaks.setdefault(key, {'passes': 0, 'notified': False})
+    entry['passes'] += 1
+    if entry['passes'] >= FAILURE_STREAK_PASSES and not entry['notified']:
+        entry['notified'] = True
+        return [Urgent('%s (%d passes in a row)' % (text, entry['passes']))]
+    return []
 
 
 def issue_scan_pass(
@@ -3164,8 +3215,12 @@ def issue_scan_pass(
     if not gate_check(config):
         return notices, ['issue_scan_gate']
     admission = admit_fn(host, config, workers)
-    if not admission.get('admitted'):
-        return notices, ['issue_scan_load']
+    refused = not admission.get('admitted')
+    reason = re.sub(r'[,;\s]+', ' ', str(admission.get('reason') or 'unknown')).strip()
+    notices += failure_streak_notices(
+        state, 'issue_scan_refused', refused, 'issue scan refused on %s: %s' % (host, reason))
+    if refused:
+        return notices, ['issue_scan_load', 'issue_scan_refused=%s' % reason]
 
     extra_starts = 0
     repos = scan.get('repos') or []
