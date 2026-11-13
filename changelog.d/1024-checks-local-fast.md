@@ -1,0 +1,1 @@
+Make script/checks-local.sh fast and stable for fleet-watch and wrap-up changes: the wrap-up temp file walk no longer forks per entry, the longest tests start first in the local pool, and fleet-watch admission tests stub the host load and memory reads (#1024).
