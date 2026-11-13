@@ -11,6 +11,7 @@ export HOME="$tmp/home"
 export CODEGRAPH_HOME="$tmp/cg-home"
 export DOTFILES="$tmp/dotfiles"
 mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.gemini/config" "$DOTFILES" "$tmp/bin"
+touch "$HOME/.gemini/config/.migrated"
 pin=$(bash "$here/codegraph-setup.sh" version)
 
 # A fake npm: `npm ci` drops a fake codegraph into node_modules/.bin and counts the call.
@@ -44,7 +45,9 @@ json.dump(d, open(p, "w"), indent=2)
 PY
       printf '\n<!-- CODEGRAPH_START -->\n## CodeGraph\ntext\n<!-- CODEGRAPH_END -->\n' >> "\$HOME/.claude/CLAUDE.md" ;; esac
     case "\$2" in *cursor*) echo '{"mcpServers":{"codegraph":{}}}' > "\$HOME/.cursor/mcp.json" ;; esac
-    case "\$2" in *antigravity*) echo '{"mcpServers":{"codegraph":{}}}' > "\$HOME/.gemini/config/mcp_config.json" ;; esac
+    case "\$2" in *antigravity*)
+      f="\$HOME/.gemini/antigravity/mcp_config.json"; { [ -e "\$HOME/.gemini/config/.migrated" ] || [ -e "\$HOME/.gemini/config/mcp_config.json" ]; } && f="\$HOME/.gemini/config/mcp_config.json"
+      mkdir -p "\$(dirname "\$f")"; echo '{"mcpServers":{"codegraph":{}}}' > "\$f" ;; esac
     ;;
   init) mkdir -p .codegraph; touch .codegraph/codegraph.db; echo "init \$PWD" >> "$tmp/init-calls" ;;
 esac
@@ -128,5 +131,56 @@ check "project without a directory fails" "$(bash "$here/codegraph-setup.sh" pro
 check "the pin is an exact version" "$(echo "$pin" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; echo $?)"
 check "the lockfile pins every platform tarball with an integrity hash" \
   "$(python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1]))["packages"]; n=[k for k in p if "codegraph" in k]; assert len(n)>=2 and all(p[k]["integrity"].startswith("sha512-") for k in n)' "$here/codegraph/package-lock.json"; echo $?)"
+
+# legacy Antigravity layout: no .migrated marker, config lives in ~/.gemini/antigravity
+export HOME="$tmp/home-legacy"
+mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.gemini/antigravity"
+echo '{}' > "$HOME/.claude/settings.json"
+legacy=$HOME/.gemini/antigravity/mcp_config.json
+bash "$here/codegraph-setup.sh" machine >/dev/null 2>&1
+check "legacy layout: machine wires the antigravity config, not the migrated path" "$(grep -q codegraph "$legacy" && [ ! -e "$HOME/.gemini/config/mcp_config.json" ]; echo $?)"
+installs=$(wc -l < "$tmp/install-calls" | tr -d " ")
+out=$(bash "$here/codegraph-setup.sh" machine 2>&1)
+check "legacy layout: a second machine run prints nothing and does not rewire" "$([ -z "$out" ] && [ "$(wc -l < "$tmp/install-calls" | tr -d " ")" = "$installs" ]; echo $?)"
+bash "$here/codegraph-setup.sh" uninstall >/dev/null 2>&1
+check "legacy layout: uninstall removes the entry" "$(! grep -q codegraph "$legacy"; echo $?)"
+
+# migrated layout in a fresh HOME
+export HOME="$tmp/home-migrated"
+mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.gemini/config" "$HOME/.gemini/antigravity"
+touch "$HOME/.gemini/config/.migrated"; echo '{}' > "$HOME/.claude/settings.json"
+bash "$here/codegraph-setup.sh" machine >/dev/null 2>&1
+check "migrated layout: machine wires the config path, not the legacy one" "$(grep -q codegraph "$HOME/.gemini/config/mcp_config.json" && [ ! -e "$HOME/.gemini/antigravity/mcp_config.json" ]; echo $?)"
+installs=$(wc -l < "$tmp/install-calls" | tr -d " ")
+out=$(bash "$here/codegraph-setup.sh" machine 2>&1)
+check "migrated layout: a second machine run prints nothing and does not rewire" "$([ -z "$out" ] && [ "$(wc -l < "$tmp/install-calls" | tr -d " ")" = "$installs" ]; echo $?)"
+echo '{"mcpServers":{"codegraph":{}}}' > "$HOME/.gemini/antigravity/mcp_config.json"
+bash "$here/codegraph-setup.sh" uninstall >/dev/null 2>&1
+check "uninstall cleans both Antigravity files" "$(! grep -q codegraph "$HOME/.gemini/config/mcp_config.json" "$HOME/.gemini/antigravity/mcp_config.json"; echo $?)"
+
+# unified file present without the .migrated marker: codegraph reads it, so setup must too
+export HOME="$tmp/home-nomarker"
+mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.gemini/config" "$HOME/.gemini/antigravity"
+echo '{}' > "$HOME/.claude/settings.json"; echo '{"mcpServers":{"codegraph":{}}}' > "$HOME/.gemini/config/mcp_config.json"
+bash "$here/codegraph-setup.sh" machine >/dev/null 2>&1
+installs=$(wc -l < "$tmp/install-calls" | tr -d " ")
+out=$(bash "$here/codegraph-setup.sh" machine 2>&1)
+check "unified file without the marker: a second machine run prints nothing and does not rewire" "$([ -z "$out" ] && [ "$(wc -l < "$tmp/install-calls" | tr -d " ")" = "$installs" ] && ! tail -1 "$tmp/install-calls" | grep -q antigravity && [ ! -e "$HOME/.gemini/antigravity/mcp_config.json" ]; echo $?)"
+
+# a malformed Antigravity file is skipped with a warning; the rest of uninstall still runs
+for layout in legacy migrated; do
+  export HOME="$tmp/home-bad-$layout"
+  mkdir -p "$HOME/.claude" "$HOME/.local/bin" "$HOME/.gemini/config" "$HOME/.gemini/antigravity"
+  if [ "$layout" = legacy ]; then bad=$HOME/.gemini/antigravity/mcp_config.json; else touch "$HOME/.gemini/config/.migrated"; bad=$HOME/.gemini/config/mcp_config.json; fi
+  printf '{"mcpServers": {broken' > "$bad"; cp "$bad" "$tmp/bad.before"
+  echo '{"permissions":{"allow":["mcp__codegraph__*","Bash(keep:*)"]}}' > "$HOME/.claude/settings.json"
+  printf '# mine\n<!-- CODEGRAPH_START -->\ntext\n<!-- CODEGRAPH_END -->\n' > "$HOME/.claude/CLAUDE.md"
+  ln -s /nonexistent "$HOME/.local/bin/codegraph"
+  bash "$here/codegraph-setup.sh" uninstall >"$tmp/bad.out" 2>&1; rc=$?
+  check "$layout malformed file: uninstall exits 0 with one warning" "$([ "$rc" = 0 ] && [ "$(grep -c 'not valid JSON' "$tmp/bad.out")" = 1 ] && ! grep -q Traceback "$tmp/bad.out"; echo $?)"
+  check "$layout malformed file: left byte identical" "$(cmp -s "$bad" "$tmp/bad.before"; echo $?)"
+  check "$layout malformed file: permission, CLAUDE.md section and link still removed" \
+    "$(! grep -q codegraph "$HOME/.claude/settings.json" "$HOME/.claude/CLAUDE.md" && grep -q 'Bash(keep:\*)' "$HOME/.claude/settings.json" && [ ! -L "$HOME/.local/bin/codegraph" ]; echo $?)"
+done
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

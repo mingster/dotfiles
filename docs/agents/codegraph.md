@@ -16,7 +16,7 @@ To bump the pin: change the version in `package.json`, run `npm install --packag
 
 1. Installs the pin under `~/.local/share/codegraph/<version>/` and links `~/.local/bin/codegraph` to it.
 2. Turns telemetry off (`codegraph telemetry off`). It is on by default.
-3. Adds the `codegraph` MCP server to `~/.claude.json`, `~/.cursor/mcp.json` and `~/.gemini/config/mcp_config.json`.
+3. Adds the `codegraph` MCP server to `~/.claude.json`, `~/.cursor/mcp.json` and the Antigravity file: `~/.gemini/config/mcp_config.json` when `~/.gemini/config/.migrated` exists, else the legacy `~/.gemini/antigravity/mcp_config.json`. Uninstall cleans both.
 4. Allows `mcp__codegraph__*` in `~/.claude/settings.json`.
 5. Keeps one `UserPromptSubmit` hook in `~/.claude/settings.json`: `$HOME/.local/bin/codegraph prompt-hook`. It runs the pinned link, never a `codegraph` found on PATH, and is the same text on every host. Without it the agent never calls the codegraph tools (issue 924, first trial). Owner decision 2026-11-13. Each run replaces the bare `codegraph prompt-hook` that `codegraph install` adds and restores the pinned one if it is missing; other hooks are untouched.
 6. Removes the marked "CodeGraph" section `codegraph install` adds to `~/.claude/CLAUDE.md`, because that file is a copy of a dotfiles file and a second block there would drift.
