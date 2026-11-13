@@ -8,6 +8,13 @@
 #   Swift helper below sets .userPresence and evaluates LAContext(.deviceOwnerAuthentication) before every
 #   read, so each signing run requires Touch ID (or device passcode) and fails closed when denied.
 #
+# Fail closed: the item is stored only in the data protection keychain with a user presence access control.
+#   That needs a keychain-access-groups entitlement, which an ad hoc signature cannot carry. An ad hoc
+#   helper therefore exits non zero on `set` and stores nothing (no login keychain fallback). The owner
+#   signs it with a team identity: APPROVAL_SIGN_IDENTITY="Apple Development: Name (TEAMID)" and
+#   APPROVAL_ENTITLEMENTS=<plist with keychain-access-groups TEAMID.agent-team>, plus the matching
+#   provisioning profile. Build with `build-helper <path>`, then set APPROVAL_KEYCHAIN_HELPER to it.
+#
 # Usage:
 #   bash script/approval-sign.sh sign <namespace> [ttl]        (or pipe unsigned approval JSON on stdin)
 #   bash script/approval-sign.sh migrate [--dry-run] <namespace> [<secret-file>]
@@ -22,7 +29,7 @@ set -euo pipefail
 
 die() { echo "approval-sign: $*" >&2; exit 1; }
 usage() {
-  sed -n '11,15p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '19,22p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -54,14 +61,6 @@ func dpQuery() -> [String: Any] {
         kSecAttrService as String: service,
         kSecAttrAccount as String: account,
         kSecUseDataProtectionKeychain as String: true,
-    ]
-}
-
-func legacyQuery() -> [String: Any] {
-    return [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: service,
-        kSecAttrAccount as String: account,
     ]
 }
 
@@ -111,15 +110,12 @@ case "set":
     var add = dpQuery()
     add[kSecAttrAccessControl as String] = access
     add[kSecValueData as String] = secretData
-    var status = SecItemAdd(add as CFDictionary, nil)
-    if status == errSecMissingEntitlement {
-        SecItemDelete(legacyQuery() as CFDictionary)
-        var leg = legacyQuery()
-        leg[kSecValueData as String] = secretData
-        status = SecItemAdd(leg as CFDictionary, nil)
-    }
+    let status = SecItemAdd(add as CFDictionary, nil)
     guard status == errSecSuccess else {
-        FileHandle.standardError.write(Data("approval-keychain: SecItemAdd failed (\(status))\n".utf8))
+        let hint = status == errSecMissingEntitlement
+            ? "; the helper must be signed with a keychain-access-groups entitlement. Refusing to store the secret without Touch ID protection"
+            : ""
+        FileHandle.standardError.write(Data("approval-keychain: SecItemAdd failed (\(status))\(hint)\n".utf8))
         exit(1)
     }
 case "get":
@@ -129,16 +125,7 @@ case "get":
     query[kSecMatchLimit as String] = kSecMatchLimitOne
     query[kSecUseAuthenticationContext as String] = context
     var item: CFTypeRef?
-    var status = SecItemCopyMatching(query as CFDictionary, &item)
-    if status == errSecMissingEntitlement || status == errSecItemNotFound {
-        var leg = legacyQuery()
-        leg[kSecReturnData as String] = true
-        leg[kSecMatchLimit as String] = kSecMatchLimitOne
-        let legStatus = SecItemCopyMatching(leg as CFDictionary, &item)
-        if legStatus == errSecSuccess || status == errSecMissingEntitlement {
-            status = legStatus
-        }
-    }
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
     if status == errSecItemNotFound {
         exit(3)
     }
@@ -149,8 +136,7 @@ case "get":
     FileHandle.standardOutput.write(data)
 case "delete":
     let s1 = SecItemDelete(dpQuery() as CFDictionary)
-    let s2 = SecItemDelete(legacyQuery() as CFDictionary)
-    guard s1 == errSecSuccess || s1 == errSecItemNotFound || s2 == errSecSuccess || s2 == errSecItemNotFound else {
+    guard s1 == errSecSuccess || s1 == errSecItemNotFound else {
         exit(1)
     }
 default:
@@ -170,6 +156,10 @@ build_helper() {
   trap "rm -rf '$tmp_dir'" RETURN
   swift_source > "$tmp_dir/helper.swift"
   swiftc -O "$tmp_dir/helper.swift" -o "$tmp_dir/approval-keychain"
+  # Hardened runtime blocks DYLD_INSERT_LIBRARIES into the helper. An ad hoc signature carries no keychain
+  # entitlement, so the protected store fails closed until the owner signs it (see the header).
+  codesign --force --sign "${APPROVAL_SIGN_IDENTITY:--}" --options runtime ${APPROVAL_ENTITLEMENTS:+--entitlements "$APPROVAL_ENTITLEMENTS"} "$tmp_dir/approval-keychain" \
+    || die "codesign failed for the Keychain helper"
   chmod 0700 "$tmp_dir/approval-keychain"
   mv -f "$tmp_dir/approval-keychain" "$out"
 }

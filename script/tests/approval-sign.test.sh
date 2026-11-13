@@ -162,5 +162,21 @@ else
   ok "swiftc compile check skipped (not Darwin)"
 fi
 
+# 8. Fail closed: the real ad hoc helper has no Keychain entitlement, so it must refuse to store and write to no keychain.
+if [ "$(uname -s)" = Darwin ] && command -v swiftc >/dev/null 2>&1 && command -v security >/dev/null 2>&1; then
+  KC_NS="approval-sign-test-$$-$RANDOM"
+  cleanup_kc() { security delete-generic-password -s agent-team.approval-secret -a "$KC_NS" >/dev/null 2>&1; }
+  trap 'cleanup_kc; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
+  printf 'throwaway-test-value' | "$TMP/bin/compiled-keychain" set "$KC_NS" >/dev/null 2>"$TMP/kc-err" \
+    && bad "unentitled helper must refuse to store" \
+    || ok "unentitled helper exits non-zero on set"
+  security find-generic-password -s agent-team.approval-secret -a "$KC_NS" >/dev/null 2>&1 \
+    && bad "set wrote an unprotected item to a keychain" \
+    || ok "set leaves nothing in any keychain when protected storage is unavailable"
+  codesign -dv "$TMP/bin/compiled-keychain" 2>&1 | grep -q 'flags=.*runtime' \
+    && ok "helper is signed with hardened runtime" || bad "helper lacks hardened runtime"
+fi
+grep -q 'legacyQuery' "$SIGN" && bad "helper source still has a legacy keychain path" || ok "helper source has no legacy keychain path"
+
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
