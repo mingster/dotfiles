@@ -62,8 +62,6 @@ mf_pr_add() {
   "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
   head=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$branch")
   files=$(jq -n --arg f "$path" '[{path:$f, filename:$f}]')
-  # MF_SELF_REVIEW=1: kept for tests that still read it; ship.sh no longer gates on Self-review.
-  [ -z "${MF_SELF_REVIEW:-}" ] || grep -qE '^## Self-review' <<<"$body" || body=$(printf '%s\n\n## Self-review\n%s' "$body" "$head")
   jq -n --argjson n "$n" --arg b "$branch" --arg h "$head" --arg body "$body" --argjson files "$files" --arg base "$base" \
     '{number:$n, state:"OPEN", baseRefName:"main", headRefName:$b, headRefOid:$h, baseRefOid:$base, changedFiles:($files|length), body:$body, files:$files,
       comments:[], closingIssuesReferences:[], mergeable:"MERGEABLE", mergeCommit:null,

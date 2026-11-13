@@ -321,7 +321,7 @@ with_finish_block() { # <spec_file> <run_id>
     printf '\n## Finish\n'
     printf -- '- Self-review the diff before you hand off.\n'
     if grep -qi 'fullstack-dev' "$spec_file"; then
-      printf -- '- Open a PR with the issue closing line, a line `Builder: agent=<agent> model=<model>`, and `## Self-review` with the full 40 hex head sha; rewrite it after every push.\n'
+      printf -- '- Open a PR with the issue closing line, a line `Builder: agent=<agent> model=<model>`.\n'
       printf -- '- Wait until `gh pr checks <n> --watch --fail-fast` (or `gh run list --branch <branch> --limit 3`) shows the checks passing at your final head. Never send worker_done with red or pending checks.\n'
     fi
     printf -- '- Run `orca worktree set --worktree active --workspace-status in-review`, then send `worker_done` to run %s. Never wait for a reply. Never contact the user.\n' "$run_id"

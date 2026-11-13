@@ -278,29 +278,6 @@ pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <r
   return 0
 }
 
-pr_review_gates_self_review_head() { # <body>
-  local body=$1 section sha
-  section=$(printf '%s' "$body" | awk '
-    /^## Self-review([[:space:]]|$)/ { on=1; next }
-    /^## / { if (on) exit; on=0 }
-    on { print }
-  ')
-  sha=$(printf '%s' "$section" | grep -Eo '[0-9a-f]{40}' | head -1)
-  printf '%s' "$sha"
-}
-
-pr_review_gate_self_review() { # <pr_body> <head_sha> <refuse_fn> [carry_fn_name]
-  local body=$1 head=$2 refuse=$3 carry=${4:-} reviewed
-  reviewed=$(pr_review_gates_self_review_head "$body")
-  [ -n "$reviewed" ] || { $refuse "missing ## Self-review naming head $head"; return 1; }
-  [ "$reviewed" = "$head" ] && return 0
-  if [ -n "$carry" ] && declare -F "$carry" >/dev/null 2>&1 && "$carry" "$reviewed" "$head"; then
-    return 0
-  fi
-  $refuse "no self-review at head $head (reviewed $reviewed)"
-  return 1
-}
-
 pr_review_gate_verifier_known() { # <verifier_id> <builder_dispatch> <known_dispatches_newline> <refuse_fn>
   local verifier=$1 builder=$2 known=$3 refuse=$4
   [ -n "$builder" ] && [ "$verifier" = "$builder" ] && { $refuse "verifier $verifier is the PR builder"; return 1; }

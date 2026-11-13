@@ -2,7 +2,6 @@
 # Proving suite for Verdict history preservation (issue #416).
 # Real git, fake gh and orca from the shared fixture; nothing leaves the temp dir.
 set -u
-export MF_SELF_REVIEW=1
 here=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/merge-fixture.sh
 . "$here/tests/lib/merge-fixture.sh"
@@ -102,7 +101,7 @@ fi
 # 4. Stale heads fail closed
 h3=$(new_pr 53); post_checks 53 "$h3"
 verdict 53 --result PASS --head "$h3" --verifier ctx_verify --author ctx_author >/dev/null
-# Advance branch with new commit (stale head); the self-review follows the head so the Verdict gate is what refuses
+# Advance branch with new commit (stale head); the Verdict head match is what refuses
 echo "new work" >> "$MF_REPO/stale.txt"
 git -C "$MF_REPO" checkout -q "vh53"
 git -C "$MF_REPO" add "stale.txt"

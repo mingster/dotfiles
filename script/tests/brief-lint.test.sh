@@ -253,5 +253,8 @@ ec=$?
 set -e
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "brief with no Finish passes (ec=$ec, out=$out)"; fi
 
+# 969. No Self-review section anywhere in the brief: still passes, and a PR body never needed one.
+if ! grep -qi 'self-review' "$tmp/no-finish.md"; then ok; else bad "969 fixture should have no Self-review"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

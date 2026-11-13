@@ -41,18 +41,11 @@ EOS
 chmod +x "$tmp/fake-orca"
 export ORCA_CLI_COMMAND="$tmp/fake-orca"
 
-# 1. Self-review sha carries across verdict_carry hook.
-carry_ok() { [ "$1" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] && [ "$2" = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]; }
-body=$'## Self-review\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
-if pr_review_gate_self_review "$body" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refuse carry_ok; then
-  ok "self-review carries when carry hook accepts"
+# 1. The Self-review head sha gate is gone: no function demands it, a body without it is not looked at.
+if declare -F pr_review_gate_self_review >/dev/null || declare -F pr_review_gates_self_review_head >/dev/null; then
+  bad "self-review gate should be removed"
 else
-  bad "self-review carry hook"
-fi
-if pr_review_gate_self_review "$body" cccccccccccccccccccccccccccccccccccccccc refuse carry_ok; then
-  bad "self-review without carry should refuse"
-else
-  ok "self-review refuses stale sha without carry"
+  ok "no self-review gate"
 fi
 
 # 2. Missing builder agent/model refuses (no Builder: line bypass).
