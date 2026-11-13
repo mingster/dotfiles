@@ -30,6 +30,8 @@ trap 'rm -rf "$HOME"' EXIT
 # Overlap the selected script tests. One-by-one, ship.test.sh and the wrap-up suite
 # already take longer than 15 minutes. CI leaves SELECT_SCRIPT_TESTS_JOBS unset and stays serial.
 export SELECT_SCRIPT_TESTS_JOBS=${SELECT_SCRIPT_TESTS_JOBS:-4}
+# Its release budget is a few seconds and assumes a quiet machine.
+export SELECT_SCRIPT_TESTS_SERIAL=${SELECT_SCRIPT_TESTS_SERIAL:-'*wrap-up-scheduled-cleanup.test.sh'}
 bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${changed[@]+"${changed[@]}"}"
 [ "${#list_only[@]}" -eq 0 ] || { skipped_note; exit 0; }
 # Hook gate tests read brief-lint and the hook files, so any change can break them. Run all of them.

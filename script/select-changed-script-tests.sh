@@ -255,6 +255,19 @@ if [ "$jobs" -le 1 ]; then
     run_one "$test_path"
   done
 else
+  # SELECT_SCRIPT_TESTS_SERIAL is a glob. Those tests run first, alone. A suite with
+  # a few-second budget (wrap-up-scheduled-cleanup) fails if it shares the machine
+  # with ship.test.sh.
+  pool_list=()
+  serial_glob=${SELECT_SCRIPT_TESTS_SERIAL:-}
+  for test_path in "${run_list[@]}"; do
+    if [ -n "$serial_glob" ] && [[ "$test_path" == $serial_glob ]]; then
+      run_one "$test_path"
+    else
+      pool_list+=("$test_path")
+    fi
+  done
+  [ "${#pool_list[@]}" -gt 0 ] || exit 0
   # A finished slot starts the next test. Waiting on the oldest pid would hold the
   # rest of the queue behind one long test. Bash 3.2 has no wait -n, so a fifo
   # token stands in for a free slot. macOS xargs -P also hides a failing child.
@@ -270,7 +283,7 @@ else
   set +e
   pids=()
   n=0
-  for test_path in "${run_list[@]}"; do
+  for test_path in "${pool_list[@]}"; do
     IFS= read -r _ <&3
     n=$((n + 1))
     slot=$n
@@ -300,7 +313,7 @@ else
     fi
   done
   rm -rf "$status_dir"
-  [ "$got" -eq "${#run_list[@]}" ] || exit 1
+  [ "$got" -eq "${#pool_list[@]}" ] || exit 1
   # One failing test keeps its own status so a caller can tell exit 9 from a pool error.
   if [ "$fails" -eq 1 ]; then
     exit "$only"
