@@ -4375,7 +4375,7 @@ def issue_scan_pass(
                 if act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', needs_redesign]) != 0:
                     log_bits.append('rework_cap_label_fail=%d' % pr_num)
                 escalated[pr_key] = True
-                notices.append(Urgent('%s #%d failed twice; redesign due' % (repo, pr_num)))
+                notices.append(Urgent('%s #%d needs redesign' % (repo, pr_num)))
                 log_bits.append('rework_cap=%d' % pr_num)
                 if persist_state:
                     persist_state()
@@ -4555,7 +4555,11 @@ def issue_scan_pass(
 
 
 def workflow_notices(config, state, now, fetch=None, act=None):
-    """Rerun a failed workflow once, then open one issue. A repo whose fetch failed keeps its state."""
+    """Rerun one failed workflow once per head. Never open a failed-twice issue.
+
+    A head that is still red on a later pass is rework input via workflow_watch.
+    Red checks on main stay with main_red_notices. A repo whose fetch failed keeps its state.
+    """
     if fetch is None:
         fetch = fetch_failed_runs
     if act is None:
@@ -4565,16 +4569,16 @@ def workflow_notices(config, state, now, fetch=None, act=None):
         return []
     workflows = watch.get('workflows') or []
     workflow_filter = set(workflows) if workflows else None
-    stall_cfg = config.get('worker_stall') or {}
-    needs_elon = stall_cfg.get('needs_elon_label', 'needs-elon')
-    notices = []
     handled = state.setdefault('workflow_watch', {})
+    spent = state.setdefault('workflow_head_rerun', {})
     for repo in watch['repos']:
         runs = fetch(repo)
         if runs is None:
             continue
         old = handled.get(repo, {})
+        spent_heads = spent.setdefault(repo, {})
         done = {}
+        fresh = []
         for run in runs:
             created = calendar.timegm(time.strptime(run['createdAt'], '%Y-%m-%dT%H:%M:%SZ'))
             if workflow_filter is not None and run['workflowName'] not in workflow_filter:
@@ -4582,23 +4586,27 @@ def workflow_notices(config, state, now, fetch=None, act=None):
             if now - created > RUN_WINDOW:
                 continue
             key = str(run['databaseId'])
+            head = run.get('headSha') or ''
             step = old.get(key)
-            if step == 'issue' or (step == 'rerun' and run['attempt'] < 2):
-                done[key] = step
+            already = step in ('rerun', 'issue') or run['attempt'] >= 2 or (head and head in spent_heads)
+            if already:
+                done[key] = 'issue' if step == 'issue' else 'rerun'
+                if head and head not in spent_heads:
+                    spent_heads[head] = key
                 continue
-            if run['attempt'] < 2 and act(['gh', 'run', 'rerun', key, '--repo', repo, '--failed']) == 0:
+            fresh.append(run)
+        for run in fresh:
+            key = str(run['databaseId'])
+            head = run.get('headSha') or ''
+            if head and head in spent_heads:
                 done[key] = 'rerun'
                 continue
-            title = f"{run['workflowName']} failed twice on {run['headSha'][:8]}"
-            issue_cmd = ['gh', 'issue', 'create', '--repo', repo, '--title', title,
-                         '--body', run['url'], '--label', needs_elon]
-            if act(issue_cmd) == 0:
-                done[key] = 'issue'
-                notices.append(Urgent(f'{repo}: {title}'))
-            else:
-                notices.append(f'{repo}: {title}, issue not opened')
+            act(['gh', 'run', 'rerun', key, '--repo', repo, '--failed'])
+            done[key] = 'rerun'
+            if head:
+                spent_heads[head] = key
         handled[repo] = done
-    return notices
+    return []
 
 
 def main_red_notices(config, state, now, fetch=None):
