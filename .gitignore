@@ -106,6 +106,3 @@ script/wrap-up-fleet.config.json
 script/fleet-pull.config.json
 script/secrets-sync.config.json
 script/weekly-update.projects.conf
-
-# codegraph index (per machine, per working tree)
-.codegraph/

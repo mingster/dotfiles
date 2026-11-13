@@ -122,7 +122,7 @@ probe_host() { # <host>
   local h=$1 f="$probe_dir/$1" t val out
   [ -f "$f" ] && return 0
   if [ -n "${FLEET_TOOLCHAIN_VERSIONS:-}" ] && jq -e --arg h "$h" 'has($h)' <<<"$FLEET_TOOLCHAIN_VERSIONS" >/dev/null 2>&1; then
-    for t in $TOOLS codegraph; do
+    for t in $TOOLS; do
       if jq -e --arg h "$h" --arg t "$t" '.[$h] | has($t)' <<<"$FLEET_TOOLCHAIN_VERSIONS" >/dev/null 2>&1; then
         val=$(jq -r --arg h "$h" --arg t "$t" '.[$h][$t] // ""' <<<"$FLEET_TOOLCHAIN_VERSIONS")
         case "$val" in
@@ -263,29 +263,9 @@ check_host() { # <host>
   done
 }
 
-# codegraph is a trial tool: a host without it is fine, a host with another version than the pin is not.
-codegraph_pin=$(bash "$here/codegraph-setup.sh" version 2>/dev/null || true)
-check_codegraph() { # <host>
-  local st
-  st=$(host_tool_state "$1" codegraph)
-  case "$st" in
-    ok\ *)
-      if [ -n "$codegraph_pin" ] && [ "${st#ok }" != "$codegraph_pin" ]; then
-        echo "fleet-toolchain-check: $1 codegraph ${st#ok } differs from the pin $codegraph_pin"
-        rc=1
-      fi
-      ;;
-    unreadable)
-      echo "fleet-toolchain-check: $1 codegraph version unreadable" >&2
-      rc=1
-      ;;
-  esac
-}
-
 for h in $hosts; do
   [ -n "$h" ] || continue
   check_host "$h"
-  [ "$(host_tool_state "$h" git)" = unreachable ] || check_codegraph "$h"
 done
 
 peer_pin() { # <host> <tool> -> coordinator version for a peer below it, "keep" for a peer level or above, empty to update to latest

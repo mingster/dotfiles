@@ -2,12 +2,11 @@
 # agent-team.sh: Single entrypoint for machine and project Agent Team setup, migration, sync, and drift check.
 #
 # Usage:
-#   ~/dotfiles/script/agent-team.sh machine [--dry-run] [--codegraph]
-#   ~/dotfiles/script/agent-team.sh project [<dir>] [--project-name <name>] [--dry-run] [--labels] [--codegraph]
-#   ~/dotfiles/script/agent-team.sh sync    [<dir>] [--project-name <name>] [--dry-run] [--labels] [--codegraph]
+#   ~/dotfiles/script/agent-team.sh machine [--dry-run]
+#   ~/dotfiles/script/agent-team.sh project [<dir>] [--project-name <name>] [--dry-run] [--labels]
+#   ~/dotfiles/script/agent-team.sh sync    [<dir>] [--project-name <name>] [--dry-run] [--labels]
 #   ~/dotfiles/script/agent-team.sh check   [<dir> ...]
-#   ~/dotfiles/script/agent-team.sh all     [<dir>] [--project-name <name>] [--dry-run] [--labels] [--codegraph]
-# --codegraph also installs the pinned codegraph and indexes the project (docs/agents/codegraph.md).
+#   ~/dotfiles/script/agent-team.sh all     [<dir>] [--project-name <name>] [--dry-run] [--labels]
 set -euo pipefail
 
 export DOTFILES="${DOTFILES:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -239,11 +238,10 @@ PY
 }
 
 cmd_machine() {
-  local dry=0 codegraph=0
+  local dry=0
   for arg in "$@"; do
     case "$arg" in
       --dry-run) dry=1 ;;
-      --codegraph) codegraph=1 ;;
       -h|--help) usage 0 ;;
       *) die "unknown machine option: $arg" 2 ;;
     esac
@@ -354,10 +352,6 @@ cmd_machine() {
   fi
 
   merge_machine_settings "$TEMPLATE_DIR/.claude/settings.json" "$HOME/.claude/settings.json" "$dry"
-
-  if [ "$codegraph" -eq 1 ]; then
-    bash "$DOTFILES/script/codegraph-setup.sh" machine $([ "$dry" -eq 1 ] && echo --dry-run)
-  fi
 }
 
 validate_target_dir() {
@@ -2365,11 +2359,10 @@ PY
 }
 
 cmd_project() {
-  local dry=0 labels=0 codegraph=0 name="" target_raw=""
+  local dry=0 labels=0 name="" target_raw=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) dry=1; shift ;;
-      --codegraph) codegraph=1; shift ;;
       --labels) labels=1; shift ;;
       --project-name)
         [ $# -ge 2 ] || die "--project-name requires a value" 2
@@ -2396,9 +2389,6 @@ cmd_project() {
 
   if [ "$labels" -eq 1 ]; then
     create_github_labels "$target" "$dry"
-  fi
-  if [ "$codegraph" -eq 1 ]; then
-    bash "$DOTFILES/script/codegraph-setup.sh" project "$target" $([ "$dry" -eq 1 ] && echo --dry-run)
   fi
 }
 
@@ -2480,7 +2470,6 @@ cmd_all() {
   local arg
   for arg in "$@"; do
     [ "$arg" = "--dry-run" ] && dry_args+=(--dry-run)
-    [ "$arg" = "--codegraph" ] && dry_args+=(--codegraph)
   done
   cmd_machine ${dry_args[@]+"${dry_args[@]}"}
   cmd_project "$@"
