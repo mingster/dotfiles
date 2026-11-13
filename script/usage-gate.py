@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Provider usage gate: only fresh real usage plus running worker reserve can block.
+"""Provider usage gate: only real usage readings plus a running worker reserve can block.
 
-check --provider NAME exits 0 allowed, 3 weekly/cycle ceiling reached, 4 unknown.
-Antigravity is the one exception (owner 2026-11-12): an unknown reading exits 0 with a note,
-and the worker stops at its first quota or sign-in error. worker-startup.sh and the hook follow the exit code.
+Ceilings, reserve weights and the missing reading rule live in usage-gate.config.json
+(USAGE_GATE_CONFIG overrides the path); check, pick and fleet-watch all read that one file.
+check --provider NAME exits 0 allowed, 3 ceiling reached (or daily cap, automatic starts only),
+4 unknown. A missing reading falls back to the last good one when it is under 2 hours old and at
+least 10 points under the ceiling (allowed with a note); otherwise it is unknown and blocks.
+Antigravity with no reading is allowed in check and pick alike (owner 2026-11-12, 2026-11-13);
+the worker stops at its first quota or sign-in error.
+--auto marks an automatic start (fleet-watch issue scan and babysit pass it). Only an
+automatic start is blocked by the daily cap; manual and coordinator starts never are, they
+get the note "pacing: prefer a lighter model".
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags. fullstack-dev and light-tier roles take the first allowed of
 Cursor grok-4.7-xhigh, then that role's Claude entry, then Antigravity. Strong
-roles never select Cursor. Every other role ranks by remaining weekly/cycle headroom.
+roles never select Cursor. Every other role ranks by headroom per day left until the
+provider's reset, so quota about to reset is spent first.
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
 endpoint; Cursor reads included usage from GetCurrentPeriodUsage, which names
 every model that percent covers, and falls back to the usage-summary meter only
 when that reading is missing; Antigravity queries local GetUserStatus,
 defaulting to the Gemini Flash pool.
-Missing, stale (>5 minutes), expired, invalid or future readings trigger a refresh.
-If the real source cannot supply a fresh reading, report unknown, never inferred
-zero usage or a stale ceiling verdict. Unknown blocks every provider except Antigravity.
-Daily caps and owner cap overrides remain pacing hints only: at the hint, allow
-with note "pacing: prefer a lighter model". --reserve (default 1) holds weekly
-percentage points per running worker; --ceiling defaults to 95. Cursor uses its
-provider billing cycle when verifiable; Antigravity uses separate Flash, Pro/Argon
-and Claude provider model pools.
+Missing, stale (>15 minutes), expired, invalid or future readings trigger a refresh.
+If the real source cannot supply a fresh reading, never infer zero usage or a stale
+ceiling verdict. The reserve holds weekly percentage points per running worker (strong
+models 2, others 1; --reserve N sets a flat value); --ceiling N overrides every
+provider's configured ceiling. Cursor uses its provider billing cycle when verifiable;
+Antigravity uses separate Flash, Pro/Argon and Claude provider model pools.
 """
 import argparse, re, json, math, os, shutil, subprocess, sys, tempfile, time
 from datetime import datetime, timedelta
@@ -28,11 +34,14 @@ from datetime import datetime, timedelta
 HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
 WEEK_MIN = 10080
-TIE_POINTS = 2.0  # headroom points within which the preset provider keeps the pick
+TIE_POINTS = 2.0  # headroom points per day within which the preset provider keeps the pick
 MAX_AGE = 15 * 60  # seconds; an older reading is no reading
+STATE_VERSION = 2  # a state file written before the day baseline rules below is recomputed
+MIN_DAYS = 0.25  # floor on days left, so a reset minutes away does not rank infinitely high
 ORCA = os.environ.get("USAGE_GATE_ORCA", "orca")
 NOT_GATED = ()
-UNKNOWN_ALLOWED = ("antigravity",)  # owner 2026-11-12: these start with no quota reading
+CONFIG = os.environ.get("USAGE_GATE_CONFIG", os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.config.json"))
+LAUNCHES = os.environ.get("WORKER_STARTUP_STATE", HOME + "/.local/state/worker-startup") + "/launches"
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_PERIOD_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
@@ -41,6 +50,17 @@ CURSOR_URGENT_MODEL = "grok-4.7-xhigh-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
 STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops", "qa-sdet")
+
+
+def load_config():
+    """The committed gate config. fleet-watch reads the notice settings from the same file."""
+    with open(CONFIG) as f:
+        return json.load(f)
+
+
+def ceiling_for(provider):
+    config = load_config()
+    return float(config["ceilings"].get(provider, config["default_ceiling"]))
 
 
 def epoch(at):
@@ -519,10 +539,11 @@ def auto_cap(baseline, resets, now, ceiling):
     return round(max(ceiling - baseline, 0.0) / max(days, 1.0), 1)
 
 
-def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None):
+def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None, auto=False):
     """Return (verdict, detail, new_state). verdict: allowed|blocked|unknown.
     reserve is weekly percent held back for workers already running.
-    cap is advisory; None derives pacing from the day baseline and weekly reset."""
+    cap is the daily pacing line; None derives it from the day baseline and weekly reset.
+    Past the cap an automatic start (auto) is blocked until midnight; any other start gets a note."""
     if reading is None:
         return "unknown", {"reason": "no reading"}, state
     pct, resets = reading["pct"], reading.get("resets_at")
@@ -533,8 +554,13 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
     # resets_at can jitter by a few seconds between events; only a jump of an hour is a new week
     moved = (old is None) != (resets is None) or (old is not None and abs(float(resets) - float(old)) >= 3600)
     rolled = moved or pct < st.get("baseline", 0)
-    if st.get("date") != today or "baseline" not in st or rolled:
-        st = {"date": today, "baseline": 0.0 if rolled and st.get("date") == today
+    # A cycle that began before today and "rolled" mid day is a moved reset, not a fresh cycle,
+    # so it is not a zero baseline (Cursor read "100% today" from such a fake zero).
+    began = reading.get("began_at")
+    zero_on_roll = began is None or float(began) >= local_midnight(now)
+    if st.get("date") != today or "baseline" not in st or st.get("v") != STATE_VERSION or rolled:
+        st = {"v": STATE_VERSION, "date": today,
+              "baseline": 0.0 if rolled and st.get("date") == today and zero_on_roll
               else day_baseline(day_start, pct, resets), "resets_at": resets}
     spent = round(pct - st["baseline"], 1)
     if cap is None:
@@ -545,6 +571,9 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
         detail["reason"] = "weekly ceiling"
         return "blocked", detail, st
     if spent + reserve >= cap:
+        if auto:
+            detail["reason"] = "daily cap"
+            return "blocked", detail, st
         detail["note"] = "pacing: prefer a lighter model"
     return "allowed", detail, st
 
@@ -581,27 +610,63 @@ def orca_pages(*command):
         seen.add(cursor)
 
 
-def running_workers(provider):
-    """Live running Dispatches, including retained/reused terminals, in every Run and on every page.
+FINAL_STATES = ("completed", "failed", "cancelled", "abandoned", "succeeded")
 
-    worker-list without --run shows only the caller's Run. None when any Run or page cannot be read.
+
+def live_workers(provider):
+    """Live worker rows on provider in every Run and on every page; None when any Run or page cannot be read.
+
+    worker-list without --run shows only the caller's Run. Today's rows carry agent, liveness, state and
+    terminalState at the top level; older Orca nested provider and liveness under projection.
     """
     try:
         run_ids = [run["id"] for page in orca_pages("run-list") for run in page["runs"]]
-        count = 0
+        live = []
         for run_id in run_ids:
             for result in orca_pages("worker-list", "--run", run_id):
                 for worker in result["workers"]:
                     projection = worker.get("projection") or {}
-                    # Older hosts may omit terminalState; their provider projection remains usable.
-                    if (worker.get("terminalState") not in ("released", "reclaimable")
-                            and worker.get("dispatchStatus") not in ("completed", "failed", "cancelled", "abandoned")
-                            and (projection.get("liveness") or {}).get("verdict") != "exited"
-                            and (projection.get("provider") or {}).get("id") == provider):
-                        count += 1
-        return count
+                    agent = worker.get("agent") or (projection.get("provider") or {}).get("id")
+                    liveness = worker.get("liveness") or (projection.get("liveness") or {}).get("verdict")
+                    if (agent == provider and liveness != "exited"
+                            and worker.get("terminalState") not in ("released", "reclaimable")
+                            and worker.get("dispatchStatus") not in FINAL_STATES
+                            and worker.get("state") not in FINAL_STATES):
+                        live.append(worker)
+        return live
     except Exception:
         return None
+
+
+def running_workers(provider):
+    workers = live_workers(provider)
+    return None if workers is None else len(workers)
+
+
+def worker_weight(worker):
+    """Reserve points for one running worker: strong models hold more than the rest."""
+    config = load_config()
+    model = ((worker.get("projection") or {}).get("provider") or {}).get("model") or worker.get("model")
+    dispatch = worker.get("dispatchId")
+    if not model and isinstance(dispatch, str) and re.fullmatch(r"[A-Za-z0-9_-]+", dispatch):
+        try:
+            with open(f"{LAUNCHES}/{dispatch}.json") as f:
+                model = json.load(f).get("model")
+        except (OSError, ValueError, AttributeError):
+            pass
+    strong = isinstance(model, str) and any(tag in model.lower() for tag in config["strong_models"])
+    return float(config["reserve_points"]["strong" if strong else "other"])
+
+
+def running_reserve(provider, per_worker=None):
+    """(running workers, reserve points) for a provider. per_worker, when given, is a flat weight."""
+    if per_worker is not None:
+        running = running_workers(provider)
+        return running, per_worker * (running or 0)
+    workers = live_workers(provider)
+    if workers is None:
+        return None, 0.0
+    return len(workers), sum(worker_weight(w) for w in workers)
 
 
 def local(ts):
@@ -614,9 +679,47 @@ def next_midnight(now):
 
 
 def blocked_until(detail, now):
-    """Only the provider's real reset ends a weekly/cycle ceiling block."""
+    """The provider's real reset ends a weekly/cycle ceiling block; midnight ends a daily cap block."""
+    if detail.get("reason") == "daily cap":
+        return next_midnight(now)
     resets = detail.get("resets_at")
     return float(resets) if resets else None
+
+
+def save_last_good(provider, reading):
+    """Keep the newest fresh reading (numbers only) so a later outage can fall back on it."""
+    path = f"{STATE}/{provider}.last-good.json"
+    keep = {k: reading.get(k) for k in ("pct", "resets_at", "observed_at", "began_at")}
+    try:
+        with open(path) as f:
+            if json.load(f).get("observed_at") == keep["observed_at"]:
+                return
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(keep, f)
+    except OSError:
+        pass
+
+
+def last_good(provider, now, ceiling):
+    """(reading, age minutes, usable). usable: under the config age limit and the margin under the ceiling."""
+    try:
+        with open(f"{STATE}/{provider}.last-good.json") as f:
+            old = json.load(f)
+        t, pct = epoch(old["observed_at"]), float(old["pct"])
+        resets = epoch(old.get("resets_at"))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None, None, False
+    if t is None or not math.isfinite(pct) or not 0 <= now - t:
+        return None, None, False
+    config = load_config()
+    age = round((now - t) / 60, 1)
+    usable = (now - t < config["last_good_max_age_min"] * 60 and (resets is None or resets > now)
+              and ceiling - pct >= config["last_good_margin_points"])
+    return {**old, "pct": pct, "resets_at": resets}, age, usable
 
 
 def antigravity_result(pools, ceiling, now, model=None, pool=None, reserve=0.0, running=None):
@@ -628,7 +731,9 @@ def antigravity_result(pools, ceiling, now, model=None, pool=None, reserve=0.0, 
     result["reading_age_min"] = ((now - epoch(reading["observed_at"])) / 60
                                   if reading and epoch(reading.get("observed_at")) is not None else None)
     if not fresh(reading, now):
-        result["reason"] = "GetUserStatus returned no fresh valid pool quota"
+        # Owner 2026-11-12 and 2026-11-13: no reading starts anyway, in check and pick alike.
+        result.update(verdict="allowed", blind=True, reason="GetUserStatus returned no fresh valid pool quota",
+                      note="no quota reading: starting anyway, stop at the first quota or sign-in error")
         return result
     blocked = reading["pct"] + reserve >= ceiling
     result.update(verdict="blocked" if blocked else "allowed", weekly_used=reading["pct"],
@@ -642,15 +747,16 @@ def antigravity_result(pools, ceiling, now, model=None, pool=None, reserve=0.0, 
     return result
 
 
-def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
+def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=False):
     live_clock = now is None
     now = time.time() if live_clock else now
+    if ceiling is None:
+        ceiling = ceiling_for(provider)
     if provider == "antigravity":
         pools = READERS[provider]() or {}
         now = time.time() if live_clock else now
-        running = running_workers(provider) if pools else None
-        return antigravity_result(pools, ceiling, now, model=model,
-                                  reserve=per_worker * (running or 0), running=running)
+        running, points = running_reserve(provider, per_worker) if pools else (None, 0.0)
+        return antigravity_result(pools, ceiling, now, model=model, reserve=points, running=running)
     today = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
     midnight = local_midnight(now)
     path = f"{STATE}/{provider}.json"
@@ -679,10 +785,16 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
             source = reading_source(provider, refresh=True)
             failure = "refresh failed: " + type(exc).__name__
     # Do not print exception text: provider responses can contain credentials.
-    running = running_workers(provider) if reading else None
-    reserve = round(per_worker * (running or 0), 1)
+    carried, carried_age, carried_ok = (None, None, False)
+    if reading:
+        save_last_good(provider, reading)
+    elif reader:
+        carried, carried_age, carried_ok = last_good(provider, now, ceiling)
+    basis = reading or (carried if carried_ok else None)
+    running, points = running_reserve(provider, per_worker) if basis else (None, 0.0)
+    reserve = round(points, 1)
     day_start = None
-    if reading and (state or {}).get("date") != today:
+    if reading and ((state or {}).get("date") != today or (state or {}).get("v") != STATE_VERSION):
         day_start = start_of_day(reading, provider, midnight)
     if cap is None:
         # Owner approved cap: STATE/<provider>.cap-override.json {"date": "YYYY-MM-DD", "cap": N}
@@ -693,7 +805,7 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
                 cap = float(o["cap"])
         except (OSError, ValueError, KeyError, TypeError):
             pass
-    verdict, detail, new = decide(reading, state, today, now, cap, ceiling, reserve, day_start)
+    verdict, detail, new = decide(basis, state, today, now, cap, ceiling, reserve, day_start, auto)
     if new is not state and new:
         os.makedirs(STATE, exist_ok=True)
         json.dump(new, open(path, "w"))
@@ -702,13 +814,23 @@ def run(provider, cap, ceiling, now=None, per_worker=1.0, model=None):
     if not reading and previous:
         detail["last_reading_source"] = reading_source(provider)
     detail["reading_age_min"] = round((now - t) / 60, 1) if t is not None else None
-    if not reading:
+    if not basis:
         detail["reason"] = ("no reliable Cursor included-usage reading; read the Cursor dashboard"
                             if provider == "cursor" else failure)
-    if reading:
-        t = epoch(reading.get("observed_at"))
-        detail["reading_age_min"] = round((now - t) / 60) if t is not None else None
+        if carried:
+            detail["last_good_pct"] = carried["pct"]
+            detail["headroom"] = round(max(ceiling - carried["pct"], 0.0), 1)
+            detail["reason"] += (f"; last good reading {carried_age:g}m old, "
+                                 f"{ceiling - carried['pct']:g} points under the ceiling")
+    if not reading and carried_ok:
+        stale = f"no fresh reading: using the last good one from {carried_age:g}m ago"
+        detail["note"] = "; ".join(filter(None, (stale, detail.get("note"))))
+        detail["carried"] = True
+    if basis:
+        t = epoch(basis.get("observed_at"))
+        detail["reading_age_min"] = (round((now - t) / 60, 1) if carried_ok else round((now - t) / 60)) if t is not None else None
         detail["running"] = running
+        detail["headroom"] = round(max(ceiling - basis["pct"] - reserve, 0.0), 1)
         detail["resets_local"] = local(detail.get("resets_at"))
         if verdict == "blocked":
             until = blocked_until(detail, now)
@@ -730,9 +852,9 @@ def table(rows):
     out = []
     for r in rows:
         name = "cursor included" if r["provider"] == "cursor" else r["provider"]
-        if r["verdict"] == "unknown":
+        if r["verdict"] == "unknown" or r.get("blind"):
             note = "not gated" if r["provider"] in NOT_GATED else r.get("reason", "no reading")
-            out.append((name, "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
+            out.append((name, "allowed (no reading)" if r.get("blind") else "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
             continue
         age = r.get("reading_age_min")
         out.append((name, r["verdict"], f"{r['weekly_used']:g}",
@@ -742,13 +864,15 @@ def table(rows):
                     f"{r['blocked_until_local']} ({r['reason']})" if r["verdict"] == "blocked" else r.get("note", "now")))
     widths = [max(len(str(x[i])) for x in [head] + out) for i in range(len(head))]
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip() for row in [head] + out]
-    lines.append("cap% is a pacing hint only; only fresh real usage + reserve% reaching the weekly/cycle ceiling blocks.")
-    ordered = sorted(rows, key=lambda r: headroom(r)[1] if headroom(r)[1] is not None else -float("inf"),
+    lines.append("cap% blocks automatic starts only (fleet-watch); other starts get a pacing note. "
+                 "The ceiling plus reserve% blocks every start.")
+    now = time.time()
+    ordered = sorted(rows, key=lambda r: pace(r, now) if pace(r, now) is not None else -float("inf"),
                      reverse=True)
     order = []
     for row in ordered:
-        fraction = headroom(row)[1]
-        note = f"{fraction * 100:.1f}%" if fraction is not None else (
+        score = pace(row, now)
+        note = f"{score:.1f} pts/day" if score is not None else (
             "not gated" if row["provider"] in NOT_GATED else row.get("reason", "unknown"))
         if note == "no reading":
             note = "unknown"
@@ -761,8 +885,18 @@ def headroom(row):
     """Remaining real weekly/cycle headroom; daily pacing never ranks out a provider."""
     if row.get("verdict") == "unknown" or "weekly_used" not in row:
         return None, None
-    room = row["ceiling"] - row["weekly_used"] - row.get("reserve", 0)
+    room = max(row["ceiling"] - row["weekly_used"] - row.get("reserve", 0), 0.0)
     return room, room / row["ceiling"] if row["ceiling"] > 0 else 0.0
+
+
+def pace(row, now):
+    """Headroom points per day left until the provider's reset: quota about to reset is spent first."""
+    room = headroom(row)[0]
+    if room is None:
+        return None
+    resets = row.get("resets_at")
+    days = max((float(resets) - now) / 86400, MIN_DAYS) if resets else 7.0
+    return room / days
 
 
 def link_presets():
@@ -906,7 +1040,7 @@ def _gated_model(entry):
     return None
 
 
-def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
+def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False):
     chain, pinned = role_chain(role)
     builder = is_builder_role(role)
     if builder:
@@ -915,11 +1049,12 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
     for entry in chain:
         key = (entry["provider"], _gated_model(entry))
         if key not in rows:
-            rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1])
+            rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1], auto=auto)
     known = antigravity_models() if any(e["provider"] == "antigravity" for e in chain) else None
     gated = [r for (p, _), r in rows.items() if p in READERS]
     fallback = all(r["verdict"] == "blocked" for r in gated)
     candidates, allowed = [], []
+    now = time.time()
     for index, entry in enumerate(chain):
         row = rows[(entry["provider"], _gated_model(entry))]
         room, fraction = headroom(row)
@@ -935,7 +1070,9 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
-                     "headroom_fraction": fraction, "excluded_family": excluded,
+                     "headroom_fraction": fraction, "headroom_per_day": pace(row, now),
+                     "reason": row.get("reason"), "reading_age_min": row.get("reading_age_min"),
+                     "last_headroom": row.get("headroom"), "excluded_family": excluded,
                      "excluded_provider": excluded_provider,
                      "eligible": eligible and not excluded and not excluded_provider}
         candidates.append(candidate)
@@ -948,13 +1085,13 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
         elif (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
             chosen = allowed[0][1]
         else:
-            best = max(allowed, key=lambda pair: pair[1]["headroom_fraction"]
-                       if pair[1]["headroom_fraction"] is not None else -1)[1]
+            best = max(allowed, key=lambda pair: pair[1]["headroom_per_day"]
+                       if pair[1]["headroom_per_day"] is not None else -1)[1]
             first = allowed[0][1]
-            # Near equal headroom keeps the role's preset provider so readings that wobble
-            # by a point do not flip the pick; switch only when clearly lower (over 2 points).
-            near = (first["headroom"] is None or best["headroom"] is None
-                    or best["headroom"] - first["headroom"] <= TIE_POINTS)
+            # Near equal pace keeps the role's preset provider so readings that wobble
+            # by a point do not flip the pick; switch only when clearly lower (over 2 points a day).
+            near = (first["headroom_per_day"] is None or best["headroom_per_day"] is None
+                    or best["headroom_per_day"] - first["headroom_per_day"] <= TIE_POINTS)
             chosen = first if allowed[0][0] == 0 and near else best
     resets = [r["blocked_until"] for r in rows.values() if r.get("blocked_until")]
     until = min(resets) if resets else None
@@ -965,7 +1102,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None):
 def candidate_reason(candidate):
     fraction = candidate["headroom_fraction"]
     room = candidate["headroom"]
-    detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of ceiling)"
+    detail = "headroom unknown" if room is None else f"headroom {room:g}% ({fraction * 100:.1f}% of ceiling, {candidate['headroom_per_day']:.1f} pts/day)"
     note = ("excluded provider" if candidate["excluded_provider"] else
             "excluded family" if candidate["excluded_family"] else candidate["verdict"])
     return f"{candidate['provider']} {candidate['model']}: {detail}, {note}"
@@ -981,10 +1118,13 @@ def main(argv=None):
     ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer", "grok"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])
     ap.add_argument("--cap", type=float, default=None,
-                    help="advisory daily pacing hint; never blocks")
-    ap.add_argument("--ceiling", type=float, default=95.0)
-    ap.add_argument("--reserve", type=float, default=1.0,
-                    help="weekly percent held back per worker already running on the provider")
+                    help="daily pacing line; blocks automatic starts (--auto) only")
+    ap.add_argument("--auto", action="store_true",
+                    help="an automatic start (fleet-watch): the daily cap blocks it")
+    ap.add_argument("--ceiling", type=float, default=None,
+                    help="override every provider's ceiling from usage-gate.config.json")
+    ap.add_argument("--reserve", type=float, default=None,
+                    help="flat weekly percent held back per running worker; default is the config weights")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd in ("check", "pick", "link"):
@@ -1001,7 +1141,7 @@ def main(argv=None):
         if not a.role:
             ap.error("pick requires --role")
         try:
-            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider)
+            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider, a.auto)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"cannot read role presets: {type(exc).__name__}", file=sys.stderr)
             return 4
@@ -1025,14 +1165,12 @@ def main(argv=None):
     for name in names:
         if name == "antigravity" and a.cmd == "show":
             pools = READERS[name]() or {}
-            running = running_workers(name) if pools else None
-            out.extend(antigravity_result(pools, a.ceiling, time.time(), pool=pool,
-                                         reserve=a.reserve * (running or 0), running=running)
+            running, points = running_reserve(name, a.reserve) if pools else (None, 0.0)
+            out.extend(antigravity_result(pools, a.ceiling or ceiling_for(name), time.time(), pool=pool,
+                                         reserve=points, running=running)
                        for pool in ("claude", "gemini-flash", "gemini-pro"))
         else:
-            out.append(run(name, a.cap, a.ceiling, per_worker=a.reserve, model=a.model))
-    if a.cmd == "check" and a.provider in UNKNOWN_ALLOWED and out[0]["verdict"] == "unknown":
-        out[0] = {**out[0], "note": "no quota reading: starting anyway, stop at the first quota or sign-in error"}
+            out.append(run(name, a.cap, a.ceiling, per_worker=a.reserve, model=a.model, auto=a.auto))
     if a.cmd == "show" and not a.json:
         print(table(out))
     else:
@@ -1040,8 +1178,6 @@ def main(argv=None):
     if a.cmd == "show":
         return 0
     if a.provider:
-        if "note" in out[0] and out[0]["verdict"] == "unknown":
-            return 0
         return {"allowed": 0, "blocked": 3, "unknown": 4}[out[0]["verdict"]]
     if any(o["verdict"] == "allowed" for o in out):
         return 0

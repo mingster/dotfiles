@@ -263,6 +263,55 @@ else: sys.exit(1)
     finally:
         if heavy.poll() is None: heavy.terminate()
         heavy.communicate(timeout=10)
+    # A _checks gitfile that points at a deleted repo is replaced and the checks run.
+    # A gitfile that still points at a live repo is left in place and posts no receipt.
+    shutil.rmtree(wt, ignore_errors=True)
+    subprocess.run(['git','-C',str(repo),'worktree','prune'],check=True)
+    conf.write_text(line('orphan recovered')+'\n')
+    git('add','.agents/head-checks.conf'); git('commit','-qm','orphan checklist')
+    orphan_head=git('rev-parse','HEAD'); env['GH_HEAD']=orphan_head
+    scratch=root/'scratch-orphan'; scratch.mkdir()
+    for args in (['init','-q'],['config','user.email','fixture@example.invalid'],['config','user.name','Fixture']):
+        subprocess.run(['git','-C',str(scratch),*args],check=True)
+    (scratch/'s.txt').write_text('scratch\n')
+    subprocess.run(['git','-C',str(scratch),'add','.'],check=True)
+    subprocess.run(['git','-C',str(scratch),'commit','-qm','scratch'],check=True)
+    subprocess.run(['git','-C',str(scratch),'worktree','add','--detach',str(wt),'HEAD'],check=True)
+    (wt/'orphan-marker').write_text('old\n')
+    dead_gitdir=pathlib.Path((wt/'.git').read_text().split(' ',1)[1].strip())
+    shutil.rmtree(scratch)
+    if dead_gitdir.exists():
+        failed+=1; print('FAIL orphan setup',dead_gitdir)
+    else:
+        order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+        recovered=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=60)
+        same=subprocess.run(['git','-C',str(wt),'rev-parse','--path-format=absolute','--git-common-dir'],text=True,capture_output=True)
+        repo_common=subprocess.run(['git','-C',str(repo),'rev-parse','--path-format=absolute','--git-common-dir'],text=True,capture_output=True)
+        if (recovered.returncode==0 and comments.exists() and comments.read_text().startswith('Checks: PASS head='+orphan_head)
+                and order.read_text()=='orphan recovered\n' and not (wt/'orphan-marker').exists()
+                and same.returncode==0 and same.stdout.strip()==repo_common.stdout.strip()):
+            passed+=1; print('ok   orphan check worktree is replaced and checks run')
+        else:
+            failed+=1; print('FAIL orphan check worktree',recovered.returncode,recovered.stdout,comments.read_text() if comments.exists() else '',same.stdout,same.stderr)
+    foreign=root/'scratch-live'; foreign.mkdir()
+    for args in (['init','-q'],['config','user.email','fixture@example.invalid'],['config','user.name','Fixture']):
+        subprocess.run(['git','-C',str(foreign),*args],check=True)
+    (foreign/'f.txt').write_text('live\n')
+    subprocess.run(['git','-C',str(foreign),'add','.'],check=True)
+    subprocess.run(['git','-C',str(foreign),'commit','-qm','live'],check=True)
+    foreign_wt=root/'foreign-wt'
+    subprocess.run(['git','-C',str(foreign),'worktree','add','--detach',str(foreign_wt),'HEAD'],check=True)
+    (foreign_wt/'live-marker').write_text('stay\n')
+    wt.mkdir(parents=True, exist_ok=True)
+    (wt/'kept-marker').write_text('stay\n')
+    (wt/'.git').write_text((foreign_wt/'.git').read_text())
+    order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+    refused=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env={**env,'HEAD_CHECKS_SLOTS':'1'},text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=60)
+    if (refused.returncode==1 and 'cannot replace unusable check worktree' in refused.stdout and 'Checks:' not in refused.stdout
+            and not comments.exists() and not order.exists() and (wt/'kept-marker').is_file() and (foreign_wt/'live-marker').is_file()):
+        passed+=1; print('ok   unusable check worktree refuses with no receipt')
+    else:
+        failed+=1; print('FAIL unusable check worktree receipt',refused.returncode,refused.stdout,comments.exists(),order.exists(),(wt/'kept-marker').exists(),(foreign_wt/'live-marker').exists())
 print(f'passed {passed}, failed {failed}')
 sys.exit(bool(failed))
 PY

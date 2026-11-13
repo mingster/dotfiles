@@ -2,12 +2,11 @@
 # agent-team.sh: Single entrypoint for machine and project Agent Team setup, migration, sync, and drift check.
 #
 # Usage:
-#   ~/dotfiles/script/agent-team.sh machine [--dry-run] [--codegraph]
-#   ~/dotfiles/script/agent-team.sh project [<dir>] [--project-name <name>] [--dry-run] [--labels] [--codegraph]
-#   ~/dotfiles/script/agent-team.sh sync    [<dir>] [--project-name <name>] [--dry-run] [--labels] [--codegraph]
+#   ~/dotfiles/script/agent-team.sh machine [--dry-run]
+#   ~/dotfiles/script/agent-team.sh project [<dir>] [--project-name <name>] [--dry-run] [--labels]
+#   ~/dotfiles/script/agent-team.sh sync    [<dir>] [--project-name <name>] [--dry-run] [--labels]
 #   ~/dotfiles/script/agent-team.sh check   [<dir> ...]
-#   ~/dotfiles/script/agent-team.sh all     [<dir>] [--project-name <name>] [--dry-run] [--labels] [--codegraph]
-# --codegraph also installs the pinned codegraph and indexes the project (docs/agents/codegraph.md).
+#   ~/dotfiles/script/agent-team.sh all     [<dir>] [--project-name <name>] [--dry-run] [--labels]
 set -euo pipefail
 
 export DOTFILES="${DOTFILES:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -239,11 +238,10 @@ PY
 }
 
 cmd_machine() {
-  local dry=0 codegraph=0
+  local dry=0
   for arg in "$@"; do
     case "$arg" in
       --dry-run) dry=1 ;;
-      --codegraph) codegraph=1 ;;
       -h|--help) usage 0 ;;
       *) die "unknown machine option: $arg" 2 ;;
     esac
@@ -354,10 +352,6 @@ cmd_machine() {
   fi
 
   merge_machine_settings "$TEMPLATE_DIR/.claude/settings.json" "$HOME/.claude/settings.json" "$dry"
-
-  if [ "$codegraph" -eq 1 ]; then
-    bash "$DOTFILES/script/codegraph-setup.sh" machine $([ "$dry" -eq 1 ] && echo --dry-run)
-  fi
 }
 
 validate_target_dir() {
@@ -417,6 +411,7 @@ check_safe_paths() {
     docs/agents/deploy-facts.md
     docs/agents/elon-dispatch.md
     docs/agents/release-manager-work.md
+    docs/agents/fleet-watch.md
     bin
     bin/changelog-compile.sh
     bin/changelog-compile.test.sh
@@ -587,6 +582,7 @@ TEMPLATE_SYNC_FILES = [
     "docs/agents/team.md",
     "docs/agents/elon-dispatch.md",
     "docs/agents/release-manager-work.md",
+    "docs/agents/fleet-watch.md",
     "bin/changelog-compile.sh",
     "bin/changelog-compile.test.sh",
     "changelog.d/README.md",
@@ -1019,6 +1015,15 @@ def compact_hook_cmd(cmd):
 def read_text(path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def template_sync_body(rel):
+    src = os.path.join(template_dir, rel)
+    # Owner adds templates/agent-team/docs/agents/fleet-watch.md. Until that copy
+    # exists, sync and check leave projects alone instead of failing every run.
+    if rel == "docs/agents/fleet-watch.md" and not os.path.isfile(src):
+        return None
+    return read_text(src).replace("{{PROJECT_NAME}}", project_name)
 
 
 def write_text(rel, content, executable=False):
@@ -2173,9 +2178,10 @@ def seed_and_sync_project(proj_settings_mem=None):
     write_text(".claude/settings.json", compiled_settings)
 
     for rel in TEMPLATE_SYNC_FILES:
-        src = os.path.join(template_dir, rel)
-        is_exec = rel.endswith(".sh")
-        write_text(rel, read_text(src).replace("{{PROJECT_NAME}}", project_name), executable=is_exec)
+        body = template_sync_body(rel)
+        if body is None:
+            continue
+        write_text(rel, body, executable=rel.endswith(".sh"))
 
 
 def run_check():
@@ -2261,12 +2267,14 @@ def run_check():
                 drifts.append(".claude/settings.json differs from compiled merge")
 
     for rel in TEMPLATE_SYNC_FILES:
+        body = template_sync_body(rel)
+        if body is None:
+            continue
         full = os.path.join(target, rel)
-        src = os.path.join(template_dir, rel)
         if not os.path.isfile(full):
             drifts.append(f"missing template-managed file: {rel}")
         else:
-            if read_text(full) != read_text(src).replace("{{PROJECT_NAME}}", project_name):
+            if read_text(full) != body:
                 drifts.append(f"template-managed file drifted: {rel}")
             if rel.endswith(".sh") and not os.access(full, os.X_OK):
                 drifts.append(f"template-managed script not executable: {rel}")
@@ -2365,11 +2373,10 @@ PY
 }
 
 cmd_project() {
-  local dry=0 labels=0 codegraph=0 name="" target_raw=""
+  local dry=0 labels=0 name="" target_raw=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) dry=1; shift ;;
-      --codegraph) codegraph=1; shift ;;
       --labels) labels=1; shift ;;
       --project-name)
         [ $# -ge 2 ] || die "--project-name requires a value" 2
@@ -2396,9 +2403,6 @@ cmd_project() {
 
   if [ "$labels" -eq 1 ]; then
     create_github_labels "$target" "$dry"
-  fi
-  if [ "$codegraph" -eq 1 ]; then
-    bash "$DOTFILES/script/codegraph-setup.sh" project "$target" $([ "$dry" -eq 1 ] && echo --dry-run)
   fi
 }
 
@@ -2480,7 +2484,6 @@ cmd_all() {
   local arg
   for arg in "$@"; do
     [ "$arg" = "--dry-run" ] && dry_args+=(--dry-run)
-    [ "$arg" = "--codegraph" ] && dry_args+=(--codegraph)
   done
   cmd_machine ${dry_args[@]+"${dry_args[@]}"}
   cmd_project "$@"

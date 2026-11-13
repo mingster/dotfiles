@@ -1,0 +1,10 @@
+{
+  "ceilings": {"claude": 95, "cursor": 100, "antigravity": 95},
+  "default_ceiling": 95,
+  "reserve_points": {"strong": 2, "other": 1},
+  "strong_models": ["opus", "argon", "pro"],
+  "last_good_max_age_min": 120,
+  "last_good_margin_points": 10,
+  "notice_after_min": 30,
+  "notice_headroom_points": 20
+}

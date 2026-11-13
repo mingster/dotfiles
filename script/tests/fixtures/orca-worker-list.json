@@ -1,0 +1,80 @@
+{
+ "ok": true,
+ "result": {
+  "workers": [
+   {
+    "dispatchId": "ctx_8470295b380b",
+    "taskId": "task_24c540b8a0ef",
+    "state": "ready",
+    "outcome": "in_progress",
+    "liveness": "live",
+    "agent": "claude",
+    "terminal": "term_c045b531-0460-46d7-979c-9e6e71a378db",
+    "terminalState": "active",
+    "workspace": "ws_0::/workspaces/example/ws_0",
+    "host": "local"
+   },
+   {
+    "dispatchId": "ctx_9313bdc964f8",
+    "taskId": "task_b9c2d9e1bb0b",
+    "state": "ready",
+    "outcome": "in_progress",
+    "liveness": "live",
+    "agent": "claude",
+    "terminal": "term_a46462d2-e93a-41cb-a1cd-e3decf807b87",
+    "terminalState": "active",
+    "workspace": "ws_1::/workspaces/example/ws_1",
+    "host": "local"
+   },
+   {
+    "dispatchId": "ctx_f2d200a271bc",
+    "taskId": "task_194d362914a4",
+    "state": "ready",
+    "outcome": "in_progress",
+    "liveness": "live",
+    "agent": "claude",
+    "terminal": "term_b68c68d1-6058-413b-9697-1f4f9625ef3a",
+    "terminalState": "active",
+    "workspace": "ws_2::/workspaces/example/ws_2",
+    "host": "local"
+   },
+   {
+    "dispatchId": "ctx_3fa76276aca3",
+    "taskId": "task_2cc80a618b14",
+    "state": "succeeded",
+    "liveness": "exited",
+    "terminal": "term_d44d0339-b448-4549-ab10-453202a96ea0",
+    "terminalState": "released",
+    "workspace": "ws_3::/workspaces/example/ws_3",
+    "host": "local"
+   },
+   {
+    "dispatchId": "ctx_865c5b7957a8",
+    "taskId": "task_f7584e3dea34",
+    "state": "succeeded",
+    "liveness": "exited",
+    "terminal": "term_3407b482-1920-4bd9-b3a9-ad133391a21b",
+    "terminalState": "released",
+    "workspace": "ws_4::/workspaces/example/ws_4",
+    "host": "local"
+   },
+   {
+    "dispatchId": "ctx_b8cb64ff150a",
+    "taskId": "task_a6120adf2f41",
+    "state": "succeeded",
+    "liveness": "exited",
+    "terminal": "term_08221428-1a8d-4aa0-9233-5c6902b22572",
+    "terminalState": "released",
+    "workspace": "ws_5::/workspaces/example/ws_5",
+    "host": "local"
+   }
+  ],
+  "scope": {
+   "run": "run_2d30da234f80",
+   "source": "flag"
+  },
+  "warnings": [
+   "Showing 100 of 1023 Dispatches, newest first; more are on later pages. Follow page.nextCursor with --cursor."
+  ]
+ }
+}
