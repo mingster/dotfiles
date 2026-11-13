@@ -133,6 +133,17 @@ echo 'ok explicit dry run preserves panes'
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test -f "$HOME/panes-closed"
 echo 'ok apply invokes pane cleanup without arguments'
+# A pane sweep that runs out of time (timeout exit 124) is slow, not broken: the run still succeeds, says so, and goes on to update main.
+cp "$HOME/.claude/skills/orca-team/worker-pane-close.sh" "$tmp/pane-ok.sh"
+printf '#!/usr/bin/env bash\nexit 124\n' > "$HOME/.claude/skills/orca-team/worker-pane-close.sh"
+bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/pane-slow-err" || { cat "$tmp/pane-slow-err"; echo 'slow pane sweep failed the run'; exit 1; }
+grep -Fq 'worker-pane-close timed out' "$tmp/output" "$tmp/pane-slow-err" || { echo 'slow pane sweep left no note'; exit 1; }
+! grep -Fq 'worker-pane-close exited' "$tmp/output" "$tmp/pane-slow-err" || { echo 'slow pane sweep counted as a failure'; exit 1; }
+printf '#!/usr/bin/env bash\nexit 3\n' > "$HOME/.claude/skills/orca-team/worker-pane-close.sh"
+if bash "$here/wrap-up.sh" --apply > "$tmp/output" 2> "$tmp/pane-bad-err"; then echo 'a failing pane sweep passed the run'; exit 1; fi
+grep -Fq 'worker-pane-close exited 3' "$tmp/output" "$tmp/pane-bad-err" || { echo 'a failing pane sweep was not reported'; exit 1; }
+cp "$tmp/pane-ok.sh" "$HOME/.claude/skills/orca-team/worker-pane-close.sh"
+echo 'ok a timed out pane sweep is a note, any other pane failure still fails'
 git clone -q --branch main "$tmp/origin" "$tmp/updater"
 git -C "$tmp/updater" config user.email test@example.invalid
 git -C "$tmp/updater" config user.name Test

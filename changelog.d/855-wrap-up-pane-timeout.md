@@ -1,0 +1,1 @@
+A worker pane sweep that runs out of time no longer fails the scheduled wrap-up round for every repo. It is logged as a note and retried next run, while any other pane close failure still fails the run.

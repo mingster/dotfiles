@@ -70,6 +70,7 @@ calls="$tmp/calls"; log="$tmp/home/round.log"; detail="$tmp/home/round-detail.lo
 passed=0; failed=0
 check() { if "${@:2}"; then printf 'ok %s\n' "$1"; passed=$((passed+1)); else printf 'FAIL %s\n' "$1"; failed=$((failed+1)); fi; }
 has() { grep -Fq -- "$1" "$2"; }
+not_has() { ! grep -Fq -- "$1" "$2"; }
 lacks() { ! grep -Fq -- "$1" "$2" 2>/dev/null; }
 ncalls() { [ -f "$calls" ] && wc -l < "$calls" | tr -d ' ' || echo 0; }
 lines() { [ -f "$log" ] && wc -l < "$log" | tr -d ' ' || echo 0; }
@@ -424,7 +425,8 @@ run_limited 5 env -i HOME="$tmp/home" PATH="$tmp/bin/orca-apply:$tmp/bin/gh-appl
   bash "$script" --apply --repo "$mini" >>"$detail" 2>&1 || true
 p_elapsed=$((SECONDS - p_start))
 check 'hung pane close is cut off by bounded helper within budget' test "$p_elapsed" -lt 4
-check 'hung pane close records timeout exit 124 in failures' has 'worker panes: worker-pane-close exited 124' "$detail"
+check 'hung pane close is noted as a timeout, not a failure' has 'worker-pane-close timed out' "$detail"
+check 'hung pane close does not fail the repo' not_has 'worker panes: worker-pane-close exited' "$detail"
 
 # Multi-repo scheduled round stops starting new repos when its budget is spent and logs which repos it skipped.
 reset
