@@ -38,4 +38,4 @@ Log only what would change a rule with `~/dotfiles/script/team-audit.sh --log "<
 - After the start: confirm acceptance within 2 minutes.
 - Each wake, a free lane plus a startable unit (accepted document, grill approved where one is needed) means the coordinator starts it, and never holds it behind a regression, a deploy or open PRs waiting to merge (owner 2026-11-13, #986). Lane counts come from `fleet-load.sh`, never from dispatch notes.
 - Keep about ten workers in flight within the host caps, and start the next as each finishes; never hold a batch.
-- File every issue ready to start: run `script/brief-lint.sh` on the body; when it passes and the work is not owner-reserved, add `ready-for-agent` and a P label (default P2) in the same `gh issue create`. Apply the same-file rule in `team.md` before filing.
+- File every issue ready to start: run `script/brief-lint.sh` on the body; when it passes and the work is not owner-reserved, add `ready-for-agent` in the same `gh issue create`, plus a P label (default P2) where the repo has P labels. Apply the same-file rule in `team.md` before filing.

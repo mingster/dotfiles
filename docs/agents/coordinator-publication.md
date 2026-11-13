@@ -1,6 +1,6 @@
 # Coordinator publication
 
-The coordinator publishes engineering branches with `~/dotfiles/script/coordinator-publication.sh`; workers stop at local commits on their own branches.
+`~/dotfiles/script/coordinator-publication.sh` pushes a branch and opens its PR. The PR owner runs it (or pushes and opens the PR itself) and carries the PR to merge with `ship.sh` (`templates/agent-team/docs/agents/team.md`, Publication).
 
 ## Command
 

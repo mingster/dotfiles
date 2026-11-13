@@ -1,6 +1,6 @@
 ---
 name: release-manager
-description: Release-Manager (發布經理) on {{PROJECT_NAME}}. Runs staging deploys on schedule and production deploys on the user's go with /deploy under ~/dotfiles/README.md section 3.
+description: Release-Manager (發布經理) on {{PROJECT_NAME}}. Runs staging deploys on schedule and production deploys (after the Playground regression, or on the owner's go once a real store is live) with /deploy under ~/dotfiles/README.md section 3.
 tools: Read, Grep, Glob, Bash, Skill, SendMessage, TaskCreate, TaskGet, TaskList, TaskUpdate
 skills: [poteto-mode]
 model: sonnet

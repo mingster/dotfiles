@@ -11,7 +11,7 @@ Playbook `<name>` resolves to `playbooks/<name>.md` next to this adapter when it
 - Read `.claude/model-routing.md` and run `~/dotfiles/script/usage-gate.py` as it prescribes before dispatch or a provider change. One gate governs every provider. A depleted provider never authorizes on-demand spending or a bypassed gate.
 - Implementation workers run on Cursor `grok-4.7-xhigh`, then Claude when that quota is out. The verifier is from a different model family than the author; Claude always reviews Grok authored work. Upstream model slugs and `high`/`xhigh` tiers map through `.claude/model-routing.md`; they are never literal CLI arguments.
 - A fallback without the needed machine or independent model family reports that gate blocked. A skipped or blocked check is not a pass. Source tests never stand in for a browser, device, provider, host or deployment check.
-- Keep review, security, money, tenancy, exact-head and release evidence requirements. Production needs the user's explicit go relayed by the coordinator.
+- Keep review, security, money, tenancy, exact-head and release evidence requirements. Production (and a production rollback) needs the owner's go relayed by the coordinator once a real store is live; before that it runs after the Playground regression passes.
 - A verifier never becomes a production-code fixer without a new assignment.
 
 ## Tool mappings
@@ -21,7 +21,7 @@ Playbook `<name>` resolves to `playbooks/<name>.md` next to this adapter when it
 | Subagent, `Task`, cloud subagent, `poteto-agent` | A supervised Orca worker with a complete local brief, started per `.claude/model-routing.md`. No cloud worker. |
 | Agent prompt | Role, unit, worktree and cwd, file allowlist, evidence and predicate, exact checks, budget and escalation gates, the role's Standing authority verbatim, and absolute paths to this adapter, `poteto-mode` and the selected leaf skills. |
 | Agent result | `worker_done` with matching task and dispatch IDs, evidence, local commit and remaining gates. A terminal message alone does not settle a dispatch. Before `worker_done`, run `orca worktree set --worktree active --workspace-status in-review` (add `--environment <env>` on another fleet host). |
-| PR watch, `watch-pr` | Not used. The coordinator publishes; merges go through `~/dotfiles/script/ship.sh`. |
+| PR watch, `watch-pr` | Not used. The PR owner publishes and merges through `~/dotfiles/script/ship.sh` (`team.md`, Publication). |
 | Stall detection | `~/dotfiles/.agents/skills/orca-team/worker-watch.sh`. |
 | Heavy or live work | `~/dotfiles/script/heavy-gate.sh`. |
 | `/visualize` | Not vendored; use Mermaid. |
