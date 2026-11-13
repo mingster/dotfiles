@@ -83,7 +83,7 @@ fi
 
 # 3. History preservation: a FAIL stays in history; the newest Verdict decides
 h2=$(new_pr 52); post_checks 52 "$h2"
-verdict 52 --result FAIL --head "$h2" --verifier ctx_verify --author ctx_author >/dev/null
+verdict 52 --result FAIL --head "$h2" --verifier ctx_verify --author ctx_author --command "bash script/tests/verdict-history.test.sh" --notes "- [ ] keep the FAIL in history" >/dev/null
 out=$(merge 52 "$h2"); code=$?
 if [ "$code" -ne 0 ]; then
   ok "FAIL Verdict blocks the merge"
