@@ -55,8 +55,10 @@
   },
   "issue_scan": {
     "enabled": false,
-    "repos": ["owner/app"],
-    "repo_roots": {"owner/app": "/path/to/checkout"},
+    "repos": ["owner/app", "mingster/dotfiles"],
+    "repo_roots": {"owner/app": "/path/to/checkout", "mingster/dotfiles": "/path/to/dotfiles"},
+    "hosts": ["local", "overflow-host-a", "overflow-host-b"],
+    "host_repo_roots": {"overflow-host-a": {"owner/app": "/path/on/host-a", "mingster/dotfiles": "/path/on/host-a/dotfiles"}},
     "run": "run_id",
     "from_terminal": "coordinator_terminal_handle",
     "host": "local",

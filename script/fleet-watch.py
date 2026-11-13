@@ -663,7 +663,7 @@ def _first_admitted_overflow_host(host, config, workers):
     return None
 
 
-def admit(host, config, workers=None):
+def admit(host, config, workers=None, live_only=False):
     """Evaluate host admission under its configured cap.
     Returns an admission receipt dict. Missing/failed remote inventory and release_unknown never authorize a start.
     """
@@ -733,6 +733,9 @@ def admit(host, config, workers=None):
             has_any_release_unknown = True
         w_host = info.get('host')
         matches_host = (w_host in local_names) if is_local else (w_host == host)
+        if live_only and occupies and not (
+                info.get('category') == 'live' and worker_liveness_verdict(w) != 'exited'):
+            occupies = False
         if matches_host and occupies:
             host_resources.append(info)
             if info.get('category') == 'live':
@@ -1862,7 +1865,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
 
 
 _ISSUE_ACCEPTANCE_RE = re.compile(
-    r'^(?:## (?:[0-9]+[.)] +)?(?:Acceptance(?: criteria)?|Done check)\b|\*\*Acceptance(?: criteria)?:\*\*)',
+    r'^(?:## (?:[0-9]+[.)] +)?(?:Acceptance(?: criteria)?|Done check|Done when)\b|\*\*Acceptance(?: criteria)?:\*\*|\*{0,2}Done when:\*{0,2})',
     re.I | re.M)
 
 
@@ -1900,6 +1903,29 @@ def issue_scan_eligible(issue):
     texts = [issue.get('body') or '']
     texts += [entry.get('body') or '' for entry in (issue.get('comments') or []) if isinstance(entry, dict)]
     return any(issue_scan_has_acceptance(text) for text in texts)
+
+
+SKIP_COMMENT_HEAD = 'issue-scan skipped:'
+
+
+def issue_scan_comment_skip(state, repo, row, act, persist_state, log_bits):
+    """One comment on a ready-for-agent issue the scan skips for lacking acceptance criteria."""
+    labels = {entry.get('name') for entry in (row.get('labels') or []) if isinstance(entry, dict)}
+    if 'ready-for-agent' not in labels or issue_scan_blocked(row):
+        return
+    number = row['number']
+    done = state.setdefault('issue_scan_skip_commented', {}).setdefault(repo, [])
+    if number in done or any(
+            (c.get('body') or '').startswith(SKIP_COMMENT_HEAD)
+            for c in (row.get('comments') or []) if isinstance(c, dict)):
+        return
+    body = (SKIP_COMMENT_HEAD + ' no "## Acceptance" or "Done when" section in the body or a comment. '
+            'Add one and the next scan will pick this issue up.')
+    if act(['gh', 'issue', 'comment', str(number), '--repo', repo, '--body', body]) == 0:
+        done.append(number)
+        log_bits.append('issue_skip_commented=%d' % number)
+        if persist_state:
+            persist_state()
 
 
 def issue_scan_priority(issue):
@@ -2333,9 +2359,17 @@ def brief_lint_missing(spec_path, run=subprocess.run):
     return missing or [out or 'brief-lint failed']
 
 
-def build_issue_start_command(config, repo, issue_row):
+def _issue_scan_is_local(host, config):
+    return _is_local_coordinator_host(host, config)
+
+
+def build_issue_start_command(config, repo, issue_row, host=None):
     scan = config['issue_scan']
-    root = _issue_scan_repo_root(config, repo)
+    remote = bool(host) and not _issue_scan_is_local(host, config)
+    if remote:
+        root = ((scan.get('host_repo_roots') or {}).get(host) or {}).get(repo)
+    else:
+        root = _issue_scan_repo_root(config, repo)
     if not root:
         return None
     spec_path = _write_issue_scan_spec(
@@ -2358,6 +2392,8 @@ def build_issue_start_command(config, repo, issue_row):
         '--name', 'issue-%d' % issue_row['number'],
         '--repo', 'path:' + root,
     ]
+    if remote:
+        command += ['--on', host]
     return [part for part in command if part]
 
 
@@ -2548,6 +2584,11 @@ def default_issue_scan_start(command, run=subprocess.run):
         return run(command, capture_output=True, text=True, timeout=180).returncode
     except (subprocess.SubprocessError, OSError):
         return 1
+
+
+def admit_live_only(host, config, workers=None):
+    """issue_scan admission: retained and exited workers do not hold a slot."""
+    return admit(host, config, workers, live_only=True)
 
 
 def _issue_scan_has_slot(host, config, admission, extra_starts):
@@ -3203,7 +3244,7 @@ def issue_scan_pass(
     if gate_check is None:
         gate_check = default_issue_scan_gate
     if admit_fn is None:
-        admit_fn = admit
+        admit_fn = admit_live_only
     if start_worker is None:
         start_worker = default_issue_scan_start
     if act is None:
@@ -3212,15 +3253,29 @@ def issue_scan_pass(
         start_detached = default_detached_start
 
     host = scan.get('host') or 'local'
+    hosts = [host] + [h for h in (scan.get('hosts') or []) if h != host]
     if not gate_check(config):
         return notices, ['issue_scan_gate']
-    admission = admit_fn(host, config, workers)
-    refused = not admission.get('admitted')
-    reason = re.sub(r'[,;\s]+', ' ', str(admission.get('reason') or 'unknown')).strip()
+    admissions = {}
+    reasons = []
+    place_host = None
+    for candidate in hosts:
+        receipt = admit_fn(candidate, config, workers)
+        admissions[candidate] = receipt
+        if receipt.get('admitted'):
+            if place_host is None:
+                place_host = candidate
+        else:
+            why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
+            reasons.append(why if len(hosts) == 1 else '%s: %s' % (candidate, why))
+    refused = place_host is None
+    reason = '; '.join(reasons)
     notices += failure_streak_notices(
-        state, 'issue_scan_refused', refused, 'issue scan refused on %s: %s' % (host, reason))
+        state, 'issue_scan_refused', refused, 'issue scan refused on every host (%s)' % reason)
     if refused:
         return notices, ['issue_scan_load', 'issue_scan_refused=%s' % reason]
+    # Rework and the backlog sweep build local commands, so they use the primary host only.
+    admission = admissions[host]
 
     extra_starts = 0
     repos = scan.get('repos') or []
@@ -3301,7 +3356,7 @@ def issue_scan_pass(
                 else:
                     log_bits.append('rework_cap_label_fail=%d' % pr_num)
                 continue
-            if not _issue_scan_has_slot(host, config, admission, extra_starts):
+            if not admission.get('admitted') or not _issue_scan_has_slot(host, config, admission, extra_starts):
                 continue
             command = build_rework_start_command(config, repo, pr_row)
             if command is None:
@@ -3349,6 +3404,7 @@ def issue_scan_pass(
         ready_queue_count += len(issues)
         for row in issues:
             if not issue_scan_eligible(row):
+                issue_scan_comment_skip(state, repo, row, act, persist_state, log_bits)
                 continue
             if issue_already_claimed(repo, row['number']):
                 continue
@@ -3356,7 +3412,7 @@ def issue_scan_pass(
 
     if not candidates:
         queue_count = None if list_failed else ready_queue_count
-        sweep_bits = issue_scan_try_backlog_sweep(
+        sweep_bits = [] if not admission.get('admitted') else issue_scan_try_backlog_sweep(
             config, state, now, repos, queue_count, host, admission, extra_starts,
             start_worker, persist_state,
         )
@@ -3365,12 +3421,13 @@ def issue_scan_pass(
             log_bits.append('issue_scan_none')
         return notices, log_bits
 
-    if not _issue_scan_has_slot(host, config, admission, extra_starts):
+    placed = admissions[place_host]
+    if not _issue_scan_has_slot(place_host, config, placed, extra_starts if place_host == host else 0):
         return notices, log_bits
 
     candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
     repo, row = candidates[0]
-    command = build_issue_start_command(config, repo, row)
+    command = build_issue_start_command(config, repo, row, host=place_host)
     if command is None:
         log_bits.append('issue_scan_skip')
         return notices, log_bits
