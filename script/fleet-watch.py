@@ -290,6 +290,13 @@ def worker_terminal_released(worker):
         return True
     if evidence.get('release') in (True, 'confirmed'):
         return True
+    resource = w.get('resource') or {}
+    if 'released' in (resource.get('releaseState'), resource.get('ownershipState')):
+        return True
+    # Orca drops the resource and terminal of a dispatch it already released (worker-release says already_released).
+    if (status == 'completed' and 'resource' in w and not resource
+            and not w.get('agentTerminalHandle') and not w.get('terminalState')):
+        return True
     return w.get('terminalState') == 'released' or w.get('stage') == 'released'
 
 
@@ -372,7 +379,8 @@ def classify_worker(worker):
         return True, info, False
 
     if status == 'completed':
-        if pushed and released:
+        # A released terminal frees the seat; a worker that pushed nothing (verifier, auditor) has nothing to keep.
+        if released:
             info = {
                 'dispatchId': dispatch_id,
                 'host': host,
