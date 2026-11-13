@@ -73,6 +73,7 @@ SEND_ERRORS = (
     OrcaReadError,
 )
 NOTICE_PASS_LIMIT = 20
+STALL_RESTART_ATTEMPTS = 2  # one retry covers a transient failure; a second ends it
 DIGEST_SECONDS = 600
 ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
 
@@ -1728,7 +1729,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     local_handles = set(term_times.keys())
 
     for skey, pend in list(pending.items()):
-        if not isinstance(pend, dict) or pend.get('started'):
+        if not isinstance(pend, dict) or pend.get('started') or pend.get('gave_up'):
             continue
         row = pend.get('row_snapshot')
         old_dispatch = pend.get('old_dispatch')
@@ -1751,7 +1752,14 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             pending.pop(skey, None)
             log_bits.append('stall_restart=%s' % old_dispatch)
         except SEND_ERRORS as exc:
-            log_bits.append('stall_restart_retry=%s:%s' % (old_dispatch, orchestration_failure_log_code(exc)))
+            code = orchestration_failure_log_code(exc)
+            pend['failures'] = int(pend.get('failures') or 0) + 1
+            if pend['failures'] >= STALL_RESTART_ATTEMPTS:
+                pend['gave_up'] = True
+                log_bits.append('stall_restart_failed=%s:%s' % (old_dispatch, code))
+                notices.append(Urgent('stall restart failed for %s (%s); not retrying' % (old_dispatch, code)))
+            else:
+                log_bits.append('stall_restart_retry=%s:%s' % (old_dispatch, code))
 
     for w in workers:
         did = w.get('dispatchId')
@@ -1824,6 +1832,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                             'stall_restart_run_id': run_for_start,
                             'row_snapshot': snap,
                             'started': False,
+                            'failures': 1,
                         }
                         st['restarted'] = False
                         log_bits.append('stall_stop_start_retry_next=%s:%s' % (did, orchestration_failure_log_code(exc)))
@@ -2370,6 +2379,15 @@ def default_repo_id_lookup(host, repo):
     return None
 
 
+def pr_base_ref(root, branch, run=subprocess.run):
+    """Fetch the PR head branch from origin and name it as a remote ref, since a PR opened on another host has no local ref."""
+    try:
+        run(['git', '-C', root, 'fetch', '-q', 'origin', branch], capture_output=True, timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return 'origin/' + branch
+
+
 def build_issue_start_command(config, repo, issue_row, placement=None):
     """placement is (host, repo_id) to start on a remote host instead of the local checkout."""
     scan = config['issue_scan']
@@ -2438,7 +2456,7 @@ def build_rework_start_command(config, repo, pr_row):
     ]
     branch = pr_row.get('headRefName')
     if branch:
-        command += ['--base-branch', branch]
+        command += ['--base-branch', pr_base_ref(root, branch)]
     return [part for part in command if part]
 
 
@@ -3073,7 +3091,18 @@ BABYSIT_DEFERRED_EXITS = (3, 4)  # worker-startup.sh: usage gate refused, host p
 
 
 def _start_reason(stderr):
-    lines = [line.strip() for line in (stderr or '').splitlines() if line.strip()]
+    text = stderr or ''
+    start = text.find('{')
+    if start >= 0:
+        try:
+            error = json.JSONDecoder().raw_decode(text[start:])[0].get('error')
+            message = error.get('message') if isinstance(error, dict) else None
+            if isinstance(message, str) and message.strip():
+                lines = [line.strip() for line in message.splitlines() if line.strip()]
+                return re.sub(r'[,;\s]+', ' ', lines[0]).strip()[:160]
+        except (ValueError, AttributeError):
+            pass
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     return re.sub(r'[,;\s]+', ' ', lines[-1]).strip()[:160] if lines else ''
 
 
@@ -3113,7 +3142,7 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
     ]
     branch = pr_row.get('headRefName') or ''
     if branch:
-        command += ['--base-branch', branch]
+        command += ['--base-branch', pr_base_ref(root, branch)]
     return command
 
 
@@ -3804,7 +3833,7 @@ def flush_queue(state, now, rpc_call):
             continue
         try:
             rpc_call(
-                'orchestration', 'send', '--to', term,
+                'orchestration', 'send', '--to', term, '--from', term,
                 '--subject', 'fleet-watch digest',
                 '--body', '\n'.join(item['text'] for item in items),
             )
@@ -3880,6 +3909,8 @@ def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of
     digest_terms = [run['terminal'] for run in runs if not run.get('typed')]
     typed_runs = [run for run in runs if run.get('typed')]
     queue = state.setdefault('notice_queue', {})
+    live = set(digest_terms) | {run['terminal'] for run in typed_runs} | {
+        lead['terminal'] for lead in config.get('leads', []) if lead.get('terminal')}
     for notice in new_notices:
         targets, urgent = digest_terms, isinstance(notice, Urgent)
         if isinstance(notice, Verdict):
@@ -3887,8 +3918,13 @@ def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of
             if lead:
                 targets, urgent = [lead], True
         text = str(notice)
+        live.update(targets)
         for term in targets:
             queue_notice(queue, term, text, urgent)
+    for term in list(queue):
+        if term not in live:
+            print('fleet-watch: dropping %d notice(s) for %s, not in runs' % (len(queue[term]), term), file=sys.stderr)
+            del queue[term]
     flush_queue(state, now, rpc_call)
     deliver_typed_notices(typed_runs, state, new_notices, rpc_call)
 

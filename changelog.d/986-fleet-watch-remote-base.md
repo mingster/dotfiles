@@ -1,0 +1,1 @@
+fleet-watch bases babysit and rework worktrees on the fetched remote PR branch, logs Orca's error message as the start reason, sends coordinator notices with a sender and drops those for terminals not in runs, and stops a failing stall restart after one retry (#986).
