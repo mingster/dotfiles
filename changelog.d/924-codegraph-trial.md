@@ -1,0 +1,1 @@
+Add a pinned codegraph trial: `script/codegraph-setup.sh`, an opt in `--codegraph` flag on `agent-team.sh machine|project|sync|all`, a pin check in `fleet-toolchain-check.sh`, `docs/agents/codegraph.md`, and the pinned `codegraph prompt-hook` hook with `codegraph-setup.sh uninstall`. Refs #924.

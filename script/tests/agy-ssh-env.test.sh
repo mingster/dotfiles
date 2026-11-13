@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # agy started from a login shell or from an Orca that a script reopened never sees the SSH variables (#911).
 root=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
