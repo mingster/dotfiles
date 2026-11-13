@@ -2,7 +2,8 @@
 # Create and trust a worktree on the execution environment before Cursor starts.
 # Usage: --run ID --spec FILE --title TEXT --model ID [--from HANDLE] [--on ENV]
 #        [--role NAME] (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
-# Refuses Strong tier roles (elon, architect-pm, secops-finops, qa-sdet); use usage-gate pick + worker-start.
+# Refuses Strong tier roles other than qa-sdet (elon, architect-pm, secops-finops).
+# qa-sdet may run on Cursor grok for a Claude-built PR.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
@@ -12,7 +13,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 orca=${ORCA_CLI_COMMAND:-orca}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment='' role=''
 from=${ORCA_TERMINAL_HANDLE:-}
-readonly STRONG_ROLES='elon architect-pm secops-finops qa-sdet'
+readonly STRONG_ROLES='elon architect-pm secops-finops'
 usage() { echo "need --run --spec --title --model --from and --worktree-path or --name --repo" >&2; exit 2; }
 is_strong_role() {
   local candidate=$1
@@ -57,7 +58,7 @@ spec_body=$(cat "$spec")
 if spec_role=$(python3 - "$spec_body" <<'PY'
 import re, sys
 body = sys.argv[1]
-for role in ("elon", "architect-pm", "secops-finops", "qa-sdet"):
+for role in ("elon", "architect-pm", "secops-finops"):
     if re.search(rf"(?:\.claude/agents|/agents)/{re.escape(role)}\.md", body):
         print(role)
         raise SystemExit(0)

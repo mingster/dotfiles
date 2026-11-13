@@ -14,8 +14,12 @@ get the note "pacing: prefer a lighter model".
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags. fullstack-dev and light-tier roles take the first allowed of
 Cursor grok-4.7-xhigh, then that role's Claude entry, then Antigravity. Strong
-roles never select Cursor. Every other role ranks by headroom per day left until the
-provider's reset, so quota about to reset is spent first.
+roles other than qa-sdet never select Cursor. qa-sdet may select Cursor grok, so a
+Claude-built PR can be verified on Cursor. Every other role ranks by headroom per
+day left until the provider's reset, so quota about to reset is spent first.
+family --agent A --model M prints the model family from the one map ship.sh and
+fleet-watch share. When qa-sdet is asked to avoid a family and every other family
+is out of quota, pick returns a different Claude model with same_family_fallback.
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
 endpoint; Cursor reads included usage from GetCurrentPeriodUsage, which names
 every model that percent covers, and falls back to the usage-summary meter only
@@ -49,7 +53,7 @@ CURSOR_BUILD_MODEL = "grok-4.7-xhigh"
 CURSOR_URGENT_MODEL = "grok-4.7-xhigh-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
-STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops", "qa-sdet")
+STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops")
 
 
 def load_config():
@@ -1019,6 +1023,7 @@ def order_builder_chain(chain):
 
 
 def family(entry):
+    """One model-family map. ship.sh and fleet-watch call model_family, which uses this."""
     provider, model = entry["provider"], entry["model"]
     if provider == "claude" or (provider in ("antigravity", "cursor") and model.startswith("claude-")):
         return "claude"
@@ -1030,6 +1035,67 @@ def family(entry):
         return "grok"
     if provider in ("antigravity", "cursor") and model.startswith("gemini-"):
         return "gemini"
+    return None
+
+
+def model_family(agent, model):
+    if not isinstance(agent, str) or not isinstance(model, str) or not agent or not model:
+        return None
+    return family({"provider": agent, "model": model})
+
+
+_CLAUDE_FALLBACK = (
+    {"provider": "claude", "model": "opus", "effort": "high"},
+    {"provider": "claude", "model": "sonnet", "effort": "medium"},
+)
+
+
+def _other_families_quota_blocked(chain, avoid, rows):
+    """True when at least one other family is in the chain and every one of them is quota-blocked."""
+    saw = False
+    for entry in chain:
+        fam = family(entry)
+        if not fam or fam == avoid:
+            continue
+        if avoid == "grok" and fam != "claude":
+            continue
+        saw = True
+        row = rows[(entry["provider"], _gated_model(entry))]
+        if row["verdict"] != "blocked":
+            return False
+    return saw
+
+
+def _mark_claude_fallback(candidates, chain, rows):
+    """When no other family has quota, offer Opus and Sonnet and select the first."""
+    base = next((candidate for candidate in candidates if family(candidate) == "claude"), None)
+    if base is None:
+        return None
+    key = None
+    for entry in chain:
+        if family(entry) == "claude":
+            key = (entry["provider"], _gated_model(entry))
+            break
+    if key is None or rows[key]["verdict"] != "allowed":
+        return None
+    present = {(candidate["provider"], candidate["model"]) for candidate in candidates}
+    for extra in _CLAUDE_FALLBACK:
+        pair = (extra["provider"], extra["model"])
+        if pair in present:
+            for candidate in candidates:
+                if (candidate["provider"], candidate["model"]) == pair:
+                    candidate["same_family_fallback"] = True
+            continue
+        candidates.append({
+            **base,
+            **extra,
+            "excluded_family": True,
+            "eligible": False,
+            "same_family_fallback": True,
+        })
+    for candidate in candidates:
+        if candidate.get("same_family_fallback"):
+            return candidate
     return None
 
 
@@ -1093,6 +1159,11 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
             near = (first["headroom_per_day"] is None or best["headroom_per_day"] is None
                     or best["headroom_per_day"] - first["headroom_per_day"] <= TIE_POINTS)
             chosen = first if allowed[0][0] == 0 and near else best
+    if (role == "qa-sdet" and avoid and chosen is None
+            and _other_families_quota_blocked(chain, avoid, rows)):
+        fallback = _mark_claude_fallback(candidates, chain, rows)
+        if fallback is not None:
+            chosen = fallback
     resets = [r["blocked_until"] for r in rows.values() if r.get("blocked_until")]
     until = min(resets) if resets else None
     return {"role": role, "selected": chosen, "candidates": candidates,
@@ -1110,7 +1181,8 @@ def candidate_reason(candidate):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish", "link"])
+    ap.add_argument("cmd", choices=["check", "show", "pick", "banner", "publish", "link", "family"])
+    ap.add_argument("--agent")
     ap.add_argument("--host", action="append", default=[])
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model checked against included usage")
@@ -1127,6 +1199,11 @@ def main(argv=None):
                     help="flat weekly percent held back per running worker; default is the config weights")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "family":
+        if not a.agent or not a.model:
+            ap.error("family requires --agent and --model")
+        print(model_family(a.agent, a.model) or "unknown")
+        return 0
     if a.cmd in ("check", "pick", "link"):
         link_presets()
     if a.cmd == "link":
