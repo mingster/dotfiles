@@ -225,8 +225,7 @@ class RedCheckLadder(unittest.TestCase):
 
     def test_recorded_pr_list_opens_no_failed_twice_issue(self):
         recorded = recorded_reply('gh-pr-list')
-        if recorded is None:
-            self.skipTest('gh-pr-list recording arrives with #990')
+        self.assertIsNotNone(recorded, 'gh-pr-list recording from #990')
         self.assertEqual(recorded['exit_code'], 0)
         prs = json.loads(recorded['stdout'])
         self.assertIsInstance(prs, list)
