@@ -1,0 +1,1 @@
+* `script/tests/test_fleet_watch_966.py` pins host load and free memory, so it no longer fails on a busy coordinator. The freed branch in `classify_worker` now reports the real `pushed` value instead of always `True` (#971).

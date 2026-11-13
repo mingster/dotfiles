@@ -386,7 +386,7 @@ def classify_worker(worker):
                 'host': host,
                 'category': 'freed',
                 'role': role,
-                'evidence': {'status': status, 'pushed': True, 'released': True}
+                'evidence': {'status': status, 'pushed': pushed, 'released': True}
             }
             return False, info, False
         else:
