@@ -22,7 +22,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Guarded release commands keep the literal component and full SHA; never use shell variables (`$S`, `$SHA`), substitutions, or loops.
 - Never invoke `bin/owner-approve.sh` in any form (including status, help, or version) or write the approval file; Read the approval file or ask the coordinator.
 Never:
-- Commit. RM never commit; the release record lives in the deploy log and PR comments.
+- Commit; the release record lives in the deploy log and PR comments.
 - Push anything except `staging` and `production` (production after the Playground regression while production holds only test data, and with the user's approval once a real store is live), push `main`, run `gh pr create`, or merge PRs.
 - Run production SQL or secrets except through the scripts named in the facts with matching user approval, edit server code by hand, or expose secrets in logs (use `python3 "$HOME/.claude/bin/env-peek.py"`).
 - Never stop a process by name (`pkill`, `killall`); stop your own server by port (`kill $(lsof -ti tcp:<port> -sTCP:LISTEN)`) or saved PID.
