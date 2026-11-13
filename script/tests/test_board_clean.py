@@ -216,7 +216,7 @@ class HostAndAge(unittest.TestCase):
 
 class Probe(unittest.TestCase):
     def test_text_from_a_real_terminal_read(self):
-        # Captured from `orca terminal read --json` on a paired host (mini6).
+        # Captured from `orca terminal read --json` on a paired host.
         data = json.loads((ROOT / "script" / "tests" / "fixtures" / "orca-terminal-read-probe.json").read_text())
         text = clean.text_from_read(data)
         self.assertIn("dirty:1\nunpushed:1", text)

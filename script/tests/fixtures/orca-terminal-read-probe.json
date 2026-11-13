@@ -7,13 +7,13 @@
       "status": "running",
       "tail": [
         "",
-        "░▒▓ 󰀵  …/p968   mingster/p968 $!   02:38 ",
+        "░▒▓ 󰀵  …/card   user/card $!   02:38 ",
         "emotes=origin 2>/dev/null || echo unknown); printf 'dirty:%s\\nunpushed:%s\\n' \"$d\" \"$u\"",
         "dirty:1",
         "unpushed:1",
         "",
-        "░▒▓ 󰀵  …/p968   mingster/p968 $!   02:38 ",
-        "❯                                                                                                                󰒋 mini6 "
+        "░▒▓ 󰀵  …/card   user/card $!   02:38 ",
+        "❯                                                                                                                󰒋 host "
       ],
       "truncated": false,
       "limited": false,
