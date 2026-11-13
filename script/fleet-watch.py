@@ -694,7 +694,73 @@ def _is_local_coordinator_host(host, config):
     return False
 
 
-def _first_admitted_overflow_host(host, config, workers):
+def environment_name_by_id(rpc_call=None):
+    """Map an Orca environment id to its name. Empty when the list cannot be read."""
+    call = rpc if rpc_call is None else rpc_call
+    try:
+        result = call('environment', 'list')
+    except Exception:
+        return {}
+    envs = result.get('environments') if isinstance(result, dict) else None
+    names = {}
+    for env in envs or []:
+        if not isinstance(env, dict):
+            continue
+        eid, name = env.get('id'), env.get('name')
+        if isinstance(eid, str) and eid and isinstance(name, str) and name.strip():
+            names[eid] = name.strip()
+    return names
+
+
+def host_cap_name(raw, config, env_names):
+    """host_caps key for a worker-list host id.
+
+    Full rows use an environment id. host_caps is keyed by the environment name.
+    """
+    if not isinstance(raw, str) or not raw or raw == 'local':
+        return 'local'
+    config = config or {}
+    caps = config.get('host_caps') or {}
+    local_host = config.get('local_host')
+    if raw in caps or raw == local_host:
+        return raw
+    mapped = (env_names or {}).get(raw)
+    if not isinstance(mapped, str) or not mapped:
+        return raw
+    if mapped in caps or mapped == local_host:
+        return mapped
+    folded = {}
+    for key in list(caps) + ([local_host] if isinstance(local_host, str) else []):
+        if isinstance(key, str):
+            folded.setdefault(key.lower(), key)
+    return folded.get(mapped.lower(), mapped)
+
+
+def _hosts_need_env_map(workers, config):
+    config = config or {}
+    known = set(config.get('host_caps') or {})
+    known.update({'local', ''})
+    local_host = config.get('local_host')
+    if isinstance(local_host, str) and local_host.strip():
+        known.add(local_host.strip())
+    for worker in workers or []:
+        if not isinstance(worker, dict):
+            continue
+        host_id = projection_host_id(worker)
+        if host_id not in known:
+            return True
+    return False
+
+
+def _resolve_env_names(workers, config, env_names):
+    if env_names is not None:
+        return env_names
+    if not _hosts_need_env_map(workers, config):
+        return {}
+    return environment_name_by_id()
+
+
+def _first_admitted_overflow_host(host, config, workers, env_names=None):
     local_host = (config or {}).get('local_host')
     local_names = {'local', host}
     if isinstance(local_host, str) and local_host.strip():
@@ -702,13 +768,13 @@ def _first_admitted_overflow_host(host, config, workers):
     for candidate in ((config or {}).get('host_caps') or {}):
         if candidate in local_names:
             continue
-        remote_receipt = admit(candidate, config, workers=workers)
+        remote_receipt = admit(candidate, config, workers=workers, env_names=env_names if env_names is not None else {})
         if remote_receipt.get('admitted'):
             return candidate
     return None
 
 
-def admit(host, config, workers=None):
+def admit(host, config, workers=None, env_names=None):
     """Evaluate host admission under its configured cap.
     Returns an admission receipt dict. Missing/failed remote inventory and release_unknown never authorize a start.
     """
@@ -764,6 +830,7 @@ def admit(host, config, workers=None):
                     }
 
     deduped = deduplicate_workers(workers)
+    env_names = _resolve_env_names(deduped, config, env_names)
     host_resources = []
     has_any_release_unknown = False
     live_count = 0
@@ -776,7 +843,9 @@ def admit(host, config, workers=None):
         occupies, info, release_unk = classify_worker(w)
         if release_unk:
             has_any_release_unknown = True
-        w_host = info.get('host')
+        w_host = host_cap_name(info.get('host'), config, env_names)
+        info = dict(info)
+        info['host'] = w_host
         matches_host = (w_host in local_names) if is_local else (w_host == host)
         if matches_host and occupies:
             host_resources.append(info)
@@ -788,7 +857,7 @@ def admit(host, config, workers=None):
     occupied_count = len(host_resources)
 
     if load_breached or mem_breached:
-        overflow_host = _first_admitted_overflow_host(host, config, deduped)
+        overflow_host = _first_admitted_overflow_host(host, config, deduped, env_names)
         breaches = []
         if load_breached:
             breaches.append('coordinator 1m load per core %.2f >= %.2f' % (load_per_core, COORDINATOR_MAX_LOAD_PER_CORE))
@@ -850,7 +919,7 @@ def admit(host, config, workers=None):
         }
 
     admitted = (occupied_count < cap)
-    overflow_host = None if admitted else (_first_admitted_overflow_host(host, config, deduped) if is_local else None)
+    overflow_host = None if admitted else (_first_admitted_overflow_host(host, config, deduped, env_names) if is_local else None)
     return {
         'ok': True,
         'admitted': admitted,
@@ -875,6 +944,20 @@ def admit(host, config, workers=None):
     }
 
 
+def worker_failure_is_quiet(worker):
+    """A failed dispatch that is already released or settled is not a new alert."""
+    if worker_terminal_released(worker):
+        return True
+    stage = (worker.get('projection') or {}).get('stage')
+    detail = stage.get('detail') if isinstance(stage, dict) else ''
+    if detail == 'settled' or worker.get('stage') == 'settled':
+        return True
+    if worker_liveness_verdict(worker) == 'settled':
+        return True
+    outcome = (worker.get('projection') or {}).get('outcome') or worker.get('outcome')
+    return outcome == 'settled'
+
+
 def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None):
     notices = []
     counts = {}
@@ -886,7 +969,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
         dispatch = worker['dispatchId']
         retried = any(w.get('taskId') == worker.get('taskId') and w.get('dispatchStatus') != 'failed' for w in workers) if worker.get('taskId') else False
         if status == 'failed' and not retried and dispatch not in state['failed']:
-            if not baseline:
+            if not baseline and not worker_failure_is_quiet(worker):
                 notices.append(Urgent('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity'))
             state['failed'].append(dispatch)
             stall_cfg = config.get('worker_stall') or {}
@@ -2525,7 +2608,10 @@ def classify_open_pr(pr_row, workflow_watch_state=None, repo='', repo_root=None)
         return 'waiting'
     if rework_needed_at_head(pr_row, workflow_watch_state, repo, repo_root=repo_root):
         return 'needs_fix'
-    if (pr_row.get('mergeable') not in ('CONFLICTING', 'UNKNOWN')
+    # UNKNOWN means GitHub has not calculated the merge yet. ship.sh rereads it.
+    # CONFLICTING is already needs_fix via rework_needed_at_head.
+    if (pr_row.get('mergeable') != 'CONFLICTING'
+            and pr_row.get('mergeStateStatus') not in ('DIRTY', 'CONFLICTING')
             and pr_checks_all_success(pr_row)
             and pr_verdict_valid_for_head(pr_row, repo_root=repo_root)):
         return 'ready'
@@ -3238,6 +3324,9 @@ def worker_checkout_path(worker):
     """Filesystem path of a worker checkout. A worktree id may be ``id::path``."""
     raw = worker_worktree_selector(worker)
     if not isinstance(raw, str) or not raw:
+        workspace = ((worker or {}).get('projection') or {}).get('workspace')
+        raw = workspace.get('path') if isinstance(workspace, dict) else ''
+    if not isinstance(raw, str) or not raw:
         return ''
     if '::' in raw:
         raw = raw.split('::', 1)[1]
@@ -3912,7 +4001,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
             '## Acceptance\n'
             '- [ ] a Verdict for head %s is posted\n\n'
             '## Out of scope\n'
-            'Merging. ship.sh stays manual. Verdict format stays as it is.\n\n'
+            'Merging. Verdict format stays as it is.\n\n'
             '## Verify\n'
             '%s\n\n'
             '## Finish\n'
@@ -3926,7 +4015,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
             '## Acceptance\n'
             '- [ ] head-checks pass for the new head\n\n'
             '## Out of scope\n'
-            'Merging. ship.sh stays manual. Files outside this PR.\n\n'
+            'Merging. Files outside this PR.\n\n'
             '## Verify\n'
             '%s\n\n'
             '## Finish\n'
@@ -4529,13 +4618,11 @@ def issue_scan_pass(
         count_refused(refusal_token(reason))
         remote_hosts = [h for h in (config.get('host_caps') or {}) if not _is_local_coordinator_host(h, config)]
         remote_hosts = [h for h in remote_hosts if h != host]
-        if not remote_hosts:
-            return notices, log_bits
     extra_starts = 0
     repos = scan.get('repos') or []
     if pr_fetch is None:
         pr_fetch = fetch_prs
-    pr_repos = [] if remote_hosts else (scan.get('pr_repos') or repos)
+    pr_repos = scan.get('pr_repos') or repos
     needs_elon = (config.get('worker_stall') or {}).get('needs_elon_label', 'needs-elon')
     needs_redesign = (config.get('worker_stall') or {}).get('needs_redesign_label', 'needs-redesign')
     ship_heads = state.setdefault('issue_scan_ship', {})
@@ -4654,7 +4741,14 @@ def issue_scan_pass(
                 remember_started_dispatch(state, started_worker, 'rework')
                 seen[head] = True
                 pending.pop(head, None)
-                rounds[pr_key] = rounds.get(pr_key, 0) + 1
+                conflict_only = (
+                    pr_has_conflict(pr_row, repo_root=root)
+                    and not pr_has_unresolved_threads(pr_row)
+                    and not review_failed_at_head(pr_row)
+                    and not pr_red_check_in_diff(pr_row, workflow_watch_prior, repo)
+                )
+                if not conflict_only:
+                    rounds[pr_key] = rounds.get(pr_key, 0) + 1
                 extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_num, head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
@@ -4671,6 +4765,9 @@ def issue_scan_pass(
                 log_bits.append('rework_fail=%d%s' % (pr_num, suffix))
 
     prune_closed_maps(state, listed, {})
+
+    if refused and not remote_hosts:
+        return notices, log_bits
 
     if list_issues is None:
         list_issues = fetch_ready_issues
@@ -4719,85 +4816,91 @@ def issue_scan_pass(
             log_bits.append('issue_scan_none')
         return notices, log_bits
 
-    if not _issue_scan_has_slot(host, config, admission, extra_starts):
+    if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
         count_refused('host_cap')
         return notices, log_bits
 
     candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
-    repo, row = candidates[0]
-    placement = None
-    if remote_hosts:
-        lookup = repo_id_lookup or default_repo_id_lookup
-        for candidate in remote_hosts:
-            receipt = admit_fn(candidate, config, workers)
-            if not receipt.get('admitted'):
-                why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
-                log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
-                count_refused(refusal_token(why))
-                continue
-            repo_id = lookup(candidate, repo)
-            if not repo_id:
-                log_bits.append('issue_scan_no_repo_%s' % candidate)
-                continue
-            host, admission, placement = candidate, receipt, (candidate, repo_id)
-            log_bits.append('issue_scan_placed=%s' % candidate)
-            break
-        if placement is None:
+    lookup = repo_id_lookup or default_repo_id_lookup
+    for repo, row in candidates:
+        placement = None
+        if remote_hosts:
+            placed = False
+            for candidate in remote_hosts:
+                receipt = admit_fn(candidate, config, workers)
+                if not receipt.get('admitted'):
+                    why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
+                    log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
+                    count_refused(refusal_token(why))
+                    continue
+                repo_id = lookup(candidate, repo)
+                if not repo_id:
+                    log_bits.append('issue_scan_no_repo_%s' % candidate)
+                    continue
+                placement = (candidate, repo_id)
+                log_bits.append('issue_scan_placed=%s' % candidate)
+                placed = True
+                break
+            if not placed:
+                return notices, log_bits
+        command = build_issue_start_command(config, repo, row, placement)
+        if command is None:
+            log_bits.append('issue_scan_skip')
             return notices, log_bits
-    command = build_issue_start_command(config, repo, row, placement)
-    if command is None:
-        log_bits.append('issue_scan_skip')
-        return notices, log_bits
-    spec_path = command[command.index('--spec') + 1]
-    missing = brief_lint_missing(spec_path)
-    if missing:
-        issue_key = str(row['number'])
-        body_head = hashlib.sha256(issue_scan_brief_text(row).encode('utf-8')).hexdigest()
-        lint_state = state.setdefault('issue_scan_brief_lint', {}).setdefault(repo, {})
-        comment_head = 'brief-lint: %s' % ', '.join(missing)
-        comment_body = comment_head + '\n' + '\n'.join('brief-lint: missing %s' % m for m in missing)
-        already = lint_state.get(issue_key) == body_head or any(
-            (c.get('body') or '').splitlines()[:1] == [comment_head]
-            for c in (row.get('comments') or []) if isinstance(c, dict)
-        )
-        if not already:
-            act(['gh', 'issue', 'edit', issue_key, '--repo', repo, '--add-label', 'needs-triage'])
-            act(['gh', 'issue', 'comment', issue_key, '--repo', repo, '--body', comment_body])
-            lint_state[issue_key] = body_head
+        spec_path = command[command.index('--spec') + 1]
+        missing = brief_lint_missing(spec_path)
+        if missing:
+            issue_key = str(row['number'])
+            body_head = hashlib.sha256(issue_scan_brief_text(row).encode('utf-8')).hexdigest()
+            lint_state = state.setdefault('issue_scan_brief_lint', {}).setdefault(repo, {})
+            comment_head = 'brief-lint: %s' % ', '.join(missing)
+            comment_body = comment_head + '\n' + '\n'.join('brief-lint: missing %s' % m for m in missing)
+            already = lint_state.get(issue_key) == body_head or any(
+                (c.get('body') or '').splitlines()[:1] == [comment_head]
+                for c in (row.get('comments') or []) if isinstance(c, dict)
+            )
+            if not already:
+                act([
+                    'gh', 'issue', 'edit', issue_key, '--repo', repo,
+                    '--add-label', 'needs-triage', '--remove-label', 'ready-for-agent',
+                ])
+                act(['gh', 'issue', 'comment', issue_key, '--repo', repo, '--body', comment_body])
+                lint_state[issue_key] = body_head
+                if persist_state:
+                    persist_state()
+            log_bits.append('issue_needs_triage=%d' % row['number'])
+            continue
+        issue_pending.setdefault(repo, []).append(row['number'])
+        if persist_state:
+            persist_state()
+        started_worker = start_worker(command)
+        code, reason = start_result_parts(started_worker)
+        pending_list = issue_pending.setdefault(repo, [])
+        if row['number'] in pending_list:
+            pending_list.remove(row['number'])
+        suffix = ':%s' % reason if reason else ''
+        if code in BABYSIT_DEFERRED_EXITS:
             if persist_state:
                 persist_state()
-        log_bits.append('issue_needs_triage=%d' % row['number'])
+            log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
+            return notices, log_bits
+        if code == 0:
+            remember_started_dispatch(state, started_worker, 'issue')
+            started.setdefault(repo, []).append(row['number'])
+            notices.append('issue %s #%d' % (repo, row['number']))
+            log_bits.append('issue_start=%d' % row['number'])
+            count_started()
+            if persist_state:
+                persist_state()
+        else:
+            updated = row.get('updatedAt') or ''
+            park_key = park_id('issue', repo, row['number'], updated)
+            if park_failure(state, park_key, reason, config, repo=repo, issue=row['number']):
+                notices.append(park_notice('issue', '%s#%s' % (repo, row['number']), reason))
+            if persist_state:
+                persist_state()
+            log_bits.append('issue_start_fail=%d%s' % (row['number'], suffix))
         return notices, log_bits
-    issue_pending.setdefault(repo, []).append(row['number'])
-    if persist_state:
-        persist_state()
-    started_worker = start_worker(command)
-    code, reason = start_result_parts(started_worker)
-    pending_list = issue_pending.setdefault(repo, [])
-    if row['number'] in pending_list:
-        pending_list.remove(row['number'])
-    suffix = ':%s' % reason if reason else ''
-    if code in BABYSIT_DEFERRED_EXITS:
-        if persist_state:
-            persist_state()
-        log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
-        return notices, log_bits
-    if code == 0:
-        remember_started_dispatch(state, started_worker, 'issue')
-        started.setdefault(repo, []).append(row['number'])
-        notices.append('issue %s #%d' % (repo, row['number']))
-        log_bits.append('issue_start=%d' % row['number'])
-        count_started()
-        if persist_state:
-            persist_state()
-    else:
-        updated = row.get('updatedAt') or ''
-        park_key = park_id('issue', repo, row['number'], updated)
-        if park_failure(state, park_key, reason, config, repo=repo, issue=row['number']):
-            notices.append(park_notice('issue', '%s#%s' % (repo, row['number']), reason))
-        if persist_state:
-            persist_state()
-        log_bits.append('issue_start_fail=%d%s' % (row['number'], suffix))
     return notices, log_bits
 
 
@@ -5329,6 +5432,63 @@ def fetch_pr_body(repo, number, run=subprocess.run):
     return body if isinstance(body, str) else ''
 
 
+def _mark_worker_released(worker):
+    """The seat drops on the next admit once Orca has released the terminal."""
+    worker['released'] = True
+    worker['terminalState'] = 'released'
+    evidence = worker.get('evidence')
+    if isinstance(evidence, dict):
+        evidence['released'] = True
+    projection = worker.get('projection')
+    if isinstance(projection, dict):
+        projection['released'] = True
+
+
+def release_green_successes(messages, workers, config, state, release, pr_of):
+    """Release a worker once when worker_done succeeded and its PR checks are green.
+
+    The in-memory row is marked released so this pass stops counting the seat.
+    """
+    released_ids = state.setdefault('auto_released', [])
+    if not isinstance(released_ids, list):
+        released_ids = []
+        state['auto_released'] = released_ids
+    seen = set(released_ids)
+    by_dispatch = {}
+    for worker in workers or []:
+        if not isinstance(worker, dict):
+            continue
+        dispatch = worker.get('dispatchId') or worker.get('dispatch_id')
+        if isinstance(dispatch, str) and dispatch:
+            by_dispatch[dispatch] = worker
+    done = []
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('type') != 'worker_done':
+            continue
+        payload = _message_payload(message)
+        if _message_outcome(message, payload) != 'succeeded':
+            continue
+        dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
+        if not isinstance(dispatch, str) or not dispatch or dispatch in seen:
+            continue
+        worker = by_dispatch.get(dispatch)
+        if worker is None or worker_terminal_released(worker):
+            continue
+        number = worker_pr_number(worker)
+        repo = repo_for_worker(worker, config)
+        if not number or not repo:
+            continue
+        pr_row = pr_of(repo, number)
+        if not isinstance(pr_row, dict) or not pr_checks_all_success(pr_row):
+            continue
+        release(dispatch)
+        _mark_worker_released(worker)
+        released_ids.append(dispatch)
+        seen.add(dispatch)
+        done.append(dispatch)
+    return done
+
+
 def bounce_builder_dones(messages, workers, body_of, notify, state, config):
     """Tell a builder its worker_done does not count when the PR body fails the finish gate."""
     lines = []
@@ -5522,6 +5682,20 @@ def main():
         if not isinstance(rows, list):
             return None
         return [row for row in rows if _babysit_closed(row)]
+
+    if inventory_ok:
+        try:
+            freed = release_green_successes(
+                inv['messages'], workers, config, state, _default_release_worker,
+                lambda repo, number: next(
+                    (row for row in (fetch_once(repo) or []) if isinstance(row, dict) and row.get('number') == number),
+                    None,
+                ),
+            )
+            for dispatch_id in freed:
+                print('fleet-watch: released %s' % dispatch_id)
+        except Exception as error:
+            print('fleet-watch: auto-release skipped: %s' % (repr(error),), file=sys.stderr)
 
     notices += pr_notices(config, state, now, fetch=fetch_once)
     notices += usage_notices(config)

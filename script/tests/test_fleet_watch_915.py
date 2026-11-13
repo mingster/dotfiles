@@ -240,6 +240,17 @@ class BabysitLiveVerifier(unittest.TestCase):
         starts, _lines, _state = self.run_pass([row])
         self.assertEqual(len(starts), 1)
 
+    def test_exited_stopped_verifier_with_no_verdict_starts_another(self):
+        row = self.live_verifier()
+        row['workerState'] = 'stopped'
+        row['dispatchStatus'] = 'dispatched'
+        row['terminalState'] = 'retained'
+        row['projection']['outcome'] = 'in_progress'
+        row['projection']['liveness'] = {'verdict': 'exited'}
+        starts, lines, _state = self.run_pass([row])
+        self.assertEqual(len(starts), 1, lines)
+        self.assertFalse(any('verifier-live' in line for line in lines), lines)
+
     def test_live_verifier_for_another_pr_does_not_block(self):
         starts, _lines, _state = self.run_pass([self.live_verifier(title='qa-sdet - verify PR #8')])
         self.assertEqual(len(starts), 1)
