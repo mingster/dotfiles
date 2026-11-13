@@ -46,7 +46,7 @@ PY
       printf '\n<!-- CODEGRAPH_START -->\n## CodeGraph\ntext\n<!-- CODEGRAPH_END -->\n' >> "\$HOME/.claude/CLAUDE.md" ;; esac
     case "\$2" in *cursor*) echo '{"mcpServers":{"codegraph":{}}}' > "\$HOME/.cursor/mcp.json" ;; esac
     case "\$2" in *antigravity*)
-      f="\$HOME/.gemini/antigravity/mcp_config.json"; [ -e "\$HOME/.gemini/config/.migrated" ] && f="\$HOME/.gemini/config/mcp_config.json"
+      f="\$HOME/.gemini/antigravity/mcp_config.json"; { [ -e "\$HOME/.gemini/config/.migrated" ] || [ -e "\$HOME/.gemini/config/mcp_config.json" ]; } && f="\$HOME/.gemini/config/mcp_config.json"
       mkdir -p "\$(dirname "\$f")"; echo '{"mcpServers":{"codegraph":{}}}' > "\$f" ;; esac
     ;;
   init) mkdir -p .codegraph; touch .codegraph/codegraph.db; echo "init \$PWD" >> "$tmp/init-calls" ;;
@@ -157,5 +157,30 @@ check "migrated layout: a second machine run prints nothing and does not rewire"
 echo '{"mcpServers":{"codegraph":{}}}' > "$HOME/.gemini/antigravity/mcp_config.json"
 bash "$here/codegraph-setup.sh" uninstall >/dev/null 2>&1
 check "uninstall cleans both Antigravity files" "$(! grep -q codegraph "$HOME/.gemini/config/mcp_config.json" "$HOME/.gemini/antigravity/mcp_config.json"; echo $?)"
+
+# unified file present without the .migrated marker: codegraph reads it, so setup must too
+export HOME="$tmp/home-nomarker"
+mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.gemini/config" "$HOME/.gemini/antigravity"
+echo '{}' > "$HOME/.claude/settings.json"; echo '{"mcpServers":{"codegraph":{}}}' > "$HOME/.gemini/config/mcp_config.json"
+bash "$here/codegraph-setup.sh" machine >/dev/null 2>&1
+installs=$(wc -l < "$tmp/install-calls" | tr -d " ")
+out=$(bash "$here/codegraph-setup.sh" machine 2>&1)
+check "unified file without the marker: a second machine run prints nothing and does not rewire" "$([ -z "$out" ] && [ "$(wc -l < "$tmp/install-calls" | tr -d " ")" = "$installs" ] && ! tail -1 "$tmp/install-calls" | grep -q antigravity && [ ! -e "$HOME/.gemini/antigravity/mcp_config.json" ]; echo $?)"
+
+# a malformed Antigravity file is skipped with a warning; the rest of uninstall still runs
+for layout in legacy migrated; do
+  export HOME="$tmp/home-bad-$layout"
+  mkdir -p "$HOME/.claude" "$HOME/.local/bin" "$HOME/.gemini/config" "$HOME/.gemini/antigravity"
+  if [ "$layout" = legacy ]; then bad=$HOME/.gemini/antigravity/mcp_config.json; else touch "$HOME/.gemini/config/.migrated"; bad=$HOME/.gemini/config/mcp_config.json; fi
+  printf '{"mcpServers": {broken' > "$bad"; cp "$bad" "$tmp/bad.before"
+  echo '{"permissions":{"allow":["mcp__codegraph__*","Bash(keep:*)"]}}' > "$HOME/.claude/settings.json"
+  printf '# mine\n<!-- CODEGRAPH_START -->\ntext\n<!-- CODEGRAPH_END -->\n' > "$HOME/.claude/CLAUDE.md"
+  ln -s /nonexistent "$HOME/.local/bin/codegraph"
+  bash "$here/codegraph-setup.sh" uninstall >"$tmp/bad.out" 2>&1; rc=$?
+  check "$layout malformed file: uninstall exits 0 with one warning" "$([ "$rc" = 0 ] && [ "$(grep -c 'not valid JSON' "$tmp/bad.out")" = 1 ] && ! grep -q Traceback "$tmp/bad.out"; echo $?)"
+  check "$layout malformed file: left byte identical" "$(cmp -s "$bad" "$tmp/bad.before"; echo $?)"
+  check "$layout malformed file: permission, CLAUDE.md section and link still removed" \
+    "$(! grep -q codegraph "$HOME/.claude/settings.json" "$HOME/.claude/CLAUDE.md" && grep -q 'Bash(keep:\*)' "$HOME/.claude/settings.json" && [ ! -L "$HOME/.local/bin/codegraph" ]; echo $?)"
+done
 
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

@@ -94,7 +94,11 @@ set_hook() { # <ensure|remove>
   python3 -I - "$settings" "$1" "$hook_cmd" <<'PY'
 import json, sys
 p, mode, cmd = sys.argv[1:4]
-d = json.load(open(p))
+try:
+    d = json.load(open(p))
+except ValueError:
+    print("codegraph-setup: skipped %s (not valid JSON)" % p, file=sys.stderr)
+    sys.exit(0)
 hooks = d.setdefault("hooks", {})
 found = [(e, h.get("command")) for e, gs in hooks.items() for g in gs for h in g.get("hooks", []) if "codegraph" in h.get("command", "")]
 if mode == "ensure" and found == [("UserPromptSubmit", cmd)]:
@@ -135,9 +139,9 @@ PY
   fi
 }
 
-# Antigravity reads ~/.gemini/config once migrated (marker .migrated), else ~/.gemini/antigravity.
+# Antigravity reads ~/.gemini/config once migrated (marker .migrated, or the file already there, as codegraph itself checks), else ~/.gemini/antigravity.
 agy_mcp() {
-  if [ -e "$HOME/.gemini/config/.migrated" ]; then echo "$HOME/.gemini/config/mcp_config.json"
+  if [ -e "$HOME/.gemini/config/.migrated" ] || [ -e "$HOME/.gemini/config/mcp_config.json" ]; then echo "$HOME/.gemini/config/mcp_config.json"
   else echo "$HOME/.gemini/antigravity/mcp_config.json"; fi
 }
 
@@ -188,7 +192,11 @@ cmd_uninstall() {
     python3 -I - "$f" <<'PY'
 import json, sys
 p = sys.argv[1]
-d = json.load(open(p))
+try:
+    d = json.load(open(p))
+except ValueError:
+    print("codegraph-setup: skipped %s (not valid JSON)" % p, file=sys.stderr)
+    sys.exit(0)
 if "codegraph" in (d.get("mcpServers") or {}):
     del d["mcpServers"]["codegraph"]
     open(p, "w").write(json.dumps(d, indent=2) + "\n")
@@ -199,7 +207,11 @@ PY
     python3 -I - "$HOME/.claude/settings.json" <<'PY'
 import json, sys
 p = sys.argv[1]
-d = json.load(open(p))
+try:
+    d = json.load(open(p))
+except ValueError:
+    print("codegraph-setup: skipped %s (not valid JSON)" % p, file=sys.stderr)
+    sys.exit(0)
 allow = (d.get("permissions") or {}).get("allow") or []
 if "mcp__codegraph__*" in allow:
     allow.remove("mcp__codegraph__*")
