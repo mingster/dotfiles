@@ -30,6 +30,13 @@ def stall_test_config(worker_stall_extra=None):
     return cfg
 
 
+def mark_own(state, *ids, kind='verifier'):
+    bucket = state.setdefault('own_dispatches', {})
+    for did in ids:
+        bucket.setdefault(did, {'kind': kind})
+    return state
+
+
 def base_worker(**kw):
     w = {
         'dispatchId': 'disp_fixture',
@@ -191,7 +198,7 @@ class WorkerStallPass(unittest.TestCase):
             calls.append(a)
             return {}
 
-        state = {}
+        state = mark_own({}, 'disp_fixture')
         notices, bits = fw.worker_stall_pass(
             stall_test_config(), state, T0, [w], term_times, rpc)
         self.assertEqual(notices, [])
@@ -213,7 +220,7 @@ class WorkerStallPass(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_one_restart_per_task_survives_dispatch_change(self):
-        """Replacement on same task id: one stop/restart; next pass labels once, no second restart."""
+        """One restart of the recorded dispatch. A later dispatch id is reported, not stopped or labeled."""
         calls = []
         w1 = base_worker(dispatchId='disp_old')
         w2 = base_worker(dispatchId='disp_new')
@@ -223,7 +230,7 @@ class WorkerStallPass(unittest.TestCase):
             calls.append(a)
             return {}
 
-        state = {}
+        state = mark_own({}, 'disp_old')
         cfg = stall_test_config({'label_cooldown_seconds': 0})
         gh_calls = []
 
@@ -236,15 +243,15 @@ class WorkerStallPass(unittest.TestCase):
         self.assertEqual(len(stops_after_first), 1)
         calls.clear()
         gh_calls.clear()
-        fw.worker_stall_pass(cfg, state, T0 + 1, [w2], term_times, rpc, act=fake_act)
+        notices, _bits = fw.worker_stall_pass(cfg, state, T0 + 1, [w2], term_times, rpc, act=fake_act)
         stops_after_second = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops_after_second), 0)
         edits = [c for c in gh_calls if len(c) >= 4 and c[0] == 'gh' and c[1] == 'pr' and c[2] == 'edit']
-        self.assertEqual(len(edits), 1)
-        self.assertIn('needs-elon', edits[0])
+        self.assertEqual(edits, [])
+        self.assertTrue(any('disp_new' in n for n in notices))
 
     def test_failed_start_after_stop_is_parked(self):
-        """A start that fails after stop is not tried again on the next pass."""
+        """A failed restart of our own worker is parked once and is not tried again."""
         starts = []
 
         def rpc(*a):
@@ -260,11 +267,15 @@ class WorkerStallPass(unittest.TestCase):
 
         w = base_worker(dispatchId='d1', taskId='t_retry', resource={'worktreeId': 'wt::/p'})
         term_times = {'term_fix': OLD_MS}
-        state = {}
+        state = mark_own({}, 'd1')
         cfg = stall_test_config()
         notices, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc)
-        self.assertTrue(any('no active sender terminal' in str(notice) for notice in notices), notices)
+        self.assertEqual(len(notices), 1)
+        self.assertIn('no active sender terminal', notices[0])
+        self.assertIn('no_active_sender_terminal', notices[0])
+        self.assertIn('stall_parked=d1', bits1)
         self.assertTrue(any(bit.startswith('stall_restart_fail=d1:') for bit in bits1), bits1)
+        self.assertTrue(state['own_dispatches']['d1']['parked'])
         self.assertNotIn('t_retry', state.get('stall_pending_start', {}))
         self.assertEqual(len(starts), 1)
         self.assertEqual(starts[0][0], 'bash')
@@ -276,7 +287,8 @@ class WorkerStallPass(unittest.TestCase):
         self.assertIn('--from', starts[0])
         self.assertEqual(starts[0][starts[0].index('--from') + 1], 'term_stall_sender')
 
-        _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 2, [w], term_times, rpc)
+        notices2, bits2 = fw.worker_stall_pass(cfg, state, T0 + 2, [w], term_times, rpc)
+        self.assertEqual(notices2, [])
         self.assertEqual(len(starts), 1)
         self.assertFalse(any(bit.startswith('stall_restart_retry=') for bit in bits2), bits2)
 
@@ -351,7 +363,7 @@ class WorkerStallPass(unittest.TestCase):
         })
         term_times = {'term_fix': OLD_MS}
         cfg = {'runs': [{'id': 'run_fixture', 'waiter_pattern': 'w'}], 'worker_stall': {'label_repo': 'o/r'}}
-        notices, bits = fw.worker_stall_pass(cfg, {}, T0, [w], term_times, rpc)
+        notices, bits = fw.worker_stall_pass(cfg, mark_own({}, 'd_ns'), T0, [w], term_times, rpc)
         self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
         self.assertTrue(any(b == 'stall_no_sender_terminal=d_ns' for b in bits))
 
@@ -366,7 +378,7 @@ class WorkerStallPass(unittest.TestCase):
         self.assertEqual(fw.orchestration_failure_log_code(wrapped), 'task_gone')
 
     def test_non_live_sibling_same_task_one_restart_then_label(self):
-        """Two rows same task: only the live stalled row restarts; one label after cooldown."""
+        """Two rows same task: only the live own row restarts, and a later pass does not label it."""
         calls = []
         w_old = base_worker(
             dispatchId='disp_completed',
@@ -387,7 +399,7 @@ class WorkerStallPass(unittest.TestCase):
             gh_calls.append(cmd)
             return 0
 
-        state = {}
+        state = mark_own({}, 'disp_live')
         cfg = stall_test_config({'label_cooldown_seconds': 0})
         fw.worker_stall_pass(cfg, state, T0, [w_old, w_live], term_times, rpc, act=fake_act)
         stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
@@ -398,7 +410,7 @@ class WorkerStallPass(unittest.TestCase):
         fw.worker_stall_pass(cfg, state, T0 + 1, [w_old, w_live], term_times, rpc, act=fake_act)
         self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
         edits = [c for c in gh_calls if len(c) >= 4 and c[0] == 'gh' and c[1] == 'pr' and c[2] == 'edit']
-        self.assertEqual(len(edits), 1)
+        self.assertEqual(edits, [])
 
     def test_inventory_failure_skipped_pass_preserves_restart_state(self):
         """Orca inventory failure skips stall logic without clearing one-restart state."""
@@ -413,7 +425,7 @@ class WorkerStallPass(unittest.TestCase):
         self.assertTrue(state['worker_stall']['task_fix']['restarted'])
 
     def test_failed_inventory_between_passes_then_label_no_second_restart(self):
-        """After restart, a failed inventory pass preserves state; next ok pass labels, no second stop."""
+        """After restart, a failed inventory pass preserves state; the next ok pass does not stop again."""
         calls = []
 
         def rpc(*a):
@@ -428,7 +440,7 @@ class WorkerStallPass(unittest.TestCase):
 
         w = base_worker(dispatchId='d1')
         term_times = {'term_fix': OLD_MS}
-        state = {}
+        state = mark_own({}, 'd1')
         cfg = stall_test_config({'label_cooldown_seconds': 0})
         fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
         self.assertTrue(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
@@ -437,13 +449,14 @@ class WorkerStallPass(unittest.TestCase):
         fw.worker_stall_pass(cfg, state, T0 + 1, [w], term_times, rpc, act=fake_act,
                              inventory_ok=False)
         self.assertEqual(calls, [])
+        self.assertTrue(state['own_dispatches']['d1'].get('restarted'))
         fw.worker_stall_pass(cfg, state, T0 + 2, [w], term_times, rpc, act=fake_act,
                              inventory_ok=True)
         self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
-        self.assertTrue(any(c for c in gh_calls if 'pr' in c and 'edit' in c))
+        self.assertFalse(any(c for c in gh_calls if 'pr' in c and 'edit' in c))
 
     def test_fresh_terminal_after_restart_clears_stall_no_label(self):
-        """Replacement shows progress (fresh lastOutputAt): no label/restart; one-restart record kept until TTL."""
+        """Fresh output after a restart does not park the dispatch or stop it again."""
         calls = []
 
         def rpc(*a):
@@ -458,21 +471,22 @@ class WorkerStallPass(unittest.TestCase):
 
         w = base_worker(dispatchId='d1')
         fresh_ms = int(T0 * 1000)
-        state = {}
+        state = mark_own({}, 'd1')
         cfg = stall_test_config({'label_cooldown_seconds': 0})
         fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
         calls.clear()
         gh_calls.clear()
         _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 60, [w], {'term_fix': fresh_ms}, rpc, act=fake_act)
         self.assertEqual(gh_calls, [])
-        self.assertFalse(any('stall_label_pr' in b for b in bits2))
+        self.assertFalse(any('stall_parked' in b for b in bits2))
         self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
-        st = state['worker_stall'].get('task_fix')
+        st = state['own_dispatches'].get('d1')
         self.assertIsInstance(st, dict)
         self.assertTrue(st.get('restarted'))
+        self.assertFalse(st.get('parked'))
 
     def test_recovery_then_stall_again_labels_once_no_second_restart(self):
-        """After fresh output, stall again inside record TTL: label once, no second stop/restart."""
+        """After fresh output, silence for another 30 minutes parks once and does not restart again."""
         calls = []
 
         def rpc(*a):
@@ -486,7 +500,7 @@ class WorkerStallPass(unittest.TestCase):
             return 0
 
         w = base_worker(dispatchId='d1')
-        state = {}
+        state = mark_own({}, 'd1')
         cfg = stall_test_config({
             'label_cooldown_seconds': 0,
             'stall_restart_record_ttl_seconds': 24 * 3600,
@@ -512,9 +526,8 @@ class WorkerStallPass(unittest.TestCase):
         stops_pass3 = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
         self.assertEqual(len(stops_pass3), 0)
         edits = [c for c in gh_calls if len(c) >= 4 and c[0] == 'gh' and c[1] == 'pr' and c[2] == 'edit']
-        self.assertEqual(len(edits), 1)
-        self.assertIn('needs-elon', edits[0])
-        self.assertEqual(len([b for b in bits3 if 'stall_label_pr' in b]), 1)
+        self.assertEqual(edits, [])
+        self.assertEqual(len([b for b in bits3 if b == 'stall_parked=d1']), 1)
 
     def test_labeled_worker_next_pass_does_not_label_again(self):
         gh_calls = []
@@ -531,7 +544,7 @@ class WorkerStallPass(unittest.TestCase):
         edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
         self.assertEqual(len(edits), 0)
 
-    def test_record_ttl_expiry_allows_new_stall_restart(self):
+    def test_record_ttl_expiry_does_not_restart_a_foreign_dispatch(self):
         calls = []
 
         def rpc(*a):
@@ -548,105 +561,13 @@ class WorkerStallPass(unittest.TestCase):
             'label_cooldown_seconds': 0,
             'stall_restart_record_ttl_seconds': 3600,
         })
-        fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc)
+        notices, _bits = fw.worker_stall_pass(cfg, state, T0, [w], {'term_fix': OLD_MS}, rpc)
         stops = [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
-        self.assertEqual(len(stops), 1)
-        self.assertEqual(stops[0][3], 'd_after_ttl')
+        self.assertEqual(stops, [])
+        self.assertTrue(any('d_after_ttl' in n for n in notices))
 
-    def test_gh_pr_list_fails_then_succeeds_labels_once_second_pass(self):
-        """Lookup failure does not open an issue or set labeled; next pass labels the PR."""
-        calls = []
-
-        def rpc(*a):
-            calls.append(a)
-            return {}
-
-        gh_calls = []
-        run_seq = []
-
-        def fake_run(cmd, **kwargs):
-            run_seq.append(cmd)
-            if len(run_seq) == 1:
-                raise subprocess.CalledProcessError(1, cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout='[{"number": 88}]')
-
-        def fake_act(cmd):
-            gh_calls.append(cmd)
-            return 0
-
-        w = base_worker(
-            dispatchId='d_gh',
-            githubPullRequestNumber=None,
-            headRefName='feature-retry',
-        )
-        term_times = {'term_fix': OLD_MS}
-        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
-        cfg = stall_test_config({'label_cooldown_seconds': 0})
-        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
-            _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
-        issues1 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
-        edits1 = [c for c in gh_calls if len(c) >= 4 and c[:4] == ['gh', 'pr', 'edit', '88']]
-        self.assertIn('stall_pr_lookup_failed=d_gh', bits1)
-        self.assertEqual(issues1, [])
-        self.assertEqual(edits1, [])
-        self.assertFalse(state['worker_stall']['task_fix'].get('labeled'))
-
-        gh_calls.clear()
-        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
-            _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 5, [w], term_times, rpc, act=fake_act)
-        issues2 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
-        edits2 = [c for c in gh_calls if len(c) >= 4 and c[:4] == ['gh', 'pr', 'edit', '88']]
-        self.assertEqual(issues2, [])
-        self.assertEqual(len(edits2), 1)
-        self.assertIn('needs-elon', edits2[0])
-        self.assertTrue(state['worker_stall']['task_fix'].get('labeled'))
-
-    def test_gh_pr_list_timeout_then_empty_opens_fallback_once(self):
-        """Timeout is lookup failure (no issue); empty list is no_pr -> one fallback issue next pass."""
-        calls = []
-
-        def rpc(*a):
-            calls.append(a)
-            return {}
-
-        gh_calls = []
-        run_seq = []
-
-        def fake_run(cmd, **kwargs):
-            run_seq.append(cmd)
-            if len(run_seq) == 1:
-                raise subprocess.TimeoutExpired(cmd, kwargs.get('timeout', 30))
-            return subprocess.CompletedProcess(cmd, 0, stdout='[]')
-
-        def fake_act(cmd):
-            gh_calls.append(cmd)
-            return 0
-
-        w = base_worker(
-            dispatchId='d_to',
-            githubPullRequestNumber=None,
-            headRefName='gone-branch',
-        )
-        term_times = {'term_fix': OLD_MS}
-        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
-        cfg = stall_test_config({'label_cooldown_seconds': 0})
-        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
-            _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
-        issues1 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
-        self.assertIn('stall_pr_lookup_failed=d_to', bits1)
-        self.assertEqual(issues1, [])
-        self.assertFalse(state['worker_stall']['task_fix'].get('labeled'))
-
-        gh_calls.clear()
-        with patch.object(fw.subprocess, 'run', side_effect=fake_run):
-            _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 5, [w], term_times, rpc, act=fake_act)
-        issues2 = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'issue', 'create']]
-        self.assertEqual(len(issues2), 1)
-        self.assertTrue(state['worker_stall']['task_fix'].get('labeled'))
-        self.assertIn('stall_no_pr=d_to', bits2)
-
-    def test_lookup_fails_every_pass_no_label_no_issue(self):
-        """Repeated gh failures never set labeled, never open issues, and do not crash."""
+    def test_silent_own_worker_parks_without_github_calls(self):
+        """A silent restart is a notice. Fleet watch does not label the PR or open an issue."""
         calls = []
 
         def rpc(*a):
@@ -662,24 +583,21 @@ class WorkerStallPass(unittest.TestCase):
             gh_calls.append(cmd)
             return 0
 
-        w = base_worker(
-            dispatchId='d_bad',
-            githubPullRequestNumber=None,
-            headRefName='any',
-        )
-        term_times = {'term_fix': OLD_MS}
-        state = {'worker_stall': {'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 200}}}
-        cfg = stall_test_config({'label_cooldown_seconds': 0})
+        w = base_worker(dispatchId='d_gh', githubPullRequestNumber=None, headRefName='feature-retry')
+        state = {'own_dispatches': {
+            'd_gh': {'kind': 'verifier', 'restarted': True, 'restart_at': T0 - 4000},
+        }}
         with patch.object(fw.subprocess, 'run', side_effect=fake_run):
-            _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc, act=fake_act)
-            _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 100, [w], term_times, rpc, act=fake_act)
-        self.assertIn('stall_pr_lookup_failed=d_bad', bits1)
-        self.assertIn('stall_pr_lookup_failed=d_bad', bits2)
+            notices, bits = fw.worker_stall_pass(
+                stall_test_config(), state, T0, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
+            again, bits2 = fw.worker_stall_pass(
+                stall_test_config(), state, T0 + 100, [w], {'term_fix': OLD_MS}, rpc, act=fake_act)
+        self.assertIn('stall_parked=d_gh', bits)
+        self.assertNotIn('stall_parked=d_gh', bits2)
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(again, [])
         self.assertEqual(gh_calls, [])
-        st = state['worker_stall'].get('task_fix')
-        self.assertIsInstance(st, dict)
-        self.assertTrue(st.get('restarted'))
-        self.assertFalse(st.get('labeled'))
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
 
 
 class MainStallInventory(unittest.TestCase):

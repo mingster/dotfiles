@@ -1,0 +1,1 @@
+Each fleet-watch pass logs started, refused, parked, failed, sent, send_failed and refused_reasons, including zeros, and the automation summary shows those counts instead of `no change`. A gate or pick refusal names its reason. (#992)

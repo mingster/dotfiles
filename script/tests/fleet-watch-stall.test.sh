@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# No orca: worker stall uses terminal lastOutputAt, worker-stop/start and gh label.
+# No orca: a recorded own worker stalls, is restarted once, then parked. Others are not stopped.
 set -euo pipefail
 path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
 PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
@@ -60,11 +60,12 @@ class Stall(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
         self.log_path = self.home / 'fleet-watch-test.log'
 
-    def test_stall_restarts_once_then_labels(self):
+    def test_own_stall_restarts_once_then_parks(self):
         calls = []
         gh_calls = []
         # last output 3000s before pass at T0+4000 -> idle 3000s > 30 min (STALL_IDLE_LIMIT)
         term_ms = int((T0 + 1000) * 1000)
+        clock = {'now': T0 + 4000}
 
         def rpc(*args):
             calls.append(args)
@@ -91,6 +92,7 @@ class Stall(unittest.TestCase):
             'worker_stall': {'label_repo': 'owner/repo', 'label_cooldown_seconds': 0},
             'backup': {'stamp': str(backup_stamp), 'issue_repo': 'owner/repo'},
         }))
+        state.write_text(json.dumps({'own_dispatches': {'disp1': {'kind': 'verifier'}}}))
 
         with isolated_main_env(str(self.home)), \
                 patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
@@ -99,8 +101,10 @@ class Stall(unittest.TestCase):
                 patch.object(watch, 'pr_notices', return_value=[]), \
                 patch.object(watch, 'usage_notices', return_value=[]), \
                 patch.object(watch, 'deliver_notices', return_value=None), \
-                patch.object(watch.time, 'time', return_value=T0 + 4000):
+                patch.object(watch.time, 'time', side_effect=lambda: clock['now']):
             watch.main()
+            watch.main()
+            clock['now'] = T0 + 4000 + 31 * 60
             watch.main()
 
         stops = [c for c in calls if c[:4] == ('orchestration', 'worker-stop', '--dispatch', 'disp1')]
@@ -124,10 +128,10 @@ class Stall(unittest.TestCase):
         self.assertIn('tcoord', starts[0])
         self.assertNotIn('worker-start', starts[0])
         edits = [c for c in gh_calls if len(c) >= 3 and c[:3] == ['gh', 'pr', 'edit']]
-        self.assertTrue(any('629' in c and 'needs-elon' in c for c in edits))
+        self.assertFalse(any('needs-elon' in c for c in edits))
         log = self.log_path.read_text()
         self.assertIn('stall_restart=disp1', log)
-        self.assertIn('stall_label_pr=disp1:629', log)
+        self.assertIn('stall_parked=disp1', log)
         self.assertIn('backup_stale', log)
 
     def test_no_worker_stop_without_stall_config(self):

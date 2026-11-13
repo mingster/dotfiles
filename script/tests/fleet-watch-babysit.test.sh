@@ -136,6 +136,11 @@ run_pass() {
   fi
   if [ -n "$workers" ]; then
     args+=(--workers-json "$workers")
+  else
+    # The fixture config has no runs, so a live fetch reads every Orca Run.
+    # These cases do not need workers; the one that does passes a workers file.
+    printf '[]\n' > "$tmp/workers-empty.json"
+    args+=(--workers-json "$tmp/workers-empty.json")
   fi
   if "${args[@]}" >"$out" 2>"$out.err"; then
     return 0
