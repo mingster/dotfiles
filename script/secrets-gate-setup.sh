@@ -48,7 +48,11 @@ check_parent() {
   local why
   why=$(bash "$gate_src" check-path "$2") || die "$1: $why. The folder must sit in a path only root can change (default $gate_dir/folder), not in a home folder."
 }
-check_parent "folder parent" "${dir%/*}"
+# On a fresh host the parent (default /opt/secrets-gate) does not exist yet, step 1 creates it as root. Check the
+# nearest parent that exists now; the part step 1 creates is made by root and not writable by anyone else.
+nearest=${dir%/*}
+while [ -n "$nearest" ] && [ ! -e "$nearest" ] && [ ! -L "$nearest" ]; do nearest=${nearest%/*}; done
+check_parent "folder parent" "${nearest:-/}"
 [ ! -L "$dir" ] || die "$dir is a symbolic link"
 check_parent "gate folder parent" "${gate_dir%/*}"
 [ ! -L "$gate_dir" ] || die "$gate_dir is a symbolic link"

@@ -143,5 +143,31 @@ out=$(run --role source --dir "$WD" --hosts hostA 2>&1); rc=$?
 if grep -E '^(chown|chmod) ' "$TMP/sudo.log" | grep -vF -- " -- " | grep -q .; then bad "a chown or chmod lacks --: $(cat "$TMP/sudo.log")"; else ok "every chown and chmod has -- before the name"; fi
 grep -qF -- "-- $WD" "$TMP/sudo.log" && ok "the odd name arrives as one quoted argument" || bad "odd name split: $(cat "$TMP/sudo.log")"
 
+# Fresh host: the gate directory does not exist yet and no --dir is given (the documented first step)
+FRESH="$TMP/fresh"
+mkdir -p "$FRESH"; chmod 700 "$FRESH"
+run_fresh() {
+  HOME="$TMP" PATH="$TMP/bin:$PATH" SECRETS_SYNC_CONFIG="$TMP/sync.json" SG_TRUST_UID="$(id -u)" \
+    SG_GATE_DIR="$FRESH/secrets-gate" SG_SUDOERS_FILE="$TMP/sudoers" SG_PAM_DIR="$TMP/pam" SG_SSHD_DIR="$TMP/ssh" SG_ROOT_HOME="$TMP/roothome" \
+    bash "$SETUP" "$@"
+}
+for fresh_role in source receiver; do
+  if [ "$fresh_role" = source ]; then fresh_args=(--role source --hosts hostA); else fresh_args=(--role receiver --pubkey "$KEY"); fi
+  : >"$TMP/sudo.log"
+  out=$(run_fresh --dry-run "${fresh_args[@]}" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && ok "fresh host $fresh_role dry run exits 0" || bad "fresh host $fresh_role dry run rc $rc: $out"
+  grep -qF "would: create $FRESH/secrets-gate" <<<"$out" && ok "fresh host $fresh_role dry run reports creating the gate dir" || bad "fresh host $fresh_role dry run lacks the create step: $out"
+  [ ! -s "$TMP/sudo.log" ] && [ ! -e "$FRESH/secrets-gate" ] && ok "fresh host $fresh_role dry run ran no sudo and created nothing" || bad "fresh host $fresh_role dry run changed something"
+  : >"$TMP/sudo.log"
+  out=$(run_fresh "${fresh_args[@]}" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && ok "fresh host $fresh_role run exits 0" || bad "fresh host $fresh_role run rc $rc: $out"
+  grep -qE "^install -d -o root -g [^ ]+ -m 755 -- $FRESH/secrets-gate\$" "$TMP/sudo.log" && ok "fresh host $fresh_role run creates the gate dir through sudo" || bad "fresh host $fresh_role run did not create the gate dir: $(cat "$TMP/sudo.log")"
+done
+# A fresh host whose top parent is not root controlled is still refused
+mkdir -p "$TMP/openparent"; chmod 777 "$TMP/openparent"
+refused_fresh_out=$(HOME="$TMP" PATH="$TMP/bin:$PATH" SECRETS_SYNC_CONFIG="$TMP/sync.json" SG_TRUST_UID="$(id -u)" SG_GATE_DIR="$TMP/openparent/secrets-gate" \
+  bash "$SETUP" --dry-run --role source --hosts hostA 2>&1); rc=$?
+[ "$rc" -eq 1 ] && grep -qF "writable" <<<"$refused_fresh_out" && ok "fresh host under a writable parent is refused" || bad "writable parent accepted: rc $rc $refused_fresh_out"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
