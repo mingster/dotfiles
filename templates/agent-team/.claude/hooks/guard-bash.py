@@ -526,14 +526,32 @@ def is_sign_in_invocation(prog, args):
     return not any(SECRETS_DIR.search(a) or SECRET_FILE.search(a) for a in script_args)
 
 
-def check_secrets_dir(segment, base, args, prog=None):
+def is_refs_invocation(prog, args, cwd=None):
+    """~/dotfiles/script/secrets-refs.sh <dir> <pattern>: prints file:line, never the matched text, so the pattern
+    may name the secrets dir. Only that script (by real path), exactly two plain arguments, and a <dir> that
+    neither names the secrets dir nor expands."""
+    if len(args) != 2 or any(a.startswith("-") for a in args):
+        return False
+    if SECRETS_DIR.search(args[0]) or SECRET_FILE.search(args[0]) or any(ch in args[0] for ch in "*?[{$`"):
+        return False
+    try:
+        canonical = os.path.realpath(os.path.expanduser("~/dotfiles/script/secrets-refs.sh"))
+        joined = os.path.expanduser(prog or "")
+        if not os.path.isabs(joined):
+            joined = os.path.join(cwd or os.getcwd(), joined)
+        return os.path.isfile(canonical) and os.path.realpath(joined) == canonical
+    except (OSError, ValueError):
+        return False
+
+
+def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     """Deny a segment that reads the secrets dir: readers, interpreters, redirects, copies out, cd."""
     text = SECRETS_WRITE_REDIRECT.sub("", segment)
     if not SECRETS_DIR.search(text) or base in SECRETS_NONREAD:
         return
     if any(p.fullmatch(segment.strip()) for p in SECRETS_STDIN_OK):
         return
-    if is_sign_in_invocation(prog or base, args):
+    if is_sign_in_invocation(prog or base, args) or is_refs_invocation(prog or base, args, cwd):
         return
     if base in SECRETS_COPIERS:
         operands, target_dir, i = [], False, 0
@@ -2125,8 +2143,9 @@ def check_segment(segment, depth=0, cwd=None):
                  "and any other write are gated: report them to Elon, who asks the owner.")
 
     # 2a. Anything that reads under the secrets dir.
-    check_secrets_dir(segment, base, args, prog=prog)
-    if any(p.fullmatch(segment.strip()) for p in SECRETS_STDIN_OK) or is_sign_in_invocation(prog, args):
+    check_secrets_dir(segment, base, args, prog=prog, cwd=cwd)
+    if (any(p.fullmatch(segment.strip()) for p in SECRETS_STDIN_OK) or is_sign_in_invocation(prog, args)
+            or is_refs_invocation(prog, args, cwd)):
         return
 
     # 2. Secrets.

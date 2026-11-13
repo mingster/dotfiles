@@ -746,5 +746,49 @@ class ExactOnlyScripts(GuardTest):
                 self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
+class SecretsRefsSearch(GuardTest):
+    """The one read only search that may name the secrets dir: ~/dotfiles/script/secrets-refs.sh <dir> <pattern>."""
+
+    def setUp(self):
+        super().setUp()
+        script_dir = os.path.join(self.home, "dotfiles", "script")
+        os.makedirs(script_dir)
+        self.script = os.path.join(script_dir, "secrets-refs.sh")
+        with open(self.script, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.makedirs(os.path.join(self.home, "work"))
+        os.makedirs(os.path.join(self.home, "other", "script"))
+        with open(os.path.join(self.home, "other", "script", "secrets-refs.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+
+    def test_search_naming_the_folder_is_allowed(self):
+        for command in (f"{self.script} ~/work secrets", f"{self.script} ~/work 'secrets/'",
+                        f"{self.script} . secrets", "~/dotfiles/script/secrets-refs.sh ~/work secrets/"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_relative_path_from_the_dotfiles_checkout_is_allowed(self):
+        payload = {"tool_name": "Bash", "tool_input": {"command": "script/secrets-refs.sh ~/work secrets"},
+                   "cwd": os.path.join(self.home, "dotfiles")}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home), cwd=self.home, timeout=20)
+        self.assertEqual(out.stdout.strip(), "")
+
+    def test_other_shapes_stay_denied(self):
+        for command in (f"{self.script} ~/work/secrets x",             # dir is the folder
+                        f"{self.script} ~/work secrets extra",          # a third argument
+                        f"{self.script} -r ~/work secrets",             # an option
+                        f"{self.script} ~/work* secrets",               # a glob dir
+                        f"{self.script} \"$X\" secrets",                # an expansion dir
+                        f"{self.home}/other/script/secrets-refs.sh ~/work secrets",  # not the dotfiles script
+                        f"bash {self.script} ~/work secrets",           # through a shell
+                        f"{self.script} ~/work secrets > out.txt",      # a redirect makes it more than two arguments
+                        "grep -rn secrets ~/work",                      # the plain search
+                        "cat ~/work/secrets/key",
+                        f"{self.script} ~/work secrets; cat ~/work/secrets/key"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+
 if __name__ == "__main__":
     unittest.main()
