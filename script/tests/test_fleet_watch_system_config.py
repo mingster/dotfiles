@@ -86,7 +86,7 @@ class RecordedRun(unittest.TestCase):
                 'id': 'run_real',
                 'coordinator_handle': 'term_real',
                 'updated_at': '2026-11-01T00:00:00',
-                'objective': 'Coordinated from mini6',
+                'objective': 'ordinary coordinator objective',
             },
             {
                 'id': 'run_scratch',
