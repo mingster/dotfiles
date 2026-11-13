@@ -2078,6 +2078,42 @@ sweep_browsers() {
   printf 'browsers closed=%s kept=%s\n' "$browser_closed" "$browser_kept"
 }
 sweep_browsers
+# Grayed-out workspaces (issue 953): every non-main Orca worktree with no terminal attached goes, with its branch kept.
+# Uncommitted tracked changes keep it, named in the report. Runs on a fleet host too, ahead of its early exit below.
+guarded_idle_worktree_rm() { # <orca id> <path>: after sweep_idle_worktrees' terminal and dirty checks; never --delete-branch
+  if orca_call worktree rm --worktree "id:$1" --force >/dev/null 2>&1; then
+    printf 'Removed idle worktree %s\n' "$2"
+  else
+    echo "Warning: could not remove idle worktree $2." >&2; fail_item "idle worktree $2" 'orca worktree rm failed'; return 1
+  fi
+}
+sweep_idle_worktrees() {
+  local term_json="$tmp/sweep-terminals" wt_json="$tmp/sweep-worktrees" id path rc gone=0 dirty=0 status_out
+  [ -n "${orca_bin:-}" ] && command -v "$orca_bin" >/dev/null 2>&1 || { echo 'Idle worktree sweep skipped: Orca unavailable'; return 0; }
+  if ! orca_call terminal list --json > "$term_json" 2>/dev/null \
+    || ! jq -e '.ok != false and ((.result.terminals // []) | type == "array")' "$term_json" >/dev/null 2>&1; then
+    echo 'Idle worktree sweep skipped: cannot read the terminal list'; fail_item 'idle worktrees' 'terminal list unreadable; all kept'; return 0
+  fi
+  if ! orca_call worktree list --json > "$wt_json" 2>/dev/null \
+    || ! jq -e '.ok != false and ((.result.worktrees // []) | type == "array") and (.result.truncated != true)' "$wt_json" >/dev/null 2>&1; then
+    echo 'Idle worktree sweep skipped: cannot read the worktree list'; fail_item 'idle worktrees' 'worktree list unreadable; all kept'; return 0
+  fi
+  jq -r '.result.terminals[]? | (.worktreePath // empty) | select(. != "")' "$term_json" > "$tmp/sweep-live"
+  while IFS=$'\t' read -r id path; do
+    [ -n "$id" ] && [ -n "$path" ] || continue
+    if grep -Fxq -- "$path" "$tmp/sweep-live" || grep -Fxq -- "$(real "$path")" "$tmp/sweep-live"; then continue; fi
+    if [ -d "$path" ]; then
+      rc=0; status_out=$(git -C "$path" status --porcelain --untracked-files=no 2>/dev/null) || rc=$?
+      if [ "$rc" -ne 0 ] || [ -n "$status_out" ]; then
+        printf 'Kept idle worktree %s (uncommitted changes)\n' "$path"; dirty=$((dirty+1)); continue
+      fi
+    fi
+    if [ "$apply" -eq 0 ]; then printf 'Remove idle worktree %s\n' "$path"; gone=$((gone+1)); continue; fi
+    if guarded_idle_worktree_rm "$id" "$path"; then gone=$((gone+1)); fi
+  done < <(jq -r '.result.worktrees[]? | select((.isMainWorktree == true or .git.isMainWorktree == true) | not) | [.id // "", (.path // .workspacePath // "")] | @tsv' "$wt_json")
+  printf 'idle worktrees %s=%s kept dirty=%s\n' "$([ "$apply" -eq 0 ] && echo 'to remove' || echo removed)" "$gone" "$dirty"
+}
+sweep_idle_worktrees
 # A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once. With
 # --main-update it also fast forwards a clean main checkout and installs the merged preset.
 if [ "$worktrees_only" -eq 1 ]; then
