@@ -1,0 +1,1 @@
+* Team doc: a message that names the owner approval file or script goes through a file written with the Write tool and `--body-file`, not a heredoc. The guard is unchanged; tests now pin the allowed `--body-file` forms and the heredoc bypass shapes that stay denied.
