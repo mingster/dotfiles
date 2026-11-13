@@ -109,13 +109,15 @@ class StallRestartGivesUp(unittest.TestCase):
         w = base_worker(dispatchId='d1', taskId='t_fail', resource={'worktreeId': 'wt::/p'})
         term_times = {'term_fix': OLD_MS}
         cfg, state = stall_test_config(), {}
+        state['own_dispatches'] = {'d1': {'kind': 'rework'}}
         urgent = []
         for step in range(6):
             notices, _bits = fw.worker_stall_pass(cfg, state, T0 + step, [w] if step == 0 else [], term_times, rpc)
             urgent += [n for n in notices if isinstance(n, fw.Urgent)]
-        self.assertEqual(len(starts), fw.STALL_RESTART_ATTEMPTS)
+        self.assertEqual(len(starts), 1)
         self.assertEqual(len(urgent), 1)
         self.assertIn('d1', str(urgent[0]))
+        self.assertTrue(state['own_dispatches']['d1'].get('parked'))
 
 
 if __name__ == '__main__':

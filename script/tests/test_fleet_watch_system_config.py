@@ -79,14 +79,6 @@ def stalled_worker(**extra):
     return row
 
 
-def stall_state():
-    return {
-        'worker_stall': {
-            'task_fix': {'restarted': True, 'labeled': False, 'restart_at': T0 - 1000},
-        },
-    }
-
-
 class RecordedRun(unittest.TestCase):
     def test_full_list_picks_a_run_with_a_coordinator_terminal(self):
         chosen = fw.select_coordinator_run(recorded_result('run-list-full')['runs'])
@@ -220,7 +212,48 @@ class SystemConfig(unittest.TestCase):
 
 
 class StallRepo(unittest.TestCase):
-    def pass_stall(self, worker, config):
+    def stall_config(self):
+        return {
+            'runs': [{'id': 'run_placeholder', 'terminal': 'term_placeholder', 'waiter_pattern': 'w'}],
+            'worker_stall': {'from_system': True, 'label_cooldown_seconds': 0},
+        }
+
+    def test_stalled_own_worker_parks_against_its_checkout_repo(self):
+        checkout_tmp, checkout = git_checkout('https://github.com/owner/app.git')
+        self.addCleanup(checkout_tmp.cleanup)
+        worker = stalled_worker(
+            githubPullRequestNumber=99,
+            resource={'worktreeId': 'wt::' + str(checkout)},
+        )
+        state = {
+            'own_dispatches': {
+                'disp_fixture': {'kind': 'verifier', 'restarted': True, 'restart_at': T0 - 4000},
+            },
+        }
+        calls = []
+
+        def act(command):
+            calls.append(list(command))
+            return 0
+
+        notices, log_bits = fw.worker_stall_pass(
+            self.stall_config(), state, T0, [worker], {'term_fix': OLD_MS}, lambda *_args: None, act=act,
+        )
+        self.assertTrue(any(str(notice).startswith('parked stall ') for notice in notices))
+        self.assertTrue(any('stall_parked=disp_fixture' in bit for bit in log_bits))
+        row = next(value for value in state['parked'].values() if value.get('dispatch') == 'disp_fixture')
+        self.assertEqual(row.get('repo'), 'owner/app')
+        self.assertEqual(row.get('pr'), 99)
+        self.assertNotEqual(row.get('repo'), fw.FAULT_REPO)
+        self.assertFalse(any(call[:3] == ['gh', 'pr', 'edit'] for call in calls))
+
+    def test_stall_without_a_pr_parks_in_the_fleet_repo(self):
+        worker = stalled_worker()
+        state = {
+            'own_dispatches': {
+                'disp_fixture': {'kind': 'verifier', 'restarted': True, 'restart_at': T0 - 4000},
+            },
+        }
         calls = []
 
         def act(command):
@@ -228,39 +261,13 @@ class StallRepo(unittest.TestCase):
             return 0
 
         _notices, log_bits = fw.worker_stall_pass(
-            config, stall_state(), T0, [worker], {'term_fix': OLD_MS}, lambda *_args: None, act=act,
+            self.stall_config(), state, T0, [worker], {'term_fix': OLD_MS}, lambda *_args: None, act=act,
         )
-        return calls, log_bits
-
-    def test_stalled_worker_labels_the_pr_in_its_own_repo(self):
-        checkout_tmp, checkout = git_checkout('https://github.com/owner/app.git')
-        self.addCleanup(checkout_tmp.cleanup)
-        worker = stalled_worker(
-            githubPullRequestNumber=99,
-            resource={'worktreeId': 'wt::' + str(checkout)},
-        )
-        config = {
-            'runs': [{'id': 'run_placeholder', 'terminal': 'term_placeholder', 'waiter_pattern': 'w'}],
-            'worker_stall': {'from_system': True, 'label_cooldown_seconds': 0},
-        }
-        calls, log_bits = self.pass_stall(worker, config)
-        edits = [call for call in calls if call[:3] == ['gh', 'pr', 'edit']]
-        self.assertEqual(len(edits), 1)
-        self.assertEqual(edits[0][edits[0].index('--repo') + 1], 'owner/app')
-        self.assertIn('99', edits[0])
-        self.assertNotIn(fw.FAULT_REPO, edits[0])
-        self.assertTrue(any('stall_label_pr=' in bit for bit in log_bits))
-
-    def test_stall_without_a_pr_opens_in_the_fleet_repo(self):
-        worker = stalled_worker()
-        config = {
-            'runs': [{'id': 'run_placeholder', 'terminal': 'term_placeholder', 'waiter_pattern': 'w'}],
-            'worker_stall': {'from_system': True, 'label_cooldown_seconds': 0},
-        }
-        calls, _log_bits = self.pass_stall(worker, config)
-        creates = [call for call in calls if call[:3] == ['gh', 'issue', 'create']]
-        self.assertEqual(len(creates), 1)
-        self.assertEqual(creates[0][creates[0].index('--repo') + 1], fw.FAULT_REPO)
+        row = next(value for value in state['parked'].values() if value.get('dispatch') == 'disp_fixture')
+        self.assertEqual(row.get('repo'), fw.FAULT_REPO)
+        self.assertNotIn('pr', row)
+        self.assertTrue(any('stall_parked=disp_fixture' in bit for bit in log_bits))
+        self.assertFalse(any(call[:3] == ['gh', 'issue', 'create'] for call in calls))
         self.assertFalse(any(call[:3] == ['gh', 'pr', 'edit'] for call in calls))
 
     def test_restart_failure_is_parked(self):
@@ -274,12 +281,10 @@ class StallRepo(unittest.TestCase):
             raise fw.OrcaReadError('down')
 
         worker = stalled_worker()
-        config = {
-            'runs': [{'id': 'run_placeholder', 'terminal': 'term_placeholder', 'waiter_pattern': 'w'}],
-            'worker_stall': {'from_system': True, 'label_cooldown_seconds': 0},
-        }
         notices, log_bits = fw.worker_stall_pass(
-            config, {'worker_stall': {}}, T0, [worker], {'term_fix': OLD_MS}, rpc_call, act=act,
+            self.stall_config(),
+            {'worker_stall': {}, 'own_dispatches': {'disp_fixture': {'kind': 'verifier'}}},
+            T0, [worker], {'term_fix': OLD_MS}, rpc_call, act=act,
         )
         self.assertFalse(any(call[:3] == ['gh', 'issue', 'create'] for call in calls))
         self.assertTrue(any(str(notice).startswith('parked stall ') for notice in notices))

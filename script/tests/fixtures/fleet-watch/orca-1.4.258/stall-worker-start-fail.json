@@ -1,0 +1,5 @@
+{
+  "stdout": "",
+  "stderr": "{\"ok\": false, \"error\": {\"code\": \"no_active_sender_terminal\", \"message\": \"no active sender terminal\"}}\n",
+  "exit": 1
+}

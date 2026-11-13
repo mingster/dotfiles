@@ -10,7 +10,7 @@ spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).pare
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
-from test_fleet_watch_stall import OLD_MS, T0, base_worker, stall_test_config  # noqa: E402
+from test_fleet_watch_stall import OLD_MS, T0, base_worker, mark_own, stall_test_config  # noqa: E402
 
 REPO = 'o/r'
 HEAD = 'a' * 40
@@ -355,7 +355,7 @@ class StallPark(unittest.TestCase):
             return {}
 
         worker = base_worker(dispatchId='d1', taskId='t_park', resource={'worktreeId': 'wt::/p'})
-        state = {}
+        state = mark_own({}, 'd1')
         cfg = stall_test_config()
         notices, _bits = fw.worker_stall_pass(cfg, state, T0, [worker], {'term_fix': OLD_MS}, rpc)
         self.assertEqual(len(starts), 1)
@@ -380,7 +380,7 @@ class StallPark(unittest.TestCase):
             return {}
 
         worker = base_worker(dispatchId='d1', taskId='t_gate', resource={'worktreeId': 'wt::/p'})
-        state = {}
+        state = mark_own({}, 'd1')
         cfg = stall_test_config()
         _notices, bits = fw.worker_stall_pass(cfg, state, T0, [worker], {'term_fix': OLD_MS}, rpc)
         self.assertIn('stall_restart_deferred=d1:refused by the usage gate', bits)
