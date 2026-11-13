@@ -861,7 +861,7 @@ class IssueScanPass(unittest.TestCase):
         _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
         self.assertEqual(len(starts), 1)
 
-    def test_rework_cap_labels_needs_elon(self):
+    def test_rework_cap_labels_needs_redesign(self):
         state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
         head = '2' * 40
         prs = {REPO: [pr(10, head=head, comments=[
@@ -883,8 +883,17 @@ class IssueScanPass(unittest.TestCase):
             act=act,
         )
         self.assertTrue(any(c[:3] == ['gh', 'pr', 'edit'] for c in edits))
-        self.assertIn('needs-elon', edits[0])
+        self.assertIn('needs-redesign', edits[0])
         self.assertTrue(any(isinstance(n, fw.Urgent) for n in notices))
+
+    def test_needs_redesign_label_skips_rework(self):
+        state = {}
+        head = '3' * 40
+        prs = {REPO: [pr(11, head=head, labels=['needs-redesign'], comments=[
+            {'body': 'Checks: FAIL head=%s' % head},
+        ])]}
+        _, _, starts, _ = self.run_pass(state, prs_by_repo=prs)
+        self.assertEqual(starts, [])
 
     def test_needs_elon_label_skips_rework(self):
         state = {}

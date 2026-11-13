@@ -320,11 +320,13 @@ echo web/src/a.ts > "$tmp/files"
 printf 'Review: FAIL\nBroken.\n' > "$tmp/answer"
 issue_comments_set "$(printf 'Review: FAIL head=%040d model=sonnet\n' 1)" "$(printf 'Review: FAIL head=%040d model=sonnet\n' 2)"
 run
-grep -q 'edit' "$tmp/calls" && grep -q 'needs-elon' "$tmp/calls" || fail "the third failed head gets the label"
+grep -q 'edit' "$tmp/calls" && grep -q 'needs-redesign' "$tmp/calls" || fail "two failed Verdicts add the redesign label"
+grep -q 'Redesign due' "$tmp/posted" || fail "two failed Verdicts post the redesign message"
 
 issue_comments_set "$(printf 'Review: FAIL head=%040d model=sonnet\n' 1)"
 run
-if grep -q needs-elon "$tmp/calls"; then fail "the second failed head gets no label"; fi
+if grep -qE 'needs-(elon|redesign)' "$tmp/calls"; then fail "one failed Verdict gets no label"; fi
+if grep -q 'Redesign due' "$tmp/posted"; then fail "one failed Verdict gets no redesign message"; fi
 
 # REVIEW_POST_STATUS=1: PASS posts success status at head sha (status before comment)
 issue_comments_set

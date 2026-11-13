@@ -46,7 +46,7 @@ Each rule names what enforces it. "none" means only the agent's reading holds it
 | **Background waits:** every wait runs in the background with a timeout; in Claude Code as its own Bash call with `run_in_background: true`, never a shell `&`. | `.claude/hooks/guard-bash.py` (trailing `&` on `check --wait`) |
 | **No run-use for workers:** workers and child coordinators never run `orca orchestration run-use`. The coordinator rebinds with `run-use --id <run>` after a restart. | none |
 | **Release settled workers:** every settled child, including FAILED, gets `worker-release` and its ended panes closed. | `script/wrap-up.sh` |
-| **Reworks:** at most 2 reworks per PR, then the `needs-elon` label. | `script/pr-review.sh` |
+| **Redesign:** a PR whose Verdict or Review failed twice gets no third patch. It gets the `needs-redesign` label, and the coordinator closes it with the lesson and dispatches a fresh worker on a new brief. | `script/pr-review.sh` |
 | **Extra Strong review (user 2026-10-31):** extra Strong cross review only for money transactions, or when the coordinator or the user asks for it on that issue. | `script/pr-review.sh` (money paths) |
 | **Merge host (2026-11-09):** the coordinator runs `ship.sh` on its own host. | `script/worker-startup.sh` (refuses `--on` for a brief titled `release-manager: merge`) |
 | **Board status (user 2026-11-12):** every worker's Finish runs `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. A release with no PR sets `completed`, and `ship.sh` sets it after a merge. | `script/brief-lint.sh` (Finish must say so), `.agents/skills/orca-team/worker-pane-close.sh`, `script/ship.sh` |

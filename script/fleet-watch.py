@@ -3283,6 +3283,7 @@ def issue_scan_pass(
         pr_fetch = fetch_prs
     pr_repos = scan.get('pr_repos') or repos
     needs_elon = (config.get('worker_stall') or {}).get('needs_elon_label', 'needs-elon')
+    needs_redesign = (config.get('worker_stall') or {}).get('needs_redesign_label', 'needs-redesign')
     ship_heads = state.setdefault('issue_scan_ship', {})
     rework_heads = state.setdefault('issue_scan_rework', {})
     rework_pending = state.setdefault('issue_scan_rework_pending', {})
@@ -3304,7 +3305,7 @@ def issue_scan_pass(
         for pr_row in prs:
             if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
                 continue
-            if pr_has_label(pr_row, needs_elon):
+            if pr_has_label(pr_row, needs_elon) or pr_has_label(pr_row, needs_redesign):
                 continue
             head = pr_row.get('headRefOid') or ''
             if not head:
@@ -3347,9 +3348,9 @@ def issue_scan_pass(
             if escalated.get(pr_key):
                 continue
             if rounds.get(pr_key, 0) >= 2:
-                if act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', needs_elon]) == 0:
+                if act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', needs_redesign]) == 0:
                     escalated[pr_key] = True
-                    notices.append(Urgent('%s #%d rework cap reached; needs-elon' % (repo, pr_num)))
+                    notices.append(Urgent('%s #%d failed twice; redesign due' % (repo, pr_num)))
                     log_bits.append('rework_cap=%d' % pr_num)
                     if persist_state:
                         persist_state()
