@@ -98,7 +98,7 @@ else
 fi
 
 #brew install iftop iperf nmap tcpflow tcptrace tcpreplay nano svn nmap  fastfetch kdiff3 jq trash bat rar asdf nmap
-for pkg in coreutils curl git rsync wget unzip; do
+for pkg in coreutils curl git rsync wget unzip libpq; do
   brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
 done
 

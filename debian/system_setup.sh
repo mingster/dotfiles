@@ -29,7 +29,7 @@ simple() {
         exfat-fuse libreoffice udiskie mpv lightdm xsecurelock psmisc brightnessctl \
         zram-tools
 
-    sudo apt install -y git ufw rsync unzip curl wget wput
+    sudo apt install -y git ufw rsync unzip curl wget wput postgresql-client
     sudo apt install -y kdiff3 zsh tmux neovim lf kitty fastfetch fzf
     sudo apt install -y chromium-browser
 

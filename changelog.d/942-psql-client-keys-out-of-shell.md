@@ -1,0 +1,1 @@
+Every host installs the PostgreSQL client (Homebrew libpq, apt postgresql-client, pacman postgresql) and `.zshrc` resolves `psql` and `createdb` from it. Shell startup no longer sources `~/dotfiles/.env`, so API keys are not exported into every shell; `bin/with-keychain` reads them from the macOS keychain for one command (#942).
