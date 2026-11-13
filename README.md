@@ -27,7 +27,7 @@ Full role names and boundaries live in [Agent team reference](docs/agents/team-r
 ## How one task runs
 
 1. **Issue.** Someone opens a tracker item with acceptance criteria. Intake roles may grill and slice it until it is ready.
-2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief has five parts: `Refs`, Acceptance, Out of scope, Verify and Finish. `script/brief-lint.sh` rejects a brief that lacks any of them.
+2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief has four parts a person writes: `Refs`, Acceptance, Out of scope and Verify. `script/worker-startup.sh` runs `script/brief-lint.sh` once per start and rejects a brief that lacks any of them, then appends the fixed Finish steps when the brief has no `## Finish`.
 3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks that the host is ready and that the usage quota allows another worker, then starts one worker in a fresh worktree.
 4. **Build.** The worker implements the ticket, runs local checks, commits, pushes once and opens a pull request.
 5. **Checks and review.** GitHub Actions runs required checks. A read only bot review and a separate verifier model post a **Verdict** (`PASS`, `PASS+NOTES` or `FAIL`) via `script/post-verdict.sh`.

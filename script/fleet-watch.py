@@ -3149,11 +3149,6 @@ def babysit_pass(
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
-        spec_path = command[command.index('--spec') + 1]
-        if brief_lint_missing(spec_path):
-            lines.append(_babysit_line(repo, number, head, 'skip', 'brief-lint'))
-            log_bits.append('lint_fail=%s' % number)
-            continue
         if start_worker(command) != 0:
             lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
             log_bits.append('start_fail=%s' % number)

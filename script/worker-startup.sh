@@ -307,6 +307,28 @@ host_check() {
 
 # --- --run: optional worktree create (non-cursor), then delegate ---
 
+# The fixed Finish steps are not the author's to write (#968). A brief with no "## Finish" heading gets the
+# standard block appended in a copy; the original is untouched. Prints the spec path to use.
+with_finish_block() { # <spec_file> <run_id>
+  local spec_file=$1 run_id=$2 out
+  if grep -qE '^## Finish([[:space:]]|$)' "$spec_file"; then
+    printf '%s\n' "$spec_file"
+    return 0
+  fi
+  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-spec.XXXXXX") || die "cannot write the spec copy"
+  cp "$spec_file" "$out"
+  {
+    printf '\n## Finish\n'
+    printf -- '- Self-review the diff before you hand off.\n'
+    if grep -qi 'fullstack-dev' "$spec_file"; then
+      printf -- '- Open a PR with the issue closing line, a line `Builder: agent=<agent> model=<model>`, and `## Self-review` with the full 40 hex head sha; rewrite it after every push.\n'
+      printf -- '- Wait until `gh pr checks <n> --watch --fail-fast` (or `gh run list --branch <branch> --limit 3`) shows the checks passing at your final head. Never send worker_done with red or pending checks.\n'
+    fi
+    printf -- '- Run `orca worktree set --worktree active --workspace-status in-review`, then send `worker_done` to run %s. Never wait for a reply. Never contact the user.\n' "$run_id"
+  } >>"$out"
+  printf '%s\n' "$out"
+}
+
 usage_run() {
   echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV] [--route-override REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
@@ -463,6 +485,7 @@ run_mode() {
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out dispatch_log
+  spec=$(with_finish_block "$spec" "$run")
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
   enforce_builder_cursor "$title" "$agent" "$route_override"

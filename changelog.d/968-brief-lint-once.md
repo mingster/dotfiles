@@ -1,0 +1,1 @@
+brief-lint now runs once, in worker-startup.sh, and checks only what a person writes (Refs, Acceptance, Out of scope, Verify). worker-startup.sh appends the fixed Finish block (self-review, green checks, in-review status, worker_done) when the brief has no `## Finish`. The babysit pass no longer lints before it starts a worker (#968).

@@ -472,6 +472,53 @@ set -e
 grep -q 'brief-lint: missing Refs' "$tmp/run-lint.err" && ok || bad "bad brief stderr should include brief-lint output ($(cat "$tmp/run-lint.err"))"
 grep -q 'orchestration worker-start' "$tmp/orca-lint.log" && bad "orca should not worker-start when brief-lint fails" || ok
 
+# 968: a brief with no Finish starts, and the spec the worker gets carries the fixed Finish block
+nofin_spec="$tmp/nofin-spec.txt"
+cat >"$nofin_spec" <<'EOS'
+Refs #968
+Role: fullstack-dev.
+
+## Acceptance
+- [ ] Do the task.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+EOS
+ws968_run() { # <log> <run id> <spec> -> exit code in ec_968, stderr in $tmp/run-968.err
+  : >"$1"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$1" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    bash --noprofile --norc "$script" --run "$2" --spec "$3" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run-968.err"
+  ec_968=$?
+  set -e
+}
+ws968_run "$tmp/orca-nofin.log" run_nofin "$nofin_spec"
+[ "$ec_968" = 0 ] && ok || bad "brief with no Finish should start ($ec_968) $(cat "$tmp/run-968.err")"
+grep -q 'orchestration worker-start' "$tmp/orca-nofin.log" && ok || bad "no-Finish brief should reach worker-start"
+grep -q '## Finish' "$tmp/orca-nofin.log" && ok || bad "worker spec should carry a ## Finish block"
+grep -q 'workspace-status in-review' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set in-review"
+grep -q 'to run run_nofin' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the run for worker_done"
+grep -q '40 hex head sha' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should name the 40 hex Self-review sha"
+grep -q 'gh pr checks' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should wait for green checks"
+grep -q '^## Finish' "$nofin_spec" && bad "the original brief file should be untouched" || ok
+
+# 968: a brief with its own Finish is not given a second one
+ws968_run "$tmp/orca-ownfin.log" run_ownfin "$spec_file"
+[ "$(grep -o '## Finish' "$tmp/orca-ownfin.log" | wc -l | tr -d ' ')" = 1 ] && ok || bad "a brief with its own Finish should keep exactly one"
+
+# 968: a brief with no Acceptance is still refused
+noacc_spec="$tmp/noacc-spec.txt"
+sed '/^## Acceptance/,/^$/d' "$nofin_spec" >"$noacc_spec"
+ws968_run "$tmp/orca-noacc.log" run_noacc "$noacc_spec"
+[ "$ec_968" -ne 0 ] && grep -q 'brief-lint: missing Acceptance' "$tmp/run-968.err" && ok || bad "no Acceptance should be refused ($ec_968) $(cat "$tmp/run-968.err")"
+grep -q 'orchestration worker-start' "$tmp/orca-noacc.log" && bad "no-Acceptance brief must not start" || ok
+
 # 849: a "release-manager: merge" worker never starts on an overflow host
 : >"$tmp/orca-merge.log"
 set +e

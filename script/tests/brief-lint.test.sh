@@ -137,27 +137,6 @@ ec=$?
 set -e
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Verify" ]; then ok; else bad "missing Verify (ec=$ec, out=$out)"; fi
 
-# 7. Missing Finish
-cat >"$tmp/no-finish.md" <<'EOF'
-Refs dotfiles#717
-
-## Acceptance
-- [ ] Checks pass.
-
-## Out of scope
-Unrelated files.
-
-## Verify
-Run bash script/checks-local.sh.
-
-## Finish
-EOF
-set +e
-out=$(bash "$lint" "$tmp/no-finish.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Finish" ]; then ok; else bad "missing Finish (ec=$ec, out=$out)"; fi
-
 # 8. This T8 brief passes
 cat >"$tmp/t8-brief.md" <<'EOF'
 Refs dotfiles#717 (T8). Role: fullstack-dev. Repo: dotfiles, worktree from origin/main. LOCAL ONLY: no push, no PR, no Actions. Owner accepted T8 on 2026-11-08 (protected hook path included).
@@ -231,29 +210,6 @@ ec=$?
 set -e
 if [ "$ec" -ne 0 ] && printf '%s' "$out" | grep -q 'missing Acceptance' && printf '%s' "$out" | grep -q 'missing Out of scope'; then ok; else bad "empty bold sections should fail (ec=$ec, out=$out)"; fi
 
-# 10. Finish without self-review step is refused
-cat >"$tmp/no-self-review.md" <<'EOF'
-Refs dotfiles#760
-
-## Acceptance
-- [ ] Gate enforces self-review.
-
-## Out of scope
-Unrelated files.
-
-## Verify
-Run bash script/checks-local.sh.
-
-## Finish
-Run orca worktree set --worktree active --workspace-status in-review before worker_done.
-Send worker_done only.
-EOF
-set +e
-out=$(bash "$lint" "$tmp/no-self-review.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Finish self-review step" ]; then ok; else bad "missing self-review in Finish (ec=$ec, out=$out)"; fi
-
 # 11. Verify that does not run checks-local.sh is refused
 cat >"$tmp/no-checks-local.md" <<'EOF'
 Refs dotfiles#818
@@ -277,59 +233,10 @@ ec=$?
 set -e
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "Verify without checks-local.sh (ec=$ec, out=$out)"; fi
 
-# 849. A fullstack-dev brief's Finish must name the 40 hex sha and the rewrite after every push.
-cat >"$tmp/builder-weak.md" <<'EOF'
-Refs dotfiles#849. Role: fullstack-dev.
-
-## Acceptance
-- [ ] Gates added.
-
-## Out of scope
-Other scripts.
-
-## Verify
-bash script/checks-local.sh
-
-## Finish
-Run orca worktree set --worktree active --workspace-status in-review before worker_done.
-Wait until gh pr checks <n> --watch --fail-fast passes at the final head.
-Self-review, then send worker_done.
-EOF
-set +e
-out=$(bash "$lint" "$tmp/builder-weak.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 1 ] && [[ "$out" == *"40 hex head sha and rewrites it after every push"* ]]; then ok; else bad "builder Finish without 40 hex sha (ec=$ec, out=$out)"; fi
-sed 's/^Self-review, then send worker_done\./Write ## Self-review with the full 40 hex head sha, rewrite it after every push, then send worker_done./' "$tmp/builder-weak.md" >"$tmp/builder-ok.md"
-set +e
-out=$(bash "$lint" "$tmp/builder-ok.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with 40 hex sha passes (ec=$ec, out=$out)"; fi
-
-# 940. A fullstack-dev Finish must wait for green PR checks; a verifier brief is not affected.
-grep -v 'gh pr checks' "$tmp/builder-ok.md" >"$tmp/builder-nogreen.md"
-set +e
-out=$(bash "$lint" "$tmp/builder-nogreen.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 1 ] && [[ "$out" == *"Finish must wait for green PR checks"* ]]; then ok; else bad "builder Finish without green checks line (ec=$ec, out=$out)"; fi
-sed 's/^Wait until gh pr checks .*/Wait until gh run list --branch b --limit 3 shows the checks passing./' "$tmp/builder-ok.md" >"$tmp/builder-runlist.md"
-set +e
-out=$(bash "$lint" "$tmp/builder-runlist.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with gh run list passes (ec=$ec, out=$out)"; fi
-sed 's/fullstack-dev/qa-sdet/' "$tmp/builder-nogreen.md" >"$tmp/verifier.md"
-set +e
-out=$(bash "$lint" "$tmp/verifier.md" 2>&1)
-ec=$?
-set -e
-if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "verifier brief needs no green checks line (ec=$ec, out=$out)"; fi
-
-# Finish without the in-review step is refused, for any role
-cat >"$tmp/no-in-review.md" <<'EOF'
+# 968. Finish is not the author's to write: a brief with no Finish passes, builder or not.
+cat >"$tmp/no-finish.md" <<'EOF'
 Refs dotfiles#717
+Role: fullstack-dev.
 
 ## Acceptance
 - [ ] Checks pass.
@@ -339,15 +246,12 @@ Unrelated files.
 
 ## Verify
 Run bash script/checks-local.sh.
-
-## Finish
-Self-review, then send worker_done.
 EOF
 set +e
-out=$(bash "$lint" "$tmp/no-in-review.md" 2>&1)
+out=$(bash "$lint" "$tmp/no-finish.md" 2>&1)
 ec=$?
 set -e
-if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Finish must run orca worktree set --worktree active --workspace-status in-review before worker_done" ]; then ok; else bad "Finish without in-review (ec=$ec, out=$out)"; fi
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "brief with no Finish passes (ec=$ec, out=$out)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
