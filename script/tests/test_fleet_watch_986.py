@@ -75,14 +75,28 @@ class StartReason(unittest.TestCase):
 
 
 class Notices(unittest.TestCase):
-    def test_send_names_the_sender_terminal(self):
+    def test_send_addresses_the_run_with_the_existing_sender(self):
         calls = []
         config = {'runs': [{'id': 'run_x', 'terminal': 'term_live'}]}
         state = {}
         fw.deliver_notices(config, state, [fw.Urgent('boom')], rpc_call=lambda *a: calls.append(a), now=100.0)
         self.assertEqual(len(calls), 1)
         args = calls[0]
-        self.assertEqual(args[args.index('--to') + 1], 'term_live')
+        self.assertEqual(args[args.index('--to') + 1], 'run:run_x')
+        self.assertEqual(args[args.index('--from') + 1], 'term_live')
+        self.assertNotEqual(args[args.index('--from') + 1], args[args.index('--to') + 1])
+
+    def test_verdict_goes_to_the_lead_from_the_run_terminal(self):
+        calls = []
+        config = {'runs': [{'id': 'run_x', 'terminal': 'term_live'}]}
+        verdict = fw.Verdict('Verdict: PASS')
+        verdict.author = 'ctx_a1'
+        fw.deliver_notices(
+            config, {}, [verdict], rpc_call=lambda *a: calls.append(a), now=100.0,
+            owner_of=lambda author: 'term_lead' if author == 'ctx_a1' else None,
+        )
+        args = calls[0]
+        self.assertEqual(args[args.index('--to') + 1], 'term_lead')
         self.assertEqual(args[args.index('--from') + 1], 'term_live')
 
     def test_notices_for_terminals_not_in_runs_are_dropped(self):
