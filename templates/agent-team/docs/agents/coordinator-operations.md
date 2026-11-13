@@ -40,7 +40,7 @@ The inbox waiter script and its output file live in `~/.local/state/agent-team/`
 
 ## Wake loop
 
-The coordinator runs this on every wake, at least every 10 minutes (user rule 2026-10-23).
+The coordinator runs this on every wake. One waiter per delivery, `--timeout-ms 3600000`, re-armed only after it fires; an empty timeout wake is re-armed once, then the next wake is whatever fleet-watch or a worker sends (owner decision 2026-11-13, #970).
 
 - After every `worker-start`, run `~/.claude/skills/orca-team/worker-start-check.sh <dispatch>`: exit 1 (failed or not accepted in 2 minutes) means restart once from the same brief. A silent start failure (`agent_not_in_foreground`) once sat unnoticed. Do not open worker panes.
 - `~/dotfiles/script/fleet-pull.sh` on every wake: a host whose dotfiles or main checkout lags breaks the fleet scripts (a lagging `wrap-up.sh` failed on jq). Report skipped dirty checkouts.

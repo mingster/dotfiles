@@ -20,6 +20,8 @@ HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 class GuardTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="guard-home-")
+        # #960: a host with /usr/local/etc/agent-team would make the guard ignore the temp home approval.
+        self.enterContext(mock.patch.dict(os.environ, {"GUARD_APPROVAL_ROOT": os.path.join(self.home, "no-root")}))
 
     def bash(self, command):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.home}

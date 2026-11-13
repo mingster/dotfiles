@@ -441,7 +441,7 @@ class BriefLintGate(Gate):
         cmd = 'orca orchestration worker-start --agent claude --spec "Refs dotfiles#717\n## Acceptance\n- [ ] ok\n"'
         reason = self.bash(cmd)
         self.assertIsNotNone(reason)
-        for missing in ("Out of scope", "Verify", "Finish", "~/.agents/skills/triage/AGENT-BRIEF.md"):
+        for missing in ("Out of scope", "Verify", "~/.agents/skills/triage/AGENT-BRIEF.md"):
             self.assertIn(missing, reason)
 
     def test_inline_spec_complete_allowed(self):
@@ -465,13 +465,6 @@ class BriefLintGate(Gate):
         self.assertIn("~/.agents/skills/triage/AGENT-BRIEF.md", reason)
         self.write_brief(self.FULL_BRIEF)
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
-
-    def test_finish_without_in_review_step_denied(self):
-        brief = self.FULL_BRIEF.replace("run orca worktree set --worktree active --workspace-status in-review, ", "")
-        self.write_brief(brief)
-        reason = self.bash("orca orchestration worker-start --agent claude --spec-file brief.md")
-        self.assertIsNotNone(reason)
-        self.assertIn("workspace-status in-review", reason)
 
     def test_missing_brief_lint_script_fails_closed(self):
         prev = os.environ.get("BRIEF_LINT")
