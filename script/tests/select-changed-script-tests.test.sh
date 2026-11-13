@@ -173,6 +173,19 @@ case_fleet_watch_config_example() {
   ok "fleet-watch config example maps to fleet-watch tests"
 }
 
+case_fleet_watch_recorded_replies() {
+  local out count
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
+    bash "$root/script/select-changed-script-tests.sh" --list-only \
+    script/tests/fixtures/fleet-watch/orca-1.4.258/run-list.json 2>&1)
+  grep -Fq 'Fallback:' <<<"$out" && fail "recorded fleet-watch replies must not fall back to full suite"
+  grep -Fq 'Selected: script/tests/test_fleet_watch_scan.py' <<<"$out" \
+    || fail "recorded replies must select fleet-watch tests"
+  count=$(script_tests_count_from_output <<<"$out")
+  [ "${count:-0}" -lt 50 ] || fail "recorded replies want scoped suite got ${count:-0}"
+  ok "recorded fleet-watch replies map to fleet-watch tests"
+}
+
 case8_full_suite_fallback() {
   local out count
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
@@ -301,6 +314,7 @@ case5_py_runner
 case6_pr_review
 case7_ship_maps_its_test
 case_fleet_watch_config_example
+case_fleet_watch_recorded_replies
 case8_full_suite_fallback
 case9_sync_team_skills_agent_team
 case10_script_plus_already_selected_test
@@ -342,4 +356,4 @@ case15_parallel_jobs() {
 }
 
 case15_parallel_jobs
-echo 'PASS: 17 acceptance cases'
+echo 'PASS: 18 acceptance cases'

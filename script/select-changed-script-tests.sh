@@ -171,6 +171,9 @@ map_file() {
     script/tests/fixtures/orca-worker-list.json)
       add_if_exists "script/tests/test_usage_gate.py"
       ;;
+    script/tests/fixtures/fleet-watch/*)
+      map_script_py_base "fleet-watch"
+      ;;
     script/*example|script/*.example.json)
       map_script_example "$path"
       ;;
