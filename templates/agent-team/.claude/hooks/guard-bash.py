@@ -28,11 +28,14 @@ Blocks these kinds of accident:
    or `python3 -c` / `perl -e` / `node -e` code that starts a process.
 9. A glob, brace, variable or substitution that can build a path under an exact_only script
    directory or a credential directory, and `find -exec`, `find -execdir` or `xargs` that
-   search one of those directories (`check_hidden_script_paths`).
+   search one of those directories (`check_hidden_script_paths`). `$?`, `$#`, `$$`, `$!`
+   and `$-` are never path expansions. Another variable counts only in a path word.
 
 Anything it cannot parse is let through: the deny rules in settings.json are the
 backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
 """
+from __future__ import annotations
+
 import fnmatch
 import glob
 import json
@@ -2419,6 +2422,23 @@ def check_exact_only_scripts(command, cwd):
 # protected directory does not, because the shell can turn it into that path.
 _EXPANSION_META = set("*?[{$`")
 _SHELL_OPERATORS = {";", "&&", "||", "|", "&"}
+# $?, $#, $$, $!, and $- expand to a number or flag letters, never a path.
+_NONPATH_SPECIALS = "?#$!-"
+
+
+def _nonpath_special_len(command, index):
+    """Length of $?, $#, $$, $!, or $-, or the ${?} form, starting at index. Otherwise 0."""
+    if index >= len(command) or command[index] != "$":
+        return 0
+    nxt = index + 1
+    if nxt >= len(command):
+        return 0
+    if command[nxt] in _NONPATH_SPECIALS:
+        return 2
+    if (nxt + 2 < len(command) and command[nxt] == "{"
+            and command[nxt + 1] in _NONPATH_SPECIALS and command[nxt + 2] == "}"):
+        return 4
+    return 0
 
 
 def hidden_script_dirs():
@@ -2521,7 +2541,9 @@ def _directory_hit(path, cwd, absolute, relative, ancestor=False):
 def _component_patterns(partial, suffix):
     head = suffix.split("/", 1)[0]
     if any(ch in head for ch in "$`"):
-        return ["*"]
+        # The characters before the variable still have to match a protected name.
+        # A bare "*" matches every directory, so `exit=$?` and `state=$(...)` were denied.
+        return [partial + "*"] if partial else ["*"]
     return _expand_braces(partial + head)
 
 
@@ -2655,10 +2677,17 @@ def _command_words(command):
                 continue
             if ch == '"':
                 quote = None
-            elif ch in "$`":
-                take(ch, active=True)
             else:
-                take(ch)
+                span = _nonpath_special_len(command, i)
+                if span:
+                    for offset in range(span):
+                        take(command[i + offset])
+                    i += span
+                    continue
+                if ch in "$`":
+                    take(ch, active=True)
+                else:
+                    take(ch)
             i += 1
             continue
         if quote == "`":
@@ -2699,6 +2728,12 @@ def _command_words(command):
                 i += 1
             words.append((op, op, set()))
             i += 1
+            continue
+        span = _nonpath_special_len(command, i)
+        if span:
+            for offset in range(span):
+                take(command[i + offset])
+            i += span
             continue
         take(ch, active=ch in _EXPANSION_META)
         i += 1
