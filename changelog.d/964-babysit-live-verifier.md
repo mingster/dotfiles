@@ -1,0 +1,1 @@
+Babysit no longer starts a verifier for a PR that already has a live verifier worker, whether the coordinator started it by hand or babysit did, and retries on the next pass once that worker has finished. (#964)

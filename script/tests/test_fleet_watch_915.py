@@ -181,5 +181,97 @@ class BabysitStartFailureNotice(unittest.TestCase):
             self.assertNotIn('babysit_start_failed', state['failure_streaks'])
 
 
+class BabysitLiveVerifier(unittest.TestCase):
+    def run_pass(self, workers, state=None):
+        starts = []
+        with tempfile.TemporaryDirectory() as root:
+            config = {
+                'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {'o/r': root}},
+                'babysit': {'repos': ['o/r'], 'startup': '/bin/true'},
+            }
+            pr = {
+                'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
+                'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
+                'comments': [], 'labels': [], 'mergeable': 'MERGEABLE',
+                'body': 'Builder: agent=claude model=sonnet',
+            }
+            state = {} if state is None else state
+            _notices, lines, _log = fw.babysit_pass(
+                config, state, workers, pr_fetch=lambda _repo: [pr],
+                start_worker=lambda command: starts.append(command) or 0,
+                pick=lambda _role: {'selected': {'provider': 'cursor', 'model': 'm', 'eligible': True}},
+                owner_check=lambda _pr: None,
+            )
+        return starts, lines, state
+
+    def live_verifier(self, title='qa-sdet - verify PR #7', **extra):
+        """A worker-list row as Orca returns it (run_2d30da234f80, trimmed), with the task title fetch_workers joins."""
+        row = {
+            'dispatchId': 'ctx_e771016f49a0', 'taskId': 'task_aa11bb22cc33', 'runId': 'run_2d30da234f80',
+            'workerState': 'ready', 'dispatchStatus': 'dispatched', 'terminalState': 'active',
+            'projection': {
+                'role': 'worker', 'outcome': 'in_progress', 'provider': None,
+                'workspace': {'id': 'wt::/Users/x/orca/workspaces/dotfiles/v972', 'kind': 'folder_or_worktree'},
+                'stage': {'worker': 'ready', 'dispatch': 'dispatched', 'detail': 'input_accepted', 'activity': 'working'},
+                'liveness': {'verdict': 'live', 'source': 'agent_status'},
+            },
+            '_task_title': title,
+        }
+        row.update(extra)
+        return row
+
+    def test_live_hand_dispatched_verifier_blocks_a_second_one(self):
+        starts, lines, state = self.run_pass([self.live_verifier()])
+        self.assertEqual(starts, [])
+        self.assertTrue(any('verifier-live' in line for line in lines), lines)
+        self.assertNotIn('o/r', state.get('babysit', {}))
+
+    def test_babysit_title_form_blocks_too(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(title='qa-sdet verify o/r#7')])
+        self.assertEqual(starts, [])
+
+    def test_finished_verifier_does_not_block(self):
+        row = self.live_verifier()
+        row['projection']['liveness'] = {'verdict': 'exited'}
+        row['dispatchStatus'] = 'completed'
+        starts, _lines, _state = self.run_pass([row])
+        self.assertEqual(len(starts), 1)
+
+    def test_live_verifier_for_another_pr_does_not_block(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(title='qa-sdet - verify PR #8')])
+        self.assertEqual(len(starts), 1)
+
+    def test_live_builder_does_not_block(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(title='fullstack-dev - 7 rework')])
+        self.assertEqual(len(starts), 1)
+
+    def test_verifier_skip_is_retried_once_it_finishes(self):
+        state = {}
+        starts, _lines, _ = self.run_pass([self.live_verifier()], state)
+        self.assertEqual(starts, [])
+        starts, _lines, _ = self.run_pass([], state)
+        self.assertEqual(len(starts), 1)
+
+    def test_fetch_workers_joins_the_task_title_onto_each_row(self):
+        row = self.live_verifier()
+        del row['_task_title']
+        calls = []
+
+        def fake_rpc(*args):
+            calls.append(args[:2])
+            if args[1] == 'task-list':
+                return {'tasks': [{'id': 'task_aa11bb22cc33', 'title': 'qa-sdet - verify PR #7'}]}
+            return {'workers': [row]}
+
+        real = fw.rpc
+        fw.rpc = fake_rpc
+        try:
+            workers = fw.fetch_workers({'runs': [{'id': 'run_2d30da234f80'}]})
+        finally:
+            fw.rpc = real
+        self.assertEqual(workers[0]['_task_title'], 'qa-sdet - verify PR #7')
+        self.assertTrue(fw.live_verifier_for_pr({'number': 7}, workers))
+
+
 if __name__ == '__main__':
     unittest.main()

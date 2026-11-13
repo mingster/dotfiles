@@ -14,7 +14,7 @@
 - Before framing, spawning or closing a Run, read `~/dotfiles/templates/agent-team/docs/agents/team.md`, rule table. Use Orca, never Claude subagents; stay within the host caps in `.claude/model-routing.md`. A silent lead: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop.
 - A security gate brief states the threat model.
 - Routing, quota and launch: every worker start goes through `script/worker-startup.sh`, which pulls, checks the host and lints the brief (direct `worker-start` is not allowed). See `.claude/model-routing.md` and `~/.orca/presets.json`.
-- Arm the inbox waiter with a 10 minute timeout and run `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop, on every wake.
+- Arm one inbox waiter per delivery with `--timeout-ms 3600000` (60 minutes), re-armed only after it fires, and not again on an empty wake beyond one; fleet-watch mail (see `docs/agents/fleet-watch.md`, Wake path) wakes it for anything else. Run `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop, on every wake.
 - A worker asking to touch a file outside its scope gets an answer at once: decide and comment "the coordinator decision <date>" on the issue.
 - A defect spotted in review becomes its own issue, never part of the PR under review.
 - Log each user approval with `show-me-your-work`: one row naming the exact head sha it covers (ORCA-ADAPTER.md).
