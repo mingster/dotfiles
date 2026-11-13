@@ -549,6 +549,16 @@ def run_id_for_stall_restart(w, persisted=''):
     return ''
 
 
+def task_titles(run_id):
+    """Map task id to title for a Run; empty when the task list cannot be read (worker rows then carry no title)."""
+    try:
+        result = rpc('orchestration', 'task-list', '--run', run_id)
+    except Exception:
+        return {}
+    tasks = result.get('tasks') if isinstance(result, dict) else None
+    return {t['id']: t['title'] for t in tasks or [] if isinstance(t, dict) and t.get('id') and t.get('title')}
+
+
 def fetch_workers(config):
     """Retrieve and deduplicate workers across runs and pagination.
 
@@ -560,8 +570,11 @@ def fetch_workers(config):
         run_ids = [run['id'] for page in list_pages('orchestration', 'run-list') for run in page['runs']]
     workers = []
     for run_id in run_ids:
+        titles = task_titles(run_id)
         for result in list_pages('orchestration', 'worker-list', '--run', run_id, '--include-remote', '--full'):
             for w in result.get('workers', []):
+                if isinstance(w, dict) and titles.get(worker_task_id(w)):
+                    w['_task_title'] = titles[worker_task_id(w)]
                 if isinstance(w, dict) and not worker_run_id(w):
                     w['_fleet_watch_list_run'] = run_id
                 workers.append(w)
@@ -2875,18 +2888,27 @@ def _worker_is_verifier(worker):
     return str(role).lower() in ('qa', 'qa-sdet', 'reviewer', 'verifier')
 
 
+_VERIFY_TITLE_RE = re.compile(r'^qa-sdet\b.*?\bverify\b(.*)$', re.I)
+_TITLE_PR_RE = re.compile(r'(?:#|\bPR\s+)(\d+)', re.I)
+
+
+def verifier_title_pr(worker):
+    """PR number named by a verifier task title ("qa-sdet - verify PR #7" or "qa-sdet verify o/r#7"), else None.
+
+    Real worker-list rows carry no role, PR number or branch, only a taskId; fetch_workers joins the task title.
+    """
+    match = _VERIFY_TITLE_RE.match(str(worker.get('_task_title') or '').strip())
+    found = _TITLE_PR_RE.search(match.group(1)) if match else None
+    return int(found.group(1)) if found else None
+
+
 def live_verifier_for_pr(pr, workers):
     """True when a live verifier worker, hand dispatched or not, is already on this PR."""
     number = pr.get('number')
-    branch = pr.get('headRefName') or ''
     for worker in workers or []:
         if not isinstance(worker, dict) or not worker_row_is_live(worker):
             continue
-        if not _worker_is_verifier(worker):
-            continue
-        if number is not None and worker_pr_number(worker) == number:
-            return True
-        if branch and worker_branch_name(worker) == branch:
+        if number is not None and verifier_title_pr(worker) == number:
             return True
     return False
 
@@ -3847,6 +3869,11 @@ def main():
         if args.workers_json:
             loaded = json.loads(args.workers_json.read_text())
             workers = loaded if isinstance(loaded, list) else []
+        else:
+            try:
+                workers = fetch_workers(config)
+            except Exception as error:
+                print('fleet-watch: Orca workers unavailable: %s' % (repr(error),), file=sys.stderr)
         dry = bool(args.babysit_dry_run)
 
         def persist_babysit():

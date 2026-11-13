@@ -204,8 +204,19 @@ class BabysitLiveVerifier(unittest.TestCase):
             )
         return starts, lines, state
 
-    def live_verifier(self, **extra):
-        row = {'githubPullRequestNumber': 7, 'role': 'qa-sdet', 'state': 'running'}
+    def live_verifier(self, title='qa-sdet - verify PR #7', **extra):
+        """A worker-list row as Orca returns it (run_2d30da234f80, trimmed), with the task title fetch_workers joins."""
+        row = {
+            'dispatchId': 'ctx_e771016f49a0', 'taskId': 'task_aa11bb22cc33', 'runId': 'run_2d30da234f80',
+            'workerState': 'ready', 'dispatchStatus': 'dispatched', 'terminalState': 'active',
+            'projection': {
+                'role': 'worker', 'outcome': 'in_progress', 'provider': None,
+                'workspace': {'id': 'wt::/Users/x/orca/workspaces/dotfiles/v972', 'kind': 'folder_or_worktree'},
+                'stage': {'worker': 'ready', 'dispatch': 'dispatched', 'detail': 'input_accepted', 'activity': 'working'},
+                'liveness': {'verdict': 'live', 'source': 'agent_status'},
+            },
+            '_task_title': title,
+        }
         row.update(extra)
         return row
 
@@ -215,20 +226,23 @@ class BabysitLiveVerifier(unittest.TestCase):
         self.assertTrue(any('verifier-live' in line for line in lines), lines)
         self.assertNotIn('o/r', state.get('babysit', {}))
 
-    def test_live_verifier_matched_by_branch(self):
-        starts, _lines, _state = self.run_pass([self.live_verifier(githubPullRequestNumber=None, branch='b')])
+    def test_babysit_title_form_blocks_too(self):
+        starts, _lines, _state = self.run_pass([self.live_verifier(title='qa-sdet verify o/r#7')])
         self.assertEqual(starts, [])
 
     def test_finished_verifier_does_not_block(self):
-        starts, _lines, _state = self.run_pass([self.live_verifier(state='completed')])
+        row = self.live_verifier()
+        row['projection']['liveness'] = {'verdict': 'exited'}
+        row['dispatchStatus'] = 'completed'
+        starts, _lines, _state = self.run_pass([row])
         self.assertEqual(len(starts), 1)
 
     def test_live_verifier_for_another_pr_does_not_block(self):
-        starts, _lines, _state = self.run_pass([self.live_verifier(githubPullRequestNumber=8)])
+        starts, _lines, _state = self.run_pass([self.live_verifier(title='qa-sdet - verify PR #8')])
         self.assertEqual(len(starts), 1)
 
     def test_live_builder_does_not_block(self):
-        starts, _lines, _state = self.run_pass([self.live_verifier(role='fullstack-dev')])
+        starts, _lines, _state = self.run_pass([self.live_verifier(title='fullstack-dev - 7 rework')])
         self.assertEqual(len(starts), 1)
 
     def test_verifier_skip_is_retried_once_it_finishes(self):
@@ -237,6 +251,26 @@ class BabysitLiveVerifier(unittest.TestCase):
         self.assertEqual(starts, [])
         starts, _lines, _ = self.run_pass([], state)
         self.assertEqual(len(starts), 1)
+
+    def test_fetch_workers_joins_the_task_title_onto_each_row(self):
+        row = self.live_verifier()
+        del row['_task_title']
+        calls = []
+
+        def fake_rpc(*args):
+            calls.append(args[:2])
+            if args[1] == 'task-list':
+                return {'tasks': [{'id': 'task_aa11bb22cc33', 'title': 'qa-sdet - verify PR #7'}]}
+            return {'workers': [row]}
+
+        real = fw.rpc
+        fw.rpc = fake_rpc
+        try:
+            workers = fw.fetch_workers({'runs': [{'id': 'run_2d30da234f80'}]})
+        finally:
+            fw.rpc = real
+        self.assertEqual(workers[0]['_task_title'], 'qa-sdet - verify PR #7')
+        self.assertTrue(fw.live_verifier_for_pr({'number': 7}, workers))
 
 
 if __name__ == '__main__':
