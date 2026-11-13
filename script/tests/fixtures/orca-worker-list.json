@@ -11,7 +11,7 @@
     "agent": "claude",
     "terminal": "term_c045b531-0460-46d7-979c-9e6e71a378db",
     "terminalState": "active",
-    "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/verify-988",
+    "workspace": "ws_0::/workspaces/example/ws_0",
     "host": "local"
    },
    {
@@ -23,7 +23,7 @@
     "agent": "claude",
     "terminal": "term_a46462d2-e93a-41cb-a1cd-e3decf807b87",
     "terminalState": "active",
-    "workspace": "c0198e49-7613-4b6c-813f-7bd1160e36ce::/Users/mtsai/orca/workspaces/riben.life/b7886",
+    "workspace": "ws_1::/workspaces/example/ws_1",
     "host": "local"
    },
    {
@@ -35,7 +35,7 @@
     "agent": "claude",
     "terminal": "term_b68c68d1-6058-413b-9697-1f4f9625ef3a",
     "terminalState": "active",
-    "workspace": "c0198e49-7613-4b6c-813f-7bd1160e36ce::/Users/mtsai/orca/workspaces/riben.life/f7885",
+    "workspace": "ws_2::/workspaces/example/ws_2",
     "host": "local"
    },
    {
@@ -45,7 +45,7 @@
     "liveness": "exited",
     "terminal": "term_d44d0339-b448-4549-ab10-453202a96ea0",
     "terminalState": "released",
-    "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/verify-989",
+    "workspace": "ws_3::/workspaces/example/ws_3",
     "host": "local"
    },
    {
@@ -55,7 +55,7 @@
     "liveness": "exited",
     "terminal": "term_3407b482-1920-4bd9-b3a9-ad133391a21b",
     "terminalState": "released",
-    "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/gfw",
+    "workspace": "ws_4::/workspaces/example/ws_4",
     "host": "local"
    },
    {
@@ -65,7 +65,7 @@
     "liveness": "exited",
     "terminal": "term_08221428-1a8d-4aa0-9233-5c6902b22572",
     "terminalState": "released",
-    "workspace": "c0198e49-7613-4b6c-813f-7bd1160e36ce::/Users/mtsai/orca/workspaces/riben.life/verify-7893",
+    "workspace": "ws_5::/workspaces/example/ws_5",
     "host": "local"
    }
   ],
