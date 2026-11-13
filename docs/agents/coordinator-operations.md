@@ -56,7 +56,7 @@ The team coordinates work across a fleet of Macs paired in Orca ADE (`orca envir
 
 Host names, 1-minute load ceilings and roles live in the private fleet-watch config (`host_caps`, `host_load_ceilings`, `worker_placement.order` and `worker_placement.roles`). `~/.claude/state/fleet-load.sh` is the default load sensor.
 
-**Automatic placement (`script/worker-startup.sh`):** when `--run` has no `--on`, `script/worker-placement.py` reads the sensor and config, walks `worker_placement.order`, skips hosts tagged `heavy`, `release` or `browser` for ordinary code work, skips hosts with no readable load, and picks the first host whose 1-minute load is under its ceiling. On the local host only, placement also treats the host as full when 1-minute load per core is at or above `0.7` (same bar as coordinator overload), even when load is still under the host ceiling. Remote picks require a `worker_placement.repos.<environment>` entry that maps the caller's repo id or path to that environment's Orca repo selector; hosts without a mapping are skipped. Browser workers are routed only when the brief contains a line `Host role: browser` (not from casual mentions of secrets or checkout). With no fleet config file, placement is skipped and the worker starts locally. It prints one line (`worker-placement: host=<name> load_1m=<value>`), sets `--on` for a remote choice, and refuses with one line listing each considered host's load when every candidate is at or over its ceiling. Explicit `--on` skips placement; the usage gate (#748) still applies to the named host. Dry check only: `worker-startup.sh --pick-host-only --spec <brief>`.
+**Automatic placement (`script/worker-startup.sh`):** when `--run` has no `--on`, `script/worker-placement.py` reads the sensor and config, walks `worker_placement.order`, skips hosts tagged `heavy`, `release` or `browser` for ordinary code work, skips hosts with no readable load, and picks the first host whose 1-minute load is under its ceiling. On the local host only, placement also treats the host as full when 1-minute load per core is at or above `0.7` (same bar as coordinator overload), even when load is still under the host ceiling. Remote picks require a `worker_placement.repos.<environment>` entry that maps the caller's repo id or path to that environment's Orca repo selector; hosts without a mapping are skipped. When every remote host is skipped for no repo mapping, the refusal line says `no host has a repo mapping` (it does not blame a missing load reading). Cursor placement passes that mapped selector to `start-cursor-worker.sh`. Browser workers are routed only when the brief contains a line `Host role: browser` (not from casual mentions of secrets or checkout). With no fleet config file, placement is skipped and the worker starts locally. It prints one line (`worker-placement: host=<name> load_1m=<value>`), sets `--on` for a remote choice, and refuses with one line listing each considered host's load when every candidate is at or over its ceiling. Explicit `--on` skips placement; the usage gate (#748) still applies to the named host. Dry check only: `worker-startup.sh --pick-host-only --spec <brief> [--repo <selector>]`.
 
 **Manual reference order** (must match `worker_placement.order` in the live config):
 
@@ -119,6 +119,14 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 
 `NO DISPATCH` means start no worker and ask the user. Failover is never automatic: only the user changes the coordinator.
 
+## Board status
+
+A card is Done (`workspaceStatus=completed`) when any one holds: its pull request is merged or closed, its linked issue is closed, its worker is released and the worktree has no pull request, or its worker failed or stopped. A worker that is still live stays, unless a pull request or issue rule already applies. An open pull request stays In review when a worker on that worktree was released, even if another worker there failed or stopped. A card whose workers only failed or stopped goes to Done. A worker with a pull request sets `in-review` before `worker_done`. A worker with no pull request sets `completed`.
+
+`script/board-done.py` does the check. Dry run is the default and lists each card it would move and why. `--apply` sets the status. `--fleet` visits this Orca and every paired host with `--environment`. A host that cannot be reached is skipped and tried again on the next round. It is not treated as gone.
+
+The coordinator's `wrap-up.sh --scheduled` round runs that check after the round's own cleanup, so the same round does not delete a card that just became Done. Only the host named in `agent-state/coordinator.conf` runs it. Fleet-watch does not: that pass is frozen and only alerts, while this round is already the one that reads the board. `script/ship.sh` still sets `completed` after a merge, on the environment that holds the worktree (`--environment`, or the dispatch record's host). A record that names no remote host sets the card on the local Orca.
+
 ## Tools
 
 | Tool | Role in coordinator and fleet operations |
@@ -136,7 +144,8 @@ Each failure prints a `PROBLEM` line and a `NO DISPATCH: <reason>` line. A missi
 | `script/pr-review.sh` | Cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass; picks a cross family model via `usage-gate.py`. |
 | `script/post-verdict.sh` | Posts the canonical `Verdict:` comment and `review` status. |
 | `script/doc-fact-check.sh` | Lists removed markdown lines that do not appear anywhere under `docs/` or `README.md` at head (exit 1 when any). Coordinators and verifier briefs run it on doc rewrites. |
-| `script/ship.sh` | Shipping run: verifies required checks and matching `git patch-id` Verdict, squash merges, and reads back `MERGED`. |
+| `script/ship.sh` | Shipping run: verifies required checks and matching `git patch-id` Verdict, squash merges, reads back `MERGED`, and sets the board card to Done on the host that holds the worktree. |
+| `script/board-done.py` | Moves finished board cards to Done. Dry run by default. `--fleet` reaches every paired host; an unreachable host is skipped until the next round. |
 | `script/heavy-gate.sh`, `script/heavy-gate.py`, `script/hw-probe.sh`, `script/remote-heavy.sh` | Per-host heavy job admission, hardware calibration, and remote heavy job execution. |
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
 | `script/wrap-up.sh`, `script/worktree-idle.py` | Fleet-wide cleanup of finished worktrees, merged branches, ended terminals/panes and temp files. |

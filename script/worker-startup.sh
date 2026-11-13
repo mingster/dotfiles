@@ -223,12 +223,16 @@ r = json.load(sys.stdin)
 if r.get("ok"):
     print("worker-placement: host=%s load_1m=%s" % (r["host"], r["load_1m"]))
 else:
+    reason = r.get("reason") or "unknown"
     loads = r.get("loads") or {}
-    if loads:
+    if loads and "repo mapping" not in reason:
         parts = " ".join("%s=%s" % (h, loads[h]) for h in sorted(loads))
         print("worker-placement: refused %s" % parts)
+    elif loads:
+        parts = " ".join("%s=%s" % (h, loads[h]) for h in sorted(loads))
+        print("worker-placement: refused (%s) %s" % (reason, parts))
     else:
-        print("worker-placement: refused (%s)" % (r.get("reason") or "unknown"))
+        print("worker-placement: refused (%s)" % reason)
 ' <<<"$1"
 }
 
@@ -265,18 +269,22 @@ apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACE
 }
 
 pick_host_only() {
-  local spec=''
+  local spec='' repo=''
   while [ $# -gt 0 ]; do
     case "$1" in
       --spec)
         [ $# -ge 2 ] || die "need --spec FILE"
         spec=$2
         shift 2 ;;
-      *) die "usage: worker-startup.sh --pick-host-only --spec FILE" ;;
+      --repo)
+        [ $# -ge 2 ] || die "need --repo SELECTOR"
+        repo=$2
+        shift 2 ;;
+      *) die "usage: worker-startup.sh --pick-host-only --spec FILE [--repo SELECTOR]" ;;
     esac
   done
   [ -f "$spec" ] || die "spec file not found: $spec"
-  apply_worker_placement "$spec"
+  apply_worker_placement "$spec" "$repo"
 }
 
 host_check() {
@@ -324,7 +332,7 @@ with_finish_block() { # <spec_file> <run_id>
       printf -- '- Open a PR with the issue closing line, a line `Builder: agent=<agent> model=<model>`.\n'
       printf -- '- Wait until `gh pr checks <n> --watch --fail-fast` (or `gh run list --branch <branch> --limit 3`) shows the checks passing at your final head. Never send worker_done with red or pending checks.\n'
     fi
-    printf -- '- Run `orca worktree set --worktree active --workspace-status in-review`, then send `worker_done` to run %s. Never wait for a reply. Never contact the user.\n' "$run_id"
+    printf -- '- When this work has a pull request, run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. When it has no pull request, run `orca worktree set --worktree active --workspace-status completed` before `worker_done`. Then send `worker_done` to run %s. Never wait for a reply. Never contact the user.\n' "$run_id"
   } >>"$out"
   printf '%s\n' "$out"
 }
@@ -543,9 +551,14 @@ run_mode() {
   [ -z "$ref_issue" ] || printf '%s\t%s\t%s\n' "$ref_issue" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ref_repo" 2>/dev/null >>"$dispatch_log" || true
 
   if [ "$agent" = cursor ]; then
+    # Placement's remote repo selector is the one Cursor must create. The caller's local id is not on that host.
+    cursor_repo=$repo
+    if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
+      cursor_repo=$WORKER_STARTUP_PLACED_REPO
+    fi
     exec bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
-      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${repo:+--repo "$repo"} ${base:+--base-branch "$base"}
+      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"}
   fi
 
   if [ -z "$wt" ]; then

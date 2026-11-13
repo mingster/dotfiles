@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ship one verified PR with squash merge and read-back confirmation (pstack Shipping run).
-# Usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--mechanical | --verdict-from <owner/dotfiles#N>]
+# Usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]
 # Lanes: code and script PRs need a verifier Verdict: PASS whose agent and model differ from the builder's
 # (PR body line "Builder: agent=<a> model=<m>"); a docs only PR needs a cold "Review: PASS head=<head>"
 # or a Verdict PASS or PASS+NOTES at that exact head (same author and builder checks as the verdict lane);
@@ -16,12 +16,63 @@ ship_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 refuse() { echo "ship: refused: $*" >&2; exit 1; }
 die() { refuse "$*"; }
 
+# Host that holds the worktree for this PR head, or empty when it is on the local Orca.
+# Reads the dispatch record (projection.host.id) and confirms the branch with worktree list.
+# An unreachable host is skipped. A miss falls back to the local Orca, which warns if the card is not there.
+board_environment_for_branch() { # <branch>
+  local branch=$1 orca page cursor hosts_file hosts host pages=0
+  orca=${ORCA_CLI_COMMAND:-orca}
+  hosts_file=$(mktemp)
+  cursor=""
+  while [ "$pages" -lt 10 ]; do
+    pages=$((pages + 1))
+    if [ -n "$cursor" ]; then
+      page=$("$orca" orchestration worker-list --full --include-remote --limit 100 --cursor "$cursor" --json 2>/dev/null) || break
+    else
+      page=$("$orca" orchestration worker-list --full --include-remote --limit 100 --json 2>/dev/null) || break
+    fi
+    [ -n "$page" ] || break
+    printf '%s' "$page" | jq -r '
+      [.result.workers[]?
+        | (.projection.host.id // .host.id // (if (.host | type) == "string" then .host else empty end) // empty)
+        | select(type == "string" and length > 0 and . != "local")]
+      | unique[]' >>"$hosts_file" 2>/dev/null || break
+    cursor=$(printf '%s' "$page" | jq -r '.result.nextCursor // .result.page.nextCursor // empty' 2>/dev/null) || cursor=""
+    [ -n "$cursor" ] || break
+  done
+  branch_on_host() { # <host> <branch> -> 0 when that Orca lists the branch
+    local args=(worktree list --json) listed
+    [ -z "$1" ] || args=(worktree list --environment "$1" --json)
+    listed=$("$orca" "${args[@]}" 2>/dev/null) || return 1
+    printf '%s' "$listed" | jq -e --arg b "$2" '
+      [.result.worktrees[]? | (.branch // "") | sub("^refs/heads/"; "")] | index($b) != null' >/dev/null 2>&1
+  }
+  # No remote host in the dispatch record: the local set is the whole lookup.
+  if [ ! -s "$hosts_file" ]; then
+    rm -f "$hosts_file"
+    return 0
+  fi
+  hosts=$(sort -u "$hosts_file")
+  rm -f "$hosts_file"
+  if branch_on_host "" "$branch"; then
+    return 0
+  fi
+  while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    if branch_on_host "$host" "$branch"; then
+      printf '%s\n' "$host"
+      return 0
+    fi
+  done <<<"$hosts"
+  return 0
+}
+
 # shellcheck disable=SC1091
 . "$ship_dir/lib/protected-paths.sh"
 # shellcheck disable=SC1091
 . "$ship_dir/lib/board-status.sh"
 
-repo="" pr="" dry_run=false mechanical=false verdict_from=""
+repo="" pr="" dry_run=false mechanical=false verdict_from="" ship_environment=""
 sync_dir=""
 trap '[ -z "$sync_dir" ] || rm -rf "$sync_dir"' EXIT
 while [ $# -gt 0 ]; do
@@ -31,10 +82,11 @@ while [ $# -gt 0 ]; do
     --dry-run) dry_run=true; shift ;;
     --mechanical) mechanical=true; shift ;;
     --verdict-from) [ $# -ge 2 ] || refuse "--verdict-from needs owner/dotfiles#N"; verdict_from=$2; shift 2 ;;
+    --environment) [ $# -ge 2 ] || refuse "--environment needs a value"; ship_environment=$2; shift 2 ;;
     *) refuse "unknown argument: $1" ;;
   esac
 done
-[ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--mechanical | --verdict-from <owner/dotfiles#N>]"
+[ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]"
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
 
 info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
@@ -577,4 +629,9 @@ merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || refuse "MERGED read-back for PR $pr has no merge commit"
 echo "shipped PR $pr as $merge_sha"
 # The merge is done; a board failure only warns. A failed merge refused above and never reaches this line.
-board_status_set "branch:$(field .headRefName)" completed
+# The card lives on the host that holds the worktree. --environment wins; otherwise the dispatch record's host does.
+board_env=$ship_environment
+if [ -z "$board_env" ]; then
+  board_env=$(board_environment_for_branch "$(field .headRefName)") || board_env=""
+fi
+board_status_set "branch:$(field .headRefName)" completed "$board_env"

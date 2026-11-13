@@ -502,7 +502,9 @@ ws968_run "$tmp/orca-nofin.log" run_nofin "$nofin_spec"
 [ "$ec_968" = 0 ] && ok || bad "brief with no Finish should start ($ec_968) $(cat "$tmp/run-968.err")"
 grep -q 'orchestration worker-start' "$tmp/orca-nofin.log" && ok || bad "no-Finish brief should reach worker-start"
 grep -q '## Finish' "$tmp/orca-nofin.log" && ok || bad "worker spec should carry a ## Finish block"
-grep -q 'workspace-status in-review' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set in-review"
+grep -q 'workspace-status in-review' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set in-review when there is a PR"
+grep -q 'workspace-status completed' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set completed when there is no PR"
+grep -q 'no pull request' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the no-PR case"
 grep -q 'to run run_nofin' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the run for worker_done"
 grep -q 'Builder: agent=' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should name the Builder line"
 grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok
@@ -711,6 +713,22 @@ ec=$?
 set -e
 [ "$ec" = 0 ] && ok || bad "cursor run exits 0 ($ec)"
 grep -q -- '--run run_y' "$tmp/cursor.args" && grep -q composer-2.5 "$tmp/cursor.args" && ok || bad "cursor helper args"
+
+# Cursor receives the same Finish block: a PR stays in review, and no PR goes to Done.
+rm -f "$tmp/cursor.args"
+set +e
+env -u BASH_ENV \
+  PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_cursor_fin --spec "$nofin_spec" --title cjob --agent cursor --model composer-2.5 \
+  --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor-fin.err"
+ec_cfin=$?
+set -e
+[ "$ec_cfin" = 0 ] && ok || bad "cursor no-Finish brief exits 0 ($ec_cfin) $(cat "$tmp/cursor-fin.err")"
+cursor_spec=$(awk '{for (i = 1; i <= NF; i++) if ($i == "--spec") print $(i + 1)}' "$tmp/cursor.args")
+grep -q 'workspace-status in-review' "$cursor_spec" && ok || bad "cursor Finish should set in-review when there is a PR ($(cat "$cursor_spec" 2>/dev/null))"
+grep -q 'workspace-status completed' "$cursor_spec" && ok || bad "cursor Finish should set completed when there is no PR"
+grep -q 'no pull request' "$cursor_spec" && ok || bad "cursor Finish should name the no-PR case"
 
 # --- AGENT_STATE_DIR config resolution + state dir fast-forward in host-check ---
 state_repo="$tmp/agent-state"
@@ -997,6 +1015,22 @@ set -e
 grep -q 'worktree create' "$tmp/orca-repo-map.log" && ok || bad "repo map worktree create logged"
 grep -q 'id:remote-app-id' "$tmp/orca-repo-map.log" && ok || bad "worktree create uses mapped remote repo id ($(cat "$tmp/orca-repo-map.log"))"
 
+# Cursor on a placed remote host must receive that host's repo selector, not the caller's.
+rm -f "$tmp/cursor.args"
+set +e
+env -u BASH_ENV \
+  PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_cursor_map --spec "$spec_file" --title cjob --agent cursor --model composer-2.5 \
+  --from term_coord --name n_cmap --repo "id:local-app-id" 2>"$tmp/cursor-map.err"
+ec_cmap=$?
+set -e
+[ "$ec_cmap" = 0 ] && ok || bad "cursor placed remote run exits 0 ($ec_cmap) $(cat "$tmp/cursor-map.err")"
+grep -q -- '--on host-remote' "$tmp/cursor.args" && ok || bad "cursor helper receives the placed host ($(cat "$tmp/cursor.args" 2>/dev/null))"
+grep -q -- '--repo id:remote-app-id' "$tmp/cursor.args" && ok || bad "cursor helper receives the placed repo ($(cat "$tmp/cursor.args" 2>/dev/null))"
+grep -q 'id:local-app-id' "$tmp/cursor.args" && bad "cursor helper must not keep the local repo id ($(cat "$tmp/cursor.args"))" || ok
+
 # Missing fleet config: skip placement and start locally; malformed config still refuses
 no_cfg_path="$tmp/no-fleet-placement.json"
 set +e
@@ -1123,6 +1157,40 @@ set -e
 [ "$ec_nomap" -ne 0 ] && ok || bad "unmapped repo on every host refuses ($ec_nomap)"
 grep -q 'no host has a repo mapping' <<<"$out_nomap" && ok || bad "unmapped refusal names the repo mapping ($out_nomap)"
 grep -q 'no readable load' <<<"$out_nomap" && bad "unmapped refusal must not say no readable load" || ok
+
+# Every remote host skipped for no mapping, while the local host has no readable load.
+cat >"$tmp/fleet-remote-unmapped.json" <<'EOF'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-remote": 4, "host-remote-2": 4},
+  "host_load_ceilings": {"host-primary": 12, "host-remote": 12, "host-remote-2": 12},
+  "worker_placement": {"order": ["host-primary", "host-remote", "host-remote-2"], "repos": {}}
+}
+EOF
+cat >"$tmp/load-primary-missing.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-remote cores=8 load=1.0 1.0 1.0\n'
+printf 'host-remote-2 cores=8 load=1.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-primary-missing.sh"
+set +e
+out_remote_nomap=$(FLEET_LOAD_SCRIPT="$tmp/load-primary-missing.sh" FLEET_WATCH_CONFIG="$tmp/fleet-remote-unmapped.json" \
+  "$python3_real" "$placement_py" pick --spec "$spec_file" --repo "id:local-app-id" 2>/dev/null)
+ec_remote_nomap=$?
+set -e
+[ "$ec_remote_nomap" -ne 0 ] && ok || bad "every remote unmapped refuses ($ec_remote_nomap)"
+grep -q 'no host has a repo mapping' <<<"$out_remote_nomap" && ok || bad "every remote unmapped names the repo mapping ($out_remote_nomap)"
+grep -q 'no readable load' <<<"$out_remote_nomap" && bad "every remote unmapped must not say no readable load" || ok
+
+# The shell refusal line, the one --run prints, says the same thing.
+set +e
+out_shell_nomap=$(FLEET_LOAD_SCRIPT="$tmp/load-primary-missing.sh" FLEET_WATCH_CONFIG="$tmp/fleet-remote-unmapped.json" \
+  bash "$script" --pick-host-only --spec "$spec_file" --repo "id:local-app-id" 2>"$tmp/nomap-shell.err")
+ec_shell_nomap=$?
+set -e
+[ "$ec_shell_nomap" = 4 ] && ok || bad "shell unmapped refusal exits 4 ($ec_shell_nomap) $(cat "$tmp/nomap-shell.err")"
+grep -q 'no host has a repo mapping' "$tmp/nomap-shell.err" && ok || bad "shell refusal names the repo mapping ($(cat "$tmp/nomap-shell.err"))"
+grep -q 'no readable load' "$tmp/nomap-shell.err" && bad "shell refusal must not say no readable load" || ok
 
 # Builder route: fullstack-dev and light refuse Claude while pick allows Cursor.
 cat >"$tmp/pick-stub.py" <<'EOS'
