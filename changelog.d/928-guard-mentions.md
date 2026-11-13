@@ -1,0 +1,1 @@
+The Bash guard now lets an `orca orchestration` or `gh` message that names the owner approval file or the owner script pass when the text is a quoted heredoc, while every write to the file and every run of the script stays denied.

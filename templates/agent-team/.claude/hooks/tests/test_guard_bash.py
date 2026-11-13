@@ -295,6 +295,55 @@ class ShellScriptBoundary(GuardTest):
         self.assertDenied('sh -c \'sh -c \'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'sh -c \'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'echo "$(bunx playwright test)"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'"\'"\'"\'"\'"\'"\'\'"\'"\'\'')
 
 
+class OwnerApprovalMentions(GuardTest):
+    """#928: the guard blocks writes to the owner approval file and runs of the owner script, not messages naming them."""
+    FILE = "~/.config/agent-team/approval.json"
+    MENTION = "The owner writes approval.json with bin/owner-approve.sh promote abc."
+
+    def test_inline_message_naming_them_passes(self):
+        for command in (
+                f'orca orchestration reply --id m1 --body "{self.MENTION}"',
+                f'orca orchestration send --to run:r1 --type status --subject "owner-approve.sh" --body "{self.FILE}"',
+                f'gh issue comment 5 --body "{self.MENTION}"',
+                f'gh pr comment 5 -b "{self.MENTION}"'):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_quoted_heredoc_message_naming_them_passes(self):
+        text = f"{self.MENTION}\nbin/owner-approve.sh host\n{self.FILE}"
+        for head in ('orca orchestration reply --id m1 --body "$(cat <<\'EOF\'', 'gh issue comment 5 --body "$(cat <<\'EOF\'',
+                     'gh pr create --title t --body "$(cat <<"EOF"'):
+            with self.subTest(head=head):
+                self.assertAllowed(f'{head}\n{text}\nEOF\n)"')
+        for command in ("gh issue comment 5 --body-file - <<'EOF'", "orca orchestration reply --id m1 --body-file - <<'EOF'"):
+            with self.subTest(command=command):
+                self.assertAllowed(f"{command}\n{text}\nEOF")
+
+    def test_every_write_form_still_denied(self):
+        for command in (f"echo x > {self.FILE}", f"echo x >> {self.FILE}", f"cp x {self.FILE}", f"mv x {self.FILE}",
+                        f"rm {self.FILE}", f"chmod 600 {self.FILE}", f"tee {self.FILE}", f"sed -i s/a/b/ {self.FILE}",
+                        f'orca orchestration reply --id m1 --body "ok" > {self.FILE}',
+                        f'gh issue comment 5 --body "ok" > {self.FILE}',
+                        "bin/owner-approve.sh promote abc", "bash bin/owner-approve.sh promote abc",
+                        "echo ok; bin/owner-approve.sh host"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "owner")
+
+    def test_heredoc_that_runs_or_expands_is_still_denied(self):
+        for command in (
+                'orca orchestration reply --id m1 --body "$(cat <<EOF\nbin/owner-approve.sh host\nEOF\n)"',  # unquoted: expands
+                'bash -c "$(cat <<\'EOF\'\nbin/owner-approve.sh host\nEOF\n)"',  # runs the body
+                'orca orchestration reply --id m1 --body "$(cat <<\'EOF\'\nhi\nEOF\n)" && bin/owner-approve.sh host',
+                'orca orchestration reply --id m1 --body "$(cat <<\'EOF\'\nhi\nEOF\n; bin/owner-approve.sh host)"',
+                "orca orchestration reply --id m1 --body-file - <<'EOF'\nhi\nEOF\nbin/owner-approve.sh host",
+                # the first EOF ends the heredoc, so the script line after it really runs
+                'gh issue comment 5 --body "$(cat <<\'EOF\'\nhi\nEOF\nbin/owner-approve.sh host\ncat <<\'EOF\'\nEOF\n)"',
+                f"cat > {self.FILE} <<'EOF'\nhi\nEOF",
+                f"gh issue comment 5 --body-file - <<'EOF' > {self.FILE}\nhi\nEOF"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "owner")
+
+
 class AdminMerge(GuardTest):
     """gh pr merge --admin runs only inside the owner's `merge` window (any PR, any repo)."""
     MERGES = ("gh pr merge 12 --admin", "gh pr merge --admin --merge 12", "gh pr merge 12 --merge --admin -R a/b",

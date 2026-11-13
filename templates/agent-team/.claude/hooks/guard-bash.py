@@ -2241,8 +2241,34 @@ REPORT_HEREDOC = re.compile(
 )
 
 
+# A message for `orca orchestration` or `gh` given as a quoted heredoc (#928): `--body "$(cat <<'EOF' ... EOF\n)"`
+# or `--body-file - <<'EOF' ... EOF`. A quoted delimiter expands nothing, so the body is data. Only the whole command
+# in this shape qualifies: plain words before, nothing but plain words after the heredoc.
+_MSG_WORD = r"""(?:[^\s;|&<>`$()\\'"]+|"[^"$`\\\n]*"|'[^'\n]*')"""
+_MSG_HEAD = rf"[ \t]*(?:orca[ \t]+orchestration|gh)(?:[ \t]+{_MSG_WORD})*"
+_MSG_OPEN = r"<<-?[ \t]*(?P<q>['\"])(?P<d>[A-Za-z_][A-Za-z0-9_]*)(?P=q)[ \t]*\n"
+MESSAGE_HEREDOC = (
+    re.compile(rf'(?s)\A(?P<pre>(?P<head>{_MSG_HEAD})[ \t]+(?:--?[A-Za-z-]+=)?"?\$\([ \t]*cat[ \t]*{_MSG_OPEN})'
+               rf'(?P<body>.*?)\n(?P<end>[ \t]*(?P=d)[ \t]*\n[ \t]*\)"?(?:[ \t]+{_MSG_WORD})*[ \t]*\Z)'),
+    re.compile(rf'(?s)\A(?P<pre>(?P<head>{_MSG_HEAD})[ \t]+{_MSG_OPEN})(?P<body>.*?)\n(?P<end>[ \t]*(?P=d)[ \t]*\n?\Z)'),
+)
+
+
+def message_heredoc_text(command):
+    """The command without the body of a quoted message heredoc; the program and its words are still checked."""
+    for pattern in MESSAGE_HEREDOC:
+        m = pattern.match(command)
+        if not m or any(line.strip() == m.group("d") for line in m.group("body").split("\n")):
+            continue  # the delimiter inside the body would end the heredoc early, leaving real commands after it
+        prog, args = program_and_args(words(m.group("head")))
+        if text_program(os.path.basename(prog or ""), args):
+            return m.group("pre") + m.group("end")
+    return command
+
+
 def report_command_text(command):
     """Remove literal data only for a standalone quoted cat-to-file or commit message heredoc."""
+    command = message_heredoc_text(command)
     lines = command.splitlines(keepends=True)
     out, i = [], 0
     while i < len(lines):
