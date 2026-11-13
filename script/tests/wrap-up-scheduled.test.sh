@@ -422,10 +422,11 @@ run_limited 5 env -i HOME="$tmp/home" PATH="$tmp/bin/orca-apply:$tmp/bin/gh-appl
   WRAP_UP_PANE_TIMEOUT=1 WRAP_UP_TOTAL_TIMEOUT=2 \
   WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose" \
   WRAP_UP_CLONE_ROOT="$tmp/no-clones" ORCA_CLI_COMMAND="$tmp/bin/orca-apply" WORKER_PANE_CLOSE="$pane_hang" \
-  bash "$script" --apply --repo "$mini" >>"$detail" 2>&1 || true
+  bash "$script" --apply --repo "$mini" >>"$detail" 2>"$tmp/pane-stderr" || true; cat "$tmp/pane-stderr" >> "$detail"
 p_elapsed=$((SECONDS - p_start))
 check 'hung pane close is cut off by bounded helper within budget' test "$p_elapsed" -lt 4
-check 'hung pane close is noted as a timeout, not a failure' has 'worker-pane-close timed out' "$detail"
+check 'hung pane close is noted as a timeout, not a failure' has 'Warning: worker-pane-close timed out' "$detail"
+check 'the timeout warning is written to stderr' grep -q 'Warning: worker-pane-close timed out' "$tmp/pane-stderr"
 check 'hung pane close does not fail the repo' not_has 'worker panes: worker-pane-close exited' "$detail"
 
 # Multi-repo scheduled round stops starting new repos when its budget is spent and logs which repos it skipped.
