@@ -73,7 +73,7 @@ SEND_ERRORS = (
     OrcaReadError,
 )
 NOTICE_PASS_LIMIT = 20
-STALL_RESTART_ATTEMPTS = 2  # one retry covers a transient failure; a second ends it
+STALL_RESTART_ATTEMPTS = 1  # a failed restart is parked; it is not tried again
 DIGEST_SECONDS = 600
 ORCA_SKIP_NOTICE = 'Orca could not be read; skipping worker inbox alerts this run'
 
@@ -866,6 +866,10 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
             if not baseline:
                 notices.append(Urgent('failed dispatch ' + dispatch + '; inspect worker-show and provider capacity'))
             state['failed'].append(dispatch)
+            label_repo = (config.get('worker_stall') or {}).get('label_repo')
+            pr_num = worker_pr_number(worker)
+            if isinstance(label_repo, str) and label_repo and pr_num:
+                state.setdefault('failed_refs', {})[dispatch] = {'repo': label_repo, 'pr': pr_num}
 
     deduped = deduplicate_workers(workers)
     for worker in deduped:
@@ -1736,6 +1740,21 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not row or not old_dispatch:
             pending.pop(skey, None)
             continue
+        key = park_id('stall', old_dispatch)
+        if park_is_active(state, key, config):
+            pending.pop(skey, None)
+            continue
+        if int(pend.get('failures') or 0) >= STALL_RESTART_ATTEMPTS:
+            reason = pend.get('reason') or ''
+            pr_num = pend.get('pr') if isinstance(pend.get('pr'), int) else None
+            if park_failure(
+                state, key, reason, config, dispatch=old_dispatch,
+                repo=pend.get('repo') or '', pr=pr_num,
+            ):
+                notices.append(park_notice('stall', old_dispatch, reason))
+                log_bits.append('stall_restart_fail=%s:%s' % (old_dispatch, reason or 'parked'))
+            pending.pop(skey, None)
+            continue
         run_for_start = run_id_for_stall_restart(
             row, pend.get('stall_restart_run_id') or '') or default_list_run_id(config)
         start_args = worker_stall_restart_start_args(row, old_dispatch, run_for_start, config)
@@ -1752,14 +1771,19 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             pending.pop(skey, None)
             log_bits.append('stall_restart=%s' % old_dispatch)
         except SEND_ERRORS as exc:
-            code = orchestration_failure_log_code(exc)
-            pend['failures'] = int(pend.get('failures') or 0) + 1
-            if pend['failures'] >= STALL_RESTART_ATTEMPTS:
-                pend['gave_up'] = True
-                log_bits.append('stall_restart_failed=%s:%s' % (old_dispatch, code))
-                notices.append(Urgent('stall restart failed for %s (%s); not retrying' % (old_dispatch, code)))
-            else:
-                log_bits.append('stall_restart_retry=%s:%s' % (old_dispatch, code))
+            reason, exit_code = exception_start_failure(exc)
+            if exit_code in BABYSIT_DEFERRED_EXITS:
+                log_bits.append('stall_restart_deferred=%s:%s' % (old_dispatch, reason or exit_code))
+                continue
+            pr_num = pend.get('pr') if isinstance(pend.get('pr'), int) else None
+            if park_failure(
+                state, key, reason, config, dispatch=old_dispatch,
+                repo=pend.get('repo') or '', pr=pr_num,
+            ):
+                notices.append(park_notice('stall', old_dispatch, reason))
+            log_bits.append('stall_restart_fail=%s:%s' % (
+                old_dispatch, reason or orchestration_failure_log_code(exc)))
+            pending.pop(skey, None)
 
     for w in workers:
         did = w.get('dispatchId')
@@ -1800,12 +1824,20 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
 
         if not st['restarted']:
+            if park_is_active(state, park_id('stall', did), config):
+                continue
             run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
             start_args = worker_stall_restart_start_args(w, did, run_for_start, config)
             if start_args:
                 try:
                     rpc_call('orchestration', 'worker-stop', '--dispatch', did)
-                    state.setdefault('stall_stopped', {})[worker_task_id(w) or skey] = did
+                    stopped = {'dispatch': did}
+                    if isinstance(label_repo, str) and label_repo:
+                        stopped['repo'] = label_repo
+                    pr_num = worker_pr_number(w)
+                    if pr_num:
+                        stopped['pr'] = pr_num
+                    state.setdefault('stall_stopped', {})[worker_task_id(w) or skey] = stopped
                     try:
                         rpc_call(*start_args)
                         st['restarted'] = True
@@ -1813,39 +1845,59 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                         log_bits.append('stall_restart=%s' % did)
                         pending.pop(skey, None)
                     except SEND_ERRORS as exc:
-                        wt_sel = worker_worktree_selector(w)
-                        snap = {
-                            'taskId': worker_task_id(w),
-                            'resource': {'worktreeId': wt_sel} if wt_sel else {},
-                            'projection': {
-                                'provider': {
-                                    'id': worker_agent_id(w),
-                                    'model': worker_model_id(w) or None,
+                        reason, exit_code = exception_start_failure(exc)
+                        if exit_code in BABYSIT_DEFERRED_EXITS:
+                            wt_sel = worker_worktree_selector(w)
+                            snap = {
+                                'taskId': worker_task_id(w),
+                                'resource': {'worktreeId': wt_sel} if wt_sel else {},
+                                'projection': {
+                                    'provider': {
+                                        'id': worker_agent_id(w),
+                                        'model': worker_model_id(w) or None,
+                                    },
                                 },
-                            },
-                        }
-                        r_id = run_id_for_stall_restart(w, run_for_start)
-                        if isinstance(r_id, str) and r_id.strip():
-                            snap['runId'] = r_id.strip()
-                        pending[skey] = {
-                            'old_dispatch': did,
-                            'stall_restart_run_id': run_for_start,
-                            'row_snapshot': snap,
-                            'started': False,
-                            'failures': 1,
-                        }
-                        st['restarted'] = False
-                        log_bits.append('stall_stop_start_retry_next=%s:%s' % (did, orchestration_failure_log_code(exc)))
-                except SEND_ERRORS as exc:
-                    log_bits.append('stall_restart_fail=%s:%s' % (did, orchestration_failure_log_code(exc)))
-                    title = 'Fleet-watch: restart failed for dispatch %s' % did
-                    if title not in issue_keys:
-                        if act(['gh', 'issue', 'create', '--repo', label_repo, '--title', title,
-                                '--body', 'Fleet-watch could not restart this dispatch; inspect Orca and the worker terminal.']) == 0:
-                            issue_keys.append(title)
-                            notices.append(title)
+                            }
+                            r_id = run_id_for_stall_restart(w, run_for_start)
+                            if isinstance(r_id, str) and r_id.strip():
+                                snap['runId'] = r_id.strip()
+                            pending[skey] = {
+                                'old_dispatch': did,
+                                'stall_restart_run_id': run_for_start,
+                                'row_snapshot': snap,
+                                'started': False,
+                                'failures': 0,
+                                'reason': reason,
+                                'repo': label_repo if isinstance(label_repo, str) else '',
+                                'pr': pr_num,
+                            }
+                            st['restarted'] = False
+                            log_bits.append('stall_restart_deferred=%s:%s' % (did, reason or exit_code))
                         else:
-                            notices.append(title + ', issue not opened')
+                            key = park_id('stall', did)
+                            if park_failure(
+                                state, key, reason, config, dispatch=did,
+                                repo=label_repo if isinstance(label_repo, str) else '', pr=pr_num,
+                            ):
+                                notices.append(park_notice('stall', did, reason))
+                            log_bits.append('stall_restart_fail=%s:%s' % (
+                                did, reason or orchestration_failure_log_code(exc)))
+                            pending.pop(skey, None)
+                            st['restarted'] = False
+                except SEND_ERRORS as exc:
+                    reason, exit_code = exception_start_failure(exc)
+                    if exit_code in BABYSIT_DEFERRED_EXITS:
+                        log_bits.append('stall_restart_deferred=%s:%s' % (did, reason or exit_code))
+                    else:
+                        pr_num = worker_pr_number(w)
+                        key = park_id('stall', did)
+                        if park_failure(
+                            state, key, reason, config, dispatch=did,
+                            repo=label_repo if isinstance(label_repo, str) else '', pr=pr_num,
+                        ):
+                            notices.append(park_notice('stall', did, reason))
+                        log_bits.append('stall_restart_fail=%s:%s' % (
+                            did, reason or orchestration_failure_log_code(exc)))
             else:
                 line = stall_restart_start_blocked_log(did, config, w, run_for_start)
                 if line.startswith('stall_no_sender_terminal='):
@@ -2296,9 +2348,9 @@ def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
         env.update(extra_env)
     try:
         popen(command, start_new_session=True, env=env)
-        return 0
-    except OSError:
-        return 1
+        return BabysitStartResult(0)
+    except OSError as exc:
+        return BabysitStartResult(1, _start_reason(str(exc)))
 
 
 def review_failed_at_head(pr):
@@ -2308,7 +2360,7 @@ def review_failed_at_head(pr):
 def fetch_ready_issues(repo, run=subprocess.run):
     command = [
         'gh', 'issue', 'list', '--repo', repo, '--label', 'ready-for-agent', '--state', 'open',
-        '--limit', '100', '--json', 'number,title,body,labels,comments,createdAt,blockedBy',
+        '--limit', '100', '--json', 'number,title,body,labels,comments,createdAt,updatedAt,blockedBy',
     ]
     try:
         output = run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -2661,9 +2713,12 @@ def default_issue_scan_gate(config, run=subprocess.run):
 
 def default_issue_scan_start(command, run=subprocess.run):
     try:
-        return run(command, capture_output=True, text=True, timeout=180).returncode
-    except (subprocess.SubprocessError, OSError):
-        return 1
+        done = run(command, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return BabysitStartResult(1, 'timed out after 180s')
+    except (subprocess.SubprocessError, OSError) as exc:
+        return BabysitStartResult(1, _start_reason(str(exc)))
+    return BabysitStartResult(done.returncode, _start_reason(done.stderr, getattr(done, 'stdout', '') or ''))
 
 
 def _issue_scan_has_slot(host, config, admission, extra_starts):
@@ -3157,20 +3212,236 @@ class BabysitStartResult(int):
 BABYSIT_DEFERRED_EXITS = (3, 4)  # worker-startup.sh: usage gate refused, host placement refused
 
 
-def _start_reason(stderr):
-    text = stderr or ''
+def _json_error_message(text):
+    """First line of error.message in an Orca JSON object, or '' when it is not there."""
+    text = text or ''
     start = text.find('{')
-    if start >= 0:
+    if start < 0:
+        return ''
+    try:
+        error = json.JSONDecoder().raw_decode(text[start:])[0].get('error')
+    except (ValueError, AttributeError, json.JSONDecodeError):
+        return ''
+    message = error.get('message') if isinstance(error, dict) else None
+    if not isinstance(message, str) or not message.strip():
+        return ''
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    return re.sub(r'[,;\s]+', ' ', lines[0]).strip()[:160] if lines else ''
+
+
+def _start_reason(stderr, stdout=''):
+    """First line of Orca's error.message. Stdout wins, then stderr, then the last plain line."""
+    for text in (stdout, stderr):
+        message = _json_error_message(text)
+        if message:
+            return message
+    for text in (stderr, stdout):
+        lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+        if lines:
+            return re.sub(r'[,;\s]+', ' ', lines[-1]).strip()[:160]
+    return ''
+
+
+def _mtime_value(raw):
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return int(raw)
+
+
+def config_mtime(config):
+    return _mtime_value((config or {}).get('config_mtime'))
+
+
+def park_id(kind, *parts):
+    return '|'.join([kind, *[str(part) for part in parts]])
+
+
+def park_is_active(state, key, config):
+    """True when this start must not run. A changed config mtime drops the row and re-arms it."""
+    parked = state.get('parked')
+    if not isinstance(parked, dict):
+        return False
+    entry = parked.get(key)
+    if not isinstance(entry, dict):
+        return False
+    current = config_mtime(config)
+    saved = _mtime_value(entry.get('config_mtime'))
+    if current is not None and saved is not None and saved != current:
+        parked.pop(key, None)
+        return False
+    return True
+
+
+def park_failure(state, key, reason, config, **meta):
+    """Record one parked start. False when that key is already parked."""
+    if park_is_active(state, key, config):
+        return False
+    record = {'reason': reason or '', 'config_mtime': config_mtime(config)}
+    for name, value in meta.items():
+        if value is None or value == '':
+            continue
+        record[name] = value
+    state.setdefault('parked', {})[key] = record
+    return True
+
+
+def park_notice(kind, target, reason):
+    text = 'parked %s %s' % (kind, target)
+    if reason:
+        text += ': ' + reason
+    return Urgent(text)
+
+
+def start_result_parts(result):
+    if isinstance(result, int) and not isinstance(result, bool):
+        return int(result), getattr(result, 'reason', '') or ''
+    return 1, ''
+
+
+def exception_start_failure(exc):
+    """(reason, exit code) from an Orca or worker-startup failure. Exit code is None when there is none."""
+    cause = exc.__cause__ if isinstance(getattr(exc, '__cause__', None), subprocess.CalledProcessError) else None
+    if cause is None and isinstance(exc, subprocess.CalledProcessError):
+        cause = exc
+    if cause is not None:
+        stdout = cause.stdout or ''
+        stderr = cause.stderr or ''
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode('utf-8', 'replace')
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode('utf-8', 'replace')
+        return _start_reason(stderr, stdout), cause.returncode
+    return _start_reason(str(exc)), None
+
+
+def _closed_numbers(rows):
+    """Issue or PR numbers this list shows as not open. None means the list was not fetched."""
+    if not isinstance(rows, list):
+        return None
+    closed, opened = set(), set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        number = row.get('number')
+        if isinstance(number, bool) or not isinstance(number, int):
+            continue
+        if str(row.get('state') or '').upper() == 'OPEN':
+            opened.add(number)
+        else:
+            closed.add(number)
+    return closed - opened
+
+
+def _matches_pr(entry, repo, numbers):
+    return isinstance(entry, dict) and entry.get('repo') == repo and entry.get('pr') in numbers
+
+
+def _drop_closed_prs(state, repo, numbers):
+    babysit = state.get('babysit')
+    if isinstance(babysit, dict):
+        repo_rows = babysit.get(repo)
+        if isinstance(repo_rows, dict):
+            for number in numbers:
+                repo_rows.pop(str(number), None)
+            if not repo_rows:
+                babysit.pop(repo, None)
+    parked = state.get('parked')
+    if isinstance(parked, dict):
+        for key, entry in list(parked.items()):
+            if _matches_pr(entry, repo, numbers):
+                parked.pop(key, None)
+    refs = state.get('failed_refs')
+    failed = state.get('failed')
+    if isinstance(refs, dict) and isinstance(failed, list):
+        drop = [did for did, ref in refs.items() if _matches_pr(ref, repo, numbers)]
+        if drop:
+            gone = set(drop)
+            state['failed'] = [did for did in failed if did not in gone]
+            for did in drop:
+                refs.pop(did, None)
+    stopped = state.get('stall_stopped')
+    if isinstance(stopped, dict):
+        for task, value in list(stopped.items()):
+            if _matches_pr(value, repo, numbers):
+                stopped.pop(task, None)
+
+
+def _drop_closed_issues(state, repo, numbers):
+    parked = state.get('parked')
+    if not isinstance(parked, dict):
+        return
+    for key, entry in list(parked.items()):
+        if isinstance(entry, dict) and entry.get('repo') == repo and entry.get('issue') in numbers:
+            parked.pop(key, None)
+
+
+def prune_closed_maps(state, prs_by_repo, issues_by_repo):
+    """Drop parked, failed, stall_stopped and babysit rows for PRs and issues listed as not open.
+
+    A repo whose list is None was not fetched, so its rows stay.
+    """
+    for repo, rows in (prs_by_repo or {}).items():
+        numbers = _closed_numbers(rows)
+        if numbers:
+            _drop_closed_prs(state, repo, numbers)
+    for repo, rows in (issues_by_repo or {}).items():
+        numbers = _closed_numbers(rows)
+        if numbers:
+            _drop_closed_issues(state, repo, numbers)
+
+
+def prune_closed_issues(state, fetch):
+    """Ask `fetch(repo)` for closed issues and drop parked rows for the ones it lists."""
+    repos = []
+    for entry in (state.get('parked') or {}).values():
+        if not isinstance(entry, dict) or not entry.get('issue'):
+            continue
+        repo = entry.get('repo')
+        if repo and repo not in repos:
+            repos.append(repo)
+    if not repos or fetch is None:
+        return
+    for repo in repos:
         try:
-            error = json.JSONDecoder().raw_decode(text[start:])[0].get('error')
-            message = error.get('message') if isinstance(error, dict) else None
-            if isinstance(message, str) and message.strip():
-                lines = [line.strip() for line in message.splitlines() if line.strip()]
-                return re.sub(r'[,;\s]+', ' ', lines[0]).strip()[:160]
-        except (ValueError, AttributeError):
-            pass
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return re.sub(r'[,;\s]+', ' ', lines[-1]).strip()[:160] if lines else ''
+            rows = fetch(repo)
+        except (subprocess.SubprocessError, OSError, ValueError):
+            continue
+        prune_closed_maps(state, {}, {repo: rows})
+
+
+def fetch_closed_issue_rows(repo, run=subprocess.run):
+    command = [
+        'gh', 'issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100',
+        '--json', 'number,state',
+    ]
+    try:
+        output = run(command, capture_output=True, text=True, timeout=30, check=True)
+        rows = json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
+        return None
+    return rows if isinstance(rows, list) else None
+
+
+def _state_tracks_repo(state, repo):
+    if repo in (state.get('babysit') or {}):
+        return True
+    for entry in (state.get('parked') or {}).values():
+        if isinstance(entry, dict) and entry.get('repo') == repo and entry.get('pr'):
+            return True
+    for ref in (state.get('failed_refs') or {}).values():
+        if isinstance(ref, dict) and ref.get('repo') == repo:
+            return True
+    for value in (state.get('stall_stopped') or {}).values():
+        if isinstance(value, dict) and value.get('repo') == repo:
+            return True
+    return False
+
+
+def remember_config_mtime(config, path):
+    try:
+        config['config_mtime'] = int(Path(path).stat().st_mtime_ns)
+    except OSError:
+        return
 
 
 def default_babysit_start(command, run=subprocess.run):
@@ -3180,7 +3451,7 @@ def default_babysit_start(command, run=subprocess.run):
         return BabysitStartResult(1, 'timed out after 180s')
     except (subprocess.SubprocessError, OSError) as exc:
         return BabysitStartResult(1, _start_reason(str(exc)))
-    return BabysitStartResult(done.returncode, _start_reason(done.stderr))
+    return BabysitStartResult(done.returncode, _start_reason(done.stderr, getattr(done, 'stdout', '') or ''))
 
 
 def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
@@ -3236,7 +3507,6 @@ def babysit_pass(
     cap = babysit_cap(config)
     started = 0
     picks = {}
-    start_failures = []
 
     def cached_pick(role):
         if role not in picks:
@@ -3314,6 +3584,10 @@ def babysit_pass(
         if kind == 'verifier' and live_verifier_for_pr(pr_row, workers):
             lines.append(_babysit_line(repo, number, head, 'skip', 'verifier-live'))
             continue
+        park_key = park_id('verifier', repo, number, head)
+        if park_is_active(state, park_key, config):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'parked'))
+            continue
         if started >= cap:
             lines.append(_babysit_line(repo, number, head, 'skip', 'cap'))
             log_bits.append('cap')
@@ -3336,18 +3610,18 @@ def babysit_pass(
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
-        code = start_worker(command)
+        code, reason = start_result_parts(start_worker(command))
         if code != 0:
-            reason = getattr(code, 'reason', '')
             suffix = ':' + reason if reason else ''
             if code in BABYSIT_DEFERRED_EXITS:
-                # The usage gate or host placement said wait; the next pass retries, so no failure streak.
+                # The usage gate or host placement said wait. That is not a failed start, so the next pass retries.
                 lines.append(_babysit_line(repo, number, head, 'skip', 'start-deferred'))
                 log_bits.append('start_deferred=%s%s' % (number, suffix))
                 continue
             lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
             log_bits.append('start_fail=%s%s' % (number, suffix))
-            start_failures.append('%s#%s%s' % (repo, number, ' (%s)' % reason if reason else ''))
+            if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
+                notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason))
             continue
         babysit_mark(state, repo, number, head, action)
         started += 1
@@ -3355,10 +3629,6 @@ def babysit_pass(
         log_bits.append('%s=%s' % (action, number))
         if persist_state:
             persist_state()
-    if not dry_run:
-        notices += failure_streak_notices(
-            state, 'babysit_start_failed', bool(start_failures),
-            'babysit could not start a worker for %s' % ', '.join(start_failures))
     return notices, lines, log_bits
 
 
@@ -3439,8 +3709,10 @@ def issue_scan_pass(
     if workflow_watch_prior is None:
         workflow_watch_prior = state.get('workflow_watch') or {}
 
+    listed = {}
     for repo in pr_repos:
         prs = pr_fetch(repo)
+        listed[repo] = prs
         if prs is None:
             continue
         root = _issue_scan_repo_root(config, repo)
@@ -3459,12 +3731,24 @@ def issue_scan_pass(
                 continue
             pr_num = pr_row['number']
             if root and not checks_receipt_at_head(pr_row) and not pr_checks_all_success(pr_row):
-                if not head_checks_lock_live(root, lock_live=checks_lock_live):
+                hc_key = park_id('head_checks', repo, pr_num, head)
+                if park_is_active(state, hc_key, config):
+                    log_bits.append('head_checks_parked=%s' % head[:8])
+                elif not head_checks_lock_live(root, lock_live=checks_lock_live):
                     command = build_head_checks_command(config, repo, pr_row)
-                    if command and start_detached(command) == 0:
-                        log_bits.append('head_checks_start=%s' % head[:8])
-                        if persist_state:
-                            persist_state()
+                    if command:
+                        code, reason = start_result_parts(start_detached(command))
+                        if code == 0:
+                            log_bits.append('head_checks_start=%s' % head[:8])
+                            if persist_state:
+                                persist_state()
+                        else:
+                            if park_failure(state, hc_key, reason, config, repo=repo, pr=pr_num, head=head):
+                                notices.append(park_notice('head checks', '%s#%s' % (repo, pr_num), reason))
+                            if persist_state:
+                                persist_state()
+                            suffix = ':%s' % reason if reason else ''
+                            log_bits.append('head_checks_fail=%s%s' % (head[:8], suffix))
             if repo in babysit_owned:
                 owner_reason = pr_owner_only_reason(pr_row)
                 if owner_reason and owner_reason != 'error':
@@ -3503,6 +3787,10 @@ def issue_scan_pass(
                 if persist_state:
                     persist_state()
                 continue
+            park_key = park_id('rework', repo, pr_num, head, int(rounds.get(pr_key, 0)) + 1)
+            if park_is_active(state, park_key, config):
+                log_bits.append('rework_parked=%d' % pr_num)
+                continue
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 continue
             command = build_rework_start_command(config, repo, pr_row)
@@ -3512,7 +3800,15 @@ def issue_scan_pass(
             pending[head] = True
             if persist_state:
                 persist_state()
-            if start_worker(command) == 0:
+            code, reason = start_result_parts(start_worker(command))
+            if code in BABYSIT_DEFERRED_EXITS:
+                pending.pop(head, None)
+                if persist_state:
+                    persist_state()
+                suffix = ':%s' % reason if reason else ''
+                log_bits.append('rework_deferred=%d%s' % (pr_num, suffix))
+                continue
+            if code == 0:
                 seen[head] = True
                 pending.pop(head, None)
                 rounds[pr_key] = rounds.get(pr_key, 0) + 1
@@ -3523,9 +3819,14 @@ def issue_scan_pass(
                     persist_state()
             else:
                 pending.pop(head, None)
+                if park_failure(state, park_key, reason, config, repo=repo, pr=pr_num, head=head):
+                    notices.append(park_notice('rework', '%s#%s' % (repo, pr_num), reason))
                 if persist_state:
                     persist_state()
-                log_bits.append('rework_fail=%d' % pr_num)
+                suffix = ':%s' % reason if reason else ''
+                log_bits.append('rework_fail=%d%s' % (pr_num, suffix))
+
+    prune_closed_maps(state, listed, {})
 
     if list_issues is None:
         list_issues = fetch_ready_issues
@@ -3553,6 +3854,10 @@ def issue_scan_pass(
             if not issue_scan_eligible(row):
                 continue
             if issue_already_claimed(repo, row['number']):
+                continue
+            updated = row.get('updatedAt') or ''
+            if park_is_active(state, park_id('issue', repo, row['number'], updated), config):
+                log_bits.append('issue_parked=%d' % row['number'])
                 continue
             candidates.append((repo, row))
 
@@ -3620,22 +3925,30 @@ def issue_scan_pass(
     issue_pending.setdefault(repo, []).append(row['number'])
     if persist_state:
         persist_state()
-    if start_worker(command) == 0:
-        pending_list = issue_pending.setdefault(repo, [])
-        if row['number'] in pending_list:
-            pending_list.remove(row['number'])
+    code, reason = start_result_parts(start_worker(command))
+    pending_list = issue_pending.setdefault(repo, [])
+    if row['number'] in pending_list:
+        pending_list.remove(row['number'])
+    suffix = ':%s' % reason if reason else ''
+    if code in BABYSIT_DEFERRED_EXITS:
+        if persist_state:
+            persist_state()
+        log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
+        return notices, log_bits
+    if code == 0:
         started.setdefault(repo, []).append(row['number'])
         notices.append('issue %s #%d' % (repo, row['number']))
         log_bits.append('issue_start=%d' % row['number'])
         if persist_state:
             persist_state()
     else:
-        pending_list = issue_pending.setdefault(repo, [])
-        if row['number'] in pending_list:
-            pending_list.remove(row['number'])
+        updated = row.get('updatedAt') or ''
+        park_key = park_id('issue', repo, row['number'], updated)
+        if park_failure(state, park_key, reason, config, repo=repo, issue=row['number']):
+            notices.append(park_notice('issue', '%s#%s' % (repo, row['number']), reason))
         if persist_state:
             persist_state()
-        log_bits.append('issue_start_fail=%d' % row['number'])
+        log_bits.append('issue_start_fail=%d%s' % (row['number'], suffix))
     return notices, log_bits
 
 
@@ -4040,6 +4353,7 @@ def main():
     if adopted is not None:
         print('fleet-watch: using coordinator config %s' % adopted, file=sys.stderr)
     apply_active_run(config)
+    remember_config_mtime(config, adopted or args.config)
 
     if not args.state:
         parser.error('--state is required when --admit is not specified')
@@ -4175,6 +4489,12 @@ def main():
     if scan_log:
         parts.append('scan ' + ','.join(scan_log))
     log_fleet_watch('; '.join(parts))
+
+    for repo in babysit_repos(config):
+        if repo not in pass_prs and _state_tracks_repo(state, repo):
+            pass_prs[repo] = fetch_prs(repo)
+    prune_closed_maps(state, pass_prs, {})
+    prune_closed_issues(state, fetch_closed_issue_rows)
 
     deliver_notices(config, state, notices, rpc, pass_start)
     if notices:

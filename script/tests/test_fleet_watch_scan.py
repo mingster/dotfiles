@@ -592,7 +592,7 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(starts2, [])
         self.assertIn('issue_scan_none', log2)
 
-    def test_start_timeout_clears_pending_and_retries(self):
+    def test_start_failure_parks_and_does_not_retry(self):
         state = {}
         issues = {REPO: [issue(5, ['ready-for-agent'], self.VALID_BRIEF)]}
         _, _, starts1, _ = self.run_pass(state, issues, start_rc=1)
@@ -600,8 +600,7 @@ class IssueScanPass(unittest.TestCase):
         self.assertNotIn(5, state.get('issue_scan_started', {}).get(REPO, []))
         self.assertNotIn(5, state.get('issue_scan_pending', {}).get(REPO, []))
         _, _, starts2, _ = self.run_pass(state, issues, start_rc=0)
-        self.assertEqual(len(starts2), 1)
-        self.assertIn(5, state.get('issue_scan_started', {}).get(REPO, []))
+        self.assertEqual(starts2, [])
 
     def test_cap_one_allows_only_one_rework_in_pass(self):
         state = {}

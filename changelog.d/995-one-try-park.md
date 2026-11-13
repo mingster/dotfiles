@@ -1,0 +1,1 @@
+A failed fleet-watch start is tried once and parked with one notice. A usage-gate or host-cap refusal is logged and retried, and a closed PR or issue drops the parked, failed, stall_stopped and babysit rows.
