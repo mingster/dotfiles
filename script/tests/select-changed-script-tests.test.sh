@@ -357,6 +357,29 @@ case16_template_role_file_selects_role_word_budget() {
 
 case16_template_role_file_selects_role_word_budget
 
+case17_new_routing_scripts_stay_scoped() {
+  local path out count
+  for path in script/pr-body-gate.py script/worker-preamble.py script/setup-agent-skills.sh; do
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "$path" 2>&1)
+    grep -Fq 'Fallback:' <<<"$out" && fail "case17 $path must not fall back to the full suite"
+    count=$(script_tests_count_from_output <<<"$out")
+    [ "${count:-0}" -gt 0 ] || fail "case17 $path selected nothing"
+    [ "${count:-0}" -lt 20 ] || fail "case17 $path suite too wide (${count:-0})"
+  done
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-body-gate.py 2>&1)
+  grep -Fxq 'Selected: script/tests/ship.test.sh' <<<"$out" \
+    || fail "case17 pr-body-gate must select ship.test.sh"
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/setup-agent-skills.sh 2>&1)
+  grep -Fxq 'Selected: script/tests/setup-user-level-team.test.sh' <<<"$out" \
+    || fail "case17 setup-agent-skills must select setup-user-level-team.test.sh"
+  ok "case17 routing scripts map to their tests"
+}
+
+case17_new_routing_scripts_stay_scoped
+
 case15_parallel_jobs() {
   local fixture=$tmp/case15 out rc
   mkdir -p "$fixture/script/tests"
@@ -378,4 +401,4 @@ case15_parallel_jobs() {
 }
 
 case15_parallel_jobs
-echo 'PASS: 19 acceptance cases'
+echo 'PASS: 20 acceptance cases'

@@ -148,6 +148,18 @@ map_file() {
       map_tests_referencing "lib/$(basename "$path")"
       map_tests_referencing "$(basename "$path")"
       ;;
+    script/pr-body-gate.py)
+      add_if_exists "script/tests/test_fleet_watch_routing.py"
+      add_if_exists "script/tests/ship.test.sh"
+      ;;
+    script/worker-preamble.py)
+      add_if_exists "script/tests/test_fleet_watch_routing.py"
+      add_if_exists "script/tests/test_fleet_watch_scan.py"
+      add_if_exists "script/tests/worker-startup.test.sh"
+      ;;
+    script/setup-agent-skills.sh)
+      add_if_exists "script/tests/setup-user-level-team.test.sh"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
