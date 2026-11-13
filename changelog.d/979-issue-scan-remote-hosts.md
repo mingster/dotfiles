@@ -1,0 +1,1 @@
+When the local host is full, `issue_scan` in `fleet-watch.py` now starts the ready issue on the first other configured host that admits, using `--on <host>` and that host's repo id from `orca repo list --environment <host>`, and logs the placement or every host's refusal; covered by `script/tests/test_fleet_watch_979.py`.

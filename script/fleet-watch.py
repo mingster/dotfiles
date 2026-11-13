@@ -2354,7 +2354,24 @@ def brief_lint_missing(spec_path, run=subprocess.run):
     return missing or [out or 'brief-lint failed']
 
 
-def build_issue_start_command(config, repo, issue_row):
+def default_repo_id_lookup(host, repo):
+    """Orca repo id of owner/name on an environment, matched by git remote since paths differ per host."""
+    try:
+        result = rpc('repo', 'list', '--environment', host)
+    except Exception:
+        return None
+    key = 'github.com/%s' % repo.lower()
+    for row in (result.get('repos') if isinstance(result, dict) else None) or []:
+        if not isinstance(row, dict) or not row.get('id'):
+            continue
+        identity = row.get('gitRemoteIdentity') or {}
+        if str(identity.get('canonicalKey') or '').lower() == key:
+            return row['id']
+    return None
+
+
+def build_issue_start_command(config, repo, issue_row, placement=None):
+    """placement is (host, repo_id) to start on a remote host instead of the local checkout."""
     scan = config['issue_scan']
     root = _issue_scan_repo_root(config, repo)
     if not root:
@@ -2379,6 +2396,9 @@ def build_issue_start_command(config, repo, issue_row):
         '--name', 'issue-%d' % issue_row['number'],
         '--repo', 'path:' + root,
     ]
+    if placement:
+        command[command.index('--repo') + 1] = 'id:' + placement[1]
+        command += ['--on', placement[0]]
     return [part for part in command if part]
 
 
@@ -2728,6 +2748,9 @@ def resolve_pass_config(config, config_path):
     except (OSError, ValueError):
         return config, None
     if isinstance(loaded, dict) and config_runs(loaded):
+        for key in ('host_caps', 'local_host', 'host_load_ceilings'):
+            if key in config and key not in loaded:
+                loaded[key] = config[key]
         return loaded, path
     return config, None
 
@@ -3265,7 +3288,7 @@ def issue_scan_pass(
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
-    babysit_repos=None,
+    babysit_repos=None, repo_id_lookup=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -3298,14 +3321,18 @@ def issue_scan_pass(
     reason = re.sub(r'[,;\s]+', ' ', str(admission.get('reason') or 'unknown')).strip()
     notices += failure_streak_notices(
         state, 'issue_scan_refused', refused, 'issue scan refused on %s: %s' % (host, reason))
+    remote_hosts = []
     if refused:
-        return notices, ['issue_scan_load', 'issue_scan_refused=%s' % reason]
-
+        log_bits = ['issue_scan_load', 'issue_scan_refused=%s' % reason]
+        remote_hosts = [h for h in (config.get('host_caps') or {}) if not _is_local_coordinator_host(h, config)]
+        remote_hosts = [h for h in remote_hosts if h != host]
+        if not remote_hosts:
+            return notices, log_bits
     extra_starts = 0
     repos = scan.get('repos') or []
     if pr_fetch is None:
         pr_fetch = fetch_prs
-    pr_repos = scan.get('pr_repos') or repos
+    pr_repos = [] if remote_hosts else (scan.get('pr_repos') or repos)
     needs_elon = (config.get('worker_stall') or {}).get('needs_elon_label', 'needs-elon')
     needs_redesign = (config.get('worker_stall') or {}).get('needs_redesign_label', 'needs-redesign')
     ship_heads = state.setdefault('issue_scan_ship', {})
@@ -3433,6 +3460,9 @@ def issue_scan_pass(
                 continue
             candidates.append((repo, row))
 
+    if not candidates and remote_hosts:
+        log_bits.append('issue_scan_none')
+        return notices, log_bits
     if not candidates:
         queue_count = None if list_failed else ready_queue_count
         sweep_bits = issue_scan_try_backlog_sweep(
@@ -3449,7 +3479,25 @@ def issue_scan_pass(
 
     candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
     repo, row = candidates[0]
-    command = build_issue_start_command(config, repo, row)
+    placement = None
+    if remote_hosts:
+        lookup = repo_id_lookup or default_repo_id_lookup
+        for candidate in remote_hosts:
+            receipt = admit_fn(candidate, config, workers)
+            if not receipt.get('admitted'):
+                why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
+                log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
+                continue
+            repo_id = lookup(candidate, repo)
+            if not repo_id:
+                log_bits.append('issue_scan_no_repo_%s' % candidate)
+                continue
+            host, admission, placement = candidate, receipt, (candidate, repo_id)
+            log_bits.append('issue_scan_placed=%s' % candidate)
+            break
+        if placement is None:
+            return notices, log_bits
+    command = build_issue_start_command(config, repo, row, placement)
     if command is None:
         log_bits.append('issue_scan_skip')
         return notices, log_bits
