@@ -93,6 +93,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/fleet-pull.sh`, `script/fleet-toolchain-check.sh` | Yes (as `fleet-toolchain`) | Daily coordinator pull, toolchain check and upgrade, and Orca bundled skills refresh |
 | `script/automation-precheck-staging-daily.sh` | Yes (as `daily-program-1900`) | Daily `0 19 * * *` (`Asia/Taipei`) coordinator wake for the standing program; asks for the staging deploy and the pstack `swarm` live lanes only when `origin/main` is ahead of staging |
 | `script/secrets-sync.sh`, `script/secrets-pack.sh`, `script/secrets-unpack.sh` | No | Secrets mutation or user transfer |
+| `script/secrets-gate-setup.sh` | No | Owner only, runs sudo and makes the credential folder root owned |
 | `script/elon-startup.sh` | No | Wake-only health report |
 | `script/coordinator-drain.sh`, `script/worker-watch.sh` | No | Tied to the coordinator session and fleet-watch, not a cron |
 | `script/worker-startup.sh --host-check` | No | Runs before each worker launch |

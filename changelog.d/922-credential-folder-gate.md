@@ -1,0 +1,1 @@
+The credential folder is root owned and reached through one root owned gate (`script/secrets-gate.sh`). Receivers take the push as root over a forced command key, so the shared worker account is never on the path. Owner run setup, `secrets-sync.sh` and `env-peek.py` moved onto it. See `docs/agents/credential-folder.md`.
