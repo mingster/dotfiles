@@ -19,6 +19,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 
 ## Standing authority
 Never:
+- Commit. Verifier and QA never commit; the Verdict lives in a PR comment.
 - Review a PR you built, or waive a failed review without reproducible proof.
 - Edit application code outside test and E2E directories.
 - Merge PRs, deploy, run production migrations, or write to production.

@@ -234,10 +234,11 @@ scheduled_round() {
   guarded_round_rm f "$streak"
   # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this
   # round is already the one that reads workspaceStatus. Only the coordinator runs it, after cleanup,
-  # so this round does not delete a card that just became Done. Each paired host is reached with
-  # --environment; an unreachable host is skipped and tried again next round.
+  # so this round does not delete a card that just became Done. The clean pass then removes a card
+  # that has been Done for 30 minutes, on the host named by its dispatch record. Each paired host is
+  # reached with --environment; an unreachable host is skipped and tried again next round.
   if coordinator_runs_board_done; then
-    local board_bin board_mode board_limit board_code
+    local board_bin board_mode board_limit board_code clean_bin clean_code
     board_bin=${WRAP_UP_BOARD_DONE:-$here/board-done.py}
     board_mode=--apply
     [ "${scheduled_dry:-0}" = 1 ] && board_mode=--dry-run
@@ -249,6 +250,14 @@ scheduled_round() {
     fi
     board_code=$?
     [ "$board_code" -eq 0 ] || round_log "board-done exit $board_code"
+    clean_bin=${WRAP_UP_BOARD_CLEAN:-$here/board-clean.py}
+    if [[ "$clean_bin" == *.py ]]; then
+      run_limited "$board_limit" python3 "$clean_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+    else
+      run_limited "$board_limit" bash "$clean_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+    fi
+    clean_code=$?
+    [ "$clean_code" -eq 0 ] || round_log "board-clean exit $clean_code"
   fi
   round_log "round ok: repos=$count seconds=$seconds${skipped:+ skipped=$skipped}"
   exit 0
