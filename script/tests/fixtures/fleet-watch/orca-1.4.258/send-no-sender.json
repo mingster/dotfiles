@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "orca",
+    "orchestration",
+    "send",
+    "--subject",
+    "fleet-watch recorder test",
+    "--body",
+    "fleet-watch recorder test",
+    "--to",
+    "term_placeholder",
+    "--json"
+  ],
+  "exit_code": 1,
+  "stderr": "<redacted>",
+  "stdout": "{\n  \"error\": {\n    \"code\": \"no_active_sender_terminal\",\n    \"message\": \"<redacted>\"\n  },\n  \"ok\": false\n}\n"
+}

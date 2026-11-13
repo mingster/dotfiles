@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "orca",
+    "orchestration",
+    "run-list",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"result\": {\n    \"nextCursor\": \"eyJjcmVhdGVkQXQiOiIyMDI2LTExLTA1IDIzOjM4OjE1IiwiaWQiOiJydW5fMDYzMWZiNWMyMGU3In0\",\n    \"runs\": [\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      },\n      {\n        \"id\": \"run_placeholder\",\n        \"objective\": \"<redacted>\"\n      }\n    ]\n  }\n}\n"
+}
