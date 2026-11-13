@@ -42,6 +42,12 @@ resolve_fleet_pull_config() {
 
 die() { echo "worker-startup: $*" >&2; exit 1; }
 
+this_host_name() {
+  local name
+  name=$(hostname -s 2>/dev/null || true)
+  printf '%s' "$name" | tr '[:upper:]' '[:lower:]'
+}
+
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 
 # --- pins (node via asdf in repo .tool-versions, bun via packageManager / engines.bun) ---
@@ -460,6 +466,7 @@ enforce_builder_cursor() { # <title> <agent> <override>
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
+  local explicit_on=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override)
@@ -471,7 +478,7 @@ run_mode() {
           --agent) agent=$2 ;;
           --model) model=$2 ;;
           --from) from=$2 ;;
-          --on) environment=$2 ;;
+          --on) environment=$2; explicit_on=1 ;;
           --worktree-path) wt=$2 ;;
           --worktree) worktree_sel=$2 ;;
           --name) name=$2 ;;
@@ -485,6 +492,14 @@ run_mode() {
       *) usage_run ;;
     esac
   done
+  if [ -n "$environment" ]; then
+    local me want
+    me=$(this_host_name)
+    want=$(printf '%s' "$environment" | tr '[:upper:]' '[:lower:]')
+    if [ -n "$me" ] && [ "$want" = "$me" ]; then
+      environment=
+    fi
+  fi
   if [ -n "$task" ] || [ -n "$retry_of" ]; then
     [ -n "$run" ] && [ -n "$task" ] && [ -n "$retry_of" ] && [ -n "$agent" ] || usage_run
     if [ -z "$worktree_sel" ] && [ -n "$wt" ]; then
@@ -530,7 +545,7 @@ run_mode() {
 
   host_check
 
-  if [ -z "$environment" ] && [ -z "$wt" ] && [ -z "$merge_worker" ]; then
+  if [ "$explicit_on" != 1 ] && [ -z "$environment" ] && [ -z "$wt" ] && [ -z "$merge_worker" ]; then
     apply_worker_placement "$spec" "$repo"
     [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
   fi
