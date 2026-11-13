@@ -84,7 +84,7 @@ out=$(run_guard "$tmp3" "$tmp3/missing.pattern" 2>&1)
 ec=$?
 set -e
 check "missing pattern file exits 0" "$ec" 0
-check "missing pattern prints skip" "$(echo "$out" | grep -c '^skip:')" 1
+check "missing pattern prints SKIPPED" "$(echo "$out" | grep -cxF 'SKIPPED (no pattern file; CI runs this)')" 1
 
 tmp4=$(new_fixture_repo)
 cleanup+=("$tmp4")

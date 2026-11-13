@@ -234,6 +234,7 @@ BRIEF_SECTIONS = (
     "## Out of scope\nunrelated files\n"
     "## Verify\nrun script/checks-local.sh\n"
     "## Finish\nwrite ## Self-review with the full 40 hex head sha, rewrite it after every push, "
+    "wait for gh pr checks <n> --watch --fail-fast to pass, "
     "run orca worktree set --worktree active --workspace-status in-review, send worker_done\n"
 )
 

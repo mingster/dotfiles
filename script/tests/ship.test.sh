@@ -386,6 +386,40 @@ blank_case() { # <pr> <branch> <empty|whitespace>
 blank_case 14 feat-empty empty
 blank_case 15 feat-ws whitespace
 
+# 940. A wording-only change after the Verdict head ships on green checks; code, protected paths and code fences keep the patch-id refusal
+wording_case() { # <pr> <branch> <file> <content> <expect ship|refuse> <label>
+  local n=$1 b=$2 f=$3 content=$4 expect=$5 label=$6 old new
+  mf_pr_add "$n" "$b" "Body"
+  old=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$b"
+  mkdir -p "$MF_REPO/$(dirname "$f")"
+  printf '%s\n' "$content" > "$MF_REPO/$f"
+  "$MF_REAL_GIT" -C "$MF_REPO" add "$f"
+  "$MF_REAL_GIT" -C "$MF_REPO" commit -q -m "after verdict"
+  "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$b"
+  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
+  new=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$b")
+  jq --arg h "$new" --arg f "$f" '.headRefOid = $h | .files += [{path:$f, filename:$f}]' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  mf_self_review "$n" "$new"
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$old"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  if [ "$expect" = ship ]; then
+    if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "patch-id does not match" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+wording_case 60 feat-word-docs docs/note.md "plain words" ship "docs text change after the Verdict ships with no new Verdict"
+wording_case 61 feat-word-log changelog.d/61-x.md "a fragment" ship "changelog fragment after the Verdict ships"
+wording_case 62 feat-word-top README.md "top level words" ship "top level .md after the Verdict ships"
+wording_case 63 feat-word-sh script/new.sh "echo hi" refuse "a .sh change after the Verdict is refused"
+wording_case 64 feat-word-hook .claude/hooks/guard.md "words" refuse "a hooks path change after the Verdict is refused"
+wording_case 65 feat-word-intent docs/intent/x.md "words" refuse "an intent change after the Verdict is refused"
+wording_case 66 feat-word-fence docs/fence.md '```sh
+rm -rf x
+```' refuse "a docs change that adds a code fence is refused"
+wording_case 67 feat-word-nested notes/other.md "words" refuse "a .md outside docs and changelog.d is refused"
+
 # Red main: refuses and names the run, unless the PR body says it fixes that run and the PR touches what failed.
 # red_main_case <pr> <branch> <body-line or empty> <expect: refuse|ship> <pr file> <label> [conclusion] [expect text]
 red_main_case() {

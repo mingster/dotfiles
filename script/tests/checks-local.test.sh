@@ -23,7 +23,8 @@ printf '#!/usr/bin/env bash\n' >"$r/script/tests/bar.test.sh"
 git -C "$r" add -A
 git -C "$r" -c user.email=t@t -c user.name=t commit -qm change
 
-got=$(bash "$r/script/checks-local.sh" --list-only --base main 2>&1)
+: >"$tmp/some.pattern"
+got=$(NO_PROJECT_NAMES_FILE="$tmp/some.pattern" bash "$r/script/checks-local.sh" --list-only --base main 2>&1)
 want=$(bash "$r/script/select-changed-script-tests.sh" --list-only \
   script/foo.sh script/tests/bar.test.sh script/tests/foo.test.sh 2>&1)
 if [ -n "$got" ] && [ "$got" = "$want" ]; then
@@ -31,5 +32,15 @@ if [ -n "$got" ] && [ "$got" = "$want" ]; then
 else
   echo "FAIL: selection differs"; echo "got:"; echo "$got"; echo "want:"; echo "$want"; fail=1
 fi
+
+# 940. The summary repeats the no-project-names SKIPPED line when no pattern file is set.
+got=$(NO_PROJECT_NAMES_FILE="$tmp/none.pattern" bash "$r/script/checks-local.sh" --list-only --base main 2>&1)
+if grep -qxF 'SKIPPED no-project-names.test.sh (no pattern file; CI runs this)' <<<"$got"; then
+  echo "ok: summary repeats SKIPPED"
+else
+  echo "FAIL: summary lacks SKIPPED line"; echo "$got"; fail=1
+fi
+got=$(NO_PROJECT_NAMES_FILE="$tmp/some.pattern" bash "$r/script/checks-local.sh" --list-only --base main 2>&1)
+if grep -q SKIPPED <<<"$got"; then echo "FAIL: SKIPPED shown with a pattern file"; fail=1; else echo "ok: no SKIPPED with a pattern file"; fi
 
 [ "$fail" -eq 0 ]

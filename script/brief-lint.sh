@@ -54,6 +54,7 @@ sec == "Finish" && /[^[:space:]]/ {
   if (tolower($0) ~ /40 hex/) has_full_sha = 1
   if (tolower($0) ~ /push/) has_rewrite = 1
   if ($0 ~ /workspace-status in-review/) has_in_review = 1
+  if ($0 ~ /gh pr checks|gh run list/) has_green = 1
 }
 END {
   rc = 0
@@ -68,6 +69,8 @@ END {
   if (has_finish && !has_in_review) { print "brief-lint: Finish must run orca worktree set --worktree active --workspace-status in-review before worker_done"; rc = 1 }
   # A fullstack-dev Finish writes ## Self-review with the full 40 hex head sha, and rewrites it after every push.
   if (is_builder && has_self_review && !(has_full_sha && has_rewrite)) { print "brief-lint: Finish must say the builder writes ## Self-review with the full 40 hex head sha and rewrites it after every push"; rc = 1 }
+  # A fullstack-dev Finish waits for green PR checks at the final head before worker_done (#940).
+  if (is_builder && has_finish && !has_green) { print "brief-lint: Finish must wait for green PR checks at the final head (gh pr checks <n> --watch --fail-fast, or gh run list --branch <branch>) before worker_done"; rc = 1 }
   exit rc
 }
 ' "$file"
