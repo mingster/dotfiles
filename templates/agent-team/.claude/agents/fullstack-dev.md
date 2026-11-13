@@ -18,6 +18,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 
 ## Finish
 Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. It moves the Orca board card to in-review, so wrap-up can tell finished work from running work.
+Before `worker_done`, wait until the PR checks at your final head pass (`gh pr checks <n> --watch --fail-fast`, or `gh run list --branch <branch> --limit 3` where the token gets 403). Never hand off red or pending checks.
 
 ## Standing authority
 Never:
