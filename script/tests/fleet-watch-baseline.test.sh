@@ -14,8 +14,10 @@ watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
 _spec_env = importlib.util.spec_from_file_location('fleet_watch_test_env', root/'tests'/'fleet_watch_test_env.py')
 _fwe = importlib.util.module_from_spec(_spec_env); _spec_env.loader.exec_module(_fwe)
 redirect_main_log_under = _fwe.redirect_main_log_under
+quiet_host = _fwe.quiet_host
 def failed(name): return {'dispatchId': name, 'dispatchStatus': 'failed'}
 class Baseline(unittest.TestCase):
+    def setUp(self): quiet_host(self, watch)
     def pass_with(self, state, workers):
         calls = []
         def rpc(*args):
