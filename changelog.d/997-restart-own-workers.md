@@ -1,0 +1,1 @@
+Fleet-watch restarts only workers it started (verifiers, rework, scanned issues) after 30 minutes without output, and reports every other stalled worker once so the coordinator recovers those with worker-watch.sh.

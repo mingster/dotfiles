@@ -1,0 +1,5 @@
+{
+  "stdout": "{\"ok\": true, \"result\": {\"dispatchId\": \"ctx_retry_recorded\", \"taskId\": \"task_recorded\", \"state\": \"ready\"}}\n",
+  "stderr": "",
+  "exit": 0
+}

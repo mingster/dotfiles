@@ -150,6 +150,8 @@ The coordinator's `wrap-up.sh --scheduled` round runs that check after the round
 | `script/usage-gate.py`, `script/usage-gate-hook.py` | Real provider quota check, `--publish` sync to runner hosts, `pick` ranking, and fail-closed `PreToolUse` hook. |
 | `script/wrap-up.sh`, `script/worktree-idle.py` | Fleet-wide cleanup of finished worktrees, merged branches, ended terminals/panes and temp files. |
 
+Fleet watch restarts only workers it started (verifiers, rework and scanned issues) and reports every other stalled worker once; the coordinator recovers those with `worker-watch.sh`.
+
 Full tool list across all stages: [Agent team reference](team-reference.md).
 
 ## Review rules (issue #760)

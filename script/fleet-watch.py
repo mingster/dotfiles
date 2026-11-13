@@ -5,14 +5,15 @@ The private config keeps repo_roots (checkout paths), host_caps, and the per-hos
 paths backup.stamp, heavy_gate.hosts and wrap_up.hosts. A backup host may also set
 coordinator_watch. The Run id and coordinator terminal come from Orca each pass
 (run-list --full, then run-show --full). Each repo owner/name comes from the origin
-remote of a repo_roots path. Issue scan is on when that Run exists. A stalled worker's
-PR is labeled in that worker's repo. A stall with no PR, and a backup alert, open in
-mingster/agent-state. A failed restart is parked once. A pass that finds no coordinator Run logs `no coordinator run`,
+remote of a repo_roots path. Issue scan is on when that Run exists. Fleet watch
+restarts only a verifier, rework worker, or scanned issue it started. A failed
+restart is parked once. A stall it did not start is reported once and not stopped.
+A pass that finds no coordinator Run logs `no coordinator run`,
 leaves notices queued, and exits 0.
 The same pass dispatches one verifier when head-checks succeeded and the head has no Verdict,
 once per head (babysit.per_pass_cap, default 2). Fix workers and shipping runs stay in issue_scan.
 --babysit-dry-run lists those actions and starts nothing. --state FILE persists missing-waiter timers and alerts.
-Counts every active Dispatch, including descendants. May restart a stalled worker once per task.
+Counts every active Dispatch, including descendants. Restarts a stalled worker only when this pass started it.
 """
 import argparse
 import calendar
@@ -1691,11 +1692,214 @@ def stall_restart_start_blocked_log(old_dispatch_id, config, w, run_id):
     return ''
 
 
+def _dispatch_id_in(data):
+    if not isinstance(data, dict):
+        return ''
+    for key in ('dispatchId', 'dispatch_id'):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    for key in ('result', 'worker'):
+        found = _dispatch_id_in(data.get(key))
+        if found:
+            return found
+    return ''
+
+
+def dispatch_id_from_text(text):
+    """Dispatch id from a worker-start JSON reply, or '' when the text has none."""
+    raw = text if isinstance(text, str) else ''
+    decoder = json.JSONDecoder()
+    idx = 0
+    while True:
+        start = raw.find('{', idx)
+        if start < 0:
+            return ''
+        try:
+            data, end = decoder.raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            idx = start + 1
+            continue
+        found = _dispatch_id_in(data)
+        if found:
+            return found
+        idx = start + max(end, 1)
+
+
+def dispatch_id_from_start(result):
+    if isinstance(result, dict):
+        return _dispatch_id_in(result)
+    did = getattr(result, 'dispatch_id', None)
+    if isinstance(did, str) and did.strip():
+        return did.strip()
+    return ''
+
+
+def record_own_dispatch(state, dispatch_id, kind, retry_of=None, restart_at=None, restarted=False):
+    """Remember a dispatch fleet-watch started. Empty ids are ignored."""
+    did = dispatch_id.strip() if isinstance(dispatch_id, str) else ''
+    if not did:
+        return
+    bucket = state.setdefault('own_dispatches', {})
+    if not isinstance(bucket, dict):
+        bucket = {}
+        state['own_dispatches'] = bucket
+    row = bucket.get(did)
+    if not isinstance(row, dict):
+        row = {}
+        bucket[did] = row
+    row.setdefault('kind', kind)
+    if retry_of and not row.get('retry_of'):
+        row['retry_of'] = retry_of
+    if restarted:
+        row['restarted'] = True
+    if restart_at is not None and row.get('restart_at') is None:
+        row['restart_at'] = restart_at
+
+
+def remember_started_dispatch(state, result, kind):
+    """Record a verifier, rework worker, or scanned issue. Other starts are not ours to restart."""
+    if kind not in ('verifier', 'rework', 'issue'):
+        return
+    record_own_dispatch(state, dispatch_id_from_start(result), kind)
+
+
+def _own_row(state, dispatch_id):
+    row = (state.get('own_dispatches') or {}).get(dispatch_id)
+    return row if isinstance(row, dict) else None
+
+
+def _retry_recorded(state, dispatch_id):
+    bucket = state.get('own_dispatches') or {}
+    if not isinstance(bucket, dict):
+        return False
+    for row in bucket.values():
+        if isinstance(row, dict) and row.get('retry_of') == dispatch_id:
+            return True
+    return False
+
+
+def _report_foreign_stall(state, dispatch_id, notices, log_bits):
+    reported = state.setdefault('stall_reported', {})
+    if not isinstance(reported, dict):
+        reported = {}
+        state['stall_reported'] = reported
+    if reported.get(dispatch_id):
+        return
+    reported[dispatch_id] = True
+    log_bits.append('stall_report=%s' % dispatch_id)
+    notices.append(Urgent(
+        'stalled worker %s is not one fleet-watch started; coordinator recovers it with worker-watch.sh'
+        % dispatch_id))
+
+
+def _stall_notice_reason(reason, code):
+    """Recorded message, with the error code kept when the message does not already contain it."""
+    text = reason or ''
+    if code and code not in text:
+        text = '%s (%s)' % (text, code) if text else code
+    return text
+
+
+def _park_own_stall(state, dispatch_id, now, reason, notices, log_bits, config,
+                    repo='', pr=None, fail_log=True):
+    """Park one own-worker stall once. The notice keeps the recorded message and the error code."""
+    record_own_dispatch(state, dispatch_id, 'restart')
+    row = _own_row(state, dispatch_id)
+    key = park_id('stall', dispatch_id)
+    if (row is not None and row.get('parked')) or park_is_active(state, key, config):
+        return
+    if row is not None:
+        row['parked'] = True
+        row['parked_at'] = now
+        row['park_reason'] = reason
+    pr_num = pr if isinstance(pr, int) else None
+    park_failure(
+        state, key, reason or '', config, dispatch=dispatch_id,
+        repo=repo or '', pr=pr_num,
+    )
+    log_bits.append('stall_parked=%s' % dispatch_id)
+    if fail_log:
+        log_bits.append('stall_restart_fail=%s:%s' % (dispatch_id, reason or 'parked'))
+    notices.append(park_notice('stall', dispatch_id, reason))
+
+
+def _dispatch_is_pending(pending, dispatch_id):
+    for pend in pending.values():
+        if (
+            isinstance(pend, dict)
+            and pend.get('old_dispatch') == dispatch_id
+            and not pend.get('started')
+            and not pend.get('gave_up')
+        ):
+            return True
+    return False
+
+
+def _drop_pending_dispatch(pending, dispatch_id):
+    for skey, pend in list(pending.items()):
+        if isinstance(pend, dict) and pend.get('old_dispatch') == dispatch_id:
+            pending.pop(skey, None)
+
+
+def _remember_stall_stop(state, w, did, label_repo):
+    stopped = {'dispatch': did}
+    if isinstance(label_repo, str) and label_repo:
+        stopped['repo'] = label_repo
+    pr_num = worker_pr_number(w)
+    if pr_num:
+        stopped['pr'] = pr_num
+    state.setdefault('stall_stopped', {})[worker_task_id(w) or did] = stopped
+
+
+def _record_stall_restart(state, old_dispatch, result, now, log_bits, pending):
+    record_own_dispatch(state, old_dispatch, 'restart', restarted=True, restart_at=now)
+    row = _own_row(state, old_dispatch)
+    if row is not None:
+        row['restarted'] = True
+        row['restart_at'] = now
+    new_id = dispatch_id_from_start(result)
+    if new_id and new_id != old_dispatch:
+        kind = (row or {}).get('kind') or 'restart'
+        record_own_dispatch(state, new_id, kind, retry_of=old_dispatch, restart_at=now)
+    _drop_pending_dispatch(pending, old_dispatch)
+    log_bits.append('stall_restart=%s' % old_dispatch)
+
+
+def _defer_stall_restart(pending, w, did, run_for_start, reason, repo, pr_num):
+    skey = stall_state_key(w) or did
+    wt_sel = worker_worktree_selector(w)
+    snap = {
+        'taskId': worker_task_id(w),
+        'resource': {'worktreeId': wt_sel} if wt_sel else {},
+        'projection': {
+            'provider': {
+                'id': worker_agent_id(w),
+                'model': worker_model_id(w) or None,
+            },
+        },
+    }
+    r_id = run_id_for_stall_restart(w, run_for_start)
+    if isinstance(r_id, str) and r_id.strip():
+        snap['runId'] = r_id.strip()
+    pending[skey] = {
+        'old_dispatch': did,
+        'stall_restart_run_id': run_for_start,
+        'row_snapshot': snap,
+        'started': False,
+        'failures': 0,
+        'reason': reason,
+        'repo': repo,
+        'pr': pr_num,
+    }
+
+
 def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True,
                      terminal_branches=None, inventory_ok=True):
-    """Detect no terminal output for stall idle limit; restart once per task; then label needs-elon."""
-    if act is None:
-        act = run_gh
+    """Restart our own silent workers once; report every other stalled worker once and do not stop it.
+
+    A failed restart is parked with the recorded message. A usage-gate or host-cap refusal is retried.
+    """
     cfg = config.get('worker_stall') or {}
     fixed_repo = cfg.get('label_repo')
     if not isinstance(fixed_repo, str) or not fixed_repo.strip():
@@ -1719,8 +1923,6 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         return FAULT_REPO
 
     stall_limit = stall_idle_limit_seconds(config)
-    label_name = cfg.get('needs_elon_label', 'needs-elon')
-    cooldown = int(cfg.get('label_cooldown_seconds', 120))
     try:
         record_ttl = int(cfg.get('stall_restart_record_ttl_seconds', STALL_RESTART_RECORD_TTL_DEFAULT))
     except (TypeError, ValueError):
@@ -1736,8 +1938,7 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
 
     bucket = state.setdefault('worker_stall', {})
     pending = state.setdefault('stall_pending_start', {})
-    issue_keys = state.setdefault('stall_issue_keys', [])
-    # One-restart state is keyed by task id only; it expires by age, never by worker-list membership.
+    # Legacy one-restart records expire by age. New restarts live on own_dispatches.
     for skey in list(bucket.keys()):
         st_entry = bucket.get(skey)
         if not isinstance(st_entry, dict):
@@ -1755,218 +1956,146 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         log_bits.append('stall_skipped_empty_workers')
         return notices, log_bits
 
-    branches = terminal_branches or {}
-    local_handles = set(term_times.keys())
-
     for skey, pend in list(pending.items()):
         if not isinstance(pend, dict) or pend.get('started') or pend.get('gave_up'):
             continue
-        row = pend.get('row_snapshot')
+        row_snapshot = pend.get('row_snapshot')
         old_dispatch = pend.get('old_dispatch')
-        if not row or not old_dispatch:
+        if not row_snapshot or not old_dispatch:
             pending.pop(skey, None)
             continue
-        key = park_id('stall', old_dispatch)
-        if park_is_active(state, key, config):
+        if park_is_active(state, park_id('stall', old_dispatch), config):
             pending.pop(skey, None)
             continue
+        pr_num = pend.get('pr') if isinstance(pend.get('pr'), int) else None
+        repo = pend.get('repo') or ''
         if int(pend.get('failures') or 0) >= STALL_RESTART_ATTEMPTS:
-            reason = pend.get('reason') or ''
-            pr_num = pend.get('pr') if isinstance(pend.get('pr'), int) else None
-            if park_failure(
-                state, key, reason, config, dispatch=old_dispatch,
-                repo=pend.get('repo') or '', pr=pr_num,
-            ):
-                notices.append(park_notice('stall', old_dispatch, reason))
-                log_bits.append('stall_restart_fail=%s:%s' % (old_dispatch, reason or 'parked'))
+            _park_own_stall(
+                state, old_dispatch, now, pend.get('reason') or '', notices, log_bits, config,
+                repo=repo, pr=pr_num,
+            )
             pending.pop(skey, None)
             continue
         run_for_start = run_id_for_stall_restart(
-            row, pend.get('stall_restart_run_id') or '') or default_list_run_id(config)
-        start_args = worker_stall_restart_start_args(row, old_dispatch, run_for_start, config)
+            row_snapshot, pend.get('stall_restart_run_id') or '') or default_list_run_id(config)
+        start_args = worker_stall_restart_start_args(row_snapshot, old_dispatch, run_for_start, config)
         if not start_args:
-            line = stall_restart_start_blocked_log(old_dispatch, config, row, run_for_start)
+            line = stall_restart_start_blocked_log(old_dispatch, config, row_snapshot, run_for_start)
             if line:
                 log_bits.append(line)
             continue
         try:
-            rpc_call(*start_args)
-            st = bucket.setdefault(skey, {'restarted': False, 'labeled': False, 'restart_at': None})
-            st['restarted'] = True
-            st['restart_at'] = now
-            pending.pop(skey, None)
-            log_bits.append('stall_restart=%s' % old_dispatch)
+            result = rpc_call(*start_args)
         except SEND_ERRORS as exc:
             reason, exit_code = exception_start_failure(exc)
             if exit_code in BABYSIT_DEFERRED_EXITS:
                 log_bits.append('stall_restart_deferred=%s:%s' % (old_dispatch, reason or exit_code))
                 continue
-            pr_num = pend.get('pr') if isinstance(pend.get('pr'), int) else None
-            if park_failure(
-                state, key, reason, config, dispatch=old_dispatch,
-                repo=pend.get('repo') or '', pr=pr_num,
-            ):
-                notices.append(park_notice('stall', old_dispatch, reason))
-            log_bits.append('stall_restart_fail=%s:%s' % (
-                old_dispatch, reason or orchestration_failure_log_code(exc)))
+            _park_own_stall(
+                state, old_dispatch, now, _stall_notice_reason(reason, orchestration_failure_log_code(exc)),
+                notices, log_bits, config, repo=repo, pr=pr_num,
+            )
             pending.pop(skey, None)
+            continue
+        _record_stall_restart(state, old_dispatch, result, now, log_bits, pending)
 
+    def restart_own(w, did):
+        row = _own_row(state, did)
+        key = park_id('stall', did)
+        if row is not None and row.get('parked'):
+            if park_is_active(state, key, config):
+                return
+            for name in ('parked', 'parked_at', 'park_reason', 'restarted', 'restart_at'):
+                row.pop(name, None)
+        elif park_is_active(state, key, config):
+            return
+        if _dispatch_is_pending(pending, did):
+            return
+        if row is not None and (row.get('retry_of') or row.get('restarted')):
+            if row.get('restarted') and not row.get('retry_of') and _retry_recorded(state, did):
+                return
+            try:
+                restarted_at = float(row.get('restart_at'))
+            except (TypeError, ValueError):
+                restarted_at = None
+            if restarted_at is not None and now - restarted_at >= stall_limit:
+                _park_own_stall(
+                    state, did, now, 'still silent after restart', notices, log_bits, config,
+                    repo=label_target(w) or fault_target(),
+                    pr=worker_pr_number(w), fail_log=False,
+                )
+            return
+        run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
+        start_args = worker_stall_restart_start_args(w, did, run_for_start, config)
+        repo = label_target(w) or fault_target()
+        pr_num = worker_pr_number(w)
+        if not start_args:
+            line = stall_restart_start_blocked_log(did, config, w, run_for_start)
+            if line:
+                log_bits.append(line)
+            if not str(line).startswith('stall_no_sender_terminal='):
+                _park_own_stall(
+                    state, did, now, 'restart failed (no start args)', notices, log_bits, config,
+                    repo=repo, pr=pr_num,
+                )
+            return
+        try:
+            rpc_call('orchestration', 'worker-stop', '--dispatch', did)
+            _remember_stall_stop(state, w, did, repo)
+        except SEND_ERRORS as exc:
+            reason, exit_code = exception_start_failure(exc)
+            if exit_code in BABYSIT_DEFERRED_EXITS:
+                log_bits.append('stall_restart_deferred=%s:%s' % (did, reason or exit_code))
+                return
+            _park_own_stall(
+                state, did, now, _stall_notice_reason(reason, orchestration_failure_log_code(exc)),
+                notices, log_bits, config, repo=repo, pr=pr_num,
+            )
+            return
+        try:
+            result = rpc_call(*start_args)
+        except SEND_ERRORS as exc:
+            reason, exit_code = exception_start_failure(exc)
+            if exit_code in BABYSIT_DEFERRED_EXITS:
+                _defer_stall_restart(pending, w, did, run_for_start, reason, repo, pr_num)
+                log_bits.append('stall_restart_deferred=%s:%s' % (did, reason or exit_code))
+                return
+            _park_own_stall(
+                state, did, now, _stall_notice_reason(reason, orchestration_failure_log_code(exc)),
+                notices, log_bits, config, repo=repo, pr=pr_num,
+            )
+            return
+        _record_stall_restart(state, did, result, now, log_bits, pending)
+
+    local_handles = set(term_times.keys())
     for w in workers:
         did = w.get('dispatchId')
-        skey = stall_state_key(w)
-        if not did or not skey:
+        if not isinstance(did, str) or not did:
             continue
         if not worker_row_is_live(w):
             continue
-
-        host_id = worker_execution_host_id(w)
         term = worker_terminal_handle(w)
         if not term:
             continue
-
+        host_id = worker_execution_host_id(w)
+        last_s = _normalize_terminal_time_ms(term_times.get(term))
+        is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
         if host_id != 'local':
-            last_raw = term_times.get(term)
-            last_s = _normalize_terminal_time_ms(last_raw)
-            if worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit):
+            if is_stalled:
                 log_bits.append('remote_stall_unknown=%s' % did)
+                if _own_row(state, did):
+                    restart_own(w, did)
+                else:
+                    _report_foreign_stall(state, did, notices, log_bits)
             continue
-
         if term not in local_handles:
             continue
-
-        last_raw = term_times.get(term)
-        last_s = _normalize_terminal_time_ms(last_raw)
-        st = bucket.setdefault(skey, {'restarted': False, 'labeled': False, 'restart_at': None})
-
-        is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
         if not is_stalled:
-            # Replacement recovered (fresh output) or agent is live.
-            # One-restart records expire by age only (see loop above); keep restarted=True until TTL.
-            if st.get('restarted'):
-                pending.pop(skey, None)
-                continue
-            bucket.pop(skey, None)
-            pending.pop(skey, None)
             continue
-
-        if not st['restarted']:
-            if park_is_active(state, park_id('stall', did), config):
-                continue
-            run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
-            start_args = worker_stall_restart_start_args(w, did, run_for_start, config)
-            if start_args:
-                try:
-                    rpc_call('orchestration', 'worker-stop', '--dispatch', did)
-                    stopped = {'dispatch': did}
-                    repo_for_stop = label_target(w)
-                    if repo_for_stop:
-                        stopped['repo'] = repo_for_stop
-                    pr_num = worker_pr_number(w)
-                    if pr_num:
-                        stopped['pr'] = pr_num
-                    state.setdefault('stall_stopped', {})[worker_task_id(w) or skey] = stopped
-                    try:
-                        rpc_call(*start_args)
-                        st['restarted'] = True
-                        st['restart_at'] = now
-                        log_bits.append('stall_restart=%s' % did)
-                        pending.pop(skey, None)
-                    except SEND_ERRORS as exc:
-                        reason, exit_code = exception_start_failure(exc)
-                        if exit_code in BABYSIT_DEFERRED_EXITS:
-                            wt_sel = worker_worktree_selector(w)
-                            snap = {
-                                'taskId': worker_task_id(w),
-                                'resource': {'worktreeId': wt_sel} if wt_sel else {},
-                                'projection': {
-                                    'provider': {
-                                        'id': worker_agent_id(w),
-                                        'model': worker_model_id(w) or None,
-                                    },
-                                },
-                            }
-                            r_id = run_id_for_stall_restart(w, run_for_start)
-                            if isinstance(r_id, str) and r_id.strip():
-                                snap['runId'] = r_id.strip()
-                            pending[skey] = {
-                                'old_dispatch': did,
-                                'stall_restart_run_id': run_for_start,
-                                'row_snapshot': snap,
-                                'started': False,
-                                'failures': 0,
-                                'reason': reason,
-                                'repo': repo_for_stop,
-                                'pr': pr_num,
-                            }
-                            st['restarted'] = False
-                            log_bits.append('stall_restart_deferred=%s:%s' % (did, reason or exit_code))
-                        else:
-                            key = park_id('stall', did)
-                            if park_failure(
-                                state, key, reason, config, dispatch=did,
-                                repo=repo_for_stop, pr=pr_num,
-                            ):
-                                notices.append(park_notice('stall', did, reason))
-                            log_bits.append('stall_restart_fail=%s:%s' % (
-                                did, reason or orchestration_failure_log_code(exc)))
-                            pending.pop(skey, None)
-                            st['restarted'] = False
-                except SEND_ERRORS as exc:
-                    reason, exit_code = exception_start_failure(exc)
-                    if exit_code in BABYSIT_DEFERRED_EXITS:
-                        log_bits.append('stall_restart_deferred=%s:%s' % (did, reason or exit_code))
-                    else:
-                        pr_num = worker_pr_number(w)
-                        key = park_id('stall', did)
-                        if park_failure(
-                            state, key, reason, config, dispatch=did,
-                            repo=label_target(w), pr=pr_num,
-                        ):
-                            notices.append(park_notice('stall', did, reason))
-                        log_bits.append('stall_restart_fail=%s:%s' % (
-                            did, reason or orchestration_failure_log_code(exc)))
-            else:
-                line = stall_restart_start_blocked_log(did, config, w, run_for_start)
-                if line.startswith('stall_no_sender_terminal='):
-                    st['restarted'] = False
-                else:
-                    st['restarted'] = True
-                    st['restart_at'] = now
-                if line:
-                    log_bits.append(line)
-            continue
-
-        if st.get('labeled'):
-            continue
-        if now - st.get('restart_at', 0) < cooldown:
-            continue
-
-        repo = label_target(w)
-        pr_num, pr_status = resolve_pr_number_for_worker(w, repo, act, branch_hint=branches.get(term, ''))
-        if pr_status == 'lookup_failed':
-            log_bits.append('stall_pr_lookup_failed=%s' % did)
-            continue
-        if pr_num and repo:
-            code = act(['gh', 'pr', 'edit', str(pr_num), '--repo', repo, '--add-label', label_name])
-            if code == 0:
-                st['labeled'] = True
-                log_bits.append('stall_label_pr=%s:%s' % (did, pr_num))
-            else:
-                notices.append('needs-elon label failed for PR %s' % pr_num)
+        if _own_row(state, did):
+            restart_own(w, did)
         else:
-            title = 'Fleet-watch: stalled worker dispatch %s (no PR to label)' % did
-            code = 1
-            if title not in issue_keys:
-                code = act(['gh', 'issue', 'create', '--repo', fault_target(), '--title', title,
-                            '--body', 'Dispatch is stalled with no linked PR number in worker-list; assign or label manually.'])
-                if code == 0:
-                    issue_keys.append(title)
-            if code == 0:
-                st['labeled'] = True
-                log_bits.append('stall_no_pr=%s' % did)
-                notices.append(title)
-            else:
-                notices.append(title + ', issue not opened')
+            _report_foreign_stall(state, did, notices, log_bits)
 
     return notices, log_bits
 
@@ -2746,7 +2875,11 @@ def default_issue_scan_start(command, run=subprocess.run):
         return BabysitStartResult(1, 'timed out after 180s')
     except (subprocess.SubprocessError, OSError) as exc:
         return BabysitStartResult(1, _start_reason(str(exc)))
-    return BabysitStartResult(done.returncode, _start_reason(done.stderr, getattr(done, 'stdout', '') or ''))
+    return BabysitStartResult(
+        done.returncode,
+        _start_reason(done.stderr, getattr(done, 'stdout', '') or ''),
+        dispatch_id_from_text(getattr(done, 'stdout', None) or ''),
+    )
 
 
 def _issue_scan_has_slot(host, config, admission, extra_starts):
@@ -3482,11 +3615,12 @@ def build_babysit_spec(repo, pr_row, kind, builder):
 
 
 class BabysitStartResult(int):
-    """A start exit code that also carries the failing command's last stderr line."""
+    """A start exit code that also carries the failing command's last stderr line and dispatch id."""
 
-    def __new__(cls, code, reason=''):
+    def __new__(cls, code, reason='', dispatch_id=''):
         self = super().__new__(cls, code)
         self.reason = reason
+        self.dispatch_id = dispatch_id or ''
         return self
 
 
@@ -3732,7 +3866,11 @@ def default_babysit_start(command, run=subprocess.run):
         return BabysitStartResult(1, 'timed out after 180s')
     except (subprocess.SubprocessError, OSError) as exc:
         return BabysitStartResult(1, _start_reason(str(exc)))
-    return BabysitStartResult(done.returncode, _start_reason(done.stderr, getattr(done, 'stdout', '') or ''))
+    return BabysitStartResult(
+        done.returncode,
+        _start_reason(done.stderr, getattr(done, 'stdout', '') or ''),
+        dispatch_id_from_text(getattr(done, 'stdout', None) or ''),
+    )
 
 
 def build_babysit_command(config, repo, pr_row, kind, agent, model, builder):
@@ -3891,7 +4029,8 @@ def babysit_pass(
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
-        code, reason = start_result_parts(start_worker(command))
+        started_worker = start_worker(command)
+        code, reason = start_result_parts(started_worker)
         if code != 0:
             suffix = ':' + reason if reason else ''
             if code in BABYSIT_DEFERRED_EXITS:
@@ -3905,6 +4044,8 @@ def babysit_pass(
                 notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason))
             continue
         babysit_mark(state, repo, number, head, action)
+        if action == 'verifier':
+            remember_started_dispatch(state, started_worker, 'verifier')
         started += 1
         lines.append(_babysit_line(repo, number, head, action, detail))
         log_bits.append('%s=%s' % (action, number))
@@ -4081,7 +4222,8 @@ def issue_scan_pass(
             pending[head] = True
             if persist_state:
                 persist_state()
-            code, reason = start_result_parts(start_worker(command))
+            started_worker = start_worker(command)
+            code, reason = start_result_parts(started_worker)
             if code in BABYSIT_DEFERRED_EXITS:
                 pending.pop(head, None)
                 if persist_state:
@@ -4090,6 +4232,7 @@ def issue_scan_pass(
                 log_bits.append('rework_deferred=%d%s' % (pr_num, suffix))
                 continue
             if code == 0:
+                remember_started_dispatch(state, started_worker, 'rework')
                 seen[head] = True
                 pending.pop(head, None)
                 rounds[pr_key] = rounds.get(pr_key, 0) + 1
@@ -4206,7 +4349,8 @@ def issue_scan_pass(
     issue_pending.setdefault(repo, []).append(row['number'])
     if persist_state:
         persist_state()
-    code, reason = start_result_parts(start_worker(command))
+    started_worker = start_worker(command)
+    code, reason = start_result_parts(started_worker)
     pending_list = issue_pending.setdefault(repo, [])
     if row['number'] in pending_list:
         pending_list.remove(row['number'])
@@ -4217,6 +4361,7 @@ def issue_scan_pass(
         log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
         return notices, log_bits
     if code == 0:
+        remember_started_dispatch(state, started_worker, 'issue')
         started.setdefault(repo, []).append(row['number'])
         notices.append('issue %s #%d' % (repo, row['number']))
         log_bits.append('issue_start=%d' % row['number'])
