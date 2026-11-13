@@ -11,7 +11,7 @@ cd "$root" || exit 1
 pattern_file="${NO_PROJECT_NAMES_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/project-names.pattern}"
 
 if [ ! -f "$pattern_file" ]; then
-  echo "skip: project-names pattern file missing ($pattern_file)"
+  echo "SKIPPED (no pattern file; CI runs this)"
   exit 0
 fi
 

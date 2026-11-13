@@ -126,6 +126,26 @@ verdict_carry() { # <verdict_head> <current_head>
   ! blank_commit "$1" "$2" >/dev/null
 }
 
+# Wording only since the Verdict head (#940): every changed file is .md under docs/ or changelog.d/ or at the top level,
+# the diff adds no code fence, and no changed path is protected. Such a change merges on green checks with no new Verdict.
+wording_only_carry() { # <verdict_head> <current_head>
+  local f out
+  git cat-file -e "$1^{commit}" 2>/dev/null || git fetch origin "$1" >&2 || return 1
+  git merge-base --is-ancestor "$1" "$2" 2>/dev/null || return 1
+  out=$(git diff --no-renames --name-only "$1" "$2") || return 1
+  [ -n "$out" ] || return 1
+  while IFS= read -r f; do
+    case "$f" in
+      docs/*.md|changelog.d/*.md) ;;
+      */*) return 1 ;;
+      *.md) ;;
+      *) return 1 ;;
+    esac
+    protected_path "$f" && return 1
+  done <<<"$out"
+  ! git diff "$1" "$2" | grep -qE '^\+.*(```|~~~)'
+}
+
 # Files and diff of the PR, read once: the lane choice and the protected path check both use them.
 file_pages=$(gh api --paginate "repos/$repo/pulls/$pr/files") || refuse "cannot read PR $pr files"
 # shellcheck disable=SC2034
@@ -496,7 +516,7 @@ verdict)
   same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr"
 
   # Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
-  if [ "$verdict_head" != "$head" ] && ! verdict_carry "$verdict_head" "$head"; then
+  if [ "$verdict_head" != "$head" ] && ! verdict_carry "$verdict_head" "$head" && ! wording_only_carry "$verdict_head" "$head"; then
     blank=$(blank_commit "$verdict_head" "$head") \
       && refuse "commit ${blank:0:12} after verdict head ${verdict_head:0:12} is empty or whitespace only; post a new Verdict"
     refuse "verdict head ${verdict_head:0:12} patch-id does not match current head ${head:0:12}"

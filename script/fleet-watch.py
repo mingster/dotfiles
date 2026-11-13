@@ -2343,7 +2343,7 @@ def build_issue_start_command(config, repo, issue_row):
         '## Verify\n'
         'Run bash script/checks-local.sh and show the Done condition.\n\n'
         '## Finish\n'
-        'Self-review, push, open the PR, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
+        'Self-review, push, open the PR, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip()))
     role = scan.get('role') or 'builder'
     title = '%s - #%d' % (role, issue_row['number'])
@@ -2986,7 +2986,7 @@ def build_babysit_spec(repo, pr_row, kind, builder):
             '## Verify\n'
             'bash script/checks-local.sh\n\n'
             '## Finish\n'
-            'Write ## Self-review with the full 40 hex head sha and rewrite it after every push, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
+            'Write ## Self-review with the full 40 hex head sha and rewrite it after every push, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         ) % (repo, number, head)
     return _write_issue_scan_spec(text)
 

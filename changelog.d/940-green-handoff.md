@@ -1,0 +1,1 @@
+Builders hand off only on green PR checks (brief-lint requires the Finish line), ship.sh lets a wording only change merge after a Verdict, and the no project names test prints a SKIPPED line when it has no pattern file.

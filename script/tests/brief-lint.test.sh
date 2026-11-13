@@ -180,7 +180,7 @@ With timeout 300 each: bash script/checks-local.sh, brief-lint.test.sh, the work
 
 ## Finish
 Run orca worktree set --worktree active --workspace-status in-review before worker_done.
-Write ## Self-review against origin/main with the full 40 hex head sha, rewrite it after every push, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
+Write ## Self-review against origin/main with the full 40 hex head sha, rewrite it after every push, wait for `gh pr checks <n> --watch --fail-fast` to pass at the final head, then worker_done with worktree path, `git log --oneline origin/main..HEAD`, `git diff --stat origin/main...HEAD`, red then green tails. Then end.
 EOF
 set +e
 out=$(bash "$lint" "$tmp/t8-brief.md" 2>&1)
@@ -292,6 +292,7 @@ bash script/checks-local.sh
 
 ## Finish
 Run orca worktree set --worktree active --workspace-status in-review before worker_done.
+Wait until gh pr checks <n> --watch --fail-fast passes at the final head.
 Self-review, then send worker_done.
 EOF
 set +e
@@ -305,6 +306,26 @@ out=$(bash "$lint" "$tmp/builder-ok.md" 2>&1)
 ec=$?
 set -e
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with 40 hex sha passes (ec=$ec, out=$out)"; fi
+
+# 940. A fullstack-dev Finish must wait for green PR checks; a verifier brief is not affected.
+grep -v 'gh pr checks' "$tmp/builder-ok.md" >"$tmp/builder-nogreen.md"
+set +e
+out=$(bash "$lint" "$tmp/builder-nogreen.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [[ "$out" == *"Finish must wait for green PR checks"* ]]; then ok; else bad "builder Finish without green checks line (ec=$ec, out=$out)"; fi
+sed 's/^Wait until gh pr checks .*/Wait until gh run list --branch b --limit 3 shows the checks passing./' "$tmp/builder-ok.md" >"$tmp/builder-runlist.md"
+set +e
+out=$(bash "$lint" "$tmp/builder-runlist.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "builder Finish with gh run list passes (ec=$ec, out=$out)"; fi
+sed 's/fullstack-dev/qa-sdet/' "$tmp/builder-nogreen.md" >"$tmp/verifier.md"
+set +e
+out=$(bash "$lint" "$tmp/verifier.md" 2>&1)
+ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "verifier brief needs no green checks line (ec=$ec, out=$out)"; fi
 
 # Finish without the in-review step is refused, for any role
 cat >"$tmp/no-in-review.md" <<'EOF'

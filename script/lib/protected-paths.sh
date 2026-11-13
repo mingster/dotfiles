@@ -14,6 +14,14 @@ check_owner_only_paths() {
   intent_acceptance_receipt
 }
 
+# True for a path that waits for the owner or an owner receipt: hooks, settings, rules, role files, intents.
+protected_path() { # <path>
+  case "$1" in
+    .claude/hooks/*|*/.claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|docs/intent/*) return 0 ;;
+  esac
+  text_lane_role_path "$1"
+}
+
 # An intent that the diff marks Accepted passes only when every commit in the PR range that
 # touches that file carries a non-empty Owner-approved trailer (the owner accepted it in chat).
 intent_acceptance_receipt() {
