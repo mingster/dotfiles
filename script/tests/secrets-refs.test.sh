@@ -22,6 +22,12 @@ printf 'secrets in git\n' >"$P/.git/config"
 printf 'secrets/linked\n' >"$TMP/elsewhere"
 ln -s "$TMP/elsewhere" "$P/sub/link"
 
+# The guard allows only a direct call, so the file must be executable in the working tree and in git
+if [ -x "$REFS" ]; then ok "the script is executable"; else bad "the script is not executable"; fi
+mode=$(git -C "$ROOT" ls-files -s script/secrets-refs.sh | cut -d' ' -f1)
+if [ "$mode" = 100755 ]; then ok "git mode is 100755"; else bad "git mode is $mode"; fi
+out=$("$REFS" "$P" secrets 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "direct call works"; else bad "direct call rc $rc: $out"; fi
 out=$(bash "$REFS" "$P" secrets 2>&1); rc=$?
 real=$(cd "$P" && pwd -P)
 if [ "$rc" -eq 0 ]; then ok "exit 0"; else bad "rc $rc: $out"; fi

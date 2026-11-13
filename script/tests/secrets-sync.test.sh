@@ -29,6 +29,8 @@ out=$(SECRETS_GATE="$TMP/gate" PATH="$TMP/bin:$PATH" bash "$SYNC" 2>&1)
 if [ "$out" = "FAKEGATE sync" ] && [ "$(cat "$TMP/sudo.log")" = "sudo -n $TMP/gate sync" ]; then
   ok "plain sync is sudo -n gate sync (the passwordless entry)"; else bad "plain sync: $out / $(cat "$TMP/sudo.log")"; fi
 rm -f "$TMP/sudo.log"
+out=$(SECRETS_GATE="$TMP/gate" bash "$SYNC" --delete 2>&1); rc=$?
+if [ "$rc" -eq 2 ]; then ok "--delete is refused"; else bad "--delete rc $rc"; fi
 out=$(SECRETS_GATE="$TMP/gate" PATH="$TMP/bin:$PATH" bash "$SYNC" --dry-run 2>&1)
 if [ "$out" = "FAKEGATE sync --dry-run" ] && [ "$(cat "$TMP/sudo.log")" = "sudo $TMP/gate sync --dry-run" ]; then
   ok "flags go through plain sudo (Touch ID)"; else bad "dry run: $out / $(cat "$TMP/sudo.log")"; fi

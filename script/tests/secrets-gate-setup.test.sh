@@ -29,7 +29,8 @@ printf '%s\n' '#!/bin/sh' \
   'fi' \
   'exit 0' >"$TMP/bin/sudo"
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$TMP/bin/visudo"
-chmod +x "$TMP/bin/sudo" "$TMP/bin/visudo"
+printf '%s\n' '#!/bin/sh' 'echo "$* ssh-ed25519 AAAAfake"' >"$TMP/bin/ssh-keyscan"
+chmod +x "$TMP/bin/sudo" "$TMP/bin/visudo" "$TMP/bin/ssh-keyscan"
 
 run() {
   HOME="$TMP/home" PATH="$TMP/bin:$PATH" SECRETS_SYNC_CONFIG="$TMP/sync.json" \
@@ -42,7 +43,7 @@ if [ "$rc" -eq 0 ]; then ok "dry run exits 0"; else bad "dry run rc $rc: $out"; 
 if [ ! -e "$TMP/sudo.log" ]; then ok "dry run ran no sudo"; else bad "dry run called sudo: $(cat "$TMP/sudo.log")"; fi
 if [ ! -e "$TMP/opt" ] && [ ! -e "$TMP/sudoers" ] && [ -z "$(ls "$TMP/captured")" ]; then ok "dry run created nothing"; else bad "dry run created files"; fi
 for want in "would: create $TMP/opt" "would: install the gate" "would: write the config" "would: hand the folder to root" \
-            "would: folder mode 700" "would: install the sudoers entry (role source)" "dry run: nothing changed"; do
+            "would: create the sync's ssh key" "would: write known_hosts" "would: folder mode 700" "would: install the sudoers entry (role source)" "dry run: nothing changed"; do
   if grep -qF "$want" <<<"$out"; then ok "dry run says: $want"; else bad "dry run lacks: $want"; fi
 done
 if [ "$(uname -s)" = Darwin ]; then
@@ -59,6 +60,11 @@ if grep -qF "chmod -R go-rwx $TMP/home/cred" <<<"$log"; then ok "group and other
 if grep -qE "^install .* $TMP/opt/secrets-gate\$" <<<"$log"; then ok "gate installed into the gate dir"; else bad "gate not installed"; fi
 if ! grep -qE "^(rm|cat|cp|mv|tee|rsync) " <<<"$log"; then ok "no read, copy or delete under sudo"; else bad "unexpected sudo command: $log"; fi
 
+# The sync's ssh key and known_hosts are root owned files next to the gate
+if grep -qE "^ssh-keygen .* -f $TMP/opt/id_ed25519\$" <<<"$log"; then ok "ssh key created under sudo in the gate dir"; else bad "no ssh-keygen: $log"; fi
+if grep -qE "^install -o root .* -m 644 .* $TMP/opt/known_hosts\$" <<<"$log"; then ok "known_hosts installed root owned"; else bad "no known_hosts install: $log"; fi
+if grep -q "hostA ssh-ed25519" "$TMP/captured/known_hosts" && grep -q "hostB ssh-ed25519" "$TMP/captured/known_hosts"; then ok "known_hosts lists the fixed host list"; else bad "known_hosts: $(cat "$TMP/captured/known_hosts" 2>/dev/null)"; fi
+
 # The installed config carries the folder and hosts
 conf="$TMP/captured/secrets-gate.conf"
 if grep -qx "DIR=$TMP/home/cred" "$conf" && grep -qx "HOSTS=hostA hostB" "$conf" && grep -qx "REL=cred" "$conf"; then
@@ -68,11 +74,13 @@ if grep -qx "DIR=$TMP/home/cred" "$conf" && grep -qx "HOSTS=hostA hostB" "$conf"
 sud="$TMP/captured/sudoers"
 if [ "$(grep -c NOPASSWD "$sud")" -eq 1 ]; then ok "role source: one passwordless entry"; else bad "entries: $(cat "$sud")"; fi
 if grep -qE "NOPASSWD: $TMP/opt/secrets-gate sync\$" "$sud"; then ok "the entry is the fixed sync only"; else bad "entry: $(cat "$sud")"; fi
-if ! grep -qE "NOPASSWD: ALL|\*" "$sud"; then ok "no wildcard or ALL for source"; else bad "wildcard present"; fi
+if ! grep -qE "NOPASSWD: ALL|NOPASSWD:.*\*" "$sud"; then ok "no wildcard or ALL for source"; else bad "wildcard present"; fi
+if grep -qF "Defaults!$TMP/opt/secrets-gate env_reset, secure_path=\"/usr/bin:/bin:/usr/sbin:/sbin\"" "$sud"; then ok "sudoers sets env_reset and secure_path for the gate"; else bad "no env_reset/secure_path: $(cat "$sud")"; fi
 rm -f "$sud"
 run --role receiver >/dev/null 2>&1
-if grep -qE "NOPASSWD: $TMP/opt/secrets-gate receive --server \*\$" "$sud"; then ok "role receiver: receive --server entry"; else bad "receiver entry: $(cat "$sud" 2>/dev/null)"; fi
+if grep -qE "NOPASSWD: $TMP/opt/secrets-gate receive \*\$" "$sud"; then ok "role receiver: receive entry"; else bad "receiver entry: $(cat "$sud" 2>/dev/null)"; fi
 if ! grep -qE "secrets-gate sync\$" "$sud"; then ok "receiver has no sync entry"; else bad "receiver got sync"; fi
+if grep -qF "env_reset, secure_path" "$sud"; then ok "receiver sudoers also resets env and PATH"; else bad "receiver lacks env_reset"; fi
 
 # Idempotent: a folder that is already root 700 is not touched again (stat shim reports it)
 printf '%s\n' '#!/bin/sh' \

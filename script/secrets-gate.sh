@@ -1,25 +1,34 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Root owned gate to the credential folder. secrets-gate-setup.sh installs it as /opt/secrets-gate/secrets-gate
 # (root, mode 755) next to its config. The folder is root:wheel 700, so this is the only way in.
 # Fixed command list, anything else is refused:
 #   fingerprint <file>              size and 8 hex fingerprint of one file in the folder, never its content
-#   sync [--dry-run] [--delete]     push the folder to the fleet hosts with rsync over ssh, prints file names only
-#   receive --server ...            the rsync server side on a fleet host, writes only into the configured folder
+#   sync [--dry-run]                push the folder to the fleet hosts with rsync over ssh, prints file names only
+#   receive ...                     the rsync server side on a fleet host. Takes no option from the caller: the
+#                                   rsync arguments are fixed here, it receives into a fresh root staging folder,
+#                                   then moves regular files only into the configured folder. Never deletes.
 #   deploy-read <name>              print one file from the DEPLOY allow list, for a deploy step
 # Config (root owned, KEY=value lines): DIR (absolute), REL (path under $HOME on the fleet hosts), OWNER (the
-# account whose ssh keys reach the hosts), HOSTS (space separated), DEPLOY (space separated file names).
-# A non root caller may point SECRETS_GATE_CONF elsewhere (tests); under root the variable is ignored.
+# account name on the fleet hosts), HOSTS (space separated), DEPLOY (space separated file names).
+# Next to the config (root owned): id_ed25519 (the only key sync's ssh uses) and known_hosts.
+# A non root caller may point SECRETS_GATE_CONF, SECRETS_GATE_SELF and SG_RSYNC elsewhere (tests); under root they
+# are ignored. Under root the first thing that runs is a re-exec with an empty environment and a PATH of system
+# folders only (no user writable folder), so nothing the calling account sets can steer a command here.
+if [ -z "${SG_CLEAN:-}" ] && [ "$(/usr/bin/id -u)" -eq 0 ]; then
+  exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$0" "$@"
+fi
 set -u
 
-if [ "$(id -u)" -eq 0 ]; then
-  PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin
+if [ "$(/usr/bin/id -u)" -eq 0 ]; then
   conf=/opt/secrets-gate/secrets-gate.conf
   self=/opt/secrets-gate/secrets-gate
+  rsync_bin=/usr/bin/rsync
 else
   conf=${SECRETS_GATE_CONF:-/opt/secrets-gate/secrets-gate.conf}
   self=${SECRETS_GATE_SELF:-/opt/secrets-gate/secrets-gate}
+  rsync_bin=${SG_RSYNC:-/usr/bin/rsync}
 fi
-export PATH
+gate_dir=$(dirname "$conf")
 
 refuse() { echo "secrets-gate: refused: $*" >&2; exit 2; }
 fail() { echo "secrets-gate: $*" >&2; exit 1; }
@@ -68,69 +77,83 @@ cmd_deploy_read() {
   cat "$f"
 }
 
-# Run the argument as the owner account when root, as the caller otherwise (tests).
-as_owner() {
-  if [ "$(id -u)" -eq 0 ]; then sudo -n -u "$OWNER" -H "$@"; else "$@"; fi
-}
-
 cmd_sync() {
-  local dry=() del=() a
+  local dry=() a
   for a in "$@"; do
     case $a in
       --dry-run) dry=(--dry-run) ;;
-      --delete) del=(--delete) ;;
       *) refuse "sync: unknown flag" ;;
     esac
   done
   case $REL in ''|/*|*[!A-Za-z0-9._/-]*|*..*) fail "config REL is not a safe relative path" ;; esac
   case $OWNER in ''|*[!a-z0-9_-]*) fail "config OWNER is not a plain account name" ;; esac
   [ -n "$HOSTS" ] || fail "config has no HOSTS"
-  local count h ssh_cmd rsh
-  count=$(find "$DIR" -type f ! -name .DS_Store | wc -l | tr -d ' ')
-  if [ "${#del[@]}" -gt 0 ] && [ "$count" -lt 3 ]; then fail "refusing --delete, source has only $count files"; fi
-  ssh_cmd="ssh -o BatchMode=yes -o ConnectTimeout=10"
-  if [ "$(id -u)" -eq 0 ]; then rsh="sudo -n -u $OWNER -H $ssh_cmd"; else rsh=$ssh_cmd; fi
+  local key=$gate_dir/id_ed25519 known=$gate_dir/known_hosts
+  [ -f "$key" ] && [ -f "$known" ] || fail "no ssh key or known_hosts next to the config (rerun secrets-gate-setup.sh)"
+  local count h rsh target
+  count=$(find "$DIR" -type f ! -name .DS_Store ! -path '*/.stage.*' | wc -l | tr -d ' ')
+  # ssh ignores every user editable file: no config (-F /dev/null), one root owned key, one root owned known_hosts.
+  rsh="ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o IdentityFile=$key"
+  rsh="$rsh -o UserKnownHostsFile=$known -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes"
+  rsh="$rsh -o ProxyCommand=none -o ControlPath=none -o PermitLocalCommand=no"
   for h in $HOSTS; do
     case $h in -*|*[!A-Za-z0-9._@-]*) echo "warn bad host name, skipped"; continue ;; esac
+    target=$h
+    case $h in *@*) ;; *) target=$OWNER@$h ;; esac
     echo "$h"
     local rpath=()
     # shellcheck disable=SC2086
-    if as_owner $ssh_cmd "$h" "test -x $self" >/dev/null 2>&1; then
+    if $rsh "$target" "test -x $self" >/dev/null 2>&1; then
       rpath=(--rsync-path="sudo -n $self receive")
     else
       # The host has no gate yet: its folder is still owner owned, so the owner account can prepare it.
       # shellcheck disable=SC2086
-      as_owner $ssh_cmd "$h" "umask 077; mkdir -p ~/'$REL'; chmod 700 ~/'$REL'" 2>&1 \
+      $rsh "$target" "umask 077; mkdir -p ~/'$REL'; chmod 700 ~/'$REL'" 2>&1 \
         || { echo "warn unreachable $h"; continue; }
     fi
-    # -i lists changed names only; --chmod forces owner only modes on the fleet copy.
-    rsync -a ${dry[@]+"${dry[@]}"} ${del[@]+"${del[@]}"} -i --chmod=D700,F600 --exclude .DS_Store \
-      ${rpath[@]+"${rpath[@]}"} -e "$rsh" "$DIR"/ "$h":"~/$REL"/ 2>&1 \
+    # -rt only: no links, owners or devices travel. -i lists changed names only; the receiving gate sets modes 700 and 600.
+    "$rsync_bin" -rt ${dry[@]+"${dry[@]}"} -i --exclude .DS_Store --exclude '.stage.*' \
+      ${rpath[@]+"${rpath[@]}"} -e "$rsh" "$DIR"/ "$target":"~/$REL"/ 2>&1 \
       | grep -v '^\.' | sed 's/^/  /' || true
   done
   echo "secrets-sync done ($count files at source)"
 }
 
-# rsync --server <flags> . <dest>: accept only plain flag clusters and the delete family, and only the
-# configured folder as the destination. Everything else the caller sends is refused.
-cmd_receive() {
-  [ "${1:-}" = --server ] || refuse "receive: only the rsync server side"
-  shift
-  local opts=() dest
-  while [ "$#" -gt 2 ]; do
-    case $1 in
-      --delete|--delete-before|--delete-during|--delete-after|--delete-delay|--log-format=%i) opts+=("$1") ;;
-      -*[!A-Za-z0-9.]*|--*|-) refuse "receive: option not allowed" ;;
-      -?*) opts+=("$1") ;;
-      *) refuse "receive: unexpected argument" ;;
-    esac
-    shift
+# The rsync server side. The caller's arguments are ignored: rsync starts with a fixed list (no -l, -K, -L, -o,
+# -g, -D, --delete, no caller path) into a fresh staging folder inside the root owned folder. Only regular files
+# are then moved into the folder; directories are created plain; links and anything else are dropped. Nothing
+# is ever deleted from the folder.
+# Create a relative directory inside the folder one component at a time; fail if any component is a link.
+safe_mkdir() {
+  local p=$real_dir c
+  [ "$1" = . ] && return 0
+  local IFS=/
+  for c in $1; do
+    p=$p/$c
+    [ -L "$p" ] && return 1
+    [ -d "$p" ] || mkdir "$p" || return 1
+    chmod 700 "$p"
   done
-  [ "$#" -eq 2 ] && [ "$1" = . ] || refuse "receive: expected '. <folder>'"
-  dest=${2%/}
-  [ "$dest" = "$DIR" ] || refuse "receive: destination is not the configured folder"
-  mkdir -p "$DIR" && chmod 700 "$DIR"
-  exec rsync --server ${opts[@]+"${opts[@]}"} . "$DIR"/
+}
+
+cmd_receive() {
+  local stage f rel d dest
+  chmod 700 "$real_dir"
+  stage=$(mktemp -d "$real_dir/.stage.XXXXXX") || fail "receive: cannot create a staging folder"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$stage'" EXIT
+  "$rsync_bin" --server -rt --log-format=%i . "$stage"/ || fail "receive: rsync failed"
+  while IFS= read -r -d '' f; do
+    rel=${f#./}
+    case "/$rel/" in */../*|*/./*|*//*|*/.stage.*) continue ;; esac
+    case $rel in .DS_Store|*/.DS_Store) continue ;; esac
+    d=$(dirname "$rel")
+    safe_mkdir "$d" || continue
+    dest=$real_dir/$rel
+    if [ -d "$dest" ] && [ ! -L "$dest" ]; then continue; fi
+    if [ -L "$dest" ]; then rm -f "$dest"; fi
+    mv -f "$stage/$rel" "$dest" && chmod 600 "$dest"
+  done < <(cd "$stage" && find . -type f -print0)
 }
 
 [ "$#" -ge 1 ] || refuse "usage: secrets-gate fingerprint|sync|receive|deploy-read"
@@ -139,6 +162,6 @@ case $cmd in
   fingerprint) cmd_fingerprint "$@" ;;
   deploy-read) cmd_deploy_read "$@" ;;
   sync) cmd_sync "$@" ;;
-  receive) cmd_receive "$@" ;;
+  receive) cmd_receive ;;
   *) refuse "unknown command" ;;
 esac

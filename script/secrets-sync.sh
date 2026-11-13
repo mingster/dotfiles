@@ -3,15 +3,15 @@
 # inside the root owned gate (script/secrets-gate.sh, installed by script/secrets-gate-setup.sh), which
 # prints the names of changed files and never their contents.
 # The plain call uses the one passwordless sudoers entry (`sync`). Flags need Touch ID or the password.
-# Flags: --dry-run (show what would change). --delete (also remove files the source no longer has;
-# use once after a reorg, refused when the source holds fewer than 3 files).
+# Flag: --dry-run (show what would change). There is no --delete: the passwordless receive on a fleet host only
+# adds and overwrites files, so remove a retired file on each host by hand.
 # A host without the gate installed is skipped with a note, so fleet-pull keeps working until the owner sets it up.
 set -u
 gate=${SECRETS_GATE:-/opt/secrets-gate/secrets-gate}
 flags=()
 for a in "$@"; do
   case "$a" in
-    --dry-run|--delete) flags+=("$a") ;;
+    --dry-run) flags+=("$a") ;;
     *) echo "unknown flag $a" >&2; exit 2 ;;
   esac
 done

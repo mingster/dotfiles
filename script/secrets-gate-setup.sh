@@ -3,13 +3,14 @@
 # Usage: secrets-gate-setup.sh [--dry-run] [--role source|receiver|both] [--dir <path>] [--hosts "h1 h2"] [--deploy "name1 name2"]
 #   --dry-run  print every step it would take, change nothing, run no sudo
 #   --role     source (default): this host pushes the folder, one passwordless sudoers entry for `sync` only
-#              receiver: a fleet host that only receives, one passwordless entry for `receive --server`
+#              receiver: a fleet host that only receives, one passwordless entry for `receive` (the gate ignores its arguments)
 #              both: the two entries
 #   --dir      the folder, default from script/secrets-sync.config.json ("dir")
 #   --hosts    fleet hosts to push to, default from that config ("hosts"), then fleet-pull.config.json
 #   --deploy   file names `deploy-read` may print, default none
-# Steps (each one skipped when already in place): /opt/secrets-gate with the gate and its config, folder
-# chown root and mode 700, sudoers entry (checked with visudo), Touch ID for sudo (macOS pam_tid).
+# Steps (each one skipped when already in place): /opt/secrets-gate with the gate and its config, a root owned ssh key
+# and known_hosts for the sync (not for a receiver), folder chown root and mode 700, sudoers entry (checked with visudo),
+# Touch ID for sudo (macOS pam_tid).
 # Every privileged step goes through `sudo`, so Touch ID or the password is asked as usual.
 # The SG_* variables below move the targets for tests only.
 set -euo pipefail
@@ -80,6 +81,21 @@ if [ -f "$gate_dir/secrets-gate.conf" ] && cmp -s "$tmp/secrets-gate.conf" "$gat
 else act "write the config (folder, hosts, owner, deploy list)" install -o root -g "$root_group" -m 644 \
   "$tmp/secrets-gate.conf" "$gate_dir/secrets-gate.conf"; fi
 
+# 2b. The sync's ssh uses only a root owned key and known_hosts, never the owner's ~/.ssh. Source hosts only.
+if [ "$role" != receiver ]; then
+  if [ -f "$gate_dir/id_ed25519" ]; then step "ok:    ssh key exists"
+  else act "create the sync's ssh key (root only, no passphrase)" ssh-keygen -q -t ed25519 -N '' -C secrets-gate -f "$gate_dir/id_ed25519"; fi
+  : >"$tmp/known_hosts"
+  if [ "$dry" -eq 0 ]; then
+    for h in $hosts; do ssh-keyscan -q -t ed25519 "${h#*@}" >>"$tmp/known_hosts" 2>/dev/null || echo "warn: no host key from $h"; done
+    step "host keys found (compare them with each host before trusting this):"
+    ssh-keygen -lf "$tmp/known_hosts" 2>/dev/null | sed 's/^/        /' || true
+  fi
+  if [ -f "$gate_dir/known_hosts" ] && cmp -s "$tmp/known_hosts" "$gate_dir/known_hosts" && [ "$dry" -eq 0 ]; then step "ok:    known_hosts up to date"
+  else act "write known_hosts for the fleet hosts" install -o root -g "$root_group" -m 644 "$tmp/known_hosts" "$gate_dir/known_hosts"; fi
+  step "note:  on every host that receives, add the key below to ~/.ssh/authorized_keys of $owner: sudo cat $gate_dir/id_ed25519.pub"
+fi
+
 # 3. The folder. After this the owner account cannot read it either, only through the gate.
 if [ ! -d "$dir" ]; then
   step "skip:  $dir does not exist yet, create it and rerun"
@@ -92,9 +108,11 @@ fi
 
 # 4. Sudoers: exactly the commands each role needs, passwordless. Everything else asks Touch ID or the password.
 {
-  echo "# Managed by secrets-gate-setup.sh. Passwordless: the fixed sync, and the rsync server side on a receiver."
+  echo "# Managed by secrets-gate-setup.sh. Passwordless: the fixed sync, and receive on a receiver (the gate ignores its arguments)."
+  # The gate runs with a clean environment and root owned PATH whatever the caller exports.
+  echo "Defaults!$gate_dir/secrets-gate env_reset, secure_path=\"/usr/bin:/bin:/usr/sbin:/sbin\""
   if [ "$role" != receiver ]; then echo "$owner ALL=(root) NOPASSWD: $gate_dir/secrets-gate sync"; fi
-  if [ "$role" != source ]; then echo "$owner ALL=(root) NOPASSWD: $gate_dir/secrets-gate receive --server *"; fi
+  if [ "$role" != source ]; then echo "$owner ALL=(root) NOPASSWD: $gate_dir/secrets-gate receive *"; fi
 } >"$tmp/sudoers"
 if [ "$dry" -eq 0 ]; then
   visudo -cf "$tmp/sudoers" >/dev/null || { echo "secrets-gate-setup: generated sudoers failed visudo, nothing installed" >&2; exit 1; }

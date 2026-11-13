@@ -11,8 +11,8 @@ The gate has a fixed command list and refuses everything else (exit 2):
 | Command | What it does | How it is approved |
 |---|---|---|
 | `fingerprint <file>` | Prints the file's size and an 8 hex fingerprint. Never the content. | Touch ID or password |
-| `sync [--dry-run] [--delete]` | Pushes the folder to the fleet hosts (rsync over ssh as the owner account). Prints file names only. | Plain `sync` is passwordless (one sudoers entry). Flags need Touch ID. |
-| `receive --server ...` | The rsync server side on a fleet host. Writes only into the configured folder, accepts only plain rsync flags. | Passwordless on a host set up with `--role receiver` |
+| `sync [--dry-run]` | Pushes the folder to the fleet hosts (rsync over ssh). Prints file names only. | Plain `sync` is passwordless (one sudoers entry). `--dry-run` needs Touch ID. |
+| `receive` | The rsync server side on a fleet host. Takes no option from the caller: the gate ignores every argument and runs `/usr/bin/rsync --server -rt` itself into a fresh root staging folder inside the folder, then moves regular files only into place (no links, no devices, nothing deleted, modes 600 and 700). | Passwordless on a host set up with `--role receiver` |
 | `deploy-read <name>` | Prints one file named on the config's deploy list. | Touch ID or password |
 
 Paths for `fingerprint` and `deploy-read` must be regular files inside the folder (no `..`, no symlinks, nothing outside).
@@ -21,7 +21,9 @@ Scripts moved onto the gate: `script/secrets-sync.sh` (calls `sudo -n gate sync`
 
 `script/secrets-pack.sh` and `script/secrets-unpack.sh` are not moved. Pack reads the folder, so after setup the owner runs it with `sudo`.
 
-Limits to know: the account is still shared. A worker can run the passwordless `sync` (it prints file names only). A worker can also run the passwordless `receive` on a receiver host, which can only write into the folder, never read it. Everything else asks the owner.
+The sync's ssh ignores everything the owner account can edit: `-F /dev/null`, one key `/opt/secrets-gate/id_ed25519` and one `known_hosts` next to it (both root owned, the key mode 600), a fixed host list from the root owned config, strict host key checking. The gate starts as `/bin/bash`, re-executes itself with an empty environment and `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, and the sudoers drop in sets `env_reset` and `secure_path` for it.
+
+Limits to know: the account is still shared. A worker can run the passwordless `sync` (it prints file names only). A worker can also run the passwordless `receive` on a receiver host: it can add or overwrite regular files in the folder (integrity), but never read, delete, or write outside it. Everything else asks the owner. There is no `sync --delete`: the owner removes a retired file on each host with `sudo rm`.
 
 ## Owner steps (once per host)
 
@@ -31,7 +33,7 @@ Source host (the one holding the master copy and running the daily sync):
 
 1. `cd ~/dotfiles && git pull`
 2. `bash script/secrets-gate-setup.sh --dry-run` and read the plan.
-3. `bash script/secrets-gate-setup.sh` (asks for the password the first time, then Touch ID works for sudo on macOS).
+3. `bash script/secrets-gate-setup.sh` (asks for the password the first time, then Touch ID works for sudo on macOS). It creates the gate's own ssh key and a `known_hosts` from `ssh-keyscan`, and prints the host key fingerprints: compare them with the hosts. Then `sudo cat /opt/secrets-gate/id_ed25519.pub` and add that line to `~/.ssh/authorized_keys` of the owner account on every fleet host.
 4. Check: `sudo /opt/secrets-gate/secrets-gate fingerprint <a file name in the folder>` prints one line, and `ls <folder>` now says permission denied.
 5. Check the sync: `bash script/secrets-sync.sh --dry-run` (Touch ID), then `bash script/secrets-sync.sh` (no prompt).
 
