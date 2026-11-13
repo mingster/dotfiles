@@ -15,6 +15,10 @@ pass=0
 fail=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
+# Every external call runs under a timeout so a hang fails fast instead of eating the CI job.
+TMO=${SG_TEST_TIMEOUT:-60}
+mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+sha8() { { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-8; }
 
 mkdir -p "$TMP/home/rel/sub" "$TMP/rhome/rel" "$TMP/bin" "$TMP/outside"
 D="$TMP/home/rel"
@@ -40,20 +44,21 @@ printf '%s\n' '#!/bin/sh' \
   "SSH_ORIGINAL_COMMAND=\"\$*\" SECRETS_GATE_CONF=\"$TMP/recv.conf\" exec bash \"$GATE\" receive" >"$TMP/bin/ssh"
 chmod +x "$TMP/bin/ssh"
 
-g() { SECRETS_GATE_CONF="$TMP/send.conf" PATH="$TMP/bin:$PATH" bash "$GATE" "$@"; }
+g() { SECRETS_GATE_CONF="$TMP/send.conf" PATH="$TMP/bin:$PATH" timeout "$TMO" bash "$GATE" "$@"; }
 
 LAST_OUT=
 # expect_rc <label> <rc> <command...>
 expect_rc() {
   local label=$1 want=$2 rc
   shift 2
-  LAST_OUT=$("$@" 2>&1); rc=$?
+  if [ "$(type -t "$1")" = function ]; then LAST_OUT=$("$@" 2>&1); else LAST_OUT=$(timeout "$TMO" "$@" 2>&1); fi; rc=$?
+  [ "$rc" -eq 124 ] && LAST_OUT="timed out after ${TMO}s: $LAST_OUT"
   if [ "$rc" -ne "$want" ]; then bad "$label (rc $rc, want $want: $LAST_OUT)"; else ok "$label"; fi
 }
 
 # Fingerprint
 expect_rc "fingerprint prints size and fp for a file" 0 g fingerprint a.key
-want_fp=$(shasum -a 256 <"$D/a.key" | cut -c1-8)
+want_fp=$(sha8 <"$D/a.key")
 [[ "$LAST_OUT" == "a.key: not a dotenv file; 13 bytes, fp $want_fp" ]] && ok "fingerprint line is exact" || bad "fingerprint line: $LAST_OUT"
 [[ "$LAST_OUT" != *fake-value* ]] && ok "fingerprint never prints content" || bad "fingerprint printed content"
 expect_rc "fingerprint takes an absolute path inside the folder" 0 g fingerprint "$D/sub/b.key"
@@ -82,7 +87,7 @@ expect_rc "deploy-read refuses a path" 2 g deploy-read sub/b.key
 expect_rc "deploy-read refuses a dot name" 2 g deploy-read ..
 expect_rc "deploy-read refuses no name" 2 g deploy-read
 sed 's#^DEPLOY=.*#DEPLOY=*#' "$TMP/send.conf" >"$TMP/glob.conf"
-out=$(SECRETS_GATE_CONF="$TMP/glob.conf" bash "$GATE" deploy-read c.key 2>&1); rc=$?
+out=$(SECRETS_GATE_CONF="$TMP/glob.conf" timeout "$TMO" bash "$GATE" deploy-read c.key 2>&1); rc=$?
 [[ "$rc" -eq 2 ]] && ok "a star on the deploy list matches no file" || bad "glob deploy list: rc $rc $out"
 
 # The folder is checked on every use: root controlled path, mode 700, no link inside
@@ -94,11 +99,11 @@ expect_rc "a parent others can write is refused" 1 g fingerprint a.key
 chmod 700 "$TMP/home"
 ln -s "$D" "$TMP/linkfolder"
 printf 'DIR=%s\nHOSTS=hostA\nDEPLOY=\n' "$TMP/linkfolder" >"$TMP/linkfolder.conf"
-out=$(SECRETS_GATE_CONF="$TMP/linkfolder.conf" bash "$GATE" fingerprint a.key 2>&1); rc=$?
+out=$(SECRETS_GATE_CONF="$TMP/linkfolder.conf" timeout "$TMO" bash "$GATE" fingerprint a.key 2>&1); rc=$?
 [[ "$rc" -eq 1 && "$out" == *"symlink"* ]] && ok "a folder that is a symlink is refused" || bad "link folder: rc $rc $out"
 mkdir -p "$TMP/real"; chmod 700 "$TMP/real"; mv "$D" "$TMP/real/rel"; ln -s "$TMP/real" "$TMP/linkparent"
 printf 'DIR=%s/rel\nHOSTS=hostA\nDEPLOY=\n' "$TMP/linkparent" >"$TMP/linkparent.conf"
-out=$(SECRETS_GATE_CONF="$TMP/linkparent.conf" bash "$GATE" fingerprint a.key 2>&1); rc=$?
+out=$(SECRETS_GATE_CONF="$TMP/linkparent.conf" timeout "$TMO" bash "$GATE" fingerprint a.key 2>&1); rc=$?
 [[ "$rc" -eq 1 && "$out" == *"symlink"* ]] && ok "a folder under a symlinked parent is refused" || bad "link parent: rc $rc $out"
 mv "$TMP/real/rel" "$D"
 ln -s "$TMP/outside/o.key" "$D/link.key"
@@ -121,8 +126,8 @@ expect_rc "sync --delete is refused" 2 g sync --delete
 expect_rc "sync pushes the folder" 0 g sync
 sync_out=$LAST_OUT
 [[ -f "$R/a.key" && -f "$R/sub/b.key" ]] && ok "sync copied the files" || bad "sync copied nothing: $sync_out"
-[[ "$(stat -f %Lp "$R/a.key" 2>/dev/null || stat -c %a "$R/a.key")" == 600 ]] && ok "fleet copy files are 600" || bad "fleet copy mode"
-[[ "$(stat -f %Lp "$R/sub" 2>/dev/null || stat -c %a "$R/sub")" == 700 ]] && ok "fleet copy dirs are 700" || bad "fleet copy dir mode"
+[[ "$(mode "$R/a.key")" == 600 ]] && ok "fleet copy files are 600" || bad "fleet copy mode"
+[[ "$(mode "$R/sub")" == 700 ]] && ok "fleet copy dirs are 700" || bad "fleet copy dir mode"
 [[ "$sync_out" != *fake-value* ]] && ok "sync output has no content" || bad "sync printed content"
 [[ "$sync_out" == *a.key* ]] && ok "sync output lists changed names" || bad "sync output has no names: $sync_out"
 [[ -z "$(find "$R" -name '.stage*')" ]] && ok "no staging folder left behind" || bad "staging left: $(find "$R" -name '.stage*')"
@@ -141,28 +146,29 @@ expect_rc "sync again updates the file" 0 g sync
 # sync's ssh ignores everything the owner account can edit, and logs in as root
 for want in "-F /dev/null" "IdentitiesOnly=yes" "IdentityFile=$TMP/id_ed25519" "UserKnownHostsFile=$TMP/known_hosts" \
             "GlobalKnownHostsFile=/dev/null" "StrictHostKeyChecking=yes" "ProxyCommand=none" "ControlPath=none" "root@hostA"; do
-  [[ "$ssh_line" == *"$want"* ]] && ok "ssh has $want" || bad "ssh lacks $want: $ssh_line"
+  # rsync hands the login to ssh as user@host on some builds and as -l user host on others
+  [[ "$ssh_line" == *"$want"* || ( "$want" == root@hostA && "$ssh_line" == *"-l root hostA"* ) ]] && ok "ssh has $want" || bad "ssh lacks $want: $ssh_line"
 done
 mv "$TMP/known_hosts" "$TMP/known_hosts.keep"
 expect_rc "sync without a root owned known_hosts fails" 1 g sync
 mv "$TMP/known_hosts.keep" "$TMP/known_hosts"
 sed 's#^HOSTS=.*#HOSTS=-oProxyCommand=x user@hostA#' "$TMP/send.conf" >"$TMP/badhost.conf"
 : >"$TMP/ssh.log"
-out=$(SECRETS_GATE_CONF="$TMP/badhost.conf" PATH="$TMP/bin:$PATH" bash "$GATE" sync 2>&1)
+out=$(SECRETS_GATE_CONF="$TMP/badhost.conf" PATH="$TMP/bin:$PATH" timeout "$TMO" bash "$GATE" sync 2>&1)
 if [[ "$out" == *"bad host name"* ]] && ! grep -q ProxyCommand=x "$TMP/ssh.log" && ! grep -q 'user@hostA' "$TMP/ssh.log"; then ok "an option shaped or user@ host is skipped"; else bad "bad host: $out"; fi
 
 # A hostile ~/.ssh/config (ProxyCommand, HostName) steers nothing: real ssh, real rsync, a name that cannot resolve
 mkdir -p "$TMP/evilhome/.ssh"
 printf 'Host *\n  ProxyCommand touch %s/proxy-ran\n  HostName 127.0.0.1\n  Port 1\n  User attacker\n' "$TMP/evilhome" >"$TMP/evilhome/.ssh/config"
 sed 's#^HOSTS=.*#HOSTS=nohost.invalid#' "$TMP/send.conf" >"$TMP/invalid.conf"
-out=$(HOME="$TMP/evilhome" SECRETS_GATE_CONF="$TMP/invalid.conf" bash "$GATE" sync 2>&1)
+out=$(HOME="$TMP/evilhome" SECRETS_GATE_CONF="$TMP/invalid.conf" timeout "$TMO" bash "$GATE" sync 2>&1)
 [[ ! -e "$TMP/evilhome/proxy-ran" ]] && ok "a user ssh config is not read (no ProxyCommand ran)" || bad "user ssh config ran a command"
 [[ "$out" != *"attacker"* && "$out" != *"127.0.0.1"* ]] && ok "a user ssh config does not redirect the host" || bad "user ssh config used: $out"
 
 # receive takes no caller option, and the client's command line is ignored: a fake rsync records the argv
 printf '%s\n' '#!/bin/sh' "printf '%s\\n' \"\$@\" >\"$TMP/rsync.argv\"" 'exit 0' >"$TMP/fakersync"
 chmod +x "$TMP/fakersync"
-rr() { SG_RSYNC="$TMP/fakersync" SECRETS_GATE_CONF="$TMP/recv.conf" SSH_ORIGINAL_COMMAND="rsync --server -rlKLkogD --delete --rsync-path=/bin/sh . $TMP/outside/" bash "$GATE" receive "$@"; }
+rr() { SG_RSYNC="$TMP/fakersync" SECRETS_GATE_CONF="$TMP/recv.conf" SSH_ORIGINAL_COMMAND="rsync --server -rlKLkogD --delete --rsync-path=/bin/sh . $TMP/outside/" timeout "$TMO" bash "$GATE" receive "$@"; }
 expect_rc "receive with an argument is refused" 2 rr -K
 expect_rc "receive with a hostile client command line still runs the fixed list" 0 rr
 got=$(sed "s#$R/\.stage\.[A-Za-z0-9]*/#STAGE/#" "$TMP/rsync.argv")
@@ -175,14 +181,18 @@ mkdir -p "$TMP/atk/src1" "$TMP/atk/src2/evil" "$TMP/atk/out"
 ln -s "$TMP/atk/out" "$TMP/atk/src1/evil"
 printf 'pwn\n' >"$TMP/atk/src2/evil/pwn"
 APATH="$TMP/bin:/usr/bin:/bin"
-push() { PATH="$APATH" /usr/bin/rsync "$1" -e ssh "$2"/ "h:$R"/ >/dev/null 2>&1; }
+# The receiver's fixed flags (no -l) disagree with a client that sends links, so on some rsync builds that push stalls
+# instead of failing. A stall counts as a refusal here: what matters is that nothing lands outside, which is asserted
+# on the files after each push. The short timeout keeps the stall cheap.
+PUSH_TMO=${SG_TEST_PUSH_TIMEOUT:-10}
+push() { PATH="$APATH" timeout "$PUSH_TMO" /usr/bin/rsync "$1" -e ssh "$2"/ "h:$R"/ >/dev/null 2>&1; }
 # two push symlink then keep-dirlinks
 push -rl "$TMP/atk/src1"
 push -rK "$TMP/atk/src2"
 [[ -z "$(ls -A "$TMP/atk/out")" ]] && ok "symlink plus keep-dirlinks push wrote nothing outside the folder" || bad "ESCAPE: $(ls -A "$TMP/atk/out")"
 [[ -z "$(find "$R" -type l)" ]] && ok "no symlink landed in the folder" || bad "symlink in the folder: $(find "$R" -type l)"
 # option injection through the remote command: the forced command ignores it (the fake ssh does the same)
-PATH="$APATH" /usr/bin/rsync -rK -e ssh --rsync-path="/opt/x --server -rlK --delete" "$TMP/atk/src2"/ "h:$R"/ >/dev/null 2>&1
+PATH="$APATH" timeout "$PUSH_TMO" /usr/bin/rsync -rK -e ssh --rsync-path="/opt/x --server -rlK --delete" "$TMP/atk/src2"/ "h:$R"/ >/dev/null 2>&1
 [[ -z "$(ls -A "$TMP/atk/out")" ]] && ok "an injected --rsync-path option changes nothing" || bad "ESCAPE with injected options: $(ls -A "$TMP/atk/out")"
 
 # a link planted in the folder before setup, leading dash directory: the gate refuses to receive at all
@@ -224,7 +234,7 @@ if grep -qF 'exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin 
 if ! grep -qE '(^|[^/A-Za-z_])id -u' "$GATE"; then ok "id is called by absolute path"; else bad "bare id call"; fi
 # a fake id first on PATH that claims root must not change what the gate believes
 mkdir -p "$TMP/fakebin"; printf '%s\n' '#!/bin/sh' 'echo 0' >"$TMP/fakebin/id"; chmod +x "$TMP/fakebin/id"
-out=$(PATH="$TMP/fakebin:$PATH" SECRETS_GATE_CONF="$TMP/send.conf" bash "$GATE" fingerprint a.key 2>&1)
+out=$(PATH="$TMP/fakebin:$PATH" SECRETS_GATE_CONF="$TMP/send.conf" timeout "$TMO" bash "$GATE" fingerprint a.key 2>&1)
 [[ "$out" == a.key:* ]] && ok "a fake id on PATH does not make the gate think it is root" || bad "fake id changed behaviour: $out"
 if ! grep -qE 'homebrew|/usr/local' "$GATE"; then ok "no user writable folder on the root PATH"; else bad "user writable path in the gate"; fi
 if grep -qE '^[[:space:]]*rsync_bin=/usr/bin/rsync' "$GATE"; then ok "rsync is an absolute path chosen on purpose"; else bad "rsync path not pinned"; fi
