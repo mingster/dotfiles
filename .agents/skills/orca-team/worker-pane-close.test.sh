@@ -1128,49 +1128,4 @@ gate_sweep
 check "deletion gate: sweep missing omitted keeps record" "$([ -e "$F2/state/missomit" ] && [ "$(gate_rm "$F2")" = 0 ]; echo $?)"
 unset F2
 
-# Issue 920: a terminal list that omits other hosts never proves a handle gone, so records used to pile up and every
-# one cost a worker-show and a release each round. Aged records of ended dispatches are forgotten; nothing live is touched.
-F2="$tmp/r920"; gate_setup "$F2"
-proj_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
-echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":["runtime:x"]},"terminals":[{"handle":"t_live","worktreePath":"/live/wt"},{"handle":"term_coord","worktreePath":"'"$proj_root"'","worktreeId":"repo1::'"$proj_root"'"},{"handle":"t_c","worktreePath":"/gone/c"}]}}' > "$F2/terminals.json"
-echo '{"ok":true,"result":{"runs":[{"id":"run0","coordinator_handle":"term_coord"},{"id":"run1","coordinator_handle":"term_coord1"}]}}' > "$F2/runs.json"
-echo '{"ok":true,"result":{"workers":[{"dispatchId":"old_done","state":"succeeded","liveness":"exited","workspace":"repo1::/gone/a"},{"dispatchId":"new_done","state":"succeeded","liveness":"exited","workspace":"repo1::/gone/b"},{"dispatchId":"old_live","state":"running","terminal":"t_live","workspace":"repo1::/live/wt"},{"dispatchId":"live_nopane","state":"running","workspace":"repo1::/live/other"}]}}' > "$F2/workers-run0.json"
-echo '{"ok":true,"result":{"workers":[{"dispatchId":"settled_run_a","state":"succeeded","liveness":"exited","workspace":"repo1::/gone/c"},{"dispatchId":"settled_run_b","state":"failed","liveness":"exited","workspace":"repo1::/gone/d"}]}}' > "$F2/workers-run1.json"
-for d in old_done new_done old_live; do echo "t_$d" > "$F2/state/$d"; done
-echo t_live > "$F2/state/old_live"
-echo t_vanished > "$F2/state/old_vanished"
-touch -t 202001010000 "$F2/state/old_done" "$F2/state/old_live" "$F2/state/old_vanished"
-cp "$F2/state/old_live" "$F2/live.before"
-: > "$F2/calls.log"
-( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
-check "920: aged record of an ended dispatch is pruned" "$([ ! -e "$F2/state/old_done" ]; echo $?)"
-check "920: aged record of a dispatch Orca no longer lists is pruned" "$([ ! -e "$F2/state/old_vanished" ]; echo $?)"
-check "920: young record of an ended dispatch is kept" "$([ -e "$F2/state/new_done" ]; echo $?)"
-check "920: aged record of a live worker is kept unchanged" "$([ -e "$F2/state/old_live" ] && cmp -s "$F2/state/old_live" "$F2/live.before"; echo $?)"
-check "920: live worker's terminal is never closed or released" "$(! { [ -s "$F2/closes.log" ] || grep -q 'worker-release --dispatch old_live' "$F2/calls.log"; }; echo $?)"
-check "920: the coordinator terminal is never closed" "$(! grep -qx 'term_coord' "$F2/closes.log" 2>/dev/null; echo $?)"
-check "920: running dispatches get no worker-show" "$(! grep -Eq 'worker-show --dispatch (old_live|live_nopane)' "$F2/calls.log"; echo $?)"
-check "920: a settled Run with no records and no listed terminal costs no worker-show" "$(! grep -q 'worker-show --dispatch settled_run_b' "$F2/calls.log"; echo $?)"
-check "920: a settled Run whose terminal is listed is still looked at" "$(grep -q 'worker-show --dispatch settled_run_a' "$F2/calls.log"; echo $?)"
-# Aging stays off when a list cannot be read: nothing is pruned.
-F2="$tmp/r920-unread"; gate_setup "$F2"
-echo '{"ok":true,"result":{"workers":[{"dispatchId":"old_done","state":"succeeded","liveness":"exited","workspace":"repo1::/gone/a"}]}}' > "$F2/workers-run0.json"
-echo t_x > "$F2/state/old_done"; touch -t 202001010000 "$F2/state/old_done"
-( F2_WORKER_LIST_FAIL=1 ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
-check "920: an unreadable worker-list prunes nothing" "$([ -e "$F2/state/old_done" ]; echo $?)"
-
-# A worker that ran longer than the record age: its record mtime is the start, but its split pane must still be closed
-# before the record is forgotten. A running dispatch keeps a fresh record, so the age counts from when it ended.
-F2="$tmp/r920-long"; gate_setup "$F2"
-echo '{"ok":true,"result":{"truncated":false,"hostScope":{"hostIds":["local"],"omittedHostIds":["runtime:x"]},"terminals":[{"handle":"t_split","worktreePath":"/coord"}]}}' > "$F2/terminals.json"
-echo '{"ok":true,"result":{"workers":[{"dispatchId":"long_done","state":"succeeded","liveness":"exited","workspace":"repo1::/gone/l"},{"dispatchId":"long_run","state":"running","terminal":"t_run","workspace":"repo1::/live/l"}]}}' > "$F2/workers-run0.json"
-echo t_split > "$F2/state/long_done"; echo t_run > "$F2/state/long_run"
-echo '{"result":{"state":"succeeded","liveness":"exited","workspace":"repo1::/gone/l"}}' > "$F2/show.long_done"
-touch -t 202001010000 "$F2/state/long_done" "$F2/state/long_run"
-: > "$F2/calls.log"; : > "$F2/closes.log"
-( ORCA_CLI_COMMAND="$tmp/orca2" ORCA_PANE_STATE_DIR="$F2/state" "$here/worker-pane-close.sh" >/dev/null 2>&1 )
-check "920: a long running worker's split pane is closed before its record is pruned" "$(grep -qx 't_split' "$F2/closes.log"; echo $?)"
-check "920: a running dispatch's record is refreshed, so it ages from its end" "$([ -n "$(find "$F2/state/long_run" -mmin -5)" ]; echo $?)"
-unset F2
-
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

@@ -68,6 +68,27 @@ else
   check "machine --dry-run prints planned links without mutating HOME" bad
 fi
 
+# 924: codegraph is opt in. Without --codegraph nothing about it runs; with it a dry run only plans.
+if ! echo "$out" | grep -q codegraph; then
+  check "machine --dry-run without --codegraph does not mention codegraph" ok
+else
+  check "machine --dry-run without --codegraph does not mention codegraph" bad
+fi
+out_cg=$(bash "$SCRIPT" machine --dry-run --codegraph 2>&1)
+if echo "$out_cg" | grep -q "would install codegraph" && [ ! -e "$HOME/.local" ] && [ ! -e "$HOME/.claude" ]; then
+  check "machine --dry-run --codegraph plans the pinned install and writes nothing" ok
+else
+  check "machine --dry-run --codegraph plans the pinned install and writes nothing" bad
+fi
+cg_proj="$tmp/cg-project"
+mkdir -p "$cg_proj" && cg_proj=$(cd "$cg_proj" && pwd -P) && git -C "$cg_proj" init -q
+out_cgp=$(bash "$SCRIPT" project "$cg_proj" --dry-run --codegraph 2>&1)
+if echo "$out_cgp" | grep -q "would index $cg_proj" && [ ! -e "$cg_proj/.codegraph" ]; then
+  check "project --dry-run --codegraph plans the index and writes nothing" ok
+else
+  check "project --dry-run --codegraph plans the index and writes nothing" bad
+fi
+
 mkdir -p "$HOME/.claude"
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {

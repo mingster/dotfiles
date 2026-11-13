@@ -2342,7 +2342,7 @@ if [ -f "$pane_script" ]; then
     sed -n '/^sweep: /p' "$pane_out"
     guarded_scratch_rm f "$pane_out"
     # 124 is the sweep running out of its budget: it keeps its records and resumes next round, so it is a note, not a failure.
-    if [ "$rc" -eq 124 ]; then echo "Warning: worker-pane-close timed out after ${pane_left}s; retried next run" >&2
+    if [ "$rc" -eq 124 ]; then echo "worker-pane-close timed out after ${pane_left}s; retried next run"
     elif [ "$rc" -ne 0 ]; then fail_item 'worker panes' "worker-pane-close exited $rc"; fi
   fi
 fi
