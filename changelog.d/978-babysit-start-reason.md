@@ -1,0 +1,1 @@
+Babysit now logs why a worker start failed (last stderr line) in the fleet-watch log and the babysit_start_failed notice. A start refused by the usage gate or host placement (exit 3 or 4) is logged as start_deferred and no longer counts toward the failure notice.
