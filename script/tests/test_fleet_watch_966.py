@@ -1,5 +1,7 @@
 import importlib.util
+import os
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
@@ -47,6 +49,15 @@ def unreleased_row(dispatch):
 
 
 class ReleasedDispatchesHoldNoSeat(unittest.TestCase):
+    def setUp(self):
+        # Pin host load and free memory so a busy coordinator cannot fail admission.
+        env = patch.dict(os.environ, {
+            'FLEET_WATCH_TEST_LOAD_PER_CORE': '0.10',
+            'FLEET_WATCH_TEST_FREE_GB': '16.0',
+        })
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_already_released_rows_hold_no_seat(self):
         receipt = fw.admit('local', HOST_CONFIG, workers=[gone_row('d1'), released_verifier_row('d2')])
         self.assertTrue(receipt['admitted'], receipt['reason'])
@@ -56,6 +67,13 @@ class ReleasedDispatchesHoldNoSeat(unittest.TestCase):
         receipt = fw.admit('local', HOST_CONFIG, workers=[unreleased_row('d3')])
         self.assertFalse(receipt['admitted'])
         self.assertEqual(receipt['occupied'], 1)
+
+    def test_freed_evidence_reports_real_pushed_value(self):
+        _, info, _ = fw.classify_worker(released_verifier_row('d2'))
+        self.assertEqual(info['category'], 'freed')
+        self.assertIs(info['evidence']['pushed'], False)
+        _, info, _ = fw.classify_worker(dict(released_verifier_row('d4'), pushed=True))
+        self.assertIs(info['evidence']['pushed'], True)
 
 
 if __name__ == '__main__':
