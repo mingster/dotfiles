@@ -243,38 +243,29 @@ class WorkerStallPass(unittest.TestCase):
         self.assertEqual(len(edits), 1)
         self.assertIn('needs-elon', edits[0])
 
-    def test_pending_start_retries_after_row_not_live(self):
-        """If start fails right after stop, retry on a later pass with snapshot row."""
-        seq = []
+    def test_failed_start_after_stop_is_parked(self):
+        """A start that fails after stop is not tried again on the next pass."""
         starts = []
-        start_attempts = 0
 
         def rpc(*a):
-            seq.append(a)
             if '--retry-of' in a:
                 starts.append(a)
-                nonlocal start_attempts
-                start_attempts += 1
-                if start_attempts == 1:
-                    body = json.dumps({'ok': False, 'error': {'code': 'no_active_sender_terminal'}})
-                    proc_err = subprocess.CalledProcessError(1, ['orca'], '', body)
-                    err = fw.OrcaReadError('no_active_sender_terminal')
-                    err.orca_error_code = 'no_active_sender_terminal'
-                    raise err from proc_err
+                body = json.dumps({'ok': False, 'error': {'code': 'no_active_sender_terminal',
+                                                         'message': 'no active sender terminal'}})
+                proc_err = subprocess.CalledProcessError(1, ['orca'], body, '}\n')
+                err = fw.OrcaReadError('no_active_sender_terminal')
+                err.orca_error_code = 'no_active_sender_terminal'
+                raise err from proc_err
             return {}
 
         w = base_worker(dispatchId='d1', taskId='t_retry', resource={'worktreeId': 'wt::/p'})
         term_times = {'term_fix': OLD_MS}
         state = {}
         cfg = stall_test_config()
-        _, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc)
-        self.assertIn('stall_stop_start_retry_next=d1:no_active_sender_terminal', bits1)
-        self.assertIn('t_retry', state.get('stall_pending_start', {}))
-
-        seq.clear()
-        starts.clear()
-        _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 2, [], term_times, rpc)
-        self.assertIn('stall_restart=d1', bits2)
+        notices, bits1 = fw.worker_stall_pass(cfg, state, T0, [w], term_times, rpc)
+        self.assertTrue(any('no active sender terminal' in str(notice) for notice in notices), notices)
+        self.assertTrue(any(bit.startswith('stall_restart_fail=d1:') for bit in bits1), bits1)
+        self.assertNotIn('t_retry', state.get('stall_pending_start', {}))
         self.assertEqual(len(starts), 1)
         self.assertEqual(starts[0][0], 'bash')
         self.assertTrue(str(starts[0][1]).endswith('worker-startup.sh'))
@@ -284,6 +275,10 @@ class WorkerStallPass(unittest.TestCase):
         self.assertNotIn('--terminal', starts[0])
         self.assertIn('--from', starts[0])
         self.assertEqual(starts[0][starts[0].index('--from') + 1], 'term_stall_sender')
+
+        _, bits2 = fw.worker_stall_pass(cfg, state, T0 + 2, [w], term_times, rpc)
+        self.assertEqual(len(starts), 1)
+        self.assertFalse(any(bit.startswith('stall_restart_retry=') for bit in bits2), bits2)
 
     def test_pending_start_retries_old_record_without_stored_run_uses_single_config_run(self):
         """Legacy pending (no stall_restart_run_id): retry uses the sole configured run id."""

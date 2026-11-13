@@ -171,6 +171,9 @@ map_file() {
     script/tests/fixtures/orca-worker-list.json)
       add_if_exists "script/tests/test_usage_gate.py"
       ;;
+    script/tests/fixtures/fleet-watch/*)
+      map_script_py_base "fleet-watch"
+      ;;
     script/*example|script/*.example.json)
       map_script_example "$path"
       ;;
@@ -238,7 +241,8 @@ printf 'Script tests: %d\n' "${#run_list[@]}"
 [ "$list_only" = true ] && exit 0
 [ "${#run_list[@]}" -eq 0 ] && exit 0
 
-for test_path in "${run_list[@]}"; do
+run_one() {
+  local test_path=$1 pattern
   case "$test_path" in
     *.test.sh) bash "$ROOT/$test_path" ;;
     script/tests/*.test.py) python3 "$ROOT/$test_path" ;;
@@ -246,6 +250,83 @@ for test_path in "${run_list[@]}"; do
       pattern=$(basename "$test_path")
       python3 -m unittest "discover" -s "$ROOT/script/tests" -p "$pattern"
       ;;
-    *) echo "unsupported test type: $test_path" >&2; exit 2 ;;
+    *) echo "unsupported test type: $test_path" >&2; return 2 ;;
   esac
-done
+}
+
+# SELECT_SCRIPT_TESTS_JOBS overlaps independent tests. Unset, tests run one at a time,
+# which is what CI does. checks-local.sh raises it so ship.test.sh can overlap the wrap-up suite.
+jobs=${SELECT_SCRIPT_TESTS_JOBS:-1}
+case "$jobs" in
+  ''|*[!0-9]*) jobs=1 ;;
+esac
+if [ "$jobs" -le 1 ]; then
+  for test_path in "${run_list[@]}"; do
+    run_one "$test_path"
+  done
+else
+  # SELECT_SCRIPT_TESTS_SERIAL is a glob. Those tests run first, alone. A suite with
+  # a few-second budget (wrap-up-scheduled-cleanup) fails if it shares the machine
+  # with ship.test.sh.
+  pool_list=()
+  serial_glob=${SELECT_SCRIPT_TESTS_SERIAL:-}
+  for test_path in "${run_list[@]}"; do
+    if [ -n "$serial_glob" ] && [[ "$test_path" == $serial_glob ]]; then
+      run_one "$test_path"
+    else
+      pool_list+=("$test_path")
+    fi
+  done
+  [ "${#pool_list[@]}" -gt 0 ] || exit 0
+  # A finished slot starts the next test. Waiting on the oldest pid would hold the
+  # rest of the queue behind one long test. Bash 3.2 has no wait -n, so a fifo
+  # token stands in for a free slot. macOS xargs -P also hides a failing child.
+  status_dir=$(mktemp -d)
+  mkfifo "$status_dir/slot"
+  exec 3<>"$status_dir/slot"
+  rm -f "$status_dir/slot"
+  slot_n=0
+  while [ "$slot_n" -lt "$jobs" ]; do
+    printf 'x\n' >&3
+    slot_n=$((slot_n + 1))
+  done
+  set +e
+  pids=()
+  n=0
+  for test_path in "${pool_list[@]}"; do
+    IFS= read -r _ <&3
+    n=$((n + 1))
+    slot=$n
+    (
+      rc=0
+      run_one "$test_path" 3>&- || rc=$?
+      printf '%s\n' "$rc" >"$status_dir/$slot.rc"
+      printf 'x\n' >&3
+    ) &
+    pids+=("$!")
+  done
+  for pid in "${pids[@]+"${pids[@]}"}"; do
+    wait "$pid" || true
+  done
+  set -e
+  exec 3>&-
+  fails=0
+  got=0
+  only=0
+  for rcfile in "$status_dir"/*.rc; do
+    [ -f "$rcfile" ] || continue
+    got=$((got + 1))
+    rc=$(cat "$rcfile")
+    if [ "$rc" -ne 0 ]; then
+      fails=$((fails + 1))
+      only=$rc
+    fi
+  done
+  rm -rf "$status_dir"
+  [ "$got" -eq "${#pool_list[@]}" ] || exit 1
+  # One failing test keeps its own status so a caller can tell exit 9 from a pool error.
+  if [ "$fails" -eq 1 ]; then
+    exit "$only"
+  fi
+  [ "$fails" -eq 0 ]
+fi

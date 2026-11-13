@@ -17,6 +17,69 @@ from unittest import mock
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "guard-bash.py")
 
 
+def _python3_name(name):
+    if name == "python3":
+        return True
+    if not name.startswith("python3."):
+        return False
+    rest = name[len("python3."):]
+    return bool(rest) and rest.isdigit()
+
+
+def _python3_version(path):
+    try:
+        out = subprocess.run(
+            [path, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    parts = out.stdout.strip().splitlines()[-1].strip().split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError:
+        return None
+
+
+def oldest_python3():
+    """The oldest python3 binary on PATH and the usual system prefixes."""
+    seen = set()
+    found = []
+    directories = ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/bin"]
+    directories.extend(os.environ.get("PATH", "").split(os.pathsep))
+    for directory in directories:
+        if not directory or not os.path.isdir(directory):
+            continue
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            if not _python3_name(name):
+                continue
+            path = os.path.join(directory, name)
+            if not os.path.isfile(path) or not os.access(path, os.X_OK):
+                continue
+            try:
+                key = os.path.realpath(path)
+            except OSError:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            version = _python3_version(path)
+            if version:
+                found.append((version, path))
+    if not found:
+        return None
+    found.sort()
+    return found[0][1]
+
+
 class GuardTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="guard-home-")
@@ -595,18 +658,19 @@ class ExactOnlyScripts(GuardTest):
             json.dump(cfg, handle)
         self.extra_env = {"GUARD_CONFIG": path}
 
-    def run_in(self, command, cwd):
-        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd}
-        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
-                             env=dict(os.environ, HOME=self.home, **self.extra_env), cwd=self.home, timeout=20)
+    def run_in(self, command, cwd=None, *, python=None):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd or self.repo}
+        out = subprocess.run([python or sys.executable, HOOK], input=json.dumps(payload), text=True,
+                             capture_output=True, env=dict(os.environ, HOME=self.home, **self.extra_env),
+                             cwd=self.home, timeout=20)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
 
-    def assertRuns(self, command, cwd=None):
-        self.assertIsNone(self.run_in(command, cwd or self.repo), f"expected allow: {command}")
+    def assertRuns(self, command, cwd=None, *, python=None):
+        self.assertIsNone(self.run_in(command, cwd, python=python), f"expected allow: {command}")
 
-    def assertBlocked(self, command, cwd=None):
-        reason = self.run_in(command, cwd or self.repo)
+    def assertBlocked(self, command, cwd=None, *, python=None):
+        reason = self.run_in(command, cwd, python=python)
         self.assertIsNotNone(reason, f"expected deny: {command}")
         self.assertIn(self.SCRIPT, reason)
 
@@ -721,6 +785,58 @@ class ExactOnlyScripts(GuardTest):
                         "ls vault/*.ts", "echo ok # bash .claude/bin/*"):
             with self.subTest(command=command):
                 self.assertRuns(command)
+
+    def test_non_path_variables_and_jq_reads_stay_allowed(self):
+        """A variable that is not a path word, and a plain gh read, stay allowed."""
+        commands = (
+            "ssh -o BatchMode=yes root@stm36.tvcdn.org true; echo exit=$?",
+            "gh api repos/mingster/dotfiles/issues/1007 --jq .state",
+            "state=$(gh api repos/mingster/dotfiles/issues/1007 --jq .state)",
+            'state="$(gh api repos/mingster/dotfiles/issues/1007 --jq .state)"',
+            "echo exit=$HOME",
+            "echo $?",
+            "echo $#",
+            "echo $$",
+            "echo $!",
+            "echo $-",
+            "echo exit=$?",
+            "echo exit=$#",
+            "echo exit=$$",
+            "echo exit=$!",
+            "echo exit=$-",
+            "result=$?",
+            "echo exit=${?}",
+            'echo "exit=$?"',
+            "bash .claude/bin/$?",
+            "bash .claude/bin/$#",
+            "bash .claude/bin/$$",
+            "bash .claude/bin/$!",
+            "bash .claude/bin/$-",
+            "bash .claude/bin/${?}",
+            'bash ".claude/bin/$?"',
+        )
+        for number in range(10):
+            commands += (f"echo ${number}", f"status=${number}")
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertRuns(command)
+        self.assertBlocked("bash .claude/bin/$0")
+        self.assertBlocked("bash .claude/bin/$9")
+
+    def test_hook_compiles_and_runs_on_oldest_python3(self):
+        """The hook loads under the oldest python3 on the host, then still decides."""
+        py = oldest_python3()
+        self.assertIsNotNone(py, "no python3 binary on PATH")
+        self.extra_env["PYTHONDONTWRITEBYTECODE"] = "1"
+        compiled = subprocess.run(
+            [py, "-c",
+             "import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)",
+             HOOK, os.path.join(self.home, "guard-bash.pyc")],
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        self.assertRuns("ssh -o BatchMode=yes root@stm36.tvcdn.org true; echo exit=$?", python=py)
+        self.assertBlocked("bash .claude/bin/*", python=py)
 
     def test_credential_dir_expansion_is_denied(self):
         for command in ("cat vault/secret?/token", "cat vault/secr*", "cat VAULT/SECRETS/*",

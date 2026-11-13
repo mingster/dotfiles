@@ -86,8 +86,8 @@ if ! orca_cli=$(resolve_orca_cli); then
   exit 0
 fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
-# Coordinator file (runs and issue_scan). The host-caps stub at
-# ~/.config/fleet-watch/config.json has no runs and is not the scheduled config.
+# Scheduled config: repo_roots, host_caps, and per-host monitor paths.
+# ~/.config/fleet-watch/config.json is not the scheduled config.
 FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.claude/state/fleet-watch-elon.json}
 FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
 FLEET_WATCH_AUTOMATION_LOG=${FLEET_WATCH_AUTOMATION_LOG:-$HOME/.orca/logs/fleet-watch.log}

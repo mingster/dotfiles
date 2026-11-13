@@ -542,20 +542,40 @@ else
   bad "active run refreshes issue_scan run, terminal and model"
 fi
 
-# --- a pass with no runs fails loudly and the log names the file ---
-echo '{}' > "$tmp/state-noruns.json"
-printf '%s\n' '{"local_host":"h"}' > "$tmp/noruns.json"
+# --- a pass with no coordinator Run keeps queued notices and exits 0 ---
+# The recorded concise run-list has runs and no coordinator terminal. Pagination stops on this copy.
+recorded_list=$(ls "$root"/script/tests/fixtures/fleet-watch/orca-*/run-list.json | tail -1)
+cat > "$tmp/bin/orca-no-run" <<EOF
+#!/bin/bash
+'$real_py' - '$recorded_list' <<'PY'
+import json, sys
+raw = json.load(open(sys.argv[1], encoding='utf-8'))
+body = json.loads(raw['stdout'])
+body['result']['nextCursor'] = None
+json.dump(body, sys.stdout)
+PY
+EOF
+chmod +x "$tmp/bin/orca-no-run"
+python3 - "$tmp/state-noruns.json" <<'PY'
+import json, sys
+json.dump({
+    "notice_queue": {"term_old": [{"text": "queued notice", "urgent": False, "passes": 0}]},
+}, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+printf '%s\n' '{"runs":[{"id":"run_stale","terminal":"term_stale","waiter_pattern":"old"}],"local_host":"h"}' > "$tmp/noruns.json"
 noruns_log=$tmp/noruns.log
 rm -f "$noruns_log"
 noruns_rc=0
-HOME="$stub_home" FLEET_WATCH_LOG_PATH="$noruns_log" "$real_py" "$root/script/fleet-watch.py" \
+ORCA_CLI_COMMAND="$tmp/bin/orca-no-run" HOME="$stub_home" FLEET_WATCH_LOG_PATH="$noruns_log" \
+  "$real_py" "$root/script/fleet-watch.py" \
   --config "$tmp/noruns.json" --state "$tmp/state-noruns.json" >"$tmp/noruns.out" 2>"$tmp/noruns.err" || noruns_rc=$?
-if [ "$noruns_rc" -ne 0 ] \
-  && grep -q "config $tmp/noruns.json has no runs; refusing this pass" "$tmp/noruns.err" \
-  && grep -q "config $tmp/noruns.json has no runs; refusing this pass" "$noruns_log"; then
-  ok "missing runs refuses the pass and the log names the file"
+if [ "$noruns_rc" -eq 0 ] \
+  && grep -q "no coordinator run" "$tmp/noruns.err" \
+  && grep -q "no coordinator run" "$noruns_log" \
+  && grep -q "queued notice" "$tmp/state-noruns.json"; then
+  ok "no coordinator run keeps the queue and exits 0"
 else
-  bad "missing runs refuses the pass and the log names the file (rc=$noruns_rc stderr=$(cat "$tmp/noruns.err") log=$(cat "$noruns_log" 2>/dev/null || true))"
+  bad "no coordinator run keeps the queue and exits 0 (rc=$noruns_rc stderr=$(cat "$tmp/noruns.err") log=$(cat "$noruns_log" 2>/dev/null || true) state=$(cat "$tmp/state-noruns.json" 2>/dev/null || true))"
 fi
 
 echo "babysit-dispatch: $pass passed, $fail failed"

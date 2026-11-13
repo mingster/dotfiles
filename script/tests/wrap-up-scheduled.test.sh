@@ -88,6 +88,9 @@ round() {
     FAKE_REPOS="${FAKE_REPOS:-ok}" FAKE_REPO_LIST="$tmp/repos.json" FAKE_SLEEP="${FAKE_SLEEP:-}" \
     FAKE_GH_LOG="$ghlog" FAKE_GH_OPEN="$tmp/gh-open.json" FAKE_GH_LIST_FAIL="${FAKE_GH_LIST_FAIL:-}" FAKE_GH_PUBLIC="${FAKE_GH_PUBLIC:-}" \
     ORCA_CLI_COMMAND=/nonexistent/orca WRAP_UP_FLEET_CONFIG=/caller/fleet.json \
+    ${BOARD_DONE_COORDINATOR_CONF:+BOARD_DONE_COORDINATOR_CONF="$BOARD_DONE_COORDINATOR_CONF"} \
+    ${WRAP_UP_BOARD_DONE:+WRAP_UP_BOARD_DONE="$WRAP_UP_BOARD_DONE"} \
+    ${BOARD_DONE_CALLS:+BOARD_DONE_CALLS="$BOARD_DONE_CALLS"} \
     bash "$script" --scheduled "$@"
 }
 # Bounded wait on a file the other side creates (no sleeps: it ends the moment the file exists, or after ~20 s of polling).
@@ -95,7 +98,7 @@ waitfor() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 200000 ]; do i=$((i+1))
 reset() {
   rm -rf "$calls" "$log" "$detail" "$ghlog" "$tmp/gh-open.json" "$tmp/state"/* "$tmp/app"/* "$tmp/home/.local/bin"/* "$tmp/home/.orca/cli/bin"/*
   FAKE_BLOCK=; FAKE_ORCA=ready; FAKE_REPOS=ok; FAKE_SLEEP=; LOAD=1; FAIL_REPO=none; ROUND_PATH=; APP_BIN=; ROUND_LIMIT=; CALL_TIMEOUT=; FAKE_GH_LIST_FAIL=; KILL_GRACE=; FAKE_GH_PUBLIC=; PRECHECK_TIMEOUT=; unset ISSUE_REPO
-  unset LOAD_CMD CORES_CMD
+  unset LOAD_CMD CORES_CMD BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE BOARD_DONE_CALLS
 }
 
 reset
@@ -448,6 +451,31 @@ round --dry-run
 check 'scheduled dry-run passes --dry-run to the child' has "args=--dry-run --repo $repo_a" "$calls"
 check 'scheduled dry-run does not apply' lacks 'args=--apply' "$calls"
 check 'scheduled dry-run records per-repo seconds' has "repo $repo_a seconds=" "$detail"
+
+# The coordinator's round moves board cards on every host. Other hosts leave the board alone.
+# fleet-watch stays out of it: that pass only alerts, and this round already owns the board.
+reset
+board_conf="$tmp/home/coordinator.conf"
+board_stub="$tmp/board-done-stub"
+export BOARD_DONE_CALLS="$tmp/board-done-calls"
+printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+cat > "$board_stub" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$BOARD_DONE_CALLS"
+exit 0
+EOS
+chmod +x "$board_stub"
+: > "$BOARD_DONE_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round
+check 'coordinator round runs board-done across the fleet' has '--fleet --apply' "$BOARD_DONE_CALLS"
+check 'coordinator round still records round ok' has 'round ok: repos=2' "$log"
+: > "$BOARD_DONE_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round --dry-run
+check 'coordinator dry run asks board-done not to set cards' has '--fleet --dry-run' "$BOARD_DONE_CALLS"
+printf 'coordinator someone-else\n' > "$board_conf"
+: > "$BOARD_DONE_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round
+check 'a non-coordinator round leaves the board alone' test ! -s "$BOARD_DONE_CALLS"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

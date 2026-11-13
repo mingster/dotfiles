@@ -173,6 +173,19 @@ case_fleet_watch_config_example() {
   ok "fleet-watch config example maps to fleet-watch tests"
 }
 
+case_fleet_watch_recorded_replies() {
+  local out count
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
+    bash "$root/script/select-changed-script-tests.sh" --list-only \
+    script/tests/fixtures/fleet-watch/orca-1.4.258/run-list.json 2>&1)
+  grep -Fq 'Fallback:' <<<"$out" && fail "recorded fleet-watch replies must not fall back to full suite"
+  grep -Fq 'Selected: script/tests/test_fleet_watch_scan.py' <<<"$out" \
+    || fail "recorded replies must select fleet-watch tests"
+  count=$(script_tests_count_from_output <<<"$out")
+  [ "${count:-0}" -lt 50 ] || fail "recorded replies want scoped suite got ${count:-0}"
+  ok "recorded fleet-watch replies map to fleet-watch tests"
+}
+
 case8_full_suite_fallback() {
   local out count
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
@@ -301,6 +314,7 @@ case5_py_runner
 case6_pr_review
 case7_ship_maps_its_test
 case_fleet_watch_config_example
+case_fleet_watch_recorded_replies
 case8_full_suite_fallback
 case9_sync_team_skills_agent_team
 case10_script_plus_already_selected_test
@@ -320,4 +334,26 @@ case14_worker_start_check() {
 }
 
 case14_worker_start_check
-echo 'PASS: 16 acceptance cases'
+
+case15_parallel_jobs() {
+  local fixture=$tmp/case15 out rc
+  mkdir -p "$fixture/script/tests"
+  printf '#!/usr/bin/env bash\necho pass-a\n' >"$fixture/script/tests/a.test.sh"
+  printf '#!/usr/bin/env bash\necho pass-b\n' >"$fixture/script/tests/b.test.sh"
+  printf '#!/usr/bin/env bash\necho fail-c >&2\nexit 7\n' >"$fixture/script/tests/c.test.sh"
+  chmod +x "$fixture/script/tests/"*.test.sh
+  rc=0
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$fixture" SELECT_SCRIPT_TESTS_SKIP=/dev/null SELECT_SCRIPT_TESTS_JOBS=2 \
+    bash "$root/script/select-changed-script-tests.sh" script/tests/a.test.sh script/tests/b.test.sh 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "case15 passing pair exit $rc: $out"
+  grep -Fq 'pass-a' <<<"$out" && grep -Fq 'pass-b' <<<"$out" || fail "case15 missing pass lines: $out"
+  rc=0
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$fixture" SELECT_SCRIPT_TESTS_SKIP=/dev/null SELECT_SCRIPT_TESTS_JOBS=2 \
+    bash "$root/script/select-changed-script-tests.sh" script/tests/a.test.sh script/tests/c.test.sh 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "case15 a failing test must fail the run: $out"
+  grep -Fq 'fail-c' <<<"$out" || fail "case15 missing the failing line: $out"
+  ok "case15 overlapping tests keep a failing exit"
+}
+
+case15_parallel_jobs
+echo 'PASS: 18 acceptance cases'

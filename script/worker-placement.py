@@ -280,8 +280,14 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
                 if mapped:
                     result['repo'] = mapped
             return result
-    if unmapped == len(hosts):
-        return {'ok': False, 'reason': 'no host has a repo mapping', 'loads': {}}
+    remote_hosts = [h for h in hosts if h != local_host]
+    every_remote_unmapped = bool(remote_hosts) and all(
+        not host_has_repo_mapping(config, h, local_host, repo_selector) for h in remote_hosts
+    )
+    # A local host that is merely busy is not a mapping miss. When every remote host was
+    # skipped for no repo mapping, say that, even if the local host also had no load.
+    if every_remote_unmapped or unmapped == len(hosts):
+        return {'ok': False, 'reason': 'no host has a repo mapping', 'loads': considered}
     if not considered:
         return {'ok': False, 'reason': 'no readable load for any eligible host', 'loads': {}}
     return {'ok': False, 'reason': 'all eligible hosts over load ceiling', 'loads': considered}
@@ -290,11 +296,15 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
 def format_line(result: dict) -> str:
     if result.get('ok'):
         return 'worker-placement: host=%s load_1m=%s' % (result['host'], result['load_1m'])
+    reason = result.get('reason') or 'unknown'
     loads = result.get('loads') or {}
-    if loads:
+    if loads and 'repo mapping' not in reason:
         parts = ' '.join('%s=%s' % (h, loads[h]) for h in sorted(loads))
         return 'worker-placement: refused %s' % parts
-    return 'worker-placement: refused (%s)' % (result.get('reason') or 'unknown')
+    if loads:
+        parts = ' '.join('%s=%s' % (h, loads[h]) for h in sorted(loads))
+        return 'worker-placement: refused (%s) %s' % (reason, parts)
+    return 'worker-placement: refused (%s)' % reason
 
 
 def cmd_pick(args: argparse.Namespace) -> int:

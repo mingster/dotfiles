@@ -165,20 +165,17 @@ class BabysitStartFailureNotice(unittest.TestCase):
             owner_check=lambda _pr: None,
         )
 
-    def test_three_start_failures_send_one_notice_until_a_start_works(self):
+    def test_one_start_failure_notifies_once_and_does_not_retry(self):
         with tempfile.TemporaryDirectory() as root:
             state = {}
-            sent = []
-            for _ in range(4):
-                notices, lines, _log = self.run_pass(state, 1, root)
-                self.assertTrue(any('start-failed' in line for line in lines), lines)
-                sent += notices
-            self.assertEqual(len(sent), 1)
-            self.assertIn('o/r#7', sent[0])
+            notices, lines, _log = self.run_pass(state, 1, root)
+            self.assertTrue(any('start-failed' in line for line in lines), lines)
+            self.assertEqual(len(notices), 1)
+            self.assertIn('o/r#7', notices[0])
 
-            notices, _lines, _log = self.run_pass(state, 0, root)
+            notices, lines, _log = self.run_pass(state, 1, root)
             self.assertEqual(notices, [])
-            self.assertNotIn('babysit_start_failed', state['failure_streaks'])
+            self.assertTrue(any('parked' in line for line in lines), lines)
 
 
 class BabysitLiveVerifier(unittest.TestCase):
@@ -315,13 +312,13 @@ class BabysitStartReason(unittest.TestCase):
     def test_start_failure_logs_the_reason_and_names_it_in_the_notice(self):
         with tempfile.TemporaryDirectory() as root:
             state = {}
-            sent = []
-            for _ in range(3):
-                notices, _lines, log = self.pass_with(state, 1, 'bun install failed in /x', root)
-                sent += notices
+            notices, _lines, log = self.pass_with(state, 1, 'bun install failed in /x', root)
             self.assertIn('start_fail=7:bun install failed in /x', log)
-            self.assertEqual(len(sent), 1)
-            self.assertIn('bun install failed in /x', sent[0])
+            self.assertEqual(len(notices), 1)
+            self.assertIn('bun install failed in /x', notices[0])
+            notices, _lines, log = self.pass_with(state, 1, 'bun install failed in /x', root)
+            self.assertEqual(notices, [])
+            self.assertFalse(any(bit.startswith('start_fail=') for bit in log), log)
 
     def test_placement_and_usage_gate_refusals_defer_without_a_failure_streak(self):
         with tempfile.TemporaryDirectory() as root:

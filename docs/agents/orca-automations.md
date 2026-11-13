@@ -2,7 +2,7 @@
 
 Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each job runs only a precheck shell command; the automation prompt is a placeholder and the precheck always exits with status 1 so no agent session starts. `wrap-up-scheduled` installs **enabled** (`*/10 * * * *`) on every host that runs Orca, while `fleet-watch` and the other coordinator jobs install **enabled** only on the host named in private `agent-state/coordinator.conf` and **disabled** (paused) on other Orca hosts. Re-running `--install` fixes a stale `wrap-up-scheduled` schedule (such as `0 */2 * * *`) or a disabled entry. Hosts without the Orca app (such as the headless database host) are skipped with a clear message and exit 0, and worktree cleanup there stays manual.
 
-Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). The installer passes `WRAP_UP_ISSUE_REPO` to `wrap-up-scheduled`. It defaults to the private `mingster/agent-state`, and `automations.env` can override it. The `fleet-watch` precheck passes `--config` for `~/.claude/state/fleet-watch-elon.json` unless `FLEET_WATCH_CONFIG` is set. That file holds `runs` and `issue_scan`. The host-caps file `~/.config/fleet-watch/config.json` is not the scheduled config. wrap-up opens no issue on a public repo. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
+Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). The installer passes `WRAP_UP_ISSUE_REPO` to `wrap-up-scheduled`. It defaults to the private `mingster/agent-state`, and `automations.env` can override it. The `fleet-watch` precheck passes `--config` for `~/.claude/state/fleet-watch-elon.json` unless `FLEET_WATCH_CONFIG` is set. That file holds the hand-kept keys (`repo_roots`, `host_caps`, and the per-host monitor paths). The host-caps file `~/.config/fleet-watch/config.json` is not the scheduled config. wrap-up opens no issue on a public repo. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
 
 ## Commands
 
@@ -30,7 +30,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 
 ## Scheduled worktree cleanup round
 
-`script/wrap-up.sh --scheduled` runs one worktree cleanup round on this host. A round takes a lock (one per host,
+`script/wrap-up.sh --scheduled` runs one worktree cleanup round on this host. On the coordinator host it then runs `script/board-done.py --fleet`, which moves finished cards to Done on every paired Orca and skips a host it cannot reach. A round takes a lock (one per host,
 under `~/.local/state/agent-team/`), finds the orca CLI, checks that `orca status --json` reports ready,
 skips when the 1 minute load divided by the cores is 0.7 or more, then runs `wrap-up.sh --apply` for each
 git repo in `orca repo list`. There is no config file. A manual worktree cleanup run does not take the lock;

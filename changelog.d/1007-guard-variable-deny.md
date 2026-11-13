@@ -1,0 +1,2 @@
+The shell guard allows `$?`, `$#`, `$$`, `$!`, `$-`, and `$0` to `$9` when they are not part of a path. It allows any other variable in a word with no path separator, unless the text before the variable can complete a protected directory name. The guard still denies a glob, a brace, a substitution, `find -exec`, or `xargs` that can name a restricted script or a credential directory. The hook loads on Python 3.9.
+
