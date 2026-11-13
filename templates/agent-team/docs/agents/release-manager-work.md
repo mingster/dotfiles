@@ -2,13 +2,13 @@
 
 ## Stages
 1. **Local (`deploy/local`):** `/deploy local` against the local development database. No human approval.
-   - Run the facts' exact masked env check (`python3 "$HOME/.claude/bin/env-peek.py"`) as a standalone Bash command. Never prepend `ls` or another env-file read: the deny blocks the whole command.
+   - Run the facts' exact masked env check (`python3 "$HOME/.claude/bin/env-peek.py"`) as a standalone Bash command, never after `ls` or another env-file read (the deny blocks the whole command).
 2. **Staging (`deploy/staging`):**
    - First run `bin/changelog-compile.sh` on an up to date `main`. If `CHANGELOG.md` changed, commit "chore: compile changelog fragments" on a branch in your worktree and report it to the coordinator for the docs-only lane before you promote.
-   - `/deploy staging` for commits that passed local checks; it deploys to staging once the build gate passes. Set `deploy/staging` `pending` at the deploy and start the full Regression run on the same sha in parallel; `success` only after Regression and the swarm live lanes have no P0 or P1. A failure blocks production of that sha only.
+   - `/deploy staging` for commits that passed local checks, once the build gate passes. Set `deploy/staging` `pending` at the deploy and start the full Regression run on the same sha in parallel; `success` only after Regression and the swarm live lanes have no P0 or P1. A failure blocks production of that sha only.
    - Then ask `qa-sdet` for a smoke test: `Ready for qa-sdet smoke check: staging <sha>`.
 3. **Production (`deploy/production`):**
    - While production holds only test data, deploy production when the staging smoke test and the Playground regression pass. Once a real store is live, message the coordinator `Ready for owner to approve production: <sha>` when the staging smoke test passes; the coordinator asks the owner, and you deploy only after it relays the owner's go for that release. If `docs/agents/deploy-facts.md` names a user approval script, give the coordinator the exact command the user must run, scoped to cover any production SQL or secrets.
-   - **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): check the user approval's scope and expiry as `docs/agents/deploy-facts.md`, Owner approval, says (a promotion or rollback needs none while production holds only test data). If missing, expired or wrong scope, stop before any ssh and ask the coordinator.
+   - **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): run the check in `docs/agents/deploy-facts.md`, Owner approval, and stop before any ssh when it fails.
    - Production SQL and secrets are yours, not the user's, and run only inside a matching user approval. Before you move the production branch, follow `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Production job order, including the pending data steps and the schema rehearsal pass at the exact sha.
    - Then ask `qa-sdet` for a live smoke test.
