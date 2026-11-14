@@ -75,6 +75,13 @@ class ExitedLivenessSeats(unittest.TestCase):
         self.assertEqual(receipt['live_count'], 0)
         self.assertEqual(receipt['retained_count'], 0)
 
+    def test_null_workspace_does_not_raise_and_holds_no_seat(self):
+        row = dispatched_exited('ctx_null_ws')
+        row['projection']['workspace'] = None
+        receipt = self.admit([row])
+        self.assertEqual(receipt['occupied'], 0)
+        self.assertEqual(receipt['live_count'], 0)
+
     def test_live_dispatch_still_holds_a_live_seat(self):
         row = dispatched_exited('ctx_live')
         row['projection']['liveness'] = {'verdict': 'live', 'source': 'agent_status'}
