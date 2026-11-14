@@ -15,11 +15,13 @@ Blocks these kinds of accident:
    configured stage or production branch, any force push, promote/rollback/apply
    scripts, schema overrides, and ssh, scp, sftp or rsync to a configured
    production host beyond a read-only allowlist. release-manager may push the
-   production branch with no owner go while `docs/agents/deploy-facts.md` has
-   exactly one `Production data: production holds only test data` line. Once that
-   line says a real store is live, the go is required again. Project values are
-   loaded from `<project>/.claude/hooks/guard-config.json` (defaulting to empty
-   when absent).
+   production branch with no owner go only when the committed
+   `origin/main:docs/agents/deploy-facts.md` in the project whose guard config
+   loaded has exactly one `Production data: production holds only test data`
+   line outside a code fence or HTML comment, and no other line says a real
+   store is live. A force push stays gated. Once a real store is live, the go
+   is required again. Project values are loaded from
+   `<project>/.claude/hooks/guard-config.json` (defaulting to empty when absent).
 5. Copying, linking, or writing `.env` / `.env.*` files in linked agent worktrees
    (`check_worktree_env`), unless listed in `worktree_env_allow`.
 6. Editing template-managed agent team files directly inside an adopted project
@@ -76,6 +78,7 @@ SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
 HOST_DEPLOY_PATTERNS: dict[str, list[re.Pattern]] = {}
 CONFIG_LOADED_FROM: str | None = None
+GRILL_APPROVERS: set[str] = set()
 
 DEFAULT_SECRETS_DIR_PATTERN = r"(?:^|[/\s='\"<(])secrets(?:/|$|[\s'\"\)])"
 SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
@@ -210,9 +213,10 @@ def load_guard_config(start_dir):
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
-    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS
+    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS
 
     BLOCKED_SCRIPTS = set()
+    GRILL_APPROVERS = set()
     PRODUCTION_HOSTS = set()
     BACKSTOP_HOSTS = set()
     PRODUCTION_HOSTS_ERROR = None
@@ -428,6 +432,9 @@ def load_guard_config(start_dir):
     for name in cfg_expect("remote_read_only_commands", list, "list") or []:
         if isinstance(name, str) and name.strip() and not any(ch.isspace() for ch in name):
             REMOTE_READ_ONLY.append(re.compile(re.escape(name.strip()) + r"(?: .*)?"))
+    for login in cfg_expect("grill_approvers", list, "list") or []:
+        if isinstance(login, str) and login.strip():
+            GRILL_APPROVERS.add(login.strip().lower())
 
 
 def segments(command):
@@ -1044,19 +1051,56 @@ def is_production_branch(branch):
 PRODUCTION_DATA_LINE = re.compile(
     r"(?im)^[ \t]*\*[ \t]+Production data:[ \t]*(production holds only test data|a real store is live)[ \t]*\.?[ \t]*$"
 )
+LIVE_STORE = re.compile(r"(?i)real store is live")
+POLICY_LIVE = re.compile(r"(?i)\b(?:once|when|if|after)\b[^.\n]{0,40}\Z")
 
 
-def production_holds_test_data(cwd):
-    """True only for one status line. Policy sentences that mention both states do not count.
-    A missing, unreadable or contradictory file keeps the owner's go."""
-    root = find_project_root(cwd or GATE_CWD or os.getcwd())
-    path = os.path.join(root, "docs", "agents", "deploy-facts.md")
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read(65536)
-    except OSError:
+def guard_facts_root():
+    """The project whose guard config loaded. `git -C` does not move it."""
+    cfg = find_guard_config(GATE_CWD or os.getcwd())
+    if not cfg:
+        return None
+    parent = os.path.dirname(os.path.abspath(cfg))
+    if os.path.basename(parent) == "hooks" and os.path.basename(os.path.dirname(parent)) == ".claude":
+        return os.path.dirname(os.path.dirname(parent))
+    return find_project_root(parent)
+
+
+def strip_hidden_markup(text):
+    """Drop HTML comments and fenced blocks so a status line inside them does not count."""
+    text = re.sub(r"(?s)<!--.*?-->", "", text)
+    text = re.sub(r"(?s)<!--.*\Z", "", text)
+    for fence in ("```", "~~~"):
+        text = re.sub("(?s)" + re.escape(fence) + ".*?" + re.escape(fence), "", text)
+        text = re.sub("(?s)" + re.escape(fence) + r".*\Z", "", text)
+    return text
+
+
+def states_real_store_is_live(text):
+    """True when the file states that a real store is live, outside a policy sentence."""
+    for match in LIVE_STORE.finditer(text):
+        before = text[max(0, match.start() - 40):match.start()]
+        if POLICY_LIVE.search(before):
+            continue
+        return True
+    return False
+
+
+def production_holds_test_data():
+    """True only for one committed test-data status line on origin/main.
+
+    Policy sentences that mention both states do not count. A status line inside a
+    code fence or HTML comment does not count. Any other line that says a real store
+    is live wins. A missing or unreadable blob keeps the owner's go."""
+    root = guard_facts_root()
+    if not root:
         return False
-    found = [m.group(1).lower() for m in PRODUCTION_DATA_LINE.finditer(text)]
+    shown = gate_run(["git", "-C", root, "show", "origin/main:docs/agents/deploy-facts.md"], None)
+    if shown is None:
+        return False
+    if states_real_store_is_live(shown):
+        return False
+    found = [m.group(1).lower() for m in PRODUCTION_DATA_LINE.finditer(strip_hidden_markup(shown))]
     return found == ["production holds only test data"]
 
 
@@ -1091,24 +1135,27 @@ def first_brief(transcript_path):
     return ""
 
 
+def agreed_session_role(text):
+    """The brief's `Role:` line and title, when they name the same role.
+
+    A path such as `agents/<role>.md` does not assign the role. A disagreement returns
+    nothing, so a production exemption that needs one role does not fire."""
+    if not text:
+        return ""
+    named = re.search(r"(?m)^Role:\s*([a-z0-9-]+)\b", text)
+    title = re.search(r"(?m)^#\s*([a-z0-9-]+)\s+-\s+\S", text)
+    if not named or not title or named.group(1) != title.group(1):
+        return ""
+    return named.group(1)
+
+
 def session_role():
-    """The role the worker brief assigns. The first canonical role file wins, then `Role:`, then the title."""
+    """The role the worker brief assigns. `Role:` and the title must agree."""
     cached = getattr(session_role, "cached", None)
     if cached is not None:
         return cached[0]
     text = first_brief(HOOK_INPUT.get("transcript_path") if isinstance(HOOK_INPUT, dict) else "")
-    role = ""
-    if text:
-        path = re.search(r"(?:^|/)agents/([a-z0-9-]+)\.md\b", text)
-        if path and f"{path.group(1)}.md" in CANONICAL_ROLES:
-            role = path.group(1)
-        else:
-            named = re.search(r"(?m)^Role:\s*([a-z0-9-]+)\b", text)
-            if named:
-                role = named.group(1)
-            else:
-                title = re.search(r"(?m)^#\s*([a-z0-9-]+)\s+-\s+\S", text)
-                role = title.group(1) if title else ""
+    role = agreed_session_role(text)
     session_role.cached = (role,)
     return role
 
@@ -1164,7 +1211,7 @@ def check_git_push(args, cdir):
             if not src:
                 deny(f"Deleting `{branch}` is never an agent's job and {APPROVE} has no scope for it. "
                      "Report it to Elon, who asks the owner; the owner does it himself.")
-            if (not forced and is_production_branch(branch) and production_holds_test_data(cwd)
+            if (not forced and is_production_branch(branch) and production_holds_test_data()
                     and session_role() == "release-manager"):
                 continue
             sha = resolve(src, cwd) or (src if re.fullmatch(r"[0-9a-fA-F]{7,40}", src) else "<sha>")
@@ -1773,15 +1820,25 @@ PROTECTED_PATHS = (
     "templates/agent-team/.claude/agents/",
 )
 OWNER_TRAILER = re.compile(r"Owner-approved:\s*\S", re.I)
-GRILL_RECORD = re.compile(
-    r"(?is)(?=.*\bgrill\b)(?=.*(?:\b(?:coordinator|elon|owner)\b.{0,80}\bapprov|\bapprov.{0,80}\b(?:coordinator|elon|owner)\b))"
+GRILL_LINE = re.compile(
+    r"(?i)\Agrill approved:[ \t]+(coordinator|owner|elon)[ \t]+(\d{4}-\d{2}-\d{2})\Z"
 )
 GRILL_EXEMPT_LABELS = ("hotfix", "mechanical")
-MONEY_PRICE_LABELS = frozenset({"money-rule", "money-rules", "price", "prices"})
-MONEY_PRICE_LINE = re.compile(
-    r"(?im)^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?owner-reserved(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*(?:\*\*)?"
-    r"(money rules?|prices?)(?:\*\*)?[ \t]*\.?[ \t]*$"
+# team.md, Pre-build grill gate: money is payments, billing, refunds, ledger, credits,
+# pricing or entitlements. Bare "price" is a label or an Owner-reserved value, not a
+# new page that mentions a price in yen. A near miss of that marker fails closed.
+MONEY_PRICE_LABELS = frozenset({
+    "money-rule", "money-rules", "price", "prices",
+    "money", "pricing", "billing",
+    "payment", "payments", "refund", "refunds",
+    "ledger", "credit", "credits",
+    "entitlement", "entitlements",
+    "fee", "fees",
+})
+BODY_MONEY = re.compile(
+    r"(?i)(?:\b(?:payments?|billing|refunds?|ledger|credits?|pricing|entitlements?|fees?|money)\b|儲值|plan\s+prices?)"
 )
+PRICE_WORD = re.compile(r"(?i)\bprices?\b")
 REMOTE_FLAGS = ("--on", "--environment", "--pairing-code")
 
 
@@ -1976,17 +2033,72 @@ def check_brief_lint(brief):
              "Follow ~/.agents/skills/triage/AGENT-BRIEF.md.")
 
 
+def owner_reserved_values(text):
+    values = []
+    for line in str(text).splitlines():
+        cleaned = line.replace("**", "").replace("__", "").strip()
+        cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
+        cleaned = re.sub(r"^[-*]\s+", "", cleaned)
+        match = re.match(r"(?i)owner[\s-]*reserved\s*:\s*(.+)$", cleaned)
+        if match:
+            values.append(match.group(1).strip())
+    return values
+
+
 def money_or_price_issue(issue):
-    """A money rule or a price. A new page, and every other issue, is not one of these."""
+    """A money rule or a price, from the title, body, or labels. A new page is not one."""
     names = set()
-    for label in issue.get("labels") or []:
+    labels = issue.get("labels")
+    if labels is None:
+        labels = []
+    elif not isinstance(labels, list):
+        return True
+    for label in labels:
         if isinstance(label, dict):
             names.add(str(label.get("name", "")).strip().lower())
         elif isinstance(label, str):
             names.add(label.strip().lower())
     if names & MONEY_PRICE_LABELS:
         return True
-    return bool(MONEY_PRICE_LINE.search(issue.get("body") or ""))
+    text = "\n".join([str(issue.get("title") or ""), str(issue.get("body") or "")])
+    if BODY_MONEY.search(text):
+        return True
+    return any(BODY_MONEY.search(value) or PRICE_WORD.search(value) for value in owner_reserved_values(text))
+
+
+def comment_login(comment):
+    author = comment.get("author")
+    if isinstance(author, dict):
+        return str(author.get("login") or "").strip().lower()
+    if isinstance(author, str):
+        return author.strip().lower()
+    return ""
+
+
+def grill_record_ok(comment):
+    """An exact approval line from the repo owner or a configured coordinator login."""
+    if not isinstance(comment, dict) or not GRILL_LINE.search(str(comment.get("body") or "").strip()):
+        return False
+    login = comment_login(comment)
+    if not login:
+        return False
+    if str(comment.get("authorAssociation") or "").strip().upper() == "OWNER":
+        return True
+    return login in GRILL_APPROVERS
+
+
+def load_issue(number, repo_args):
+    raw = gate_run(
+        ["gh", "issue", "view", number, *repo_args, "--json", "title,labels,body,comments"], None)
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        issue = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(issue, dict):
+        return None
+    return issue
 
 
 def check_grill_gate(args, spec):
@@ -2005,21 +2117,39 @@ def check_grill_gate(args, spec):
         deny("This build worker names no issue number, so a money rule or price issue cannot be told apart from "
              "other work. Name the issue (`#<n>`) in the spec, or use `--worktree issue:<n>`.")
     number = found.group(1)
-    raw = gate_run(["gh", "issue", "view", number, *repo_args, "--json", "labels,body,comments"], None)
-    try:
-        issue = json.loads(raw)
-    except Exception:
-        return
-    labels = " ".join(l.get("name", "") for l in issue.get("labels") or [] if isinstance(l, dict)).lower()
-    texts = [issue.get("body") or ""] + [c.get("body") or "" for c in issue.get("comments") or []]
-    if any(x in labels for x in GRILL_EXEMPT_LABELS) or any("elon take over" in t.lower() for t in texts[1:]):
+    shown = f"{repo_name}#{number}" if repo_name else f"#{number}"
+    issue = load_issue(number, repo_args)
+    if issue is None:
+        deny(f"Issue {shown} could not be read, so a money rule or price cannot be told apart from other work. "
+             "The build stays stopped until `gh issue view` returns the issue.")
+    labels = issue.get("labels")
+    comments = issue.get("comments")
+    if labels is None:
+        labels = []
+    if comments is None:
+        comments = []
+    if not isinstance(labels, list) or not isinstance(comments, list):
+        deny(f"Issue {shown} could not be read, so a money rule or price cannot be told apart from other work.")
+    names = []
+    for label in labels:
+        if isinstance(label, dict):
+            names.append(str(label.get("name") or ""))
+        elif isinstance(label, str):
+            names.append(label)
+    label_text = " ".join(names).lower()
+    texts = [comment.get("body") or "" for comment in comments if isinstance(comment, dict)]
+    if any(x in label_text for x in GRILL_EXEMPT_LABELS) or any("elon take over" in t.lower() for t in texts):
         return
     if not money_or_price_issue(issue):
         return
-    if not any(GRILL_RECORD.search(t) for t in texts[1:]):
-        deny(f"Missing: a comment on {repo_name}#{number} recording the coordinator's approval of the grill results "
-             "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). Money rules and prices need "
-             "that record before the build starts. The owner checks the same issue at merge. "
+    if not any(grill_record_ok(comment) for comment in comments):
+        deny(f"Missing: a comment on {shown} recording the coordinator's approval of the grill results "
+             "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). "
+             "The comment is one line, `Grill approved: coordinator <YYYY-MM-DD>`, "
+             "`Grill approved: owner <YYYY-MM-DD>`, or `Grill approved: elon <YYYY-MM-DD>`, "
+             "written by the coordinator or the owner. "
+             "Money rules and prices need that record before the build starts. "
+             "The owner checks the same issue at merge. "
              "Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
 
 

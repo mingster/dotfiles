@@ -294,17 +294,17 @@ class GrillGate(Gate):
 
     def test_build_worker_with_approval_allowed(self):
         self.reserve()
-        self.issue["comments"] = [{"body": "Owner approved the grill results on 2026-11-04."}]
+        self.grill_comment(who="owner", date="2026-11-04")
         self.assertAllowed(self.BUILD)
 
     def test_coordinator_grill_record_allows_the_build(self):
         self.reserve("price")
-        self.issue["comments"] = [{"body": "Coordinator approved the grill results on 2026-11-14."}]
+        self.grill_comment()
         self.assertAllowed(self.BUILD)
 
     def test_elon_grill_record_allows_the_build(self):
         self.reserve()
-        self.issue["comments"] = [{"body": "Elon grill approval 2026-11-14"}]
+        self.grill_comment(who="elon")
         self.assertAllowed(self.BUILD)
 
     def test_hotfix_label_exempt(self):
@@ -443,7 +443,7 @@ class GrillGateRepo(Gate):
     def test_dotfiles_issue_is_read_in_the_dotfiles_repo(self):
         for ref in ("dotfiles#522", "acme/dotfiles#522"):
             self.reset_log()
-            self.issue["comments"] = [{"body": "Owner approved the grill results."}]
+            self.grill_comment(who="owner")
             self.assertAllowed(self.spec(ref))
             calls = self.gh_calls()
             self.assertEqual(len(calls), 1, calls)
@@ -484,7 +484,7 @@ class CursorWorkerScript(Gate):
     def test_build_brief_with_approval_allowed(self):
         self.reserve()
         self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
-        self.issue["comments"] = [{"body": "Coordinator approved the grill results."}]
+        self.grill_comment()
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
 
     def test_ordinary_brief_needs_no_grill_record(self):
