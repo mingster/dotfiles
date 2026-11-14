@@ -180,6 +180,20 @@ def reason(provider, d):
             "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 
 
+def dispatch_repo(env=None):
+    """id:<repo> for this process's Orca dispatch, or None.
+
+    A worker-start with no --repo still belongs to the dispatch that runs the command.
+    The workspace id is <repo-id>::<path>, and the placement table keys that repo id.
+    """
+    source = os.environ if env is None else env
+    for key in ("ORCA_WORKSPACE_ID", "ORCA_WORKTREE_ID"):
+        repo_id, sep, _path = (source.get(key) or "").strip().partition("::")
+        if sep and re.fullmatch(r"[\w.-]+", repo_id):
+            return "id:" + repo_id
+    return None
+
+
 def coordinator_overflow(repo=None):
     try:
         spec = importlib.util.spec_from_file_location("fleet_watch", FLEET_WATCH)
@@ -234,7 +248,7 @@ def main():
                        "with the same arguments.")
     if commands and any(not c.get("remote") for c in commands):
         repos = [c.get("repo") for c in commands if not c.get("remote") and c.get("repo")]
-        overflow = coordinator_overflow(repos[0] if repos else None)
+        overflow = coordinator_overflow(repos[0] if repos else dispatch_repo())
         if overflow:
             blocked.append(overflow)
     # Repair the preset link first, so the role check below never reads a stale copy.
