@@ -991,5 +991,105 @@ else
   bad "UNKNOWN mergeable rereads a few times and then refuses" "rc=$SHIP_RC views=$unknown_views out=$SHIP_OUT"
 fi
 
+# A Review: FAIL at the merge head blocks the merge. A later Verdict: PASS does not
+# cover it. A later Review: PASS for that head, or a Countersign, does (#1070).
+code_head() { # <pr> <branch>
+  mf_pr_add "$1" "$2" "Body"
+  local h
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$1.json")
+  mf_self_review "$1" "$h"
+  set_checks "$1" "$green_checks"
+  printf '%s\n' "$h"
+}
+
+h1070=$(code_head 1070 feat-review-fail-verdict)
+gh pr comment 1070 --repo example/repo --body "Review: FAIL head=$h1070" >/dev/null
+post_verdict 1070 PASS "$h1070"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1070
+if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
+  && grep -Fq "Review: FAIL at head ${h1070:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "Review FAIL at head then Verdict PASS refuses"
+else
+  bad "Review FAIL at head then Verdict PASS refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1071=$(code_head 1071 feat-review-pass-only)
+gh pr comment 1071 --repo example/repo --body "Review: PASS head=$h1071" >/dev/null
+post_verdict 1071 PASS "$h1071"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1071
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 1071\ as\ [0-9a-f]{40}$ ]] \
+  && grep -q "gh pr merge 1071 --repo example/repo --squash --match-head-commit $h1071" "$MF_GH_LOG"; then
+  ok "a PR whose only Review at the head is PASS still merges"
+else
+  bad "a PR whose only Review at the head is PASS still merges" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1072=$(code_head 1072 feat-review-fail-then-pass)
+gh pr comment 1072 --repo example/repo --body "Review: FAIL head=$h1072" >/dev/null
+gh pr comment 1072 --repo example/repo --body "Review: PASS head=$h1072" >/dev/null
+post_verdict 1072 PASS "$h1072"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1072
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 1072 --repo example/repo --squash --match-head-commit $h1072" "$MF_GH_LOG"; then
+  ok "a later Review PASS for the same head covers an earlier Review FAIL"
+else
+  bad "a later Review PASS for the same head covers an earlier Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1073=$(code_head 1073 feat-review-fail-countersign)
+gh pr comment 1073 --repo example/repo --body "Review: FAIL head=$h1073" >/dev/null
+gh pr comment 1073 --repo example/repo --body "Countersign: Elon head=$h1073 reason=covered the review fail" >/dev/null
+post_verdict 1073 PASS "$h1073"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1073
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 1073 --repo example/repo --squash --match-head-commit $h1073" "$MF_GH_LOG"; then
+  ok "a Countersign covers a Review FAIL at the head"
+else
+  bad "a Countersign covers a Review FAIL at the head" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1074=$(code_head 1074 feat-review-fail-other-head)
+other1074=$(printf 'd%.0s' {1..40})
+gh pr comment 1074 --repo example/repo --body "Review: FAIL head=$other1074" >/dev/null
+post_verdict 1074 PASS "$h1074"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1074
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 1074 --repo example/repo --squash --match-head-commit $h1074" "$MF_GH_LOG"; then
+  ok "a Review FAIL at another head does not block"
+else
+  bad "a Review FAIL at another head does not block" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1075=$(code_head 1075 feat-review-fail-again)
+gh pr comment 1075 --repo example/repo --body "Review: FAIL head=$h1075" >/dev/null
+gh pr comment 1075 --repo example/repo --body "Review: PASS head=$h1075" >/dev/null
+gh pr comment 1075 --repo example/repo --body "Review: FAIL head=$h1075" >/dev/null
+post_verdict 1075 PASS "$h1075"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1075
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1075:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "a Review FAIL after a Review PASS still refuses"
+else
+  bad "a Review FAIL after a Review PASS still refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1076=$(code_head 1076 feat-review-edited-pass)
+gh pr comment 1076 --repo example/repo --body "Review: FAIL head=$h1076" >/dev/null
+gh pr comment 1076 --repo example/repo --body "Review: PASS head=$h1076" >/dev/null
+mf_comment_flag 1076 1 edited true
+post_verdict 1076 PASS "$h1076"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1076
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1076:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "an edited Review PASS does not cover a Review FAIL"
+else
+  bad "an edited Review PASS does not cover a Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
