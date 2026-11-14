@@ -12,11 +12,11 @@ _env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(
 fw_env = importlib.util.module_from_spec(_env_spec)
 _env_spec.loader.exec_module(fw_env)
 
-CONFIG = {'host_caps': {'blueDevil': 5, 'local': 5}, 'local_host': 'mini6'}
+CONFIG = {'host_caps': {'remote-1': 5, 'local': 5}, 'local_host': 'coord'}
 
 
 def exited_row(dispatch, status, worker_state, detail, outcome):
-    """worker-list --full shape from mini6 on 2026-11-14. Resource is absent. Liveness is exited."""
+    """worker-list --full shape. Resource is absent. Liveness is exited."""
     return {
         'dispatchId': dispatch,
         'taskId': 'task_x',
@@ -25,11 +25,11 @@ def exited_row(dispatch, status, worker_state, detail, outcome):
         'dispatchStatus': status,
         'terminalState': 'retained',
         'agentTerminalHandle': 'term_' + dispatch,
-        'host': 'blueDevil',
+        'host': 'remote-1',
         'projection': {
             'role': 'worker',
             'outcome': outcome,
-            'host': {'kind': 'remote', 'id': 'blueDevil'},
+            'host': {'kind': 'remote', 'id': 'remote-1'},
             'stage': {'worker': worker_state, 'dispatch': status, 'detail': detail},
             'liveness': {'verdict': 'exited', 'source': 'execution_host'},
             'resource': {'state': 'absent', 'reason': 'not_materialized'},
@@ -60,7 +60,7 @@ class ExitedLivenessSeats(unittest.TestCase):
     def setUp(self):
         fw_env.quiet_host(self, fw)
 
-    def admit(self, workers, host='blueDevil'):
+    def admit(self, workers, host='remote-1'):
         return fw.admit(host, CONFIG, workers=workers)
 
     def test_exited_dispatches_and_absent_completed_rows_hold_no_seat(self):
