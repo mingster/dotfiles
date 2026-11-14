@@ -30,6 +30,7 @@ assert_count 'Cursor IDE helper' 0 '/Users/u/Library/Application Support/Cursor/
 assert_count 'other executables and embedded command text' 0 $'grep -c claude\n/bin/sh -c claude --no-daemon\n/usr/bin/cursor-agent\nclaude-helper --dangerously-skip-permissions'
 assert_count 'leading whitespace' 2 $'  claude --model example\n\t/usr/bin/other --no-daemon\n   /Users/u/.local/bin/cursor-agent'
 assert_count 'app-server in session configuration' 1 'claude --no-daemon -c app-server'
+# Deliberate refuse (#1074): Codex is not an agent session.
 assert_count 'Codex CLI is not counted' 0 'codex --full-auto'
 
 printf 'PASS: %s tests\n' "$tests"

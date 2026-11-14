@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Install missing provider CLIs. Authentication remains an owner action.
 # Official installers: code.claude.com/docs/en/setup,
-# help.openai.com/en/articles/11096431, cursor.com/docs/cli/installation,
-# antigravity.google/docs/cli/install/.
+# cursor.com/docs/cli/installation, antigravity.google/docs/cli/install/.
 set -euo pipefail
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 export PATH="$HOME/.local/bin:$PATH:${ASDF_DATA_DIR:-$HOME/.asdf}/shims"

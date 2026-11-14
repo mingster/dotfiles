@@ -20,7 +20,6 @@ echo ""
 #bc evernote
 bc raycast
 bc vnc-viewer
-#bc chatgpt
 bc surfshark
 
 bc claude

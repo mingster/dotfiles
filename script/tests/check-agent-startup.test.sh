@@ -70,7 +70,8 @@ trap 'rm -rf "$tmp" "$home2" "$home3"' EXIT
 mkdir -p "$home3"
 (
   export HOME="$home3" OSTYPE=linux-gnu
-  export PATH="$(dirname "$python_bin"):/usr/bin:/bin"
+  # Python's directory can also contain antigravity-ide. This case has no agent CLI.
+  export PATH="/usr/bin:/bin"
   unset DOTFILES
   bash "$root/script/check-agent-startup.sh" >"$tmp/skip-out"
 )

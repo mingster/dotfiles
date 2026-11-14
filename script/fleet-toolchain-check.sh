@@ -3,7 +3,7 @@
 # when it is below the latest release. Peers follow the coordinator, never the fleet maximum.
 # Reuses .tool-versions via bootstrap-asdf-tools for node and python.
 # --apply upgrades Orca to the coordinator's version (latest on the coordinator) on a host with no live
-# claude, codex, agent or agy process, because the upgrade restarts Orca; a busy host is reported as skipped.
+# claude, agent or agy process, because the upgrade restarts Orca; a busy host is reported as skipped.
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
 # A host with a regression runtime.conf and no E2E_SHARD line fails the check, because the regression fleet skips it.
@@ -385,7 +385,7 @@ inside_orca() { # true when this script runs under an Orca process, which the up
 if [ -n '$orca_to' ]; then
   # Claude renames its process to its version, so match the first word of the command line too
   live=\$({ ps -A -o comm=; ps -A -o args= | awk '{ print \$1 }'; } 2>/dev/null | sed 's#.*/##' |
-    grep -xE 'claude|codex|agent|agy' | sort -u | tr '\n' ' ')
+    grep -xE 'claude|agent|agy' | sort -u | tr '\n' ' ')
   up=
   if [ -n "\$live" ]; then
     echo "__orca_skipped__ live agents: \${live% }"
