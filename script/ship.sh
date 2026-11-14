@@ -120,8 +120,14 @@ head=$(field .headRefOid)
 # 2. Every required check at the current head is SUCCESS (statusCheckRollup; pending counts as not yet).
 jq -e '((.statusCheckRollup // []) | length) > 0' <<<"$info" >/dev/null \
   || refuse "no checks reported at head $head"
-jq -e 'all((.statusCheckRollup // [])[] | select((.isRequired // true) != false);
-  ((.status // "COMPLETED") == "COMPLETED") and ((.conclusion // .state // "") == "SUCCESS"))' <<<"$info" >/dev/null \
+# A name is judged by its newest run. A SKIPPED run is dropped when the same name has a SUCCESS run at this head
+# (GitHub keeps the superseded trigger's SKIPPED run in the rollup, sometimes with a later timestamp).
+jq -e '[(.statusCheckRollup // [])[] | select((.isRequired // true) != false)
+    | . + {key: (.name // .context // ""), at: (if (.status // "COMPLETED") != "COMPLETED" then "9999" else (.completedAt // .startedAt // "") end)}]
+  | group_by(.key)
+  | map(if any(.[]; (.conclusion // .state // "") == "SUCCESS") then map(select((.conclusion // "") != "SKIPPED")) else . end
+    | sort_by(.at) | last)
+  | all(.[]; ((.status // "COMPLETED") == "COMPLETED") and ((.conclusion // .state // "") == "SUCCESS"))' <<<"$info" >/dev/null \
   || refuse "required checks are not all SUCCESS at head ${head:0:12}"
 
 # 2b. The latest finished push Checks run on main is SUCCESS, unless this PR names that run as the one it fixes
