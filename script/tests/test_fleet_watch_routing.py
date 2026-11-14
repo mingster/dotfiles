@@ -40,10 +40,39 @@ class FamilyCli(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), 'grok')
         unknown = subprocess.run(
-            [sys.executable, str(ROOT / 'usage-gate.py'), 'family', '--agent', 'codex', '--model', 'opus'],
+            [sys.executable, str(ROOT / 'usage-gate.py'), 'family', '--agent', 'no-such-agent', '--model', 'opus'],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(unknown.stdout.strip(), 'unknown')
+
+
+class RoutingPick(unittest.TestCase):
+    def test_pick_never_returns_codex(self):
+        # Deliberate refuse (#1074): the routing pick never returns Codex or ChatGPT.
+        ug = _load('usage-gate.py')
+        presets = ROOT.parent / '.orca' / 'presets.json'
+
+        def allowed(*_args, **_kwargs):
+            return {"verdict": "allowed", "ceiling": 95, "weekly_used": 10,
+                    "reserve": 0, "resets_at": 2_000_000_000}
+
+        with unittest.mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": str(presets)}), \
+                unittest.mock.patch.object(ug, "run", side_effect=allowed), \
+                unittest.mock.patch.object(ug, "antigravity_models", return_value=None):
+            roles = ug.load_presets()["roles"]
+            self.assertGreater(len(roles), 0)
+            for role in roles:
+                with self.subTest(role=role):
+                    result = ug.pick(role, None, None, None, None)
+                    selected = result["selected"]
+                    self.assertIsNotNone(selected, role)
+                    chosen = f"{selected['provider']} {selected['model']}".lower()
+                    self.assertNotIn("codex", chosen)
+                    self.assertNotIn("chatgpt", chosen)
+                    for candidate in result["candidates"]:
+                        text = f"{candidate['provider']} {candidate['model']}".lower()
+                        self.assertNotIn("codex", text)
+                        self.assertNotIn("chatgpt", text)
 
 
 class ChoosePick(unittest.TestCase):

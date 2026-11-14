@@ -31,7 +31,7 @@ out=$(bash "$here/ship.sh" --repo example/repo --pr 71 2>&1); rc=$?
 [ "$rc" -ne 0 ] && grep -q 'same agent and model' <<<"$out" && ok "same agent/model verdict refused" || bad "same agent/model: rc=$rc $out"
 
 h72=$(new_pr 72 other-model claude sonnet)
-verdict 72 "$h72" codex gpt
+verdict 72 "$h72" antigravity gemini-4-argon-high
 out=$(bash "$here/ship.sh" --repo example/repo --pr 72 2>&1); rc=$?
 [ "$rc" -eq 0 ] && grep -q '^shipped PR' <<<"$out" && ok "different agent/model verdict ships" || bad "different verifier: rc=$rc $out"
 

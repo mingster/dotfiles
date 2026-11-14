@@ -443,7 +443,7 @@ run_ship --repo example/repo --pr 132
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "no 'Builder: agent=<agent> model=<model>' line" <<<"$SHIP_OUT"; then ok "PR without a Builder line refuses"; else bad "PR without a Builder line refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 # Same model, different agent, passes the pair rule.
 mf_pr_add 133 feat-other-agent "Body"
-h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h" claude/opus; set_checks 133 "$green_checks"; post_verdict 133 PASS "$h" ctx_verifier ctx_author codex/opus
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h" claude/opus; set_checks 133 "$green_checks"; post_verdict 133 PASS "$h" ctx_verifier ctx_author antigravity/opus
 run_ship --repo example/repo --pr 133
 if [ "$SHIP_RC" -eq 0 ]; then ok "a different agent with the same model passes"; else bad "a different agent with the same model passes" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 

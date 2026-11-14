@@ -92,7 +92,7 @@ coord_gap_out=$(FLEET_PULL_CONFIG="$tmp/fleet-no-coord.json" FLEET_TOOLCHAIN_VER
 check "coordinator host is checked when omitted from .hosts" \
   "$(echo "$coord_gap_out" | grep -q 'coord-a orca 1.4.250 is below latest 1.4.253'; echo $?)"
 
-# Fake tools + fake ssh: checks all 11 tools, never checks codex
+# Fake tools + fake ssh: checks all 11 tools.
 fake_bin="$tmp/fake-bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/hostname" <<'EOS'
@@ -178,6 +178,7 @@ for t in git gh jq python3 shellcheck bun node orca claude agent agy; do
   check "reports older $t on worker-a via fake ssh" \
     "$(echo "$probe_out" | grep -q "worker-a $t "; echo $?)"
 done
+# Deliberate refuse (#1074): the probe must not check or report Codex.
 check "never checks or reports codex" "$(echo "$probe_out" | grep -qi 'codex' && echo 1 || echo 0)"
 
 # Missing tool exits non-zero
@@ -455,10 +456,17 @@ FAKE_UNAME_M=x86_64 orca_apply 1.4.251 >/dev/null
 check "842 Intel macOS peer downloads the x64 zip" \
   "$(grep -q '^worker-a curl .*/Orca-1.4.253-mac.zip' "$orca_log"; echo $?)"
 : > "$orca_log"
-orca_out=$(FAKE_PS=$'/usr/sbin/sshd\n2.1.319\nclaude --dangerously-skip-permissions\n/opt/homebrew/bin/codex exec' orca_apply 1.4.251)
+orca_out=$(FAKE_PS=$'/usr/sbin/sshd\n2.1.319\nclaude --dangerously-skip-permissions' orca_apply 1.4.251)
 check "842 peer with live agents is skipped and named" \
-  "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, live agents: claude codex'; echo $?)"
+  "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, live agents: claude'; echo $?)"
 check "842 peer with live agents downloads nothing" "$(grep -q '^worker-a curl' "$orca_log" && echo 1 || echo 0)"
+: > "$orca_log"
+# Deliberate refuse (#1074): a Codex process is not a live agent, so it does not skip the Orca upgrade.
+orca_out=$(FAKE_PS=$'/opt/homebrew/bin/codex exec' orca_apply 1.4.251)
+check "codex alone does not skip the Orca upgrade" \
+  "$(echo "$orca_out" | grep -q 'orca upgrade skipped' && echo 1 || echo 0)"
+check "codex alone still upgrades Orca" \
+  "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgraded to 1.4.253'; echo $?)"
 : > "$orca_log"
 orca_out=$(FAKE_COMM=/Applications/_dev/Orca.app/Contents/MacOS/Orca orca_apply 1.4.251)
 check "842 a run inside Orca never kills its own Orca" \
