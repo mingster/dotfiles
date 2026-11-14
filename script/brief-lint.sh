@@ -65,16 +65,26 @@ function harvest_searches(line,    rest, chunk, bare) {
 # Bold labels from the triage Agent Brief template: **Acceptance criteria:**, **Out of scope:**.
 /^\*\*[^*]+:\*\*/ {
   if ($0 ~ /^\*\*Acceptance( criteria)?:\*\*/) sec = "Acceptance"
-  else if ($0 ~ /^\*\*Out of scope:\*\*/) sec = "Out of scope"
+  else if ($0 ~ /^\*\*(Out of scope|Non-goals|Allowed files \/ scope boundaries):\*\*/) sec = "Out of scope"
   else sec = ""
   rest = $0
   sub(/^\*\*[^*]+:\*\*/, "", rest)
   if (sec == "Out of scope" && rest ~ /[^[:space:]]/) has_out_of_scope = 1
   next
 }
+/^[[:space:]]*-[[:space:]]+\*\*(Out of scope|Non-goals|Allowed files \/ scope boundaries):\*\*/ {
+  rest = $0
+  sub(/^[[:space:]]*-[[:space:]]+\*\*[^*]+:\*\*/, "", rest)
+  if (rest ~ /[^[:space:]]/) has_out_of_scope = 1
+  next
+}
+/^Leave alone:[[:space:]]*[^[:space:]]/ {
+  has_out_of_scope = 1
+  next
+}
 /^## / {
   if ($0 ~ /^## Acceptance( criteria)?([[:space:]]|$)/) sec = "Acceptance"
-  else if ($0 ~ /^## Out of scope([[:space:]]|$)/) sec = "Out of scope"
+  else if ($0 ~ /^## (Out of scope|Non-goals|Scope)([[:space:]]|$)/) sec = "Out of scope"
   else if ($0 ~ /^## Verify([[:space:]]|$)/) sec = "Verify"
   else sec = ""
   next

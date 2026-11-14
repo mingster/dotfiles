@@ -2,7 +2,7 @@
 
 ## Work
 
-- **Unit contract:** one body/comment has `## Acceptance criteria` (observable cases and proving command), `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>`. evidence and predicate also define done.
+- **Unit contract:** one body/comment has `## Acceptance criteria` (observable cases and proving command), `## Out of scope`, `Requirement owner: <requester and reason>` and `Deleted: <removed requirement or nothing, because ...>`. evidence and predicate also define done.
 - **Ready queue:** keep at least 3 `ready-for-agent` units ahead of the coordinator; when fewer remain, tell the coordinator and start the next spec or triage round.
 - **Triage** (`architect-pm.md`; outcomes in `daily-run.md`, step 2): rewrite the brief until `script/brief-lint.sh` passes, with Acceptance as a `- [ ]` list of provable items, then swap `needs-triage` for `ready-for-agent`.
 - **Competing prototypes:** before building 2 or 3, send the coordinator the options and cost; it decides and records the choice on the issue. Zero-Env: no raw secrets in specs.

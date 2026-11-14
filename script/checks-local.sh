@@ -18,6 +18,7 @@ done
 
 # The no project names test needs a private pattern file and skips without one. HOME is swapped below, so look now.
 names_file="${NO_PROJECT_NAMES_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/project-names.pattern}"
+export NO_PROJECT_NAMES_FILE="$names_file"
 skipped_note() { [ -f "$names_file" ] || echo "SKIPPED no-project-names.test.sh (no pattern file; CI runs this)"; }
 # shellcheck source=tests/lib/asdf-pin.sh
 . "$here/tests/lib/asdf-pin.sh"

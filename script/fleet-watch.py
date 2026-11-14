@@ -1564,6 +1564,16 @@ def stall_idle_limit_seconds(config):
     return STALL_IDLE_LIMIT_DEFAULT
 
 
+def _remote_server_row(w):
+    """True for a remote --include-remote row that carries server metadata and no local terminal/resource."""
+    w = w or {}
+    return (isinstance(w.get('server'), dict)
+            and not w.get('projection')
+            and not w.get('agentTerminalHandle')
+            and not w.get('terminalState')
+            and not w.get('resource'))
+
+
 def projection_host_id(w):
     """Host id from worker-list row: full rows use projection.host object; list view may use host string."""
     w = w or {}
@@ -1578,6 +1588,12 @@ def projection_host_id(w):
     top = w.get('host')
     if isinstance(top, str) and top:
         return top
+    if _remote_server_row(w):
+        srv = w.get('server') or {}
+        for key in ('name', 'environmentId', 'id'):
+            val = srv.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
     return 'local'
 
 AGENT_STATE_BACKUP_STALE_TITLE = 'agent-state backup has not pushed for 30 minutes'
@@ -2039,13 +2055,27 @@ def worker_row_is_live(w):
         proj = w.get('projection') or {}
         liv = proj.get('liveness') or {}
         ver = liv.get('verdict') if isinstance(liv, dict) else liv
-        return (w.get('terminalState') in ('active', 'retained')
+        term_live = w.get('terminalState') in ('active', 'retained') or (
+            _remote_server_row(w) and w.get('workerState') in ('ready', 'starting', 'running', 'active')
+        )
+        return (term_live
                 and w.get('dispatchStatus') not in ('completed', 'failed', 'cancelled', 'abandoned')
                 and (proj.get('outcome') or 'in_progress') == 'in_progress'
                 and ver != 'exited')
     return (w.get('state') not in ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
             and w.get('stage') != 'released' and w.get('terminalState') != 'released'
             and w.get('liveness') != 'exited')
+
+
+def _server_as_of_epoch_seconds(w):
+    srv = (w or {}).get('server')
+    if not isinstance(srv, dict):
+        return None
+    token = srv.get('asOf')
+    if not isinstance(token, str) or not token.strip():
+        return None
+    age = wait_log_line_age_seconds(token.strip(), 0.0)
+    return -age if age is not None else None
 
 
 def worker_liveness_verdict(w):
@@ -2704,10 +2734,13 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not worker_row_is_live(w):
             continue
         term = worker_terminal_handle(w)
-        if not term:
-            continue
         host_id = worker_execution_host_id(w)
-        last_s = _normalize_terminal_time_ms(term_times.get(term))
+        if not term:
+            if host_id == 'local':
+                continue
+            last_s = _server_as_of_epoch_seconds(w)
+        else:
+            last_s = _normalize_terminal_time_ms(term_times.get(term))
         is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
         if host_id != 'local':
             if is_stalled:
@@ -3642,8 +3675,8 @@ def pr_file_paths(pr):
     return paths
 
 
-def pr_owner_only_reason(pr, run=subprocess.run):
-    """Refuse text from check_owner_only_paths, None when the PR is clear, or 'error'."""
+def pr_owner_only_reason(pr, run=subprocess.run, repo_root=None):
+    """Refuse text from check_owner_only_paths or missing Owner-approved receipt, None when clear, or 'error'."""
     paths = pr_file_paths(pr)
     if not paths:
         return None
@@ -3669,12 +3702,49 @@ def pr_owner_only_reason(pr, run=subprocess.run):
         )
     except (subprocess.SubprocessError, OSError):
         return 'error'
-    if proc.returncode == 0:
-        return None
     if proc.returncode == 2:
         message = (proc.stderr or proc.stdout or '').strip()
         return message or 'owner-only path'
-    return 'error'
+    if proc.returncode != 0:
+        return 'error'
+    head = (pr or {}).get('headRefOid') or ''
+    base = (pr or {}).get('baseRefOid') or ''
+    if (isinstance(repo_root, str) and repo_root and os.path.exists(os.path.join(repo_root, '.git'))
+            and re.fullmatch(r'[0-9a-f]{40}', head) and re.fullmatch(r'[0-9a-f]{40}', base)):
+        receipt_script = (
+            'cd "$BABYSIT_ROOT" || exit 0\n'
+            'files=$BABYSIT_FILES\n'
+            'head=$BABYSIT_HEAD\n'
+            'base=$BABYSIT_BASE\n'
+            'pr=$BABYSIT_PR\n'
+            'info=$(printf \'{"baseRefOid":"%s","comments":[]}\' "$base")\n'
+            'field() { jq -r "$1" <<<"$info"; }\n'
+            'refuse() { printf \'%s\\n\' "$*" >&2; exit 2; }\n'
+            'die() { exit 0; }\n'
+            'verdict_carry() { return 1; }\n'
+            'source "$BABYSIT_PROTECTED"\n'
+            'ensure_commit_in_store "$head" || exit 0\n'
+            'ensure_commit_in_store "$base" || exit 0\n'
+            'diff=$(git diff "$base..$head" -- docs/intent 2>/dev/null || true)\n'
+            'intent_acceptance_receipt\n'
+            'collect_owner_receipt_paths\n'
+            'text_lane_owner_receipt\n'
+        )
+        env['BABYSIT_ROOT'] = repo_root
+        env['BABYSIT_HEAD'] = head
+        env['BABYSIT_BASE'] = base
+        env['BABYSIT_PR'] = str((pr or {}).get('number') or '')
+        try:
+            rproc = run(
+                ['bash', '-c', receipt_script],
+                capture_output=True, text=True, timeout=20, env=env, check=False,
+            )
+            if rproc.returncode == 2:
+                message = (rproc.stderr or rproc.stdout or '').strip()
+                return message or 'owner-only path'
+        except (subprocess.SubprocessError, OSError):
+            pass
+    return None
 
 
 def github_repo_from_url(url):
@@ -4889,7 +4959,12 @@ def babysit_pass(
         if record.get('head') == head and record.get('action'):
             lines.append(_babysit_line(repo, number, head, 'skip', 'already'))
             continue
-        owner = owner_check(pr_row)
+        root = roots.get(repo) if isinstance(roots.get(repo), str) else ''
+        repo_root = root if root and os.path.isdir(root) else None
+        try:
+            owner = owner_check(pr_row, repo_root=repo_root)
+        except TypeError:
+            owner = owner_check(pr_row)
         if owner == 'error':
             lines.append(_babysit_line(repo, number, head, 'skip', 'owner-check-error'))
             log_bits.append('owner_check_error=%s' % number)
@@ -4906,8 +4981,6 @@ def babysit_pass(
                     persist_state()
             continue
         status = head_checks_status(pr_row)
-        root = roots.get(repo) if isinstance(roots.get(repo), str) else ''
-        repo_root = root if root and os.path.isdir(root) else None
         needs_fix = rework_needed_at_head(pr_row, None, repo, repo_root=repo_root)
         ready = (
             status == 'SUCCESS'
@@ -5136,7 +5209,9 @@ def issue_scan_pass(
                             suffix = ':%s' % reason if reason else ''
                             log_bits.append('head_checks_fail=%s%s' % (head[:8], suffix))
             if repo in babysit_owned:
-                owner_reason = pr_owner_only_reason(pr_row)
+                owner_reason = pr_owner_only_reason(
+                    pr_row, repo_root=root if root and os.path.isdir(root) else None,
+                )
                 if owner_reason and owner_reason != 'error':
                     log_bits.append('babysit_owner_skip=%d' % pr_num)
                     continue
@@ -5953,6 +6028,23 @@ def release_green_successes(messages, workers, config, state, release, pr_of):
     return done
 
 
+_WORKER_ISSUE_TITLE_RE = re.compile(
+    r'^(?!rework\b)(?:[a-z0-9-]+)\s+-\s+#([0-9]+)\b|\bissue-([0-9]+)\b', re.I
+)
+
+
+def _worker_issue_number(worker):
+    w = worker or {}
+    for key in ('_task_title', 'title', 'name'):
+        text = w.get(key)
+        if not isinstance(text, str) or not text:
+            continue
+        match = _WORKER_ISSUE_TITLE_RE.search(text.strip())
+        if match:
+            return int(match.group(1) or match.group(2))
+    return None
+
+
 def bounce_builder_dones(messages, workers, body_of, notify, state, config):
     """Tell a builder its worker_done does not count when the PR body fails the finish gate."""
     lines = []
@@ -5992,7 +6084,7 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
         body = body_of(repo, number)
         if body is None:
             continue
-        reason = gate.finish_block_reason(body)
+        reason = gate.finish_block_reason(body, issue=_worker_issue_number(worker))
         if not reason:
             continue
         notify(worker_terminal_handle(worker), 'worker_done bounced: ' + reason)
