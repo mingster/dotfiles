@@ -33,7 +33,7 @@ fi
 
 [ -f "$HOME/.claude/agents/elon.md" ] && [ ! -L "$HOME/.claude/agents/elon.md" ] && ok "user level role is a rendered copy" || bad "user level role is not a rendered copy"
 grep -q 'CEO of this project' "$HOME/.claude/agents/elon.md" && ok "elon role reads 'this project'" || bad "elon role not rendered"
-grep -q 'scratch is operated' "$TMP/scratch/docs/agents/team.md" && ok "project team.md names the project" || bad "project team.md not rendered"
+grep -q 'scratch is run' "$TMP/scratch/docs/agents/team.md" && ok "project team.md names the project" || bad "project team.md not rendered"
 
 timeout 120 bash "$SCRIPT" check "$TMP/scratch" >"$TMP/check.log" 2>&1 && ok "check passes on rendered docs" || bad "check failed: $(tail -3 "$TMP/check.log")"
 
