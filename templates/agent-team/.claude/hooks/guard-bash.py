@@ -2089,7 +2089,9 @@ def check_role_file_gate(base, args):
     elif not (base == "gh" and args[:2] == ["pr", "create"]):
         return
     # Push or PR create: every commit not yet on origin/main that touches a protected path needs the trailer.
-    shas = (gate_run([*git, "rev-list", "origin/main..HEAD"], None) or "").split()
+    #shas = (gate_run([*git, "rev-list", "origin/main..HEAD"], None) or "").split()
+    shas = (gate_run([*git, "rev-list", "refs/remotes/origin/main..HEAD"], None) or "").split()
+
     for sha in shas:
         changed = (gate_run([*git, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha], None) or "").split()
         files = {f for f in changed if is_protected(f)}

@@ -1237,12 +1237,12 @@ class ProductionTestData(GuardTest):
         local_sha = self.git("rev-parse", "HEAD").strip()
         self.git("branch", "-f", "origin/main", local_sha)
         try:
-            self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+            self.assertDenied("git push origin HEAD:production", "Owner-approved")
         finally:
             self.git("branch", "-D", "origin/main")
         self.git("tag", "-f", "origin/main", local_sha)
         try:
-            self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+            self.assertDenied("git push origin HEAD:production", "Owner-approved")
         finally:
             self.git("tag", "-d", "origin/main")
 
