@@ -1,0 +1,1 @@
+* The build grill gate stops a start only for a money rule or price issue with no coordinator grill record. release-manager can push the production branch with no owner go while deploy facts say production holds only test data, and needs the go again once a real store is live (#1017).

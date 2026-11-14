@@ -2,7 +2,7 @@
 
 1. Role file gate: commit, push and PR create that touch .claude/agents, docs/agents or
    .claude/model-routing.md need an `Owner-approved:` trailer.
-2. Grill gate: worker-start for a build worker needs the owner's grill approval on the issue.
+2. Grill gate: a fullstack-dev start is denied only for a money rule or price issue with no grill record.
 3. Owning lead: worker-start on another host needs `--from <lead handle>`.
 4. SessionStart:compact prints a checklist.
 
@@ -36,6 +36,9 @@ class Gate(unittest.TestCase):
         self.issue = {"labels": [], "body": "", "comments": []}
         self.gh_fails = False
         self.gh_log = os.path.join(self.home, "gh.log")
+
+    def reserve(self, kind="money rule"):
+        self.issue["body"] = f"Owner-reserved: {kind}\n"
 
     def gh_calls(self):
         try:
@@ -244,34 +247,77 @@ class GrillGate(Gate):
         '--spec "Refs acme/project-a#6936. You are fullstack-dev.' + BRIEF_SECTIONS + '"'
     )
 
-    def test_build_worker_without_approval_denied(self):
+    def test_ordinary_build_needs_no_grill_record(self):
         self.issue["comments"] = [{"body": "grill notes from architect-pm"}]
-        self.assertDenied(self.BUILD, "owner's approval of the grill results")
+        self.assertAllowed(self.BUILD)
+
+    def test_new_page_needs_no_grill_record(self):
+        self.issue["body"] = "New UI page for the catalog.\nThe card shows the price in yen.\n"
+        self.assertAllowed(self.BUILD)
+
+    def test_money_marker_in_a_comment_does_not_classify(self):
+        self.issue["comments"] = [{"body": "Owner-reserved: money rule"}]
+        self.assertAllowed(self.BUILD)
+
+    def test_build_worker_without_approval_denied(self):
+        self.reserve()
+        self.issue["comments"] = [{"body": "grill notes from architect-pm"}]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_price_label_without_record_denied(self):
+        self.issue["labels"] = [{"name": "price"}]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_bold_owner_reserved_line_is_a_money_rule(self):
+        for body in (
+            "* **Owner-reserved:** money rule\n",
+            "* **Owner-reserved**: money rule\n",
+            "**Owner-reserved:** **prices**\n",
+        ):
+            with self.subTest(body=body):
+                self.issue["body"] = body
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_denial_names_the_issue(self):
+        self.reserve()
         self.assertDenied(self.BUILD, "#6936")
 
     def test_build_worker_with_approval_allowed(self):
+        self.reserve()
         self.issue["comments"] = [{"body": "Owner approved the grill results on 2026-11-04."}]
         self.assertAllowed(self.BUILD)
 
+    def test_coordinator_grill_record_allows_the_build(self):
+        self.reserve("price")
+        self.issue["comments"] = [{"body": "Coordinator approved the grill results on 2026-11-14."}]
+        self.assertAllowed(self.BUILD)
+
+    def test_elon_grill_record_allows_the_build(self):
+        self.reserve()
+        self.issue["comments"] = [{"body": "Elon grill approval 2026-11-14"}]
+        self.assertAllowed(self.BUILD)
+
     def test_hotfix_label_exempt(self):
+        self.reserve()
         self.issue["labels"] = [{"name": "hotfix"}]
         self.assertAllowed(self.BUILD)
 
     def test_mechanical_label_exempt(self):
+        self.reserve()
         self.issue["labels"] = [{"name": "mechanical-lane"}]
         self.assertAllowed(self.BUILD)
 
     def test_elon_take_over_exempt(self):
+        self.reserve()
         self.issue["comments"] = [{"body": "Elon take over, decide and record."}]
         self.assertAllowed(self.BUILD)
 
     def test_elon_take_over_in_the_body_is_not_an_exemption(self):
-        self.issue["body"] = 'Exempt: hotfix, mechanical text only and "Elon take over" (team.md).'
-        self.assertDenied(self.BUILD, "owner's approval of the grill results")
+        self.issue["body"] = 'Owner-reserved: money rule\nExempt: hotfix, mechanical text only and "Elon take over" (team.md).'
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_worktree_issue_selector_names_the_issue(self):
+        self.reserve()
         cmd = 'orca orchestration worker-start --agent claude --worktree issue:4242 --spec "You are fullstack-dev."'
         self.assertDenied(cmd, "#4242")
 
@@ -284,6 +330,7 @@ class GrillGate(Gate):
         self.assertAllowed(cmd)
 
     def test_gh_failure_lets_the_command_through(self):
+        self.reserve()
         self.gh_fails = True
         self.assertAllowed(self.BUILD)
 
@@ -292,6 +339,7 @@ class GrillGateRepo(Gate):
     """A spec naming dotfiles#<n> reads that issue in the dotfiles repo, not the project's own."""
     def setUp(self):
         super().setUp()
+        self.reserve()
         previous = os.environ.get("DOTFILES_REPO")
         os.environ["DOTFILES_REPO"] = "acme/dotfiles"
         self.addCleanup(lambda: os.environ.pop("DOTFILES_REPO", None) if previous is None
@@ -341,12 +389,18 @@ class CursorWorkerScript(Gate):
             f.write(text)
 
     def test_build_brief_without_approval_denied(self):
+        self.reserve()
         self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
         self.assertDenied(f"{self.SCRIPT} --spec brief.md", "#7114")
 
     def test_build_brief_with_approval_allowed(self):
+        self.reserve()
         self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
-        self.issue["comments"] = [{"body": "Owner approved the grill results."}]
+        self.issue["comments"] = [{"body": "Coordinator approved the grill results."}]
+        self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
+
+    def test_ordinary_brief_needs_no_grill_record(self):
+        self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
 
     def test_unreadable_brief_is_denied(self):
@@ -364,6 +418,10 @@ class CursorWorkerScript(Gate):
 
 class WorkerBrief(Gate):
     """The grill gate reads the brief the worker really gets, not the whole Bash string."""
+
+    def setUp(self):
+        super().setUp()
+        self.reserve()
     START = "orca orchestration worker-start --agent claude --worktree new-child"
     NOTES = "cat > notes.md <<'EOF'\nfullstack-dev finished #1111\nEOF\n"
     BRIEF = "Refs acme/project-a#6936. You are fullstack-dev." + BRIEF_SECTIONS

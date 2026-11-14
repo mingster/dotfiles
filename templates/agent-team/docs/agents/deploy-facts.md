@@ -36,6 +36,7 @@ One row per deployable component. With one row, `/deploy` takes no component arg
 
 ## production
 
+* Production data: production holds only test data
 * Deploy command: `<command>`. Overrides allowed only on the user's word: `<env flags, or none>`.
 * Host check that it runs the commit: `<command>`.
 * Schema diff for the summary: `<git diff command>`.
