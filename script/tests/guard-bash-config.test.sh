@@ -10,6 +10,8 @@ SUPPORT_CSM="$ROOT/templates/agent-team/.claude/agents/support-csm.md"
 TEAM_FACTS="$ROOT/templates/agent-team/docs/agents/team-facts.md"
 
 TMP="$(mktemp -d)"
+# #1034: env -i unsets TMPDIR. macOS mktemp still uses /var/folders, and Python uses /private/tmp.
+export TMPDIR="${TMPDIR:-$(dirname "$TMP")}"
 trap 'rm -rf "$TMP"' EXIT
 
 HOME_DIR="$TMP/home"
