@@ -198,9 +198,23 @@ if [ -n "$pr" ]; then
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$base" =~ ^[0-9a-f]{40}$ ]] || usage "invalid head or base SHA from GitHub"
     [ "$pr_local_branch" -eq 0 ] && break
     [ "$sha" = "$local_pushed" ] && break
-    # A local copy that is behind the PR head is stale, not a push still in flight: use the PR head.
+    # Behind the PR head: the local copy is stale, so check the PR head.
+    # Diverged and the PR head is newer: the force-push has landed, so check that head.
+    # Strictly ahead, or diverged while the PR head is still older: the push may
+    # still be propagating, so wait and refuse only when the wait runs out.
     git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$repo" fetch -q origin "$sha" >> "$log" 2>&1 || true
-    git -C "$repo" merge-base --is-ancestor "$local_pushed" "$sha" 2>/dev/null && break
+    if git -C "$repo" merge-base --is-ancestor "$local_pushed" "$sha" 2>/dev/null; then
+      break
+    fi
+    if git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null \
+      && git -C "$repo" cat-file -e "$local_pushed^{commit}" 2>/dev/null \
+      && ! git -C "$repo" merge-base --is-ancestor "$sha" "$local_pushed" 2>/dev/null; then
+      gh_ts=$(git -C "$repo" log -1 --format=%ct "$sha")
+      local_ts=$(git -C "$repo" log -1 --format=%ct "$local_pushed")
+      if [ "$gh_ts" -gt "$local_ts" ]; then
+        break
+      fi
+    fi
     gh_head_attempt=$((gh_head_attempt + 1))
     [ "$gh_head_attempt" -lt $((pr_head_wait * 2)) ] || {
       refused=1
@@ -394,6 +408,22 @@ step_path="$PATH"
 for tool in python3 node; do
   real=$(cd "$worktree" && asdf which "$tool" 2>/dev/null) && [ -x "$real" ] && step_path="$(dirname "$real"):$step_path"
 done
+# blueDevil's bash is /bin/bash. A PATH entry named bash with shebang /usr/bin/bash
+# makes posix_spawn return ENOENT, which is how the throwaway DB drop died.
+if PATH="$step_path" bash -c 'exit 0' >/dev/null 2>&1; then
+  bash_bin=$(PATH="$step_path" command -v bash)
+else
+  bash_bin=""
+  for candidate in /bin/bash /usr/bin/bash; do
+    if [ -x "$candidate" ] && "$candidate" -c 'exit 0' >/dev/null 2>&1; then
+      bash_bin=$candidate
+      break
+    fi
+  done
+  [ -n "$bash_bin" ] || usage "bash not found"
+  step_path="$(dirname "$bash_bin"):$step_path"
+  export PATH="$(dirname "$bash_bin"):$PATH"
+fi
 count=0
 while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
@@ -402,7 +432,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
   step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info")
-  run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" bash -euo pipefail -c "$expanded")
+  run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" "$bash_bin" -euo pipefail -c "$expanded")
   gate_prefix=()
   while IFS= read -r token || [ -n "${token:-}" ]; do
     [ -n "${token:-}" ] && gate_prefix+=("$token")
