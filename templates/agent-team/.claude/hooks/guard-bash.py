@@ -16,13 +16,14 @@ Blocks these kinds of accident:
    scripts, schema overrides, and ssh, scp, sftp or rsync to a configured
    production host beyond a read-only allowlist. release-manager may push the
    production branch with no owner go only after `git fetch origin main` in the
-   project whose guard config loaded, when `origin/main:docs/agents/deploy-facts.md`
-   has exactly one unindented `Production data: production holds only test data`
-   line outside a code fence or HTML comment, and no line says a real or live
-   store exists. A failed fetch, a `cd`, `git -C`, `--git-dir`, or a URL remote
-   aimed at another repo keeps the go. A force push stays gated. Project values
-   are loaded from `<project>/.claude/hooks/guard-config.json` (defaulting to
-   empty when absent).
+   project whose guard config loaded, when
+   `refs/remotes/origin/main:docs/agents/deploy-facts.md` has exactly one
+   unindented `Production data: production holds only test data` line outside a
+   code fence or HTML comment, and no line says a real or live store exists. A
+   failed fetch, a `cd`, `pushd`, `git -C`, `--git-dir`, `--work-tree`, `GIT_*`
+   env, `-c`, or a URL remote aimed at another repo keeps the go. A force push
+   stays gated. Project values are loaded from
+   `<project>/.claude/hooks/guard-config.json` (defaulting to empty when absent).
 5. Copying, linking, or writing `.env` / `.env.*` files in linked agent worktrees
    (`check_worktree_env`), unless listed in `worktree_env_allow`.
 6. Editing template-managed agent team files directly inside an adopted project
@@ -1019,8 +1020,11 @@ def git_subcommand(args):
         a = args[i]
         if a in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env") and i + 1 < len(args):
             if a == "-C":
-                cdir = args[i + 1]
+                cdir = os.path.join(cdir, args[i + 1]) if cdir else args[i + 1]
             i += 2
+        elif a.startswith("-C") and len(a) > 2:
+            cdir = os.path.join(cdir, a[2:]) if cdir else a[2:]
+            i += 1
         elif a.startswith(("--config-env=", "--exec-path=", "--git-dir=", "--work-tree=", "--namespace=")):
             i += 1
         elif a.startswith("-"):
@@ -1050,7 +1054,7 @@ def is_production_branch(branch):
 
 
 PRODUCTION_DATA_LINE = re.compile(
-    r"(?im)^[ ]{0,3}\*[ \t]+Production data:[ \t]*(production holds only test data|a real store is live)[ \t]*\.?[ \t]*$"
+    r"(?im)^\*[ \t]+Production data:[ \t]*(production holds only test data|a real store is live)[ \t]*\.?[ \t]*$"
 )
 # A conditional in the template ("once a real store is live, it needs the go") is the rule,
 # not a claim that a store already exists. An assertion that one does keeps the owner's go.
@@ -1058,7 +1062,13 @@ POLICY_CONDITION = re.compile(
     r"(?i)\b(?:once|when|if|after)\s+a\s+real\s+store\s+is\s+live\b"
 )
 LIVE_CLAIM = re.compile(
-    r"(?i)(?:\breal\s+store\b|\blive\s+store\b|\bstore\s+is\s+(?:now\s+)?live\b|\bwent\s+live\b|\breal\s+customers\b)"
+    r"(?i)\b(?:"
+    r"real\s+(?:store|(?:customer\s+)?data|customers?|users?|orders?|traffic|transactions?|payments?)"
+    r"|live\s+(?:store|data|customers?|users?|orders?|traffic)"
+    r"|(?:store|production|product|site|app)\s+is\s+(?:now\s+)?live"
+    r"|paying\s+(?:customers?|users?)"
+    r"|went\s+live|gone\s+live|launched"
+    r")\b"
 )
 
 
@@ -1118,7 +1128,7 @@ def fetch_origin_main(root):
 
 
 def production_holds_test_data():
-    """True only after a fresh fetch, for one test-data status line on origin/main.
+    """True only after a fresh fetch, for one test-data status line on refs/remotes/origin/main.
 
     An indented, fenced, or HTML-commented status line does not count. Any line that
     says a real or live store exists keeps the owner's go. A missing blob or a failed
@@ -1126,7 +1136,7 @@ def production_holds_test_data():
     root = guard_facts_root()
     if not root or not fetch_origin_main(root):
         return False
-    shown = gate_run(["git", "-C", root, "show", "origin/main:docs/agents/deploy-facts.md"], None)
+    shown = gate_run(["git", "-C", root, "show", "refs/remotes/origin/main:docs/agents/deploy-facts.md"], None)
     if shown is None:
         return False
     if states_real_store_is_live(shown):
@@ -1191,25 +1201,71 @@ def session_role():
     return role
 
 
-def git_dir_option(args):
-    i = 0
+GIT_ENV_ASSIGN = re.compile(r"^GIT_[A-Za-z0-9_]*=")
+
+
+def git_option_values(args, flag):
+    out, i = [], 0
+    prefix = flag + "="
     while i < len(args):
         a = args[i]
-        if a == "--git-dir" and i + 1 < len(args):
-            return args[i + 1]
-        if a.startswith("--git-dir="):
-            return a.split("=", 1)[1]
-        if a in ("-C", "-c", "--work-tree", "--namespace", "--config-env") and i + 1 < len(args):
+        if a == flag and i + 1 < len(args):
+            out.append(args[i + 1])
             i += 2
             continue
-        if a.startswith(("--work-tree=", "--namespace=", "--config-env=", "--exec-path=")):
+        if a.startswith(prefix):
+            out.append(a[len(prefix):])
+            i += 1
+            continue
+        if a in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env") and i + 1 < len(args):
+            i += 2
+            continue
+        if a.startswith(("--git-dir=", "--work-tree=", "--namespace=", "--config-env=", "--exec-path=")):
             i += 1
             continue
         if a.startswith("-"):
             i += 1
             continue
         break
-    return None
+    return out
+
+
+def git_has_config_override(args):
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            break
+        if a in ("-c", "--config-env") or a.startswith("--config-env="):
+            return True
+        if a.startswith("-c") and not a.startswith("--"):
+            return True
+        if a in ("-C", "--git-dir", "--work-tree", "--namespace") and i + 1 < len(args):
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        break
+    return False
+
+
+def command_moves_git_target():
+    """True when the command sets any GIT_* variable or changes directories with pushd/popd/cd -."""
+    for text in [RAW_COMMAND, *substitutions(RAW_COMMAND)]:
+        for seg in segments(text):
+            tokens = words(seg)
+            while tokens and tokens[0] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
+                tokens = tokens[1:]
+            if any(GIT_ENV_ASSIGN.match(t) for t in tokens):
+                return True
+            prog, args = program_and_args(tokens)
+            base = os.path.basename(prog or "")
+            if base in {"pushd", "popd"}:
+                return True
+            if base == "cd" and (not args or any(a == "-" for a in args)):
+                return True
+    return False
 
 
 def _abs_under(base, path):
@@ -1221,6 +1277,8 @@ def _abs_under(base, path):
 
 def push_repo_is_guard(segment_cwd, cdir, git_args):
     """The test-data waiver applies only when the push stays in the guard's own repo."""
+    if command_moves_git_target() or git_has_config_override(git_args or []):
+        return False
     root = guard_facts_root()
     if not root:
         return False
@@ -1229,13 +1287,20 @@ def push_repo_is_guard(segment_cwd, cdir, git_args):
     if not guard_top or not guard_git:
         return False
     base = segment_cwd or GATE_CWD or os.getcwd()
-    git_dir = git_dir_option(git_args or [])
-    if git_dir and os.path.realpath(_abs_under(base, git_dir)) != os.path.realpath(guard_git):
-        return False
+    for git_dir in git_option_values(git_args or [], "--git-dir"):
+        if os.path.realpath(_abs_under(base, git_dir)) != os.path.realpath(guard_git):
+            return False
+    for work_tree in git_option_values(git_args or [], "--work-tree"):
+        if os.path.realpath(_abs_under(base, work_tree)) != os.path.realpath(guard_top):
+            return False
     if cdir:
         base = _abs_under(base, cdir)
     top = git_out("rev-parse", "--show-toplevel", cwd=base)
-    return bool(top and os.path.realpath(top) == os.path.realpath(guard_top))
+    if not top or os.path.realpath(top) != os.path.realpath(guard_top):
+        return False
+    fetch_url = git_out("remote", "get-url", "origin", cwd=root)
+    push_url = git_out("remote", "get-url", "--push", "origin", cwd=base)
+    return bool(fetch_url and push_url and fetch_url == push_url)
 
 
 def check_git_push(args, cdir, segment_cwd=None, git_args=None):
@@ -1917,11 +1982,16 @@ GRILL_EXEMPT_LABELS = ("hotfix", "mechanical")
 # Fail closed. Any of these in the title, body, or a label keeps the grill gate.
 # "pay" and "plan" are whole words so "payload" and "planning" stay ordinary.
 MONEY_WORD = re.compile(
-    r"(?i)\b(?:prices?|pricing|fees?|refund(?:ed|s)?|payments?|pay|subscriptions?|"
-    r"plans?|discounts?|coupons?|wallets?|credits?|billing|invoices?|money|"
-    r"ledgers?|entitlements?)\b"
+    r"(?i)(?:\b(?:prices?|pricing|fees?|refund\w*|payments?|pay|paid|payouts?|"
+    r"charg(?:e|es|ed|ing)|costs?|costing|tuitions?|checkouts?|deposits?|"
+    r"subscriptions?|plans?|discount\w*|coupons?|wallets?|balances?|"
+    r"top[ -]?ups?|credits?|billing|invoices?|tax(?:es|ed|able|ing)?|"
+    r"memberships?|money|ledgers?|entitlements?)\b|(?:NT|US|HK)?\$\s*\d)"
 )
-MONEY_ZH = re.compile("價格|價錢|付款|退款|儲值|訂閱|方案|折扣|優惠|點數|金流|發票|費用")
+MONEY_ZH = re.compile(
+    "價格|價錢|價目|定價|售價|付款|付費|退款|退費|收費|收款|學費|運費|費用|"
+    "儲值|加值|結帳|金額|訂閱|方案|折扣|優惠|點數|金流|發票"
+)
 REMOTE_FLAGS = ("--on", "--environment", "--pairing-code")
 
 
@@ -2505,7 +2575,7 @@ def check_segment(segment, depth=0, cwd=None):
                     for seg in segments(text):
                         check_segment(seg, depth + 1, cwd=cur_cwd)
                         p2, a2 = program_and_args(words(seg))
-                        if p2 == "cd" and a2:
+                        if p2 in ("cd", "pushd") and a2:
                             dest = next((x for x in a2 if not x.startswith("-")), None)
                             if dest:
                                 cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
@@ -3237,7 +3307,7 @@ def check_command(command):
         for seg in segments(text):
             check_segment(seg, cwd=cur_cwd)
             prog, args = program_and_args(words(seg))
-            if prog == "cd" and args:
+            if prog in ("cd", "pushd") and args:
                 dest = next((a for a in args if not a.startswith("-")), None)
                 if dest:
                     cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
