@@ -1118,6 +1118,8 @@ def _host_maps_repo(config, host, repo):
     """False when worker_placement.repos exists and this host has no entry for repo.
 
     No table means the caller still asks Orca. The local host is always mapped.
+    A table keyed by the local Orca repo id matches that id as well as owner/name
+    and path:<root>.
     """
     placement = _sibling('worker_placement', 'worker-placement.py')
     if not placement.repos_for_env(config or {}):
@@ -1128,7 +1130,12 @@ def _host_maps_repo(config, host, repo):
     root = _issue_scan_repo_root(config, repo)
     if root:
         selectors.append('path:' + root)
-    return any(placement.host_has_repo_mapping(config, host, local, sel) for sel in selectors)
+    if any(placement.host_has_repo_mapping(config, host, local, sel) for sel in selectors):
+        return True
+    local_id = default_local_repo_id(repo)
+    if not isinstance(local_id, str) or not local_id.strip():
+        return False
+    return placement.host_has_repo_mapping(config, host, local, 'id:' + local_id.strip())
 
 
 def _overflow_host_ok(config, host, repo, lookup):
@@ -3197,13 +3204,8 @@ def brief_lint_missing(spec_path, run=subprocess.run):
     return missing or [out or 'brief-lint failed']
 
 
-def default_repo_id_lookup(host, repo):
-    """Orca repo id of owner/name on an environment, matched by git remote since paths differ per host."""
-    try:
-        result = rpc('repo', 'list', '--environment', host)
-    except Exception:
-        return None
-    key = 'github.com/%s' % repo.lower()
+def _repo_id_in_list(result, repo):
+    key = 'github.com/%s' % str(repo or '').lower()
     for row in (result.get('repos') if isinstance(result, dict) else None) or []:
         if not isinstance(row, dict) or not row.get('id'):
             continue
@@ -3211,6 +3213,24 @@ def default_repo_id_lookup(host, repo):
         if str(identity.get('canonicalKey') or '').lower() == key:
             return row['id']
     return None
+
+
+def default_repo_id_lookup(host, repo):
+    """Orca repo id of owner/name on an environment, matched by git remote since paths differ per host."""
+    try:
+        result = rpc('repo', 'list', '--environment', host)
+    except Exception:
+        return None
+    return _repo_id_in_list(result, repo)
+
+
+def default_local_repo_id(repo):
+    """Orca repo id of owner/name on this machine."""
+    try:
+        result = rpc('repo', 'list')
+    except Exception:
+        return None
+    return _repo_id_in_list(result, repo)
 
 
 def pr_base_ref(root, branch, run=subprocess.run):
@@ -3937,28 +3957,53 @@ def coordinator_config_path():
     return Path.home() / '.claude' / 'state' / 'fleet-watch-elon.json'
 
 
-def resolve_pass_config(config, config_path):
-    """Use the coordinator file when the scheduled stub config has no runs."""
-    if config_runs(config):
-        return config, None
-    stub = Path.home() / '.config' / 'fleet-watch' / 'config.json'
+_STUB_FILL_KEYS = ('local_host', 'host_caps', 'host_load_ceilings', 'worker_placement')
+
+
+def _read_json_object(path):
     try:
-        given_is_stub = Path(config_path).resolve() == stub.resolve()
+        loaded = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _fill_missing_stub_keys(dest, source):
+    if not isinstance(dest, dict) or not isinstance(source, dict):
+        return
+    for key in _STUB_FILL_KEYS:
+        if key not in dest and key in source:
+            dest[key] = source[key]
+
+
+def _host_caps_present(config):
+    caps = config.get('host_caps') if isinstance(config, dict) else None
+    return isinstance(caps, dict) and bool(caps)
+
+
+def resolve_pass_config(config, config_path):
+    """Use the coordinator file when the scheduled stub has no runs.
+
+    Fill local_host, host_caps, host_load_ceilings and worker_placement from the
+    stub when the pass config lacks them, whichever file was --config.
+    """
+    stub_path = Path.home() / '.config' / 'fleet-watch' / 'config.json'
+    try:
+        given_is_stub = Path(config_path).resolve() == stub_path.resolve()
     except OSError:
         given_is_stub = False
-    if not given_is_stub:
-        return config, None
-    path = coordinator_config_path()
-    try:
-        loaded = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        return config, None
-    if isinstance(loaded, dict) and config_runs(loaded):
-        for key in ('host_caps', 'local_host', 'host_load_ceilings'):
-            if key in config and key not in loaded:
-                loaded[key] = config[key]
-        return loaded, path
-    return config, None
+    adopted = None
+    pass_config = config
+    if isinstance(config, dict) and not config_runs(config) and given_is_stub:
+        loaded = _read_json_object(coordinator_config_path())
+        if loaded is not None and config_runs(loaded):
+            pass_config = loaded
+            adopted = coordinator_config_path()
+    source = config if given_is_stub and isinstance(config, dict) else _read_json_object(stub_path)
+    _fill_missing_stub_keys(pass_config, source)
+    if isinstance(pass_config, dict) and not _host_caps_present(pass_config):
+        log_fleet_watch('pass_config_no_host_caps')
+    return pass_config, adopted
 
 
 def current_coordinator_handle(run_id):

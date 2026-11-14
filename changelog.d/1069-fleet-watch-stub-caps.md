@@ -1,0 +1,1 @@
+Each fleet-watch pass fills `local_host`, `host_caps`, `host_load_ceilings`, and `worker_placement` from the stub config when the pass config lacks them. A pass with no `host_caps` logs `pass_config_no_host_caps`. Issue scan also matches a host by the local Orca repo id.
