@@ -51,8 +51,31 @@ class Gate(unittest.TestCase):
     def fake_gh(self):
         path = os.path.join(self.bin, "gh")
         record = f'echo "$@" >> {self.gh_log}\n'
+        by_number = getattr(self, "by_number", None)
         with open(path, "w") as f:
-            if self.gh_raw is not None:
+            if by_number is not None:
+                folder = os.path.join(self.home, "issues")
+                os.makedirs(folder, exist_ok=True)
+                for num, issue in by_number.items():
+                    with open(os.path.join(folder, f"{num}.json"), "w") as out:
+                        json.dump(issue, out)
+                f.write(
+                    "#!/bin/sh\n"
+                    + record
+                    + "num=\n"
+                    + 'for a in "$@"; do\n'
+                    + '  case "$a" in\n'
+                    + "    ''|*[!0-9]*) ;;\n"
+                    + "    *) num=$a ;;\n"
+                    + "  esac\n"
+                    + "done\n"
+                    + f'if [ -n "$num" ] && [ -f {folder}/$num.json ]; then\n'
+                    + f"  cat {folder}/$num.json\n"
+                    + "  exit 0\n"
+                    + "fi\n"
+                    + "exit 1\n"
+                )
+            elif self.gh_raw is not None:
                 f.write("#!/bin/sh\n" + record + "cat <<'JSON'\n" + self.gh_raw + "\nJSON\n")
             elif self.gh_fails:
                 f.write("#!/bin/sh\n" + record + "exit 1\n")
@@ -262,7 +285,7 @@ class GrillGate(Gate):
         self.assertAllowed(self.BUILD)
 
     def test_new_page_needs_no_grill_record(self):
-        self.issue["body"] = "New UI page for the catalog.\nThe card shows the price in yen.\n"
+        self.issue["body"] = "New UI page for the catalog.\nThe card shows the item name.\n"
         self.assertAllowed(self.BUILD)
 
     def test_money_marker_in_a_comment_does_not_classify(self):
@@ -319,8 +342,21 @@ class GrillGate(Gate):
 
     def test_elon_take_over_exempt(self):
         self.reserve()
-        self.issue["comments"] = [{"body": "Elon take over, decide and record."}]
+        self.issue["comments"] = [{
+            "body": "Elon take over, decide and record.",
+            "author": {"login": "mingster"},
+            "authorAssociation": "OWNER",
+        }]
         self.assertAllowed(self.BUILD)
+
+    def test_elon_take_over_by_a_builder_does_not_exempt(self):
+        self.reserve()
+        self.issue["comments"] = [{
+            "body": "Elon take over, decide and record.",
+            "author": {"login": "builder-bot"},
+            "authorAssociation": "CONTRIBUTOR",
+        }]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_elon_take_over_in_the_body_is_not_an_exemption(self):
         self.issue["body"] = 'Owner-reserved: money rule\nExempt: hotfix, mechanical text only and "Elon take over" (team.md).'
@@ -368,6 +404,32 @@ class GrillGate(Gate):
             ("marker owner reserved price", {"labels": [], "body": "Owner reserved: price\n", "title": "Catalog"}),
             ("heading price", {"labels": [], "body": "## Owner-reserved: price\n", "title": "Catalog"}),
             ("fees suffix", {"labels": [], "body": "Owner-reserved: money rule (fees)\n", "title": "Catalog"}),
+            ("label money rule", {"labels": [{"name": "money rule"}], "body": "", "title": "Catalog"}),
+            ("label area billing", {"labels": [{"name": "area:billing"}], "body": "", "title": "Catalog"}),
+            ("label pricing change", {"labels": [{"name": "pricing-change"}], "body": "", "title": "Catalog"}),
+            ("label subscription", {"labels": [{"name": "subscription"}], "body": "", "title": "Catalog"}),
+            ("monthly subscription", {"labels": [], "body": "monthly subscription\n", "title": "Catalog"}),
+            ("raise the price", {"labels": [], "body": "Raise the price of the Pro plan\n", "title": "Catalog"}),
+            ("title course price", {"labels": [], "body": "A catalog page.\n", "title": "Change the course price"}),
+            ("wallet", {"labels": [], "body": "top up their wallet\n", "title": "Catalog"}),
+            ("refunded", {"labels": [], "body": "refunded in full\n", "title": "Catalog"}),
+            ("discount coupon", {"labels": [], "body": "discount coupon at checkout\n", "title": "Catalog"}),
+            ("invoice", {"labels": [], "body": "Checkout charges the card and sends an invoice\n", "title": "Catalog"}),
+            ("customers pay", {"labels": [], "body": "Customers pay by card.\n", "title": "Catalog"}),
+            ("price in yen", {"labels": [], "body": "The card shows the price in yen.\n", "title": "Catalog"}),
+            ("zh price", {"labels": [], "body": "價格\n", "title": "Catalog"}),
+            ("zh price alt", {"labels": [], "body": "價錢\n", "title": "Catalog"}),
+            ("zh pay", {"labels": [], "body": "付款\n", "title": "Catalog"}),
+            ("zh refund", {"labels": [], "body": "退款\n", "title": "Catalog"}),
+            ("zh stored value", {"labels": [], "body": "儲值\n", "title": "Catalog"}),
+            ("zh subscription", {"labels": [], "body": "訂閱\n", "title": "Catalog"}),
+            ("zh plan", {"labels": [], "body": "方案\n", "title": "Catalog"}),
+            ("zh discount", {"labels": [], "body": "折扣\n", "title": "Catalog"}),
+            ("zh offer", {"labels": [], "body": "優惠\n", "title": "Catalog"}),
+            ("zh points", {"labels": [], "body": "點數\n", "title": "Catalog"}),
+            ("zh payments", {"labels": [], "body": "金流\n", "title": "Catalog"}),
+            ("zh invoice", {"labels": [], "body": "發票\n", "title": "Catalog"}),
+            ("zh fee", {"labels": [], "body": "費用\n", "title": "Catalog"}),
         )
         for name, issue in cases:
             with self.subTest(name=name):
@@ -377,16 +439,42 @@ class GrillGate(Gate):
                 if name == "title payment":
                     self.assertIn("title", self.gh_calls()[-1])
 
-    def test_a_price_mention_on_a_new_page_stays_open(self):
+    def test_a_customer_message_is_not_a_money_issue(self):
         self.issue = {
             "labels": [],
             "title": "Catalog",
-            "body": "The card shows the price in yen.\n",
+            "body": "Owner-reserved: customer message\n",
             "comments": [],
         }
         self.assertAllowed(self.BUILD)
-        self.issue["body"] = "Owner-reserved: customer message\n"
-        self.assertAllowed(self.BUILD)
+
+    def two_issues(self, first, second):
+        return (
+            "orca orchestration worker-start --agent claude --worktree new-child "
+            f'--spec "See #{first} for context. Refs acme/project-a#{second}. You are fullstack-dev.'
+            + BRIEF_SECTIONS + '"'
+        )
+
+    def test_a_later_money_issue_keeps_the_gate(self):
+        self.by_number = {
+            "1000": {"labels": [], "title": "Context", "body": "Notes for the reader.\n", "comments": []},
+            "6936": {"labels": [], "title": "Catalog", "body": "There is a refund fee.\n", "comments": []},
+        }
+        self.assertDenied(self.two_issues("1000", "6936"), "#6936")
+
+    def test_hotfix_on_the_context_issue_does_not_exempt_the_money_issue(self):
+        self.by_number = {
+            "1000": {"labels": [{"name": "hotfix"}], "title": "Context", "body": "", "comments": []},
+            "6936": {"labels": [], "title": "Catalog", "body": "There is a refund fee.\n", "comments": []},
+        }
+        self.assertDenied(self.two_issues("1000", "6936"), "#6936")
+
+    def test_two_ordinary_issues_need_no_grill_record(self):
+        self.by_number = {
+            "1000": {"labels": [], "title": "Context", "body": "Notes for the reader.\n", "comments": []},
+            "6936": {"labels": [], "title": "Catalog", "body": "A new page.\n", "comments": []},
+        }
+        self.assertAllowed(self.two_issues("1000", "6936"))
 
     def test_a_negation_is_not_a_grill_record(self):
         self.reserve()
@@ -421,6 +509,26 @@ class GrillGate(Gate):
         self.reserve()
         self.grill_comment(login="coordinator-bot", association="CONTRIBUTOR")
         self.assertAllowed(self.BUILD)
+
+
+class GrillRecordDoc(unittest.TestCase):
+    def test_team_md_states_the_record_and_the_production_waiver(self):
+        path = os.path.normpath(os.path.join(
+            os.path.dirname(HOOK), "..", "..", "docs", "agents", "team.md"))
+        with open(path) as f:
+            text = f.read()
+        for needle in (
+            "Grill approved: coordinator YYYY-MM-DD",
+            "Grill approved: owner YYYY-MM-DD",
+            "Grill approved: elon YYYY-MM-DD",
+            "grill_approvers",
+            "speed bump",
+            "not proof of who wrote it",
+            "git fetch origin main",
+            "origin/main:docs/agents/deploy-facts.md",
+            "* Production data: production holds only test data",
+        ):
+            self.assertIn(needle, text)
 
 
 class GrillGateRepo(Gate):
