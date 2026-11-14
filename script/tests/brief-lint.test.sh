@@ -561,5 +561,13 @@ ec=$?
 set -e
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "builder still needs checks-local.sh (ec=$ec, out=$out)"; fi
 
+template="$here/../../.agents/skills/triage/AGENT-BRIEF.md"
+if grep -q 'Type: rule/guide change' "$template" && grep -q 'one search command' "$template" \
+  && grep -q 'builder' "$template" && grep -q 'verifier' "$template"; then
+  ok
+else
+  bad "rule/guide template names one search command for the builder and the verifier"
+fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
