@@ -209,8 +209,8 @@ for rp in repos:
     for st in ("queue", "build", "merge"):
         print(f"| {st} | {m[f'median_stage_{st}_minutes']} | {m[f'p75_stage_{st}_minutes']} | {m[f'max_stage_{st}_minutes']}"
               f" | {m[f'median_stage_{st}_minutes_n']} | {m[f'stage_{st}_verified']} |")
-    keys = ("median_ticket_start_to_merge_minutes", "first_pass_checks_fail_rate", "reopened_or_hotfix_rate",
-            "p0_filed_this_month", "p1_filed_this_month")
+    keys = ("median_ticket_start_to_merge_minutes", "first_pass_checks_fail_rate", "first_pass_verdict_rate",
+            "reopened_or_hotfix_rate", "p0_filed_this_month", "p1_filed_this_month")
     print("Delivery: " + ", ".join(f"{k}={m.get(k, 'unknown')}" for k in keys))
 REPORT
   bases=""

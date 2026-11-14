@@ -83,9 +83,57 @@ test("missing data reads unknown, never zero", () => {
   const m = computeMetrics({ now: data.now, prs: [], issues: [] }, 7);
   expect(m.median_ticket_start_to_merge_minutes).toBe("unknown");
   expect(m.first_pass_checks_fail_rate).toBe("unknown");
+  expect(m.first_pass_verdict_rate).toBe("unknown");
   expect(m.reopened_or_hotfix_rate).toBe("unknown");
   expect(m.median_stage_queue_minutes).toBe("unknown");
   expect(m.p0_filed_this_month).toBe("0");
+});
+
+test("first-pass Verdict rate is per builder agent and model", () => {
+  const pr = (number: number, agent: string, model: string, firstVerdict: "PASS" | "PASS+NOTES" | "FAIL") => ({
+    number,
+    title: "t",
+    mergedAt: "2026-11-08T12:00:00Z",
+    labels: [],
+    firstChecksConclusion: "success",
+    closingIssue: null,
+    builderAgent: agent,
+    builderModel: model,
+    firstVerdict,
+  });
+  const m = computeMetrics({
+    now: data.now,
+    prs: [
+      pr(1, "cursor", "grok-4.7-xhigh", "PASS"),
+      pr(2, "cursor", "grok-4.7-xhigh", "FAIL"),
+      pr(3, "claude", "claude-opus-5-5", "PASS+NOTES"),
+      { ...pr(4, "cursor", "grok-4.7-xhigh", "PASS"), mergedAt: "2026-10-01T12:00:00Z" },
+      { ...pr(5, "cursor", "grok-4.7-xhigh", "PASS"), builderAgent: null, builderModel: null },
+    ],
+    issues: [],
+  }, 7);
+  expect(m.first_pass_verdict_rate).toBe(
+    "agent=claude model=claude-opus-5-5:1/1,agent=cursor model=grok-4.7-xhigh:0.5/2",
+  );
+});
+
+test("toPr keeps the earliest Verdict and the Builder line", () => {
+  const parsed = toPr({
+    number: 8,
+    title: "t",
+    mergedAt: "2026-11-08T12:00:00Z",
+    labels: { nodes: [] },
+    commits: { nodes: [] },
+    closingIssuesReferences: { nodes: [] },
+    body: "Builder: agent=cursor model=grok-4.7-xhigh\n",
+    comments: { nodes: [
+      { createdAt: "2026-11-08T13:00:00Z", body: "Verdict: PASS head=" + "a".repeat(40) + " verifier=ctx_v author=ctx_a" },
+      { createdAt: "2026-11-08T12:00:00Z", body: "Verdict: FAIL head=" + "b".repeat(40) + " verifier=ctx_v author=ctx_a\n\n- [ ] fix it" },
+    ] },
+  });
+  expect(parsed.builderAgent).toBe("cursor");
+  expect(parsed.builderModel).toBe("grok-4.7-xhigh");
+  expect(parsed.firstVerdict).toBe("FAIL");
 });
 
 test("cli prints key=value lines from a fixture", () => {

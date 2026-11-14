@@ -222,7 +222,7 @@ else
   rcheck "--report queue row" '^\| queue \| 20 \| 30 \| 30 \| 2 \| 2 \|$'
   rcheck "--report build runs from dispatch to first Checks" '^\| build \| 60 \| 90 \| 90 \| 2 \| 2 \|$'
   rcheck "--report merge row" '^\| merge \| 60 \| 120 \| 120 \| 3 \| 2 \|$'
-  rcheck "--report delivery metrics" 'Delivery: median_ticket_start_to_merge_minutes=150, first_pass_checks_fail_rate=0.33'
+  rcheck "--report delivery metrics" 'Delivery: median_ticket_start_to_merge_minutes=150, first_pass_checks_fail_rate=0.33, first_pass_verdict_rate=unknown'
   rcheck "--report prints ROLE_RECEIPT_BASE" '^ROLE_RECEIPT_BASE="[0-9a-f]+( [0-9a-f]+)*"$'
   n=$(wc -l < "$GH_CALLS" | tr -d ' ')
   if [ "$n" -le 3 ] && grep -q '^api graphql' "$GH_CALLS" && [ "$(grep -c '^issue list' "$GH_CALLS")" = 2 ]; then
@@ -235,6 +235,12 @@ else
   rcheck "--report lists the FINDING as a problem" '^- skills: .*names nosuch'
   rcheck "--report gives the finding a recommended option" '^  Recommended: A, fix the skill or role file'
   rcheck "--report without a dispatch log has no verified samples" '^Samples: 3, fully verified: 0$'
+  metrics_test=$(cd "$here/tests" && pwd)/team-audit-metrics.test.ts
+  if bun test "$metrics_test"; then
+    pass=$((pass+1)); echo "ok   team-audit-metrics unit tests"
+  else
+    fail=$((fail+1)); echo "FAIL team-audit-metrics unit tests"
+  fi
 fi
 
 setup

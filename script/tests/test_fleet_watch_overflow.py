@@ -211,6 +211,24 @@ class CoordinatorOverflowAdmitTests(unittest.TestCase):
         self.assertIn('overflow-b', out['permissionDecisionReason'])
         self.assertIn('script/start-remote-worker.sh --on overflow-b', out['permissionDecisionReason'])
 
+    def test_usage_gate_hook_names_only_a_host_mapped_for_the_repo(self):
+        out = self._run_hook(
+            'orca orchestration worker-start --task t --agent claude --spec ok --repo path:/tmp/dotfiles',
+            {
+                'host_caps': {'local': 4, 'overflow-a': 2, 'overflow-b': 2},
+                'worker_placement': {'repos': {
+                    'overflow-a': {'/tmp/other': 'id:other'},
+                    'overflow-b': {'/tmp/dotfiles': 'id:dots'},
+                }},
+            },
+            load_per_core='0.85',
+            free_gb='12.0',
+        )
+        self.assertIsNotNone(out)
+        self.assertEqual(out['permissionDecision'], 'deny')
+        self.assertIn('overflow-b', out['permissionDecisionReason'])
+        self.assertNotIn('overflow-a', out['permissionDecisionReason'])
+
     def test_usage_gate_hook_reports_no_overflow_host_when_none_available(self):
         out = self._run_hook(
             'orca orchestration worker-start --task t --agent claude --spec ok',

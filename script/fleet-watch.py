@@ -694,9 +694,7 @@ def _is_local_coordinator_host(host, config):
     return False
 
 
-def environment_name_by_id(rpc_call=None):
-    """Map an Orca environment id to its name. Empty when the list cannot be read."""
-    call = rpc if rpc_call is None else rpc_call
+def _environment_names(call):
     try:
         result = call('environment', 'list')
     except Exception:
@@ -709,6 +707,21 @@ def environment_name_by_id(rpc_call=None):
         eid, name = env.get('id'), env.get('name')
         if isinstance(eid, str) and eid and isinstance(name, str) and name.strip():
             names[eid] = name.strip()
+    return names
+
+
+def environment_name_by_id(rpc_call=None):
+    """Map an Orca environment id to its name. Empty when the list cannot be read.
+
+    A pass reads the list once. A caller that passes rpc_call always reads again.
+    """
+    global _ENV_NAMES_CACHE
+    cache_on = rpc_call is None and _PASS is not None and _ENV_PASS_ID == id(_PASS)
+    if cache_on and _ENV_NAMES_CACHE is not None:
+        return _ENV_NAMES_CACHE
+    names = _environment_names(rpc if rpc_call is None else rpc_call)
+    if cache_on:
+        _ENV_NAMES_CACHE = names
     return names
 
 
@@ -760,7 +773,46 @@ def _resolve_env_names(workers, config, env_names):
     return environment_name_by_id()
 
 
-def _first_admitted_overflow_host(host, config, workers, env_names=None):
+def _host_maps_repo(config, host, repo):
+    """False when worker_placement.repos exists and this host has no entry for repo.
+
+    No table means the caller still asks Orca. The local host is always mapped.
+    """
+    placement = _sibling('worker_placement', 'worker-placement.py')
+    if not placement.repos_for_env(config or {}):
+        return True
+    local = (config or {}).get('local_host')
+    local = local.strip() if isinstance(local, str) and local.strip() else None
+    selectors = [repo]
+    root = _issue_scan_repo_root(config, repo)
+    if root:
+        selectors.append('path:' + root)
+    return any(placement.host_has_repo_mapping(config, host, local, sel) for sel in selectors)
+
+
+def _overflow_host_ok(config, host, repo, lookup):
+    """True when this host may take overflow for repo. No repo means no filter."""
+    if not repo:
+        return True
+    placement = _sibling('worker_placement', 'worker-placement.py')
+    if placement.repos_for_env(config or {}):
+        return _host_maps_repo(config, host, repo)
+    owner = repo
+    if repo.startswith('path:'):
+        owner = github_repo_from_origin(repo[5:]) or ''
+    elif repo.startswith('id:'):
+        owner = ''
+    if not owner or '/' not in owner:
+        return False
+    if lookup is None:
+        lookup = default_repo_id_lookup
+    try:
+        return bool(lookup(host, owner))
+    except Exception:
+        return False
+
+
+def _first_admitted_overflow_host(host, config, workers, env_names=None, repo=None, repo_lookup=None):
     local_host = (config or {}).get('local_host')
     local_names = {'local', host}
     if isinstance(local_host, str) and local_host.strip():
@@ -768,13 +820,15 @@ def _first_admitted_overflow_host(host, config, workers, env_names=None):
     for candidate in ((config or {}).get('host_caps') or {}):
         if candidate in local_names:
             continue
+        if not _overflow_host_ok(config, candidate, repo, repo_lookup):
+            continue
         remote_receipt = admit(candidate, config, workers=workers, env_names=env_names if env_names is not None else {})
         if remote_receipt.get('admitted'):
             return candidate
     return None
 
 
-def admit(host, config, workers=None, env_names=None):
+def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=None):
     """Evaluate host admission under its configured cap.
     Returns an admission receipt dict. Missing/failed remote inventory and release_unknown never authorize a start.
     """
@@ -857,7 +911,8 @@ def admit(host, config, workers=None, env_names=None):
     occupied_count = len(host_resources)
 
     if load_breached or mem_breached:
-        overflow_host = _first_admitted_overflow_host(host, config, deduped, env_names)
+        overflow_host = _first_admitted_overflow_host(
+            host, config, deduped, env_names, repo, repo_lookup)
         breaches = []
         if load_breached:
             breaches.append('coordinator 1m load per core %.2f >= %.2f' % (load_per_core, COORDINATOR_MAX_LOAD_PER_CORE))
@@ -867,6 +922,10 @@ def admit(host, config, workers=None, env_names=None):
         if overflow_host:
             reason = '%s; overflow to %s: use script/start-remote-worker.sh --on %s' % (
                 breach_text, overflow_host, overflow_host
+            )
+        elif repo:
+            reason = '%s; no remote overflow host has this repo (use script/start-remote-worker.sh --on <host>)' % (
+                breach_text,
             )
         else:
             reason = '%s; no remote overflow host has free capacity (use script/start-remote-worker.sh --on <host>)' % (
@@ -919,7 +978,9 @@ def admit(host, config, workers=None, env_names=None):
         }
 
     admitted = (occupied_count < cap)
-    overflow_host = None if admitted else (_first_admitted_overflow_host(host, config, deduped, env_names) if is_local else None)
+    overflow_host = None if admitted else (
+        _first_admitted_overflow_host(host, config, deduped, env_names, repo, repo_lookup) if is_local else None
+    )
     return {
         'ok': True,
         'admitted': admitted,
@@ -1513,12 +1574,16 @@ class PassCounts:
 
 
 _PASS = None
+_ENV_PASS_ID = None
+_ENV_NAMES_CACHE = None
 
 
 def begin_pass_counts():
     """Start a new pass. Counts from the previous pass are dropped."""
-    global _PASS
+    global _PASS, _ENV_PASS_ID, _ENV_NAMES_CACHE
     _PASS = PassCounts()
+    _ENV_PASS_ID = id(_PASS)
+    _ENV_NAMES_CACHE = None
     return _PASS
 
 
@@ -4001,7 +4066,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
             '## Acceptance\n'
             '- [ ] a Verdict for head %s is posted\n\n'
             '## Out of scope\n'
-            'Merging. Verdict format stays as it is.\n\n'
+            'Merging. fleet-watch starts ship.sh for a ready head. Verdict format stays as it is.\n\n'
             '## Verify\n'
             '%s\n\n'
             '## Finish\n'
@@ -4015,7 +4080,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
             '## Acceptance\n'
             '- [ ] head-checks pass for the new head\n\n'
             '## Out of scope\n'
-            'Merging. Files outside this PR.\n\n'
+            'Merging. fleet-watch starts ship.sh for a ready head. Files outside this PR.\n\n'
             '## Verify\n'
             '%s\n\n'
             '## Finish\n'
@@ -4654,7 +4719,14 @@ def issue_scan_pass(
             if not head:
                 continue
             pr_num = pr_row['number']
-            if root and not checks_receipt_at_head(pr_row) and not pr_checks_all_success(pr_row):
+            needs_head_checks = (
+                bool(root)
+                and not checks_receipt_at_head(pr_row)
+                and not pr_checks_all_success(pr_row)
+            )
+            if needs_head_checks and refused:
+                log_bits.append('head_checks_held=%s' % head[:8])
+            elif needs_head_checks:
                 hc_key = park_id('head_checks', repo, pr_num, head)
                 if park_is_active(state, hc_key, config):
                     log_bits.append('head_checks_parked=%s' % head[:8])
@@ -4832,6 +4904,9 @@ def issue_scan_pass(
                     why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
                     log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
                     count_refused(refusal_token(why))
+                    continue
+                if not _host_maps_repo(config, candidate, repo):
+                    log_bits.append('issue_scan_no_repo_%s' % candidate)
                     continue
                 repo_id = lookup(candidate, repo)
                 if not repo_id:

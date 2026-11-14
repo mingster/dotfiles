@@ -519,8 +519,8 @@ echo "drift" >> "$fleet_repo/docs/agents/fleet-watch.md"
 fleet_drift=$(DOTFILES="$fleet_df" bash "$SCRIPT" check "$fleet_repo" 2>&1)
 fleet_drift_rc=$?
 if [ "$fleet_drift_rc" -ne 0 ] \
-  && ! echo "$fleet_before" | grep -Fq "docs/agents/fleet-watch.md" \
-  && echo "$fleet_drift" | grep -Fq "template-managed file drifted: docs/agents/fleet-watch.md"; then
+  && ! grep -Fq "docs/agents/fleet-watch.md" <<<"$fleet_before" \
+  && grep -Fq "template-managed file drifted: docs/agents/fleet-watch.md" <<<"$fleet_drift"; then
   check "check flags a drifted docs/agents/fleet-watch.md" ok
 else
   check "check flags a drifted docs/agents/fleet-watch.md" bad
