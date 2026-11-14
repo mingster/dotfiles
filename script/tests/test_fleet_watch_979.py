@@ -1,5 +1,9 @@
 import importlib.util
+import json
+import os
+import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
@@ -151,6 +155,155 @@ class AdoptedConfigKeepsHosts(unittest.TestCase):
         )
         self.assertEqual(arg(starts[0], '--on'), 'hostA')
         self.assertEqual(arg(starts[0], '--repo'), 'id:idA')
+
+
+STUB_KEYS = {
+    'local_host': 'coord',
+    'host_caps': {'coord': 5, 'blueDevil': 4},
+    'host_load_ceilings': {'blueDevil': 0.7},
+    'worker_placement': {'repos': {'blueDevil': {REPO: 'id:blue'}}},
+}
+ELON_RUNS = {'runs': [{'id': 'run_x', 'terminal': 't'}], 'issue_scan': CONFIG['issue_scan']}
+
+
+@contextmanager
+def fleet_home(stub_obj, elon_obj):
+    old_home = os.environ.get('HOME')
+    old_log = os.environ.get('FLEET_WATCH_LOG_PATH')
+    with tempfile.TemporaryDirectory() as home:
+        Path(home, '.config/fleet-watch').mkdir(parents=True)
+        Path(home, '.claude/state').mkdir(parents=True)
+        stub = Path(home, '.config/fleet-watch/config.json')
+        elon = Path(home, '.claude/state/fleet-watch-elon.json')
+        stub.write_text(json.dumps(stub_obj))
+        elon.write_text(json.dumps(elon_obj))
+        log = Path(home, 'fleet-watch.log')
+        os.environ['HOME'] = home
+        os.environ['FLEET_WATCH_LOG_PATH'] = str(log)
+        try:
+            yield stub, elon, log
+        finally:
+            if old_home is None:
+                os.environ.pop('HOME', None)
+            else:
+                os.environ['HOME'] = old_home
+            if old_log is None:
+                os.environ.pop('FLEET_WATCH_LOG_PATH', None)
+            else:
+                os.environ['FLEET_WATCH_LOG_PATH'] = old_log
+
+
+def scan_on(config):
+    starts = []
+    _notices, log = fw.issue_scan_pass(
+        config, {'issue_scan_backlog_sweep_at': NOW}, NOW, [],
+        list_issues=lambda _r: [ISSUE], pr_fetch=lambda _r: [],
+        gate_check=lambda _c: True,
+        admit_fn=lambda host, _c, _w: (
+            FULL if host in ('local', 'coord') else FREE
+        ),
+        start_worker=lambda cmd: starts.append(cmd) or 0,
+        repo_id_lookup=lambda host, _repo: 'id-blue' if host == 'blueDevil' else None,
+    )
+    return starts, log
+
+
+class StubKeysFillThePass(unittest.TestCase):
+    def test_coordinator_file_fills_missing_keys_from_the_stub(self):
+        with fleet_home(STUB_KEYS, ELON_RUNS) as (_stub, elon, log):
+            config, adopted = fw.resolve_pass_config(json.loads(elon.read_text()), str(elon))
+            self.assertIsNone(adopted)
+            self.assertEqual(config['local_host'], 'coord')
+            self.assertEqual(config['host_caps'], STUB_KEYS['host_caps'])
+            self.assertEqual(config['host_load_ceilings'], STUB_KEYS['host_load_ceilings'])
+            self.assertEqual(config['worker_placement'], STUB_KEYS['worker_placement'])
+            self.assertFalse(log.exists())
+
+    def test_stub_file_also_fills_worker_placement(self):
+        with fleet_home(STUB_KEYS, ELON_RUNS) as (stub, elon, _log):
+            config, adopted = fw.resolve_pass_config(json.loads(stub.read_text()), str(stub))
+            self.assertEqual(Path(adopted), elon)
+            self.assertEqual(config['worker_placement'], STUB_KEYS['worker_placement'])
+            self.assertEqual(config['host_load_ceilings'], STUB_KEYS['host_load_ceilings'])
+
+    def test_a_key_already_on_the_pass_config_is_kept(self):
+        elon = dict(ELON_RUNS, host_caps={'coord': 9})
+        with fleet_home(STUB_KEYS, elon) as (_stub, elon_path, _log):
+            config, _adopted = fw.resolve_pass_config(json.loads(elon_path.read_text()), str(elon_path))
+        self.assertEqual(config['host_caps'], {'coord': 9})
+        self.assertEqual(config['local_host'], 'coord')
+
+    def test_one_log_line_when_the_pass_config_has_no_host_caps(self):
+        with fleet_home({}, ELON_RUNS) as (_stub, elon, log):
+            config, _adopted = fw.resolve_pass_config(json.loads(elon.read_text()), str(elon))
+            self.assertTrue(log.is_file())
+            lines = log.read_text(encoding='utf-8').splitlines()
+        self.assertNotIn('host_caps', config)
+        self.assertEqual(len(lines), 1)
+        self.assertIn('pass_config_no_host_caps', lines[0])
+
+    def test_full_local_host_starts_on_the_admitted_remote_that_maps_the_repo(self):
+        with fleet_home(STUB_KEYS, ELON_RUNS) as (_stub, elon, _log):
+            config, _adopted = fw.resolve_pass_config(json.loads(elon.read_text()), str(elon))
+        starts, log = scan_on(config)
+        self.assertEqual(len(starts), 1, log)
+        self.assertEqual(arg(starts[0], '--on'), 'blueDevil')
+        self.assertIn('issue_start=7', log)
+
+
+class LocalOrcaRepoIdMapsTheHost(unittest.TestCase):
+    def mapped_config(self):
+        return {
+            'local_host': 'coord',
+            'host_caps': {'coord': 1, 'blueDevil': 4},
+            'worker_placement': {'repos': {'blueDevil': {'repo-local-1': 'id:remote-blue'}}},
+            'issue_scan': CONFIG['issue_scan'],
+        }
+
+    def list_reply(self, repo_id):
+        return {'repos': [{
+            'id': repo_id,
+            'path': '/Users/u/app',
+            'gitRemoteIdentity': {'canonicalKey': 'github.com/owner/app'},
+        }]}
+
+    def with_local_list(self, repo_id):
+        calls = []
+
+        def rpc(*args):
+            calls.append(args)
+            if args[:2] == ('repo', 'list') and '--environment' not in args:
+                return self.list_reply(repo_id)
+            raise AssertionError(args)
+
+        return calls, rpc
+
+    def test_host_maps_repo_tries_the_local_orca_repo_id(self):
+        config = self.mapped_config()
+        calls, rpc = self.with_local_list('repo-local-1')
+        orig = fw.rpc
+        fw.rpc = rpc
+        try:
+            mapped = fw._host_maps_repo(config, 'blueDevil', REPO)
+            starts, log = scan_on(config)
+        finally:
+            fw.rpc = orig
+        self.assertTrue(mapped)
+        self.assertEqual(len(starts), 1, log)
+        self.assertEqual(arg(starts[0], '--on'), 'blueDevil')
+        self.assertNotIn('issue_scan_no_repo_blueDevil', log)
+        self.assertTrue(any(call[:2] == ('repo', 'list') for call in calls))
+
+    def test_a_different_local_repo_id_does_not_map_the_host(self):
+        config = self.mapped_config()
+        _calls, rpc = self.with_local_list('repo-other')
+        orig = fw.rpc
+        fw.rpc = rpc
+        try:
+            mapped = fw._host_maps_repo(config, 'blueDevil', REPO)
+        finally:
+            fw.rpc = orig
+        self.assertFalse(mapped)
 
 
 if __name__ == '__main__':
