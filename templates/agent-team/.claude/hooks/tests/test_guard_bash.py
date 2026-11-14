@@ -1214,7 +1214,10 @@ class ProductionTestData(GuardTest):
 
     def test_rewritten_origin_main_does_not_count(self):
         self.write_facts("* Production data: a real store is live")
-        self.git("update-ref", "refs/remotes/origin/main", "HEAD~1")
+        self.write_facts("* Production data: production holds only test data", commit=False)
+        self.git("add", "docs/agents/deploy-facts.md")
+        self.git("commit", "-q", "-m", "rewrite facts")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
 
     def test_role_line_beats_an_earlier_role_path(self):
