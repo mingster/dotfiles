@@ -35,6 +35,7 @@ class Gate(unittest.TestCase):
         os.makedirs(self.bin)
         self.issue = {"labels": [], "body": "", "comments": []}
         self.gh_fails = False
+        self.gh_raw = None
         self.gh_log = os.path.join(self.home, "gh.log")
 
     def reserve(self, kind="money rule"):
@@ -51,11 +52,20 @@ class Gate(unittest.TestCase):
         path = os.path.join(self.bin, "gh")
         record = f'echo "$@" >> {self.gh_log}\n'
         with open(path, "w") as f:
-            if self.gh_fails:
+            if self.gh_raw is not None:
+                f.write("#!/bin/sh\n" + record + "cat <<'JSON'\n" + self.gh_raw + "\nJSON\n")
+            elif self.gh_fails:
                 f.write("#!/bin/sh\n" + record + "exit 1\n")
             else:
                 f.write("#!/bin/sh\n" + record + "cat <<'JSON'\n" + json.dumps(self.issue) + "\nJSON\n")
         os.chmod(path, 0o755)
+
+    def grill_comment(self, who="coordinator", login="mingster", association="OWNER", date="2026-11-14", body=None):
+        self.issue["comments"] = [{
+            "body": body if body is not None else f"Grill approved: {who} {date}",
+            "author": {"login": login},
+            "authorAssociation": association,
+        }]
 
     def bash(self, command, cwd=None):
         self.fake_gh()
@@ -329,9 +339,87 @@ class GrillGate(Gate):
         cmd = 'orca orchestration worker-start --agent claude --spec "Refs #6936. You are qa-sdet.' + BRIEF_SECTIONS + '"'
         self.assertAllowed(cmd)
 
-    def test_gh_failure_lets_the_command_through(self):
+    def test_unreadable_issue_denies_the_build(self):
         self.reserve()
-        self.gh_fails = True
+        cases = (
+            ("gh failure", None, True),
+            ("null", "null", False),
+            ("not json", "not-json", False),
+            ("list", "[]", False),
+        )
+        for name, raw, fails in cases:
+            with self.subTest(name=name):
+                self.gh_fails = fails
+                self.gh_raw = None if fails else raw
+                self.assertDenied(self.BUILD, "could not be read")
+
+    def test_money_vocabulary_needs_a_grill_record(self):
+        cases = (
+            ("label money", {"labels": [{"name": "money"}], "body": "", "title": "Catalog"}),
+            ("label pricing", {"labels": [{"name": "pricing"}], "body": "", "title": "Catalog"}),
+            ("label billing", {"labels": [{"name": "billing"}], "body": "", "title": "Catalog"}),
+            ("refund fee", {"labels": [], "body": "There is a refund fee.\n", "title": "Catalog"}),
+            ("stored value", {"labels": [], "body": "儲值 wallet top up\n", "title": "Catalog"}),
+            ("payment flow", {"labels": [], "body": "The payment flow charges the card.\n", "title": "Catalog"}),
+            ("plan price", {"labels": [], "body": "Show a plan price on the page.\n", "title": "Catalog"}),
+            ("title payment", {"labels": [], "body": "A new page.\n", "title": "Add a payment flow"}),
+            ("marker money", {"labels": [], "body": "Owner-reserved: money\n", "title": "Catalog"}),
+            ("marker pricing", {"labels": [], "body": "Owner-reserved: pricing\n", "title": "Catalog"}),
+            ("marker owner reserved price", {"labels": [], "body": "Owner reserved: price\n", "title": "Catalog"}),
+            ("heading price", {"labels": [], "body": "## Owner-reserved: price\n", "title": "Catalog"}),
+            ("fees suffix", {"labels": [], "body": "Owner-reserved: money rule (fees)\n", "title": "Catalog"}),
+        )
+        for name, issue in cases:
+            with self.subTest(name=name):
+                issue["comments"] = []
+                self.issue = issue
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+                if name == "title payment":
+                    self.assertIn("title", self.gh_calls()[-1])
+
+    def test_a_price_mention_on_a_new_page_stays_open(self):
+        self.issue = {
+            "labels": [],
+            "title": "Catalog",
+            "body": "The card shows the price in yen.\n",
+            "comments": [],
+        }
+        self.assertAllowed(self.BUILD)
+        self.issue["body"] = "Owner-reserved: customer message\n"
+        self.assertAllowed(self.BUILD)
+
+    def test_a_negation_is_not_a_grill_record(self):
+        self.reserve()
+        for body in (
+            "The owner has not approved the grill results",
+            "grill awaiting owner approval",
+            "not Grill approved: coordinator 2026-11-14",
+            "Grill approved: coordinator 2026-11-14 extra",
+            "Grill approved: coordinator",
+        ):
+            with self.subTest(body=body):
+                self.grill_comment(body=body)
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_a_builder_cannot_record_the_grill(self):
+        self.reserve()
+        self.grill_comment(login="builder-bot", association="CONTRIBUTOR")
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+        self.issue["comments"] = [{"body": "Grill approved: coordinator 2026-11-14"}]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_owner_fixed_form_allows_the_build(self):
+        self.reserve()
+        self.grill_comment(who="owner", date="2026-11-04")
+        self.assertAllowed(self.BUILD)
+
+    def test_configured_approver_login_allows_the_build(self):
+        folder = os.path.join(self.home, ".claude", "hooks")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "guard-config.json"), "w") as f:
+            json.dump({"grill_approvers": ["coordinator-bot"]}, f)
+        self.reserve()
+        self.grill_comment(login="coordinator-bot", association="CONTRIBUTOR")
         self.assertAllowed(self.BUILD)
 
 

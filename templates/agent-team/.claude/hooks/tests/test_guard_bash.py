@@ -1011,7 +1011,10 @@ class ProductionTestData(GuardTest):
 
     def setUp(self):
         super().setUp()
-        os.makedirs(os.path.join(self.home, ".git"))
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "t@example.com")
+        self.git("config", "user.name", "t")
+        self.git("config", "commit.gpgsign", "false")
         cfg = os.path.join(self.home, "guard-config.json")
         with open(cfg, "w") as f:
             json.dump({
@@ -1022,7 +1025,12 @@ class ProductionTestData(GuardTest):
         self.write_facts("* Production data: production holds only test data")
         self.write_role("release-manager")
 
-    def write_facts(self, *lines):
+    def git(self, *args):
+        out = subprocess.run(["git", *args], cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def write_facts(self, *lines, commit=True):
         folder = os.path.join(self.home, "docs", "agents")
         os.makedirs(folder, exist_ok=True)
         prose = ("* While production holds only test data, a promotion needs no user approval. "
@@ -1030,6 +1038,27 @@ class ProductionTestData(GuardTest):
         body = "# Deploy facts\n\n## production\n\n" + "\n".join(lines) + "\n" + prose
         with open(os.path.join(folder, "deploy-facts.md"), "w") as f:
             f.write(body)
+        if commit:
+            self.commit_facts()
+
+    def commit_facts(self):
+        self.git("add", "docs/agents/deploy-facts.md")
+        staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=self.home)
+        if staged.returncode != 0:
+            self.git("commit", "-q", "-m", "facts")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+    def other_repo(self, *lines):
+        other = os.path.join(self.home, "other")
+        os.makedirs(os.path.join(other, ".git"))
+        folder = os.path.join(other, "docs", "agents")
+        os.makedirs(folder)
+        prose = ("* While production holds only test data, a promotion needs no user approval. "
+                 "Once a real store is live, it needs the go.\n")
+        body = "# Deploy facts\n\n## production\n\n" + "\n".join(lines) + "\n" + prose
+        with open(os.path.join(folder, "deploy-facts.md"), "w") as f:
+            f.write(body)
+        return other
 
     def write_role(self, role, spoof=False):
         path = os.path.join(self.home, "transcript.jsonl")
@@ -1090,6 +1119,71 @@ class ProductionTestData(GuardTest):
             json.dump({"stage_branches": ["production", "live"], "production_branches": ["live"]}, f)
         self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
         self.assertAllowed("git push origin HEAD:live")
+
+    def test_status_line_inside_a_fence_or_comment_does_not_count(self):
+        for name, lines in (
+            ("fence", ("```", "* Production data: production holds only test data", "```")),
+            ("comment", ("<!--", "* Production data: production holds only test data", "-->")),
+        ):
+            with self.subTest(name=name):
+                self.write_facts(*lines)
+                self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_another_live_sentence_wins(self):
+        self.write_facts(
+            "* Production data: production holds only test data",
+            "A real store is live since 2026-11-01",
+        )
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_a_commented_live_sentence_still_blocks(self):
+        self.write_facts(
+            "* Production data: production holds only test data",
+            "<!-- A real store is live since 2026-11-01 -->",
+        )
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_working_tree_rewrite_does_not_count(self):
+        self.write_facts("* Production data: a real store is live")
+        self.write_facts("* Production data: production holds only test data", commit=False)
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_git_dash_c_does_not_read_the_other_repo(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        self.write_facts("* Production data: a real store is live")
+        self.assertDenied(f"git -C {other} push https://github.com/acme/real.git HEAD:production", "owner-approve.sh")
+
+    def test_git_dash_c_still_uses_this_projects_committed_facts(self):
+        other = self.other_repo("* Production data: a real store is live")
+        self.assertAllowed(f"git -C {other} push https://github.com/acme/real.git HEAD:production")
+
+    def test_role_line_beats_an_earlier_role_path(self):
+        path = os.path.join(self.home, "transcript.jsonl")
+        brief = ("Read these files before any work:\n- .claude/agents/release-manager.md\n\n"
+                 "# fullstack-dev - deploy\n\nRole: fullstack-dev\n")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": brief}}) + "\n")
+        self.transcript = path
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_role_and_title_must_agree(self):
+        path = os.path.join(self.home, "transcript.jsonl")
+        brief = ("Read these files before any work:\n- .claude/agents/release-manager.md\n\n"
+                 "# release-manager - deploy\n\nRole: fullstack-dev\n")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": brief}}) + "\n")
+        self.transcript = path
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+
+class DeployFactsRollbackWording(unittest.TestCase):
+    def test_test_data_does_not_waive_a_rollback(self):
+        path = os.path.normpath(os.path.join(
+            os.path.dirname(HOOK), "..", "..", "docs", "agents", "deploy-facts.md"))
+        with open(path) as f:
+            text = f.read()
+        self.assertNotIn("a promotion or rollback needs no user approval", text)
+        self.assertIn("A rollback is a force push and still needs the owner's go.", text)
 
 
 if __name__ == "__main__":
