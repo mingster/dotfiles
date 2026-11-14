@@ -2,6 +2,8 @@
 # shellcheck disable=SC2209
 # Prints "<tool> ok <version>", "<tool> missing" or "<tool> unreadable" for each fleet tool on this host.
 # fleet-toolchain-check.sh sends this file over ssh; session-sync.sh runs it locally.
+# Also prints "e2e_shard ok" or "e2e_shard missing" when this host has a regression runtime.conf,
+# and nothing when it has none. It never prints the file's values.
 [ -n "${ZSH_VERSION:-}" ] && emulate -L sh
 export PATH="${FLEET_TOOLCHAIN_PATH:-$HOME/.local/bin:$HOME/.bun/bin:${ASDF_DATA_DIR:-$HOME/.asdf}/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH}"
 stale="$HOME/.orca/cli/bin"
@@ -75,3 +77,19 @@ for t in git gh jq python3 shellcheck bun node orca claude agent agy; do
       ;;
   esac
 done
+
+rt=""
+if [ -n "${FLEET_REGRESSION_HOME:-}" ]; then
+  rt="$FLEET_REGRESSION_HOME/runtime.conf"
+else
+  for f in "$HOME"/.local/share/*-regression/runtime.conf; do
+    [ -f "$f" ] && { rt=$f; break; }
+  done
+fi
+if [ -n "$rt" ] && [ -f "$rt" ]; then
+  if grep -qE '^[[:space:]]*(export[[:space:]]+)?E2E_SHARD=' "$rt" 2>/dev/null; then
+    echo "e2e_shard ok"
+  else
+    echo "e2e_shard missing"
+  fi
+fi

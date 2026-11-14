@@ -554,4 +554,30 @@ AGENT_STATE_DIR="$tmp/peer-state" FLEET_PULL_CONFIG="$tmp/floor-fleet.json" FLEE
 check "842 a peer run leaves the state dir without a floor file" \
   "$([ ! -e "$tmp/peer-state/fleet-floor.json" ] && echo 0 || echo 1)"
 
+# 1075: a host whose runtime.conf lacks E2E_SHARD fails the check and is named; a host with it or with no runtime.conf passes
+shard_out=$(FLEET_TOOLCHAIN_VERSIONS="{
+  \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\", \"e2e_shard\": \"ok\"},
+  \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\", \"e2e_shard\": \"missing\"}
+}" FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 "$here/fleet-toolchain-check.sh" 2>&1); shard_rc=$?
+check "1075 missing E2E_SHARD names the host" "$(echo "$shard_out" | grep -q 'worker-a runtime.conf has no E2E_SHARD'; echo $?)"
+check "1075 missing E2E_SHARD fails the check" "$([ "$shard_rc" != 0 ] && echo 0 || echo 1)"
+check "1075 host with E2E_SHARD is not named" "$(echo "$shard_out" | grep -q 'coord-a runtime.conf' && echo 1 || echo 0)"
+FLEET_TOOLCHAIN_VERSIONS="{
+  \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
+  \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"}
+}" FLEET_TOOLCHAIN_LATEST_ORCA=1.4.253 "$here/fleet-toolchain-check.sh" >/dev/null 2>&1
+check "1075 hosts with no runtime.conf pass" "$?"
+
+# 1075: the real probe reports the shard line without printing any value
+rt_home="$tmp/rt"; mkdir -p "$rt_home"
+printf 'SECRET_KEY=hunter2\nE2E_SHARD=s2\n' >"$rt_home/runtime.conf"
+probe_ok=$(FLEET_REGRESSION_HOME="$rt_home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
+printf 'SECRET_KEY=hunter2\n' >"$rt_home/runtime.conf"
+probe_miss=$(FLEET_REGRESSION_HOME="$rt_home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
+probe_none=$(FLEET_REGRESSION_HOME="$tmp/none" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
+check "1075 probe prints e2e_shard ok" "$(echo "$probe_ok" | grep -qx 'e2e_shard ok'; echo $?)"
+check "1075 probe prints e2e_shard missing" "$(echo "$probe_miss" | grep -qx 'e2e_shard missing'; echo $?)"
+check "1075 probe prints nothing without runtime.conf" "$(echo "$probe_none" | grep -q e2e_shard && echo 1 || echo 0)"
+check "1075 probe never prints values" "$(echo "$probe_ok$probe_miss" | grep -q hunter2 && echo 1 || echo 0)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]
