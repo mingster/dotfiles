@@ -4,7 +4,9 @@
 # Lanes: code and script PRs need a verifier Verdict: PASS whose agent and model differ from the builder's
 # (PR body line "Builder: agent=<a> model=<m>"). The same model family is refused unless the Verdict
 # comment is tagged same-family-different-model. The body also needs checked Acceptance and a
-# ## Self-check with a command and its output. A docs only PR needs a cold "Review: PASS head=<head>"
+# ## Self-check with a command and its output. A Review: FAIL at the merge head refuses the merge
+# unless a later Review: PASS for that head, or a Countersign, covers it. A Verdict does not cover it.
+# A docs only PR needs a cold "Review: PASS head=<head>"
 # or a Verdict PASS or PASS+NOTES at that exact head (same author and builder checks as the verdict lane);
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
 # copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
@@ -294,6 +296,32 @@ load_newest_verdict() {
       break
     fi
   done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0]), tag: (if ((.body // "") | test("same-family-different-model")) then "same-family-different-model" else "" end)}] | reverse[] | .f, .l, .tag' <<<"$info")
+}
+
+# A Verdict does not cover a Review: FAIL at the merge head. Comments are oldest
+# first, the same order the docs lane treats as newest-last. An edited or
+# minimized PASS does not count. An edited FAIL still blocks.
+review_fail_blocks_merge() {
+  local uncovered
+  uncovered=$(jq -r --arg h "$head" '
+    [ .comments[]?
+      | (.body // "" | split("\n")[0]) as $line
+      | select($line | test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )"))
+      | {
+          r: ($line | capture("^Review: (?<r>PASS|FAIL)").r),
+          cold: (((.includesCreatedEdit // false) or (.isMinimized // false)) | not)
+        }
+      | select(.r == "FAIL" or .cold)
+    ] as $rows
+    | ($rows | to_entries | map(select(.value.r == "FAIL")) | last | .key) as $at
+    | if $at == null then ""
+      elif any($rows[($at + 1):][]; .r == "PASS") then ""
+      else "Review: FAIL"
+      end
+  ' <<<"$info") || refuse "cannot read Review comments on PR $pr"
+  [ -n "$uncovered" ] || return 0
+  countersigned "$head" && return 0
+  refuse "Review: FAIL at head ${head:0:12} is not covered by a later Review: PASS or a Countersign"
 }
 
 # Generated team copies change only through the dotfiles template. A copy that is not the origin/main
@@ -633,6 +661,8 @@ verdict)
   fi
   ;;
 esac
+
+review_fail_blocks_merge
 
 # 5. Protected paths (shared lib: owner-only, Owner-approved trailer, Countersign).
 if [ "$lane" = generated ]; then
