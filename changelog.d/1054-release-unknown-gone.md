@@ -1,0 +1,1 @@
+fleet-watch drops a settled release_unknown seat after it proves the worker is gone. No process is using that workspace, and the worktree is missing or clean. A failed check keeps the seat, and the host cap is unchanged (#1054).

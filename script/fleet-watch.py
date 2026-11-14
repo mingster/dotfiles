@@ -333,7 +333,258 @@ def worker_freed_by_terminal_exit(worker):
     return worker_liveness_verdict(w) == 'exited' and w.get('terminalState') == 'released'
 
 
-def classify_worker(worker):
+_SETTLED_KINDS = ('succeeded', 'stopped', 'failed')
+_ARG_BOUNDARY = set(' \t/:=\'",;')
+
+
+def worker_settled_kind(worker):
+    """succeeded, stopped, or failed. completed alone is not settled."""
+    w = worker or {}
+    proj = w.get('projection') or {}
+    stage = proj.get('stage')
+    stage_worker = stage.get('worker') if isinstance(stage, dict) else None
+    for value in (w.get('workerState'), w.get('state'), w.get('outcome'), proj.get('outcome'), stage_worker):
+        if value in _SETTLED_KINDS:
+            return value
+    return None
+
+
+def release_unknown_row(worker):
+    """True when the terminal no longer resolves, or release itself came back release_unknown."""
+    w = worker or {}
+    if w.get('terminalState') == 'release_unknown':
+        return True
+    evidence = w.get('evidence') or {}
+    return bool(
+        worker_inventory_status(w) == 'release_unknown' or
+        w.get('releaseStatus') == 'release_unknown' or
+        evidence.get('release') == 'release_unknown' or
+        w.get('released') == 'release_unknown'
+    )
+
+
+def safe_workspace_path(path):
+    """Absolute workspace path worth comparing to a process. Short paths match too much."""
+    if not isinstance(path, str):
+        return ''
+    path = path.rstrip('/')
+    if len(path) < 2 or not path.startswith('/') or path.startswith('//'):
+        return ''
+    if len([part for part in path.split('/') if part]) < 3:
+        return ''
+    return path
+
+
+def worker_on_local_machine(worker, config, env_names):
+    """True when this process can see that worker's host. A remote row stays occupying."""
+    raw = projection_host_id(worker)
+    if _is_local_coordinator_host(raw, config):
+        return True
+    return _is_local_coordinator_host(host_cap_name(raw, config or {}, env_names or {}), config)
+
+
+def command_names_path(command, path):
+    """True when path is one argument, or the prefix of an argument, not a sibling prefix."""
+    if not command or not path:
+        return False
+    start = 0
+    while True:
+        found = command.find(path, start)
+        if found < 0:
+            return False
+        end = found + len(path)
+        before = command[found - 1] if found else ''
+        after = command[end] if end < len(command) else ''
+        before_ok = found == 0 or before in _ARG_BOUNDARY
+        after_ok = end == len(command) or after in _ARG_BOUNDARY
+        if before_ok and after_ok:
+            return True
+        start = found + 1
+
+
+def cwd_is_workspace(cwd, path):
+    if not isinstance(cwd, str) or not path:
+        return False
+    if cwd.endswith(' (deleted)'):
+        cwd = cwd[:-len(' (deleted)')]
+    if len(cwd) > 1:
+        cwd = cwd.rstrip('/')
+    return cwd == path or cwd.startswith(path + '/')
+
+
+def place_keys(path):
+    """Recorded path and its real path. macOS reports /var cwd values under /private/var."""
+    if not path:
+        return []
+    keys = [path]
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        real = ''
+    if real and real not in keys:
+        keys.append(real)
+    return keys
+
+
+def process_uses_workspace(path, commands, cwds):
+    places = place_keys(path)
+    for cwd in cwds:
+        raw = cwd[:-len(' (deleted)')] if isinstance(cwd, str) and cwd.endswith(' (deleted)') else cwd
+        for key in place_keys(raw):
+            for place in places:
+                if cwd_is_workspace(key, place):
+                    return True
+    for place in places:
+        for command in commands:
+            if command_names_path(command, place):
+                return True
+    return False
+
+
+def worktree_disposition(path, run=None):
+    """removed, clean, dirty, or unknown. unknown keeps the seat."""
+    if not safe_workspace_path(path):
+        return 'unknown'
+    try:
+        if not os.path.exists(path):
+            return 'removed'
+        if not os.path.isdir(path):
+            return 'unknown'
+    except OSError:
+        return 'unknown'
+    run = run or subprocess.run
+    try:
+        proc = run(
+            ['git', '-C', path, '-c', 'status.showUntrackedFiles=all', 'status', '--porcelain', '--untracked-files=all'],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 'unknown'
+    if getattr(proc, 'returncode', 1) != 0:
+        return 'unknown'
+    if (getattr(proc, 'stdout', '') or '').strip() == '':
+        return 'clean'
+    return 'dirty'
+
+
+class GoneProof:
+    """One process and worktree snapshot. failed means the process list could not be read."""
+
+    def __init__(self, commands=(), cwds=(), dispositions=None, failed=False):
+        self.commands = commands
+        self.cwds = cwds
+        self.dispositions = dispositions or {}
+        self.failed = failed
+
+    def clears(self, path):
+        if self.failed or not path:
+            return False
+        if process_uses_workspace(path, self.commands, self.cwds):
+            return False
+        return self.dispositions.get(path) in ('removed', 'clean')
+
+
+def lsof_cwds(text):
+    cwds = []
+    want = False
+    for line in (text or '').splitlines():
+        if line.startswith('f'):
+            want = line[1:] == 'cwd'
+            continue
+        if want and line.startswith('n'):
+            cwds.append(line[1:])
+            want = False
+            continue
+        if line.startswith('p'):
+            want = False
+    return cwds
+
+
+def proc_cwds(root='/proc'):
+    """Working directories of this uid, or None when /proc cannot be listed."""
+    try:
+        uid = os.getuid()
+        names = os.listdir(root)
+    except OSError:
+        return None
+    cwds = []
+    for name in names:
+        if not name.isdigit():
+            continue
+        pid_path = os.path.join(root, name)
+        try:
+            if os.stat(pid_path).st_uid != uid:
+                continue
+            dest = os.readlink(os.path.join(pid_path, 'cwd'))
+        except OSError:
+            continue
+        if dest:
+            cwds.append(dest)
+    return cwds
+
+
+def read_process_snapshot(run=None):
+    """(commands, cwds) or None. An empty cwd list cannot prove that no process is using a workspace."""
+    run = run or subprocess.run
+    try:
+        ps = run(['ps', '-axww', '-o', 'command='], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if getattr(ps, 'returncode', 1) != 0:
+        return None
+    commands = tuple((ps.stdout or '').splitlines())
+    cwds = None
+    if sys.platform != 'darwin' and os.path.isdir('/proc'):
+        cwds = proc_cwds('/proc')
+    if not cwds:
+        try:
+            listed = run(['lsof', '-n', '-P', '-d', 'cwd', '-Fn'], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if getattr(listed, 'returncode', 1) not in (0, 1):
+            return None
+        cwds = lsof_cwds(listed.stdout or '')
+    if not cwds:
+        return None
+    return commands, tuple(cwds)
+
+
+def build_gone_proof(workers, config, env_names, run=None):
+    """Snapshot processes once, then read only the local settled release_unknown worktrees."""
+    paths = []
+    for worker in workers or []:
+        if not isinstance(worker, dict) or worker_settled_kind(worker) is None:
+            continue
+        if not release_unknown_row(worker) or not worker_on_local_machine(worker, config, env_names):
+            continue
+        path = safe_workspace_path(worker_checkout_path(worker))
+        if path:
+            paths.append(path)
+    if not paths:
+        return GoneProof()
+    snapshot = read_process_snapshot(run)
+    if snapshot is None:
+        return GoneProof(failed=True)
+    commands, cwds = snapshot
+    dispositions = {path: worktree_disposition(path, run) for path in dict.fromkeys(paths)}
+    return GoneProof(commands, cwds, dispositions, False)
+
+
+def worker_proven_gone(worker, proof, config, env_names):
+    """True only when every proof check passed. A missing proof keeps the seat."""
+    if proof is None or proof.failed:
+        return False
+    if worker_settled_kind(worker) is None or not release_unknown_row(worker):
+        return False
+    if not worker_on_local_machine(worker, config, env_names):
+        return False
+    path = safe_workspace_path(worker_checkout_path(worker))
+    if not path:
+        return False
+    return proof.clears(path)
+
+
+def classify_worker(worker, proof=None, config=None, env_names=None):
     """Classifies a worker and determines if it occupies a host slot with evidence.
     Returns: (occupies: bool, classification: dict, has_release_unknown: bool)
     """
@@ -363,6 +614,22 @@ def classify_worker(worker):
     released = worker_terminal_released(worker) and not release_unknown
 
     dispatch_id = worker.get('dispatchId')
+
+    if worker_proven_gone(worker, proof, config, env_names):
+        info = {
+            'dispatchId': dispatch_id,
+            'host': host,
+            'category': 'freed',
+            'role': role,
+            'evidence': {
+                'status': status,
+                'pushed': pushed,
+                'released': False,
+                'release_unknown': True,
+                'proven_gone': True,
+            },
+        }
+        return False, info, False
 
     if release_unknown:
         info = {
@@ -885,6 +1152,7 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
 
     deduped = deduplicate_workers(workers)
     env_names = _resolve_env_names(deduped, config, env_names)
+    proof = build_gone_proof(deduped, config, env_names)
     host_resources = []
     has_any_release_unknown = False
     live_count = 0
@@ -894,7 +1162,7 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
         local_names.add(local_host.strip())
 
     for w in deduped:
-        occupies, info, release_unk = classify_worker(w)
+        occupies, info, release_unk = classify_worker(w, proof, config, env_names)
         if release_unk:
             has_any_release_unknown = True
         w_host = host_cap_name(info.get('host'), config, env_names)
@@ -1046,8 +1314,9 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
                 state.setdefault('failed_refs', {})[dispatch] = {'repo': fixed, 'pr': pr_num}
 
     deduped = deduplicate_workers(workers)
+    proof = build_gone_proof(deduped, config, {})
     for worker in deduped:
-        occupies, info, _ = classify_worker(worker)
+        occupies, info, _ = classify_worker(worker, proof, config, {})
         if occupies:
             host = info['host']
             counts[host] = counts.get(host, 0) + 1
