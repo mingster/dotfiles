@@ -78,8 +78,15 @@ for t in git gh jq python3 shellcheck bun node orca claude agent agy; do
   esac
 done
 
-rt="${RIBEN_REGRESSION_HOME:-$HOME/.local/share/riben-regression}/runtime.conf"
-if [ -f "$rt" ]; then
+rt=""
+if [ -n "${FLEET_REGRESSION_HOME:-}" ]; then
+  rt="$FLEET_REGRESSION_HOME/runtime.conf"
+else
+  for f in "$HOME"/.local/share/*-regression/runtime.conf; do
+    [ -f "$f" ] && { rt=$f; break; }
+  done
+fi
+if [ -n "$rt" ] && [ -f "$rt" ]; then
   if grep -qE '^[[:space:]]*(export[[:space:]]+)?E2E_SHARD=' "$rt" 2>/dev/null; then
     echo "e2e_shard ok"
   else

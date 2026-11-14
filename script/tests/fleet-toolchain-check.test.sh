@@ -571,10 +571,10 @@ check "1075 hosts with no runtime.conf pass" "$?"
 # 1075: the real probe reports the shard line without printing any value
 rt_home="$tmp/rt"; mkdir -p "$rt_home"
 printf 'SECRET_KEY=hunter2\nE2E_SHARD=s2\n' >"$rt_home/runtime.conf"
-probe_ok=$(RIBEN_REGRESSION_HOME="$rt_home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
+probe_ok=$(FLEET_REGRESSION_HOME="$rt_home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
 printf 'SECRET_KEY=hunter2\n' >"$rt_home/runtime.conf"
-probe_miss=$(RIBEN_REGRESSION_HOME="$rt_home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
-probe_none=$(RIBEN_REGRESSION_HOME="$tmp/none" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
+probe_miss=$(FLEET_REGRESSION_HOME="$rt_home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
+probe_none=$(FLEET_REGRESSION_HOME="$tmp/none" bash "$here/lib/toolchain-probe.sh" 2>/dev/null)
 check "1075 probe prints e2e_shard ok" "$(echo "$probe_ok" | grep -qx 'e2e_shard ok'; echo $?)"
 check "1075 probe prints e2e_shard missing" "$(echo "$probe_miss" | grep -qx 'e2e_shard missing'; echo $?)"
 check "1075 probe prints nothing without runtime.conf" "$(echo "$probe_none" | grep -q e2e_shard && echo 1 || echo 0)"
