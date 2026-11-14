@@ -37,6 +37,8 @@ class Hook(unittest.TestCase):
 
     def run_hook(self, command, tool="Bash", presets=True):
         env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA="false", USAGE_GATE_PRESETS=self.presets)
+        env.setdefault("FLEET_WATCH_TEST_LOAD_PER_CORE", "0.20")
+        env.setdefault("FLEET_WATCH_TEST_FREE_GB", "12")
         if not presets:
             del env["USAGE_GATE_PRESETS"]
         r = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),

@@ -235,7 +235,7 @@ else
   rcheck "--report lists the FINDING as a problem" '^- skills: .*names nosuch'
   rcheck "--report gives the finding a recommended option" '^  Recommended: A, fix the skill or role file'
   rcheck "--report without a dispatch log has no verified samples" '^Samples: 3, fully verified: 0$'
-  metrics_test=$(cd "$here" && pwd)/team-audit-metrics.test.ts
+  metrics_test=$(cd "$here/tests" && pwd)/team-audit-metrics.test.ts
   if bun test "$metrics_test"; then
     pass=$((pass+1)); echo "ok   team-audit-metrics unit tests"
   else
