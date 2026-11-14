@@ -10,6 +10,10 @@ FUT = time.time() + 3 * 86400
 
 class Hook(unittest.TestCase):
     def setUp(self):
+        self._saved_load = os.environ.get("FLEET_WATCH_TEST_LOAD_PER_CORE")
+        self._saved_free = os.environ.get("FLEET_WATCH_TEST_FREE_GB")
+        os.environ["FLEET_WATCH_TEST_LOAD_PER_CORE"] = "0.20"
+        os.environ["FLEET_WATCH_TEST_FREE_GB"] = "12"
         self.tmp = tempfile.TemporaryDirectory()
         self.state = self.tmp.name + "/state"
         self.presets = self.tmp.name + "/presets.json"
@@ -26,6 +30,14 @@ class Hook(unittest.TestCase):
         os.makedirs(self.state)
 
     def tearDown(self):
+        if self._saved_load is None:
+            os.environ.pop("FLEET_WATCH_TEST_LOAD_PER_CORE", None)
+        else:
+            os.environ["FLEET_WATCH_TEST_LOAD_PER_CORE"] = self._saved_load
+        if self._saved_free is None:
+            os.environ.pop("FLEET_WATCH_TEST_FREE_GB", None)
+        else:
+            os.environ["FLEET_WATCH_TEST_FREE_GB"] = self._saved_free
         self.tmp.cleanup()
 
     def claude(self, pct, baseline=None, written_at=None):
@@ -37,8 +49,8 @@ class Hook(unittest.TestCase):
 
     def run_hook(self, command, tool="Bash", presets=True):
         env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA="false", USAGE_GATE_PRESETS=self.presets)
-        env.setdefault("FLEET_WATCH_TEST_LOAD_PER_CORE", "0.20")
-        env.setdefault("FLEET_WATCH_TEST_FREE_GB", "12")
+        env["FLEET_WATCH_TEST_LOAD_PER_CORE"] = "0.20"
+        env["FLEET_WATCH_TEST_FREE_GB"] = "12"
         if not presets:
             del env["USAGE_GATE_PRESETS"]
         r = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
