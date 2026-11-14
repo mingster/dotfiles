@@ -323,6 +323,28 @@ else
   bad "empty statusCheckRollup refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# 12a. A check name is judged by its newest run; a superseded SKIPPED run does not block
+rollup_case() { # <pr> <expect ship|refuse> <label> <json array>
+  local n=$1 want=$2 label=$3 h
+  mf_pr_add "$n" "feat-rollup-$n" "Body"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h"
+  set_checks "$n" "$4"; post_verdict "$n" PASS "$h"
+  run_ship --repo example/repo --pr "$n"
+  if [ "$want" = ship ] && [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ $n ]]; then ok "$label"
+  elif [ "$want" = refuse ] && [ "$SHIP_RC" -ne 0 ] && grep -Fq "required checks are not all SUCCESS" <<<"$SHIP_OUT"; then ok "$label"
+  else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+rollup_case 121 ship "SKIPPED newer than SUCCESS, same name, ships" \
+  '[{"name":"head-checks","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-11-14T06:13:43Z","completedAt":"2026-11-14T06:13:43Z"},{"name":"head-checks","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-14T05:36:50Z","completedAt":"2026-11-14T05:52:44Z"},{"context":"review","state":"SUCCESS","startedAt":"2026-11-14T06:12:34Z"}]'
+rollup_case 122 refuse "SKIPPED as the only run of a name refuses" \
+  '[{"name":"head-checks","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-11-14T06:13:43Z","completedAt":"2026-11-14T06:13:43Z"}]'
+rollup_case 123 refuse "newer FAILURE over older SUCCESS refuses" \
+  '[{"name":"head-checks","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-14T05:36:50Z","completedAt":"2026-11-14T05:52:44Z"},{"name":"head-checks","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-11-14T06:00:00Z","completedAt":"2026-11-14T06:10:00Z"}]'
+rollup_case 124 ship "newer SUCCESS over older FAILURE ships" \
+  '[{"name":"head-checks","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-11-14T05:36:50Z","completedAt":"2026-11-14T05:52:44Z"},{"name":"head-checks","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-14T06:00:00Z","completedAt":"2026-11-14T06:10:00Z"}]'
+rollup_case 125 refuse "pending newer run over older SUCCESS refuses" \
+  '[{"name":"head-checks","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-14T05:36:50Z","completedAt":"2026-11-14T05:52:44Z"},{"name":"head-checks","status":"IN_PROGRESS","conclusion":"","startedAt":"2026-11-14T06:00:00Z"}]'
+
 # 13. No Self-review needed, no builder dispatch required, no cwd root check: the PR lands from any directory.
 # The board call stays on the local Orca when the dispatch record names no remote host.
 mf_pr_add 13 feat-no-self-review "Body"
