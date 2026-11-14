@@ -147,13 +147,13 @@ class Baseline(unittest.TestCase):
         self.assertFalse(occupies)
         self.assertEqual(info['category'], 'freed')
 
-    def test_flat_exited_without_released_terminal_still_retained(self):
+    def test_flat_exited_without_a_resource_holds_no_seat(self):
         config = {'host_caps': {'local': 1}}
         workers = [self.flat_exited(terminalState='retained')]
         receipt = watch.admit('local', config, workers)
-        self.assertFalse(receipt['admitted'])
-        self.assertEqual(receipt['occupied'], 1)
-        self.assertEqual(receipt['retained_count'], 1)
+        self.assertTrue(receipt['admitted'], receipt.get('reason'))
+        self.assertEqual(receipt['occupied'], 0)
+        self.assertEqual(receipt['retained_count'], 0)
         self.assertEqual(receipt['live_count'], 0)
 
     def test_live_dispatched_worker_still_counts_toward_cap(self):

@@ -584,6 +584,49 @@ def worker_proven_gone(worker, proof, config, env_names):
     return proof.clears(path)
 
 
+def _resource_holds_seat(resource):
+    if not isinstance(resource, dict):
+        return False
+    if resource.get('retainedReason') == 'unpushed':
+        return True
+    if resource.get('ownershipState') == 'owned':
+        return True
+    return resource.get('releaseState') in ('pending', 'retained')
+
+
+def worktree_has_unpushed_commits(path):
+    """True when HEAD has commits on no remote. Unknown keeps the seat."""
+    try:
+        proc = subprocess.run(
+            ['git', '-C', path, 'rev-list', '--count', 'HEAD', '--not', '--remotes'],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    if getattr(proc, 'returncode', 1) != 0:
+        return True
+    try:
+        return int((proc.stdout or '0').strip() or '0') > 0
+    except ValueError:
+        return True
+
+
+def worker_exit_still_holds_seat(worker):
+    """An exited worker keeps a seat only while Orca owns a resource or the visible worktree has unpushed commits.
+
+    worker-release can return ok with processAction none when the execution host is missing.
+    The list row stays terminalState retained and projection.resource state absent. That is not a seat.
+    """
+    w = worker or {}
+    projection = w.get('projection') or {}
+    if _resource_holds_seat(w.get('resource')) or _resource_holds_seat(projection.get('resource')):
+        return True
+    path = safe_workspace_path(worker_checkout_path(w))
+    if not path or not os.path.isdir(path):
+        return False
+    return worktree_has_unpushed_commits(path)
+
+
 def classify_worker(worker, proof=None, config=None, env_names=None):
     """Classifies a worker and determines if it occupies a host slot with evidence.
     Returns: (occupies: bool, classification: dict, has_release_unknown: bool)
@@ -656,6 +699,37 @@ def classify_worker(worker, proof=None, config=None, env_names=None):
             }
         }
         return False, info, False
+
+    if worker_liveness_verdict(worker) == 'exited':
+        holds_seat = worker_exit_still_holds_seat(worker)
+        if holds_seat and status in ('dispatched', 'running', 'pending', 'active'):
+            info = {
+                'dispatchId': dispatch_id,
+                'host': host,
+                'category': 'retained',
+                'role': role,
+                'evidence': {
+                    'status': status,
+                    'pushed': pushed,
+                    'released': False,
+                    'liveness': 'exited',
+                },
+            }
+            return True, info, False
+        if not holds_seat:
+            info = {
+                'dispatchId': dispatch_id,
+                'host': host,
+                'category': 'freed',
+                'role': role,
+                'evidence': {
+                    'status': status,
+                    'pushed': pushed,
+                    'released': False,
+                    'liveness': 'exited',
+                },
+            }
+            return False, info, False
 
     if status in ('dispatched', 'running', 'pending', 'active'):
         category = 'live_child' if is_child else ('live_qa' if is_qa else 'live_builder')
@@ -2031,8 +2105,9 @@ def worker_worktree_selector(w):
     ws = w.get('workspace')
     if isinstance(ws, str) and ws:
         return ws
-    wid = (resource.get('worktreeId') or w.get('worktreeId')
-           or (w.get('projection') or {}).get('workspace', {}).get('id'))
+    workspace = (w.get('projection') or {}).get('workspace')
+    workspace_id = workspace.get('id') if isinstance(workspace, dict) else None
+    wid = resource.get('worktreeId') or w.get('worktreeId') or workspace_id
     if isinstance(wid, str) and wid:
         return wid
     return ''
