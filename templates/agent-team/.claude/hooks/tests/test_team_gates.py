@@ -2,7 +2,7 @@
 
 1. Role file gate: commit, push and PR create that touch .claude/agents, docs/agents or
    .claude/model-routing.md need an `Owner-approved:` trailer.
-2. Grill gate: worker-start for a build worker needs the owner's grill approval on the issue.
+2. Grill gate: a fullstack-dev start is denied only for a money rule or price issue with no grill record.
 3. Owning lead: worker-start on another host needs `--from <lead handle>`.
 4. SessionStart:compact prints a checklist.
 
@@ -35,7 +35,11 @@ class Gate(unittest.TestCase):
         os.makedirs(self.bin)
         self.issue = {"labels": [], "body": "", "comments": []}
         self.gh_fails = False
+        self.gh_raw = None
         self.gh_log = os.path.join(self.home, "gh.log")
+
+    def reserve(self, kind="money rule"):
+        self.issue["body"] = f"Owner-reserved: {kind}\n"
 
     def gh_calls(self):
         try:
@@ -47,12 +51,44 @@ class Gate(unittest.TestCase):
     def fake_gh(self):
         path = os.path.join(self.bin, "gh")
         record = f'echo "$@" >> {self.gh_log}\n'
+        by_number = getattr(self, "by_number", None)
         with open(path, "w") as f:
-            if self.gh_fails:
+            if by_number is not None:
+                folder = os.path.join(self.home, "issues")
+                os.makedirs(folder, exist_ok=True)
+                for num, issue in by_number.items():
+                    with open(os.path.join(folder, f"{num}.json"), "w") as out:
+                        json.dump(issue, out)
+                f.write(
+                    "#!/bin/sh\n"
+                    + record
+                    + "num=\n"
+                    + 'for a in "$@"; do\n'
+                    + '  case "$a" in\n'
+                    + "    ''|*[!0-9]*) ;;\n"
+                    + "    *) num=$a ;;\n"
+                    + "  esac\n"
+                    + "done\n"
+                    + f'if [ -n "$num" ] && [ -f {folder}/$num.json ]; then\n'
+                    + f"  cat {folder}/$num.json\n"
+                    + "  exit 0\n"
+                    + "fi\n"
+                    + "exit 1\n"
+                )
+            elif self.gh_raw is not None:
+                f.write("#!/bin/sh\n" + record + "cat <<'JSON'\n" + self.gh_raw + "\nJSON\n")
+            elif self.gh_fails:
                 f.write("#!/bin/sh\n" + record + "exit 1\n")
             else:
                 f.write("#!/bin/sh\n" + record + "cat <<'JSON'\n" + json.dumps(self.issue) + "\nJSON\n")
         os.chmod(path, 0o755)
+
+    def grill_comment(self, who="coordinator", login="mingster", association="OWNER", date="2026-11-14", body=None):
+        self.issue["comments"] = [{
+            "body": body if body is not None else f"Grill approved: {who} {date}",
+            "author": {"login": login},
+            "authorAssociation": association,
+        }]
 
     def bash(self, command, cwd=None):
         self.fake_gh()
@@ -244,34 +280,90 @@ class GrillGate(Gate):
         '--spec "Refs acme/project-a#6936. You are fullstack-dev.' + BRIEF_SECTIONS + '"'
     )
 
-    def test_build_worker_without_approval_denied(self):
+    def test_ordinary_build_needs_no_grill_record(self):
         self.issue["comments"] = [{"body": "grill notes from architect-pm"}]
-        self.assertDenied(self.BUILD, "owner's approval of the grill results")
+        self.assertAllowed(self.BUILD)
+
+    def test_new_page_needs_no_grill_record(self):
+        self.issue["body"] = "New UI page for the catalog.\nThe card shows the item name.\n"
+        self.assertAllowed(self.BUILD)
+
+    def test_money_marker_in_a_comment_does_not_classify(self):
+        self.issue["comments"] = [{"body": "Owner-reserved: money rule"}]
+        self.assertAllowed(self.BUILD)
+
+    def test_build_worker_without_approval_denied(self):
+        self.reserve()
+        self.issue["comments"] = [{"body": "grill notes from architect-pm"}]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_price_label_without_record_denied(self):
+        self.issue["labels"] = [{"name": "price"}]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_bold_owner_reserved_line_is_a_money_rule(self):
+        for body in (
+            "* **Owner-reserved:** money rule\n",
+            "* **Owner-reserved**: money rule\n",
+            "**Owner-reserved:** **prices**\n",
+        ):
+            with self.subTest(body=body):
+                self.issue["body"] = body
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_denial_names_the_issue(self):
+        self.reserve()
         self.assertDenied(self.BUILD, "#6936")
 
     def test_build_worker_with_approval_allowed(self):
-        self.issue["comments"] = [{"body": "Owner approved the grill results on 2026-11-04."}]
+        self.reserve()
+        self.grill_comment(who="owner", date="2026-11-04")
+        self.assertAllowed(self.BUILD)
+
+    def test_coordinator_grill_record_allows_the_build(self):
+        self.reserve("price")
+        self.grill_comment()
+        self.assertAllowed(self.BUILD)
+
+    def test_elon_grill_record_allows_the_build(self):
+        self.reserve()
+        self.grill_comment(who="elon")
         self.assertAllowed(self.BUILD)
 
     def test_hotfix_label_exempt(self):
+        self.reserve()
         self.issue["labels"] = [{"name": "hotfix"}]
         self.assertAllowed(self.BUILD)
 
     def test_mechanical_label_exempt(self):
+        self.reserve()
         self.issue["labels"] = [{"name": "mechanical-lane"}]
         self.assertAllowed(self.BUILD)
 
     def test_elon_take_over_exempt(self):
-        self.issue["comments"] = [{"body": "Elon take over, decide and record."}]
+        self.reserve()
+        self.issue["comments"] = [{
+            "body": "Elon take over, decide and record.",
+            "author": {"login": "mingster"},
+            "authorAssociation": "OWNER",
+        }]
         self.assertAllowed(self.BUILD)
 
+    def test_elon_take_over_by_a_builder_does_not_exempt(self):
+        self.reserve()
+        self.issue["comments"] = [{
+            "body": "Elon take over, decide and record.",
+            "author": {"login": "builder-bot"},
+            "authorAssociation": "CONTRIBUTOR",
+        }]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
     def test_elon_take_over_in_the_body_is_not_an_exemption(self):
-        self.issue["body"] = 'Exempt: hotfix, mechanical text only and "Elon take over" (team.md).'
-        self.assertDenied(self.BUILD, "owner's approval of the grill results")
+        self.issue["body"] = 'Owner-reserved: money rule\nExempt: hotfix, mechanical text only and "Elon take over" (team.md).'
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_worktree_issue_selector_names_the_issue(self):
+        self.reserve()
         cmd = 'orca orchestration worker-start --agent claude --worktree issue:4242 --spec "You are fullstack-dev."'
         self.assertDenied(cmd, "#4242")
 
@@ -283,15 +375,209 @@ class GrillGate(Gate):
         cmd = 'orca orchestration worker-start --agent claude --spec "Refs #6936. You are qa-sdet.' + BRIEF_SECTIONS + '"'
         self.assertAllowed(cmd)
 
-    def test_gh_failure_lets_the_command_through(self):
-        self.gh_fails = True
+    def test_unreadable_issue_denies_the_build(self):
+        self.reserve()
+        cases = (
+            ("gh failure", None, True),
+            ("null", "null", False),
+            ("not json", "not-json", False),
+            ("list", "[]", False),
+        )
+        for name, raw, fails in cases:
+            with self.subTest(name=name):
+                self.gh_fails = fails
+                self.gh_raw = None if fails else raw
+                self.assertDenied(self.BUILD, "could not be read")
+
+    def test_money_vocabulary_needs_a_grill_record(self):
+        cases = (
+            ("label money", {"labels": [{"name": "money"}], "body": "", "title": "Catalog"}),
+            ("label pricing", {"labels": [{"name": "pricing"}], "body": "", "title": "Catalog"}),
+            ("label billing", {"labels": [{"name": "billing"}], "body": "", "title": "Catalog"}),
+            ("refund fee", {"labels": [], "body": "There is a refund fee.\n", "title": "Catalog"}),
+            ("stored value", {"labels": [], "body": "儲值 wallet top up\n", "title": "Catalog"}),
+            ("payment flow", {"labels": [], "body": "The payment flow charges the card.\n", "title": "Catalog"}),
+            ("plan price", {"labels": [], "body": "Show a plan price on the page.\n", "title": "Catalog"}),
+            ("title payment", {"labels": [], "body": "A new page.\n", "title": "Add a payment flow"}),
+            ("marker money", {"labels": [], "body": "Owner-reserved: money\n", "title": "Catalog"}),
+            ("marker pricing", {"labels": [], "body": "Owner-reserved: pricing\n", "title": "Catalog"}),
+            ("marker owner reserved price", {"labels": [], "body": "Owner reserved: price\n", "title": "Catalog"}),
+            ("heading price", {"labels": [], "body": "## Owner-reserved: price\n", "title": "Catalog"}),
+            ("fees suffix", {"labels": [], "body": "Owner-reserved: money rule (fees)\n", "title": "Catalog"}),
+            ("label money rule", {"labels": [{"name": "money rule"}], "body": "", "title": "Catalog"}),
+            ("label area billing", {"labels": [{"name": "area:billing"}], "body": "", "title": "Catalog"}),
+            ("label pricing change", {"labels": [{"name": "pricing-change"}], "body": "", "title": "Catalog"}),
+            ("label subscription", {"labels": [{"name": "subscription"}], "body": "", "title": "Catalog"}),
+            ("monthly subscription", {"labels": [], "body": "monthly subscription\n", "title": "Catalog"}),
+            ("raise the price", {"labels": [], "body": "Raise the price of the Pro plan\n", "title": "Catalog"}),
+            ("title course price", {"labels": [], "body": "A catalog page.\n", "title": "Change the course price"}),
+            ("wallet", {"labels": [], "body": "top up their wallet\n", "title": "Catalog"}),
+            ("refunded", {"labels": [], "body": "refunded in full\n", "title": "Catalog"}),
+            ("discount coupon", {"labels": [], "body": "discount coupon at checkout\n", "title": "Catalog"}),
+            ("invoice", {"labels": [], "body": "Checkout charges the card and sends an invoice\n", "title": "Catalog"}),
+            ("customers pay", {"labels": [], "body": "Customers pay by card.\n", "title": "Catalog"}),
+            ("price in yen", {"labels": [], "body": "The card shows the price in yen.\n", "title": "Catalog"}),
+            ("zh price", {"labels": [], "body": "價格\n", "title": "Catalog"}),
+            ("zh price alt", {"labels": [], "body": "價錢\n", "title": "Catalog"}),
+            ("zh pay", {"labels": [], "body": "付款\n", "title": "Catalog"}),
+            ("zh refund", {"labels": [], "body": "退款\n", "title": "Catalog"}),
+            ("zh stored value", {"labels": [], "body": "儲值\n", "title": "Catalog"}),
+            ("zh subscription", {"labels": [], "body": "訂閱\n", "title": "Catalog"}),
+            ("zh plan", {"labels": [], "body": "方案\n", "title": "Catalog"}),
+            ("zh discount", {"labels": [], "body": "折扣\n", "title": "Catalog"}),
+            ("zh offer", {"labels": [], "body": "優惠\n", "title": "Catalog"}),
+            ("zh points", {"labels": [], "body": "點數\n", "title": "Catalog"}),
+            ("zh payments", {"labels": [], "body": "金流\n", "title": "Catalog"}),
+            ("zh invoice", {"labels": [], "body": "發票\n", "title": "Catalog"}),
+            ("zh fee", {"labels": [], "body": "費用\n", "title": "Catalog"}),
+        )
+        for name, issue in cases:
+            with self.subTest(name=name):
+                issue["comments"] = []
+                self.issue = issue
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+                if name == "title payment":
+                    self.assertIn("title", self.gh_calls()[-1])
+
+    def test_round3_verdict_money_terms_need_a_grill_record(self):
+        for body in (
+            "Checkout charges the card",
+            "Only paid members",
+            "Raise the tuition",
+            "what the course costs",
+            "non-refundable deposit",
+            "a discounted rate",
+            "top up their balance",
+            "sales tax on the order total",
+            "weekly payout",
+            "Gold membership tier at NT$300",
+            "退費",
+            "收費",
+            "定價",
+            "售價",
+            "付費",
+            "學費",
+            "運費",
+            "加值",
+            "結帳",
+            "金額",
+            "費用",
+            "收款",
+            "價目",
+        ):
+            with self.subTest(body=body):
+                self.issue = {"labels": [], "title": "Catalog", "body": body + "\n", "comments": []}
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_a_customer_message_is_not_a_money_issue(self):
+        self.issue = {
+            "labels": [],
+            "title": "Catalog",
+            "body": "Owner-reserved: customer message\n",
+            "comments": [],
+        }
         self.assertAllowed(self.BUILD)
+
+    def two_issues(self, first, second):
+        return (
+            "orca orchestration worker-start --agent claude --worktree new-child "
+            f'--spec "See #{first} for context. Refs acme/project-a#{second}. You are fullstack-dev.'
+            + BRIEF_SECTIONS + '"'
+        )
+
+    def test_a_later_money_issue_keeps_the_gate(self):
+        self.by_number = {
+            "1000": {"labels": [], "title": "Context", "body": "Notes for the reader.\n", "comments": []},
+            "6936": {"labels": [], "title": "Catalog", "body": "There is a refund fee.\n", "comments": []},
+        }
+        self.assertDenied(self.two_issues("1000", "6936"), "#6936")
+
+    def test_hotfix_on_the_context_issue_does_not_exempt_the_money_issue(self):
+        self.by_number = {
+            "1000": {"labels": [{"name": "hotfix"}], "title": "Context", "body": "", "comments": []},
+            "6936": {"labels": [], "title": "Catalog", "body": "There is a refund fee.\n", "comments": []},
+        }
+        self.assertDenied(self.two_issues("1000", "6936"), "#6936")
+
+    def test_two_ordinary_issues_need_no_grill_record(self):
+        self.by_number = {
+            "1000": {"labels": [], "title": "Context", "body": "Notes for the reader.\n", "comments": []},
+            "6936": {"labels": [], "title": "Catalog", "body": "A new page.\n", "comments": []},
+        }
+        self.assertAllowed(self.two_issues("1000", "6936"))
+
+    def test_a_negation_is_not_a_grill_record(self):
+        self.reserve()
+        for body in (
+            "The owner has not approved the grill results",
+            "grill awaiting owner approval",
+            "not Grill approved: coordinator 2026-11-14",
+            "Grill approved: coordinator 2026-11-14 extra",
+            "Grill approved: coordinator",
+        ):
+            with self.subTest(body=body):
+                self.grill_comment(body=body)
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_a_builder_cannot_record_the_grill(self):
+        self.reserve()
+        self.grill_comment(login="builder-bot", association="CONTRIBUTOR")
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+        self.issue["comments"] = [{"body": "Grill approved: coordinator 2026-11-14"}]
+        self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
+    def test_owner_fixed_form_allows_the_build(self):
+        self.reserve()
+        self.grill_comment(who="owner", date="2026-11-04")
+        self.assertAllowed(self.BUILD)
+
+    def test_configured_approver_login_allows_the_build(self):
+        folder = os.path.join(self.home, ".claude", "hooks")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "guard-config.json"), "w") as f:
+            json.dump({"grill_approvers": ["coordinator-bot"]}, f)
+        self.reserve()
+        self.grill_comment(login="coordinator-bot", association="CONTRIBUTOR")
+        self.assertAllowed(self.BUILD)
+
+
+class GrillRecordDoc(unittest.TestCase):
+    def test_team_md_states_the_record_and_the_production_waiver(self):
+        path = os.path.normpath(os.path.join(
+            os.path.dirname(HOOK), "..", "..", "docs", "agents", "team.md"))
+        with open(path) as f:
+            text = f.read()
+        for needle in (
+            "Grill approved: coordinator YYYY-MM-DD",
+            "Grill approved: owner YYYY-MM-DD",
+            "Grill approved: elon YYYY-MM-DD",
+            "grill_approvers",
+            "speed bump",
+            "not proof of who wrote it",
+            "reminder against mistakes, not a security boundary",
+            "git fetch origin main",
+            "refs/remotes/origin/main:docs/agents/deploy-facts.md",
+            "* Production data: production holds only test data",
+            "退費",
+            "收費",
+            "定價",
+            "付費",
+            "費用",
+            "收款",
+            "金額",
+            "價目",
+            "tuition",
+            "paid",
+            "charge",
+        ):
+            self.assertIn(needle, text)
 
 
 class GrillGateRepo(Gate):
     """A spec naming dotfiles#<n> reads that issue in the dotfiles repo, not the project's own."""
     def setUp(self):
         super().setUp()
+        self.reserve()
         previous = os.environ.get("DOTFILES_REPO")
         os.environ["DOTFILES_REPO"] = "acme/dotfiles"
         self.addCleanup(lambda: os.environ.pop("DOTFILES_REPO", None) if previous is None
@@ -307,7 +593,7 @@ class GrillGateRepo(Gate):
     def test_dotfiles_issue_is_read_in_the_dotfiles_repo(self):
         for ref in ("dotfiles#522", "acme/dotfiles#522"):
             self.reset_log()
-            self.issue["comments"] = [{"body": "Owner approved the grill results."}]
+            self.grill_comment(who="owner")
             self.assertAllowed(self.spec(ref))
             calls = self.gh_calls()
             self.assertEqual(len(calls), 1, calls)
@@ -341,12 +627,18 @@ class CursorWorkerScript(Gate):
             f.write(text)
 
     def test_build_brief_without_approval_denied(self):
+        self.reserve()
         self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
         self.assertDenied(f"{self.SCRIPT} --spec brief.md", "#7114")
 
     def test_build_brief_with_approval_allowed(self):
+        self.reserve()
         self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
-        self.issue["comments"] = [{"body": "Owner approved the grill results."}]
+        self.grill_comment()
+        self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
+
+    def test_ordinary_brief_needs_no_grill_record(self):
+        self.write_brief("Refs #7114. You are fullstack-dev." + BRIEF_SECTIONS)
         self.assertAllowed(f"{self.SCRIPT} --spec brief.md")
 
     def test_unreadable_brief_is_denied(self):
@@ -364,6 +656,10 @@ class CursorWorkerScript(Gate):
 
 class WorkerBrief(Gate):
     """The grill gate reads the brief the worker really gets, not the whole Bash string."""
+
+    def setUp(self):
+        super().setUp()
+        self.reserve()
     START = "orca orchestration worker-start --agent claude --worktree new-child"
     NOTES = "cat > notes.md <<'EOF'\nfullstack-dev finished #1111\nEOF\n"
     BRIEF = "Refs acme/project-a#6936. You are fullstack-dev." + BRIEF_SECTIONS

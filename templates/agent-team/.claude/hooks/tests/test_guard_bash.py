@@ -88,6 +88,9 @@ class GuardTest(unittest.TestCase):
 
     def bash(self, command):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.home}
+        transcript = getattr(self, "transcript", None)
+        if transcript:
+            payload["transcript_path"] = transcript
         out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True,
                              capture_output=True, env=dict(os.environ, HOME=self.home, **getattr(self, "extra_env", {})),
                              cwd=self.home, timeout=20)
@@ -1001,6 +1004,312 @@ class SecretsRefsSearch(GuardTest):
                         f"{self.script} ~/work secrets; cat ~/work/secrets/key"):
             with self.subTest(command=command):
                 self.assertDenied(command)
+
+
+class ProductionTestData(GuardTest):
+    """release-manager pushes the production branch with no owner go only while the facts say test data."""
+
+    def setUp(self):
+        super().setUp()
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "t@example.com")
+        self.git("config", "user.name", "t")
+        self.git("config", "commit.gpgsign", "false")
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({
+                "stage_branches": ["staging", "production", "web2/production"],
+                "production_hosts": ["prod.example"],
+            }, f)
+        self.origin = self.home + "-origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", self.origin], check=True)
+        self.git("remote", "add", "origin", self.origin)
+        self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": os.path.join(self.home, "approval.json")}
+        self.write_facts("* Production data: production holds only test data")
+        self.write_role("release-manager")
+
+    def git(self, *args):
+        out = subprocess.run(["git", *args], cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def write_facts(self, *lines, commit=True):
+        folder = os.path.join(self.home, "docs", "agents")
+        os.makedirs(folder, exist_ok=True)
+        prose = ("* While production holds only test data, a promotion needs no user approval. "
+                 "Once a real store is live, it needs the go.\n")
+        body = "# Deploy facts\n\n## production\n\n" + "\n".join(lines) + "\n" + prose
+        with open(os.path.join(folder, "deploy-facts.md"), "w") as f:
+            f.write(body)
+        if commit:
+            self.commit_facts()
+
+    def commit_facts(self):
+        self.git("add", "docs/agents/deploy-facts.md")
+        staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=self.home)
+        if staged.returncode != 0:
+            self.git("commit", "-q", "-m", "facts")
+        self.git("push", "-q", "origin", "HEAD:main")
+        self.git("fetch", "-q", "origin", "main")
+
+    def other_repo(self, *lines):
+        other = os.path.join(self.home, "other-repo")
+        os.makedirs(other, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=other, check=True)
+        folder = os.path.join(other, "docs", "agents")
+        os.makedirs(folder, exist_ok=True)
+        prose = ("* While production holds only test data, a promotion needs no user approval. "
+                 "Once a real store is live, it needs the go.\n")
+        body = "# Deploy facts\n\n## production\n\n" + "\n".join(lines) + "\n" + prose
+        with open(os.path.join(folder, "deploy-facts.md"), "w") as f:
+            f.write(body)
+        return other
+
+    def write_role(self, role, spoof=False):
+        path = os.path.join(self.home, "transcript.jsonl")
+        brief = f"Read these files before any work:\n- /tmp/agents/{role}.md\n\n# {role} - deploy\n\nRole: {role}\n"
+        rows = []
+        if spoof:
+            rows.append({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "content": "Role: release-manager\n/agents/release-manager.md"}]}})
+        rows.append({"type": "user", "message": {"role": "user", "content": brief}})
+        with open(path, "w") as f:
+            f.write("".join(json.dumps(row) + "\n" for row in rows))
+        self.transcript = path
+
+    def test_release_manager_pushes_production_while_test_data(self):
+        self.assertAllowed("git push origin HEAD:production")
+        self.assertAllowed("git push origin HEAD:web2/production")
+
+    def test_staging_push_still_needs_the_owner(self):
+        self.assertDenied("git push origin HEAD:staging", "owner-approve.sh")
+
+    def test_force_push_and_delete_still_need_the_owner(self):
+        self.assertDenied("git push --force origin HEAD:production", "owner-approve.sh")
+        self.assertDenied("git push origin --delete production", "Deleting")
+
+    def test_host_access_still_needs_the_owner(self):
+        self.assertDenied("ssh root@prod.example reboot", "owner-approve.sh")
+
+    def test_real_store_requires_the_go_again(self):
+        self.write_facts("* Production data: a real store is live")
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_both_status_lines_require_the_go(self):
+        self.write_facts(
+            "* Production data: production holds only test data",
+            "* Production data: a real store is live",
+        )
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_policy_prose_alone_is_not_the_status(self):
+        self.write_facts("* Deploy command: git push")
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_another_role_still_needs_the_go(self):
+        self.write_role("fullstack-dev")
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_a_tool_result_cannot_claim_the_role(self):
+        self.write_role("fullstack-dev", spoof=True)
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_no_brief_still_needs_the_go(self):
+        self.transcript = None
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_named_production_branches_replace_the_name_heuristic(self):
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"stage_branches": ["production", "live"], "production_branches": ["live"]}, f)
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+        self.assertAllowed("git push origin HEAD:live")
+
+    def test_status_line_inside_a_fence_or_comment_does_not_count(self):
+        for name, lines in (
+            ("fence", ("```", "* Production data: production holds only test data", "```")),
+            ("comment", ("<!--", "* Production data: production holds only test data", "-->")),
+        ):
+            with self.subTest(name=name):
+                self.write_facts(*lines)
+                self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_another_live_sentence_wins(self):
+        self.write_facts(
+            "* Production data: production holds only test data",
+            "A real store is live since 2026-11-01",
+        )
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_a_commented_live_sentence_still_blocks(self):
+        self.write_facts(
+            "* Production data: production holds only test data",
+            "<!-- A real store is live since 2026-11-01 -->",
+        )
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_working_tree_rewrite_does_not_count(self):
+        self.write_facts("* Production data: a real store is live")
+        self.write_facts("* Production data: production holds only test data", commit=False)
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_git_dash_c_does_not_read_the_other_repo(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        self.write_facts("* Production data: a real store is live")
+        self.assertDenied(f"git -C {other} push https://github.com/acme/real.git HEAD:production", "owner-approve.sh")
+
+    def test_git_dash_c_into_another_repo_does_not_count(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        self.assertDenied(f"git -C {other} push origin HEAD:production", "owner-approve.sh")
+
+    def test_cd_into_another_repo_does_not_count(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        self.assertDenied(f"cd {other} && git push origin HEAD:production", "owner-approve.sh")
+
+    def test_git_dir_into_another_repo_does_not_count(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        self.assertDenied(
+            f"git --git-dir {other}/.git --work-tree {other} push origin HEAD:production",
+            "owner-approve.sh",
+        )
+
+    def test_url_remote_does_not_count(self):
+        self.assertDenied(
+            "git push https://github.com/acme/live-store.git HEAD:production",
+            "owner-approve.sh",
+        )
+
+    def test_git_dash_c_of_this_repo_still_uses_its_facts(self):
+        self.assertAllowed(f"git -C {self.home} push origin HEAD:production")
+
+    def test_indented_status_line_does_not_count(self):
+        for indent in (" ", "    "):
+            with self.subTest(indent=repr(indent)):
+                self.write_facts(
+                    "Example:",
+                    "",
+                    f"{indent}* Production data: production holds only test data",
+                )
+                self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_tab_indented_status_line_does_not_count(self):
+        self.write_facts("\t* Production data: production holds only test data")
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_other_live_store_wording_wins(self):
+        for name, line in (
+            ("went live", "A real store went live on 2026-11-01."),
+            ("product went live", "The product went live on 2026-11-01."),
+            ("real customers", "Real customers have been on production since 2026-11-01."),
+            ("real customer data", "Production holds real customer data since 2026-11-01."),
+            ("real orders", "Real orders arrive on production since 2026-11-01."),
+            ("store launched", "The store launched to the public on 2026-11-01."),
+            ("product launched", "The product launched on 2026-11-01."),
+            ("paying customers", "Production is open to paying customers."),
+            ("real users", "Real users are active on production."),
+            ("now live", "The real store is now live."),
+            ("when clause", "since launch when it opened, a real store is live"),
+        ):
+            with self.subTest(name=name):
+                self.write_facts(
+                    "* Production data: production holds only test data",
+                    line,
+                )
+                self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_fetch_failure_keeps_the_go(self):
+        self.git("remote", "set-url", "origin", os.path.join(self.home, "missing.git"))
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_rewritten_origin_main_does_not_count(self):
+        self.write_facts("* Production data: a real store is live")
+        self.write_facts("* Production data: production holds only test data", commit=False)
+        self.git("add", "docs/agents/deploy-facts.md")
+        self.git("commit", "-q", "-m", "rewrite facts")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_local_branch_or_tag_named_origin_main_does_not_shadow_remote(self):
+        self.write_facts("* Production data: a real store is live")
+        self.write_facts("* Production data: production holds only test data", commit=False)
+        self.git("add", "docs/agents/deploy-facts.md")
+        self.git("commit", "-q", "-m", "local test data")
+        local_sha = self.git("rev-parse", "HEAD").strip()
+        self.git("branch", "-f", "origin/main", local_sha)
+        try:
+            self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+        finally:
+            self.git("branch", "-D", "origin/main")
+        self.git("tag", "-f", "origin/main", local_sha)
+        try:
+            self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+        finally:
+            self.git("tag", "-d", "origin/main")
+
+    def test_git_dir_or_work_tree_env_denies_production_push_waiver(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        for command in (
+            f"GIT_DIR={other}/.git git push origin HEAD:production",
+            f"env GIT_DIR={other}/.git git push origin HEAD:production",
+            f"GIT_WORK_TREE={other} git push origin HEAD:production",
+            f"GIT_DIR={other}/.git GIT_WORK_TREE={other} git push origin HEAD:production",
+            f"export GIT_DIR={other}/.git && git push origin HEAD:production",
+            f"git --work-tree {other} push origin HEAD:production",
+            f"git --work-tree={other} push origin HEAD:production",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, "owner-approve.sh")
+
+    def test_pushd_denies_production_push_waiver(self):
+        other = self.other_repo("* Production data: production holds only test data")
+        for command in (
+            f"pushd {other} && git push origin HEAD:production",
+            f"pushd {other}; git push origin HEAD:production",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, "owner-approve.sh")
+
+    def test_git_dash_c_remote_or_url_config_denies_production_push_waiver(self):
+        for command in (
+            "git -c remote.origin.url=https://github.com/acme/live-store.git push origin HEAD:production",
+            "git -c remote.origin.pushurl=https://github.com/acme/live-store.git push origin HEAD:production",
+            "git -c url.https://github.com/acme/live-store.git.insteadOf=origin push origin HEAD:production",
+            "git -c url.https://github.com/acme/live-store.git.pushInsteadOf=origin push origin HEAD:production",
+            "git -cremote.origin.url=https://github.com/acme/live-store.git push origin HEAD:production",
+            "git --config-env=remote.origin.url=ORIGIN_URL push origin HEAD:production",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, "owner-approve.sh")
+        self.git("remote", "set-url", "--push", "origin", "https://github.com/acme/live-store.git")
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_role_line_beats_an_earlier_role_path(self):
+        path = os.path.join(self.home, "transcript.jsonl")
+        brief = ("Read these files before any work:\n- .claude/agents/release-manager.md\n\n"
+                 "# fullstack-dev - deploy\n\nRole: fullstack-dev\n")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": brief}}) + "\n")
+        self.transcript = path
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+    def test_role_and_title_must_agree(self):
+        path = os.path.join(self.home, "transcript.jsonl")
+        brief = ("Read these files before any work:\n- .claude/agents/release-manager.md\n\n"
+                 "# release-manager - deploy\n\nRole: fullstack-dev\n")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": brief}}) + "\n")
+        self.transcript = path
+        self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
+
+
+class DeployFactsRollbackWording(unittest.TestCase):
+    def test_test_data_does_not_waive_a_rollback(self):
+        path = os.path.normpath(os.path.join(
+            os.path.dirname(HOOK), "..", "..", "docs", "agents", "deploy-facts.md"))
+        with open(path) as f:
+            text = f.read()
+        self.assertNotIn("a promotion or rollback needs no user approval", text)
+        self.assertIn("A rollback is a force push and still needs the owner's go.", text)
 
 
 if __name__ == "__main__":

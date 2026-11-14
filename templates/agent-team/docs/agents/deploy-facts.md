@@ -36,6 +36,7 @@ One row per deployable component. With one row, `/deploy` takes no component arg
 
 ## production
 
+* Production data: production holds only test data
 * Deploy command: `<command>`. Overrides allowed only on the user's word: `<env flags, or none>`.
 * Host check that it runs the commit: `<command>`.
 * Schema diff for the summary: `<git diff command>`.
@@ -55,8 +56,8 @@ Release-manager applies production SQL and secrets itself, through the project's
 
 ## Owner approval
 
-* **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): read only the scope and expiry of the user approval and check it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and covers the expected job length. While production holds only test data, a promotion or rollback needs no user approval; host, SQL and secrets jobs still do. If it is missing, expired, another scope or too short, stop before the first ssh and ask the coordinator for a fresh user approval of that scope. The expiry itself stays.
-* Production (and a production rollback) needs the owner's go for each release once a real store is live; before that it runs after the Playground regression passes.
+* **Host preflight** before any production host job (promote, SQL, secrets, rollback, any ssh to a production host): read only the scope and expiry of the user approval and check it has the scope of the job (`host` for host jobs, `promote` for a promotion, `rollback` for a rollback) and covers the expected job length. While production holds only test data, a non-force push of the production branch needs no user approval. A rollback is a force push and still needs the owner's go. Host, SQL and secrets jobs still do. If it is missing, expired, another scope or too short, stop before the first ssh and ask the coordinator for a fresh user approval of that scope. The expiry itself stays.
+* Production needs the owner's go for each release once a real store is live. Before that, a non-force production push runs after the Playground regression passes. A production rollback still needs the owner's go.
 * Owner approval script: `<path and exact command, for example bin/owner-approve.sh <component> <sha>, or none>`. The user runs it; the deploy skill gives them the exact command.
 
 ## Host status

@@ -14,7 +14,15 @@ Blocks these kinds of accident:
 4. Risky production commands without the owner's go (`check_risky`): a push to a
    configured stage or production branch, any force push, promote/rollback/apply
    scripts, schema overrides, and ssh, scp, sftp or rsync to a configured
-   production host beyond a read-only allowlist. Project values are loaded from
+   production host beyond a read-only allowlist. release-manager may push the
+   production branch with no owner go only after `git fetch origin main` in the
+   project whose guard config loaded, when
+   `refs/remotes/origin/main:docs/agents/deploy-facts.md` has exactly one
+   unindented `Production data: production holds only test data` line outside a
+   code fence or HTML comment, and no line says a real or live store exists. A
+   failed fetch, a `cd`, `pushd`, `git -C`, `--git-dir`, `--work-tree`, `GIT_*`
+   env, `-c`, or a URL remote aimed at another repo keeps the go. A force push
+   stays gated. Project values are loaded from
    `<project>/.claude/hooks/guard-config.json` (defaulting to empty when absent).
 5. Copying, linking, or writing `.env` / `.env.*` files in linked agent worktrees
    (`check_worktree_env`), unless listed in `worktree_env_allow`.
@@ -53,6 +61,7 @@ PRODUCTION_HOSTS: set[str] = set()
 BACKSTOP_HOSTS: set[str] = set()
 PRODUCTION_HOSTS_ERROR: str | None = None
 STAGE_BRANCHES: list[str] = []
+PRODUCTION_BRANCHES: list[str] = []
 STAGE_BRANCH_COMPONENTS: dict[str, str] = {}
 PROMOTE_RULES: dict[str, dict] = {
     "deploy-stage.sh": {"free_stages": {"local", "staging", "status"}, "component": 1, "sha": 2}
@@ -71,6 +80,7 @@ SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
 HOST_DEPLOY_PATTERNS: dict[str, list[re.Pattern]] = {}
 CONFIG_LOADED_FROM: str | None = None
+GRILL_APPROVERS: set[str] = set()
 
 DEFAULT_SECRETS_DIR_PATTERN = r"(?:^|[/\s='\"<(])secrets(?:/|$|[\s'\"\)])"
 SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
@@ -169,6 +179,7 @@ TIER2_SKILLS = {"ceo", "deploy", "elon", "poteto-mode", "team-audit"}
 
 GATE_CWD = None
 RAW_COMMAND = ""
+HOOK_INPUT: dict = {}
 
 
 def deny(reason):
@@ -200,17 +211,19 @@ def find_guard_config(start_dir):
 
 def load_guard_config(start_dir):
     global BLOCKED_SCRIPTS, PRODUCTION_HOSTS, PRODUCTION_HOSTS_ERROR, BACKSTOP_HOSTS
-    global STAGE_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
+    global STAGE_BRANCHES, PRODUCTION_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
-    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS
+    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS
 
     BLOCKED_SCRIPTS = set()
+    GRILL_APPROVERS = set()
     PRODUCTION_HOSTS = set()
     BACKSTOP_HOSTS = set()
     PRODUCTION_HOSTS_ERROR = None
     STAGE_BRANCHES = []
+    PRODUCTION_BRANCHES = []
     STAGE_BRANCH_COMPONENTS = {}
     PROMOTE_RULES = {
         "deploy-stage.sh": {"free_stages": {"local", "staging", "status"}, "component": 1, "sha": 2}
@@ -286,10 +299,14 @@ def load_guard_config(start_dir):
                     STAGE_BRANCHES.append(br)
                 if isinstance(comp, str):
                     STAGE_BRANCH_COMPONENTS[br] = comp
+                if key == "production_branches" and isinstance(br, str) and br.strip() and br.strip() not in PRODUCTION_BRANCHES:
+                    PRODUCTION_BRANCHES.append(br.strip())
         elif isinstance(val, list):
             for br in val:
                 if isinstance(br, str) and br.strip() and br.strip() not in STAGE_BRANCHES:
                     STAGE_BRANCHES.append(br.strip())
+                if key == "production_branches" and isinstance(br, str) and br.strip() and br.strip() not in PRODUCTION_BRANCHES:
+                    PRODUCTION_BRANCHES.append(br.strip())
 
     raw_promote = cfg_expect("promote_scripts", (list, dict), "list or object")
     if isinstance(raw_promote, dict):
@@ -417,6 +434,9 @@ def load_guard_config(start_dir):
     for name in cfg_expect("remote_read_only_commands", list, "list") or []:
         if isinstance(name, str) and name.strip() and not any(ch.isspace() for ch in name):
             REMOTE_READ_ONLY.append(re.compile(re.escape(name.strip()) + r"(?: .*)?"))
+    for login in cfg_expect("grill_approvers", list, "list") or []:
+        if isinstance(login, str) and login.strip():
+            GRILL_APPROVERS.add(login.strip().lower())
 
 
 def segments(command):
@@ -1000,8 +1020,11 @@ def git_subcommand(args):
         a = args[i]
         if a in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env") and i + 1 < len(args):
             if a == "-C":
-                cdir = args[i + 1]
+                cdir = os.path.join(cdir, args[i + 1]) if cdir else args[i + 1]
             i += 2
+        elif a.startswith("-C") and len(a) > 2:
+            cdir = os.path.join(cdir, a[2:]) if cdir else a[2:]
+            i += 1
         elif a.startswith(("--config-env=", "--exec-path=", "--git-dir=", "--work-tree=", "--namespace=")):
             i += 1
         elif a.startswith("-"):
@@ -1011,16 +1034,279 @@ def git_subcommand(args):
     return None, [], cdir
 
 
-def matches_stage_branch(branch):
-    for pat in STAGE_BRANCHES:
+def matches_branch_list(branch, patterns):
+    for pat in patterns:
         if branch == pat or fnmatch.fnmatchcase(branch, pat):
             return True
     return False
 
 
-def check_git_push(args, cdir):
-    cwd = os.path.join(GATE_CWD or os.getcwd(), os.path.expanduser(cdir)) if cdir else GATE_CWD
-    force = every = delete = False
+def matches_stage_branch(branch):
+    return matches_branch_list(branch, STAGE_BRANCHES)
+
+
+def is_production_branch(branch):
+    """A branch the test-data exemption can cover. `production_branches` wins when set.
+    Otherwise a stage branch whose last segment is `production` (`production`, `web2/production`)."""
+    if PRODUCTION_BRANCHES:
+        return matches_branch_list(branch, PRODUCTION_BRANCHES)
+    return branch.rsplit("/", 1)[-1] == "production"
+
+
+PRODUCTION_DATA_LINE = re.compile(
+    r"(?im)^\*[ \t]+Production data:[ \t]*(production holds only test data|a real store is live)[ \t]*\.?[ \t]*$"
+)
+# A conditional in the template ("once a real store is live, it needs the go") is the rule,
+# not a claim that a store already exists. An assertion that one does keeps the owner's go.
+POLICY_CONDITION = re.compile(
+    r"(?i)\b(?:once|when|if|after)\s+a\s+real\s+store\s+is\s+live\b"
+)
+LIVE_CLAIM = re.compile(
+    r"(?i)\b(?:"
+    r"real\s+(?:store|(?:customer\s+)?data|customers?|users?|orders?|traffic|transactions?|payments?)"
+    r"|live\s+(?:store|data|customers?|users?|orders?|traffic)"
+    r"|(?:store|production|product|site|app)\s+is\s+(?:now\s+)?live"
+    r"|paying\s+(?:customers?|users?)"
+    r"|went\s+live|gone\s+live|launched"
+    r")\b"
+)
+
+
+def guard_facts_root():
+    """The project whose guard config loaded. `git -C` does not move it."""
+    cfg = find_guard_config(GATE_CWD or os.getcwd())
+    if not cfg:
+        return None
+    parent = os.path.dirname(os.path.abspath(cfg))
+    if os.path.basename(parent) == "hooks" and os.path.basename(os.path.dirname(parent)) == ".claude":
+        return os.path.dirname(os.path.dirname(parent))
+    return find_project_root(parent)
+
+
+def strip_hidden_markup(text):
+    """Drop HTML comments and fenced blocks so a status line inside them does not count."""
+    text = re.sub(r"(?s)<!--.*?-->", "", text)
+    text = re.sub(r"(?s)<!--.*\Z", "", text)
+    for fence in ("```", "~~~"):
+        text = re.sub("(?s)" + re.escape(fence) + ".*?" + re.escape(fence), "", text)
+        text = re.sub("(?s)" + re.escape(fence) + r".*\Z", "", text)
+    return text
+
+
+def states_real_store_is_live(text):
+    """True when a line says a real or live store exists.
+
+    The template's conditional ("once a real store is live") is not that claim.
+    A sentence that only uses "when" to assert the store is already live still is.
+    """
+    for line in text.splitlines():
+        if LIVE_CLAIM.search(POLICY_CONDITION.sub("", line)):
+            return True
+    return False
+
+
+def fetch_origin_main(root):
+    """Fetch origin's main and require the remote-tracking ref to follow it.
+
+    A local update of refs/remotes/origin/main must not outvote the remote.
+    A failed fetch keeps the owner's go.
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        fetched = subprocess.run(
+            ["git", "-C", root, "fetch", "origin", "main"],
+            capture_output=True, text=True, timeout=8, env=env,
+        )
+    except Exception:
+        return False
+    if fetched.returncode != 0:
+        return False
+    tip = git_out("rev-parse", "--verify", "FETCH_HEAD", cwd=root)
+    tracked = git_out("rev-parse", "--verify", "refs/remotes/origin/main", cwd=root)
+    return bool(tip and tracked and tip == tracked)
+
+
+def production_holds_test_data():
+    """True only after a fresh fetch, for one test-data status line on refs/remotes/origin/main.
+
+    An indented, fenced, or HTML-commented status line does not count. Any line that
+    says a real or live store exists keeps the owner's go. A missing blob or a failed
+    fetch does too."""
+    root = guard_facts_root()
+    if not root or not fetch_origin_main(root):
+        return False
+    shown = gate_run(["git", "-C", root, "show", "refs/remotes/origin/main:docs/agents/deploy-facts.md"], None)
+    if shown is None:
+        return False
+    if states_real_store_is_live(shown):
+        return False
+    found = [m.group(1).lower() for m in PRODUCTION_DATA_LINE.finditer(strip_hidden_markup(shown))]
+    return found == ["production holds only test data"]
+
+
+def first_brief(transcript_path):
+    """The session's first real user message. Tool results and meta lines are not the brief."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return ""
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as f:
+            raw = f.read(65536)
+    except OSError:
+        return ""
+    for line in raw.splitlines():
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(obj, dict) or obj.get("type") != "user" or obj.get("isMeta") or obj.get("toolUseResult"):
+            continue
+        msg = obj.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+                continue
+            parts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
+            if parts:
+                return "\n".join(parts)
+        elif isinstance(content, str):
+            return content
+    return ""
+
+
+def agreed_session_role(text):
+    """The brief's `Role:` line and title, when they name the same role.
+
+    A path such as `agents/<role>.md` does not assign the role. A disagreement returns
+    nothing, so a production exemption that needs one role does not fire."""
+    if not text:
+        return ""
+    named = re.search(r"(?m)^Role:\s*([a-z0-9-]+)\b", text)
+    title = re.search(r"(?m)^#\s*([a-z0-9-]+)\s+-\s+\S", text)
+    if not named or not title or named.group(1) != title.group(1):
+        return ""
+    return named.group(1)
+
+
+def session_role():
+    """The role the worker brief assigns. `Role:` and the title must agree."""
+    cached = getattr(session_role, "cached", None)
+    if cached is not None:
+        return cached[0]
+    text = first_brief(HOOK_INPUT.get("transcript_path") if isinstance(HOOK_INPUT, dict) else "")
+    role = agreed_session_role(text)
+    session_role.cached = (role,)
+    return role
+
+
+GIT_ENV_ASSIGN = re.compile(r"^GIT_[A-Za-z0-9_]*=")
+
+
+def git_option_values(args, flag):
+    out, i = [], 0
+    prefix = flag + "="
+    while i < len(args):
+        a = args[i]
+        if a == flag and i + 1 < len(args):
+            out.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith(prefix):
+            out.append(a[len(prefix):])
+            i += 1
+            continue
+        if a in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env") and i + 1 < len(args):
+            i += 2
+            continue
+        if a.startswith(("--git-dir=", "--work-tree=", "--namespace=", "--config-env=", "--exec-path=")):
+            i += 1
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        break
+    return out
+
+
+def git_has_config_override(args):
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            break
+        if a in ("-c", "--config-env") or a.startswith("--config-env="):
+            return True
+        if a.startswith("-c") and not a.startswith("--"):
+            return True
+        if a in ("-C", "--git-dir", "--work-tree", "--namespace") and i + 1 < len(args):
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        break
+    return False
+
+
+def command_moves_git_target():
+    """True when the command sets any GIT_* variable or changes directories with pushd/popd/cd -."""
+    for text in [RAW_COMMAND, *substitutions(RAW_COMMAND)]:
+        for seg in segments(text):
+            tokens = words(seg)
+            while tokens and tokens[0] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
+                tokens = tokens[1:]
+            if any(GIT_ENV_ASSIGN.match(t) for t in tokens):
+                return True
+            prog, args = program_and_args(tokens)
+            base = os.path.basename(prog or "")
+            if base in {"pushd", "popd"}:
+                return True
+            if base == "cd" and (not args or any(a == "-" for a in args)):
+                return True
+    return False
+
+
+def _abs_under(base, path):
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return expanded
+    return os.path.normpath(os.path.join(base, expanded))
+
+
+def push_repo_is_guard(segment_cwd, cdir, git_args):
+    """The test-data waiver applies only when the push stays in the guard's own repo."""
+    if command_moves_git_target() or git_has_config_override(git_args or []):
+        return False
+    root = guard_facts_root()
+    if not root:
+        return False
+    guard_top = git_out("rev-parse", "--show-toplevel", cwd=root)
+    guard_git = git_out("rev-parse", "--absolute-git-dir", cwd=root)
+    if not guard_top or not guard_git:
+        return False
+    base = segment_cwd or GATE_CWD or os.getcwd()
+    for git_dir in git_option_values(git_args or [], "--git-dir"):
+        if os.path.realpath(_abs_under(base, git_dir)) != os.path.realpath(guard_git):
+            return False
+    for work_tree in git_option_values(git_args or [], "--work-tree"):
+        if os.path.realpath(_abs_under(base, work_tree)) != os.path.realpath(guard_top):
+            return False
+    if cdir:
+        base = _abs_under(base, cdir)
+    top = git_out("rev-parse", "--show-toplevel", cwd=base)
+    if not top or os.path.realpath(top) != os.path.realpath(guard_top):
+        return False
+    fetch_url = git_out("remote", "get-url", "origin", cwd=root)
+    push_url = git_out("remote", "get-url", "--push", "origin", cwd=base)
+    return bool(fetch_url and push_url and fetch_url == push_url)
+
+
+def check_git_push(args, cdir, segment_cwd=None, git_args=None):
+    base = segment_cwd or GATE_CWD or os.getcwd()
+    cwd = _abs_under(base, cdir) if cdir else base
+    force = every = delete = repo_flag = False
     positional, i = [], 0
     while i < len(args):
         a = args[i]
@@ -1028,6 +1314,7 @@ def check_git_push(args, cdir):
             positional += args[i + 1:]
             break
         if a in ("-o", "--push-option", "--repo", "--receive-pack", "--exec"):
+            repo_flag = repo_flag or a == "--repo"
             i += 2
             continue
         if a.startswith("--"):
@@ -1038,12 +1325,20 @@ def check_git_push(args, cdir):
                 every = True
             elif name == "--delete":
                 delete = True
+            elif name == "--repo":
+                repo_flag = True
         elif a.startswith("-") and len(a) > 1:
             force = force or "f" in a[1:]
             delete = delete or "d" in a[1:]
         else:
             positional.append(a)
         i += 1
+    if not positional:
+        remote = ""
+    elif len(positional) == 1 and (":" in positional[0] or positional[0] == "HEAD"):
+        remote = ""
+    else:
+        remote = positional[0]
 
     if every and STAGE_BRANCHES:
         deny(f"`git push {' '.join(args)}` pushes every branch, stage and production included, and cannot be "
@@ -1069,6 +1364,11 @@ def check_git_push(args, cdir):
             if not src:
                 deny(f"Deleting `{branch}` is never an agent's job and {APPROVE} has no scope for it. "
                      "Report it to Elon, who asks the owner; the owner does it himself.")
+            if (not forced and is_production_branch(branch) and remote == "origin" and not repo_flag
+                    and push_repo_is_guard(segment_cwd, cdir, git_args)
+                    and production_holds_test_data()
+                    and session_role() == "release-manager"):
+                continue
             sha = resolve(src, cwd) or (src if re.fullmatch(r"[0-9a-fA-F]{7,40}", src) else "<sha>")
             scope = "rollback" if forced else "promote"
             ok, why = approval_for({scope}, lambda t: same_commit(src, t, cwd))
@@ -1529,7 +1829,7 @@ def check_approval_secret_read(path):
             deny_approval_secret()
 
 
-def check_risky(segment, base, args, depth):
+def check_risky(segment, base, args, depth, segment_cwd=None):
     tokens = words(segment)
     viewer = read_only_viewer(base, args)
     text = text_program(base, args)
@@ -1607,7 +1907,7 @@ def check_risky(segment, base, args, depth):
         check_git_ssh(args)
         sub, rest, cdir = git_subcommand(args)
         if sub == "push":
-            check_git_push(rest, cdir)
+            check_git_push(rest, cdir, segment_cwd, args)
 
     if base == "gh" and args[:1] == ["api"] and STAGE_BRANCHES:
         for a in args:
@@ -1675,8 +1975,23 @@ PROTECTED_PATHS = (
     "templates/agent-team/.claude/agents/",
 )
 OWNER_TRAILER = re.compile(r"Owner-approved:\s*\S", re.I)
-GRILL_APPROVAL = re.compile(r"(?is)(?=.*grill)(?=.*(owner.{0,60}approv|approv.{0,60}owner))")
+GRILL_LINE = re.compile(
+    r"(?i)\Agrill approved:[ \t]+(coordinator|owner|elon)[ \t]+(\d{4}-\d{2}-\d{2})\Z"
+)
 GRILL_EXEMPT_LABELS = ("hotfix", "mechanical")
+# Fail closed. Any of these in the title, body, or a label keeps the grill gate.
+# "pay" and "plan" are whole words so "payload" and "planning" stay ordinary.
+MONEY_WORD = re.compile(
+    r"(?i)(?:\b(?:prices?|pricing|fees?|refund\w*|payments?|pay|paid|payouts?|"
+    r"charg(?:e|es|ed|ing)|costs?|costing|tuitions?|checkouts?|deposits?|"
+    r"subscriptions?|plans?|discount\w*|coupons?|wallets?|balances?|"
+    r"top[ -]?ups?|credits?|billing|invoices?|tax(?:es|ed|able|ing)?|"
+    r"memberships?|money|ledgers?|entitlements?)\b|(?:NT|US|HK)?\$\s*\d)"
+)
+MONEY_ZH = re.compile(
+    "價格|價錢|價目|定價|售價|付款|付費|退款|退費|收費|收款|學費|運費|費用|"
+    "儲值|加值|結帳|金額|訂閱|方案|折扣|優惠|點數|金流|發票"
+)
 REMOTE_FLAGS = ("--on", "--environment", "--pairing-code")
 
 
@@ -1871,35 +2186,153 @@ def check_brief_lint(brief):
              "Follow ~/.agents/skills/triage/AGENT-BRIEF.md.")
 
 
-def check_grill_gate(args, spec):
-    if "fullstack-dev" not in spec:
-        return
-    selector = option_value(args, "--worktree") or ""
-    repo_args, repo_name = [], ""
-    found = re.match(r"issue:(\d+)$", selector)
-    if not found:
-        found = DOTFILES_ISSUE.search(spec)
-        if found:
-            repo_args, repo_name = ["-R", DOTFILES_REPO], DOTFILES_REPO
+def money_text(text):
+    return bool(MONEY_WORD.search(text) or MONEY_ZH.search(text))
+
+
+def money_or_price_issue(issue):
+    """A money or price word in the title, body, or any label. One match keeps the gate."""
+    labels = issue.get("labels")
+    if labels is None:
+        labels = []
+    elif not isinstance(labels, list):
+        return True
+    for label in labels:
+        if isinstance(label, dict):
+            name = str(label.get("name", ""))
+        elif isinstance(label, str):
+            name = label
         else:
-            found = re.search(r"(?:issues/|#)(\d{3,6})\b", spec)
-    if not found:
-        deny("This build worker names no issue number, so the owner's approval of the grill results cannot be "
-             "checked. Name the issue (`#<n>`) in the spec, or use `--worktree issue:<n>`.")
-    number = found.group(1)
-    raw = gate_run(["gh", "issue", "view", number, *repo_args, "--json", "labels,body,comments"], None)
+            continue
+        if money_text(name):
+            return True
+    return money_text("\n".join([str(issue.get("title") or ""), str(issue.get("body") or "")]))
+
+
+def comment_login(comment):
+    author = comment.get("author")
+    if isinstance(author, dict):
+        return str(author.get("login") or "").strip().lower()
+    if isinstance(author, str):
+        return author.strip().lower()
+    return ""
+
+
+def comment_is_trusted(comment):
+    """Owner association or a grill_approvers login.
+
+    On this fleet every agent posts as the owner, so this is a speed bump against a
+    missing login, not proof of which agent wrote the line. team.md says so.
+    """
+    login = comment_login(comment)
+    if not login:
+        return False
+    if str(comment.get("authorAssociation") or "").strip().upper() == "OWNER":
+        return True
+    return login in GRILL_APPROVERS
+
+
+def grill_record_ok(comment):
+    """An exact approval line from the repo owner or a configured coordinator login."""
+    if not isinstance(comment, dict) or not GRILL_LINE.search(str(comment.get("body") or "").strip()):
+        return False
+    return comment_is_trusted(comment)
+
+
+def elon_take_over_ok(comment):
+    """The same author check as the grill record. The phrase alone is not enough."""
+    if not isinstance(comment, dict):
+        return False
+    if "elon take over" not in str(comment.get("body") or "").lower():
+        return False
+    return comment_is_trusted(comment)
+
+
+def load_issue(number, repo_args):
+    raw = gate_run(
+        ["gh", "issue", "view", number, *repo_args, "--json", "title,labels,body,comments"], None)
+    if raw is None or not str(raw).strip():
+        return None
     try:
         issue = json.loads(raw)
     except Exception:
+        return None
+    if not isinstance(issue, dict):
+        return None
+    return issue
+
+
+def named_issues(spec, args):
+    """Every issue the spec or `--worktree issue:<n>` names, in the order they appear."""
+    found, seen = [], set()
+
+    def add(number, repo_args, repo_name):
+        key = (number, repo_name)
+        if key in seen:
+            return
+        seen.add(key)
+        shown = f"{repo_name}#{number}" if repo_name else f"#{number}"
+        found.append((number, repo_args, shown))
+
+    selector = option_value(args, "--worktree") or ""
+    match = re.fullmatch(r"issue:(\d+)", selector)
+    if match:
+        add(match.group(1), [], "")
+    occupied = [item.span() for item in DOTFILES_ISSUE.finditer(spec)]
+    for item in DOTFILES_ISSUE.finditer(spec):
+        add(item.group(1), ["-R", DOTFILES_REPO], DOTFILES_REPO)
+    for item in re.finditer(r"(?:issues/|#)(\d{3,6})\b", spec):
+        if any(start <= item.start() < end for start, end in occupied):
+            continue
+        add(item.group(1), [], "")
+    return found
+
+
+def issue_is_exempt(issue):
+    names = []
+    for label in issue.get("labels") or []:
+        if isinstance(label, dict):
+            names.append(str(label.get("name") or ""))
+        elif isinstance(label, str):
+            names.append(label)
+    label_text = " ".join(names).lower()
+    if any(marker in label_text for marker in GRILL_EXEMPT_LABELS):
+        return True
+    return any(elon_take_over_ok(comment) for comment in issue.get("comments") or [] if isinstance(comment, dict))
+
+
+def check_grill_gate(args, spec):
+    if "fullstack-dev" not in spec:
         return
-    labels = " ".join(l.get("name", "") for l in issue.get("labels") or []).lower()
-    texts = [issue.get("body") or ""] + [c.get("body") or "" for c in issue.get("comments") or []]
-    if any(x in labels for x in GRILL_EXEMPT_LABELS) or any("elon take over" in t.lower() for t in texts[1:]):
-        return
-    if not any(GRILL_APPROVAL.search(t) for t in texts[1:]):
-        deny(f"Missing: a comment on {repo_name}#{number} naming the owner's approval of the grill results "
-             "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). Get the owner's approval, record it on the issue, "
-             "then dispatch. Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
+    refs = named_issues(spec, args)
+    if not refs:
+        deny("This build worker names no issue number, so a money rule or price issue cannot be told apart from "
+             "other work. Name the issue (`#<n>`) in the spec, or use `--worktree issue:<n>`.")
+    for number, repo_args, shown in refs:
+        issue = load_issue(number, repo_args)
+        if issue is None:
+            deny(f"Issue {shown} could not be read, so a money rule or price cannot be told apart from other work. "
+                 "The build stays stopped until `gh issue view` returns the issue.")
+        labels = issue.get("labels")
+        comments = issue.get("comments")
+        if labels is None:
+            labels = []
+        if comments is None:
+            comments = []
+        if not isinstance(labels, list) or not isinstance(comments, list):
+            deny(f"Issue {shown} could not be read, so a money rule or price cannot be told apart from other work.")
+        issue = dict(issue, labels=labels, comments=comments)
+        if issue_is_exempt(issue) or not money_or_price_issue(issue):
+            continue
+        if not any(grill_record_ok(comment) for comment in comments):
+            deny(f"Missing: a comment on {shown} recording the coordinator's approval of the grill results "
+                 "(~/dotfiles/templates/agent-team/docs/agents/team.md, Pre-build grill gate). "
+                 "The comment is one line, `Grill approved: coordinator <YYYY-MM-DD>`, "
+                 "`Grill approved: owner <YYYY-MM-DD>`, or `Grill approved: elon <YYYY-MM-DD>`, "
+                 "written by the coordinator or the owner. "
+                 "Money rules and prices need that record before the build starts. "
+                 "The owner checks the same issue at merge. "
+                 "Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
 
 
 def check_worker_start(args, script=False):
@@ -2065,7 +2498,7 @@ def check_segment(segment, depth=0, cwd=None):
     except Exception:
         pass  # a bug in a team gate must not skip the production guards below
     check_approval_secret(segment, base, args)
-    check_risky(segment, base, args, depth)
+    check_risky(segment, base, args, depth, transfer_cwd)
     lead = 0
     while lead < len(tokens) and tokens[lead] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
         lead += 1
@@ -2142,7 +2575,7 @@ def check_segment(segment, depth=0, cwd=None):
                     for seg in segments(text):
                         check_segment(seg, depth + 1, cwd=cur_cwd)
                         p2, a2 = program_and_args(words(seg))
-                        if p2 == "cd" and a2:
+                        if p2 in ("cd", "pushd") and a2:
                             dest = next((x for x in a2 if not x.startswith("-")), None)
                             if dest:
                                 cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
@@ -2874,7 +3307,7 @@ def check_command(command):
         for seg in segments(text):
             check_segment(seg, cwd=cur_cwd)
             prog, args = program_and_args(words(seg))
-            if prog == "cd" and args:
+            if prog in ("cd", "pushd") and args:
                 dest = next((a for a in args if not a.startswith("-")), None)
                 if dest:
                     cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
@@ -2896,7 +3329,9 @@ def main():
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict):
         tool_input = {}
-    global GATE_CWD, RAW_COMMAND
+    global GATE_CWD, RAW_COMMAND, HOOK_INPUT
+    HOOK_INPUT = data
+    session_role.cached = None
     raw_cwd = data.get("cwd")
     GATE_CWD = raw_cwd if isinstance(raw_cwd, str) and raw_cwd else os.getcwd()
     load_guard_config(GATE_CWD)
