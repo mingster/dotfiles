@@ -117,6 +117,42 @@ test("first-pass Verdict rate is per builder agent and model", () => {
   );
 });
 
+function verdictRateForBody(body: string): string {
+  const parsed = toPr({
+    number: 868,
+    title: "t",
+    mergedAt: "2026-11-08T12:00:00Z",
+    labels: { nodes: [] },
+    commits: { nodes: [] },
+    closingIssuesReferences: { nodes: [] },
+    body,
+    comments: {
+      nodes: [{ createdAt: "2026-11-08T12:00:00Z", body: "Verdict: PASS head=" + "a".repeat(40) }],
+    },
+  });
+  return computeMetrics({ now: data.now, prs: [parsed], issues: [] }, 7).first_pass_verdict_rate;
+}
+
+test("a quoted Builder format counts under the real Builder line", () => {
+  const body = [
+    "Builder source: a `Builder: agent=<a> model=<m>` line in the PR body.",
+    "Builder: agent=cursor model=grok-4.7-xhigh",
+  ].join("\n");
+  expect(verdictRateForBody(body)).toBe("agent=cursor model=grok-4.7-xhigh:1/1");
+});
+
+test("the last line-start Builder line is the one that counts", () => {
+  const body = [
+    "Builder: agent=<a> model=<m>",
+    "Builder: agent=cursor model=grok-4.7-xhigh",
+  ].join("\n");
+  expect(verdictRateForBody(body)).toBe("agent=cursor model=grok-4.7-xhigh:1/1");
+});
+
+test("a Builder format quoted only in a sentence is not a builder", () => {
+  expect(verdictRateForBody("Builder source: a `Builder: agent=<a> model=<m>` line in the PR body.\n")).toBe("unknown");
+});
+
 test("toPr keeps the earliest Verdict and the Builder line", () => {
   const parsed = toPr({
     number: 8,
