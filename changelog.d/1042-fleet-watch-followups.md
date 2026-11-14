@@ -1,0 +1,1 @@
+fleet-watch holds head-checks on a refused host, names an overflow host only when that host has the repo, and reads the environment list once per pass. Team audit records the first-pass Verdict rate per builder agent and model (#1042, #1027).

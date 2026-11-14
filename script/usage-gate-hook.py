@@ -86,7 +86,7 @@ def starts(cmd):
             and not models[0].startswith("-") else None
         spec = option("--spec")
         out += [{"provider": provider.lower() if provider else None, "role": role,
-                 "override": override, "model": model, "spec": spec,
+                 "override": override, "model": model, "spec": spec, "repo": option("--repo"),
                  "remote": option("--on") is not None} for provider in providers]
     return out
 
@@ -180,7 +180,7 @@ def reason(provider, d):
             "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 
 
-def coordinator_overflow():
+def coordinator_overflow(repo=None):
     try:
         spec = importlib.util.spec_from_file_location("fleet_watch", FLEET_WATCH)
         fw = importlib.util.module_from_spec(spec)
@@ -196,7 +196,7 @@ def coordinator_overflow():
         if cfg_path and os.path.isfile(cfg_path):
             with open(cfg_path) as f:
                 config = json.load(f)
-        receipt = fw.admit(config.get("local_host") or "local", config)
+        receipt = fw.admit(config.get("local_host") or "local", config, repo=repo or None)
         if not receipt.get("admitted"):
             return "Coordinator capacity gate blocked local worker-start: " + (
                 receipt.get("reason") or "load or memory threshold exceeded"
@@ -233,7 +233,8 @@ def main():
         blocked.append("Refused a direct remote worker-start: use script/start-remote-worker.sh "
                        "with the same arguments.")
     if commands and any(not c.get("remote") for c in commands):
-        overflow = coordinator_overflow()
+        repos = [c.get("repo") for c in commands if not c.get("remote") and c.get("repo")]
+        overflow = coordinator_overflow(repos[0] if repos else None)
         if overflow:
             blocked.append(overflow)
     # Repair the preset link first, so the role check below never reads a stale copy.

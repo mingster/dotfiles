@@ -7,7 +7,8 @@
 //   bun script/team-audit-metrics.ts --fixture <data.json> [--dispatches <tsv>] [--json]
 //
 // --repo makes two gh calls: one GraphQL search for the merged PRs (first commit GitHub Actions
-// check runs, app id 15368, and the closing issue timeline inline; at most 100 PRs) and one gh
+// check runs, app id 15368, the PR body Builder line, the earliest Verdict comment, and the
+// closing issue timeline inline; at most 100 PRs) and one gh
 // issue list for the month.
 // --fixture reads the data from a JSON file instead of GitHub (offline tests):
 //   { "now": ISO, "prs": [{ "number", "title", "mergedAt", "labels": [name],
@@ -28,6 +29,9 @@ export type Pr = {
   firstChecksConclusion: string | null;
   firstChecksAt?: string | null;
   closingIssue: { number: number; readyAt: string | null; reopened: boolean } | null;
+  builderAgent?: string;
+  builderModel?: string;
+  firstVerdict?: "PASS" | "PASS+NOTES" | "FAIL";
 };
 export type Issue = { number: number; createdAt: string; labels: string[] };
 export type Data = { now: string; prs: Pr[]; issues: Issue[] };
@@ -72,6 +76,20 @@ export function computeMetrics(data: Data, days = 7, dispatches: Map<number, str
   const failed = checked.filter((p) => p.firstChecksConclusion === "failure").length;
   out.first_pass_checks_fail_rate = rate(failed, checked.length);
   out.first_pass_checks_fail_rate_n = String(checked.length);
+
+  const verdicts = new Map<string, { hit: number; total: number }>();
+  for (const p of prs) {
+    if (!p.builderAgent || !p.builderModel || !p.firstVerdict) continue;
+    const key = `agent=${p.builderAgent} model=${p.builderModel}`;
+    const row = verdicts.get(key) ?? { hit: 0, total: 0 };
+    row.total += 1;
+    if (p.firstVerdict === "PASS" || p.firstVerdict === "PASS+NOTES") row.hit += 1;
+    verdicts.set(key, row);
+  }
+  const verdictParts = [...verdicts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, row]) => `${key}:${rate(row.hit, row.total)}/${row.total}`);
+  out.first_pass_verdict_rate = verdictParts.length === 0 ? UNKNOWN : verdictParts.join(",");
 
   const month = new Date(now).toISOString().slice(0, 7);
   const filed = (label: string) =>
@@ -140,7 +158,8 @@ function gh(args: string[]): unknown {
 const PR_QUERY = `query($q: String!) {
   search(query: $q, type: ISSUE, first: 100) {
     nodes { ... on PullRequest {
-      number title mergedAt
+      number title mergedAt body
+      comments(first: 100) { nodes { createdAt body } }
       labels(first: 10) { nodes { name } }
       commits(first: 1) { nodes { commit { checkSuites(first: 5, filterBy: { appId: 15368 }) { nodes {
         checkRuns(first: 20) { nodes { conclusion completedAt } } } } } } }
@@ -156,12 +175,37 @@ type RawPr = {
   number: number;
   title: string;
   mergedAt: string;
+  body?: string | null;
+  comments?: { nodes: { createdAt: string; body: string | null }[] };
   labels: { nodes: { name: string }[] };
   commits: { nodes: { commit: { checkSuites: { nodes: { checkRuns: { nodes: Run[] } }[] } } }[] };
   closingIssuesReferences: {
     nodes: { number: number; timelineItems: { nodes: { __typename: string; createdAt?: string; label?: { name: string } }[] } }[];
   };
 };
+
+function builderAndVerdict(p: RawPr): Partial<Pr> {
+  const match = (p.body ?? "").match(/Builder:\s*agent=(\S+)\s+model=(\S+)/);
+  const comments = [...(p.comments?.nodes ?? [])].sort(
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
+  let firstVerdict: Pr["firstVerdict"];
+  for (const comment of comments) {
+    const line = (comment.body ?? "").split("\n")[0];
+    const verdict = line.match(/^Verdict:\s*(PASS\+NOTES|PASS|FAIL)\b/);
+    if (verdict) {
+      firstVerdict = verdict[1] as Pr["firstVerdict"];
+      break;
+    }
+  }
+  const extra: Partial<Pr> = {};
+  if (match) {
+    extra.builderAgent = match[1];
+    extra.builderModel = match[2];
+  }
+  if (firstVerdict) extra.firstVerdict = firstVerdict;
+  return extra;
+}
 
 export function toPr(p: RawPr): Pr {
   const runs = (p.commits.nodes[0]?.commit.checkSuites.nodes ?? []).flatMap((s) => s.checkRuns.nodes);
@@ -181,6 +225,7 @@ export function toPr(p: RawPr): Pr {
     closingIssue: issue
       ? { number: issue.number, readyAt: ready?.createdAt ?? null, reopened: events.some((e) => e.__typename === "ReopenedEvent") }
       : null,
+    ...builderAndVerdict(p),
   };
 }
 
