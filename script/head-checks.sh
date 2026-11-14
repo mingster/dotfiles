@@ -199,8 +199,9 @@ if [ -n "$pr" ]; then
     [ "$pr_local_branch" -eq 0 ] && break
     [ "$sha" = "$local_pushed" ] && break
     # Behind the PR head: the local copy is stale, so check the PR head.
-    # Diverged and the PR head is newer: a force-push, so check that head too.
-    # Strictly ahead: a push still in flight, so wait. Diverged and older: refuse now.
+    # Diverged and the PR head is newer: the force-push has landed, so check that head.
+    # Strictly ahead, or diverged while the PR head is still older: the push may
+    # still be propagating, so wait and refuse only when the wait runs out.
     git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$repo" fetch -q origin "$sha" >> "$log" 2>&1 || true
     if git -C "$repo" merge-base --is-ancestor "$local_pushed" "$sha" 2>/dev/null; then
       break
@@ -213,8 +214,6 @@ if [ -n "$pr" ]; then
       if [ "$gh_ts" -gt "$local_ts" ]; then
         break
       fi
-      refused=1
-      usage "GitHub PR #$pr head $sha diverged from local branch $branch at $local_pushed and is not newer"
     fi
     gh_head_attempt=$((gh_head_attempt + 1))
     [ "$gh_head_attempt" -lt $((pr_head_wait * 2)) ] || {
