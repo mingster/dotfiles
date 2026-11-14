@@ -22,24 +22,42 @@ protected_path() { # <path>
   text_lane_role_path "$1"
 }
 
+# %(trailers) puts each value on its own line, so %x1e ends the commit and keeps those lines together.
+# owner_receipt_missing is the first sha with no non-whitespace Owner-approved value.
+# It stays empty when every listed commit has a non-whitespace value.
+load_owner_receipts() { # <rev-range> <path>...
+  local range=$1 raw record sha values
+  shift
+  owner_receipt_count=0
+  owner_receipt_missing=""
+  raw=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)%x1e' "$range" -- "$@" 2>/dev/null) || return 1
+  while IFS= read -r -d $'\x1e' record || [ -n "$record" ]; do
+    record=${record//$'\n'/}
+    [ -n "$record" ] || continue
+    sha=${record%%$'\x1f'*}
+    values=${record#*$'\x1f'}
+    [ -n "$sha" ] || continue
+    owner_receipt_count=$((owner_receipt_count + 1))
+    values=${values//[[:space:]]/}
+    if [ -z "$values" ] && [ -z "$owner_receipt_missing" ]; then
+      owner_receipt_missing=$sha
+    fi
+  done <<<"$raw"
+}
+
 # An intent that the diff marks Accepted passes only when every commit in the PR range that
-# touches that file carries a non-empty Owner-approved trailer (the owner accepted it in chat).
+# touches that file carries an Owner-approved value with a non-whitespace character.
 intent_acceptance_receipt() {
-  local accepted f ancestor rows sha trailer seen
+  local accepted f ancestor
   accepted=$(awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//); path = substr($2, 3)} intent && /^\+Status:.*Accepted/ && !(path in s){s[path]=1; print path}' <<<"$diff")
   [ -n "$accepted" ] || return 0
   local msg="PR accepts an intent under docs/intent/ without an Owner-approved: trailer on every commit that touches it; the owner adds the trailer once they have accepted it"
   git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || refuse "$msg"
   ancestor=$(git merge-base "$(field .baseRefOid)" "$head" 2>/dev/null) || refuse "$msg"
   while IFS= read -r f; do
-    rows=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "$f" 2>/dev/null) || refuse "$msg"
-    seen=0
-    while IFS=$'\x1f' read -r sha trailer; do
-      [ -n "$sha" ] || continue
-      seen=1
-      [ -n "$trailer" ] || refuse "$msg"
-    done <<<"$rows"
-    [ "$seen" = 1 ] || refuse "$msg"
+    load_owner_receipts "$ancestor..$head" "$f" || refuse "$msg"
+    [ "$owner_receipt_count" -gt 0 ] || refuse "$msg"
+    [ -z "$owner_receipt_missing" ] || refuse "$msg"
   done <<<"$accepted"
 }
 
@@ -63,15 +81,12 @@ collect_owner_receipt_paths() {
 
 text_lane_owner_receipt() {
   [ "${#owner_receipt_paths[@]}" -gt 0 ] || return 0
-  local ancestor rows sha trailer
+  local ancestor
   git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head for owner receipt"
   ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base for owner receipt"
-  rows=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)' "$ancestor..$head" -- "${owner_receipt_paths[@]}" 2>/dev/null) \
+  load_owner_receipts "$ancestor..$head" "${owner_receipt_paths[@]}" \
     || die "cannot list commits for owner receipt"
-  while IFS=$'\x1f' read -r sha trailer; do
-    [ -n "$sha" ] || continue
-    [ -n "$trailer" ] || refuse "commit ${sha:0:12} touches owner-gated paths without Owner-approved trailer"
-  done <<<"$rows"
+  [ -z "$owner_receipt_missing" ] || refuse "commit ${owner_receipt_missing:0:12} touches owner-gated paths without Owner-approved trailer"
 }
 
 countersigned() { # <head>
