@@ -145,6 +145,7 @@ formulae=(
   zsh-completions
   libpq
 )
+
 for pkg in "${formulae[@]}"; do
   if [ "$dry" -eq 1 ]; then
     echo "would run: brew install $pkg (if missing)"
@@ -180,6 +181,8 @@ if [ "$skip_casks" -eq 0 ]; then
     cursor
     antigravity
     antigravity-ide
+    font-hack-nerd-font
+    kitty
   )
   for cask in "${dev_casks[@]}"; do
     if [ "$dry" -eq 1 ]; then
