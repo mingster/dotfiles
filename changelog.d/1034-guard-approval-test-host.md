@@ -1,0 +1,1 @@
+`guard-bash-config.test.sh` sets `GUARD_APPROVAL_ROOT` to a missing directory, so a host that already has `/usr/local/etc/agent-team` still runs the owner-approval cases against the temp home file (#1034). `approval-sign.test.sh` saves `codesign -dv` output before it checks the hardened-runtime flag, so a `grep -q` early exit cannot fail the pipeline under `pipefail` (#1034).
