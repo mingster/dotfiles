@@ -136,6 +136,9 @@ map_file() {
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
+    script/team-audit-metrics.ts|script/tests/team-audit-metrics.test.ts)
+      add_if_exists "script/tests/team-audit.test.sh"
+      ;;
     script/agent-team.sh)
       map_script_sh_base "agent-team"
       add_if_exists "script/agent-team.test.sh"
