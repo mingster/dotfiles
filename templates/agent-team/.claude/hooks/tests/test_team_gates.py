@@ -439,6 +439,36 @@ class GrillGate(Gate):
                 if name == "title payment":
                     self.assertIn("title", self.gh_calls()[-1])
 
+    def test_round3_verdict_money_terms_need_a_grill_record(self):
+        for body in (
+            "Checkout charges the card",
+            "Only paid members",
+            "Raise the tuition",
+            "what the course costs",
+            "non-refundable deposit",
+            "a discounted rate",
+            "top up their balance",
+            "sales tax on the order total",
+            "weekly payout",
+            "Gold membership tier at NT$300",
+            "退費",
+            "收費",
+            "定價",
+            "售價",
+            "付費",
+            "學費",
+            "運費",
+            "加值",
+            "結帳",
+            "金額",
+            "費用",
+            "收款",
+            "價目",
+        ):
+            with self.subTest(body=body):
+                self.issue = {"labels": [], "title": "Catalog", "body": body + "\n", "comments": []}
+                self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
+
     def test_a_customer_message_is_not_a_money_issue(self):
         self.issue = {
             "labels": [],
@@ -524,9 +554,21 @@ class GrillRecordDoc(unittest.TestCase):
             "grill_approvers",
             "speed bump",
             "not proof of who wrote it",
+            "reminder against mistakes, not a security boundary",
             "git fetch origin main",
-            "origin/main:docs/agents/deploy-facts.md",
+            "refs/remotes/origin/main:docs/agents/deploy-facts.md",
             "* Production data: production holds only test data",
+            "退費",
+            "收費",
+            "定價",
+            "付費",
+            "費用",
+            "收款",
+            "金額",
+            "價目",
+            "tuition",
+            "paid",
+            "charge",
         ):
             self.assertIn(needle, text)
 
