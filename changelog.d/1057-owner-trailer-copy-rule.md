@@ -1,0 +1,1 @@
+Document in `team.md` (and reference from the `guard-bash.py` role file deny message) that when a change to an owner-gated file only copies rules the owner already approved, the coordinator may add the `Owner-approved:` trailer citing the source decisions in the commit and PR body, while a new rule or loosened limit still waits for the owner (#1057).

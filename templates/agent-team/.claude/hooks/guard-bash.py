@@ -1743,7 +1743,9 @@ def commit_message_file(rest, repo):
 def deny_role_files(files, how):
     deny(f"{how} touches {', '.join(sorted(files))}, which only the owner approves. Add an "
          "`Owner-approved: <name> <date>` trailer to the commit message once the owner has said yes "
-         "(never before), or take those files out of the change. In an adopted project, edit "
+         "(never before; or by the coordinator when the change only copies owner-approved rules, "
+         "citing the source decisions per ~/dotfiles/templates/agent-team/docs/agents/team.md, Role changes), "
+         "or take those files out of the change. In an adopted project, edit "
          "`.claude/hooks/guard-config.json`, `.claude/settings.project.json`, `docs/agents/team-facts.md`, "
          "or `dotfiles/templates/agent-team/` instead.")
 
