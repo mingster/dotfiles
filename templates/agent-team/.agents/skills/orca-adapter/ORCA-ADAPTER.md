@@ -38,7 +38,7 @@ Read a skill before using it. Anything not listed here is not available: skip it
 | `deslop`, `verify-this`, `check-compiler-errors`, `get-pr-comments`, `workflow-from-chats` | As written. |
 | `loop-on-ci` | Fixes on the worker's own branch only. |
 | `ci-watcher` agent (`vendor/cursor-team-kit/agents/ci-watcher.md`) | As written. |
-| `control-ui`, `control-cli` | Browsers follow the `AGENTS.md` split: Orca embedded browser for local preview, `agent-browser --session` for QA, never Chrome Dev on 9223, Playwright only for a project's own test suites. Heavy work through `heavy-gate.sh`. |
+| `control-ui`, `control-cli` | Browsers follow the `AGENTS.md` split: Orca embedded browser for local preview, `agent-browser --session` for QA, Chrome Dev on 9223 only under the `AGENTS.md` rule for test agents on the coordinator host, Playwright only for a project's own test suites. Heavy work through `heavy-gate.sh`. |
 | `new-branch-and-pr`, `review-and-ship`, `fix-merge-conflicts` | Not allowed. |
 | Local team skills (`elon`, `ceo`, `deploy`, `grill-backlog`, `team-audit`) | As their own `SKILL.md` says. |
 
