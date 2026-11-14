@@ -569,5 +569,35 @@ else
   bad "rule/guide template names one search command for the builder and the verifier"
 fi
 
+# Scope heading, Leave alone:, and Allowed files / scope boundaries satisfy Out of scope.
+cat >"$tmp/scope-heading.md" <<'EOF'
+Refs dotfiles#1074
+
+## Scope
+Only docs prose under docs/.
+Leave alone: changelog.d/ history.
+
+## Acceptance
+- [ ] All checks pass.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "Scope heading with Leave alone satisfies Out of scope" "$tmp/scope-heading.md" 0 ""
+
+cat >"$tmp/allowed-files.md" <<'EOF'
+Refs owner/app#7889
+
+## Machine-checkable contract
+- **Allowed files / scope boundaries:** `web/src/actions/` only; do not touch unrelated pages.
+
+## Acceptance criteria
+- [ ] New action passes contract tests.
+
+## Verify
+Run bash script/checks-local.sh.
+EOF
+lint_exact "Allowed files / scope boundaries satisfies Out of scope" "$tmp/allowed-files.md" 0 ""
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

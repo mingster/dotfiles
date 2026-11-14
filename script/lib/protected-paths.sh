@@ -45,17 +45,31 @@ load_owner_receipts() { # <rev-range> <path>...
   done <<<"$raw"
 }
 
+ensure_commit_in_store() { # <sha>
+  local sha=$1
+  [ -n "$sha" ] || return 1
+  git cat-file -e "$sha^{commit}" 2>/dev/null && return 0
+  git fetch origin "$sha" >&2 2>/dev/null && git cat-file -e "$sha^{commit}" 2>/dev/null && return 0
+  if [ -n "${pr:-}" ]; then
+    git fetch origin "pull/$pr/head" >&2 2>/dev/null && git cat-file -e "$sha^{commit}" 2>/dev/null && return 0
+  fi
+  git fetch origin main >&2 2>/dev/null && git cat-file -e "$sha^{commit}" 2>/dev/null && return 0
+  return 1
+}
+
 # An intent that the diff marks Accepted passes only when every commit in the PR range that
 # touches that file carries an Owner-approved value with a non-whitespace character.
 intent_acceptance_receipt() {
-  local accepted f ancestor
+  local accepted f ancestor base_sha
   accepted=$(awk '/^\+\+\+ /{intent = ($2 ~ /^b\/docs\/intent\//); path = substr($2, 3)} intent && /^\+Status:.*Accepted/ && !(path in s){s[path]=1; print path}' <<<"$diff")
   [ -n "$accepted" ] || return 0
   local msg="PR accepts an intent under docs/intent/ without an Owner-approved: trailer on every commit that touches it; the owner adds the trailer once they have accepted it"
-  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || refuse "$msg"
-  ancestor=$(git merge-base "$(field .baseRefOid)" "$head" 2>/dev/null) || refuse "$msg"
+  base_sha=$(field .baseRefOid)
+  ensure_commit_in_store "$head" || die "cannot read head $head for intent acceptance receipt"
+  ensure_commit_in_store "$base_sha" || die "cannot read base $base_sha for intent acceptance receipt"
+  ancestor=$(git merge-base "$base_sha" "$head" 2>/dev/null) || die "cannot find merge base for intent acceptance receipt"
   while IFS= read -r f; do
-    load_owner_receipts "$ancestor..$head" "$f" || refuse "$msg"
+    load_owner_receipts "$ancestor..$head" "$f" || die "cannot list commits for intent acceptance receipt"
     [ "$owner_receipt_count" -gt 0 ] || refuse "$msg"
     [ -z "$owner_receipt_missing" ] || refuse "$msg"
   done <<<"$accepted"
@@ -81,9 +95,11 @@ collect_owner_receipt_paths() {
 
 text_lane_owner_receipt() {
   [ "${#owner_receipt_paths[@]}" -gt 0 ] || return 0
-  local ancestor
-  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || die "cannot read head $head for owner receipt"
-  ancestor=$(git merge-base "$(field .baseRefOid)" "$head") || die "cannot find merge base for owner receipt"
+  local ancestor base_sha
+  base_sha=$(field .baseRefOid)
+  ensure_commit_in_store "$head" || die "cannot read head $head for owner receipt"
+  ensure_commit_in_store "$base_sha" || die "cannot read base $base_sha for owner receipt"
+  ancestor=$(git merge-base "$base_sha" "$head") || die "cannot find merge base for owner receipt"
   load_owner_receipts "$ancestor..$head" "${owner_receipt_paths[@]}" \
     || die "cannot list commits for owner receipt"
   [ -z "$owner_receipt_missing" ] || refuse "commit ${owner_receipt_missing:0:12} touches owner-gated paths without Owner-approved trailer"

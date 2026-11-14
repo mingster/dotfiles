@@ -136,5 +136,45 @@ printf 'touch path\n' > "$tmp/msg"
 commit_path docs/intent/example.md
 expect_refuse "an accepted intent with no trailer is refused" "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
 
+# Unfetched PR head (under refs/pull/<pr>/head on origin) and unfetched base (on origin/main) are fetched before checking receipts.
+remote=$tmp/remote.git
+git init -q --bare "$remote"
+clone=$tmp/clone
+git clone -q "$remote" "$clone" 2>/dev/null || { git init -q -b main "$clone"; git -C "$clone" remote add origin "$remote"; }
+git -C "$clone" config core.hooksPath "$tmp/hooks"
+git -C "$repo" checkout -q main
+printf 'base2\n' > "$repo/base2.txt"
+git -C "$repo" add base2.txt
+git -C "$repo" commit -q -m "advance main"
+remote_base=$(git -C "$repo" rev-parse HEAD)
+git -C "$repo" push -q "$remote" main:refs/heads/main
+git -C "$repo" checkout -q -B pr-intent "$remote_base"
+printf '%s' "$owner_msg_one" > "$tmp/msg"
+commit_path docs/intent/example.md
+remote_head=$(git -C "$repo" rev-parse HEAD)
+git -C "$repo" push -q "$remote" "$remote_head:refs/pull/42/head"
+
+out=$(
+  set -euo pipefail
+  cd "$clone"
+  pr=42
+  head=$remote_head
+  files='["docs/intent/example.md"]'
+  diff=$intent_diff
+  info=$(jq -n --arg b "$remote_base" '{baseRefOid:$b,comments:[]}')
+  field() { jq -r "$1" <<<"$info"; }
+  refuse() { printf 'REFUSED:%s\n' "$*"; exit 7; }
+  die() { printf 'DIE:%s\n' "$*"; exit 8; }
+  verdict_carry() { return 1; }
+  check_protected_paths
+  printf 'ALLOWED\n'
+)
+rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = ALLOWED ]; then
+  ok "unfetched pull/<pr>/head and origin/main base are fetched before checking intent acceptance receipt"
+else
+  bad "unfetched pull/<pr>/head and origin/main base are fetched before checking intent acceptance receipt" "rc=$rc out=$out"
+fi
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

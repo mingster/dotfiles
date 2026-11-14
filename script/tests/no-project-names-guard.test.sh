@@ -156,5 +156,25 @@ check "machine name in a template doc fails guard" "$ec" 1
 check "machine name hit names the template doc" "$(echo "$out" | grep -c '^templates/agent-team/docs/agents/dispatch.md$')" 1
 check "machine name hit hides the name" "$(echo "$out" | grep -c "$host")" 0
 
+tmp8=$(new_fixture_repo)
+cleanup+=("$tmp8")
+printf 'plain public text only\n' > "$tmp8/leak.txt"
+(
+  cd "$tmp8" || exit 1
+  git add leak.txt
+  git commit -qm init
+  git update-ref refs/remotes/origin/main HEAD
+  printf 'still public\n' >> "$tmp8/leak.txt"
+  git commit -qam "fix issue on $host"
+)
+printf '%s\n' "$host" > "$tmp8/pattern.host"
+set +e
+out=$(run_guard "$tmp8" "$tmp8/pattern.host" 2>&1)
+ec=$?
+set -e
+check "commit message hit on origin/main..HEAD fails guard" "$ec" 1
+check "commit message hit mentions FAIL" "$(echo "$out" | grep -c '^FAIL: project names found in commit messages:')" 1
+check "commit message hit hides the matched text" "$(echo "$out" | grep -c "$host")" 0
+
 echo "$fails failed"
 [ "$fails" -eq 0 ]

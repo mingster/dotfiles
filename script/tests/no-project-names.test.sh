@@ -44,4 +44,17 @@ if [ "$grep_ec" -eq 0 ] && [ -n "$hits" ]; then
   echo "FAIL: project names found in tracked files:"; echo "$hits" | head -30
   exit 1
 fi
+if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  bad_commits=""
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    if git show -s --format='%B' "$sha" | grep -qiE "$pattern"; then
+      bad_commits="${bad_commits:+$bad_commits$'\n'}${sha:0:12}"
+    fi
+  done < <(git rev-list origin/main..HEAD)
+  if [ -n "$bad_commits" ]; then
+    echo "FAIL: project names found in commit messages:"; echo "$bad_commits" | head -30
+    exit 1
+  fi
+fi
 echo "ok: no project names in tracked text files"

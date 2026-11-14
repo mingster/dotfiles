@@ -82,6 +82,24 @@ class WorkerStallHelpers(unittest.TestCase):
     def test_projection_host_id_accepts_string_or_object(self):
         self.assertEqual(fw.projection_host_id({'host': 'remote-1'}), 'remote-1')
         self.assertEqual(fw.projection_host_id({'projection': {'host': {'id': 'x'}}}), 'x')
+        remote_row = {
+            'dispatchId': 'ctx_remote_1',
+            'workerState': 'ready',
+            'dispatchStatus': 'dispatched',
+            'agentTerminalHandle': None,
+            'terminalState': None,
+            'resource': None,
+            'server': {'environmentId': 'env-1', 'name': 'remote-host', 'asOf': '2023-11-14T21:00:00Z'},
+        }
+        self.assertEqual(fw.projection_host_id(remote_row), 'remote-host')
+        self.assertTrue(fw.worker_row_is_live(remote_row))
+        state = {}
+        notices, log_bits = fw.worker_stall_pass(
+            stall_test_config(), state, T0, [remote_row], {}, lambda *_a: {},
+        )
+        self.assertIn('remote_stall_unknown=ctx_remote_1', log_bits)
+        self.assertEqual(len(notices), 1)
+        self.assertIn('ctx_remote_1', notices[0])
 
     def test_terminal_branch_map_from_refs_heads(self):
         result = {
