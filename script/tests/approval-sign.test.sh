@@ -173,7 +173,9 @@ if [ "$(uname -s)" = Darwin ] && command -v swiftc >/dev/null 2>&1 && command -v
   security find-generic-password -s agent-team.approval-secret -a "$KC_NS" >/dev/null 2>&1 \
     && bad "set wrote an unprotected item to a keychain" \
     || ok "set leaves nothing in any keychain when protected storage is unavailable"
-  codesign -dv "$TMP/bin/compiled-keychain" 2>&1 | grep -q 'flags=.*runtime' \
+  # Capture first. A pipe into grep -q under pipefail reports failure when codesign gets SIGPIPE.
+  sign_info=$(codesign -dv "$TMP/bin/compiled-keychain" 2>&1)
+  grep -q 'flags=.*runtime' <<<"$sign_info" \
     && ok "helper is signed with hardened runtime" || bad "helper lacks hardened runtime"
 fi
 grep -q 'legacyQuery' "$SIGN" && bad "helper source still has a legacy keychain path" || ok "helper source has no legacy keychain path"

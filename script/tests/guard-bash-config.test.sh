@@ -10,10 +10,14 @@ SUPPORT_CSM="$ROOT/templates/agent-team/.claude/agents/support-csm.md"
 TEAM_FACTS="$ROOT/templates/agent-team/docs/agents/team-facts.md"
 
 TMP="$(mktemp -d)"
+# #1034: env -i unsets TMPDIR. macOS mktemp still uses /var/folders, and Python uses /private/tmp.
+export TMPDIR="${TMPDIR:-$(dirname "$TMP")}"
 trap 'rm -rf "$TMP"' EXIT
 
 HOME_DIR="$TMP/home"
 PROJ="$TMP/proj"
+# #960: a host with /usr/local/etc/agent-team would make the guard ignore the temp home approval.
+export GUARD_APPROVAL_ROOT="$TMP/no-approval-root"
 mkdir -p "$HOME_DIR" "$PROJ/.claude/hooks" "$PROJ/docs/agents"
 git -C "$PROJ" init -q -b main
 git -C "$PROJ" config user.email "test@example.invalid"
