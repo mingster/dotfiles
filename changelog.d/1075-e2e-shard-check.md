@@ -1,0 +1,1 @@
+The fleet toolchain check now fails and names a host whose regression runtime.conf has no E2E_SHARD line, because the regression fleet silently skips that host and the round overruns its time cap. The check reads only whether the line exists and never prints the file values. Hosts with no runtime.conf are not affected.

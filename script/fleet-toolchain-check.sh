@@ -6,6 +6,7 @@
 # claude, codex, agent or agy process, because the upgrade restarts Orca; a busy host is reported as skipped.
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
+# A host with a regression runtime.conf and no E2E_SHARD line fails the check, because the regression fleet skips it.
 # Config: FLEET_PULL_CONFIG or fleet-pull.config.json (same hosts as fleet-pull).
 # Tests: FLEET_ORCA_APP (Orca.app path), FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_NODE_INDEX (path), FLEET_TOOLCHAIN_VERSIONS (json).
 set -u
@@ -134,6 +135,9 @@ probe_host() { # <host>
         echo "$t missing"
       fi
     done >"$f"
+    if jq -e --arg h "$h" '.[$h] | has("e2e_shard")' <<<"$FLEET_TOOLCHAIN_VERSIONS" >/dev/null 2>&1; then
+      echo "e2e_shard $(jq -r --arg h "$h" '.[$h].e2e_shard' <<<"$FLEET_TOOLCHAIN_VERSIONS")" >>"$f"
+    fi
     return 0
   fi
   if same_host "$h" "$me"; then
@@ -224,6 +228,10 @@ check_host() { # <host>
     echo "fleet-toolchain-check: $h unreachable" >&2
     rc=1
     return 0
+  fi
+  if [ "$(host_tool_state "$h" e2e_shard)" = missing ]; then
+    echo "fleet-toolchain-check: $h runtime.conf has no E2E_SHARD" >&2
+    rc=1
   fi
   for t in $TOOLS; do
     st=$(host_tool_state "$h" "$t")
