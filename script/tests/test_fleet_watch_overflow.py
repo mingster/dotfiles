@@ -145,7 +145,7 @@ class CoordinatorOverflowAdmitTests(unittest.TestCase):
             self.assertFalse(payload['admitted'])
             self.assertEqual(payload['overflow_host'], 'overflow-a')
 
-    def _run_hook(self, command, fw_config, load_per_core='0.20', free_gb='12.0'):
+    def _run_hook(self, command, fw_config, load_per_core='0.20', free_gb='12.0', env_extra=None):
         hook_path = ROOT / 'script' / 'usage-gate-hook.py'
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -177,6 +177,11 @@ class CoordinatorOverflowAdmitTests(unittest.TestCase):
                 FLEET_WATCH_TEST_LOAD_PER_CORE=str(load_per_core),
                 FLEET_WATCH_TEST_FREE_GB=str(free_gb),
             )
+            # A dispatch workspace on the test runner must not leak into a case that sets none.
+            env.pop('ORCA_WORKSPACE_ID', None)
+            env.pop('ORCA_WORKTREE_ID', None)
+            if env_extra:
+                env.update(env_extra)
             proc = subprocess.run(
                 [sys.executable, str(hook_path)],
                 input=json.dumps({'tool_name': 'Bash', 'tool_input': {'command': command}}),
@@ -228,6 +233,45 @@ class CoordinatorOverflowAdmitTests(unittest.TestCase):
         self.assertEqual(out['permissionDecision'], 'deny')
         self.assertIn('overflow-b', out['permissionDecisionReason'])
         self.assertNotIn('overflow-a', out['permissionDecisionReason'])
+
+    def test_usage_gate_hook_derives_the_dispatch_repo_when_repo_is_absent(self):
+        config = {
+            'host_caps': {'local': 4, 'overflow-a': 2, 'overflow-b': 2},
+            'worker_placement': {'repos': {
+                'overflow-a': {'other-repo': 'id:other'},
+                'overflow-b': {'repo-dots': 'id:dots'},
+            }},
+        }
+        out = self._run_hook(
+            'orca orchestration worker-start --task t --agent claude --spec ok --worktree current',
+            config,
+            load_per_core='0.85',
+            free_gb='12.0',
+            env_extra={'ORCA_WORKSPACE_ID': 'repo-dots::/tmp/dotfiles'},
+        )
+        self.assertIsNotNone(out)
+        self.assertEqual(out['permissionDecision'], 'deny')
+        self.assertIn('overflow-b', out['permissionDecisionReason'])
+        self.assertNotIn('overflow-a', out['permissionDecisionReason'])
+
+    def test_usage_gate_hook_keeps_an_explicit_repo_over_the_dispatch(self):
+        out = self._run_hook(
+            'orca orchestration worker-start --task t --agent claude --spec ok --repo path:/tmp/other',
+            {
+                'host_caps': {'local': 4, 'overflow-a': 2, 'overflow-b': 2},
+                'worker_placement': {'repos': {
+                    'overflow-a': {'/tmp/other': 'id:other'},
+                    'overflow-b': {'repo-dots': 'id:dots'},
+                }},
+            },
+            load_per_core='0.85',
+            free_gb='12.0',
+            env_extra={'ORCA_WORKSPACE_ID': 'repo-dots::/tmp/dotfiles'},
+        )
+        self.assertIsNotNone(out)
+        self.assertEqual(out['permissionDecision'], 'deny')
+        self.assertIn('overflow-a', out['permissionDecisionReason'])
+        self.assertNotIn('overflow-b', out['permissionDecisionReason'])
 
     def test_usage_gate_hook_reports_no_overflow_host_when_none_available(self):
         out = self._run_hook(

@@ -1768,6 +1768,8 @@ class ProjectPresetsMergeTests(unittest.TestCase):
             FLEET_WATCH_TEST_LOAD_PER_CORE="0.85",
             FLEET_WATCH_TEST_FREE_GB="12.0",
         )
+        env.pop("ORCA_WORKSPACE_ID", None)
+        env.pop("ORCA_WORKTREE_ID", None)
         proc = subprocess.run(
             [sys.executable, hook_path],
             input=json.dumps({
