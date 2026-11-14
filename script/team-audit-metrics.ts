@@ -185,7 +185,8 @@ type RawPr = {
 };
 
 function builderAndVerdict(p: RawPr): Partial<Pr> {
-  const match = (p.body ?? "").match(/Builder:\s*agent=(\S+)\s+model=(\S+)/);
+  const matches = [...(p.body ?? "").matchAll(/^Builder:\s*agent=(\S+)\s+model=(\S+)/gm)];
+  const match = matches.at(-1);
   const comments = [...(p.comments?.nodes ?? [])].sort(
     (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
   );
