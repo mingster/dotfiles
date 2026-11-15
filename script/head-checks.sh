@@ -5,6 +5,12 @@
 # for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+is_tsc_step() {
+  case "$1" in
+    *head-checks-tsc*|*tsc\ *|*tsc.js*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 head_checks_gate_wrap() {
   local command="$1"
   [ "$name" = dotfiles ] && return 0
@@ -13,7 +19,7 @@ head_checks_gate_wrap() {
       printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 2 --
       ;;
     *head-checks-tsc*|*tsc\ *|*tsc.js*)
-      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --measure --
+      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 1 --
       ;;
   esac
 }
@@ -38,7 +44,7 @@ orphan_check_worktree() {
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
-override="" changed="" explicit_base="" main_sha=""
+override="" changed="" explicit_base="" main_sha="" check_result=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,7 +82,7 @@ log=$(mktemp); receipt=$(mktemp)
 # Fixed cap on the posted receipt; GitHub rejects a comment body over 65536 characters.
 receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
 finish() {
-  local status=$? result=FAIL
+  local status=$? result=${check_result:-FAIL}
   trap - EXIT
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
@@ -454,26 +460,45 @@ while IFS= read -r command || [ -n "$command" ]; do
     rm -f "$output"
     exit 1
   fi
-  if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
-    sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
-    sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
-    summary=$(test_summary "$output")
-    tail -20 "$output" >> "$log"
-    printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
-    [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
-    rm -f "$output"
-  else
-    status=$?
-    sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
-    sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
-    summary=$(test_summary "$output")
-    tail -20 "$output" >> "$log"
-    # Exit 137 is a kill signal (often the kernel out of memory killer): still a FAIL, but not a verdict on the code.
-    note=""; [ "$status" -ne 137 ] || note="; interrupted by a kill signal, the code was not judged, rerun Checks"
-    printf 'Result: exit %s; remaining checks stopped%s\nDuration: %ss\n' "$status" "$note" "$((SECONDS - started))" >> "$log"
-    [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
-    rm -f "$output"
-    exit 1
-  fi
+  tsc_attempt=0
+  while :; do
+    tsc_attempt=$((tsc_attempt + 1))
+    if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
+      sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
+      sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
+      summary=$(test_summary "$output")
+      tail -20 "$output" >> "$log"
+      printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+      [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+      rm -f "$output"
+      break
+    else
+      status=$?
+      sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
+      sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
+      summary=$(test_summary "$output")
+      tail -20 "$output" >> "$log"
+      if [ "$status" -eq 137 ] && is_tsc_step "$expanded"; then
+        if [ "$tsc_attempt" -eq 1 ]; then
+          printf 'Result: exit 137; retryable infra failure (tsc killed by OS, the code was not judged); retrying once when load drops\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+          [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+          : > "$output"
+          started=$SECONDS
+          continue
+        fi
+        check_result=INFRA
+        printf 'Result: exit 137; retryable infra failure; remaining checks stopped; interrupted by a kill signal, the code was not judged, rerun Checks\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+        [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+        rm -f "$output"
+        exit 1
+      fi
+      # Exit 137 is a kill signal (often the kernel out of memory killer): still a FAIL, but not a verdict on the code.
+      note=""; [ "$status" -ne 137 ] || note="; interrupted by a kill signal, the code was not judged, rerun Checks"
+      printf 'Result: exit %s; remaining checks stopped%s\nDuration: %ss\n' "$status" "$note" "$((SECONDS - started))" >> "$log"
+      [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+      rm -f "$output"
+      exit 1
+    fi
+  done
 done < "$config"
 [ "$count" -gt 0 ] || usage "empty head-checks checklist"
