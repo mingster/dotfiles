@@ -62,4 +62,23 @@ out=$(pick "$tmp/mapped.json" "$tmp/load-all-hot.sh" 2>/dev/null || true)
 grep -Fq 'refused host-primary=20.0 host-remote=20.0' <<<"$out" || fail "over ceiling keeps the load refusal: $out"
 grep -Fq 'repo mapping' <<<"$out" && fail "over ceiling must not say repo mapping: $out" || true
 
+# Least loaded host wins, not the first one under its ceiling.
+cat >"$tmp/load-spread.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=4.5 1.0 1.0\n'
+printf 'host-remote cores=8 load=1.0 1.0 1.0\n'
+printf 'host-remote-2 cores=8 load=1.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-spread.sh"
+cat >"$tmp/spread.json" <<'EOS'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-remote": 4, "host-remote-2": 4},
+  "host_load_ceilings": {"host-primary": 8, "host-remote": 8, "host-remote-2": 8},
+  "worker_placement": {"order": ["host-primary", "host-remote", "host-remote-2"]}
+}
+EOS
+out=$(FLEET_LOAD_SCRIPT="$tmp/load-spread.sh" FLEET_WATCH_CONFIG="$tmp/spread.json" python3 "$py" pick --json)
+grep -Fq '"host":"host-remote"' <<<"$out" || fail "less loaded later host must win, ties keep order: $out"
+
 echo "worker-placement.test.sh passed"

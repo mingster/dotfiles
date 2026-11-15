@@ -246,6 +246,7 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
         return {'ok': False, 'reason': str(exc), 'loads': {}}
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     considered: dict[str, float] = {}
+    candidates: list[tuple[float, str, float, float]] = []
     unmapped = 0
     for host in hosts:
         if not host_has_repo_mapping(config, host, local_host, repo_selector):
@@ -265,21 +266,24 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
             continue
         considered[host] = load
         if not host_over_load(host, load, cores, ceiling, local_host):
-            is_local = host == local_host
-            result: dict = {
-                'ok': True,
-                'host': host,
-                'load_1m': load,
-                'ceiling': ceiling,
-                'local': is_local,
-                'environment': None if is_local else host,
-                'task_kind': kind,
-            }
-            if repo_selector and not is_local:
-                mapped = translate_repo(config, host, repo_selector)
-                if mapped:
-                    result['repo'] = mapped
-            return result
+            candidates.append((load / ceiling if ceiling > 0 else 0.0, host, load, ceiling))
+    if candidates:
+        _, host, load, ceiling = min(candidates, key=lambda c: c[0])
+        is_local = host == local_host
+        result: dict = {
+            'ok': True,
+            'host': host,
+            'load_1m': load,
+            'ceiling': ceiling,
+            'local': is_local,
+            'environment': None if is_local else host,
+            'task_kind': kind,
+        }
+        if repo_selector and not is_local:
+            mapped = translate_repo(config, host, repo_selector)
+            if mapped:
+                result['repo'] = mapped
+        return result
     remote_hosts = [h for h in hosts if h != local_host]
     every_remote_unmapped = bool(remote_hosts) and all(
         not host_has_repo_mapping(config, h, local_host, repo_selector) for h in remote_hosts
