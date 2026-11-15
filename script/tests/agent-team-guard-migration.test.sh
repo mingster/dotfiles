@@ -65,6 +65,41 @@ else
   bad "invalid remote_read_only regex fails closed (out: $(tail -3 <<<"$out"))"
 fi
 
+# A host list built with list(<shared list>) migrates and keeps every host (#1121).
+LST="$TMP/lst"
+mkdir -p "$LST/.claude/hooks"
+cat > "$LST/.claude/hooks/guard-bash.py" <<'PYEOF'
+_APP = "/var/www/example.app"
+_SLOT_DEPLOY = f"sh {_APP}/bin/deploy.sh"
+_PRIMARY_DEPLOY_COMMANDS = [
+    f"git -C {_APP} fetch --quiet origin && git -C {_APP} checkout --quiet --detach SHA40",
+    f"{_SLOT_DEPLOY} slot-start SHA40 3001",
+    "nginx -t && systemctl reload nginx",
+]
+HOST_DEPLOY_COMMANDS = {
+    "root@prod-a.example.net": list(_PRIMARY_DEPLOY_COMMANDS),
+    "root@prod-b": list(_PRIMARY_DEPLOY_COMMANDS),
+    "root@prod-c.example.net": [
+        f"git -C {_APP} fetch --quiet origin && git -C {_APP} checkout --quiet --detach SHA40",
+        f"{_SLOT_DEPLOY} slot-stop SHA40 3001",
+    ],
+}
+PYEOF
+git -C "$LST" init -q -b main
+if out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$LST" --project-name x 2>&1)" \
+  && python3 - "$LST/.claude/hooks/guard-config.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))["host_deploy_commands"]
+assert sorted(c) == ["root@prod-a.example.net", "root@prod-b", "root@prod-c.example.net"], c
+assert len(c["root@prod-a.example.net"]) == 3 and c["root@prod-a.example.net"] == c["root@prod-b"], c
+assert len(c["root@prod-c.example.net"]) == 2, c
+PY
+then
+  ok "list() host deploy commands migrate and keep every host"
+else
+  bad "list() host deploy commands migrate and keep every host (out: $(tail -3 <<<"$out"))"
+fi
+
 # 2. The real run writes every production guard fact into guard-config.json.
 if out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$PROJ" --project-name x 2>&1)"; then
   ok "migration runs"

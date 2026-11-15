@@ -746,6 +746,8 @@ def eval_guard_ast(node, errors, ctx, env=None):
         args = [eval_guard_ast(a, errors, ctx, env) for a in node.args]
         if func == "set" and not args:
             return []
+        if func == "list" and len(args) == 1 and isinstance(args[0], list):
+            return list(args[0])
         if func == "re.compile" and args:
             if isinstance(args[0], str):
                 return args[0]
