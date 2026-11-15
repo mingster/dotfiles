@@ -5125,7 +5125,8 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'bad-head'))
             continue
         record = babysit_record(state, repo, number)
-        if record.get('head') == head and record.get('action'):
+        reported = record.get('head') == head and record.get('action') == 'report'
+        if record.get('head') == head and record.get('action') and not reported:
             lines.append(_babysit_line(repo, number, head, 'skip', 'already'))
             continue
         root = roots.get(repo) if isinstance(roots.get(repo), str) else ''
@@ -5138,17 +5139,17 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'owner-check-error'))
             log_bits.append('owner_check_error=%s' % number)
             continue
-        if owner:
+        if owner and not reported:
+            # Report once per head, then fall through: the Verdict is still needed, only ship waits for the owner.
             lines.append(_babysit_line(repo, number, head, 'report', owner))
             notices.append(Urgent(
-                'owner-only path on %s#%s (%s); not dispatched' % (repo, number, owner)
+                'owner-only path on %s#%s (%s); verify only, ship waits for the owner' % (repo, number, owner)
             ))
             log_bits.append('report=%s' % number)
             if not dry_run:
                 babysit_mark(state, repo, number, head, 'report')
                 if persist_state:
                     persist_state()
-            continue
         status = head_checks_status(pr_row)
         needs_fix = rework_needed_at_head(pr_row, None, repo, repo_root=repo_root)
         ready = (

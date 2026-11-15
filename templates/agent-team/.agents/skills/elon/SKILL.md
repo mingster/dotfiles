@@ -11,5 +11,6 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, `.agents/skills/orca-adapter
 
 - `/elon <objective>`: run pstack Orchestrate on it, with the `orca-adapter/playbooks/orchestrate.md` overlay.
 - `/elon status` (Mingster also says "what now"), only when Mingster asks: run `ketchup`, read only; start no workers. Reply as Now, Needs user, Running.
+- A plain "status", "recap" or a question about a worker counts as `/elon status`: read the run's task list and worker list first, then name a worker's state. Never answer from memory or from a fleet-watch log line.
 
 Roles the coordinator dispatches or hears from: `architect-pm`, `fullstack-dev`, `qa-sdet`, `secops-finops`, `support-csm`, `release-manager`, `sales-marketing` (`~/dotfiles/templates/agent-team/docs/agents/team.md`).

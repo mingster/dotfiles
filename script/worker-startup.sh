@@ -452,6 +452,23 @@ surface_antigravity_screen() { # <agent> <worker-start json>
   fi
 }
 
+# A builder brief for a backlog line ("#<issue> L<n>" in the title or the brief's first heading) is refused
+# when a merged PR title already carries that line. Skipped when gh is missing or the lookup fails.
+refuse_merged_backlog_line() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role kind key repo merged
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || return 0
+  [ "$kind" = builder ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  key=$({ printf '%s\n' "$title"; grep -m1 '^# ' "$spec_file"; } | grep -oE '#[0-9]+ L[0-9]+' | head -1 || true)
+  [ -n "$key" ] || return 0
+  repo=$(grep -m1 -oE '^Refs [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#' "$spec_file" | sed -e 's/^Refs //' -e 's/#$//' || true)
+  merged=$(gh pr list ${repo:+-R "$repo"} --state merged --search "${key#\#} in:title" --json number,title \
+    --jq "[.[] | select(.title | test(\"$key\\\\b\"))][0].number // empty" 2>/dev/null || true)
+  [ -z "$merged" ] || die "refused: $key already merged in PR #$merged; check the backlog before building it again"
+}
+
 enforce_builder_cursor() { # <title> <agent> <override>
   local title=$1 agent=$2 override=$3 role kind pick_py pick_out pick_err flags
   [ "$agent" = claude ] || return 0
@@ -552,6 +569,7 @@ run_mode() {
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out dispatch_log
+  refuse_merged_backlog_line "$spec" "$title"
   spec=$(with_finish_block "$spec" "$run" "$agent" "$model")
   spec=$(prepend_role_preamble "$spec" "$title")
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"

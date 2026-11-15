@@ -1316,6 +1316,38 @@ grep -q 'no grok CLI' "$tmp/grok-on.err" && ok || bad "grok refusal should name 
 grok_on "$tmp/fleet-nogrok.json" grok-box
 [ "$grok_ec" -ne 0 ] && ok || bad "grok --on with no grok_hosts config should be refused"
 
+# A builder brief for a backlog line that a merged PR already carries is refused before worker-start.
+ghbin="$tmp/ghbin"
+mkdir -p "$ghbin"
+cat >"$ghbin/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+printf '[{"number":8111,"title":"release notes titles (#7298 L103)"},{"number":9,"title":"other (#7298 L1030)"}]\n' \
+  | jq "${@: -1}"
+EOS
+chmod +x "$ghbin/gh"
+spec_saved=$(cat "$spec_file")
+printf 'Refs acme/app#7298\n\n# fullstack-dev - #7298 L103: titles\n\n%s\n' "$spec_saved" >"$spec_file"
+run_path_saved=$run_path
+run_path="$ghbin:$run_path"
+export GH_STUB_LOG="$tmp/gh-stub.log"
+: >"$GH_STUB_LOG"
+PICK_STUB_MODE=sonnet route_run "fullstack-dev - build-7298-l103" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "merged backlog line should be refused (ec=$route_ec)"
+grep -q 'L103 already merged in PR #8111' "$tmp/route.err" && ok || bad "refusal should name the merged PR ($(cat "$tmp/route.err"))"
+grep -q -- '-R acme/app' "$GH_STUB_LOG" && ok || bad "lookup should use the Refs repo ($(cat "$GH_STUB_LOG"))"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused builder must not reach worker-start" || ok
+printf 'Refs acme/app#7298\n\n# fullstack-dev - #7298 L10: titles\n\n%s\n' "$spec_saved" >"$spec_file"
+PICK_STUB_MODE=sonnet route_run "fullstack-dev - build-7298-l10" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "L10 is not L103 or L1030 (ec=$route_ec) $(cat "$tmp/route.err")"
+: >"$GH_STUB_LOG"
+printf 'Refs acme/app#7298\n\n# qa-sdet - verify #7298 L103\n\n%s\n' "$spec_saved" >"$spec_file"
+PICK_STUB_MODE=sonnet route_run "qa-sdet - verify #7298 L103" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a verifier for a merged line is not refused (ec=$route_ec) $(cat "$tmp/route.err")"
+[ -s "$GH_STUB_LOG" ] && bad "non-builder must not look up merged PRs" || ok
+run_path=$run_path_saved
+printf '%s\n' "$spec_saved" >"$spec_file"
+
 # Orca registers the physical checkout. A symlink selector must be rewritten before worktree create.
 link_real="$tmp/link-real"
 mkdir -p "$link_real"
