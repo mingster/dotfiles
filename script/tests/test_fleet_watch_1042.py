@@ -120,7 +120,7 @@ class BabysitBriefMatchesAutoShip(unittest.TestCase):
         row = {'number': 4, 'headRefOid': HEAD}
         with tempfile.TemporaryDirectory() as root:
             texts = [
-                Path(fw.build_babysit_spec(REPO, row, kind, ('cursor', 'grok-4.7-xhigh'), root)).read_text(
+                Path(fw.build_babysit_spec(REPO, row, kind, ('cursor', 'grok-4.7-high'), root)).read_text(
                     encoding='utf-8')
                 for kind in ('verifier', 'fixer')
             ]

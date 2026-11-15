@@ -75,7 +75,7 @@ class FamilyCli(unittest.TestCase):
             ('fullstack-dev', 'claude-sonnet-5-5-medium', 'claude'),
             ('no-such-agent', 'sonnet', 'claude'),
             ('no-such-agent', 'opus', 'claude'),
-            ('fullstack-dev', 'grok-4.7-xhigh', 'grok'),
+            ('fullstack-dev', 'grok-4.7-high', 'grok'),
             ('cursor', 'grok-4.7-high', 'grok'),
         ]
         for agent, model, expected in cases:

@@ -64,10 +64,10 @@ test ! -s "$CURSOR_TEST_LOG"
 echo 'PASS: Strong role named in the spec is refused before Orca'
 : > "$CURSOR_TEST_LOG"
 printf 'read /tmp/.claude/agents/qa-sdet.md first\n' > "$tmp/spec"
-launch --title 'qa-sdet - fixture job' --model grok-4.7-xhigh --worktree-path '/tmp/example.repo/work tree.v1' > "$tmp/result"
+launch --title 'qa-sdet - fixture job' --model grok-4.7-high --worktree-path '/tmp/example.repo/work tree.v1' > "$tmp/result"
 grep -q 'orchestration worker-start' "$CURSOR_TEST_LOG" \
   || { echo "FAIL: qa-sdet on Cursor grok did not reach Orca" >&2; cat "$tmp/result"; exit 1; }
-grep -q -- '--model grok-4.7-xhigh' "$CURSOR_TEST_LOG"
+grep -q -- '--model grok-4.7-high' "$CURSOR_TEST_LOG"
 echo 'PASS: qa-sdet on Cursor grok is accepted'
 printf 'Do the fixture task.\n' > "$tmp/spec"
 launch --name fixture --repo /tmp/example.repo --base-branch origin/main > "$tmp/result"

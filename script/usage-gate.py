@@ -13,7 +13,7 @@ automatic start is blocked by the daily cap; manual and coordinator starts never
 get the note "pacing: prefer a lighter model".
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags. fullstack-dev and light-tier roles take the first allowed of
-Cursor grok-4.7-xhigh, then that role's Claude entry, then Antigravity. Strong
+Cursor grok-4.7-high, then that role's Claude entry, then Antigravity. Strong
 roles other than qa-sdet never select Cursor. qa-sdet may select Cursor grok, so a
 Claude-built PR can be verified on Cursor. Every other role ranks by headroom per
 day left until the provider's reset, so quota about to reset is spent first.
@@ -49,8 +49,8 @@ LAUNCHES = os.environ.get("WORKER_STARTUP_STATE", HOME + "/.local/state/worker-s
 CURSOR_URL = "https://cursor.com/api/usage-summary"
 CURSOR_PERIOD_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 CURSOR_SUMMARY = os.environ.get("USAGE_GATE_CURSOR_SUMMARY")  # a summary JSON file instead of the network (tests)
-CURSOR_BUILD_MODEL = "grok-4.7-xhigh"
-CURSOR_URGENT_MODEL = "grok-4.7-xhigh-fast"
+CURSOR_BUILD_MODEL = "grok-4.7-high"
+CURSOR_URGENT_MODEL = "grok-4.7-high-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
 STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops")
@@ -1012,7 +1012,7 @@ def is_builder_role(role):
 
 
 def order_builder_chain(chain):
-    """Cursor grok-4.7-xhigh, then Claude, then Antigravity, whatever the preset text says."""
+    """Cursor grok-4.7-high, then Claude, then Antigravity, whatever the preset text says."""
     cursor = [entry for entry in chain
               if entry.get("provider") == "cursor" and entry.get("model") == CURSOR_BUILD_MODEL]
     if not cursor:
@@ -1130,7 +1130,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
             excluded = True  # Claude always reviews Grok authored work (owner 2026-11-09)
         excluded_provider = entry["provider"] == avoid_provider
         if entry["provider"] == "cursor" and entry["model"] not in CURSOR_MODELS:
-            eligible, row = False, {**row, "verdict": "cursor runs only grok-4.7-xhigh, grok-4.7-xhigh-fast and grok-4.7-high"}
+            eligible, row = False, {**row, "verdict": "cursor runs only grok-4.7-high and grok-4.7-high-fast"}
         if role in STRONG_NO_CURSOR and entry["provider"] == "cursor":
             eligible, row = False, {**row, "verdict": "strong roles never run on Cursor"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:

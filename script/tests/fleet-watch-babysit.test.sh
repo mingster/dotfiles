@@ -58,9 +58,9 @@ if "--role" in args:
     role = args[args.index("--role") + 1]
 if role == "qa-sdet":
     print(json.dumps({
-        "selected": {"provider": "cursor", "model": "grok-4.7-xhigh", "eligible": True},
+        "selected": {"provider": "cursor", "model": "grok-4.7-high", "eligible": True},
         "candidates": [
-            {"provider": "cursor", "model": "grok-4.7-xhigh", "eligible": True},
+            {"provider": "cursor", "model": "grok-4.7-high", "eligible": True},
             {"provider": "claude", "model": "opus", "eligible": True},
         ],
     }))
@@ -166,7 +166,7 @@ row = {
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-%s" % number,
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
@@ -207,7 +207,7 @@ if grep -q -- '--agent claude' "$BABYSIT_STARTS" && grep -q -- '--model opus' "$
 else
   bad "verifier route is the non-builder pick ($(cat "$BABYSIT_STARTS"))"
 fi
-if grep -q -- '--model grok-4.7-xhigh' "$BABYSIT_STARTS"; then
+if grep -q -- '--model grok-4.7-high' "$BABYSIT_STARTS"; then
   bad "verifier must refuse the builder agent and model"
 else
   ok "verifier refuses the builder agent and model"
@@ -293,7 +293,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-8",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{
         "body": "Verdict: PASS head=%s verifier=ctx_v author=ctx_a agent=claude model=opus\n" % head,
@@ -327,7 +327,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-2",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
@@ -359,7 +359,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-3",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": ".claude/hooks/guard.sh"}],
     "comments": [],
     "statusCheckRollup": [
@@ -392,7 +392,7 @@ json.dump([{
     "isDraft": True,
     "headRefOid": head,
     "headRefName": "feature/pr-4",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
@@ -428,7 +428,7 @@ json.dump([
         "mergedAt": "2026-11-13T20:01:52Z",
         "headRefOid": merged_head,
         "headRefName": "feature/pr-1021",
-        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
         "files": [{"path": "script/fleet-watch.py"}],
         "comments": [],
         "statusCheckRollup": checks,
@@ -440,7 +440,7 @@ json.dump([
         "closedAt": "2026-11-13T20:01:52Z",
         "headRefOid": closed_head,
         "headRefName": "feature/pr-8",
-        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
         "files": [{"path": "script/fleet-watch.py"}],
         "comments": [],
         "statusCheckRollup": checks,
@@ -452,7 +452,7 @@ json.dump([
         "mergedAt": "2026-11-13T20:01:52Z",
         "headRefOid": stale_head,
         "headRefName": "feature/pr-9",
-        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
+        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
         "files": [{"path": "script/fleet-watch.py"}],
         "comments": [],
         "statusCheckRollup": checks,
@@ -495,7 +495,7 @@ json.dump([{
     "githubPullRequestNumber": 5,
     "dispatchId": "ctx_builder",
 }], open(workers, "w", encoding="utf-8"))
-json.dump({"dispatchId": "ctx_builder", "agent": "cursor", "model": "grok-4.7-xhigh"}, open(launch, "w"))
+json.dump({"dispatchId": "ctx_builder", "agent": "cursor", "model": "grok-4.7-high"}, open(launch, "w"))
 PY
 echo '{}' > "$tmp/state-record.json"
 if run_pass "$tmp/state-record.json" only "$tmp/workers.json" "$tmp/record.out"; then
@@ -503,7 +503,7 @@ if run_pass "$tmp/state-record.json" only "$tmp/workers.json" "$tmp/record.out";
 else
   bad "dispatch-record pass exits 0"
 fi
-if [ "$(starts)" = 1 ] && grep -q -- '--model opus' "$BABYSIT_STARTS" && ! grep -q -- '--model grok-4.7-xhigh' "$BABYSIT_STARTS"; then
+if [ "$(starts)" = 1 ] && grep -q -- '--model opus' "$BABYSIT_STARTS" && ! grep -q -- '--model grok-4.7-high' "$BABYSIT_STARTS"; then
   ok "dispatch record refuses the builder pair"
 else
   bad "dispatch record refuses the builder pair ($(cat "$BABYSIT_STARTS"))"

@@ -27,7 +27,7 @@ NOW = 1_000_000_000.0
 FUT = NOW + 86400
 D = lambda pct, resets=FUT: {"pct": pct, "resets_at": resets}
 REVIEWER_CHAIN = [{"provider": "other", "model": "gpt-6.1-sol", "effort": "medium"},
-                  {"provider": "cursor", "model": "grok-4.7-xhigh"},
+                  {"provider": "cursor", "model": "grok-4.7-high"},
                   {"provider": "antigravity", "model": "gemini-3.8-flash"}]
 
 
@@ -528,12 +528,12 @@ class Cursor(unittest.TestCase):
         self.assertEqual(ug.family({"provider": "cursor", "model": "grok-4.7-high"}), "grok")
 
     def test_recorded_period_usage_counts_a_non_composer_model(self):
-        """GetCurrentPeriodUsage lists grok-4.7-xhigh in autoBucketModels.
+        """GetCurrentPeriodUsage lists grok-4.7-high in autoBucketModels.
 
         usage-summary's autoPercentUsed was 0 at the same time. The reading uses the
         period percent that covers the listed model, never that zero.
         """
-        # Recorded GetCurrentPeriodUsage body. autoBucketModels includes grok-4.7-xhigh.
+        # Recorded GetCurrentPeriodUsage body. autoBucketModels includes grok-4.7-high.
         payload = json.loads(r'''{
           "billingCycleStart": "1793972416493",
           "billingCycleEnd": "1794577216493",
@@ -548,16 +548,16 @@ class Cursor(unittest.TestCase):
             "cursor-grok-4.6-medium-fast", "cursor-grok-4.6-high", "cursor-grok-4.6-high-fast",
             "cursor-grok-4.6-xhigh", "cursor-grok-4.6-xhigh-fast", "grok-4.7", "grok-4.7-fast", "grok-4.7-low",
             "grok-4.7-low-fast", "grok-4.7-medium", "grok-4.7-medium-fast", "grok-4.7-high",
-            "grok-4.7-high-fast", "grok-4.7-xhigh", "grok-4.7-xhigh-fast", "composer-1"]
+            "grok-4.7-high-fast", "composer-1"]
         }''')
-        self.assertIn("grok-4.7-xhigh", payload["autoBucketModels"])
-        self.assertFalse(any(model.startswith("composer") for model in ("grok-4.7-xhigh",)))
+        self.assertIn("grok-4.7-high", payload["autoBucketModels"])
+        self.assertFalse(any(model.startswith("composer") for model in ("grok-4.7-high",)))
         payload["individualUsage"] = {"plan": {
             "enabled": True, "autoPercentUsed": 0, "apiPercentUsed": 0, "totalPercentUsed": 0}}
         reading = ug.cursor_parse(payload, NOW)
         counted = payload["planUsage"]["autoPercentUsed"]
         self.assertEqual(reading["pct"], counted)
-        self.assertIn("grok-4.7-xhigh", reading["models"])
+        self.assertIn("grok-4.7-high", reading["models"])
         self.assertEqual(reading["resets_at"], float(payload["billingCycleEnd"]) / 1000)
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
@@ -567,13 +567,18 @@ class Cursor(unittest.TestCase):
             os.environ["USAGE_GATE_CURSOR_SUMMARY"] = path
             ug.CURSOR_SUMMARY = path
             try:
-                for model in ("grok-4.7-xhigh", "grok-4.7-high", "grok-4.7-xhigh-fast"):
+                for model in ("grok-4.7-high", "grok-4.7-high-fast"):
                     with contextlib.redirect_stdout(io.StringIO()) as out:
                         self.assertEqual(ug.main(["check", "--provider", "cursor", "--model", model]), 0)
                     self.assertEqual(json.loads(out.getvalue())["weekly_used"], counted)
             finally:
                 ug.CURSOR_SUMMARY = NO_CURSOR
                 os.environ.pop("USAGE_GATE_CURSOR_SUMMARY", None)
+
+    def test_cursor_models_are_high_and_high_fast_only(self):
+        self.assertEqual(ug.CURSOR_MODELS, ("grok-4.7-high", "grok-4.7-high-fast", "grok-4.7-high"))
+        self.assertNotIn("grok-4.7-xhigh", ug.CURSOR_MODELS)
+        self.assertEqual(ug.family({"provider": "cursor", "model": "grok-4.7-high-fast"}), "grok")
 
     def test_worker_model_absent_from_the_measured_bucket_is_refused(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
@@ -589,7 +594,7 @@ class Cursor(unittest.TestCase):
             ug.CURSOR_SUMMARY = path
             try:
                 with contextlib.redirect_stdout(io.StringIO()) as out:
-                    status = ug.main(["check", "--provider", "cursor", "--model", "grok-4.7-xhigh"])
+                    status = ug.main(["check", "--provider", "cursor", "--model", "grok-4.7-high"])
                     row = json.loads(out.getvalue())
                 self.assertNotEqual((status, row["verdict"]), (0, "allowed"))
                 self.assertNotIn("weekly_used", row)
@@ -610,7 +615,7 @@ class Cursor(unittest.TestCase):
             ug.CURSOR_SUMMARY = path
             try:
                 for args in (["check", "--provider", "cursor"],
-                             ["check", "--provider", "cursor", "--model", "grok-4.7-xhigh"]):
+                             ["check", "--provider", "cursor", "--model", "grok-4.7-high"]):
                     with contextlib.redirect_stdout(io.StringIO()) as out:
                         self.assertEqual(ug.main(args), 0)
                         row = json.loads(out.getvalue())
@@ -983,10 +988,10 @@ class Pick(unittest.TestCase):
 
 
 class CursorComposerOnly(unittest.TestCase):
-    """Owner 2026-11-09: Cursor builds only on grok-4.7-xhigh, so pick never selects an unapproved Cursor model."""
+    """Owner 2026-11-09: Cursor builds only on grok-4.7-high, so pick never selects an unapproved Cursor model."""
     CHAIN = [{"provider": "cursor", "model": "gpt-5.6-sol-high"},
              {"provider": "cursor", "model": "claude-sonnet-5-5-medium"},
-             {"provider": "cursor", "model": "grok-4.7-xhigh"}]
+             {"provider": "cursor", "model": "grok-4.7-high"}]
 
     def test_pick_skips_other_cursor_models(self):
         def row(provider, *_, **__):
@@ -995,7 +1000,7 @@ class CursorComposerOnly(unittest.TestCase):
                 mock.patch.object(ug, "run", side_effect=row), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             sel = ug.pick("fullstack-dev", None, None, 95, 0)["selected"]
-        self.assertEqual(sel["model"], "grok-4.7-xhigh")
+        self.assertEqual(sel["model"], "grok-4.7-high")
 
 
 class PickOrder(unittest.TestCase):
@@ -1047,7 +1052,7 @@ class RealReadingPolicy(unittest.TestCase):
                         ("cursorAuth/accessToken", "redacted-opaque-token"))
             con.commit()
             con.close()
-            self.assertEqual(gate.main(["check", "--provider", "cursor", "--model", "grok-4.7-xhigh"]), 4)
+            self.assertEqual(gate.main(["check", "--provider", "cursor", "--model", "grok-4.7-high"]), 4)
             row = json.loads(out.getvalue())
             self.assertEqual(row["verdict"], "unknown")
             self.assertIn("read the Cursor dashboard", row["reason"])
@@ -1373,7 +1378,7 @@ class Reserve987(unittest.TestCase):
     def test_reserve_comes_from_the_config_file(self):
         self.assertEqual(ug.load_config()["reserve_points"], {"strong": 2, "other": 1})
         self.assertEqual(ug.worker_weight({"model": "opus"}), 2.0)
-        self.assertEqual(ug.worker_weight({"model": "grok-4.7-xhigh"}), 1.0)
+        self.assertEqual(ug.worker_weight({"model": "grok-4.7-high"}), 1.0)
 
 
 class Ceilings987(unittest.TestCase):
@@ -1621,7 +1626,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
                         "tier": "workhorse",
                         "chain": [
                             {"provider": "claude", "model": "sonnet", "effort": "medium"},
-                            {"provider": "cursor", "model": "grok-4.7-xhigh"},
+                            {"provider": "cursor", "model": "grok-4.7-high"},
                         ],
                         "pin": True,
                     },
@@ -1686,7 +1691,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
                         "tier": "workhorse",
                         "chain": [
                             {"provider": "claude", "model": "sonnet", "effort": "medium"},
-                            {"provider": "cursor", "model": "grok-4.7-xhigh"},
+                            {"provider": "cursor", "model": "grok-4.7-high"},
                         ],
                     },
                 },
@@ -1737,7 +1742,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
             input=json.dumps({
                 "tool_name": "Bash",
                 "tool_input": {
-                    "command": "orca orchestration worker-start --task t --agent cursor --model grok-4.7-xhigh --task-title 'stream-health - check'",
+                    "command": "orca orchestration worker-start --task t --agent cursor --model grok-4.7-high --task-title 'stream-health - check'",
                 },
             }),
             capture_output=True, text=True, env=env, cwd=repo_dir, timeout=15,
@@ -1786,7 +1791,7 @@ class ProjectPresetsMergeTests(unittest.TestCase):
 
 
 class BuilderCursorRoute(unittest.TestCase):
-    """Owner 2026-11-09 line 7: builders take Cursor grok-4.7-xhigh first, in code.
+    """Owner 2026-11-09 line 7: builders take Cursor grok-4.7-high first, in code.
 
     The preset text may still list Claude first. Strong roles never take Cursor.
     Light is whatever role pick already stores as tier light (fullstack-dev-small).
@@ -1795,10 +1800,10 @@ class BuilderCursorRoute(unittest.TestCase):
     PRESETS = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
     FS = [{"provider": "claude", "model": "sonnet", "effort": "medium"},
           {"provider": "antigravity", "model": "gemini-4-argon-medium"},
-          {"provider": "cursor", "model": "grok-4.7-xhigh"}]
+          {"provider": "cursor", "model": "grok-4.7-high"}]
     LIGHT = [{"provider": "claude", "model": "haiku"},
              {"provider": "antigravity", "model": "gemini-3.8-flash"},
-             {"provider": "cursor", "model": "grok-4.7-xhigh"}]
+             {"provider": "cursor", "model": "grok-4.7-high"}]
 
     def flags(self, role, roles, weekly):
         path = os.path.join(self.tmp, "presets.json")
@@ -1836,13 +1841,13 @@ class BuilderCursorRoute(unittest.TestCase):
         # Cursor has less headroom than Claude and Antigravity. The old pin would stay on Claude.
         roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
         status, out = self.flags("fullstack-dev", roles, {"cursor": 80, "claude": 40, "antigravity": 5})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
 
     def test_fullstack_dev_picks_cursor_when_the_chain_omits_it(self):
         chain = [entry for entry in self.FS if entry["provider"] != "cursor"]
         roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": chain}}
         status, out = self.flags("fullstack-dev", roles, {"cursor": 80, "claude": 10, "antigravity": 10})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
 
     def test_fullstack_dev_picks_sonnet_only_when_cursor_is_blocked(self):
         # Antigravity has more headroom. Builders still walk the chain: Claude, then Antigravity.
@@ -1859,14 +1864,14 @@ class BuilderCursorRoute(unittest.TestCase):
         roles = {"clerk": {"tier": "light", "chain": self.LIGHT},
                  "fullstack-dev-small": {"tier": "light", "chain": self.LIGHT}}
         status, out = self.flags("clerk", roles, {"cursor": 80, "claude": 10, "antigravity": 1})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
         status, out = self.flags("fullstack-dev-small", roles, {"cursor": 96, "claude": 40, "antigravity": 1})
         self.assertEqual((status, out), (0, "--agent claude --model haiku"))
         status, out = self.flags("fullstack-dev-small", roles, {"cursor": 96, "claude": 96, "antigravity": 5})
         self.assertEqual((status, out), (0, "--agent antigravity --model gemini-3.8-flash"))
 
     def test_strong_roles_never_pick_cursor(self):
-        chain = [{"provider": "cursor", "model": "grok-4.7-xhigh"},
+        chain = [{"provider": "cursor", "model": "grok-4.7-high"},
                  {"provider": "claude", "model": "opus", "effort": "medium"},
                  {"provider": "antigravity", "model": "gemini-4-argon-high"}]
         roles = {role: {"tier": "strong", "chain": chain}
@@ -1878,12 +1883,12 @@ class BuilderCursorRoute(unittest.TestCase):
                 self.assertNotIn("cursor", out)
 
     def test_qa_sdet_may_pick_cursor_grok(self):
-        chain = [{"provider": "cursor", "model": "grok-4.7-xhigh"},
+        chain = [{"provider": "cursor", "model": "grok-4.7-high"},
                  {"provider": "claude", "model": "opus", "effort": "medium"},
                  {"provider": "antigravity", "model": "gemini-4-argon-high"}]
         roles = {"qa-sdet": {"tier": "strong", "chain": chain}}
         status, out = self.flags("qa-sdet", roles, {"cursor": 1, "claude": 40, "antigravity": 40})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-xhigh"))
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
 
     def test_qa_sdet_falls_back_to_a_different_claude_model_when_other_families_are_blocked(self):
         chain = [{"provider": "claude", "model": "opus", "effort": "high"},
@@ -1913,12 +1918,12 @@ class BuilderCursorRoute(unittest.TestCase):
             roles = json.load(handle)["roles"]
         fullstack = roles["fullstack-dev"]["chain"]
         self.assertEqual([entry["provider"] for entry in fullstack], ["cursor", "claude", "antigravity"])
-        self.assertEqual(fullstack[0]["model"], "grok-4.7-xhigh")
+        self.assertEqual(fullstack[0]["model"], "grok-4.7-high")
         self.assertEqual((fullstack[1]["model"], fullstack[1].get("effort")), ("sonnet", "medium"))
         light = roles["fullstack-dev-small"]
         self.assertEqual(light["tier"], "light")
         self.assertEqual([entry["provider"] for entry in light["chain"]], ["cursor", "claude", "antigravity"])
-        self.assertEqual(light["chain"][0]["model"], "grok-4.7-xhigh")
+        self.assertEqual(light["chain"][0]["model"], "grok-4.7-high")
         qa = roles["qa-sdet"]["chain"]
         self.assertEqual([entry["provider"] for entry in qa], ["claude", "antigravity", "cursor"])
         self.assertEqual(qa[-1]["model"], "grok-4.7-high")

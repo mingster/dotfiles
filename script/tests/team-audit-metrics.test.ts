@@ -104,16 +104,16 @@ test("first-pass Verdict rate is per builder agent and model", () => {
   const m = computeMetrics({
     now: data.now,
     prs: [
-      pr(1, "cursor", "grok-4.7-xhigh", "PASS"),
-      pr(2, "cursor", "grok-4.7-xhigh", "FAIL"),
+      pr(1, "cursor", "grok-4.7-high", "PASS"),
+      pr(2, "cursor", "grok-4.7-high", "FAIL"),
       pr(3, "claude", "claude-opus-5-5", "PASS+NOTES"),
-      { ...pr(4, "cursor", "grok-4.7-xhigh", "PASS"), mergedAt: "2026-10-01T12:00:00Z" },
-      { ...pr(5, "cursor", "grok-4.7-xhigh", "PASS"), builderAgent: null, builderModel: null },
+      { ...pr(4, "cursor", "grok-4.7-high", "PASS"), mergedAt: "2026-10-01T12:00:00Z" },
+      { ...pr(5, "cursor", "grok-4.7-high", "PASS"), builderAgent: null, builderModel: null },
     ],
     issues: [],
   }, 7);
   expect(m.first_pass_verdict_rate).toBe(
-    "agent=claude model=claude-opus-5-5:1/1,agent=cursor model=grok-4.7-xhigh:0.5/2",
+    "agent=claude model=claude-opus-5-5:1/1,agent=cursor model=grok-4.7-high:0.5/2",
   );
 });
 
@@ -136,17 +136,17 @@ function verdictRateForBody(body: string): string {
 test("a quoted Builder format counts under the real Builder line", () => {
   const body = [
     "Builder source: a `Builder: agent=<a> model=<m>` line in the PR body.",
-    "Builder: agent=cursor model=grok-4.7-xhigh",
+    "Builder: agent=cursor model=grok-4.7-high",
   ].join("\n");
-  expect(verdictRateForBody(body)).toBe("agent=cursor model=grok-4.7-xhigh:1/1");
+  expect(verdictRateForBody(body)).toBe("agent=cursor model=grok-4.7-high:1/1");
 });
 
 test("the last line-start Builder line is the one that counts", () => {
   const body = [
     "Builder: agent=<a> model=<m>",
-    "Builder: agent=cursor model=grok-4.7-xhigh",
+    "Builder: agent=cursor model=grok-4.7-high",
   ].join("\n");
-  expect(verdictRateForBody(body)).toBe("agent=cursor model=grok-4.7-xhigh:1/1");
+  expect(verdictRateForBody(body)).toBe("agent=cursor model=grok-4.7-high:1/1");
 });
 
 test("a Builder format quoted only in a sentence is not a builder", () => {
@@ -161,14 +161,14 @@ test("toPr keeps the earliest Verdict and the Builder line", () => {
     labels: { nodes: [] },
     commits: { nodes: [] },
     closingIssuesReferences: { nodes: [] },
-    body: "Builder: agent=cursor model=grok-4.7-xhigh\n",
+    body: "Builder: agent=cursor model=grok-4.7-high\n",
     comments: { nodes: [
       { createdAt: "2026-11-08T13:00:00Z", body: "Verdict: PASS head=" + "a".repeat(40) + " verifier=ctx_v author=ctx_a" },
       { createdAt: "2026-11-08T12:00:00Z", body: "Verdict: FAIL head=" + "b".repeat(40) + " verifier=ctx_v author=ctx_a\n\n- [ ] fix it" },
     ] },
   });
   expect(parsed.builderAgent).toBe("cursor");
-  expect(parsed.builderModel).toBe("grok-4.7-xhigh");
+  expect(parsed.builderModel).toBe("grok-4.7-high");
   expect(parsed.firstVerdict).toBe("FAIL");
 });
 

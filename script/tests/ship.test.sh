@@ -34,8 +34,8 @@ post_verdict() { # <pr> <result> <head> [verifier] [author] [agent/model, defaul
 }
 
 # The builder's own record on the PR: one body line. The head argument is unused (the old Self-review gate is gone).
-mf_self_review() { # <pr> <head> [agent/model, default cursor/grok-4.7-xhigh]
-  local pr_n=$1 am=${3:-cursor/grok-4.7-xhigh} f block
+mf_self_review() { # <pr> <head> [agent/model, default cursor/grok-4.7-high]
+  local pr_n=$1 am=${3:-cursor/grok-4.7-high} f block
   f="$MF_GH_DIR/pr-${pr_n}.json"
   block=$(printf 'Builder: agent=%s model=%s\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0' "${am%%/*}" "${am#*/}")
   jq --arg l "$block" '.body = ((.body // "") + "\n\n" + $l + "\n")' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
@@ -281,7 +281,7 @@ fi
 
 mf_pr_add 3027 feat-no-self "Body"
 h3027=$(jq -r .headRefOid "$MF_GH_DIR/pr-3027.json")
-jq --arg l "Builder: agent=cursor model=grok-4.7-xhigh" '.body = $l' "$MF_GH_DIR/pr-3027.json" > "$MF_GH_DIR/pr-3027.tmp" && mv "$MF_GH_DIR/pr-3027.tmp" "$MF_GH_DIR/pr-3027.json"
+jq --arg l "Builder: agent=cursor model=grok-4.7-high" '.body = $l' "$MF_GH_DIR/pr-3027.json" > "$MF_GH_DIR/pr-3027.tmp" && mv "$MF_GH_DIR/pr-3027.tmp" "$MF_GH_DIR/pr-3027.json"
 set_checks 3027 "$green_checks"
 post_verdict 3027 PASS "$h3027"
 run_ship --repo example/repo --pr 3027
@@ -479,7 +479,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "needs a cold 'Review: PASS head=" <<<"$SHIP
 docs_verdict_case() { # <pr> <branch> <file> <result> <verdict head: @HEAD@ or sha> <expect ship|refuse> <label> [text]
   local n=$1 b=$2 f=$3 res=$4 vh=$5 expect=$6 label=$7 text=${8:-} h
   mf_pr_add "$n" "$b" "Body" "$f"
-  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h" cursor/grok-4.7-xhigh; set_checks "$n" "$green_checks"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h" cursor/grok-4.7-high; set_checks "$n" "$green_checks"
   post_verdict "$n" "$res" "${vh//@HEAD@/$h}"
   : > "$MF_GH_LOG"
   run_ship --repo example/repo --pr "$n"
@@ -716,7 +716,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   GOOD="Verdict: PASS head=$DH verifier=ctx_verify author=ctx_author agent=claude model=opus"
   BADF="Verdict: FAIL head=$DH verifier=ctx_verify author=ctx_author agent=claude model=opus"
   src() { # <state> <json comments> [builder line]
-    local default=$'Builder: agent=cursor model=grok-4.7-xhigh\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0'
+    local default=$'Builder: agent=cursor model=grok-4.7-high\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0'
     jq -n --arg st "$1" --arg h "$DH" --argjson c "$2" --arg b "${3:-$default}" \
       '{number:9,state:$st,headRefName:"src",headRefOid:$h,baseRefOid:$h,body:$b,comments:$c,files:[],changedFiles:0,mergeable:"MERGEABLE",mergeCommit:null}' > "$MF_GH_DIR/pr-9.json"
   }

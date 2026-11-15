@@ -172,7 +172,7 @@ Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers the
 | --- | --- |
 | `elon` | User's window and only contact, weekly priorities, `needs-elon` exceptions, ready issue dispatch, and user decisions. |
 | `architect-pm` | Intake, one design document per feature (intent, spec and units), issue triage, the weekly non-blocker list and full `/team-audit` runs. |
-| `fullstack-dev` | Features and fixes built with tests first by TDD (Cursor `grok-4.7-xhigh` first, then Claude when quota is out), running touched checks locally before pushing once and opening its PR. |
+| `fullstack-dev` | Features and fixes built with tests first by TDD (Cursor `grok-4.7-high` first, then Claude when quota is out), running touched checks locally before pushing once and opening its PR. |
 | `qa-sdet` | Cross-family verifier Verdict (`script/post-verdict.sh`, running parent against head as a user would), Playwright proving runs and the daily/weekly pstack `swarm` live lanes. |
 | `release-manager` | Daily 19:00 Taiwan time staging deploy, production deploy after the Playground regression (owner's go once a real store is live), release evidence and rollback plans. |
 | `sales-marketing` | Self-serve acquisition, positioning, conversion experiments, weekly metrics (MRR, LTV, CAC, churn) and the pre-build grill for new UI pages and wording. Delegates market research and merchant lookups to a Gemini worker on Antigravity with source URLs. |

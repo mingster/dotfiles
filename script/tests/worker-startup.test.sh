@@ -1223,7 +1223,7 @@ role = sys.argv[sys.argv.index("--role") + 1] if "--role" in sys.argv else ""
 with open(os.environ["PICK_STUB_LOG"], "a") as handle:
     handle.write(role + "\n")
 if mode == "cursor":
-    print("--agent cursor --model grok-4.7-xhigh")
+    print("--agent cursor --model grok-4.7-high")
     raise SystemExit(0)
 if mode == "sonnet":
     print("--agent claude --model sonnet --effort medium")
@@ -1253,11 +1253,11 @@ route_run() { # <title> <agent> <model> [extra args...]
 }
 PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on claude should be refused while Cursor is allowed (ec=$route_ec)"
-grep -Fq -- '--agent cursor --model grok-4.7-xhigh' "$tmp/route.err" && ok || bad "refusal should print the pick ($(cat "$tmp/route.err"))"
+grep -Fq -- '--agent cursor --model grok-4.7-high' "$tmp/route.err" && ok || bad "refusal should print the pick ($(cat "$tmp/route.err"))"
 grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused builder must not reach worker-start" || ok
 PICK_STUB_MODE=cursor route_run "fullstack-dev-small - chore" claude claude-haiku
 [ "$route_ec" -ne 0 ] && ok || bad "light unit on claude should be refused while Cursor is allowed (ec=$route_ec)"
-grep -Fq -- '--agent cursor --model grok-4.7-xhigh' "$tmp/route.err" && ok || bad "light refusal should print the pick ($(cat "$tmp/route.err"))"
+grep -Fq -- '--agent cursor --model grok-4.7-high' "$tmp/route.err" && ok || bad "light refusal should print the pick ($(cat "$tmp/route.err"))"
 rm -f "$route_state/route-override.log"
 PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium --route-override "cursor desktop trust is stuck"
 [ "$route_ec" = 0 ] && ok || bad "route override should let claude through (ec=$route_ec) $(cat "$tmp/route.err")"
