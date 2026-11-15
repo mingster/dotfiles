@@ -40,10 +40,31 @@ class FamilyCli(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), 'grok')
         unknown = subprocess.run(
-            [sys.executable, str(ROOT / 'usage-gate.py'), 'family', '--agent', 'no-such-agent', '--model', 'opus'],
+            [sys.executable, str(ROOT / 'usage-gate.py'), 'family', '--agent', 'no-such-agent', '--model', 'no-such-model'],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(unknown.stdout.strip(), 'unknown')
+
+    def test_family_maps_model_by_prefix_regardless_of_agent(self):
+        ug = _load('usage-gate.py')
+        cases = [
+            ('fullstack-dev', 'gemini-4-argon', 'gemini'),
+            ('antigravity', 'gemini-4-argon-medium', 'gemini'),
+            ('fullstack-dev', 'claude-sonnet-5-5-medium', 'claude'),
+            ('no-such-agent', 'sonnet', 'claude'),
+            ('no-such-agent', 'opus', 'claude'),
+            ('fullstack-dev', 'grok-4.7-xhigh', 'grok'),
+            ('cursor', 'grok-4.7-high', 'grok'),
+        ]
+        for agent, model, expected in cases:
+            with self.subTest(agent=agent, model=model):
+                self.assertEqual(ug.model_family(agent, model), expected)
+                proc = subprocess.run(
+                    [sys.executable, str(ROOT / 'usage-gate.py'), 'family', '--agent', agent, '--model', model],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stdout.strip(), expected)
 
 
 class RoutingPick(unittest.TestCase):
@@ -328,6 +349,33 @@ class Sticky(unittest.TestCase):
             )
         self.assertEqual(starts, [])
         self.assertEqual(released, ['ctx_v'])
+
+    def test_unknown_builder_family_stops_without_dispatching_verifier(self):
+        now = 1_700_000_000
+        for body in ('Builder: agent=fullstack-dev model=mystery-1', 'Why\n\nNo builder line here.\n'):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as root:
+                pr = self.pr()
+                pr['body'] = body
+                starts = []
+                picks = []
+                config = {
+                    'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
+                    'babysit': {'repos': [REPO], 'startup': '/bin/true'},
+                }
+                _notices, lines, log = fw.babysit_pass(
+                    config, {}, [],
+                    pr_fetch=lambda _repo, row=pr: [row],
+                    start_worker=lambda command: starts.append(command) or 0,
+                    pick=lambda role, avoid_family=None: picks.append((role, avoid_family)) or {
+                        'selected': {'provider': 'antigravity', 'model': 'gemini-4-argon-high', 'eligible': True},
+                    },
+                    owner_check=lambda _pr: None,
+                    now=now,
+                )
+                self.assertEqual(starts, [])
+                self.assertEqual(picks, [])
+                self.assertTrue(any('action=skip unknown-builder-family' in line for line in lines), lines)
+                self.assertIn('unknown_builder=7', log)
 
 
 class Bounce(unittest.TestCase):

@@ -506,14 +506,33 @@ grep -q 'workspace-status in-review' "$tmp/orca-nofin.log" && ok || bad "worker 
 grep -q 'workspace-status completed' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set completed when there is no PR"
 grep -q 'no pull request' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the no-PR case"
 grep -q 'to run run_nofin' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the run for worker_done"
-grep -q 'Builder: agent=' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should name the Builder line"
+grep -q 'Builder: agent=claude model=claude-sonnet-5-5-medium' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should write the exact Builder agent and model line"
+grep -q 'Builder: agent=<agent>' "$tmp/orca-nofin.log" && bad "builder spec Finish must not leave <agent> placeholder" || ok
 grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok
 grep -q 'gh pr checks' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should wait for green checks"
 grep -q '^## Finish' "$nofin_spec" && bad "the original brief file should be untouched" || ok
 
-# 968: a brief with its own Finish is not given a second one
-ws968_run "$tmp/orca-ownfin.log" run_ownfin "$spec_file"
+# 968: a brief with its own Finish is not given a second one, and a builder with its own Finish still gets the exact Builder line
+ownfin_builder="$tmp/ownfin-builder.txt"
+cat >"$ownfin_builder" <<'EOS'
+Refs #968
+Role: fullstack-dev.
+
+## Acceptance
+- [ ] Do the task.
+
+## Out of scope
+Unrelated files.
+
+## Verify
+Run bash script/checks-local.sh.
+
+## Finish
+Self-review, open the PR, then send worker_done.
+EOS
+ws968_run "$tmp/orca-ownfin.log" run_ownfin "$ownfin_builder"
 [ "$(grep -o '## Finish' "$tmp/orca-ownfin.log" | wc -l | tr -d ' ')" = 1 ] && ok || bad "a brief with its own Finish should keep exactly one"
+grep -q 'Builder: agent=claude model=claude-sonnet-5-5-medium' "$tmp/orca-ownfin.log" && ok || bad "a builder brief with its own Finish should still carry the exact Builder line"
 
 # 968: a brief with no Acceptance is still refused
 noacc_spec="$tmp/noacc-spec.txt"
