@@ -441,11 +441,11 @@ mf_pr_add 132 feat-no-builder "Body"
 h=$(jq -r .headRefOid "$MF_GH_DIR/pr-132.json"); set_checks 132 "$green_checks"; post_verdict 132 PASS "$h"
 run_ship --repo example/repo --pr 132
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "no 'Builder: agent=<agent> model=<model>' line" <<<"$SHIP_OUT"; then ok "PR without a Builder line refuses"; else bad "PR without a Builder line refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
-# Same model, different agent, passes the pair rule.
+# A verifier from a different model family passes the pair rule.
 mf_pr_add 133 feat-other-agent "Body"
-h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h" claude/opus; set_checks 133 "$green_checks"; post_verdict 133 PASS "$h" ctx_verifier ctx_author antigravity/opus
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h" claude/opus; set_checks 133 "$green_checks"; post_verdict 133 PASS "$h" ctx_verifier ctx_author antigravity/gemini-3-pro
 run_ship --repo example/repo --pr 133
-if [ "$SHIP_RC" -eq 0 ]; then ok "a different agent with the same model passes"; else bad "a different agent with the same model passes" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+if [ "$SHIP_RC" -eq 0 ]; then ok "a verifier from a different model family passes"; else bad "a verifier from a different model family passes" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
 # 13c. Docs only: a cold Review: PASS at the head (or a Verdict, see 13d) lands; code still needs a Verdict
 docs_case() { # <pr> <branch> <file> <review line or empty> <expect ship|refuse> <label> [text] [flags]
