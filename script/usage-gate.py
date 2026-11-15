@@ -946,11 +946,11 @@ def table(rows):
             out.append((name, "allowed (no reading)" if r.get("blind") else "unknown", "-", "-", "-", "-", "-", ("age unknown" if r.get("reading_age_min") is None else f"{r['reading_age_min']}m ago") + ": " + note, r.get("source", "unknown"), "-", "-"))
             continue
         age = r.get("reading_age_min")
-        out.append((name, r["verdict"], f"{r['weekly_used']:g}",
+        out.append((name, r["verdict"], f"{r['weekly_used']:g}" if "weekly_used" in r else "-",
                     *(f"{r[k]:g}" if k in r else "?" for k in ("today_used", "cap", "reserve")),
                     "?" if r.get("running") is None else str(r["running"]),
                     "?" if age is None else f"{age}m ago", r.get("source", "unknown"), r.get("resets_local", "-"),
-                    f"{r['blocked_until_local']} ({r['reason']})" if r["verdict"] == "blocked" else r.get("note", "now")))
+                    f"{r.get('blocked_until_local', 'when a worker ends')} ({r['reason']})" if r["verdict"] == "blocked" else r.get("note", "now")))
     widths = [max(len(str(x[i])) for x in [head] + out) for i in range(len(head))]
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip() for row in [head] + out]
     lines.append("cap% blocks automatic starts only (fleet-watch); other starts get a pacing note. "

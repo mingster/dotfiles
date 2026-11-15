@@ -512,6 +512,15 @@ class Show(unittest.TestCase):
             self.assertIn(name, text)
         self.assertEqual(len([l for l in text.splitlines() if l.startswith("claude")]), 1)
 
+    def test_show_grok_prints_a_line_without_json(self):
+        for live in (0, 1):
+            with mock.patch.object(ug, "live_workers", return_value=rows(live)), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(ug.main(["show", "--provider", "grok"]), 0)
+            line = [l for l in out.getvalue().splitlines() if l.startswith("grok")]
+            self.assertEqual(len(line), 1)
+            self.assertIn("allowed" if live == 0 else "blocked", line[0])
+
     def test_show_json_is_a_list(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                 mock.patch.dict(ug.READERS, {"claude": lambda: None}), \
