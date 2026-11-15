@@ -95,7 +95,7 @@ Placement follows the order and per host limits in [Coordinator operations](docs
 
 The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch for a provider at its weekly quota ceiling. The **coordinator overload gate** lives in `script/fleet-watch.py` (`COORDINATOR_MAX_LOAD_PER_CORE`). When the coordinator host's load per core or free memory crosses its limit, no new local worker starts there, and the run points to an overflow host with free room. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
 
-`script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. An explicit `--on <environment>` starts it on that host.
+`script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. Placement is automatic (`script/worker-placement.py` picks the least loaded host). A reason flag (`--force-host chrome-dev|line-desktop|host-file`) sends the start to the host the fleet config maps that reason to. `--on <environment>` remains only as a test or debug override, still gated by the host's load limit and, for the coordinator host, by an allowed `--force-host` reason.
 
 Host names, caps and roles come from private fleet configuration, not from hard coded values in this public repo.
 

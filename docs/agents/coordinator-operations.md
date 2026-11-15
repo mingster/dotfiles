@@ -1,8 +1,10 @@
 # Coordinator operations
 
 Start remote workers through `bash script/start-remote-worker.sh` (or `bash script/worker-startup.sh`)
-with the same arguments as `orca orchestration worker-start`, including `--on <environment>`
-and `--agent claude|cursor|antigravity`. The helper first checks `script/usage-gate.py` for the
+with the same arguments as `orca orchestration worker-start`, including `--agent claude|cursor|antigravity`.
+Placement is automatic. Pass `--force-host chrome-dev|line-desktop|host-file` when a task needs a specific
+host; the fleet config maps the reason to the host. `--on <environment>` is only a test or debug override
+(it needs `--force-host` for the coordinator host). The helper first checks `script/usage-gate.py` for the
 target provider and model (exiting 3 if refused), then probes the required CLI on the execution
 environment's login-shell PATH in an Orca terminal and refreshes `~/dotfiles` and the `~/.orca/presets.json`
 symlink (`script/setup-orca.sh`) on that host before dispatch. A missing CLI, failed probe, or

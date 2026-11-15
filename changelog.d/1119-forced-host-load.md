@@ -1,0 +1,1 @@
+Forced `--on` hosts are now load checked (exit 4 with the least loaded alternative unless `--force-host REASON`). The coordinator host needs `--force-host chrome-dev|line-desktop|host-file`. `--force-host` with a reason maps to its host in `worker_placement.reasons`. Each start prints live workers per host.

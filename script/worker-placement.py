@@ -293,6 +293,56 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
     return {'ok': False, 'reason': 'all eligible hosts over load ceiling', 'loads': considered}
 
 
+def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: str | None = None) -> dict:
+    """Judge a host the caller already chose (--on). Same load rule as pick_host."""
+    known = {h.lower(): h for h in (config.get('host_caps') or {})}
+    name = known.get(host.lower())
+    ceiling = ceiling_for(name, config) if name else None
+    if name is None or ceiling is None:
+        return {'ok': True, 'host': host, 'reason': 'no load limit configured for this host'}
+    try:
+        loads = read_loads(load_sensor_path(config), float(os.environ.get('WORKER_PLACEMENT_TIMEOUT', '120')))
+    except LoadSensorError as exc:
+        return {'ok': True, 'host': name, 'reason': str(exc)}
+    sample = loads.get(name)
+    if sample is None:
+        return {'ok': True, 'host': name, 'reason': 'no readable load'}
+    load, cores = sample
+    local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
+    if not host_over_load(name, load, cores, ceiling, local_host):
+        return {'ok': True, 'host': name, 'load_1m': load, 'ceiling': ceiling}
+    alt = pick_host(config, spec_path, repo_selector)
+    return {
+        'ok': False,
+        'host': name,
+        'load_1m': load,
+        'ceiling': ceiling,
+        'alternative': alt.get('host') if alt.get('ok') else None,
+        'alternative_load_1m': alt.get('load_1m') if alt.get('ok') else None,
+    }
+
+
+def reason_host(config: dict, reason: str) -> str | None:
+    """Host a --force-host reason names in worker_placement.reasons, or None."""
+    placement = config.get('worker_placement') or {}
+    reasons = placement.get('reasons') if isinstance(placement, dict) else None
+    host = reasons.get(reason) if isinstance(reasons, dict) else None
+    return host if isinstance(host, str) and host.strip() else None
+
+
+def format_check_line(result: dict) -> str:
+    if result.get('ok'):
+        return 'worker-placement: forced host=%s within limit' % result['host']
+    line = 'worker-placement: refused forced host=%s load_1m=%s limit=%s' % (
+        result['host'], result['load_1m'], result['ceiling'])
+    alt = result.get('alternative')
+    if alt:
+        line += '; least loaded host placement would pick: %s (load_1m=%s)' % (alt, result['alternative_load_1m'])
+    else:
+        line += '; no other host is under its limit'
+    return line
+
+
 def format_line(result: dict) -> str:
     if result.get('ok'):
         return 'worker-placement: host=%s load_1m=%s' % (result['host'], result['load_1m'])
@@ -327,6 +377,32 @@ def cmd_pick(args: argparse.Namespace) -> int:
     return 0 if result.get('ok') else 1
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config(config_path(args.config))
+    except FleetConfigMissing:
+        print(json.dumps({'ok': True, 'skipped': True, 'host': args.host}))
+        return 0
+    except FleetConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    result = check_host(cfg, args.host, Path(args.spec) if args.spec else None, args.repo)
+    result['line'] = format_check_line(result)
+    print(json.dumps(result, separators=(',', ':')))
+    return 0 if result['ok'] else 1
+
+
+def cmd_reason_host(args: argparse.Namespace) -> int:
+    try:
+        host = reason_host(load_config(config_path(args.config)), args.reason)
+    except FleetConfigError:
+        host = None
+    if not host:
+        return 1
+    print(host)
+    return 0
+
+
 def cmd_translate_repo(args: argparse.Namespace) -> int:
     path = config_path(args.config)
     try:
@@ -355,6 +431,16 @@ def main() -> int:
     pick.add_argument('--config', default=None, help='Fleet-watch JSON config')
     pick.add_argument('--json', action='store_true', help='Emit JSON instead of one line')
     pick.set_defaults(func=cmd_pick)
+    check = sub.add_parser('check-host', help='Judge a host chosen with --on against its load limit')
+    check.add_argument('--host', required=True)
+    check.add_argument('--spec', default=None)
+    check.add_argument('--repo', default=None)
+    check.add_argument('--config', default=None)
+    check.set_defaults(func=cmd_check)
+    reason = sub.add_parser('reason-host', help='Host a --force-host reason maps to')
+    reason.add_argument('--reason', required=True)
+    reason.add_argument('--config', default=None)
+    reason.set_defaults(func=cmd_reason_host)
     translate = sub.add_parser('translate-repo', help='Map a local repo selector to a remote environment')
     translate.add_argument('--environment', required=True)
     translate.add_argument('--repo', required=True)

@@ -1455,7 +1455,7 @@ env -u BASH_ENV \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
   bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
-  --from term_coord --on thishost --name n_own --repo "path:$clean" 2>"$tmp/own-host.err"
+  --from term_coord --on thishost --force-host chrome-dev --name n_own --repo "path:$clean" 2>"$tmp/own-host.err"
 ec_own=$?
 set -e
 [ "$ec_own" = 0 ] && ok || bad "own-host --on exits 0 ($ec_own) $(cat "$tmp/own-host.err")"
@@ -1470,12 +1470,94 @@ env -u BASH_ENV \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
   bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
-  --from term_coord --on THISHOST --name n_own_case --repo "path:$clean" 2>"$tmp/own-host-case.err"
+  --from term_coord --on THISHOST --force-host host-file --name n_own_case --repo "path:$clean" 2>"$tmp/own-host-case.err"
 ec_case=$?
 set -e
 [ "$ec_case" = 0 ] && ok || bad "own-host --on THISHOST exits 0 ($ec_case) $(cat "$tmp/own-host-case.err")"
 grep -q -- '--environment' "$tmp/orca-own-host-case.log" && bad "own-host THISHOST must not pass --environment ($(cat "$tmp/orca-own-host-case.log"))" || ok
 grep -q -- '--environment rem-env' "$tmp/orca-rem-ok.log" && ok || bad "remote --on still passes --environment ($(cat "$tmp/orca-rem-ok.log"))"
+# Forced --on: load check, --force-host, coordinator host gate, live worker spread
+cat >"$tmp/load-forced-hot.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=1.0 1.0 1.0\n'
+printf 'host-overflow cores=8 load=9.0 9.0 9.0\n'
+EOS
+cat >"$tmp/load-forced-ok.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=1.0 1.0 1.0\n'
+printf 'host-overflow cores=8 load=2.0 2.0 2.0\n'
+EOS
+chmod +x "$tmp/load-forced-hot.sh" "$tmp/load-forced-ok.sh"
+forced_start() { # <load script> <--on host> [extra args...] -> sets forced_ec, stderr in $tmp/forced.err
+  local load=$1 on=$2; shift 2
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-forced.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$load" \
+    bash --noprofile --norc "$script" --run run_forced --spec "$spec_file" --title forcedjob --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --on "$on" --name n_forced --repo "path:$rem_app" "$@" 2>"$tmp/forced.err"
+  forced_ec=$?
+  set -e
+}
+: >"$tmp/orca-forced.log"
+forced_start "$tmp/load-forced-hot.sh" host-overflow
+[ "$forced_ec" = 4 ] && ok || bad "forced --on over the limit exits 4 ($forced_ec) $(cat "$tmp/forced.err")"
+grep -q 'host-primary' "$tmp/forced.err" && ok || bad "refusal names the alternative host ($(cat "$tmp/forced.err"))"
+grep -q 'orchestration worker-start' "$tmp/orca-forced.log" && bad "refused forced start must not reach worker-start" || ok
+forced_start "$tmp/load-forced-ok.sh" host-overflow
+[ "$forced_ec" = 0 ] && ok || bad "forced --on under the limit passes ($forced_ec) $(cat "$tmp/forced.err")"
+forced_start "$tmp/load-forced-hot.sh" host-overflow --force-host "owner asked for this host"
+[ "$forced_ec" = 0 ] && ok || bad "--force-host passes over the limit ($forced_ec) $(cat "$tmp/forced.err")"
+grep -q 'force-host: owner asked for this host' "$tmp/forced.err" && ok || bad "--force-host logs the reason ($(cat "$tmp/forced.err"))"
+
+forced_start "$tmp/load-forced-ok.sh" thishost
+[ "$forced_ec" = 4 ] && ok || bad "coordinator host without a reason exits 4 even under load limit ($forced_ec)"
+grep -q 'chrome-dev, line-desktop, host-file' "$tmp/forced.err" && ok || bad "coordinator refusal lists the allowed reasons ($(cat "$tmp/forced.err"))"
+forced_start "$tmp/load-forced-ok.sh" thishost --force-host because
+[ "$forced_ec" = 4 ] && ok || bad "coordinator host with a bad reason exits 4 ($forced_ec)"
+forced_start "$tmp/load-forced-ok.sh" thishost --force-host line-desktop
+[ "$forced_ec" = 0 ] && ok || bad "coordinator host with an allowed reason passes ($forced_ec) $(cat "$tmp/forced.err")"
+grep -q 'worker-startup: live workers' "$tmp/forced.err" && ok || bad "start prints the live worker spread ($(cat "$tmp/forced.err"))"
+
+# No --on: still goes through placement
+: >"$tmp/orca-noon.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-noon.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-forced-ok.sh" \
+  bash --noprofile --norc "$script" --run run_noon --spec "$spec_file" --title noonjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_noon --repo "path:$clean" >"$tmp/noon.out" 2>"$tmp/noon.err"
+set -e
+grep -q 'worker-placement: host=' "$tmp/noon.err" "$tmp/noon.out" && ok || bad "no --on goes through placement ($(cat "$tmp/noon.err"))"
+
+# --force-host REASON picks the mapped host without --on
+cat >"$tmp/fleet-reasons.json" <<'EOS'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-overflow": 4},
+  "host_load_ceilings": {"host-primary": 12, "host-overflow": 8},
+  "worker_placement": {
+    "order": ["host-primary", "host-overflow"],
+    "reasons": {"chrome-dev": "host-overflow", "line-desktop": "host-overflow", "host-file": "host-overflow"}
+  }
+}
+EOS
+: >"$tmp/orca-reason.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-reason.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  FLEET_WATCH_CONFIG="$tmp/fleet-reasons.json" FLEET_LOAD_SCRIPT="$tmp/load-forced-ok.sh" \
+  bash --noprofile --norc "$script" --run run_reason --spec "$spec_file" --title reasonjob --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --force-host chrome-dev --name n_reason --repo "path:$rem_app" 2>"$tmp/reason.err"
+ec_reason=$?
+set -e
+[ "$ec_reason" = 0 ] && ok || bad "--force-host chrome-dev without --on exits 0 ($ec_reason) $(cat "$tmp/reason.err")"
+grep -q 'reason chrome-dev -> host=host-overflow' "$tmp/reason.err" && ok || bad "reason names the mapped host ($(cat "$tmp/reason.err"))"
+grep -q 'worker-placement: host=' "$tmp/reason.err" && bad "reason start must not run placement" || ok
+
 rm -f "$bin/hostname"
 
 echo "worker-startup: $pass passed, $fail failed"

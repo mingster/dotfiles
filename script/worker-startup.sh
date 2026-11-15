@@ -9,6 +9,8 @@
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
 # A fullstack-dev or light-tier title ("<role> - <job>") started with --agent claude is refused while
 # usage-gate.py pick still allows Grok or Cursor.
+# --on ENV over its load limit, or naming the coordinator host, exits 4 unless --force-host REASON
+# is given (the coordinator host accepts only chrome-dev, line-desktop or host-file).
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
 set -euo pipefail
@@ -276,6 +278,53 @@ apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACE
   WORKER_STARTUP_PLACED_REPO=$placed_repo
 }
 
+# --on skips placement, so judge the named host by the same load rule (worker-placement.py owns it).
+# Over its limit: exit 4 naming the host placement would pick, unless --force-host gave a reason.
+# The coordinator host (the host this script runs on, read from hostname) needs an allowed reason under any load.
+FORCE_COORDINATOR_REASONS='chrome-dev line-desktop host-file'
+check_forced_host() { # <host> <spec_file> <repo_selector> <force_reason>
+  local host=$1 spec_file=$2 repo_sel=$3 reason=$4 cfg json ec check_args=() me ok_reason r
+  me=$(this_host_name)
+  if [ -n "$me" ] && [ "$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')" = "$me" ]; then
+    ok_reason=
+    for r in $FORCE_COORDINATOR_REASONS; do [ "$reason" != "$r" ] || ok_reason=1; done
+    if [ -z "$ok_reason" ]; then
+      echo "worker-placement: refused forced host=$host (the coordinator host); --force-host must be one of: ${FORCE_COORDINATOR_REASONS// /, }${reason:+ (got: $reason)}" >&2
+      exit 4
+    fi
+    echo "worker-startup: force-host: $reason (coordinator host $host)" >&2
+    return 0
+  fi
+  cfg=$(resolve_placement_config)
+  [ -f "$cfg" ] || return 0
+  check_args=(check-host --host "$host" --spec "$spec_file" --config "$cfg")
+  [ -z "$repo_sel" ] || check_args+=(--repo "$repo_sel")
+  set +e
+  json=$("$python3" "$here/worker-placement.py" "${check_args[@]}")
+  ec=$?
+  set -e
+  [ "$ec" -eq 2 ] && die "worker-placement failed (fleet config unreadable or malformed)"
+  [ -n "$json" ] || die "worker-placement failed"
+  [ "$(printf '%s' "$json" | jq -r '.ok')" != true ] || return 0
+  if [ -n "$reason" ]; then
+    echo "worker-startup: force-host: $reason ($(printf '%s' "$json" | jq -r '.line'))" >&2
+    return 0
+  fi
+  printf '%s\n' "$(printf '%s' "$json" | jq -r '.line')" >&2
+  echo 'worker-startup: pass --force-host REASON to start there anyway' >&2
+  exit 4
+}
+
+# One line per start: live workers per host, so the coordinator sees the spread. Never blocks a start.
+print_worker_spread() {
+  local me out
+  me=$(this_host_name)
+  out=$("$orca" orchestration worker-list --include-remote --terminal-state active --json --limit 100 2>/dev/null \
+    | jq -r --arg me "${me:-local}" '[.result.workers[]? | select(.liveness == "live") | (if .host == "local" then $me else .host end)]
+        | group_by(.) | map("\(.[0])=\(length)") | join(" ")' 2>/dev/null) || out=
+  echo "worker-startup: live workers ${out:-none}" >&2
+}
+
 pick_host_only() {
   local spec='' repo=''
   while [ $# -gt 0 ]; do
@@ -357,7 +406,7 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
 }
 
 usage_run() {
-  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV] [--route-override REASON]" >&2
+  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
   echo "       worker-startup.sh --run ID --task ID --retry-of DISPATCH_ID --worktree SELECTOR --agent NAME --from HANDLE [--model ID]" >&2
   exit 2
@@ -506,10 +555,10 @@ require_grok_host() { # <environment>
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
-  local explicit_on=0
+  local explicit_on=0 force_host='' on_raw=''
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override)
+      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host)
         [ $# -ge 2 ] || usage_run
         case "$1" in
           --run) run=$2 ;;
@@ -518,7 +567,7 @@ run_mode() {
           --agent) agent=$2 ;;
           --model) model=$2 ;;
           --from) from=$2 ;;
-          --on) environment=$2; explicit_on=1 ;;
+          --on) environment=$2; on_raw=$2; explicit_on=1 ;;
           --worktree-path) wt=$2 ;;
           --worktree) worktree_sel=$2 ;;
           --name) name=$2 ;;
@@ -527,6 +576,7 @@ run_mode() {
           --task) task=$2 ;;
           --retry-of) retry_of=$2 ;;
           --route-override) route_override=$2; [ -n "$route_override" ] || die "route override needs a reason" ;;
+          --force-host) force_host=$2; [ -n "$force_host" ] || die "force-host needs a reason" ;;
         esac
         shift 2 ;;
       *) usage_run ;;
@@ -585,6 +635,31 @@ run_mode() {
   esac
 
   host_check
+  print_worker_spread
+
+  # --force-host REASON names its host in worker_placement.reasons (fleet config), so --on is not needed.
+  if [ -z "$on_raw" ] && [ -n "$force_host" ] && [ -z "$merge_worker" ] && [ -z "$wt" ]; then
+    local reason_cfg reason_target
+    reason_cfg=$(resolve_placement_config)
+    if [ -f "$reason_cfg" ] && reason_target=$("$python3" "$here/worker-placement.py" reason-host --reason "$force_host" --config "$reason_cfg"); then
+      on_raw=$reason_target
+      explicit_on=1
+      echo "worker-placement: reason $force_host -> host=$reason_target" >&2
+      if [ "$(printf '%s' "$reason_target" | tr '[:upper:]' '[:lower:]')" != "$(this_host_name)" ]; then
+        environment=$reason_target
+        if [ -n "$repo" ]; then
+          local mapped_repo
+          if mapped_repo=$("$python3" "$here/worker-placement.py" translate-repo --environment "$reason_target" --repo "$repo" --config "$reason_cfg" 2>/dev/null); then
+            repo=$mapped_repo
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  if [ -n "$on_raw" ] && [ -z "$merge_worker" ]; then
+    check_forced_host "$on_raw" "$spec" "$repo" "$force_host"
+  fi
 
   if [ "$explicit_on" != 1 ] && [ -z "$environment" ] && [ -z "$wt" ] && [ -z "$merge_worker" ]; then
     apply_worker_placement "$spec" "$repo"

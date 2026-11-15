@@ -115,7 +115,7 @@ Host ssh work routes to a Claude worker.
 - The `usage-gate-hook.py` PreToolUse hook denies only a start blocked by the real usage ceiling, and warns on unknown readings. Provider routing recommendations are advisory; `USAGE_GATE_OVERRIDE='<reason>'` records a deliberate routing choice and never bypasses the usage ceiling. Daily cap overrides remain pacing hints and are unnecessary to spawn with weekly headroom.
 - Read each provider's startup notice and record each unavailable provider's reset time in the status report.
 - Write a brief in its own Bash call, then spawn in the next one. `guard-bash.py` reads the whole command, so a brief and a `worker-start` in one call can be denied on the wrong issue number, and the denial means the brief is never written.
-- Host routing: browser tests and browser walks start only on a host that has the browser installed. Pass `--on <host>` to `orca orchestration worker-start` yourself, and report lane counts from the fleet load output, never from dispatch notes.
+- Host routing: browser tests and browser walks start only on a host that has the browser installed. Pass `--force-host chrome-dev|line-desktop|host-file` to `worker-startup.sh`: the fleet config maps that reason to its host, so no `--on` is needed. Report lane counts from the fleet load output, never from dispatch notes.
 - Bun drift: when the worker runs on another host, run `~/dotfiles/script/bun-pin-check.sh <host> <repo>` first. It prints one warning if the host's bun is older than the repo's pin (never blocks). A mass of init-time `ReferenceError` failures on one host is usually an old bun, not a regression.
 
 **Start.**
