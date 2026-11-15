@@ -9,7 +9,7 @@
 ## Dispatch
 
 - Before spawning a PR owner, meet `team.md`, Pre-build grill gate.
-- Keep briefs in `~/.claude/state/briefs/` until `worker_done`.
+- Keep briefs in `~/agent-state/briefs/` (private repo, synced across hosts, no sensitive-path prompt) until `worker_done`.
 - Before framing, spawning or closing a Run, read the `team.md` rule table. Use Orca, never Claude subagents, within the host caps (`.claude/model-routing.md`, Starting a worker). Waiter and wakes: `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop, and fleet-watch mail (`docs/agents/fleet-watch.md`, Wake path).
 - A security gate brief states the threat model.
 - Every worker start goes through `script/worker-startup.sh`, which pulls, checks the host and lints the brief; direct `worker-start` is not allowed (`.claude/model-routing.md`, `~/.orca/presets.json`).
