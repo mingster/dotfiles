@@ -4290,17 +4290,19 @@ def _worker_is_verifier(worker):
 
 
 _VERIFY_TITLE_RE = re.compile(r'^qa-sdet\b.*?\bverify\b(.*)$', re.I)
-_TITLE_PR_RE = re.compile(r'(?:#|\bPR\s+)(\d+)', re.I)
+_TITLE_PR_RE = re.compile(r'#(\d+)|\bPRs?\s+(\d+)', re.I)
 
 
-def verifier_title_pr(worker):
-    """PR number named by a verifier task title ("qa-sdet - verify PR #7" or "qa-sdet verify o/r#7"), else None.
+def verifier_title_prs(worker):
+    """PR numbers named by a verifier task title ("qa-sdet - verify PR #7", "qa-sdet verify o/r#7" or a batch
+    "qa-sdet - verify PRs #7, #8 and o/r#9"), else an empty list.
 
     Real worker-list rows carry no role, PR number or branch, only a taskId; fetch_workers joins the task title.
     """
     match = _VERIFY_TITLE_RE.match(str(worker.get('_task_title') or '').strip())
-    found = _TITLE_PR_RE.search(match.group(1)) if match else None
-    return int(found.group(1)) if found else None
+    if not match:
+        return []
+    return [int(a or b) for a, b in _TITLE_PR_RE.findall(match.group(1))]
 
 
 def live_verifier_worker(pr, workers):
@@ -4309,7 +4311,7 @@ def live_verifier_worker(pr, workers):
     for worker in workers or []:
         if not isinstance(worker, dict) or not worker_row_is_live(worker):
             continue
-        if number is not None and verifier_title_pr(worker) == number:
+        if number is not None and number in verifier_title_prs(worker):
             return worker
     return None
 

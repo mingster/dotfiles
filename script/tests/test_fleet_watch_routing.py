@@ -31,6 +31,28 @@ preamble = _load('worker-preamble.py')
 gate = _load('pr-body-gate.py')
 
 
+class BatchVerifier(unittest.TestCase):
+    """dotfiles #1082: a verifier start skips a PR that a live batch verifier lists."""
+
+    def worker(self, title):
+        return {'dispatchId': 'ctx_v', 'terminal': 'term_v', 'workerState': 'ready',
+                'dispatchStatus': 'dispatched', 'terminalState': 'active',
+                'projection': {'role': 'worker', 'liveness': {'verdict': 'live'}},
+                '_task_title': title}
+
+    def test_every_pr_in_a_batch_title_has_a_live_verifier(self):
+        workers = [self.worker('qa-sdet - verify PRs #8107, #8109 and o/r#8111')]
+        for number in (8107, 8109, 8111):
+            with self.subTest(number=number):
+                self.assertTrue(fw.live_verifier_for_pr({'number': number}, workers))
+        self.assertFalse(fw.live_verifier_for_pr({'number': 8110}, workers))
+
+    def test_single_pr_title_still_matches_only_that_pr(self):
+        workers = [self.worker('qa-sdet - verify PR #7')]
+        self.assertTrue(fw.live_verifier_for_pr({'number': 7}, workers))
+        self.assertFalse(fw.live_verifier_for_pr({'number': 8}, workers))
+
+
 class FamilyCli(unittest.TestCase):
     def test_family_command_prints_the_shared_map(self):
         out = subprocess.run(
