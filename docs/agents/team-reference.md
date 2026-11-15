@@ -116,7 +116,7 @@ The team docs live once, in `~/dotfiles/templates/agent-team/`. Role files and s
 
 A project's `docs/agents/` holds only five files, because shared skills, scripts and hooks read them by a fixed path:
 
-* `issue-tracker.md`, `triage-labels.md`, `domain.md`: read by the Matt Pocock skills and `init-agent-project.sh`.
+* `issue-tracker.md`, `triage-labels.md`, `domain.md`: read by the Matt Pocock skills and `script/agent-team.sh project`.
 * `team-facts.md`: the project's own team facts, such as hosts, lanes, times and its differences from `team.md`.
 * `deploy-facts.md`: deploy targets and production hosts, read by the deploy skill.
 
@@ -164,7 +164,7 @@ Use `script/agent-team.sh` for machine setup (`machine`), new projects (`project
 
 The team files give agents their jobs, working rules and repeatable steps. The coordinator is the user's window and only contact, off the main line: he sets priorities weekly, handles `needs-elon` exceptions, dispatches ready issues within the usage and load gates, and contacts the user only on user decisions. See [Agent team architecture](agent-team-architecture.md) for the full design.
 
-`script/adopt-agent-team.sh [--project-name <name>] <dir>` installs from [templates/agent-team](../../templates/agent-team/): roles, generated team skills, facts file skeletons, role reference docs, settings, hooks, model routing and a Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
+`script/agent-team.sh project <dir> [--project-name <name>] [--labels]` installs from [templates/agent-team](../../templates/agent-team/): facts file skeletons, synced team docs, compiled settings, guard config, model routing, tracker files and the Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
 
 Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers their role file path in the task prompt (using the main checkout's absolute path so a branch worktree never reads a stale copy), including workers on other providers. Every role edit merges on a passing non-author Verdict with the coordinator's approval; only a change that loosens a safety limit needs the owner (`team.md`, Role changes). Each carries an `Owner-approved: <owner> <date> (<where approved>)` commit trailer.
 
@@ -200,7 +200,7 @@ Other project files tell the team how this repo works:
 | `docs/agents/triage-labels.md` | The project's issue labels and what each means. |
 | `docs/agents/domain.md` | Where agents read domain terms (`CONTEXT.md`) and design decisions (`docs/adr/`). |
 
-Adoption creates `team.md`, `team-facts.md`, `deploy-facts.md` and the role reference docs. Create the tracker, label and domain files with `~/dotfiles/script/init-agent-project.sh --labels <dir>` (automatically run by `script/agent-team.sh project`). Configure `docs/agents/daily-run.md` in the project before turning on the `daily-program-1900` automation. Decisions belong in `docs/adr/`.
+Adoption creates `team.md`, `team-facts.md`, `deploy-facts.md`, the role reference docs, and (with `--labels`) the tracker, label and domain files (`script/agent-team.sh project <dir> --labels`). Configure `docs/agents/daily-run.md` in the project before turning on the `daily-program-1900` automation. Decisions belong in `docs/adr/`.
 
 Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt can instead name the skill's `SKILL.md` path and ask it to follow the file.
 
@@ -244,10 +244,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 
 | Tool | Purpose |
 | --- | --- |
-| `script/agent-team.sh` | Single entry point: `machine` setup, `project` adoption (also refreshes generated team skills), `sync`, read-only `check` for drift, and `all`. |
-| `script/adopt-agent-team.sh` | Copies the agent team template (`.claude/agents/`, hooks, `model-routing.md`, `team.md`, facts skeletons) into a project and syncs team skills. |
-| `script/init-agent-project.sh` | Seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, appends `## Agent skills` to `AGENTS.md`, and with `--labels` creates the five triage labels on GitHub. |
-| `script/agent-project-autoinit.sh` | Claude Code `SessionStart` hook that auto-runs `init-agent-project.sh --labels` for unseeded `mingster/*` repos. |
+| `script/agent-team.sh` | Single entry point: `machine` setup, `project` adoption (seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, appends `## Agent skills` to `AGENTS.md`, and with `--labels` creates the triage labels on GitHub), `sync`, read-only `check` for drift, and `all`. |
 | `script/sync-mattpocock-skills.sh` | Refreshes the 22 vendored Matt Pocock skills from upstream and reapplies `CONTEXT.md` naming and `.mattpocock-local.patch`. |
 | `script/check-skill-collisions.sh` | Checks for project skills that shadow shared or Orca-bundled skills, broken symlinks, or missing `SKILL.md` files. |
 | `script/bootstrap-asdf-tools.sh` | Installs and pins `python` and `nodejs` from `.tool-versions` via `asdf`. |
@@ -294,7 +291,8 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 
 | Tool | Purpose |
 | --- | --- |
-| `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (replacing `script/on-worker-done.sh`; uses `script/review-prompt.sh`, `script/review-prompt.txt`, `script/review-model.sh`, `script/review-run.sh`, `script/pr-review-author-family.py`). |
+| `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (uses `script/review-prompt.txt`). |
+| `script/live-check-server.sh` | Takes a lock on the live-check host (waiting up to 30 minutes), reuses one running dev server on latest `main` when healthy (starting it once if not), and releases the lock after without stopping the shared server. |
 | `script/coordinator-publication.sh` | Pushes an explicit engineering branch (`--branch <branch> --worktree <path>`) and opens or updates its PR after validating `Closes #<n>`, `## Verification` bullets, and zero `.env` secrets. |
 | `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree; only Playwright and build steps wait on `heavy-gate.sh`. |
 | `script/dotfiles-sync.sh` | Fast-forwards `~/dotfiles` when it is on main, clean and behind, with the rule `session-sync.sh` uses; a dirty, diverged or offline checkout prints one line and the job still runs. A project workflow that runs `$HOME/dotfiles/script/head-checks.sh` (or any other dotfiles script) on a self-hosted runner calls `bash "$HOME/dotfiles/script/dotfiles-sync.sh"` as its first step. |

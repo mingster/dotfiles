@@ -47,7 +47,7 @@ Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load i
 * **Weekly maintenance (`script/weekly-update.sh`):**
 
   * Three PR slices from `origin/main` (at most): `mattpocock` (`sync-mattpocock-skills.sh` + `script/tests/sync-mattpocock-skills.test.sh`), `pstack` (`sync-pstack-template-skills.sh` + `script/tests/sync-pstack-template-skills.test.sh`), `toolchain` (Node LTS on the current major via `nodejs.org` index or fixture, `.tool-versions` pin, `script/tests/install_node.test.sh`). Never merges; push and `gh pr create` unless `WEEKLY_UPDATE_NO_PUSH=1`.
-  * Project roots: optional `script/weekly-update.projects.conf` (gitignored) or `WEEKLY_UPDATE_PROJECTS`. Preflight runs `check-skill-collisions.sh`, `agent-team.sh check`, and `adopt-agent-team.sh --check-paths`. Apply to projects only when `WEEKLY_UPDATE_SYNC_PROJECTS=1`.
+  * Project roots: optional `script/weekly-update.projects.conf` (gitignored) or `WEEKLY_UPDATE_PROJECTS`. Preflight runs `check-skill-collisions.sh` and `agent-team.sh check`. Apply to projects only when `WEEKLY_UPDATE_SYNC_PROJECTS=1`.
   * Commits `docs/agents/drafts/weekly-skill-impact-<date>.md` on the mattpocock or pstack branch (citation and diff report only; never edits role or team agent files).
   * Toolchain stdout summary adds report-only lines for bun, a brew outdated sample, and agent CLIs on PATH. No `brew upgrade` in this script. Node major jumps stay on the pin until you decide.
   * Post-merge on machines (not automated here): re-run `install.sh`, `bash script/setup-agent-skills.sh`, and `orca skills install --all` after merging skill PRs. Unattended fleet schedules must not run this script (it opens branches and pushes).

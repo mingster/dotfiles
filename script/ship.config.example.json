@@ -2,5 +2,6 @@
   "verdict_from_repos": [],
   "coordinator_ids": [],
   "coordinator_host": "",
-  "head_checks_remote": {}
+  "head_checks_remote": {},
+  "live_check_server": {}
 }

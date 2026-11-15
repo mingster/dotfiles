@@ -65,7 +65,7 @@ Stages 2, 3, and 5 read `docs/agents/` in the repo you are working in: `issue-tr
 
 If you reach stage 2 in a repo where `docs/agents/issue-tracker.md` does not exist, stop and set it up before continuing. Two ways:
 
-- `~/dotfiles/script/init-agent-project.sh --labels` from the repo root. Deterministic, seeds the three files from the templates, appends the `## Agent skills` block, creates the triage labels on the GitHub remote. Safe to re-run, it never overwrites an existing file.
+- `~/dotfiles/script/agent-team.sh project <dir> --labels` from the repo root. Deterministic, seeds the three files from the templates, appends the `## Agent skills` block, creates the triage labels on the GitHub remote. Safe to re-run, it never overwrites an existing file.
 - `/setup-matt-pocock-skills` when the repo needs judgement instead: a monorepo layout, a tracker that is not GitHub or GitLab, or existing conventions to merge with.
 
 Prefer the script. Fall back to the skill when it does not fit.

@@ -82,7 +82,7 @@ links with a script over all tracked `.md` and `.mdc` files.
 
 ## New repos
 
-`script/init-agent-project.sh` creates the three tracker files in `docs/agents/` and the `## Agent skills` block,
+`script/agent-team.sh project <dir> --labels` creates the three tracker files in `docs/agents/` and the `## Agent skills` block,
 and creates `AGENTS.md` plus the `CLAUDE.md` pointer when the repo has neither.
 
 Reference: [Claude Code memory docs](https://code.claude.com/docs/en/memory)

@@ -95,12 +95,11 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 | `script/secrets-sync.sh`, `script/secrets-pack.sh`, `script/secrets-unpack.sh` | No | Secrets mutation or user transfer |
 | `script/secrets-gate-setup.sh` | No | Owner only, runs sudo and makes the credential folder root owned |
 | `script/elon-startup.sh` | No | Wake-only health report |
-| `script/coordinator-drain.sh`, `script/worker-watch.sh` | No | Tied to the coordinator session and fleet-watch, not a cron |
+| `script/coordinator-drain.sh`, `.agents/skills/orca-team/worker-watch.sh` | No | Tied to the coordinator session and fleet-watch, not a cron |
 | `script/worker-startup.sh --host-check` | No | Runs before each worker launch |
 | `script/head-checks.sh`, `script/pr-review.sh` | No | PR CI (`Checks`) and GitHub Actions `Review` workflow after `Checks` pass |
 | `script/ship.sh`, `script/coordinator-publication.sh` | No | Shipping run squash merge; push and PR opening by the PR owner |
 | `script/new-coordinator.sh`, `script/take-over-coordinator.sh` | No | User provisioning and failover |
-| `script/agent-project-autoinit.sh` | No | IDE SessionStart hook |
 | `script/bun-pin-check.sh`, `script/count-agents.sh` | No | On-demand checks from startup or fleet-watch |
 | `script/weekly-skill-impact.sh`, `script/prepend-recent-change.ts` | No | Draft or changelog helpers on request |
 | `script/remote-heavy.sh` | No | Per-job remote runs with admission gates |
