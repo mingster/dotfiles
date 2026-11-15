@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Reject a commit message that names a private project or host (this repo is public).
+# Wired by script/worktree-setup.sh (core.hooksPath). See script/name-lint.sh.
+exec bash "$(git rev-parse --show-toplevel)/script/name-lint.sh" message "$1"

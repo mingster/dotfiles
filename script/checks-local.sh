@@ -36,6 +36,8 @@ export SELECT_SCRIPT_TESTS_JOBS=${SELECT_SCRIPT_TESTS_JOBS:-8}
 export SELECT_SCRIPT_TESTS_SERIAL=${SELECT_SCRIPT_TESTS_SERIAL:-'*wrap-up-scheduled-cleanup.test.sh'}
 # The longest tests start first; at the end of the queue wrap-up.test.sh alone added minutes.
 export SELECT_SCRIPT_TESTS_FIRST=${SELECT_SCRIPT_TESTS_FIRST:-'script/wrap-up.test.sh script/wrap-up-guards.test.sh script/tests/ship.test.sh script/tests/wrap-up-fleet-release.test.sh script/tests/wrap-up-after-merge.test.sh'}
+# Always check names on the branch commits and changed files, not only when the selector picks the test.
+[ "${#list_only[@]}" -gt 0 ] || bash script/name-lint.sh branch "$base"
 bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${changed[@]+"${changed[@]}"}"
 [ "${#list_only[@]}" -eq 0 ] || { skipped_note; exit 0; }
 # Hook gate tests read brief-lint and the hook files, so any change can break them. Run all of them.

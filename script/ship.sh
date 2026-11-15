@@ -94,11 +94,17 @@ done
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
 
 read_pr() {
-  info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
+  info=$(gh pr view "$pr" --repo "$repo" --json state,title,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
     || refuse "cannot read PR $pr"
 }
 read_pr
 field() { jq -r "$1" <<<"$info"; }
+
+# Public repo: a private project or host name in the PR title or body stays on GitHub after merge.
+if [ "${SHIP_SKIP_NAME_LINT:-}" != 1 ]; then
+  field .title | NAME_LINT_QUIET=1 bash "$ship_dir/name-lint.sh" text "PR $pr title" || refuse "PR $pr title names a private project or host"
+  printf '%s' "$(field .body)" | NAME_LINT_QUIET=1 bash "$ship_dir/name-lint.sh" text "PR $pr body" || refuse "PR $pr body names a private project or host"
+fi
 
 # 1. PR is open, not draft, mergeable (not CONFLICTING).
 # GitHub leaves mergeable UNKNOWN until it has calculated the merge. PRs 801 and 802

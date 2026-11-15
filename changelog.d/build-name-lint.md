@@ -1,0 +1,1 @@
+Private project and host names now fail early: a `commit-msg` hook (`.githooks/`, wired by `worktree-setup.sh`), `checks-local.sh` (always checks branch commit messages and changed files), and `ship.sh` (refuses a PR title or body with a private name), all through `script/name-lint.sh`.
