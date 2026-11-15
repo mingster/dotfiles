@@ -690,7 +690,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   repo_root="$MF_DIR/main-tree"; mkdir -p "$repo_root"
   git -C "$here/.." archive origin/main | tar -x -C "$repo_root"
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
-  cp "$here/ship.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
+  cp "$here/ship.sh" "$here/name-lint.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
