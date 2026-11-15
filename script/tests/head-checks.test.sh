@@ -88,10 +88,80 @@ else: sys.exit(1)
     if 'Result: exit 9; remaining checks stopped\n' in comments.read_text() and 'kill signal' not in comments.read_text():
         passed+=1; print('ok   other exit codes keep their result line')
     else: failed+=1; print('FAIL exit 9 receipt',comments.read_text())
-    run('tsc step uses measure without slots',
-        "printf 'tsc --noEmit\\n'; test ! -d \"$HOME/.cache/heavy-gate/slot-1\"",0)
+    run('tsc step claims a heavy-gate slot',
+        "printf 'tsc --noEmit\\n'; test -d \"$HOME/.cache/heavy-gate/slot-1\"",0)
     run('build step claims weight 2 gate slots',
         "printf 'run build\\n'; test -d \"$HOME/.cache/heavy-gate/slot-1\" -a -d \"$HOME/.cache/heavy-gate/slot-2\"",0)
+    # #1081: tsc step waits when two other heavy jobs hold the host slots.
+    tsc_hold_a=subprocess.Popen(['bash',str(pathlib.Path(runner).with_name('heavy-gate.sh')),'--weight','1','--','sleep','30'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    tsc_hold_b=subprocess.Popen(['bash',str(pathlib.Path(runner).with_name('heavy-gate.sh')),'--weight','1','--','sleep','30'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    tsc_waiter=None
+    try:
+        deadline=time.time()+10
+        while len(list((root/'home/.cache/heavy-gate').glob('slot-*')))!=2 and time.time()<deadline:
+            time.sleep(0.02)
+        order.unlink(missing_ok=True); comments.unlink(missing_ok=True)
+        conf.write_text("printf 'tsc\\n' >> '"+str(order)+"' # head-checks-tsc\n")
+        (repo/'code.txt').write_text('tsc wait\n'); git('add','.'); git('commit','-qm','tsc wait')
+        tsc_head=git('rev-parse','HEAD'); env['GH_HEAD']=tsc_head
+        tsc_waiter=subprocess.Popen(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+        time.sleep(0.25)
+        waited_while_two_busy=(not order.exists() and tsc_waiter.poll() is None)
+        tsc_hold_a.terminate(); tsc_hold_a.communicate(timeout=10)
+        tsc_out=tsc_waiter.communicate(timeout=30)[0]
+        if waited_while_two_busy and tsc_waiter.returncode==0 and order.exists() and order.read_text()=='tsc\n':
+            passed+=1; print('ok   tsc step waits instead of running beside two others')
+        else:
+            failed+=1; print('FAIL tsc step wait',waited_while_two_busy,tsc_waiter.returncode if tsc_waiter else None,tsc_out)
+    finally:
+        for proc in (tsc_hold_a,tsc_hold_b,tsc_waiter):
+            if proc is not None and proc.poll() is None:
+                proc.terminate(); proc.communicate(timeout=10)
+    # #1081: tsc step killed by the OS (exit 137) is retried once when load drops.
+    sample_file=root/'sample-load'; sample_file.write_text('0 90\n')
+    reader.write_text('''#!/usr/bin/env bash
+case "$1" in
+  hardware) echo "12 8 1000000000" ;;
+  model) echo fixture ;;
+  *)
+    line=$(head -n 1 "'''+str(sample_file)+'''" 2>/dev/null)
+    if [ "$(wc -l < "'''+str(sample_file)+'''" | tr -d ' ')" -gt 1 ]; then
+      tail -n +2 "'''+str(sample_file)+'''" > "'''+str(sample_file)+'''.tmp" && mv "'''+str(sample_file)+'''.tmp" "'''+str(sample_file)+'''"
+    fi
+    echo "${line:-0 90}"
+    ;;
+esac
+'''); reader.chmod(0o755)
+    attempts=root/'tsc-attempts'; attempts.unlink(missing_ok=True)
+    wait_log=root/'home/.orca/logs/heavy-gate-wait.log'; wait_log.unlink(missing_ok=True)
+    tsc_retry_cmd=(
+        "n=$(cat '"+str(attempts)+"' 2>/dev/null || echo 0); n=$((n+1)); printf '%s\\n' \"$n\" > '"+str(attempts)+"'; "
+        "if [ \"$n\" -eq 1 ]; then printf '25 90\\n0 90\\n' > '"+str(sample_file)+"'; kill -9 $$; fi; "
+        "cat '"+str(sample_file)+"' >> '"+str(order)+"' # head-checks-tsc"
+    )
+    res_retry,retry_head=run('tsc exit 137 retries once when load drops',tsc_retry_cmd,0)
+    retry_receipt=comments.read_text() if comments.exists() else ''
+    if (res_retry.returncode==0 and attempts.exists() and attempts.read_text().strip()=='2'
+            and order.exists() and order.read_text().strip()=='0 90'
+            and wait_log.exists() and 'wait_s=' in wait_log.read_text()
+            and 'retryable infra failure' in retry_receipt and retry_receipt.startswith('Checks: PASS head='+retry_head)):
+        passed+=1; print('ok   tsc exit 137 retries once after load drops and passes')
+    else:
+        failed+=1; print('FAIL tsc exit 137 retry',res_retry.returncode,attempts.read_text() if attempts.exists() else '',order.read_text() if order.exists() else '',retry_receipt)
+    # #1081: tsc step killed by OS on retry too reports Checks: INFRA (retryable infra failure, not a code FAIL).
+    attempts.unlink(missing_ok=True); sample_file.write_text('0 90\n'); comments.unlink(missing_ok=True)
+    tsc_kill_twice="n=$(cat '"+str(attempts)+"' 2>/dev/null || echo 0); n=$((n+1)); printf '%s\\n' \"$n\" > '"+str(attempts)+"'; kill -9 $$ # head-checks-tsc"
+    conf.write_text(tsc_kill_twice+'\n'); (repo/'code.txt').write_text('tsc kill twice\n'); git('add','.'); git('commit','-qm','tsc kill twice')
+    infra_head=git('rev-parse','HEAD'); env['GH_HEAD']=infra_head
+    res_infra=subprocess.run(['bash',runner,'--repo',str(repo),'--pr','7'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    infra_receipt=comments.read_text() if comments.exists() else ''
+    if (res_infra.returncode!=0 and attempts.exists() and attempts.read_text().strip()=='2'
+            and infra_receipt.startswith('Checks: INFRA head='+infra_head)
+            and 'Checks: FAIL' not in infra_receipt
+            and 'retryable infra failure' in infra_receipt):
+        passed+=1; print('ok   tsc exit 137 twice reports Checks: INFRA (not a code FAIL)')
+    else:
+        failed+=1; print('FAIL tsc exit 137 twice',res_infra.returncode,attempts.read_text() if attempts.exists() else '',infra_receipt)
     run('ref checks do not post',line('ref'),0,False)
     train_heads=base+','+env['GH_HEAD']
     train=subprocess.run(['bash',runner,'--repo',str(repo),'--ref',env['GH_HEAD'],'--base',base,'--config',str(conf),'--train-heads',train_heads],env=env,text=True,capture_output=True)
