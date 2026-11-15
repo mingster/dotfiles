@@ -2237,6 +2237,33 @@ def is_protected(path):
     return any(path.startswith(p) if p.endswith("/") else path == p for p in PROTECTED_PATHS)
 
 
+PROTECTED_PATHS_LIB_REL = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "script", "lib", "protected-paths.sh")
+)
+# check_owner_only_paths reads $files through jq and calls refuse; both are stubbed to report the path.
+PROTECTED_PATHS_SCRIPT = (
+    'source "$1" || exit 1; shift\n'
+    'jq() { printf "%s\\n" "$p"; }\n'
+    'refuse() { hit=1; }\n'
+    'intent_acceptance_receipt() { :; }\n'
+    'for p; do hit=0; check_owner_only_paths; protected_path "$p" && hit=1; [ "$hit" = 1 ] && printf "%s\\n" "$p"; done\n'
+)
+
+
+def ship_protected(paths):
+    """The paths script/lib/protected-paths.sh (the ship.sh set) protects. Empty when that file is not found."""
+    lib = os.environ.get("PROTECTED_PATHS_LIB")
+    if not lib:
+        lib = PROTECTED_PATHS_LIB_REL
+        if not os.path.isfile(lib):
+            lib = os.path.join(os.environ.get("DOTFILES") or os.path.expanduser("~/dotfiles"),
+                               "script", "lib", "protected-paths.sh")
+    if not paths or not os.path.isfile(lib):
+        return set()
+    out = gate_run(["bash", "-c", PROTECTED_PATHS_SCRIPT, "_", lib, *sorted(paths)], None)
+    return set(out.split()) if out else set()
+
+
 def option_value(args, name):
     for i, a in enumerate(args):
         if a == name and i + 1 < len(args):
@@ -2310,7 +2337,7 @@ def check_role_file_gate(base, args):
                 managed = sorted(f for f in staged if is_template_managed_rel(f))
                 if managed:
                     deny_template_managed(managed[0])
-            files = {f for f in staged if is_protected(f)}
+            files = {f for f in staged if is_protected(f)} | ship_protected(staged)
             if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
                 deny_role_files(files, "This commit")
             return

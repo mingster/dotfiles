@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import importlib.util
 
 HOOKS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -169,7 +170,6 @@ class RoleFileGate(Gate):
         for rel in (
             "docs/agents/learned.md",
             "docs/agents/experiences/gotcha.md",
-            "docs/agents/team.md",
             "docs/other.md",
         ):
             with self.subTest(rel=rel):
@@ -177,6 +177,26 @@ class RoleFileGate(Gate):
                 self.write(rel, "x\n")
                 sh(self.repo, "git", "add", "-A")
                 self.assertAllowed('git commit -m "tweak unprotected"', self.repo)
+
+    def test_commit_ship_protected_paths_need_trailer(self):
+        for rel in (
+            "AGENTS.md",
+            ".claude/hooks/x",
+            ".claude/settings.json",
+            "docs/intent/a/intent.md",
+            "foo.rules",
+            "bin/owner-approve.sh",
+            "docs/agents/team.md",
+            "templates/agent-team/.claude/settings.json",
+        ):
+            with self.subTest(rel=rel):
+                sh(self.repo, "git", "reset", "-q", "--hard", "HEAD")
+                self.write(rel, "x\n")
+                sh(self.repo, "git", "add", "-A")
+                self.assertDenied('git commit -m "tweak protected"', "Owner-approved:", self.repo)
+                # AGENT_TEAM_SYNC=1 keeps the adopted project template gate out of the way.
+                with mock.patch.dict(os.environ, {"AGENT_TEAM_SYNC": "1"}):
+                    self.assertAllowed(f'git commit -m "tweak protected{TRAILER}"', self.repo)
 
     def test_commit_with_heredoc_trailer_allowed(self):
         self.write(".claude/model-routing.md", "x\n")
