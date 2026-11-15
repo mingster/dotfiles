@@ -1,0 +1,1 @@
+Start a verifier in `fleet-watch.py` only after `Review: PASS` is posted on the same head (leaving `Review: FAIL` to send the pull request back to the builder with no verifier), and brief a re-verify after a fix to check only the prior `FAIL` items and the diff since the last verified head (#1082).

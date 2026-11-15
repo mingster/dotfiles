@@ -50,7 +50,7 @@ def verifier_pr(number):
         'mergeable': 'MERGEABLE',
         'body': 'Builder: agent=claude model=sonnet',
         'statusCheckRollup': [{'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}],
-        'comments': [],
+        'comments': [{'body': 'Review: PASS head=%s' % HEAD}],
         'files': [],
     }
 

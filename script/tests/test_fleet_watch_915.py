@@ -161,7 +161,7 @@ class BabysitStartFailureNotice(unittest.TestCase):
         pr = {
             'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
             'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
-            'comments': [], 'labels': [], 'mergeable': 'MERGEABLE',
+            'comments': [{'body': 'Review: PASS head=%s' % HEAD}], 'labels': [], 'mergeable': 'MERGEABLE',
             'body': 'Builder: agent=claude model=sonnet',
         }
         return fw.babysit_pass(
@@ -195,7 +195,7 @@ class BabysitLiveVerifier(unittest.TestCase):
             pr = {
                 'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
                 'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
-                'comments': [], 'labels': [], 'mergeable': 'MERGEABLE',
+                'comments': [{'body': 'Review: PASS head=%s' % HEAD}], 'labels': [], 'mergeable': 'MERGEABLE',
                 'body': 'Builder: agent=claude model=sonnet',
             }
             state = {} if state is None else state
@@ -310,7 +310,7 @@ class BabysitStartReason(unittest.TestCase):
         pr = {
             'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
             'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
-            'comments': [], 'labels': [], 'mergeable': 'MERGEABLE',
+            'comments': [{'body': 'Review: PASS head=%s' % HEAD}], 'labels': [], 'mergeable': 'MERGEABLE',
             'body': 'Builder: agent=claude model=sonnet',
         }
         return fw.babysit_pass(

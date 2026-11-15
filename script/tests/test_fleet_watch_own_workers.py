@@ -194,7 +194,7 @@ class OwnDispatchRecord(unittest.TestCase):
             'statusCheckRollup': [{
                 'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS', 'isRequired': True,
             }],
-            'comments': [], 'labels': [], 'body': 'Builder: agent=claude model=sonnet',
+            'comments': [{'body': 'Review: PASS head=%s' % head}], 'labels': [], 'body': 'Builder: agent=claude model=sonnet',
         }
         babysit_state = {}
         _b_notices, b_lines, _b_log = fw.babysit_pass(

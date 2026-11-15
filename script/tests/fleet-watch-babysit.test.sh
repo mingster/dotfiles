@@ -168,7 +168,7 @@ row = {
     "headRefName": "feature/pr-%s" % number,
     "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
     "files": [{"path": "script/fleet-watch.py"}],
-    "comments": [],
+    "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
         {"name": "script-tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {"name": "shellcheck", "status": "COMPLETED", "conclusion": "SUCCESS"},
@@ -249,6 +249,7 @@ import json, sys
 path, head = sys.argv[1:]
 rows = json.load(open(path, encoding="utf-8"))
 rows[0]["headRefOid"] = head
+rows[0]["comments"] = [{"body": "Review: PASS head=%s\n" % head}]
 json.dump(rows, open(path, "w", encoding="utf-8"))
 PY
 if run_pass "$state" only "" "$tmp/green3.out"; then
@@ -328,7 +329,7 @@ json.dump([{
     "headRefName": "feature/pr-2",
     "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
     "files": [{"path": "script/fleet-watch.py"}],
-    "comments": [],
+    "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
         {"name": "head-checks", "status": "COMPLETED", "conclusion": "FAILURE"},
     ],
@@ -393,7 +394,7 @@ json.dump([{
     "headRefName": "feature/pr-4",
     "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-xhigh\n",
     "files": [{"path": "script/fleet-watch.py"}],
-    "comments": [],
+    "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
         {"name": "head-checks", "status": "COMPLETED", "conclusion": "SUCCESS"},
     ],
@@ -485,7 +486,7 @@ json.dump([{
     "headRefName": "feature/pr-5",
     "body": "No builder line here.\n",
     "files": [{"path": "script/fleet-watch.py"}],
-    "comments": [],
+    "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
         {"name": "head-checks", "status": "COMPLETED", "conclusion": "SUCCESS"},
     ],
