@@ -3671,6 +3671,32 @@ def review_passed_at_head(pr):
     return rs.newest_receipt_kind(pr.get('comments') or [], 'Review', head) == 'PASS'
 
 
+def fetch_actions_runners(repo):
+    """Runner list for a repo from the Actions API, or None when the call fails."""
+    try:
+        proc = subprocess.run(
+            ['gh', 'api', 'repos/%s/actions/runners' % repo],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        return json.loads(proc.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def has_online_review_runner(data):
+    """True when the runner list holds an online runner carrying the review label."""
+    runners = data.get('runners') if isinstance(data, dict) else None
+    if not isinstance(runners, list):
+        raise ValueError('no runner list')
+    return any(
+        isinstance(r, dict) and r.get('status') == 'online'
+        and any(isinstance(l, dict) and l.get('name') == 'review' for l in r.get('labels') or [])
+        for r in runners
+    )
+
+
 def prior_verdict_fail(pr):
     """(verified_head, findings_body) from the newest prior Verdict: FAIL on an earlier head, or None."""
     head = pr.get('headRefOid') or ''
@@ -4908,7 +4934,7 @@ def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
     release_worker=None, notify_worker=None, now=None, term_times=None,
-    closed_fetch=None,
+    closed_fetch=None, runner_fetch=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -4936,10 +4962,29 @@ def babysit_pass(
     if closed_fetch is None:
         # The open list drops a pull request the moment it merges. The full list is how a live verifier is released.
         closed_fetch = fetch_prs if pr_fetch is fetch_open_prs else (lambda _repo: None)
+    if runner_fetch is None:
+        runner_fetch = fetch_actions_runners
     _startup, run_id, from_terminal, roots = babysit_settings(config)
     cap = babysit_cap(config)
     started = 0
     picks = {}
+    runner_state = {}
+
+    def review_gate_open(pr_row, repo_name):
+        """Review: PASS at head, or the repo has no online review runner (one API call per repo per pass)."""
+        if review_passed_at_head(pr_row):
+            return True
+        if repo_name not in runner_state:
+            try:
+                data = runner_fetch(repo_name)
+                runner_state[repo_name] = 'online' if has_online_review_runner(data) else 'none'
+            except Exception:
+                runner_state[repo_name] = 'error'
+            if runner_state[repo_name] == 'none':
+                log_bits.append('review_gate_no_runner_%s' % repo_name)
+            elif runner_state[repo_name] == 'error':
+                log_bits.append('review_gate_runner_error_%s' % repo_name)
+        return runner_state[repo_name] == 'none'
 
     def cached_pick(role, avoid_family=None):
         key = (role, avoid_family or '')
@@ -5036,8 +5081,8 @@ def babysit_pass(
             and pr_checks_all_success(pr_row)
             and pr_verdict_valid_for_head(pr_row, repo_root=repo_root)
         )
-        if (status == 'SUCCESS' and review_passed_at_head(pr_row)
-                and not verdict_posted_for_head(pr_row) and not needs_fix):
+        if (status == 'SUCCESS' and not verdict_posted_for_head(pr_row) and not needs_fix
+                and review_gate_open(pr_row, repo)):
             kind, role = 'verifier', 'qa-sdet'
         elif needs_fix:
             if release_idle_rework_verifier(

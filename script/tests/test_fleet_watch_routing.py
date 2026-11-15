@@ -393,6 +393,9 @@ class Sticky(unittest.TestCase):
                     _notices, lines, _log = fw.babysit_pass(
                         config, {}, [],
                         pr_fetch=lambda _repo, rs=review_status: [self.pr(review=rs)],
+                        runner_fetch=lambda _repo: {'runners': [
+                            {'status': 'online', 'labels': [{'name': 'review'}]},
+                        ]},
                         start_worker=lambda command: starts.append(command) or 0,
                         pick=lambda _role, avoid_family=None: {
                             'selected': {'provider': 'cursor', 'model': 'grok-4.7-high', 'eligible': True},
@@ -415,6 +418,66 @@ class Sticky(unittest.TestCase):
             )
             self.assertEqual(len(starts), 1)
             self.assertTrue(any('action=verifier' in line for line in lines), lines)
+
+    def review_gate_pass(self, runners):
+        """One babysit pass on a green PR with no Review receipt; returns (starts, lines, log, fetches)."""
+        fetches = []
+
+        def runner_fetch(repo):
+            fetches.append(repo)
+            if isinstance(runners, Exception):
+                raise runners
+            return runners
+
+        starts = []
+        with tempfile.TemporaryDirectory() as root:
+            config = {
+                'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
+                'babysit': {'repos': [REPO], 'startup': '/bin/true'},
+            }
+            _notices, lines, log = fw.babysit_pass(
+                config, {}, [],
+                pr_fetch=lambda _repo: [self.pr(review=None), dict(self.pr(review=None), number=8)],
+                start_worker=lambda command: starts.append(command) or 0,
+                pick=lambda _role, avoid_family=None: {
+                    'selected': {'provider': 'cursor', 'model': 'grok-4.7-high', 'eligible': True},
+                },
+                owner_check=lambda _pr: None,
+                runner_fetch=runner_fetch,
+                now=1_700_000_000,
+            )
+        return starts, lines, log, fetches
+
+    def test_repo_with_no_online_review_runner_falls_back_to_green_checks(self):
+        offline = {'total_count': 1, 'runners': [
+            {'status': 'offline', 'labels': [{'name': 'self-hosted'}, {'name': 'review'}]},
+            {'status': 'online', 'labels': [{'name': 'self-hosted'}, {'name': 'build'}]},
+        ]}
+        for runners in ({'total_count': 0, 'runners': []}, offline):
+            with self.subTest(runners=runners):
+                starts, lines, log, fetches = self.review_gate_pass(runners)
+                self.assertTrue(starts, lines)
+                self.assertTrue(any('action=verifier' in line for line in lines), lines)
+                self.assertEqual(log.count('review_gate_no_runner_%s' % REPO), 1, log)
+                self.assertEqual(fetches, [REPO])
+
+    def test_repo_with_online_review_runner_still_waits_for_review_pass(self):
+        runners = {'total_count': 1, 'runners': [
+            {'status': 'online', 'labels': [{'name': 'self-hosted'}, {'name': 'review'}]},
+        ]}
+        starts, lines, log, _fetches = self.review_gate_pass(runners)
+        self.assertEqual(starts, [])
+        self.assertTrue(any('action=skip pending' in line for line in lines), lines)
+        self.assertNotIn('review_gate_no_runner', str(log))
+
+    def test_runner_api_error_keeps_waiting_and_logs_it(self):
+        for runners in (RuntimeError('boom'), None):
+            with self.subTest(runners=runners):
+                starts, lines, log, _fetches = self.review_gate_pass(runners)
+                self.assertEqual(starts, [])
+                self.assertTrue(any('action=skip pending' in line for line in lines), lines)
+                self.assertEqual(log.count('review_gate_runner_error_%s' % REPO), 1, log)
+                self.assertNotIn('review_gate_no_runner', str(log))
 
     def test_reverify_after_fix_briefs_only_prior_fail_items_and_diff_since_last_verified_head(self):
         now = 1_700_000_000
