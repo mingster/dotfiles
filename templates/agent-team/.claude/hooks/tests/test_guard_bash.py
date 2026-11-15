@@ -529,6 +529,34 @@ class ProjectConfigRules(GuardTest):
         self.approve(scope="promote", target=self.SHA, schema=True, apply=True, expires_at=float("nan"))
         self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
 
+    def go_live(self, until):
+        cfg = dict(self.CONFIG)
+        if until:
+            cfg["pre_go_live_secrets"] = {"script": "set-production-secret.sh", "until": until}
+        self.use_config(cfg)
+
+    def test_pre_go_live_secret_needs_no_approval_before_the_date(self):
+        self.go_live("2999-12-31")
+        self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY")
+
+    def test_pre_go_live_secret_denied_on_and_after_the_date(self):
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        for until in (today, "2000-01-01"):
+            with self.subTest(until=until):
+                self.go_live(until)
+                self.assertDenied(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY", "--schema --apply")
+
+    def test_pre_go_live_secret_denied_without_the_key_or_with_a_bad_date(self):
+        for until in (None, "soon", "2999-1-1"):
+            with self.subTest(until=until):
+                self.go_live(until)
+                self.assertDenied(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY", "--schema --apply")
+
+    def test_pre_go_live_date_exempts_no_other_apply_script(self):
+        self.go_live("2999-12-31")
+        self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
+        self.assertDenied(f"bin/run-production-data-step.sh {self.SHA} some-step", "--schema --apply")
+
     def test_commit_message_heredoc_is_data(self):
         self.assertAllowed("bash -n x.sh && git commit -F - <<'EOF'\nadd bin/owner-approve.sh\nEOF")
         self.assertAllowed("git commit -q -F- <<\"EOF\"\ngit push -f origin main\nEOF")

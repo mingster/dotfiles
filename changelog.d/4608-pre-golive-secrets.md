@@ -1,0 +1,1 @@
+The guard-bash hook lets `set-production-secret.sh` run without the owner's approval while today (UTC) is before `pre_go_live_secrets.until` in a project's `guard-config.json`. With no such key, a bad date, or on and after the date, the approval rule applies. Every other apply script keeps it.
