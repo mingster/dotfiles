@@ -706,6 +706,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   g fetch -q origin; g checkout -q -B main origin/main
   DOTFILES="$repo_root" bash "$here/agent-team.sh" project "$MF_REPO" --project-name acme >/dev/null 2>&1
   echo "# old" > "$MF_REPO/docs/agents/team.md"; echo "# old" >> "$MF_REPO/bin/changelog-compile.sh"
+  echo "# old" >> "$MF_REPO/bin/check-commit-trailers.sh"; echo "# old" >> "$MF_REPO/.githooks/commit-msg"
   g add -A && g commit -qm seed-base && g push -q origin main && g fetch -q origin
   base_sha=$(g rev-parse HEAD)
   g checkout -q -B feat-gen
@@ -757,7 +758,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   src MERGED "$(one "$GOOD")"
   # The sync result equals the origin/main render, so the verdict lane does not call it a hand edit.
   # The Verdict gate still applies.
-  : > "$MF_GH_LOG"; SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 200 2>&1); SHIP_RC=$?
+  : > "$MF_GH_LOG"; SHIP_OUT=$(bash "$fx/script/ship.sh" --repo example/repo --pr 200 2>&1); SHIP_RC=$?
   if [ "$SHIP_RC" -ne 0 ] && grep -Fq "missing Verdict comment" <<<"$SHIP_OUT" && ! grep -Fq "edits generated team copy" <<<"$SHIP_OUT"; then
     ok "render-equal generated copies pass the verdict lane and still need a Verdict"
   else

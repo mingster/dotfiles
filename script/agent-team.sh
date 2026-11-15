@@ -2188,7 +2188,11 @@ def seed_and_sync_project(proj_settings_mem=None):
         body = template_sync_body(rel)
         if body is None:
             continue
-        write_text(rel, body, executable=rel.endswith(".sh"))
+        write_text(rel, body, executable=is_exec_sync(rel))
+
+
+def is_exec_sync(rel):
+    return rel.endswith(".sh") or rel == ".githooks/commit-msg"
 
 
 def run_check():
@@ -2283,7 +2287,7 @@ def run_check():
         else:
             if read_text(full) != body:
                 drifts.append(f"template-managed file drifted: {rel}")
-            if rel.endswith(".sh") and not os.access(full, os.X_OK):
+            if is_exec_sync(rel) and not os.access(full, os.X_OK):
                 drifts.append(f"template-managed script not executable: {rel}")
 
     if not os.path.isfile(os.path.join(target, ".cursor/changelog-hook.json")):

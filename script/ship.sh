@@ -353,7 +353,7 @@ review_fail_blocks_merge() {
 is_generated_copy() { # <path>
   local skill_names=$2
   case "$1" in
-    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md)
       return 0 ;;
   esac
   [[ "$1" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"
@@ -361,7 +361,7 @@ is_generated_copy() { # <path>
 # Template path relative to templates/agent-team for a generated copy. Same files agent-team.sh syncs.
 template_rel_for() { # <path>
   case "$1" in
-    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md)
       printf '%s\n' "$1" ;;
     .agents/skills/*)
       printf '%s\n' "$1" ;;

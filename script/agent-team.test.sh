@@ -167,6 +167,8 @@ if [ -f "$empty_repo/AGENTS.md" ] \
   && [ -f "$empty_repo/.cursor/changelog-hook.json" ] \
   && [ -x "$empty_repo/bin/changelog-compile.sh" ] \
   && [ -x "$empty_repo/bin/changelog-compile.test.sh" ] \
+  && [ -x "$empty_repo/bin/check-commit-trailers.sh" ] \
+  && [ -x "$empty_repo/.githooks/commit-msg" ] \
   && [ -f "$empty_repo/changelog.d/README.md" ] \
   && grep -q "alpha-widget" "$empty_repo/docs/agents/team-facts.md" \
   && grep -q "alpha-widget" "$empty_repo/docs/agents/deploy-facts.md" \
