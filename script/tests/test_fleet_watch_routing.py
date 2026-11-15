@@ -441,6 +441,40 @@ class Sticky(unittest.TestCase):
             self.assertEqual(len(starts), 1)
             self.assertTrue(any('action=verifier' in line for line in lines), lines)
 
+    def test_verifier_requires_same_head_unedited_review_pass_and_skips_status_context_review_fail(self):
+        now = 1_700_000_000
+        with tempfile.TemporaryDirectory() as root:
+            config = {
+                'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
+                'babysit': {'repos': [REPO], 'startup': '/bin/true'},
+            }
+            stale_pr = self.pr(head=NEW, review=None)
+            stale_pr['comments'] = [{'body': 'Review: PASS head=%s' % HEAD}]
+            edited_pr = self.pr(head=NEW, review=None)
+            edited_pr['comments'] = [{'body': 'Review: PASS head=%s' % NEW, 'includesCreatedEdit': True}]
+            status_fail_pr = self.pr(head=NEW, review=None)
+            status_fail_pr['statusCheckRollup'].append({'context': 'review', 'state': 'FAILURE'})
+            for case_name, row, expected_skip in (
+                ('stale-head-review-pass', stale_pr, 'pending'),
+                ('edited-review-pass', edited_pr, 'pending'),
+                ('status-context-review-fail', status_fail_pr, 'needs-fix'),
+            ):
+                with self.subTest(case=case_name):
+                    starts = []
+                    _notices, lines, _log = fw.babysit_pass(
+                        config, {}, [],
+                        pr_fetch=lambda _repo, r=row: [r],
+                        runner_fetch=lambda _repo: {'total_count': 0, 'runners': []},
+                        start_worker=lambda command: starts.append(command) or 0,
+                        pick=lambda _role, avoid_family=None: {
+                            'selected': {'provider': 'cursor', 'model': 'grok-4.7-high', 'eligible': True},
+                        },
+                        owner_check=lambda _pr: None,
+                        now=now,
+                    )
+                    self.assertEqual(starts, [], case_name)
+                    self.assertTrue(any(('action=skip %s' % expected_skip) in line for line in lines), lines)
+
     def review_gate_pass(self, runners):
         """One babysit pass on a green PR with no Review receipt; returns (starts, lines, log, fetches)."""
         fetches = []

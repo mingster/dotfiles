@@ -856,6 +856,42 @@ class IssueScanPass(unittest.TestCase):
         _, _, starts3, _ = self.run_pass(state, prs_by_repo=prs)
         self.assertEqual(len(starts3), 1)
 
+    def test_review_fail_status_context_or_comment_reworks_without_spawning_head_checks(self):
+        head = 'e' * 40
+        with tempfile.TemporaryDirectory() as td:
+            wt = os.path.join(td, 'wt')
+            subprocess.run(['git', 'init', '-q', wt], check=True)
+            subprocess.run(['git', '-C', wt, 'config', 'user.email', 't@example.com'], check=True)
+            subprocess.run(['git', '-C', wt, 'config', 'user.name', 't'], check=True)
+            subprocess.run(['git', '-C', wt, 'commit', '--allow-empty', '-m', 'init', '-q'], check=True)
+            cfg = json.loads(json.dumps(self.CONFIG))
+            cfg['issue_scan']['repo_roots'] = {REPO: wt}
+            status_fail = pr(
+                17, head=head,
+                checks=[
+                    {'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'},
+                    {'context': 'review', 'state': 'FAILURE', 'description': 'review failed'},
+                ],
+            )
+            comment_fail = pr(
+                18, head=head,
+                checks=[{'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}],
+                comments=[{'body': 'Review: FAIL head=%s\nmissing test' % head}],
+            )
+            for row, expected_excerpt in (
+                (status_fail, 'statusCheckRollup FAILURE: review'),
+                (comment_fail, 'Review: FAIL head=%s' % head),
+            ):
+                with self.subTest(pr=row['number']):
+                    self.assertTrue(fw.review_failed_at_head(row))
+                    self.assertIn(expected_excerpt, fw.rework_failure_excerpt(row))
+                    _, log, starts, _ = self.run_pass(
+                        {}, prs_by_repo={REPO: [row]}, detached=True, config=cfg,
+                    )
+                    self.assertEqual(len(starts), 1, log)
+                    self.assertFalse(any('head-checks.sh' in ' '.join(cmd) for cmd in starts), starts)
+                    self.assertIn('rework', ' '.join(starts[0]).lower())
+
     def test_checks_fail_starts_rework(self):
         state = {}
         head = '1' * 40

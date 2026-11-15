@@ -3140,11 +3140,11 @@ def rework_failure_excerpt(pr_row):
         if comment and rs.newest_receipt_kind(comments, label, head) == 'FAIL':
             return (comment.get('body') or '')[:8000]
     for check in pr_row.get('statusCheckRollup') or []:
-        if not isinstance(check, dict) or check.get('conclusion') != 'FAILURE':
+        if not isinstance(check, dict) or _check_conclusion(check) not in ('FAILURE', 'ERROR'):
             continue
         name = check.get('context') or check.get('name') or 'check'
         parts = ['statusCheckRollup FAILURE: %s' % name]
-        summary = check.get('summary') or check.get('title')
+        summary = check.get('summary') or check.get('title') or check.get('description')
         if summary:
             parts.append(summary)
         return '\n'.join(parts)
@@ -3217,7 +3217,20 @@ def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
 
 
 def review_failed_at_head(pr):
-    return rs.review_failed_at_head(pr)
+    if rs.review_failed_at_head(pr):
+        return True
+    saw_failure = False
+    for check in pr.get('statusCheckRollup') or []:
+        if not isinstance(check, dict):
+            continue
+        if (check.get('context') or check.get('name') or '').lower() != 'review':
+            continue
+        conclusion = _check_conclusion(check)
+        if conclusion == 'SUCCESS':
+            return False
+        if conclusion in ('FAILURE', 'ERROR'):
+            saw_failure = True
+    return saw_failure
 
 
 def fetch_ready_issues(repo, run=subprocess.run):
@@ -3705,11 +3718,30 @@ def verdict_posted_for_head(pr):
 
 
 def review_passed_at_head(pr):
-    """True when the newest Review receipt for this head is PASS."""
+    """True when the newest unedited Review receipt for this head is PASS and Review has not failed."""
     head = pr.get('headRefOid') or ''
-    if not re.fullmatch(r'[0-9a-f]{40}', head):
+    if not re.fullmatch(r'[0-9a-f]{40}', head) or review_failed_at_head(pr):
         return False
-    return rs.newest_receipt_kind(pr.get('comments') or [], 'Review', head) == 'PASS'
+    valid_comments = [
+        c for c in (pr.get('comments') or [])
+        if isinstance(c, dict)
+        and not (c.get('includesCreatedEdit') or c.get('isMinimized') or c.get('edited') or c.get('minimized'))
+    ]
+    return rs.newest_receipt_kind(valid_comments, 'Review', head) == 'PASS'
+
+
+def _pr_has_review_lane(pr):
+    """True when this PR already carries a Review receipt comment or a review status check."""
+    for comment in pr.get('comments') or []:
+        if not isinstance(comment, dict):
+            continue
+        match = rs.HEAD_RECEIPT_RE.match(_receipt_first_line(comment.get('body')))
+        if match and match.group('label') == 'Review':
+            return True
+    for check in pr.get('statusCheckRollup') or []:
+        if isinstance(check, dict) and (check.get('context') or check.get('name') or '').lower() == 'review':
+            return True
+    return False
 
 
 def fetch_actions_runners(repo):
@@ -5017,6 +5049,8 @@ def babysit_pass(
         """Review: PASS at head, or the repo has no online review runner (one API call per repo per pass)."""
         if review_passed_at_head(pr_row):
             return True
+        if _pr_has_review_lane(pr_row):
+            return False
         if repo_name not in runner_state:
             try:
                 data = runner_fetch(repo_name)
@@ -5326,6 +5360,8 @@ def issue_scan_pass(
             needs_head_checks = (
                 bool(root)
                 and not checks_receipt_at_head(pr_row)
+                and not checks_pass_at_head(pr_row)
+                and not review_failed_at_head(pr_row)
                 and not pr_checks_all_success(pr_row)
             )
             if needs_head_checks and checks_infra_runs(pr_row) > head_checks_infra_cap(config):
