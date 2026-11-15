@@ -1,4 +1,4 @@
-import contextlib, importlib.util, io, json, os, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, json, os, shutil, sys, tempfile, time, unittest
 from datetime import timezone
 from unittest import mock
 
@@ -7,6 +7,12 @@ import asdf_pin  # noqa: E402
 
 asdf_pin.pin()  # before any test sets HOME
 os.environ.setdefault("USAGE_GATE_ORCA", "false")  # tests never read real Orca accounts
+_CONFIG_DIR = tempfile.mkdtemp()  # the committed grok pause is date bound; every other case runs without it
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usage-gate.config.json")) as _f:
+    _config = {key: value for key, value in json.load(_f).items() if key != "pauses"}
+with open(_CONFIG_DIR + "/usage-gate.config.json", "w") as _f:
+    json.dump(_config, _f)
+os.environ["USAGE_GATE_CONFIG"] = _CONFIG_DIR + "/usage-gate.config.json"
 
 spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname(__file__), "..", "usage-gate.py"))
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
@@ -18,6 +24,8 @@ ug.refresh_reading = lambda provider: None  # isolate provider refresh transport
 ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
 real_live_workers = ug.live_workers
 ug.live_workers = lambda provider: []  # tests never run orca; the running count cases patch this
+real_active_pause = ug.active_pause
+ug.active_pause = lambda provider, model, now: None  # the committed grok pause must not leak into other cases
 
 
 def rows(n, model="sonnet"):
@@ -2107,3 +2115,81 @@ class GrokGate(unittest.TestCase):
         self.assertIn("grok replaces cursor", text)
         self.assertIn("`--agent grok --model grok-4.7`", text)
         self.assertIn("grok_hosts", text)
+
+
+class Pauses(unittest.TestCase):
+    """A provider paused until a date is blocked for check and pick; an expired pause is ignored (#1115)."""
+    PRESETS = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        self.today = ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d")
+
+    def configure(self, until, provider="grok"):
+        path = os.path.join(self.tmp, "config.json")
+        config = ug.load_config()
+        config["pauses"] = [{"provider": provider, "until": until, "reason": "owner rule"}]
+        with open(path, "w") as f:
+            json.dump(config, f)
+        return mock.patch.multiple(ug, CONFIG=path, active_pause=real_active_pause)
+
+    def check(self, provider, model=None):
+        argv = ["check", "--provider", provider] + (["--model", model] if model else [])
+        with mock.patch.object(ug.time, "time", return_value=NOW), \
+                mock.patch.object(ug, "live_workers", return_value=[]), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            return ug.main(argv), json.loads(out.getvalue())
+
+    def pick(self, role, avoid=None):
+        reading = {"pct": 10, "resets_at": FUT, "observed_at": NOW}
+        with mock.patch.object(ug, "STATE", self.tmp), \
+                mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}), \
+                mock.patch.dict(ug.READERS, {"claude": lambda: reading, "cursor": lambda: reading}), \
+                mock.patch.object(ug, "live_workers", return_value=[]), \
+                mock.patch.object(ug, "antigravity_models", return_value=None), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            return ug.pick(role, avoid, None, None, None)
+
+    def test_a_paused_grok_is_blocked_with_the_reason_and_end_date(self):
+        with self.configure("2026-12-31"):
+            status, row = self.check("grok")
+        self.assertEqual((status, row["verdict"]), (3, "blocked"))
+        self.assertIn("paused until 2026-12-31", row["reason"])
+        self.assertIn("owner rule", row["reason"])
+
+    def test_the_grok_pause_also_blocks_cursor_grok_models(self):
+        with self.configure("2026-12-31"):
+            status, row = self.check("cursor", "grok-4.7-high")
+        self.assertEqual((status, row["verdict"]), (3, "blocked"))
+
+    def test_the_grok_pause_leaves_claude_alone(self):
+        with self.configure("2026-12-31"):
+            row = ug.run("claude", None, None, now=NOW, model="sonnet")
+        self.assertNotIn("paused", row.get("reason", ""))
+
+    def test_an_expired_pause_is_ignored(self):
+        with self.configure("2000-01-01"):
+            status, row = self.check("grok")
+        self.assertEqual((status, row["verdict"]), (0, "allowed"))
+
+    def test_the_pause_ends_on_its_until_date(self):
+        with self.configure(self.today):
+            self.assertEqual(self.check("grok")[0], 0)
+
+    def test_pick_never_returns_grok_while_paused(self):
+        for role, avoid in (("fullstack-dev", None), ("qa-sdet", "claude"), ("reviewer", None)):
+            with self.subTest(role=role), self.configure("2026-12-31"):
+                chosen = self.pick(role, avoid)["selected"]
+                self.assertIsNotNone(chosen)
+                self.assertNotEqual(ug.family(chosen), "grok")
+
+    def test_pick_returns_grok_again_after_the_pause(self):
+        with self.configure("2000-01-01"):
+            chosen = self.pick("fullstack-dev")["selected"]
+        self.assertEqual(chosen["provider"], "grok")
+
+    def test_the_committed_config_pauses_grok_until_2026_11_20(self):
+        pauses = ug.load_config()["pauses"]
+        self.assertEqual([(p["provider"], p["until"]) for p in pauses], [("grok", "2026-11-20")])
+        self.assertTrue(pauses[0]["reason"])

@@ -1,0 +1,1 @@
+- usage-gate: a `pauses` entry in `usage-gate.config.json` (provider, until date, reason) blocks that provider, and any Cursor model of its family, in `check` and `pick` until the date. fleet-watch and `worker-startup.sh` call those, so a paused provider is skipped and the next in the fallback order is used. Seeded: grok until 2026-11-20 (mingster/dotfiles#1115).

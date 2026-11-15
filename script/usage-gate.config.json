@@ -6,5 +6,8 @@
   "last_good_max_age_min": 120,
   "last_good_margin_points": 10,
   "notice_after_min": 30,
-  "notice_headroom_points": 20
+  "notice_headroom_points": 20,
+  "pauses": [
+    {"provider": "grok", "until": "2026-11-20", "reason": "owner rule: no Grok workers until 2026-11-20"}
+  ]
 }

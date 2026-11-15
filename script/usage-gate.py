@@ -19,6 +19,8 @@ gets a Grok verifier. Strong roles other than qa-sdet never select Grok or Curso
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state). Every other role ranks by headroom per
 day left until the provider's reset, so quota about to reset is spent first.
+A "pauses" entry in the config (provider, until YYYY-MM-DD, reason) makes check and pick
+treat that provider as blocked until the date; "grok" also covers Cursor grok models.
 family --agent A --model M prints the model family from the one map ship.sh and
 fleet-watch share. When qa-sdet is asked to avoid a family and every other family
 is out of quota, pick returns a different Claude model with same_family_fallback.
@@ -820,9 +822,29 @@ def antigravity_result(pools, ceiling, now, model=None, pool=None, reserve=0.0, 
     return result
 
 
+def active_pause(provider, model, now):
+    """The config pause covering this provider or its model family, or None. It lasts until local midnight starting `until`."""
+    today = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+    family_name = model_family(provider, model)
+    for pause in load_config().get("pauses", []):
+        if pause["provider"] in (provider, family_name) and today < pause["until"]:
+            return pause
+    return None
+
+
+def paused_result(provider, pause):
+    until = datetime.strptime(pause["until"], "%Y-%m-%d").timestamp()
+    reason = f"paused until {pause['until']}" + (f": {pause['reason']}" if pause.get("reason") else "")
+    return {"provider": provider, "verdict": "blocked", "reason": reason, "source": CONFIG,
+            "reading_age_min": None, "blocked_until": until, "blocked_until_local": local(until)}
+
+
 def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=False):
     live_clock = now is None
     now = time.time() if live_clock else now
+    pause = active_pause(provider, model, now)
+    if pause:
+        return paused_result(provider, pause)
     if ceiling is None:
         ceiling = ceiling_for(provider)
     if provider == "grok":

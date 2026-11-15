@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -116,6 +117,52 @@ class Notice(Base):
         self.assertEqual(fw.usage_gate_notices(state, NOW + 40 * 60), [])  # clock restarted at 40
         self.refuse(49)
         self.assertEqual(len(fw.usage_gate_notices(state, NOW + 71 * 60)), 1)
+
+
+GATE_WRAPPER = '''
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location('ug', sys.argv[1])
+ug = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ug)
+reading = lambda: {'pct': 10, 'resets_at': time.time() + 86400, 'observed_at': time.time()}
+ug.READERS.update({'claude': reading, 'cursor': reading, 'antigravity': lambda: None})
+ug.live_workers = lambda provider: []
+ug.antigravity_models = lambda: None
+ug.refresh_reading = lambda provider: None
+sys.exit(ug.main(sys.argv[2:]))
+'''
+
+
+class ProviderPause(Base):
+    """A paused provider is never the verifier fleet-watch starts; after the date it is allowed again (#1115)."""
+
+    def pick_verifier(self, until):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        gate = Path(__file__).parent.parent / 'usage-gate.py'
+        config = json.loads(gate.with_name('usage-gate.config.json').read_text())
+        config['pauses'] = [{'provider': 'grok', 'until': until, 'reason': 'owner rule'}]
+        (root / 'config.json').write_text(json.dumps(config))
+        (root / 'wrapper.py').write_text(GATE_WRAPPER)
+        cli = root / 'usage-gate'
+        cli.write_text('#!/bin/sh\nexec %s %s %s "$@"\n' % (sys.executable, root / 'wrapper.py', gate))
+        cli.chmod(0o755)
+        env = {'USAGE_GATE_CLI': str(cli), 'USAGE_GATE_CONFIG': str(root / 'config.json'),
+               'USAGE_GATE_STATE': str(root / 'state'),
+               'USAGE_GATE_PRESETS': str(gate.parent.parent / '.orca' / 'presets.json')}
+        with mock.patch.dict(os.environ, env):
+            data = fw.pick_role('qa-sdet', avoid_family='claude')
+            return fw.choose_pick(data, avoid=('claude', 'sonnet'))
+
+    def test_a_paused_grok_is_not_picked_as_the_verifier(self):
+        agent, model, _tag = self.pick_verifier('2999-01-01')
+        self.assertNotIn('grok', model)
+        self.assertNotEqual(agent, 'grok')
+
+    def test_an_expired_pause_lets_grok_verify_again(self):
+        agent, model, _tag = self.pick_verifier('2000-01-01')
+        self.assertEqual((agent, model), ('grok', 'grok-4.7'))
 
 
 if __name__ == '__main__':
