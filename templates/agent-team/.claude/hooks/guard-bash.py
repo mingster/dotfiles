@@ -1395,6 +1395,8 @@ def check_git_push(args, cdir, segment_cwd=None, git_args=None):
 
 def remote_read_only(segment):
     text = " ".join(re.split(r"[ \t]+", segment.strip(" \t")))
+    if re.search(r"(?:^|[ /=])(?:\.\.|\.ssh)(?:$|[ /])", text):
+        return False
     return any(p.fullmatch(text) for p in REMOTE_READ_ONLY)
 
 
@@ -1773,10 +1775,10 @@ def promote_host_step(target, remote, opts, cmd_ok):
     )
     shas = [m.group(1) for m in re.finditer(r"(?<![0-9a-fA-F])([0-9a-f]{40})(?![0-9a-fA-F])", remote)]
     cwd = None
-    saw_inspect = saw_regen = saw_regen_action = pending_fetch = proved = False
+    saw_inspect = saw_regen = saw_regen_action = pending_fetch = proved = need_generate = False
 
     for seg in segs:
-        if re.search(r"(?:^|[ /=])\.\.(?:$|[ /])", seg):  # nothing climbs out of the app directory
+        if re.search(r"(?:^|[ /=])(?:\.\.|\.ssh)(?:$|[ /])", seg):  # nothing climbs out of the app directory
             return None
         if pending_fetch:
             m = re.fullmatch(rf"git -C {app} checkout --quiet --detach (?P<sha>[0-9a-f]{{7,40}})", seg)
@@ -1850,16 +1852,19 @@ def promote_host_step(target, remote, opts, cmd_ok):
             ):
                 if not proved:
                     return None
-                saw_regen = True
+                saw_regen = need_generate = True
                 continue
 
             if cwd == f"{app_dir}/web" and schema_hash_assign.fullmatch(seg):
                 saw_regen = True
                 continue
 
-            if (
+            is_generate = (
                 (cwd == f"{app_dir}/web" and re.fullmatch(path_prefix + rf"(?:bunx prisma generate|bun run generate)(?: --schema(?:=| )(?:{app}/web/)?prisma/schema\.prisma)?", seg))
                 or re.fullmatch(path_prefix + rf"bunx prisma generate --schema(?:=| ){app}/web/prisma/schema\.prisma", seg)
+            )
+            if (
+                is_generate
                 or re.fullmatch(path_prefix + rf"node {app}/web/scripts/link-prisma-client-default\.js", seg)
                 or (cwd == f"{app_dir}/web" and re.fullmatch(path_prefix + r"node scripts/link-prisma-client-default\.js", seg))
                 or re.fullmatch(rf"""printf '%s' "\$\{{?_schema_hash\}}?" > {app}/web/prisma/generated/client/source-schema\.sha256""", seg)
@@ -1870,13 +1875,15 @@ def promote_host_step(target, remote, opts, cmd_ok):
             ):
                 if not proved:
                     return None
+                if is_generate:
+                    need_generate = False
                 saw_regen = True
                 saw_regen_action = True
                 continue
 
         return None
 
-    if pending_fetch or (saw_regen and not saw_regen_action) or (not saw_inspect and not saw_regen_action):
+    if pending_fetch or need_generate or (saw_regen and not saw_regen_action) or (not saw_inspect and not saw_regen_action):
         return None
     if saw_regen_action and not shas:  # regeneration must name the release it is for
         return None

@@ -644,9 +644,13 @@ class PromoteHostSteps(GuardTest):
     APP = "/srv/sample"
     CONFIG = {
         "approval_namespace": "sample",
-        "production_hosts": ["prod.example"],
+        "production_hosts": ["prod.example", "edge.example"],
         "remote_read_only": [],  # ls and cat are not free on the host, so only the promote steps allow them
-        "promote_host_steps": {"app_dir": APP, "read_hosts": ["root@prod.example"], "write_hosts": ["root@prod.example"]},
+        "promote_host_steps": {
+            "app_dir": APP,
+            "read_hosts": ["root@prod.example", "root@edge.example"],
+            "write_hosts": ["root@prod.example"],
+        },
     }
     SSH = "ssh root@prod.example"
     OPTS = "ssh -o BatchMode=yes -o ConnectTimeout=15 root@prod.example"
@@ -674,7 +678,7 @@ class PromoteHostSteps(GuardTest):
 
     def test_read_only_inspection_without_a_sha_passes_under_a_promote_approval(self):
         self.approve(scope="promote", target=self.SHA)
-        for prefix in (self.SSH, self.OPTS):
+        for prefix in (self.SSH, self.OPTS, "ssh root@edge.example"):
             for remote in (f"ls -la {self.APP}", f"cd {self.APP}/web && ls prisma/generated/client",
                            f"cd {self.APP}/web && cat prisma/generated/client/source-schema.sha256"):
                 with self.subTest(prefix=prefix, remote=remote):
@@ -713,9 +717,21 @@ class PromoteHostSteps(GuardTest):
 
     def test_ls_cannot_climb_out_of_the_app_directory(self):
         self.approve(scope="promote", target=self.SHA)
-        self.assertDenied(self.ssh(f"ls -la {self.APP}/../../root/.ssh"))
-        self.assertDenied(self.ssh(f"ls -la {self.APP}/.."))
-        self.assertDenied(self.ssh(f"cd {self.APP}/web && ls prisma/../.."))
+        for cfg in (self.CONFIG, {k: v for k, v in self.CONFIG.items() if k != "remote_read_only"}):
+            self.use_config(cfg)
+            for remote in (f"ls -la {self.APP}/../../root/.ssh", f"ls -la {self.APP}/..", "ls -la /root/.ssh",
+                           f"cd {self.APP}/web && ls prisma/../.."):
+                with self.subTest(cfg=cfg, remote=remote):
+                    self.assertDenied(self.ssh(remote))
+
+    def test_client_removal_without_generate_is_denied(self):
+        self.approve(scope="promote", target=self.SHA)
+        for remote in (
+            f"{self.head()} && cd {self.APP}/web && rm -rf prisma/generated/client && node scripts/link-prisma-client-default.js",
+            f"{self.head()} && cd {self.APP}/web && bunx prisma generate && rm -rf prisma/generated/client",
+        ):
+            with self.subTest(remote=remote):
+                self.assertDenied(self.ssh(remote))
 
     def test_other_writes_stay_denied(self):
         self.approve(scope="promote", target=self.SHA)
@@ -724,6 +740,7 @@ class PromoteHostSteps(GuardTest):
                        f"{self.head()} && cd {self.APP}/web && bunx prisma db push --accept-data-loss"):
             with self.subTest(remote=remote):
                 self.assertDenied(self.ssh(remote))
+        self.assertDenied(self.ssh(self.regen(self.head()), "ssh root@edge.example"))
 
     def test_without_config_the_steps_are_off(self):
         self.use_config({**self.CONFIG, "promote_host_steps": None})
