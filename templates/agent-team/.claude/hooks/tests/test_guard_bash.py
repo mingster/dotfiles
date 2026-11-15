@@ -537,20 +537,30 @@ class ProjectConfigRules(GuardTest):
 
     def test_pre_go_live_secret_needs_no_approval_before_the_date(self):
         self.go_live("2999-12-31")
-        self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY")
+        self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --host prod-1 STORE_DOCUMENTS_KEY")
+        self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --host prod-1 --copy-to-standby STORE_DOCUMENTS_KEY")
+        self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --copy-to-standby OTHER_KEY")
+
+    def test_pre_go_live_window_is_only_store_documents_on_prod_1(self):
+        self.go_live("2999-12-31")
+        self.assertDenied(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY", "--schema --apply")
+        self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 OTHER_KEY", "--schema --apply")
+        self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-2 STORE_DOCUMENTS_KEY", "--schema --apply")
+        self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 STORE_DOCUMENTS_KEY OTHER_KEY",
+                          "--schema --apply")
 
     def test_pre_go_live_secret_denied_on_and_after_the_date(self):
         today = time.strftime("%Y-%m-%d", time.gmtime())
         for until in (today, "2000-01-01"):
             with self.subTest(until=until):
                 self.go_live(until)
-                self.assertDenied(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY", "--schema --apply")
+                self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 STORE_DOCUMENTS_KEY", "--schema --apply")
 
     def test_pre_go_live_secret_denied_without_the_key_or_with_a_bad_date(self):
         for until in (None, "soon", "2999-1-1"):
             with self.subTest(until=until):
                 self.go_live(until)
-                self.assertDenied(f"bin/set-production-secret.sh {self.SHA} STORE_DOCUMENTS_KEY", "--schema --apply")
+                self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 STORE_DOCUMENTS_KEY", "--schema --apply")
 
     def test_pre_go_live_date_exempts_no_other_apply_script(self):
         self.go_live("2999-12-31")

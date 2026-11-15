@@ -72,6 +72,16 @@ APPLY_SCRIPTS: set[str] = {"apply-production-sql.sh", "set-production-secret.sh"
 # `pre_go_live_secrets.until`. The script itself refuses to overwrite an existing key.
 PRE_GO_LIVE_SCRIPT = "set-production-secret.sh"
 PRE_GO_LIVE_UNTIL: str | None = None
+
+
+def pre_go_live_command(script_args):
+    """Only `<sha> --host prod-1 STORE_DOCUMENTS_<NAME>` or a `--copy-to-standby` run skips the approval."""
+    rest = script_args[1:]
+    if "--copy-to-standby" in rest:
+        return True
+    if rest[:2] != ["--host", "prod-1"]:
+        return False
+    return len(rest) == 3 and re.fullmatch(r"STORE_DOCUMENTS_[A-Z0-9_]+", rest[2]) is not None
 SCHEMA_OVERRIDE: str = "SCHEMA_APPROVED"
 APPROVAL_NAMESPACE: str = ""
 APPROVAL_FILE_OVERRIDE: str = ""
@@ -2091,7 +2101,8 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
         script_args = args[idx + 1:] if idx is not None else []
 
     pre_go_live = (script == PRE_GO_LIVE_SCRIPT and PRE_GO_LIVE_UNTIL is not None
-                   and time.strftime("%Y-%m-%d", time.gmtime()) < PRE_GO_LIVE_UNTIL)
+                   and time.strftime("%Y-%m-%d", time.gmtime()) < PRE_GO_LIVE_UNTIL
+                   and pre_go_live_command(script_args))
     if script in APPLY_SCRIPTS and not pre_go_live:
         sha = script_args[0] if script_args else "<sha>"
         a, why = load_approval()
