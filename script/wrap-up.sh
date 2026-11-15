@@ -1306,8 +1306,8 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
           echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
-        elif jq -e '.error.code == "remote_runtime_unavailable" or (.error.message | startswith("Unknown environment") or startswith("Remote Dispatch"))' "$tmp/show" >/dev/null 2>&1; then
-          # Ran on a host this one no longer pairs with, or one that is offline now (issue 855): its worktree and browser live
+        elif jq -e '.error.code == "remote_runtime_unavailable" or .error.code == "peer_changed" or (.error.message | startswith("Unknown environment") or startswith("Remote Dispatch"))' "$tmp/show" >/dev/null 2>&1; then
+          # Ran on a host this one no longer pairs with (peer_changed), or one that is offline now (issue 855): its worktree and browser live
           # there, that host's wrap-up owns them. A path its row names may still be here, so that one stays.
           [ -z "$row_path" ] || echo "$row_path" >> "$tmp/active"
           echo "Warning: worker-show failed for dispatch $dispatch on an unpaired host; skipped." >&2
@@ -2116,6 +2116,19 @@ sweep_browsers() {
 sweep_browsers
 # Grayed-out workspaces (issue 953): every non-main Orca worktree with no terminal attached goes, with its branch kept.
 # Uncommitted tracked changes keep it, named in the report. Runs on a fleet host too, ahead of its early exit below.
+idle_worktree_guard() { # <path>: prints the Kept line and returns 0 when the worktree must stay
+  local wt=$1 branch head
+  branch=$(git -C "$wt" symbolic-ref --short -q HEAD 2>/dev/null) || branch=''
+  head=$(git -C "$wt" rev-parse -q --verify HEAD 2>/dev/null) || { printf 'Kept idle worktree %s (unreadable)\n' "$wt"; return 0; }
+  if [ "$pr_ok" -eq 0 ]; then printf 'Kept idle worktree %s (PR lookup unavailable)\n' "$wt"; return 0; fi
+  if { [ -n "$branch" ] && grep -Fxq -- "$branch" "$tmp/open"; } || grep -Fxq -- "$head" "$tmp/open-heads"; then
+    printf 'Kept idle worktree %s (open PR)\n' "$wt"; return 0
+  fi
+  if [ -n "$(git -C "$wt" rev-list -n 1 HEAD --not --remotes 2>/dev/null)" ]; then
+    printf 'Kept idle worktree %s (commits not on the remote)\n' "$wt"; return 0
+  fi
+  return 1
+}
 guarded_idle_worktree_rm() { # <orca id> <path>: after sweep_idle_worktrees' terminal and dirty checks; never --delete-branch
   if orca_call worktree rm --worktree "id:$1" --force >/dev/null 2>&1; then
     printf 'Removed idle worktree %s\n' "$2"
@@ -2143,6 +2156,8 @@ sweep_idle_worktrees() {
       if [ "$rc" -ne 0 ] || [ -n "$status_out" ]; then
         printf 'Kept idle worktree %s (uncommitted changes)\n' "$path"; dirty=$((dirty+1)); continue
       fi
+      # #1083: an open PR and commits no remote holds (the last copy) keep it, however idle.
+      if idle_worktree_guard "$path"; then continue; fi
     fi
     if [ "$apply" -eq 0 ]; then printf 'Remove idle worktree %s\n' "$path"; gone=$((gone+1)); continue; fi
     if guarded_idle_worktree_rm "$id" "$path"; then gone=$((gone+1)); fi

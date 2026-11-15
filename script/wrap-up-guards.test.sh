@@ -894,6 +894,9 @@ for n in gone live dirty; do
   git -C "$idle/repo" worktree add -qb "i-$n" "$idle/i-$n"
   echo "$n" > "$idle/i-$n/$n.txt"; git -C "$idle/i-$n" add "$n.txt"; git -C "$idle/i-$n" commit -qm "$n"
 done
+# A removable idle worktree has its commits on a remote (#1083). It is locked so the earlier worktree pass keeps it and the idle sweep decides.
+git -C "$idle/i-gone" push -q origin i-gone:i-gone-copy
+git -C "$idle/repo" worktree lock "$idle/i-gone"
 echo changed >> "$idle/i-dirty/dirty.txt"
 irepo=$(cd "$idle/repo" && pwd -P); igone=$(cd "$idle/i-gone" && pwd -P); ilive=$(cd "$idle/i-live" && pwd -P); idirty=$(cd "$idle/i-dirty" && pwd -P)
 cat > "$tmp/bin/orca-idle953" <<'FAKE'
@@ -951,3 +954,44 @@ grep -Fq 'cannot read the terminal list' "$tmp/output" "$tmp/stderr" || idle_fai
 FAKE_TRUNC_HOST=local bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
 [ ! -s "$idle/rm.log" ] || idle_fail 'a truncated terminal list still removed a worktree'
 echo 'ok a truncated terminal list removes nothing on that host and the next host still runs'
+# #1083: an open PR branch and a branch with commits not on its remote (the last copy) are never proposed.
+for n in pr last; do
+  git -C "$idle/repo" worktree add -qb "i-$n" "$idle/i-$n"
+  echo "$n" > "$idle/i-$n/$n.txt"; git -C "$idle/i-$n" add "$n.txt"; git -C "$idle/i-$n" commit -qm "$n"
+done
+git -C "$idle/i-pr" push -q origin i-pr:i-pr-copy
+git -C "$idle/repo" worktree lock "$idle/i-pr"
+git -C "$idle/repo" worktree lock "$idle/i-last"
+ipr=$(cd "$idle/i-pr" && pwd -P); ilast=$(cd "$idle/i-last" && pwd -P)
+printf '{"ok":true,"result":{"worktrees":[{"id":"w-main","path":"%s","isMainWorktree":true},{"id":"w-gone","path":"%s"},{"id":"w-pr","path":"%s"},{"id":"w-last","path":"%s"}]}}\n' "$irepo" "$igone" "$ipr" "$ilast" > "$idle/wts.json"
+: > "$idle/rm.log"
+export FAKE_PRS='[{"headRefName":"i-pr","headRefOid":"x","state":"OPEN"}]'
+bash "$here/wrap-up.sh" --dry-run --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+has "Remove idle worktree $igone" || idle_fail 'the pushed worktree with no PR was not proposed'
+! has "Remove idle worktree $ipr" || idle_fail 'a worktree whose branch has an open PR was proposed'
+! has "Remove idle worktree $ilast" || idle_fail 'a worktree holding unpushed commits was proposed'
+has "Kept idle worktree $ipr (open PR)" || idle_fail 'the open PR worktree is not named in the report'
+has "Kept idle worktree $ilast (commits not on the remote)" || idle_fail 'the unpushed worktree is not named in the report'
+bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || true
+[ "$(cat "$idle/rm.log")" = 'worktree rm --worktree id:w-gone --force' ] || idle_fail "only the pushed worktree may go: $(cat "$idle/rm.log")"
+unset FAKE_PRS
+echo 'ok an open PR branch and unpushed commits keep an idle worktree'
+# #1083: a peer_changed worker-show error is reported and skipped; the run and the other worktrees go on.
+cat > "$tmp/bin/orca-peer" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  'orchestration worker-show --dispatch d-peer '*) echo '{"ok":false,"error":{"code":"peer_changed","message":"The paired peer changed."}}'; exit 5 ;;
+  'orchestration worker-list '*) echo '{"ok":true,"result":{"workers":[{"dispatchId":"d-peer","state":"ready","liveness":"live","terminal":"t-peer"}],"page":{"hasMore":false}}}' ;;
+  *) exec "$PEER_BASE" "$@" ;;
+esac
+FAKE
+chmod +x "$tmp/bin/orca-peer"
+printf '{"ok":true,"result":{"worktrees":[{"id":"w-main","path":"%s","isMainWorktree":true},{"id":"w-gone","path":"%s"}]}}\n' "$irepo" "$igone" > "$idle/wts.json"
+: > "$idle/rm.log"
+rc=0
+PEER_BASE="$tmp/bin/orca-idle953" ORCA_CLI_COMMAND="$tmp/bin/orca-peer" bash "$here/wrap-up.sh" --apply --worktrees-only --repo "$irepo" > "$tmp/output" 2> "$tmp/stderr" || rc=$?
+[ "$rc" = 0 ] || idle_fail "a peer_changed error failed the run (rc=$rc)"
+grep -Fq 'worker-show failed for dispatch d-peer on an unpaired host; skipped.' "$tmp/stderr" || idle_fail 'the peer_changed error was not reported as skipped'
+! grep -Fq 'all worktrees kept' "$tmp/stderr" || idle_fail 'a peer_changed error kept every worktree'
+grep -Fxq 'worktree rm --worktree id:w-gone --force' "$idle/rm.log" || idle_fail 'a peer_changed error stopped the idle sweep'
+echo 'ok a peer_changed worker-show error is reported and skipped, not a failed run'
