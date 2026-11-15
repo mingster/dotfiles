@@ -2357,8 +2357,21 @@ def check_role_file_gate(base, args):
             deny_role_files(files, f"Commit {sha[:9]}")
 
 
-DOTFILES_REPO = os.environ.get("DOTFILES_REPO") or "OWNER/dotfiles"
-DOTFILES_ISSUE = re.compile(r"(?:[\w.-]+/)?dotfiles#(\d{3,6})\b")
+DOTFILES_ISSUE = re.compile(r"(?:([\w.-]+/)?dotfiles)#(\d{3,6})\b")
+FIRST_REFS = re.compile(r"\bRefs\s+((?:[\w.-]+/)?[\w.-]*)#\d+")
+REMOTE_REPO = re.compile(r"[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
+
+
+def dotfiles_repo(spec):
+    """`owner/dotfiles`: DOTFILES_REPO, else the owner on a `<owner>/dotfiles#N` ref, else the dotfiles checkout's origin."""
+    if os.environ.get("DOTFILES_REPO"):
+        return os.environ["DOTFILES_REPO"]
+    for item in DOTFILES_ISSUE.finditer(spec):
+        if item.group(1):
+            return item.group(1) + "dotfiles"
+    url = (gate_run(["git", "-C", os.path.expanduser("~/dotfiles"), "remote", "get-url", "origin"], None) or "").strip()
+    match = REMOTE_REPO.search(url)
+    return match.group(1) if match else None
 BRIEF_LINT_REL = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "script", "brief-lint.sh")
 )
@@ -2538,12 +2551,22 @@ def named_issues(spec, args):
     if match:
         add(match.group(1), [], "")
     occupied = [item.span() for item in DOTFILES_ISSUE.finditer(spec)]
+    first = FIRST_REFS.search(spec)
+    # A bare #N follows the repo of the brief's first Refs line when that line names the dotfiles repo.
+    bare_in_dotfiles = bool(first and DOTFILES_ISSUE.fullmatch(first.group(0)[len("Refs"):].strip()))
+    repo = dotfiles_repo(spec) if occupied else None
     for item in DOTFILES_ISSUE.finditer(spec):
-        add(item.group(1), ["-R", DOTFILES_REPO], DOTFILES_REPO)
+        if repo is None:
+            deny("A brief names a dotfiles issue, but the dotfiles repo is unknown. Set DOTFILES_REPO, write "
+                 "`<owner>/dotfiles#<n>`, or make ~/dotfiles a checkout with an origin remote.")
+        add(item.group(2), ["-R", repo], repo)
     for item in re.finditer(r"(?:issues/|#)(\d{3,6})\b", spec):
         if any(start <= item.start() < end for start, end in occupied):
             continue
-        add(item.group(1), [], "")
+        if bare_in_dotfiles and repo:
+            add(item.group(1), ["-R", repo], repo)
+        else:
+            add(item.group(1), [], "")
     return found
 
 

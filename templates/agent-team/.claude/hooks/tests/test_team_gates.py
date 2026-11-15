@@ -638,6 +638,45 @@ class GrillGateRepo(Gate):
         self.assertNotIn("-R", self.gh_calls()[0])
 
 
+class GrillGateCrossRepoBrief(Gate):
+    """A bare #N in a brief whose first Refs line names the dotfiles repo is that repo's issue."""
+    def setUp(self):
+        super().setUp()
+        self.reserve()
+        previous = os.environ.pop("DOTFILES_REPO", None)
+        if previous is not None:
+            self.addCleanup(os.environ.__setitem__, "DOTFILES_REPO", previous)
+
+    def spec(self, text):
+        return f'orca orchestration worker-start --agent claude --worktree new-child --spec "{text} You are fullstack-dev.{BRIEF_SECTIONS}"'
+
+    def test_bare_number_follows_the_refs_repo(self):
+        self.grill_comment(who="owner")
+        self.assertAllowed(self.spec("Refs acme/dotfiles#1107. Also see #1093."))
+        calls = self.gh_calls()
+        self.assertEqual(len(calls), 2, calls)
+        self.assertTrue(all("-R acme/dotfiles" in c for c in calls), calls)
+
+    def test_first_bare_refs_line_keeps_the_current_repo(self):
+        self.grill_comment(who="owner")
+        self.assertAllowed(self.spec("Refs #7114.\nQuoted: Refs acme/dotfiles#1107.\nAlso see #7115."))
+        calls = self.gh_calls()
+        self.assertTrue(any("7114" in c and "-R" not in c for c in calls), calls)
+        self.assertTrue(any("7115" in c and "-R" not in c for c in calls), calls)
+
+    def test_missing_env_reads_repo_from_refs_line(self):
+        self.assertDenied(self.spec("Refs acme/dotfiles#1107."), "acme/dotfiles#1107")
+        self.assertIn("-R acme/dotfiles", self.gh_calls()[0])
+
+    def test_missing_env_reads_repo_from_dotfiles_checkout(self):
+        checkout = os.path.join(self.home, "dotfiles")
+        sh(self.home, "git", "init", "-q", checkout)
+        sh(checkout, "git", "remote", "add", "origin", "https://github.com/acme/dotfiles.git")
+        self.assertDenied(self.spec("Refs dotfiles#1107."), "acme/dotfiles#1107")
+        self.assertIn("-R acme/dotfiles", self.gh_calls()[0])
+        self.assertNotIn("OWNER/dotfiles", self.gh_calls()[0])
+
+
 class CursorWorkerScript(Gate):
     """start-cursor-worker.sh takes the same grill check; its --spec is a brief file."""
     SCRIPT = "~/dotfiles/script/start-cursor-worker.sh --run r1 --title t --model composer-2.5 --from term_abc --name n --repo id:x"
