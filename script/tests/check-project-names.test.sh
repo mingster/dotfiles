@@ -11,7 +11,9 @@ trap 'rm -rf "$tmp"' EXIT
 pass=0 fail=0
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1: $2"; fail=$((fail + 1)); }
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# shellcheck disable=SC1091
+. "$here/tests/lib/git-identity.sh"
+use_test_git_identity "$tmp"
 printf 'zorkmid\n\nplugh\n' >"$tmp/names.pattern"
 export NO_PROJECT_NAMES_FILE="$tmp/names.pattern"
 chk="$here/check-project-names.sh"
