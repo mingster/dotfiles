@@ -692,6 +692,10 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   # ship.sh renders templates from origin/main, so the fixture syncs from origin/main too: a branch that edits a template must not fail here.
   repo_root="$MF_DIR/main-tree"; mkdir -p "$repo_root"
   git -C "$here/.." archive origin/main | tar -x -C "$repo_root"
+  # agent-team.sh syncs every file it lists, so a template file this branch adds (and origin/main lacks) is overlaid as is.
+  while IFS= read -r added; do
+    mkdir -p "$repo_root/$(dirname "$added")"; cp "$here/../$added" "$repo_root/$added"
+  done < <(git -C "$here/.." diff --diff-filter=A --name-only origin/main HEAD -- templates/agent-team)
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
   cp "$here/ship.sh" "$here/check-project-names.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
