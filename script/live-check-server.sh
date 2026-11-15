@@ -51,7 +51,8 @@ Options:
   --wait-seconds <sec>     Lock wait limit in seconds before failing (default: 1800 = 30m)
   --poll-seconds <sec>     Lock poll interval in seconds (default: 2)
   --ready-seconds <sec>    Server readiness timeout in seconds (default: 120)
-  --owner-pid <pid>        Lock holder PID for acquire (default: caller PPID)
+  --lease-seconds <sec>    Lease length for acquire before the lock counts as stale (default: 3600)
+  --token <token>          Owner token printed by acquire; release must present it (or LIVE_CHECK_TOKEN)
 EOF
 }
 
@@ -72,7 +73,8 @@ state_dir="${LIVE_CHECK_STATE_DIR:-}"
 wait_seconds="${LIVE_CHECK_WAIT_SECONDS:-}"
 poll_seconds="${LIVE_CHECK_POLL_SECONDS:-}"
 ready_seconds="${LIVE_CHECK_READY_SECONDS:-}"
-owner_pid=""
+token="${LIVE_CHECK_TOKEN:-}"
+lease_seconds="${LIVE_CHECK_LEASE_SECONDS:-}"
 action=""
 cmd_args=()
 
@@ -90,7 +92,8 @@ while [ $# -gt 0 ]; do
     --wait-seconds) wait_seconds="${2:-}"; shift 2 ;;
     --poll-seconds) poll_seconds="${2:-}"; shift 2 ;;
     --ready-seconds) ready_seconds="${2:-}"; shift 2 ;;
-    --owner-pid) owner_pid="${2:-}"; shift 2 ;;
+    --lease-seconds) lease_seconds="${2:-}"; shift 2 ;;
+    --token) token="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     acquire|release|status|stop)
       action="$1"
@@ -170,10 +173,11 @@ for k in ("host", "dir", "sub", "port", "url", "start_cmd", "state_dir", "wait_s
   [ -n "$port" ] || port="${cfg_port:-3100}"
   [ -n "$url" ] || url="${cfg_url:-http://127.0.0.1:${port}}"
   [ -n "$start_cmd" ] || start_cmd="${cfg_start_cmd:-}"
-  [ -n "$state_dir" ] || state_dir="${cfg_state_dir:-${TMPDIR:-/tmp}/live-check-server-${port}}"
+  [ -n "$state_dir" ] || state_dir="${cfg_state_dir:-}"
   [ -n "$wait_seconds" ] || wait_seconds="${cfg_wait_seconds:-1800}"
   [ -n "$poll_seconds" ] || poll_seconds="${cfg_poll_seconds:-2}"
   [ -n "$ready_seconds" ] || ready_seconds="${cfg_ready_seconds:-120}"
+  [ -n "$lease_seconds" ] || lease_seconds=3600
 }
 
 load_config
@@ -200,7 +204,8 @@ if is_remote_host; then
   [ -z "$wait_seconds" ] || remote_cmd+=("--wait-seconds" "$wait_seconds")
   [ -z "$poll_seconds" ] || remote_cmd+=("--poll-seconds" "$poll_seconds")
   [ -z "$ready_seconds" ] || remote_cmd+=("--ready-seconds" "$ready_seconds")
-  [ -z "$owner_pid" ] || remote_cmd+=("--owner-pid" "$owner_pid")
+  [ -z "$lease_seconds" ] || remote_cmd+=("--lease-seconds" "$lease_seconds")
+  [ -z "$token" ] || remote_cmd+=("--token" "$token")
   if [ "$action" = "run" ]; then
     remote_cmd+=("--" "${cmd_args[@]}")
   else
@@ -217,38 +222,66 @@ if is_remote_host; then
   exec ssh "$host" "$quoted"
 fi
 
+# Resolved here so a remote host uses its own TMPDIR, not the caller's.
+[ -n "$state_dir" ] || state_dir="${TMPDIR:-/tmp}/live-check-server-${port}"
 mkdir -p "$state_dir"
 lock_dir="$state_dir/lock"
 pid_file="$state_dir/server.pid"
 sha_file="$state_dir/server.sha"
 log_file="$state_dir/server.log"
-lock_held=0
+lock_token=""
+
+lock_is_stale() {
+  local expires holder
+  expires=$(cat "$lock_dir/expires" 2>/dev/null || true)
+  if [ -n "$expires" ]; then
+    [ "$(date +%s)" -ge "$expires" ]
+    return
+  fi
+  holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
+  [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null
+}
+
+# Removes the lock only when $1 matches the token stored in it.
+remove_lock_if_owner() {
+  local stored
+  stored=$(cat "$lock_dir/token" 2>/dev/null || true)
+  [ -n "$1" ] && [ "$stored" = "$1" ] || return 1
+  rm -rf "$lock_dir" 2>/dev/null || true
+}
 
 release_lock() {
-  if [ "$lock_held" -eq 1 ]; then
-    rm -rf "$lock_dir" 2>/dev/null || true
-    lock_held=0
+  if [ -n "$lock_token" ]; then
+    remove_lock_if_owner "$lock_token" || true
+    lock_token=""
   fi
 }
 
+# mode "run": held while this process lives (pid). mode "lease": held until
+# released with the token or until the lease expires, whatever the caller's shell does.
 acquire_lock() {
-  local record_pid="${1:-$$}"
-  local waited=0 holder=""
+  local mode="$1" waited=0 holder="" new_token
   while ! mkdir "$lock_dir" 2>/dev/null; do
-    holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+    if lock_is_stale; then
       rm -rf "$lock_dir" 2>/dev/null || true
       continue
     fi
+    holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
     if [ "$waited" -ge "$wait_seconds" ]; then
-      echo "live-check-server: blocked: lock held by pid ${holder:-unknown} after ${wait_seconds}s (30m wait limit)" >&2
+      echo "live-check-server: blocked: lock held${holder:+ by pid $holder} after ${wait_seconds}s (30m wait limit)" >&2
       exit 75
     fi
     sleep "$poll_seconds"
     waited=$((waited + poll_seconds))
   done
-  printf '%s\n' "$record_pid" > "$lock_dir/pid"
-  lock_held=1
+  new_token="$$-$(date +%s)-$RANDOM$RANDOM"
+  printf '%s\n' "$new_token" > "$lock_dir/token"
+  if [ "$mode" = "lease" ]; then
+    printf '%s\n' "$(($(date +%s) + lease_seconds))" > "$lock_dir/expires"
+  else
+    printf '%s\n' "$$" > "$lock_dir/pid"
+  fi
+  lock_token="$new_token"
 }
 
 probe_url() {
@@ -361,24 +394,31 @@ case "$action" in
     exit 0
     ;;
   release)
-    rm -rf "$lock_dir" 2>/dev/null || true
+    if [ ! -d "$lock_dir" ]; then
+      exit 0
+    fi
+    if ! remove_lock_if_owner "$token"; then
+      echo "live-check-server: release refused: lock is owned by another holder (pass the --token printed by acquire)" >&2
+      exit 1
+    fi
     exit 0
     ;;
   acquire)
-    acquire_lock "${owner_pid:-$PPID}"
+    acquire_lock lease
     if ! ensure_server; then
       release_lock
       exit 1
     fi
     srv_pid=$(cat "$pid_file")
     srv_sha=$(cat "$sha_file")
-    printf 'LIVE_CHECK_URL=%s\nLIVE_CHECK_PORT=%s\nLIVE_CHECK_SHA=%s\nLIVE_CHECK_PID=%s\n' \
-      "$url" "$port" "$srv_sha" "$srv_pid"
+    printf 'LIVE_CHECK_URL=%s\nLIVE_CHECK_PORT=%s\nLIVE_CHECK_SHA=%s\nLIVE_CHECK_PID=%s\nLIVE_CHECK_TOKEN=%s\n' \
+      "$url" "$port" "$srv_sha" "$srv_pid" "$lock_token"
+    lock_token=""
     exit 0
     ;;
   run)
     trap 'release_lock' EXIT INT TERM
-    acquire_lock "$$"
+    acquire_lock run
     ensure_server
     srv_pid=$(cat "$pid_file")
     srv_sha=$(cat "$sha_file")

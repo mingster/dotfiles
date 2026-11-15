@@ -203,9 +203,11 @@ cat > "$local_cfg" <<EOF
 EOF
 
 acq_out=$(bash "$SUT" --config "$local_cfg" --repo "example-org/sample-web" acquire 2>"$tmp/err7")
+tok7=$(printf '%s\n' "$acq_out" | sed -n 's/^LIVE_CHECK_TOKEN=//p')
 if [[ "$acq_out" == *"LIVE_CHECK_URL=${url}"* ]] \
+  && [ -n "$tok7" ] \
   && [ -d "$state_dir/lock" ] \
-  && bash "$SUT" --config "$local_cfg" --repo "example-org/sample-web" release \
+  && bash "$SUT" --config "$local_cfg" --repo "example-org/sample-web" --token "$tok7" release \
   && [ ! -d "$state_dir/lock" ]; then
   ok "reads config from ship.local.json overlay and supports acquire/release"
 else
@@ -228,6 +230,49 @@ if [[ "$ssh_out" == *"SSH_HOST=remote-box"* ]] && [[ "$ssh_out" == *"--host loca
   ok "delegates to remote live-check host over ssh when host is non-local"
 else
   bad "remote ssh delegation (out=$ssh_out)"
+fi
+
+# 9. acquire keeps the lock after the calling shell exits (no PPID ownership)
+sh -c "bash '$SUT' --host local --dir '$checkout_dir' --port '$port' --url '$url' --state-dir '$state_dir' --start-cmd '$start_cmd' acquire >'$tmp/acq9' 2>/dev/null"
+tok9=$(sed -n 's/^LIVE_CHECK_TOKEN=//p' "$tmp/acq9")
+set +e
+bash "$SUT" --host local --dir "$checkout_dir" --port "$port" --url "$url" --state-dir "$state_dir" \
+  --start-cmd "$start_cmd" --wait-seconds 2 --poll-seconds 1 -- true 2>"$tmp/err9"
+rc9=$?
+set -e
+if [ -n "$tok9" ] && [ "$rc9" -eq 75 ] && [ -d "$state_dir/lock" ]; then
+  ok "acquire keeps the lock after the caller's shell exits"
+else
+  bad "acquire lock lost after caller exit (tok=$tok9 rc=$rc9 err=$(cat "$tmp/err9"))"
+fi
+
+# 10. release refuses to delete a lock it does not own
+set +e
+bash "$SUT" --state-dir "$state_dir" release 2>/dev/null
+rc10a=$?
+bash "$SUT" --state-dir "$state_dir" --token wrong-token release 2>/dev/null
+rc10b=$?
+set -e
+still=0
+[ -d "$state_dir/lock" ] && still=1
+bash "$SUT" --state-dir "$state_dir" --token "$tok9" release 2>/dev/null
+if [ "$rc10a" -ne 0 ] && [ "$rc10b" -ne 0 ] && [ "$still" -eq 1 ] && [ ! -d "$state_dir/lock" ]; then
+  ok "release refuses a lock it does not own and frees it for the owner"
+else
+  bad "release ownership (rc=$rc10a/$rc10b still=$still)"
+fi
+
+# 11. Remote host resolves its own state dir, not the caller's local TMPDIR
+ssh_out11=$(TMPDIR="$tmp/caller-tmp" PATH="$tmp/bin:$PATH" bash "$SUT" \
+  --host "remote-box" \
+  --repo "example-org/sample-web" \
+  status)
+if [[ "$ssh_out11" == *"SSH_HOST=remote-box"* ]] \
+  && [[ "$ssh_out11" != *"caller-tmp"* ]] \
+  && [[ "$ssh_out11" != *"--state-dir"* ]]; then
+  ok "remote host does not receive the caller's local state dir"
+else
+  bad "remote state dir leaked (out=$ssh_out11)"
 fi
 
 bash "$SUT" --state-dir "$state_dir" stop >/dev/null 2>&1 || true
