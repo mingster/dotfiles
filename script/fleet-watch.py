@@ -349,6 +349,26 @@ def worker_settled_kind(worker):
     return None
 
 
+def mail_worker(notify, worker, text, allow_settled=False):
+    """Send text to a worker terminal unless its dispatch is released, or settled when allow_settled is off.
+
+    Mail to such a worker is never read and comes back to the coordinator as an escalation (#1089).
+    Refused mail logs one line. True when sent.
+    """
+    reason = ''
+    if worker_terminal_released(worker):
+        reason = 'released'
+    elif not allow_settled:
+        reason = worker_settled_kind(worker) or ''
+    if reason:
+        line = 'fleet-watch: mail skipped for %s, dispatch %s' % (worker.get('dispatchId') or worker.get('dispatch_id') or '?', reason)
+        print(line, file=sys.stderr)
+        log_fleet_watch(line)
+        return False
+    notify(worker_terminal_handle(worker), text)
+    return True
+
+
 def release_unknown_row(worker):
     """True when the terminal no longer resolves, or release itself came back release_unknown."""
     w = worker or {}
@@ -4373,8 +4393,8 @@ def route_rework_head(pr, workers, state, repo, now, term_times, release, notify
             release(worker.get('dispatchId') or '')
             bucket.pop(str(number), None)
             return 'released'
-        notify(
-            worker_terminal_handle(worker),
+        mail_worker(
+            notify, worker,
             'Rework head %s is on %s#%s. Check only the prior FAIL items and git diff %s..%s (the diff since the last verified head).'
             % (head, repo, number, tracked, head),
         )
@@ -6186,7 +6206,7 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
         reason = gate.finish_block_reason(body, issue=_worker_issue_number(worker))
         if not reason:
             continue
-        notify(worker_terminal_handle(worker), 'worker_done bounced: ' + reason)
+        mail_worker(notify, worker, 'worker_done bounced: ' + reason, allow_settled=True)
         bounced.append(message_id)
         seen.add(message_id)
         lines.append('bounce %s#%s %s' % (repo, number, reason))
