@@ -12,13 +12,12 @@ the worker stops at its first quota or sign-in error.
 automatic start is blocked by the daily cap; manual and coordinator starts never are, they
 get the note "pacing: prefer a lighter model".
 show [--json] includes the exact source and reading age; pick --role ROLE retains
-its existing flags. fullstack-dev and light-tier roles take the first allowed of
-Grok grok-4.7, then that role's Claude entry, then Antigravity, then Cursor
-grok-4.7-high. qa-sdet and reviewer take Grok first the same way, so a Claude-built PR
-gets a Grok verifier. Strong roles other than qa-sdet never select Grok or Cursor.
+its existing flags. every role takes the first allowed entry of the provider priority
+(owner 2026-11-16): Claude, then Antigravity, then Grok grok-4.7, then Cursor
+grok-4.7-high. A Claude-built PR gets an Antigravity verifier first. Strong roles
+other than qa-sdet never select Grok or Cursor.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
-is live on this host (Orca worker state). Every other role ranks by headroom per
-day left until the provider's reset, so quota about to reset is spent first.
+is live on this host (Orca worker state).
 A "pauses" entry in the config (provider, until YYYY-MM-DD, reason) makes check and pick
 treat that provider as blocked until the date; "grok" also covers Cursor grok models.
 family --agent A --model M prints the model family from the one map ship.sh and
@@ -42,7 +41,6 @@ from datetime import datetime, timedelta
 HOME = os.path.expanduser("~")
 STATE = os.environ.get("USAGE_GATE_STATE", HOME + "/.claude/state/usage-gate")
 WEEK_MIN = 10080
-TIE_POINTS = 2.0  # headroom points per day within which the preset provider keeps the pick
 MAX_AGE = 15 * 60  # seconds; an older reading is no reading
 STATE_VERSION = 2  # a state file written before the day baseline rules below is recomputed
 MIN_DAYS = 0.25  # floor on days left, so a reset minutes away does not rank infinitely high
@@ -1108,7 +1106,7 @@ def role_chain(role):
 
 
 def is_builder_role(role):
-    """Implementation and light units start on Cursor when that provider is allowed."""
+    """Implementation and light units: their chain is forced to the provider priority order."""
     if role == "fullstack-dev":
         return True
     presets = load_presets()
@@ -1125,19 +1123,21 @@ def grok_entry(chain):
 
 
 def order_builder_chain(chain):
-    """Grok grok-4.7, then Claude, then Antigravity, then Cursor grok-4.7-high, whatever the preset text says."""
+    """Claude, then Antigravity, then Grok grok-4.7, then Cursor grok-4.7-high, whatever the preset text says."""
     cursor = [entry for entry in chain
               if entry.get("provider") == "cursor" and entry.get("model") == CURSOR_BUILD_MODEL]
     if not cursor:
         cursor = [{"provider": "cursor", "model": CURSOR_BUILD_MODEL}]
     claude = [entry for entry in chain if entry.get("provider") == "claude"]
     antigravity = [entry for entry in chain if entry.get("provider") == "antigravity"]
-    return [grok_entry(chain), *claude, *antigravity, *cursor[:1]]
+    return [*claude, *antigravity, grok_entry(chain), *cursor[:1]]
 
 
 def order_reviewer_chain(chain):
-    """Grok first for a reviewer; the rest keep their order and any preset Grok entry is dropped."""
-    return [grok_entry(chain), *[entry for entry in chain if entry.get("provider") != "grok"]]
+    """Claude, Antigravity, Grok grok-4.7, then Cursor for a reviewer; other providers keep their place after Claude."""
+    rank = {"claude": 0, "antigravity": 1, "grok": 2, "cursor": 3}
+    rest = [entry for entry in chain if entry.get("provider") != "grok"]
+    return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 1))
 
 
 def family(entry):
@@ -1225,7 +1225,7 @@ def _gated_model(entry):
 
 
 def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False):
-    chain, pinned = role_chain(role)
+    chain, _pinned = role_chain(role)
     builder = is_builder_role(role)
     reviewer = role in ("qa-sdet", "reviewer")
     if builder:
@@ -1270,21 +1270,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
             allowed.append((index, candidate))
     chosen = None
     if allowed:
-        if builder:
-            chosen = allowed[0][1]
-        elif reviewer and allowed[0][1]["provider"] == "grok":
-            chosen = allowed[0][1]
-        elif (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
-            chosen = allowed[0][1]
-        else:
-            best = max(allowed, key=lambda pair: pair[1]["headroom_per_day"]
-                       if pair[1]["headroom_per_day"] is not None else -1)[1]
-            first = allowed[0][1]
-            # Near equal pace keeps the role's preset provider so readings that wobble
-            # by a point do not flip the pick; switch only when clearly lower (over 2 points a day).
-            near = (first["headroom_per_day"] is None or best["headroom_per_day"] is None
-                    or best["headroom_per_day"] - first["headroom_per_day"] <= TIE_POINTS)
-            chosen = first if allowed[0][0] == 0 and near else best
+        chosen = allowed[0][1]
     if (role == "qa-sdet" and avoid and chosen is None
             and _other_families_quota_blocked(chain, avoid, rows)):
         fallback = _mark_claude_fallback(candidates, chain, rows)

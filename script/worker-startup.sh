@@ -7,8 +7,8 @@
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
 #         [--route-override REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
-# A fullstack-dev or light-tier title ("<role> - <job>") started with --agent claude is refused while
-# usage-gate.py pick still allows Grok or Cursor.
+# A fullstack-dev or light-tier title ("<role> - <job>") started on antigravity, grok or cursor is refused
+# while usage-gate.py pick still returns claude (provider priority: claude, antigravity, grok, cursor).
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
 set -euo pipefail
@@ -469,9 +469,9 @@ refuse_merged_backlog_line() { # <spec_file> <title>
   [ -z "$merged" ] || die "refused: $key already merged in PR #$merged; check the backlog before building it again"
 }
 
-enforce_builder_cursor() { # <title> <agent> <override>
+enforce_builder_provider() { # <title> <agent> <override>
   local title=$1 agent=$2 override=$3 role kind pick_py pick_out pick_err flags
-  [ "$agent" = claude ] || return 0
+  [ "$agent" != claude ] || return 0
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
   kind=$(role_class "$role") || die "cannot classify role $role"
@@ -485,8 +485,8 @@ enforce_builder_cursor() { # <title> <agent> <override>
   pick_out=$("$python3" "$pick_py" pick --role "$role" 2>"$pick_err" || true)
   flags=$(printf '%s\n' "$pick_out" | awk '/^--agent /{line=$0} END{print line}')
   case "$flags" in
-    "--agent grok"*|"--agent cursor"*)
-      echo "worker-startup: refused $role on claude while ${flags#--agent } is allowed: $flags" >&2
+    "--agent claude"*)
+      echo "worker-startup: refused $role on $agent while claude is allowed: $flags" >&2
       [ ! -s "$pick_err" ] || cat "$pick_err" >&2
       exit 1
       ;;
@@ -574,7 +574,7 @@ run_mode() {
   spec=$(prepend_role_preamble "$spec" "$title")
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
-  enforce_builder_cursor "$title" "$agent" "$route_override"
+  enforce_builder_provider "$title" "$agent" "$route_override"
 
   # A merge worker reads the local Orca run list, so it runs on the coordinator host, never on an overflow host.
   local merge_worker=''

@@ -48,10 +48,10 @@ class Refusals(Base):
             self.assertIn(part, line)
         self.assertEqual(fw.USAGE_GATE_REFUSALS[0]['headroom'], 49)
 
-    def test_issue_scan_with_no_agent_is_gated_as_grok(self):
+    def test_issue_scan_with_no_agent_is_gated_as_claude(self):
         seen = []
         fw.default_issue_scan_gate({'issue_scan': {}}, run=lambda c, **k: seen.append(c) or proc(0, {}))
-        self.assertEqual(seen[0][seen[0].index('--provider') + 1], 'grok')
+        self.assertEqual(seen[0][seen[0].index('--provider') + 1], 'claude')
 
     def test_an_allowed_gate_logs_nothing(self):
         self.assertTrue(fw.default_issue_scan_gate({'issue_scan': {'agent': 'claude'}}, run=lambda c, **k: proc(0, {})))
@@ -160,9 +160,9 @@ class ProviderPause(Base):
         self.assertNotIn('grok', model)
         self.assertNotEqual(agent, 'grok')
 
-    def test_an_expired_pause_lets_grok_verify_again(self):
+    def test_a_claude_built_pr_gets_an_antigravity_verifier_before_grok_even_after_the_pause(self):
         agent, model, _tag = self.pick_verifier('2000-01-01')
-        self.assertEqual((agent, model), ('grok', 'grok-4.7'))
+        self.assertEqual((agent, model), ('antigravity', 'gemini-4-argon-high'))
 
 
 if __name__ == '__main__':

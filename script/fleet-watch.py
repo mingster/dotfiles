@@ -3370,7 +3370,7 @@ def build_issue_start_command(config, repo, issue_row, placement=None):
         '--run', scan['run'],
         '--spec', spec_path,
         '--title', title,
-        '--agent', scan.get('agent') or 'grok',
+        '--agent', scan.get('agent') or 'claude',
         '--model', scan.get('model') or '',
         '--from', scan['from_terminal'],
         '--name', 'issue-%d' % issue_row['number'],
@@ -3408,7 +3408,7 @@ def build_rework_start_command(config, repo, pr_row):
         % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify),
         'fullstack-dev'))
     title = 'rework #%d' % pr_row['number']
-    agent = scan.get('rework_agent') or scan.get('agent') or 'grok'
+    agent = scan.get('rework_agent') or scan.get('agent') or 'claude'
     model = scan.get('rework_model') or scan.get('model') or ''
     command = [
         'bash', _issue_scan_startup_script(config),
@@ -3428,6 +3428,7 @@ def build_rework_start_command(config, repo, pr_row):
 
 
 _BACKLOG_SWEEP_ROLES = ('architect-pm', 'sales-marketing')
+_NO_GROK_CURSOR_ROLES = ('elon', 'architect-pm', 'secops-finops')  # usage-gate.py STRONG_NO_CURSOR
 _BACKLOG_SWEEP_INTERVAL = 7200
 _BACKLOG_SWEEP_QUEUE_MAX = 3
 
@@ -3462,7 +3463,9 @@ def build_backlog_sweep_command(config, repo, role):
         % role
     )
     spec_path = _write_issue_scan_spec(_with_preamble(spec, role))
-    agent = scan.get('sweep_agent') or scan.get('agent') or 'grok'
+    agent = scan.get('sweep_agent') or scan.get('agent') or 'claude'
+    if role in _NO_GROK_CURSOR_ROLES and agent in ('grok', 'cursor') and not scan.get('sweep_agent'):
+        agent = 'claude'  # these roles never run on Grok or Cursor; the builder's pick must not leak in
     model = scan.get('sweep_model') or scan.get('model') or ''
     command = [
         'bash', _issue_scan_startup_script(config),
@@ -3605,7 +3608,7 @@ def usage_gate_notices(state, now):
 
 def default_issue_scan_gate(config, run=subprocess.run):
     scan = config.get('issue_scan') or {}
-    agent = scan.get('agent') or 'grok'
+    agent = scan.get('agent') or 'claude'
     command = [sys.executable, str(Path(__file__).with_name('usage-gate.py')), 'check', '--provider', agent, '--auto']
     model = scan.get('model')
     if model:
