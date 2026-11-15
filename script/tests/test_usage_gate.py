@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 import asdf_pin  # noqa: E402
 
 asdf_pin.pin()  # before any test sets HOME
+os.environ.setdefault("USAGE_GATE_ORCA", "false")  # tests never read real Orca accounts
 
 spec = importlib.util.spec_from_file_location("ug", os.path.join(os.path.dirname(__file__), "..", "usage-gate.py"))
 ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
@@ -334,6 +335,68 @@ class Readers(unittest.TestCase):
             json.dump({"seven_day": {"used_percentage": 21.5, "resets_at": 7}}, open(p, "w"))
             self.assertEqual(ug.claude_reading(p)["pct"], 21.5)
             self.assertIsNone(ug.claude_reading(t + "/missing.json"))
+
+
+def orca_accounts(active_pct, others=(), managed=True, active_id="aaaaaaaa-1"):
+    """An `orca account list --json` receipt with a Claude weekly reading per account."""
+    week = lambda pct: {"weekly": {"usedPercent": pct, "resetsAt": int(FUT * 1000)}}
+    return json.dumps({"ok": True, "result": {
+        "claude": {"accounts": [{"id": active_id}] if managed else [], "activeAccountId": active_id},
+        "rateLimits": {"claude": {**week(active_pct), "updatedAt": int(NOW * 1000)},
+                       "inactiveClaudeAccounts": [{"accountId": i, "rateLimits": week(p)} for i, p in others]}}})
+
+
+class OrcaAccounts(unittest.TestCase):
+    """Issue 1103: the Claude reading follows the Orca active account, and a full one switches."""
+    def gate(self, listing, select_code=0):
+        calls = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[1:3] == ["account", "list"]:
+                if isinstance(listing, Exception):
+                    raise listing
+                return mock.Mock(returncode=0, stdout=listing)
+            return mock.Mock(returncode=select_code, stdout="")
+        patches = [mock.patch.object(ug, "ORCA", "orca"), mock.patch.object(ug.subprocess, "run", fake),
+                   mock.patch.object(ug.time, "time", return_value=NOW),
+                   mock.patch.object(ug, "live_workers", return_value=rows(0)),
+                   mock.patch.object(ug, "STATE", tempfile.mkdtemp())]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return calls
+
+    def test_no_managed_accounts_keeps_the_old_reading(self):
+        self.gate(orca_accounts(99, managed=False))
+        self.assertIsNone(ug.claude_reading())
+        self.assertIsNone(ug.claude_switch(95))
+
+    def test_reading_is_the_active_account(self):
+        self.gate(orca_accounts(42, [("bbbbbbbb-2", 5)]))
+        self.assertEqual(ug.claude_reading()["pct"], 42)
+
+    def test_active_full_and_other_free_switches(self):
+        calls = self.gate(orca_accounts(97, [("bbbbbbbb-2", 10)]))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            result = ug.run("claude", 100, 95, now=NOW)
+        self.assertIn(["orca", "account", "select", "--agent", "claude", "--account", "bbbbbbbb-2"], calls)
+        self.assertEqual((result["verdict"], result["weekly_used"]), ("allowed", 10))
+        self.assertIn("aaaaaaaa at 97%", err.getvalue())
+        self.assertIn("bbbbbbbb at 10%", err.getvalue())
+
+    def test_both_full_is_blocked_without_switching(self):
+        calls = self.gate(orca_accounts(97, [("bbbbbbbb-2", 96)]))
+        result = ug.run("claude", 100, 95, now=NOW)
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
+
+    def test_orca_call_fails_keeps_the_old_reading(self):
+        calls = self.gate(OSError("no orca"))
+        self.assertIsNone(ug.claude_reading())
+        self.assertIsNone(ug.claude_switch(95))
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
 
 
 class Reserve(unittest.TestCase):

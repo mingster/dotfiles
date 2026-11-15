@@ -78,7 +78,72 @@ def epoch(at):
             return None
 
 
+def _orca_weekly(limits, observed):
+    weekly = (limits or {}).get("weekly") or {}
+    pct = _percent_used(weekly.get("usedPercent"))
+    resets = weekly.get("resetsAt")
+    if pct is None:
+        return None
+    return {"pct": pct, "resets_at": resets / 1000 if isinstance(resets, (int, float)) else None,
+            "observed_at": observed}
+
+
+def orca_claude_accounts():
+    """Managed Claude accounts from Orca: {"active": reading, "active_id", "others": [{"id", **reading}]}.
+
+    None when Orca lists no managed Claude accounts or the call fails, so callers keep the old reading.
+    """
+    try:
+        response = subprocess.run([ORCA, "account", "list", "--json"], capture_output=True, text=True, timeout=5)
+        result = json.loads(response.stdout)["result"]
+        if not result["claude"]["accounts"]:
+            return None
+        limits = result["rateLimits"]["claude"]
+        observed = limits.get("updatedAt")
+        observed = observed / 1000 if isinstance(observed, (int, float)) else None
+        active = _orca_weekly(limits, observed)
+        if active is None:
+            return None
+        others = []
+        for other in result["rateLimits"].get("inactiveClaudeAccounts") or []:
+            reading = _orca_weekly(other.get("rateLimits"), observed)
+            if reading and other.get("accountId"):
+                others.append({"id": other["accountId"], **reading})
+        return {"active": active, "active_id": result["claude"].get("activeAccountId"), "others": others}
+    except Exception:
+        return None
+
+
+def claude_switch(ceiling):
+    """Select a managed Claude account under the ceiling when the active one is at or over it.
+
+    Returns the new account's reading, or None when nothing changed. Running workers keep their account.
+    """
+    accounts = orca_claude_accounts()
+    if not accounts or accounts["active"]["pct"] < ceiling:
+        return None
+    free = [o for o in accounts["others"] if o["pct"] < ceiling]
+    if not free:
+        return None
+    best = min(free, key=lambda o: o["pct"])
+    try:
+        done = subprocess.run([ORCA, "account", "select", "--agent", "claude", "--account", best["id"]],
+                              capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    if done.returncode:
+        return None
+    print(f"usage-gate: claude account {str(accounts['active_id'] or 'system')[:8]} at "
+          f"{accounts['active']['pct']:g}% (ceiling {ceiling:g}%), switched to {best['id'][:8]} at {best['pct']:g}%",
+          file=sys.stderr)
+    return {k: v for k, v in best.items() if k != "id"}
+
+
 def claude_reading(path=None):
+    if path is None:
+        accounts = orca_claude_accounts()
+        if accounts:
+            return accounts["active"]
     try:
         d = json.load(open(path or STATE + "/claude-rate-limits.json"))
         w = d["seven_day"]
@@ -769,8 +834,9 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
     except (OSError, ValueError):
         state = None
     reader = READERS.get(provider)
+    switched = claude_switch(ceiling) if provider == "claude" else None
     try:
-        raw = reader() if reader else None
+        raw = switched or (reader() if reader else None)
     except Exception:
         raw = None
     now = time.time() if live_clock else now
