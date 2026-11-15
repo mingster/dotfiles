@@ -13,6 +13,8 @@ git fetch --quiet origin
 if git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
   git merge --quiet --ff-only origin/main
 fi
+# Commit-time guard against private names (dotfiles only; other repos have no .githooks/commit-msg).
+[ -x .githooks/commit-msg ] && git config core.hooksPath .githooks
 [ "$git_only" = 1 ] && exit 0
 # The project may sit in the root or one folder down (for example web/).
 for pkg in package.json */package.json; do

@@ -94,11 +94,35 @@ done
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
 
 read_pr() {
-  info=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
+  info=$(gh pr view "$pr" --repo "$repo" --json state,title,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
     || refuse "cannot read PR $pr"
 }
 read_pr
 field() { jq -r "$1" <<<"$info"; }
+
+# Public repo: a private project or host name in the PR title or body stays on GitHub after merge.
+name_dir=$(mktemp -d)
+field .title >"$name_dir/pr-$pr-title.txt"
+field .body >"$name_dir/pr-$pr-body.txt"
+name_out=$(bash "$ship_dir/check-project-names.sh" --show-match --file "$name_dir/pr-$pr-title.txt" --file "$name_dir/pr-$pr-body.txt" 2>&1) && name_rc=0 || name_rc=$?
+rm -rf "$name_dir"
+[ "$name_rc" -eq 0 ] || refuse "PR $pr text names a private project or host: ${name_out//$'\n'/; }"
+
+# A trailer git does not parse (a blank line before Co-Authored-By) makes the guard and fleet-watch see the commit as unapproved.
+trailer_dir=$(mktemp -d)
+trailer_args=()
+commit_pages=$(gh api --paginate "repos/$repo/pulls/$pr/commits") || { rm -rf "$trailer_dir"; refuse "cannot read PR $pr commits"; }
+while IFS=$'\t' read -r sha msg; do
+  [ -n "$sha" ] || continue
+  base64 --decode <<<"$msg" >"$trailer_dir/$sha"
+  trailer_args+=(--file "$trailer_dir/$sha")
+done < <(jq -r '.[] | [.sha[0:12], (.commit.message | @base64)] | @tsv' <<<"$commit_pages")
+trailer_rc=0 trailer_out=""
+if [ "${#trailer_args[@]}" -gt 0 ]; then
+  trailer_out=$(bash "$ship_dir/check-commit-trailers.sh" "${trailer_args[@]}" 2>&1) || trailer_rc=$?
+fi
+rm -rf "$trailer_dir"
+[ "$trailer_rc" -eq 0 ] || refuse "PR $pr has a commit trailer git does not parse: ${trailer_out//$'\n'/; }"
 
 # 1. PR is open, not draft, mergeable (not CONFLICTING).
 # GitHub leaves mergeable UNKNOWN until it has calculated the merge. PRs 801 and 802
@@ -329,7 +353,7 @@ review_fail_blocks_merge() {
 is_generated_copy() { # <path>
   local skill_names=$2
   case "$1" in
-    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md)
       return 0 ;;
   esac
   [[ "$1" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"
@@ -337,7 +361,7 @@ is_generated_copy() { # <path>
 # Template path relative to templates/agent-team for a generated copy. Same files agent-team.sh syncs.
 template_rel_for() { # <path>
   case "$1" in
-    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|changelog.d/README.md)
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md)
       printf '%s\n' "$1" ;;
     .agents/skills/*)
       printf '%s\n' "$1" ;;

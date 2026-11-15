@@ -52,5 +52,11 @@ mkdir "$tmp/wt/web"; echo '{}' > "$tmp/wt/web/package.json"
 [ -d "$tmp/wt/web/node_modules" ] && ok || bad "install ran in web/"
 [ "$(wc -l < "$BUN_LOG" | tr -d ' ')" = 2 ] && ok || bad "one install for web/"
 
+# a repo with .githooks/commit-msg gets core.hooksPath; one without is left alone
+[ -z "$(git -C "$tmp/wt" config core.hooksPath)" ] && ok || bad "no hooksPath without .githooks"
+mkdir "$tmp/wt/.githooks"; printf '#!/bin/sh\n' > "$tmp/wt/.githooks/commit-msg"; chmod +x "$tmp/wt/.githooks/commit-msg"
+(cd "$tmp/wt" && bash "$script") && ok || bad "hooks run exits 0"
+[ "$(git -C "$tmp/wt" config core.hooksPath)" = .githooks ] && ok || bad "core.hooksPath set"
+
 echo "worktree-setup: $pass passed, $fail failed"
 [ "$fail" = 0 ]

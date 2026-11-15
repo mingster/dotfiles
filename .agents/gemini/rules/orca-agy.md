@@ -16,4 +16,4 @@
        --body "Worktree: <path>\nBranch: <branch>\nHEAD: <40-char sha>\nDiff stat: ...\nVerification: ..." \
        --json
      ```
-4. **Public repository hygiene (`dotfiles`):** never write private project names, company names, or fleet hostnames in `dotfiles` docs, commits, or PR descriptions (`script/tests/no-project-names.test.sh`), and never use dashes (`—` or ` - `) as punctuation in markdown docs or READMEs.
+4. **Markdown dashes:** never use dashes (`—` or ` - `) as punctuation in markdown docs or READMEs.

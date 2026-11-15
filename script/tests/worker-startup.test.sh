@@ -1214,7 +1214,7 @@ set -e
 grep -q 'no host has a repo mapping' "$tmp/nomap-shell.err" && ok || bad "shell refusal names the repo mapping ($(cat "$tmp/nomap-shell.err"))"
 grep -q 'no readable load' "$tmp/nomap-shell.err" && bad "shell refusal must not say no readable load" || ok
 
-# Builder route: fullstack-dev and light refuse Claude while pick allows Cursor.
+# Builder route: fullstack-dev and light refuse antigravity, grok and cursor while pick allows Claude.
 cat >"$tmp/pick-stub.py" <<'EOS'
 #!/usr/bin/env python3
 import os, sys
@@ -1254,31 +1254,31 @@ route_run() { # <title> <agent> <model> [extra args...]
   route_ec=$?
   set -e
 }
-PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
-[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on claude should be refused while Cursor is allowed (ec=$route_ec)"
-grep -Fq -- '--agent cursor --model grok-4.7-high' "$tmp/route.err" && ok || bad "refusal should print the pick ($(cat "$tmp/route.err"))"
+PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" cursor grok-4.7-high
+[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on cursor should be refused while claude is allowed (ec=$route_ec)"
+grep -Fq -- '--agent claude --model sonnet' "$tmp/route.err" && ok || bad "refusal should print the pick ($(cat "$tmp/route.err"))"
 grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused builder must not reach worker-start" || ok
-PICK_STUB_MODE=cursor route_run "fullstack-dev-small - chore" claude claude-haiku
-[ "$route_ec" -ne 0 ] && ok || bad "light unit on claude should be refused while Cursor is allowed (ec=$route_ec)"
-grep -Fq -- '--agent cursor --model grok-4.7-high' "$tmp/route.err" && ok || bad "light refusal should print the pick ($(cat "$tmp/route.err"))"
+PICK_STUB_MODE=haiku route_run "fullstack-dev-small - chore" antigravity gemini-3.8-flash
+[ "$route_ec" -ne 0 ] && ok || bad "light unit on antigravity should be refused while claude is allowed (ec=$route_ec)"
+grep -Fq -- '--agent claude --model haiku' "$tmp/route.err" && ok || bad "light refusal should print the pick ($(cat "$tmp/route.err"))"
+PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" grok grok-4.7
+[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on grok should be refused while claude is allowed (ec=$route_ec)"
 rm -f "$route_state/route-override.log"
-PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium --route-override "cursor desktop trust is stuck"
-[ "$route_ec" = 0 ] && ok || bad "route override should let claude through (ec=$route_ec) $(cat "$tmp/route.err")"
-grep -Fq 'cursor desktop trust is stuck' "$route_state/route-override.log" && ok || bad "route override should log the reason ($(cat "$route_state/route-override.log" 2>/dev/null))"
+PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" cursor grok-4.7-high --route-override "claude is rate limited"
+[ "$route_ec" = 0 ] && ok || bad "route override should let cursor through (ec=$route_ec) $(cat "$route_state/../route.err" 2>/dev/null)$(cat "$tmp/route.err")"
+grep -Fq 'claude is rate limited' "$route_state/route-override.log" && ok || bad "route override should log the reason ($(cat "$route_state/route-override.log" 2>/dev/null))"
 grep -q 'worker-start' "$tmp/orca-route.log" && ok || bad "route override should still start the worker"
+PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" cursor grok-4.7-high
+[ "$route_ec" = 0 ] && ok || bad "cursor is allowed when pick says claude is blocked (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'refused' "$tmp/route.err" && bad "claude-blocked pick must not refuse cursor" || ok
 PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
-[ "$route_ec" = 0 ] && ok || bad "claude is allowed when pick says Cursor is blocked (ec=$route_ec) $(cat "$tmp/route.err")"
-grep -q 'refused' "$tmp/route.err" && bad "cursor-blocked pick must not refuse claude" || ok
+[ "$route_ec" = 0 ] && ok || bad "claude builder is never refused by the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
 : >"$tmp/pick-stub.log"
-PICK_STUB_MODE=cursor route_run "elon - think" claude claude-opus
-[ "$route_ec" = 0 ] && ok || bad "strong role on claude must not hit the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
-grep -q '^elon$' "$tmp/pick-stub.log" && bad "strong role must not be asked to yield to Cursor" || ok
+PICK_STUB_MODE=sonnet route_run "elon - think" antigravity gemini-4-argon-medium
+[ "$route_ec" = 0 ] && ok || bad "strong role must not hit the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q '^elon$' "$tmp/pick-stub.log" && bad "strong role must not be asked to yield to claude" || ok
 
-# Grok (#1097): a builder on claude is refused while pick allows grok; grok starts locally and --on
-# only for hosts the fleet config lists in grok_hosts.
-PICK_STUB_MODE=grok route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
-[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on claude should be refused while grok is allowed (ec=$route_ec)"
-grep -Fq -- '--agent grok --model grok-4.7' "$tmp/route.err" && ok || bad "grok refusal should print the pick ($(cat "$tmp/route.err"))"
+# Grok (#1097): grok starts locally and --on only for hosts the fleet config lists in grok_hosts.
 PICK_STUB_MODE=grok route_run "fullstack-dev - feature" grok grok-4.7
 [ "$route_ec" = 0 ] && ok || bad "local grok start exits 0 (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -Fq -- '--agent grok --model grok-4.7' "$tmp/orca-route.log" && ok || bad "local grok start should reach worker-start ($(cat "$tmp/orca-route.log"))"

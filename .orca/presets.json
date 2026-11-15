@@ -2,8 +2,9 @@
   "version": "1.0.0",
   "default_chain": [
     "claude",
-    "cursor",
-    "antigravity"
+    "antigravity",
+    "grok",
+    "cursor"
   ],
   "roles": {
     "elon": {
@@ -56,10 +57,6 @@
       "description": "Fullstack developer implementing features test-first",
       "chain": [
         {
-          "provider": "grok",
-          "model": "grok-4.7"
-        },
-        {
           "provider": "claude",
           "model": "sonnet",
           "effort": "medium"
@@ -67,6 +64,10 @@
         {
           "provider": "antigravity",
           "model": "gemini-4-argon-medium"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.7"
         },
         {
           "provider": "cursor",
@@ -80,13 +81,13 @@
       "description": "Engineering lead integrating branches, eager merging, and hygiene",
       "chain": [
         {
-          "provider": "antigravity",
-          "model": "gemini-4-argon-medium"
-        },
-        {
           "provider": "claude",
           "model": "opus",
           "effort": "medium"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-medium"
         }
       ]
     },
@@ -95,10 +96,6 @@
       "description": "Quality assurance and dual-axis test/spec reviewer (distinct from developer models)",
       "chain": [
         {
-          "provider": "grok",
-          "model": "grok-4.7"
-        },
-        {
           "provider": "claude",
           "model": "opus",
           "effort": "high"
@@ -106,6 +103,10 @@
         {
           "provider": "antigravity",
           "model": "gemini-4-argon-high"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.7"
         },
         {
           "provider": "cursor",
@@ -163,17 +164,17 @@
       "description": "Cross-family PR reviewer after a coding worker finishes. Pick the first entry whose family differs from the author (usage-gate --avoid-family); if none, report gate blocked.",
       "chain": [
         {
-          "provider": "grok",
-          "model": "grok-4.7"
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "medium"
         },
         {
           "provider": "antigravity",
           "model": "gemini-4-argon-high"
         },
         {
-          "provider": "claude",
-          "model": "sonnet",
-          "effort": "medium"
+          "provider": "grok",
+          "model": "grok-4.7"
         },
         {
           "provider": "cursor",
@@ -186,16 +187,16 @@
       "description": "Fix or chore touching 3 files or fewer (owner 2026-10-09)",
       "chain": [
         {
-          "provider": "grok",
-          "model": "grok-4.7"
-        },
-        {
           "provider": "claude",
           "model": "haiku"
         },
         {
           "provider": "antigravity",
           "model": "gemini-3.8-flash"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.7"
         },
         {
           "provider": "cursor",

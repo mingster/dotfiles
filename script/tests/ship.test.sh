@@ -10,6 +10,9 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 mf_setup
 trap mf_teardown EXIT
 cd "$MF_REPO" || exit 1
+# ship.sh checks the PR text for private names and fails without a pattern file.
+echo xyzzynomatch >"$MF_DIR/names.pattern"
+export NO_PROJECT_NAMES_FILE="$MF_DIR/names.pattern"
 
 # ship.sh calls Orca only to set the board status after a merge: the stub logs every call and exits ORCA_FAKE_RC (default 0).
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/orca-called"\nexit "${ORCA_FAKE_RC:-0}"\n' "$MF_DIR" > "$MF_DIR/fake-orca"
@@ -689,8 +692,12 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   # ship.sh renders templates from origin/main, so the fixture syncs from origin/main too: a branch that edits a template must not fail here.
   repo_root="$MF_DIR/main-tree"; mkdir -p "$repo_root"
   git -C "$here/.." archive origin/main | tar -x -C "$repo_root"
+  # agent-team.sh syncs every file it lists, so a template file this branch adds (and origin/main lacks) is overlaid as is.
+  while IFS= read -r added; do
+    mkdir -p "$repo_root/$(dirname "$added")"; cp "$here/../$added" "$repo_root/$added"
+  done < <(git -C "$here/.." diff --diff-filter=A --name-only origin/main HEAD -- templates/agent-team)
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
-  cp "$here/ship.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
+  cp "$here/ship.sh" "$here/check-project-names.sh" "$here/check-commit-trailers.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
@@ -699,6 +706,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   g fetch -q origin; g checkout -q -B main origin/main
   DOTFILES="$repo_root" bash "$here/agent-team.sh" project "$MF_REPO" --project-name acme >/dev/null 2>&1
   echo "# old" > "$MF_REPO/docs/agents/team.md"; echo "# old" >> "$MF_REPO/bin/changelog-compile.sh"
+  echo "# old" >> "$MF_REPO/bin/check-commit-trailers.sh"; echo "# old" >> "$MF_REPO/.githooks/commit-msg"
   g add -A && g commit -qm seed-base && g push -q origin main && g fetch -q origin
   base_sha=$(g rev-parse HEAD)
   g checkout -q -B feat-gen
@@ -750,7 +758,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   src MERGED "$(one "$GOOD")"
   # The sync result equals the origin/main render, so the verdict lane does not call it a hand edit.
   # The Verdict gate still applies.
-  : > "$MF_GH_LOG"; SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 200 2>&1); SHIP_RC=$?
+  : > "$MF_GH_LOG"; SHIP_OUT=$(bash "$fx/script/ship.sh" --repo example/repo --pr 200 2>&1); SHIP_RC=$?
   if [ "$SHIP_RC" -ne 0 ] && grep -Fq "missing Verdict comment" <<<"$SHIP_OUT" && ! grep -Fq "edits generated team copy" <<<"$SHIP_OUT"; then
     ok "render-equal generated copies pass the verdict lane and still need a Verdict"
   else

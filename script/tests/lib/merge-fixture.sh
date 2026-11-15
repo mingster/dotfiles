@@ -80,10 +80,11 @@ _mf_write_gh() {
 echo "gh $*" >> "$MF_GH_LOG"
 all_args=("$@")
 cmd="$1 ${2:-}"; shift 2 || true
-  pr="" commit_sha="" body="" body_file="" json="" match="" base="" jq_expr=""
+  want_commits="" pr="" commit_sha="" body="" body_file="" json="" match="" base="" jq_expr=""
   case "$cmd" in
     api*) for a in "${all_args[@]}"; do case "$a" in
       repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;;
+      repos/*/pulls/*/commits) pr=${a#*/pulls/}; pr=${pr%%/*}; want_commits=1 ;;
       repos/*/commits/*) commit_sha=${a##*/} ;;
     esac; done ;;
     *)
@@ -137,7 +138,9 @@ case "$cmd" in
       && "$MF_REAL_GIT" -C "$work" push -q origin HEAD:main || { rm -rf "$work"; exit 1; }
     sha=$("$MF_REAL_GIT" -C "$work" rev-parse HEAD); rm -rf "$work"
     save ".state = \"MERGED\" | .mergeCommit = {oid: \"$sha\"}" ;;
-  api*) # a commit's files come from $MF_GH_DIR/commit-<sha>.txt, one path per line, as --jq prints them
+  api*) # a PR's commits come from .commits in its json (default none), as the pulls/N/commits endpoint prints them
+    if [ -n "$want_commits" ]; then jq '.commits // []' "$file"; exit 0; fi
+    # a commit's files come from $MF_GH_DIR/commit-<sha>.txt, one path per line, as --jq prints them
     if [ -n "$commit_sha" ]; then cat "$MF_GH_DIR/commit-$commit_sha.txt"
     elif [ -n "$pr" ] && [ -n "$jq_expr" ]; then jq -r ".files | $jq_expr" "$file"
     elif [ -n "$pr" ]; then jq '[.files[]]' "$file"

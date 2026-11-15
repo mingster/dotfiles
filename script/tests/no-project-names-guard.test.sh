@@ -26,6 +26,7 @@ new_fixture_repo() {
   tmp=$(mktemp -d)
   mkdir -p "$tmp/script/tests"
   cp "$guard_src" "$tmp/script/tests/no-project-names.test.sh"
+  cp "$here/../check-project-names.sh" "$tmp/script/"
   (
     cd "$tmp" || exit 1
     git init -q .
@@ -52,7 +53,7 @@ ec=$?
 set -e
 check "pattern hit fails guard" "$ec" 1
 check "pattern hit mentions FAIL" "$(echo "$out" | grep -c '^FAIL:')" 1
-check "pattern hit names the file" "$(echo "$out" | grep -c '^leak.txt$')" 1
+check "pattern hit names the file" "$(echo "$out" | grep -c '^leak.txt:1: ')" 1
 check "pattern hit hides the matched text" "$(echo "$out" | grep -c "$token")" 0
 
 tmp2=$(new_fixture_repo)
@@ -153,7 +154,7 @@ out=$(run_guard "$tmp7" "$tmp7/pattern.host" 2>&1)
 ec=$?
 set -e
 check "machine name in a template doc fails guard" "$ec" 1
-check "machine name hit names the template doc" "$(echo "$out" | grep -c '^templates/agent-team/docs/agents/dispatch.md$')" 1
+check "machine name hit names the template doc" "$(echo "$out" | grep -c '^templates/agent-team/docs/agents/dispatch.md:1: ')" 1
 check "machine name hit hides the name" "$(echo "$out" | grep -c "$host")" 0
 
 tmp8=$(new_fixture_repo)
@@ -173,7 +174,7 @@ out=$(run_guard "$tmp8" "$tmp8/pattern.host" 2>&1)
 ec=$?
 set -e
 check "commit message hit on origin/main..HEAD fails guard" "$ec" 1
-check "commit message hit mentions FAIL" "$(echo "$out" | grep -c '^FAIL: project names found in commit messages:')" 1
+check "commit message hit mentions FAIL" "$(echo "$out" | grep -cE '^[0-9a-f]{12}:1: ')" 1
 check "commit message hit hides the matched text" "$(echo "$out" | grep -c "$host")" 0
 
 echo "$fails failed"

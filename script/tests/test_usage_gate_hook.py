@@ -309,15 +309,14 @@ class Hook(unittest.TestCase):
 
     def test_start_must_use_pick_even_on_retry(self):
         self.claude(44, baseline=40)
-        # Grok has no live worker on this host, so a builder pick stays on Grok whatever Claude's headroom.
+        # Claude has headroom, so a builder pick stays on Claude and any other provider draws the warning.
         orca = self.idle_orca()
         for retry in ("", " --retry-of dispatch_old"):
-            deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude "
+            deny, err = self.run_hook("orca orchestration worker-start --task t --agent antigravity "
                                     "--task-title 'fullstack-dev - job'" + retry, orca=orca)
             self.assertIsNone(deny)
-            self.assertIn("pick recommends grok", err)
-            self.assertIn("claude headroom", err)
-        deny, err = self.run_hook("orca orchestration worker-start --agent grok "
+            self.assertIn("pick recommends claude", err)
+        deny, err = self.run_hook("orca orchestration worker-start --agent claude "
                                   "--task-title 'fullstack-dev - job'", orca=orca)
         self.assertIsNone(deny)
         self.assertNotIn("pick recommends", err)
@@ -376,12 +375,12 @@ class Hook(unittest.TestCase):
     def test_override_only_applies_to_its_command_and_not_spec_text(self):
         self.claude(44, baseline=40)
         orca = self.idle_orca()
-        start = "orca orchestration worker-start --agent claude --task-title 'fullstack-dev - job'"
+        start = "orca orchestration worker-start --agent antigravity --task-title 'fullstack-dev - job'"
         for cmd in ("USAGE_GATE_OVERRIDE=outage " + start + " && " + start,
                     start + " --spec 'USAGE_GATE_OVERRIDE=outage'",
                     "echo USAGE_GATE_OVERRIDE=outage; " + start):
             self.assertIsNone(self.run_hook(cmd, orca=orca)[0])
-            self.assertIn("pick recommends grok", self.run_hook(cmd, orca=orca)[1])
+            self.assertIn("pick recommends claude", self.run_hook(cmd, orca=orca)[1])
 
     def test_unknown_role_override_is_also_logged(self):
         self.claude(44)

@@ -25,6 +25,20 @@ skipped_note() { [ -f "$names_file" ] || echo "SKIPPED no-project-names.test.sh 
 cd "$root"
 changed=()
 while IFS= read -r f; do changed+=("$f"); done < <(git diff --diff-filter=d --name-only "$(git merge-base "$base" HEAD)")
+# Names in the branch commits, the changed files and the PR text fail here, so a worker sees them before the push.
+# A missing pattern file fails too (it is on every fleet host). Run before the HOME swap: gh reads its login from HOME.
+if [ "${#list_only[@]}" -eq 0 ]; then
+  name_args=(--show-match --changed "$base" --commits "$base..HEAD")
+  pr_text=$(mktemp -d)
+  if gh pr view --json title,body >"$pr_text/pr.json" 2>/dev/null; then
+    jq -r .title "$pr_text/pr.json" >"$pr_text/pr-title.txt"
+    jq -r .body "$pr_text/pr.json" >"$pr_text/pr-body.txt"
+    name_args+=(--file "$pr_text/pr-title.txt" --file "$pr_text/pr-body.txt")
+  fi
+  bash script/check-project-names.sh "${name_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+  rm -rf "$pr_text"
+  bash script/check-commit-trailers.sh --commits "$base..HEAD"
+fi
 HOME=$(mktemp -d)
 export HOME
 trap 'rm -rf "$HOME"' EXIT
