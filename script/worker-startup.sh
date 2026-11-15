@@ -323,9 +323,20 @@ host_check() {
 
 # The fixed Finish steps are not the author's to write (#968). A brief with no "## Finish" heading gets the
 # standard block appended in a copy; the original is untouched. Prints the spec path to use.
-with_finish_block() { # <spec_file> <run_id>
-  local spec_file=$1 run_id=$2 out
+with_finish_block() { # <spec_file> <run_id> <agent> <model>
+  local spec_file=$1 run_id=$2 agent=${3:-} model=${4:-} out
+  local builder_line=""
+  if [ -n "$agent" ] && [ -n "$model" ]; then
+    builder_line="Builder: agent=$agent model=$model"
+  fi
   if grep -qE '^## Finish([[:space:]]|$)' "$spec_file"; then
+    if [ -n "$builder_line" ] && grep -qi 'fullstack-dev' "$spec_file" && ! grep -qF "$builder_line" "$spec_file"; then
+      out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-spec.XXXXXX") || die "cannot write the spec copy"
+      cp "$spec_file" "$out"
+      printf -- '- Put the line `%s` in the PR body.\n' "$builder_line" >>"$out"
+      printf '%s\n' "$out"
+      return 0
+    fi
     printf '%s\n' "$spec_file"
     return 0
   fi
@@ -335,7 +346,7 @@ with_finish_block() { # <spec_file> <run_id>
     printf '\n## Finish\n'
     printf -- '- Self-review the diff before you hand off.\n'
     if grep -qi 'fullstack-dev' "$spec_file"; then
-      printf -- '- Open a PR with the issue closing line, a line `Builder: agent=<agent> model=<model>`.\n'
+      printf -- '- Open a PR with the issue closing line, a line `%s`.\n' "${builder_line:-Builder: agent=<agent> model=<model>}"
       printf -- '- Wait until `gh pr checks <n> --watch --fail-fast` (or `gh run list --branch <branch> --limit 3`) shows the checks passing at your final head. Never send worker_done with red or pending checks.\n'
     fi
     printf -- '- When this work has a pull request, run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. When it has no pull request, run `orca worktree set --worktree active --workspace-status completed` before `worker_done`. Then send `worker_done` to run %s. Never wait for a reply. Never contact the user.\n' "$run_id"
@@ -529,7 +540,7 @@ run_mode() {
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out dispatch_log
-  spec=$(with_finish_block "$spec" "$run")
+  spec=$(with_finish_block "$spec" "$run" "$agent" "$model")
   spec=$(prepend_role_preamble "$spec" "$title")
   lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"

@@ -48,6 +48,7 @@ def verifier_pr(number):
         'headRefOid': HEAD,
         'headRefName': '',
         'mergeable': 'MERGEABLE',
+        'body': 'Builder: agent=claude model=sonnet',
         'statusCheckRollup': [{'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}],
         'comments': [],
         'files': [],

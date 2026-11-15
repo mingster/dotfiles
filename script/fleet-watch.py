@@ -5032,7 +5032,13 @@ def babysit_pass(
             continue
         builder = builder_pair(pr_row, workers)
         avoid = builder if kind == 'verifier' else None
-        picked = cached_pick(role, _avoid_family(avoid) if avoid else None)
+        avoid_fam = _avoid_family(avoid) if avoid else None
+        if kind == 'verifier' and not avoid_fam:
+            lines.append(_babysit_line(repo, number, head, 'skip', 'unknown-builder-family'))
+            log_bits.append('unknown_builder=%s' % number)
+            count_refused('builder')
+            continue
+        picked = cached_pick(role, avoid_fam)
         chosen = choose_pick(picked, avoid=avoid)
         if not chosen:
             why = pick_failure_reason(picked, avoid)

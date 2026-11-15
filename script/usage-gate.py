@@ -1025,15 +1025,15 @@ def order_builder_chain(chain):
 def family(entry):
     """One model-family map. ship.sh and fleet-watch call model_family, which uses this."""
     provider, model = entry["provider"], entry["model"]
-    if provider == "claude" or (provider in ("antigravity", "cursor") and model.startswith("claude-")):
+    if model.startswith(("claude-", "sonnet", "opus")) or provider == "claude":
         return "claude"
     if model.startswith("gpt-"):
         return "gpt"
-    if provider == "cursor" and model.startswith("composer"):
+    if model.startswith("composer"):
         return "composer"
-    if provider == "cursor" and model.startswith("grok"):
+    if model.startswith("grok"):
         return "grok"
-    if provider in ("antigravity", "cursor") and model.startswith("gemini-"):
+    if model.startswith("gemini-"):
         return "gemini"
     return None
 
