@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Report commit trailers that git does not parse. A line such as 'Owner-approved: <name> <date>' that sits in an
+# earlier paragraph than 'Co-Authored-By:' (a blank line between them) is not a trailer, so fleet-watch and the guard
+# see the commit as unapproved. Callers only invoke this: the commit-msg hook and checks-local.sh.
+# Usage: check-commit-trailers.sh <input>...
+#   --file <path>      one commit message file (lines starting with '#' are comments)
+#   --commits <range>  the message of each commit in <range>, for example origin/main..HEAD
+# Trailer-looking lines are Owner-approved:, Co-Authored-By:, Refs: and Closes:, matched without regard to case.
+# Each problem goes to stderr as '<source>:<line>: <message>'; stdout gets 'N checked, M problems'.
+# Exit 0 clean, 1 problems, 2 usage error.
+set -uo pipefail
+
+usage() { echo "Usage: $0 [--file <path>]... [--commits <range>]" >&2; exit 2; }
+commits="" files=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --commits) [ $# -ge 2 ] || usage; commits=$2; shift 2 ;;
+    --file) [ $# -ge 2 ] || usage; files+=("$(cd "$(dirname "$2")" 2>/dev/null && pwd)/$(basename "$2")"); shift 2 ;;
+    *) usage ;;
+  esac
+done
+[ -n "$commits" ] || [ "${#files[@]}" -gt 0 ] || usage
+
+cd "$(dirname "$0")/.." || exit 2
+checked=0 problems=0
+looks_like_trailer='^(owner-approved|co-authored-by|refs|closes):'
+
+check_message() { # <source>; message on stdin
+  local source=$1 raw parsed n=0 line low
+  raw=$(cat)
+  parsed=$(grep -v '^#' <<<"$raw" | git interpret-trailers --parse)
+  checked=$((checked + 1))
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    [ "${line:0:1}" = "#" ] && continue
+    low=$(tr '[:upper:]' '[:lower:]' <<<"$line")
+    [[ "$low" =~ $looks_like_trailer ]] || continue
+    grep -qxF -- "$line" <<<"$parsed" && continue
+    echo "$source:$n: not a git trailer (it must sit in the last paragraph, with no blank line before the next trailer); git does not parse it" >&2
+    problems=$((problems + 1))
+  done <<<"$raw"
+}
+
+if [ -n "$commits" ]; then
+  shas=$(git rev-list "$commits" 2>/dev/null) || { echo "check-commit-trailers: bad commit range $commits" >&2; exit 2; }
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    check_message "${sha:0:12}" < <(git show -s --format=%B "$sha")
+  done <<<"$shas"
+fi
+for f in ${files[@]+"${files[@]}"}; do
+  [ -f "$f" ] || { echo "check-commit-trailers: no such file: $f" >&2; exit 2; }
+  check_message "$f" <"$f"
+done
+echo "$checked checked, $problems problems"
+[ "$problems" -eq 0 ]

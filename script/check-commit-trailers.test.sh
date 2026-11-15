@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Tests for script/check-commit-trailers.sh and the template copy. Fixtures are inline commit messages.
+set -uo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+src=$(cd "$here/.." && pwd)
+chk="$here/check-commit-trailers.sh"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+pass=0 fail=0
+ok() { echo "ok   $1"; pass=$((pass + 1)); }
+bad() { echo "FAIL $1: $2"; fail=$((fail + 1)); }
+# shellcheck disable=SC1091
+. "$here/tests/lib/git-identity.sh"
+use_test_git_identity "$tmp"
+
+run() { bash "$chk" "$@" >"$tmp/so" 2>"$tmp/se"; rc=$?; so=$(cat "$tmp/so"); se=$(cat "$tmp/se"); }
+msg() { printf '%b' "$2" >"$tmp/$1"; }
+
+msg good 'feat: x\n\nBody.\n\nOwner-approved: mingster 2026-11-16 (issue 1)\nCo-Authored-By: A <a@b.c>\n'
+run --file "$tmp/good"
+[ "$rc" -eq 0 ] && [ "$so" = "1 checked, 0 problems" ] && [ -z "$se" ] && ok "trailers in one block pass" || bad "good" "rc=$rc so=$so se=$se"
+
+msg none 'feat: x\n\nJust a body.\n'
+run --file "$tmp/none"
+[ "$rc" -eq 0 ] && ok "no trailers passes" || bad "none" "rc=$rc $se"
+
+msg blank 'feat: x\n\nBody.\n\nOwner-approved: mingster 2026-11-16 (issue 1)\n\nCo-Authored-By: A <a@b.c>\n'
+run --file "$tmp/blank"
+[ "$rc" -eq 1 ] && [ "$so" = "1 checked, 1 problems" ] && grep -q "^$tmp/blank:5: not a git trailer" <<<"$se" && ! grep -q ":7:" <<<"$se" \
+  && ok "blank line before Co-Authored-By fails and names the line" || bad "blank" "rc=$rc so=$so se=$se"
+
+msg lower 'feat: x\n\nBody.\n\nrefs: #1\n\nCloses: #2\n'
+run --file "$tmp/lower"
+[ "$rc" -eq 1 ] && grep -q ":5:" <<<"$se" && ok "keys match without regard to case" || bad "lower" "rc=$rc $se"
+
+msg comment 'feat: x\n\nBody.\n\nRefs: #1\n# Please enter the commit message\n'
+run --file "$tmp/comment"
+[ "$rc" -eq 0 ] && ok "comment lines are ignored" || bad "comment" "rc=$rc $se"
+
+# a commit range
+r="$tmp/repo"; git init -q -b main "$r"
+git -C "$r" commit -q --allow-empty -m base
+git -C "$r" commit -q --allow-empty -F "$tmp/good"
+git -C "$r" commit -q --allow-empty -F "$tmp/blank"
+mkdir "$r/script"; cp "$chk" "$r/script/"
+( cd "$r" && bash script/check-commit-trailers.sh --commits HEAD~2..HEAD >"$tmp/so" 2>"$tmp/se" ); rc=$?
+[ "$rc" -eq 1 ] && grep -qE "^[0-9a-f]{12}:5: " "$tmp/se" && [ "$(cat "$tmp/so")" = "2 checked, 1 problems" ] && ok "range: only the bad commit is reported" || bad "range" "rc=$rc $(cat "$tmp/so") $(cat "$tmp/se")"
+run_in_repo() { ( cd "$r" && bash script/check-commit-trailers.sh "$@" >"$tmp/so" 2>"$tmp/se" ); rc=$?; so=$(cat "$tmp/so"); }
+run_in_repo --commits HEAD..HEAD
+[ "$rc" -eq 0 ] && [ "$so" = "0 checked, 0 problems" ] && ok "empty range passes" || bad "empty range" "rc=$rc $so"
+
+run
+[ "$rc" -eq 2 ] && ok "no input is a usage error" || bad "usage" "rc=$rc"
+run --bogus
+[ "$rc" -eq 2 ] && ok "unknown flag is a usage error" || bad "bogus" "rc=$rc"
+run --file "$tmp/missing"
+[ "$rc" -eq 2 ] && ok "missing file is a usage error" || bad "missing file" "rc=$rc"
+
+# the commit-msg hook rejects the blank line case
+h="$tmp/hookrepo"; mkdir -p "$h/script" "$h/.githooks"
+cp "$chk" "$here/check-project-names.sh" "$h/script/"; cp "$src/.githooks/commit-msg" "$h/.githooks/"
+git init -q -b main "$h"; git -C "$h" config core.hooksPath .githooks
+out=$(git -C "$h" commit -q --allow-empty -F "$tmp/blank" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -q "not a git trailer" <<<"$out" && ok "hook rejects a blank line before a trailer" || bad "hook blank" "rc=$rc $out"
+git -C "$h" commit -q --allow-empty -F "$tmp/good" && ok "hook allows correct trailers" || bad "hook good" "rejected"
+
+# the template copy matches, so adopted repos run the same check
+cmp -s "$chk" "$src/templates/agent-team/bin/check-commit-trailers.sh" && ok "template copy of the checker is identical" || bad "template checker" "differs"
+# the template hook calls bin/check-commit-trailers.sh, the place an adopted repo gets the checker
+t="$tmp/adopted"; mkdir -p "$t/bin" "$t/.githooks"
+cp "$src/templates/agent-team/bin/check-commit-trailers.sh" "$t/bin/"; cp "$src/templates/agent-team/.githooks/commit-msg" "$t/.githooks/"
+git init -q -b main "$t"; git -C "$t" config core.hooksPath .githooks
+out=$(git -C "$t" commit -q --allow-empty -F "$tmp/blank" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -q "not a git trailer" <<<"$out" && ok "template hook rejects a blank line before a trailer" || bad "template hook" "rc=$rc $out"
+git -C "$t" commit -q --allow-empty -F "$tmp/good" && ok "template hook allows correct trailers" || bad "template hook good" "rejected"
+
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ]

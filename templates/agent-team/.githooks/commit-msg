@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Reject a commit message whose trailers git cannot parse (for example a blank line between
+# 'Owner-approved:' and 'Co-Authored-By:'). Wire it with: git config core.hooksPath .githooks
+# The check lives in bin/check-commit-trailers.sh.
+out=$(bash "$(git rev-parse --show-toplevel)/bin/check-commit-trailers.sh" --file "$1" 2>&1)
+rc=$?
+[ "$rc" -eq 0 ] || echo "$out" >&2
+exit "$rc"

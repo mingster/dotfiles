@@ -2,7 +2,7 @@
 # Tests for script/check-project-names.sh and its callers: the commit-msg hook, checks-local.sh, ship.sh.
 # Fixtures are inline and use a fake name in a temp pattern file.
 set -uo pipefail
-here=$(cd "$(dirname "$0")/.." && pwd)
+here=$(cd "$(dirname "$0")" && pwd)
 src=$(cd "$here/.." && pwd)
 # shellcheck disable=SC1091
 . "$here/tests/lib/asdf-pin.sh"
@@ -44,7 +44,7 @@ run --bogus
 # Fixture repo: checker, hook, checks-local
 r="$tmp/repo"
 mkdir -p "$r/script/tests/lib" "$r/.githooks"
-cp "$chk" "$src/script/checks-local.sh" "$src/script/select-changed-script-tests.sh" "$r/script/"
+cp "$chk" "$here/check-commit-trailers.sh" "$src/script/checks-local.sh" "$src/script/select-changed-script-tests.sh" "$r/script/"
 cp "$src/script/tests/lib/asdf-pin.sh" "$r/script/tests/lib/"
 cp "$src/.githooks/commit-msg" "$r/.githooks/"
 git -C "$r" init -q -b main

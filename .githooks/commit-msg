@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Reject a commit message that names a private project or host (this repo is public).
-# Wired by script/worktree-setup.sh (core.hooksPath). The check lives in script/check-project-names.sh.
-out=$(bash "$(git rev-parse --show-toplevel)/script/check-project-names.sh" --allow-missing --show-match --file "$1" 2>&1)
-rc=$?
+# Reject a commit message that names a private project or host (this repo is public) or whose trailers git
+# cannot parse. Wired by script/worktree-setup.sh (core.hooksPath). The checks live in script/check-*.sh.
+top=$(git rev-parse --show-toplevel)
+rc=0
+out=$(bash "$top/script/check-project-names.sh" --allow-missing --show-match --file "$1" 2>&1) || rc=1
 # Say something only on a problem or a skipped check.
 { [ "$rc" -ne 0 ] || [[ "$out" == SKIPPED* ]]; } && echo "$out" >&2
+out=$(bash "$top/script/check-commit-trailers.sh" --file "$1" 2>&1) || { echo "$out" >&2; rc=1; }
 exit "$rc"

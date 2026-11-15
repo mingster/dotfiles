@@ -415,6 +415,9 @@ check_safe_paths() {
     bin
     bin/changelog-compile.sh
     bin/changelog-compile.test.sh
+    bin/check-commit-trailers.sh
+    .githooks
+    .githooks/commit-msg
     changelog.d
     changelog.d/README.md
   )
@@ -585,6 +588,8 @@ TEMPLATE_SYNC_FILES = [
     "docs/agents/fleet-watch.md",
     "bin/changelog-compile.sh",
     "bin/changelog-compile.test.sh",
+    "bin/check-commit-trailers.sh",
+    ".githooks/commit-msg",
     "changelog.d/README.md",
 ]
 

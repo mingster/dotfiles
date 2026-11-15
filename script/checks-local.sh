@@ -37,6 +37,7 @@ if [ "${#list_only[@]}" -eq 0 ]; then
   fi
   bash script/check-project-names.sh "${name_args[@]}" || { rm -rf "$pr_text"; exit 1; }
   rm -rf "$pr_text"
+  bash script/check-commit-trailers.sh --commits "$base..HEAD"
 fi
 HOME=$(mktemp -d)
 export HOME
