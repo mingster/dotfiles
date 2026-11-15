@@ -82,7 +82,7 @@ else: sys.exit(99)
 
     def test_missing_cli_refuses_and_names_it_without_dispatch(self):
         for agent, cli in [('antigravity', 'agy'), ('cursor', 'agent'),
-                           ('claude', 'claude')]:
+                           ('claude', 'claude'), ('grok', 'grok')]:
             with self.subTest(agent=agent):
                 self.log.unlink(missing_ok=True)
                 result = self.launch(agent)

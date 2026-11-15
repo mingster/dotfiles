@@ -13,9 +13,11 @@ automatic start is blocked by the daily cap; manual and coordinator starts never
 get the note "pacing: prefer a lighter model".
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags. fullstack-dev and light-tier roles take the first allowed of
-Cursor grok-4.7-high, then that role's Claude entry, then Antigravity. Strong
-roles other than qa-sdet never select Cursor. qa-sdet may select Cursor grok, so a
-Claude-built PR can be verified on Cursor. Every other role ranks by headroom per
+Grok grok-4.7, then that role's Claude entry, then Antigravity, then Cursor
+grok-4.7-high. qa-sdet and reviewer take Grok first the same way, so a Claude-built PR
+gets a Grok verifier. Strong roles other than qa-sdet never select Grok or Cursor.
+Grok has no usage API: check --provider grok allows a start only while no grok worker
+is live on this host (Orca worker state). Every other role ranks by headroom per
 day left until the provider's reset, so quota about to reset is spent first.
 family --agent A --model M prints the model family from the one map ship.sh and
 fleet-watch share. When qa-sdet is asked to avoid a family and every other family
@@ -53,7 +55,9 @@ CURSOR_BUILD_MODEL = "grok-4.7-high"
 CURSOR_URGENT_MODEL = "grok-4.7-high-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
-STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops")
+STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops")  # these roles never take Cursor or Grok
+GROK_MODEL = "grok-4.7"
+GROK_MAX_LIVE = 1  # Grok has no usage API: its gate is one live worker per host
 
 
 def load_config():
@@ -821,6 +825,8 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
     now = time.time() if live_clock else now
     if ceiling is None:
         ceiling = ceiling_for(provider)
+    if provider == "grok":
+        return grok_result()
     if provider == "antigravity":
         pools = READERS[provider]() or {}
         now = time.time() if live_clock else now
@@ -914,6 +920,19 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
                   "reason": ("Cursor included usage does not measure model "
                              + model + "; read the Cursor dashboard"),
                   "source": result.get("source"), "reading_age_min": result.get("reading_age_min")}
+    return result
+
+
+def grok_result():
+    """Grok gate: at most GROK_MAX_LIVE live grok workers on this host, read from Orca worker state."""
+    live = live_workers("grok")
+    result = {"provider": "grok", "source": "Orca worker state: live grok workers on this host",
+              "reading_age_min": 0 if live is not None else None}
+    if live is None:
+        return {**result, "verdict": "unknown", "reason": "cannot read Orca worker state"}
+    result.update(verdict="allowed", running=len(live))
+    if len(live) >= GROK_MAX_LIVE:
+        result.update(verdict="blocked", reason="one live grok worker per host")
     return result
 
 
@@ -1077,15 +1096,26 @@ def is_builder_role(role):
     return isinstance(entry, dict) and entry.get("tier") == "light"
 
 
+def grok_entry(chain):
+    """The chain's grok-4.7 entry, or the one the gate always offers."""
+    found = [entry for entry in chain if entry.get("provider") == "grok" and entry.get("model") == GROK_MODEL]
+    return found[0] if found else {"provider": "grok", "model": GROK_MODEL}
+
+
 def order_builder_chain(chain):
-    """Cursor grok-4.7-high, then Claude, then Antigravity, whatever the preset text says."""
+    """Grok grok-4.7, then Claude, then Antigravity, then Cursor grok-4.7-high, whatever the preset text says."""
     cursor = [entry for entry in chain
               if entry.get("provider") == "cursor" and entry.get("model") == CURSOR_BUILD_MODEL]
     if not cursor:
         cursor = [{"provider": "cursor", "model": CURSOR_BUILD_MODEL}]
     claude = [entry for entry in chain if entry.get("provider") == "claude"]
     antigravity = [entry for entry in chain if entry.get("provider") == "antigravity"]
-    return [*cursor[:1], *claude, *antigravity]
+    return [grok_entry(chain), *claude, *antigravity, *cursor[:1]]
+
+
+def order_reviewer_chain(chain):
+    """Grok first for a reviewer; the rest keep their order and any preset Grok entry is dropped."""
+    return [grok_entry(chain), *[entry for entry in chain if entry.get("provider") != "grok"]]
 
 
 def family(entry):
@@ -1175,22 +1205,28 @@ def _gated_model(entry):
 def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False):
     chain, pinned = role_chain(role)
     builder = is_builder_role(role)
+    reviewer = role in ("qa-sdet", "reviewer")
     if builder:
         chain = order_builder_chain(chain)
+    elif reviewer:
+        chain = order_reviewer_chain(chain)
+    chain = [entry for entry in chain
+             if not (entry["provider"] == "grok" and role in STRONG_NO_CURSOR)]
     rows = {}
     for entry in chain:
         key = (entry["provider"], _gated_model(entry))
         if key not in rows:
             rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1], auto=auto)
     known = antigravity_models() if any(e["provider"] == "antigravity" for e in chain) else None
-    gated = [r for (p, _), r in rows.items() if p in READERS]
+    gated = [r for (p, _), r in rows.items() if p in READERS or p == "grok"]
     fallback = all(r["verdict"] == "blocked" for r in gated)
     candidates, allowed = [], []
     now = time.time()
     for index, entry in enumerate(chain):
         row = rows[(entry["provider"], _gated_model(entry))]
         room, fraction = headroom(row)
-        eligible = row["verdict"] == "allowed" if entry["provider"] in READERS else fallback
+        eligible = (row["verdict"] == "allowed" if entry["provider"] in READERS or entry["provider"] == "grok"
+                    else fallback)
         excluded = avoid is not None and family(entry) == avoid
         if avoid == "grok" and family(entry) != "claude":
             excluded = True  # Claude always reviews Grok authored work (owner 2026-11-09)
@@ -1213,6 +1249,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
     chosen = None
     if allowed:
         if builder:
+            chosen = allowed[0][1]
+        elif reviewer and allowed[0][1]["provider"] == "grok":
             chosen = allowed[0][1]
         elif (pinned or role in ("release-manager", "elon")) and allowed[0][0] == 0:
             chosen = allowed[0][1]
@@ -1254,7 +1292,7 @@ def main(argv=None):
     ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model checked against included usage")
     ap.add_argument("--role")
     ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer", "grok"])
-    ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity"])
+    ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity", "grok"])
     ap.add_argument("--cap", type=float, default=None,
                     help="daily pacing line; blocks automatic starts (--auto) only")
     ap.add_argument("--auto", action="store_true",

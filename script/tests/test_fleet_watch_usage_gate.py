@@ -47,6 +47,11 @@ class Refusals(Base):
             self.assertIn(part, line)
         self.assertEqual(fw.USAGE_GATE_REFUSALS[0]['headroom'], 49)
 
+    def test_issue_scan_with_no_agent_is_gated_as_grok(self):
+        seen = []
+        fw.default_issue_scan_gate({'issue_scan': {}}, run=lambda c, **k: seen.append(c) or proc(0, {}))
+        self.assertEqual(seen[0][seen[0].index('--provider') + 1], 'grok')
+
     def test_an_allowed_gate_logs_nothing(self):
         self.assertTrue(fw.default_issue_scan_gate({'issue_scan': {'agent': 'claude'}}, run=lambda c, **k: proc(0, {})))
         self.assertEqual(self.lines(), [])

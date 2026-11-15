@@ -1225,6 +1225,9 @@ with open(os.environ["PICK_STUB_LOG"], "a") as handle:
 if mode == "cursor":
     print("--agent cursor --model grok-4.7-high")
     raise SystemExit(0)
+if mode == "grok":
+    print("--agent grok --model grok-4.7")
+    raise SystemExit(0)
 if mode == "sonnet":
     print("--agent claude --model sonnet --effort medium")
     raise SystemExit(0)
@@ -1270,6 +1273,48 @@ grep -q 'refused' "$tmp/route.err" && bad "cursor-blocked pick must not refuse c
 PICK_STUB_MODE=cursor route_run "elon - think" claude claude-opus
 [ "$route_ec" = 0 ] && ok || bad "strong role on claude must not hit the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -q '^elon$' "$tmp/pick-stub.log" && bad "strong role must not be asked to yield to Cursor" || ok
+
+# Grok (#1097): a builder on claude is refused while pick allows grok; grok starts locally and --on
+# only for hosts the fleet config lists in grok_hosts.
+PICK_STUB_MODE=grok route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on claude should be refused while grok is allowed (ec=$route_ec)"
+grep -Fq -- '--agent grok --model grok-4.7' "$tmp/route.err" && ok || bad "grok refusal should print the pick ($(cat "$tmp/route.err"))"
+PICK_STUB_MODE=grok route_run "fullstack-dev - feature" grok grok-4.7
+[ "$route_ec" = 0 ] && ok || bad "local grok start exits 0 (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fq -- '--agent grok --model grok-4.7' "$tmp/orca-route.log" && ok || bad "local grok start should reach worker-start ($(cat "$tmp/orca-route.log"))"
+cat >"$helper_dir/start-remote-worker.sh" <<EOS
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$tmp/grok-remote.args"
+printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_grok","state":"ready"}}'
+exit 0
+EOS
+chmod +x "$helper_dir/start-remote-worker.sh"
+cat >"$tmp/fleet-grok.json" <<EOF
+{"hosts": ["grok-box", "plain-box"], "grok_hosts": ["grok-box"], "repos": ["$clean"]}
+EOF
+cat >"$tmp/fleet-nogrok.json" <<EOF
+{"hosts": ["grok-box", "plain-box"], "repos": ["$clean"]}
+EOF
+grok_on() { # <fleet config> <environment>
+  rm -f "$tmp/grok-remote.args"
+  set +e
+  env -u BASH_ENV \
+    PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
+    FLEET_PULL_CONFIG="$1" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_grok --spec "$spec_file" --title gjob --agent grok --model grok-4.7 \
+    --from term_coord --on "$2" --worktree-path /abs/wt >"$tmp/grok-on.out" 2>"$tmp/grok-on.err"
+  grok_ec=$?
+  set -e
+}
+grok_on "$tmp/fleet-grok.json" grok-box
+[ "$grok_ec" = 0 ] && ok || bad "grok --on a host with the CLI exits 0 ($grok_ec) $(cat "$tmp/grok-on.err")"
+grep -Fq -- '--agent grok --model grok-4.7' "$tmp/grok-remote.args" 2>/dev/null && grep -Fq -- '--on grok-box' "$tmp/grok-remote.args" && ok || bad "grok --on should reach the remote start ($(cat "$tmp/grok-remote.args" 2>/dev/null))"
+grok_on "$tmp/fleet-grok.json" plain-box
+[ "$grok_ec" -ne 0 ] && ok || bad "grok --on a host listed without the CLI should be refused"
+grep -q 'no grok CLI' "$tmp/grok-on.err" && ok || bad "grok refusal should name the missing CLI ($(cat "$tmp/grok-on.err"))"
+[ -e "$tmp/grok-remote.args" ] && bad "refused grok start must not reach the remote start" || ok
+grok_on "$tmp/fleet-nogrok.json" grok-box
+[ "$grok_ec" -ne 0 ] && ok || bad "grok --on with no grok_hosts config should be refused"
 
 # Orca registers the physical checkout. A symlink selector must be rewritten before worktree create.
 link_real="$tmp/link-real"

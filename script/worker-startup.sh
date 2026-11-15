@@ -8,7 +8,9 @@
 #         [--route-override REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
 # A fullstack-dev or light-tier title ("<role> - <job>") started with --agent claude is refused while
-# usage-gate.py pick still allows Cursor. --route-override REASON logs the reason and allows that start.
+# usage-gate.py pick still allows Grok or Cursor.
+# --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
+# grok_hosts in the fleet config (the hosts that have the Grok CLI).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -466,12 +468,22 @@ enforce_builder_cursor() { # <title> <agent> <override>
   pick_out=$("$python3" "$pick_py" pick --role "$role" 2>"$pick_err" || true)
   flags=$(printf '%s\n' "$pick_out" | awk '/^--agent /{line=$0} END{print line}')
   case "$flags" in
-    "--agent cursor"*)
-      echo "worker-startup: refused $role on claude while Cursor is allowed: $flags" >&2
+    "--agent grok"*|"--agent cursor"*)
+      echo "worker-startup: refused $role on claude while ${flags#--agent } is allowed: $flags" >&2
       [ ! -s "$pick_err" ] || cat "$pick_err" >&2
       exit 1
       ;;
   esac
+}
+
+# A grok start --on a host runs only where the fleet config lists the Grok CLI under grok_hosts.
+require_grok_host() { # <environment>
+  [ -n "$1" ] || return 0
+  local cfg want
+  cfg=$(resolve_fleet_pull_config)
+  want=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  [ -f "$cfg" ] && jq -e --arg h "$want" '(.grok_hosts // []) | map(ascii_downcase) | index($h)' "$cfg" >/dev/null 2>&1 \
+    || die "refused: $1 has no grok CLI (list it under grok_hosts in $cfg)"
 }
 
 run_mode() {
@@ -568,6 +580,8 @@ run_mode() {
       *) export REMOTE_REPO="$repo" ;;
     esac
   fi
+
+  [ "$agent" != grok ] || require_grok_host "$environment"
 
   "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
     || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }

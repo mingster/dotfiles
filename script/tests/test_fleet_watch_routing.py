@@ -9,6 +9,11 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib'))
+import asdf_pin  # noqa: E402
+
+asdf_pin.pin()  # before any test sets HOME
+
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('fleet_watch_routing', ROOT / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
@@ -29,6 +34,38 @@ def _load(name):
 
 preamble = _load('worker-preamble.py')
 gate = _load('pr-body-gate.py')
+
+
+class GrokVerifierPick(unittest.TestCase):
+    """dotfiles #1097: the verifier pick comes from the real usage gate, so a Claude-built PR gets a grok verifier."""
+
+    def pick(self, avoid_family, avoid):
+        with tempfile.TemporaryDirectory() as tmp:
+            presets = Path(tmp) / 'presets.json'
+            presets.write_text(json.dumps({'roles': {'qa-sdet': {'tier': 'strong', 'chain': [
+                {'provider': 'claude', 'model': 'opus', 'effort': 'high'},
+                {'provider': 'cursor', 'model': 'grok-4.7-high'},
+            ]}}}))
+            orca = Path(tmp) / 'orca'
+            orca.write_text('#!/bin/sh\nif [ "$2" = run-list ]; then echo \'{"ok":true,"result":{"runs":[{"id":"r1"}]}}\'; '
+                            'else echo \'{"ok":true,"result":{"workers":[]}}\'; fi\n')
+            orca.chmod(0o755)
+            env = dict(os.environ, HOME=tmp, USAGE_GATE_PRESETS=str(presets), USAGE_GATE_STATE=tmp + '/state',
+                       USAGE_GATE_ORCA=str(orca))
+            env.pop('USAGE_GATE_CLI', None)
+            with unittest.mock.patch.dict(os.environ, env):
+                data = fw.pick_role('qa-sdet', avoid_family=avoid_family)
+        return fw.choose_pick(data, avoid=avoid)
+
+    def test_claude_built_pr_gets_a_grok_verifier(self):
+        self.assertEqual(self.pick('claude', ('claude', 'sonnet')), ('grok', 'grok-4.7', ''))
+
+    def test_grok_built_pr_never_gets_a_grok_verifier(self):
+        chosen = self.pick('grok', ('grok', 'grok-4.7'))
+        self.assertNotEqual(chosen and chosen[0], 'grok')
+
+    def test_a_grok_agent_is_the_grok_family(self):
+        self.assertEqual(fw._avoid_family(('grok', 'grok-4.7')), 'grok')
 
 
 class BatchVerifier(unittest.TestCase):

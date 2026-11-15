@@ -3,7 +3,7 @@
 
 Wired from each agent team's .claude/settings.json. For every
 `orca orchestration worker-start ... --agent <id>` in the command it runs
-`usage-gate.py check --provider <id>` (claude, cursor and antigravity) and denies the
+`usage-gate.py check --provider <id>` (claude, cursor, antigravity and grok, whose gate is one live worker per host) and denies the
 command when the gate exits 3, with the gate's reason and reset time.
 Antigravity gates on the named --model pool, or the approved Gemini Flash pool without a model.
 Cursor forwards --model so non-Composer models reach the gate's unknown path (ADR 0001).
@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
 FLEET_WATCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet-watch.py")
-GATED = {"claude", "cursor", "antigravity"}
+GATED = {"claude", "cursor", "antigravity", "grok"}
 PUNCT = set(";&|\n()<>")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
 VAR = re.compile(r"^\$\{?(\w+)\}?$")
@@ -175,7 +175,8 @@ def routing(start):
 
 def reason(provider, d):
     reserve = f", incl. {d['reserve']:g}% held for {d['running']} running worker(s)" if d.get("reserve") else ""
-    why = f"weekly ceiling ({d.get('weekly_used')}% of the week used, ceiling {d.get('ceiling')}%{reserve})"
+    why = (f"weekly ceiling ({d.get('weekly_used')}% of the week used, ceiling {d.get('ceiling')}%{reserve})"
+           if "weekly_used" in d else d.get("reason", "see usage-gate.py check"))
     return (f"Usage gate blocked {provider}: {why}. Resets {d.get('blocked_until_local', 'unknown')} (local time). "
             "Use the next provider in the fallback order that passes the gate, or stop dispatching and report it.")
 

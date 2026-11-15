@@ -3366,7 +3366,7 @@ def build_issue_start_command(config, repo, issue_row, placement=None):
         '--run', scan['run'],
         '--spec', spec_path,
         '--title', title,
-        '--agent', scan.get('agent') or 'cursor',
+        '--agent', scan.get('agent') or 'grok',
         '--model', scan.get('model') or '',
         '--from', scan['from_terminal'],
         '--name', 'issue-%d' % issue_row['number'],
@@ -3404,7 +3404,7 @@ def build_rework_start_command(config, repo, pr_row):
         % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify),
         'fullstack-dev'))
     title = 'rework #%d' % pr_row['number']
-    agent = scan.get('rework_agent') or scan.get('agent') or 'cursor'
+    agent = scan.get('rework_agent') or scan.get('agent') or 'grok'
     model = scan.get('rework_model') or scan.get('model') or ''
     command = [
         'bash', _issue_scan_startup_script(config),
@@ -3458,7 +3458,7 @@ def build_backlog_sweep_command(config, repo, role):
         % role
     )
     spec_path = _write_issue_scan_spec(_with_preamble(spec, role))
-    agent = scan.get('sweep_agent') or scan.get('agent') or 'cursor'
+    agent = scan.get('sweep_agent') or scan.get('agent') or 'grok'
     model = scan.get('sweep_model') or scan.get('model') or ''
     command = [
         'bash', _issue_scan_startup_script(config),
@@ -3601,7 +3601,7 @@ def usage_gate_notices(state, now):
 
 def default_issue_scan_gate(config, run=subprocess.run):
     scan = config.get('issue_scan') or {}
-    agent = scan.get('agent') or 'cursor'
+    agent = scan.get('agent') or 'grok'
     command = [sys.executable, str(Path(__file__).with_name('usage-gate.py')), 'check', '--provider', agent, '--auto']
     model = scan.get('model')
     if model:

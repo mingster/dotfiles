@@ -1,0 +1,1 @@
+Route builders and reviewers to the Grok CLI agent (`grok-4.7`) instead of Cursor. `usage-gate.py` gates `grok` by a live worker count (one per host), `pick` orders grok, Claude, Antigravity, then Cursor, and the hook, `worker-startup.sh`, fleet-watch verifier pick and routing doc follow. (#1097)

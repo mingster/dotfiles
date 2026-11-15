@@ -56,8 +56,8 @@
       "description": "Fullstack developer implementing features test-first",
       "chain": [
         {
-          "provider": "cursor",
-          "model": "grok-4.7-high"
+          "provider": "grok",
+          "model": "grok-4.7"
         },
         {
           "provider": "claude",
@@ -67,6 +67,10 @@
         {
           "provider": "antigravity",
           "model": "gemini-4-argon-medium"
+        },
+        {
+          "provider": "cursor",
+          "model": "grok-4.7-high"
         }
       ],
       "pin": true
@@ -90,6 +94,10 @@
       "tier": "strong",
       "description": "Quality assurance and dual-axis test/spec reviewer (distinct from developer models)",
       "chain": [
+        {
+          "provider": "grok",
+          "model": "grok-4.7"
+        },
         {
           "provider": "claude",
           "model": "opus",
@@ -155,6 +163,10 @@
       "description": "Cross-family PR reviewer after a coding worker finishes. Pick the first entry whose family differs from the author (usage-gate --avoid-family); if none, report gate blocked.",
       "chain": [
         {
+          "provider": "grok",
+          "model": "grok-4.7"
+        },
+        {
           "provider": "antigravity",
           "model": "gemini-4-argon-high"
         },
@@ -174,8 +186,8 @@
       "description": "Fix or chore touching 3 files or fewer (owner 2026-10-09)",
       "chain": [
         {
-          "provider": "cursor",
-          "model": "grok-4.7-high"
+          "provider": "grok",
+          "model": "grok-4.7"
         },
         {
           "provider": "claude",
@@ -184,6 +196,10 @@
         {
           "provider": "antigravity",
           "model": "gemini-3.8-flash"
+        },
+        {
+          "provider": "cursor",
+          "model": "grok-4.7-high"
         }
       ]
     },

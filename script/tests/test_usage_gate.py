@@ -264,7 +264,7 @@ class Main(unittest.TestCase):
         with mock.patch.object(ug, "role_chain", return_value=(
                 [{"provider": "antigravity", "model": "gemini-3.8-flash"}], False)), \
                 mock.patch.object(ug, "is_builder_role", return_value=False):
-            chosen = ug.pick("qa-sdet", None, None, None, None)["selected"]
+            chosen = ug.pick("release-manager", None, None, None, None)["selected"]
         self.assertEqual((chosen["provider"], chosen["verdict"]), ("antigravity", "allowed"))
 
     def test_antigravity_blocked_still_exits_3(self):
@@ -865,7 +865,15 @@ class IdleReading(unittest.TestCase):
 
 
 
+GROK_BUSY = {"provider": "grok", "verdict": "blocked", "reason": "one live grok worker per host"}
+
+
 class Pick(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(ug, "grok_result", return_value=GROK_BUSY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def invoke(self, chain=None, role="dev", claude=44, other=41, extra=(), pin=False,
                running=0, default=False, cap=12, other_baseline=40):
         readings = {}   # "other" stands in for a second gated provider with a readable weekly percent
@@ -1011,8 +1019,8 @@ class Pick(unittest.TestCase):
         with open(path) as f:
             chain = json.load(f)["roles"]["reviewer"]["chain"]
         self.assertEqual([(e["provider"], e["model"]) for e in chain],
-                         [("antigravity", "gemini-4-argon-high"), ("claude", "sonnet"),
-                          ("cursor", "grok-4.7-high")])
+                         [("grok", "grok-4.7"), ("antigravity", "gemini-4-argon-high"),
+                          ("claude", "sonnet"), ("cursor", "grok-4.7-high")])
         self.assertEqual({ug.family(e) for e in chain}, {"gemini", "claude", "grok"})
 
     def test_claude_authored_pr_reviewer_pick_offers_cursor_grok(self):
@@ -1058,6 +1066,8 @@ class CursorComposerOnly(unittest.TestCase):
 
     def test_pick_skips_other_cursor_models(self):
         def row(provider, *_, **__):
+            if provider == "grok":
+                return GROK_BUSY
             return {"verdict": "allowed", "ceiling": 95, "weekly_used": 10}
         with mock.patch.object(ug, "role_chain", return_value=(self.CHAIN, False)), \
                 mock.patch.object(ug, "run", side_effect=row), \
@@ -1566,6 +1576,8 @@ class Pace987(unittest.TestCase):
     CHAIN = [{"provider": "claude", "model": "sonnet"}, {"provider": "cursor", "model": "grok-4.7-high"}]
 
     def rows(self, provider, cap, ceiling, **kw):
+        if provider == "grok":
+            return GROK_BUSY
         # claude: 40 points for 5 days (8/day). cursor: 20 points resetting in half a day (40/day).
         pct, resets = (55, NOW + 5 * 86400) if provider == "claude" else (80, NOW + 43200)
         return {"verdict": "allowed", "ceiling": 95 if provider == "claude" else 100,
@@ -1582,16 +1594,16 @@ class Pace987(unittest.TestCase):
     def test_quota_about_to_reset_is_spent_first(self):
         self.assertEqual(self.pick("qa-sdet-like", False), "cursor")
 
-    def test_builder_roles_keep_the_fixed_order_cursor_first(self):
-        self.assertEqual(self.pick("fullstack-dev", True), "cursor")
-        with mock.patch.object(ug, "run", side_effect=lambda provider, *a, **k: {
+    def test_builder_roles_keep_the_fixed_order_and_cursor_last(self):
+        self.assertEqual(self.pick("fullstack-dev", True), "claude")
+        with mock.patch.object(ug, "run", side_effect=lambda provider, *a, **k: GROK_BUSY if provider == "grok" else {
                 "verdict": "allowed", "ceiling": 95, "weekly_used": 95 - (90 if provider == "claude" else 1),
                 "resets_at": NOW + (86400 if provider == "claude" else 5 * 86400)}), \
                 mock.patch.object(ug, "role_chain", return_value=(self.CHAIN, False)), \
                 mock.patch.object(ug, "is_builder_role", return_value=True), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
-            # claude is far ahead on pace, but a builder still takes Cursor first
-            self.assertEqual(ug.pick("fullstack-dev", None, None, None, None)["selected"]["provider"], "cursor")
+            # claude is far ahead on pace, but a builder still takes the fixed order: Claude before Cursor
+            self.assertEqual(ug.pick("fullstack-dev", None, None, None, None)["selected"]["provider"], "claude")
 
     def test_pace_is_headroom_per_day_with_a_floor_on_days_left(self):
         row = {"verdict": "allowed", "ceiling": 95, "weekly_used": 55, "resets_at": NOW + 2 * 86400}
@@ -1900,38 +1912,82 @@ class BuilderCursorRoute(unittest.TestCase):
             for role in ("elon", "architect-pm", "qa-sdet", "secops-finops", "release-manager"):
                 self.assertFalse(ug.is_builder_role(role), role)
 
-    def test_fullstack_dev_picks_cursor_when_allowed_even_if_text_lists_claude_first(self):
-        # Cursor has less headroom than Claude and Antigravity. The old pin would stay on Claude.
-        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
-        status, out = self.flags("fullstack-dev", roles, {"cursor": 80, "claude": 40, "antigravity": 5})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
+    GROK = "--agent grok --model grok-4.7"
 
-    def test_fullstack_dev_picks_cursor_when_the_chain_omits_it(self):
+    def test_fullstack_dev_picks_grok_when_allowed_even_if_text_lists_claude_first(self):
+        # Grok has no weekly headroom to compare. The old pin would stay on Claude.
+        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
+        status, out = self.flags("fullstack-dev", roles, {"cursor": 5, "claude": 40, "antigravity": 5})
+        self.assertEqual((status, out), (0, self.GROK))
+
+    def test_fullstack_dev_picks_grok_when_the_chain_omits_it(self):
         chain = [entry for entry in self.FS if entry["provider"] != "cursor"]
         roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": chain}}
-        status, out = self.flags("fullstack-dev", roles, {"cursor": 80, "claude": 10, "antigravity": 10})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
+        status, out = self.flags("fullstack-dev", roles, {"claude": 10, "antigravity": 10})
+        self.assertEqual((status, out), (0, self.GROK))
 
-    def test_fullstack_dev_picks_sonnet_only_when_cursor_is_blocked(self):
+    def test_fullstack_dev_picks_sonnet_only_when_grok_is_blocked(self):
         # Antigravity has more headroom. Builders still walk the chain: Claude, then Antigravity.
         roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
-        status, out = self.flags("fullstack-dev", roles, {"cursor": 96, "claude": 40, "antigravity": 5})
+        status, out = self.flags("fullstack-dev", roles, {"grok:verdict": "blocked", "claude": 40, "antigravity": 5})
         self.assertEqual((status, out), (0, "--agent claude --model sonnet --effort medium"))
 
-    def test_fullstack_dev_picks_antigravity_after_cursor_and_claude_are_blocked(self):
+    def test_fullstack_dev_picks_antigravity_after_grok_and_claude_are_blocked(self):
         roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
-        status, out = self.flags("fullstack-dev", roles, {"cursor": 96, "claude": 96, "antigravity": 5})
+        status, out = self.flags("fullstack-dev", roles,
+                                 {"grok:verdict": "blocked", "claude": 96, "antigravity": 5, "cursor": 5})
         self.assertEqual((status, out), (0, "--agent antigravity --model gemini-4-argon-medium"))
 
-    def test_light_tier_picks_cursor_then_its_own_claude_then_antigravity(self):
+    def test_cursor_comes_after_antigravity(self):
+        roles = {"fullstack-dev": {"tier": "workhorse", "pin": True, "chain": self.FS}}
+        status, out = self.flags("fullstack-dev", roles,
+                                 {"grok:verdict": "blocked", "claude": 96, "antigravity": 96, "cursor": 5})
+        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
+
+    def test_light_tier_picks_grok_then_its_own_claude_then_antigravity_then_cursor(self):
         roles = {"clerk": {"tier": "light", "chain": self.LIGHT},
                  "fullstack-dev-small": {"tier": "light", "chain": self.LIGHT}}
-        status, out = self.flags("clerk", roles, {"cursor": 80, "claude": 10, "antigravity": 1})
-        self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
-        status, out = self.flags("fullstack-dev-small", roles, {"cursor": 96, "claude": 40, "antigravity": 1})
+        status, out = self.flags("clerk", roles, {"claude": 10, "antigravity": 1})
+        self.assertEqual((status, out), (0, self.GROK))
+        status, out = self.flags("fullstack-dev-small", roles, {"grok:verdict": "blocked", "claude": 40, "antigravity": 1})
         self.assertEqual((status, out), (0, "--agent claude --model haiku"))
-        status, out = self.flags("fullstack-dev-small", roles, {"cursor": 96, "claude": 96, "antigravity": 5})
+        status, out = self.flags("fullstack-dev-small", roles, {"grok:verdict": "blocked", "claude": 96, "antigravity": 5})
         self.assertEqual((status, out), (0, "--agent antigravity --model gemini-3.8-flash"))
+
+    def test_strong_roles_never_pick_grok(self):
+        chain = [{"provider": "grok", "model": "grok-4.7"},
+                 {"provider": "claude", "model": "opus", "effort": "medium"},
+                 {"provider": "antigravity", "model": "gemini-4-argon-high"}]
+        roles = {role: {"tier": "strong", "chain": chain}
+                 for role in ("elon", "architect-pm", "secops-finops")}
+        for role in roles:
+            with self.subTest(role=role):
+                status, out = self.flags(role, roles, {"claude": 40, "antigravity": 40})
+                self.assertEqual((status, out), (0, "--agent claude --model opus --effort medium"))
+                self.assertNotIn("grok", out)
+
+    def test_qa_sdet_picks_grok_first_and_claude_reviews_grok_work(self):
+        chain = [{"provider": "claude", "model": "opus", "effort": "medium"},
+                 {"provider": "antigravity", "model": "gemini-4-argon-high"},
+                 {"provider": "cursor", "model": "grok-4.7-high"}]
+        roles = {"qa-sdet": {"tier": "strong", "chain": chain}}
+        status, out = self.flags("qa-sdet", roles, {"claude": 40, "antigravity": 5})
+        self.assertEqual((status, out), (0, self.GROK))
+        status, out = self.flags("qa-sdet", roles, {"grok:verdict": "blocked", "claude": 40, "antigravity": 5})
+        self.assertEqual((status, out), (0, "--agent antigravity --model gemini-4-argon-high"))
+        path = os.path.join(self.tmp, "presets.json")
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=lambda p, *a, **k: {
+                    "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            picked = ug.pick("qa-sdet", "grok", None, None, None)["selected"]
+        self.assertEqual(picked["provider"], "claude")
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=lambda p, *a, **k: {
+                    "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
+        self.assertEqual((picked["provider"], picked["model"]), ("grok", "grok-4.7"))
 
     def test_strong_roles_never_pick_cursor(self):
         chain = [{"provider": "cursor", "model": "grok-4.7-high"},
@@ -1950,7 +2006,7 @@ class BuilderCursorRoute(unittest.TestCase):
                  {"provider": "claude", "model": "opus", "effort": "medium"},
                  {"provider": "antigravity", "model": "gemini-4-argon-high"}]
         roles = {"qa-sdet": {"tier": "strong", "chain": chain}}
-        status, out = self.flags("qa-sdet", roles, {"cursor": 1, "claude": 40, "antigravity": 40})
+        status, out = self.flags("qa-sdet", roles, {"grok:verdict": "blocked", "cursor": 1, "claude": 40, "antigravity": 40})
         self.assertEqual((status, out), (0, "--agent cursor --model grok-4.7-high"))
 
     def test_qa_sdet_falls_back_to_a_different_claude_model_when_other_families_are_blocked(self):
@@ -1980,16 +2036,65 @@ class BuilderCursorRoute(unittest.TestCase):
         with open(self.PRESETS) as handle:
             roles = json.load(handle)["roles"]
         fullstack = roles["fullstack-dev"]["chain"]
-        self.assertEqual([entry["provider"] for entry in fullstack], ["cursor", "claude", "antigravity"])
-        self.assertEqual(fullstack[0]["model"], "grok-4.7-high")
+        self.assertEqual([entry["provider"] for entry in fullstack], ["grok", "claude", "antigravity", "cursor"])
+        self.assertEqual(fullstack[0]["model"], "grok-4.7")
         self.assertEqual((fullstack[1]["model"], fullstack[1].get("effort")), ("sonnet", "medium"))
         light = roles["fullstack-dev-small"]
         self.assertEqual(light["tier"], "light")
-        self.assertEqual([entry["provider"] for entry in light["chain"]], ["cursor", "claude", "antigravity"])
-        self.assertEqual(light["chain"][0]["model"], "grok-4.7-high")
+        self.assertEqual([entry["provider"] for entry in light["chain"]], ["grok", "claude", "antigravity", "cursor"])
+        self.assertEqual(light["chain"][0]["model"], "grok-4.7")
         qa = roles["qa-sdet"]["chain"]
-        self.assertEqual([entry["provider"] for entry in qa], ["claude", "antigravity", "cursor"])
+        self.assertEqual([entry["provider"] for entry in qa], ["grok", "claude", "antigravity", "cursor"])
         self.assertEqual(qa[-1]["model"], "grok-4.7-high")
         for role in ("elon", "architect-pm", "secops-finops"):
             providers = [entry["provider"] for entry in roles[role]["chain"]]
             self.assertNotIn("cursor", providers, role)
+            self.assertNotIn("grok", providers, role)
+
+
+class GrokGate(unittest.TestCase):
+    """dotfiles #1097: Grok has no usage API, so its gate is one live worker per host."""
+
+    def verdict(self, live):
+        with mock.patch.object(ug, "live_workers", return_value=live):
+            return ug.run("grok", None, None)
+
+    def test_allowed_with_no_live_grok_worker(self):
+        self.assertEqual(self.verdict([])["verdict"], "allowed")
+
+    def test_blocked_at_one_live_grok_worker(self):
+        row = self.verdict([{"agent": "grok"}])
+        self.assertEqual(row["verdict"], "blocked")
+        self.assertIn("one live grok worker", row["reason"])
+
+    def test_unknown_when_orca_cannot_say(self):
+        self.assertEqual(self.verdict(None)["verdict"], "unknown")
+
+    def test_live_count_asks_orca_for_grok_workers(self):
+        with mock.patch.object(ug, "live_workers", return_value=[]) as live:
+            ug.run("grok", None, None)
+        live.assert_called_with("grok")
+
+    def test_check_exit_codes(self):
+        for live, code in (([], 0), ([{"agent": "grok"}], 3), (None, 4)):
+            with self.subTest(code=code), mock.patch.object(ug, "live_workers", return_value=live), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ug.main(["check", "--provider", "grok"]), code)
+
+    def test_grok_family(self):
+        self.assertEqual(ug.family({"provider": "grok", "model": "grok-4.7"}), "grok")
+        self.assertEqual(ug.model_family("grok", "grok-4.7"), "grok")
+
+    def test_avoid_provider_accepts_grok(self):
+        with mock.patch.object(ug, "pick", return_value={"selected": None, "candidates": [], "blocked_until_local": "x"}) as pick, \
+                contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            ug.main(["pick", "--role", "fullstack-dev", "--avoid-provider", "grok"])
+        self.assertEqual(pick.call_args.args[5], "grok")
+
+    def test_routing_doc_says_grok_replaces_cursor(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "agent-team", ".claude", "model-routing.md")
+        with open(path) as handle:
+            text = handle.read()
+        self.assertIn("grok replaces cursor", text)
+        self.assertIn("`--agent grok --model grok-4.7`", text)
+        self.assertIn("grok_hosts", text)

@@ -47,8 +47,17 @@ class Hook(unittest.TestCase):
             today = datetime.now().strftime("%Y-%m-%d")
             json.dump({"date": today, "baseline": baseline, "resets_at": FUT}, open(self.state + "/claude.json", "w"))
 
-    def run_hook(self, command, tool="Bash", presets=True):
-        env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA="false", USAGE_GATE_PRESETS=self.presets)
+    def idle_orca(self):
+        """An orca stub that lists one run with no workers, so the live grok count reads 0."""
+        path = self.tmp.name + "/bin/orca-idle"
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\nif [ \"$2\" = run-list ]; then echo '{\"ok\":true,\"result\":{\"runs\":[{\"id\":\"r1\"}]}}'; "
+                    "else echo '{\"ok\":true,\"result\":{\"workers\":[]}}'; fi\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def run_hook(self, command, tool="Bash", presets=True, orca="false"):
+        env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA=orca, USAGE_GATE_PRESETS=self.presets)
         env["FLEET_WATCH_TEST_LOAD_PER_CORE"] = "0.20"
         env["FLEET_WATCH_TEST_FREE_GB"] = "12"
         if not presets:
@@ -111,7 +120,7 @@ class Hook(unittest.TestCase):
         deny, _ = self.run_hook("orca orchestration worker-start --task t")
         self.assertIn("no usage reading", deny or "")
 
-    def run_stubbed_pool_hook(self, command, provider="antigravity", unavailable_model=None):
+    def run_stubbed_pool_hook(self, command, provider="antigravity", unavailable_model=None, busy=False):
         spec = importlib.util.spec_from_file_location("hook", HOOK)
         hook = importlib.util.module_from_spec(spec)
         with mock.patch("sys.stdin", io.StringIO('{"tool_name":"Read"}')), \
@@ -124,6 +133,8 @@ class Hook(unittest.TestCase):
             self.assertEqual(argv[:5], [sys.executable, hook.GATE, "check", "--provider", provider])
             extra = argv[5:]
             allowed = extra in ([], ["--model", "gemini-flash"]) if provider == "antigravity" else extra == []
+            if busy:
+                return mock.Mock(returncode=3, stdout=json.dumps({"reason": "one live grok worker per host"}))
             if unavailable_model and extra == ["--model", unavailable_model]:
                 return mock.Mock(returncode=4, stdout=json.dumps({"reason": "no pool reading"}))
             if unavailable_model and not extra:
@@ -207,6 +218,18 @@ class Hook(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertEqual(checks, [[]])
 
+    def test_grok_is_gated_like_the_other_agents(self):
+        out, checks = self.run_stubbed_pool_hook(
+            "orca orchestration worker-start --agent grok --model grok-4.7", provider="grok")
+        self.assertEqual(out, "")
+        self.assertEqual(checks, [[]])
+
+    def test_grok_denial_names_the_live_worker_rule(self):
+        out, checks = self.run_stubbed_pool_hook(
+            "orca orchestration worker-start --agent grok --model grok-4.7", provider="grok", busy=True)
+        self.assertIn("Usage gate blocked grok: one live grok worker per host", out)
+        self.assertNotIn("weekly ceiling", out)
+
     def test_cursor_forwards_model_to_gate_check(self):
         _, checks = self.run_stubbed_pool_hook(
             "orca orchestration worker-start --agent cursor --model gpt-5.6-sol-high",
@@ -282,16 +305,16 @@ class Hook(unittest.TestCase):
 
     def test_start_must_use_pick_even_on_retry(self):
         self.claude(44, baseline=40)
-        # Cursor has less headroom than Claude and is still allowed, so a builder pick stays on Cursor.
-        self.composer_pool(90, 85)
+        # Grok has no live worker on this host, so a builder pick stays on Grok whatever Claude's headroom.
+        orca = self.idle_orca()
         for retry in ("", " --retry-of dispatch_old"):
             deny, err = self.run_hook("orca orchestration worker-start --task t --agent claude "
-                                    "--task-title 'fullstack-dev - job'" + retry)
+                                    "--task-title 'fullstack-dev - job'" + retry, orca=orca)
             self.assertIsNone(deny)
-            self.assertIn("pick recommends cursor", err)
-            self.assertIn("cursor headroom", err)
-        deny, err = self.run_hook("orca orchestration worker-start --agent cursor "
-                                  "--task-title 'fullstack-dev - job'")
+            self.assertIn("pick recommends grok", err)
+            self.assertIn("claude headroom", err)
+        deny, err = self.run_hook("orca orchestration worker-start --agent grok "
+                                  "--task-title 'fullstack-dev - job'", orca=orca)
         self.assertIsNone(deny)
         self.assertNotIn("pick recommends", err)
 
@@ -347,14 +370,14 @@ class Hook(unittest.TestCase):
         self.assertIn("weekly ceiling", self.run_hook(cmd)[0] or "")
 
     def test_override_only_applies_to_its_command_and_not_spec_text(self):
-        self.composer_pool(90, 85)
         self.claude(44, baseline=40)
+        orca = self.idle_orca()
         start = "orca orchestration worker-start --agent claude --task-title 'fullstack-dev - job'"
         for cmd in ("USAGE_GATE_OVERRIDE=outage " + start + " && " + start,
                     start + " --spec 'USAGE_GATE_OVERRIDE=outage'",
                     "echo USAGE_GATE_OVERRIDE=outage; " + start):
-            self.assertIsNone(self.run_hook(cmd)[0])
-            self.assertIn("pick recommends cursor", self.run_hook(cmd)[1])
+            self.assertIsNone(self.run_hook(cmd, orca=orca)[0])
+            self.assertIn("pick recommends grok", self.run_hook(cmd, orca=orca)[1])
 
     def test_unknown_role_override_is_also_logged(self):
         self.claude(44)
