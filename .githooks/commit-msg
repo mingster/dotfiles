@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 # Reject a commit message that names a private project or host (this repo is public).
-# Wired by script/worktree-setup.sh (core.hooksPath). See script/name-lint.sh.
-exec bash "$(git rev-parse --show-toplevel)/script/name-lint.sh" message "$1"
+# Wired by script/worktree-setup.sh (core.hooksPath). The check lives in script/check-project-names.sh.
+out=$(bash "$(git rev-parse --show-toplevel)/script/check-project-names.sh" --allow-missing --show-match --file "$1" 2>&1)
+rc=$?
+# Say something only on a problem or a skipped check.
+{ [ "$rc" -ne 0 ] || [[ "$out" == SKIPPED* ]]; } && echo "$out" >&2
+exit "$rc"

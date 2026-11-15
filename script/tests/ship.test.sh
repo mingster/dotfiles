@@ -10,6 +10,9 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 mf_setup
 trap mf_teardown EXIT
 cd "$MF_REPO" || exit 1
+# ship.sh checks the PR text for private names and fails without a pattern file.
+echo xyzzynomatch >"$MF_DIR/names.pattern"
+export NO_PROJECT_NAMES_FILE="$MF_DIR/names.pattern"
 
 # ship.sh calls Orca only to set the board status after a merge: the stub logs every call and exits ORCA_FAKE_RC (default 0).
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/orca-called"\nexit "${ORCA_FAKE_RC:-0}"\n' "$MF_DIR" > "$MF_DIR/fake-orca"
@@ -690,7 +693,7 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   repo_root="$MF_DIR/main-tree"; mkdir -p "$repo_root"
   git -C "$here/.." archive origin/main | tar -x -C "$repo_root"
   fx="$MF_DIR/dot"; mkdir -p "$fx/script" "$fx/.agents/skills"
-  cp "$here/ship.sh" "$here/name-lint.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
+  cp "$here/ship.sh" "$here/check-project-names.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx

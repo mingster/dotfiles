@@ -25,6 +25,19 @@ skipped_note() { [ -f "$names_file" ] || echo "SKIPPED no-project-names.test.sh 
 cd "$root"
 changed=()
 while IFS= read -r f; do changed+=("$f"); done < <(git diff --diff-filter=d --name-only "$(git merge-base "$base" HEAD)")
+# Names in the branch commits, the changed files and the PR text fail here, so a worker sees them before the push.
+# A missing pattern file fails too (it is on every fleet host). Run before the HOME swap: gh reads its login from HOME.
+if [ "${#list_only[@]}" -eq 0 ]; then
+  name_args=(--show-match --changed "$base" --commits "$base..HEAD")
+  pr_text=$(mktemp -d)
+  if gh pr view --json title,body >"$pr_text/pr.json" 2>/dev/null; then
+    jq -r .title "$pr_text/pr.json" >"$pr_text/pr-title.txt"
+    jq -r .body "$pr_text/pr.json" >"$pr_text/pr-body.txt"
+    name_args+=(--file "$pr_text/pr-title.txt" --file "$pr_text/pr-body.txt")
+  fi
+  bash script/check-project-names.sh "${name_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+  rm -rf "$pr_text"
+fi
 HOME=$(mktemp -d)
 export HOME
 trap 'rm -rf "$HOME"' EXIT
@@ -36,8 +49,6 @@ export SELECT_SCRIPT_TESTS_JOBS=${SELECT_SCRIPT_TESTS_JOBS:-8}
 export SELECT_SCRIPT_TESTS_SERIAL=${SELECT_SCRIPT_TESTS_SERIAL:-'*wrap-up-scheduled-cleanup.test.sh'}
 # The longest tests start first; at the end of the queue wrap-up.test.sh alone added minutes.
 export SELECT_SCRIPT_TESTS_FIRST=${SELECT_SCRIPT_TESTS_FIRST:-'script/wrap-up.test.sh script/wrap-up-guards.test.sh script/tests/ship.test.sh script/tests/wrap-up-fleet-release.test.sh script/tests/wrap-up-after-merge.test.sh'}
-# Always check names on the branch commits and changed files, not only when the selector picks the test.
-[ "${#list_only[@]}" -gt 0 ] || bash script/name-lint.sh branch "$base"
 bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${changed[@]+"${changed[@]}"}"
 [ "${#list_only[@]}" -eq 0 ] || { skipped_note; exit 0; }
 # Hook gate tests read brief-lint and the hook files, so any change can break them. Run all of them.

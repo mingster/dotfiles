@@ -101,10 +101,12 @@ read_pr
 field() { jq -r "$1" <<<"$info"; }
 
 # Public repo: a private project or host name in the PR title or body stays on GitHub after merge.
-if [ "${SHIP_SKIP_NAME_LINT:-}" != 1 ]; then
-  field .title | NAME_LINT_QUIET=1 bash "$ship_dir/name-lint.sh" text "PR $pr title" || refuse "PR $pr title names a private project or host"
-  printf '%s' "$(field .body)" | NAME_LINT_QUIET=1 bash "$ship_dir/name-lint.sh" text "PR $pr body" || refuse "PR $pr body names a private project or host"
-fi
+name_dir=$(mktemp -d)
+field .title >"$name_dir/pr-$pr-title.txt"
+field .body >"$name_dir/pr-$pr-body.txt"
+name_out=$(bash "$ship_dir/check-project-names.sh" --show-match --file "$name_dir/pr-$pr-title.txt" --file "$name_dir/pr-$pr-body.txt" 2>&1) && name_rc=0 || name_rc=$?
+rm -rf "$name_dir"
+[ "$name_rc" -eq 0 ] || refuse "PR $pr text names a private project or host: ${name_out//$'\n'/; }"
 
 # 1. PR is open, not draft, mergeable (not CONFLICTING).
 # GitHub leaves mergeable UNKNOWN until it has calculated the merge. PRs 801 and 802
