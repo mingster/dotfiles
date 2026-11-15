@@ -4680,7 +4680,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
             if findings:
                 scope_line += '\n\nPrior FAIL items from head %s:\n%s' % (last_head, findings)
             verify = (
-                'GitHub Checks and Review are green at head %s. Check only the prior FAIL items and git diff %s..%s.'
+                'GitHub Checks are green and Review is green at head %s. Check only the prior FAIL items and git diff %s..%s.'
                 % (head, last_head, head)
             )
         else:
@@ -4689,6 +4689,8 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
                 'GitHub Checks are green at head %s. Review the diff and run the live checks this brief names.'
                 % head
             )
+        if checks_local_applies(root):
+            verify += '\nbash script/checks-local.sh 2>&1 | tail -40'
         extra_scope = ('\n\n%s' % scope_line) if scope_line else ''
         text = (
             'Refs %s#%s%s\n\n'

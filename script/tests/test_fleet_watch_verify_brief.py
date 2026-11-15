@@ -73,15 +73,29 @@ class VerifyBrief(unittest.TestCase):
         path.write_text(text, encoding='utf-8')
         return str(path)
 
-    def test_verifier_uses_green_checks_and_not_checks_local(self):
-        row = {'number': 4, 'headRefOid': HEAD}
-        for root in (self.present, self.absent):
-            text = Path(fw.build_babysit_spec(REPO, row, 'verifier', ('claude', 'opus'), str(root))).read_text(encoding='utf-8')
-            body = verify_body(text)
-            self.assertIn('GitHub Checks are green', body)
-            self.assertNotIn('checks-local.sh', text)
-            self.assertIn('Role: qa-sdet', text)
-            lint = subprocess.run(['bash', str(LINT), self._write(text)], capture_output=True, text=True)
+    def verifier_text(self, root, row):
+        return Path(fw.build_babysit_spec(REPO, row, 'verifier', ('claude', 'opus'), str(root))).read_text(encoding='utf-8')
+
+    def lint(self, text):
+        return subprocess.run(['bash', str(LINT), self._write(text)], capture_output=True, text=True)
+
+    def test_verifier_runs_checks_local_only_when_the_repo_has_it(self):
+        fresh = {'number': 4, 'headRefOid': HEAD}
+        refail = {
+            'number': 4,
+            'headRefOid': HEAD,
+            'comments': [{'body': 'Verdict: FAIL head=%s\n- item one' % ('b' * 40)}],
+        }
+        for row in (fresh, refail):
+            present = self.verifier_text(self.present, row)
+            self.assertIn('bash script/checks-local.sh 2>&1 | tail -40', verify_body(present))
+            self.assertIn('Role: qa-sdet', present)
+            lint = self.lint(present)
+            self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
+            absent = self.verifier_text(self.absent, row)
+            self.assertNotIn('checks-local.sh', absent)
+            self.assertIn('GitHub Checks', verify_body(absent))
+            lint = self.lint(absent)
             self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
 
     def test_babysit_rework_names_checks_local_only_when_the_repo_has_it(self):
