@@ -637,6 +637,107 @@ class ProjectConfigRules(GuardTest):
         self.assertIsNone(self.edit(os.path.join(self.home, ".config", "elsewhere", "notes")))
 
 
+class PromoteHostSteps(GuardTest):
+    """A promote approval covers read-only host inspection and Prisma client regeneration for its release."""
+    OTHER = "fedcba9876543210fedcba9876543210fedcba98"
+    SHA = ProjectConfigRules.SHA
+    APP = "/srv/sample"
+    CONFIG = {
+        "approval_namespace": "sample",
+        "production_hosts": ["prod.example"],
+        "remote_read_only": [],  # ls and cat are not free on the host, so only the promote steps allow them
+        "promote_host_steps": {"app_dir": APP, "read_hosts": ["root@prod.example"], "write_hosts": ["root@prod.example"]},
+    }
+    SSH = "ssh root@prod.example"
+    OPTS = "ssh -o BatchMode=yes -o ConnectTimeout=15 root@prod.example"
+
+    def setUp(self):
+        super().setUp()
+        approval_dir = os.path.join(self.home, ".config", "sample")
+        os.makedirs(approval_dir)
+        self.approval = os.path.join(approval_dir, "approval.json")
+        self.use_config(self.CONFIG)
+
+    use_config = ProjectConfigRules.use_config
+    approve = ProjectConfigRules.approve
+
+    def head(self, sha=None):
+        return f'test "$(git -C {self.APP} rev-parse HEAD)" = {sha or self.SHA}'
+
+    def regen(self, head=None):
+        pre = [head] if head else []
+        return " && ".join([*pre, f"cd {self.APP}/web", "rm -rf prisma/generated/client", "bunx prisma generate",
+                            "node scripts/link-prisma-client-default.js"])
+
+    def ssh(self, remote, prefix=None):
+        return f"{prefix or self.SSH} '{remote}'"
+
+    def test_read_only_inspection_without_a_sha_passes_under_a_promote_approval(self):
+        self.approve(scope="promote", target=self.SHA)
+        for prefix in (self.SSH, self.OPTS):
+            for remote in (f"ls -la {self.APP}", f"cd {self.APP}/web && ls prisma/generated/client",
+                           f"cd {self.APP}/web && cat prisma/generated/client/source-schema.sha256"):
+                with self.subTest(prefix=prefix, remote=remote):
+                    self.assertAllowed(self.ssh(remote, prefix))
+
+    def test_inspection_still_needs_an_approval(self):
+        self.assertDenied(self.ssh(f"ls -la {self.APP}"), "approve")
+
+    def test_regeneration_bound_to_the_approved_sha_passes(self):
+        self.approve(scope="promote", target=self.SHA)
+        for prefix in (self.SSH, self.OPTS):
+            with self.subTest(prefix=prefix):
+                self.assertAllowed(self.ssh(self.regen(self.head()), prefix))
+
+    def test_regeneration_for_another_release_or_rollback_is_denied(self):
+        self.approve(scope="promote", target=self.OTHER)
+        self.assertDenied(self.ssh(self.regen(self.head())))
+        self.approve(scope="rollback", target=self.SHA)
+        self.assertDenied(self.ssh(self.regen(self.head())))
+
+    def test_regeneration_without_a_sha_is_denied(self):
+        self.approve(scope="promote", target=self.SHA)
+        for prefix in (self.SSH, self.OPTS):
+            with self.subTest(prefix=prefix):
+                self.assertDenied(self.ssh(self.regen(), prefix))
+
+    def test_regeneration_before_the_release_check_is_denied(self):
+        self.approve(scope="promote", target=self.SHA)
+        self.assertDenied(self.ssh(f"{self.regen()} && {self.head()}"))
+        self.assertDenied(self.ssh(f"ls {self.APP}/releases/{self.SHA} && {self.regen()}"))
+
+    def test_semicolon_cannot_skip_the_release_check(self):
+        self.approve(scope="promote", target=self.SHA)
+        self.assertDenied(self.ssh(f"{self.head()}; {self.regen()}"))
+        self.assertDenied(self.ssh(f"{self.head()} && {self.regen()}; ls {self.APP}"))
+
+    def test_ls_cannot_climb_out_of_the_app_directory(self):
+        self.approve(scope="promote", target=self.SHA)
+        self.assertDenied(self.ssh(f"ls -la {self.APP}/../../root/.ssh"))
+        self.assertDenied(self.ssh(f"ls -la {self.APP}/.."))
+        self.assertDenied(self.ssh(f"cd {self.APP}/web && ls prisma/../.."))
+
+    def test_other_writes_stay_denied(self):
+        self.approve(scope="promote", target=self.SHA)
+        for remote in (f"cd {self.APP}/web && rm -rf prisma/generated/client", f"rm -rf {self.APP}",
+                       f"git -C {self.APP} checkout --quiet --detach {self.OTHER}", "pm2 restart all",
+                       f"{self.head()} && cd {self.APP}/web && bunx prisma db push --accept-data-loss"):
+            with self.subTest(remote=remote):
+                self.assertDenied(self.ssh(remote))
+
+    def test_without_config_the_steps_are_off(self):
+        self.use_config({**self.CONFIG, "promote_host_steps": None})
+        self.approve(scope="promote", target=self.SHA)
+        self.assertDenied(self.ssh(f"ls -la {self.APP}"))
+
+    def test_data_step_takes_only_the_sha_and_a_step_name(self):
+        self.approve(scope="promote", target=self.SHA, schema=True, apply=True)
+        self.assertAllowed(f"bin/run-production-data-step.sh {self.SHA} backfill-slugs")
+        self.assertDenied(f"bin/run-production-data-step.sh {self.SHA} backfill-slugs --accept-data-loss",
+                          "takes only <release-sha> and <step-name>")
+        self.assertDenied(f"bin/run-production-data-step.sh {self.SHA}")
+
+
 class ExactOnlyScripts(GuardTest):
     """`exact_only_scripts` in guard-config.json: a listed script runs only as the whole command."""
     SCRIPT = ".claude/bin/sample-credential-script.sh"

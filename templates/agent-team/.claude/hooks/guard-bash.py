@@ -79,6 +79,7 @@ FORCE_PUSH_BRANCHES: list[str] = ["main"]
 SECRETS_STDIN_OK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
 HOST_DEPLOY_PATTERNS: dict[str, list[re.Pattern]] = {}
+PROMOTE_STEPS: dict | None = None
 CONFIG_LOADED_FROM: str | None = None
 GRILL_APPROVERS: set[str] = set()
 
@@ -215,7 +216,7 @@ def load_guard_config(start_dir):
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
-    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS
+    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS, PROMOTE_STEPS
 
     BLOCKED_SCRIPTS = set()
     GRILL_APPROVERS = set()
@@ -241,6 +242,7 @@ def load_guard_config(start_dir):
     SECRETS_STDIN_OK = []
     WORKTREE_ENV_ALLOW = []
     HOST_DEPLOY_PATTERNS = {}
+    PROMOTE_STEPS = None
     REMOTE_READ_ONLY = DEFAULT_REMOTE_READ_ONLY
     SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
     SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
@@ -419,6 +421,16 @@ def load_guard_config(start_dir):
             HOST_DEPLOY_PATTERNS[target.strip().lower()] = [
                 re.compile(re.escape(c).replace("SHA40", "(?P<sha>[0-9a-f]{40})"))
                 for c in cmds if isinstance(c, str) and c.strip()]
+
+    # Read-only inspection and Prisma client regeneration a promote approval covers on the release host.
+    # app_dir is the app checkout; read_hosts may be inspected, write_hosts may also regenerate the client.
+    steps = cfg_expect("promote_host_steps", dict, "object")
+    if steps and isinstance(steps.get("app_dir"), str) and re.fullmatch(r"/[A-Za-z0-9._/-]*[A-Za-z0-9_]", steps["app_dir"]) \
+            and ".." not in steps["app_dir"].split("/"):
+        names = lambda key: {h.strip().lower() for h in steps.get(key) or [] if isinstance(h, str) and h.strip()}
+        write_hosts = names("write_hosts")
+        PROMOTE_STEPS = {"app": steps["app_dir"], "read_hosts": names("read_hosts") | write_hosts,
+                         "write_hosts": write_hosts}
 
     raw_read_only = cfg_expect("remote_read_only", list, "list")
     if raw_read_only is not None:
@@ -1676,6 +1688,201 @@ def check_backstop(segment, base, args):
         owner_go(f"`{base}` naming a production host", f"{APPROVE} host", why)
 
 
+def split_promote_chain(remote):
+    """Split a remote command on `&&` outside quotes. Refuse `;` (it does not stop on a failed check),
+    newlines, comments, backticks, input redirects, background `&` and `||`."""
+    if not remote or not printable(remote) or "\n" in remote or "\r" in remote or "#" in remote or "`" in remote:
+        return None
+    out, buf, quote, i = [], [], None, 0
+    while i < len(remote):
+        c = remote[i]
+        if quote:
+            buf.append(c)
+            if c == "\\" and quote == '"' and i + 1 < len(remote):
+                buf.append(remote[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+            buf.append(c)
+        elif c in "\\<;":
+            return None
+        elif remote.startswith("&&", i):
+            part = " ".join(re.split(r"[ \t]+", "".join(buf).strip(" \t")))
+            if not part:
+                return None
+            out.append(part)
+            buf = []
+            i += 1
+        elif c == "&":
+            if i > 0 and remote[i - 1] == ">" and i + 1 < len(remote) and remote[i + 1].isdigit():
+                buf.append(c)
+            else:
+                return None
+        elif remote.startswith("||", i) or remote.startswith("|&", i):
+            return None
+        else:
+            buf.append(c)
+        i += 1
+    if quote is not None:
+        return None
+    last = " ".join(re.split(r"[ \t]+", "".join(buf).strip(" \t")))
+    if not last:
+        return None
+    out.append(last)
+    return out
+
+
+_STEP_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+def promote_host_step(target, remote, opts, cmd_ok):
+    """None, or the list of commit refs in remote when remote is a read-only inspection or
+    app-checkout Prisma client regeneration covered by a promote approval. The refs bind the
+    approval; a regeneration needs one, proved by a HEAD check or checkout earlier in the chain."""
+    if not PROMOTE_STEPS or not cmd_ok or any(ch != "o" for ch, _ in opts):
+        return None
+    host = target.lower()
+    if host not in PROMOTE_STEPS["read_hosts"]:
+        return None
+    segs = split_promote_chain(remote)
+    if not segs:
+        return None
+    app = re.escape(PROMOTE_STEPS["app"])
+    app_dir = PROMOTE_STEPS["app"]
+    bundle_dir = app_dir + "-bundle"
+    path_prefix = rf"(?:PATH={re.escape(_STEP_PATH)} )?"
+    schema_hash_stdout = re.compile(
+        path_prefix
+        + r"""node -e 'process\.stdout\.write\(require\("node:crypto"\)\.createHash\("sha256"\)\.update\(require\("node:fs"\)\.readFileSync\("prisma/schema\.prisma"\)\)\.digest\("hex"\)\)'"""
+    )
+    client_check = re.compile(
+        path_prefix
+        + r"""node -e 'const fs=require\("node:fs"\),\s*crypto=require\("node:crypto"\);\s*process\.exit\("""
+        + r"""(?:fs\.existsSync\("prisma/generated/client/default\.js"\)\s*&&\s*)?"""
+        + r"""fs\.readFileSync\("prisma/generated/client/source-schema\.sha256",\s*"utf8"\)\s*===\s*"""
+        + r"""crypto\.createHash\("sha256"\)\.update\(fs\.readFileSync\("prisma/schema\.prisma"\)\)\.digest\("hex"\)\s*\?\s*0\s*:\s*1\)'"""
+    )
+    schema_hash_assign = re.compile(r"""_schema_hash=\$\(""" + schema_hash_stdout.pattern + r"""\)""")
+    client_write_node = re.compile(
+        path_prefix
+        + r"""node -e 'const fs=require\("node:fs"\),\s*crypto=require\("node:crypto"\);\s*"""
+        + r"""fs\.writeFileSync\("prisma/generated/client/source-schema\.sha256",\s*"""
+        + r"""crypto\.createHash\("sha256"\)\.update\(fs\.readFileSync\("prisma/schema\.prisma"\)\)\.digest\("hex"\)\)'"""
+    )
+    shas = [m.group(1) for m in re.finditer(r"(?<![0-9a-fA-F])([0-9a-f]{40})(?![0-9a-fA-F])", remote)]
+    cwd = None
+    saw_inspect = saw_regen = saw_regen_action = pending_fetch = proved = False
+
+    for seg in segs:
+        if re.search(r"(?:^|[ /=])\.\.(?:$|[ /])", seg):  # nothing climbs out of the app directory
+            return None
+        if pending_fetch:
+            m = re.fullmatch(rf"git -C {app} checkout --quiet --detach (?P<sha>[0-9a-f]{{7,40}})", seg)
+            if not m:
+                return None
+            shas.append(m.group("sha"))
+            pending_fetch = False
+            saw_regen = proved = True
+            continue
+
+        m = re.fullmatch(rf"cd ({app}(?:/web|-bundle(?:/current|/schema(?:/web)?)?)?)", seg)
+        if m:
+            cwd = m.group(1)
+            continue
+
+        if seg == f"git -C {app_dir} fetch --quiet origin":
+            if host not in PROMOTE_STEPS["write_hosts"]:
+                return None
+            pending_fetch = True
+            saw_regen = True
+            continue
+
+        ro = re.sub(r" (?:2>&1|2>/dev/null|>/dev/null)$", "", seg)
+        head_match = re.fullmatch(
+            rf'(?:test|\[) "\$\(git -C {app} rev-parse HEAD\)" = "?(?P<sha>[0-9a-f]{{7,40}})"?(?: \])?',
+            ro,
+        )
+        if head_match:
+            shas.append(head_match.group("sha"))
+            saw_inspect = proved = True
+            continue
+
+        if ">" not in ro and "$(" not in ro and "|" not in ro:
+            m = re.fullmatch(
+                rf"git -C {app}(?:/web|-bundle/schema(?:/web)?)? rev-parse (?:--(?:short|verify|quiet) )*(?P<ref>HEAD|[0-9a-f]{{7,40}})(?:\^\{{commit\}})?",
+                ro,
+            ) or (
+                cwd in {app_dir, f"{app_dir}/web", f"{bundle_dir}/schema", f"{bundle_dir}/schema/web"}
+                and re.fullmatch(r"git rev-parse (?:--(?:short|verify|quiet) )*(?P<ref>HEAD|[0-9a-f]{7,40})(?:\^\{commit\})?", ro)
+            )
+            if m:
+                if m.group("ref") != "HEAD":
+                    shas.append(m.group("ref"))
+                saw_inspect = True
+                continue
+
+            gen = r"generated/client(?:/[A-Za-z0-9._/-]+)?"
+            if (
+                re.fullmatch(rf"ls(?: -[1ladrtFh]+)* {app}(?:-bundle)?(?:/[A-Za-z0-9._/@+-]+)?", ro)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(r"ls(?: -[1ladrtFh]+)* prisma(?:/generated(?:/client(?:/[A-Za-z0-9._/-]+)?)?)?", ro))
+                or re.fullmatch(rf"stat {app}/web/prisma/(?:{gen}|schema\.prisma)", ro)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(rf"stat prisma/(?:{gen}|schema\.prisma)", ro))
+                or re.fullmatch(rf"(?:test -[efds] {app}/web/prisma/(?:{gen}|schema\.prisma)|\[ -[efds] {app}/web/prisma/(?:{gen}|schema\.prisma) \])", ro)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(rf"(?:test -[efds] prisma/(?:{gen}|schema\.prisma)|\[ -[efds] prisma/(?:{gen}|schema\.prisma) \])", ro))
+                or re.fullmatch(rf"(?:cat|head(?: -n [0-9]+| -[0-9]+)?|tail(?: -n [0-9]+| -[0-9]+)?) {app}/web/prisma/generated/client/source-schema\.sha256", ro)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(r"(?:cat|head(?: -n [0-9]+| -[0-9]+)?|tail(?: -n [0-9]+| -[0-9]+)?) prisma/generated/client/source-schema\.sha256", ro))
+                or re.fullmatch(rf"(?:sha256sum|shasum -a 256) {app}/web/prisma/(?:schema\.prisma|generated/client/source-schema\.sha256)(?: {app}/web/prisma/(?:schema\.prisma|generated/client/source-schema\.sha256))?", ro)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(r"(?:sha256sum|shasum -a 256) prisma/(?:schema\.prisma|generated/client/source-schema\.sha256)(?: prisma/(?:schema\.prisma|generated/client/source-schema\.sha256))?", ro))
+                or (cwd == f"{app_dir}/web" and client_check.fullmatch(ro))
+                or (cwd == f"{app_dir}/web" and schema_hash_stdout.fullmatch(ro))
+                or re.fullmatch(rf"readlink(?: -[fe])? {app}(?:-bundle)?/(?:current|slots/(?:blue|green)|releases/[0-9a-f]{{40}})", ro)
+                or (cwd in {app_dir, bundle_dir} and re.fullmatch(r"readlink(?: -[fe])? current", ro))
+            ):
+                saw_inspect = True
+                continue
+
+        if host in PROMOTE_STEPS["write_hosts"]:
+            if (
+                re.fullmatch(rf"rm -rf {app}/web/prisma/generated/client", seg)
+                or (cwd == f"{app_dir}/web" and seg == "rm -rf prisma/generated/client")
+            ):
+                if not proved:
+                    return None
+                saw_regen = True
+                continue
+
+            if cwd == f"{app_dir}/web" and schema_hash_assign.fullmatch(seg):
+                saw_regen = True
+                continue
+
+            if (
+                (cwd == f"{app_dir}/web" and re.fullmatch(path_prefix + rf"(?:bunx prisma generate|bun run generate)(?: --schema(?:=| )(?:{app}/web/)?prisma/schema\.prisma)?", seg))
+                or re.fullmatch(path_prefix + rf"bunx prisma generate --schema(?:=| ){app}/web/prisma/schema\.prisma", seg)
+                or re.fullmatch(path_prefix + rf"node {app}/web/scripts/link-prisma-client-default\.js", seg)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(path_prefix + r"node scripts/link-prisma-client-default\.js", seg))
+                or re.fullmatch(rf"""printf '%s' "\$\{{?_schema_hash\}}?" > {app}/web/prisma/generated/client/source-schema\.sha256""", seg)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(r"""printf '%s' "\$\{?_schema_hash\}?" > prisma/generated/client/source-schema\.sha256""", seg))
+                or re.fullmatch(rf"""(?:sha256sum|shasum -a 256) {app}/web/prisma/schema\.prisma \| (?:cut -d" " -f1|cut -d' ' -f1|awk '\{{print \$1\}}') > {app}/web/prisma/generated/client/source-schema\.sha256""", seg)
+                or (cwd == f"{app_dir}/web" and re.fullmatch(r"""(?:sha256sum|shasum -a 256) prisma/schema\.prisma \| (?:cut -d" " -f1|cut -d' ' -f1|awk '\{print \$1\}') > prisma/generated/client/source-schema\.sha256""", seg))
+                or (cwd == f"{app_dir}/web" and client_write_node.fullmatch(seg))
+            ):
+                if not proved:
+                    return None
+                saw_regen = True
+                saw_regen_action = True
+                continue
+
+        return None
+
+    if pending_fetch or (saw_regen and not saw_regen_action) or (not saw_inspect and not saw_regen_action):
+        return None
+    if saw_regen_action and not shas:  # regeneration must name the release it is for
+        return None
+    return shas
+
+
 def check_ssh(args, depth):
     opts, dest, cmd = ssh_argv(args)
     refuse_ssh_options("ssh", opts)
@@ -1701,6 +1908,18 @@ def check_ssh(args, depth):
             ok, why = approval_for({"promote", "rollback"}, lambda t: not sha or t.lower() == sha)
         if not ok:
             owner_go("The deploy command on the production host", f"{APPROVE} promote {sha or '<sha>'}", why)
+        return
+    step = promote_host_step(args[dest], remote, opts, cmd == dest + 1)
+    if step is not None:
+        for seg in segments(remote):
+            check_segment(seg, depth + 1)  # secrets rules still apply on the host
+        ok, _ = approval_for({"host"})
+        if not ok:
+            ok, why = approval_for({"promote"}, lambda t: bool(t) and all(same_commit(s, t) for s in step))
+        if not ok:
+            want_sha = next(iter(step), "<sha>")
+            owner_go(f"`{remote}` on the production host",
+                     f"{APPROVE} promote {want_sha}` or `{APPROVE} host", why)
         return
     ok, why = approval_for({"host"})
     if not ok:
@@ -1859,6 +2078,10 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
         a, why = load_approval()
         ok = (re.fullmatch(r"[0-9a-f]{40}", sha) and a and a.get("scope") == "promote" and a.get("target") == sha
               and a.get("schema") is True and a.get("apply") is True)
+        if ok and script == "run-production-data-step.sh":
+            ok = len(script_args) == 2 and bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", script_args[1]))
+            if not ok:
+                why = "run-production-data-step.sh takes only <release-sha> and <step-name>"
         if not ok:
             owner_go(f"{script} for {sha}", f"{APPROVE} promote {sha} --schema --apply",
                      why or "requires a matching literal release and schema/apply approval")
