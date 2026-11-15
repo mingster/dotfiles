@@ -50,8 +50,11 @@ class GrokVerifierPick(unittest.TestCase):
             orca.write_text('#!/bin/sh\nif [ "$2" = run-list ]; then echo \'{"ok":true,"result":{"runs":[{"id":"r1"}]}}\'; '
                             'else echo \'{"ok":true,"result":{"workers":[]}}\'; fi\n')
             orca.chmod(0o755)
+            config = json.loads((ROOT / 'usage-gate.config.json').read_text())
+            config.pop('pauses', None)  # the committed grok pause is date bound; this case tests family routing
+            (Path(tmp) / 'usage-gate.config.json').write_text(json.dumps(config))
             env = dict(os.environ, HOME=tmp, USAGE_GATE_PRESETS=str(presets), USAGE_GATE_STATE=tmp + '/state',
-                       USAGE_GATE_ORCA=str(orca))
+                       USAGE_GATE_ORCA=str(orca), USAGE_GATE_CONFIG=tmp + '/usage-gate.config.json')
             env.pop('USAGE_GATE_CLI', None)
             with unittest.mock.patch.dict(os.environ, env):
                 data = fw.pick_role('qa-sdet', avoid_family=avoid_family)
