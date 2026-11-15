@@ -60,6 +60,10 @@ class Hook(unittest.TestCase):
         env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA=orca, USAGE_GATE_PRESETS=self.presets)
         env["FLEET_WATCH_TEST_LOAD_PER_CORE"] = "0.20"
         env["FLEET_WATCH_TEST_FREE_GB"] = "12"
+        config = json.load(open(os.path.join(os.path.dirname(HOOK), "usage-gate.config.json")))
+        config.pop("pauses", None)  # the committed grok pause is date bound; these cases test the hook
+        env["USAGE_GATE_CONFIG"] = self.tmp.name + "/usage-gate.config.json"
+        json.dump(config, open(env["USAGE_GATE_CONFIG"], "w"))
         if not presets:
             del env["USAGE_GATE_PRESETS"]
         r = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
